@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: ${DATA_DIR:-/data}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
+      POSTING_PROVIDER_MODE: ${POSTING_PROVIDER_MODE:-real}
+      POSTING_PROXY_URL: ${POSTING_PROXY_URL:-}
+      POSTING_AUTH_ENABLED: ${POSTING_AUTH_ENABLED:-true}
+      POSTING_API_TOKEN: ${POSTING_API_TOKEN:-}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+    ports:
+      - "8088:8088"
+    volumes:
+      - vv-fabric-data:/data
+    restart: unless-stopped
+
+volumes:
+  vv-fabric-data:

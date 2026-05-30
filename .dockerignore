@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+node_modules
+data
+uploads
+runtime
+logs
+.env
+

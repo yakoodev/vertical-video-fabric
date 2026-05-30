@@ -1,0 +1,10 @@
+{
+  "name": "vertical-video-fabric",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "undici": "7.26.0",
+    "youtubei.js": "17.0.1"
+  }
+}
