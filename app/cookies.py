@@ -139,7 +139,7 @@ def _parse_netscape(text: str, default_domain: str) -> list[CookieRecord]:
 
 
 def _parse_cookie_header(header: str, default_domain: str) -> list[CookieRecord]:
-    cookies: list[CookieRecord] = []
+    cookies_by_name: dict[str, CookieRecord] = {}
     for part in header.replace("\n", ";").split(";"):
         part = part.strip()
         if not part or "=" not in part:
@@ -148,7 +148,8 @@ def _parse_cookie_header(header: str, default_domain: str) -> list[CookieRecord]
         name = name.strip()
         if not name:
             continue
-        cookies.append(CookieRecord(name=name, value=value.strip(), domain=default_domain))
+        cookies_by_name[name] = CookieRecord(name=name, value=value.strip(), domain=default_domain)
+    cookies = list(cookies_by_name.values())
     if not cookies:
         raise ValueError("no cookies found in Cookie header")
     return cookies

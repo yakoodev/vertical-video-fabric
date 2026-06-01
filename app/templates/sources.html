@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topline">
+  <h1>Sources</h1>
+  <a class="button" href="/posts/new">New Post</a>
+</div>
+
+<section class="panel">
+  <div class="grid two">
+    <form method="post" action="/ui/sources/upload" enctype="multipart/form-data" class="grid">
+      <h2>Upload</h2>
+      <label>Video File
+        <input type="file" name="file" accept="video/*" required>
+      </label>
+      <div>
+        <button type="submit">Save Source</button>
+      </div>
+    </form>
+    <form method="post" action="/ui/sources/url" class="grid">
+      <h2>Add URL</h2>
+      <label>Direct video or YouTube URL
+        <input name="url" type="url" placeholder="https://..." required>
+      </label>
+      <div>
+        <button type="submit">Download Source</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Status</th>
+        <th>Source</th>
+        <th>Duration</th>
+        <th>Resolution</th>
+        <th>Analyses</th>
+        <th>Clips</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for source in sources %}
+      <tr>
+        <td><a href="/sources/{{ source.id }}">#{{ source.id }}</a></td>
+        <td><span class="status {{ source.status }}">{{ source.status }}</span></td>
+        <td>{{ source.original_filename or source.original_url or source.local_path }}</td>
+        <td>{{ "%.1f"|format(source.duration_sec) }}s</td>
+        <td>{{ source.width }}x{{ source.height }}</td>
+        <td>{{ source.analyses_count }}</td>
+        <td>{{ source.clips_count }}</td>
+        <td class="muted">{{ source.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No sources yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

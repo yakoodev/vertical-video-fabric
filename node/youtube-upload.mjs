@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { Innertube } from 'youtubei.js';
 import { ProxyAgent } from 'undici';
 
@@ -34,20 +33,6 @@ function jsonSafe(value) {
   }
 }
 
-function getCookie(cookie, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = cookie.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
-  return match ? match[1] : '';
-}
-
-function sidAuth(cookie, origin) {
-  const sapisid = getCookie(cookie, 'SAPISID') || getCookie(cookie, '__Secure-3PAPISID') || getCookie(cookie, '__Secure-1PAPISID');
-  if (!sapisid) return '';
-  const timestamp = Math.floor(Date.now() / 1000);
-  const digest = createHash('sha1').update(`${timestamp} ${sapisid} ${origin}`).digest('hex');
-  return `SAPISIDHASH ${timestamp}_${digest}`;
-}
-
 async function main() {
   const payload = JSON.parse(await readStdin());
   const file = await fs.readFile(payload.filePath);
@@ -56,24 +41,10 @@ async function main() {
   const yt = await Innertube.create({
     cookie: payload.cookie,
     fetch: async (input, init = {}) => {
-      const rawUrl = typeof input === 'string' ? input : input.url;
-      const url = new URL(rawUrl, 'https://www.youtube.com');
-      const headers = new Headers(init.headers || (typeof input === 'string' ? undefined : input.headers));
-      if (url.hostname === 'upload.youtube.com') {
-        const authOrigin = 'https://www.youtube.com';
-        const auth = sidAuth(payload.cookie, authOrigin);
-        if (auth) {
-          headers.set('Authorization', auth);
-        }
-        headers.set('Origin', authOrigin);
-        headers.set('X-Origin', authOrigin);
-        headers.set('Referer', `${authOrigin}/`);
-      }
-      const nextInit = { ...init, headers };
       if (agent) {
-        return fetch(input, { ...nextInit, dispatcher: agent });
+        return fetch(input, { ...init, dispatcher: agent });
       }
-      return fetch(input, nextInit);
+      return fetch(input, init);
     }
   });
   const response = await yt.studio.upload(file, {

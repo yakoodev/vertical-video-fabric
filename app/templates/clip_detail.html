@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topline">
+  <h1>Clip #{{ clip.id }}</h1>
+  <a class="button" href="/clips">Clips</a>
+</div>
+
+<section class="panel source-layout">
+  <div>
+    {% if clip.status == "succeeded" %}
+    <video class="source-video" controls preload="metadata" src="/media/clips/{{ clip.id }}"></video>
+    {% else %}
+    <div class="empty-video">{{ clip.status }}</div>
+    {% endif %}
+  </div>
+  <div class="grid">
+    <h2>{{ clip.title or "Rendered clip" }}</h2>
+    <div class="meta-grid">
+      <span>Status</span><strong class="status {{ clip.status }}">{{ clip.status }}</strong>
+      <span>Duration</span><strong>{{ "%.1f"|format(clip.duration_sec) }}s</strong>
+      <span>Resolution</span><strong>{{ clip.width }}x{{ clip.height }}</strong>
+      <span>Size</span><strong>{{ clip.size_bytes }} bytes</strong>
+      <span>Source</span><strong>#{{ clip.source_id }}</strong>
+      <span>Segment</span><strong>{{ "#" ~ clip.segment_id if clip.segment_id else "none" }}</strong>
+      <span>Subtitle Track</span><strong>{{ "#" ~ clip.subtitle_track_id if clip.subtitle_track_id else "none" }}</strong>
+    </div>
+    {% if clip.error %}
+    <p class="status failed">{{ clip.error }}</p>
+    {% endif %}
+  </div>
+</section>
+
+{% if clip.status == "succeeded" %}
+<section class="panel">
+  <form method="post" action="/ui/clips/{{ clip.id }}/posts" class="grid">
+    <h2>Publish Clip</h2>
+    <div class="grid two">
+      <label>Title
+        <input name="title" value="{{ clip.title }}">
+      </label>
+      <label>Privacy
+        <select name="privacy">
+          <option value="public">Public</option>
+          <option value="unlisted">Unlisted</option>
+          <option value="private">Private</option>
+        </select>
+      </label>
+      <label>Description
+        <textarea name="description" rows="3">{{ clip.description }}</textarea>
+      </label>
+      <label>Accounts
+        <select name="targets" multiple size="4" required>
+          {% for account in accounts %}
+          <option value="{{ account.id }}">{{ account.platform }} · {{ account.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label class="checkbox">
+      <input type="checkbox" name="allow_comments" value="true" checked>
+      Allow comments
+    </label>
+    <div>
+      <button type="submit" {{ "disabled" if not accounts else "" }}>Queue Post</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Subtitle Tracks</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Status</th>
+        <th>Provider</th>
+        <th>Model</th>
+        <th>ASS</th>
+        <th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for track in subtitle_tracks %}
+      <tr>
+        <td>#{{ track.id }}</td>
+        <td><span class="status {{ track.status }}">{{ track.status }}</span></td>
+        <td>{{ track.provider }}</td>
+        <td>{{ track.model }}</td>
+        <td class="muted">{{ track.ass_path }}</td>
+        <td class="muted">{{ track.error }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No subtitle tracks.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

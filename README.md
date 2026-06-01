@@ -52,6 +52,7 @@ Cookies сохраняются зашифрованно в `/data/app.sqlite` с
 Если платформа инвалидирует cookies или попросит challenge, задача перейдет в `needs_reauth`.
 
 Подробный гайд по импорту cookies: [docs/cookie-import.md](docs/cookie-import.md).
+Безопасная схема тестов на реальных файлах, аккаунтах и ключах: [docs/real-testing.md](docs/real-testing.md).
 
 ## AI video pipeline
 

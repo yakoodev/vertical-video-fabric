@@ -10,9 +10,9 @@ npm-debug.log*
 /uploads/
 /runtime/
 /logs/
+/tests data/
 
 .env
 *.cookie
 *.sqlite
 *.db
-

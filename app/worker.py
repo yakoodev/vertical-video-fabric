@@ -42,20 +42,37 @@ class JobWorker:
         fresh_job = self.store.get_job(job["id"])
         for target in fresh_job["targets"]:
             self.store.mark_target_running(target["id"])
-            account = self.store.get_account(target["account_id"], include_secret=False)
-            cookies = self.store.get_account_cookies(target["account_id"])
-            proxy_url = self.store.get_account_proxy_url(target["account_id"])
-            provider = get_provider(target["platform"])
-            result = provider.upload(
-                cookies=cookies,
-                file_path=Path(fresh_job["source_path"]),
-                title=fresh_job["title"],
-                description=fresh_job["description"],
-                privacy=fresh_job["privacy"],
-                allow_comments=fresh_job["allow_comments"],
-                account_label=account["label"],
-                proxy_url=proxy_url,
-            )
-            self.store.finish_target(target["id"], result.status, result.__dict__)
+            try:
+                account = self.store.get_account(target["account_id"], include_secret=False)
+                cookies = self.store.get_account_cookies(target["account_id"])
+                proxy_url = self.store.get_account_proxy_url(target["account_id"])
+                provider = get_provider(target["platform"])
+                result = provider.upload(
+                    cookies=cookies,
+                    file_path=Path(fresh_job["source_path"]),
+                    title=fresh_job["title"],
+                    description=fresh_job["description"],
+                    privacy=fresh_job["privacy"],
+                    allow_comments=fresh_job["allow_comments"],
+                    account_label=account["label"],
+                    proxy_url=proxy_url,
+                )
+                self.store.finish_target(target["id"], result.status, result.__dict__)
+            except Exception as exc:  # noqa: BLE001 - target failures must be persisted
+                self.store.finish_target(
+                    target["id"],
+                    "failed",
+                    {
+                        "remote_id": "",
+                        "remote_url": "",
+                        "error": _safe_error(exc),
+                        "response": {"error": type(exc).__name__},
+                    },
+                )
         self.store.finish_job_from_targets(job["id"])
         return True
+
+
+def _safe_error(exc: Exception) -> str:
+    text = str(exc or "").strip()
+    return text[:500] or "provider upload failed"

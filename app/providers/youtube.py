@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from app.cookies import CookieRecord, to_cookie_header_for_host
-from app.providers.base import Provider, ProviderResult
+from app.providers.base import Provider, ProviderResult, safe_provider_error
 from app.settings import settings
 
 
@@ -87,7 +87,4 @@ def _classify_youtube_error(message: str) -> str:
 
 
 def _safe_error(message: str) -> str:
-    text = (message or "youtube upload failed").strip()
-    if len(text) > 2000:
-        text = text[:2000] + "..."
-    return text
+    return safe_provider_error(message, "youtube upload failed")

@@ -7,3 +7,4 @@ pytest>=8,<9
 requests>=2.32,<3
 requests-auth-aws-sigv4>=0.7,<1
 uvicorn[standard]>=0.34,<1
+yt-dlp>=2025.5.22

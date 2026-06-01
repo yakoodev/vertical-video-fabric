@@ -45,7 +45,7 @@ source video
 - Источники: upload файла, прямой URL на `mp4`/`mov`/`webm`, YouTube URL через `yt-dlp`.
 - Всегда сохраняется локальная копия исходника в `/data/sources`.
 - AI-анализ: через `VideoAnalyzer` registry; начальные взаимозаменяемые providers:
-  `polza`, `gemini`, `mock`.
+  `polza`, `gemini`, `artemox`, `mock`.
 - Polza.ai input:
   - локальные файлы сначала загружаются в Polza storage;
   - YouTube URL можно передавать как `video_url`, когда выбранная модель это поддерживает;
@@ -212,6 +212,11 @@ source video
 - `audio_codec`: default `aac`
 - `video_bitrate`
 - `audio_bitrate`
+- `audio_mix_mode`: `primary`, `secondary`, `mix`
+- `audio_primary_stream`: zero-based input audio stream, default `0`
+- `audio_primary_volume`: default `1`
+- `audio_secondary_stream`: zero-based input audio stream, optional
+- `audio_secondary_volume`: default `1`
 - `scale_mode`: `cover`, `contain`, `blur_background`
 - `crop_anchor`: `center`, `top`, `bottom`
 - `banner_id`
@@ -365,6 +370,8 @@ Env:
 ```env
 AI_VIDEO_PROVIDER=polza
 SUBTITLE_PROVIDER=polza
+EXTERNAL_HTTP_RETRIES=3
+EXTERNAL_HTTP_RETRY_SECONDS=2
 
 POLZA_API_KEY=
 POLZA_BASE_URL=https://polza.ai/api/v1
@@ -373,8 +380,13 @@ POLZA_TRANSCRIBE_MODEL=openai/gpt-4o-transcribe
 
 GEMINI_API_KEY=
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
-GEMINI_VIDEO_MODEL=gemini-2.5-pro
-GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash
+GEMINI_VIDEO_MODEL=gemini-3.1-flash-lite
+GEMINI_TRANSCRIBE_MODEL=gemini-3.1-flash-lite
+
+ARTEMOX_API_KEY=
+ARTEMOX_BASE_URL=https://api.artemox.com/v1
+ARTEMOX_VIDEO_MODEL=gemini-2.0-flash-lite
+ARTEMOX_TRANSCRIBE_MODEL=gemini-2.0-flash-lite
 ```
 
 Правила взаимозаменяемости:
@@ -384,10 +396,14 @@ GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash
 - `AI_VIDEO_PROVIDER` выбирает provider анализа видео по умолчанию.
 - `SUBTITLE_PROVIDER` выбирает provider распознавания субтитров по умолчанию.
 - В UI можно переопределить provider на уровне analysis run или subtitle profile.
-- Polza.ai и Google Gemini API могут использовать похожие Gemini-модели, но это разные
-  adapters: разные ключи, base URL, формат загрузки файлов и формат structured output.
+- Polza.ai, Artemox и Google Gemini API могут использовать похожие Gemini-модели, но это
+  разные adapters: разные ключи, base URL, формат загрузки файлов и формат structured output.
 - Provider обязан вернуть одну и ту же доменную форму: `AnalysisResult.segments[]`
   или `SubtitleResult.words[]/segments[]`.
+- `gemini-3.1-flash-lite` выбран default, потому что `models.list` подтверждает
+  `generateContent` для видео/аудио workflow. Если нужен более тяжелый профиль, можно
+  переопределить `GEMINI_VIDEO_MODEL` на доступный Flash model, например
+  `gemini-3.5-flash`.
 
 AI analyzer contract:
 
@@ -407,6 +423,7 @@ Client contracts:
 - `GeminiClient.upload_file(path, mime_type)`
 - `GeminiClient.generate_content(payload)`
 - `GeminiClient.transcribe_audio(path, model, language)`
+- `ArtemoxClient.chat_completion(payload)`
 
 `PolzaVideoAnalyzer`:
 
@@ -420,11 +437,22 @@ Client contracts:
 `GeminiVideoAnalyzer`:
 
 - Для локального файла вызывает Gemini Files API и ждет, пока файл станет доступен модели.
-- Для YouTube URL передает URL напрямую в `generateContent`, если выбранная модель это поддерживает.
+- Для YouTube URL в текущей реализации также может использовать локальную копию source через
+  Files API, чтобы поведение для больших файлов было единым и не зависело от публичности URL.
 - Вызывает `models.generateContent`.
 - Передает JSON-схему через `generationConfig.responseMimeType="application/json"`
   и `generationConfig.responseJsonSchema`.
 - Парсит текст ответа как JSON.
+- Валидирует и нормализует сегменты перед записью в БД.
+
+`ArtemoxVideoAnalyzer`:
+
+- Использует Artemox как OpenAI-compatible gateway к Gemini.
+- Вызывает `POST /chat/completions` относительно `ARTEMOX_BASE_URL`.
+- Передает `response_format` с JSON Schema из этого документа.
+- Для v1 поддерживает URL-источники; локальный upload требует отдельного контракта загрузки
+  файла в Artemox и должен завершаться понятной ошибкой.
+- Парсит `choices[0].message.content` как JSON.
 - Валидирует и нормализует сегменты перед записью в БД.
 
 Базовый prompt должен просить модель найти клиповые моменты для vertical short-form:
@@ -485,6 +513,11 @@ Render steps:
 4. Обрезать исходник по `start_sec` / `end_sec`.
 5. Привести к вертикальному размеру пресета.
 6. Наложить banner, если указан.
+6.1. Обработать аудио по preset:
+   - `primary` оставляет выбранную primary-дорожку;
+   - `secondary` оставляет выбранную secondary-дорожку;
+   - `mix` применяет отдельные `volume` к primary/secondary и сводит их через `amix`
+     в одну финальную stereo-дорожку.
 7. Если указан subtitle profile:
    - извлечь аудио из клипа во временный `.m4a` или `.wav`;
    - вызвать subtitle provider;
@@ -772,10 +805,11 @@ Acceptance:
 ### 8. Subtitles service
 
 - Реализовать subtitle provider registry.
-- Реализовать Polza STT provider.
 - Реализовать Gemini subtitle provider с тем же `SubtitleResult` contract.
 - Реализовать ASS karaoke renderer.
 - Подключить subtitle profile к render job.
+- Реализовать Polza STT provider отдельным шагом, если снова понадобится Polza как
+  provider для транскрибации.
 
 Acceptance:
 
@@ -801,6 +835,14 @@ Acceptance:
 - Чистить временные файлы.
 - Сохранять Polza/Gemini usage/cost, если provider вернул эти данные.
 - Не логировать секреты.
+
+Текущий hardening:
+
+- Gemini Files API использует chunked resumable upload и retry/query offset.
+- Artemox gateway и direct URL downloader используют retry для transient network/5xx/429.
+- `JobWorker` сохраняет exception platform provider как `job_targets.status=failed`,
+  после чего job корректно завершает lifecycle вместо зависания в `running`.
+- Временные audio/base render файлы чистятся после render.
 
 Acceptance:
 
