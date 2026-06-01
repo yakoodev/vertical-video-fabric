@@ -14,6 +14,21 @@ docker compose up --build
 
 Web UI будет доступен на `http://localhost:8088`. Swagger UI: `http://localhost:8088/docs`.
 
+Для локального Windows-запуска без Docker используйте launcher:
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+По умолчанию он запускает `http://127.0.0.1:8097`, использует `data\real-pipeline-manual`,
+если такая папка уже есть, иначе `data\local-dev`, подхватывает локальный Gemini key из
+`tests data\gemini api key.txt`, если переменная `GEMINI_API_KEY` не задана, и не выводит
+секреты в консоль. Для фонового запуска:
+
+```powershell
+.\scripts\start-local.ps1 -Background -Open
+```
+
 Глобальный fallback proxy задается через `.env`:
 
 ```env
