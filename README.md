@@ -53,6 +53,13 @@ Cookies сохраняются зашифрованно в `/data/app.sqlite` с
 
 Подробный гайд по импорту cookies: [docs/cookie-import.md](docs/cookie-import.md).
 
+## AI video pipeline
+
+План развития сервиса в AI-конвейер с взаимозаменяемыми Polza.ai/Gemini-провайдерами,
+разбором исходных видео, таймлайном фрагментов, ffmpeg-реализацией,
+karaoke-субтитрами и публикацией готовых клипов описан в
+[docs/ai-video-pipeline-roadmap.md](docs/ai-video-pipeline-roadmap.md).
+
 ## API
 
 ```bash
