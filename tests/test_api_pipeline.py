@@ -109,10 +109,17 @@ def test_api_ingest_analyze_render_and_queue_clip_post(tmp_path, monkeypatch):
     analysis_response = client.post(f"/api/sources/{source['id']}/analyze", json={"provider": "mock"})
     assert analysis_response.status_code == 200
     source_detail = client.get(f"/api/sources/{source['id']}").json()
-    segment = source_detail["segments"][0]
+    clip_plan = source_detail["clip_plans"][0]
+    segment = clip_plan["segments"][0]
+
+    timecode_response = client.patch(
+        f"/api/segments/{segment['id']}/timecodes",
+        json={"start_sec": 0, "end_sec": 5},
+    )
+    assert timecode_response.status_code == 200
 
     clip_response = client.post(
-        f"/api/segments/{segment['id']}/realizations",
+        f"/api/clip-plans/{clip_plan['id']}/render",
         json={
             "ffmpeg_preset_id": preset["id"],
             "subtitle_profile_id": subtitle_profile["id"],
@@ -121,6 +128,7 @@ def test_api_ingest_analyze_render_and_queue_clip_post(tmp_path, monkeypatch):
     assert clip_response.status_code == 200
     clip = clip_response.json()
     assert clip["status"] == "succeeded"
+    assert clip["clip_plan_id"] == clip_plan["id"]
     assert clip["subtitle_track_id"]
 
     post_response = client.post(

@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.ai.contracts import AnalysisResult, AnalysisSegment
+from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.settings import settings
 
@@ -56,22 +56,12 @@ class ArtemoxVideoAnalyzer:
         response = self.client.chat_completion(payload)
         content = _extract_message_content(response)
         parsed = _parse_json_content(content)
-        segments = [
-            AnalysisSegment(
-                start_sec=float(item["start_sec"]),
-                end_sec=float(item["end_sec"]),
-                title=str(item["title"]),
-                description=str(item.get("description") or ""),
-                score=float(item.get("score") or 0),
-                category=str(item.get("category") or "general"),
-                color=str(item.get("color") or "#64748B"),
-                reason=str(item.get("reason") or ""),
-            )
-            for item in parsed.get("segments", [])
-        ]
+        clips = _clips_from_parsed(parsed)
+        segments = [segment for clip in clips for segment in clip.segments] or _segments_from_items(parsed.get("segments", []))
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         return AnalysisResult(
             segments=segments,
+            clips=clips,
             response={"artemox": response, "parsed": parsed},
             usage=usage,
         )
@@ -100,7 +90,8 @@ def build_artemox_analysis_payload(source: dict, prompt: str, model: str) -> dic
                 "role": "user",
                 "content": (
                     f"{prompt}\n\n"
-                    "Analyze this video URL through the Gemini-compatible gateway and return JSON only.\n"
+                    "Analyze this video URL through the Gemini-compatible gateway and return JSON only. "
+                    "Return clips[], where each clip contains one or more segments[] for rendering.\n"
                     f"Source metadata:\n{json.dumps(source_summary, ensure_ascii=False)}"
                 ),
             },
@@ -152,9 +143,54 @@ def _parse_json_content(content: str) -> dict[str, Any]:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise RuntimeError("Artemox returned invalid JSON") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("segments"), list):
-        raise RuntimeError("Artemox JSON does not contain segments[]")
+    if not isinstance(parsed, dict) or not (
+        isinstance(parsed.get("clips"), list) or isinstance(parsed.get("segments"), list)
+    ):
+        raise RuntimeError("Artemox JSON does not contain clips[] or segments[]")
     return parsed
+
+
+def _clips_from_parsed(parsed: dict[str, Any]) -> list[AnalysisClip]:
+    raw_clips = parsed.get("clips")
+    if not isinstance(raw_clips, list):
+        return []
+    clips: list[AnalysisClip] = []
+    for item in raw_clips:
+        if not isinstance(item, dict):
+            continue
+        segments = _segments_from_items(item.get("segments", []))
+        if not segments:
+            continue
+        clips.append(
+            AnalysisClip(
+                title=str(item.get("title") or segments[0].title),
+                description=str(item.get("description") or segments[0].description),
+                score=float(item.get("score") or segments[0].score),
+                category=str(item.get("category") or segments[0].category),
+                color=str(item.get("color") or segments[0].color),
+                segments=segments,
+            )
+        )
+    return clips
+
+
+def _segments_from_items(items: Any) -> list[AnalysisSegment]:
+    if not isinstance(items, list):
+        return []
+    return [
+        AnalysisSegment(
+            start_sec=float(item["start_sec"]),
+            end_sec=float(item["end_sec"]),
+            title=str(item["title"]),
+            description=str(item.get("description") or ""),
+            score=float(item.get("score") or 0),
+            category=str(item.get("category") or "general"),
+            color=str(item.get("color") or "#64748B"),
+            reason=str(item.get("reason") or ""),
+        )
+        for item in items
+        if isinstance(item, dict) and "start_sec" in item and "end_sec" in item and "title" in item
+    ]
 
 
 def _request_with_retries(url: str, **kwargs) -> httpx.Response:

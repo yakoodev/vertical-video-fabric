@@ -13,6 +13,7 @@
         <th>Status</th>
         <th>Title</th>
         <th>Targets</th>
+        <th>Schedule</th>
         <th>Created</th>
       </tr>
     </thead>
@@ -23,13 +24,13 @@
         <td><span class="status {{ job.status }}">{{ job.status }}</span></td>
         <td>{{ job.title }}</td>
         <td>{{ job.targets|length }}</td>
+        <td class="muted">{{ job.scheduled_at or "сразу" }}</td>
         <td class="muted">{{ job.created_at }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">No jobs yet.</td></tr>
+      <tr><td colspan="6" class="muted">No jobs yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endblock %}
-

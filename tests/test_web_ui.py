@@ -41,6 +41,14 @@ def test_html_pages_render(tmp_path, monkeypatch):
     assert "Timeline" in response.text
     assert "Artemox" in response.text
 
+    response = client.get(f"/sources/{source['id']}/studio")
+    assert response.status_code == 200
+    assert "Запустить анализ" in response.text
+    assert "Модели" in response.text
+    assert "Промпты" in response.text
+    assert "Баннеры" in response.text
+    assert "Субтитры" in response.text
+
     response = client.post(f"/api/sources/{source['id']}/analyze", json={"provider": "mock"})
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"

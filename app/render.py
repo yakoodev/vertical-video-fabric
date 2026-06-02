@@ -22,15 +22,19 @@ class ClipRenderService:
         segment_id: int,
         ffmpeg_preset_id: int | None = None,
         subtitle_profile_id: int | None = None,
+        banner_id: int | None = None,
+        clip_plan_id: int | None = None,
     ) -> dict:
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
+        preset = self._preset_with_banner(preset, banner_id)
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
             source["id"],
             segment_id=segment_id,
+            clip_plan_id=clip_plan_id,
             ffmpeg_preset_id=preset["id"],
             subtitle_profile_id=subtitle_profile_id,
         )
@@ -104,6 +108,8 @@ class ClipRenderService:
         segment_ids: list[int],
         ffmpeg_preset_id: int | None = None,
         subtitle_profile_id: int | None = None,
+        banner_id: int | None = None,
+        clip_plan_id: int | None = None,
         title: str = "Montage",
         description: str = "",
     ) -> dict:
@@ -115,11 +121,13 @@ class ClipRenderService:
             raise ValueError("all montage segments must belong to the same source")
         source = self.store.get_source(segments[0]["source_id"])
         preset = self._preset(ffmpeg_preset_id)
+        preset = self._preset_with_banner(preset, banner_id)
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
             source["id"],
             segment_id=None,
+            clip_plan_id=clip_plan_id,
             ffmpeg_preset_id=preset["id"],
             subtitle_profile_id=subtitle_profile_id,
             title=title,
@@ -128,8 +136,12 @@ class ClipRenderService:
         self.store.mark_clip_rendering(clip["id"])
         render_id = uuid4().hex
         output_path = settings.clip_dir / f"{render_id}.mp4"
+        base_output_path = settings.clip_dir / f"{render_id}.base.mp4" if subtitle_profile_id else output_path
         temp_dir = settings.tmp_dir / f"montage-{render_id}"
         temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_paths: list[Path] = []
+        if subtitle_profile_id:
+            temp_paths.append(base_output_path)
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
             rendered_parts: list[Path] = []
@@ -152,14 +164,24 @@ class ClipRenderService:
                 "\n".join(_concat_file_line(path) for path in rendered_parts) + "\n",
                 encoding="utf-8",
             )
-            _run_ffmpeg(build_ffmpeg_concat_args(concat_list_path, output_path), timeout=60 * 30)
-            metadata = probe_media(output_path)
-            _sha256, size_bytes = file_hash_and_size(output_path)
+            _run_ffmpeg(build_ffmpeg_concat_args(concat_list_path, base_output_path), timeout=60 * 30)
+            final_output_path = base_output_path
+            if subtitle_profile_id:
+                final_output_path = output_path
+                self._render_subtitles(
+                    clip_id=clip["id"],
+                    input_path=base_output_path,
+                    output_path=final_output_path,
+                    subtitle_profile_id=subtitle_profile_id,
+                    preset=preset,
+                )
+            metadata = probe_media(final_output_path)
+            _sha256, size_bytes = file_hash_and_size(final_output_path)
             clip = self.store.finish_clip_render(
                 clip["id"],
                 status="succeeded",
-                output_path=output_path,
-                preview_path=output_path,
+                output_path=final_output_path,
+                preview_path=final_output_path,
                 duration_sec=metadata.duration_sec,
                 width=metadata.width,
                 height=metadata.height,
@@ -167,6 +189,8 @@ class ClipRenderService:
             )
             for segment in segments:
                 self.store.update_ai_segment_status(segment["id"], "rendered")
+            for path in temp_paths:
+                path.unlink(missing_ok=True)
             return clip
         except Exception as exc:  # noqa: BLE001 - render failures are persisted as clip state
             clip = self.store.finish_clip_render(
@@ -175,9 +199,54 @@ class ClipRenderService:
                 error=_safe_error(exc),
             )
             output_path.unlink(missing_ok=True)
+            for path in temp_paths:
+                path.unlink(missing_ok=True)
             return clip
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def render_clip_plan(
+        self,
+        clip_plan_id: int,
+        ffmpeg_preset_id: int | None = None,
+        subtitle_profile_id: int | None = None,
+        banner_id: int | None = None,
+    ) -> dict:
+        plan = self.store.get_clip_plan(clip_plan_id)
+        segments = plan.get("segments") or []
+        if not segments:
+            raise ValueError("clip plan has no segments")
+        self.store.update_clip_plan_status(clip_plan_id, "rendering")
+        segment_ids = [segment["id"] for segment in segments]
+        if len(segment_ids) == 1:
+            clip = self.render_segment(
+                segment_ids[0],
+                ffmpeg_preset_id=ffmpeg_preset_id,
+                subtitle_profile_id=subtitle_profile_id,
+                banner_id=banner_id,
+                clip_plan_id=clip_plan_id,
+            )
+        else:
+            clip = self.render_montage(
+                segment_ids,
+                ffmpeg_preset_id=ffmpeg_preset_id,
+                subtitle_profile_id=subtitle_profile_id,
+                banner_id=banner_id,
+                clip_plan_id=clip_plan_id,
+                title=plan["title"],
+                description=plan["description"],
+            )
+        if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
+            clip = self.store.update_clip(
+                clip["id"],
+                title=plan["title"],
+                description=plan["description"],
+            )
+        self.store.update_clip_plan_status(
+            clip_plan_id,
+            "rendered" if clip["status"] == "succeeded" else "failed",
+        )
+        return clip
 
     def _render_subtitles(
         self,
@@ -188,6 +257,7 @@ class ClipRenderService:
         preset: dict,
     ) -> None:
         profile = self.store.get_subtitle_profile(subtitle_profile_id)
+        profile["prompt"] = self.store.get_app_setting_value("subtitle_prompt", "", include_secret=False)
         provider = get_subtitle_provider(profile["provider"])
         model = subtitle_model_for_profile(profile)
         track = self.store.create_subtitle_track(
@@ -233,6 +303,18 @@ class ClipRenderService:
             raise
         finally:
             audio_path.unlink(missing_ok=True)
+
+    def _preset_with_banner(self, preset: dict, banner_id: int | None) -> dict:
+        if banner_id is None:
+            return preset
+        if banner_id <= 0:
+            preset = dict(preset)
+            preset["banner_id"] = None
+            return preset
+        self.store.get_banner(banner_id)
+        preset = dict(preset)
+        preset["banner_id"] = banner_id
+        return preset
 
 
 def build_ffmpeg_render_args(

@@ -29,7 +29,7 @@ class Settings:
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
         self.external_http_retries = int(os.getenv("EXTERNAL_HTTP_RETRIES", "3"))
         self.external_http_retry_seconds = float(os.getenv("EXTERNAL_HTTP_RETRY_SECONDS", "2"))
-        self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(1024 * 1024 * 1024)))
+        self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
         self.tiktok_vendor_root = Path(
             os.getenv("TIKTOK_VENDOR_ROOT", "/opt/TiktokAutoUploader")
         )

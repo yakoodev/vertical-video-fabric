@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.ai.contracts import AnalysisResult, AnalysisSegment
+from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
 from app.settings import settings
 
 
@@ -189,22 +189,12 @@ class GeminiVideoAnalyzer:
         response = self.client.generate_content(model, payload)
         content = _extract_response_text(response)
         parsed = _parse_json_content(content)
-        segments = [
-            AnalysisSegment(
-                start_sec=float(item["start_sec"]),
-                end_sec=float(item["end_sec"]),
-                title=str(item["title"]),
-                description=str(item.get("description") or ""),
-                score=float(item.get("score") or 0),
-                category=str(item.get("category") or "general"),
-                color=str(item.get("color") or "#64748B"),
-                reason=str(item.get("reason") or ""),
-            )
-            for item in parsed.get("segments", [])
-        ]
+        clips = _clips_from_parsed(parsed)
+        segments = [segment for clip in clips for segment in clip.segments] or _segments_from_items(parsed.get("segments", []))
         usage = response.get("usageMetadata") if isinstance(response.get("usageMetadata"), dict) else {}
         return AnalysisResult(
             segments=segments,
+            clips=clips,
             response={
                 "gemini_file": {
                     "name": file_info.get("name", ""),
@@ -236,7 +226,8 @@ def build_gemini_analysis_payload(
     full_prompt = (
         f"{prompt}\n\n"
         "Analyze the uploaded video. Return JSON only. "
-        "Use the timestamps from the video and keep segments within the source duration.\n"
+        "Use the timestamps from the video and keep segments within the source duration. "
+        "Return clips[], where each clip contains one or more segments[] for rendering.\n"
         f"Source metadata:\n{json.dumps(source_summary, ensure_ascii=False)}"
     )
     return {
@@ -273,39 +264,69 @@ def gemini_analysis_schema() -> dict[str, Any]:
         "color": {"type": "string", "description": "CSS hex color like #2563EB."},
         "reason": {"type": "string", "description": "Why this moment works as a standalone clip."},
     }
+    clip_properties = {
+        "title": {"type": "string", "description": "Short publishing title."},
+        "description": {"type": "string", "description": "Short caption or description."},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "category": {"type": "string", "description": "Short category label."},
+        "color": {"type": "string", "description": "CSS hex color like #2563EB."},
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": segment_properties,
+                "required": [
+                    "start_sec",
+                    "end_sec",
+                    "title",
+                    "description",
+                    "score",
+                    "category",
+                    "color",
+                    "reason",
+                ],
+                "propertyOrdering": [
+                    "start_sec",
+                    "end_sec",
+                    "title",
+                    "description",
+                    "score",
+                    "category",
+                    "color",
+                    "reason",
+                ],
+            },
+        },
+    }
     return {
         "type": "object",
         "properties": {
-            "segments": {
+            "clips": {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": segment_properties,
+                    "properties": clip_properties,
                     "required": [
-                        "start_sec",
-                        "end_sec",
                         "title",
                         "description",
                         "score",
                         "category",
                         "color",
-                        "reason",
+                        "segments",
                     ],
                     "propertyOrdering": [
-                        "start_sec",
-                        "end_sec",
                         "title",
                         "description",
                         "score",
                         "category",
                         "color",
-                        "reason",
+                        "segments",
                     ],
                 },
             }
         },
-        "required": ["segments"],
-        "propertyOrdering": ["segments"],
+        "required": ["clips"],
+        "propertyOrdering": ["clips"],
     }
 
 
@@ -336,9 +357,54 @@ def _parse_json_content(content: str) -> dict[str, Any]:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise RuntimeError("Gemini returned invalid JSON") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("segments"), list):
-        raise RuntimeError("Gemini JSON does not contain segments[]")
+    if not isinstance(parsed, dict) or not (
+        isinstance(parsed.get("clips"), list) or isinstance(parsed.get("segments"), list)
+    ):
+        raise RuntimeError("Gemini JSON does not contain clips[] or segments[]")
     return parsed
+
+
+def _clips_from_parsed(parsed: dict[str, Any]) -> list[AnalysisClip]:
+    raw_clips = parsed.get("clips")
+    if not isinstance(raw_clips, list):
+        return []
+    clips: list[AnalysisClip] = []
+    for item in raw_clips:
+        if not isinstance(item, dict):
+            continue
+        segments = _segments_from_items(item.get("segments", []))
+        if not segments:
+            continue
+        clips.append(
+            AnalysisClip(
+                title=str(item.get("title") or segments[0].title),
+                description=str(item.get("description") or segments[0].description),
+                score=float(item.get("score") or segments[0].score),
+                category=str(item.get("category") or segments[0].category),
+                color=str(item.get("color") or segments[0].color),
+                segments=segments,
+            )
+        )
+    return clips
+
+
+def _segments_from_items(items: Any) -> list[AnalysisSegment]:
+    if not isinstance(items, list):
+        return []
+    return [
+        AnalysisSegment(
+            start_sec=float(item["start_sec"]),
+            end_sec=float(item["end_sec"]),
+            title=str(item["title"]),
+            description=str(item.get("description") or ""),
+            score=float(item.get("score") or 0),
+            category=str(item.get("category") or "general"),
+            color=str(item.get("color") or "#64748B"),
+            reason=str(item.get("reason") or ""),
+        )
+        for item in items
+        if isinstance(item, dict) and "start_sec" in item and "end_sec" in item and "title" in item
+    ]
 
 
 def _guess_mime_type(path: Path) -> str:

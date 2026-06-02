@@ -27,7 +27,7 @@ def test_artemox_payload_uses_openai_compatible_schema():
 
     assert payload["model"] == "gemini-2.0-flash-lite"
     assert payload["response_format"]["type"] == "json_schema"
-    assert payload["response_format"]["json_schema"]["schema"]["required"] == ["segments"]
+    assert payload["response_format"]["json_schema"]["schema"]["required"] == ["clips"]
     assert "https://youtu.be/example" in payload["messages"][1]["content"]
 
 

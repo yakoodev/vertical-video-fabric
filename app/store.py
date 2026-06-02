@@ -25,8 +25,10 @@ VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
 VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock"}
+VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
 VALID_ANALYSIS_STATUSES = {"queued", "running", "succeeded", "failed"}
 VALID_SEGMENT_STATUSES = {"candidate", "rendering", "rendered", "rejected"}
+VALID_CLIP_PLAN_STATUSES = {"candidate", "rendering", "rendered", "failed", "rejected"}
 VALID_SCALE_MODES = {"cover", "contain", "blur_background"}
 VALID_CROP_ANCHORS = {"center", "top", "bottom"}
 VALID_AUDIO_MIX_MODES = {"primary", "secondary", "mix"}
@@ -65,7 +67,7 @@ class AppStore:
                 """
                 UPDATE accounts
                 SET encrypted_cookies = ?, encrypted_proxy_url = ?, cookie_count = ?, has_required_cookies = ?,
-                    missing_cookies = ?, updated_at = CURRENT_TIMESTAMP
+                    missing_cookies = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (encrypted, encrypted_proxy_url, len(cookies), int(ok), ",".join(missing), existing["id"]),
@@ -90,14 +92,15 @@ class AppStore:
             SELECT id, platform, label, encrypted_proxy_url, cookie_count, has_required_cookies,
                    missing_cookies, created_at, updated_at
             FROM accounts
+            WHERE deleted_at IS NULL
             ORDER BY platform, label
             """
         )
         return [self._account_from_row(row, include_secret=False) for row in rows]
 
-    def get_account(self, account_id: int, include_secret: bool = False) -> dict:
+    def get_account(self, account_id: int, include_secret: bool = False, include_deleted: bool = False) -> dict:
         row = self.db.query_one("SELECT * FROM accounts WHERE id = ?", (account_id,))
-        if not row:
+        if not row or (row["deleted_at"] and not include_deleted):
             raise KeyError(f"account not found: {account_id}")
         data = self._account_from_row(row, include_secret=include_secret)
         if include_secret:
@@ -105,6 +108,18 @@ class AppStore:
                 self.cipher.decrypt_json(row["encrypted_cookies"])
             )
         return data
+
+    def delete_account(self, account_id: int) -> dict:
+        account = self.get_account(account_id, include_deleted=False)
+        self.db.execute(
+            """
+            UPDATE accounts
+            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (account_id,),
+        )
+        return account
 
     def get_account_cookies(self, account_id: int):
         row = self.db.query_one("SELECT encrypted_cookies FROM accounts WHERE id = ?", (account_id,))
@@ -119,7 +134,153 @@ class AppStore:
         encrypted = row["encrypted_proxy_url"] or ""
         if encrypted:
             return str(self.cipher.decrypt_json(encrypted)).strip()
-        return settings.posting_proxy_url
+        return self.get_global_proxy_url()
+
+    def set_app_setting(self, key: str, value: Any, encrypted: bool = False) -> dict:
+        key = key.strip()
+        if not key:
+            raise ValueError("setting key is required")
+        value_json = self.cipher.encrypt_json(value) if encrypted else json.dumps(value, ensure_ascii=False)
+        self.db.execute(
+            """
+            INSERT INTO app_settings (key, value_json, encrypted, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json = excluded.value_json,
+                encrypted = excluded.encrypted,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value_json, int(encrypted)),
+        )
+        return self.get_app_setting(key, include_secret=True)
+
+    def get_app_setting(self, key: str, default: Any | None = None, include_secret: bool = False) -> dict:
+        row = self.db.query_one("SELECT * FROM app_settings WHERE key = ?", (key.strip(),))
+        if not row:
+            return {"key": key, "value": default, "encrypted": False}
+        data = dict(row)
+        encrypted = bool(data.get("encrypted"))
+        data["encrypted"] = encrypted
+        if encrypted:
+            data["value"] = self.cipher.decrypt_json(data["value_json"]) if include_secret else ""
+        else:
+            data["value"] = json.loads(data["value_json"])
+        return data
+
+    def list_app_settings(self, include_secrets: bool = False) -> dict[str, Any]:
+        rows = self.db.query_all("SELECT * FROM app_settings ORDER BY key")
+        values: dict[str, Any] = {}
+        for row in rows:
+            data = dict(row)
+            if data.get("encrypted"):
+                values[data["key"]] = self.cipher.decrypt_json(data["value_json"]) if include_secrets else ""
+            else:
+                values[data["key"]] = json.loads(data["value_json"])
+        return values
+
+    def get_app_setting_value(self, key: str, default: Any | None = None, include_secret: bool = False) -> Any:
+        return self.get_app_setting(key, default=default, include_secret=include_secret)["value"]
+
+    def ensure_prompt_presets(self, defaults: dict[str, tuple[str, str]]) -> None:
+        for task, (label, prompt) in defaults.items():
+            if self.list_prompt_presets(task):
+                continue
+            self.create_prompt_preset(task, label, prompt, is_default=True)
+
+    def create_prompt_preset(self, task: str, label: str, prompt: str, is_default: bool = False) -> dict:
+        task = _choice(task, VALID_PROMPT_TASKS, "task")
+        label = str(label).strip()
+        prompt = str(prompt).strip()
+        if not label:
+            raise ValueError("prompt preset label is required")
+        if not prompt:
+            raise ValueError("prompt preset text is required")
+        with self.db._lock, self.db.connect() as conn:
+            if is_default:
+                conn.execute("UPDATE prompt_presets SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE task = ?", (task,))
+            cur = conn.execute(
+                """
+                INSERT INTO prompt_presets (task, label, prompt, is_default)
+                VALUES (?, ?, ?, ?)
+                """,
+                (task, label, prompt, int(is_default)),
+            )
+            conn.commit()
+            preset_id = cur.lastrowid
+        return self.get_prompt_preset(preset_id)
+
+    def update_prompt_preset(
+        self,
+        preset_id: int,
+        *,
+        label: str,
+        prompt: str,
+        is_default: bool = False,
+    ) -> dict:
+        preset = self.get_prompt_preset(preset_id)
+        label = str(label).strip()
+        prompt = str(prompt).strip()
+        if not label:
+            raise ValueError("prompt preset label is required")
+        if not prompt:
+            raise ValueError("prompt preset text is required")
+        with self.db._lock, self.db.connect() as conn:
+            if is_default:
+                conn.execute("UPDATE prompt_presets SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE task = ?", (preset["task"],))
+            conn.execute(
+                """
+                UPDATE prompt_presets
+                SET label = ?, prompt = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (label, prompt, int(is_default), preset_id),
+            )
+            conn.commit()
+        return self.get_prompt_preset(preset_id)
+
+    def delete_prompt_preset(self, preset_id: int) -> None:
+        preset = self.get_prompt_preset(preset_id)
+        count = self.db.query_one("SELECT COUNT(*) AS count FROM prompt_presets WHERE task = ?", (preset["task"],))["count"]
+        if count <= 1:
+            raise ValueError("cannot delete the last prompt preset for task")
+        self.db.execute("DELETE FROM prompt_presets WHERE id = ?", (preset_id,))
+        if preset["is_default"]:
+            replacement = self.list_prompt_presets(preset["task"])[0]
+            self.update_prompt_preset(replacement["id"], label=replacement["label"], prompt=replacement["prompt"], is_default=True)
+
+    def list_prompt_presets(self, task: str | None = None) -> list[dict]:
+        if task:
+            task = _choice(task, VALID_PROMPT_TASKS, "task")
+            rows = self.db.query_all(
+                "SELECT * FROM prompt_presets WHERE task = ? ORDER BY is_default DESC, label, id",
+                (task,),
+            )
+        else:
+            rows = self.db.query_all("SELECT * FROM prompt_presets ORDER BY task, is_default DESC, label, id")
+        return [self._prompt_preset_from_row(row) for row in rows]
+
+    def get_prompt_preset(self, preset_id: int) -> dict:
+        row = self.db.query_one("SELECT * FROM prompt_presets WHERE id = ?", (preset_id,))
+        if not row:
+            raise KeyError(f"prompt preset not found: {preset_id}")
+        return self._prompt_preset_from_row(row)
+
+    def get_default_prompt_preset(self, task: str) -> dict | None:
+        task = _choice(task, VALID_PROMPT_TASKS, "task")
+        row = self.db.query_one(
+            """
+            SELECT * FROM prompt_presets
+            WHERE task = ?
+            ORDER BY is_default DESC, id
+            LIMIT 1
+            """,
+            (task,),
+        )
+        return self._prompt_preset_from_row(row) if row else None
+
+    def get_global_proxy_url(self) -> str:
+        stored = str(self.get_app_setting_value("global_proxy_url", "", include_secret=True) or "").strip()
+        return stored or settings.posting_proxy_url
 
     def create_job(
         self,
@@ -131,6 +292,7 @@ class AppStore:
         privacy: str,
         allow_comments: bool,
         clip_id: int | None = None,
+        scheduled_at: str = "",
     ) -> dict:
         title = title.strip()
         if not title:
@@ -147,9 +309,9 @@ class AppStore:
         cur = self.db.execute(
             """
             INSERT INTO jobs
-                (clip_id, title, description, privacy, allow_comments, source_filename, source_path,
+                (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
                  source_sha256, source_size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clip_id,
@@ -157,6 +319,7 @@ class AppStore:
                 description,
                 privacy,
                 int(allow_comments),
+                scheduled_at.strip(),
                 source_filename,
                 str(file_info["path"]),
                 file_info["sha256"],
@@ -182,6 +345,7 @@ class AppStore:
         target_account_ids: list[int],
         privacy: str,
         allow_comments: bool,
+        scheduled_at: str = "",
     ) -> dict:
         clip = self.get_clip(clip_id)
         if clip["status"] != "succeeded":
@@ -201,9 +365,9 @@ class AppStore:
         cur = self.db.execute(
             """
             INSERT INTO jobs
-                (clip_id, title, description, privacy, allow_comments, source_filename, source_path,
+                (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
                  source_sha256, source_size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clip_id,
@@ -211,6 +375,7 @@ class AppStore:
                 description,
                 privacy,
                 int(allow_comments),
+                scheduled_at.strip(),
                 source_path.name,
                 str(source_path),
                 sha256,
@@ -239,10 +404,41 @@ class AppStore:
         return self._job_from_row(row, include_targets=True)
 
     def next_queued_job(self) -> dict | None:
-        row = self.db.query_one("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1")
+        row = self.db.query_one(
+            """
+            SELECT * FROM jobs
+            WHERE status = 'queued'
+              AND (scheduled_at IS NULL OR scheduled_at = '' OR scheduled_at <= CURRENT_TIMESTAMP)
+            ORDER BY COALESCE(NULLIF(scheduled_at, ''), created_at), id
+            LIMIT 1
+            """
+        )
         if not row:
             return None
         return self._job_from_row(row, include_targets=True)
+
+    def list_active_tasks(self) -> list[dict]:
+        rows = self.db.query_all(
+            """
+            SELECT 'job' AS kind, id, status, title AS label, error, created_at, updated_at, scheduled_at
+            FROM jobs
+            WHERE status IN ('queued', 'running')
+               OR (status IN ('failed', 'needs_reauth', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
+            UNION ALL
+            SELECT 'clip' AS kind, id, status, title AS label, error, created_at, updated_at, '' AS scheduled_at
+            FROM clips
+            WHERE status IN ('queued', 'rendering')
+               OR (status IN ('failed', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
+            UNION ALL
+            SELECT 'analysis' AS kind, id, status, provider || ' ' || model AS label, error, created_at, updated_at, '' AS scheduled_at
+            FROM ai_analyses
+            WHERE status IN ('queued', 'running')
+               OR (status IN ('failed', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
+            ORDER BY updated_at DESC
+            LIMIT 30
+            """
+        )
+        return [dict(row) for row in rows]
 
     def mark_job_running(self, job_id: int) -> None:
         self.db.execute(
@@ -354,7 +550,17 @@ class AppStore:
             """
             SELECT s.*,
                    (SELECT COUNT(*) FROM ai_analyses a WHERE a.source_id = s.id) AS analyses_count,
-                   (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clips_count
+                   (SELECT COUNT(*) FROM clip_plans cp WHERE cp.source_id = s.id) AS clip_plans_count,
+                   (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clips_count,
+                   (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id AND c.status = 'succeeded') AS ready_clips_count,
+                   (SELECT COUNT(*) FROM jobs j JOIN clips c ON c.id = j.clip_id WHERE c.source_id = s.id) AS posts_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM job_targets jt
+                       JOIN jobs j ON j.id = jt.job_id
+                       JOIN clips c ON c.id = j.clip_id
+                       WHERE c.source_id = s.id AND jt.status = 'succeeded'
+                   ) AS published_targets_count
             FROM sources s
             ORDER BY s.id DESC
             LIMIT 200
@@ -370,8 +576,40 @@ class AppStore:
         if include_related:
             data["analyses"] = self.list_ai_analyses(source_id=source_id)
             data["segments"] = self.list_ai_segments(source_id=source_id)
+            data["clip_plans"] = self.list_clip_plans(source_id=source_id)
             data["clips"] = self.list_clips(source_id=source_id)
         return data
+
+    def get_source_stats(self, source_id: int) -> dict:
+        self.get_source(source_id)
+        row = self.db.query_one(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM ai_analyses WHERE source_id = ?) AS analyses_count,
+                (SELECT COUNT(*) FROM clip_plans WHERE source_id = ?) AS clip_plans_count,
+                (SELECT COUNT(*) FROM clips WHERE source_id = ?) AS clips_count,
+                (SELECT COUNT(*) FROM clips WHERE source_id = ? AND status = 'succeeded') AS ready_clips_count,
+                (SELECT COUNT(*) FROM clips WHERE source_id = ? AND status IN ('queued', 'rendering')) AS active_render_count,
+                (SELECT COUNT(*) FROM clips WHERE source_id = ? AND status = 'failed') AS failed_clips_count,
+                (SELECT COUNT(*) FROM jobs j JOIN clips c ON c.id = j.clip_id WHERE c.source_id = ?) AS posts_count,
+                (
+                    SELECT COUNT(*)
+                    FROM job_targets jt
+                    JOIN jobs j ON j.id = jt.job_id
+                    JOIN clips c ON c.id = j.clip_id
+                    WHERE c.source_id = ? AND jt.status = 'succeeded'
+                ) AS published_targets_count,
+                (
+                    SELECT COUNT(*)
+                    FROM job_targets jt
+                    JOIN jobs j ON j.id = jt.job_id
+                    JOIN clips c ON c.id = j.clip_id
+                    WHERE c.source_id = ? AND jt.status IN ('queued', 'running')
+                ) AS active_post_targets_count
+            """,
+            (source_id,) * 9,
+        )
+        return dict(row) if row else {}
 
     def update_source(self, source_id: int, **fields: Any) -> dict:
         self.get_source(source_id)
@@ -546,6 +784,242 @@ class AppStore:
         )
         return self.get_ai_segment(segment_id)
 
+    def update_ai_segment_timecodes(self, segment_id: int, start_sec: float, end_sec: float) -> dict:
+        segment = self.get_ai_segment(segment_id)
+        source = self.get_source(segment["source_id"])
+        normalized = _normalize_segment(
+            {
+                **segment,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+            },
+            source_duration=float(source["duration_sec"]),
+            sort_order=int(segment["sort_order"]),
+        )
+        self._update_record(
+            "ai_segments",
+            segment_id,
+            {
+                "start_sec": normalized["start_sec"],
+                "end_sec": normalized["end_sec"],
+            },
+        )
+        return self.get_ai_segment(segment_id)
+
+    def create_clip_plan(
+        self,
+        source_id: int,
+        analysis_id: int | None,
+        title: str,
+        description: str = "",
+        segment_ids: list[int] | None = None,
+        score: float = 0,
+        category: str = "",
+        color: str = "",
+        sort_order: int = 0,
+        status: str = "candidate",
+    ) -> dict:
+        self.get_source(source_id)
+        if analysis_id is not None:
+            analysis = self.get_ai_analysis(analysis_id)
+            if analysis["source_id"] != source_id:
+                raise ValueError("analysis does not belong to source")
+        segment_ids = segment_ids or []
+        if not segment_ids:
+            raise ValueError("clip plan requires at least one segment")
+        segments = [self.get_ai_segment(segment_id) for segment_id in segment_ids]
+        for segment in segments:
+            if segment["source_id"] != source_id:
+                raise ValueError("clip plan segment does not belong to source")
+            if analysis_id is not None and segment["analysis_id"] != analysis_id:
+                raise ValueError("clip plan segment does not belong to analysis")
+        title = title.strip() or segments[0]["title"]
+        description = description.strip() or segments[0]["description"]
+        category = category.strip() or segments[0]["category"]
+        color = color.strip() or segments[0]["color"] or _color_for_category(category)
+        if not CSS_HEX_RE.match(color):
+            color = _color_for_category(category)
+        status = _choice(status, VALID_CLIP_PLAN_STATUSES, "status")
+        cur = self.db.execute(
+            """
+            INSERT INTO clip_plans
+                (source_id, analysis_id, status, title, description, score, category, color, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                analysis_id,
+                status,
+                title[:100],
+                description[:500],
+                max(0, min(1, float(score))),
+                category[:40],
+                color,
+                int(sort_order),
+            ),
+        )
+        plan_id = cur.lastrowid
+        for index, segment_id in enumerate(segment_ids):
+            self.db.execute(
+                """
+                INSERT INTO clip_plan_segments (clip_plan_id, segment_id, sort_order)
+                VALUES (?, ?, ?)
+                """,
+                (plan_id, segment_id, index),
+            )
+        return self.get_clip_plan(plan_id)
+
+    def list_clip_plans(
+        self,
+        source_id: int | None = None,
+        analysis_id: int | None = None,
+        include_segments: bool = True,
+    ) -> list[dict]:
+        where: list[str] = []
+        params: list[Any] = []
+        if source_id is not None:
+            where.append("source_id = ?")
+            params.append(source_id)
+        if analysis_id is not None:
+            where.append("analysis_id = ?")
+            params.append(analysis_id)
+        sql = "SELECT * FROM clip_plans"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY sort_order, id"
+        plans = [dict(row) for row in self.db.query_all(sql, params)]
+        if include_segments:
+            for plan in plans:
+                plan["segments"] = self._segments_for_clip_plan(plan["id"])
+        return plans
+
+    def get_clip_plan(self, clip_plan_id: int, include_segments: bool = True) -> dict:
+        row = self.db.query_one("SELECT * FROM clip_plans WHERE id = ?", (clip_plan_id,))
+        if not row:
+            raise KeyError(f"clip plan not found: {clip_plan_id}")
+        data = dict(row)
+        if include_segments:
+            data["segments"] = self._segments_for_clip_plan(clip_plan_id)
+        return data
+
+    def update_clip_plan_status(self, clip_plan_id: int, status: str) -> dict:
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        self._update_record(
+            "clip_plans",
+            clip_plan_id,
+            {"status": _choice(status, VALID_CLIP_PLAN_STATUSES, "status")},
+        )
+        return self.get_clip_plan(clip_plan_id)
+
+    def add_segment_to_clip_plan(
+        self,
+        clip_plan_id: int,
+        start_sec: float,
+        end_sec: float,
+        title: str = "Segment",
+    ) -> dict:
+        plan = self.get_clip_plan(clip_plan_id)
+        analysis_id = plan["analysis_id"]
+        if analysis_id is None:
+            analysis = self.create_ai_analysis(plan["source_id"], "mock", status="succeeded")
+            analysis_id = analysis["id"]
+        segment = self.create_ai_segment(
+            analysis_id,
+            {
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "title": title.strip() or f"Segment {len(plan['segments']) + 1}",
+                "description": "Manual segment",
+                "score": 0.5,
+                "category": plan["category"] or "manual",
+                "color": plan["color"] or "#22D3EE",
+                "reason": "Created in studio preview.",
+            },
+        )
+        next_order = len(plan["segments"])
+        self.db.execute(
+            """
+            INSERT INTO clip_plan_segments (clip_plan_id, segment_id, sort_order)
+            VALUES (?, ?, ?)
+            """,
+            (clip_plan_id, segment["id"], next_order),
+        )
+        return self.get_clip_plan(clip_plan_id)
+
+    def remove_segment_from_clip_plan(self, clip_plan_id: int, segment_id: int) -> dict:
+        plan = self.get_clip_plan(clip_plan_id)
+        if len(plan["segments"]) <= 1:
+            raise ValueError("clip plan must keep at least one segment")
+        self.db.execute(
+            "DELETE FROM clip_plan_segments WHERE clip_plan_id = ? AND segment_id = ?",
+            (clip_plan_id, segment_id),
+        )
+        self._renumber_clip_plan_segments(clip_plan_id)
+        return self.get_clip_plan(clip_plan_id)
+
+    def move_clip_plan_segment(self, clip_plan_id: int, segment_id: int, direction: str) -> dict:
+        rows = self.db.query_all(
+            """
+            SELECT id, segment_id, sort_order
+            FROM clip_plan_segments
+            WHERE clip_plan_id = ?
+            ORDER BY sort_order, id
+            """,
+            (clip_plan_id,),
+        )
+        items = [dict(row) for row in rows]
+        index = next((idx for idx, item in enumerate(items) if item["segment_id"] == segment_id), -1)
+        if index < 0:
+            raise KeyError(f"segment not found in clip plan: {segment_id}")
+        target = index - 1 if direction == "up" else index + 1
+        if target < 0 or target >= len(items):
+            return self.get_clip_plan(clip_plan_id)
+        items[index], items[target] = items[target], items[index]
+        for sort_order, item in enumerate(items):
+            self.db.execute(
+                "UPDATE clip_plan_segments SET sort_order = ? WHERE id = ?",
+                (sort_order, item["id"]),
+            )
+        return self.get_clip_plan(clip_plan_id)
+
+    def ensure_clip_plans_for_source(self, source_id: int) -> list[dict]:
+        self.get_source(source_id)
+        existing = self.list_clip_plans(source_id=source_id, include_segments=False)
+        if existing:
+            return existing
+        segments = self.list_ai_segments(source_id=source_id)
+        created: list[dict] = []
+        for index, segment in enumerate(segments):
+            created.append(
+                self.create_clip_plan(
+                    source_id,
+                    segment["analysis_id"],
+                    segment["title"],
+                    description=segment["description"],
+                    segment_ids=[segment["id"]],
+                    score=segment["score"],
+                    category=segment["category"],
+                    color=segment["color"],
+                    sort_order=index,
+                )
+            )
+        return created
+
+    def _renumber_clip_plan_segments(self, clip_plan_id: int) -> None:
+        rows = self.db.query_all(
+            """
+            SELECT id FROM clip_plan_segments
+            WHERE clip_plan_id = ?
+            ORDER BY sort_order, id
+            """,
+            (clip_plan_id,),
+        )
+        for index, row in enumerate(rows):
+            self.db.execute(
+                "UPDATE clip_plan_segments SET sort_order = ? WHERE id = ?",
+                (index, row["id"]),
+            )
+
     def create_ffmpeg_preset(self, label: str, **fields: Any) -> dict:
         values = _prepare_ffmpeg_preset_fields({"label": label, **fields}, partial=False)
         if values["banner_id"] is not None:
@@ -713,6 +1187,7 @@ class AppStore:
         self,
         source_id: int,
         segment_id: int | None = None,
+        clip_plan_id: int | None = None,
         ffmpeg_preset_id: int | None = None,
         subtitle_profile_id: int | None = None,
         title: str = "",
@@ -720,6 +1195,9 @@ class AppStore:
         status: str = "queued",
     ) -> dict:
         self.get_source(source_id)
+        clip_plan = self.get_clip_plan(clip_plan_id) if clip_plan_id is not None else None
+        if clip_plan and clip_plan["source_id"] != source_id:
+            raise ValueError("clip plan does not belong to source")
         segment = self.get_ai_segment(segment_id) if segment_id is not None else None
         if segment and segment["source_id"] != source_id:
             raise ValueError("segment does not belong to source")
@@ -727,18 +1205,22 @@ class AppStore:
             self.get_ffmpeg_preset(ffmpeg_preset_id)
         if subtitle_profile_id is not None:
             self.get_subtitle_profile(subtitle_profile_id)
-        if segment:
+        if clip_plan:
+            title = title or clip_plan["title"]
+            description = description or clip_plan["description"]
+        elif segment:
             title = title or segment["title"]
             description = description or segment["description"]
         status = _choice(status, VALID_CLIP_STATUSES, "status")
         cur = self.db.execute(
             """
             INSERT INTO clips
-                (source_id, segment_id, ffmpeg_preset_id, subtitle_profile_id, status, title, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (source_id, clip_plan_id, segment_id, ffmpeg_preset_id, subtitle_profile_id, status, title, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source_id,
+                clip_plan_id,
                 segment_id,
                 ffmpeg_preset_id,
                 subtitle_profile_id,
@@ -751,16 +1233,101 @@ class AppStore:
 
     def list_clips(self, source_id: int | None = None) -> list[dict]:
         if source_id is None:
-            rows = self.db.query_all("SELECT * FROM clips ORDER BY id DESC LIMIT 200")
+            rows = self.db.query_all(
+                """
+                SELECT c.*,
+                       (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                       (
+                           SELECT COUNT(*)
+                           FROM job_targets jt
+                           JOIN jobs j ON j.id = jt.job_id
+                           WHERE j.clip_id = c.id AND jt.status = 'succeeded'
+                       ) AS published_targets_count,
+                       (
+                           SELECT jt.error
+                           FROM job_targets jt
+                           JOIN jobs j ON j.id = jt.job_id
+                           WHERE j.clip_id = c.id AND jt.error != ''
+                           ORDER BY jt.updated_at DESC
+                           LIMIT 1
+                       ) AS last_post_error,
+                       (
+                           SELECT j.status
+                           FROM jobs j
+                           WHERE j.clip_id = c.id
+                           ORDER BY j.id DESC
+                           LIMIT 1
+                       ) AS last_job_status
+                FROM clips c
+                ORDER BY c.id DESC
+                LIMIT 200
+                """
+            )
         else:
             rows = self.db.query_all(
-                "SELECT * FROM clips WHERE source_id = ? ORDER BY id DESC",
+                """
+                SELECT c.*,
+                       (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                       (
+                           SELECT COUNT(*)
+                           FROM job_targets jt
+                           JOIN jobs j ON j.id = jt.job_id
+                           WHERE j.clip_id = c.id AND jt.status = 'succeeded'
+                       ) AS published_targets_count,
+                       (
+                           SELECT jt.error
+                           FROM job_targets jt
+                           JOIN jobs j ON j.id = jt.job_id
+                           WHERE j.clip_id = c.id AND jt.error != ''
+                           ORDER BY jt.updated_at DESC
+                           LIMIT 1
+                       ) AS last_post_error,
+                       (
+                           SELECT j.status
+                           FROM jobs j
+                           WHERE j.clip_id = c.id
+                           ORDER BY j.id DESC
+                           LIMIT 1
+                       ) AS last_job_status
+                FROM clips c
+                WHERE c.source_id = ?
+                ORDER BY c.id DESC
+                """,
                 (source_id,),
             )
         return [dict(row) for row in rows]
 
     def get_clip(self, clip_id: int) -> dict:
-        row = self.db.query_one("SELECT * FROM clips WHERE id = ?", (clip_id,))
+        row = self.db.query_one(
+            """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM job_targets jt
+                       JOIN jobs j ON j.id = jt.job_id
+                       WHERE j.clip_id = c.id AND jt.status = 'succeeded'
+                   ) AS published_targets_count,
+                   (
+                       SELECT jt.error
+                       FROM job_targets jt
+                       JOIN jobs j ON j.id = jt.job_id
+                       WHERE j.clip_id = c.id AND jt.error != ''
+                       ORDER BY jt.updated_at DESC
+                       LIMIT 1
+                   ) AS last_post_error,
+                   (
+                       SELECT j.status
+                       FROM jobs j
+                       WHERE j.clip_id = c.id
+                       ORDER BY j.id DESC
+                       LIMIT 1
+                   ) AS last_job_status
+            FROM clips c
+            WHERE c.id = ?
+            """,
+            (clip_id,),
+        )
         if not row:
             raise KeyError(f"clip not found: {clip_id}")
         return dict(row)
@@ -841,6 +1408,7 @@ class AppStore:
 
     def delete_clip(self, clip_id: int) -> None:
         self.get_clip(clip_id)
+        self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))
         self._delete_record("clips", clip_id)
 
     def create_subtitle_track(
@@ -966,6 +1534,11 @@ class AppStore:
         data["uppercase"] = bool(data["uppercase"])
         return data
 
+    def _prompt_preset_from_row(self, row) -> dict:
+        data = dict(row)
+        data["is_default"] = bool(data["is_default"])
+        return data
+
     def _targets_for_job(self, job_id: int) -> list[dict]:
         rows = self.db.query_all(
             """
@@ -976,6 +1549,19 @@ class AppStore:
             ORDER BY jt.id
             """,
             (job_id,),
+        )
+        return [dict(row) for row in rows]
+
+    def _segments_for_clip_plan(self, clip_plan_id: int) -> list[dict]:
+        rows = self.db.query_all(
+            """
+            SELECT s.*, cps.sort_order AS clip_sort_order
+            FROM clip_plan_segments cps
+            JOIN ai_segments s ON s.id = cps.segment_id
+            WHERE cps.clip_plan_id = ?
+            ORDER BY cps.sort_order, cps.id
+            """,
+            (clip_plan_id,),
         )
         return [dict(row) for row in rows]
 

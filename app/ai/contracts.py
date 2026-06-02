@@ -29,8 +29,19 @@ class AnalysisSegment:
 
 
 @dataclass(frozen=True)
+class AnalysisClip:
+    title: str
+    segments: list[AnalysisSegment]
+    description: str = ""
+    score: float = 0
+    category: str = "general"
+    color: str = "#64748B"
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     segments: list[AnalysisSegment]
+    clips: list[AnalysisClip] = field(default_factory=list)
     response: dict[str, Any] = field(default_factory=dict)
     usage: dict[str, Any] = field(default_factory=dict)
 

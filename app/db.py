@@ -31,6 +31,7 @@ class Database:
                     cookie_count INTEGER NOT NULL DEFAULT 0,
                     has_required_cookies INTEGER NOT NULL DEFAULT 0,
                     missing_cookies TEXT NOT NULL DEFAULT '',
+                    deleted_at TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(platform, label)
@@ -44,6 +45,7 @@ class Database:
                     description TEXT NOT NULL DEFAULT '',
                     privacy TEXT NOT NULL DEFAULT 'public',
                     allow_comments INTEGER NOT NULL DEFAULT 1,
+                    scheduled_at TEXT,
                     source_filename TEXT NOT NULL,
                     source_path TEXT NOT NULL,
                     source_sha256 TEXT NOT NULL,
@@ -126,6 +128,30 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS clip_plans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                    analysis_id INTEGER REFERENCES ai_analyses(id) ON DELETE SET NULL,
+                    status TEXT NOT NULL DEFAULT 'candidate',
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    score REAL NOT NULL DEFAULT 0,
+                    category TEXT NOT NULL DEFAULT '',
+                    color TEXT NOT NULL DEFAULT '#64748B',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS clip_plan_segments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_plan_id INTEGER NOT NULL REFERENCES clip_plans(id) ON DELETE CASCADE,
+                    segment_id INTEGER NOT NULL REFERENCES ai_segments(id) ON DELETE CASCADE,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(clip_plan_id, segment_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS ffmpeg_presets (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     label TEXT NOT NULL,
@@ -206,6 +232,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS clips (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                    clip_plan_id INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL,
                     segment_id INTEGER REFERENCES ai_segments(id) ON DELETE SET NULL,
                     ffmpeg_preset_id INTEGER REFERENCES ffmpeg_presets(id),
                     subtitle_profile_id INTEGER REFERENCES subtitle_profiles(id),
@@ -226,22 +253,46 @@ class Database:
                     finished_at TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL DEFAULT '{}',
+                    encrypted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS prompt_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id);
                 CREATE INDEX IF NOT EXISTS idx_job_targets_job ON job_targets(job_id);
                 CREATE INDEX IF NOT EXISTS idx_sources_status ON sources(status, id);
                 CREATE INDEX IF NOT EXISTS idx_ai_analyses_source ON ai_analyses(source_id, id);
                 CREATE INDEX IF NOT EXISTS idx_ai_segments_source ON ai_segments(source_id, start_sec);
+                CREATE INDEX IF NOT EXISTS idx_clip_plans_source ON clip_plans(source_id, id);
+                CREATE INDEX IF NOT EXISTS idx_clip_plan_segments_plan ON clip_plan_segments(clip_plan_id, sort_order);
                 CREATE INDEX IF NOT EXISTS idx_clips_status ON clips(status, id);
                 CREATE INDEX IF NOT EXISTS idx_clips_source ON clips(source_id, id);
+                CREATE INDEX IF NOT EXISTS idx_prompt_presets_task ON prompt_presets(task, is_default, id);
                 """
             )
             self._ensure_column(conn, "accounts", "encrypted_proxy_url", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")
+            self._ensure_column(conn, "jobs", "scheduled_at", "TEXT")
             self._ensure_column(conn, "ffmpeg_presets", "audio_mix_mode", "TEXT NOT NULL DEFAULT 'primary'")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_stream", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_volume", "REAL NOT NULL DEFAULT 1")
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_stream", "INTEGER")
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_volume", "REAL NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "clips", "clip_plan_id", "INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL")
 
     def _ensure_column(
         self,

@@ -16,6 +16,10 @@
       {{ job.privacy }}
     </div>
     <div>
+      <div class="muted">Schedule</div>
+      {{ job.scheduled_at or "сразу" }}
+    </div>
+    <div>
       <div class="muted">Title</div>
       {{ job.title }}
     </div>
@@ -61,4 +65,3 @@
   </table>
 </section>
 {% endblock %}
-

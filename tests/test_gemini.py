@@ -32,14 +32,16 @@ def test_gemini_payload_uses_file_data_and_response_format():
     assert parts[0]["file_data"]["mime_type"] == "video/mp4"
     assert parts[0]["file_data"]["file_uri"].endswith("/files/abc")
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
-    assert payload["generationConfig"]["responseJsonSchema"]["required"] == ["segments"]
+    assert payload["generationConfig"]["responseJsonSchema"]["required"] == ["clips"]
 
 
 def test_gemini_schema_has_property_ordering_for_2_0_models():
     schema = gemini_analysis_schema()
 
-    assert schema["propertyOrdering"] == ["segments"]
-    assert schema["properties"]["segments"]["items"]["propertyOrdering"][0] == "start_sec"
+    assert schema["propertyOrdering"] == ["clips"]
+    assert schema["properties"]["clips"]["items"]["propertyOrdering"][0] == "title"
+    segment_schema = schema["properties"]["clips"]["items"]["properties"]["segments"]["items"]
+    assert segment_schema["propertyOrdering"][0] == "start_sec"
 
 
 def test_gemini_video_analyzer_uploads_waits_and_parses_response(tmp_path):

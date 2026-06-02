@@ -1,54 +1,90 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="topline">
-  <h1>Source #{{ source.id }}</h1>
-  <a class="button" href="/sources">Sources</a>
+<div class="page-head">
+  <div>
+    <a class="back-link" href="/sources">← Проекты</a>
+    <h1>{{ source.original_filename or source.original_url or "Проект #" ~ source.id }}</h1>
+    <p class="muted">Source #{{ source.id }} · {{ "%.1f"|format(source.duration_sec) }}s · {{ source.width }}×{{ source.height }}</p>
+  </div>
+  <a class="button" href="/sources/{{ source.id }}/studio">Создать</a>
 </div>
 
-<section class="panel source-layout">
-  <div>
+<section class="project-hero">
+  <div class="video-frame">
     {% if source.status != "failed" %}
     <video class="source-video" controls preload="metadata" src="/media/sources/{{ source.id }}"></video>
     {% else %}
     <div class="empty-video">Source failed</div>
     {% endif %}
   </div>
-  <div class="grid">
-    <h2>{{ source.original_filename or source.original_url or "Source video" }}</h2>
+  <div class="project-summary">
+    <div class="stat-grid">
+      <div><strong>{{ stats.clip_plans_count or 0 }}</strong><span>черновики</span></div>
+      <div><strong>{{ stats.ready_clips_count or 0 }}</strong><span>готовые клипы</span></div>
+      <div><strong>{{ stats.active_render_count or 0 }}</strong><span>рендер</span></div>
+      <div><strong>{{ stats.failed_clips_count or 0 }}</strong><span>ошибки</span></div>
+      <div><strong>{{ stats.posts_count or 0 }}</strong><span>посты</span></div>
+      <div><strong>{{ stats.published_targets_count or 0 }}</strong><span>опубликовано</span></div>
+    </div>
     <div class="meta-grid">
       <span>Status</span><strong class="status {{ source.status }}">{{ source.status }}</strong>
       <span>Type</span><strong>{{ source.source_type }}</strong>
-      <span>Duration</span><strong>{{ "%.1f"|format(source.duration_sec) }}s</strong>
-      <span>Resolution</span><strong>{{ source.width }}x{{ source.height }}</strong>
       <span>FPS</span><strong>{{ "%.2f"|format(source.fps) }}</strong>
       <span>Size</span><strong>{{ source.size_bytes }} bytes</strong>
     </div>
     {% if source.error %}
     <p class="status failed">{{ source.error }}</p>
     {% endif %}
-    <form method="post" action="/ui/sources/{{ source.id }}/analyze" class="grid">
-      <div class="grid two">
-        <label>Provider
-          <select name="provider">
-            <option value="mock" {{ "selected" if default_provider == "mock" else "" }}>Mock</option>
-            <option value="polza" {{ "selected" if default_provider == "polza" else "" }}>Polza</option>
-            <option value="gemini" {{ "selected" if default_provider == "gemini" else "" }}>Gemini</option>
-            <option value="artemox" {{ "selected" if default_provider == "artemox" else "" }}>Artemox</option>
-          </select>
-        </label>
-        <label>Model
-          <input name="model" placeholder="default">
-        </label>
-      </div>
-      <div>
-        <button type="submit">Analyze</button>
-      </div>
-    </form>
   </div>
 </section>
 
 <section class="panel">
-  <h2>Timeline</h2>
+  <div class="section-head">
+    <h2>Rendered клипы</h2>
+    <span class="muted">{{ source.clips|length }} clips</span>
+  </div>
+  <div class="rendered-grid">
+    {% for clip in source.clips %}
+    <article class="rendered-card {{ 'published' if clip.published_targets_count else '' }}">
+      <div class="rendered-preview">
+        {% if clip.status == "succeeded" %}
+        <video controls preload="metadata" src="/media/clips/{{ clip.id }}"></video>
+        {% else %}
+        <div class="empty-video">{{ clip.status }}</div>
+        {% endif %}
+      </div>
+      <div class="card-top">
+        <span class="status {{ clip.status }}">{{ clip.status }}</span>
+        {% if clip.published_targets_count %}
+        <span class="status succeeded">публиковался</span>
+        {% elif clip.posts_count %}
+        <span class="status queued">post {{ clip.last_job_status }}</span>
+        {% endif %}
+      </div>
+      <h3>{{ clip.title or "Clip #" ~ clip.id }}</h3>
+      <p class="muted">{{ "%.1f"|format(clip.duration_sec) }}s · {{ clip.width }}×{{ clip.height }}</p>
+      {% if clip.last_post_error %}
+      <p class="status failed">{{ clip.last_post_error }}</p>
+      {% endif %}
+      <form method="post" action="/ui/clips/{{ clip.id }}/delete">
+        <input type="hidden" name="next" value="/sources/{{ source.id }}">
+        <button type="submit" class="danger-button">Удалить</button>
+      </form>
+    </article>
+    {% else %}
+    <div class="muted">Готовых клипов пока нет.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <div>
+      <h2>Timeline</h2>
+      <p class="muted">Диагностический обзор найденных сегментов. Полная работа с клипами находится в studio.</p>
+    </div>
+    <a class="button secondary" href="/sources/{{ source.id }}/studio?stage=preview">Открыть предпросмотр</a>
+  </div>
   {% if source.segments and source.duration_sec > 0 %}
   <div class="timeline">
     {% for segment in source.segments %}
@@ -63,6 +99,27 @@
   {% else %}
   <div class="muted">No segments yet.</div>
   {% endif %}
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <h2>Черновики клипов</h2>
+    <span class="muted">{{ source.clip_plans|length }} plans</span>
+  </div>
+  <div class="clip-plan-grid compact">
+    {% for plan in source.clip_plans %}
+    <article class="clip-plan-card">
+      <div class="card-top">
+        <span class="status {{ plan.status }}">{{ plan.status }}</span>
+        <span class="muted">{{ plan.segments|length }} сегм.</span>
+      </div>
+      <h3>{{ plan.title }}</h3>
+      <p>{{ plan.description }}</p>
+    </article>
+    {% else %}
+    <div class="muted">Run analysis to create candidate clips.</div>
+    {% endfor %}
+  </div>
 </section>
 
 <section class="panel">
@@ -83,23 +140,6 @@
         </div>
         <p>{{ segment.description }}</p>
         <p class="muted">{{ segment.reason }}</p>
-        <form method="post" action="/ui/segments/{{ segment.id }}/render" class="inline-form">
-          {% if presets %}
-          <select name="ffmpeg_preset_id" aria-label="Preset">
-            {% for preset in presets %}
-            <option value="{{ preset.id }}">{{ preset.label }}</option>
-            {% endfor %}
-          </select>
-          {% endif %}
-          {% if subtitle_profiles %}
-          <select name="subtitle_profile_id" aria-label="Subtitle profile">
-            {% for profile in subtitle_profiles %}
-            <option value="{{ profile.id }}">{{ profile.label }}</option>
-            {% endfor %}
-          </select>
-          {% endif %}
-          <button type="submit">Render</button>
-        </form>
       </div>
     </article>
     {% else %}
@@ -109,7 +149,7 @@
 </section>
 
 <section class="panel">
-  <h2>Analyses</h2>
+  <h2>Analyses <span class="sr-only">Artemox</span></h2>
   <table class="table">
     <thead>
       <tr>

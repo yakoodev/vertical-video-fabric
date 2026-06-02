@@ -52,6 +52,10 @@ class GeminiSubtitleProvider:
 
 def build_gemini_subtitle_payload(file_info: dict[str, Any], profile: dict) -> dict[str, Any]:
     language_hint = profile.get("language") or "auto"
+    prompt = str(profile.get("prompt") or "").strip() or (
+        "Transcribe this audio for karaoke subtitles. Return JSON only with "
+        "word-level timestamps. If language is uncertain, detect it."
+    )
     return {
         "contents": [
             {
@@ -65,8 +69,7 @@ def build_gemini_subtitle_payload(file_info: dict[str, Any], profile: dict) -> d
                     },
                     {
                         "text": (
-                            "Transcribe this audio for karaoke subtitles. Return JSON only with "
-                            "word-level timestamps. If language is uncertain, detect it. "
+                            f"{prompt}\n\n"
                             f"Language hint: {language_hint}."
                         )
                     },

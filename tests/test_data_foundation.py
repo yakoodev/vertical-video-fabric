@@ -38,18 +38,31 @@ def test_database_init_creates_pipeline_tables_and_job_clip_id(tmp_path):
         "sources",
         "ai_analyses",
         "ai_segments",
+        "clip_plans",
+        "clip_plan_segments",
         "ffmpeg_presets",
         "banners",
         "subtitle_profiles",
         "subtitle_tracks",
         "clips",
+        "app_settings",
+        "prompt_presets",
     }.issubset(tables)
     job_columns = {row["name"] for row in db.query_all("PRAGMA table_info(jobs)")}
     assert "clip_id" in job_columns
+    clip_columns = {row["name"] for row in db.query_all("PRAGMA table_info(clips)")}
+    assert "clip_plan_id" in clip_columns
 
 
 def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
+    account = store.upsert_account("youtube", "delete-me", "SID=a; HSID=b; SSID=c; APISID=d; SAPISID=e")
+    assert len(store.list_accounts()) == 1
+    store.delete_account(account["id"])
+    assert store.list_accounts() == []
+    with pytest.raises(KeyError):
+        store.get_account(account["id"])
+
     source_path = settings.source_dir / "source.mp4"
     source_path.write_bytes(b"video")
 
@@ -85,6 +98,23 @@ def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     )
     assert analysis["status"] == "succeeded"
     assert json.loads(analysis["usage_json"]) == {"tokens": 12}
+    preset = store.create_prompt_preset("analysis", "Apex preset", "Find Apex moments", is_default=True)
+    assert preset["is_default"] is True
+    assert store.get_default_prompt_preset("analysis")["id"] == preset["id"]
+    preset = store.update_prompt_preset(preset["id"], label="Apex updated", prompt="Find better Apex moments", is_default=True)
+    assert preset["label"] == "Apex updated"
+    failed_analysis = store.create_ai_analysis(source["id"], "gemini", model="gemini-test")
+    store.mark_ai_analysis_running(failed_analysis["id"])
+    failed_analysis = store.finish_ai_analysis(
+        failed_analysis["id"],
+        "failed",
+        response={"error": "Media is too large"},
+        error="Media is too large",
+    )
+    tasks = store.list_active_tasks()
+    failed_task = next(task for task in tasks if task["kind"] == "analysis" and task["id"] == failed_analysis["id"])
+    assert failed_task["status"] == "failed"
+    assert failed_task["error"] == "Media is too large"
 
     segment = store.create_ai_segment(
         analysis["id"],
@@ -101,6 +131,20 @@ def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     )
     assert segment["score"] == 1
     assert segment["color"] == "#2563EB"
+    segment = store.update_ai_segment_timecodes(segment["id"], 11, 26)
+    assert segment["start_sec"] == 11
+    assert segment["end_sec"] == 26
+
+    clip_plan = store.create_clip_plan(
+        source["id"],
+        analysis["id"],
+        "Planned clip",
+        description="Planned description",
+        segment_ids=[segment["id"]],
+        score=0.8,
+        category="insight",
+    )
+    assert clip_plan["segments"][0]["id"] == segment["id"]
 
     with pytest.raises(ValueError):
         store.create_ai_segment(
@@ -155,10 +199,12 @@ def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     clip = store.create_clip(
         source["id"],
         segment_id=segment["id"],
+        clip_plan_id=clip_plan["id"],
         ffmpeg_preset_id=preset["id"],
         subtitle_profile_id=profile["id"],
     )
-    assert clip["title"] == "Best moment"
+    assert clip["title"] == "Planned clip"
+    assert clip["clip_plan_id"] == clip_plan["id"]
 
     output_path = settings.clip_dir / "clip.mp4"
     output_path.write_bytes(b"clip")
@@ -187,11 +233,13 @@ def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     assert clip["subtitle_track_id"] == track["id"]
 
     listed_source = store.list_sources()[0]
-    assert listed_source["analyses_count"] == 1
+    assert listed_source["analyses_count"] == 2
+    assert listed_source["clip_plans_count"] == 1
     assert listed_source["clips_count"] == 1
     source_detail = store.get_source(source["id"], include_related=True)
-    assert len(source_detail["analyses"]) == 1
+    assert len(source_detail["analyses"]) == 2
     assert len(source_detail["segments"]) == 1
+    assert len(source_detail["clip_plans"]) == 1
     assert len(source_detail["clips"]) == 1
 
     disposable = store.create_ffmpeg_preset("Disposable")
