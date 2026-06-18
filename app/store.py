@@ -22,7 +22,7 @@ from app.settings import settings
 
 VALID_PLATFORMS = {"youtube", "tiktok"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
-VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url"}
+VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
 VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock"}
 VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
@@ -33,6 +33,7 @@ VALID_SCALE_MODES = {"cover", "contain", "blur_background"}
 VALID_CROP_ANCHORS = {"center", "top", "bottom"}
 VALID_AUDIO_MIX_MODES = {"primary", "secondary", "mix"}
 VALID_BANNER_POSITIONS = {"top", "center", "bottom", "custom"}
+VALID_COLOR_STYLES = {"none", "warm", "cold", "cinematic", "vibrant", "noir", "vintage"}
 VALID_CLIP_STATUSES = {"queued", "rendering", "succeeded", "failed"}
 CSS_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 MIN_SEGMENT_DURATION_SEC = 5
@@ -418,6 +419,7 @@ class AppStore:
         return self._job_from_row(row, include_targets=True)
 
     def list_active_tasks(self) -> list[dict]:
+        self.mark_stale_ai_analyses_failed()
         rows = self.db.query_all(
             """
             SELECT 'job' AS kind, id, status, title AS label, error, created_at, updated_at, scheduled_at
@@ -562,6 +564,7 @@ class AppStore:
                        WHERE c.source_id = s.id AND jt.status = 'succeeded'
                    ) AS published_targets_count
             FROM sources s
+            WHERE s.source_type != 'clip_upload'
             ORDER BY s.id DESC
             LIMIT 200
             """
@@ -667,6 +670,7 @@ class AppStore:
         return self.get_ai_analysis(cur.lastrowid)
 
     def list_ai_analyses(self, source_id: int | None = None) -> list[dict]:
+        self.mark_stale_ai_analyses_failed()
         if source_id is None:
             rows = self.db.query_all("SELECT * FROM ai_analyses ORDER BY id DESC LIMIT 200")
         else:
@@ -712,6 +716,103 @@ class AppStore:
             (status, _json_text(response), _json_text(usage), error.strip(), analysis_id),
         )
         return self.get_ai_analysis(analysis_id)
+
+    def recover_interrupted_ai_analyses(self) -> int:
+        rows = self.db.query_all("SELECT id, source_id FROM ai_analyses WHERE status = 'running'")
+        if not rows:
+            return 0
+        source_ids = {int(row["source_id"]) for row in rows}
+        self.db.execute(
+            """
+            UPDATE ai_analyses
+            SET status = 'failed',
+                error = 'analysis was interrupted by service restart',
+                response_json = CASE
+                    WHEN response_json IS NULL OR response_json = '' OR response_json = '{}'
+                    THEN '{"error":"analysis was interrupted by service restart"}'
+                    ELSE response_json
+                END,
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'running'
+            """
+        )
+        for source_id in source_ids:
+            self._refresh_source_status_after_analysis_change(source_id)
+        return len(rows)
+
+    def mark_stale_ai_analyses_failed(self, stale_after_seconds: int | None = None) -> int:
+        seconds = int(stale_after_seconds if stale_after_seconds is not None else settings.ai_analysis_stale_seconds)
+        seconds = max(60, seconds)
+        cutoff_modifier = f"-{seconds} seconds"
+        rows = self.db.query_all(
+            """
+            SELECT id, source_id
+            FROM ai_analyses
+            WHERE status = 'running'
+              AND updated_at <= datetime('now', ?)
+            """,
+            (cutoff_modifier,),
+        )
+        if not rows:
+            return 0
+        ids = [int(row["id"]) for row in rows]
+        source_ids = {int(row["source_id"]) for row in rows}
+        placeholders = ",".join("?" for _ in ids)
+        self.db.execute(
+            f"""
+            UPDATE ai_analyses
+            SET status = 'failed',
+                error = 'analysis timed out or was interrupted',
+                response_json = CASE
+                    WHEN response_json IS NULL OR response_json = '' OR response_json = '{{}}'
+                    THEN '{{"error":"analysis timed out or was interrupted"}}'
+                    ELSE response_json
+                END,
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders})
+            """,
+            ids,
+        )
+        for source_id in source_ids:
+            self._refresh_source_status_after_analysis_change(source_id)
+        return len(ids)
+
+    def delete_ai_analysis(self, analysis_id: int) -> dict:
+        self.mark_stale_ai_analyses_failed()
+        analysis = self.get_ai_analysis(analysis_id)
+        if analysis["status"] == "running":
+            raise ValueError("running analysis cannot be deleted")
+        self.delete_generated_outputs_for_analysis(analysis_id)
+        self.db.execute("DELETE FROM ai_analyses WHERE id = ?", (analysis_id,))
+        self._refresh_source_status_after_analysis_change(int(analysis["source_id"]))
+        return analysis
+
+    def _refresh_source_status_after_analysis_change(self, source_id: int) -> None:
+        source = self.get_source(source_id)
+        if source["status"] not in {"analyzing", "analyzed"}:
+            return
+        running_count = self.db.query_one(
+            "SELECT COUNT(*) AS count FROM ai_analyses WHERE source_id = ? AND status = 'running'",
+            (source_id,),
+        )["count"]
+        if running_count:
+            return
+        succeeded_count = self.db.query_one(
+            "SELECT COUNT(*) AS count FROM ai_analyses WHERE source_id = ? AND status = 'succeeded'",
+            (source_id,),
+        )["count"]
+        self.update_source(source_id, status="analyzed" if succeeded_count else "ready", error="")
+
+    def delete_generated_outputs_for_analysis(self, analysis_id: int) -> dict[str, int]:
+        self.get_ai_analysis(analysis_id)
+        plan_cur = self.db.execute("DELETE FROM clip_plans WHERE analysis_id = ?", (analysis_id,))
+        segment_cur = self.db.execute("DELETE FROM ai_segments WHERE analysis_id = ?", (analysis_id,))
+        return {
+            "clip_plans": int(plan_cur.rowcount or 0),
+            "ai_segments": int(segment_cur.rowcount or 0),
+        }
 
     def create_ai_segment(self, analysis_id: int, segment: dict[str, Any]) -> dict:
         return self.create_ai_segments(analysis_id, [segment])[0]
@@ -911,6 +1012,16 @@ class AppStore:
         )
         return self.get_clip_plan(clip_plan_id)
 
+    def delete_generated_clip_plans_for_source(self, source_id: int, exclude_analysis_id: int | None = None) -> int:
+        self.get_source(source_id)
+        params: list[Any] = [source_id]
+        sql = "DELETE FROM clip_plans WHERE source_id = ? AND analysis_id IS NOT NULL"
+        if exclude_analysis_id is not None:
+            sql += " AND analysis_id != ?"
+            params.append(exclude_analysis_id)
+        cur = self.db.execute(sql, params)
+        return int(cur.rowcount or 0)
+
     def add_segment_to_clip_plan(
         self,
         clip_plan_id: int,
@@ -1026,14 +1137,19 @@ class AppStore:
             self.get_banner(values["banner_id"])
         if values["subtitle_profile_id"] is not None:
             self.get_subtitle_profile(values["subtitle_profile_id"])
+        if values["music_track_id"] is not None:
+            self.get_audio_track(values["music_track_id"])
         cur = self.db.execute(
             """
             INSERT INTO ffmpeg_presets
                 (label, description, output_width, output_height, fps, video_codec, audio_codec,
                  video_bitrate, audio_bitrate, audio_mix_mode, audio_primary_stream,
                  audio_primary_volume, audio_secondary_stream, audio_secondary_volume,
-                 scale_mode, crop_anchor, banner_id, subtitle_profile_id, extra_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 scale_mode, crop_anchor, banner_id, subtitle_profile_id, extra_json,
+                 music_track_id, music_volume, music_loop, music_fade_in_sec, music_fade_out_sec,
+                 music_duck, music_duck_amount, color_style, color_strength, vignette, grain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["label"],
@@ -1055,6 +1171,17 @@ class AppStore:
                 values["banner_id"],
                 values["subtitle_profile_id"],
                 values["extra_json"],
+                values["music_track_id"],
+                values["music_volume"],
+                values["music_loop"],
+                values["music_fade_in_sec"],
+                values["music_fade_out_sec"],
+                values["music_duck"],
+                values["music_duck_amount"],
+                values["color_style"],
+                values["color_strength"],
+                values["vignette"],
+                values["grain"],
             ),
         )
         return self.get_ffmpeg_preset(cur.lastrowid)
@@ -1076,6 +1203,8 @@ class AppStore:
             self.get_banner(values["banner_id"])
         if values.get("subtitle_profile_id") is not None:
             self.get_subtitle_profile(values["subtitle_profile_id"])
+        if values.get("music_track_id") is not None:
+            self.get_audio_track(values["music_track_id"])
         self._update_record(
             "ffmpeg_presets",
             preset_id,
@@ -1131,6 +1260,44 @@ class AppStore:
         self.get_banner(banner_id)
         self._delete_record("banners", banner_id)
 
+    def create_audio_track(self, label: str, file_path: str | Path, **fields: Any) -> dict:
+        values = _prepare_audio_track_fields({"label": label, "file_path": file_path, **fields}, partial=False)
+        cur = self.db.execute(
+            """
+            INSERT INTO audio_tracks
+                (label, file_path, original_filename, mime_type, duration_sec, volume)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values["label"],
+                values["file_path"],
+                values["original_filename"],
+                values["mime_type"],
+                values["duration_sec"],
+                values["volume"],
+            ),
+        )
+        return self.get_audio_track(cur.lastrowid)
+
+    def list_audio_tracks(self) -> list[dict]:
+        rows = self.db.query_all("SELECT * FROM audio_tracks ORDER BY id DESC")
+        return [dict(row) for row in rows]
+
+    def get_audio_track(self, track_id: int) -> dict:
+        row = self.db.query_one("SELECT * FROM audio_tracks WHERE id = ?", (track_id,))
+        if not row:
+            raise KeyError(f"audio track not found: {track_id}")
+        return dict(row)
+
+    def update_audio_track(self, track_id: int, **fields: Any) -> dict:
+        self.get_audio_track(track_id)
+        self._update_record("audio_tracks", track_id, _prepare_audio_track_fields(fields, partial=True))
+        return self.get_audio_track(track_id)
+
+    def delete_audio_track(self, track_id: int) -> None:
+        self.get_audio_track(track_id)
+        self._delete_record("audio_tracks", track_id)
+
     def create_subtitle_profile(self, label: str, **fields: Any) -> dict:
         values = _prepare_subtitle_profile_fields({"label": label, **fields}, partial=False)
         cur = self.db.execute(
@@ -1138,8 +1305,8 @@ class AppStore:
             INSERT INTO subtitle_profiles
                 (label, provider, model, language, font_family, font_size, primary_color,
                  active_word_color, outline_color, back_color, alignment, margin_v,
-                 max_words_per_line, uppercase)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 max_words_per_line, uppercase, timing_offset_sec, outline_width, shadow)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["label"],
@@ -1156,6 +1323,9 @@ class AppStore:
                 values["margin_v"],
                 values["max_words_per_line"],
                 values["uppercase"],
+                values["timing_offset_sec"],
+                values["outline_width"],
+                values["shadow"],
             ),
         )
         return self.get_subtitle_profile(cur.lastrowid)
@@ -1532,6 +1702,9 @@ class AppStore:
     def _subtitle_profile_from_row(self, row) -> dict:
         data = dict(row)
         data["uppercase"] = bool(data["uppercase"])
+        data["timing_offset_sec"] = float(data.get("timing_offset_sec") or 0)
+        data["outline_width"] = float(data.get("outline_width") if data.get("outline_width") is not None else 5)
+        data["shadow"] = float(data.get("shadow") if data.get("shadow") is not None else 1)
         return data
 
     def _prompt_preset_from_row(self, row) -> dict:
@@ -1712,6 +1885,17 @@ def _prepare_ffmpeg_preset_fields(fields: dict[str, Any], partial: bool) -> dict
         "banner_id": None,
         "subtitle_profile_id": None,
         "extra": {},
+        "music_track_id": None,
+        "music_volume": 0.25,
+        "music_loop": True,
+        "music_fade_in_sec": 0.0,
+        "music_fade_out_sec": 0.0,
+        "music_duck": True,
+        "music_duck_amount": 0.6,
+        "color_style": "none",
+        "color_strength": 1.0,
+        "vignette": 0.0,
+        "grain": 0.0,
     }
     raw = fields if partial else {**defaults, **fields}
     values: dict[str, Any] = {}
@@ -1755,12 +1939,69 @@ def _prepare_ffmpeg_preset_fields(fields: dict[str, Any], partial: bool) -> dict
             if volume < 0 or volume > 4:
                 raise ValueError(f"{key} must be between 0 and 4")
             values[key] = volume
-        elif key in {"banner_id", "subtitle_profile_id"}:
-            values[key] = int(value) if value is not None else None
+        elif key in {"banner_id", "subtitle_profile_id", "music_track_id"}:
+            if value is None or str(value).strip() == "":
+                values[key] = None
+            else:
+                parsed = int(value)
+                values[key] = parsed if parsed > 0 else None
+        elif key in {"music_volume", "music_duck_amount"}:
+            number = float(value)
+            if number < 0 or number > 4:
+                raise ValueError(f"{key} must be between 0 and 4")
+            values[key] = round(number, 4)
+        elif key in {"music_fade_in_sec", "music_fade_out_sec"}:
+            number = float(value)
+            if number < 0 or number > 30:
+                raise ValueError(f"{key} must be between 0 and 30")
+            values[key] = round(number, 3)
+        elif key in {"music_loop", "music_duck"}:
+            values[key] = int(bool(value))
+        elif key == "color_style":
+            values[key] = _choice(str(value), VALID_COLOR_STYLES, key)
+        elif key in {"color_strength", "vignette", "grain"}:
+            number = float(value)
+            upper = 2.0 if key == "color_strength" else 1.0
+            if number < 0 or number > upper:
+                raise ValueError(f"{key} must be between 0 and {upper:g}")
+            values[key] = round(number, 4)
         elif key in {"extra", "extra_json"}:
             values["extra_json"] = _json_text(value)
         else:
             raise ValueError(f"unsupported ffmpeg preset field: {key}")
+    return values
+
+
+def _prepare_audio_track_fields(fields: dict[str, Any], partial: bool) -> dict[str, Any]:
+    defaults = {
+        "label": "",
+        "file_path": "",
+        "original_filename": "",
+        "mime_type": "",
+        "duration_sec": 0.0,
+        "volume": 0.25,
+    }
+    raw = fields if partial else {**defaults, **fields}
+    values: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key == "label":
+            label = str(value).strip()
+            if not label:
+                raise ValueError("label is required")
+            values[key] = label
+        elif key == "file_path":
+            values[key] = _path_inside(value, settings.audio_dir, "file_path")
+        elif key in {"original_filename", "mime_type"}:
+            values[key] = str(value).strip()
+        elif key == "duration_sec":
+            values[key] = max(0.0, float(value))
+        elif key == "volume":
+            volume = float(value)
+            if volume < 0 or volume > 4:
+                raise ValueError("volume must be between 0 and 4")
+            values[key] = round(volume, 4)
+        else:
+            raise ValueError(f"unsupported audio track field: {key}")
     return values
 
 
@@ -1814,6 +2055,7 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
         "provider": "mock",
         "model": "openai/gpt-4o-transcribe",
         "language": "",
+        "timing_offset_sec": 0.0,
         "font_family": "Arial",
         "font_size": 64,
         "primary_color": "#FFFFFF",
@@ -1824,6 +2066,8 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
         "margin_v": 160,
         "max_words_per_line": 5,
         "uppercase": False,
+        "outline_width": 5,
+        "shadow": 1,
     }
     raw = fields if partial else {**defaults, **fields}
     values: dict[str, Any] = {}
@@ -1837,6 +2081,11 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
             values[key] = _choice(str(value), VALID_AI_PROVIDERS, key)
         elif key in {"model", "language", "font_family"}:
             values[key] = str(value).strip()
+        elif key == "timing_offset_sec":
+            offset = float(value or 0)
+            if offset < -2 or offset > 2:
+                raise ValueError("timing_offset_sec must be between -2 and 2")
+            values[key] = round(offset, 3)
         elif key in {"primary_color", "active_word_color", "outline_color", "back_color"}:
             color = str(value).strip()
             if not CSS_HEX_RE.match(color):
@@ -1847,6 +2096,11 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
             if number < 0:
                 raise ValueError(f"{key} must be >= 0")
             values[key] = number
+        elif key in {"outline_width", "shadow"}:
+            number = float(value)
+            if number < 0 or number > 20:
+                raise ValueError(f"{key} must be between 0 and 20")
+            values[key] = round(number, 3)
         elif key == "uppercase":
             values[key] = int(bool(value))
         else:

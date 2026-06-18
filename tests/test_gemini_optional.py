@@ -26,7 +26,7 @@ def test_gemini_files_api_upload_and_generate_smoke(monkeypatch):
     file_info = client.upload_file(source_path, "video/webm")
     file_info = client.wait_file_active(file_info)
     response = client.generate_content(
-        os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.1-flash-lite"),
+        os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash"),
         {
             "contents": [
                 {
@@ -75,7 +75,7 @@ def test_gemini_video_analyzer_live_structured_smoke(monkeypatch):
             "Return exactly one candidate segment for this test file. "
             "Use start_sec=0 and end_sec=5 if the visual content is too simple."
         ),
-        os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.1-flash-lite"),
+        os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash"),
     )
     assert result.segments
     assert result.response["gemini_file"]["uri"]

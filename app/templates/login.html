@@ -3,21 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login - Vertical Video Fabric</title>
-    <link rel="stylesheet" href="/static/app.css">
+    <title>Вход · Video Fabric</title>
+    <link rel="stylesheet" href="/static/app.css?v=20260618-rebuild6">
   </head>
   <body class="login-body">
     <main class="login-panel">
-      <div class="brand dark">Vertical Video Fabric</div>
+      <div class="brand">Video Fabric</div>
       <form method="post" action="/login" class="grid">
         <input type="hidden" name="next" value="{{ next }}">
-        <label>Access Token
+        <label>Токен доступа
           <input name="token" type="password" autocomplete="current-password" required autofocus>
         </label>
         {% if error %}
         <div class="form-error">{{ error }}</div>
         {% endif %}
-        <button type="submit">Sign In</button>
+        <button type="submit">Войти</button>
       </form>
     </main>
   </body>

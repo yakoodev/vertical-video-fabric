@@ -56,17 +56,17 @@
               Снизить разрешение
             </label>
             <label>Max сторона
-              <input name="analysis_max_dimension" type="number" min="144" max="2160" value="720">
+              <input name="analysis_max_dimension" type="number" min="144" max="2160" value="1080">
             </label>
             <label class="checkbox">
-              <input type="checkbox" name="reduce_fps_for_analysis" value="true" checked>
+              <input type="checkbox" name="reduce_fps_for_analysis" value="true">
               Снизить FPS
             </label>
             <label>FPS анализа
               <input name="analysis_target_fps" type="number" min="1" max="60" step="1" value="12">
             </label>
             <label>CRF
-              <input name="analysis_video_crf" type="number" min="18" max="40" value="32">
+              <input name="analysis_video_crf" type="number" min="18" max="40" value="26">
             </label>
           </div>
         </div>
@@ -80,72 +80,111 @@
         <button type="submit">Запустить анализ</button>
       </div>
     </form>
+
+    {% if source.analyses %}
+    <div class="workflow-panel generation-panel">
+      <div class="section-head compact">
+        <div>
+          <h2>Генерации</h2>
+          <p class="muted">Удаление анализа убирает связанные черновики и сегменты, готовые видео остаются в проекте.</p>
+        </div>
+      </div>
+      <div class="generation-list">
+        {% for analysis in source.analyses %}
+        <div class="generation-row">
+          <span>#{{ analysis.id }}</span>
+          <span class="status {{ analysis.status }}">{{ analysis.status }}</span>
+          <strong>{{ analysis.provider }} {{ analysis.model }}</strong>
+          <span class="muted">{{ analysis.created_at }}</span>
+          {% if analysis.error %}<span class="muted">{{ analysis.error }}</span>{% endif %}
+          <form method="post" action="/ui/ai-analyses/{{ analysis.id }}/delete">
+            <input type="hidden" name="next" value="/sources/{{ source.id }}/studio?stage=analysis">
+            <button type="submit" class="danger-button compact-button">Удалить</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </section>
 
   <section class="studio-step" data-step="preview">
-    <div class="workflow-panel preview-workbench">
-      <div class="custom-player">
-        <video data-studio-video preload="metadata" src="/media/sources/{{ source.id }}"></video>
-        <div class="timeline-board in-player">
-          {% if source.clip_plans and source.duration_sec > 0 %}
-          {% for plan in source.clip_plans %}
-          {% set range = namespace(start=source.duration_sec, end=0) %}
-          {% for segment in plan.segments %}
-            {% if segment.start_sec < range.start %}{% set range.start = segment.start_sec %}{% endif %}
-            {% if segment.end_sec > range.end %}{% set range.end = segment.end_sec %}{% endif %}
-          {% endfor %}
-          <div class="clip-track-row {{ 'active' if loop.first else '' }}" data-plan-row="{{ plan.id }}">
-            <button
-              type="button"
-              class="clip-track-label"
-              data-plan-select="{{ plan.id }}"
-              data-range-start="{{ range.start }}"
-              data-range-end="{{ range.end }}"
-            >
-              <strong>{{ plan.title }}</strong>
-              <span>{{ "%.1f"|format(range.start) }}–{{ "%.1f"|format(range.end) }}s · {{ plan.segments|length }} сегм.</span>
-            </button>
-            <div class="clip-track">
-              <button
-                type="button"
-                class="clip-range"
-                data-plan-select="{{ plan.id }}"
-                data-range-start="{{ range.start }}"
-                data-range-end="{{ range.end }}"
-                style="left: {{ (range.start / source.duration_sec * 100)|round(3) }}%; width: {{ (((range.end - range.start) / source.duration_sec * 100)|round(3)) }}%;"
-              ></button>
-              {% for segment in plan.segments %}
-              <div
-                role="button"
-                tabindex="0"
-                class="segment-range"
-                data-plan-select="{{ plan.id }}"
-                data-segment-select="{{ segment.id }}"
-                data-range-start="{{ segment.start_sec }}"
-                data-range-end="{{ segment.end_sec }}"
-                title="{{ segment.title }} · {{ '%.1f'|format(segment.start_sec) }}–{{ '%.1f'|format(segment.end_sec) }}s"
-                style="left: {{ (segment.start_sec / source.duration_sec * 100)|round(3) }}%; width: {{ (((segment.end_sec - segment.start_sec) / source.duration_sec * 100)|round(3)) }}%; background: {{ segment.color }};"
-              >
-                <span class="segment-handle left" data-resize-handle="start"></span>
-                <span class="segment-index">{{ loop.index }}</span>
-                <span class="segment-handle right" data-resize-handle="end"></span>
-              </div>
+    <div class="preview-workbench">
+      <div class="preview-stage">
+      <div class="player-deck" data-player-deck>
+        <div class="deck-stage">
+          <video data-studio-video preload="metadata" playsinline src="/media/sources/{{ source.id }}"></video>
+          <div class="deck-overlay-play" data-deck-overlay hidden>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+        </div>
+        <div class="deck-transport">
+          <button type="button" class="icon-button" data-player-play aria-label="Play/Pause">▶</button>
+          <button type="button" class="icon-button ghost-ctrl" data-player-back title="−5 сек" aria-label="Назад">«</button>
+          <button type="button" class="icon-button ghost-ctrl" data-player-fwd title="+5 сек" aria-label="Вперёд">»</button>
+          <span class="deck-time" data-player-time>0:00 / {{ "%.1f"|format(source.duration_sec) }}s</span>
+          <span class="deck-spacer"></span>
+          {% if source.clip_plans %}
+          <button type="button" class="secondary compact-button" data-add-at-playhead>＋ сегмент</button>
+          {% endif %}
+          <div class="tl-zoom">
+            <button type="button" data-tl-zoom="out" title="Отдалить" aria-label="Отдалить">−</button>
+            <button type="button" class="tl-fit" data-tl-zoom="fit">По ширине</button>
+            <button type="button" data-tl-zoom="in" title="Приблизить" aria-label="Приблизить">＋</button>
+            <span class="tl-zoom-label" data-tl-zoom-label></span>
+          </div>
+        </div>
+
+        {% if latest_analysis and latest_analysis.status == "failed" and source.clip_plans %}
+        <div class="analysis-error stale-plans">
+          <strong>Показаны старые черновики</strong>
+          <p>Последний анализ #{{ latest_analysis.id }} упал и не заменил таймлайн.</p>
+        </div>
+        {% endif %}
+
+        {% if source.clip_plans and source.duration_sec > 0 %}
+        <div class="timeline-editor" data-timeline data-duration="{{ source.duration_sec }}">
+          <div class="timeline-body">
+            <div class="tl-headers">
+              <div class="tl-corner">Дорожки</div>
+              {% for plan in source.clip_plans %}
+              <button type="button" class="tl-head {{ 'active' if loop.first else '' }}" data-plan-select="{{ plan.id }}" data-plan-head="{{ plan.id }}">
+                <strong>{{ plan.title }}</strong>
+                <span>{{ plan.segments|length }} сегм.</span>
+              </button>
               {% endfor %}
             </div>
+            <div class="tl-lanes-scroll" data-tl-scroll>
+              <div class="tl-lanes-inner" data-tl-inner>
+                <div class="tl-ruler" data-tl-ruler></div>
+                {% for plan in source.clip_plans %}
+                <div class="tl-track" data-tl-track data-plan-id="{{ plan.id }}">
+                  {% for segment in plan.segments %}
+                  <div
+                    class="tl-clip"
+                    data-segment-select="{{ segment.id }}"
+                    data-plan-select="{{ plan.id }}"
+                    data-range-start="{{ segment.start_sec }}"
+                    data-range-end="{{ segment.end_sec }}"
+                    data-color="{{ segment.color }}"
+                    title="{{ segment.title }} · {{ '%.1f'|format(segment.start_sec) }}–{{ '%.1f'|format(segment.end_sec) }}s"
+                  >
+                    <span class="tl-grip left" data-resize-handle="start"></span>
+                    <span class="tl-clip-label">{{ loop.index }} · {{ segment.title }}</span>
+                    <span class="tl-grip right" data-resize-handle="end"></span>
+                  </div>
+                  {% endfor %}
+                </div>
+                {% endfor %}
+                <div class="tl-playhead" data-tl-playhead><span class="tl-playhead-grab" data-tl-playhead-grab></span></div>
+              </div>
+            </div>
           </div>
-          {% endfor %}
-          {% else %}
-          <div class="empty-state">
-            <h2>Timeline пустой</h2>
-            <p class="muted">Сегменты появятся после анализа.</p>
-          </div>
-          {% endif %}
+          <div class="timeline-foot">Тяните клип — сдвиг · край — длина · клик по линейке — перемотка · Ctrl+колесо — зум · пробел — пауза</div>
         </div>
-        <div class="player-controls">
-          <button type="button" class="icon-button" data-player-play aria-label="Play">▶</button>
-          <input type="range" min="0" max="{{ source.duration_sec }}" step="0.01" value="0" data-player-seek>
-          <span data-player-time>0.0 / {{ "%.1f"|format(source.duration_sec) }}s</span>
-        </div>
+        {% else %}
+        <div class="timeline-editor"><div class="empty-state" style="padding:42px 20px"><h2>Таймлайн пустой</h2><p class="muted">Сегменты появятся после анализа на первом шаге.</p></div></div>
+        {% endif %}
       </div>
 
       <aside class="selection-panel">
@@ -203,7 +242,7 @@
         </div>
         {% endfor %}
       </aside>
-
+      </div>
     </div>
   </section>
 
@@ -260,6 +299,19 @@
             <option value="">Default style</option>
             {% for profile in subtitle_profiles %}
             <option value="{{ profile.id }}" {{ "selected" if default_subtitle_profile_id == profile.id else "" }}>{{ profile.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="use_music" value="true">
+          Музыка из пресета
+        </label>
+        <label>Трек
+          <select name="music_track_id">
+            <option value="">Из пресета</option>
+            <option value="0">Без музыки</option>
+            {% for track in audio_tracks %}
+            <option value="{{ track.id }}">{{ track.label }}</option>
             {% endfor %}
           </select>
         </label>

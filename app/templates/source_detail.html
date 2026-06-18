@@ -159,6 +159,7 @@
         <th>Model</th>
         <th>Error</th>
         <th>Created</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -170,9 +171,15 @@
         <td>{{ analysis.model }}</td>
         <td class="muted">{{ analysis.error }}</td>
         <td class="muted">{{ analysis.created_at }}</td>
+        <td>
+          <form method="post" action="/ui/ai-analyses/{{ analysis.id }}/delete">
+            <input type="hidden" name="next" value="/sources/{{ source.id }}">
+            <button type="submit" class="danger-button compact-button">Удалить</button>
+          </form>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">No analyses yet.</td></tr>
+      <tr><td colspan="7" class="muted">No analyses yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

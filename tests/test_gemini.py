@@ -31,6 +31,13 @@ def test_gemini_payload_uses_file_data_and_response_format():
     parts = payload["contents"][0]["parts"]
     assert parts[0]["file_data"]["mime_type"] == "video/mp4"
     assert parts[0]["file_data"]["file_uri"].endswith("/files/abc")
+    assert "A clip is the final video plan" in parts[1]["text"]
+    assert "multiple segments" in parts[1]["text"]
+    assert "Every start_sec and end_sec must be between 0 and 60.000" in parts[1]["text"]
+    assert "Each individual fiction segment must be 12 to 75 seconds" in parts[1]["text"]
+    assert "clips[0] must be an Episode Story Recap" in parts[1]["text"]
+    assert "Do not tile the episode into consecutive timeline slices" in parts[1]["text"]
+    assert "in Russian" in parts[1]["text"]
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
     assert payload["generationConfig"]["responseJsonSchema"]["required"] == ["clips"]
 
@@ -157,8 +164,8 @@ def test_gemini_client_uploads_files_in_chunks(tmp_path, monkeypatch):
     ]
 
 
-def test_default_gemini_video_model_uses_3_1_flash_lite():
+def test_default_gemini_video_model_uses_3_5_flash():
     from app.ai.service import _default_model
 
-    assert settings.gemini_video_model == "gemini-3.1-flash-lite"
-    assert _default_model("gemini") == "gemini-3.1-flash-lite"
+    assert settings.gemini_video_model == "gemini-3.5-flash"
+    assert _default_model("gemini") == "gemini-3.5-flash"

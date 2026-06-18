@@ -18,11 +18,33 @@
       <button type="submit">Загрузить</button>
     </form>
     <div class="divider"></div>
-    <form method="post" action="/ui/sources/url" class="grid">
-      <label>URL видео или YouTube
-        <input name="url" type="url" placeholder="https://..." required>
+    <form method="post" action="/ui/sources/url" class="grid" data-smotvibe-form>
+      <label>URL видео, YouTube, Twitch или Smotvibe
+        <input name="url" type="url" placeholder="https://..." required data-smotvibe-url>
       </label>
-      <button type="submit" class="secondary">Добавить URL</button>
+      <input type="hidden" name="smotvibe_media_url" data-smotvibe-media-url>
+      <input type="hidden" name="smotvibe_referer" data-smotvibe-referer>
+      <input type="hidden" name="smotvibe_audio_format_id" data-smotvibe-audio-format>
+      <input type="hidden" name="smotvibe_filename_label" data-smotvibe-filename-label>
+      <div class="source-url-actions">
+        <button type="button" class="secondary" data-smotvibe-load>Найти варианты Smotvibe</button>
+        <button type="submit" class="secondary" data-smotvibe-submit>Добавить URL</button>
+      </div>
+      <div class="smotvibe-picker" data-smotvibe-picker hidden>
+        <div class="grid three">
+          <label>Сезон
+            <select data-smotvibe-season></select>
+          </label>
+          <label>Серия
+            <select data-smotvibe-episode></select>
+          </label>
+          <label>Озвучка
+            <select data-smotvibe-voice></select>
+          </label>
+        </div>
+        <div class="smotvibe-summary" data-smotvibe-summary></div>
+      </div>
+      <div class="smotvibe-status muted" data-smotvibe-status></div>
     </form>
   </article>
 

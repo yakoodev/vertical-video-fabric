@@ -380,7 +380,7 @@ POLZA_TRANSCRIBE_MODEL=openai/gpt-4o-transcribe
 
 GEMINI_API_KEY=
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
-GEMINI_VIDEO_MODEL=gemini-3.1-flash-lite
+GEMINI_VIDEO_MODEL=gemini-3.5-flash
 GEMINI_TRANSCRIBE_MODEL=gemini-3.1-flash-lite
 
 ARTEMOX_API_KEY=
@@ -400,10 +400,10 @@ ARTEMOX_TRANSCRIBE_MODEL=gemini-2.0-flash-lite
   разные adapters: разные ключи, base URL, формат загрузки файлов и формат structured output.
 - Provider обязан вернуть одну и ту же доменную форму: `AnalysisResult.segments[]`
   или `SubtitleResult.words[]/segments[]`.
-- `gemini-3.1-flash-lite` выбран default, потому что `models.list` подтверждает
-  `generateContent` для видео/аудио workflow. Если нужен более тяжелый профиль, можно
-  переопределить `GEMINI_VIDEO_MODEL` на доступный Flash model, например
-  `gemini-3.5-flash`.
+- `gemini-3.5-flash` выбран default для видеоанализа: на anime/series digest он
+  заметно лучше держит сюжетные главы и таймкоды. Для субтитров default остаётся
+  `gemini-3.1-flash-lite`; при необходимости можно переопределить
+  `GEMINI_VIDEO_MODEL` или `GEMINI_TRANSCRIBE_MODEL`.
 
 AI analyzer contract:
 

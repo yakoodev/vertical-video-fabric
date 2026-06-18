@@ -29,6 +29,13 @@ def test_artemox_payload_uses_openai_compatible_schema():
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["schema"]["required"] == ["clips"]
     assert "https://youtu.be/example" in payload["messages"][1]["content"]
+    assert "A clip is the final video plan" in payload["messages"][1]["content"]
+    assert "multiple segments" in payload["messages"][1]["content"]
+    assert "Every start_sec and end_sec must be between 0 and 60.000" in payload["messages"][1]["content"]
+    assert "Each individual fiction segment must be 12 to 75 seconds" in payload["messages"][1]["content"]
+    assert "clips[0] must be an Episode Story Recap" in payload["messages"][1]["content"]
+    assert "Do not tile the episode into consecutive timeline slices" in payload["messages"][1]["content"]
+    assert "in Russian" in payload["messages"][1]["content"]
 
 
 def test_artemox_video_analyzer_parses_chat_completion_response():

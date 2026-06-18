@@ -14,6 +14,7 @@ class Settings:
         self.source_dir = self.data_dir / "sources"
         self.clip_dir = self.data_dir / "clips"
         self.banner_dir = self.data_dir / "banners"
+        self.audio_dir = self.data_dir / "audio"
         self.subtitle_dir = self.data_dir / "subtitles"
         self.tmp_dir = self.data_dir / "tmp"
         self.runtime_dir = self.data_dir / "runtime"
@@ -29,6 +30,7 @@ class Settings:
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
         self.external_http_retries = int(os.getenv("EXTERNAL_HTTP_RETRIES", "3"))
         self.external_http_retry_seconds = float(os.getenv("EXTERNAL_HTTP_RETRY_SECONDS", "2"))
+        self.external_download_timeout_seconds = int(os.getenv("EXTERNAL_DOWNLOAD_TIMEOUT_SECONDS", str(15 * 60)))
         self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
         self.tiktok_vendor_root = Path(
             os.getenv("TIKTOK_VENDOR_ROOT", "/opt/TiktokAutoUploader")
@@ -37,6 +39,7 @@ class Settings:
         self.api_token = os.getenv("POSTING_API_TOKEN", "").strip()
         self.auth_cookie_name = os.getenv("POSTING_AUTH_COOKIE_NAME", "vvf_token").strip() or "vvf_token"
         self.ai_video_provider = os.getenv("AI_VIDEO_PROVIDER", "mock").strip().lower() or "mock"
+        self.ai_analysis_stale_seconds = int(os.getenv("AI_ANALYSIS_STALE_SECONDS", str(2 * 60 * 60)))
         self.subtitle_provider = os.getenv("SUBTITLE_PROVIDER", "mock").strip().lower() or "mock"
         self.polza_api_key = os.getenv("POLZA_API_KEY", "").strip()
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
@@ -50,10 +53,16 @@ class Settings:
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()
-        self.gemini_video_model = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.1-flash-lite").strip()
+        self.gemini_video_model = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash").strip()
         self.gemini_transcribe_model = os.getenv(
             "GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite"
         ).strip()
+        self.gemini_transcribe_fallback_models = _csv(
+            os.getenv(
+                "GEMINI_TRANSCRIBE_FALLBACK_MODELS",
+                "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-lite-latest",
+            )
+        )
         self.gemini_file_poll_seconds = float(os.getenv("GEMINI_FILE_POLL_SECONDS", "5"))
         self.gemini_file_timeout_seconds = float(os.getenv("GEMINI_FILE_TIMEOUT_SECONDS", "900"))
         self.gemini_http_retries = int(os.getenv("GEMINI_HTTP_RETRIES", "3"))
@@ -75,6 +84,7 @@ class Settings:
             self.source_dir,
             self.clip_dir,
             self.banner_dir,
+            self.audio_dir,
             self.subtitle_dir,
             self.tmp_dir,
             self.runtime_dir,
@@ -104,6 +114,10 @@ class Settings:
 
 def _truthy(value: str) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 settings = Settings()

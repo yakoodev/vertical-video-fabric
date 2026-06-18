@@ -8,6 +8,7 @@ import httpx
 
 from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
+from app.default_prompts import MULTI_SEGMENT_OUTPUT_RULES
 from app.settings import settings
 
 
@@ -76,6 +77,14 @@ def build_artemox_analysis_payload(source: dict, prompt: str, model: str) -> dic
         "height": source.get("height"),
         "fps": source.get("fps"),
     }
+    duration_sec = float(source.get("duration_sec") or 0)
+    duration_rule = (
+        f"Uploaded source duration is {duration_sec:.3f} seconds. "
+        f"Every start_sec and end_sec must be between 0 and {duration_sec:.3f}; "
+        "do not use timestamps from another cut or a longer episode.\n"
+        if duration_sec > 0
+        else ""
+    )
     return {
         "model": model,
         "messages": [
@@ -90,8 +99,19 @@ def build_artemox_analysis_payload(source: dict, prompt: str, model: str) -> dic
                 "role": "user",
                 "content": (
                     f"{prompt}\n\n"
+                    f"{MULTI_SEGMENT_OUTPUT_RULES}\n\n"
+                    f"{duration_rule}"
                     "Analyze this video URL through the Gemini-compatible gateway and return JSON only. "
-                    "Return clips[], where each clip contains one or more segments[] for rendering.\n"
+                    "Return clips[], where each clip is a final edit plan containing one or more segments[] for rendering. "
+                    "For episodic fiction, clips[0] must be an Episode Story Recap with 4 to 6 ordered "
+                    "segments from the main plot, around 90 to 150 seconds total, so a viewer can understand what happened in the episode. "
+                    "Additional clips may be self-contained main story shorts around 45 to 105 seconds. "
+                    "Do not tile the episode into consecutive timeline slices; skip weak connective scenes. "
+                    "Do not return finished clips around 3 minutes. "
+                    "Write every clip title, clip description, segment title, segment description, and segment reason in Russian. "
+                    "Each individual fiction segment must be 12 to 75 seconds, should contain complete spoken lines, "
+                    "and long scenes must be split into multiple ordered segments. "
+                    "When several source ranges belong together, put them in the same clip.segments array.\n"
                     f"Source metadata:\n{json.dumps(source_summary, ensure_ascii=False)}"
                 ),
             },

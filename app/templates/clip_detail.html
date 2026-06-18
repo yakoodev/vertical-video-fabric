@@ -1,84 +1,151 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="topline">
-  <h1>Clip #{{ clip.id }}</h1>
-  <a class="button" href="/clips">Clips</a>
+<div class="page-head">
+  <div>
+    <a class="back-link" href="/clips">← Клипы</a>
+    <h1>{{ clip.title or "Клип #" ~ clip.id }}</h1>
+    <p class="muted">Clip #{{ clip.id }} · {{ "%.1f"|format(clip.duration_sec) }}s · {{ clip.width }}×{{ clip.height }}</p>
+  </div>
+  <span class="status {{ clip.status }}">{{ clip.status }}</span>
 </div>
 
-<section class="panel source-layout">
-  <div>
+<div class="project-hero">
+  <div class="publish-preview" style="max-width:320px">
     {% if clip.status == "succeeded" %}
-    <video class="source-video" controls preload="metadata" src="/media/clips/{{ clip.id }}"></video>
+    <video controls preload="metadata" src="/media/clips/{{ clip.id }}"></video>
     {% else %}
     <div class="empty-video">{{ clip.status }}</div>
     {% endif %}
   </div>
-  <div class="grid">
-    <h2>{{ clip.title or "Rendered clip" }}</h2>
-    <div class="meta-grid">
-      <span>Status</span><strong class="status {{ clip.status }}">{{ clip.status }}</strong>
-      <span>Duration</span><strong>{{ "%.1f"|format(clip.duration_sec) }}s</strong>
-      <span>Resolution</span><strong>{{ clip.width }}x{{ clip.height }}</strong>
-      <span>Size</span><strong>{{ clip.size_bytes }} bytes</strong>
-      <span>Source</span><strong>#{{ clip.source_id }}</strong>
-      <span>Segment</span><strong>{{ "#" ~ clip.segment_id if clip.segment_id else "none" }}</strong>
-      <span>Subtitle Track</span><strong>{{ "#" ~ clip.subtitle_track_id if clip.subtitle_track_id else "none" }}</strong>
-    </div>
-    {% if clip.error %}
-    <p class="status failed">{{ clip.error }}</p>
+  <div class="project-summary">
+    {% if clip.status == "succeeded" %}
+    <section class="panel" style="margin:0">
+      <h2>Опубликовать</h2>
+      <form method="post" action="/ui/clips/{{ clip.id }}/posts" class="grid">
+        <input type="hidden" name="next" value="/jobs">
+        <div class="grid two">
+          <label>Название
+            <input name="title" value="{{ clip.title }}">
+          </label>
+          <label>Приватность
+            <select name="privacy">
+              <option value="public">Публично</option>
+              <option value="unlisted">По ссылке</option>
+              <option value="private">Только я</option>
+            </select>
+          </label>
+        </div>
+        <label>Описание
+          <textarea name="description" rows="3">{{ clip.description }}</textarea>
+        </label>
+        <div>
+          <div class="field-title">Аккаунты</div>
+          <div class="account-target-grid">
+            {% for account in accounts %}
+            <label class="account-target-card">
+              <input type="checkbox" name="targets" value="{{ account.id }}">
+              <span>
+                <strong>{{ account.platform }} · {{ account.label }}</strong>
+                <small>{{ "ok" if account.has_required_cookies else account.missing_cookies }}</small>
+              </span>
+            </label>
+            {% else %}
+            <div class="muted">Сначала добавьте аккаунт в настройках.</div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="grid two">
+          <label class="checkbox" style="align-self:end;padding-bottom:9px">
+            <input type="checkbox" name="allow_comments" value="true" checked> Комментарии включены
+          </label>
+          <label>Отложить публикацию
+            <input type="datetime-local" name="scheduled_at">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" {{ "disabled" if not accounts else "" }}>Опубликовать</button>
+          <button type="button" class="secondary" data-open-settings="accounts">Добавить аккаунт</button>
+        </div>
+      </form>
+    </section>
     {% endif %}
+    <div class="meta-grid">
+      <span>Статус</span><strong class="status {{ clip.status }}">{{ clip.status }}</strong>
+      <span>Длина</span><strong>{{ "%.1f"|format(clip.duration_sec) }}s</strong>
+      <span>Разрешение</span><strong>{{ clip.width }}×{{ clip.height }}</strong>
+      <span>Размер</span><strong>{{ "%.1f"|format(clip.size_bytes / 1048576) }} MB</strong>
+      <span>Дорожка субтитров</span><strong>{{ "#" ~ clip.subtitle_track_id if clip.subtitle_track_id else "—" }}</strong>
+    </div>
+    {% if clip.error %}<p class="status failed">{{ clip.error }}</p>{% endif %}
   </div>
-</section>
+</div>
 
-{% if clip.status == "succeeded" %}
+{% if can_render %}
 <section class="panel">
-  <form method="post" action="/ui/clips/{{ clip.id }}/posts" class="grid">
-    <h2>Publish Clip</h2>
-    <div class="grid two">
-      <label>Title
-        <input name="title" value="{{ clip.title }}">
-      </label>
-      <label>Privacy
-        <select name="privacy">
-          <option value="public">Public</option>
-          <option value="unlisted">Unlisted</option>
-          <option value="private">Private</option>
-        </select>
-      </label>
-      <label>Description
-        <textarea name="description" rows="3">{{ clip.description }}</textarea>
-      </label>
-      <label>Accounts
-        <select name="targets" multiple size="4" required>
-          {% for account in accounts %}
-          <option value="{{ account.id }}">{{ account.platform }} · {{ account.label }}</option>
+  <div class="section-head">
+    <div>
+      <h2>Рендер: субтитры, музыка, баннер</h2>
+      <p class="muted">Накладывает оформление на загруженный клип из исходного файла и создаёт новый готовый клип. Оригинал остаётся.</p>
+    </div>
+  </div>
+  <form method="post" action="/ui/clips/{{ clip.id }}/render" class="clip-render-form" data-busy-form>
+    <div class="busy-overlay" data-busy-overlay hidden>
+      <div class="spinner"></div>
+      <strong>Рендер запущен</strong>
+      <span>Накладываем субтитры, музыку и баннер. Дождитесь готового клипа.</span>
+    </div>
+    <div class="render-settings">
+      <label>Пресет рендера
+        <select name="ffmpeg_preset_id">
+          <option value="">Вертикальный по умолчанию</option>
+          {% for preset in presets %}
+          <option value="{{ preset.id }}">{{ preset.label }} · {{ preset.output_width }}×{{ preset.output_height }}</option>
           {% endfor %}
         </select>
       </label>
-    </div>
-    <label class="checkbox">
-      <input type="checkbox" name="allow_comments" value="true" checked>
-      Allow comments
-    </label>
-    <div>
-      <button type="submit" {{ "disabled" if not accounts else "" }}>Queue Post</button>
+      <label class="checkbox"><input type="checkbox" name="use_subtitles" value="true" {{ "checked" if default_subtitle_profile_id else "" }}> Субтитры</label>
+      <label>Стиль субтитров
+        <select name="subtitle_profile_id">
+          <option value="">Стиль по умолчанию</option>
+          {% for profile in subtitle_profiles %}
+          <option value="{{ profile.id }}" {{ "selected" if default_subtitle_profile_id == profile.id else "" }}>{{ profile.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="checkbox"><input type="checkbox" name="use_banner" value="true" {{ "checked" if default_banner_id else "" }}> Баннер</label>
+      <label>Баннер
+        <select name="banner_id">
+          <option value="">Баннер по умолчанию</option>
+          {% for banner in banners %}
+          <option value="{{ banner.id }}" {{ "selected" if default_banner_id == banner.id else "" }}>{{ banner.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="checkbox"><input type="checkbox" name="use_music" value="true"> Музыка из пресета</label>
+      <label>Трек
+        <select name="music_track_id">
+          <option value="">Из пресета</option>
+          <option value="0">Без музыки</option>
+          {% for track in audio_tracks %}
+          <option value="{{ track.id }}">{{ track.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-actions">
+        <button type="submit">Рендерить клип</button>
+        <button type="button" class="secondary" data-open-settings="subtitles">Стили субтитров</button>
+      </div>
     </div>
   </form>
 </section>
 {% endif %}
 
+{% if subtitle_tracks %}
 <section class="panel">
-  <h2>Subtitle Tracks</h2>
+  <h2>Дорожки субтитров</h2>
   <table class="table">
     <thead>
-      <tr>
-        <th>ID</th>
-        <th>Status</th>
-        <th>Provider</th>
-        <th>Model</th>
-        <th>ASS</th>
-        <th>Error</th>
-      </tr>
+      <tr><th>ID</th><th>Статус</th><th>Провайдер</th><th>Модель</th><th>Ошибка</th></tr>
     </thead>
     <tbody>
       {% for track in subtitle_tracks %}
@@ -87,13 +154,11 @@
         <td><span class="status {{ track.status }}">{{ track.status }}</span></td>
         <td>{{ track.provider }}</td>
         <td>{{ track.model }}</td>
-        <td class="muted">{{ track.ass_path }}</td>
         <td class="muted">{{ track.error }}</td>
       </tr>
-      {% else %}
-      <tr><td colspan="6" class="muted">No subtitle tracks.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
+{% endif %}
 {% endblock %}

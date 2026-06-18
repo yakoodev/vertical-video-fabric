@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
+from app.default_prompts import MULTI_SEGMENT_OUTPUT_RULES
 from app.settings import settings
 
 
@@ -223,11 +224,35 @@ def build_gemini_analysis_payload(
         "height": source.get("height"),
         "fps": source.get("fps"),
     }
+    duration_sec = float(source.get("duration_sec") or 0)
+    duration_rule = (
+        f"Uploaded source duration is {duration_sec:.3f} seconds. "
+        f"Every start_sec and end_sec must be between 0 and {duration_sec:.3f}; "
+        "do not use timestamps from another cut or a longer episode.\n"
+        if duration_sec > 0
+        else ""
+    )
     full_prompt = (
         f"{prompt}\n\n"
+        f"{MULTI_SEGMENT_OUTPUT_RULES}\n\n"
+        f"{duration_rule}"
         "Analyze the uploaded video. Return JSON only. "
         "Use the timestamps from the video and keep segments within the source duration. "
-        "Return clips[], where each clip contains one or more segments[] for rendering.\n"
+        "Return clips[], where each clip is a final edit plan containing one or more segments[] for rendering. "
+        "For episodic fiction, clips[0] must be an Episode Story Recap with 4 to 6 ordered "
+        "segments from the main plot, around 90 to 150 seconds total, so a viewer can understand what happened in the episode. "
+        "That recap must include a plot-bearing setup/inciting segment from the first third of the uploaded source "
+        "and a consequence/new-direction segment from the final third. If only one good clip is possible, return only this recap. "
+        "Additional clips may be self-contained main story shorts around 45 to 105 seconds. "
+        "Do not tile the episode into consecutive timeline slices; skip weak connective scenes. "
+        "Do not return finished clips around 3 minutes. "
+        "Write every clip title, clip description, segment title, segment description, and segment reason in Russian. "
+        "Use natural Russian wording suitable for a Russian-speaking editor. "
+        "Each individual fiction segment must be 12 to 75 seconds, should contain complete spoken lines, "
+        "and long scenes must be split into multiple ordered segments. Before returning JSON, audit every "
+        "segment boundary: if speech or action is already in progress at start_sec, move start_sec earlier; "
+        "if speech or action is still in progress at end_sec, move end_sec later or add a follow-up segment in the same clip. "
+        "When several source ranges belong together, put them in the same clip.segments array.\n"
         f"Source metadata:\n{json.dumps(source_summary, ensure_ascii=False)}"
     )
     return {
@@ -257,21 +282,27 @@ def gemini_analysis_schema() -> dict[str, Any]:
     segment_properties = {
         "start_sec": {"type": "number", "description": "Segment start timestamp in seconds."},
         "end_sec": {"type": "number", "description": "Segment end timestamp in seconds."},
-        "title": {"type": "string", "description": "Short publishing title."},
-        "description": {"type": "string", "description": "Short caption or description."},
+        "title": {"type": "string", "description": "Short Russian publishing title."},
+        "description": {"type": "string", "description": "Short Russian caption or description."},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "category": {"type": "string", "description": "Short category label."},
         "color": {"type": "string", "description": "CSS hex color like #2563EB."},
-        "reason": {"type": "string", "description": "Why this moment works as a standalone clip."},
+        "reason": {"type": "string", "description": "Russian explanation of why this source range is necessary for the combined clip."},
     }
     clip_properties = {
-        "title": {"type": "string", "description": "Short publishing title."},
-        "description": {"type": "string", "description": "Short caption or description."},
+        "title": {"type": "string", "description": "Short Russian publishing title for the combined final clip."},
+        "description": {"type": "string", "description": "Short Russian caption or description for the combined final clip."},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "category": {"type": "string", "description": "Short category label."},
         "color": {"type": "string", "description": "CSS hex color like #2563EB."},
         "segments": {
             "type": "array",
+            "minItems": 1,
+            "description": (
+                "Ordered source ranges to concatenate into this one final clip. Use multiple "
+                "segments for setup, escalation, payoff, and consequence. For episodic fiction, "
+                "each segment must be 12 to 75 seconds and should not cut through spoken lines."
+            ),
             "items": {
                 "type": "object",
                 "properties": segment_properties,
@@ -303,6 +334,11 @@ def gemini_analysis_schema() -> dict[str, Any]:
         "properties": {
             "clips": {
                 "type": "array",
+                "minItems": 1,
+                "description": (
+                    "Finished edit plans, not raw detections. For episodic fiction, each item "
+                    "should be either the required Episode Story Recap or a self-contained main story short."
+                ),
                 "items": {
                     "type": "object",
                     "properties": clip_properties,

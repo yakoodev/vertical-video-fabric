@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Iterable
+
+from app.default_prompts import (
+    DEFAULT_PROMPT_PRESETS,
+    DEFAULT_PROMPT_SEED_KEY,
+    DEFAULT_PROMPT_SEED_VERSION,
+    LEGACY_DEFAULT_PROMPTS,
+)
 
 
 class Database:
@@ -194,12 +202,25 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS audio_tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    original_filename TEXT NOT NULL DEFAULT '',
+                    mime_type TEXT NOT NULL DEFAULT '',
+                    duration_sec REAL NOT NULL DEFAULT 0,
+                    volume REAL NOT NULL DEFAULT 0.25,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS subtitle_profiles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     label TEXT NOT NULL,
                     provider TEXT NOT NULL DEFAULT 'mock',
                     model TEXT NOT NULL DEFAULT 'openai/gpt-4o-transcribe',
                     language TEXT NOT NULL DEFAULT '',
+                    timing_offset_sec REAL NOT NULL DEFAULT 0,
                     font_family TEXT NOT NULL DEFAULT 'Arial',
                     font_size INTEGER NOT NULL DEFAULT 64,
                     primary_color TEXT NOT NULL DEFAULT '#FFFFFF',
@@ -292,7 +313,29 @@ class Database:
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_volume", "REAL NOT NULL DEFAULT 1")
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_stream", "INTEGER")
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_volume", "REAL NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "audio_tracks", "volume", "REAL NOT NULL DEFAULT 0.25")
+            self._ensure_column(conn, "ffmpeg_presets", "music_track_id", "INTEGER REFERENCES audio_tracks(id)")
+            self._ensure_column(conn, "ffmpeg_presets", "music_volume", "REAL NOT NULL DEFAULT 0.25")
+            self._ensure_column(conn, "ffmpeg_presets", "music_loop", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "ffmpeg_presets", "music_fade_in_sec", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "ffmpeg_presets", "music_fade_out_sec", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "ffmpeg_presets", "music_duck", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "ffmpeg_presets", "music_duck_amount", "REAL NOT NULL DEFAULT 0.6")
+            self._ensure_column(conn, "ffmpeg_presets", "color_style", "TEXT NOT NULL DEFAULT 'none'")
+            self._ensure_column(conn, "ffmpeg_presets", "color_strength", "REAL NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "ffmpeg_presets", "vignette", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "ffmpeg_presets", "grain", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(conn, "clips", "clip_plan_id", "INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL")
+            self._ensure_column(
+                conn,
+                "subtitle_profiles",
+                "timing_offset_sec",
+                "REAL NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(conn, "subtitle_profiles", "outline_width", "REAL NOT NULL DEFAULT 5")
+            self._ensure_column(conn, "subtitle_profiles", "shadow", "REAL NOT NULL DEFAULT 1")
+            self._reset_legacy_gemini_subtitle_offset(conn)
+            self._seed_default_prompt_presets(conn)
 
     def _ensure_column(
         self,
@@ -300,10 +343,94 @@ class Database:
         table_name: str,
         column_name: str,
         column_definition: str,
-    ) -> None:
+    ) -> bool:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
         if column_name not in columns:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+            return True
+        return False
+
+    def _reset_legacy_gemini_subtitle_offset(self, conn: sqlite3.Connection) -> None:
+        """Drop the legacy +0.35s Gemini subtitle nudge.
+
+        Older builds shifted every Gemini subtitle 0.35s later to paper over
+        early word timestamps. The reworked timeline/ASS engine syncs honestly,
+        so that global nudge now reads as "subtitles arrive late". Reset profiles
+        that still carry the exact legacy value, once, leaving any value the user
+        tuned by hand untouched.
+        """
+
+        flag_key = "subtitle_legacy_offset_reset_v1"
+        row = conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (flag_key,)).fetchone()
+        if row is None:
+            conn.execute(
+                "UPDATE subtitle_profiles SET timing_offset_sec = 0 "
+                "WHERE provider = 'gemini' AND ABS(timing_offset_sec - 0.35) < 0.001"
+            )
+            conn.execute(
+                "INSERT INTO app_settings (key, value_json, encrypted) VALUES (?, ?, 0) "
+                "ON CONFLICT(key) DO NOTHING",
+                (flag_key, json.dumps(True)),
+            )
+
+    def _seed_default_prompt_presets(self, conn: sqlite3.Connection) -> None:
+        seed_row = conn.execute(
+            "SELECT value_json, updated_at FROM app_settings WHERE key = ?",
+            (DEFAULT_PROMPT_SEED_KEY,),
+        ).fetchone()
+        seed_is_current = bool(seed_row and _json_value(seed_row["value_json"]) == DEFAULT_PROMPT_SEED_VERSION)
+        seed_updated_at = str(seed_row["updated_at"] or "") if seed_row else ""
+
+        existing_rows = {
+            (row["task"], row["label"]): row
+            for row in conn.execute("SELECT id, task, label, prompt, updated_at FROM prompt_presets")
+        }
+        task_counts = {
+            row["task"]: int(row["count"])
+            for row in conn.execute("SELECT task, COUNT(*) AS count FROM prompt_presets GROUP BY task")
+        }
+        for preset in DEFAULT_PROMPT_PRESETS:
+            task = str(preset["task"])
+            label = str(preset["label"])
+            key = (task, label)
+            existing = existing_rows.get(key)
+            if existing:
+                legacy_prompt = LEGACY_DEFAULT_PROMPTS.get(key)
+                if str(existing["prompt"] or "").strip() == str(preset["prompt"]).strip():
+                    continue
+                if _should_update_seeded_prompt(existing, legacy_prompt, seed_updated_at):
+                    conn.execute(
+                        """
+                        UPDATE prompt_presets
+                        SET prompt = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (str(preset["prompt"]), int(existing["id"])),
+                    )
+                continue
+            if seed_is_current:
+                continue
+            is_default = bool(preset.get("is_default")) and task_counts.get(task, 0) == 0
+            conn.execute(
+                """
+                INSERT INTO prompt_presets (task, label, prompt, is_default)
+                VALUES (?, ?, ?, ?)
+                """,
+                (task, label, str(preset["prompt"]), int(is_default)),
+            )
+            task_counts[task] = task_counts.get(task, 0) + 1
+
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value_json, encrypted)
+            VALUES (?, ?, 0)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json = excluded.value_json,
+                encrypted = 0,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (DEFAULT_PROMPT_SEED_KEY, json.dumps(DEFAULT_PROMPT_SEED_VERSION)),
+        )
 
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
         with self._lock, self.connect() as conn:
@@ -318,3 +445,166 @@ class Database:
     def query_all(self, sql: str, params: Iterable = ()) -> list[sqlite3.Row]:
         with self._lock, self.connect() as conn:
             return conn.execute(sql, tuple(params)).fetchall()
+
+
+def _json_value(value_json: str):
+    try:
+        return json.loads(value_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def _should_update_seeded_prompt(existing, legacy_prompt: str | None, seed_updated_at: str) -> bool:
+    current_prompt = str(existing["prompt"] or "").strip()
+    if legacy_prompt and current_prompt == legacy_prompt:
+        return True
+    if not seed_updated_at:
+        return False
+    updated_at = str(existing["updated_at"] or "")
+    key = (str(existing["task"]), str(existing["label"]))
+    return bool(
+        updated_at
+        and updated_at <= seed_updated_at
+        and _matches_seeded_prompt_fingerprint(key, current_prompt)
+    )
+
+
+def _matches_seeded_prompt_fingerprint(key: tuple[str, str], prompt: str) -> bool:
+    fingerprints = {
+        ("analysis", "Apex analysis"): (
+            (
+                "Analyze this source for vertical short-form publishing.",
+                "Return clips[] as finished edit plans, not just isolated detections.",
+                "If a clip needs context, include a short setup segment before the payoff.",
+            ),
+        ),
+        ("analysis", "Anime analysis"): (
+            (
+                "Analyze this anime source for vertical short-form publishing.",
+                "Return clips[] as finished edit plans.",
+                "setup and reaction, joke and punchline",
+            ),
+            (
+                "Analyze this anime episode as a connected story digest",
+                "Build clips[] as chronological story",
+                "Prefer combined clip length around 45 to 150 seconds.",
+            ),
+            (
+                "Analyze this anime episode as a connected story digest",
+                "Keep each individual segment around 25 to 70 seconds",
+                "never longer than 90 seconds",
+            ),
+            (
+                "Analyze this anime episode for self-contained main story clips",
+                "Do not cover the episode mechanically from beginning to end",
+                "Every returned clip must have its own local hook",
+            ),
+            (
+                "Analyze this anime episode for vertical publishing.",
+                "clips[0] is mandatory and must be titled like",
+                "Episode Story Recap",
+            ),
+            (
+                "Analyze this anime episode for vertical publishing.",
+                "Prefer recap clip length around 120 to 180 seconds",
+                "5 to 6 ordered segments",
+            ),
+            (
+                "Analyze this anime episode for vertical publishing.",
+                "Prefer recap clip length around 90 to 150 seconds",
+                "Do not return any finished clip around 3 minutes",
+            ),
+        ),
+        ("analysis", "Series analysis"): (
+            (
+                "Analyze this TV series or episodic live-action source for vertical short-form",
+                "Return clips[] as finished edit plans.",
+                "setup and reveal, accusation and response",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source as a connected story",
+                "chronological story chapters",
+                "Prefer combined clip length around 45 to 150 seconds.",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source as a connected story",
+                "Keep each individual segment around 25 to 70 seconds",
+                "never longer than 90 seconds",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source for self-contained main",
+                "Do not cover the episode mechanically from beginning to end",
+                "Every returned clip must have its own local hook",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source for vertical publishing.",
+                "clips[0] is mandatory and must be titled like",
+                "Episode Story Recap",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source for vertical publishing.",
+                "Prefer recap clip length around 120 to 180 seconds",
+                "5 to 6 ordered segments",
+            ),
+            (
+                "Analyze this TV series or episodic live-action source for vertical publishing.",
+                "Prefer recap clip length around 90 to 150 seconds",
+                "Do not return any finished clip around 3 minutes",
+            ),
+        ),
+        ("publishing", "Publishing metadata"): (
+            (
+                "Generate publishing metadata for a rendered vertical clip.",
+                "Return JSON only with title and description suitable for YouTube Shorts and TikTok.",
+                "Keep the title short, direct, and based on the clip content.",
+            ),
+            (
+                "Generate publishing metadata for a rendered vertical clip.",
+                "Make the title specific to the clip, not generic.",
+                "Avoid clickbait that misrepresents the scene.",
+            ),
+        ),
+        ("subtitle", "Apex subtitles"): (
+            (
+                "Transcribe this audio for karaoke subtitles.",
+                "Split readable subtitle segments by phrase",
+                "Keep word timestamps aligned tightly enough for karaoke highlighting.",
+            ),
+            (
+                "Transcribe this audio for karaoke subtitles.",
+                "Do not stretch a word or segment through silence.",
+                "Word end timestamps should be close to the audible end of the word",
+            ),
+        ),
+        ("subtitle", "Anime subtitles"): (
+            (
+                "Transcribe this anime audio for karaoke subtitles.",
+                "Preserve character names, honorifics",
+                "keep word timestamps tight for karaoke highlighting",
+            ),
+            (
+                "Transcribe this anime audio for karaoke subtitles.",
+                "Preserve character names, honorifics",
+                "Keep word timestamps tight for karaoke highlighting.",
+            ),
+            (
+                "Transcribe this anime audio for karaoke subtitles.",
+                "Do not stretch subtitles across dramatic silence",
+                "Word end timestamps should be close to the audible end",
+            ),
+        ),
+        ("subtitle", "Series subtitles"): (
+            (
+                "Transcribe this TV series audio for karaoke subtitles.",
+                "Preserve exact dialogue, names, places",
+                "Keep word timestamps tight for karaoke highlighting.",
+            ),
+            (
+                "Transcribe this TV series audio for karaoke subtitles.",
+                "Do not stretch subtitles across dramatic silence",
+                "Word end timestamps should be close to the audible end",
+            ),
+        ),
+    }
+    expected_options = fingerprints.get(key)
+    return bool(expected_options and any(all(part in prompt for part in expected) for expected in expected_options))
