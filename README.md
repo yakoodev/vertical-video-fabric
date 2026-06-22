@@ -6,17 +6,78 @@ AI-комбайн для автопостинга вертикальных ви�
 Публикация выполняется с сохранёнными cookies (YouTube — с авто-обновлением ротируемых
 куки, Instagram — через instagrapi).
 
-> **Полный гайд по развёртыванию на новом ПК/сервере: [DEPLOY.md](DEPLOY.md).**
+## Как установить (Docker)
 
-## Быстрый старт
+Всё состояние (БД, секреты, видео, клипы, модели Whisper) живёт в одном Docker-томе —
+перенос и бэкап тривиальны. GPU не нужен.
 
-```powershell
-copy .env.example .env
-docker compose up --build
+### Требования
+- **Docker** + **Docker Compose v2** (Windows/macOS — Docker Desktop; Linux — docker + `docker compose`).
+- **Git**.
+- Интернет на время первой сборки (образ клонирует TiktokAutoUploader, ставит npm/pip-зависимости, собирает фронт).
+- Диск ~3–4 ГБ под образ + место под видео; ОЗУ 4 ГБ минимум, 8+ комфортно.
+
+### Установка
+
+```bash
+git clone https://github.com/yakoodev/vertical-video-fabric.git
+cd vertical-video-fabric
+cp .env.example .env        # Windows: copy .env.example .env
 ```
 
-Web UI будет доступен на `http://localhost:8088`. Swagger UI: `http://localhost:8088/docs`.
-Подробная инструкция по Docker и локальному запуску: [docs/run-project.md](docs/run-project.md).
+Заполни `.env` (минимум для боевого запуска):
+
+```ini
+POSTING_AUTH_ENABLED=true
+POSTING_API_TOKEN=                 # свой длинный токен; пусто = сгенерится в /data/api_token.txt
+POSTING_PROVIDER_MODE=real         # real = публикует; mock = ничего не шлёт (тест пайплайна)
+
+AI_VIDEO_PROVIDER=gemini           # gemini | polza | action | mock
+SUBTITLE_PROVIDER=whisper          # whisper (локально) | gemini | mock
+GEMINI_API_KEY=...                 # ключ Google AI Studio
+GEMINI_VIDEO_MODEL=gemini-3.5-flash
+```
+
+Полный список переменных — в [.env.example](.env.example). Запуск:
+
+```bash
+docker compose up -d --build       # --build обязателен при первом старте и после git pull
+docker compose logs -f app         # логи
+```
+
+Открой **http://localhost:8088** и войди по токену. Если токен не задавал — возьми авто-сгенерированный:
+
+```bash
+docker compose exec app cat /data/api_token.txt
+```
+
+Swagger UI: `http://localhost:8088/docs`. Порт меняется в `docker-compose.yml` (`ports: - "8088:8088"`).
+
+### Данные, бэкап, обновление
+
+- Том `vv-fabric-data` → `/data`: `app.sqlite` (база), `secret.key` (ключ шифрования куки — **не теряй**),
+  `api_token.txt`, загрузки/клипы, `whisper-models/`. Дефолтный пак (луки, стили субтитров, промпты) сеется сам.
+- **Бэкап/перенос** — выгрузить/загрузить том:
+  ```bash
+  docker run --rm -v vv-fabric-data:/data -v "$PWD":/backup alpine tar czf /backup/vvf-data.tar.gz -C /data .
+  docker run --rm -v vv-fabric-data:/data -v "$PWD":/backup alpine tar xzf /backup/vvf-data.tar.gz -C /data
+  ```
+- **Обновление**: `git pull && docker compose up -d --build` (миграции БД применяются автоматически).
+- **Управление**: `docker compose stop|start|restart app`, `docker compose down` (том остаётся),
+  `docker compose down -v` ⚠️ удалит и данные.
+
+### Удалённый доступ
+Не публикуй порт 8088 в интернет голым. Поставь reverse-proxy (Nginx Proxy Manager / Caddy / Traefik)
+с HTTPS на `app:8088` и держи `POSTING_AUTH_ENABLED=true` с длинным токеном.
+
+### Если что-то не так
+- Не открывается / 502 → `docker compose logs app` (часто незаполненный `.env` или занятый порт).
+- «Invalid token» → сверь токен: `docker compose exec app cat /data/api_token.txt`.
+- Анализ падает с «high demand» → перегрузка Gemini на стороне Google, перезапусти (ретраи с Retry-After обычно проходят).
+- Статус `needs_reauth` → куки протухли, обнови в Настройки → Аккаунты.
+- Сборка падает на clone/npm/pip → нет интернета во время `--build`.
+
+> Локальный Windows-запуск без Docker — через `scripts\start-local.ps1` (см. ниже).
 
 В `Sources -> URL` можно добавить прямую ссылку на `mp4/mov/webm`, YouTube, Twitch или
 страницу Smotvibe с таким же встроенным плеером. Для Smotvibe сервис находит HLS/MP4
