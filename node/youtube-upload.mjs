@@ -33,18 +33,41 @@ function jsonSafe(value) {
   }
 }
 
+// Google rotates a few session cookies (notably __Secure-1PSIDTS/3PSIDTS) on
+// almost every request; if we never persist them the stored jar goes stale in
+// days. Capture every Set-Cookie we see and report the fresh values so the
+// caller can write them back — this keeps the session alive for months.
+function collectSetCookies(headers, jar) {
+  try {
+    const lines = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+    for (const line of lines) {
+      const first = String(line).split(';', 1)[0];
+      const eq = first.indexOf('=');
+      if (eq <= 0) continue;
+      const name = first.slice(0, eq).trim();
+      const value = first.slice(eq + 1).trim();
+      // Skip deletions (empty value) so we never wipe a good cookie.
+      if (name && value) jar.set(name, value);
+    }
+  } catch {
+    /* header API not available — ignore */
+  }
+}
+
 async function main() {
   const payload = JSON.parse(await readStdin());
   const file = await fs.readFile(payload.filePath);
   const proxyUrl = payload.proxyUrl || '';
   const agent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
+  const cookieJar = new Map();
   const yt = await Innertube.create({
     cookie: payload.cookie,
     fetch: async (input, init = {}) => {
-      if (agent) {
-        return fetch(input, { ...init, dispatcher: agent });
-      }
-      return fetch(input, init);
+      const res = agent
+        ? await fetch(input, { ...init, dispatcher: agent })
+        : await fetch(input, init);
+      collectSetCookies(res.headers, cookieJar);
+      return res;
     }
   });
   const response = await yt.studio.upload(file, {
@@ -55,7 +78,12 @@ async function main() {
   });
   const safe = jsonSafe(response);
   const videoId = findVideoId(safe);
-  process.stdout.write(JSON.stringify({ ok: true, videoId, response: safe }));
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    videoId,
+    refreshedCookies: Object.fromEntries(cookieJar),
+    response: safe
+  }));
 }
 
 main().catch((error) => {

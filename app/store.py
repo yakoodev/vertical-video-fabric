@@ -10,7 +10,11 @@ from typing import Any, BinaryIO
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+from dataclasses import replace as _dc_replace
+
 from app.cookies import (
+    DEFAULT_DOMAINS,
+    CookieRecord,
     cookies_from_jsonable,
     cookies_to_jsonable,
     parse_cookie_input,
@@ -21,7 +25,7 @@ from app.db import Database
 from app.settings import settings
 
 
-VALID_PLATFORMS = {"youtube", "tiktok"}
+VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
@@ -130,6 +134,56 @@ class AppStore:
         if not row:
             raise KeyError(f"account not found: {account_id}")
         return cookies_from_jsonable(self.cipher.decrypt_json(row["encrypted_cookies"]))
+
+    def update_account_cookie_values(self, account_id: int, updates: dict[str, str]) -> bool:
+        """Merge refreshed cookie values (name -> value) into the stored jar so a
+        rotating session stays alive. Existing records keep their domain/flags;
+        unknown names are appended with the platform default domain. Returns True
+        if anything changed."""
+        if not updates:
+            return False
+        row = self.db.query_one(
+            "SELECT platform, encrypted_cookies FROM accounts WHERE id = ? AND deleted_at IS NULL",
+            (account_id,),
+        )
+        if not row:
+            return False
+        cookies = cookies_from_jsonable(self.cipher.decrypt_json(row["encrypted_cookies"]))
+        default_domain = DEFAULT_DOMAINS.get(row["platform"], "")
+        seen: set[str] = set()
+        out: list[CookieRecord] = []
+        changed = False
+        for cookie in cookies:
+            new_value = updates.get(cookie.name)
+            if new_value and new_value != cookie.value:
+                out.append(_dc_replace(cookie, value=new_value))
+                changed = True
+            else:
+                out.append(cookie)
+            seen.add(cookie.name)
+        for name, value in updates.items():
+            if name not in seen and value:
+                out.append(CookieRecord(name=name, value=value, domain=default_domain))
+                changed = True
+        if not changed:
+            return False
+        ok, missing = required_cookie_status(row["platform"], out)
+        self.db.execute(
+            """
+            UPDATE accounts
+            SET encrypted_cookies = ?, cookie_count = ?, has_required_cookies = ?,
+                missing_cookies = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                self.cipher.encrypt_json(cookies_to_jsonable(out)),
+                len(out),
+                int(ok),
+                ",".join(missing),
+                account_id,
+            ),
+        )
+        return True
 
     def get_account_proxy_url(self, account_id: int) -> str:
         row = self.db.query_one("SELECT encrypted_proxy_url FROM accounts WHERE id = ?", (account_id,))

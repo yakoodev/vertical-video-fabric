@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.providers.base import Provider
+from app.providers.instagram import InstagramProvider
 from app.providers.mock import MockProvider
 from app.providers.tiktok import TikTokProvider
 from app.providers.youtube import YouTubeProvider
@@ -15,5 +16,7 @@ def get_provider(platform: str) -> Provider:
         return YouTubeProvider()
     if platform == "tiktok":
         return TikTokProvider()
+    if platform == "instagram":
+        return InstagramProvider()
     raise ValueError(f"unsupported provider: {platform}")
 

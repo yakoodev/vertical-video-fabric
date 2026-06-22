@@ -70,11 +70,13 @@ class YouTubeProvider(Provider):
             error = _safe_error(result.get("error") or "")
             return ProviderResult(status=_classify_youtube_error(error), error=error, response=result)
         remote_id = result.get("videoId") or ""
+        refreshed = result.get("refreshedCookies")
         return ProviderResult(
             status="succeeded",
             remote_id=remote_id,
             remote_url=f"https://youtu.be/{remote_id}" if remote_id else "",
-            response=result,
+            response={k: v for k, v in result.items() if k != "refreshedCookies"},
+            refreshed_cookies=refreshed if isinstance(refreshed, dict) else {},
         )
 
 

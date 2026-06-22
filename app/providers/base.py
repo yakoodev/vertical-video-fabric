@@ -20,6 +20,9 @@ class ProviderResult:
     remote_url: str = ""
     error: str = ""
     response: dict = field(default_factory=dict)
+    # Refreshed auth material (e.g. rotated cookies {name: value}) to persist
+    # back to the account after a successful upload, keeping the session alive.
+    refreshed_cookies: dict = field(default_factory=dict)
 
 
 class Provider:

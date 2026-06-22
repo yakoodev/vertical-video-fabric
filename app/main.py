@@ -158,7 +158,7 @@ def _source_analysis_prompt_preset_id(source: dict, presets: list[dict], fallbac
 
 
 class AccountCreate(BaseModel):
-    platform: Literal["youtube", "tiktok"] = Field(description="Target platform.")
+    platform: Literal["youtube", "tiktok", "instagram"] = Field(description="Target platform.")
     label: str = Field(description="Human-readable account label.", examples=["youtube-main"])
     proxy_url: str = Field(
         default="",

@@ -45,6 +45,7 @@ export function AccountsSettings() {
             <select className="input" value={platform} onChange={(e) => setPlatform(e.target.value)}>
               <option value="youtube">youtube</option>
               <option value="tiktok">tiktok</option>
+              <option value="instagram">instagram</option>
             </select>
           </label>
           <label className="field" style={{ flex: 2, minWidth: 180 }}>

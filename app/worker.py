@@ -57,7 +57,16 @@ class JobWorker:
                     account_label=account["label"],
                     proxy_url=proxy_url,
                 )
-                self.store.finish_target(target["id"], result.status, result.__dict__)
+                # Persist any rotated cookies so the session self-heals next time.
+                if result.status == "succeeded" and result.refreshed_cookies:
+                    try:
+                        self.store.update_account_cookie_values(
+                            target["account_id"], result.refreshed_cookies
+                        )
+                    except Exception:  # noqa: BLE001 - cookie refresh is best-effort
+                        pass
+                payload = {k: v for k, v in result.__dict__.items() if k != "refreshed_cookies"}
+                self.store.finish_target(target["id"], result.status, payload)
             except Exception as exc:  # noqa: BLE001 - target failures must be persisted
                 self.store.finish_target(
                     target["id"],

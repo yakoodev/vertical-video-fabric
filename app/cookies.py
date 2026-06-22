@@ -7,6 +7,7 @@ from typing import Iterable
 DEFAULT_DOMAINS = {
     "youtube": ".youtube.com",
     "tiktok": ".tiktok.com",
+    "instagram": ".instagram.com",
 }
 
 
@@ -78,6 +79,8 @@ def to_cookie_header_for_host(cookies: Iterable[CookieRecord], host: str) -> str
 def required_cookie_status(platform: str, cookies: Iterable[CookieRecord]) -> tuple[bool, list[str]]:
     names = {cookie.name for cookie in cookies}
     if platform == "tiktok":
+        required = {"sessionid"}
+    elif platform == "instagram":
         required = {"sessionid"}
     elif platform == "youtube":
         required = {"SID", "HSID", "SSID", "APISID", "SAPISID"}
