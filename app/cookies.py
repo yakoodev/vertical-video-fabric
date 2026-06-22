@@ -7,6 +7,7 @@ from typing import Iterable
 DEFAULT_DOMAINS = {
     "youtube": ".youtube.com",
     "tiktok": ".tiktok.com",
+    "instagram": ".instagram.com",
 }
 
 
@@ -79,6 +80,8 @@ def required_cookie_status(platform: str, cookies: Iterable[CookieRecord]) -> tu
     names = {cookie.name for cookie in cookies}
     if platform == "tiktok":
         required = {"sessionid"}
+    elif platform == "instagram":
+        required = {"sessionid"}
     elif platform == "youtube":
         required = {"SID", "HSID", "SSID", "APISID", "SAPISID"}
     else:
@@ -139,7 +142,7 @@ def _parse_netscape(text: str, default_domain: str) -> list[CookieRecord]:
 
 
 def _parse_cookie_header(header: str, default_domain: str) -> list[CookieRecord]:
-    cookies: list[CookieRecord] = []
+    cookies_by_name: dict[str, CookieRecord] = {}
     for part in header.replace("\n", ";").split(";"):
         part = part.strip()
         if not part or "=" not in part:
@@ -148,7 +151,8 @@ def _parse_cookie_header(header: str, default_domain: str) -> list[CookieRecord]
         name = name.strip()
         if not name:
             continue
-        cookies.append(CookieRecord(name=name, value=value.strip(), domain=default_domain))
+        cookies_by_name[name] = CookieRecord(name=name, value=value.strip(), domain=default_domain)
+    cookies = list(cookies_by_name.values())
     if not cookies:
         raise ValueError("no cookies found in Cookie header")
     return cookies

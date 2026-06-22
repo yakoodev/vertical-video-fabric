@@ -16,6 +16,19 @@ def test_parse_raw_cookie_header():
     assert missing == []
 
 
+def test_parse_raw_cookie_header_deduplicates_using_latest_value():
+    raw = "\n".join(
+        [
+            "Cookie: SID=old; HSID=old; SAPISID=old",
+            "Cookie: SID=new; APISID=new; SAPISID=new; SSID=new",
+        ]
+    )
+
+    cookies = parse_cookie_input(raw, "youtube")
+
+    assert to_cookie_header(cookies) == "SID=new; HSID=old; SAPISID=new; APISID=new; SSID=new"
+
+
 def test_parse_netscape_cookie():
     raw = ".tiktok.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tabc\n"
     cookies = parse_cookie_input(raw, "tiktok")

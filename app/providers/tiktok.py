@@ -13,7 +13,7 @@ import requests
 from requests_auth_aws_sigv4 import AWSSigV4
 
 from app.cookies import CookieRecord, tiktok_caption
-from app.providers.base import Provider, ProviderResult
+from app.providers.base import Provider, ProviderResult, safe_provider_error
 from app.settings import settings
 
 _UA = (
@@ -348,7 +348,4 @@ def _classify_tiktok_error(message: str) -> str:
 
 
 def _safe_error(message: str) -> str:
-    text = (message or "tiktok upload failed").strip()
-    if len(text) > 2000:
-        text = text[:2000] + "..."
-    return text
+    return safe_provider_error(message, "tiktok upload failed")
