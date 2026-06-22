@@ -10,9 +10,44 @@ from app.ingest import file_hash_and_size, probe_media
 from app.settings import settings
 from app.store import AppStore
 from app.subtitles.ass import write_ass_subtitles
-from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWord
+from app.subtitles.contracts import SubtitleResult
 from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
 from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_timeline
+from app.video_crop import build_reframe_x_expr
+
+
+def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
+    """Build a smoothed crop-x expression for a segment, or None when smart
+    reframing is off, there's no focus track, or the source has no horizontal
+    slack (already ≤ the target aspect)."""
+    if not preset.get("smart_reframe"):
+        return None
+    focus = segment.get("focus") or []
+    if not focus:
+        return None
+    sw = float(source.get("width") or 0)
+    sh = float(source.get("height") or 0)
+    if sw <= 0 or sh <= 0:
+        return None
+    crop = source.get("content_crop") or None
+    eff_w = sw * (float(crop["w"]) if crop else 1.0)
+    eff_h = sh * (float(crop["h"]) if crop else 1.0)
+    out_w = int(preset.get("output_width") or 1080)
+    out_h = int(preset.get("output_height") or 1920)
+    if eff_h <= 0 or out_h <= 0 or (eff_w / eff_h) <= (out_w / out_h) + 1e-3:
+        return None
+    remapped: list[dict] = []
+    for point in focus:
+        try:
+            fx = float(point["x"])
+            t = float(point["t"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if crop:
+            fx = (fx - float(crop["x"])) / (float(crop["w"]) or 1.0)
+        remapped.append({"t": t, "x": min(1.0, max(0.0, fx))})
+    duration = float(segment.get("end_sec", 0)) - float(segment.get("start_sec", 0))
+    return build_reframe_x_expr(remapped, duration, out_w)
 
 
 class ClipRenderService:
@@ -28,12 +63,25 @@ class ClipRenderService:
         clip_plan_id: int | None = None,
         music_track_id: int | None = None,
         music_volume: float | None = None,
+        subtitle_offset_sec: float | None = None,
+        subtitle_provider: str | None = None,
+        banner_height_frac: float | None = None,
+        banner_y_frac: float | None = None,
+        subtitle_margin_v: int | None = None,
     ) -> dict:
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
         preset = self._preset_with_banner(preset, banner_id)
         preset = self._preset_with_music(preset, music_track_id, music_volume)
+        preset = self._preset_with_subtitle_offset(preset, subtitle_offset_sec)
+        preset = self._preset_with_render_overrides(
+            preset,
+            banner_height_frac=banner_height_frac,
+            banner_y_frac=banner_y_frac,
+            subtitle_provider=subtitle_provider,
+            subtitle_margin_v=subtitle_margin_v,
+        )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
@@ -61,6 +109,8 @@ class ClipRenderService:
                 end_sec=float(segment["end_sec"]),
                 preset=preset,
                 banner=banner,
+                source_crop=source.get("content_crop"),
+                reframe_x=_segment_reframe_x(segment, preset, source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
             final_output_path, post_temps = self._finalize_render(
@@ -70,7 +120,6 @@ class ClipRenderService:
                 output_path=output_path,
                 preset=preset,
                 subtitle_profile_id=subtitle_profile_id,
-                subtitle_ranges=None,
             )
             temp_paths.extend(post_temps)
             metadata = probe_media(final_output_path)
@@ -120,6 +169,11 @@ class ClipRenderService:
         description: str = "",
         music_track_id: int | None = None,
         music_volume: float | None = None,
+        subtitle_offset_sec: float | None = None,
+        subtitle_provider: str | None = None,
+        banner_height_frac: float | None = None,
+        banner_y_frac: float | None = None,
+        subtitle_margin_v: int | None = None,
     ) -> dict:
         if not segment_ids:
             raise ValueError("at least one segment is required")
@@ -131,6 +185,14 @@ class ClipRenderService:
         preset = self._preset(ffmpeg_preset_id)
         preset = self._preset_with_banner(preset, banner_id)
         preset = self._preset_with_music(preset, music_track_id, music_volume)
+        preset = self._preset_with_subtitle_offset(preset, subtitle_offset_sec)
+        preset = self._preset_with_render_overrides(
+            preset,
+            banner_height_frac=banner_height_frac,
+            banner_y_frac=banner_y_frac,
+            subtitle_provider=subtitle_provider,
+            subtitle_margin_v=subtitle_margin_v,
+        )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
@@ -165,6 +227,8 @@ class ClipRenderService:
                         end_sec=float(segment["end_sec"]),
                         preset=preset,
                         banner=banner,
+                        source_crop=source.get("content_crop"),
+                        reframe_x=_segment_reframe_x(segment, preset, source),
                     ),
                     timeout=60 * 30,
                 )
@@ -175,7 +239,6 @@ class ClipRenderService:
                 encoding="utf-8",
             )
             _run_ffmpeg(build_ffmpeg_concat_args(concat_list_path, base_output_path), timeout=60 * 30)
-            subtitle_ranges = _subtitle_ranges_for_parts(rendered_parts) if subtitle_profile_id else None
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -183,7 +246,6 @@ class ClipRenderService:
                 output_path=output_path,
                 preset=preset,
                 subtitle_profile_id=subtitle_profile_id,
-                subtitle_ranges=subtitle_ranges,
             )
             temp_paths.extend(post_temps)
             metadata = probe_media(final_output_path)
@@ -224,6 +286,11 @@ class ClipRenderService:
         banner_id: int | None = None,
         music_track_id: int | None = None,
         music_volume: float | None = None,
+        subtitle_offset_sec: float | None = None,
+        subtitle_provider: str | None = None,
+        banner_height_frac: float | None = None,
+        banner_y_frac: float | None = None,
+        subtitle_margin_v: int | None = None,
     ) -> dict:
         """Render a fresh clip from a directly-uploaded clip's pristine source.
 
@@ -246,6 +313,14 @@ class ClipRenderService:
         preset = self._preset(ffmpeg_preset_id)
         preset = self._preset_with_banner(preset, banner_id)
         preset = self._preset_with_music(preset, music_track_id, music_volume)
+        preset = self._preset_with_subtitle_offset(preset, subtitle_offset_sec)
+        preset = self._preset_with_render_overrides(
+            preset,
+            banner_height_frac=banner_height_frac,
+            banner_y_frac=banner_y_frac,
+            subtitle_provider=subtitle_provider,
+            subtitle_margin_v=subtitle_margin_v,
+        )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
@@ -281,7 +356,6 @@ class ClipRenderService:
                 output_path=output_path,
                 preset=preset,
                 subtitle_profile_id=subtitle_profile_id,
-                subtitle_ranges=None,
             )
             temp_paths.extend(post_temps)
             metadata = probe_media(final_output_path)
@@ -314,6 +388,11 @@ class ClipRenderService:
         banner_id: int | None = None,
         music_track_id: int | None = None,
         music_volume: float | None = None,
+        subtitle_offset_sec: float | None = None,
+        subtitle_provider: str | None = None,
+        banner_height_frac: float | None = None,
+        banner_y_frac: float | None = None,
+        subtitle_margin_v: int | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -330,6 +409,11 @@ class ClipRenderService:
                 clip_plan_id=clip_plan_id,
                 music_track_id=music_track_id,
                 music_volume=music_volume,
+                subtitle_offset_sec=subtitle_offset_sec,
+                subtitle_provider=subtitle_provider,
+                banner_height_frac=banner_height_frac,
+                banner_y_frac=banner_y_frac,
+                subtitle_margin_v=subtitle_margin_v,
             )
         else:
             clip = self.render_montage(
@@ -342,6 +426,11 @@ class ClipRenderService:
                 description=plan["description"],
                 music_track_id=music_track_id,
                 music_volume=music_volume,
+                subtitle_offset_sec=subtitle_offset_sec,
+                subtitle_provider=subtitle_provider,
+                banner_height_frac=banner_height_frac,
+                banner_y_frac=banner_y_frac,
+                subtitle_margin_v=subtitle_margin_v,
             )
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
@@ -362,10 +451,23 @@ class ClipRenderService:
         output_path: Path,
         subtitle_profile_id: int,
         preset: dict,
-        subtitle_ranges: list[dict] | None = None,
     ) -> None:
         profile = self.store.get_subtitle_profile(subtitle_profile_id)
         profile["prompt"] = _subtitle_prompt_for_clip(self.store, clip_id)
+        # A per-render nudge (set on the preset) overrides the profile's saved
+        # timing offset, so a single drifting clip can be pulled into sync without
+        # changing the shared subtitle style.
+        offset_override = preset.get("subtitle_offset_override")
+        if offset_override is not None:
+            profile = {**profile, "timing_offset_sec": offset_override}
+        # Per-render engine swap: pick whisper/gemini independently of the style.
+        provider_override = preset.get("subtitle_provider_override")
+        if provider_override:
+            profile = {**profile, "provider": provider_override}
+        # Per-render vertical position so the burned subtitles match the preview band.
+        margin_override = preset.get("subtitle_margin_v_override")
+        if margin_override is not None:
+            profile = {**profile, "margin_v": margin_override}
         provider = get_subtitle_provider(profile["provider"])
         model = subtitle_model_for_profile(profile)
         track = self.store.create_subtitle_track(
@@ -380,20 +482,16 @@ class ClipRenderService:
         ass_path = settings.subtitle_dir / f"{uuid4().hex}.ass"
         try:
             input_duration = probe_media(input_path).duration_sec
-            if subtitle_ranges and len(subtitle_ranges) > 1:
-                result = self._transcribe_subtitle_ranges(
-                    input_path,
-                    subtitle_ranges,
-                    input_duration,
-                    provider,
-                    profile,
-                    model,
-                )
-            else:
-                _run_ffmpeg(build_ffmpeg_extract_audio_args(input_path, audio_path), timeout=60 * 10)
-                result = provider.transcribe(audio_path, profile, model)
-                audio_duration = probe_media(audio_path).duration_sec
-                result = normalize_subtitle_timeline(result, min(audio_duration, input_duration))
+            # Always transcribe the exact audio of the clip we are about to burn
+            # onto, in a single pass. Because the timestamps come from the same
+            # (already cut, possibly stitched) audio they are rendered over, the
+            # karaoke highlight stays locked to the speech. Per-part chunked
+            # transcription used to re-seek into the stitched file and could land a
+            # couple of seconds off on real concatenated media, drifting the words.
+            _run_ffmpeg(build_ffmpeg_extract_audio_args(input_path, audio_path), timeout=60 * 10)
+            result = provider.transcribe(audio_path, profile, model)
+            audio_duration = probe_media(audio_path).duration_sec
+            result = normalize_subtitle_timeline(result, min(audio_duration, input_duration))
             result = _apply_subtitle_timing_offset(result, profile, input_duration)
             ass_path = write_ass_subtitles(
                 result,
@@ -426,87 +524,6 @@ class ClipRenderService:
         finally:
             audio_path.unlink(missing_ok=True)
 
-    def _transcribe_subtitle_ranges(
-        self,
-        input_path: Path,
-        subtitle_ranges: list[dict],
-        input_duration: float,
-        provider,
-        profile: dict,
-        model: str,
-    ) -> SubtitleResult:
-        words: list[SubtitleWord] = []
-        segments: list[SubtitleSegment] = []
-        texts: list[str] = []
-        responses: list[dict] = []
-        usage_chunks: list[dict] = []
-        language = str(profile.get("language") or "").strip() or "und"
-        effective_model = model
-        for index, item in enumerate(subtitle_ranges):
-            offset = max(0.0, float(item.get("offset_sec") or 0))
-            duration = max(0.0, float(item.get("duration_sec") or 0))
-            if input_duration > 0:
-                duration = min(duration, max(0.0, input_duration - offset))
-            if duration <= 0.05:
-                continue
-            chunk_audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
-            try:
-                _run_ffmpeg(
-                    build_ffmpeg_extract_audio_args(
-                        input_path,
-                        chunk_audio_path,
-                        start_sec=offset,
-                        duration_sec=duration,
-                    ),
-                    timeout=60 * 10,
-                )
-                result = provider.transcribe(chunk_audio_path, profile, model)
-                audio_duration = probe_media(chunk_audio_path).duration_sec
-                target_duration = min(audio_duration, duration)
-                result = normalize_subtitle_timeline(result, target_duration)
-            finally:
-                chunk_audio_path.unlink(missing_ok=True)
-            if result.language:
-                language = result.language
-            if result.text.strip():
-                texts.append(result.text.strip())
-            responses.append({"index": index, "offset_sec": offset, "duration_sec": duration, "response": result.response})
-            chunk_usage = dict(result.usage)
-            chunk_usage["index"] = index
-            chunk_usage["offset_sec"] = round(offset, 3)
-            chunk_usage["duration_sec"] = round(target_duration, 3)
-            usage_chunks.append(chunk_usage)
-            effective_model = str(result.usage.get("model") or effective_model)
-            for segment in result.segments:
-                start = offset + max(0.0, float(segment.start))
-                end = offset + max(0.0, float(segment.end))
-                if end <= start:
-                    continue
-                segments.append(SubtitleSegment(start=round(start, 3), end=round(end, 3), text=segment.text))
-            for word in result.words:
-                start = offset + max(0.0, float(word.start))
-                end = offset + max(0.0, float(word.end))
-                if end <= start:
-                    continue
-                words.append(SubtitleWord(word=word.word, start=round(start, 3), end=round(end, 3)))
-        if not words:
-            raise RuntimeError("subtitle transcription returned no word-level timestamps")
-        return SubtitleResult(
-            text="\n".join(texts),
-            language=language,
-            duration=input_duration,
-            segments=segments,
-            words=words,
-            response={"chunks": responses},
-            usage={
-                "subtitleChunkedTranscription": True,
-                "subtitleChunkCount": len(usage_chunks),
-                "requestedModel": model,
-                "model": effective_model,
-                "chunks": usage_chunks,
-            },
-        )
-
     def _preset_with_banner(self, preset: dict, banner_id: int | None) -> dict:
         if banner_id is None:
             return preset
@@ -538,6 +555,51 @@ class ClipRenderService:
             preset["music_volume_override"] = max(0.0, min(4.0, float(music_volume)))
         return preset
 
+    def _preset_with_subtitle_offset(self, preset: dict, subtitle_offset_sec: float | None) -> dict:
+        if subtitle_offset_sec is None:
+            return preset
+        preset = dict(preset)
+        preset["subtitle_offset_override"] = max(-2.0, min(2.0, float(subtitle_offset_sec)))
+        return preset
+
+    def _preset_with_render_overrides(
+        self,
+        preset: dict,
+        *,
+        banner_height_frac: float | None = None,
+        banner_y_frac: float | None = None,
+        subtitle_provider: str | None = None,
+        subtitle_margin_v: int | None = None,
+    ) -> dict:
+        """Stash per-render overrides on the preset dict so they reach the ffmpeg
+        builder / subtitle pass without changing the saved preset or profile.
+
+        - banner_height_frac scales the banner overlay to a fraction of the output
+          height (preserving aspect).
+        - banner_y_frac pins the banner's top edge to a fraction of the output
+          height (0 = top), overriding the banner asset's saved position.
+        - subtitle_provider swaps the transcription engine (e.g. whisper vs gemini)
+          regardless of what the style profile saved.
+        - subtitle_margin_v pins the subtitle band vertical position (ASS units).
+        """
+        if (
+            banner_height_frac is None
+            and banner_y_frac is None
+            and not subtitle_provider
+            and subtitle_margin_v is None
+        ):
+            return preset
+        preset = dict(preset)
+        if banner_height_frac is not None:
+            preset["banner_height_frac"] = max(0.02, min(0.6, float(banner_height_frac)))
+        if banner_y_frac is not None:
+            preset["banner_y_frac"] = max(0.0, min(0.97, float(banner_y_frac)))
+        if subtitle_provider:
+            preset["subtitle_provider_override"] = str(subtitle_provider).strip().lower()
+        if subtitle_margin_v is not None:
+            preset["subtitle_margin_v_override"] = max(0, int(subtitle_margin_v))
+        return preset
+
     def _finalize_render(
         self,
         clip_id: int,
@@ -546,7 +608,6 @@ class ClipRenderService:
         output_path: Path,
         preset: dict,
         subtitle_profile_id: int | None,
-        subtitle_ranges: list[dict] | None,
     ) -> tuple[Path, list[Path]]:
         """Apply optional subtitle and music passes after the base clip exists.
 
@@ -583,7 +644,6 @@ class ClipRenderService:
                     output_path=dest,
                     subtitle_profile_id=int(subtitle_profile_id),
                     preset=preset,
-                    subtitle_ranges=subtitle_ranges,
                 )
             if current is not base_output_path:
                 temp_paths.append(current)
@@ -598,6 +658,8 @@ def build_ffmpeg_render_args(
     end_sec: float,
     preset: dict,
     banner: dict | None = None,
+    source_crop: dict | None = None,
+    reframe_x: str | None = None,
 ) -> list[str]:
     if end_sec <= start_sec:
         raise ValueError("end_sec must be greater than start_sec")
@@ -624,7 +686,7 @@ def build_ffmpeg_render_args(
     args.extend(
         [
             "-filter_complex",
-            _filter_complex(width, height, fps, preset, banner),
+            _filter_complex(width, height, fps, preset, banner, source_crop, reframe_x),
             "-map",
             "[vout]",
             "-c:v",
@@ -859,28 +921,63 @@ def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
     }
 
 
-def _filter_complex(width: int, height: int, fps: float, preset: dict, banner: dict | None) -> str:
-    filters = [_render_filter(width, height, fps, preset, banner)]
+def _filter_complex(
+    width: int,
+    height: int,
+    fps: float,
+    preset: dict,
+    banner: dict | None,
+    source_crop: dict | None = None,
+    reframe_x: str | None = None,
+) -> str:
+    filters = [_render_filter(width, height, fps, preset, banner, source_crop, reframe_x)]
     audio_filter = _audio_filter(preset)
     if audio_filter:
         filters.append(audio_filter)
     return ";".join(filters)
 
 
-def _render_filter(width: int, height: int, fps: float, preset: dict, banner: dict | None) -> str:
+def _crop_prefix(source_crop: dict | None, copies: int) -> tuple[str, list[str]]:
+    """Build the optional content-crop filter and the input label(s) to consume.
+
+    An input pad (``0:v``) can feed several filters, but a filter *output* label
+    can be read only once — so when the crop is active and we need the frame more
+    than once (blur background) we ``split`` it.
+    """
+    if not source_crop:
+        return "", ["0:v"] * copies
+    c = source_crop
+    crop = f"[0:v]crop=iw*{c['w']:.5f}:ih*{c['h']:.5f}:iw*{c['x']:.5f}:ih*{c['y']:.5f}"
+    if copies == 1:
+        return f"{crop}[vsrc];", ["vsrc"]
+    labels = [f"vsrc{i}" for i in range(copies)]
+    return f"{crop},split={copies}{''.join(f'[{label}]' for label in labels)};", labels
+
+
+def _render_filter(
+    width: int,
+    height: int,
+    fps: float,
+    preset: dict,
+    banner: dict | None,
+    source_crop: dict | None = None,
+    reframe_x: str | None = None,
+) -> str:
     mode = preset.get("scale_mode") or "cover"
     anchor = preset.get("crop_anchor") or "center"
     if mode == "blur_background":
+        prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
         base = (
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"{prefix}[{bg_in}]scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height},boxblur=24:2[bg];"
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
+            f"[{fg_in}]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
             f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
     elif mode == "contain":
+        prefix, (vin,) = _crop_prefix(source_crop, 1)
         base = (
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"{prefix}[{vin}]scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
@@ -890,9 +987,12 @@ def _render_filter(width: int, height: int, fps: float, preset: dict, banner: di
             "bottom": f"ih-{height}",
             "center": f"(ih-{height})/2",
         }.get(anchor, f"(ih-{height})/2")
+        # Dynamic reframe overrides the horizontal crop offset with a smoothed x(t).
+        crop_x = reframe_x if reframe_x else f"(iw-{width})/2"
+        prefix, (vin,) = _crop_prefix(source_crop, 1)
         base = (
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height}:(iw-{width})/2:{crop_y},"
+            f"{prefix}[{vin}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height}:{crop_x}:{crop_y},"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
     style = _video_style_filter(preset)
@@ -904,9 +1004,20 @@ def _render_filter(width: int, height: int, fps: float, preset: dict, banner: di
         return f"{base};[{source_label}]copy[vout]"
     opacity = max(0, min(1, float(banner.get("opacity") if banner.get("opacity") is not None else 1)))
     x_expr, y_expr = _banner_position_expr(banner)
+    # Per-render vertical position overrides the banner asset's saved placement so
+    # it matches the preview band.
+    y_frac = preset.get("banner_y_frac")
+    if y_frac is not None:
+        y_expr = str(int(round(float(y_frac) * height)))
+    banner_chain = f"[1:v]format=rgba,colorchannelmixer=aa={opacity}"
+    bh_frac = preset.get("banner_height_frac")
+    if bh_frac:
+        banner_h = max(1, int(round(float(bh_frac) * height)))
+        banner_chain += f",scale=-1:{banner_h}:flags=lanczos"
+    banner_chain += "[banner]"
     return (
         f"{base};"
-        f"[1:v]format=rgba,colorchannelmixer=aa={opacity}[banner];"
+        f"{banner_chain};"
         f"[{source_label}][banner]overlay={x_expr}:{y_expr}:shortest=1,format=yuv420p[vout]"
     )
 
@@ -1071,16 +1182,6 @@ def _filter_filename(filename: str) -> str:
 def _concat_file_line(path: Path) -> str:
     escaped = path.resolve().as_posix().replace("'", "'\\''")
     return f"file '{escaped}'"
-
-
-def _subtitle_ranges_for_parts(parts: list[Path]) -> list[dict]:
-    ranges: list[dict] = []
-    offset = 0.0
-    for part in parts:
-        duration = max(0.0, float(probe_media(part).duration_sec or 0))
-        ranges.append({"offset_sec": round(offset, 3), "duration_sec": round(duration, 3)})
-        offset += duration
-    return ranges
 
 
 def _apply_subtitle_timing_offset(result: SubtitleResult, profile: dict, input_duration: float) -> SubtitleResult:

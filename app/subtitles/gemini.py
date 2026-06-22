@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from app.ai.gemini import GeminiClient
 from app.settings import settings
 from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWord
+
+
+# Word-level transcripts can be long; without a generous output cap the model
+# truncates the JSON array mid-word and the response no longer parses. Gemini
+# clamps this to the model's real maximum, so a high value is safe.
+SUBTITLE_MAX_OUTPUT_TOKENS = 65536
+
+# Matches one complete {"word": "...", "start": N, "end": N} object (schema order),
+# tolerating escaped quotes inside the word. Used to salvage a truncated array.
+_WORD_OBJECT_RE = re.compile(
+    r'\{\s*"word"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"start"\s*:\s*(-?\d+(?:\.\d+)?)'
+    r'\s*,\s*"end"\s*:\s*(-?\d+(?:\.\d+)?)',
+    re.DOTALL,
+)
+_SEGMENT_OBJECT_RE = re.compile(
+    r'\{\s*"start"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"end"\s*:\s*(-?\d+(?:\.\d+)?)'
+    r'\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+    re.DOTALL,
+)
 
 
 class GeminiSubtitleProvider:
@@ -19,8 +39,7 @@ class GeminiSubtitleProvider:
         file_info = self.client.upload_file(audio_path, _audio_mime_type(audio_path))
         file_info = self.client.wait_file_active(file_info)
         payload = build_gemini_subtitle_payload(file_info, profile)
-        response, selected_model, fallback_errors = self._generate_content_with_fallbacks(model, payload)
-        parsed = _parse_json_content(_extract_response_text(response))
+        response, parsed, selected_model, fallback_errors = self._generate_and_parse_with_fallbacks(model, payload)
         words = [
             SubtitleWord(
                 word=str(item["word"]),
@@ -57,22 +76,41 @@ class GeminiSubtitleProvider:
             usage=usage,
         )
 
-    def _generate_content_with_fallbacks(self, model: str, payload: dict[str, Any]) -> tuple[dict[str, Any], str, list[str]]:
+    def _generate_and_parse_with_fallbacks(
+        self, model: str, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any], str, list[str]]:
         errors: list[str] = []
         candidates = _subtitle_model_candidates(model)
         for index, candidate in enumerate(candidates):
+            last = index + 1 >= len(candidates)
             try:
-                return self.client.generate_content(candidate, payload), candidate, errors
+                response = self.client.generate_content(candidate, payload)
             except RuntimeError as exc:
                 message = _safe_error(exc)
                 errors.append(f"{candidate}: {message}")
-                if index + 1 >= len(candidates) or not _is_transient_gemini_error(message):
-                    raise RuntimeError(
-                        "Gemini subtitle transcription failed"
-                        + (f" after trying {', '.join(candidates)}" if len(candidates) > 1 else "")
-                        + f": {message}"
-                    ) from exc
+                if last or not _is_transient_gemini_error(message):
+                    raise RuntimeError(self._fallback_message(candidates, message)) from exc
+                continue
+            # A response that does not parse (most often a truncated JSON array)
+            # is recoverable by trying the next model, so treat it like a
+            # transient failure instead of aborting the whole render.
+            try:
+                parsed = _parse_subtitle_json(_extract_response_text(response))
+            except RuntimeError as exc:
+                message = _safe_error(exc)
+                errors.append(f"{candidate}: {message}")
+                if last:
+                    raise RuntimeError(self._fallback_message(candidates, message)) from exc
+                continue
+            return response, parsed, candidate, errors
         raise RuntimeError("Gemini subtitle transcription failed")
+
+    @staticmethod
+    def _fallback_message(candidates: list[str], message: str) -> str:
+        prefix = "Gemini subtitle transcription failed"
+        if len(candidates) > 1:
+            prefix += f" after trying {', '.join(candidates)}"
+        return f"{prefix}: {message}"
 
 
 def build_gemini_subtitle_payload(file_info: dict[str, Any], profile: dict) -> dict[str, Any]:
@@ -115,6 +153,7 @@ def build_gemini_subtitle_payload(file_info: dict[str, Any], profile: dict) -> d
         ],
         "generationConfig": {
             "temperature": 0,
+            "maxOutputTokens": SUBTITLE_MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
             "responseJsonSchema": gemini_subtitle_schema(),
         },
@@ -174,22 +213,107 @@ def _extract_response_text(response: dict[str, Any]) -> str:
     return text
 
 
-def _parse_json_content(content: str) -> dict[str, Any]:
-    text = content.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+def _parse_subtitle_json(content: str) -> dict[str, Any]:
+    """Parse the subtitle JSON, recovering from common malformations.
+
+    Tries a strict parse first, then an extracted top-level object, and finally
+    salvages word/segment objects directly from the text. The last step rescues
+    a transcript whose JSON array was truncated mid-word (the typical cause of
+    "invalid JSON"), so a long clip still gets usable, correctly-timed captions
+    instead of a hard render failure.
+    """
+
+    text = _strip_code_fence(str(content or "").strip())
+
+    parsed = _loads_or_none(text)
+    if parsed is None:
+        extracted = _extract_json_object(text)
+        if extracted is not None:
+            parsed = _loads_or_none(extracted)
+    # A cleanly-parsed object wins even if words[] is empty; the caller decides
+    # what to do with an empty transcript ("no word-level timestamps").
+    if isinstance(parsed, dict) and isinstance(parsed.get("words"), list):
+        return parsed
+
+    # The JSON itself is broken (typically truncated mid-array). Salvage whatever
+    # complete word/segment objects are present rather than failing the render.
+    salvaged = _salvage_subtitle_json(text)
+    if salvaged["words"]:
+        return salvaged
+
+    raise RuntimeError("Gemini subtitle response returned invalid JSON")
+
+
+def _strip_code_fence(text: str) -> str:
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _loads_or_none(text: str) -> Any:
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Gemini subtitle response returned invalid JSON") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("words"), list):
-        raise RuntimeError("Gemini subtitle JSON does not contain words[]")
-    return parsed
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _extract_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _salvage_subtitle_json(text: str) -> dict[str, Any]:
+    words = [
+        {"word": _unescape_json_string(match.group(1)), "start": float(match.group(2)), "end": float(match.group(3))}
+        for match in _WORD_OBJECT_RE.finditer(text)
+    ]
+    segments = [
+        {"start": float(match.group(1)), "end": float(match.group(2)), "text": _unescape_json_string(match.group(3))}
+        for match in _SEGMENT_OBJECT_RE.finditer(text)
+    ]
+    language_match = re.search(r'"language"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    return {
+        "words": words,
+        "segments": segments,
+        "language": _unescape_json_string(language_match.group(1)) if language_match else "",
+        "text": " ".join(word["word"] for word in words),
+        "salvaged": True,
+    }
+
+
+def _unescape_json_string(value: str) -> str:
+    try:
+        return json.loads(f'"{value}"')
+    except json.JSONDecodeError:
+        return value.replace('\\"', '"').replace("\\\\", "\\")
 
 
 def _audio_mime_type(path: Path) -> str:

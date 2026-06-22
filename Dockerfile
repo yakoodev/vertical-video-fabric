@@ -1,3 +1,12 @@
+# --- Stage 1: build the React SPA (only dist/ is copied into the final image) ---
+FROM node:24-bookworm-slim AS frontend-build
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend ./
+RUN npm run build
+
+# --- Stage 2: runtime ---
 FROM node:24-bookworm-slim
 
 ARG TIKTOK_UPLOADER_REF=73475dbb67be5d8e5e7181af665fbf7f0db7fff4
@@ -21,6 +30,7 @@ RUN apt-get update \
         chromium \
         ffmpeg \
         git \
+        libglib2.0-0 \
         python3 \
         python3-pip \
         python3-venv \
@@ -30,6 +40,11 @@ RUN python3 -m venv /opt/venv
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# YuNet DNN face-detection model for the deterministic autofocus (vendored so the
+# build needs no network; falls back to Haar cascades at runtime if absent).
+ENV YUNET_MODEL=/opt/models/yunet.onnx
+COPY vendor/yunet.onnx /opt/models/yunet.onnx
 
 RUN git clone https://github.com/makiisthenes/TiktokAutoUploader.git /opt/TiktokAutoUploader \
     && cd /opt/TiktokAutoUploader \
@@ -45,6 +60,7 @@ COPY app /app/app
 COPY node /app/node
 COPY tests /app/tests
 COPY pytest.ini /app/pytest.ini
+COPY --from=frontend-build /build/dist /app/frontend/dist
 
 RUN mkdir -p /data && chown -R node:node /data /app
 

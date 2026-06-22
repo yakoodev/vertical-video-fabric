@@ -20,6 +20,16 @@ from app.settings import settings
 from app.store import AppStore
 
 
+def test_preset_with_subtitle_offset_clamps_and_stashes(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    service = ClipRenderService(store)
+    assert service._preset_with_subtitle_offset({"id": 1}, None) == {"id": 1}
+    assert service._preset_with_subtitle_offset({"id": 1}, 0.5)["subtitle_offset_override"] == 0.5
+    # Clamped to the supported nudge range.
+    assert service._preset_with_subtitle_offset({"id": 1}, 9)["subtitle_offset_override"] == 2.0
+    assert service._preset_with_subtitle_offset({"id": 1}, -9)["subtitle_offset_override"] == -2.0
+
+
 def _store(tmp_path, monkeypatch) -> AppStore:
     data_dir = tmp_path / "data"
     monkeypatch.setattr(settings, "data_dir", data_dir)
@@ -293,7 +303,7 @@ def test_finalize_render_transcribes_before_mixing_music(tmp_path, monkeypatch):
     output = settings.clip_dir / "r.mp4"
     order: list[str] = []
 
-    def fake_subs(*, clip_id, input_path, output_path, subtitle_profile_id, preset, subtitle_ranges):
+    def fake_subs(*, clip_id, input_path, output_path, subtitle_profile_id, preset):
         order.append("subtitle")
         Path(output_path).write_bytes(b"subbed")
 
@@ -317,7 +327,6 @@ def test_finalize_render_transcribes_before_mixing_music(tmp_path, monkeypatch):
         output_path=output,
         preset=preset,
         subtitle_profile_id=7,
-        subtitle_ranges=None,
     )
 
     assert order == ["subtitle", "music"]
@@ -707,13 +716,16 @@ def test_render_montage_with_mock_subtitles_transcribes_each_part(tmp_path, monk
     transcript = json.loads(track["transcript_json"])
     usage = json.loads(track["usage_json"])
     words = transcript["words"]
-    assert usage["subtitleChunkedTranscription"] is True
-    assert usage["subtitleChunkCount"] == 2
+    # Subtitles are transcribed from the whole stitched clip in a single pass so
+    # the timestamps stay locked to the audio they are burned over (no chunked
+    # per-part re-seek, which used to drift on real concatenated media).
+    assert "subtitleChunkedTranscription" not in usage
     assert usage["subtitleTimingOffsetSec"] == 0.25
-    assert len(words) == 8
+    assert words, "expected word-level timestamps"
+    # The profile carries a +0.25s offset, so the first word starts no earlier.
     assert words[0]["start"] >= 0.24
-    assert words[4]["start"] >= 2.05
-    assert max(word["end"] for word in words) <= transcript["duration"]
+    # Every word must stay within the clip duration (no drift past the end).
+    assert max(word["end"] for word in words) <= transcript["duration"] + 0.001
 
 
 def test_render_clip_plan_stitches_multiple_segments(tmp_path, monkeypatch):

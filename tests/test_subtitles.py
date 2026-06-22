@@ -239,7 +239,39 @@ def test_gemini_subtitle_payload_uses_files_api_and_json_schema():
     assert parts[0]["file_data"]["mime_type"] == "audio/wav"
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
     assert payload["generationConfig"]["responseJsonSchema"]["required"][-1] == "words"
+    # A generous output cap keeps long word-level transcripts from truncating.
+    assert payload["generationConfig"]["maxOutputTokens"] >= 32768
     assert "do not anticipate speech" in parts[1]["text"].lower()
+
+
+def test_gemini_subtitle_recovers_from_truncated_json(tmp_path):
+    # Gemini occasionally truncates the words[] array (hitting the output token
+    # limit), producing invalid JSON. The provider must salvage the complete
+    # words instead of failing the whole render.
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"wav")
+    truncated = (
+        '{"text":"привет мир","language":"ru","duration":3,'
+        '"segments":[{"start":0,"end":3,"text":"привет мир"}],'
+        '"words":[{"word":"привет","start":0.0,"end":0.5},'
+        '{"word":"мир","start":0.6,"end":1.1},{"word":"тест'
+    )
+
+    class FakeClient:
+        def upload_file(self, path: Path, mime_type: str):
+            return {"name": "files/audio", "uri": "https://file-uri", "mimeType": "audio/wav"}
+
+        def wait_file_active(self, file_info):
+            return file_info
+
+        def generate_content(self, model, payload):
+            return {"candidates": [{"content": {"parts": [{"text": truncated}]}}]}
+
+    result = GeminiSubtitleProvider(FakeClient()).transcribe(audio_path, {"language": "ru"}, "gemini-2.5-flash")
+
+    assert [word.word for word in result.words] == ["привет", "мир"]
+    assert result.words[0].start == 0.0
+    assert result.words[1].end == 1.1
 
 
 def test_gemini_subtitle_provider_uploads_waits_and_parses_response(tmp_path):
@@ -448,6 +480,56 @@ def test_gemini_subtitle_provider_fails_without_words(tmp_path):
 
     with pytest.raises(RuntimeError, match="no word-level timestamps"):
         GeminiSubtitleProvider(FakeClient()).transcribe(audio_path, {"language": "en"}, "gemini-2.5-flash")
+
+
+def test_whisper_provider_builds_word_timestamps(tmp_path):
+    from app.subtitles.whisper_local import WhisperSubtitleProvider
+
+    class FakeWord:
+        def __init__(self, word, start, end):
+            self.word, self.start, self.end = word, start, end
+
+    class FakeSegment:
+        def __init__(self, start, end, text, words):
+            self.start, self.end, self.text, self.words = start, end, text, words
+
+    class FakeInfo:
+        language = "ru"
+        language_probability = 0.98
+
+    class FakeModel:
+        def transcribe(self, audio, **kwargs):
+            assert kwargs["word_timestamps"] is True
+            assert kwargs["vad_filter"] is True
+            return (
+                iter(
+                    [
+                        FakeSegment(1.2, 2.0, "Привет мир", [FakeWord(" Привет", 1.2, 1.7), FakeWord(" мир", 1.75, 2.0)]),
+                    ]
+                ),
+                FakeInfo(),
+            )
+
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"wav")
+    provider = WhisperSubtitleProvider(model_loader=lambda size: FakeModel())
+    result = provider.transcribe(audio, {"language": "ru"}, "fake-size")
+
+    assert [word.word for word in result.words] == ["Привет", "мир"]
+    # Whisper anchors the first word at its real onset (1.2s), not at 0.
+    assert result.words[0].start == 1.2
+    assert result.words[-1].end == 2.0
+    assert result.language == "ru"
+
+
+def test_whisper_profile_ignores_leftover_llm_model_name():
+    from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
+    from app.subtitles.whisper_local import WhisperSubtitleProvider
+
+    assert isinstance(get_subtitle_provider("whisper"), WhisperSubtitleProvider)
+    # A profile carrying a Gemini model id must not be passed to WhisperModel.
+    assert subtitle_model_for_profile({"provider": "whisper", "model": "gemini-3.5-flash"}) == settings.whisper_model_size
+    assert subtitle_model_for_profile({"provider": "whisper", "model": "medium"}) == "medium"
 
 
 def test_gemini_profile_uses_configured_transcribe_model(monkeypatch):

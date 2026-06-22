@@ -16,6 +16,8 @@ class Settings:
         self.banner_dir = self.data_dir / "banners"
         self.audio_dir = self.data_dir / "audio"
         self.subtitle_dir = self.data_dir / "subtitles"
+        self.storyboard_dir = self.data_dir / "storyboards"
+        self.whisper_model_dir = self.data_dir / "whisper-models"
         self.tmp_dir = self.data_dir / "tmp"
         self.runtime_dir = self.data_dir / "runtime"
         self.log_dir = self.data_dir / "logs"
@@ -41,6 +43,25 @@ class Settings:
         self.ai_video_provider = os.getenv("AI_VIDEO_PROVIDER", "mock").strip().lower() or "mock"
         self.ai_analysis_stale_seconds = int(os.getenv("AI_ANALYSIS_STALE_SECONDS", str(2 * 60 * 60)))
         self.subtitle_provider = os.getenv("SUBTITLE_PROVIDER", "mock").strip().lower() or "mock"
+        # Long episodes are analyzed in time windows so the model covers the whole
+        # runtime instead of skimming one stretch. Windowing kicks in only when the
+        # source is meaningfully longer than one window.
+        self.analysis_window_seconds = float(os.getenv("ANALYSIS_WINDOW_SECONDS", "780"))
+        self.analysis_window_overlap_seconds = float(os.getenv("ANALYSIS_WINDOW_OVERLAP_SECONDS", "30"))
+        # Local motion+audio action detector (provider "action"): no LLM/tokens.
+        self.action_max_clips = int(os.getenv("ACTION_MAX_CLIPS", "18"))
+        self.action_min_clip_seconds = float(os.getenv("ACTION_MIN_CLIP_SECONDS", "20"))
+        self.action_max_clip_seconds = float(os.getenv("ACTION_MAX_CLIP_SECONDS", "60"))
+        # Lead-in / tail padding captures the build-up and aftermath around a peak;
+        # merge-gap stitches nearby bursts into one fuller scene instead of slivers.
+        self.action_lead_seconds = float(os.getenv("ACTION_LEAD_SECONDS", "4"))
+        self.action_tail_seconds = float(os.getenv("ACTION_TAIL_SECONDS", "3"))
+        self.action_merge_gap_seconds = float(os.getenv("ACTION_MERGE_GAP_SECONDS", "12"))
+        # Local Whisper (faster-whisper) — accurate word-level timestamps with VAD,
+        # which is far more reliable than LLM-guessed timings for karaoke subtitles.
+        self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"
+        self.whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
+        self.whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"
         self.polza_api_key = os.getenv("POLZA_API_KEY", "").strip()
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(
@@ -49,6 +70,12 @@ class Settings:
         self.polza_transcribe_model = os.getenv(
             "POLZA_TRANSCRIBE_MODEL", "openai/gpt-4o-transcribe"
         ).strip()
+        # Polza VLM mode (provider "polza"): Whisper transcript + sampled frames fed
+        # to a vision model. Frames are sampled every N seconds and analyzed in
+        # time windows so a long film fits comfortably in each request.
+        self.polza_frame_interval_seconds = float(os.getenv("POLZA_FRAME_INTERVAL_SECONDS", "10"))
+        self.polza_frame_width = int(os.getenv("POLZA_FRAME_WIDTH", "512"))
+        self.polza_window_seconds = float(os.getenv("POLZA_WINDOW_SECONDS", "600"))
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
@@ -65,8 +92,9 @@ class Settings:
         )
         self.gemini_file_poll_seconds = float(os.getenv("GEMINI_FILE_POLL_SECONDS", "5"))
         self.gemini_file_timeout_seconds = float(os.getenv("GEMINI_FILE_TIMEOUT_SECONDS", "900"))
-        self.gemini_http_retries = int(os.getenv("GEMINI_HTTP_RETRIES", "3"))
+        self.gemini_http_retries = int(os.getenv("GEMINI_HTTP_RETRIES", "5"))
         self.gemini_http_retry_seconds = float(os.getenv("GEMINI_HTTP_RETRY_SECONDS", "2"))
+        self.gemini_http_retry_cap_seconds = float(os.getenv("GEMINI_HTTP_RETRY_CAP_SECONDS", "30"))
         self.gemini_upload_chunk_bytes = int(
             os.getenv("GEMINI_UPLOAD_CHUNK_BYTES", str(8 * 1024 * 1024))
         )
@@ -86,6 +114,8 @@ class Settings:
             self.banner_dir,
             self.audio_dir,
             self.subtitle_dir,
+            self.storyboard_dir,
+            self.whisper_model_dir,
             self.tmp_dir,
             self.runtime_dir,
             self.log_dir,

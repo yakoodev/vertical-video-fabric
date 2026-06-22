@@ -29,6 +29,25 @@ SEGMENT_SCHEMA = {
         "category": {"type": "string", "maxLength": 40},
         "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
         "reason": {"type": "string", "maxLength": 500, "description": "Russian reason for including this source range."},
+        "focus": {
+            "type": "array",
+            "description": (
+                "Optional point-of-interest track for vertical (9:16) reframing of a wider source. "
+                "List the horizontal centre of the main subject/action over time so the vertical crop "
+                "can follow it. Sample roughly one point every 2-4 seconds (and at any hard subject "
+                "change), keeping motion gradual. Omit entirely if the framing should stay centred."
+            ),
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["t", "x"],
+                "properties": {
+                    "t": {"type": "number", "minimum": 0, "description": "Seconds from this segment's start."},
+                    "x": {"type": "number", "minimum": 0, "maximum": 1, "description": "Horizontal centre of interest, 0=left … 1=right."},
+                    "y": {"type": "number", "minimum": 0, "maximum": 1, "description": "Vertical centre of interest, 0=top … 1=bottom."},
+                },
+            },
+        },
     },
 }
 

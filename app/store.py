@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import urlsplit, urlunsplit
@@ -24,7 +25,9 @@ VALID_PLATFORMS = {"youtube", "tiktok"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
-VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock"}
+VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action"}
+# Subtitles can additionally use the local Whisper engine (analysis cannot).
+VALID_SUBTITLE_PROVIDERS = VALID_AI_PROVIDERS | {"whisper"}
 VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
 VALID_ANALYSIS_STATUSES = {"queued", "running", "succeeded", "failed"}
 VALID_SEGMENT_STATUSES = {"candidate", "rendering", "rendered", "rejected"}
@@ -422,23 +425,48 @@ class AppStore:
         self.mark_stale_ai_analyses_failed()
         rows = self.db.query_all(
             """
-            SELECT 'job' AS kind, id, status, title AS label, error, created_at, updated_at, scheduled_at
+            SELECT 'job' AS kind, id, status, title AS label, error, created_at, updated_at, scheduled_at,
+                   (SELECT source_id FROM clips WHERE clips.id = jobs.clip_id) AS source_id
             FROM jobs
             WHERE status IN ('queued', 'running')
                OR (status IN ('failed', 'needs_reauth', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
             UNION ALL
-            SELECT 'clip' AS kind, id, status, title AS label, error, created_at, updated_at, '' AS scheduled_at
+            SELECT 'clip' AS kind, id, status, title AS label, error, created_at, updated_at, '' AS scheduled_at, source_id
             FROM clips
             WHERE status IN ('queued', 'rendering')
                OR (status IN ('failed', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
             UNION ALL
-            SELECT 'analysis' AS kind, id, status, provider || ' ' || model AS label, error, created_at, updated_at, '' AS scheduled_at
+            SELECT 'analysis' AS kind, id, status, provider || ' ' || model AS label, error, created_at, updated_at, '' AS scheduled_at, source_id
             FROM ai_analyses
             WHERE status IN ('queued', 'running')
                OR (status IN ('failed', 'succeeded') AND updated_at >= datetime('now', '-1 day'))
             ORDER BY updated_at DESC
             LIMIT 30
             """
+        )
+        return [dict(row) for row in rows]
+
+    def list_recent_tasks(self, limit: int = 80) -> list[dict]:
+        """Recent tasks across renders, analyses and publications regardless of
+        status — powers the unified Tasks page / execution log."""
+        self.mark_stale_ai_analyses_failed()
+        rows = self.db.query_all(
+            """
+            SELECT 'job' AS kind, id, status, title AS label, error, created_at, updated_at, scheduled_at,
+                   (SELECT source_id FROM clips WHERE clips.id = jobs.clip_id) AS source_id, '' AS detail
+            FROM jobs
+            UNION ALL
+            SELECT 'clip' AS kind, id, status, title AS label, error, created_at, updated_at, '' AS scheduled_at,
+                   source_id, '' AS detail
+            FROM clips
+            UNION ALL
+            SELECT 'analysis' AS kind, id, status, provider || ' ' || model AS label, error, created_at, updated_at,
+                   '' AS scheduled_at, source_id, provider AS detail
+            FROM ai_analyses
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
         )
         return [dict(row) for row in rows]
 
@@ -576,12 +604,59 @@ class AppStore:
         if not row:
             raise KeyError(f"source not found: {source_id}")
         data = dict(row)
+        data["content_crop"] = _parse_content_crop(data.get("content_crop"))
+        # Don't ship the (potentially huge) cached transcript in every source
+        # response — expose only a presence flag + size for the UI.
+        raw_transcript = data.pop("transcript_json", "") or ""
+        cues = _parse_transcript(raw_transcript)
+        data["has_transcript"] = bool(cues)
+        data["transcript_segments"] = len(cues)
         if include_related:
             data["analyses"] = self.list_ai_analyses(source_id=source_id)
             data["segments"] = self.list_ai_segments(source_id=source_id)
             data["clip_plans"] = self.list_clip_plans(source_id=source_id)
             data["clips"] = self.list_clips(source_id=source_id)
         return data
+
+    def get_source_transcript(self, source_id: int) -> list[dict]:
+        """Return the cached Whisper transcript cues for a source, or []."""
+        row = self.db.query_one("SELECT transcript_json FROM sources WHERE id = ?", (source_id,))
+        if not row:
+            raise KeyError(f"source not found: {source_id}")
+        return _parse_transcript(row["transcript_json"])
+
+    def set_source_transcript(self, source_id: int, cues: list[dict], model: str = "") -> None:
+        """Cache the Whisper transcript on the source so re-analysis reuses it."""
+        self.db.execute(
+            "UPDATE sources SET transcript_json = ?, transcript_model = ? WHERE id = ?",
+            (_json_text(cues or []), str(model or ""), source_id),
+        )
+
+    def delete_source(self, source_id: int) -> dict:
+        """Delete a source and everything derived from it (analyses, segments, clip
+        plans, clips, subtitle tracks via FK cascade) plus the files on disk.
+
+        ``jobs.clip_id`` has no ``ON DELETE`` action, so detach those references
+        before the clip cascade fires, mirroring :meth:`delete_clip`.
+        """
+        source = self.get_source(source_id)
+        files: list[str] = []
+        if source.get("local_path"):
+            files.append(source["local_path"])
+        for clip in self.list_clips(source_id=source_id):
+            for key in ("output_path", "preview_path"):
+                if clip.get(key):
+                    files.append(clip[key])
+            for track in self.list_subtitle_tracks(clip["id"]):
+                if track.get("ass_path"):
+                    files.append(track["ass_path"])
+        self.db.execute(
+            "UPDATE jobs SET clip_id = NULL WHERE clip_id IN (SELECT id FROM clips WHERE source_id = ?)",
+            (source_id,),
+        )
+        self._delete_record("sources", source_id)
+        files_removed = _remove_files_within(files, settings.data_dir)
+        return {"deleted": True, "source": source, "files_removed": files_removed}
 
     def get_source_stats(self, source_id: int) -> dict:
         self.get_source(source_id)
@@ -624,6 +699,8 @@ class AppStore:
                 updates["local_path"] = _path_inside(value, settings.source_dir, "local_path")
             elif key == "metadata":
                 updates["metadata_json"] = _json_text(value)
+            elif key == "content_crop":
+                updates["content_crop"] = _normalize_content_crop(value)
             elif key in {
                 "original_url",
                 "original_filename",
@@ -830,8 +907,8 @@ class AppStore:
                 """
                 INSERT INTO ai_segments
                     (source_id, analysis_id, start_sec, end_sec, title, description, score,
-                     category, color, reason, status, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     category, color, reason, status, sort_order, focus_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     analysis["source_id"],
@@ -846,6 +923,7 @@ class AppStore:
                     segment["reason"],
                     segment["status"],
                     segment["sort_order"],
+                    segment["focus_json"],
                 ),
             )
             created.append(self.get_ai_segment(cur.lastrowid))
@@ -868,13 +946,13 @@ class AppStore:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY start_sec, id"
-        return [dict(row) for row in self.db.query_all(sql, params)]
+        return [_segment_dict(row) for row in self.db.query_all(sql, params)]
 
     def get_ai_segment(self, segment_id: int) -> dict:
         row = self.db.query_one("SELECT * FROM ai_segments WHERE id = ?", (segment_id,))
         if not row:
             raise KeyError(f"segment not found: {segment_id}")
-        return dict(row)
+        return _segment_dict(row)
 
     def update_ai_segment_status(self, segment_id: int, status: str) -> dict:
         self.get_ai_segment(segment_id)
@@ -883,6 +961,12 @@ class AppStore:
             segment_id,
             {"status": _choice(status, VALID_SEGMENT_STATUSES, "status")},
         )
+        return self.get_ai_segment(segment_id)
+
+    def update_ai_segment_focus(self, segment_id: int, focus: Any) -> dict:
+        segment = self.get_ai_segment(segment_id)
+        duration = float(segment["end_sec"]) - float(segment["start_sec"])
+        self._update_record("ai_segments", segment_id, {"focus_json": _normalize_focus(focus, duration)})
         return self.get_ai_segment(segment_id)
 
     def update_ai_segment_timecodes(self, segment_id: int, start_sec: float, end_sec: float) -> dict:
@@ -1596,7 +1680,7 @@ class AppStore:
         self.get_clip(clip_id)
         if subtitle_profile_id is not None:
             self.get_subtitle_profile(subtitle_profile_id)
-        provider = _choice(provider, VALID_AI_PROVIDERS, "provider")
+        provider = _choice(provider, VALID_SUBTITLE_PROVIDERS, "provider")
         status = _choice(status, VALID_ANALYSIS_STATUSES, "status")
         ass_path_text = _path_inside(ass_path, settings.subtitle_dir, "ass_path") if ass_path else ""
         cur = self.db.execute(
@@ -1736,7 +1820,7 @@ class AppStore:
             """,
             (clip_plan_id,),
         )
-        return [dict(row) for row in rows]
+        return [_segment_dict(row) for row in rows]
 
     def _update_record(self, table: str, record_id: int, values: dict[str, Any]) -> None:
         if not values:
@@ -1816,6 +1900,100 @@ def _path_inside(value: str | Path, root: Path, field_name: str) -> str:
     return str(resolved_path)
 
 
+def _normalize_content_crop(value: Any) -> str:
+    """Validate a normalized content-crop rect and return it as JSON text.
+
+    ``None`` / empty / a full-frame rect clears the crop (stored as "").
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise ValueError("content_crop must be a JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("content_crop must be an object with x, y, w, h")
+    try:
+        x = float(value["x"])
+        y = float(value["y"])
+        w = float(value["w"])
+        h = float(value["h"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("content_crop requires numeric x, y, w, h") from exc
+    if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1):
+        raise ValueError("content_crop values must be within 0..1")
+    if x + w > 1.0001 or y + h > 1.0001:
+        raise ValueError("content_crop must stay inside the frame")
+    # A full-frame crop is the same as no crop.
+    if x <= 0.001 and y <= 0.001 and w >= 0.999 and h >= 0.999:
+        return ""
+    return json.dumps({"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)})
+
+
+def _parse_focus(value: Any) -> list:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _segment_dict(row: Any) -> dict:
+    data = dict(row)
+    data["focus"] = _parse_focus(data.get("focus_json"))
+    return data
+
+
+def _parse_content_crop(value: Any) -> dict | None:
+    if not value:
+        return None
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_transcript(value: Any) -> list[dict]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _remove_files_within(paths: Iterable[str], root: Path) -> int:
+    """Best-effort delete of files that live inside ``root``. Never raises."""
+    removed = 0
+    root_resolved = root.resolve()
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            path = Path(raw).resolve(strict=False)
+            path.relative_to(root_resolved)
+        except (ValueError, OSError):
+            continue
+        try:
+            if path.is_file():
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_order: int) -> dict:
     start_sec = float(segment.get("start_sec", 0))
     end_sec = float(segment.get("end_sec", 0))
@@ -1849,7 +2027,43 @@ def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_ord
         "reason": str(segment.get("reason", "")).strip()[:500],
         "status": _choice(str(segment.get("status", "candidate")), VALID_SEGMENT_STATUSES, "status"),
         "sort_order": int(segment.get("sort_order", sort_order)),
+        "focus_json": _normalize_focus(segment.get("focus"), duration),
     }
+
+
+def _normalize_focus(value: Any, duration: float) -> str:
+    """Validate a point-of-interest track → JSON ``[{t,x,y}]`` (sorted, clamped).
+
+    ``t`` is seconds from the segment start, ``x``/``y`` normalized centres 0..1.
+    Invalid points are skipped; anything unusable yields ``"[]"``.
+    """
+    if not value:
+        return "[]"
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return "[]"
+    if not isinstance(value, list):
+        return "[]"
+    points: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            t = float(item["t"])
+            x = float(item["x"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        point = {"t": round(max(0.0, min(duration, t)), 3), "x": round(min(1.0, max(0.0, x)), 4)}
+        if "y" in item:
+            try:
+                point["y"] = round(min(1.0, max(0.0, float(item["y"]))), 4)
+            except (TypeError, ValueError):
+                pass
+        points.append(point)
+    points.sort(key=lambda p: p["t"])
+    return json.dumps(points[:64])
 
 
 def _color_for_category(category: str) -> str:
@@ -1896,6 +2110,7 @@ def _prepare_ffmpeg_preset_fields(fields: dict[str, Any], partial: bool) -> dict
         "color_strength": 1.0,
         "vignette": 0.0,
         "grain": 0.0,
+        "smart_reframe": True,
     }
     raw = fields if partial else {**defaults, **fields}
     values: dict[str, Any] = {}
@@ -1955,7 +2170,7 @@ def _prepare_ffmpeg_preset_fields(fields: dict[str, Any], partial: bool) -> dict
             if number < 0 or number > 30:
                 raise ValueError(f"{key} must be between 0 and 30")
             values[key] = round(number, 3)
-        elif key in {"music_loop", "music_duck"}:
+        elif key in {"music_loop", "music_duck", "smart_reframe"}:
             values[key] = int(bool(value))
         elif key == "color_style":
             values[key] = _choice(str(value), VALID_COLOR_STYLES, key)
@@ -2078,7 +2293,7 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
                 raise ValueError("label is required")
             values[key] = label
         elif key == "provider":
-            values[key] = _choice(str(value), VALID_AI_PROVIDERS, key)
+            values[key] = _choice(str(value), VALID_SUBTITLE_PROVIDERS, key)
         elif key in {"model", "language", "font_family"}:
             values[key] = str(value).strip()
         elif key == "timing_offset_sec":

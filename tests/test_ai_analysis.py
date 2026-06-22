@@ -3,7 +3,12 @@ import struct
 from pathlib import Path
 
 from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
-from app.ai.service import VideoAnalysisService, _energy_boundaries_from_pcm, _segments_for_store
+from app.ai.service import (
+    VideoAnalysisService,
+    _energy_boundaries_from_pcm,
+    _highlights_clip_cap,
+    _segments_for_store,
+)
 from app.analysis_preprocess import build_analysis_preprocess_args, normalize_analysis_preprocessing
 from app.crypto import CookieCipher
 from app.default_prompts import ANIME_ANALYSIS_PROMPT
@@ -133,7 +138,10 @@ def test_video_analysis_uses_anime_prompt_for_smotvibe_without_override(tmp_path
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
     assert analysis["status"] == "succeeded"
-    assert seen["prompt"] == ANIME_ANALYSIS_PROMPT
+    # The model gets the anime prompt augmented with the focus-track instruction;
+    # the stored request keeps the user's clean prompt.
+    assert seen["prompt"].startswith(ANIME_ANALYSIS_PROMPT)
+    assert "focus" in seen["prompt"].lower()
     assert json.loads(analysis["request_json"])["prompt"] == ANIME_ANALYSIS_PROMPT
 
 
@@ -912,7 +920,7 @@ def test_video_analysis_fails_when_narrative_retry_still_has_invalid_timestamps(
 
     monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
 
-    analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
+    analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
     assert analysis["status"] == "failed"
     assert calls["count"] == 2
@@ -956,7 +964,7 @@ def test_video_analysis_fails_when_narrative_retry_still_has_oversized_segments(
 
     monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
 
-    analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
+    analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
     assert analysis["status"] == "failed"
     assert calls["count"] == 2
@@ -1155,10 +1163,18 @@ def test_failed_video_analysis_is_recorded_without_losing_source(tmp_path, monke
         status="ready",
     )
 
+    class _BoomAnalyzer:
+        provider = "polza"
+
+        def analyze(self, source, prompt, model):
+            raise RuntimeError("analyzer exploded")
+
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: _BoomAnalyzer())
+
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="polza")
 
     assert analysis["status"] == "failed"
-    assert "not implemented" in analysis["error"]
+    assert "analyzer exploded" in analysis["error"]
     assert store.list_ai_segments(source_id=source["id"]) == []
     assert store.get_source(source["id"])["status"] == "ready"
 
@@ -1345,8 +1361,8 @@ def test_video_analysis_anime_caps_highlight_clip_count(tmp_path, monkeypatch):
         status="ready",
     )
     moments = [
-        AnalysisSegment(start_sec=100 + index * 150, end_sec=130 + index * 150, title=f"Момент {index}")
-        for index in range(9)
+        AnalysisSegment(start_sec=50 + index * 100, end_sec=80 + index * 100, title=f"Момент {index}")
+        for index in range(16)
     ]
 
     class FakeAnalyzer:
@@ -1365,4 +1381,26 @@ def test_video_analysis_anime_caps_highlight_clip_count(tmp_path, monkeypatch):
 
     assert analysis["status"] == "succeeded"
     clip_plans = store.list_clip_plans(source_id=source["id"])
-    assert len(clip_plans) == 6
+    # Highlights cap scales with episode length so coverage isn't truncated; for a
+    # 30-minute source it keeps more than the base 6 but still caps the flood.
+    expected = _highlights_clip_cap(1800)
+    assert expected > 6
+    assert len(clip_plans) == expected
+
+
+def test_action_analyzer_builds_clips_from_detected_regions(monkeypatch):
+    from app.ai import action_detect
+    from app.ai.registry import get_video_analyzer
+    from app.ai.action_detect import ActionVideoAnalyzer
+
+    assert isinstance(get_video_analyzer("action"), ActionVideoAnalyzer)
+    monkeypatch.setattr(action_detect.Path, "exists", lambda self: True)
+    monkeypatch.setattr(
+        action_detect, "detect_action_regions",
+        lambda path, duration, **kw: [(0.9, 20.0, 48.0), (0.8, 2583.0, 2638.0)],
+    )
+    result = ActionVideoAnalyzer().analyze({"local_path": "/x.mp4", "duration_sec": 3863}, "", "")
+    assert len(result.clips) == 2
+    assert result.clips[0].segments[0].start_sec == 20.0
+    assert result.clips[0].category == "Экшн"
+    assert result.usage["provider"] == "action"

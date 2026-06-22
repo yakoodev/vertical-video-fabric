@@ -1,4 +1,4 @@
-def test_html_pages_render(tmp_path, monkeypatch):
+def test_core_api_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("POSTING_PROVIDER_MODE", "mock")
     from app.settings import settings
 
@@ -11,6 +11,7 @@ def test_html_pages_render(tmp_path, monkeypatch):
     settings.banner_dir = settings.data_dir / "banners"
     settings.audio_dir = settings.data_dir / "audio"
     settings.subtitle_dir = settings.data_dir / "subtitles"
+    settings.storyboard_dir = settings.data_dir / "storyboards"
     settings.tmp_dir = settings.data_dir / "tmp"
     settings.runtime_dir = settings.data_dir / "runtime"
     settings.log_dir = settings.data_dir / "logs"
@@ -22,9 +23,6 @@ def test_html_pages_render(tmp_path, monkeypatch):
     from app.main import app, store
 
     client = TestClient(app)
-    response = client.get("/sources")
-    assert response.status_code == 200
-    assert "Sources" in response.text
 
     source_path = settings.source_dir / "source.mp4"
     source_path.write_bytes(b"video")
@@ -37,54 +35,24 @@ def test_html_pages_render(tmp_path, monkeypatch):
         height=1920,
         status="ready",
     )
-    response = client.get(f"/sources/{source['id']}")
-    assert response.status_code == 200
-    assert "Timeline" in response.text
-    assert "Artemox" in response.text
 
-    response = client.get(f"/sources/{source['id']}/studio")
-    assert response.status_code == 200
-    assert "Запустить анализ" in response.text
-    assert "timeline-board in-player" not in response.text
-    assert "Модели" in response.text
-    assert "Промпты" in response.text
-    assert "Баннеры" in response.text
-    assert "Субтитры" in response.text
-    assert 'name="analysis_max_dimension" type="number" min="144" max="2160" value="1080"' in response.text
-    assert 'name="analysis_video_crf" type="number" min="18" max="40" value="26"' in response.text
-    assert 'name="reduce_fps_for_analysis" value="true" checked' not in response.text
-
-    smotvibe_path = settings.source_dir / "smotvibe-source.mp4"
-    smotvibe_path.write_bytes(b"video")
-    smotvibe_source = store.create_source(
-        "smotvibe_url",
-        smotvibe_path,
-        original_url="https://smotvibe.sbs/series/6802576/",
-        original_filename="smotvibe-6802576.mp4",
-        duration_sec=60,
-        width=1080,
-        height=1920,
-        status="ready",
-    )
-    anime_preset = next(preset for preset in store.list_prompt_presets("analysis") if preset["label"] == "Anime analysis")
-    response = client.get(f"/sources/{smotvibe_source['id']}/studio")
-    assert response.status_code == 200
-    assert f'value="{anime_preset["id"]}" selected' in response.text
-
+    # Analysis runs synchronously with the mock provider.
     response = client.post(f"/api/sources/{source['id']}/analyze", json={"provider": "mock"})
     assert response.status_code == 200
     analysis_id = response.json()["id"]
     assert response.json()["status"] == "succeeded"
-    response = client.get(f"/sources/{source['id']}/studio")
-    assert response.status_code == 200
-    assert "Генерации" in response.text
     response = client.post(
         f"/ui/ai-analyses/{analysis_id}/delete",
-        data={"next": f"/sources/{source['id']}/studio?stage=analysis"},
+        data={"next": f"/projects/{source['id']}/source"},
         follow_redirects=False,
     )
     assert response.status_code == 303
     assert store.list_ai_analyses(source_id=source["id"]) == []
+
+    # Rename the source (new PATCH endpoint).
+    response = client.patch(f"/api/sources/{source['id']}", json={"name": "Renamed project"})
+    assert response.status_code == 200
+    assert response.json()["original_filename"] == "Renamed project"
 
     account = store.upsert_account("youtube", "clip-target", "SID=a; HSID=b; SSID=c; APISID=d; SAPISID=e")
     clip = store.create_clip(source["id"], title="Clip API title")
@@ -107,33 +75,14 @@ def test_html_pages_render(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["clip_id"] == clip["id"]
 
-    response = client.get("/accounts")
+    # Rename the clip (new PATCH endpoint).
+    response = client.patch(f"/api/clips/{clip['id']}", json={"title": "Renamed clip"})
     assert response.status_code == 200
-    assert "Аккаунты" in response.text
+    assert response.json()["title"] == "Renamed clip"
 
-    response = client.get("/posts/new")
-    assert response.status_code == 200
-    assert "New Post" in response.text
-
-    response = client.get("/jobs")
-    assert response.status_code == 200
-    assert "Публикации" in response.text
-
-    response = client.get("/clips")
-    assert response.status_code == 200
-    assert "Клипы" in response.text
-
-    # The presets page is gone; its forms now live in the shared Settings panel.
-    response = client.get("/presets", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/sources"
-
-    # The Settings panel (rendered on every page) hosts the music + render tabs.
-    response = client.get("/sources")
-    assert response.status_code == 200
-    assert 'data-settings-tab="music"' in response.text
-    assert "Цветовой стиль" in response.text
-    assert "Музыкальный трек" in response.text
+    # Listing endpoints return JSON, filterable by source.
+    assert client.get("/api/clips").status_code == 200
+    assert client.get(f"/api/clips?source_id={source['id']}").status_code == 200
 
     response = client.post(
         "/api/audio-tracks",
@@ -156,10 +105,6 @@ def test_html_pages_render(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["music_track_id"] == track_id
     assert response.json()["color_style"] == "cinematic"
-
-    # The uploaded track shows in the settings Music tab.
-    response = client.get("/sources")
-    assert "Lofi loop" in response.text
 
     # Standalone clip upload: a finished clip becomes a publishable library entry
     # without going through analysis/render. ffprobe is stubbed so the test does
@@ -185,15 +130,11 @@ def test_html_pages_render(tmp_path, monkeypatch):
     assert uploaded_clip["title"] == "Hand-edited clip"
     # The backing source is hidden from the Projects list.
     assert all(item["id"] != uploaded_clip["source_id"] for item in store.list_sources())
-    # But the clip is visible in the library.
-    response = client.get("/clips")
-    assert "Hand-edited clip" in response.text
-
-    # An uploaded clip exposes the render panel; a studio-rendered one does not.
-    response = client.get(f"/clips/{uploaded_clip_id}")
-    assert "Рендер: субтитры" in response.text
-    response = client.get(f"/clips/{clip['id']}")
-    assert "Рендер: субтитры" not in response.text
+    # But the clip is visible in the library via the API.
+    library = client.get("/api/clips").json()
+    assert any(c["id"] == uploaded_clip_id for c in library)
+    # An uploaded clip keeps its pristine clip_upload source so it can be re-rendered.
+    assert store.get_source(uploaded_clip["source_id"])["source_type"] == "clip_upload"
 
     # The render route delegates to the render service and redirects to the new
     # clip. ffmpeg is not available in the test env, so the service is stubbed.
@@ -220,12 +161,7 @@ def test_html_pages_render(tmp_path, monkeypatch):
     assert response.headers["location"] == f"/clips/{rendered['id']}"
     assert captured["clip_id"] == uploaded_clip_id
 
-    # Auto page renders and its start route forwards the parsed config to the
-    # automation service.
-    response = client.get("/auto")
-    assert response.status_code == 200
-    assert "Автонарезка" in response.text
-
+    # The auto start route forwards the parsed config to the automation service.
     captured_auto = {}
     monkeypatch.setattr(
         main_module.automation_service,

@@ -21,12 +21,15 @@ from app.automation import AutomationService
 from app.auth import AuthRequired, auth_required_handler, require_auth, token_is_valid
 from app.crypto import CookieCipher
 from app.db import Database
+from app.default_pack import seed_default_pack
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
+from app.storyboard import ensure_storyboard, frame_path
 from app.store import AppStore
+from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
 
@@ -35,6 +38,7 @@ settings.ensure_api_token()
 db = Database(settings.db_path)
 db.init()
 store = AppStore(db, CookieCipher(settings.secret_key_path))
+seed_default_pack(store)
 worker = JobWorker(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
@@ -74,7 +78,6 @@ app = FastAPI(
     ],
 )
 app.add_exception_handler(AuthRequired, auth_required_handler)
-app.mount("/static", StaticFiles(directory=settings.root_dir / "app" / "static"), name="static")
 templates = Jinja2Templates(directory=settings.root_dir / "app" / "templates")
 
 PUBLISHING_METADATA_SCHEMA = {
@@ -272,13 +275,17 @@ class SmotvibeOptionRead(BaseModel):
 
 
 class AnalyzeSourceRequest(BaseModel):
-    provider: Literal["mock", "polza", "gemini", "artemox"] | None = Field(
+    provider: Literal["mock", "action", "polza", "gemini", "artemox"] | None = Field(
         default=None,
         description="Analyzer provider override. Defaults to AI_VIDEO_PROVIDER.",
     )
     model: str | None = Field(default=None, description="Optional model override.")
     prompt: str | None = Field(default=None, description="Analyzer prompt override.")
     prompt_preset_id: int | None = Field(default=None, description="Saved analysis prompt preset id.")
+    use_transcript: bool | None = Field(
+        default=None,
+        description="Feed a Whisper speech transcript to the video LLM. Null = default (on for Gemini).",
+    )
     merge_audio_for_analysis: bool = Field(
         default=False,
         description="Merge source audio tracks before sending video to the analyzer.",
@@ -375,7 +382,7 @@ class BannerPatchPayload(BaseModel):
 
 class SubtitleProfilePayload(BaseModel):
     label: str
-    provider: Literal["mock", "polza", "gemini", "artemox"] = "mock"
+    provider: Literal["mock", "whisper", "polza", "gemini", "artemox"] = "mock"
     model: str = "openai/gpt-4o-transcribe"
     language: str = ""
     timing_offset_sec: float | None = None
@@ -395,7 +402,7 @@ class SubtitleProfilePayload(BaseModel):
 
 class SubtitleProfilePatchPayload(BaseModel):
     label: str | None = None
-    provider: Literal["mock", "polza", "gemini", "artemox"] | None = None
+    provider: Literal["mock", "whisper", "polza", "gemini", "artemox"] | None = None
     model: str | None = None
     language: str | None = None
     timing_offset_sec: float | None = None
@@ -449,7 +456,11 @@ class RenderClipPlansRequest(BaseModel):
     clip_plan_ids: list[int]
     ffmpeg_preset_id: int | None = None
     subtitle_profile_id: int | None = None
+    subtitle_provider: str | None = None
+    subtitle_margin_v: int | None = None
     banner_id: int | None = None
+    banner_height_frac: float | None = None
+    banner_y_frac: float | None = None
     music_track_id: int | None = None
     music_volume: float | None = None
 
@@ -475,11 +486,11 @@ class ClipPlanSegmentMoveRequest(BaseModel):
 
 @app.get("/", include_in_schema=False)
 def root(_auth: AuthDep) -> RedirectResponse:
-    return RedirectResponse(url="/sources", status_code=303)
+    return RedirectResponse(url="/projects", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-def login_page(request: Request, next: str = "/sources") -> HTMLResponse:
+def login_page(request: Request, next: str = "/projects") -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -491,7 +502,7 @@ def login_page(request: Request, next: str = "/sources") -> HTMLResponse:
 def login_submit(
     request: Request,
     token: Annotated[str, Form()],
-    next: Annotated[str, Form()] = "/sources",
+    next: Annotated[str, Form()] = "/projects",
 ):
     safe_next = _safe_next(next)
     if not token_is_valid(token):
@@ -538,15 +549,6 @@ def openapi_json(_auth: AuthDep) -> JSONResponse:
     return JSONResponse(app.openapi())
 
 
-@app.get("/accounts", response_class=HTMLResponse, include_in_schema=False)
-def accounts_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "accounts.html",
-        _ui_context("accounts", accounts=store.list_accounts()),
-    )
-
-
 @app.post("/ui/accounts", include_in_schema=False)
 def ui_add_account(
     _auth: AuthDep,
@@ -574,15 +576,6 @@ def ui_delete_account(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
-@app.get("/sources", response_class=HTMLResponse, include_in_schema=False)
-def sources_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "sources.html",
-        _ui_context("sources", sources=store.list_sources()),
-    )
 
 
 @app.post("/ui/sources/upload", include_in_schema=False)
@@ -638,69 +631,6 @@ def _ingest_source_url(
             filename_label=smotvibe_filename_label,
         )
     return source_ingestor.ingest_url(url)
-
-
-@app.get("/sources/{source_id}", response_class=HTMLResponse, include_in_schema=False)
-def source_page(request: Request, source_id: int, _auth: AuthDep) -> HTMLResponse:
-    try:
-        store.ensure_clip_plans_for_source(source_id)
-        source = store.get_source(source_id, include_related=True)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return templates.TemplateResponse(
-        request,
-        "source_detail.html",
-        _ui_context(
-            "sources",
-            source=source,
-            default_provider=settings.ai_video_provider,
-            presets=store.list_ffmpeg_presets(),
-            subtitle_profiles=store.list_subtitle_profiles(),
-            stats=store.get_source_stats(source_id),
-        ),
-    )
-
-
-@app.get("/sources/{source_id}/studio", response_class=HTMLResponse, include_in_schema=False)
-def source_studio_page(
-    request: Request,
-    source_id: int,
-    _auth: AuthDep,
-    stage: str = "analysis",
-) -> HTMLResponse:
-    try:
-        store.ensure_clip_plans_for_source(source_id)
-        source = store.get_source(source_id, include_related=True)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    defaults = _settings_panel_data()
-    return templates.TemplateResponse(
-        request,
-        "source_studio.html",
-        _ui_context(
-            "sources",
-            source=source,
-            stats=store.get_source_stats(source_id),
-            stage=stage,
-            default_provider=defaults["default_ai_provider"],
-            default_model=defaults["default_ai_model"],
-            analysis_prompt=defaults["analysis_prompt"],
-            analysis_prompt_presets=defaults["analysis_prompt_presets"],
-            default_analysis_prompt_preset_id=_source_analysis_prompt_preset_id(
-                source,
-                defaults["analysis_prompt_presets"],
-                defaults["default_analysis_prompt_preset_id"],
-            ),
-            presets=store.list_ffmpeg_presets(),
-            banners=store.list_banners(),
-            audio_tracks=store.list_audio_tracks(),
-            subtitle_profiles=store.list_subtitle_profiles(),
-            accounts=store.list_accounts(),
-            default_banner_id=defaults["default_banner_id"],
-            default_subtitle_profile_id=defaults["default_subtitle_profile_id"],
-            latest_analysis=source["analyses"][0] if source.get("analyses") else None,
-        ),
-    )
 
 
 @app.post("/ui/sources/{source_id}/analyze", include_in_schema=False)
@@ -794,6 +724,7 @@ def ui_render_clip_plans(
     use_subtitles: Annotated[bool, Form()] = False,
     use_banner: Annotated[bool, Form()] = False,
     use_music: Annotated[bool, Form()] = False,
+    subtitle_offset_sec: Annotated[str, Form()] = "",
 ) -> RedirectResponse:
     if not clip_plan_ids:
         raise HTTPException(status_code=400, detail="select at least one clip plan")
@@ -823,6 +754,7 @@ def ui_render_clip_plans(
                 banner_id=selected_banner_id,
                 music_track_id=selected_music_track_id,
                 music_volume=selected_music_volume,
+                subtitle_offset_sec=_optional_form_float(subtitle_offset_sec),
             )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -874,15 +806,6 @@ def ui_move_clip_plan_segment(
     return RedirectResponse(url=_safe_next(next or "/sources"), status_code=303)
 
 
-@app.get("/clips", response_class=HTMLResponse, include_in_schema=False)
-def clips_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "clips.html",
-        _ui_context("clips", clips=store.list_clips(), accounts=store.list_accounts()),
-    )
-
-
 @app.post("/ui/clips/upload", include_in_schema=False)
 async def ui_upload_clip(
     _auth: AuthDep,
@@ -899,38 +822,6 @@ async def ui_upload_clip(
     return RedirectResponse(url=f"/clips/{clip['id']}", status_code=303)
 
 
-@app.get("/clips/{clip_id}", response_class=HTMLResponse, include_in_schema=False)
-def clip_page(request: Request, clip_id: int, _auth: AuthDep) -> HTMLResponse:
-    try:
-        clip = store.get_clip(clip_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    can_render = False
-    try:
-        source = store.get_source(clip["source_id"])
-        can_render = str(source.get("source_type") or "") == "clip_upload"
-    except KeyError:
-        pass
-    defaults = _settings_panel_data()
-    return templates.TemplateResponse(
-        request,
-        "clip_detail.html",
-        _ui_context(
-            "clips",
-            clip=clip,
-            subtitle_tracks=store.list_subtitle_tracks(clip_id),
-            accounts=store.list_accounts(),
-            can_render=can_render,
-            presets=store.list_ffmpeg_presets(),
-            banners=store.list_banners(),
-            audio_tracks=store.list_audio_tracks(),
-            subtitle_profiles=store.list_subtitle_profiles(),
-            default_banner_id=defaults["default_banner_id"],
-            default_subtitle_profile_id=defaults["default_subtitle_profile_id"],
-        ),
-    )
-
-
 @app.post("/ui/clips/{clip_id}/render", include_in_schema=False)
 def ui_render_uploaded_clip(
     clip_id: int,
@@ -943,6 +834,7 @@ def ui_render_uploaded_clip(
     use_subtitles: Annotated[bool, Form()] = False,
     use_banner: Annotated[bool, Form()] = False,
     use_music: Annotated[bool, Form()] = False,
+    subtitle_offset_sec: Annotated[str, Form()] = "",
 ) -> RedirectResponse:
     defaults = _settings_panel_data()
     selected_subtitle_profile_id = _optional_form_int(subtitle_profile_id) if use_subtitles else None
@@ -963,6 +855,7 @@ def ui_render_uploaded_clip(
             banner_id=selected_banner_id,
             music_track_id=selected_music_track_id,
             music_volume=selected_music_volume,
+            subtitle_offset_sec=_optional_form_float(subtitle_offset_sec),
         )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1070,13 +963,6 @@ def ui_delete_ai_analysis(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
-@app.get("/presets", include_in_schema=False)
-def presets_page(_auth: AuthDep) -> RedirectResponse:
-    # Render presets, banners, music tracks and subtitle styles now live in the
-    # shared Settings panel (⚙ Настройки), reachable from every page.
-    return RedirectResponse(url="/sources", status_code=307)
 
 
 @app.post("/ui/ffmpeg-presets", include_in_schema=False)
@@ -1323,6 +1209,23 @@ def ui_update_subtitle_profile(
     return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
+@app.get("/api/settings", tags=["Render"], summary="Default models, proxy and asset settings")
+def api_settings(_auth: AuthDep) -> dict:
+    data = _settings_panel_data()
+    return {
+        "default_ai_provider": data["default_ai_provider"],
+        "default_ai_model": data["default_ai_model"],
+        "default_subtitle_provider": data["default_subtitle_provider"],
+        "default_subtitle_model": data["default_subtitle_model"],
+        "default_banner_id": data["default_banner_id"],
+        "default_subtitle_profile_id": data["default_subtitle_profile_id"],
+        "global_proxy_configured": data["global_proxy_configured"],
+        "global_proxy_display": data["global_proxy_display"],
+        "banners": [{"id": b["id"], "label": b["label"]} for b in data["banners"]],
+        "subtitle_profiles": [{"id": p["id"], "label": p["label"]} for p in data["subtitle_profiles"]],
+    }
+
+
 @app.post("/ui/settings/defaults", include_in_schema=False)
 def ui_save_settings_defaults(
     _auth: AuthDep,
@@ -1341,9 +1244,9 @@ def ui_save_settings_defaults(
     try:
         provider = default_ai_provider.strip().lower() or "mock"
         subtitle_provider = default_subtitle_provider.strip().lower() or "mock"
-        if provider not in {"mock", "polza", "gemini", "artemox"}:
+        if provider not in {"mock", "action", "polza", "gemini", "artemox"}:
             raise ValueError(f"unsupported provider: {default_ai_provider}")
-        if subtitle_provider not in {"mock", "polza", "gemini", "artemox"}:
+        if subtitle_provider not in {"mock", "whisper", "polza", "gemini", "artemox"}:
             raise ValueError(f"unsupported subtitle provider: {default_subtitle_provider}")
         if global_proxy_url is not None and global_proxy_url.strip() and not global_proxy_url.strip().startswith(("http://", "https://")):
             raise ValueError("global proxy must start with http:// or https://")
@@ -1362,6 +1265,11 @@ def ui_save_settings_defaults(
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(url=_safe_next(next), status_code=303)
+
+
+@app.get("/api/prompt-presets", tags=["Render"], summary="List prompt presets")
+def api_prompt_presets(_auth: AuthDep, task: str | None = None) -> list[dict]:
+    return store.list_prompt_presets(task)
 
 
 @app.post("/ui/prompt-presets", include_in_schema=False)
@@ -1409,15 +1317,6 @@ def ui_delete_prompt_preset(
     return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
-@app.get("/posts/new", response_class=HTMLResponse, include_in_schema=False)
-def new_post_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "new_post.html",
-        _ui_context("new", accounts=store.list_accounts()),
-    )
-
-
 @app.post("/ui/posts", include_in_schema=False)
 async def ui_create_post(
     _auth: AuthDep,
@@ -1431,30 +1330,6 @@ async def ui_create_post(
 ) -> RedirectResponse:
     job = await _create_post_from_upload(file, title, description, targets, privacy, allow_comments, scheduled_at)
     return RedirectResponse(url=f"/jobs/{job['id']}", status_code=303)
-
-
-@app.get("/auto", response_class=HTMLResponse, include_in_schema=False)
-def auto_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    defaults = _settings_panel_data()
-    return templates.TemplateResponse(
-        request,
-        "auto.html",
-        _ui_context(
-            "auto",
-            runs=automation_service.list_runs(),
-            default_provider=defaults["default_ai_provider"],
-            default_model=defaults["default_ai_model"],
-            analysis_prompt_presets=defaults["analysis_prompt_presets"],
-            default_analysis_prompt_preset_id=defaults["default_analysis_prompt_preset_id"],
-            presets=store.list_ffmpeg_presets(),
-            banners=store.list_banners(),
-            audio_tracks=store.list_audio_tracks(),
-            subtitle_profiles=store.list_subtitle_profiles(),
-            accounts=store.list_accounts(),
-            default_banner_id=defaults["default_banner_id"],
-            default_subtitle_profile_id=defaults["default_subtitle_profile_id"],
-        ),
-    )
 
 
 @app.get("/api/auto/runs", tags=["Jobs"], summary="List recent automation runs")
@@ -1473,9 +1348,14 @@ def ui_auto_start(
     provider: Annotated[str, Form()] = "",
     model: Annotated[str, Form()] = "",
     prompt_preset_id: Annotated[int, Form()] = 0,
+    use_transcript: Annotated[bool, Form()] = True,
     ffmpeg_preset_id: Annotated[str, Form()] = "",
     subtitle_profile_id: Annotated[str, Form()] = "",
+    subtitle_provider: Annotated[str, Form()] = "",
+    subtitle_margin_v: Annotated[str, Form()] = "",
     banner_id: Annotated[str, Form()] = "",
+    banner_height_frac: Annotated[str, Form()] = "",
+    banner_y_frac: Annotated[str, Form()] = "",
     music_track_id: Annotated[str, Form()] = "",
     music_volume: Annotated[str, Form()] = "",
     use_subtitles: Annotated[bool, Form()] = False,
@@ -1520,11 +1400,15 @@ def ui_auto_start(
             "audio_format_id": smotvibe_audio_format_id.strip(),
             "filename_label": smotvibe_filename_label.strip(),
         },
-        analysis={"provider": provider.strip(), "model": model.strip(), "prompt": selected_prompt},
+        analysis={"provider": provider.strip(), "model": model.strip(), "prompt": selected_prompt, "use_transcript": use_transcript},
         render={
             "ffmpeg_preset_id": _optional_form_int(ffmpeg_preset_id),
             "subtitle_profile_id": selected_subtitle_profile_id,
+            "subtitle_provider": (subtitle_provider.strip().lower() or None) if use_subtitles else None,
+            "subtitle_margin_v": _optional_form_int(subtitle_margin_v) if use_subtitles else None,
             "banner_id": selected_banner_id,
+            "banner_height_frac": (float(banner_height_frac) if str(banner_height_frac).strip() else None) if use_banner else None,
+            "banner_y_frac": (float(banner_y_frac) if str(banner_y_frac).strip() else None) if use_banner else None,
             "music_track_id": selected_music_track_id,
             "music_volume": selected_music_volume,
         },
@@ -1538,24 +1422,6 @@ def ui_auto_start(
         },
     )
     return RedirectResponse(url="/auto", status_code=303)
-
-
-@app.get("/jobs", response_class=HTMLResponse, include_in_schema=False)
-def jobs_page(request: Request, _auth: AuthDep) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "jobs.html",
-        _ui_context("jobs", jobs=store.list_jobs()),
-    )
-
-
-@app.get("/jobs/{job_id}", response_class=HTMLResponse, include_in_schema=False)
-def job_page(request: Request, job_id: int, _auth: AuthDep) -> HTMLResponse:
-    try:
-        job = store.get_job(job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return templates.TemplateResponse(request, "job_detail.html", _ui_context("jobs", job=job))
 
 
 @app.post(
@@ -1677,6 +1543,94 @@ def api_source(source_id: int, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.delete(
+    "/api/sources/{source_id}",
+    tags=["Sources"],
+    summary="Delete a source and all derived data",
+)
+def api_delete_source(source_id: int, _auth: AuthDep) -> dict:
+    try:
+        return store.delete_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+class SourceRenamePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+@app.patch("/api/sources/{source_id}", tags=["Sources"], summary="Rename a source")
+def api_rename_source(source_id: int, payload: SourceRenamePayload, _auth: AuthDep) -> dict:
+    try:
+        return store.update_source(source_id, original_filename=payload.name.strip())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+class CropRect(BaseModel):
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+class SourceCropPayload(BaseModel):
+    crop: CropRect | None = None
+
+
+@app.post("/api/sources/{source_id}/detect-crop", tags=["Sources"], summary="Auto-detect content bars")
+def api_detect_crop(source_id: int, _auth: AuthDep) -> dict:
+    try:
+        source = store.get_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        crop = detect_content_crop(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"crop": crop}
+
+
+@app.patch("/api/sources/{source_id}/crop", tags=["Sources"], summary="Set the content crop rect")
+def api_set_crop(source_id: int, payload: SourceCropPayload, _auth: AuthDep) -> dict:
+    crop = payload.crop.model_dump() if payload.crop else None
+    try:
+        return store.update_source(source_id, content_crop=crop)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/sources/{source_id}/storyboard",
+    tags=["Sources"],
+    summary="Storyboard thumbnails sampled across the video",
+)
+def api_source_storyboard(source_id: int, _auth: AuthDep) -> dict:
+    try:
+        source = store.get_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        meta = ensure_storyboard(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "count": meta["count"],
+        "interval_sec": meta["interval_sec"],
+        "frames": [f"/media/sources/{source_id}/storyboard/{i}" for i in range(meta["count"])],
+    }
+
+
+@app.get("/media/sources/{source_id}/storyboard/{index}", include_in_schema=False)
+def media_source_storyboard_frame(source_id: int, index: int, _auth: AuthDep) -> FileResponse:
+    path = frame_path(source_id, index)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="frame not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @app.get(
     "/api/sources/{source_id}/stats",
     tags=["Sources"],
@@ -1718,6 +1672,7 @@ def api_analyze_source(
             provider=payload.provider if payload else None,
             model=payload.model if payload else None,
             prompt=_analysis_prompt_from_payload(payload),
+            use_transcript=payload.use_transcript if payload else None,
             preprocessing={
                 "enabled": bool(payload.preprocess_for_analysis) if payload else False,
                 "merge_audio_for_analysis": bool(payload.merge_audio_for_analysis)
@@ -1794,6 +1749,63 @@ def api_update_segment_timecodes(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class FocusPoint(BaseModel):
+    t: float
+    x: float
+    y: float | None = None
+
+
+class SegmentFocusPayload(BaseModel):
+    focus: list[FocusPoint] = Field(default_factory=list)
+
+
+@app.patch("/api/segments/{segment_id}/focus", tags=["Render"], summary="Set a segment's reframe focus track")
+def api_update_segment_focus(segment_id: int, payload: SegmentFocusPayload, _auth: AuthDep) -> dict:
+    focus = [p.model_dump(exclude_none=True) for p in payload.focus]
+    try:
+        return store.update_ai_segment_focus(segment_id, focus)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _autofocus_segment(segment_id: int) -> dict:
+    from app.autofocus import compute_segment_focus  # lazy: opencv is heavy / optional
+
+    segment = store.get_ai_segment(segment_id)
+    source = store.get_source(segment["source_id"])
+    points = compute_segment_focus(source, float(segment["start_sec"]), float(segment["end_sec"]))
+    return store.update_ai_segment_focus(segment_id, points)
+
+
+@app.post("/api/segments/{segment_id}/autofocus", tags=["Render"], summary="Detect focus (faces/motion) for a segment")
+def api_autofocus_segment(segment_id: int, _auth: AuthDep) -> dict:
+    try:
+        return _autofocus_segment(segment_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class AutofocusBatchPayload(BaseModel):
+    segment_ids: list[int] = Field(default_factory=list)
+
+
+@app.post("/api/sources/{source_id}/autofocus", tags=["Render"], summary="Detect focus for many segments")
+def api_autofocus_segments(source_id: int, payload: AutofocusBatchPayload, _auth: AuthDep) -> dict:
+    try:
+        store.get_source(source_id)
+        ids = payload.segment_ids or [s["id"] for s in store.list_ai_segments(source_id=source_id)]
+        done = 0
+        for sid in ids:
+            seg = store.get_ai_segment(sid)
+            if seg["source_id"] != source_id:
+                continue
+            _autofocus_segment(sid)
+            done += 1
+        return {"updated": done}
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post(
     "/api/clip-plans/{clip_plan_id}/render",
     tags=["Render"],
@@ -1843,6 +1855,10 @@ def api_render_clip_plans(
                     banner_id=payload.banner_id,
                     music_track_id=payload.music_track_id,
                     music_volume=payload.music_volume,
+                    subtitle_provider=payload.subtitle_provider,
+                    banner_height_frac=payload.banner_height_frac,
+                    banner_y_frac=payload.banner_y_frac,
+                    subtitle_margin_v=payload.subtitle_margin_v,
                 )
             )
         return clips
@@ -1872,8 +1888,8 @@ def api_render_montage(payload: RenderMontageRequest, _auth: AuthDep) -> dict:
 
 
 @app.get("/api/clips", tags=["Render"], summary="List clips")
-def api_clips(_auth: AuthDep) -> list[dict]:
-    return store.list_clips()
+def api_clips(_auth: AuthDep, source_id: int | None = None) -> list[dict]:
+    return store.list_clips(source_id)
 
 
 @app.get("/api/clips/{clip_id}", tags=["Render"], summary="Get clip details")
@@ -1893,6 +1909,18 @@ def api_delete_clip(clip_id: int, _auth: AuthDep) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"deleted": True}
+
+
+class ClipRenamePayload(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+@app.patch("/api/clips/{clip_id}", tags=["Render"], summary="Rename a clip")
+def api_rename_clip(clip_id: int, payload: ClipRenamePayload, _auth: AuthDep) -> dict:
+    try:
+        return store.update_clip(clip_id, title=payload.title.strip())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post(
@@ -1919,6 +1947,11 @@ def api_create_post_from_clip(clip_id: int, payload: ClipPostRequest, _auth: Aut
 @app.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")
 def api_active_tasks(_auth: AuthDep) -> list[dict]:
     return store.list_active_tasks()
+
+
+@app.get("/api/tasks", tags=["Jobs"], summary="List recent tasks (execution log)")
+def api_recent_tasks(_auth: AuthDep, limit: int = 80) -> list[dict]:
+    return store.list_recent_tasks(max(1, min(300, limit)))
 
 
 @app.post("/api/clip-plans/{clip_plan_id}/segments", tags=["Render"], summary="Add segment to clip plan")
@@ -2360,7 +2393,7 @@ def _payload_data(payload: BaseModel, exclude: set[str] | None = None, exclude_n
 
 def _safe_next(value: str) -> str:
     if not value.startswith("/") or value.startswith("//"):
-        return "/sources"
+        return "/projects"
     return value
 
 
@@ -2368,6 +2401,12 @@ def _optional_form_int(value: str | int | None) -> int | None:
     if value is None or str(value).strip() == "":
         return None
     return int(value)
+
+
+def _optional_form_float(value: str | float | None) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return float(value)
 
 
 def _parse_schedule_dt(value: str | None) -> datetime | None:
@@ -2393,3 +2432,28 @@ def _normalize_schedule_text(value: str | None) -> str:
         except ValueError:
             continue
     raise ValueError("scheduled_at must be YYYY-MM-DD HH:MM or datetime-local format")
+
+
+# --------------------------------------------------------------------------- #
+# Single-page app (React/Vite build). MUST be registered last so the catch-all
+# route has the lowest priority and never shadows /api, /media, /ui, /docs, etc.
+# In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
+# `frontend/dist` may not exist — guarded accordingly.
+# --------------------------------------------------------------------------- #
+SPA_DIR = settings.root_dir / "frontend" / "dist"
+SPA_INDEX = SPA_DIR / "index.html"
+_SPA_RESERVED_PREFIXES = ("api/", "media/", "ui/", "assets/", "static/")
+_SPA_RESERVED_EXACT = {"login", "logout", "docs", "openapi.json", "favicon.ico"}
+
+if (SPA_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=SPA_DIR / "assets"), name="spa-assets")
+
+
+@app.get("/{spa_path:path}", include_in_schema=False)
+def spa_fallback(spa_path: str, _auth: AuthDep) -> FileResponse:
+    if not SPA_INDEX.exists():
+        raise HTTPException(status_code=404, detail="Not Found")
+    first = spa_path.split("/", 1)[0]
+    if spa_path.startswith(_SPA_RESERVED_PREFIXES) or first in _SPA_RESERVED_EXACT:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(SPA_INDEX)

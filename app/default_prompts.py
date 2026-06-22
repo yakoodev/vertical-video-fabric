@@ -2,71 +2,105 @@ from __future__ import annotations
 
 
 DEFAULT_PROMPT_SEED_KEY = "default_prompt_presets_seeded"
-DEFAULT_PROMPT_SEED_VERSION = "20260617-prompts-v17"
+DEFAULT_PROMPT_SEED_VERSION = "20260619-prompts-v20"
 
-MULTI_SEGMENT_OUTPUT_RULES = """
-Mandatory editing contract:
+# Universal editing rules appended to EVERY analysis. These must be mode-neutral:
+# no recap mandate and no "reject action unless it explains the plot" — that
+# plot bias belongs only to recap mode and otherwise kills action/highlight clips.
+UNIVERSAL_OUTPUT_RULES = """
+Editing contract:
 - A clip is the final video plan. A segment is only one source range inside that
   final clip.
-- For anime, TV series, or other episodic fiction, the FIRST clip must be an
-  Episode Story Recap: a compact plot-essential edit that lets a viewer
-  understand what happened in the episode. Additional clips may be standalone
-  main story shorts.
-- The recap clip is not a mechanical timeline dump. It must include only the
-  essential scenes: premise, inciting incident, key reveal/rule, protagonist
-  choice or mistake, crisis/consequence, and new direction.
 - Do not use one clip per detected moment when nearby/related moments should be
   watched together.
-- If two or more moments are part of the same scene, joke, fight, argument,
-  reveal, reaction chain, setup/payoff, or montage idea, return ONE clips[] item
+- If two or more moments are part of the same scene, fight, argument, reveal,
+  reaction chain, setup/payoff, joke, or montage idea, return ONE clips[] item
   containing multiple ordered segments[].
 - Prefer fewer stronger multi-segment clips over many tiny one-segment clips.
-- When the source has related beats, most clips should contain 2 to 5 segments.
+  When the source has related beats, most clips should contain 2 to 5 segments.
   A one-segment clip is rare and only acceptable for a short continuous scene
   that already contains the hook, context, escalation, and payoff.
 - Do not hide several beats inside one long continuous segment. If a scene has
   setup, escalation, reveal, reaction, and payoff, split those beats into short
   ordered segments inside the same clip.
-- For anime/series/episodic fiction, each individual segment should usually be
-  12 to 35 seconds and must stay under 75 seconds. If a scene is longer, split
-  it into 2 to 4 ordered segments inside the same clip instead of returning one
-  long source range.
-- For fiction sources, do not split one plot beat into separate clips just
-  because there is a cutaway, pause, or subtitle gap. Keep the beat together as
-  multiple segments inside the same clip.
+- Each individual segment should usually be 12 to 35 seconds and must stay under
+  75 seconds. If a scene is longer, split it into 2 to 4 ordered segments inside
+  the same clip instead of returning one long source range.
+- Do not split one continuous beat into separate clips just because there is a
+  cutaway, pause, or subtitle gap. Keep the beat together as multiple segments
+  inside the same clip.
 - Do not create micro-segments. Each segment should be a complete watchable
-  source range with full spoken lines and natural entry/exit points.
+  source range with full lines/actions and natural entry/exit points.
 - Never cut a segment in the middle of a spoken sentence, reaction sound,
-  subtitle line, or obvious character action. Start 1 to 2 seconds before the
-  first complete line begins; end 1 to 2 seconds after the line, reaction, or
-  action resolves.
-- For an episodic/anime/series source, at least two returned clips should use
-  multiple segments when the episode has enough related material.
-- For a long episodic/anime/series source, clips[0] must be the Episode Story
-  Recap with 4 to 6 ordered segments drawn from the main plot across the source.
-  It should be understandable without watching any other generated clip and
-  should finish in roughly 90 to 150 seconds total. Do not make a 3-minute recap
-  unless the actual plot cannot be understood without it.
+  subtitle line, or obvious character action. Start 1 to 2 seconds before it
+  begins; end 1 to 2 seconds after the line, reaction, or action resolves.
+- Returning several clips that each contain exactly one segment is usually a bad
+  answer. Merge related ones.
+- Before finalizing JSON, audit your answer: if several clips are related or
+  close in time, merge them into one clip with multiple ordered segments.
+- Write all clip titles, clip descriptions, segment titles, segment
+  descriptions, and segment reasons in concise natural Russian.
+""".strip()
+
+# Appended ONLY when the prompt opts into recap mode (see prompt_wants_recap).
+NARRATIVE_RECAP_RULES = """
+Recap mode (this prompt asks for an episode recap):
+- The FIRST clip must be an Episode Story Recap: a compact plot-essential edit
+  that lets a viewer understand what happened in the episode. Additional clips
+  may be standalone shorts.
+- The recap is not a mechanical timeline dump. Include only the essential scenes:
+  premise, inciting incident, key reveal/rule, protagonist choice or mistake,
+  crisis/consequence, and new direction.
+- clips[0] must have 4 to 6 ordered segments drawn from the main plot across the
+  source, understandable without watching any other generated clip, finishing in
+  roughly 90 to 150 seconds total.
 - The recap must include one setup/inciting segment from the first third of the
-  uploaded source and one consequence/new-direction segment from the final
-  third. If you cannot find those, return the closest plot-bearing scene in
-  those thirds rather than starting the recap in the middle of the episode.
-- The first clip is not optional for episodic fiction. If only one good clip is
-  possible, make that clip the Episode Story Recap and skip optional shorts.
-- Returning 4 or 5 clips that each contain exactly one segment is usually a bad
-  answer. Merge them unless they are truly unrelated moments.
+  source and one consequence/new-direction segment from the final third.
+- The first clip is not optional. If only one good clip is possible, make that
+  clip the Episode Story Recap.
 - Reject pretty visuals, reactions, gags, or action shots if they do not explain
   the plot, a character decision, a relationship change, or a consequence.
 - Do not tile the episode into consecutive chapters just to cover the timeline.
   The recap should jump between essential scenes and skip connective tissue.
-  If the result looks like "every next scene in order", it is the wrong answer.
-- Before finalizing JSON, audit your answer: if several clips have only one
-  segment and are related or close in time, merge them into one clip with
-  multiple segments.
-- Write all clip titles, clip descriptions, segment titles, segment
-  descriptions, and segment reasons in Russian. Use concise natural Russian
-  phrasing suitable for a Russian-speaking editor.
 """.strip()
+
+# Backwards-compatible combined block (still importable).
+MULTI_SEGMENT_OUTPUT_RULES = f"{UNIVERSAL_OUTPUT_RULES}\n\n{NARRATIVE_RECAP_RULES}"
+
+
+def prompt_wants_recap(prompt: str | None) -> bool:
+    """Recap mode is opted into only by prompts that explicitly ask for the
+    structured recap clip, so a casual mention of the word "recap" elsewhere does
+    not flip an action/highlights prompt into recap mode."""
+
+    text = str(prompt or "").lower()
+    return "episode story recap" in text or "main plot recap" in text
+
+
+def analysis_output_rules(prompt: str | None) -> str:
+    """Universal editing rules, plus recap rules only when the prompt wants one."""
+
+    if prompt_wants_recap(prompt):
+        return f"{UNIVERSAL_OUTPUT_RULES}\n\n{NARRATIVE_RECAP_RULES}"
+    return UNIVERSAL_OUTPUT_RULES
+
+
+def analysis_mode_instructions(prompt: str | None) -> str:
+    """One-line clip-shape instruction matching the prompt's mode."""
+
+    if prompt_wants_recap(prompt):
+        return (
+            "For episodic fiction, clips[0] must be an Episode Story Recap with 4 to 6 ordered "
+            "segments from the main plot, around 90 to 150 seconds total, so a viewer can understand "
+            "what happened in the episode. Additional clips may be self-contained main story shorts "
+            "around 45 to 105 seconds. Do not tile the episode into consecutive timeline slices; "
+            "skip weak connective scenes. Do not return finished clips around 3 minutes. "
+        )
+    return (
+        "Return 3 to 6 strong STANDALONE clips, each understandable on its own. Do not summarize the "
+        "episode, do not make a recap, and do not walk the timeline in order. Prioritize the strongest "
+        "moments the prompt asks for over plot-explaining filler; skip weak connective scenes. "
+    )
 
 LEGACY_DEFAULT_PROMPTS = {
     (
@@ -132,6 +166,22 @@ weapon names, damage/knock callouts, pings, rotations, and squad communication
 instead of rewriting them as generic speech.
 """.strip(),
 }
+
+FOCUS_TRACK_INSTRUCTION = (
+    "REFRAMING FOCUS — for cropping a wide video to vertical 9:16, tell us where the main subject sits "
+    "horizontally in each segment, as a \"focus\" array of {\"t\": seconds from the segment start, "
+    "\"x\": 0=far left … 0.5=centre … 1=far right}. Think in terms of SHOTS, not motion:\n"
+    "1. Default to ONE point per shot. If the subject stays on one side for the whole segment, return a "
+    "SINGLE point (e.g. [{\"t\":0,\"x\":0.7}]) — that is the best, most common answer.\n"
+    "2. Add another point ONLY at a real change: a hard cut to a new composition, or the subject clearly "
+    "walking across the frame. Put the point at the moment of that change. Two people talking in one "
+    "static shot = ONE point at the more important person, not switching back and forth.\n"
+    "3. Give the ACTUAL position you see (continuous, e.g. 0.18 / 0.62 / 0.8). Do NOT alternate "
+    "left-right between points and do NOT emit periodic 0.3/0.5/0.7 patterns — that is wrong.\n"
+    "4. Do NOT lazily default to 0.5. Most action and dialogue shots are framed OFF-centre — if a "
+    "face/person/action is clearly to one side, commit to that position (e.g. 0.68, 0.78). Use 0.5 only "
+    "when the subject is genuinely centred; omit focus if the whole segment is centred."
+)
 
 BASE_ANALYSIS_PROMPT = """
 Analyze this source for vertical short-form publishing.
@@ -319,6 +369,62 @@ moment. Segment titles, descriptions, and reasons must also be in Russian and
 explain why that source range is necessary for this clip.
 """.strip()
 
+ACTION_DRAMA_HIGHLIGHTS_PROMPT = """
+This is a live-action ACTION series (Korean action drama / боевик). These clips
+are for an ACTION channel. Your #1 job is to find the FIGHTS and the ACTION. If
+this episode contains any fights or action, the result MUST be mostly action.
+Never fill the result with quiet talking/drama scenes when fights are available —
+that is a wrong answer.
+
+Return 3 to 6 standalone clips[], best first. No recap, no episode summary, no
+chronological walkthrough. Each clip must hook a viewer cold and pay off on its
+own. A clip may contain one or more ordered segments[].
+
+PRIORITY 1 — ACTION. Find ALL of these and take them first, as many as exist:
+- Hand-to-hand fights, brawls, martial arts, one-vs-many beatdowns.
+- Gun fights, shootouts, knife fights, weapon disarms and takedowns.
+- Chases (foot or car), raids, ambushes, breaches, escapes.
+- Heavy hits, knockouts, throws, finishing blows, stunts, crashes.
+- A skilled character wrecking multiple opponents; a badass entrance or "he is
+  built different" moment.
+A fight is the product. Capture the WHOLE exchange: split a long fight into 2 to 5
+ordered segments inside ONE clip (approach/trigger -> the clash -> the finisher),
+not a single isolated hit and not one giant range.
+
+PRIORITY 2 — only as strong standalone extras, or if there is genuinely not
+enough action to fill the clips:
+- A hard confrontation, threat, standoff, interrogation, a betrayal exposed, a
+  villain reveal, a cold power move.
+- A revenge beat, a shocking twist or cliffhanger, a memorable one-liner.
+Use romance or plain dialogue ONLY when it is an undeniable top moment. Quiet
+conversation is the last resort, never the default.
+
+Rules:
+- Pick action a viewer understands from the clip itself. If a hit needs a one-line
+  setup, include that setup as an earlier segment in the SAME clip.
+- Segments can be punchy: about 8 to 35 seconds each, never longer than 75. Keep
+  each finished clip under about 90 seconds.
+- Never cut mid-punch, mid-line, or mid-action. Start ~1 second before the action
+  or line begins; end ~1 second after the hit, reaction, or line resolves.
+  Include the full exchange rather than trimming through it.
+- Boundary check before returning: if action or speech is already mid-way at the
+  first frame, move start_sec earlier; if it is still going at the last frame,
+  move end_sec later.
+- Use only timestamps from the uploaded source. Never invent timestamps or exceed
+  the uploaded duration.
+- Skip intros, "previously on" recaps, openings/credits, dead air, and quiet
+  connective scenes with no action or stakes.
+
+Final audit before returning JSON: re-scan the whole episode specifically for
+physical combat and action. If you ended up with mostly dialogue while the
+episode has fights, that is wrong — drop the weak talking clips and replace them
+with the fights you missed.
+
+Write every clip title, clip description, segment title, segment description, and
+segment reason in natural Russian. Titles must sell the specific action (the
+fight, the takedown, the chase, the twist), not describe the whole episode.
+""".strip()
+
 DEFAULT_PUBLISHING_PROMPT = """
 Generate publishing metadata for a rendered vertical clip.
 Return JSON only with title and description suitable for YouTube Shorts and TikTok.
@@ -406,6 +512,73 @@ Rules:
   foreground speaker.
 """.strip()
 
+PODCAST_QUOTES_PROMPT = """
+Analyze this podcast, interview, or talking-head source for vertical short-form.
+Find the most quotable, shareable spoken moments: a strong opinion, a surprising
+admission, a punchy one-liner, a vivid story, an argument with a clear payoff, or
+an emotional beat. Ignore filler, intros, sponsor reads, and rambling.
+
+Return 3 to 6 clips[] as finished edit plans, best first. Each clip is one
+publishable short and may contain one or more ordered segments[].
+
+Rules:
+- Each clip must work for someone who never heard the episode. If a quote needs a
+  one-line setup (the question asked, the topic), include that as an earlier
+  segment in the SAME clip.
+- Prefer self-contained thoughts that start and end on complete sentences. Never
+  cut in the middle of a spoken line.
+- Prefer 15 to 60 seconds per clip; keep the strongest hook in the first 3
+  seconds.
+- Merge a setup question and its answer into one clip with two segments instead
+  of two separate clips.
+- Use only timestamps from the uploaded source.
+
+Write every title, description, and reason in natural Russian. The title should
+quote or tease the actual line, not summarize the episode.
+""".strip()
+
+EDUCATIONAL_PROMPT = """
+Analyze this educational, tutorial, lecture, or explainer source for vertical
+short-form. Pull out the highest-value standalone lessons: a single clear tip, a
+counterintuitive fact, a concise how-to step, a myth being busted, or a "most
+people get this wrong" moment.
+
+Return 3 to 6 clips[] as finished edit plans, best first. Each clip teaches one
+complete idea and may contain one or more ordered segments[].
+
+Rules:
+- Each clip must deliver one full, understandable takeaway on its own. Include the
+  short setup (the question or problem) plus the answer in the same clip.
+- Open on the hook or the promise of the payoff, not on throat-clearing.
+- Prefer 20 to 75 seconds per clip. Never cut through a sentence or mid-step.
+- Skip long tangents, repeated recaps, and "like and subscribe" asides.
+- Use only timestamps from the uploaded source.
+
+Write every title, description, and reason in natural Russian. The title should
+state the concrete benefit or curiosity gap ("Почему...", "Как за 30 секунд...").
+""".strip()
+
+COMEDY_MOMENTS_PROMPT = """
+Analyze this source for the funniest standalone moments for vertical short-form:
+jokes with a clear setup and punchline, deadpan reactions, perfect comedic
+timing, unexpected turns, bloopers, and running gags landing.
+
+Return 3 to 6 clips[] as finished edit plans, best first. Each clip is one laugh
+that works on its own and may contain one or more ordered segments[].
+
+Rules:
+- Always include the setup and the punchline (and the reaction, if it sells the
+  joke) in the SAME clip as ordered segments. A punchline with no setup is weak.
+- Start right before the setup; end right after the laugh/reaction resolves.
+  Never cut through the punchline or a key reaction.
+- Prefer 8 to 45 seconds per clip. Cut dead air and slow build-up that does not
+  serve the joke.
+- Use only timestamps from the uploaded source.
+
+Write every title, description, and reason in natural Russian. The title should
+tease the joke or reaction without fully spoiling the punchline.
+""".strip()
+
 DEFAULT_PROMPT_PRESETS = (
     {
         "task": "analysis",
@@ -423,6 +596,30 @@ DEFAULT_PROMPT_PRESETS = (
         "task": "analysis",
         "label": "Series analysis",
         "prompt": SERIES_ANALYSIS_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "Action drama highlights",
+        "prompt": ACTION_DRAMA_HIGHLIGHTS_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "Подкаст: цитаты",
+        "prompt": PODCAST_QUOTES_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "Обучающее: тезисы",
+        "prompt": EDUCATIONAL_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "Юмор: смешные моменты",
+        "prompt": COMEDY_MOMENTS_PROMPT,
         "is_default": False,
     },
     {

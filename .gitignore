@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 node_modules/
 npm-debug.log*
+frontend/dist/
+.vite/
 
 /data/
 /uploads/
@@ -16,3 +18,7 @@ npm-debug.log*
 *.cookie
 *.sqlite
 *.db
+
+# Local agent artifacts (Claude Code session config + auto-memory)
+.claude/
+/memory/

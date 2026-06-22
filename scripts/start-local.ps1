@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [int]$Port = $(if ($env:VVF_PORT) { [int]$env:VVF_PORT } else { 8097 }),
+    [int]$FrontendPort = $(if ($env:VVF_FRONTEND_PORT) { [int]$env:VVF_FRONTEND_PORT } else { 5173 }),
     [string]$HostAddress = "127.0.0.1",
     [string]$DataDir = "",
     [ValidateSet("gemini", "polza", "artemox", "mock")]
@@ -13,6 +14,8 @@ param(
     [switch]$KeepExisting,
     [switch]$Background,
     [switch]$Open,
+    [switch]$BuildFrontend,
+    [switch]$NoFrontend,
     [switch]$DryRun
 )
 
@@ -102,6 +105,34 @@ function Ensure-NodeDeps {
     }
 }
 
+function Ensure-FrontendDeps {
+    if ($NoInstall) {
+        return
+    }
+    $frontendDir = Join-Path $RepoRoot "frontend"
+    if ((Test-Path (Join-Path $frontendDir "package.json")) -and -not (Test-Path (Join-Path $frontendDir "node_modules"))) {
+        Push-Location $frontendDir
+        try {
+            & npm install
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+function Build-Frontend {
+    $frontendDir = Join-Path $RepoRoot "frontend"
+    Push-Location $frontendDir
+    try {
+        & npm run build
+        if ($LASTEXITCODE -ne 0) {
+            throw "Frontend build failed (npm run build exit $LASTEXITCODE)."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Set-TiktokVendorRoot {
     if ($env:TIKTOK_VENDOR_ROOT -and (Test-Path (Join-Path $env:TIKTOK_VENDOR_ROOT "tiktok_uploader\tiktok-signature\browser.js"))) {
         return
@@ -168,6 +199,17 @@ Set-TiktokVendorRoot
 $python = Find-Python
 Ensure-NodeDeps
 
+# Frontend (React/Vite). Default dev flow runs the Vite dev server with HMR and
+# proxies the API to uvicorn. -BuildFrontend produces a static build served by
+# uvicorn directly. -NoFrontend skips the SPA entirely (API only).
+$useViteDev = (-not $BuildFrontend) -and (-not $NoFrontend)
+if (-not $NoFrontend) {
+    Ensure-FrontendDeps
+}
+if ($BuildFrontend) {
+    Build-Frontend
+}
+
 if (-not $env:GEMINI_API_KEY -and $AiProvider -eq "gemini") {
     Write-Warning "GEMINI_API_KEY is not set. Gemini analysis/upload endpoints will fail until it is configured."
 }
@@ -177,9 +219,15 @@ if (-not $env:TIKTOK_VENDOR_ROOT -and -not $MockPosting) {
 
 $uvicornArgs = @("-m", "uvicorn", "app.main:app", "--host", $HostAddress, "--port", "$Port")
 $url = "http://${HostAddress}:$Port"
+$frontendUrl = "http://${HostAddress}:$FrontendPort"
+$frontendMode = if ($useViteDev) { "vite-dev" } elseif ($BuildFrontend) { "static-build" } else { "none" }
+$openUrl = if ($useViteDev) { $frontendUrl } else { $url }
 
 $config = [PSCustomObject]@{
     Url = $url
+    OpenUrl = $openUrl
+    FrontendMode = $frontendMode
+    FrontendUrl = if ($useViteDev) { $frontendUrl } else { "(served by uvicorn)" }
     DataDir = $env:DATA_DIR
     AuthEnabled = $env:POSTING_AUTH_ENABLED
     PostingMode = $env:POSTING_PROVIDER_MODE
@@ -194,10 +242,22 @@ $config = [PSCustomObject]@{
 if ($DryRun) {
     $config | Format-List
     Write-Host "Command: $python $($uvicornArgs -join ' ')"
+    if ($useViteDev) {
+        Write-Host "Frontend: npm run dev (cwd frontend) -> $frontendUrl (VVF_BACKEND=$url)"
+    }
     exit 0
 }
 
 Stop-PortListener -LocalPort $Port
+
+# In dev mode launch the Vite dev server (its own window) pointed at this backend.
+if ($useViteDev) {
+    Stop-PortListener -LocalPort $FrontendPort
+    $env:VVF_BACKEND = $url
+    $frontendDir = Join-Path $RepoRoot "frontend"
+    Start-Process -FilePath "npm" -ArgumentList @("run", "dev", "--", "--port", "$FrontendPort") -WorkingDirectory $frontendDir | Out-Null
+    Write-Host "Vite dev server: $frontendUrl (proxying API to $url)"
+}
 
 if ($Background) {
     $stdout = Join-Path $DataDir "logs\uvicorn-$Port.out.log"
@@ -212,14 +272,17 @@ if ($Background) {
         Write-Warning "Logs: $stdout ; $stderr"
     }
     if ($Open) {
-        Start-Process $url
+        Start-Process $openUrl
     }
     exit 0
 }
 
-Write-Host "Starting Vertical Video Fabric at $url"
+Write-Host "Starting Vertical Video Fabric API at $url"
+if ($useViteDev) {
+    Write-Host "Open the app at $frontendUrl"
+}
 Write-Host "DataDir: $DataDir"
 if ($Open) {
-    Start-Process $url
+    Start-Process $openUrl
 }
 & $python @uvicornArgs

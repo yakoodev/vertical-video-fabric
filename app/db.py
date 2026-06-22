@@ -306,6 +306,14 @@ class Database:
             )
             self._ensure_column(conn, "accounts", "encrypted_proxy_url", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
+            # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.
+            self._ensure_column(conn, "sources", "content_crop", "TEXT NOT NULL DEFAULT ''")
+            # Cached Whisper transcript (JSON [{start,end,text}]) so analysis does not
+            # re-transcribe the same source every run.
+            self._ensure_column(conn, "sources", "transcript_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "sources", "transcript_model", "TEXT NOT NULL DEFAULT ''")
+            # Point-of-interest focus track for dynamic reframing (JSON [{t,x,y}]).
+            self._ensure_column(conn, "ai_segments", "focus_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")
             self._ensure_column(conn, "jobs", "scheduled_at", "TEXT")
             self._ensure_column(conn, "ffmpeg_presets", "audio_mix_mode", "TEXT NOT NULL DEFAULT 'primary'")
@@ -325,6 +333,8 @@ class Database:
             self._ensure_column(conn, "ffmpeg_presets", "color_strength", "REAL NOT NULL DEFAULT 1")
             self._ensure_column(conn, "ffmpeg_presets", "vignette", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(conn, "ffmpeg_presets", "grain", "REAL NOT NULL DEFAULT 0")
+            # Dynamic point-of-interest reframing for wide → vertical (needs focus data).
+            self._ensure_column(conn, "ffmpeg_presets", "smart_reframe", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "clips", "clip_plan_id", "INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL")
             self._ensure_column(
                 conn,

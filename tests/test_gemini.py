@@ -35,11 +35,58 @@ def test_gemini_payload_uses_file_data_and_response_format():
     assert "multiple segments" in parts[1]["text"]
     assert "Every start_sec and end_sec must be between 0 and 60.000" in parts[1]["text"]
     assert "Each individual fiction segment must be 12 to 75 seconds" in parts[1]["text"]
-    assert "clips[0] must be an Episode Story Recap" in parts[1]["text"]
-    assert "Do not tile the episode into consecutive timeline slices" in parts[1]["text"]
+    # A plain (non-recap) prompt runs highlights mode: no forced recap and no
+    # plot-only bias that would reject action clips.
+    assert "Episode Story Recap" not in parts[1]["text"]
+    assert "do not make a recap" in parts[1]["text"].lower()
+    assert "Reject pretty visuals" not in parts[1]["text"]
     assert "in Russian" in parts[1]["text"]
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
     assert payload["generationConfig"]["responseJsonSchema"]["required"] == ["clips"]
+
+
+def test_gemini_payload_adds_video_metadata_offsets_for_windows():
+    from app.ai.gemini import build_gemini_analysis_payload
+
+    payload = build_gemini_analysis_payload(
+        {"duration_sec": 3863}, "Find action", {"uri": "u", "mimeType": "video/mp4"}, "video/mp4",
+        start_offset_sec=780, end_offset_sec=1560,
+    )
+    vm = payload["contents"][0]["parts"][0]["video_metadata"]
+    assert vm == {"start_offset": "780s", "end_offset": "1560s"}
+
+
+def test_dedup_clips_drops_overlapping_windows():
+    from app.ai.gemini import _dedup_clips
+    from app.ai.contracts import AnalysisClip, AnalysisSegment
+
+    def clip(title, a, b):
+        return AnalysisClip(title=title, segments=[AnalysisSegment(start_sec=a, end_sec=b, title=title)])
+
+    kept = _dedup_clips([clip("a", 10, 40), clip("dup", 12, 42), clip("b", 100, 140)])
+    assert [c.title for c in kept] == ["a", "b"]
+
+
+def test_analysis_windows_only_for_long_gemini_highlights():
+    from app.ai.service import _analysis_windows, ANALYSIS_MODE_HIGHLIGHTS, ANALYSIS_MODE_NARRATIVE
+
+    assert _analysis_windows(600, ANALYSIS_MODE_HIGHLIGHTS, "gemini") is None
+    assert _analysis_windows(3863, ANALYSIS_MODE_NARRATIVE, "gemini") is None
+    assert _analysis_windows(3863, ANALYSIS_MODE_HIGHLIGHTS, "mock") is None
+    windows = _analysis_windows(3863, ANALYSIS_MODE_HIGHLIGHTS, "gemini")
+    assert windows and windows[0][0] == 0.0
+    assert abs(windows[-1][1] - 3863) < 0.01  # covers the full runtime
+    assert all(b > a for (a, b) in windows)
+
+
+def test_gemini_payload_includes_recap_rules_only_for_recap_prompt():
+    base = {"source_type": "upload", "duration_sec": 1400, "width": 1920, "height": 1080, "fps": 30}
+    file_info = {"uri": "https://x/files/abc", "mimeType": "video/mp4"}
+    recap = build_gemini_analysis_payload(
+        base, "Make an Episode Story Recap of this episode.", file_info, "video/mp4"
+    )["contents"][0]["parts"][1]["text"]
+    assert "clips[0] must be an Episode Story Recap" in recap
+    assert "Reject pretty visuals" in recap
 
 
 def test_gemini_schema_has_property_ordering_for_2_0_models():
@@ -49,6 +96,10 @@ def test_gemini_schema_has_property_ordering_for_2_0_models():
     assert schema["properties"]["clips"]["items"]["propertyOrdering"][0] == "title"
     segment_schema = schema["properties"]["clips"]["items"]["properties"]["segments"]["items"]
     assert segment_schema["propertyOrdering"][0] == "start_sec"
+    # Focus track must be in the structured-output schema, else Gemini can't return it.
+    focus = segment_schema["properties"]["focus"]
+    assert focus["type"] == "array"
+    assert set(["t", "x"]).issubset(focus["items"]["properties"])
 
 
 def test_gemini_video_analyzer_uploads_waits_and_parses_response(tmp_path):

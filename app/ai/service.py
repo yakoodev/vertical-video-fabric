@@ -9,8 +9,10 @@ from pathlib import Path
 
 from app.analysis_preprocess import normalize_analysis_preprocessing, prepare_source_for_analysis
 from app.ai.contracts import AnalysisClip
+from app.ai.gemini import GeminiVideoAnalyzer
 from app.ai.registry import get_video_analyzer
-from app.default_prompts import BASE_ANALYSIS_PROMPT
+from app.ai.transcript import transcribe_source_cues
+from app.default_prompts import BASE_ANALYSIS_PROMPT, FOCUS_TRACK_INSTRUCTION
 from app.settings import settings
 from app.store import AppStore, MAX_SEGMENT_DURATION_SEC
 
@@ -63,6 +65,7 @@ class VideoAnalysisService:
         model: str | None = None,
         prompt: str | None = None,
         preprocessing: dict | None = None,
+        use_transcript: bool | None = None,
     ) -> dict:
         selected_provider = (
             provider
@@ -84,6 +87,12 @@ class VideoAnalysisService:
             or _prompt_from_preset(self.store.get_default_prompt_preset("analysis"))
             or BASE_ANALYSIS_PROMPT
         ).strip()
+        # Vision providers are additionally asked for a point-of-interest track so
+        # wide sources can be dynamically reframed to 9:16. This augmentation goes
+        # only to the model — the stored request keeps the user's clean prompt.
+        analyzer_prompt = selected_prompt
+        if selected_provider in {"gemini", "polza", "artemox"}:
+            analyzer_prompt = f"{selected_prompt}\n\n{FOCUS_TRACK_INSTRUCTION}".strip()
         if source["status"] == "failed":
             raise ValueError("failed source cannot be analyzed")
         normalized_preprocessing = normalize_analysis_preprocessing(preprocessing)
@@ -108,28 +117,58 @@ class VideoAnalysisService:
                 float(source.get("duration_sec") or 0),
             )
             analyzer = get_video_analyzer(selected_provider)
-            result = analyzer.analyze(analyzer_source, selected_prompt, selected_model)
-            retry_reason = _narrative_retry_reason(
-                result,
+            windows = _analysis_windows(
                 float(source.get("duration_sec") or 0),
-                analysis_segment_options,
+                _analysis_mode(analysis_segment_options),
+                selected_provider,
             )
-            if retry_reason:
-                retry_prompt = _narrative_retry_prompt(
-                    selected_prompt,
+            # Hand the video LLM a verbatim Whisper transcript so cut boundaries
+            # land on whole spoken lines and quotes survive. Only Gemini ingests
+            # it (polza already does its own ASR); default on for Gemini, but the
+            # caller can force it off for visual-only sources to save the pass.
+            is_gemini = isinstance(analyzer, GeminiVideoAnalyzer)
+            want_transcript = use_transcript if use_transcript is not None else is_gemini
+            transcript_cues: list[dict] = []
+            if want_transcript and is_gemini:
+                # Reuse a cached transcript for this source; only run Whisper (the
+                # multi-minute step) the first time.
+                transcript_cues = self.store.get_source_transcript(source_id)
+                if not transcript_cues:
+                    transcript_cues = transcribe_source_cues(analyzer_source.get("local_path"))
+                    if transcript_cues:
+                        self.store.set_source_transcript(source_id, transcript_cues, settings.whisper_model_size)
+            gemini_kwargs = {"transcript": transcript_cues} if is_gemini else {}
+            if windows and is_gemini:
+                result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, windows=windows, **gemini_kwargs)
+            else:
+                result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, **gemini_kwargs)
+            # The recap-quality retry (and its single-shot re-analysis) only make
+            # sense for narrative/recap mode. Running it in highlights mode would
+            # throw away the full-episode windowed coverage by re-analyzing the
+            # whole file in one pass; oversized highlights segments are trimmed in
+            # post-processing instead.
+            if _analysis_mode(analysis_segment_options) == ANALYSIS_MODE_NARRATIVE:
+                retry_reason = _narrative_retry_reason(
+                    result,
                     float(source.get("duration_sec") or 0),
-                    retry_reason,
-                    mode=_analysis_mode(analysis_segment_options),
+                    analysis_segment_options,
                 )
-                result = analyzer.analyze(analyzer_source, retry_prompt, selected_model)
-                retry_meta = {"reason": retry_reason}
-            quality_error = _narrative_quality_error(
-                result,
-                float(source.get("duration_sec") or 0),
-                analysis_segment_options,
-            )
-            if quality_error:
-                raise RuntimeError(f"AI analyzer returned invalid narrative analysis: {quality_error}")
+                if retry_reason:
+                    retry_prompt = _narrative_retry_prompt(
+                        selected_prompt,
+                        float(source.get("duration_sec") or 0),
+                        retry_reason,
+                        mode=ANALYSIS_MODE_NARRATIVE,
+                    )
+                    result = analyzer.analyze(analyzer_source, retry_prompt, selected_model, **gemini_kwargs)
+                    retry_meta = {"reason": retry_reason}
+                quality_error = _narrative_quality_error(
+                    result,
+                    float(source.get("duration_sec") or 0),
+                    analysis_segment_options,
+                )
+                if quality_error:
+                    raise RuntimeError(f"AI analyzer returned invalid narrative analysis: {quality_error}")
             created_plans = _persist_clip_plans(
                 self.store,
                 source_id=source_id,
@@ -181,6 +220,8 @@ class VideoAnalysisService:
 
 
 def _default_model(provider: str) -> str:
+    if provider == "action":
+        return "motion+audio"
     if provider == "polza":
         return settings.polza_video_model
     if provider == "gemini":
@@ -243,6 +284,39 @@ def _segment_postprocess_options(source: dict, prompt: str, provider: str) -> di
 
 def _analysis_mode(segment_options: dict | None) -> str:
     return str((segment_options or {}).get("mode") or ANALYSIS_MODE_NARRATIVE)
+
+
+def _highlights_clip_cap(source_duration: float) -> int:
+    """How many highlight clips to keep. A short source keeps the base cap; a long
+    windowed episode keeps more so coverage isn't truncated to the first window."""
+
+    window = max(120.0, float(settings.analysis_window_seconds))
+    by_length = math.ceil(max(0.0, source_duration) / window) * 4
+    return max(HIGHLIGHTS_MAX_CLIPS, by_length)
+
+
+def _analysis_windows(duration_sec: float, mode: str, provider: str) -> list[tuple[float, float]] | None:
+    """Split a long episode into overlapping time windows for highlights mode.
+
+    Recap (narrative) mode needs the whole episode in one view, so it is never
+    windowed. Only gemini honors per-window offsets today. Returns None when the
+    source is short enough to analyze in one pass.
+    """
+
+    if provider != "gemini" or mode != ANALYSIS_MODE_HIGHLIGHTS:
+        return None
+    window = max(120.0, float(settings.analysis_window_seconds))
+    overlap = max(0.0, float(settings.analysis_window_overlap_seconds))
+    if duration_sec <= window * 1.4:
+        return None
+    count = max(2, math.ceil(duration_sec / window))
+    step = duration_sec / count
+    windows: list[tuple[float, float]] = []
+    for index in range(count):
+        start = max(0.0, index * step - (overlap if index else 0.0))
+        end = duration_sec if index == count - 1 else (index + 1) * step
+        windows.append((round(start, 3), round(end, 3)))
+    return windows
 
 
 def _segment_options_with_audio_boundaries(
@@ -894,12 +968,13 @@ def _trim_narrative_clip_specs_to_budget(
     if not specs or not segment_options or source_duration < 900:
         return specs
     if _analysis_mode(segment_options) != ANALYSIS_MODE_NARRATIVE:
+        cap = _highlights_clip_cap(source_duration)
         kept = [
             spec
             for spec in specs
             if _clip_total_duration(spec) <= NARRATIVE_MAX_CLIP_DURATION_SEC
-        ][:HIGHLIGHTS_MAX_CLIPS]
-        return kept or specs[:HIGHLIGHTS_MAX_CLIPS]
+        ][:cap]
+        return kept or specs[:cap]
     max_total = min(
         NARRATIVE_MAX_TOTAL_SELECTED_DURATION_SEC,
         max(NARRATIVE_MAX_CLIP_DURATION_SEC, source_duration * NARRATIVE_MAX_TOTAL_SELECTED_RATIO),

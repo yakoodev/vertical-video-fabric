@@ -14,6 +14,7 @@ class AnalysisSegment:
     category: str = "general"
     color: str = "#64748B"
     reason: str = ""
+    focus: tuple[dict[str, Any], ...] = ()
 
     def to_store_dict(self) -> dict[str, Any]:
         return {
@@ -25,6 +26,7 @@ class AnalysisSegment:
             "category": self.category,
             "color": self.color,
             "reason": self.reason,
+            "focus": list(self.focus),
         }
 
 

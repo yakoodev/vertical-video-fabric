@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from app.ai.action_detect import ActionVideoAnalyzer
 from app.ai.artemox import ArtemoxVideoAnalyzer
 from app.ai.contracts import VideoAnalyzer
 from app.ai.gemini import GeminiVideoAnalyzer
 from app.ai.mock import MockVideoAnalyzer
+from app.ai.polza import PolzaVideoAnalyzer
 
 
 class NotConfiguredVideoAnalyzer:
@@ -22,6 +24,8 @@ def get_video_analyzer(provider: str) -> VideoAnalyzer:
         return ArtemoxVideoAnalyzer()
     if normalized == "gemini":
         return GeminiVideoAnalyzer()
+    if normalized == "action":
+        return ActionVideoAnalyzer()
     if normalized == "polza":
-        return NotConfiguredVideoAnalyzer(normalized)
+        return PolzaVideoAnalyzer()
     raise ValueError(f"unsupported video analyzer: {provider}")
