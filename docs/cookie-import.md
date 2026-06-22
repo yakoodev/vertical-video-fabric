@@ -45,20 +45,14 @@ Cookie: SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...
 
 ## Импорт через Web UI
 
-1. Откройте `http://localhost:8088/accounts`.
-2. Выберите `Platform`: `YouTube` или `TikTok`.
-3. Введите `Label`, например `yt-main` или `tt-us-proxy-1`.
-4. В `Publishing Proxy` укажите proxy для этого аккаунта, например:
-
-```text
-http://user:pass@host:port
-```
-
-Если оставить поле пустым, сервис использует глобальный `POSTING_PROXY_URL`, если он задан. Если глобального proxy нет, публикация пойдет напрямую.
-
-5. Вставьте cookies в поле `Cookie Header or Netscape Cookies`.
-6. Нажмите `Save Account`.
-7. Проверьте таблицу `Saved Accounts`: `Required` должен быть `ok`, а `Proxy` должен показать redacted proxy или `global proxy`/`direct`.
+1. Откройте `http://localhost:8088` и перейдите в **Настройки → Аккаунты**.
+2. Выберите `Платформа`: `youtube`, `tiktok` или `instagram`.
+3. Введите `Метку`, например `yt-main` или `tt-us-proxy-1`.
+4. (Опц.) укажите proxy для этого аккаунта, например `http://user:pass@host:port`.
+   Если пусто — используется глобальный `POSTING_PROXY_URL`, а если и его нет — публикация идёт напрямую.
+5. Вставьте cookies в поле для куки (Raw Cookie header или Netscape export).
+6. Сохраните аккаунт.
+7. В списке аккаунтов у записи должно быть отмечено, что обязательные куки на месте (`Required: ok`).
 
 ## Импорт через API
 
@@ -102,6 +96,20 @@ curl -X POST http://localhost:8088/api/accounts \
   }'
 ```
 
+Пример добавления Instagram аккаунта:
+
+```bash
+curl -X POST http://localhost:8088/api/accounts \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "instagram",
+    "label": "ig-main",
+    "proxy_url": "http://user:pass@host:port",
+    "cookie": "sessionid=..."
+  }'
+```
+
 Если аккаунт уже существует с тем же `platform + label`, запрос обновит cookies и proxy.
 
 ## YouTube: как снять cookies
@@ -135,6 +143,7 @@ SAPISID
 - Не смешивайте `.google.com` cookies вручную в raw `Cookie` header для YouTube.
 - Netscape export может содержать `.google.com`, сервис сам отфильтрует cookies по host при публикации.
 - Если YouTube возвращает `needs_reauth`/401, первым делом обновите cookies из той же браузерной сессии и proxy.
+- Сервис **сам обновляет ротируемые куки** (`__Secure-*PSIDTS` и т.п.) после каждой успешной загрузки и пишет их обратно в аккаунт, поэтому сессия живёт долго — не нужно переснимать куки каждые пару дней.
 
 ## TikTok: как снять cookies
 
@@ -165,13 +174,35 @@ sessionid
 - Истек или изменился `sessionid`.
 - В аккаунте включились дополнительные проверки безопасности.
 
+## Instagram: как снять cookies
+
+Сервис публикует Reels через instagrapi, авторизуясь по куке `sessionid`.
+
+1. Откройте `https://www.instagram.com` под нужным аккаунтом (лучше через тот же proxy/IP).
+2. DevTools (`F12`) → вкладка `Application` (или `Storage`) → `Cookies` → `https://www.instagram.com`.
+3. Скопируйте значение `sessionid` (либо весь Cookie header из `Network`).
+4. Вставьте в сервис: достаточно `sessionid=...`.
+
+Минимальный cookie, который проверяет сервис:
+
+```text
+sessionid
+```
+
+Важно:
+
+- instagrapi — неофициальный приватный API. На ценных аккаунтах есть риск бана/challenge:
+  прогревайте аккаунт, не лейте десятками в час, используйте стабильный proxy/IP.
+- При `login_required`/`challenge_required`/`checkpoint` задача уйдёт в `needs_reauth` —
+  переснимите `sessionid` (пройдя при необходимости проверку в браузере).
+
 ## Проверка после импорта
 
-1. Откройте `New Post`.
-2. Выберите нужный account target.
-3. Отправьте короткий тестовый mp4 с `privacy=public` или `private`.
-4. Откройте `Jobs`.
-5. Успешная публикация должна иметь target status `succeeded` и remote id/url, если платформа вернула ссылку.
+1. Откройте проект → вкладку **Клипы** (или **Смонтированные**) и нажмите `Опубликовать` у клипа,
+   либо запустите авто-конвейер на вкладке **Авто** с выбранными аккаунтами.
+2. Выберите нужный account target и приватность, отправьте.
+3. Следите за статусом на странице **Задачи** (или **Публикации**).
+4. Успешная публикация имеет статус `succeeded` и remote id/url, если платформа вернула ссылку.
 
 Статусы:
 

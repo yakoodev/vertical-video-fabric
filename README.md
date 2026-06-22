@@ -130,12 +130,14 @@ POSTING_API_TOKEN=change-this-token
 
 ## Аккаунты
 
-Откройте `Accounts` и вставьте `Cookie` header из браузера для нужной платформы.
-Cookies сохраняются зашифрованно в `/data/app.sqlite` с ключом `/data/secret.key`.
+**Настройки → Аккаунты**: выберите платформу (YouTube / TikTok / Instagram), метку и вставьте
+`Cookie` залогиненного аккаунта. Минимально нужны: YouTube — `SID, HSID, SSID, APISID, SAPISID`;
+TikTok и Instagram — `sessionid`. Cookies хранятся зашифрованно в `/data/app.sqlite` (ключ `/data/secret.key`).
 
-Если платформа инвалидирует cookies или попросит challenge, задача перейдет в `needs_reauth`.
+YouTube-сессия **самолечится** — ротируемые куки обновляются после каждой загрузки, так что
+аккаунт живёт долго. Если платформа инвалидирует cookies или просит challenge, задача переходит в `needs_reauth`.
 
-Подробный гайд по импорту cookies: [docs/cookie-import.md](docs/cookie-import.md).
+Подробный гайд по снятию cookies (DevTools, форматы, по платформам): [docs/cookie-import.md](docs/cookie-import.md).
 Безопасная схема тестов на реальных файлах, аккаунтах и ключах: [docs/real-testing.md](docs/real-testing.md).
 
 ## AI video pipeline
