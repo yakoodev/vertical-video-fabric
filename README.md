@@ -6,7 +6,8 @@ AI-комбайн для автопостинга вертикальных ви�
 Публикация выполняется с сохранёнными cookies (YouTube — с авто-обновлением ротируемых
 куки, Instagram — через instagrapi).
 
-> **Руководство пользователя (для тех, кто работает в сервисе): [docs/user-guide.md](docs/user-guide.md).**
+> **Установка на Windows с нуля: [docs/windows-setup.md](docs/windows-setup.md).**
+> **Руководство пользователя: [docs/user-guide.md](docs/user-guide.md).**
 > Импорт cookies со скриншотами: [docs/cookie-import.md](docs/cookie-import.md).
 
 ## Как установить (Docker)
