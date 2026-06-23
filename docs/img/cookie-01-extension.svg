@@ -1,0 +1,53 @@
+<svg viewBox="0 0 640 420" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ah1" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#f5a524"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="640" height="420" rx="14" fill="#0e1015"/>
+  <text x="24" y="34" fill="#e6e8ec" font-size="17" font-weight="700">Шаг 1. Экспорт cookies расширением</text>
+  <text x="24" y="56" fill="#9aa0aa" font-size="13">Get cookies.txt LOCALLY — открой нужный сайт залогиненным, затем иконку расширения</text>
+
+  <!-- extension popup -->
+  <rect x="300" y="80" width="316" height="300" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+  <text x="316" y="106" fill="#e6e8ec" font-size="12.5">Get cookies.txt for https://www.tiktok.com/…</text>
+
+  <!-- buttons row -->
+  <rect x="316" y="120" width="92" height="30" rx="7" fill="#262b36"/>
+  <text x="362" y="140" fill="#c7ccd6" font-size="12" text-anchor="middle">Export</text>
+  <rect x="414" y="120" width="92" height="30" rx="7" fill="#262b36"/>
+  <text x="460" y="140" fill="#c7ccd6" font-size="12" text-anchor="middle">Export As</text>
+  <rect x="512" y="120" width="88" height="30" rx="7" fill="#1c2230" stroke="#6e7bff" stroke-width="2.5"/>
+  <text x="556" y="140" fill="#aeb6ff" font-size="12" font-weight="700" text-anchor="middle">Copy</text>
+
+  <rect x="316" y="158" width="284" height="28" rx="7" fill="#262b36"/>
+  <text x="458" y="177" fill="#9aa0aa" font-size="12" text-anchor="middle">Export All Cookies</text>
+
+  <!-- format -->
+  <text x="316" y="210" fill="#9aa0aa" font-size="12">Export Format:</text>
+  <rect x="404" y="197" width="120" height="26" rx="6" fill="#1c2230" stroke="#6e7bff" stroke-width="2"/>
+  <text x="414" y="215" fill="#aeb6ff" font-size="12" font-weight="600">Netscape ▾</text>
+
+  <!-- fake table -->
+  <rect x="316" y="236" width="284" height="128" rx="6" fill="#0c0e13" stroke="#22262f"/>
+  <line x1="316" y1="260" x2="600" y2="260" stroke="#22262f"/>
+  <text x="324" y="253" fill="#6b7280" font-size="10">Domain   Path  Secure  Expiry      Name</text>
+  <text x="324" y="278" fill="#7e8694" font-size="10">.tiktok.com  /   TRUE   …   sessionid</text>
+  <text x="324" y="296" fill="#7e8694" font-size="10">.tiktok.com  /   TRUE   …   sid_tt</text>
+  <text x="324" y="314" fill="#7e8694" font-size="10">.tiktok.com  /   TRUE   …   ttwid</text>
+  <text x="324" y="332" fill="#7e8694" font-size="10">.tiktok.com  /   TRUE   …   msToken</text>
+  <text x="324" y="350" fill="#7e8694" font-size="10">…</text>
+
+  <!-- callouts -->
+  <text x="24" y="210" fill="#f5a524" font-size="13" font-weight="700">1) Формат — Netscape</text>
+  <line x1="150" y1="214" x2="402" y2="210" stroke="#f5a524" stroke-width="2" marker-end="url(#ah1)"/>
+
+  <text x="24" y="150" fill="#f5a524" font-size="13" font-weight="700">2) Жми Copy</text>
+  <text x="24" y="170" fill="#9aa0aa" font-size="11.5">скопирует все куки сайта</text>
+  <line x1="150" y1="146" x2="510" y2="135" stroke="#f5a524" stroke-width="2" marker-end="url(#ah1)"/>
+
+  <text x="24" y="300" fill="#9aa0aa" font-size="12">YouTube: открывай</text>
+  <text x="24" y="318" fill="#c7ccd6" font-size="12" font-weight="600">studio.youtube.com</text>
+  <text x="24" y="340" fill="#9aa0aa" font-size="12">TikTok: www.tiktok.com</text>
+  <text x="24" y="358" fill="#9aa0aa" font-size="12">Instagram: instagram.com</text>
+</svg>

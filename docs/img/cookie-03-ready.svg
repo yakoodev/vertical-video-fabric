@@ -1,0 +1,27 @@
+<svg viewBox="0 0 640 220" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ah3" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#f5a524"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="640" height="220" rx="14" fill="#0e1015"/>
+  <text x="24" y="34" fill="#e6e8ec" font-size="17" font-weight="700">Шаг 3. Проверка: статус «готов»</text>
+  <text x="24" y="56" fill="#9aa0aa" font-size="13">Обязательные куки распознаны → аккаунт готов к публикации</text>
+
+  <!-- account card -->
+  <rect x="320" y="80" width="296" height="116" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+  <text x="338" y="112" fill="#e6e8ec" font-size="15" font-weight="700">tiktok · tt-main</text>
+  <rect x="520" y="96" width="78" height="24" rx="12" fill="#10271f" stroke="#35d39a"/>
+  <circle cx="536" cy="108" r="3.5" fill="#35d39a"/>
+  <text x="546" y="112" fill="#35d39a" font-size="11" font-weight="700">готов</text>
+  <text x="338" y="140" fill="#9aa0aa" font-size="12.5">cookies: 31</text>
+  <text x="338" y="160" fill="#9aa0aa" font-size="12.5">прокси: http://***@185.155.233.235:49155</text>
+  <rect x="338" y="170" width="74" height="20" rx="6" fill="#1a1d24" stroke="#2a2f3a"/>
+  <text x="375" y="184" fill="#c7ccd6" font-size="10.5" text-anchor="middle">Удалить</text>
+
+  <text x="24" y="120" fill="#35d39a" font-size="13" font-weight="700">«готов» = sessionid (или</text>
+  <text x="24" y="138" fill="#35d39a" font-size="13" font-weight="700">SID/HSID/… для YouTube) на месте</text>
+  <text x="24" y="166" fill="#9aa0aa" font-size="12">Дальше: Клипы → Опубликовать,</text>
+  <text x="24" y="184" fill="#9aa0aa" font-size="12">статус — на странице Задачи.</text>
+  <line x1="250" y1="130" x2="318" y2="120" stroke="#f5a524" stroke-width="2" marker-end="url(#ah3)"/>
+</svg>
