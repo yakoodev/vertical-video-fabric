@@ -1,0 +1,50 @@
+<svg viewBox="0 0 940 240" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="wa" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#6e7bff"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="940" height="240" rx="14" fill="#0e1015"/>
+  <text x="24" y="34" fill="#e6e8ec" font-size="17" font-weight="700">Как работает Vertical Video Fabric</text>
+
+  <!-- step boxes -->
+  <g>
+    <rect x="24" y="64" width="150" height="84" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+    <text x="99" y="96" fill="#aeb6ff" font-size="22" text-anchor="middle">①</text>
+    <text x="99" y="120" fill="#e6e8ec" font-size="13" font-weight="700" text-anchor="middle">Проект</text>
+    <text x="99" y="138" fill="#9aa0aa" font-size="11" text-anchor="middle">ссылка / файл</text>
+  </g>
+  <line x1="178" y1="106" x2="206" y2="106" stroke="#6e7bff" stroke-width="2" marker-end="url(#wa)"/>
+  <g>
+    <rect x="210" y="64" width="150" height="84" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+    <text x="285" y="96" fill="#aeb6ff" font-size="22" text-anchor="middle">②</text>
+    <text x="285" y="120" fill="#e6e8ec" font-size="13" font-weight="700" text-anchor="middle">Анализ (AI)</text>
+    <text x="285" y="138" fill="#9aa0aa" font-size="11" text-anchor="middle">находит моменты</text>
+  </g>
+  <line x1="364" y1="106" x2="392" y2="106" stroke="#6e7bff" stroke-width="2" marker-end="url(#wa)"/>
+  <g>
+    <rect x="396" y="64" width="150" height="84" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+    <text x="471" y="96" fill="#aeb6ff" font-size="22" text-anchor="middle">③</text>
+    <text x="471" y="120" fill="#e6e8ec" font-size="13" font-weight="700" text-anchor="middle">Кандидаты</text>
+    <text x="471" y="138" fill="#9aa0aa" font-size="11" text-anchor="middle">правки, фокус</text>
+  </g>
+  <line x1="550" y1="106" x2="578" y2="106" stroke="#6e7bff" stroke-width="2" marker-end="url(#wa)"/>
+  <g>
+    <rect x="582" y="64" width="150" height="84" rx="12" fill="#14161c" stroke="#2a2f3a"/>
+    <text x="657" y="96" fill="#aeb6ff" font-size="22" text-anchor="middle">④</text>
+    <text x="657" y="120" fill="#e6e8ec" font-size="13" font-weight="700" text-anchor="middle">Рендер</text>
+    <text x="657" y="138" fill="#9aa0aa" font-size="11" text-anchor="middle">9:16 + субтитры</text>
+  </g>
+  <line x1="736" y1="106" x2="764" y2="106" stroke="#6e7bff" stroke-width="2" marker-end="url(#wa)"/>
+  <g>
+    <rect x="768" y="64" width="150" height="84" rx="12" fill="#14161c" stroke="#35d39a"/>
+    <text x="843" y="96" fill="#35d39a" font-size="22" text-anchor="middle">⑤</text>
+    <text x="843" y="120" fill="#e6e8ec" font-size="13" font-weight="700" text-anchor="middle">Публикация</text>
+    <text x="843" y="138" fill="#9aa0aa" font-size="11" text-anchor="middle">YT / TikTok / IG</text>
+  </g>
+
+  <!-- auto band -->
+  <rect x="24" y="176" width="894" height="44" rx="10" fill="#1a1426" stroke="#6e7bff" stroke-dasharray="5 4"/>
+  <text x="44" y="203" fill="#aeb6ff" font-size="13" font-weight="700">⚡ Авто</text>
+  <text x="110" y="203" fill="#c7ccd6" font-size="12.5">вкладка «Авто» делает шаги ①→⑤ автоматически из одной ссылки (можно по расписанию)</text>
+</svg>
