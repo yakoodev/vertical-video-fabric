@@ -9,6 +9,7 @@ export interface RenderClipPlanRequest {
   banner_id?: number;
   banner_height_frac?: number;
   banner_y_frac?: number;
+  mirror?: boolean;
   music_track_id?: number;
   music_volume?: number;
 }

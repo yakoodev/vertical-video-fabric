@@ -327,6 +327,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [bannerId, setBannerId] = useState(0);
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
+  const [mirror, setMirror] = useState(false);
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -364,6 +365,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         banner_id: bannerOn ? bannerId || undefined : undefined,
         banner_height_frac: bannerOn ? bannerHeightPct / 100 : undefined,
         banner_y_frac: bannerOn ? bannerPosPct / 100 : undefined,
+        mirror: mirror || undefined,
         music_track_id: musicOn ? trackId || undefined : undefined,
       }),
     onSuccess: (clips) => {
@@ -447,7 +449,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 src={`/media/sources/${source.id}`}
                 controls
                 preload="metadata"
-                style={lookCss ? { filter: lookCss } : undefined}
+                style={{
+                  filter: lookCss || undefined,
+                  transform: mirror ? "scaleX(-1)" : undefined,
+                }}
               />
               {selectedPreset?.vignette ? (
                 <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
@@ -567,6 +572,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 ))}
               </select>
             ) : null}
+          </div>
+
+          <div className="opt-row">
+            <label className="check" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
+              <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+              <span>🪞 Зеркало (лево↔право)</span>
+            </label>
           </div>
 
           <div className="zone-settings">

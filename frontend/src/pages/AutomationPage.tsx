@@ -47,6 +47,7 @@ function StartAuto() {
   const [bannerPosPct, setBannerPosPct] = useState(4);
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
+  const [mirror, setMirror] = useState(false);
 
   const renderPresets = useQuery({ queryKey: qk.ffmpegPresets, queryFn: ffmpegPresetsApi.list });
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
@@ -207,6 +208,11 @@ function StartAuto() {
         ) : null}
 
         <label className="check">
+          <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+          <span>🪞 Зеркало (лево↔право)</span>
+        </label>
+
+        <label className="check">
           <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
           <span>Музыка</span>
         </label>
@@ -265,6 +271,7 @@ function StartAuto() {
               banner_id: bannerId || undefined,
               banner_height_frac: bannerOn ? bannerHeightPct / 100 : undefined,
               banner_y_frac: bannerOn ? bannerPosPct / 100 : undefined,
+              mirror,
               use_music: musicOn,
               music_track_id: trackId || undefined,
             })

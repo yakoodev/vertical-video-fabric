@@ -68,6 +68,7 @@ class ClipRenderService:
         banner_height_frac: float | None = None,
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
+        mirror: bool = False,
     ) -> dict:
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
@@ -81,6 +82,7 @@ class ClipRenderService:
             banner_y_frac=banner_y_frac,
             subtitle_provider=subtitle_provider,
             subtitle_margin_v=subtitle_margin_v,
+            mirror=mirror,
         )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
@@ -174,6 +176,7 @@ class ClipRenderService:
         banner_height_frac: float | None = None,
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
+        mirror: bool = False,
     ) -> dict:
         if not segment_ids:
             raise ValueError("at least one segment is required")
@@ -192,6 +195,7 @@ class ClipRenderService:
             banner_y_frac=banner_y_frac,
             subtitle_provider=subtitle_provider,
             subtitle_margin_v=subtitle_margin_v,
+            mirror=mirror,
         )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
@@ -291,6 +295,7 @@ class ClipRenderService:
         banner_height_frac: float | None = None,
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
+        mirror: bool = False,
     ) -> dict:
         """Render a fresh clip from a directly-uploaded clip's pristine source.
 
@@ -320,6 +325,7 @@ class ClipRenderService:
             banner_y_frac=banner_y_frac,
             subtitle_provider=subtitle_provider,
             subtitle_margin_v=subtitle_margin_v,
+            mirror=mirror,
         )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
@@ -393,6 +399,7 @@ class ClipRenderService:
         banner_height_frac: float | None = None,
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
+        mirror: bool = False,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -414,6 +421,7 @@ class ClipRenderService:
                 banner_height_frac=banner_height_frac,
                 banner_y_frac=banner_y_frac,
                 subtitle_margin_v=subtitle_margin_v,
+                mirror=mirror,
             )
         else:
             clip = self.render_montage(
@@ -431,6 +439,7 @@ class ClipRenderService:
                 banner_height_frac=banner_height_frac,
                 banner_y_frac=banner_y_frac,
                 subtitle_margin_v=subtitle_margin_v,
+                mirror=mirror,
             )
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
@@ -570,6 +579,7 @@ class ClipRenderService:
         banner_y_frac: float | None = None,
         subtitle_provider: str | None = None,
         subtitle_margin_v: int | None = None,
+        mirror: bool = False,
     ) -> dict:
         """Stash per-render overrides on the preset dict so they reach the ffmpeg
         builder / subtitle pass without changing the saved preset or profile.
@@ -587,6 +597,7 @@ class ClipRenderService:
             and banner_y_frac is None
             and not subtitle_provider
             and subtitle_margin_v is None
+            and not mirror
         ):
             return preset
         preset = dict(preset)
@@ -598,6 +609,8 @@ class ClipRenderService:
             preset["subtitle_provider_override"] = str(subtitle_provider).strip().lower()
         if subtitle_margin_v is not None:
             preset["subtitle_margin_v_override"] = max(0, int(subtitle_margin_v))
+        if mirror:
+            preset["mirror"] = True
         return preset
 
     def _finalize_render(
@@ -1032,6 +1045,10 @@ def _video_style_filter(preset: dict) -> str:
     """
 
     parts: list[str] = []
+    # Horizontal mirror (swap left/right) — applied after the 9:16 crop so only the
+    # final frame is flipped. Handy for making reposts look different.
+    if preset.get("mirror"):
+        parts.append("hflip")
     style = str(preset.get("color_style") or "none").strip().lower()
     strength = _clamp(preset.get("color_strength"), default=1.0, low=0.0, high=2.0)
     if style != "none" and strength > 0:

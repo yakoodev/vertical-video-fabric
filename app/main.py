@@ -461,6 +461,7 @@ class RenderClipPlansRequest(BaseModel):
     banner_id: int | None = None
     banner_height_frac: float | None = None
     banner_y_frac: float | None = None
+    mirror: bool | None = None
     music_track_id: int | None = None
     music_volume: float | None = None
 
@@ -1356,6 +1357,7 @@ def ui_auto_start(
     banner_id: Annotated[str, Form()] = "",
     banner_height_frac: Annotated[str, Form()] = "",
     banner_y_frac: Annotated[str, Form()] = "",
+    mirror: Annotated[bool, Form()] = False,
     music_track_id: Annotated[str, Form()] = "",
     music_volume: Annotated[str, Form()] = "",
     use_subtitles: Annotated[bool, Form()] = False,
@@ -1409,6 +1411,7 @@ def ui_auto_start(
             "banner_id": selected_banner_id,
             "banner_height_frac": (float(banner_height_frac) if str(banner_height_frac).strip() else None) if use_banner else None,
             "banner_y_frac": (float(banner_y_frac) if str(banner_y_frac).strip() else None) if use_banner else None,
+            "mirror": bool(mirror),
             "music_track_id": selected_music_track_id,
             "music_volume": selected_music_volume,
         },
@@ -1859,6 +1862,7 @@ def api_render_clip_plans(
                     banner_height_frac=payload.banner_height_frac,
                     banner_y_frac=payload.banner_y_frac,
                     subtitle_margin_v=payload.subtitle_margin_v,
+                    mirror=bool(payload.mirror),
                 )
             )
         return clips
