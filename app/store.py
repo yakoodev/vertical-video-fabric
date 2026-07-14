@@ -106,6 +106,117 @@ class AppStore:
         )
         return [self._account_from_row(row, include_secret=False) for row in rows]
 
+    # --- Share bundle: export/import config (and optionally accounts) as portable JSON ---
+
+    def export_bundle(self, include_accounts: bool = False) -> dict:
+        """Build a portable JSON bundle to share config with colleagues. Render/subtitle
+        presets and prompts are safe to share; accounts carry live cookies and are
+        included only when explicitly requested."""
+        drop_common = {"id", "created_at", "updated_at"}
+        drop_fp = drop_common | {"banner_id", "subtitle_profile_id", "music_track_id"}
+        bundle: dict = {
+            "version": 1,
+            "ffmpeg_presets": [
+                {k: v for k, v in p.items() if k not in drop_fp} for p in self.list_ffmpeg_presets()
+            ],
+            "subtitle_profiles": [
+                {k: v for k, v in s.items() if k not in drop_common} for s in self.list_subtitle_profiles()
+            ],
+            "prompt_presets": [
+                {
+                    "task": p.get("task"),
+                    "label": p.get("label"),
+                    "prompt": p.get("prompt"),
+                    "is_default": bool(p.get("is_default")),
+                }
+                for p in self.list_prompt_presets()
+            ],
+        }
+        if include_accounts:
+            accounts: list[dict] = []
+            for a in self.list_accounts():
+                row = self.db.query_one("SELECT encrypted_cookies FROM accounts WHERE id = ?", (a["id"],))
+                cookies = self.cipher.decrypt_json(row["encrypted_cookies"]) if row else []
+                accounts.append(
+                    {
+                        "platform": a["platform"],
+                        "label": a["label"],
+                        "proxy_url": self.get_account_proxy_url(a["id"]),
+                        "cookies": cookies,
+                    }
+                )
+            bundle["accounts"] = accounts
+        return bundle
+
+    def import_bundle(self, bundle: dict) -> dict:
+        """Merge a bundle produced by export_bundle. Existing items (by label /
+        task+label / platform+label) are skipped, not overwritten. Returns counts."""
+        counts = {"ffmpeg_presets": 0, "subtitle_profiles": 0, "prompt_presets": 0, "accounts": 0, "skipped": 0}
+        if not isinstance(bundle, dict):
+            raise ValueError("bundle must be a JSON object")
+
+        have_fp = {p.get("label") for p in self.list_ffmpeg_presets()}
+        for p in bundle.get("ffmpeg_presets") or []:
+            label = str(p.get("label") or "").strip()
+            if not label or label in have_fp:
+                counts["skipped"] += 1
+                continue
+            try:
+                self.create_ffmpeg_preset(label, **{k: v for k, v in p.items() if k != "label"})
+                have_fp.add(label)
+                counts["ffmpeg_presets"] += 1
+            except Exception:  # noqa: BLE001 - skip malformed entries, keep importing the rest
+                counts["skipped"] += 1
+
+        have_sp = {s.get("label") for s in self.list_subtitle_profiles()}
+        for s in bundle.get("subtitle_profiles") or []:
+            label = str(s.get("label") or "").strip()
+            if not label or label in have_sp:
+                counts["skipped"] += 1
+                continue
+            try:
+                self.create_subtitle_profile(label, **{k: v for k, v in s.items() if k != "label"})
+                have_sp.add(label)
+                counts["subtitle_profiles"] += 1
+            except Exception:  # noqa: BLE001
+                counts["skipped"] += 1
+
+        have_pp = {(p.get("task"), p.get("label")) for p in self.list_prompt_presets()}
+        for p in bundle.get("prompt_presets") or []:
+            key = (p.get("task"), p.get("label"))
+            if not key[0] or not key[1] or key in have_pp:
+                counts["skipped"] += 1
+                continue
+            try:
+                self.create_prompt_preset(str(p["task"]), str(p["label"]), str(p.get("prompt") or ""), bool(p.get("is_default")))
+                have_pp.add(key)
+                counts["prompt_presets"] += 1
+            except Exception:  # noqa: BLE001
+                counts["skipped"] += 1
+
+        have_acc = {(a.get("platform"), a.get("label")) for a in self.list_accounts()}
+        for a in bundle.get("accounts") or []:
+            key = (a.get("platform"), a.get("label"))
+            if not key[0] or not key[1] or key in have_acc:
+                counts["skipped"] += 1
+                continue
+            try:
+                header = "; ".join(
+                    f"{c.get('name')}={c.get('value')}"
+                    for c in (a.get("cookies") or [])
+                    if c.get("name")
+                )
+                if not header:
+                    counts["skipped"] += 1
+                    continue
+                self.upsert_account(str(a["platform"]), str(a["label"]), header, str(a.get("proxy_url") or ""))
+                have_acc.add(key)
+                counts["accounts"] += 1
+            except Exception:  # noqa: BLE001
+                counts["skipped"] += 1
+
+        return counts
+
     def get_account(self, account_id: int, include_secret: bool = False, include_deleted: bool = False) -> dict:
         row = self.db.query_one("SELECT * FROM accounts WHERE id = ?", (account_id,))
         if not row or (row["deleted_at"] and not include_deleted):

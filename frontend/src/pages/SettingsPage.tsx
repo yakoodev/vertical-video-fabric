@@ -3,6 +3,7 @@ import { PageHead } from "@/components/ui";
 import { RenderPresetsSettings, BannersSettings, AudioSettings, SubtitlesSettings } from "@/pages/settings/AssetSettings";
 import { PromptsSettings } from "@/pages/settings/PromptsSettings";
 import { DefaultsSettings } from "@/pages/settings/DefaultsSettings";
+import { BackupSettings } from "@/pages/settings/BackupSettings";
 
 const TABS = [
   { seg: "render", label: "Пресеты рендера" },
@@ -11,6 +12,7 @@ const TABS = [
   { seg: "subtitles", label: "Субтитры" },
   { seg: "prompts", label: "Промпты" },
   { seg: "defaults", label: "По умолчанию" },
+  { seg: "backup", label: "Экспорт/импорт" },
 ];
 
 export function SettingsPage() {
@@ -38,6 +40,7 @@ export function SettingsPage() {
             <Route path="subtitles" element={<SubtitlesSettings />} />
             <Route path="prompts" element={<PromptsSettings />} />
             <Route path="defaults" element={<DefaultsSettings />} />
+            <Route path="backup" element={<BackupSettings />} />
             <Route path="*" element={<Navigate to="render" replace />} />
           </Routes>
         </div>

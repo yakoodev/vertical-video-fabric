@@ -1958,6 +1958,19 @@ def api_recent_tasks(_auth: AuthDep, limit: int = 80) -> list[dict]:
     return store.list_recent_tasks(max(1, min(300, limit)))
 
 
+@app.get("/api/export", tags=["Settings"], summary="Export a shareable config bundle")
+def api_export_bundle(_auth: AuthDep, accounts: bool = False) -> dict:
+    return store.export_bundle(include_accounts=accounts)
+
+
+@app.post("/api/import", tags=["Settings"], summary="Import a config bundle")
+def api_import_bundle(payload: dict, _auth: AuthDep) -> dict:
+    try:
+        return store.import_bundle(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/clip-plans/{clip_plan_id}/segments", tags=["Render"], summary="Add segment to clip plan")
 def api_add_clip_plan_segment(
     clip_plan_id: int,
