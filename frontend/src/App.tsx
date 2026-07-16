@@ -7,6 +7,7 @@ import { AutomationPage } from "@/pages/AutomationPage";
 import { PublicationsPage } from "@/pages/PublicationsPage";
 import { AccountsPage } from "@/pages/AccountsPage";
 import { TasksPage } from "@/pages/TasksPage";
+import { HelpPage } from "@/pages/HelpPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
@@ -38,6 +39,7 @@ export function App() {
         <Route path="publications/:jobId" element={<PublicationsPage />} />
         <Route path="accounts" element={<AccountsPage />} />
         <Route path="tasks" element={<TasksPage />} />
+        <Route path="help" element={<HelpPage />} />
         <Route path="settings/*" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/projects" replace />} />
       </Route>

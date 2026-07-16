@@ -1255,6 +1255,93 @@ a.panel:hover,
   text-decoration: none;
 }
 
+/* ---------- Help page ---------- */
+.help-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.help-toc a {
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.help-toc a:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.help-wrap {
+  display: grid;
+  gap: 16px;
+  max-width: 900px;
+}
+.help-section {
+  scroll-margin-top: 16px;
+}
+.help-h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+.help-steps {
+  display: grid;
+  gap: 14px;
+}
+.help-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.help-step-n {
+  flex: 0 0 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft, rgba(110, 123, 255, 0.16));
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.help-ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--text-dim, #c7ccd6);
+  line-height: 1.5;
+}
+.help-ul code,
+.help-table code {
+  font-size: 12px;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.help-table-wrap {
+  overflow-x: auto;
+}
+.help-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13.5px;
+}
+.help-table td {
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.help-table td:first-child {
+  white-space: nowrap;
+  color: var(--text);
+}
+
 /* ---------- Tasks page ---------- */
 .task-filters {
   display: flex;

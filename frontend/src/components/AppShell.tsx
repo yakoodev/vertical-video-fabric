@@ -32,6 +32,10 @@ export function AppShell() {
           </NavLink>
         ))}
         <div className="nav-spacer" />
+        <NavLink to="/help" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <span className="ico">📖</span>
+          <span>Помощь</span>
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           <span className="ico">⚙️</span>
           <span>Настройки</span>
