@@ -22,9 +22,11 @@ from app.cookies import (
 )
 from app.crypto import CookieCipher
 from app.db import Database
+from app.focus_presets import FOCUS_PRESETS
 from app.settings import settings
 
 
+VALID_FOCUS_PRESETS = set(FOCUS_PRESETS)
 VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
@@ -866,6 +868,8 @@ class AppStore:
                 updates["metadata_json"] = _json_text(value)
             elif key == "content_crop":
                 updates["content_crop"] = _normalize_content_crop(value)
+            elif key == "focus_preset":
+                updates["focus_preset"] = _choice(str(value or ""), VALID_FOCUS_PRESETS | {""}, "focus_preset")
             elif key in {
                 "original_url",
                 "original_filename",

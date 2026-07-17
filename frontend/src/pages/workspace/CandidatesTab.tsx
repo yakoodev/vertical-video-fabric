@@ -136,7 +136,18 @@ const DT = 0.2;
 // Smoothed focus path, mirroring the server reframe (box low-pass + hysteresis
 // hold), so the preview frame moves exactly like the rendered crop — calm, not
 // chasing every noisy LLM point. Returns x samples every DT seconds.
-function smoothFocus(focus: FocusPoint[], duration: number): number[] {
+// Movement feel per autofocus preset — mirrors app/focus_presets.py. Keep in sync
+// or the preview lies about what the render will do.
+const FOCUS_FEEL: Record<string, { smoothTime: number; rubber: number; deadzone: number }> = {
+  balanced: { smoothTime: 0.85, rubber: 2.5, deadzone: 0.012 },
+  talking: { smoothTime: 0.6, rubber: 3.0, deadzone: 0.01 },
+  animation: { smoothTime: 0.75, rubber: 2.8, deadzone: 0.015 },
+  action: { smoothTime: 0.45, rubber: 3.5, deadzone: 0.02 },
+  static: { smoothTime: 1.6, rubber: 2.0, deadzone: 0.035 },
+};
+const focusFeel = (preset?: string) => FOCUS_FEEL[preset || ""] ?? FOCUS_FEEL.balanced;
+
+function smoothFocus(focus: FocusPoint[], duration: number, feel = FOCUS_FEEL.balanced): number[] {
   const n = Math.max(2, Math.round(duration / DT) + 1);
   if (!focus.length) return new Array(n).fill(0.5);
   const pts = [...focus].sort((a, b) => a.t - b.t);
@@ -160,9 +171,7 @@ function smoothFocus(focus: FocusPoint[], duration: number): number[] {
   );
   // SmoothDamp with rubber band — mirror of the server: eases in/out, the farther
   // the target the snappier the catch-up, teleports on cuts, holds inside a deadzone.
-  const smoothTime = 1.1;
-  const rubber = 2.2;
-  const deadzone = 0.012;
+  const { smoothTime, rubber, deadzone } = feel;
   let cur = xs[0];
   let vel = 0;
   const out = [cur];
@@ -203,6 +212,7 @@ function CropFrame({
   bannerPosPct,
   showSubs,
   subPosPct,
+  focusPreset,
 }: {
   srcW: number;
   srcH: number;
@@ -214,6 +224,7 @@ function CropFrame({
   bannerPosPct: number;
   showSubs: boolean;
   subPosPct: number;
+  focusPreset?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -224,7 +235,7 @@ function CropFrame({
     const fw = effAR >= targetAR ? targetAR / effAR : 1;
     const fh = effAR >= targetAR ? 1 : effAR / targetAR;
     const paths = new Map<number, number[]>(
-      segments.map((s) => [s.id, smoothFocus(s.focus ?? [], s.end_sec - s.start_sec)]),
+      segments.map((s) => [s.id, smoothFocus(s.focus ?? [], s.end_sec - s.start_sec, focusFeel(focusPreset))]),
     );
     let raf = 0;
     const tick = () => {
@@ -247,7 +258,7 @@ function CropFrame({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [srcW, srcH, crop, segments, videoRef]);
+  }, [srcW, srcH, crop, segments, videoRef, focusPreset]);
   // Zones live inside the 9:16 crop window, so they track the real output frame.
   return (
     <div ref={ref} className="crop-9x16">
@@ -442,6 +453,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить рендер"),
   });
 
+  const focusPresets = useQuery({ queryKey: ["focus-presets"], queryFn: sourcesApi.focusPresets, staleTime: Infinity });
+
+  const setFocusPreset = useMutation({
+    mutationFn: (key: string) => sourcesApi.setFocusPreset(sourceId, key),
+    onSuccess: () => {
+      toast.success("Пресет автофокуса сохранён. Перезапустите авто-фокус, чтобы пересчитать.");
+      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить пресет"),
+  });
+
   const autofocus = useMutation({
     mutationFn: (segmentIds: number[]) => segmentsApi.autofocus(sourceId, segmentIds),
     onSuccess: (res) => {
@@ -534,6 +556,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 bannerPosPct={bannerPosPct}
                 showSubs={showZones && subsOn}
                 subPosPct={subPosPct}
+                focusPreset={source.focus_preset}
               />
             </div>
             <div className="editor-stage-meta mono">
@@ -697,6 +720,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
           <div className="span-all" style={{ borderTop: "1px solid var(--border)", paddingTop: 10, display: "grid", gap: 6 }}>
             <span className="muted" style={{ fontSize: 12 }}>Умный кадр — детектор (лица/движение, без LLM):</span>
+            <label className="field">
+              <span>Пресет автофокуса — под тип видео</span>
+              <select
+                className="input"
+                value={source.focus_preset || "balanced"}
+                onChange={(e) => setFocusPreset.mutate(e.target.value)}
+                disabled={setFocusPreset.isPending}
+              >
+                {focusPresets.data?.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            <span className="muted" style={{ fontSize: 11 }}>
+              {focusPresets.data?.find((p) => p.key === (source.focus_preset || "balanced"))?.hint ?? ""}
+            </span>
             <button
               className="btn primary sm"
               disabled={autofocus.isPending || !plans.length}

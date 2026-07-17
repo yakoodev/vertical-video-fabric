@@ -33,6 +33,7 @@ export interface Source {
   clips_count?: number;
   has_transcript?: boolean;
   transcript_segments?: number;
+  focus_preset?: string;
 }
 
 export interface Clip {

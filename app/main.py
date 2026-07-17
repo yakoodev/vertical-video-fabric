@@ -22,6 +22,7 @@ from app.auth import AuthRequired, auth_required_handler, require_auth, token_is
 from app.crypto import CookieCipher
 from app.db import Database
 from app.default_pack import seed_default_pack
+from app.focus_presets import list_focus_presets
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
@@ -1568,6 +1569,25 @@ def api_rename_source(source_id: int, payload: SourceRenamePayload, _auth: AuthD
         return store.update_source(source_id, original_filename=payload.name.strip())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/focus-presets", tags=["Render"], summary="List autofocus presets")
+def api_focus_presets(_auth: AuthDep) -> list[dict]:
+    return list_focus_presets()
+
+
+class SourceFocusPresetPayload(BaseModel):
+    focus_preset: str = ""
+
+
+@app.patch("/api/sources/{source_id}/focus-preset", tags=["Render"], summary="Set the autofocus preset")
+def api_set_source_focus_preset(source_id: int, payload: SourceFocusPresetPayload, _auth: AuthDep) -> dict:
+    try:
+        return store.update_source(source_id, focus_preset=payload.focus_preset.strip())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class CropRect(BaseModel):

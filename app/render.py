@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
+from app.focus_presets import get_focus_preset
 from app.ingest import file_hash_and_size, probe_media
 from app.settings import settings
 from app.store import AppStore
@@ -45,9 +46,19 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
             continue
         if crop:
             fx = (fx - float(crop["x"])) / (float(crop["w"]) or 1.0)
-        remapped.append({"t": t, "x": min(1.0, max(0.0, fx))})
+        remapped.append({"t": t, "x": min(1.0, max(0.0, fx)), "cut": bool(point.get("cut"))})
     duration = float(segment.get("end_sec", 0)) - float(segment.get("start_sec", 0))
-    return build_reframe_x_expr(remapped, duration, out_w)
+    # Movement feel (settle time / rubber / deadzone) comes from the source's
+    # autofocus preset so an interview glides and an action clip snaps.
+    cfg = get_focus_preset(source.get("focus_preset"))
+    return build_reframe_x_expr(
+        remapped,
+        duration,
+        out_w,
+        smooth_time=float(cfg["smooth_time"]),
+        rubber=float(cfg["rubber"]),
+        deadzone=float(cfg["deadzone"]),
+    )
 
 
 class ClipRenderService:

@@ -17,6 +17,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.focus_presets import get_focus_preset
+
 _SAMPLE_W = 320
 _FRONTAL = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 _PROFILE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
@@ -32,10 +34,14 @@ if os.path.exists(_YUNET_PATH):
         _yunet = None
 
 
-def _detect_faces(img: np.ndarray, gray: np.ndarray) -> list[list[int]]:
+def _detect_faces(img: np.ndarray, gray: np.ndarray, face_score: float = 0.7) -> list[list[int]]:
     if _yunet is not None:
         h, w = img.shape[:2]
         _yunet.setInputSize((w, h))
+        try:
+            _yunet.setScoreThreshold(float(face_score))
+        except Exception:  # noqa: BLE001 - older builds lack the setter
+            pass
         ok, faces = _yunet.detect(img)
         out: list[list[int]] = []
         if ok and faces is not None:
@@ -78,10 +84,10 @@ def _hist_similarity(a: np.ndarray, b: np.ndarray) -> float:
         return 1.0
 
 
-def _pick_face(faces: list, prev_x: float | None, w: int):
+def _pick_face(faces: list, prev_x: float | None, w: int, min_face_frac: float = _MIN_FACE_W_FRAC):
     """Prefer the face closest to the previous focus (temporal stability), with a
     bias toward larger faces; fall back to the largest when there's no history."""
-    faces = [f for f in faces if f[2] >= _MIN_FACE_W_FRAC * w]
+    faces = [f for f in faces if f[2] >= min_face_frac * w]
     if not faces:
         return None
     if prev_x is None:
@@ -111,15 +117,24 @@ def _median_filter(values: list[float], k: int = 5) -> list[float]:
     return out
 
 
-def compute_segment_focus(source: dict, start_sec: float, end_sec: float, samples: int | None = None) -> list[dict]:
+def compute_segment_focus(
+    source: dict,
+    start_sec: float,
+    end_sec: float,
+    samples: int | None = None,
+    preset: str | None = None,
+) -> list[dict]:
+    cfg = get_focus_preset(preset if preset is not None else source.get("focus_preset"))
     local = str(source.get("local_path") or "")
     if not local or not Path(local).exists():
         raise ValueError("source has no playable file")
     dur = float(end_sec) - float(start_sec)
     if dur <= 0:
         raise ValueError("segment has no duration")
-    # ~one sample per second for responsive, fine-grained tracking.
-    n = samples if samples else max(12, min(60, round(dur)))
+    # Sampling density comes from the preset: denser = faster reaction (and a
+    # shorter median window in seconds), at the cost of more frames to decode.
+    per_sec = float(cfg["samples_per_sec"])
+    n = samples if samples else max(12, min(120, round(dur * per_sec)))
     fps = n / dur
 
     with tempfile.TemporaryDirectory() as td:
@@ -152,13 +167,22 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
             # Hard cut detection: within one shot the histogram stays similar even
             # under heavy motion; a cut to another shot changes it wholesale.
             hist = _frame_hist(gray)
-            is_cut = prev_hist is not None and _hist_similarity(prev_hist, hist) < _CUT_SIMILARITY
+            is_cut = prev_hist is not None and _hist_similarity(prev_hist, hist) < float(cfg["cut_similarity"])
             if is_cut:
                 # New shot — nothing from the old one should influence it.
                 prev_x = None
                 prev_gray = None
 
-            face = _pick_face(_detect_faces(img, gray), prev_x, w)
+            face = (
+                _pick_face(
+                    _detect_faces(img, gray, float(cfg["face_score"])),
+                    prev_x,
+                    w,
+                    float(cfg["min_face_frac"]),
+                )
+                if cfg["use_faces"]
+                else None
+            )
             x: float | None = None
             y = 0.5
             if face is not None:
@@ -189,13 +213,15 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
     # Kill isolated spikes before the render-side smoothing sees them: one bad frame
     # otherwise becomes a visible camera lurch. Smooth each shot separately — a
     # median across a cut would blend two unrelated compositions.
-    for shot in _split_on_cuts(points):
-        if len(shot) < 3:
-            continue
-        for axis in ("x", "y"):
-            smoothed = _median_filter([p[axis] for p in shot])
-            for p, v in zip(shot, smoothed):
-                p[axis] = round(v, 4)
+    median_k = int(cfg["median_k"])
+    if median_k > 1:
+        for shot in _split_on_cuts(points):
+            if len(shot) < 3:
+                continue
+            for axis in ("x", "y"):
+                smoothed = _median_filter([p[axis] for p in shot], median_k)
+                for p, v in zip(shot, smoothed):
+                    p[axis] = round(v, 4)
 
     return points
 
