@@ -1791,25 +1791,40 @@ def api_update_segment_focus(segment_id: int, payload: SegmentFocusPayload, _aut
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _autofocus_segment(segment_id: int) -> dict:
+def _autofocus_segment(segment_id: int, use_vlm: bool = False) -> dict:
     from app.autofocus import compute_segment_focus  # lazy: opencv is heavy / optional
 
     segment = store.get_ai_segment(segment_id)
     source = store.get_source(segment["source_id"])
-    points = compute_segment_focus(source, float(segment["start_sec"]), float(segment["end_sec"]))
+    resolver = None
+    if use_vlm and settings.gemini_api_key:
+        from app.ai.vlm_focus import shots_focus_x  # lazy: only when asked
+
+        resolver = shots_focus_x
+    points = compute_segment_focus(
+        source,
+        float(segment["start_sec"]),
+        float(segment["end_sec"]),
+        vlm_resolver=resolver,
+    )
     return store.update_ai_segment_focus(segment_id, points)
 
 
+class AutofocusPayload(BaseModel):
+    use_vlm: bool = False
+
+
 @app.post("/api/segments/{segment_id}/autofocus", tags=["Render"], summary="Detect focus (faces/motion) for a segment")
-def api_autofocus_segment(segment_id: int, _auth: AuthDep) -> dict:
+def api_autofocus_segment(segment_id: int, _auth: AuthDep, payload: AutofocusPayload | None = None) -> dict:
     try:
-        return _autofocus_segment(segment_id)
+        return _autofocus_segment(segment_id, use_vlm=bool(payload and payload.use_vlm))
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class AutofocusBatchPayload(BaseModel):
     segment_ids: list[int] = Field(default_factory=list)
+    use_vlm: bool = False
 
 
 @app.post("/api/sources/{source_id}/autofocus", tags=["Render"], summary="Detect focus for many segments")
@@ -1822,7 +1837,7 @@ def api_autofocus_segments(source_id: int, payload: AutofocusBatchPayload, _auth
             seg = store.get_ai_segment(sid)
             if seg["source_id"] != source_id:
                 continue
-            _autofocus_segment(sid)
+            _autofocus_segment(sid, use_vlm=payload.use_vlm)
             done += 1
         return {"updated": done}
     except (KeyError, ValueError) as exc:

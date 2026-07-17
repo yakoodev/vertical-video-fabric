@@ -406,6 +406,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
   const [mirror, setMirror] = useState(false);
+  const [useVlmFocus, setUseVlmFocus] = useState(false);
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -466,7 +467,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   });
 
   const autofocus = useMutation({
-    mutationFn: (segmentIds: number[]) => segmentsApi.autofocus(sourceId, segmentIds),
+    mutationFn: (segmentIds: number[]) => segmentsApi.autofocus(sourceId, segmentIds, useVlmFocus),
     onSuccess: (res) => {
       toast.success(`Авто-фокус: обновлено ${res.updated} сегм.`);
       qc.invalidateQueries({ queryKey: qk.source(sourceId) });
@@ -737,6 +738,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <span className="muted" style={{ fontSize: 11 }}>
               {focusPresets.data?.find((p) => p.key === (source.focus_preset || "balanced"))?.hint ?? ""}
             </span>
+            <label
+              className="check"
+              title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."
+            >
+              <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
+              <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
+            </label>
             <button
               className="btn primary sm"
               disabled={autofocus.isPending || !plans.length}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -107,6 +108,10 @@ def _pick_face(faces: list, prev_x: float | None, w: int, min_face_frac: float =
 _MIN_BLOB_FRAC = 0.004   # ≥0.4% of the frame to count as a subject
 _GLOBAL_MOTION_FRAC = 0.5  # >50% moving = camera move, not a subject
 _NEAR_PREV_WEIGHT = 3.0  # how strongly we stick to the previously tracked object
+
+# Cap the VLM batch: one request per segment stays cheap, and the tail of very
+# choppy segments keeps its CV framing.
+_VLM_MAX_SHOTS = 12
 
 
 def _motion_focus(
@@ -239,7 +244,11 @@ def compute_segment_focus(
     end_sec: float,
     samples: int | None = None,
     preset: str | None = None,
+    vlm_resolver: Callable[[list[bytes]], list[float | None]] | None = None,
 ) -> list[dict]:
+    """Focus track for a segment. ``vlm_resolver`` (injected so this module stays
+    pure CV) is handed one representative frame per detected shot and returns the
+    subject's x for each — the CV framing is kept for anything it doesn't answer."""
     cfg = get_focus_preset(preset if preset is not None else source.get("focus_preset"))
     local = str(source.get("local_path") or "")
     if not local or not Path(local).exists():
@@ -269,6 +278,7 @@ def compute_segment_focus(
             raise ValueError("ffmpeg produced no frames")
 
         points: list[dict] = []
+        point_frames: list[Path] = []  # frame behind each point, for the VLM pass
         prev_gray: np.ndarray | None = None
         prev_hist: np.ndarray | None = None
         prev_x: float | None = None
@@ -333,9 +343,20 @@ def compute_segment_focus(
             if is_cut:
                 point["cut"] = True
             points.append(point)
+            point_frames.append(fp)
             prev_x = x
             prev_gray = gray
             prev_hist = hist
+
+        # Grab one representative frame per shot while the temp dir still exists;
+        # the VLM pass itself runs after the CV post-processing below.
+        vlm_batch: list[tuple[int, int, bytes]] = []
+        if vlm_resolver and points:
+            for lo, hi in _shot_ranges(points)[:_VLM_MAX_SHOTS]:
+                try:
+                    vlm_batch.append((lo, hi, point_frames[(lo + hi) // 2].read_bytes()))
+                except OSError:
+                    continue
 
     # Kill isolated spikes before the render-side smoothing sees them: one bad frame
     # otherwise becomes a visible camera lurch. Smooth each shot separately — a
@@ -362,6 +383,18 @@ def compute_segment_focus(
                 for p in shot:
                     p[axis] = mid
 
+    # VLM has the final say on framing: it answers "where is the subject" per shot,
+    # which is exactly what the CV heuristics can only approximate. Anything it
+    # doesn't answer keeps the CV value.
+    if vlm_batch:
+        answers = vlm_resolver([img for (_lo, _hi, img) in vlm_batch]) or []
+        for (lo, hi, _img), x in zip(vlm_batch, answers):
+            if x is None:
+                continue
+            fixed = round(min(1.0, max(0.0, float(x))), 4)
+            for p in points[lo:hi]:
+                p["x"] = fixed
+
     return points
 
 
@@ -377,3 +410,16 @@ def _split_on_cuts(points: list[dict]) -> list[list[dict]]:
     if current:
         shots.append(current)
     return shots
+
+
+def _shot_ranges(points: list[dict]) -> list[tuple[int, int]]:
+    """Shot boundaries as [start, end) index ranges into ``points``."""
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    for i, p in enumerate(points):
+        if p.get("cut") and i > start:
+            ranges.append((start, i))
+            start = i
+    if start < len(points):
+        ranges.append((start, len(points)))
+    return ranges
