@@ -55,6 +55,7 @@ FOCUS_PRESETS: dict[str, dict] = {
         "edge_weight": 1.0,  # детали (мем/текст/картинка) важнее, чем «что мелькнуло»
         "motion_weight": 0.4,
         "center_bias": 0.4,  # контент обычно по центру — не мечемся
+        "per_shot_static": True,  # одна рамка на план, смена только на склейке
         "samples_per_sec": 2.0,
         "median_k": 5,
         "cut_similarity": 0.5,

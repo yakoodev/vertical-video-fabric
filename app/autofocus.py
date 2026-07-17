@@ -350,6 +350,18 @@ def compute_segment_focus(
                 for p, v in zip(shot, smoothed):
                     p[axis] = round(v, 4)
 
+    # One framing per shot: when everything in frame moves (B-roll, meme cutaways),
+    # per-frame estimates are near-random and ANY smoothing still swings edge to
+    # edge. A human editor picks one framing per shot and cuts — so do that: hold
+    # the shot's median position, jump only at the cut.
+    if cfg.get("per_shot_static"):
+        for shot in _split_on_cuts(points):
+            for axis in ("x", "y"):
+                values = sorted(p[axis] for p in shot)
+                mid = round(values[len(values) // 2], 4)
+                for p in shot:
+                    p[axis] = mid
+
     return points
 
 
