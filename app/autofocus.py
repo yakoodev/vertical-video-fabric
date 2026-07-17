@@ -102,6 +102,55 @@ def _pick_face(faces: list, prev_x: float | None, w: int, min_face_frac: float =
     return min(faces, key=score)
 
 
+# Motion tuning. A blob must be a real object, not sensor noise; and if "everything"
+# moves it's a camera pan (or a dissolve), where any centroid is meaningless.
+_MIN_BLOB_FRAC = 0.004   # ≥0.4% of the frame to count as a subject
+_GLOBAL_MOTION_FRAC = 0.5  # >50% moving = camera move, not a subject
+_NEAR_PREV_WEIGHT = 3.0  # how strongly we stick to the previously tracked object
+
+
+def _motion_focus(
+    gray: np.ndarray,
+    prev_gray: np.ndarray,
+    prev_x: float | None,
+    w: int,
+    h: int,
+) -> tuple[float, float] | None:
+    """Centre of the largest coherent MOVING OBJECT, or None when motion is
+    unusable (noise, or the whole frame moving).
+
+    Taking the centroid of *all* motion (the old behaviour) is the classic trap:
+    with two people moving it lands in the empty space between them, and on a
+    camera pan it drifts to the middle of the frame. Segmenting the motion mask
+    into blobs and following the biggest one — preferring the blob we were already
+    on — tracks the actual subject instead.
+    """
+    diff = cv2.absdiff(gray, prev_gray)
+    _, mask = cv2.threshold(diff, 22, 255, cv2.THRESH_BINARY)
+    # Open: drop single-pixel sensor/compression noise, keep real shapes.
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    frame_area = float(w * h)
+    moving_frac = float(np.count_nonzero(mask)) / frame_area
+    if moving_frac > _GLOBAL_MOTION_FRAC or moving_frac < _MIN_BLOB_FRAC:
+        return None
+
+    count, _labels, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+    best: tuple[float, float] | None = None
+    best_score = 0.0
+    for i in range(1, count):  # 0 is the background label
+        area = float(stats[i, cv2.CC_STAT_AREA])
+        if area < _MIN_BLOB_FRAC * frame_area:
+            continue
+        cx = float(centroids[i][0]) / w
+        cy = float(centroids[i][1]) / h
+        # Big blobs win, but stay on the object we were already following.
+        score = area if prev_x is None else area / (1.0 + _NEAR_PREV_WEIGHT * abs(cx - prev_x))
+        if score > best_score:
+            best_score = score
+            best = (cx, cy)
+    return best
+
+
 def _median_filter(values: list[float], k: int = 5) -> list[float]:
     """Median-smooth a series to kill single-frame outliers (a stray detection or
     one bad motion blob) without lagging behind real movement the way a mean would."""
@@ -190,12 +239,9 @@ def compute_segment_focus(
                 x = (fx + fw / 2) / w
                 y = (fy + fh / 2) / h
             elif prev_gray is not None:
-                diff = cv2.absdiff(gray, prev_gray)
-                _, mask = cv2.threshold(diff, 22, 255, cv2.THRESH_BINARY)
-                m = cv2.moments(mask)
-                if m["m00"] > 255 * (w * h) * 0.01:  # only a clear, large motion blob
-                    x = (m["m10"] / m["m00"]) / w
-                    y = (m["m01"] / m["m00"]) / h
+                moving = _motion_focus(gray, prev_gray, prev_x, w, h)
+                if moving is not None:
+                    x, y = moving
             # No reliable detection → hold the last known position (or centre at the
             # very start / right after a cut) so we never extrapolate a wrong
             # neighbour onto empty frames.
