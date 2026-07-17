@@ -146,20 +146,39 @@ function smoothFocus(focus: FocusPoint[], duration: number): number[] {
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i];
       const b = pts[i + 1];
-      if (t >= a.t && t <= b.t) return b.t === a.t ? a.x : a.x + (b.x - a.x) * ((t - a.t) / (b.t - a.t));
+      if (t >= a.t && t <= b.t) {
+        // Hard cut: hold the old shot, then step — never ramp across a shot change.
+        if (b.cut) return t < b.t ? a.x : b.x;
+        return b.t === a.t ? a.x : a.x + (b.x - a.x) * ((t - a.t) / (b.t - a.t));
+      }
     }
     return 0.5;
   };
   const xs = Array.from({ length: n }, (_, i) => interp(i * DT));
-  // SmoothDamp with rubber band — mirror of the server: eases in/out, and the
-  // farther the target the snappier the catch-up.
+  const cuts = new Set(
+    pts.filter((p) => p.cut).map((p) => Math.min(n - 1, Math.max(0, Math.round(p.t / DT)))),
+  );
+  // SmoothDamp with rubber band — mirror of the server: eases in/out, the farther
+  // the target the snappier the catch-up, teleports on cuts, holds inside a deadzone.
   const smoothTime = 1.1;
   const rubber = 2.2;
+  const deadzone = 0.012;
   let cur = xs[0];
   let vel = 0;
   const out = [cur];
   for (let i = 1; i < n; i++) {
     const target = xs[i];
+    if (cuts.has(i)) {
+      cur = target;
+      vel = 0;
+      out.push(cur);
+      continue;
+    }
+    if (Math.abs(cur - target) < deadzone) {
+      vel = 0;
+      out.push(cur);
+      continue;
+    }
     const st = smoothTime / (1 + rubber * Math.abs(cur - target));
     const omega = 2 / st;
     const x = omega * DT;

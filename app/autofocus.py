@@ -59,6 +59,24 @@ def _detect_faces(img: np.ndarray, gray: np.ndarray) -> list[list[int]]:
 # false positives, not the subject — following them yanks the crop around.
 _MIN_FACE_W_FRAC = 0.05
 
+# Histogram correlation below this = the picture changed wholesale → hard cut.
+# Motion inside one shot keeps the histogram broadly similar, so this separates a
+# real shot change from someone just walking across the frame.
+_CUT_SIMILARITY = 0.5
+
+
+def _frame_hist(gray: np.ndarray) -> np.ndarray:
+    hist = cv2.calcHist([gray], [0], None, [64], [0, 256])
+    cv2.normalize(hist, hist)
+    return hist
+
+
+def _hist_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    try:
+        return float(cv2.compareHist(a, b, cv2.HISTCMP_CORREL))
+    except cv2.error:  # pragma: no cover - defensive
+        return 1.0
+
 
 def _pick_face(faces: list, prev_x: float | None, w: int):
     """Prefer the face closest to the previous focus (temporal stability), with a
@@ -121,6 +139,7 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
 
         points: list[dict] = []
         prev_gray: np.ndarray | None = None
+        prev_hist: np.ndarray | None = None
         prev_x: float | None = None
         for i, fp in enumerate(frames):
             img = cv2.imread(str(fp))
@@ -129,6 +148,16 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
             h, w = img.shape[:2]
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             t = round(min(dur, i / fps), 2)
+
+            # Hard cut detection: within one shot the histogram stays similar even
+            # under heavy motion; a cut to another shot changes it wholesale.
+            hist = _frame_hist(gray)
+            is_cut = prev_hist is not None and _hist_similarity(prev_hist, hist) < _CUT_SIMILARITY
+            if is_cut:
+                # New shot — nothing from the old one should influence it.
+                prev_x = None
+                prev_gray = None
+
             face = _pick_face(_detect_faces(img, gray), prev_x, w)
             x: float | None = None
             y = 0.5
@@ -144,20 +173,42 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
                     x = (m["m10"] / m["m00"]) / w
                     y = (m["m01"] / m["m00"]) / h
             # No reliable detection → hold the last known position (or centre at the
-            # very start) so we never extrapolate a wrong neighbour onto empty frames.
+            # very start / right after a cut) so we never extrapolate a wrong
+            # neighbour onto empty frames.
             if x is None:
                 x = prev_x if prev_x is not None else 0.5
             x = min(1.0, max(0.0, x))
-            points.append({"t": t, "x": round(x, 4), "y": round(y, 4)})
+            point = {"t": t, "x": round(x, 4), "y": round(y, 4)}
+            if is_cut:
+                point["cut"] = True
+            points.append(point)
             prev_x = x
             prev_gray = gray
+            prev_hist = hist
 
-    # Kill isolated spikes before the render-side smoothing sees them: one bad
-    # frame otherwise becomes a visible camera lurch.
-    if len(points) >= 3:
+    # Kill isolated spikes before the render-side smoothing sees them: one bad frame
+    # otherwise becomes a visible camera lurch. Smooth each shot separately — a
+    # median across a cut would blend two unrelated compositions.
+    for shot in _split_on_cuts(points):
+        if len(shot) < 3:
+            continue
         for axis in ("x", "y"):
-            smoothed = _median_filter([p[axis] for p in points])
-            for p, v in zip(points, smoothed):
+            smoothed = _median_filter([p[axis] for p in shot])
+            for p, v in zip(shot, smoothed):
                 p[axis] = round(v, 4)
 
     return points
+
+
+def _split_on_cuts(points: list[dict]) -> list[list[dict]]:
+    """Group points into shots, starting a new one at every hard cut."""
+    shots: list[list[dict]] = []
+    current: list[dict] = []
+    for p in points:
+        if p.get("cut") and current:
+            shots.append(current)
+            current = []
+        current.append(p)
+    if current:
+        shots.append(current)
+    return shots

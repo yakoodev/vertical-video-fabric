@@ -2226,6 +2226,9 @@ def _normalize_focus(value: Any, duration: float) -> str:
                 point["y"] = round(min(1.0, max(0.0, float(item["y"]))), 4)
             except (TypeError, ValueError):
                 pass
+        # Hard scene cut: the reframe must jump here instead of easing across shots.
+        if item.get("cut"):
+            point["cut"] = True
         points.append(point)
     points.sort(key=lambda p: p["t"])
     return json.dumps(points[:64])

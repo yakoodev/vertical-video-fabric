@@ -9,6 +9,8 @@ export interface FocusPoint {
   t: number;
   x: number;
   y?: number;
+  /** Hard scene cut — the reframe jumps here instead of easing across shots. */
+  cut?: boolean;
 }
 
 export interface Source {

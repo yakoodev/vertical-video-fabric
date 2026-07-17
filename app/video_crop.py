@@ -60,18 +60,40 @@ def detect_content_crop(source: dict) -> dict | None:
     return {k: round(v, 5) for k, v in crop.items()}
 
 
-def _smooth_damp_series(xs: list[float], dt: float, smooth_time: float, rubber: float = 2.2) -> list[float]:
+def _smooth_damp_series(
+    xs: list[float],
+    dt: float,
+    smooth_time: float,
+    rubber: float = 2.2,
+    cut_idx: set[int] | None = None,
+    deadzone: float = 0.012,
+) -> list[float]:
     """Critically-damped follow (SmoothDamp) with a rubber-band feel: eases toward
     each target with no hard switches, but the farther the target the shorter the
     effective settle time, so big jumps catch up faster while small moves stay gentle.
+
+    ``cut_idx`` marks hard scene cuts: there the camera teleports (a cut is a cut —
+    easing across it would slide the crop over a shot change). ``deadzone`` holds the
+    frame still for sub-pixel target wobble so it doesn't breathe.
     """
     if smooth_time <= 0 or len(xs) < 2:
         return xs
+    cuts = cut_idx or set()
     cur = xs[0]
     vel = 0.0
     out = [cur]
     for i in range(1, len(xs)):
         target = xs[i]
+        if i in cuts:
+            # New shot: jump, and kill inherited velocity so we don't drift after.
+            cur = target
+            vel = 0.0
+            out.append(cur)
+            continue
+        if abs(cur - target) < deadzone:
+            vel = 0.0
+            out.append(cur)
+            continue
         st = smooth_time / (1.0 + rubber * abs(cur - target))  # rubber band: far → snappier
         omega = 2.0 / st
         x = omega * dt
@@ -103,14 +125,14 @@ def build_reframe_x_expr(
     """
     if duration <= 0:
         return None
-    pts: list[tuple[float, float]] = []
+    pts: list[tuple[float, float, bool]] = []
     for p in focus_points:
         try:
             t = float(p["t"])
             x = float(p["x"])
         except (KeyError, TypeError, ValueError):
             continue
-        pts.append((min(duration, max(0.0, t)), min(1.0, max(0.0, x))))
+        pts.append((min(duration, max(0.0, t)), min(1.0, max(0.0, x)), bool(p.get("cut"))))
     if not pts:
         return None
     pts.sort(key=lambda a: a[0])
@@ -127,14 +149,20 @@ def build_reframe_x_expr(
         if t >= pts[-1][0]:
             return pts[-1][1]
         for i in range(len(pts) - 1):
-            t0, x0 = pts[i]
-            t1, x1 = pts[i + 1]
+            t0, x0, _ = pts[i]
+            t1, x1, cut1 = pts[i + 1]
             if t0 <= t <= t1:
+                if cut1:
+                    # Hard cut: hold the old shot's framing, then step to the new one.
+                    # Ramping across a cut would slide the crop over a shot change.
+                    return x0 if t < t1 else x1
                 return x0 if t1 == t0 else x0 + (x1 - x0) * (t - t0) / (t1 - t0)
         return pts[-1][1]
 
     xs = [interp(i * dt) for i in range(n)]
-    xs = _smooth_damp_series(xs, dt, smooth_time)
+    # Dense indices where a cut lands — the smoother teleports there instead of easing.
+    cut_idx = {min(n - 1, max(0, round(t / dt))) for (t, _x, cut) in pts if cut}
+    xs = _smooth_damp_series(xs, dt, smooth_time, cut_idx=cut_idx)
 
     if n > max_anchors:
         idxs = [round(i * (n - 1) / (max_anchors - 1)) for i in range(max_anchors)]
