@@ -151,6 +151,73 @@ def _motion_focus(
     return best
 
 
+def _column_profile(
+    gray: np.ndarray,
+    prev_gray: np.ndarray | None,
+    edge_weight: float,
+    motion_weight: float,
+) -> np.ndarray:
+    """Per-column "how interesting is this strip" profile.
+
+    Two signals, because neither survives alone on B-roll (memes / movie cutouts
+    over a flat background while someone narrates):
+    - EDGES: real content is detailed — text, faces, drawings. Flat background,
+      gradients and letterbox bars score ~0. This finds *where the picture is*
+      even when nothing moves and no face is detectable.
+    - MOTION: what changed since the previous sample.
+    """
+    prof = np.zeros(gray.shape[1], dtype=np.float32)
+    if edge_weight > 0:
+        edges = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+        prof += edge_weight * _normalize(edges.sum(axis=0))
+    if motion_weight > 0 and prev_gray is not None:
+        diff = cv2.absdiff(gray, prev_gray).astype(np.float32)
+        diff[diff < 22] = 0.0  # ignore sensor/compression noise
+        prof += motion_weight * _normalize(diff.sum(axis=0))
+    # Blur across ~8% of the width so single spiky columns don't win.
+    k = max(3, (gray.shape[1] // 12) | 1)
+    return cv2.GaussianBlur(prof.reshape(1, -1), (k, 1), 0).ravel()
+
+
+def _normalize(arr: np.ndarray) -> np.ndarray:
+    peak = float(arr.max())
+    return arr / peak if peak > 1e-6 else np.zeros_like(arr, dtype=np.float32)
+
+
+def _profile_focus(profile: np.ndarray, prev_x: float | None) -> float | None:
+    """Centre of the strongest contiguous run in the profile.
+
+    Same idea as the 2D blob pick, in 1D: a weighted mean over the whole profile
+    would land between two separate things (the wall problem again), so threshold
+    at half the peak, take the connected runs, and score them by mass — sticking to
+    the run we were already on.
+    """
+    w = profile.size
+    peak = float(profile.max())
+    if peak <= 1e-6:
+        return None
+    mask = profile >= peak * 0.5
+    best_score = 0.0
+    best_x: float | None = None
+    i = 0
+    while i < w:
+        if not mask[i]:
+            i += 1
+            continue
+        j = i
+        while j < w and mask[j]:
+            j += 1
+        seg = profile[i:j]
+        mass = float(seg.sum())
+        centre = (i + float((seg * np.arange(seg.size)).sum() / max(mass, 1e-6))) / w
+        score = mass if prev_x is None else mass / (1.0 + _NEAR_PREV_WEIGHT * abs(centre - prev_x))
+        if score > best_score:
+            best_score = score
+            best_x = centre
+        i = j
+    return best_x
+
+
 def _median_filter(values: list[float], k: int = 5) -> list[float]:
     """Median-smooth a series to kill single-frame outliers (a stray detection or
     one bad motion blob) without lagging behind real movement the way a mean would."""
@@ -238,6 +305,15 @@ def compute_segment_focus(
                 fx, fy, fw, fh = face
                 x = (fx + fw / 2) / w
                 y = (fy + fh / 2) / h
+            elif cfg.get("use_saliency"):
+                # B-roll / animation: follow where the actual picture content sits
+                # (detail + change), not "the average of everything that moved".
+                prof = _column_profile(
+                    gray, prev_gray, float(cfg.get("edge_weight", 1.0)), float(cfg.get("motion_weight", 1.0))
+                )
+                px = _profile_focus(prof, prev_x)
+                if px is not None:
+                    x = px
             elif prev_gray is not None:
                 moving = _motion_focus(gray, prev_gray, prev_x, w, h)
                 if moving is not None:
@@ -247,6 +323,11 @@ def compute_segment_focus(
             # neighbour onto empty frames.
             if x is None:
                 x = prev_x if prev_x is not None else 0.5
+            # Centre bias: on chaotic content (memes/cutaways) the safest framing is
+            # near the middle, so pull the result back instead of chasing every jump.
+            bias = float(cfg.get("center_bias", 0.0))
+            if bias > 0:
+                x = x * (1.0 - bias) + 0.5 * bias
             x = min(1.0, max(0.0, x))
             point = {"t": t, "x": round(x, 4), "y": round(y, 4)}
             if is_cut:

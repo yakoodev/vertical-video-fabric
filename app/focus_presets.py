@@ -45,12 +45,33 @@ FOCUS_PRESETS: dict[str, dict] = {
         "rubber": 3.0,
         "deadzone": 0.01,
     },
+    "broll": {
+        "label": "Закадровый голос / мемы (B-roll)",
+        "hint": "Рассказ за кадром, на фоне мемы и вырезки. Ведём по содержимому кадра, держимся центра.",
+        "use_faces": False,  # лица из вырезок фильмов — это не герой ролика
+        "face_score": 0.7,
+        "min_face_frac": 0.03,
+        "use_saliency": True,
+        "edge_weight": 1.0,  # детали (мем/текст/картинка) важнее, чем «что мелькнуло»
+        "motion_weight": 0.4,
+        "center_bias": 0.4,  # контент обычно по центру — не мечемся
+        "samples_per_sec": 2.0,
+        "median_k": 5,
+        "cut_similarity": 0.5,
+        "smooth_time": 1.2,
+        "rubber": 2.0,
+        "deadzone": 0.05,  # широкая мёртвая зона: мелькание мемов не двигает кадр
+    },
     "animation": {
         "label": "Анимация / аниме",
-        "hint": "Детектор реальных лиц на рисованных не работает — ведём по движению.",
+        "hint": "Детектор реальных лиц на рисованных не работает — ведём по содержимому и движению.",
         "use_faces": False,
         "face_score": 0.7,
         "min_face_frac": 0.03,
+        "use_saliency": True,
+        "edge_weight": 0.6,
+        "motion_weight": 1.0,
+        "center_bias": 0.15,
         "samples_per_sec": 3.0,
         "median_k": 3,
         "cut_similarity": 0.55,  # в анимации склейки частые и контрастные

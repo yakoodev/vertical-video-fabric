@@ -141,6 +141,7 @@ const DT = 0.2;
 const FOCUS_FEEL: Record<string, { smoothTime: number; rubber: number; deadzone: number }> = {
   balanced: { smoothTime: 0.85, rubber: 2.5, deadzone: 0.012 },
   talking: { smoothTime: 0.6, rubber: 3.0, deadzone: 0.01 },
+  broll: { smoothTime: 1.2, rubber: 2.0, deadzone: 0.05 },
   animation: { smoothTime: 0.75, rubber: 2.8, deadzone: 0.015 },
   action: { smoothTime: 0.45, rubber: 3.5, deadzone: 0.02 },
   static: { smoothTime: 1.6, rubber: 2.0, deadzone: 0.035 },
