@@ -262,6 +262,47 @@ function lookFilterCss(preset?: FfmpegPreset): string {
   return fn ? fn(preset.color_strength ?? 1) : "";
 }
 
+// Visual picker: one thumbnail per look preset, rendered from a real source frame
+// with the preset's CSS approximation applied — pick a look by eye, not by name.
+function LookPicker({
+  frameUrl,
+  presets,
+  value,
+  onPick,
+}: {
+  frameUrl: string;
+  presets: FfmpegPreset[];
+  value: number;
+  onPick: (id: number) => void;
+}) {
+  if (!frameUrl || !presets.length) return null;
+  const items = [{ id: 0, label: "По умолчанию" } as Pick<FfmpegPreset, "id" | "label">, ...presets];
+  return (
+    <div className="look-strip">
+      {items.map((p) => {
+        const preset = presets.find((x) => x.id === p.id);
+        const css = lookFilterCss(preset);
+        return (
+          <button
+            key={p.id}
+            className={`look-item${value === p.id ? " active" : ""}`}
+            onClick={() => onPick(p.id)}
+            title={p.label}
+          >
+            <span className="look-thumb">
+              <img src={frameUrl} alt="" style={css ? { filter: css } : undefined} />
+              {preset?.vignette ? (
+                <span className="look-vig" style={{ opacity: Math.min(1, preset.vignette) }} />
+              ) : null}
+            </span>
+            <span className="look-name">{p.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -271,6 +312,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
   const tracks = useQuery({ queryKey: qk.audioTracks, queryFn: audioTracksApi.list });
   const subs = useQuery({ queryKey: qk.subtitleProfiles, queryFn: subtitleProfilesApi.list });
+  // One real frame from the source powers the look thumbnails.
+  const storyboard = useQuery({
+    queryKey: ["storyboard", sourceId],
+    queryFn: () => sourcesApi.storyboard(sourceId),
+    staleTime: 5 * 60_000,
+  });
 
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
@@ -433,26 +480,26 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         <div className="editor-stage-wrap">
           <div className="editor-stage">
             <div
-              className="stage-frame"
-              style={
-                source.width && source.height
+              className={`stage-frame${mirror ? " mirrored" : ""}`}
+              style={{
+                ...(source.width && source.height
                   ? {
                       aspectRatio: `${source.width} / ${source.height}`,
                       maxWidth: `calc(64vh * ${source.width} / ${source.height})`,
                       margin: "0 auto",
                     }
-                  : undefined
-              }
+                  : {}),
+                // Mirror the whole stage so the crop window and zones stay aligned
+                // with what the render actually produces (hflip after the crop).
+                transform: mirror ? "scaleX(-1)" : undefined,
+              }}
             >
               <video
                 ref={videoRef}
                 src={`/media/sources/${source.id}`}
                 controls
                 preload="metadata"
-                style={{
-                  filter: lookCss || undefined,
-                  transform: mirror ? "scaleX(-1)" : undefined,
-                }}
+                style={lookCss ? { filter: lookCss } : undefined}
               />
               {selectedPreset?.vignette ? (
                 <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
@@ -506,14 +553,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
         <div className="panel editor-render" style={{ display: "grid", gap: 12, alignContent: "start" }}>
           <strong className="span-all">Рендер</strong>
-          <label className="field">
-            <span>Пресет</span>
+          <label className="field span-all">
+            <span>Пресет (лук)</span>
             <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
               <option value={0}>По умолчанию</option>
               {presets.data?.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>
+            <LookPicker
+              frameUrl={storyboard.data?.frames?.[Math.floor((storyboard.data.frames.length || 1) / 2)] ?? ""}
+              presets={presets.data ?? []}
+              value={presetId}
+              onPick={setPresetId}
+            />
           </label>
 
           <div className="opt-row">

@@ -7,6 +7,23 @@ from typing import Any, Callable
 from app.settings import settings
 from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWord
 
+# Whisper invents speech on instrumental music / room tone. These guards drop it:
+# the decoder's own "this is not speech" probability, and a floor on confidence.
+_NO_SPEECH_THRESHOLD = 0.6
+_MIN_AVG_LOGPROB = -1.0
+
+
+def _is_hallucination(segment: Any) -> bool:
+    """True when a decoded segment looks like non-speech (music, silence) rather
+    than real dialogue — the usual source of phantom subtitles."""
+    no_speech = _num(getattr(segment, "no_speech_prob", None))
+    if no_speech is not None and no_speech > _NO_SPEECH_THRESHOLD:
+        return True
+    avg_logprob = _num(getattr(segment, "avg_logprob", None))
+    if avg_logprob is not None and avg_logprob < _MIN_AVG_LOGPROB:
+        return True
+    return False
+
 
 class WhisperSubtitleProvider:
     """Local forced-alignment transcription via faster-whisper.
@@ -35,20 +52,38 @@ class WhisperSubtitleProvider:
             str(audio_path),
             language=language,
             word_timestamps=True,
+            # Voice-activity filter with a bit of padding: instrumental music and
+            # room tone never reach the decoder, which is where hallucinated
+            # "lyrics" come from.
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
+            vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
             beam_size=5,
             # Single temperature (no fallback sampling) keeps word timestamps
             # deterministic — otherwise hard segments get retried with random
             # sampling and the same clip can time a word a second off between runs.
             temperature=0.0,
             condition_on_previous_text=False,
+            # Anti-hallucination guards: drop windows the model itself thinks are
+            # non-speech, low-confidence output, and repetitive gibberish
+            # ("ла-ла-ла", subtitle-credits spam) that music tends to produce.
+            no_speech_threshold=_NO_SPEECH_THRESHOLD,
+            log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            hallucination_silence_threshold=2.0,
         )
 
         words: list[SubtitleWord] = []
         segments: list[SubtitleSegment] = []
         texts: list[str] = []
+        decoded_any = False
+        dropped = 0
         for segment in segments_iter:
+            decoded_any = True
+            # Belt-and-braces on top of the decoder thresholds: never emit words
+            # for a window that scores as non-speech / low confidence.
+            if _is_hallucination(segment):
+                dropped += 1
+                continue
             text = str(getattr(segment, "text", "") or "").strip()
             if text:
                 texts.append(text)
@@ -66,10 +101,24 @@ class WhisperSubtitleProvider:
                 end = round(max(end, start + 0.05), 3)
                 words.append(SubtitleWord(word=token, start=start, end=end))
 
-        if not words:
-            raise RuntimeError("Whisper returned no word-level timestamps")
-
         language_name = str(getattr(info, "language", None) or profile.get("language") or "und")
+
+        if not words:
+            # Everything the decoder produced scored as non-speech (instrumental
+            # music, room tone) — that is a valid "no speech here" answer, so return
+            # an empty track instead of failing the render with phantom lyrics.
+            if decoded_any and dropped:
+                return SubtitleResult(
+                    text="",
+                    language=language_name,
+                    duration=0.0,
+                    segments=[],
+                    words=[],
+                    response={"provider": "whisper", "model": size, "droppedNonSpeech": dropped},
+                    usage={"provider": "whisper", "model": size, "requestedModel": model, "droppedNonSpeech": dropped},
+                )
+            # Nothing came back at all → genuine failure worth surfacing.
+            raise RuntimeError("Whisper returned no word-level timestamps")
         return SubtitleResult(
             text=" ".join(texts) or " ".join(word.word for word in words),
             language=language_name,

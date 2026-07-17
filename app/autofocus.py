@@ -55,9 +55,15 @@ def _detect_faces(img: np.ndarray, gray: np.ndarray) -> list[list[int]]:
     return faces
 
 
+# Faces smaller than this fraction of the frame width are background extras /
+# false positives, not the subject — following them yanks the crop around.
+_MIN_FACE_W_FRAC = 0.05
+
+
 def _pick_face(faces: list, prev_x: float | None, w: int):
     """Prefer the face closest to the previous focus (temporal stability), with a
     bias toward larger faces; fall back to the largest when there's no history."""
+    faces = [f for f in faces if f[2] >= _MIN_FACE_W_FRAC * w]
     if not faces:
         return None
     if prev_x is None:
@@ -70,6 +76,21 @@ def _pick_face(faces: list, prev_x: float | None, w: int):
         return abs(cx - prev_x) - 0.6 * size  # near previous + reasonably large
 
     return min(faces, key=score)
+
+
+def _median_filter(values: list[float], k: int = 5) -> list[float]:
+    """Median-smooth a series to kill single-frame outliers (a stray detection or
+    one bad motion blob) without lagging behind real movement the way a mean would."""
+    if len(values) < 3:
+        return values
+    half = max(1, k // 2)
+    out: list[float] = []
+    for i in range(len(values)):
+        lo = max(0, i - half)
+        hi = min(len(values), i + half + 1)
+        window = sorted(values[lo:hi])
+        out.append(window[len(window) // 2])
+    return out
 
 
 def compute_segment_focus(source: dict, start_sec: float, end_sec: float, samples: int | None = None) -> list[dict]:
@@ -130,5 +151,13 @@ def compute_segment_focus(source: dict, start_sec: float, end_sec: float, sample
             points.append({"t": t, "x": round(x, 4), "y": round(y, 4)})
             prev_x = x
             prev_gray = gray
+
+    # Kill isolated spikes before the render-side smoothing sees them: one bad
+    # frame otherwise becomes a visible camera lurch.
+    if len(points) >= 3:
+        for axis in ("x", "y"):
+            smoothed = _median_filter([p[axis] for p in points])
+            for p, v in zip(points, smoothed):
+                p[axis] = round(v, 4)
 
     return points
