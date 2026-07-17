@@ -180,7 +180,9 @@ class VideoAnalysisService:
             )
             if not created_plans:
                 raise RuntimeError("AI analyzer returned no valid segments")
-            self.store.delete_generated_clip_plans_for_source(source_id, exclude_analysis_id=analysis["id"])
+            # Candidates from earlier analyses are kept on purpose: a second run with
+            # another preset/model is a source of MORE options, not a replacement.
+            # Drop an analysis (which cascades to its plans) to clean up.
             usage = dict(result.usage)
             if retry_meta:
                 usage["analysis_retry"] = retry_meta

@@ -293,43 +293,94 @@ function lookFilterCss(preset?: FfmpegPreset): string {
   return fn ? fn(preset.color_strength ?? 1) : "";
 }
 
+// Collapsible group in the render panel — the panel has a lot of knobs, so keep
+// only what you're working on open.
+function Group({
+  title,
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  badge?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`rgroup${open ? " open" : ""}`}>
+      <button className="rgroup-head" onClick={() => setOpen((v) => !v)} type="button">
+        <span className="rgroup-caret">{open ? "▾" : "▸"}</span>
+        <span className="rgroup-title">{title}</span>
+        {badge ? <span className="rgroup-badge">{badge}</span> : null}
+      </button>
+      {open ? <div className="rgroup-body">{children}</div> : null}
+    </div>
+  );
+}
+
 // Visual picker: one thumbnail per look preset, rendered from a real source frame
 // with the preset's CSS approximation applied — pick a look by eye, not by name.
 function LookPicker({
-  frameUrl,
+  frames,
   presets,
   value,
   onPick,
 }: {
-  frameUrl: string;
+  frames: string[];
   presets: FfmpegPreset[];
   value: number;
   onPick: (id: number) => void;
 }) {
-  if (!frameUrl || !presets.length) return null;
+  const [hover, setHover] = useState<number | null>(null);
+  if (!frames.length || !presets.length) return null;
   const items = [{ id: 0, label: "По умолчанию" } as Pick<FfmpegPreset, "id" | "label">, ...presets];
+  const hovered = hover === null ? undefined : presets.find((x) => x.id === hover);
+  const hoveredLabel = hover === null ? "" : items.find((i) => i.id === hover)?.label ?? "";
+  const hoverCss = lookFilterCss(hovered);
   return (
-    <div className="look-strip">
-      {items.map((p) => {
-        const preset = presets.find((x) => x.id === p.id);
-        const css = lookFilterCss(preset);
-        return (
-          <button
-            key={p.id}
-            className={`look-item${value === p.id ? " active" : ""}`}
-            onClick={() => onPick(p.id)}
-            title={p.label}
-          >
-            <span className="look-thumb">
-              <img src={frameUrl} alt="" style={css ? { filter: css } : undefined} />
-              {preset?.vignette ? (
-                <span className="look-vig" style={{ opacity: Math.min(1, preset.vignette) }} />
-              ) : null}
-            </span>
-            <span className="look-name">{p.label}</span>
-          </button>
-        );
-      })}
+    <div className="look-wrap" onMouseLeave={() => setHover(null)}>
+      <div className="look-strip">
+        {items.map((p) => {
+          const preset = presets.find((x) => x.id === p.id);
+          const css = lookFilterCss(preset);
+          return (
+            <button
+              key={p.id}
+              className={`look-item${value === p.id ? " active" : ""}`}
+              onClick={() => onPick(p.id)}
+              onMouseEnter={() => setHover(p.id)}
+              onFocus={() => setHover(p.id)}
+              title={`${p.label} — наведите, чтобы рассмотреть`}
+            >
+              <span className="look-thumb">
+                <img src={frames[0]} alt="" style={css ? { filter: css } : undefined} />
+                {preset?.vignette ? (
+                  <span className="look-vig" style={{ opacity: Math.min(1, preset.vignette) }} />
+                ) : null}
+              </span>
+              <span className="look-name">{p.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {hover !== null ? (
+        // Bigger, multi-frame look-through: one frame can lie (a dark shot hides a
+        // colour grade), so show several moments of the actual video.
+        <div className="look-pop">
+          <div className="look-pop-head">{hoveredLabel}</div>
+          <div className="look-pop-frames">
+            {frames.map((f) => (
+              <span key={f} className="look-pop-frame">
+                <img src={f} alt="" style={hoverCss ? { filter: hoverCss } : undefined} />
+                {hovered?.vignette ? (
+                  <span className="look-vig" style={{ opacity: Math.min(1, hovered.vignette) }} />
+                ) : null}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -499,8 +550,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   });
 
   const activePlan = useMemo(() => plans.find((p) => p.id === activePlanId) ?? plans[0], [plans, activePlanId]);
+  // Candidates accumulate across analyses — group them so it's clear which run
+  // produced what (newest run first).
+  const planGroups = useMemo(() => {
+    const by = new Map<number, typeof plans>();
+    for (const p of plans) {
+      const key = p.analysis_id ?? 0;
+      by.set(key, [...(by.get(key) ?? []), p]);
+    }
+    return [...by.entries()].sort((a, b) => b[0] - a[0]);
+  }, [plans]);
+  const analysisMeta = (analysisId: number) => {
+    if (!analysisId) return "Добавлены вручную";
+    const a = query.data?.analyses?.find((x) => x.id === analysisId);
+    return a ? `Анализ #${a.id} · ${a.provider}${a.model ? ` · ${a.model}` : ""}` : `Анализ #${analysisId}`;
+  };
   const selectedPreset = presets.data?.find((p) => p.id === presetId);
   const lookCss = lookFilterCss(selectedPreset);
+  // A few moments spread across the video — one frame can hide what a look does.
+  const lookFrames = useMemo(() => {
+    const all = storyboard.data?.frames ?? [];
+    if (all.length <= 3) return all;
+    return [0.2, 0.5, 0.8].map((p) => all[Math.floor(all.length * p)]);
+  }, [storyboard.data]);
 
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
@@ -596,134 +668,133 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         </div>
 
         <div className="panel editor-render" style={{ display: "grid", gap: 12, alignContent: "start" }}>
-          <strong className="span-all">Рендер</strong>
-          <label className="field span-all">
-            <span>Пресет (лук)</span>
-            <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-              <option value={0}>По умолчанию</option>
-              {presets.data?.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-            <LookPicker
-              frameUrl={storyboard.data?.frames?.[Math.floor((storyboard.data.frames.length || 1) / 2)] ?? ""}
-              presets={presets.data ?? []}
-              value={presetId}
-              onPick={setPresetId}
-            />
-          </label>
+          <strong>Рендер</strong>
 
-          <div className="opt-row">
-            <label className="check">
-              <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
-              <span>Субтитры</span>
-            </label>
-          </div>
-          {subsOn ? (
-            <div className="sub-options">
-              <label className="field">
-                <span>Движок</span>
-                <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
-                  <option value="">из стиля</option>
-                  <option value="whisper">Whisper (локально)</option>
-                  <option value="gemini">Gemini</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Стиль</span>
-                <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
-                  <option value={0}>по умолчанию</option>
-                  {subs.data?.map((s) => (
-                    <option key={s.id} value={s.id}>{s.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
-
-          <div className="opt-row">
-            <label className="check">
-              <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
-              <span>Баннер</span>
-            </label>
-            {bannerOn ? (
-              <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
-                <option value={0}>по умолчанию</option>
-                {banners.data?.map((b) => (
-                  <option key={b.id} value={b.id}>{b.label}</option>
+          <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
+            <label className="field">
+              <span>Пресет</span>
+              <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
+                <option value={0}>По умолчанию</option>
+                {presets.data?.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
-            ) : null}
-          </div>
-
-          <div className="opt-row">
-            <label className="check">
-              <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
-              <span>Музыка</span>
             </label>
-            {musicOn ? (
-              <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
-                <option value={0}>по умолчанию</option>
-                {tracks.data?.map((t) => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))}
-              </select>
-            ) : null}
-          </div>
-
-          <div className="opt-row">
+            <LookPicker frames={lookFrames} presets={presets.data ?? []} value={presetId} onPick={setPresetId} />
             <label className="check" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
               <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
               <span>🪞 Зеркало (лево↔право)</span>
             </label>
-          </div>
+          </Group>
 
-          <div className="zone-settings">
+          <Group title="Субтитры" badge={subsOn ? "вкл" : "выкл"}>
             <label className="check">
-              <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
-              <span>Зоны на превью</span>
+              <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
+              <span>Накладывать субтитры</span>
             </label>
-            {showZones && bannerOn ? (
-              <label className="field range">
-                <span>Высота баннера · {bannerHeightPct}%</span>
-                <input
-                  type="range" min={6} max={30} value={bannerHeightPct}
-                  onChange={(e) => setBannerHeightPct(Number(e.target.value))}
-                />
+            {subsOn ? (
+              <>
+                <div className="sub-options">
+                  <label className="field">
+                    <span>Движок</span>
+                    <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
+                      <option value="">из стиля</option>
+                      <option value="whisper">Whisper (локально)</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Стиль</span>
+                    <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
+                      <option value={0}>по умолчанию</option>
+                      {subs.data?.map((s) => (
+                        <option key={s.id} value={s.id}>{s.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="field range">
+                  <span>Положение · {subPosPct}% снизу</span>
+                  <input
+                    type="range" min={2} max={40} value={subPosPct}
+                    onChange={(e) => setSubPosPct(Number(e.target.value))}
+                  />
+                </label>
+              </>
+            ) : null}
+          </Group>
+
+          <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
+            <label className="check">
+              <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
+              <span>Накладывать баннер</span>
+            </label>
+            {bannerOn ? (
+              <>
+                <label className="field">
+                  <span>Картинка</span>
+                  <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
+                    <option value={0}>по умолчанию</option>
+                    {banners.data?.map((b) => (
+                      <option key={b.id} value={b.id}>{b.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field range">
+                  <span>Высота · {bannerHeightPct}%</span>
+                  <input
+                    type="range" min={6} max={30} value={bannerHeightPct}
+                    onChange={(e) => setBannerHeightPct(Number(e.target.value))}
+                  />
+                </label>
+                <label className="field range">
+                  <span>Положение · {bannerPosPct}% сверху</span>
+                  <input
+                    type="range" min={0} max={80} value={bannerPosPct}
+                    onChange={(e) => setBannerPosPct(Number(e.target.value))}
+                  />
+                </label>
+              </>
+            ) : null}
+          </Group>
+
+          <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
+            <label className="check">
+              <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
+              <span>Фоновый трек</span>
+            </label>
+            {musicOn ? (
+              <label className="field">
+                <span>Трек</span>
+                <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
+                  <option value={0}>по умолчанию</option>
+                  {tracks.data?.map((t) => (
+                    <option key={t.id} value={t.id}>{t.label}</option>
+                  ))}
+                </select>
               </label>
             ) : null}
-            {showZones && bannerOn ? (
-              <label className="field range">
-                <span>Положение баннера · {bannerPosPct}% сверху</span>
-                <input
-                  type="range" min={0} max={80} value={bannerPosPct}
-                  onChange={(e) => setBannerPosPct(Number(e.target.value))}
-                />
-              </label>
-            ) : null}
-            {showZones && subsOn ? (
-              <label className="field range">
-                <span>Положение субтитров · {subPosPct}% снизу</span>
-                <input
-                  type="range" min={2} max={40} value={subPosPct}
-                  onChange={(e) => setSubPosPct(Number(e.target.value))}
-                />
-              </label>
-            ) : null}
-          </div>
+          </Group>
+
+          <label className="check" title="Показывать на превью, где окажутся баннер и субтитры">
+            <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
+            <span>Зоны на превью</span>
+          </label>
 
           <button
-            className="btn primary span-all"
+            className="btn primary"
             disabled={batch.isPending || !selected.size}
             onClick={() => batch.mutate()}
           >
             {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
           </button>
 
-          <div className="span-all" style={{ borderTop: "1px solid var(--border)", paddingTop: 10, display: "grid", gap: 6 }}>
-            <span className="muted" style={{ fontSize: 12 }}>Умный кадр — детектор (лица/движение, без LLM):</span>
+          <Group
+            title="Умный кадр (автофокус)"
+            badge={focusPresets.data?.find((p) => p.key === (source.focus_preset || "balanced"))?.label ?? ""}
+          >
             <label className="field">
-              <span>Пресет автофокуса — под тип видео</span>
+              <span>Пресет — под тип видео</span>
               <select
                 className="input"
                 value={source.focus_preset || "balanced"}
@@ -764,41 +835,67 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <span className="muted" style={{ fontSize: 11 }}>
               «Все клипы» проходит детектором по всем кандидатам сразу (займёт время). Потом можно точечно поправить.
             </span>
-          </div>
+          </Group>
         </div>
       </div>
 
-      {/* plan chips: click = active (preview), checkbox = include in render */}
-      <div className="plan-bar">
-        {plans.map((p) => (
-          <div key={p.id} className={`plan-chip${p.id === activePlan?.id ? " active" : ""}`}>
-            <input
-              type="checkbox"
-              checked={selected.has(p.id)}
-              onChange={() => toggleChosen(p.id)}
-              title="Включить в рендер"
-            />
-            <button
-              className="plan-chip-label"
-              onClick={() => {
-                setActivePlanId(p.id);
-                setSelectedSeg(null);
-              }}
-            >
-              <span>{p.title || `План #${p.id}`}</span>
-              <span className="plan-chip-dur mono">
-                {formatDuration(p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0))}
-                {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
-              </span>
-            </button>
+      {/* plan chips grouped by analysis: a re-run adds candidates, never replaces them */}
+      <div className="plan-groups">
+        <div className="plan-groups-head">
+          <strong style={{ fontSize: 13 }}>Кандидаты · {plans.length}</strong>
+          <button
+            className="btn ghost sm"
+            onClick={() => setChosen(new Set(selected.size === plans.length ? [] : plans.map((p) => p.id)))}
+          >
+            {selected.size === plans.length ? "Снять все" : "Выбрать все"}
+          </button>
+        </div>
+        {planGroups.map(([analysisId, group]) => (
+          <div key={analysisId} className="plan-group">
+            <div className="plan-group-title">
+              <span>{analysisMeta(analysisId)}</span>
+              <button
+                className="btn ghost sm"
+                onClick={() =>
+                  setChosen((prev) => {
+                    const next = new Set(prev ?? []);
+                    const ids = group.map((p) => p.id);
+                    const allOn = ids.every((id) => next.has(id));
+                    ids.forEach((id) => (allOn ? next.delete(id) : next.add(id)));
+                    return next;
+                  })
+                }
+              >
+                {group.every((p) => selected.has(p.id)) ? "снять" : "выбрать"}
+              </button>
+            </div>
+            <div className="plan-bar">
+              {group.map((p) => (
+                <div key={p.id} className={`plan-chip${p.id === activePlan?.id ? " active" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.id)}
+                    onChange={() => toggleChosen(p.id)}
+                    title="Включить в рендер"
+                  />
+                  <button
+                    className="plan-chip-label"
+                    onClick={() => {
+                      setActivePlanId(p.id);
+                      setSelectedSeg(null);
+                    }}
+                  >
+                    <span>{p.title || `План #${p.id}`}</span>
+                    <span className="plan-chip-dur mono">
+                      {formatDuration(p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0))}
+                      {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
-        <button
-          className="btn ghost sm"
-          onClick={() => setChosen(new Set(selected.size === plans.length ? [] : plans.map((p) => p.id)))}
-        >
-          {selected.size === plans.length ? "Снять все" : "Выбрать все"}
-        </button>
       </div>
 
       {/* big timeline */}

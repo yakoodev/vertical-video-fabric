@@ -469,13 +469,55 @@ textarea.input {
   gap: 14px;
   align-items: start;
 }
-/* Render controls sit below the full-width preview and flow into columns. */
+/* Render controls sit below the full-width preview, grouped into collapsibles. */
 .editor-render {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
 }
-.editor-render .span-all,
-.editor-render .zone-settings {
-  grid-column: 1 / -1;
+.rgroup {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.rgroup.open {
+  border-color: var(--border-strong);
+}
+.rgroup-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.rgroup-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.rgroup-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.rgroup-badge {
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rgroup-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 11px 11px;
 }
 .editor-stage-wrap {
   display: grid;
@@ -548,6 +590,47 @@ textarea.input {
   border-radius: 6px;
 }
 /* Look preset picker: thumbnails of the same frame with each filter applied */
+.look-wrap {
+  position: relative;
+}
+/* Hover look-through: bigger, several moments of the real video */
+.look-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.look-pop-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.look-pop-frames {
+  display: flex;
+  gap: 6px;
+}
+.look-pop-frame {
+  position: relative;
+  flex: 1 1 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #000;
+}
+.look-pop-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .look-strip {
   display: flex;
   gap: 8px;
@@ -662,6 +745,31 @@ textarea.input {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.plan-groups {
+  display: grid;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px;
+}
+.plan-groups-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.plan-group {
+  display: grid;
+  gap: 6px;
+}
+.plan-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-faint);
 }
 .plan-chip {
   display: inline-flex;

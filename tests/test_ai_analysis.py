@@ -1017,7 +1017,7 @@ def test_video_analysis_keeps_distant_single_segment_clips_separate(tmp_path, mo
     assert [len(plan["segments"]) for plan in clip_plans] == [1, 1]
 
 
-def test_video_analysis_replaces_previous_generated_clip_plans(tmp_path, monkeypatch):
+def test_video_analysis_keeps_previous_generated_clip_plans(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
     source_path = settings.source_dir / "source.mp4"
     source_path.write_bytes(b"video")
@@ -1054,10 +1054,13 @@ def test_video_analysis_replaces_previous_generated_clip_plans(tmp_path, monkeyp
 
     second_analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
+    # A second run ADDS candidates instead of replacing them: re-analysing with
+    # another preset/model is how you get more options, not a reset. Deleting the
+    # analysis is what removes its plans.
     assert second_analysis["status"] == "succeeded"
     clip_plans = store.list_clip_plans(source_id=source["id"])
-    assert [plan["title"] for plan in clip_plans] == ["New plan"]
-    assert clip_plans[0]["analysis_id"] == second_analysis["id"]
+    assert sorted(plan["title"] for plan in clip_plans) == ["New plan", "Old plan"]
+    assert {plan["analysis_id"] for plan in clip_plans} == {first_analysis["id"], second_analysis["id"]}
 
 
 def test_video_analysis_preprocesses_source_for_analyzer(tmp_path, monkeypatch):
