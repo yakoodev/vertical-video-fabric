@@ -22,6 +22,9 @@ export const sourcesApi = {
   focusOptions: () => api.get<FocusOptions>("/api/focus-presets"),
   setFocus: (id: number | string, body: { focus_preset?: string; focus_strategy?: string }) =>
     api.patch<Source>(`/api/sources/${id}/focus-preset`, body),
+  cutStrategies: () => api.get<FocusPreset[]>("/api/cut-strategies"),
+  refineCuts: (id: number | string, strategy: string) =>
+    api.post<{ updated: number; strategy: string }>(`/api/sources/${id}/refine-cuts`, { strategy }),
   get: (id: number | string) => api.get<SourceDetail>(`/api/sources/${id}`),
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/sources/${id}`),
   rename: (id: number | string, name: string) => api.patch<Source>(`/api/sources/${id}`, { name }),

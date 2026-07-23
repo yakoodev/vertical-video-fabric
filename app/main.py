@@ -22,6 +22,7 @@ from app.auth import AuthRequired, auth_required_handler, require_auth, token_is
 from app.crypto import CookieCipher
 from app.db import Database
 from app.default_pack import seed_default_pack
+from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.ingest import SourceIngestor, probe_media
@@ -1574,6 +1575,25 @@ def api_rename_source(source_id: int, payload: SourceRenamePayload, _auth: AuthD
 @app.get("/api/focus-presets", tags=["Render"], summary="List autofocus presets")
 def api_focus_presets(_auth: AuthDep) -> dict:
     return {"presets": list_focus_presets(), "strategies": list_focus_strategies()}
+
+
+@app.get("/api/cut-strategies", tags=["Sources"], summary="List cut-refinement hypotheses")
+def api_cut_strategies(_auth: AuthDep) -> list[dict]:
+    return list_cut_strategies()
+
+
+class CutStrategyPayload(BaseModel):
+    strategy: str = ""
+
+
+@app.post("/api/sources/{source_id}/refine-cuts", tags=["Sources"], summary="Re-snap clip boundaries")
+def api_refine_cuts(source_id: int, payload: CutStrategyPayload, _auth: AuthDep) -> dict:
+    try:
+        return store.refine_source_cuts(source_id, payload.strategy.strip() or None)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class SourceFocusPresetPayload(BaseModel):

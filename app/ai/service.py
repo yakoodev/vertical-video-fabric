@@ -194,6 +194,12 @@ class VideoAnalysisService:
                 response=result.response,
                 usage=usage,
             )
+            # Snap the fresh candidates' boundaries to speech per the source's cut
+            # hypothesis (default phrase-safe). Best-effort — never fail analysis on it.
+            try:
+                self.store.refine_source_cuts(source_id, source.get("cut_strategy") or None)
+            except Exception:  # noqa: BLE001
+                pass
             self.store.update_source(source_id, status="analyzed", error="")
             return analysis
         except Exception as exc:  # noqa: BLE001 - failures are part of analysis lifecycle

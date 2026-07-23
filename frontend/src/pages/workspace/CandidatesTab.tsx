@@ -517,6 +517,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
   });
 
+  const cutStrategies = useQuery({ queryKey: ["cut-strategies"], queryFn: sourcesApi.cutStrategies, staleTime: Infinity });
+  const refineCuts = useMutation({
+    mutationFn: (strategy: string) => sourcesApi.refineCuts(sourceId, strategy),
+    onSuccess: (r) => {
+      toast.success(`Границы пересчитаны (${r.updated} сегм.)`);
+      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось пересчитать границы"),
+  });
+
   const autofocus = useMutation({
     mutationFn: (segmentIds: number[]) => segmentsApi.autofocus(sourceId, segmentIds, useVlmFocus),
     onSuccess: (res) => {
@@ -850,6 +860,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </span>
           </Group>
         </div>
+      </div>
+
+      {/* cut refinement: compare boundary hypotheses without re-running the analysis */}
+      <div className="panel" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 13 }}>Границы клипов</strong>
+        <select
+          className="input"
+          style={{ width: "auto", minWidth: 220 }}
+          value={source.cut_strategy || "phrase"}
+          onChange={(e) => refineCuts.mutate(e.target.value)}
+          disabled={refineCuts.isPending}
+        >
+          {cutStrategies.data?.map((s) => (
+            <option key={s.key} value={s.key}>{s.label}</option>
+          ))}
+        </select>
+        <span className="muted" style={{ fontSize: 11.5, flex: 1, minWidth: 200 }}>
+          {cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.hint ??
+            "Подгоняет начало/конец клипов к фразам речи. Нужен транскрипт."}
+        </span>
+        <button
+          className="btn ghost sm"
+          disabled={refineCuts.isPending}
+          onClick={() => refineCuts.mutate(source.cut_strategy || "phrase")}
+        >
+          {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
+        </button>
       </div>
 
       {/* plan chips grouped by analysis: a re-run adds candidates, never replaces them */}

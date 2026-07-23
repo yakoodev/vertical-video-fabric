@@ -316,6 +316,13 @@ class Database:
             self._ensure_column(conn, "sources", "focus_preset", "TEXT NOT NULL DEFAULT ''")
             # Global autofocus strategy (shot / follow / center / auto).
             self._ensure_column(conn, "sources", "focus_strategy", "TEXT NOT NULL DEFAULT ''")
+            # Cut-refinement hypothesis + cached scene-cut times for it.
+            self._ensure_column(conn, "sources", "cut_strategy", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "sources", "scene_cuts_json", "TEXT NOT NULL DEFAULT ''")
+            # Raw (pre-refinement) LLM boundaries, so a strategy can be re-applied
+            # without re-running the analysis.
+            self._ensure_column(conn, "ai_segments", "raw_start_sec", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "ai_segments", "raw_end_sec", "REAL NOT NULL DEFAULT 0")
             # Point-of-interest focus track for dynamic reframing (JSON [{t,x,y}]).
             self._ensure_column(conn, "ai_segments", "focus_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")

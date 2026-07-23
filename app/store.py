@@ -22,12 +22,14 @@ from app.cookies import (
 )
 from app.crypto import CookieCipher
 from app.db import Database
+from app.cut_refine import CUT_STRATEGIES, get_cut_strategy, refine_boundaries
 from app.focus_presets import FOCUS_PRESETS, FOCUS_STRATEGIES
 from app.settings import settings
 
 
 VALID_FOCUS_PRESETS = set(FOCUS_PRESETS)
 VALID_FOCUS_STRATEGIES = {s["key"] for s in FOCUS_STRATEGIES}
+VALID_CUT_STRATEGIES = set(CUT_STRATEGIES)
 VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
@@ -779,12 +781,68 @@ class AppStore:
         cues = _parse_transcript(raw_transcript)
         data["has_transcript"] = bool(cues)
         data["transcript_segments"] = len(cues)
+        data.pop("scene_cuts_json", None)  # cached list, not for the client
         if include_related:
             data["analyses"] = self.list_ai_analyses(source_id=source_id)
             data["segments"] = self.list_ai_segments(source_id=source_id)
             data["clip_plans"] = self.list_clip_plans(source_id=source_id)
             data["clips"] = self.list_clips(source_id=source_id)
         return data
+
+    def refine_source_cuts(self, source_id: int, strategy: str | None = None) -> dict:
+        """Re-snap every segment's boundaries to speech (and optionally scene cuts)
+        under the chosen hypothesis, working from the stored RAW LLM boundaries — so
+        strategies can be compared without re-running the analysis."""
+        row = self.db.query_one(
+            "SELECT local_path, duration_sec, scene_cuts_json FROM sources WHERE id = ?", (source_id,)
+        )
+        if not row:
+            raise KeyError(f"source not found: {source_id}")
+        cfg = get_cut_strategy(strategy)
+        cues = self.get_source_transcript(source_id)
+        duration = float(row["duration_sec"] or 0)
+
+        cut_times: list[float] = []
+        if cfg.get("snap_cuts"):
+            cut_times = _parse_transcript(row["scene_cuts_json"])  # cached list of floats
+            if not cut_times:
+                from app.scene_cuts import detect_scene_cuts
+
+                cut_times = detect_scene_cuts(row["local_path"])
+                self.db.execute(
+                    "UPDATE sources SET scene_cuts_json = ? WHERE id = ?",
+                    (_json_text(cut_times), source_id),
+                )
+
+        segs = self.db.query_all(
+            "SELECT id, start_sec, end_sec, raw_start_sec, raw_end_sec FROM ai_segments WHERE source_id = ?",
+            (source_id,),
+        )
+        updated = 0
+        for s in segs:
+            rs, re_ = float(s["raw_start_sec"] or 0), float(s["raw_end_sec"] or 0)
+            if re_ <= rs:
+                # Segment predates raw-boundary storage — backfill from current
+                # boundaries so re-refinement works on existing analyses too.
+                rs, re_ = float(s["start_sec"] or 0), float(s["end_sec"] or 0)
+                if re_ <= rs:
+                    continue
+                self.db.execute(
+                    "UPDATE ai_segments SET raw_start_sec = ?, raw_end_sec = ? WHERE id = ?",
+                    (rs, re_, s["id"]),
+                )
+            ns, ne = refine_boundaries(
+                rs, re_, cues, strategy,
+                cut_times=cut_times, duration=duration,
+                min_duration=MIN_SEGMENT_DURATION_SEC, max_duration=MAX_SEGMENT_DURATION_SEC,
+            )
+            self.db.execute(
+                "UPDATE ai_segments SET start_sec = ?, end_sec = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (ns, ne, s["id"]),
+            )
+            updated += 1
+        self.db.execute("UPDATE sources SET cut_strategy = ? WHERE id = ?", (str(strategy or ""), source_id))
+        return {"updated": updated, "strategy": strategy or ""}
 
     def get_source_transcript(self, source_id: int) -> list[dict]:
         """Return the cached Whisper transcript cues for a source, or []."""
@@ -873,6 +931,10 @@ class AppStore:
                 updates["focus_preset"] = _choice(str(value or ""), VALID_FOCUS_PRESETS | {""}, "focus_preset")
             elif key == "focus_strategy":
                 updates["focus_strategy"] = _choice(str(value or ""), VALID_FOCUS_STRATEGIES | {""}, "focus_strategy")
+            elif key == "cut_strategy":
+                updates["cut_strategy"] = _choice(str(value or ""), VALID_CUT_STRATEGIES | {""}, "cut_strategy")
+            elif key == "scene_cuts":
+                updates["scene_cuts_json"] = _json_text(value or [])
             elif key in {
                 "original_url",
                 "original_filename",
@@ -1079,8 +1141,8 @@ class AppStore:
                 """
                 INSERT INTO ai_segments
                     (source_id, analysis_id, start_sec, end_sec, title, description, score,
-                     category, color, reason, status, sort_order, focus_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     category, color, reason, status, sort_order, focus_json, raw_start_sec, raw_end_sec)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     analysis["source_id"],
@@ -1096,6 +1158,8 @@ class AppStore:
                     segment["status"],
                     segment["sort_order"],
                     segment["focus_json"],
+                    float(segment.get("raw_start_sec", segment["start_sec"]) or segment["start_sec"]),
+                    float(segment.get("raw_end_sec", segment["end_sec"]) or segment["end_sec"]),
                 ),
             )
             created.append(self.get_ai_segment(cur.lastrowid))
@@ -2200,6 +2264,8 @@ def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_ord
         "status": _choice(str(segment.get("status", "candidate")), VALID_SEGMENT_STATUSES, "status"),
         "sort_order": int(segment.get("sort_order", sort_order)),
         "focus_json": _normalize_focus(segment.get("focus"), duration),
+        "raw_start_sec": float(segment.get("raw_start_sec", start_sec) or start_sec),
+        "raw_end_sec": float(segment.get("raw_end_sec", end_sec) or end_sec),
     }
 
 

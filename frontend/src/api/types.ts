@@ -35,6 +35,7 @@ export interface Source {
   transcript_segments?: number;
   focus_preset?: string;
   focus_strategy?: string;
+  cut_strategy?: string;
 }
 
 export interface Clip {
