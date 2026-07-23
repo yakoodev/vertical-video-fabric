@@ -7,7 +7,7 @@ import { qk } from "@/api/keys";
 import type { CropRect, SourceDetail } from "@/api/types";
 import { useToast } from "@/components/Toast";
 import { ApiError } from "@/api/client";
-import { Badge, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
+import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
 
 const PROVIDERS = ["action", "polza", "gemini", "artemox", "mock"];
 
@@ -255,26 +255,41 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
 
       <div className="panel">
         <strong>Анализы ({source.analyses.length})</strong>
-          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-            {!source.analyses.length ? (
-              <span className="muted">Пока нет анализов</span>
-            ) : (
-              source.analyses.map((a) => (
-                <div key={a.id} className="ws-row">
-                  <Badge status={a.status} />
-                  <span style={{ flex: 1 }}>
-                    {a.provider} {a.model ? `· ${a.model}` : ""}
-                  </span>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {a.created_at}
-                  </span>
-                  <button className="btn ghost sm" onClick={() => removeAnalysis(a.id)}>
-                    🗑
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+        <div className="analysis-list">
+          {!source.analyses.length ? (
+            <EmptyState icon="🧠" title="Анализов ещё нет" hint="Запустите анализ выше — он найдёт моменты для клипов" />
+          ) : (
+            [...source.analyses]
+              .sort((a, b) => b.id - a.id)
+              .map((a) => {
+                const count = (source.clip_plans ?? []).filter((p) => p.analysis_id === a.id).length;
+                return (
+                  <div key={a.id} className="analysis-card">
+                    <div className="analysis-card-main">
+                      <div className="analysis-card-head">
+                        <Badge status={a.status} />
+                        <strong className="analysis-card-title">Анализ #{a.id}</strong>
+                        <span className="analysis-card-count">
+                          {count > 0 ? `${count} кандид.` : a.status === "succeeded" ? "0 кандид." : ""}
+                        </span>
+                      </div>
+                      <div className="analysis-card-meta mono">
+                        {a.provider}
+                        {a.model ? ` · ${a.model}` : ""} · {a.created_at}
+                      </div>
+                    </div>
+                    <button
+                      className="btn ghost sm"
+                      title="Удалить анализ и его кандидатов"
+                      onClick={() => removeAnalysis(a.id)}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                );
+              })
+          )}
+        </div>
       </div>
     </div>
   );

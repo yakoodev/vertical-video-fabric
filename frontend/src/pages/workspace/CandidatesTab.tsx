@@ -913,7 +913,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         {planGroups.map(([analysisId, group]) => (
           <div key={analysisId} className="plan-group">
             <div className="plan-group-title">
-              <span>{analysisMeta(analysisId)}</span>
+              <span className="plan-group-dot" />
+              <span className="plan-group-name">{analysisMeta(analysisId)}</span>
+              <span className="plan-group-count">{group.length}</span>
+              <span style={{ flex: 1 }} />
               <button
                 className="btn ghost sm"
                 onClick={() =>

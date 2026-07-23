@@ -1,13 +1,26 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { ActivityCenter } from "@/components/ActivityCenter";
 
-const NAV = [
-  { to: "/projects", label: "Проекты", ico: "🎬" },
-  { to: "/clips", label: "Клипы", ico: "✂️" },
-  { to: "/automation", label: "Авто", ico: "⚡" },
-  { to: "/publications", label: "Публикации", ico: "📡" },
-  { to: "/tasks", label: "Задачи", ico: "🗂️" },
-  { to: "/accounts", label: "Аккаунты", ico: "👤" },
+const NAV_SECTIONS: { title: string; items: { to: string; label: string; ico: string }[] }[] = [
+  {
+    title: "Монтаж",
+    items: [
+      { to: "/projects", label: "Проекты", ico: "🎬" },
+      { to: "/clips", label: "Клипы", ico: "✂️" },
+    ],
+  },
+  {
+    title: "Постинг",
+    items: [
+      { to: "/automation", label: "Авто", ico: "⚡" },
+      { to: "/publications", label: "Публикации", ico: "📡" },
+      { to: "/accounts", label: "Аккаунты", ico: "👤" },
+    ],
+  },
+  {
+    title: "Мониторинг",
+    items: [{ to: "/tasks", label: "Задачи", ico: "🗂️" }],
+  },
 ];
 
 export function AppShell() {
@@ -21,15 +34,20 @@ export function AppShell() {
             <small>VERTICAL VIDEO</small>
           </span>
         </div>
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
-          >
-            <span className="ico">{item.ico}</span>
-            <span>{item.label}</span>
-          </NavLink>
+        {NAV_SECTIONS.map((section) => (
+          <div className="nav-section" key={section.title}>
+            <div className="nav-section-title">{section.title}</div>
+            {section.items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+              >
+                <span className="ico">{item.ico}</span>
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
         ))}
         <div className="nav-spacer" />
         <NavLink to="/help" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
