@@ -37,6 +37,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "balanced": {
         "label": "Сбалансированный",
         "hint": "Универсальный. Лица в приоритете, движение — запасной вариант.",
+        "use_object": True,
         "use_faces": True,
         "face_score": 0.7,
         "min_face_frac": 0.03,
@@ -50,6 +51,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "talking": {
         "label": "Разговорное (лица)",
         "hint": "Интервью, подкасты, влоги. Держит лицо, реагирует быстро.",
+        "use_object": True,
         "use_faces": True,
         "face_score": 0.6,  # ниже порог — ловит лица в профиль и на общем плане
         "min_face_frac": 0.02,
@@ -63,6 +65,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "broll": {
         "label": "Закадровый голос / мемы (B-roll)",
         "hint": "Рассказ за кадром, на фоне мемы и вырезки. Ведём по содержимому кадра, держимся центра.",
+        "use_object": True,
         "use_faces": False,  # лица из вырезок фильмов — это не герой ролика
         "face_score": 0.7,
         "min_face_frac": 0.03,
@@ -81,6 +84,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "animation": {
         "label": "Анимация / аниме",
         "hint": "Детектор реальных лиц на рисованных не работает — ведём по содержимому и движению.",
+        "use_object": False,
         "use_faces": False,
         "face_score": 0.7,
         "min_face_frac": 0.03,
@@ -98,6 +102,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "action": {
         "label": "Экшн / спорт",
         "hint": "Быстрое движение. Кадр догоняет резко, лица не приоритет.",
+        "use_object": True,
         "use_faces": False,
         "face_score": 0.7,
         "min_face_frac": 0.04,
@@ -111,6 +116,7 @@ FOCUS_PRESETS: dict[str, dict] = {
     "static": {
         "label": "Статика / студия",
         "hint": "Почти неподвижная камера. Кадр стоит, двигается редко и мягко.",
+        "use_object": True,
         "use_faces": True,
         "face_score": 0.7,
         "min_face_frac": 0.03,

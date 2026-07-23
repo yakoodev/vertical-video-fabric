@@ -41,10 +41,14 @@ RUN python3 -m venv /opt/venv
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# YuNet DNN face-detection model for the deterministic autofocus (vendored so the
-# build needs no network; falls back to Haar cascades at runtime if absent).
-ENV YUNET_MODEL=/opt/models/yunet.onnx
+# DNN models for the deterministic autofocus, vendored so the build needs no
+# network (both degrade gracefully at runtime if absent):
+#  - YuNet: face detection (Haar fallback).
+#  - YOLOX (OpenCV Zoo, Apache-2.0): person/object detection — the main subject signal.
+ENV YUNET_MODEL=/opt/models/yunet.onnx \
+    YOLOX_MODEL=/opt/models/yolox_nano.onnx
 COPY vendor/yunet.onnx /opt/models/yunet.onnx
+COPY vendor/yolox_nano.onnx /opt/models/yolox_nano.onnx
 
 RUN git clone https://github.com/makiisthenes/TiktokAutoUploader.git /opt/TiktokAutoUploader \
     && cd /opt/TiktokAutoUploader \

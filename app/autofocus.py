@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from app.focus_presets import DEFAULT_FOCUS_STRATEGY, get_focus_preset
+from app.object_detect import subject_center
 
 _SAMPLE_W = 320
 _FRONTAL = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -304,8 +305,16 @@ def compute_segment_focus(
                 prev_x = None
                 prev_gray = None
 
+            x: float | None = None
+            y = 0.5
+            # Top priority: a real object/person detector (ML). It boxes the subject
+            # even from behind / partial, where face + motion + edges only guess.
+            # Returns None when nothing is confident → we fall through to the heuristics.
+            subject = subject_center(img, prev_x) if cfg.get("use_object") else None
             face = (
-                _pick_face(
+                None
+                if subject is not None
+                else _pick_face(
                     _detect_faces(img, gray, float(cfg["face_score"])),
                     prev_x,
                     w,
@@ -314,9 +323,9 @@ def compute_segment_focus(
                 if cfg["use_faces"]
                 else None
             )
-            x: float | None = None
-            y = 0.5
-            if face is not None:
+            if subject is not None:
+                x, y = subject
+            elif face is not None:
                 fx, fy, fw, fh = face
                 x = (fx + fw / 2) / w
                 y = (fy + fh / 2) / h
