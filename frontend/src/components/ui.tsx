@@ -55,6 +55,14 @@ export function Badge({ status, children }: { status: string; children?: ReactNo
   );
 }
 
+// Russian pluralization: plural(2, "клип", "клипа", "клипов") -> "2 клипа".
+export function plural(n: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(n) % 100;
+  const d = abs % 10;
+  const word = abs > 10 && abs < 20 ? many : d === 1 ? one : d >= 2 && d <= 4 ? few : many;
+  return `${n} ${word}`;
+}
+
 export function formatDuration(sec: number): string {
   if (!sec || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);

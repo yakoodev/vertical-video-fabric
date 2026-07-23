@@ -9,7 +9,7 @@ import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { useToast } from "@/components/Toast";
-import { Badge, EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/components/ui";
+import { Badge, EmptyState, ErrorState, Loading, PageHead, formatDuration, plural } from "@/components/ui";
 
 function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Source) => void }) {
   const qc = useQueryClient();
@@ -90,8 +90,8 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
         <div className="pcard-stats">
           <Badge status={source.status} />
           {source.width ? <span className="mono">{source.width}×{source.height}</span> : null}
-          <span>{source.analyses_count ?? 0} анализов</span>
-          <span>{source.clips_count ?? 0} клипов</span>
+          <span>{plural(source.analyses_count ?? 0, "анализ", "анализа", "анализов")}</span>
+          <span>{plural(source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
         </div>
       </div>
     </div>
