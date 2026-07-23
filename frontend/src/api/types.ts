@@ -95,6 +95,8 @@ export interface ClipPlan {
   category: string;
   color: string;
   segments: AiSegment[];
+  quality?: number;
+  duplicate_of?: number | null;
 }
 
 export interface SourceDetail extends Source {

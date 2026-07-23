@@ -784,6 +784,25 @@ textarea.input {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+.plan-chip.dup {
+  opacity: 0.6;
+}
+.plan-q {
+  font-size: 10.5px;
+  font-weight: 700;
+  min-width: 22px;
+  text-align: center;
+  padding: 1px 4px;
+  border-radius: 5px;
+  color: #0b0c0e;
+  /* red (low) → green (high) via the --q custom prop set inline */
+  background: hsl(calc(var(--q, 0.5) * 120), 65%, 55%);
+}
+.dup-tag {
+  color: var(--text-faint);
+  font-weight: 500;
+  font-size: 11px;
+}
 .plan-chip-label {
   border: 0;
   background: none;

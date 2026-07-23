@@ -22,6 +22,7 @@ from app.cookies import (
 )
 from app.crypto import CookieCipher
 from app.db import Database
+from app.clip_score import clip_quality, words_in_ranges
 from app.cut_refine import CUT_STRATEGIES, get_cut_strategy, refine_boundaries
 from app.focus_presets import FOCUS_PRESETS, FOCUS_STRATEGIES
 from app.settings import settings
@@ -1312,7 +1313,43 @@ class AppStore:
         if include_segments:
             for plan in plans:
                 plan["segments"] = self._segments_for_clip_plan(plan["id"])
+            self._annotate_plan_quality(plans, source_id)
         return plans
+
+    def _annotate_plan_quality(self, plans: list[dict], source_id: int | None) -> None:
+        """Add a heuristic ``quality`` (0..1) to each plan and flag near-duplicates
+        (``duplicate_of``) so a re-run's overlapping candidates are easy to skip."""
+        cues_by_source: dict[int, list[dict]] = {}
+        spans: list[tuple[float, float]] = []  # (start, end) of best-quality plans kept
+        # Score first.
+        for plan in plans:
+            segs = plan.get("segments") or []
+            ranges = [(float(s["start_sec"]), float(s["end_sec"])) for s in segs if s["end_sec"] > s["start_sec"]]
+            total = sum(e - st for st, e in ranges)
+            sid = plan.get("source_id")
+            if sid not in cues_by_source:
+                try:
+                    cues_by_source[sid] = self.get_source_transcript(int(sid)) if sid else []
+                except (KeyError, ValueError):
+                    cues_by_source[sid] = []
+            words = words_in_ranges(cues_by_source[sid], ranges)
+            plan["quality"] = clip_quality(plan.get("score", 0), total, words)
+            plan["_span"] = (min((r[0] for r in ranges), default=0.0), max((r[1] for r in ranges), default=0.0))
+        # Flag duplicates: a lower-quality plan whose span heavily overlaps a kept one.
+        for plan in sorted(plans, key=lambda p: p.get("quality", 0), reverse=True):
+            s0, s1 = plan.pop("_span")
+            if s1 <= s0:
+                plan["duplicate_of"] = None
+                continue
+            dup = None
+            for (k0, k1, kid) in spans:
+                overlap = max(0.0, min(s1, k1) - max(s0, k0))
+                if overlap > 0.6 * min(s1 - s0, k1 - k0):
+                    dup = kid
+                    break
+            plan["duplicate_of"] = dup
+            if dup is None:
+                spans.append((s0, s1, plan["id"]))
 
     def get_clip_plan(self, clip_plan_id: int, include_segments: bool = True) -> dict:
         row = self.db.query_one("SELECT * FROM clip_plans WHERE id = ?", (clip_plan_id,))

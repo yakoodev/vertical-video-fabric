@@ -458,6 +458,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [trackId, setTrackId] = useState(0);
   const [mirror, setMirror] = useState(false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
+  const [hideDuplicates, setHideDuplicates] = useState(false);
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -565,11 +566,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const planGroups = useMemo(() => {
     const by = new Map<number, typeof plans>();
     for (const p of plans) {
+      if (hideDuplicates && p.duplicate_of != null) continue;
       const key = p.analysis_id ?? 0;
       by.set(key, [...(by.get(key) ?? []), p]);
     }
+    // Best candidates first inside each analysis.
+    for (const [, group] of by) group.sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0));
     return [...by.entries()].sort((a, b) => b[0] - a[0]);
-  }, [plans]);
+  }, [plans, hideDuplicates]);
   const analysisMeta = (analysisId: number) => {
     if (!analysisId) return "Добавлены вручную";
     const a = query.data?.analyses?.find((x) => x.id === analysisId);
@@ -893,6 +897,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       <div className="plan-groups">
         <div className="plan-groups-head">
           <strong style={{ fontSize: 13 }}>Кандидаты · {plans.length}</strong>
+          {plans.some((p) => p.duplicate_of != null) ? (
+            <label className="check" style={{ fontSize: 12 }}>
+              <input type="checkbox" checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />
+              <span>скрыть дубли</span>
+            </label>
+          ) : null}
           <button
             className="btn ghost sm"
             onClick={() => setChosen(new Set(selected.size === plans.length ? [] : plans.map((p) => p.id)))}
@@ -921,7 +931,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
             <div className="plan-bar">
               {group.map((p) => (
-                <div key={p.id} className={`plan-chip${p.id === activePlan?.id ? " active" : ""}`}>
+                <div
+                  key={p.id}
+                  className={`plan-chip${p.id === activePlan?.id ? " active" : ""}${p.duplicate_of != null ? " dup" : ""}`}
+                >
+                  {typeof p.quality === "number" ? (
+                    <span
+                      className="plan-q"
+                      title={`Оценка качества ${(p.quality * 100).toFixed(0)}% (речь + длительность + оценка модели)`}
+                      style={{ "--q": p.quality } as React.CSSProperties}
+                    >
+                      {(p.quality * 100).toFixed(0)}
+                    </span>
+                  ) : null}
                   <input
                     type="checkbox"
                     checked={selected.has(p.id)}
@@ -935,7 +957,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       setSelectedSeg(null);
                     }}
                   >
-                    <span>{p.title || `План #${p.id}`}</span>
+                    <span>
+                      {p.title || `План #${p.id}`}
+                      {p.duplicate_of != null ? <span className="dup-tag"> · дубль</span> : null}
+                    </span>
                     <span className="plan-chip-dur mono">
                       {formatDuration(p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0))}
                       {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
