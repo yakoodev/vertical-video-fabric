@@ -18,7 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.focus_presets import get_focus_preset
+from app.focus_presets import DEFAULT_FOCUS_STRATEGY, get_focus_preset
 
 _SAMPLE_W = 320
 _FRONTAL = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -244,12 +244,17 @@ def compute_segment_focus(
     end_sec: float,
     samples: int | None = None,
     preset: str | None = None,
+    strategy: str | None = None,
     vlm_resolver: Callable[[list[bytes]], list[float | None]] | None = None,
 ) -> list[dict]:
-    """Focus track for a segment. ``vlm_resolver`` (injected so this module stays
-    pure CV) is handed one representative frame per detected shot and returns the
-    subject's x for each — the CV framing is kept for anything it doesn't answer."""
+    """Focus track for a segment.
+
+    ``strategy`` is the GLOBAL camera behaviour (center / shot / follow / auto);
+    ``preset`` tunes detection for the content type. ``vlm_resolver`` (injected so
+    this module stays pure CV) gets one frame per shot and returns the subject x.
+    """
     cfg = get_focus_preset(preset if preset is not None else source.get("focus_preset"))
+    strat = str(strategy if strategy is not None else source.get("focus_strategy") or "").strip().lower() or DEFAULT_FOCUS_STRATEGY
     local = str(source.get("local_path") or "")
     if not local or not Path(local).exists():
         raise ValueError("source has no playable file")
@@ -371,17 +376,23 @@ def compute_segment_focus(
                 for p, v in zip(shot, smoothed):
                     p[axis] = round(v, 4)
 
-    # One framing per shot: when everything in frame moves (B-roll, meme cutaways),
-    # per-frame estimates are near-random and ANY smoothing still swings edge to
-    # edge. A human editor picks one framing per shot and cuts — so do that: hold
-    # the shot's median position, jump only at the cut.
-    if cfg.get("per_shot_static"):
+    # Global strategy — the overall camera behaviour, chosen by the user:
+    resolved = _resolve_strategy(strat, points)
+    if resolved == "center":
+        # No reframe: hand back an empty track so the render just centre-crops.
+        # (VLM would be pointless here, so skip it.)
+        return []
+    if resolved == "shot":
+        # One framing per shot: per-frame estimates on busy content are near-random
+        # and any smoothing still swings edge to edge. A human editor picks one
+        # framing per shot and cuts — hold the shot median, jump only at the cut.
         for shot in _split_on_cuts(points):
             for axis in ("x", "y"):
                 values = sorted(p[axis] for p in shot)
                 mid = round(values[len(values) // 2], 4)
                 for p in shot:
                     p[axis] = mid
+    # "follow" keeps the continuous (median-filtered) track as-is.
 
     # VLM has the final say on framing: it answers "where is the subject" per shot,
     # which is exactly what the CV heuristics can only approximate. Anything it
@@ -396,6 +407,29 @@ def compute_segment_focus(
                 p["x"] = fixed
 
     return points
+
+
+def _resolve_strategy(strategy: str, points: list[dict]) -> str:
+    """Turn ``auto`` into a concrete strategy from the track's own dynamics."""
+    if strategy != "auto" or not points:
+        return strategy
+    xs = [p["x"] for p in points]
+    spread = max(xs) - min(xs)
+    if spread < 0.08:
+        # The subject barely moves horizontally — reframing would only add wobble.
+        return "center"
+    shots = _shot_ranges(points)
+    # Jitter = mean frame-to-frame jump INSIDE shots. A smooth follow has a big
+    # spread but tiny steps; jumpy B-roll has big steps. Cuts don't count.
+    steps: list[float] = []
+    for lo, hi in shots:
+        seg = xs[lo:hi]
+        steps.extend(abs(seg[i] - seg[i - 1]) for i in range(1, len(seg)))
+    jitter = sum(steps) / len(steps) if steps else 0.0
+    # Many cuts OR jumpy within shots -> lock one framing per shot; else glide.
+    if len(shots) >= 3 or jitter > 0.12:
+        return "shot"
+    return "follow"
 
 
 def _split_on_cuts(points: list[dict]) -> list[list[dict]]:

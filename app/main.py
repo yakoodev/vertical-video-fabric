@@ -22,7 +22,7 @@ from app.auth import AuthRequired, auth_required_handler, require_auth, token_is
 from app.crypto import CookieCipher
 from app.db import Database
 from app.default_pack import seed_default_pack
-from app.focus_presets import list_focus_presets
+from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
@@ -1572,18 +1572,26 @@ def api_rename_source(source_id: int, payload: SourceRenamePayload, _auth: AuthD
 
 
 @app.get("/api/focus-presets", tags=["Render"], summary="List autofocus presets")
-def api_focus_presets(_auth: AuthDep) -> list[dict]:
-    return list_focus_presets()
+def api_focus_presets(_auth: AuthDep) -> dict:
+    return {"presets": list_focus_presets(), "strategies": list_focus_strategies()}
 
 
 class SourceFocusPresetPayload(BaseModel):
-    focus_preset: str = ""
+    focus_preset: str | None = None
+    focus_strategy: str | None = None
 
 
-@app.patch("/api/sources/{source_id}/focus-preset", tags=["Render"], summary="Set the autofocus preset")
+@app.patch("/api/sources/{source_id}/focus-preset", tags=["Render"], summary="Set the autofocus preset/strategy")
 def api_set_source_focus_preset(source_id: int, payload: SourceFocusPresetPayload, _auth: AuthDep) -> dict:
+    fields = {}
+    if payload.focus_preset is not None:
+        fields["focus_preset"] = payload.focus_preset.strip()
+    if payload.focus_strategy is not None:
+        fields["focus_strategy"] = payload.focus_strategy.strip()
+    if not fields:
+        return store.get_source(source_id)
     try:
-        return store.update_source(source_id, focus_preset=payload.focus_preset.strip())
+        return store.update_source(source_id, **fields)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

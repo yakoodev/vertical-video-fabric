@@ -314,6 +314,8 @@ class Database:
             self._ensure_column(conn, "sources", "transcript_model", "TEXT NOT NULL DEFAULT ''")
             # Autofocus tuning per source (talking / animation / action / static…).
             self._ensure_column(conn, "sources", "focus_preset", "TEXT NOT NULL DEFAULT ''")
+            # Global autofocus strategy (shot / follow / center / auto).
+            self._ensure_column(conn, "sources", "focus_strategy", "TEXT NOT NULL DEFAULT ''")
             # Point-of-interest focus track for dynamic reframing (JSON [{t,x,y}]).
             self._ensure_column(conn, "ai_segments", "focus_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")

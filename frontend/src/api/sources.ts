@@ -12,12 +12,16 @@ export interface FocusPreset {
   label: string;
   hint: string;
 }
+export interface FocusOptions {
+  presets: FocusPreset[];
+  strategies: FocusPreset[];
+}
 
 export const sourcesApi = {
   list: () => api.get<Source[]>("/api/sources"),
-  focusPresets: () => api.get<FocusPreset[]>("/api/focus-presets"),
-  setFocusPreset: (id: number | string, focus_preset: string) =>
-    api.patch<Source>(`/api/sources/${id}/focus-preset`, { focus_preset }),
+  focusOptions: () => api.get<FocusOptions>("/api/focus-presets"),
+  setFocus: (id: number | string, body: { focus_preset?: string; focus_strategy?: string }) =>
+    api.patch<Source>(`/api/sources/${id}/focus-preset`, body),
   get: (id: number | string) => api.get<SourceDetail>(`/api/sources/${id}`),
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/sources/${id}`),
   rename: (id: number | string, name: string) => api.patch<Source>(`/api/sources/${id}`, { name }),

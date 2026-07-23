@@ -506,15 +506,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить рендер"),
   });
 
-  const focusPresets = useQuery({ queryKey: ["focus-presets"], queryFn: sourcesApi.focusPresets, staleTime: Infinity });
+  const focusOptions = useQuery({ queryKey: ["focus-options"], queryFn: sourcesApi.focusOptions, staleTime: Infinity });
 
-  const setFocusPreset = useMutation({
-    mutationFn: (key: string) => sourcesApi.setFocusPreset(sourceId, key),
+  const setFocus = useMutation({
+    mutationFn: (body: { focus_preset?: string; focus_strategy?: string }) => sourcesApi.setFocus(sourceId, body),
     onSuccess: () => {
-      toast.success("Пресет автофокуса сохранён. Перезапустите авто-фокус, чтобы пересчитать.");
+      toast.success("Сохранено. Перезапустите авто-фокус, чтобы пересчитать.");
       qc.invalidateQueries({ queryKey: qk.source(sourceId) });
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить пресет"),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
   });
 
   const autofocus = useMutation({
@@ -791,24 +791,37 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
           <Group
             title="Умный кадр (автофокус)"
-            badge={focusPresets.data?.find((p) => p.key === (source.focus_preset || "balanced"))?.label ?? ""}
+            badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
           >
             <label className="field">
-              <span>Пресет — под тип видео</span>
+              <span>Стратегия — как ведёт себя кадр</span>
               <select
                 className="input"
-                value={source.focus_preset || "balanced"}
-                onChange={(e) => setFocusPreset.mutate(e.target.value)}
-                disabled={setFocusPreset.isPending}
+                value={source.focus_strategy || "shot"}
+                onChange={(e) => setFocus.mutate({ focus_strategy: e.target.value })}
+                disabled={setFocus.isPending}
               >
-                {focusPresets.data?.map((p) => (
-                  <option key={p.key} value={p.key}>{p.label}</option>
+                {focusOptions.data?.strategies.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
                 ))}
               </select>
             </label>
             <span className="muted" style={{ fontSize: 11 }}>
-              {focusPresets.data?.find((p) => p.key === (source.focus_preset || "balanced"))?.hint ?? ""}
+              {focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.hint ?? ""}
             </span>
+            <label className="field">
+              <span>Пресет детекции — под тип видео</span>
+              <select
+                className="input"
+                value={source.focus_preset || "balanced"}
+                onChange={(e) => setFocus.mutate({ focus_preset: e.target.value })}
+                disabled={setFocus.isPending}
+              >
+                {focusOptions.data?.presets.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+            </label>
             <label
               className="check"
               title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."

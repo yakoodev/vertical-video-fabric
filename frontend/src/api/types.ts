@@ -34,6 +34,7 @@ export interface Source {
   has_transcript?: boolean;
   transcript_segments?: number;
   focus_preset?: string;
+  focus_strategy?: string;
 }
 
 export interface Clip {

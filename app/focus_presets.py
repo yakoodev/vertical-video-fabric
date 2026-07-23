@@ -18,6 +18,21 @@ from __future__ import annotations
 
 DEFAULT_FOCUS_PRESET = "balanced"
 
+# Global camera behaviour, chosen by the user and compared side by side. Preset
+# tunes *detection*; strategy decides how the crop *moves*.
+DEFAULT_FOCUS_STRATEGY = "shot"
+
+FOCUS_STRATEGIES: list[dict] = [
+    {"key": "shot", "label": "Одна рамка на план", "hint": "Кадр стоит внутри плана и прыгает только на склейке. Лучший дефолт для нарезок/мемов/говорящей головы."},
+    {"key": "follow", "label": "Плавно следовать", "hint": "Камера непрерывно ведёт субъект. Хорошо, когда объект реально движется по кадру."},
+    {"key": "center", "label": "Без движения (центр)", "hint": "Никакого реф-крона — просто центр 9:16. Всегда безопасно, если авто мажет."},
+    {"key": "auto", "label": "Авто (по динамике)", "hint": "Сам смотрит на динамику клипа и выбирает одну из стратегий выше."},
+]
+
+
+def list_focus_strategies() -> list[dict]:
+    return FOCUS_STRATEGIES
+
 FOCUS_PRESETS: dict[str, dict] = {
     "balanced": {
         "label": "Сбалансированный",
