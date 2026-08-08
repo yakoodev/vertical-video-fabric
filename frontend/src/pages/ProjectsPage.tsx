@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { sourcesApi, looksLikePlayerPage, QUALITY_OPTIONS } from "@/api/sources";
+import { downloadsApi } from "@/api/downloads";
 import { qk } from "@/api/keys";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
@@ -115,7 +116,17 @@ function AddSource() {
   const onErr = (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Не удалось добавить источник");
 
   const upload = useMutation({ mutationFn: (file: File) => sourcesApi.uploadFile(file), onSuccess: onDone, onError: onErr });
-  const ingest = useMutation({ mutationFn: (u: string) => sourcesApi.ingestUrl(u, quality), onSuccess: onDone, onError: onErr });
+  // Downloads run in the background: the task shows up in the bell with progress
+  // and a cancel button, and the project card appears when it finishes.
+  const ingest = useMutation({
+    mutationFn: (u: string) => downloadsApi.start(u, quality),
+    onSuccess: () => {
+      toast.success("Скачивание началось — прогресс в уведомлениях");
+      setUrl("");
+      qc.invalidateQueries({ queryKey: qk.activeTasks });
+    },
+    onError: onErr,
+  });
   const busy = upload.isPending || ingest.isPending;
   const canPick = looksLikePlayerPage(url);
 
@@ -170,7 +181,7 @@ function AddSource() {
           </button>
         ) : null}
         <button className="btn" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
-          {ingest.isPending ? "Скачивание…" : "Добавить"}
+          {ingest.isPending ? "…" : "Добавить"}
         </button>
       </div>
       {picking ? (
@@ -178,9 +189,9 @@ function AddSource() {
           url={picking}
           quality={quality}
           onClose={() => setPicking("")}
-          onDone={(s) => {
+          onStarted={() => {
             setPicking("");
-            onDone(s);
+            setUrl("");
           }}
         />
       ) : null}

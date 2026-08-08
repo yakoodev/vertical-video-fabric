@@ -7,14 +7,20 @@ import { isActive } from "@/hooks/useActiveTasks";
 import type { ActiveTask } from "@/api/types";
 import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
-const KIND_RU: Record<string, string> = { job: "Публикация", clip: "Рендер", analysis: "Анализ" };
-const KIND_ICO: Record<string, string> = { job: "📡", clip: "✂️", analysis: "🧠" };
+const KIND_RU: Record<string, string> = {
+  job: "Публикация",
+  clip: "Рендер",
+  analysis: "Анализ",
+  download: "Скачивание",
+};
+const KIND_ICO: Record<string, string> = { job: "📡", clip: "✂️", analysis: "🧠", download: "⬇️" };
 
 type Filter = "all" | "active" | "failed" | ActiveTask["kind"];
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "Все" },
   { key: "active", label: "Активные" },
   { key: "failed", label: "С ошибкой" },
+  { key: "download", label: "Скачивание" },
   { key: "analysis", label: "Анализ" },
   { key: "clip", label: "Рендер" },
   { key: "job", label: "Публикация" },

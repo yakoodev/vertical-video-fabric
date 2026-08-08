@@ -8,9 +8,12 @@ import app.ingest as ingest_module
 from app.crypto import CookieCipher
 from app.db import Database
 from app.ingest import (
+    CancelToken,
+    DownloadCancelled,
     MediaMetadata,
     SourceIngestor,
     StoredSourceFile,
+    cancellable,
     classify_source_url,
     download_direct_url,
     download_smotvibe_media,
@@ -446,22 +449,94 @@ def test_collaps_playlist_options_include_episode_and_voice_tracks():
     assert options[1].media_url == "https://cdn.example/master.m3u8"
 
 
+class FakePopen:
+    """Stand-in for a streaming yt-dlp process."""
+
+    def __init__(self, command, lines: list[str], returncode: int = 0) -> None:
+        self.args = command
+        self.stdout = iter_lines(lines)
+        self.returncode = returncode
+        self.terminated = False
+        self._running = True
+
+    def poll(self):
+        # A live process reports None, which is what tells the token it is still
+        # worth terminating.
+        return None if self._running else self.returncode
+
+    def wait(self, timeout=None):
+        self._running = False
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+
+class iter_lines:
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = list(lines)
+
+    def __iter__(self):
+        return iter([f"{line}\n" for line in self._lines])
+
+    def close(self):
+        return None
+
+
 def test_ytdlp_runner_falls_back_to_executable_when_module_is_missing(monkeypatch):
     calls = []
 
-    def fake_run(command, **kwargs):
+    def fake_popen(command, **kwargs):
         calls.append(command)
         if command[:3] == [ingest_module.sys.executable, "-m", "yt_dlp"]:
-            return ingest_module.subprocess.CompletedProcess(command, 1, "", "No module named yt_dlp")
-        return ingest_module.subprocess.CompletedProcess(command, 0, "ok", "")
+            return FakePopen(command, ["No module named yt_dlp"], returncode=1)
+        return FakePopen(command, ["ok"], returncode=0)
 
-    monkeypatch.setattr("app.ingest.subprocess.run", fake_run)
+    monkeypatch.setattr("app.ingest.subprocess.Popen", fake_popen)
 
     proc = _run_ytdlp(["--version"])
 
     assert proc.returncode == 0
     assert calls[0][:3] == [ingest_module.sys.executable, "-m", "yt_dlp"]
     assert calls[1][0] == "yt-dlp"
+
+
+def test_ytdlp_runner_reports_progress_and_keeps_error_tail(monkeypatch):
+    seen: list[float] = []
+    output = ["[download]   0.0% of 100MiB", "[download]  42.5% of 100MiB", "ERROR: boom"]
+    monkeypatch.setattr("app.ingest.subprocess.Popen", lambda command, **kw: FakePopen(command, output, 1))
+
+    token = CancelToken(lambda percent, message: seen.append(percent))
+    with cancellable(token):
+        proc = _run_ytdlp(["https://cdn.example/master.m3u8"])
+
+    assert seen == [0.0, 42.5]
+    assert "ERROR: boom" in proc.stdout
+
+
+def test_cancelled_download_terminates_ytdlp_and_removes_partials(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "source_dir", tmp_path / "sources")
+    settings.source_dir.mkdir(parents=True, exist_ok=True)
+    token = CancelToken()
+    started: list[FakePopen] = []
+
+    def fake_popen(command, **kwargs):
+        # A partial file is on disk by the time the user hits cancel.
+        output_template = command[command.index("-o") + 1]
+        Path(output_template.replace("%(ext)s", "mp4.part")).write_bytes(b"partial")
+        token.cancel()
+        proc = FakePopen(command, ["[download]  10.0% of 100MiB"], returncode=1)
+        started.append(proc)
+        return proc
+
+    monkeypatch.setattr("app.ingest.subprocess.Popen", fake_popen)
+
+    with cancellable(token):
+        with pytest.raises(DownloadCancelled):
+            _download_with_ytdlp("https://cdn.example/master.m3u8", source_label="Smotvibe", filename_stem="clip")
+
+    assert started[0].terminated
+    assert list(settings.source_dir.glob("*")) == []
 
 
 def test_ytdlp_download_finds_named_output_file(tmp_path, monkeypatch):

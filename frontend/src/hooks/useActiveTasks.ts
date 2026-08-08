@@ -5,8 +5,8 @@ import { qk } from "@/api/keys";
 import type { ActiveTask } from "@/api/types";
 import { useToast } from "@/components/Toast";
 
-const ACTIVE = new Set(["queued", "running", "rendering", "analyzing", "downloading", "scheduling"]);
-const TERMINAL = new Set(["succeeded", "failed", "needs_reauth", "done", "error"]);
+const ACTIVE = new Set(["queued", "running", "rendering", "analyzing", "downloading", "cancelling", "scheduling"]);
+const TERMINAL = new Set(["succeeded", "failed", "needs_reauth", "done", "error", "cancelled"]);
 
 export function isActive(status: string): boolean {
   return ACTIVE.has(status);
@@ -15,7 +15,12 @@ export function isTerminal(status: string): boolean {
   return TERMINAL.has(status);
 }
 
-const KIND_RU: Record<string, string> = { job: "Публикация", clip: "Клип", analysis: "Анализ" };
+const KIND_RU: Record<string, string> = {
+  job: "Публикация",
+  clip: "Клип",
+  analysis: "Анализ",
+  download: "Скачивание",
+};
 
 function taskKey(t: ActiveTask): string {
   return `${t.kind}:${t.id}`;
@@ -51,6 +56,8 @@ export function useActiveTasks() {
       if (before === t.status) continue;
       if (isTerminal(t.status) && !isTerminal(before)) {
         sawTerminal = true;
+        // The user pressed cancel themselves — no need to announce it back.
+        if (t.status === "cancelled") continue;
         const name = `${KIND_RU[t.kind] ?? t.kind} #${t.id}`;
         const what = t.label ? `${name} · ${t.label}` : name;
         const dedupe = `${key}:${t.updated_at}`;

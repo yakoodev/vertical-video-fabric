@@ -157,7 +157,7 @@ export interface AutoRun {
 }
 
 export interface ActiveTask {
-  kind: "job" | "clip" | "analysis";
+  kind: "job" | "clip" | "analysis" | "download";
   id: number;
   status: string;
   label: string;
@@ -167,4 +167,6 @@ export interface ActiveTask {
   scheduled_at?: string | null;
   source_id?: number | null;
   detail?: string;
+  /** Downloads only: 0–100. */
+  progress?: number;
 }

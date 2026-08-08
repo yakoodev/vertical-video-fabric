@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { isActive, useActiveTasks } from "@/hooks/useActiveTasks";
+import { downloadsApi } from "@/api/downloads";
+import { qk } from "@/api/keys";
+import { ApiError } from "@/api/client";
 import type { ActiveTask } from "@/api/types";
 import { Badge } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 
 const DISMISS_KEY = "vvf-dismissed-tasks";
-const KIND_RU: Record<string, string> = { job: "Публикация", clip: "Рендер", analysis: "Анализ" };
+const KIND_RU: Record<string, string> = {
+  job: "Публикация",
+  clip: "Рендер",
+  analysis: "Анализ",
+  download: "Скачивание",
+};
 
 function fmtAgo(s?: string | null): string {
   if (!s) return "";
@@ -33,8 +43,16 @@ function loadDismissed(): Set<string> {
 
 export function ActivityCenter() {
   const query = useActiveTasks();
+  const qc = useQueryClient();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+
+  const cancelDownload = useMutation({
+    mutationFn: (id: number) => downloadsApi.cancel(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить скачивание"),
+  });
 
   useEffect(() => {
     window.localStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed]));
@@ -94,9 +112,26 @@ export function ActivityCenter() {
                         <Badge status={t.status} />
                       </div>
                       {t.label ? <div className="muted" style={{ fontSize: 12 }}>{t.label}</div> : null}
+                      {t.kind === "download" && isActive(t.status) ? (
+                        <div className="dl-progress" title={t.detail || ""}>
+                          <div className="dl-bar">
+                            <span style={{ width: `${Math.round(t.progress ?? 0)}%` }} />
+                          </div>
+                          <span className="mono">{Math.round(t.progress ?? 0)}%</span>
+                        </div>
+                      ) : null}
                       {t.error ? <div style={{ color: "var(--danger)", fontSize: 12 }}>{t.error}</div> : null}
                       <div className="activity-foot mono">
                         <span>{fmtAgo(t.updated_at)}</span>
+                        {t.kind === "download" && isActive(t.status) ? (
+                          <button
+                            className="task-link"
+                            disabled={t.status === "cancelling" || cancelDownload.isPending}
+                            onClick={() => cancelDownload.mutate(t.id)}
+                          >
+                            {t.status === "cancelling" ? "отменяю…" : "отменить"}
+                          </button>
+                        ) : null}
                         {link ? (
                           <Link to={link} onClick={() => setOpen(false)} className="task-link">
                             открыть →

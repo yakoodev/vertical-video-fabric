@@ -1685,6 +1685,41 @@ a.panel:hover,
   color: var(--accent);
   text-decoration: none;
 }
+/* The same affordance as a link, for the cancel action rendered as a button. */
+button.task-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+button.task-link:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* ---------- Download progress (activity panel) ---------- */
+.dl-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.dl-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.dl-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
+}
 
 /* ---------- Toasts ---------- */
 .toast-stack {

@@ -209,6 +209,44 @@ def test_core_api_flow(tmp_path, monkeypatch):
     assert run["clips"] == 2
     assert run["jobs"] == 2
 
+    # Background downloads: start → visible in the activity feed → cancellable.
+    import threading
+    import time
+
+    import app.main as main_module
+    from app.ingest import DownloadCancelled, current_cancel_token
+
+    released = threading.Event()
+
+    def blocking_ingest(url: str, *, quality: str = "") -> dict:
+        released.wait(5)
+        # The service binds a cancel token to the ingest thread; the real
+        # downloaders raise through it once the user cancels.
+        current_cancel_token().check()
+        raise DownloadCancelled("download cancelled")
+
+    monkeypatch.setattr(main_module.source_ingestor, "ingest_url", blocking_ingest)
+
+    response = client.post("/api/sources/download", json={"url": "https://gromfaer.top/series/1/"})
+    assert response.status_code == 200
+    download_id = response.json()["id"]
+
+    feed = client.get("/api/tasks/active").json()
+    download_row = next(row for row in feed if row["kind"] == "download" and row["id"] == download_id)
+    assert download_row["status"] in {"queued", "downloading"}
+    assert "gromfaer.top" in download_row["label"]
+
+    assert client.post(f"/api/downloads/{download_id}/cancel").json()["status"] == "cancelling"
+    released.set()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if client.get("/api/downloads").json()[0]["status"] == "cancelled":
+            break
+        time.sleep(0.02)
+    assert client.get("/api/downloads").json()[0]["status"] == "cancelled"
+    assert client.post("/api/downloads/999/cancel").status_code == 404
+    assert client.post("/api/sources/download", json={"url": "nope"}).status_code == 400
+
 
 def test_api_and_docs_require_token(monkeypatch):
     from app.settings import settings

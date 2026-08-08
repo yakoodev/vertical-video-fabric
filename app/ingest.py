@@ -6,7 +6,10 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Callable
@@ -34,6 +37,81 @@ SMOTVIBE_FORMAT_SELECTOR = "bv*[height<=720]+ba[format_id!*=failover]/b[height<=
 #   "best"         -> no cap, grab the highest available
 #   "1080"/"720"/… -> cap to that pixel height
 QUALITY_CHOICES = ["default", "best", "1080", "720", "480", "360"]
+
+
+_PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d{1,3}(?:\.\d+)?)%")
+
+
+class DownloadCancelled(RuntimeError):
+    """Raised inside a download when the user cancelled it."""
+
+
+class CancelToken:
+    """Hands a running download a kill switch and a progress channel.
+
+    The token is bound to the thread that runs the ingest (see ``cancellable``),
+    so the downloader functions keep their plain signatures and any layer can
+    reach the currently running subprocess.
+    """
+
+    def __init__(self, on_progress: Callable[[float, str], None] | None = None) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._proc: subprocess.Popen | None = None
+        self._on_progress = on_progress
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()
+
+    def check(self) -> None:
+        if self.cancelled:
+            raise DownloadCancelled("download cancelled")
+
+    def attach(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._proc = proc
+            cancelled = self._cancelled
+        if cancelled and proc.poll() is None:
+            proc.terminate()
+
+    def detach(self) -> None:
+        with self._lock:
+            self._proc = None
+
+    def report(self, percent: float, message: str = "") -> None:
+        if self._on_progress:
+            self._on_progress(max(0.0, min(100.0, percent)), message)
+
+    def observe_output(self, line: str) -> None:
+        match = _PROGRESS_RE.search(line)
+        if match:
+            self.report(float(match.group("percent")), "")
+
+
+_cancel_state = threading.local()
+
+
+def current_cancel_token() -> CancelToken | None:
+    return getattr(_cancel_state, "token", None)
+
+
+@contextmanager
+def cancellable(token: CancelToken):
+    previous = current_cancel_token()
+    _cancel_state.token = token
+    try:
+        yield token
+    finally:
+        _cancel_state.token = previous
 
 
 def _quality_cap(quality: str, default_cap: int | None) -> int | None:
@@ -257,6 +335,7 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
     dest: Path | None = None
     hasher = hashlib.sha256()
     size = 0
+    cancel = current_cancel_token()
     settings.source_dir.mkdir(parents=True, exist_ok=True)
     with httpx.stream("GET", url, follow_redirects=True, timeout=60) as response:
         response.raise_for_status()
@@ -267,11 +346,16 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
         if suffix not in MEDIA_EXTENSIONS:
             suffix = CONTENT_TYPE_EXTENSIONS.get(content_type, ".mp4")
             original_filename = f"{Path(original_filename).stem or 'source'}{suffix}"
+        total = _float_or_zero(response.headers.get("content-length"))
         dest = settings.source_dir / f"{uuid4().hex}-{Path(original_filename).name}"
         with dest.open("wb") as out:
             for chunk in response.iter_bytes():
                 if not chunk:
                     continue
+                if cancel and cancel.cancelled:
+                    out.close()
+                    dest.unlink(missing_ok=True)
+                    cancel.check()
                 size += len(chunk)
                 if size > settings.max_upload_bytes:
                     out.close()
@@ -279,6 +363,8 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
                     raise ValueError("source exceeds MAX_UPLOAD_BYTES")
                 hasher.update(chunk)
                 out.write(chunk)
+                if cancel and total > 0:
+                    cancel.report(size * 100 / total)
     if dest is None:
         raise ValueError("direct url download did not produce a file")
     return StoredSourceFile(dest, original_filename, hasher.hexdigest(), size)
@@ -430,6 +516,9 @@ def _download_with_ytdlp(
         "3",
         "--file-access-retries",
         "3",
+        # One progress line per update instead of \r-rewrites, so the reader below
+        # can turn them into a percentage for the UI.
+        "--newline",
         "-o",
         str(output_template),
     ]
@@ -437,8 +526,13 @@ def _download_with_ytdlp(
         command_args.extend(["--referer", referer])
         command_args.extend(["--add-header", f"Origin:{_origin(referer)}"])
     command_args.append(url)
-    proc = _run_ytdlp(command_args)
+    try:
+        proc = _run_ytdlp(command_args)
+    except DownloadCancelled:
+        _remove_partials(output_basename)
+        raise
     if proc.returncode != 0:
+        _remove_partials(output_basename)
         raise ValueError(f"{source_label} download failed: {_safe_error(proc.stderr or proc.stdout)}")
     matches = sorted(settings.source_dir.glob(f"{output_basename}.*"))
     if not matches:
@@ -498,14 +592,8 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess[str]:
     last_error = ""
     for index, command in enumerate(commands):
         try:
-            proc = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=settings.external_download_timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
+            proc = _stream_ytdlp(command)
+        except subprocess.TimeoutExpired:
             last_error = f"yt-dlp timed out after {settings.external_download_timeout_seconds}s"
             continue
         except FileNotFoundError as exc:
@@ -518,6 +606,67 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess[str]:
             continue
         return proc
     return subprocess.CompletedProcess(commands[-1], 1, "", last_error)
+
+
+def _stream_ytdlp(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run yt-dlp while reading its output line by line.
+
+    Streaming (instead of ``subprocess.run``) is what makes a download both
+    reportable — progress lines reach the UI as they happen — and cancellable:
+    the token holds the live process, so cancelling terminates it mid-download.
+    """
+    timeout = settings.external_download_timeout_seconds
+    token = current_cancel_token()
+    if token:
+        token.check()
+    proc = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+        bufsize=1,
+    )
+    if token:
+        token.attach(proc)
+    # Only the tail matters: yt-dlp puts the actual failure at the end, and the
+    # rest is progress noise.
+    tail: deque[str] = deque(maxlen=40)
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                tail.append(line)
+                if token:
+                    token.observe_output(line)
+            if time.monotonic() > deadline:
+                timed_out = True
+                proc.kill()
+                break
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        proc.wait()
+        if token:
+            token.detach()
+    if token:
+        # A terminated process exits non-zero; surface the cancellation instead of
+        # a confusing "download failed".
+        token.check()
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout)
+    return subprocess.CompletedProcess(command, proc.returncode, "\n".join(tail), "")
+
+
+def _remove_partials(output_basename: str) -> None:
+    for leftover in settings.source_dir.glob(f"{output_basename}*"):
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
 
 
 def probe_media(path: Path) -> MediaMetadata:

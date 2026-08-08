@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { sourcesApi, type PlayerOption } from "@/api/sources";
-import type { Source } from "@/api/types";
+import { downloadsApi } from "@/api/downloads";
+import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ErrorState, Loading, formatDuration } from "@/components/ui";
@@ -51,14 +52,15 @@ export function PlayerOptionsDialog({
   url,
   quality,
   onClose,
-  onDone,
+  onStarted,
 }: {
   url: string;
   quality: string;
   onClose: () => void;
-  onDone: (source: Source) => void;
+  onStarted: () => void;
 }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [provider, setProvider] = useState("");
   const [season, setSeason] = useState("");
   const [episode, setEpisode] = useState("");
@@ -72,9 +74,13 @@ export function PlayerOptionsDialog({
   });
 
   const download = useMutation({
-    mutationFn: (option: PlayerOption) => sourcesApi.ingestUrl(url, quality, option),
-    onSuccess: onDone,
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось скачать выбранную серию"),
+    mutationFn: (option: PlayerOption) => downloadsApi.start(url, quality, option),
+    onSuccess: () => {
+      toast.success("Скачивание началось — прогресс в уведомлениях");
+      qc.invalidateQueries({ queryKey: qk.activeTasks });
+      onStarted();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось начать скачивание"),
   });
 
   const all = options.data ?? [];
@@ -139,7 +145,7 @@ export function PlayerOptionsDialog({
             disabled={!selected || download.isPending}
             onClick={() => selected && download.mutate(selected)}
           >
-            {download.isPending ? "Скачивание…" : "Скачать выбранное"}
+            {download.isPending ? "…" : "Скачать выбранное"}
           </button>
         </div>
       </div>

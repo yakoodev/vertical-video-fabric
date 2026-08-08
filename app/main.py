@@ -25,6 +25,7 @@ from app.default_pack import seed_default_pack
 from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
+from app.downloads import DownloadService
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
@@ -46,6 +47,7 @@ source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
 clip_render_service = ClipRenderService(store)
 automation_service = AutomationService(store, source_ingestor, video_analysis_service, clip_render_service)
+download_service = DownloadService(source_ingestor)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 
@@ -251,6 +253,15 @@ class SourceRead(BaseModel):
 
 class SourceCreateRequest(BaseModel):
     url: str
+    smotvibe_media_url: str = ""
+    smotvibe_referer: str = ""
+    smotvibe_audio_format_id: str = ""
+    smotvibe_filename_label: str = ""
+
+
+class SourceDownloadRequest(BaseModel):
+    url: str
+    quality: str = ""
     smotvibe_media_url: str = ""
     smotvibe_referer: str = ""
     smotvibe_audio_format_id: str = ""
@@ -1529,6 +1540,44 @@ async def api_create_source(request: Request, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post(
+    "/api/sources/download",
+    tags=["Sources"],
+    summary="Start a background source download",
+    description=(
+        "Returns immediately with a download task. Progress and cancellation are "
+        "exposed through `/api/tasks/active` and `/api/downloads/{id}/cancel`."
+    ),
+)
+def api_start_download(payload: SourceDownloadRequest, _auth: AuthDep) -> dict:
+    try:
+        return download_service.start(
+            payload.url,
+            quality=payload.quality,
+            selection={
+                "media_url": payload.smotvibe_media_url,
+                "referer": payload.smotvibe_referer,
+                "audio_format_id": payload.smotvibe_audio_format_id,
+                "filename_label": payload.smotvibe_filename_label,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/downloads", tags=["Sources"], summary="List source download tasks")
+def api_downloads(_auth: AuthDep) -> list[dict]:
+    return download_service.list_tasks()
+
+
+@app.post("/api/downloads/{download_id}/cancel", tags=["Sources"], summary="Cancel a source download")
+def api_cancel_download(download_id: int, _auth: AuthDep) -> dict:
+    try:
+        return download_service.cancel(download_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get(
     "/api/sources",
     response_model=list[SourceRead],
@@ -2017,12 +2066,18 @@ def api_create_post_from_clip(clip_id: int, payload: ClipPostRequest, _auth: Aut
 
 @app.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")
 def api_active_tasks(_auth: AuthDep) -> list[dict]:
-    return store.list_active_tasks()
+    return _merge_tasks(store.list_active_tasks(), download_service.as_tasks())
 
 
 @app.get("/api/tasks", tags=["Jobs"], summary="List recent tasks (execution log)")
 def api_recent_tasks(_auth: AuthDep, limit: int = 80) -> list[dict]:
-    return store.list_recent_tasks(max(1, min(300, limit)))
+    limit = max(1, min(300, limit))
+    return _merge_tasks(store.list_recent_tasks(limit), download_service.as_tasks())[:limit]
+
+
+def _merge_tasks(stored: list[dict], downloads: list[dict]) -> list[dict]:
+    """Downloads live in memory, the rest in SQLite — the UI wants one feed."""
+    return sorted([*downloads, *stored], key=lambda task: str(task.get("updated_at") or ""), reverse=True)
 
 
 @app.get("/api/export", tags=["Settings"], summary="Export a shareable config bundle")
