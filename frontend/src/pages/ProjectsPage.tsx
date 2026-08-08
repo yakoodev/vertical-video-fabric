@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { sourcesApi } from "@/api/sources";
+import { sourcesApi, QUALITY_OPTIONS } from "@/api/sources";
 import { qk } from "@/api/keys";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
@@ -103,6 +103,7 @@ function AddSource() {
   const toast = useToast();
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
+  const [quality, setQuality] = useState("");
 
   const onDone = (s: Source) => {
     toast.success("Источник добавлен");
@@ -112,7 +113,7 @@ function AddSource() {
   const onErr = (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Не удалось добавить источник");
 
   const upload = useMutation({ mutationFn: (file: File) => sourcesApi.uploadFile(file), onSuccess: onDone, onError: onErr });
-  const ingest = useMutation({ mutationFn: (u: string) => sourcesApi.ingestUrl(u), onSuccess: onDone, onError: onErr });
+  const ingest = useMutation({ mutationFn: (u: string) => sourcesApi.ingestUrl(u, quality), onSuccess: onDone, onError: onErr });
   const busy = upload.isPending || ingest.isPending;
 
   return (
@@ -141,6 +142,20 @@ function AddSource() {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && url.trim() && ingest.mutate(url.trim())}
         />
+        <select
+          className="input"
+          style={{ width: 150, flex: "none" }}
+          value={quality}
+          disabled={busy}
+          title="Качество скачивания (для ссылок). «Авто» — лучшее для YouTube, 720p для стримов Twitch/Smotvibe."
+          onChange={(e) => setQuality(e.target.value)}
+        >
+          {QUALITY_OPTIONS.map((q) => (
+            <option key={q.value} value={q.value}>
+              {q.label}
+            </option>
+          ))}
+        </select>
         <button className="btn" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
           {ingest.isPending ? "Скачивание…" : "Добавить"}
         </button>

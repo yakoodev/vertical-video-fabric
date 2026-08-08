@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import subprocess
@@ -26,6 +27,32 @@ CONTENT_TYPE_EXTENSIONS = {
     "video/webm": ".webm",
 }
 SMOTVIBE_FORMAT_SELECTOR = "bv*[height<=720]+ba[format_id!*=failover]/b[height<=720]/b"
+
+# Download-quality choices for URL ingestion.
+#   "" / "default" -> keep each source's built-in cap (best for generic/YouTube,
+#                     720p for Twitch/Smotvibe live streams)
+#   "best"         -> no cap, grab the highest available
+#   "1080"/"720"/… -> cap to that pixel height
+QUALITY_CHOICES = ["default", "best", "1080", "720", "480", "360"]
+
+
+def _quality_cap(quality: str, default_cap: int | None) -> int | None:
+    q = (quality or "").strip().lower()
+    if q in ("", "default", "auto", "source"):
+        return default_cap
+    if q in ("best", "max", "highest"):
+        return None
+    match = re.match(r"^(\d{3,4})p?$", q)
+    if match:
+        return int(match.group(1))
+    return default_cap
+
+
+def format_selector_for_quality(quality: str = "", *, default_cap: int | None = None) -> str:
+    cap = _quality_cap(quality, default_cap)
+    if cap is None:
+        return "bv*+ba/b"
+    return f"bv*[height<={cap}]+ba/b[height<={cap}]/b"
 
 
 @dataclass(frozen=True)
@@ -74,14 +101,14 @@ class SourceIngestor:
             original_url="",
         )
 
-    def ingest_url(self, url: str) -> dict:
+    def ingest_url(self, url: str, *, quality: str = "") -> dict:
         source_type = classify_source_url(url)
         downloader = {
             "youtube_url": self.youtube_downloader,
             "smotvibe_url": self.smotvibe_downloader,
             "twitch_url": self.twitch_downloader,
         }.get(source_type, self.direct_downloader)
-        stored = downloader(url)
+        stored = _call_downloader(downloader, url, quality)
         return self._create_source_from_file(
             source_type=source_type,
             stored=stored,
@@ -96,6 +123,7 @@ class SourceIngestor:
         referer: str = "",
         audio_format_id: str = "",
         filename_label: str = "",
+        quality: str = "",
     ) -> dict:
         stored = download_smotvibe_media(
             url,
@@ -103,6 +131,7 @@ class SourceIngestor:
             referer=referer,
             audio_format_id=audio_format_id,
             filename_label=filename_label,
+            quality=quality,
         )
         return self._create_source_from_file(
             source_type="smotvibe_url",
@@ -176,7 +205,21 @@ def save_upload_to_sources(fileobj: BinaryIO, filename: str) -> StoredSourceFile
     return _copy_stream_to_path(fileobj, dest, safe_name)
 
 
-def download_direct_url(url: str) -> StoredSourceFile:
+def _call_downloader(downloader: DownloadFn, url: str, quality: str) -> StoredSourceFile:
+    """Pass ``quality`` only to downloaders that accept it (keeps injected test doubles working)."""
+    try:
+        params = inspect.signature(downloader).parameters
+    except (TypeError, ValueError):
+        params = {}
+    accepts_quality = "quality" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if accepts_quality:
+        return downloader(url, quality=quality)
+    return downloader(url)
+
+
+def download_direct_url(url: str, *, quality: str = "") -> StoredSourceFile:
     attempts = max(1, int(settings.external_http_retries))
     last_error: Exception | None = None
     for attempt in range(attempts):
@@ -228,7 +271,7 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
     return StoredSourceFile(dest, original_filename, hasher.hexdigest(), size)
 
 
-def download_youtube_url(url: str) -> StoredSourceFile:
+def download_youtube_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "youtube_url":
         raise ValueError("url is not a YouTube URL")
     settings.source_dir.mkdir(parents=True, exist_ok=True)
@@ -238,7 +281,7 @@ def download_youtube_url(url: str) -> StoredSourceFile:
         [
             "yt-dlp",
             "-f",
-            "bv*+ba/b",
+            format_selector_for_quality(quality, default_cap=None),
             "--merge-output-format",
             "mp4",
             "-o",
@@ -260,7 +303,7 @@ def download_youtube_url(url: str) -> StoredSourceFile:
     return StoredSourceFile(path, path.name, sha256, size_bytes)
 
 
-def download_twitch_url(url: str) -> StoredSourceFile:
+def download_twitch_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "twitch_url":
         raise ValueError("url is not a Twitch URL")
     return _download_with_ytdlp(
@@ -268,16 +311,17 @@ def download_twitch_url(url: str) -> StoredSourceFile:
         source_label="Twitch",
         referer="https://www.twitch.tv/",
         filename_stem=_source_filename_stem("twitch", url),
-        format_selector="bv*[height<=720]+ba/b[height<=720]/b",
+        format_selector=format_selector_for_quality(quality, default_cap=720),
     )
 
 
-def download_smotvibe_url(url: str) -> StoredSourceFile:
+def download_smotvibe_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "smotvibe_url":
         raise ValueError("url is not a Smotvibe page URL")
     errors: list[str] = []
     targets = discover_smotvibe_download_targets(url)
     only_source_page = len(targets) == 1 and targets[0].media_url == url
+    selector = _smotvibe_format_selector(cap=_quality_cap(quality, 720))
     for target in _prioritize_download_targets(targets):
         try:
             return _download_with_ytdlp(
@@ -285,7 +329,7 @@ def download_smotvibe_url(url: str) -> StoredSourceFile:
                 source_label="Smotvibe",
                 referer=target.referer,
                 filename_stem=_source_filename_stem("smotvibe", url),
-                format_selector=SMOTVIBE_FORMAT_SELECTOR,
+                format_selector=selector,
             )
         except ValueError as exc:
             errors.append(_safe_error(exc))
@@ -302,6 +346,7 @@ def download_smotvibe_media(
     referer: str = "",
     audio_format_id: str = "",
     filename_label: str = "",
+    quality: str = "",
 ) -> StoredSourceFile:
     if classify_source_url(url) != "smotvibe_url":
         raise ValueError("url is not a Smotvibe page URL")
@@ -319,7 +364,7 @@ def download_smotvibe_media(
         source_label="Smotvibe",
         referer=referer.strip() or url.strip(),
         filename_stem=filename_stem,
-        format_selector=_smotvibe_format_selector(audio_format_id),
+        format_selector=_smotvibe_format_selector(audio_format_id, cap=_quality_cap(quality, 720)),
     )
 
 
@@ -371,13 +416,13 @@ def _download_with_ytdlp(
     return StoredSourceFile(path, original_filename, sha256, size_bytes)
 
 
-def _smotvibe_format_selector(audio_format_id: str = "") -> str:
+def _smotvibe_format_selector(audio_format_id: str = "", *, cap: int | None = 720) -> str:
+    h = f"[height<={cap}]" if cap else ""
+    base = f"bv*{h}+ba[format_id!*=failover]/b{h}/b"
     audio_format_id = audio_format_id.strip()
-    if not audio_format_id:
-        return SMOTVIBE_FORMAT_SELECTOR
-    if not re.match(r"^[A-Za-z0-9_.:-]+$", audio_format_id):
-        return SMOTVIBE_FORMAT_SELECTOR
-    return f"bv*[height<=720]+{audio_format_id}/{SMOTVIBE_FORMAT_SELECTOR}"
+    if not audio_format_id or not re.match(r"^[A-Za-z0-9_.:-]+$", audio_format_id):
+        return base
+    return f"bv*{h}+{audio_format_id}/{base}"
 
 
 def _prioritize_download_targets(targets) -> list:

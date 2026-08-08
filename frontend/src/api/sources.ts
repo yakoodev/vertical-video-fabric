@@ -37,5 +37,16 @@ export const sourcesApi = {
     fd.append("file", file);
     return api.form<Source>("/api/sources", fd);
   },
-  ingestUrl: (url: string) => api.post<Source>("/api/sources", { url }),
+  ingestUrl: (url: string, quality = "") =>
+    api.post<Source>("/api/sources", quality ? { url, quality } : { url }),
 };
+
+// Download-quality options for URL ingestion (mirrors app/ingest.py QUALITY_CHOICES).
+export const QUALITY_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Качество: авто" },
+  { value: "best", label: "Максимальное" },
+  { value: "1080", label: "1080p" },
+  { value: "720", label: "720p" },
+  { value: "480", label: "480p" },
+  { value: "360", label: "360p" },
+];

@@ -620,6 +620,7 @@ def ui_add_source_url(
 def _ingest_source_url(
     url: str,
     *,
+    quality: str = "",
     smotvibe_media_url: str = "",
     smotvibe_referer: str = "",
     smotvibe_audio_format_id: str = "",
@@ -632,8 +633,9 @@ def _ingest_source_url(
             referer=smotvibe_referer,
             audio_format_id=smotvibe_audio_format_id,
             filename_label=smotvibe_filename_label,
+            quality=quality,
         )
-    return source_ingestor.ingest_url(url)
+    return source_ingestor.ingest_url(url, quality=quality)
 
 
 @app.post("/ui/sources/{source_id}/analyze", include_in_schema=False)
@@ -1504,6 +1506,7 @@ async def api_create_source(request: Request, _auth: AuthDep) -> dict:
             if url:
                 return _ingest_source_url(
                     url,
+                    quality=str(form.get("quality") or ""),
                     smotvibe_media_url=str(form.get("smotvibe_media_url") or ""),
                     smotvibe_referer=str(form.get("smotvibe_referer") or ""),
                     smotvibe_audio_format_id=str(form.get("smotvibe_audio_format_id") or ""),
@@ -1516,6 +1519,7 @@ async def api_create_source(request: Request, _auth: AuthDep) -> dict:
             raise ValueError("json request must include url")
         return _ingest_source_url(
             url,
+            quality=str(payload.get("quality") or ""),
             smotvibe_media_url=str(payload.get("smotvibe_media_url") or ""),
             smotvibe_referer=str(payload.get("smotvibe_referer") or ""),
             smotvibe_audio_format_id=str(payload.get("smotvibe_audio_format_id") or ""),
