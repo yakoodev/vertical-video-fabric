@@ -78,7 +78,7 @@ function StartAuto() {
     <div className="panel" style={{ display: "grid", gap: 12 }}>
       <strong>Запустить конвейер</strong>
       <label className="field">
-        <span>Ссылка на видео (mp4, YouTube, Twitch, Smotvibe)</span>
+        <span>Ссылка на видео (mp4, YouTube, Twitch, Smotvibe и похожие плееры)</span>
         <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
       </label>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

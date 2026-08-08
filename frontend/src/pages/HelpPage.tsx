@@ -55,7 +55,7 @@ export function HelpPage() {
         <Section id="quickstart" title="Быстрый старт (вручную)">
           <div className="help-steps">
             <Step n={1} title="Создать проект">
-              <b>Проекты → Добавить</b>: вставьте ссылку (mp4/YouTube/Twitch/Smotvibe) или загрузите файл.
+              <b>Проекты → Добавить</b>: вставьте ссылку (mp4/YouTube/Twitch/Smotvibe и похожие плееры) или загрузите файл.
             </Step>
             <Step n={2} title="Вкладка «Исходник»">
               При необходимости обрежьте чёрные полосы (кнопка «🔍 Найти полосы») и «Сохранить кадр».

@@ -17,6 +17,23 @@ export interface FocusOptions {
   strategies: FocusPreset[];
 }
 
+// One downloadable variant of a Kinobox-style player page (Smotvibe, gromfaer, …):
+// a concrete season/episode with a concrete voice track.
+export interface PlayerOption {
+  id: string;
+  provider: string;
+  season: string;
+  episode: string;
+  translation: string;
+  quality: string;
+  title: string;
+  duration_sec: number;
+  media_url: string;
+  referer: string;
+  audio_format_id: string;
+  filename_label: string;
+}
+
 export const sourcesApi = {
   list: () => api.get<Source[]>("/api/sources"),
   focusOptions: () => api.get<FocusOptions>("/api/focus-presets"),
@@ -37,9 +54,37 @@ export const sourcesApi = {
     fd.append("file", file);
     return api.form<Source>("/api/sources", fd);
   },
-  ingestUrl: (url: string, quality = "") =>
-    api.post<Source>("/api/sources", quality ? { url, quality } : { url }),
+  ingestUrl: (url: string, quality = "", option?: PlayerOption) =>
+    api.post<Source>("/api/sources", {
+      url,
+      ...(quality ? { quality } : {}),
+      ...(option
+        ? {
+            smotvibe_media_url: option.media_url,
+            smotvibe_referer: option.referer,
+            smotvibe_audio_format_id: option.audio_format_id,
+            smotvibe_filename_label: option.filename_label,
+          }
+        : {}),
+    }),
+  // Seasons / episodes / voice tracks behind a player page.
+  playerOptions: (url: string) => api.post<PlayerOption[]>("/api/smotvibe/options", { url }),
 };
+
+// Player pages hide their episode list behind a Kinobox iframe, so the picker is
+// only offered for links that are not already a plain file or a known platform.
+export function looksLikePlayerPage(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return false;
+  const host = parsed.hostname.toLowerCase();
+  if (/(^|\.)(youtube\.com|youtu\.be|twitch\.tv)$/.test(host)) return false;
+  return !/\.(mp4|mov|webm|m3u8)$/i.test(parsed.pathname);
+}
 
 // Download-quality options for URL ingestion (mirrors app/ingest.py QUALITY_CHOICES).
 export const QUALITY_OPTIONS: { value: string; label: string }[] = [

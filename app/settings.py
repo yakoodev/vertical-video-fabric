@@ -34,6 +34,10 @@ class Settings:
         self.external_http_retry_seconds = float(os.getenv("EXTERNAL_HTTP_RETRY_SECONDS", "2"))
         self.external_download_timeout_seconds = int(os.getenv("EXTERNAL_DOWNLOAD_TIMEOUT_SECONDS", str(15 * 60)))
         self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
+        # Kinobox-style player sites (Smotvibe and its clones: gromfaer.top, …) keep
+        # appearing under new brands, so the list is extendable without a code change.
+        # Accepts brands ("gromfaer") or full hosts ("player.example.com").
+        self.player_page_hosts = _csv(os.getenv("PLAYER_PAGE_HOSTS", ""))
         self.tiktok_vendor_root = Path(
             os.getenv("TIKTOK_VENDOR_ROOT", "/opt/TiktokAutoUploader")
         )

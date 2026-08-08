@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.smotvibe import discover_smotvibe_download_targets, is_smotvibe_url
+from app.smotvibe import discover_smotvibe_download_targets, is_player_page_url
 from app.settings import settings
 from app.store import AppStore
 
@@ -182,7 +182,7 @@ def classify_source_url(url: str) -> str:
     host = parsed.hostname or ""
     if host in {"youtube.com", "www.youtube.com", "youtu.be"} or host.endswith(".youtube.com"):
         return "youtube_url"
-    if is_smotvibe_url(url):
+    if is_player_page_url(url):
         return "smotvibe_url"
     if is_twitch_url(url):
         return "twitch_url"
@@ -230,6 +230,19 @@ def download_direct_url(url: str, *, quality: str = "") -> StoredSourceFile:
             if attempt + 1 >= attempts or not _retryable_http_error(exc):
                 break
             time.sleep(_retry_delay(attempt))
+    # A page URL that is not a media file may still be a Kinobox-style player page
+    # from a site we do not know by name yet (these clones rotate domains fast), so
+    # fall back to the player pipeline before reporting the raw HTTP failure.
+    if not is_direct_media_url(url):
+        try:
+            return download_player_page_url(url, quality=quality, source_label="Player page")
+        except ValueError as player_error:
+            if last_error is None:
+                raise
+            raise ValueError(
+                f"direct url download failed: {_safe_error(last_error)}; "
+                f"{_safe_error(player_error)}"
+            ) from last_error
     if last_error:
         raise ValueError(f"direct url download failed: {_safe_error(last_error)}") from last_error
     raise ValueError("direct url download failed")
@@ -318,6 +331,16 @@ def download_twitch_url(url: str, *, quality: str = "") -> StoredSourceFile:
 def download_smotvibe_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "smotvibe_url":
         raise ValueError("url is not a Smotvibe page URL")
+    return download_player_page_url(url, quality=quality, source_label="Smotvibe")
+
+
+def download_player_page_url(
+    url: str,
+    *,
+    quality: str = "",
+    source_label: str = "Smotvibe",
+) -> StoredSourceFile:
+    """Download from a Kinobox-style player page (Smotvibe and its look-alikes)."""
     errors: list[str] = []
     targets = discover_smotvibe_download_targets(url)
     only_source_page = len(targets) == 1 and targets[0].media_url == url
@@ -326,17 +349,25 @@ def download_smotvibe_url(url: str, *, quality: str = "") -> StoredSourceFile:
         try:
             return _download_with_ytdlp(
                 target.media_url,
-                source_label="Smotvibe",
+                source_label=source_label,
                 referer=target.referer,
-                filename_stem=_source_filename_stem("smotvibe", url),
+                filename_stem=_source_filename_stem(_filename_prefix(url), url),
                 format_selector=selector,
             )
         except ValueError as exc:
             errors.append(_safe_error(exc))
     detail = "; ".join(errors[-3:]) if errors else "no download targets discovered"
     if only_source_page:
-        detail = f"{detail}; no HLS/MP4/iframe targets discovered in Smotvibe/Kinobox page"
-    raise ValueError(f"Smotvibe download failed: {detail}")
+        detail = f"{detail}; no HLS/MP4/iframe targets discovered in player/Kinobox page"
+    raise ValueError(f"{source_label} download failed: {detail}")
+
+
+def _filename_prefix(url: str) -> str:
+    """Name files after the site the page came from (smotvibe-…, gromfaer-…)."""
+    host = (urlsplit(url.strip()).hostname or "").lower()
+    labels = [label for label in host.split(".") if label]
+    brand = labels[-2] if len(labels) >= 2 else ""
+    return _safe_filename_stem(brand) or "player"
 
 
 def download_smotvibe_media(
@@ -348,15 +379,17 @@ def download_smotvibe_media(
     filename_label: str = "",
     quality: str = "",
 ) -> StoredSourceFile:
-    if classify_source_url(url) != "smotvibe_url":
-        raise ValueError("url is not a Smotvibe page URL")
+    # The picker also serves player pages we do not know by brand yet, so accept any
+    # page URL here — the selected media URL below is what actually gets downloaded.
+    if classify_source_url(url) in {"youtube_url", "twitch_url"}:
+        raise ValueError("url is not a player page URL")
     parsed = urlsplit(media_url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("Smotvibe selected media URL must be http:// or https://")
+        raise ValueError("selected media URL must be http:// or https://")
     suffix = Path(parsed.path).suffix.lower()
     if suffix not in {".m3u8", ".mp4"}:
-        raise ValueError("Smotvibe selected media URL must point to HLS or MP4 media")
-    base_stem = _source_filename_stem("smotvibe", url)
+        raise ValueError("selected media URL must point to HLS or MP4 media")
+    base_stem = _source_filename_stem(_filename_prefix(url), url)
     label_stem = _safe_filename_stem(filename_label)
     filename_stem = f"{base_stem}-{label_stem}" if label_stem else base_stem
     return _download_with_ytdlp(

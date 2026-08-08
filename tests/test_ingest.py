@@ -135,6 +135,67 @@ def test_direct_url_downloader_retries_transient_network_error(tmp_path, monkeyp
     assert calls["count"] == 2
 
 
+def test_direct_url_downloader_falls_back_to_player_page_pipeline(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "source_dir", tmp_path / "sources")
+    monkeypatch.setattr(settings, "external_http_retries", 1)
+    called = {}
+
+    def fake_stream(*args, **kwargs):
+        raise httpx.ConnectError("boom")
+
+    def fake_player_download(url: str, *, quality: str = "", source_label: str = "") -> StoredSourceFile:
+        called["url"] = url
+        path = settings.source_dir / "clone.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"clone")
+        return StoredSourceFile(path, "clone.mp4", "sha", 5)
+
+    monkeypatch.setattr("app.ingest.httpx.stream", fake_stream)
+    monkeypatch.setattr("app.ingest.download_player_page_url", fake_player_download)
+
+    stored = download_direct_url("https://unknown-clone.cc/series/1/")
+
+    assert called["url"] == "https://unknown-clone.cc/series/1/"
+    assert stored.path.read_bytes() == b"clone"
+
+
+def test_direct_url_downloader_reports_both_errors_when_player_fallback_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "source_dir", tmp_path / "sources")
+    monkeypatch.setattr(settings, "external_http_retries", 1)
+
+    def fake_stream(*args, **kwargs):
+        raise httpx.ConnectError("boom")
+
+    def failing_player_download(url: str, **kwargs) -> StoredSourceFile:
+        raise ValueError("Player page download failed: no download targets discovered")
+
+    monkeypatch.setattr("app.ingest.httpx.stream", fake_stream)
+    monkeypatch.setattr("app.ingest.download_player_page_url", failing_player_download)
+
+    with pytest.raises(ValueError) as excinfo:
+        download_direct_url("https://unknown-clone.cc/series/1/")
+
+    assert "boom" in str(excinfo.value)
+    assert "no download targets discovered" in str(excinfo.value)
+
+
+def test_direct_media_url_failure_skips_the_player_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "source_dir", tmp_path / "sources")
+    monkeypatch.setattr(settings, "external_http_retries", 1)
+
+    def fake_stream(*args, **kwargs):
+        raise httpx.ConnectError("boom")
+
+    def unexpected_player_download(url: str, **kwargs) -> StoredSourceFile:
+        raise AssertionError("player fallback must not run for .mp4 URLs")
+
+    monkeypatch.setattr("app.ingest.httpx.stream", fake_stream)
+    monkeypatch.setattr("app.ingest.download_player_page_url", unexpected_player_download)
+
+    with pytest.raises(ValueError, match="direct url download failed"):
+        download_direct_url("https://cdn.example/video.mp4")
+
+
 def test_youtube_url_ingestion_uses_downloader_adapter(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
     called = {}
@@ -192,6 +253,29 @@ def test_smotvibe_detection_matches_rotating_tlds():
     # But unrelated hosts that merely contain the word must not match.
     assert not is_smotvibe_url("https://smotvibe.example.com/x")
     assert not is_smotvibe_url("https://notsmotvibe.sbs/x")
+
+
+def test_player_page_detection_covers_smotvibe_clones_and_configured_hosts(monkeypatch):
+    from app.smotvibe import is_player_page_url
+
+    # gromfaer.top ships the same Kinobox player as Smotvibe.
+    assert classify_source_url("https://gromfaer.top/series/685246/?socialAlias=x") == "smotvibe_url"
+    assert is_player_page_url("https://www.gromfaer.top/film/2/")
+    assert not is_player_page_url("https://notgromfaer.top/x")
+
+    # Unknown clones can be whitelisted by brand or by full host.
+    assert classify_source_url("https://newclone.cc/series/1/") == "direct_url"
+    monkeypatch.setattr(settings, "player_page_hosts", ["newclone", "player.example.com"])
+    assert classify_source_url("https://newclone.cc/series/1/") == "smotvibe_url"
+    assert is_player_page_url("https://player.example.com/series/1/")
+    assert not is_player_page_url("https://example.com/series/1/")
+
+
+def test_player_page_filename_prefix_follows_the_site_brand():
+    from app.ingest import _filename_prefix
+
+    assert _filename_prefix("https://smotvibe.pics/series/1/") == "smotvibe"
+    assert _filename_prefix("https://www.gromfaer.top/series/685246/?x=1") == "gromfaer"
 
 
 def test_twitch_url_ingestion_uses_downloader_adapter(tmp_path, monkeypatch):
@@ -519,6 +603,34 @@ def test_selected_smotvibe_media_uses_audio_format_and_label(tmp_path, monkeypat
             "bv*[height<=720]+audio0-rus1/bv*[height<=720]+ba[format_id!*=failover]/b[height<=720]/b",
         )
     ]
+
+
+def test_selected_media_download_accepts_unknown_player_page(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "source_dir", tmp_path / "sources")
+
+    def fake_download(url: str, *, source_label: str, referer: str = "", filename_stem: str = "", format_selector: str = "") -> StoredSourceFile:
+        path = settings.source_dir / "stored.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ok")
+        return StoredSourceFile(path, f"{filename_stem}.mp4", "sha", 2)
+
+    monkeypatch.setattr("app.ingest._download_with_ytdlp", fake_download)
+
+    # The picker lists episodes for any Kinobox page, so the selection must download
+    # even from a clone we do not know by brand yet.
+    result = download_smotvibe_media(
+        "https://unknown-clone.cc/series/42/",
+        media_url="https://cdn.example/master.m3u8",
+        filename_label="s1-e2",
+    )
+
+    assert result.original_filename == "unknown-clone-42-s1-e2.mp4"
+
+    with pytest.raises(ValueError, match="not a player page"):
+        download_smotvibe_media(
+            "https://www.youtube.com/watch?v=abc",
+            media_url="https://cdn.example/master.m3u8",
+        )
 
 
 def test_twitch_downloader_uses_ytdlp_and_names_file(tmp_path, monkeypatch):

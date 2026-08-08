@@ -9,11 +9,17 @@ from urllib.parse import urlencode, urljoin, urlsplit
 
 import httpx
 
+from app.settings import settings
+
 
 SMOTVIBE_HOST = "smotvibe.sbs"
 # Smotvibe rotates its top-level domain (smotvibe.sbs, smotvibe.pics, …), so match
 # the brand at the registrable (second-level) label instead of a fixed host.
 SMOTVIBE_BRAND = "smotvibe"
+# Sites that ship the very same Kinobox player template as Smotvibe (same 404-with-
+# player-markup pages, same /series/<kinopoisk-id> routes). Extra ones can be added
+# through PLAYER_PAGE_HOSTS without touching the code.
+PLAYER_PAGE_BRANDS = (SMOTVIBE_BRAND, "gromfaer")
 PLAYER_EXTENSIONS = (".m3u8", ".mp4")
 STATIC_EXTENSIONS = (
     ".css",
@@ -125,17 +131,34 @@ class SmotvibeDownloadOption:
         }
 
 
-def is_smotvibe_url(url: str) -> bool:
+def is_player_page_url(url: str) -> bool:
     host = (urlsplit(url.strip()).hostname or "").lower()
     labels = [label for label in host.split(".") if label]
-    # Match smotvibe.<tld> and any subdomain like www.smotvibe.<tld>, regardless of
+    if len(labels) < 2:
+        return False
+    brands = set(PLAYER_PAGE_BRANDS)
+    for entry in settings.player_page_hosts:
+        entry = entry.strip().lower().lstrip(".")
+        if not entry:
+            continue
+        # A full host from the config matches exactly (or as a parent domain);
+        # a bare brand matches whatever TLD the site currently squats on.
+        if "." in entry:
+            if host == entry or host.endswith(f".{entry}"):
+                return True
+        else:
+            brands.add(entry)
+    # Match <brand>.<tld> and any subdomain like www.<brand>.<tld>, regardless of
     # which TLD the brand is currently using.
-    return len(labels) >= 2 and labels[-2] == SMOTVIBE_BRAND
+    return labels[-2] in brands
+
+
+# Kept for callers and tests that predate the multi-site support.
+is_smotvibe_url = is_player_page_url
 
 
 def resolve_smotvibe_media(url: str, *, max_pages: int = 24) -> SmotvibeMedia:
-    if not is_smotvibe_url(url):
-        raise ValueError("url is not a Smotvibe page")
+    _ensure_page_url(url)
     headers = {**BASE_HEADERS, "referer": url}
     with httpx.Client(follow_redirects=True, timeout=30, headers=headers) as client:
         return resolve_smotvibe_media_with_client(client, url, max_pages=max_pages)
@@ -175,8 +198,7 @@ def resolve_smotvibe_media_with_client(
 
 
 def discover_smotvibe_download_targets(url: str, *, max_pages: int = 24) -> list[SmotvibeMedia]:
-    if not is_smotvibe_url(url):
-        raise ValueError("url is not a Smotvibe page")
+    _ensure_page_url(url)
     headers = {**BASE_HEADERS, "referer": url}
     targets = [SmotvibeMedia(url, url)]
     with httpx.Client(follow_redirects=True, timeout=30, headers=headers) as client:
@@ -209,8 +231,7 @@ def discover_smotvibe_download_targets(url: str, *, max_pages: int = 24) -> list
 
 
 def discover_smotvibe_download_options(url: str, *, max_pages: int = 24) -> list[SmotvibeDownloadOption]:
-    if not is_smotvibe_url(url):
-        raise ValueError("url is not a Smotvibe page")
+    _ensure_page_url(url)
     headers = {**BASE_HEADERS, "referer": url}
     options: list[SmotvibeDownloadOption] = []
     with httpx.Client(follow_redirects=True, timeout=30, headers=headers) as client:
@@ -488,6 +509,13 @@ def _extract_kinobox_base_urls(html_text: str) -> list[str]:
     urls = [match.group("base").strip() for match in _KINOBOX_BASE_RE.finditer(_normalize_html(html_text))]
     urls.append("https://api.kinobox.tv/")
     return _unique(urls)
+
+
+def _ensure_page_url(url: str) -> None:
+    """Discovery works on any Kinobox-style player page, not just known brands."""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("player page url must be http:// or https://")
 
 
 def _raise_for_unusable_status(response: httpx.Response) -> None:

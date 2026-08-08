@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { sourcesApi, QUALITY_OPTIONS } from "@/api/sources";
+import { sourcesApi, looksLikePlayerPage, QUALITY_OPTIONS } from "@/api/sources";
 import { qk } from "@/api/keys";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, PageHead, formatDuration, plural } from "@/components/ui";
@@ -104,6 +105,7 @@ function AddSource() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [quality, setQuality] = useState("");
+  const [picking, setPicking] = useState("");
 
   const onDone = (s: Source) => {
     toast.success("Источник добавлен");
@@ -115,6 +117,7 @@ function AddSource() {
   const upload = useMutation({ mutationFn: (file: File) => sourcesApi.uploadFile(file), onSuccess: onDone, onError: onErr });
   const ingest = useMutation({ mutationFn: (u: string) => sourcesApi.ingestUrl(u, quality), onSuccess: onDone, onError: onErr });
   const busy = upload.isPending || ingest.isPending;
+  const canPick = looksLikePlayerPage(url);
 
   return (
     <div className="panel" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
@@ -136,7 +139,7 @@ function AddSource() {
         <input
           className="input"
           style={{ flex: 1 }}
-          placeholder="…или ссылка (mp4, YouTube, Twitch, Smotvibe)"
+          placeholder="…или ссылка (mp4, YouTube, Twitch, Smotvibe и похожие плееры)"
           value={url}
           disabled={busy}
           onChange={(e) => setUrl(e.target.value)}
@@ -156,10 +159,31 @@ function AddSource() {
             </option>
           ))}
         </select>
+        {canPick ? (
+          <button
+            className="btn"
+            disabled={busy}
+            title="Выбрать сезон, серию и озвучку на странице плеера"
+            onClick={() => setPicking(url.trim())}
+          >
+            🎞 Серия и озвучка
+          </button>
+        ) : null}
         <button className="btn" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
           {ingest.isPending ? "Скачивание…" : "Добавить"}
         </button>
       </div>
+      {picking ? (
+        <PlayerOptionsDialog
+          url={picking}
+          quality={quality}
+          onClose={() => setPicking("")}
+          onDone={(s) => {
+            setPicking("");
+            onDone(s);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
