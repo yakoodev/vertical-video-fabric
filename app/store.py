@@ -39,7 +39,7 @@ VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action"}
 # Subtitles can additionally use the local Whisper engine (analysis cannot).
 VALID_SUBTITLE_PROVIDERS = VALID_AI_PROVIDERS | {"whisper"}
 VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
-VALID_ANALYSIS_STATUSES = {"queued", "running", "succeeded", "failed"}
+VALID_ANALYSIS_STATUSES = {"queued", "running", "cancelling", "cancelled", "succeeded", "failed"}
 VALID_SEGMENT_STATUSES = {"candidate", "rendering", "rendered", "rejected"}
 VALID_CLIP_PLAN_STATUSES = {"candidate", "rendering", "rendered", "failed", "rejected"}
 VALID_SCALE_MODES = {"cover", "contain", "blur_background"}
@@ -1017,7 +1017,7 @@ class AppStore:
         usage: Any | None = None,
         error: str = "",
     ) -> dict:
-        status = _choice(status, {"succeeded", "failed"}, "status")
+        status = _choice(status, {"succeeded", "failed", "cancelled"}, "status")
         self.db.execute(
             """
             UPDATE ai_analyses
@@ -1028,6 +1028,25 @@ class AppStore:
             (status, _json_text(response), _json_text(usage), error.strip(), analysis_id),
         )
         return self.get_ai_analysis(analysis_id)
+
+    def request_ai_analysis_cancel(self, analysis_id: int) -> dict:
+        """Flag a running analysis for cooperative cancellation.
+
+        The worker polls the analysis status between Gemini windows and aborts
+        when it sees ``cancelling``, then finishes the record as ``cancelled``.
+        """
+        analysis = self.get_ai_analysis(analysis_id)
+        if analysis["status"] not in {"queued", "running"}:
+            raise ValueError("only a running analysis can be cancelled")
+        self.db.execute(
+            "UPDATE ai_analyses SET status = 'cancelling', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (analysis_id,),
+        )
+        return self.get_ai_analysis(analysis_id)
+
+    def ai_analysis_cancel_requested(self, analysis_id: int) -> bool:
+        row = self.db.query_one("SELECT status FROM ai_analyses WHERE id = ?", (analysis_id,))
+        return bool(row) and str(row["status"]) == "cancelling"
 
     def recover_interrupted_ai_analyses(self) -> int:
         rows = self.db.query_all("SELECT id, source_id FROM ai_analyses WHERE status = 'running'")

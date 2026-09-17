@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { isActive, useActiveTasks } from "@/hooks/useActiveTasks";
 import { downloadsApi } from "@/api/downloads";
+import { analysesApi } from "@/api/analyses";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import type { ActiveTask } from "@/api/types";
@@ -52,6 +53,12 @@ export function ActivityCenter() {
     mutationFn: (id: number) => downloadsApi.cancel(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить скачивание"),
+  });
+
+  const cancelAnalysis = useMutation({
+    mutationFn: (id: number) => analysesApi.cancel(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить анализ"),
   });
 
   useEffect(() => {
@@ -128,6 +135,15 @@ export function ActivityCenter() {
                             className="task-link"
                             disabled={t.status === "cancelling" || cancelDownload.isPending}
                             onClick={() => cancelDownload.mutate(t.id)}
+                          >
+                            {t.status === "cancelling" ? "отменяю…" : "отменить"}
+                          </button>
+                        ) : null}
+                        {t.kind === "analysis" && isActive(t.status) ? (
+                          <button
+                            className="task-link"
+                            disabled={t.status === "cancelling" || cancelAnalysis.isPending}
+                            onClick={() => cancelAnalysis.mutate(t.id)}
                           >
                             {t.status === "cancelling" ? "отменяю…" : "отменить"}
                           </button>

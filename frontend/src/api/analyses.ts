@@ -12,4 +12,5 @@ export const analysesApi = {
   start: (sourceId: number | string, body: AnalyzeRequest) =>
     api.post<unknown>(`/api/sources/${sourceId}/analyze`, body),
   remove: (analysisId: number) => api.del<{ deleted: boolean }>(`/api/ai-analyses/${analysisId}`),
+  cancel: (analysisId: number) => api.post<{ cancelling: boolean }>(`/api/ai-analyses/${analysisId}/cancel`),
 };

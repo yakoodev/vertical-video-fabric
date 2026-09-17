@@ -2,6 +2,8 @@ import json
 import struct
 from pathlib import Path
 
+import pytest
+
 from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
 from app.ai.service import (
     VideoAnalysisService,
@@ -79,6 +81,57 @@ def test_mock_video_analysis_persists_segments(tmp_path, monkeypatch):
     assert len(clip_plans) == 2
     assert clip_plans[0]["segments"][0]["id"] == segments[0]["id"]
     assert store.get_source(source["id"])["status"] == "analyzed"
+
+
+def test_request_ai_analysis_cancel_transitions_and_guards(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    source_path = settings.source_dir / "s.mp4"
+    source_path.write_bytes(b"video")
+    source = store.create_source(
+        "upload", source_path, original_filename="s.mp4", duration_sec=60, width=1920, height=1080, status="ready"
+    )
+    analysis = store.create_ai_analysis(source["id"], "gemini")
+    store.mark_ai_analysis_running(analysis["id"])
+
+    assert store.ai_analysis_cancel_requested(analysis["id"]) is False
+    cancelling = store.request_ai_analysis_cancel(analysis["id"])
+    assert cancelling["status"] == "cancelling"
+    assert store.ai_analysis_cancel_requested(analysis["id"]) is True
+
+    finished = store.finish_ai_analysis(analysis["id"], "cancelled", response={"cancelled": True}, error="stopped")
+    assert finished["status"] == "cancelled"
+    assert store.ai_analysis_cancel_requested(analysis["id"]) is False
+    # A finished analysis can no longer be cancelled.
+    with pytest.raises(ValueError):
+        store.request_ai_analysis_cancel(analysis["id"])
+
+
+def test_run_analysis_honours_cooperative_cancel(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    source_path = settings.source_dir / "s.mp4"
+    source_path.write_bytes(b"video")
+    source = store.create_source(
+        "upload", source_path, original_filename="s.mp4", duration_sec=60, width=1920, height=1080, status="ready"
+    )
+
+    from app.ai import service as service_mod
+
+    class _CancelDuringAnalyze:
+        # Simulates the user pressing "отменить" while the model runs: flag the
+        # in-flight analysis, then return normally. The service's post-analyze
+        # cancel check must abort before any clip plan is persisted.
+        def analyze(self, src, prompt, model, **kwargs):
+            aid = store.list_ai_analyses(source["id"])[0]["id"]
+            store.request_ai_analysis_cancel(aid)
+            return AnalysisResult(segments=[], clips=[], response={}, usage={})
+
+    monkeypatch.setattr(service_mod, "get_video_analyzer", lambda provider: _CancelDuringAnalyze())
+
+    analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="mock")
+
+    assert analysis["status"] == "cancelled"
+    assert store.get_source(source["id"])["status"] == "ready"
+    assert store.list_clip_plans(source_id=source["id"]) == []
 
 
 def test_video_analysis_uses_saved_defaults(tmp_path, monkeypatch):

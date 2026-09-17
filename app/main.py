@@ -1814,6 +1814,17 @@ def api_delete_ai_analysis(analysis_id: int, _auth: AuthDep) -> dict:
     return {"deleted": True, "analysis": deleted}
 
 
+@app.post("/api/ai-analyses/{analysis_id}/cancel", tags=["Sources"], summary="Cancel a running AI analysis")
+def api_cancel_ai_analysis(analysis_id: int, _auth: AuthDep) -> dict:
+    try:
+        analysis = store.request_ai_analysis_cancel(analysis_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"cancelling": True, "analysis": analysis}
+
+
 @app.post(
     "/api/segments/{segment_id}/realizations",
     tags=["Render"],

@@ -8,7 +8,7 @@ from itertools import combinations
 from pathlib import Path
 
 from app.analysis_preprocess import normalize_analysis_preprocessing, prepare_source_for_analysis
-from app.ai.contracts import AnalysisClip
+from app.ai.contracts import AnalysisCancelled, AnalysisClip
 from app.ai.gemini import GeminiVideoAnalyzer
 from app.ai.registry import get_video_analyzer
 from app.ai.transcript import transcribe_source_cues
@@ -106,10 +106,20 @@ class VideoAnalysisService:
         )
         self.store.update_source(source_id, status="analyzing", error="")
         self.store.mark_ai_analysis_running(analysis["id"])
+        analysis_id = analysis["id"]
+
+        def should_cancel() -> bool:
+            return self.store.ai_analysis_cancel_requested(analysis_id)
+
+        def check_cancel() -> None:
+            if should_cancel():
+                raise AnalysisCancelled()
+
         result = None
         retry_meta = None
         preprocessing_meta: dict = {}
         try:
+            check_cancel()
             analyzer_source, preprocessing_meta = prepare_source_for_analysis(source, normalized_preprocessing)
             analysis_segment_options = _segment_options_with_audio_boundaries(
                 segment_options,
@@ -137,11 +147,13 @@ class VideoAnalysisService:
                     transcript_cues = transcribe_source_cues(analyzer_source.get("local_path"))
                     if transcript_cues:
                         self.store.set_source_transcript(source_id, transcript_cues, settings.whisper_model_size)
-            gemini_kwargs = {"transcript": transcript_cues} if is_gemini else {}
+            check_cancel()
+            gemini_kwargs = {"transcript": transcript_cues, "should_cancel": should_cancel} if is_gemini else {}
             if windows and is_gemini:
                 result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, windows=windows, **gemini_kwargs)
             else:
                 result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, **gemini_kwargs)
+            check_cancel()
             # The recap-quality retry (and its single-shot re-analysis) only make
             # sense for narrative/recap mode. Running it in highlights mode would
             # throw away the full-episode windowed coverage by re-analyzing the
@@ -201,6 +213,22 @@ class VideoAnalysisService:
             except Exception:  # noqa: BLE001
                 pass
             self.store.update_source(source_id, status="analyzed", error="")
+            return analysis
+        except AnalysisCancelled:
+            # Cooperative cancel: drop any partial output and mark the run cancelled
+            # (not failed) so the UI shows it was stopped on purpose, not an error.
+            try:
+                self.store.delete_generated_outputs_for_analysis(analysis["id"])
+            except Exception:  # noqa: BLE001 - best effort cleanup
+                pass
+            analysis = self.store.finish_ai_analysis(
+                analysis["id"],
+                "cancelled",
+                response={"cancelled": True},
+                usage=dict(getattr(result, "usage", {}) or {}),
+                error="Анализ отменён пользователем",
+            )
+            self.store.update_source(source_id, status="ready", error="")
             return analysis
         except Exception as exc:  # noqa: BLE001 - failures are part of analysis lifecycle
             response = {"error": str(exc)}

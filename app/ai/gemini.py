@@ -5,12 +5,12 @@ import logging
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
+from app.ai.contracts import AnalysisCancelled, AnalysisClip, AnalysisResult, AnalysisSegment
 from app.ai.transcript import format_transcript_block
 from app.default_prompts import analysis_mode_instructions, analysis_output_rules
 from app.settings import settings
@@ -192,6 +192,7 @@ class GeminiVideoAnalyzer:
         model: str,
         windows: list[tuple[float, float]] | None = None,
         transcript: list[dict] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AnalysisResult:
         """Analyze the source video.
 
@@ -213,6 +214,9 @@ class GeminiVideoAnalyzer:
             "mimeType": file_info.get("mimeType") or mime_type,
         }
 
+        if should_cancel and should_cancel():
+            raise AnalysisCancelled()
+
         if not windows:
             return self._analyze_range(source, prompt, model, file_info, mime_type, None, None, file_summary, transcript)
 
@@ -225,10 +229,14 @@ class GeminiVideoAnalyzer:
         failed = 0
         last_error: Exception | None = None
         for (start, end) in windows:
+            if should_cancel and should_cancel():
+                raise AnalysisCancelled()
             try:
                 results.append(
                     self._analyze_range(source, prompt, model, file_info, mime_type, start, end, file_summary, transcript)
                 )
+            except AnalysisCancelled:
+                raise
             except Exception as exc:  # noqa: BLE001 - tolerate a bad window, keep the rest
                 failed += 1
                 last_error = exc

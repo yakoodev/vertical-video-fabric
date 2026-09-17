@@ -4,6 +4,14 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+class AnalysisCancelled(Exception):
+    """Raised inside the analysis pipeline when the user requests cancellation.
+
+    Defined here (not in the service) so the analyzers can re-raise it without
+    importing the service layer.
+    """
+
+
 @dataclass(frozen=True)
 class AnalysisSegment:
     start_sec: float

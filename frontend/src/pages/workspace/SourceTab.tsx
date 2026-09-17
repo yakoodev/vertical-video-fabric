@@ -105,6 +105,18 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось удалить"));
   };
 
+  const cancelAnalysis = (id: number) => {
+    analysesApi
+      .cancel(id)
+      .then(() => {
+        toast.push("Отменяю анализ…", "info");
+        qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+        qc.invalidateQueries({ queryKey: qk.activeTasks });
+      })
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"));
+  };
+  const ANALYSIS_ACTIVE = ["queued", "running", "cancelling"];
+
   return (
     <div className="ws-source">
       <div className="ws-video panel">
@@ -278,13 +290,24 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                         {a.model ? ` · ${a.model}` : ""} · {a.created_at}
                       </div>
                     </div>
-                    <button
-                      className="btn ghost sm"
-                      title="Удалить анализ и его кандидатов"
-                      onClick={() => removeAnalysis(a.id)}
-                    >
-                      🗑
-                    </button>
+                    {ANALYSIS_ACTIVE.includes(a.status) ? (
+                      <button
+                        className="btn ghost sm"
+                        title="Отменить анализ"
+                        disabled={a.status === "cancelling"}
+                        onClick={() => cancelAnalysis(a.id)}
+                      >
+                        {a.status === "cancelling" ? "Отменяю…" : "Отменить"}
+                      </button>
+                    ) : (
+                      <button
+                        className="btn ghost sm"
+                        title="Удалить анализ и его кандидатов"
+                        onClick={() => removeAnalysis(a.id)}
+                      >
+                        🗑
+                      </button>
+                    )}
                   </div>
                 );
               })
