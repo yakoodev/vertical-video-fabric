@@ -325,6 +325,9 @@ class Database:
             self._ensure_column(conn, "ai_segments", "raw_end_sec", "REAL NOT NULL DEFAULT 0")
             # Point-of-interest focus track for dynamic reframing (JSON [{t,x,y}]).
             self._ensure_column(conn, "ai_segments", "focus_json", "TEXT NOT NULL DEFAULT '[]'")
+            # Optional per-clip manual horizontal frame position (full-frame 0..1);
+            # NULL = use autofocus. Overrides the focus track with a fixed frame.
+            self._ensure_column(conn, "ai_segments", "manual_focus_x", "REAL")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")
             self._ensure_column(conn, "jobs", "scheduled_at", "TEXT")
             self._ensure_column(conn, "ffmpeg_presets", "audio_mix_mode", "TEXT NOT NULL DEFAULT 'primary'")

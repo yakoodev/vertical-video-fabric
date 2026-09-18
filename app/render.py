@@ -21,12 +21,13 @@ from app.video_crop import build_reframe_x_expr
 
 def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     """Build a smoothed crop-x expression for a segment, or None when smart
-    reframing is off, there's no focus track, or the source has no horizontal
-    slack (already ≤ the target aspect)."""
+    reframing is off, there's no framing to apply, or the source has no
+    horizontal slack (already ≤ the target aspect).
+
+    A per-clip manual horizontal position (``manual_focus_x``, full-frame 0..1)
+    overrides the autofocus track with a fixed frame when the user set one.
+    """
     if not preset.get("smart_reframe"):
-        return None
-    focus = segment.get("focus") or []
-    if not focus:
         return None
     sw = float(source.get("width") or 0)
     sh = float(source.get("height") or 0)
@@ -39,17 +40,42 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     out_h = int(preset.get("output_height") or 1920)
     if eff_h <= 0 or out_h <= 0 or (eff_w / eff_h) <= (out_w / out_h) + 1e-3:
         return None
-    remapped: list[dict] = []
+    duration = float(segment.get("end_sec", 0)) - float(segment.get("start_sec", 0))
+
+    def remap_x(fx: float) -> float:
+        if crop:
+            fx = (fx - float(crop["x"])) / (float(crop["w"]) or 1.0)
+        return min(1.0, max(0.0, fx))
+
+    manual_x = segment.get("manual_focus_x")
+    if manual_x is not None:
+        try:
+            mx = remap_x(float(manual_x))
+        except (TypeError, ValueError):
+            return None
+        # A fixed frame: hold the same x for the whole segment.
+        remapped: list[dict] = [{"t": 0.0, "x": mx}, {"t": max(0.01, duration), "x": mx}]
+        cfg = get_focus_preset(source.get("focus_preset"))
+        return build_reframe_x_expr(
+            remapped,
+            duration,
+            out_w,
+            smooth_time=float(cfg["smooth_time"]),
+            rubber=float(cfg["rubber"]),
+            deadzone=float(cfg["deadzone"]),
+        )
+
+    focus = segment.get("focus") or []
+    if not focus:
+        return None
+    remapped = []
     for point in focus:
         try:
             fx = float(point["x"])
             t = float(point["t"])
         except (KeyError, TypeError, ValueError):
             continue
-        if crop:
-            fx = (fx - float(crop["x"])) / (float(crop["w"]) or 1.0)
-        remapped.append({"t": t, "x": min(1.0, max(0.0, fx)), "cut": bool(point.get("cut"))})
-    duration = float(segment.get("end_sec", 0)) - float(segment.get("start_sec", 0))
+        remapped.append({"t": t, "x": remap_x(fx), "cut": bool(point.get("cut"))})
     # Movement feel (settle time / rubber / deadzone) comes from the source's
     # autofocus preset so an interview glides and an action clip snaps.
     cfg = get_focus_preset(source.get("focus_preset"))

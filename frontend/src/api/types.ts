@@ -82,6 +82,7 @@ export interface AiSegment {
   color: string;
   status: string;
   focus?: FocusPoint[];
+  manual_focus_x?: number | null;
 }
 
 export interface ClipPlan {

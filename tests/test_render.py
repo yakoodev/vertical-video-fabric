@@ -30,6 +30,20 @@ def test_build_reframe_x_expr_accepts_preset_movement_kwargs():
     assert isinstance(expr, str) and expr
 
 
+def test_segment_reframe_x_honours_manual_focus():
+    from app.render import _segment_reframe_x
+
+    source = {"width": 1920, "height": 1080, "focus_preset": "balanced"}
+    preset = {"smart_reframe": True, "output_width": 1080, "output_height": 1920}
+    # Manual frame applies even with an empty autofocus track.
+    manual_seg = {"start_sec": 0.0, "end_sec": 5.0, "focus": [], "manual_focus_x": 0.2}
+    expr = _segment_reframe_x(manual_seg, preset, source)
+    assert isinstance(expr, str) and expr
+    # No manual and no focus track → nothing to reframe.
+    auto_seg = {"start_sec": 0.0, "end_sec": 5.0, "focus": [], "manual_focus_x": None}
+    assert _segment_reframe_x(auto_seg, preset, source) is None
+
+
 def test_render_batch_cancel_marks_are_batch_scoped(tmp_path, monkeypatch):
     import time as _time
 

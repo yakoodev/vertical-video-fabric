@@ -247,7 +247,14 @@ function CropFrame({
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
-        const fx = seg && path ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))] : 0.5;
+        // A manual per-clip frame position pins the box; otherwise it follows the focus track.
+        const manual = seg && seg.manual_focus_x != null ? seg.manual_focus_x : null;
+        const fx =
+          manual != null
+            ? manual
+            : seg && path
+              ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))]
+              : 0.5;
         const lc = Math.min(Math.max(fx - fw / 2, 0), 1 - fw);
         const tc = Math.min(Math.max(0.5 - fh / 2, 0), 1 - fh);
         el.style.left = `${(c.x + lc * c.w) * 100}%`;
@@ -560,6 +567,30 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onSettled: () => qc.invalidateQueries({ queryKey: qk.source(sourceId) }),
   });
 
+  // Manual per-clip frame: patch the cache immediately (so the preview box moves
+  // live) and persist to the plan's segments after a short debounce.
+  const manualSaveTimer = useRef<number | null>(null);
+  const saveManualFocus = (planId: number, x: number | null) => {
+    const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
+    if (prev) {
+      const plan = prev.clip_plans.find((p) => p.id === planId);
+      const ids = new Set((plan?.segments ?? []).map((s) => s.id));
+      const patch = <T extends { id: number; manual_focus_x?: number | null }>(seg: T): T =>
+        ids.has(seg.id) ? { ...seg, manual_focus_x: x } : seg;
+      qc.setQueryData<SourceDetail>(qk.source(sourceId), {
+        ...prev,
+        segments: prev.segments.map(patch),
+        clip_plans: prev.clip_plans.map((p) => ({ ...p, segments: p.segments.map(patch) })),
+      });
+    }
+    if (manualSaveTimer.current) window.clearTimeout(manualSaveTimer.current);
+    manualSaveTimer.current = window.setTimeout(() => {
+      clipPlansApi
+        .setFocus(planId, x)
+        .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить рамку"));
+    }, 350);
+  };
+
   const activePlan = useMemo(() => plans.find((p) => p.id === activePlanId) ?? plans[0], [plans, activePlanId]);
   // Candidates accumulate across analyses — group them so it's clear which run
   // produced what (newest run first).
@@ -676,9 +707,43 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <span>Зациклить</span>
             </label>
             <span className="muted" style={{ fontSize: 12 }}>
-              {activePlan ? `${activePlan.title || "План"} · ${activePlan.segments.length} сегм. · рамка следует за фокусом` : ""}
+              {activePlan ? `${activePlan.title || "План"} · ${activePlan.segments.length} сегм.` : ""}
             </span>
           </div>
+          {activePlan
+            ? (() => {
+                const mx = activePlan.segments.find((s) => s.manual_focus_x != null)?.manual_focus_x ?? null;
+                return (
+                  <div
+                    className="manual-frame"
+                    style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}
+                  >
+                    <span className="muted" style={{ fontSize: 12 }}>Рамка вручную:</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round((mx ?? 0.5) * 100)}
+                      onChange={(e) => saveManualFocus(activePlan.id, Number(e.target.value) / 100)}
+                      style={{ width: 170 }}
+                      title="Горизонтальная позиция кадра 9:16 — перебивает автофокус для этого клипа"
+                    />
+                    <span className="mono" style={{ fontSize: 12, minWidth: 44 }}>
+                      {mx == null ? "авто" : `${Math.round(mx * 100)}%`}
+                    </span>
+                    <button
+                      className="btn ghost sm"
+                      disabled={mx == null}
+                      onClick={() => saveManualFocus(activePlan.id, null)}
+                      title="Вернуть автофокус"
+                    >
+                      Авто
+                    </button>
+                  </div>
+                );
+              })()
+            : null}
         </div>
 
         <div className="panel editor-render" style={{ display: "grid", gap: 12, alignContent: "start" }}>

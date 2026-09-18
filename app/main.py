@@ -2018,6 +2018,24 @@ def api_cancel_render(source_id: int, _auth: AuthDep) -> dict:
     return {"cancelling": True, "source_id": source_id}
 
 
+class ClipPlanFocusPayload(BaseModel):
+    x: float | None = None
+
+
+@app.patch(
+    "/api/clip-plans/{clip_plan_id}/focus",
+    tags=["Render"],
+    summary="Set a manual frame position for a clip plan (x=null clears it)",
+)
+def api_set_clip_plan_focus(clip_plan_id: int, payload: ClipPlanFocusPayload, _auth: AuthDep) -> dict:
+    try:
+        return store.set_clip_plan_manual_focus(clip_plan_id, payload.x)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post(
     "/api/montages",
     tags=["Render"],

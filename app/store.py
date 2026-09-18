@@ -1321,6 +1321,22 @@ class AppStore:
             )
         return self.get_clip_plan(plan_id)
 
+    def set_clip_plan_manual_focus(self, clip_plan_id: int, x: float | None) -> dict:
+        """Set (or clear, x=None) a fixed manual frame position on every segment
+        of a clip plan. ``x`` is a full-frame horizontal centre in 0..1."""
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        value = None if x is None else min(1.0, max(0.0, float(x)))
+        rows = self.db.query_all(
+            "SELECT segment_id FROM clip_plan_segments WHERE clip_plan_id = ?",
+            (clip_plan_id,),
+        )
+        for row in rows:
+            self.db.execute(
+                "UPDATE ai_segments SET manual_focus_x = ? WHERE id = ?",
+                (value, int(row["segment_id"])),
+            )
+        return {"clip_plan_id": clip_plan_id, "manual_focus_x": value, "segments": len(rows)}
+
     def list_clip_plans(
         self,
         source_id: int | None = None,
