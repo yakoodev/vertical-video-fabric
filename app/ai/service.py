@@ -354,15 +354,19 @@ def _highlights_clip_cap(source_duration: float) -> int:
 
 
 def _analysis_windows(duration_sec: float, mode: str, provider: str) -> list[tuple[float, float]] | None:
-    """Split a long episode into overlapping time windows for highlights mode.
+    """Split a long source into overlapping time windows for gemini.
 
-    Recap (narrative) mode needs the whole episode in one view, so it is never
-    windowed. Only gemini honors per-window offsets today. Returns None when the
-    source is short enough to analyze in one pass.
+    A long video sent in one request blows Gemini's per-request token budget
+    (~1M tokens ≈ a few tens of minutes of video), so any source longer than the
+    single-pass threshold MUST be windowed — regardless of analysis mode. Each
+    window is analyzed with a video_metadata start/end offset (and a transcript
+    slice), keeping every request small; absolute timestamps merge cleanly.
+    Short sources return None and are analyzed in one pass.
     """
 
-    if provider != "gemini" or mode != ANALYSIS_MODE_HIGHLIGHTS:
+    if provider != "gemini":
         return None
+    _ = mode  # windowing is now mode-independent; kept for signature compatibility
     window = max(120.0, float(settings.analysis_window_seconds))
     overlap = max(0.0, float(settings.analysis_window_overlap_seconds))
     if duration_sec <= window * 1.4:
