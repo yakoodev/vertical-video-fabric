@@ -160,6 +160,54 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
         ) : null}
       </div>
 
+      {(source.clip_plans?.length ?? 0) > 0
+        ? (() => {
+            const plans = source.clip_plans ?? [];
+            const quals = plans.map((p) => p.quality ?? 0).filter((q) => q > 0);
+            const avgQ = quals.length ? Math.round((quals.reduce((a, b) => a + b, 0) / quals.length) * 100) : null;
+            const themes = Object.entries(
+              plans.reduce<Record<string, number>>((acc, p) => {
+                const c = (p.category || "").trim();
+                if (c) acc[c] = (acc[c] ?? 0) + 1;
+                return acc;
+              }, {}),
+            )
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5);
+            return (
+              <div className="panel analysis-status" style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                <strong style={{ fontSize: 13 }}>Статус анализа</strong>
+                <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+                  <div>
+                    <div className="mono" style={{ fontSize: 22 }}>{plans.length}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>моментов</div>
+                  </div>
+                  <div>
+                    <div className="mono" style={{ fontSize: 22 }}>{source.clips_count ?? 0}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>клипов</div>
+                  </div>
+                  {avgQ != null ? (
+                    <div>
+                      <div className="mono" style={{ fontSize: 22 }}>{avgQ}%</div>
+                      <div className="muted" style={{ fontSize: 12 }}>ср. качество</div>
+                    </div>
+                  ) : null}
+                </div>
+                {themes.length ? (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span className="muted" style={{ fontSize: 12 }}>Популярные темы:</span>
+                    {themes.map(([name, n]) => (
+                      <span key={name} className="chip" style={{ fontSize: 12 }}>
+                        {name} {n}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()
+        : null}
+
       <div className="ws-source-panels">
         <div className="panel" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
