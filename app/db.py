@@ -350,6 +350,10 @@ class Database:
             # Dynamic point-of-interest reframing for wide → vertical (needs focus data).
             self._ensure_column(conn, "ffmpeg_presets", "smart_reframe", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "clips", "clip_plan_id", "INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL")
+            # Triage flags: ⭐ favourite (promote to the clip editor) and hidden
+            # (dismiss a weak candidate from the moments list).
+            self._ensure_column(conn, "clip_plans", "favorite", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "clip_plans", "hidden", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

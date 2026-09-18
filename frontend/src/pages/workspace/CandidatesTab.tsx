@@ -525,6 +525,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
   const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -650,6 +652,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     }, 350);
   };
 
+  // Triage flags: ⭐ favourite / hide a candidate. Optimistic cache patch + save.
+  const setPlanFlag = (planId: number, flags: { favorite?: boolean; hidden?: boolean }) => {
+    const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
+    if (prev) {
+      qc.setQueryData<SourceDetail>(qk.source(sourceId), {
+        ...prev,
+        clip_plans: prev.clip_plans.map((p) => (p.id === planId ? { ...p, ...flags } : p)),
+      });
+    }
+    clipPlansApi
+      .setFlags(planId, flags)
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"));
+  };
+
   const activePlan = useMemo(() => plans.find((p) => p.id === activePlanId) ?? plans[0], [plans, activePlanId]);
   // Candidates accumulate across analyses — group them so it's clear which run
   // produced what (newest run first).
@@ -658,6 +674,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const by = new Map<number, typeof plans>();
     for (const p of plans) {
       if (hideDuplicates && p.duplicate_of != null) continue;
+      if (!showHidden && p.hidden) continue;
+      if (onlyFavorites && !p.favorite) continue;
       if (q && !(p.title ?? "").toLowerCase().includes(q)) continue;
       const key = p.analysis_id ?? 0;
       by.set(key, [...(by.get(key) ?? []), p]);
@@ -667,8 +685,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return [...by.entries()]
       .filter(([analysisId]) => !hiddenAnalyses.has(analysisId))
       .sort((a, b) => b[0] - a[0]);
-  }, [plans, hideDuplicates, candidateSearch, hiddenAnalyses]);
+  }, [plans, hideDuplicates, candidateSearch, hiddenAnalyses, onlyFavorites, showHidden]);
   const shownCount = planGroups.reduce((n, [, g]) => n + g.length, 0);
+  const favCount = plans.filter((p) => p.favorite).length;
+  const hiddenCount = plans.filter((p) => p.hidden).length;
   // All analyses present (for the show/hide filter chips), independent of search/hide.
   const analysisChips = useMemo(() => {
     const by = new Map<number, number>();
@@ -1054,6 +1074,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             value={candidateSearch}
             onChange={(e) => setCandidateSearch(e.target.value)}
           />
+          <button
+            className={`chip${onlyFavorites ? " active" : ""}`}
+            onClick={() => setOnlyFavorites((v) => !v)}
+            title="Показать только избранные"
+          >
+            ★ Избранное{favCount ? ` · ${favCount}` : ""}
+          </button>
+          {hiddenCount ? (
+            <label className="check" style={{ fontSize: 12 }}>
+              <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+              <span>скрытые ({hiddenCount})</span>
+            </label>
+          ) : null}
           {plans.some((p) => p.duplicate_of != null) ? (
             <label className="check" style={{ fontSize: 12 }}>
               <input type="checkbox" checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />
@@ -1150,6 +1183,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       {formatDuration(p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0))}
                       {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
                     </span>
+                  </button>
+                  <button
+                    className="plan-chip-act"
+                    title={p.favorite ? "Убрать из избранного" : "В избранное"}
+                    style={{ color: p.favorite ? "var(--accent)" : undefined }}
+                    onClick={() => setPlanFlag(p.id, { favorite: !p.favorite })}
+                  >
+                    {p.favorite ? "★" : "☆"}
+                  </button>
+                  <button
+                    className="plan-chip-act"
+                    title={p.hidden ? "Вернуть кандидата" : "Скрыть кандидата"}
+                    onClick={() => setPlanFlag(p.id, { hidden: !p.hidden })}
+                  >
+                    {p.hidden ? "↩" : "✕"}
                   </button>
                 </div>
               ))}

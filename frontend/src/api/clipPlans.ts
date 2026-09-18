@@ -28,4 +28,7 @@ export const clipPlansApi = {
   // Manual per-clip frame position (full-frame 0..1); x=null clears it (back to autofocus).
   setFocus: (clipPlanId: number, x: number | null) =>
     api.patch<{ manual_focus_x: number | null }>(`/api/clip-plans/${clipPlanId}/focus`, { x }),
+  // Triage flags: ⭐ favourite (promote to editor) and hidden (dismiss).
+  setFlags: (clipPlanId: number, flags: { favorite?: boolean; hidden?: boolean }) =>
+    api.patch<Clip>(`/api/clip-plans/${clipPlanId}/flags`, flags),
 };

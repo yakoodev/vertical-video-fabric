@@ -1337,6 +1337,23 @@ class AppStore:
             )
         return {"clip_plan_id": clip_plan_id, "manual_focus_x": value, "segments": len(rows)}
 
+    def set_clip_plan_flags(
+        self, clip_plan_id: int, *, favorite: bool | None = None, hidden: bool | None = None
+    ) -> dict:
+        """Toggle triage flags on a candidate: ⭐ favourite and/or hidden."""
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        updates: dict[str, int] = {}
+        if favorite is not None:
+            updates["favorite"] = 1 if favorite else 0
+        if hidden is not None:
+            updates["hidden"] = 1 if hidden else 0
+        if updates:
+            cols = ", ".join(f"{k} = ?" for k in updates)
+            self.db.execute(
+                f"UPDATE clip_plans SET {cols} WHERE id = ?", (*updates.values(), clip_plan_id)
+            )
+        return self.get_clip_plan(clip_plan_id, include_segments=False)
+
     def list_clip_plans(
         self,
         source_id: int | None = None,

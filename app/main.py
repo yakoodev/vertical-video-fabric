@@ -2036,6 +2036,25 @@ def api_set_clip_plan_focus(clip_plan_id: int, payload: ClipPlanFocusPayload, _a
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class ClipPlanFlagsPayload(BaseModel):
+    favorite: bool | None = None
+    hidden: bool | None = None
+
+
+@app.patch(
+    "/api/clip-plans/{clip_plan_id}/flags",
+    tags=["Render"],
+    summary="Toggle favourite/hidden triage flags on a candidate",
+)
+def api_set_clip_plan_flags(clip_plan_id: int, payload: ClipPlanFlagsPayload, _auth: AuthDep) -> dict:
+    try:
+        return store.set_clip_plan_flags(clip_plan_id, favorite=payload.favorite, hidden=payload.hidden)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post(
     "/api/montages",
     tags=["Render"],

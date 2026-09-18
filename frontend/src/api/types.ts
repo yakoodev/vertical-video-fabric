@@ -98,6 +98,8 @@ export interface ClipPlan {
   segments: AiSegment[];
   quality?: number;
   duplicate_of?: number | null;
+  favorite?: boolean | number;
+  hidden?: boolean | number;
 }
 
 export interface SourceDetail extends Source {
