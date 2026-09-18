@@ -524,6 +524,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
+  const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -663,9 +664,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     }
     // Best candidates first inside each analysis.
     for (const [, group] of by) group.sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0));
-    return [...by.entries()].sort((a, b) => b[0] - a[0]);
-  }, [plans, hideDuplicates, candidateSearch]);
+    return [...by.entries()]
+      .filter(([analysisId]) => !hiddenAnalyses.has(analysisId))
+      .sort((a, b) => b[0] - a[0]);
+  }, [plans, hideDuplicates, candidateSearch, hiddenAnalyses]);
   const shownCount = planGroups.reduce((n, [, g]) => n + g.length, 0);
+  // All analyses present (for the show/hide filter chips), independent of search/hide.
+  const analysisChips = useMemo(() => {
+    const by = new Map<number, number>();
+    for (const p of plans) by.set(p.analysis_id ?? 0, (by.get(p.analysis_id ?? 0) ?? 0) + 1);
+    return [...by.entries()].sort((a, b) => b[0] - a[0]);
+  }, [plans]);
   // The preset list accumulates user-saved dupes; show each label once so the
   // picker isn't flooded with identical entries.
   const uniquePresets = useMemo(() => {
@@ -1058,6 +1067,31 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             {selected.size === plans.length ? "Снять все" : "Выбрать все"}
           </button>
         </div>
+        {analysisChips.length > 1 ? (
+          <div className="analysis-filter" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {analysisChips.map(([aid, count]) => {
+              const shown = !hiddenAnalyses.has(aid);
+              return (
+                <button
+                  key={aid}
+                  className={`chip${shown ? " active" : ""}`}
+                  style={shown ? undefined : { opacity: 0.5 }}
+                  title={shown ? "Скрыть этот анализ" : "Показать этот анализ"}
+                  onClick={() =>
+                    setHiddenAnalyses((prev) => {
+                      const next = new Set(prev);
+                      next.has(aid) ? next.delete(aid) : next.add(aid);
+                      return next;
+                    })
+                  }
+                >
+                  {shown ? "" : "🚫 "}
+                  {aid ? `Анализ #${aid}` : "Вручную"} · {count}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         {planGroups.map(([analysisId, group]) => (
           <div key={analysisId} className="plan-group">
             <div className="plan-group-title">
