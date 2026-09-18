@@ -1093,6 +1093,28 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       )}
 
       {view === "triage" && (
+      <>
+      <div className="panel" style={{ marginBottom: 12 }}>
+        <div
+          className="crop-stage"
+          style={
+            source.width && source.height
+              ? {
+                  aspectRatio: `${source.width} / ${source.height}`,
+                  maxWidth: `calc(48vh * ${source.width} / ${source.height})`,
+                  margin: "0 auto",
+                }
+              : undefined
+          }
+        >
+          <video src={`/media/sources/${source.id}`} controls preload="metadata" />
+        </div>
+        <div className="muted ws-meta" style={{ marginTop: 8, justifyContent: "center" }}>
+          <span>{formatDuration(source.duration_sec)}</span>
+          {source.width ? <span>{source.width}×{source.height}</span> : null}
+          <span>{plans.length} моментов</span>
+        </div>
+      </div>
       <div className="plan-groups">
         <div className="plan-groups-head">
           <strong style={{ fontSize: 13 }}>
@@ -1237,6 +1259,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </div>
         ))}
       </div>
+      </>
       )}
 
       {view === "editor" && (
