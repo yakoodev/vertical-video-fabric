@@ -2645,4 +2645,7 @@ def spa_fallback(spa_path: str, _auth: AuthDep) -> FileResponse:
     first = spa_path.split("/", 1)[0]
     if spa_path.startswith(_SPA_RESERVED_PREFIXES) or first in _SPA_RESERVED_EXACT:
         raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(SPA_INDEX)
+    # index.html must never be cached: assets are content-hashed (safe to cache
+    # forever), but a stale index.html references old hashes and 404s after a
+    # redeploy — the "blank page until hard-refresh" bug. Always revalidate it.
+    return FileResponse(SPA_INDEX, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
