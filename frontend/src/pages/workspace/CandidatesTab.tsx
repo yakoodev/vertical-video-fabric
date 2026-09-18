@@ -524,6 +524,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  // Two-stage flow: triage the moments list, then open one clip in the editor.
+  const [view, setView] = useState<"triage" | "editor">("triage");
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -742,7 +744,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   return (
     <div className="editor">
-      {/* preview + render inspector */}
+      <div className="editor-viewbar" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+        <button className={`chip${view === "triage" ? " active" : ""}`} onClick={() => setView("triage")}>
+          🗂 Моменты · {plans.length}
+        </button>
+        <button
+          className={`chip${view === "editor" ? " active" : ""}`}
+          disabled={!activePlan}
+          onClick={() => activePlan && setView("editor")}
+          title={activePlan ? "" : "Выберите момент, чтобы открыть редактор"}
+        >
+          ✂️ Редактор{activePlan ? `: ${activePlan.title || "клип"}` : ""}
+        </button>
+        {view === "editor" ? (
+          <button className="btn ghost sm" onClick={() => setView("triage")} style={{ marginLeft: "auto" }}>
+            ← к моментам
+          </button>
+        ) : null}
+      </div>
+      {view === "editor" && (
       <div className="editor-top">
         <div className="editor-stage-wrap">
           <div className="editor-stage">
@@ -1069,7 +1089,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         </button>
       </div>
 
-      {/* plan chips grouped by analysis: a re-run adds candidates, never replaces them */}
+      )}
+
+      {view === "triage" && (
       <div className="plan-groups">
         <div className="plan-groups-head">
           <strong style={{ fontSize: 13 }}>
@@ -1181,6 +1203,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     onClick={() => {
                       setActivePlanId(p.id);
                       setSelectedSeg(null);
+                      setView("editor");
                     }}
                   >
                     <span>
@@ -1213,8 +1236,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </div>
         ))}
       </div>
+      )}
 
-      {/* big timeline */}
+      {view === "editor" && (
       <div className="panel editor-timeline">
         <Timeline
           duration={source.duration_sec}
@@ -1232,14 +1256,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           onCommit={(id, s, e) => commit.mutate({ id, s, e })}
         />
       </div>
-
-      {selectedSegment ? (
-        <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
-      ) : (
-        <p className="muted" style={{ fontSize: 13 }}>
-          Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
-        </p>
       )}
+
+      {view === "editor" &&
+        (selectedSegment ? (
+          <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
+        ) : (
+          <p className="muted" style={{ fontSize: 13 }}>
+            Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
+          </p>
+        ))}
     </div>
   );
 }
