@@ -763,6 +763,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         ) : null}
       </div>
       {view === "editor" && (
+      <>
       <div className="editor-top">
         <div className="editor-stage-wrap">
           <div className="editor-stage">
@@ -1088,7 +1089,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
         </button>
       </div>
-
+      </>
       )}
 
       {view === "triage" && (
