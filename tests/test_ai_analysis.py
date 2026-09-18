@@ -11,7 +11,11 @@ from app.ai.service import (
     _highlights_clip_cap,
     _segments_for_store,
 )
-from app.analysis_preprocess import build_analysis_preprocess_args, normalize_analysis_preprocessing
+from app.analysis_preprocess import (
+    build_analysis_preprocess_args,
+    fit_source_under_upload_limit,
+    normalize_analysis_preprocessing,
+)
 from app.crypto import CookieCipher
 from app.default_prompts import ANIME_ANALYSIS_PROMPT
 from app.db import Database
@@ -104,6 +108,23 @@ def test_request_ai_analysis_cancel_transitions_and_guards(tmp_path, monkeypatch
     # A finished analysis can no longer be cancelled.
     with pytest.raises(ValueError):
         store.request_ai_analysis_cancel(analysis["id"])
+
+
+def test_fit_source_passthrough_when_under_limit(tmp_path):
+    small = tmp_path / "small.mp4"
+    small.write_bytes(b"x" * 1000)
+    source = {"id": 7, "local_path": str(small)}
+    prepared, meta = fit_source_under_upload_limit(source, duration_sec=60, limit_bytes=2000)
+    assert meta["fit"] is False
+    assert prepared["local_path"] == str(small)  # untouched, no transcode
+
+
+def test_fit_source_rejects_unknown_duration(tmp_path):
+    big = tmp_path / "big.mp4"
+    big.write_bytes(b"x" * 3000)
+    source = {"id": 7, "local_path": str(big)}
+    with pytest.raises(RuntimeError):
+        fit_source_under_upload_limit(source, duration_sec=0, limit_bytes=2000)
 
 
 def test_run_analysis_honours_cooperative_cancel(tmp_path, monkeypatch):

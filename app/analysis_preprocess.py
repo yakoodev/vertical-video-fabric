@@ -9,6 +9,99 @@ from typing import Any
 from app.settings import settings
 
 
+# Gemini's File API rejects uploads larger than 2 GiB. A long/high-bitrate source
+# (e.g. a multi-hour Twitch VOD) must be shrunk below this before analysis.
+GEMINI_UPLOAD_LIMIT_BYTES = 2 * 1024 ** 3
+
+
+def fit_source_under_upload_limit(
+    source: dict,
+    duration_sec: float,
+    limit_bytes: int = GEMINI_UPLOAD_LIMIT_BYTES,
+    *,
+    safety: float = 0.90,
+) -> tuple[dict, dict]:
+    """Return a source whose file is guaranteed under ``limit_bytes``.
+
+    Files already under the limit pass through untouched. Larger ones are
+    transcoded to a downscaled, low-fps analysis copy at a bitrate computed from
+    the byte budget — over a multi-hour source libx264 ABR converges tightly to
+    the target, so the output lands reliably under the cap. Analysis only needs
+    legible frames, so 640px / 12fps / 64k mono audio is plenty.
+    """
+    input_path = Path(source.get("local_path") or "")
+    if not input_path.exists():
+        raise RuntimeError("source file for Gemini size-fit was not found")
+    size = input_path.stat().st_size
+    if size <= limit_bytes:
+        return source, {"fit": False, "input_bytes": size, "output_bytes": size}
+    duration = float(duration_sec or 0)
+    if duration <= 0:
+        raise RuntimeError("cannot shrink a source with unknown duration for upload")
+
+    audio_count = _audio_stream_count(input_path)
+    audio_bps = 64_000 if audio_count else 0
+    target_bytes = int(limit_bytes * safety)
+    video_bps = int(max(150_000, target_bytes * 8.0 / duration - audio_bps))
+    max_dim = 640
+    fps = 12.0
+
+    output_dir = settings.runtime_dir / "analysis-sizefit"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    key = _cache_key(input_path, {"limit": limit_bytes, "max_dim": max_dim, "fps": fps, "vb": video_bps, "ab": audio_bps})
+    output_path = output_dir / f"source-{source['id']}-{key}.mp4"
+    if not output_path.exists():
+        _run_ffmpeg(
+            _build_sizefit_args(input_path, output_path, max_dim, fps, video_bps, audio_bps, audio_count),
+            timeout=60 * 120,
+        )
+    out_size = output_path.stat().st_size
+    if out_size > limit_bytes:
+        raise RuntimeError(
+            f"downscaled source is still {out_size} bytes (> {limit_bytes}); use a shorter source"
+        )
+    prepared = dict(source)
+    prepared["local_path"] = str(output_path)
+    prepared["gemini_sizefit_from"] = str(input_path)
+    return prepared, {
+        "fit": True,
+        "input_bytes": size,
+        "output_bytes": out_size,
+        "output_path": str(output_path),
+        "video_bitrate": video_bps,
+        "max_dimension": max_dim,
+        "target_fps": fps,
+    }
+
+
+def _build_sizefit_args(
+    input_path: Path,
+    output_path: Path,
+    max_dim: int,
+    fps: float,
+    video_bps: int,
+    audio_bps: int,
+    audio_count: int,
+) -> list[str]:
+    vf = [
+        "scale=w='if(gte(iw,ih),min(%d,iw),-2)':h='if(gt(ih,iw),min(%d,ih),-2)'" % (max_dim, max_dim),
+        f"fps={float(fps):g}",
+    ]
+    args = [
+        "ffmpeg", "-y", "-hide_banner", "-i", str(input_path), "-map", "0:v:0",
+        "-vf", ",".join(vf),
+        "-c:v", "libx264", "-preset", "veryfast",
+        "-b:v", str(video_bps), "-maxrate", str(int(video_bps * 1.45)), "-bufsize", str(int(video_bps * 2)),
+        "-pix_fmt", "yuv420p",
+    ]
+    if audio_count and audio_bps:
+        args.extend(["-map", "0:a:0?", "-c:a", "aac", "-b:a", str(audio_bps), "-ac", "1"])
+    else:
+        args.append("-an")
+    args.extend(["-movflags", "+faststart", str(output_path)])
+    return args
+
+
 def normalize_analysis_preprocessing(options: dict[str, Any] | None) -> dict[str, Any]:
     options = options or {}
     enabled = _bool(options.get("enabled"))
@@ -139,8 +232,8 @@ def _audio_stream_count(path: Path) -> int:
     return len(streams) if isinstance(streams, list) else 0
 
 
-def _run_ffmpeg(args: list[str]) -> None:
-    proc = subprocess.run(args, capture_output=True, text=True, check=False, timeout=60 * 20)
+def _run_ffmpeg(args: list[str], timeout: int = 60 * 20) -> None:
+    proc = subprocess.run(args, capture_output=True, text=True, check=False, timeout=timeout)
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout or "analysis preprocessing failed").strip()
         raise RuntimeError(message[:1000])

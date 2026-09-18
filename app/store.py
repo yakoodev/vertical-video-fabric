@@ -1009,6 +1009,17 @@ class AppStore:
             (analysis_id,),
         )
 
+    def touch_ai_analysis(self, analysis_id: int) -> None:
+        """Bump updated_at so a long-running analysis isn't misjudged as stale.
+
+        The stale-guard fails analyses whose updated_at is older than
+        ``ai_analysis_stale_seconds``; a multi-hour run must heartbeat to survive.
+        """
+        self.db.execute(
+            "UPDATE ai_analyses SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
+            (analysis_id,),
+        )
+
     def finish_ai_analysis(
         self,
         analysis_id: int,

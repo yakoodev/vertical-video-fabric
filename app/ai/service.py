@@ -7,7 +7,11 @@ import subprocess
 from itertools import combinations
 from pathlib import Path
 
-from app.analysis_preprocess import normalize_analysis_preprocessing, prepare_source_for_analysis
+from app.analysis_preprocess import (
+    fit_source_under_upload_limit,
+    normalize_analysis_preprocessing,
+    prepare_source_for_analysis,
+)
 from app.ai.contracts import AnalysisCancelled, AnalysisClip
 from app.ai.gemini import GeminiVideoAnalyzer
 from app.ai.registry import get_video_analyzer
@@ -111,7 +115,11 @@ class VideoAnalysisService:
         def should_cancel() -> bool:
             return self.store.ai_analysis_cancel_requested(analysis_id)
 
+        def heartbeat() -> None:
+            self.store.touch_ai_analysis(analysis_id)
+
         def check_cancel() -> None:
+            heartbeat()
             if should_cancel():
                 raise AnalysisCancelled()
 
@@ -121,6 +129,16 @@ class VideoAnalysisService:
         try:
             check_cancel()
             analyzer_source, preprocessing_meta = prepare_source_for_analysis(source, normalized_preprocessing)
+            # Gemini rejects uploads over 2 GiB. Shrink an oversized source to a
+            # downscaled analysis copy that fits, so long VODs analyze instead of
+            # failing at the upload step.
+            if selected_provider == "gemini":
+                check_cancel()
+                analyzer_source, sizefit_meta = fit_source_under_upload_limit(
+                    analyzer_source, float(source.get("duration_sec") or 0)
+                )
+                if sizefit_meta.get("fit"):
+                    preprocessing_meta = {**(preprocessing_meta or {}), "enabled": True, "gemini_sizefit": sizefit_meta}
             analysis_segment_options = _segment_options_with_audio_boundaries(
                 segment_options,
                 analyzer_source,
@@ -148,7 +166,11 @@ class VideoAnalysisService:
                     if transcript_cues:
                         self.store.set_source_transcript(source_id, transcript_cues, settings.whisper_model_size)
             check_cancel()
-            gemini_kwargs = {"transcript": transcript_cues, "should_cancel": should_cancel} if is_gemini else {}
+            gemini_kwargs = (
+                {"transcript": transcript_cues, "should_cancel": should_cancel, "heartbeat": heartbeat}
+                if is_gemini
+                else {}
+            )
             if windows and is_gemini:
                 result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, windows=windows, **gemini_kwargs)
             else:

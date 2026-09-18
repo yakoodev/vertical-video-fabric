@@ -193,6 +193,7 @@ class GeminiVideoAnalyzer:
         windows: list[tuple[float, float]] | None = None,
         transcript: list[dict] | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> AnalysisResult:
         """Analyze the source video.
 
@@ -214,6 +215,8 @@ class GeminiVideoAnalyzer:
             "mimeType": file_info.get("mimeType") or mime_type,
         }
 
+        if heartbeat:
+            heartbeat()
         if should_cancel and should_cancel():
             raise AnalysisCancelled()
 
@@ -231,6 +234,8 @@ class GeminiVideoAnalyzer:
         for (start, end) in windows:
             if should_cancel and should_cancel():
                 raise AnalysisCancelled()
+            if heartbeat:
+                heartbeat()
             try:
                 results.append(
                     self._analyze_range(source, prompt, model, file_info, mime_type, start, end, file_summary, transcript)
