@@ -30,6 +30,7 @@ export interface Source {
   created_at: string;
   updated_at: string;
   analyses_count?: number;
+  clip_plans_count?: number;
   clips_count?: number;
   has_transcript?: boolean;
   transcript_segments?: number;

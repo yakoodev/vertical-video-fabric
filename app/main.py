@@ -249,6 +249,7 @@ class SourceRead(BaseModel):
     created_at: str
     updated_at: str
     analyses_count: int | None = None
+    clip_plans_count: int | None = None
     clips_count: int | None = None
 
 

@@ -92,7 +92,7 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
         <div className="pcard-stats">
           <Badge status={source.status} />
           {source.width ? <span className="mono">{source.width}×{source.height}</span> : null}
-          <span>{plural(source.analyses_count ?? 0, "анализ", "анализа", "анализов")}</span>
+          <span>{plural(source.clip_plans_count ?? 0, "момент", "момента", "моментов")}</span>
           <span>{plural(source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
         </div>
       </div>
