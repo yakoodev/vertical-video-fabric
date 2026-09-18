@@ -250,7 +250,15 @@ class GeminiVideoAnalyzer:
             raise last_error if last_error is not None else RuntimeError("all analysis windows failed")
         clips = _dedup_clips([clip for result in results for clip in result.clips])
         segments = [segment for clip in clips for segment in clip.segments]
-        usage = dict(results[0].usage) if results else {}
+        # Sum token counts across every window — a single window's usage badly
+        # under-reports a multi-window run, making per-analysis cost untrackable.
+        usage: dict = {}
+        for result in results:
+            counts = result.usage if isinstance(result.usage, dict) else {}
+            for key in ("promptTokenCount", "candidatesTokenCount", "totalTokenCount", "cachedContentTokenCount"):
+                value = counts.get(key)
+                if isinstance(value, (int, float)):
+                    usage[key] = usage.get(key, 0) + value
         usage["windowedAnalysis"] = True
         usage["windowCount"] = len(results)
         usage["windowFailed"] = failed
