@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -758,8 +759,11 @@ def ui_render_clip_plans(
     music_in_play = use_music or str(music_track_id).strip() != "" or volume_provided
     selected_music_track_id = _optional_form_int(music_track_id) if music_in_play else None
     selected_music_volume = float(music_volume) if volume_provided else None
+    batch_started_at = time.monotonic()
     try:
         for clip_plan_id in clip_plan_ids:
+            if clip_render_service.render_batch_cancelled(source_id, batch_started_at):
+                break
             plan = store.get_clip_plan(clip_plan_id, include_segments=False)
             if plan["source_id"] != source_id:
                 raise ValueError("clip plan does not belong to source")
@@ -1972,8 +1976,11 @@ def api_render_clip_plans(
     if not payload.clip_plan_ids:
         raise HTTPException(status_code=400, detail="clip_plan_ids cannot be empty")
     clips: list[dict] = []
+    batch_started_at = time.monotonic()
     try:
         for clip_plan_id in payload.clip_plan_ids:
+            if clip_render_service.render_batch_cancelled(source_id, batch_started_at):
+                break
             plan = store.get_clip_plan(clip_plan_id, include_segments=False)
             if plan["source_id"] != source_id:
                 raise ValueError("clip plan does not belong to source")
@@ -1995,6 +2002,20 @@ def api_render_clip_plans(
         return clips
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/sources/{source_id}/render-cancel",
+    tags=["Render"],
+    summary="Stop an in-progress batch render for a source",
+)
+def api_cancel_render(source_id: int, _auth: AuthDep) -> dict:
+    try:
+        store.get_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    clip_render_service.request_render_cancel(source_id)
+    return {"cancelling": True, "source_id": source_id}
 
 
 @app.post(

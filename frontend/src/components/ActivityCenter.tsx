@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { isActive, useActiveTasks } from "@/hooks/useActiveTasks";
 import { downloadsApi } from "@/api/downloads";
 import { analysesApi } from "@/api/analyses";
+import { clipPlansApi } from "@/api/clipPlans";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import type { ActiveTask } from "@/api/types";
@@ -59,6 +60,15 @@ export function ActivityCenter() {
     mutationFn: (id: number) => analysesApi.cancel(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить анализ"),
+  });
+
+  const cancelRender = useMutation({
+    mutationFn: (sourceId: number) => clipPlansApi.cancelRender(sourceId),
+    onSuccess: () => {
+      toast.push("Останавливаю рендер — текущий клип дорисуется, дальше очередь встанет", "info");
+      qc.invalidateQueries({ queryKey: qk.activeTasks });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить рендер"),
   });
 
   useEffect(() => {
@@ -146,6 +156,16 @@ export function ActivityCenter() {
                             onClick={() => cancelAnalysis.mutate(t.id)}
                           >
                             {t.status === "cancelling" ? "отменяю…" : "отменить"}
+                          </button>
+                        ) : null}
+                        {t.kind === "clip" && isActive(t.status) && t.source_id ? (
+                          <button
+                            className="task-link"
+                            disabled={cancelRender.isPending}
+                            onClick={() => cancelRender.mutate(t.source_id as number)}
+                            title="Остановить очередь рендера (текущий клип дорисуется)"
+                          >
+                            отменить
                           </button>
                         ) : null}
                         {link ? (

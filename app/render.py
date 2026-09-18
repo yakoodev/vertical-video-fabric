@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,6 +66,20 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
 class ClipRenderService:
     def __init__(self, store: AppStore) -> None:
         self.store = store
+        # Per-source render-cancel marks (monotonic timestamps). A batch loop
+        # records when it started and stops before its next clip once a cancel
+        # was requested after that — so a later batch on the same source is
+        # unaffected. In-memory is enough: all renders run in this process.
+        self._cancel_marks: dict[int, float] = {}
+        self._cancel_lock = threading.Lock()
+
+    def request_render_cancel(self, source_id: int) -> None:
+        with self._cancel_lock:
+            self._cancel_marks[int(source_id)] = time.monotonic()
+
+    def render_batch_cancelled(self, source_id: int, started_at: float) -> bool:
+        with self._cancel_lock:
+            return self._cancel_marks.get(int(source_id), -1.0) > started_at
 
     def render_segment(
         self,

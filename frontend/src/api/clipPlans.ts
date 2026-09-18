@@ -23,4 +23,6 @@ export const clipPlansApi = {
     api.post<Clip>(`/api/clip-plans/${clipPlanId}/render`, body),
   renderBatch: (sourceId: number | string, body: RenderClipPlansRequest) =>
     api.post<Clip[]>(`/api/sources/${sourceId}/render-plans`, body),
+  cancelRender: (sourceId: number | string) =>
+    api.post<{ cancelling: boolean }>(`/api/sources/${sourceId}/render-cancel`, {}),
 };

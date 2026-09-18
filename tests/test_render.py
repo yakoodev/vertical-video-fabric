@@ -30,6 +30,21 @@ def test_build_reframe_x_expr_accepts_preset_movement_kwargs():
     assert isinstance(expr, str) and expr
 
 
+def test_render_batch_cancel_marks_are_batch_scoped(tmp_path, monkeypatch):
+    import time as _time
+
+    store = _store(tmp_path, monkeypatch)
+    service = ClipRenderService(store)
+    # A batch started before a cancel request is cancelled...
+    before = _time.monotonic()
+    service.request_render_cancel(50)
+    assert service.render_batch_cancelled(50, before) is True
+    # ...but a batch started after the cancel is unaffected, and other sources too.
+    after = _time.monotonic()
+    assert service.render_batch_cancelled(50, after) is False
+    assert service.render_batch_cancelled(99, before) is False
+
+
 def test_preset_with_subtitle_offset_clamps_and_stashes(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
     service = ClipRenderService(store)
