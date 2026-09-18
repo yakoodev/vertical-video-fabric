@@ -523,6 +523,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [mirror, setMirror] = useState(false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
+  const [candidateSearch, setCandidateSearch] = useState("");
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -652,16 +653,30 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Candidates accumulate across analyses — group them so it's clear which run
   // produced what (newest run first).
   const planGroups = useMemo(() => {
+    const q = candidateSearch.trim().toLowerCase();
     const by = new Map<number, typeof plans>();
     for (const p of plans) {
       if (hideDuplicates && p.duplicate_of != null) continue;
+      if (q && !(p.title ?? "").toLowerCase().includes(q)) continue;
       const key = p.analysis_id ?? 0;
       by.set(key, [...(by.get(key) ?? []), p]);
     }
     // Best candidates first inside each analysis.
     for (const [, group] of by) group.sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0));
     return [...by.entries()].sort((a, b) => b[0] - a[0]);
-  }, [plans, hideDuplicates]);
+  }, [plans, hideDuplicates, candidateSearch]);
+  const shownCount = planGroups.reduce((n, [, g]) => n + g.length, 0);
+  // The preset list accumulates user-saved dupes; show each label once so the
+  // picker isn't flooded with identical entries.
+  const uniquePresets = useMemo(() => {
+    const seen = new Set<string>();
+    return (presets.data ?? []).filter((p) => {
+      const key = (p.label ?? "").trim().toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [presets.data]);
   const analysisMeta = (analysisId: number) => {
     if (!analysisId) return "Добавлены вручную";
     const a = query.data?.analyses?.find((x) => x.id === analysisId);
@@ -813,12 +828,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <span>Пресет</span>
               <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
                 <option value={0}>По умолчанию</option>
-                {presets.data?.map((p) => (
+                {uniquePresets.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
             </label>
-            <LookPicker frames={lookFrames} presets={presets.data ?? []} value={presetId} onPick={setPresetId} />
+            <LookPicker frames={lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
             <label className="check" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
               <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
               <span>🪞 Зеркало (лево↔право)</span>
@@ -1020,7 +1035,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       {/* plan chips grouped by analysis: a re-run adds candidates, never replaces them */}
       <div className="plan-groups">
         <div className="plan-groups-head">
-          <strong style={{ fontSize: 13 }}>Кандидаты · {plans.length}</strong>
+          <strong style={{ fontSize: 13 }}>
+            Кандидаты · {candidateSearch.trim() ? `${shownCount} из ${plans.length}` : plans.length}
+          </strong>
+          <input
+            className="input"
+            style={{ height: 30, fontSize: 12.5, maxWidth: 200 }}
+            placeholder="Поиск по названию…"
+            value={candidateSearch}
+            onChange={(e) => setCandidateSearch(e.target.value)}
+          />
           {plans.some((p) => p.duplicate_of != null) ? (
             <label className="check" style={{ fontSize: 12 }}>
               <input type="checkbox" checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />

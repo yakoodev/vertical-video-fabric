@@ -202,6 +202,7 @@ function AddSource() {
 export function ProjectsPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
   const [pending, setPending] = useState<Source | null>(null);
+  const [search, setSearch] = useState("");
 
   const del = useDeleteMutation<Source>({
     listKey: qk.sources,
@@ -209,6 +210,14 @@ export function ProjectsPage() {
     successMessage: () => "Проект удалён",
     onSuccess: () => setPending(null),
   });
+
+  const sources = query.data ?? [];
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? sources.filter((s) =>
+        (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q),
+      )
+    : sources;
 
   return (
     <>
@@ -218,14 +227,34 @@ export function ProjectsPage() {
         <Loading />
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
-      ) : !query.data?.length ? (
+      ) : !sources.length ? (
         <EmptyState icon="🎬" title="Пока нет проектов" hint="Загрузите видео или добавьте ссылку, чтобы начать" />
       ) : (
-        <div className="card-grid">
-          {query.data.map((source) => (
-            <ProjectCard key={source.id} source={source} onDelete={setPending} />
-          ))}
-        </div>
+        <>
+          {sources.length > 6 ? (
+            <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
+              <input
+                className="input"
+                style={{ maxWidth: 320 }}
+                placeholder="Поиск проекта по названию…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <span className="muted" style={{ fontSize: 13 }}>
+                {q ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
+              </span>
+            </div>
+          ) : null}
+          {filtered.length ? (
+            <div className="card-grid">
+              {filtered.map((source) => (
+                <ProjectCard key={source.id} source={source} onDelete={setPending} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon="🔍" title="Ничего не найдено" hint="Измените запрос" />
+          )}
+        </>
       )}
 
       <ConfirmDialog
