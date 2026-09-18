@@ -18,6 +18,16 @@ from app.render import (
 )
 from app.settings import settings
 from app.store import AppStore
+from app.video_crop import build_reframe_x_expr
+
+
+def test_build_reframe_x_expr_accepts_preset_movement_kwargs():
+    # Regression: render.py passes the focus preset's rubber/deadzone through to
+    # build_reframe_x_expr; the signature must accept them (they crashed renders
+    # with "unexpected keyword argument 'rubber'").
+    points = [{"t": 0.0, "x": 0.3}, {"t": 2.0, "x": 0.7, "cut": True}, {"t": 4.0, "x": 0.5}]
+    expr = build_reframe_x_expr(points, 5.0, 1080, smooth_time=0.9, rubber=2.4, deadzone=0.03)
+    assert isinstance(expr, str) and expr
 
 
 def test_preset_with_subtitle_offset_clamps_and_stashes(tmp_path, monkeypatch):

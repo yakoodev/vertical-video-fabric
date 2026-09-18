@@ -113,6 +113,8 @@ def build_reframe_x_expr(
     *,
     max_anchors: int = 40,
     smooth_time: float = 1.1,
+    rubber: float = 2.2,
+    deadzone: float = 0.012,
 ) -> str | None:
     """Turn sparse focus points into a smooth ffmpeg crop-x expression.
 
@@ -162,7 +164,7 @@ def build_reframe_x_expr(
     xs = [interp(i * dt) for i in range(n)]
     # Dense indices where a cut lands — the smoother teleports there instead of easing.
     cut_idx = {min(n - 1, max(0, round(t / dt))) for (t, _x, cut) in pts if cut}
-    xs = _smooth_damp_series(xs, dt, smooth_time, cut_idx=cut_idx)
+    xs = _smooth_damp_series(xs, dt, smooth_time, rubber=rubber, cut_idx=cut_idx, deadzone=deadzone)
 
     if n > max_anchors:
         idxs = [round(i * (n - 1) / (max_anchors - 1)) for i in range(max_anchors)]
