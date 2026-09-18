@@ -214,6 +214,8 @@ function CropFrame({
   showSubs,
   subPosPct,
   focusPreset,
+  onManualX,
+  mirror,
 }: {
   srcW: number;
   srcH: number;
@@ -226,8 +228,28 @@ function CropFrame({
   showSubs: boolean;
   subPosPct: number;
   focusPreset?: string;
+  onManualX?: (x: number) => void;
+  mirror?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const dragXRef = useRef(0.5);
+  // Refs so the drag handler always reads the latest callback/mirror without
+  // re-running (and restarting) the animation-frame effect every render.
+  const onManualXRef = useRef(onManualX);
+  onManualXRef.current = onManualX;
+  const mirrorRef = useRef(mirror);
+  mirrorRef.current = mirror;
+
+  const applyPointer = (clientX: number) => {
+    const parent = ref.current?.parentElement;
+    if (!parent) return;
+    const r = parent.getBoundingClientRect();
+    let x = Math.min(1, Math.max(0, (clientX - r.left) / (r.width || 1)));
+    if (mirrorRef.current) x = 1 - x; // stage is hflipped in mirror mode
+    dragXRef.current = x; // visual only; committed on pointer-up to avoid re-render thrash mid-drag
+  };
+
   useEffect(() => {
     if (!srcW || !srcH) return;
     const targetAR = 9 / 16;
@@ -242,15 +264,17 @@ function CropFrame({
     const tick = () => {
       const v = videoRef.current;
       const el = ref.current;
-      if (v && el) {
-        const cur = v.currentTime;
+      if (el && (v || draggingRef.current)) {
+        const cur = v ? v.currentTime : 0;
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
-        // A manual per-clip frame position pins the box; otherwise it follows the focus track.
+        // While dragging, the box tracks the pointer; else a manual per-clip
+        // position pins it; else it follows the focus track.
         const manual = seg && seg.manual_focus_x != null ? seg.manual_focus_x : null;
-        const fx =
-          manual != null
+        const fx = draggingRef.current
+          ? dragXRef.current
+          : manual != null
             ? manual
             : seg && path
               ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))]
@@ -265,11 +289,44 @@ function CropFrame({
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [srcW, srcH, crop, segments, videoRef, focusPreset]);
+    const onMove = (e: PointerEvent) => {
+      if (draggingRef.current) {
+        e.preventDefault();
+        applyPointer(e.clientX);
+      }
+    };
+    const onUp = () => {
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        onManualXRef.current?.(dragXRef.current); // commit once (cache patch + debounced save)
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [srcW, srcH, crop, segments, videoRef, focusPreset]); // eslint-disable-line react-hooks/exhaustive-deps
+  const draggable = Boolean(onManualX);
   // Zones live inside the 9:16 crop window, so they track the real output frame.
   return (
-    <div ref={ref} className="crop-9x16">
+    <div
+      ref={ref}
+      className={`crop-9x16${draggable ? " crop-9x16--draggable" : ""}`}
+      style={draggable ? { pointerEvents: "auto", cursor: "grab", touchAction: "none" } : undefined}
+      title={draggable ? "Перетащи рамку, чтобы задать кадр вручную (плей/стоп — кнопками под превью)" : undefined}
+      onPointerDown={
+        draggable
+          ? (e) => {
+              draggingRef.current = true;
+              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+              applyPointer(e.clientX);
+            }
+          : undefined
+      }
+    >
       {showBanner ? (
         <div className="safe-zone safe-zone--banner" style={{ top: `${bannerPosPct}%`, height: `${bannerHeightPct}%` }}>
           <span>Баннер</span>
@@ -676,6 +733,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 showSubs={showZones && subsOn}
                 subPosPct={subPosPct}
                 focusPreset={source.focus_preset}
+                onManualX={activePlan ? (x) => saveManualFocus(activePlan.id, x) : undefined}
+                mirror={mirror}
               />
             </div>
             <div className="editor-stage-meta mono">
