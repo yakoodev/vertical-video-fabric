@@ -43,6 +43,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
   const [presetId, setPresetId] = useState(0);
   const [useTranscript, setUseTranscript] = useState(true);
   const [insets, setInsets] = useState<Insets>(FULL_FRAME);
+  const [showFailed, setShowFailed] = useState(false);
 
   const presetsQuery = useQuery({ queryKey: qk.promptPresets, queryFn: promptsApi.list });
   const analysisPresets = (presetsQuery.data ?? []).filter((p) => p.task === "analysis");
@@ -271,9 +272,12 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
           {!source.analyses.length ? (
             <EmptyState icon="🧠" title="Анализов ещё нет" hint="Запустите анализ выше — он найдёт моменты для клипов" />
           ) : (
-            [...source.analyses]
-              .sort((a, b) => b.id - a.id)
-              .map((a) => {
+            (() => {
+              const FAILED = new Set(["failed", "cancelled", "error", "needs_reauth"]);
+              const sorted = [...source.analyses].sort((a, b) => b.id - a.id);
+              const primary = sorted.filter((a) => !FAILED.has(a.status));
+              const failed = sorted.filter((a) => FAILED.has(a.status));
+              const card = (a: (typeof sorted)[number]) => {
                 const count = (source.clip_plans ?? []).filter((p) => p.analysis_id === a.id).length;
                 return (
                   <div key={a.id} className="analysis-card">
@@ -310,7 +314,27 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                     )}
                   </div>
                 );
-              })
+              };
+              return (
+                <>
+                  {primary.length ? primary.map(card) : (
+                    <span className="muted" style={{ fontSize: 13 }}>Успешных анализов пока нет.</span>
+                  )}
+                  {failed.length ? (
+                    <>
+                      <button
+                        className="btn ghost sm"
+                        style={{ alignSelf: "flex-start" }}
+                        onClick={() => setShowFailed((v) => !v)}
+                      >
+                        {showFailed ? "Скрыть упавшие" : `Показать упавшие (${failed.length})`}
+                      </button>
+                      {showFailed ? failed.map(card) : null}
+                    </>
+                  ) : null}
+                </>
+              );
+            })()
           )}
         </div>
       </div>
