@@ -21,11 +21,12 @@ from app.video_crop import build_reframe_x_expr
 
 def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     """Build a smoothed crop-x expression for a segment, or None when smart
-    reframing is off, there's no framing to apply, or the source has no
-    horizontal slack (already ≤ the target aspect).
+    reframing is off, there's no focus track, or the source has no horizontal
+    slack (already ≤ the target aspect).
 
-    A per-clip manual horizontal position (``manual_focus_x``, full-frame 0..1)
-    overrides the autofocus track with a fixed frame when the user set one.
+    The focus track is the single source of truth for framing — from autofocus
+    or the user's manual keyframes / drag. A one-shot manual frame is written as
+    a constant track (see the candidates UI), so it never fights the keyframes.
     """
     if not preset.get("smart_reframe"):
         return None
@@ -47,28 +48,10 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
             fx = (fx - float(crop["x"])) / (float(crop["w"]) or 1.0)
         return min(1.0, max(0.0, fx))
 
-    manual_x = segment.get("manual_focus_x")
-    if manual_x is not None:
-        try:
-            mx = remap_x(float(manual_x))
-        except (TypeError, ValueError):
-            return None
-        # A fixed frame: hold the same x for the whole segment.
-        remapped: list[dict] = [{"t": 0.0, "x": mx}, {"t": max(0.01, duration), "x": mx}]
-        cfg = get_focus_preset(source.get("focus_preset"))
-        return build_reframe_x_expr(
-            remapped,
-            duration,
-            out_w,
-            smooth_time=float(cfg["smooth_time"]),
-            rubber=float(cfg["rubber"]),
-            deadzone=float(cfg["deadzone"]),
-        )
-
     focus = segment.get("focus") or []
     if not focus:
         return None
-    remapped = []
+    remapped: list[dict] = []
     for point in focus:
         try:
             fx = float(point["x"])

@@ -269,16 +269,13 @@ function CropFrame({
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
-        // While dragging, the box tracks the pointer; else a manual per-clip
-        // position pins it; else it follows the focus track.
-        const manual = seg && seg.manual_focus_x != null ? seg.manual_focus_x : null;
+        // While dragging, the box tracks the pointer; otherwise it follows the
+        // focus track (which carries autofocus, keyframes, or a fixed frame).
         const fx = draggingRef.current
           ? dragXRef.current
-          : manual != null
-            ? manual
-            : seg && path
-              ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))]
-              : 0.5;
+          : seg && path
+            ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))]
+            : 0.5;
         const lc = Math.min(Math.max(fx - fw / 2, 0), 1 - fw);
         const tc = Math.min(Math.max(0.5 - fh / 2, 0), 1 - fh);
         el.style.left = `${(c.x + lc * c.w) * 100}%`;
@@ -628,16 +625,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onSettled: () => qc.invalidateQueries({ queryKey: qk.source(sourceId) }),
   });
 
-  // Manual per-clip frame: patch the cache immediately (so the preview box moves
-  // live) and persist to the plan's segments after a short debounce.
+  // Manual "fixed frame": write a CONSTANT focus track to the plan's segments
+  // via the same focus-points system autofocus uses — so it never fights the
+  // per-segment keyframe editor (which it used to override). Patch the cache
+  // immediately (preview moves live), persist after a short debounce.
   const manualSaveTimer = useRef<number | null>(null);
-  const saveManualFocus = (planId: number, x: number | null) => {
+  const constTrack = (seg: AiSegment, cx: number): FocusPoint[] => [
+    { t: 0, x: cx },
+    { t: Math.max(0.01, seg.end_sec - seg.start_sec), x: cx },
+  ];
+  const setFixedFrame = (planId: number, x: number) => {
     const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
+    const segs = prev?.clip_plans.find((p) => p.id === planId)?.segments ?? [];
+    if (!segs.length) return;
+    const cx = Math.min(1, Math.max(0, x));
+    const ids = new Set(segs.map((s) => s.id));
     if (prev) {
-      const plan = prev.clip_plans.find((p) => p.id === planId);
-      const ids = new Set((plan?.segments ?? []).map((s) => s.id));
-      const patch = <T extends { id: number; manual_focus_x?: number | null }>(seg: T): T =>
-        ids.has(seg.id) ? { ...seg, manual_focus_x: x } : seg;
+      const patch = (seg: AiSegment): AiSegment => (ids.has(seg.id) ? { ...seg, focus: constTrack(seg, cx) } : seg);
       qc.setQueryData<SourceDetail>(qk.source(sourceId), {
         ...prev,
         segments: prev.segments.map(patch),
@@ -646,9 +650,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     }
     if (manualSaveTimer.current) window.clearTimeout(manualSaveTimer.current);
     manualSaveTimer.current = window.setTimeout(() => {
-      clipPlansApi
-        .setFocus(planId, x)
-        .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить рамку"));
+      segs.forEach((seg) =>
+        segmentsApi
+          .setFocus(seg.id, constTrack(seg, cx))
+          .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить рамку")),
+      );
     }, 350);
   };
 
@@ -777,7 +783,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 showSubs={showZones && subsOn}
                 subPosPct={subPosPct}
                 focusPreset={source.focus_preset}
-                onManualX={activePlan ? (x) => saveManualFocus(activePlan.id, x) : undefined}
+                onManualX={activePlan ? (x) => setFixedFrame(activePlan.id, x) : undefined}
                 mirror={mirror}
               />
             </div>
@@ -815,33 +821,35 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </div>
           {activePlan
             ? (() => {
-                const mx = activePlan.segments.find((s) => s.manual_focus_x != null)?.manual_focus_x ?? null;
+                const fx = activePlan.segments[0]?.focus ?? [];
+                const constant = fx.length > 0 && fx.every((p) => Math.abs(p.x - fx[0].x) < 0.001);
+                const mx = constant ? fx[0].x : null;
                 return (
                   <div
                     className="manual-frame"
                     style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}
                   >
-                    <span className="muted" style={{ fontSize: 12 }}>Рамка вручную:</span>
+                    <span className="muted" style={{ fontSize: 12 }}>Фикс. рамка:</span>
                     <input
                       type="range"
                       min={0}
                       max={100}
                       step={1}
                       value={Math.round((mx ?? 0.5) * 100)}
-                      onChange={(e) => saveManualFocus(activePlan.id, Number(e.target.value) / 100)}
+                      onChange={(e) => setFixedFrame(activePlan.id, Number(e.target.value) / 100)}
                       style={{ width: 170 }}
-                      title="Горизонтальная позиция кадра 9:16 — перебивает автофокус для этого клипа"
+                      title="Зафиксировать кадр 9:16 по горизонтали (или тащи рамку на превью). Пишет точки фокуса, не конфликтует с кейфреймами."
                     />
-                    <span className="mono" style={{ fontSize: 12, minWidth: 44 }}>
-                      {mx == null ? "авто" : `${Math.round(mx * 100)}%`}
+                    <span className="mono" style={{ fontSize: 12, minWidth: 52 }}>
+                      {mx == null ? "трек" : `${Math.round(mx * 100)}%`}
                     </span>
                     <button
                       className="btn ghost sm"
-                      disabled={mx == null}
-                      onClick={() => saveManualFocus(activePlan.id, null)}
-                      title="Вернуть автофокус"
+                      disabled={autofocus.isPending || !activePlan.segments.length}
+                      onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                      title="Пересчитать автофокус для этого клипа"
                     >
-                      Авто
+                      🎯 Авто
                     </button>
                   </div>
                 );
