@@ -55,6 +55,10 @@ AuthDep = Annotated[None, Depends(require_auth)]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.recover_interrupted_ai_analyses()
+    try:
+        store.dedup_unused_ffmpeg_presets()
+    except Exception:  # noqa: BLE001 - cleanup must never block startup
+        pass
     worker.start()
     try:
         yield

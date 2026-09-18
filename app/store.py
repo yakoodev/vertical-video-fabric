@@ -1636,6 +1636,27 @@ class AppStore:
         self.get_ffmpeg_preset(preset_id)
         self._delete_record("ffmpeg_presets", preset_id)
 
+    def dedup_unused_ffmpeg_presets(self) -> int:
+        """Remove duplicate render presets (same label), keeping the lowest id.
+        A later duplicate is only deleted when no rendered clip references it, so
+        history stays intact. Cleans up accidental repeat-saves (e.g. many
+        identical 'Music + cinematic')."""
+        rows = self.db.query_all("SELECT id, label FROM ffmpeg_presets ORDER BY id")
+        seen: set[str] = set()
+        removed = 0
+        for row in rows:
+            label = str(row["label"] or "").strip().lower()
+            if label in seen:
+                referenced = self.db.query_one(
+                    "SELECT COUNT(*) AS c FROM clips WHERE ffmpeg_preset_id = ?", (row["id"],)
+                )["c"]
+                if not referenced:
+                    self.db.execute("DELETE FROM ffmpeg_presets WHERE id = ?", (row["id"],))
+                    removed += 1
+            else:
+                seen.add(label)
+        return removed
+
     def create_banner(self, label: str, file_path: str | Path, **fields: Any) -> dict:
         values = _prepare_banner_fields({"label": label, "file_path": file_path, **fields}, partial=False)
         cur = self.db.execute(
