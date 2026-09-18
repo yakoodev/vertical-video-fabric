@@ -199,10 +199,27 @@ function AddSource() {
   );
 }
 
+type StatusGroup = "done" | "processing" | "error";
+const STATUS_GROUP: Record<string, StatusGroup> = {
+  ready: "done",
+  analyzed: "done",
+  analyzing: "processing",
+  downloading: "processing",
+  uploading: "processing",
+  queued: "processing",
+  rendering: "processing",
+  scheduling: "processing",
+  failed: "error",
+  error: "error",
+  needs_reauth: "error",
+};
+const statusGroup = (s: string): StatusGroup => STATUS_GROUP[s] ?? "processing";
+
 export function ProjectsPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
   const [pending, setPending] = useState<Source | null>(null);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusGroup | "all">("all");
 
   const del = useDeleteMutation<Source>({
     listKey: qk.sources,
@@ -213,11 +230,13 @@ export function ProjectsPage() {
 
   const sources = query.data ?? [];
   const q = search.trim().toLowerCase();
-  const filtered = q
-    ? sources.filter((s) =>
-        (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q),
-      )
-    : sources;
+  const counts: Record<string, number> = { all: sources.length, done: 0, processing: 0, error: 0 };
+  for (const s of sources) counts[statusGroup(s.status)] += 1;
+  const filtered = sources.filter(
+    (s) =>
+      (statusFilter === "all" || statusGroup(s.status) === statusFilter) &&
+      (!q || (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q)),
+  );
 
   return (
     <>
@@ -231,6 +250,26 @@ export function ProjectsPage() {
         <EmptyState icon="🎬" title="Пока нет проектов" hint="Загрузите видео или добавьте ссылку, чтобы начать" />
       ) : (
         <>
+          <div className="status-filter" style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            {(
+              [
+                ["all", "Все"],
+                ["processing", "Обработка"],
+                ["done", "Готово"],
+                ["error", "Ошибка"],
+              ] as const
+            ).map(([key, label]) =>
+              key === "all" || counts[key] ? (
+                <button
+                  key={key}
+                  className={`chip${statusFilter === key ? " active" : ""}`}
+                  onClick={() => setStatusFilter(key)}
+                >
+                  {label} {counts[key]}
+                </button>
+              ) : null,
+            )}
+          </div>
           {sources.length > 6 ? (
             <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
               <input
