@@ -11,7 +11,7 @@ import { MontagedTab } from "@/pages/workspace/MontagedTab";
 
 const TABS = [
   { seg: "source", label: "Исходник" },
-  { seg: "candidates", label: "Кандидаты" },
+  { seg: "candidates", label: "Моменты" },
   { seg: "clips", label: "Клипы" },
   { seg: "montaged", label: "Смонтированные" },
 ];

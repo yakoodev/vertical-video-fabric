@@ -84,7 +84,7 @@ export function ClipsTab({ sourceId }: { sourceId: string }) {
       origin="rendered"
       emptyIcon="✂️"
       emptyTitle="Клипов нет"
-      emptyHint="Отрендерите кандидатов на вкладке «Кандидаты»"
+      emptyHint="Отрендерите моменты на вкладке «Моменты»"
     />
   );
 }
