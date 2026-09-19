@@ -104,6 +104,12 @@ class AutomationService:
             if not plans:
                 raise RuntimeError("анализ не дал клипов")
 
+            if publish.get("ai_montage"):
+                self._update(run, message=f"🤖 ИИ-монтаж клипов ({len(plans)})…")
+                from app.ai.montage import montage_many
+
+                montage_many(self.store, [p["id"] for p in plans])  # best effort per clip
+
             self._update(run, status="rendering", message=f"Рендерю клипы (0/{len(plans)})…")
             clips: list[dict] = []
             for index, plan in enumerate(plans, start=1):

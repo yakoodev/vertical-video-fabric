@@ -36,7 +36,13 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
-from app.ai.montage import propose_montage
+from app.ai.montage import (
+    apply_montage,
+    latest_job_for_source,
+    propose_montage,
+    start_montage_job,
+    undo_montage,
+)
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
@@ -1465,6 +1471,7 @@ def ui_auto_start(
     interval_hours: Annotated[float, Form()] = 0,
     max_clips: Annotated[int, Form()] = 0,
     ai_metadata: Annotated[bool, Form()] = False,
+    ai_montage: Annotated[bool, Form()] = False,
 ) -> RedirectResponse:
     if not url.strip():
         raise HTTPException(status_code=400, detail="url is required")
@@ -1519,6 +1526,7 @@ def ui_auto_start(
             "interval_hours": interval_hours,
             "max_clips": max_clips,
             "ai_metadata": ai_metadata,
+            "ai_montage": ai_montage,
         },
     )
     return RedirectResponse(url="/auto", status_code=303)
@@ -2128,6 +2136,86 @@ def api_clip_plan_ai_montage(clip_plan_id: int, _auth: AuthDep, payload: AiMonta
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class AiMontageApplyRequest(BaseModel):
+    spec: dict
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/ai-montage/apply",
+    tags=["Clip file"],
+    summary="Apply an AI re-edit (the pre-AI clip file is kept for undo)",
+)
+def api_clip_plan_ai_montage_apply(clip_plan_id: int, payload: AiMontageApplyRequest, _auth: AuthDep) -> dict:
+    try:
+        spec, changes = apply_montage(store, clip_plan_id, payload.spec)
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"spec": spec, "changes": changes}
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/ai-montage/undo",
+    tags=["Clip file"],
+    summary="↩ Undo the AI re-edit: back to the clip as it was before",
+)
+def api_clip_plan_ai_montage_undo(clip_plan_id: int, _auth: AuthDep) -> dict:
+    try:
+        spec, changes = undo_montage(store, clip_plan_id)
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"spec": spec, "changes": changes}
+
+
+def _render_plan_own_settings(clip_plan_id: int) -> dict:
+    """Render a clip with its own saved settings (what the clip file says)."""
+    plan = store.get_clip_plan(clip_plan_id, include_segments=False)
+    kwargs = settings_to_render_kwargs(plan["render_settings"]) if plan.get("render_settings") else {}
+    return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
+
+
+class AiMontageBatchRequest(BaseModel):
+    clip_plan_ids: list[int] = Field(default_factory=list, description="пусто = все ★ избранные (не скрытые)")
+    goal: str = Field(default="", max_length=500)
+    render: bool = False
+
+
+@app.post(
+    "/api/sources/{source_id}/ai-montage-batch",
+    tags=["Clip file"],
+    summary="🤖 ИИ-монтаж for many clips in the background (applies, optionally renders)",
+)
+def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, _auth: AuthDep) -> dict:
+    try:
+        plans = store.list_clip_plans(source_id=source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    own = {p["id"] for p in plans}
+    ids = [i for i in payload.clip_plan_ids if i in own] or [
+        p["id"] for p in plans if p.get("favorite") and not p.get("hidden")
+    ]
+    if not ids:
+        raise HTTPException(status_code=400, detail="нет клипов: отметьте ★ избранные или передайте clip_plan_ids")
+    running = latest_job_for_source(source_id)
+    if running and running.get("status") == "running":
+        raise HTTPException(status_code=409, detail="ИИ-монтаж этого проекта уже идёт")
+    return start_montage_job(
+        store, source_id, ids, goal=payload.goal, render=_render_plan_own_settings if payload.render else None
+    )
+
+
+@app.get(
+    "/api/sources/{source_id}/ai-montage-batch",
+    tags=["Clip file"],
+    summary="Progress of the latest 🤖 ИИ-монтаж batch of this project (null if none)",
+)
+def api_source_ai_montage_batch_status(source_id: int, _auth: AuthDep) -> dict | None:
+    return latest_job_for_source(source_id)
 
 
 @app.post(

@@ -35,6 +35,7 @@ function StartAuto() {
   const [targets, setTargets] = useState<number[]>([]);
   const [useTranscript, setUseTranscript] = useState(true);
   const [aiMeta, setAiMeta] = useState(true);
+  const [aiMontage, setAiMontage] = useState(false);
 
   // Оформление клипов (зеркалит панель рендера в кандидатах).
   const [renderPresetId, setRenderPresetId] = useState(0);
@@ -136,6 +137,11 @@ function StartAuto() {
           />
         </label>
       </div>
+      <label className="switch" title="Перед рендером ИИ перемонтирует каждый клип: хук в начало, без пауз и воды (≈30–60 с на клип, ~центы)">
+        <input type="checkbox" checked={aiMontage} onChange={(e) => setAiMontage(e.target.checked)} />
+        <span className="switch-track" />
+        <span>🤖 ИИ-монтаж каждого клипа перед рендером</span>
+      </label>
       <label className="switch" title="Whisper-транскрипт в анализ — точнее границы и цитаты (для Gemini)">
         <input type="checkbox" checked={useTranscript} onChange={(e) => setUseTranscript(e.target.checked)} />
         <span className="switch-track" />
@@ -287,6 +293,7 @@ function StartAuto() {
               use_music: musicOn,
               music_track_id: trackId || undefined,
               ai_metadata: aiMeta,
+              ai_montage: aiMontage,
             })
           }
         >

@@ -2872,3 +2872,41 @@ button.task-link:disabled {
   gap: 4px;
 }
 .aim-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.ed-viewbar .btn.ed-undo-btn { margin-left: auto; height: 38px; }
+.ed-viewbar .btn.ed-undo-btn + .btn.ed-ai-btn { margin-left: 0; }
+
+/* 🤖 ИИ-монтаж всех ★ (Моменты) */
+.aib { display: grid; gap: 8px; }
+.btn.aib-btn {
+  border: 1px solid var(--accent);
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.22), rgba(160, 107, 255, 0.22));
+  color: var(--text);
+}
+.aib-form, .aib-job {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.aib-note { font-size: 11.5px; margin: 0; line-height: 1.4; }
+.aib-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.aib-x { border: 0; background: none; color: var(--text-dim); font-size: 18px; cursor: pointer; }
+.aib-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
+.aib-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.aib-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aib-item-st { color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.aib-item.done .aib-item-st { color: var(--success); }
+.aib-item.failed .aib-item-st { color: var(--danger); }
+.aib-item.thinking .aib-item-st, .aib-item.rendering .aib-item-st { color: var(--warn); }
+.aib-undo {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  border-radius: 6px;
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+}
+.aib-undo:hover { color: var(--text); border-color: var(--border-strong); }

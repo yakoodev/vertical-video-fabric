@@ -318,3 +318,172 @@ def propose_montage(
                                          + "\nИсправь и верни JSON целиком."}]},
         ]
     raise RuntimeError("ИИ не смог выдать корректный монтаж: " + "; ".join(problems[:5]))
+
+
+# ---- apply / undo / batch -------------------------------------------------
+
+_EDITABLE = ("schema", "title", "description", "notes", "favorite", "pieces", "render")
+
+
+def apply_montage(store: Any, clip_plan_id: int, spec: dict) -> tuple[dict, list[str]]:
+    """Apply an AI re-edit, keeping the pre-AI clip file for «↩ Откатить».
+
+    Only the FIRST AI edit is backed up: after «Ещё вариант» → apply again, the
+    undo still returns to the owner's own version, not to an earlier AI one.
+    """
+    from app.clip_spec import apply_spec
+
+    if store.get_clip_plan_montage_backup(clip_plan_id) is None:
+        current = export_spec(store, clip_plan_id)
+        store.set_clip_plan_montage_backup(clip_plan_id, {k: current[k] for k in _EDITABLE if k in current})
+    return apply_spec(store, clip_plan_id, spec)
+
+
+def undo_montage(store: Any, clip_plan_id: int) -> tuple[dict, list[str]]:
+    from app.clip_spec import apply_spec
+
+    backup = store.get_clip_plan_montage_backup(clip_plan_id)
+    if backup is None:
+        raise KeyError(f"no AI montage to undo for clip plan {clip_plan_id}")
+    own = {seg["id"] for seg in store.get_clip_plan(clip_plan_id).get("segments") or []}
+    # Pieces the AI dropped are no longer this clip's segments: restore them as
+    # new pieces with the same timecodes, title and framing.
+    pieces = []
+    for piece in backup.get("pieces") or []:
+        piece = dict(piece)
+        if piece.get("segment_id") not in own:
+            piece.pop("segment_id", None)
+        pieces.append(piece)
+    result = apply_spec(store, clip_plan_id, {**backup, "pieces": pieces})
+    store.set_clip_plan_montage_backup(clip_plan_id, None)
+    return result
+
+
+import threading  # noqa: E402 - batch section
+import time  # noqa: E402
+import uuid  # noqa: E402
+
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+BATCH_WORKERS = 3
+
+
+def montage_many(
+    store: Any,
+    clip_plan_ids: list[int],
+    goal: str = "",
+    render: Callable[[int], Any] | None = None,
+    progress: Callable[[dict], None] | None = None,
+    propose: Callable[..., dict] | None = None,
+    on_items: Callable[[list[dict]], None] | None = None,
+) -> list[dict]:
+    """Propose + apply (+ render) for several clips, 3 at a time. Never raises:
+    each clip's outcome is reported in its item."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    propose = propose or propose_montage
+    items = []
+    for pid in dict.fromkeys(int(p) for p in clip_plan_ids):
+        try:
+            title = store.get_clip_plan(pid, include_segments=False).get("title") or f"План #{pid}"
+        except KeyError:
+            title = f"План #{pid}"
+        items.append({"plan_id": pid, "title": title, "status": "queued"})
+    if on_items:
+        on_items(items)  # the live list: callers watch it fill in
+
+    def one(item: dict) -> None:
+        item["status"] = "thinking"
+        if progress:
+            progress(item)
+        try:
+            proposal = propose(store, item["plan_id"], goal=goal)
+            _, changes = apply_montage(store, item["plan_id"], proposal["spec"])
+            item.update(
+                total_before=proposal["diff"]["total_before"],
+                total_after=proposal["diff"]["total_after"],
+                pieces_after=len(proposal["diff"]["after"]),
+                changes=changes,
+                rationale=proposal.get("rationale") or [],
+            )
+            if render:
+                item["status"] = "rendering"
+                if progress:
+                    progress(item)
+                clip = render(item["plan_id"])
+                item["clip_id"] = (clip or {}).get("id") if isinstance(clip, dict) else None
+            item["status"] = "done"
+        except Exception as exc:  # noqa: BLE001 - one clip never stops the batch
+            item["status"] = "failed"
+            item["error"] = str(exc)[:300]
+        if progress:
+            progress(item)
+
+    with ThreadPoolExecutor(max_workers=max(1, min(BATCH_WORKERS, len(items) or 1))) as pool:
+        list(pool.map(one, items))
+    return items
+
+
+def start_montage_job(
+    store: Any, source_id: int, clip_plan_ids: list[int], goal: str = "", render: Callable[[int], Any] | None = None
+) -> dict:
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "source_id": source_id,
+        "goal": goal,
+        "render": render is not None,
+        "status": "running",
+        "started_at": time.time(),
+        "items": [],
+    }
+    with _JOBS_LOCK:
+        _JOBS[job["id"]] = job
+        # Keep the registry small: the newest 20 jobs are plenty to look back at.
+        for old in sorted(_JOBS.values(), key=lambda j: j["started_at"])[:-20]:
+            _JOBS.pop(old["id"], None)
+
+    def run() -> None:
+        def on_progress(_item: dict) -> None:
+            job["updated_at"] = time.time()
+
+        try:
+            items = montage_many(
+                store,
+                clip_plan_ids,
+                goal=goal,
+                render=render,
+                progress=on_progress,
+                on_items=lambda live: job.__setitem__("items", live),
+            )
+            job["items"] = items
+            job["status"] = "done"
+        except Exception as exc:  # noqa: BLE001
+            job["status"] = "failed"
+            job["error"] = str(exc)[:300]
+        job["finished_at"] = time.time()
+
+    # Items are visible (queued) immediately, and filled in as the workers go.
+    job["items"] = [{"plan_id": int(p), "status": "queued"} for p in dict.fromkeys(clip_plan_ids)]
+    threading.Thread(target=run, name=f"ai-montage-{job['id']}", daemon=True).start()
+    return job_view(job["id"])
+
+
+def job_view(job_id: str) -> dict:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            raise KeyError(f"ai montage job not found: {job_id}")
+        view = json.loads(json.dumps(job, default=str))
+    items = view.get("items") or []
+    view["done"] = sum(1 for i in items if i.get("status") in {"done", "failed"})
+    view["failed"] = sum(1 for i in items if i.get("status") == "failed")
+    view["total"] = len(items)
+    return view
+
+
+def latest_job_for_source(source_id: int) -> dict | None:
+    with _JOBS_LOCK:
+        jobs = [j for j in _JOBS.values() if j["source_id"] == source_id]
+    if not jobs:
+        return None
+    return job_view(max(jobs, key=lambda j: j["started_at"])["id"])

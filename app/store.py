@@ -1446,6 +1446,22 @@ class AppStore:
             "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
         )
 
+    def get_clip_plan_montage_backup(self, clip_plan_id: int) -> dict | None:
+        row = self.db.query_one("SELECT montage_backup_json FROM clip_plans WHERE id = ?", (clip_plan_id,))
+        if not row:
+            raise KeyError(f"clip plan not found: {clip_plan_id}")
+        try:
+            parsed = json.loads(row["montage_backup_json"] or "null")
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def set_clip_plan_montage_backup(self, clip_plan_id: int, spec: dict | None) -> None:
+        self.db.execute(
+            "UPDATE clip_plans SET montage_backup_json = ? WHERE id = ?",
+            (json.dumps(spec, ensure_ascii=False) if spec else "", clip_plan_id),
+        )
+
     def set_clip_plan_render_settings(self, clip_plan_id: int, settings: dict) -> dict:
         """Save one clip's own render settings (normalized — junk never lands in the DB)."""
         from app.clip_settings import normalize_render_settings
@@ -2796,6 +2812,7 @@ def _decode_plan_settings(plan: dict) -> dict:
     editor" from "nobody touched it" — only the latter falls back to the
     request's values.
     """
+    plan["has_montage_backup"] = bool(plan.pop("montage_backup_json", ""))
     raw = plan.pop("render_settings_json", None)
     settings = None
     if raw:

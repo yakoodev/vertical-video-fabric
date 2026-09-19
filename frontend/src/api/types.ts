@@ -119,6 +119,8 @@ export interface ClipPlan {
   hidden?: boolean | number;
   // Own render settings of this clip (null = never set up in the editor).
   render_settings?: RenderSettings | null;
+  /** A 🤖 ИИ-монтаж was applied and the previous version can be restored. */
+  has_montage_backup?: boolean;
 }
 
 export type TransitionType =

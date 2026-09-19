@@ -38,7 +38,7 @@ export function AiMontageDialog({
   const apply = useMutation({
     mutationFn: async (render: boolean) => {
       if (!proposal) throw new Error("нет предложения");
-      const res = await clipPlansApi.putSpec(clipPlanId, proposal.spec);
+      const res = await clipPlansApi.aiMontageApply(clipPlanId, proposal.spec);
       if (render) await clipPlansApi.render(clipPlanId);
       return { changes: res.changes, render };
     },

@@ -12,6 +12,7 @@ import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
+import { AiBatchPanel } from "@/pages/workspace/AiBatchPanel";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
@@ -1075,6 +1076,24 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               {source.original_filename || source.original_url || `Проект #${source.id}`}
             </span>
           </div>
+          {activePlan?.has_montage_backup ? (
+            <button
+              className="btn ed-undo-btn"
+              onClick={async () => {
+                try {
+                  await clipPlansApi.aiMontageUndo(activePlan.id);
+                  toast.success("Откатил к версии до ИИ-монтажа");
+                  await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                  setSettingsNonce((n) => n + 1);
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.message : "Не удалось откатить");
+                }
+              }}
+              title="Вернуть клип к версии до ИИ-монтажа"
+            >
+              ↩ Откатить ИИ-монтаж
+            </button>
+          ) : null}
           <button
             className="btn ed-ai-btn"
             disabled={!activePlan}
@@ -1206,6 +1225,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           >
             {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
           </button>
+          <AiBatchPanel sourceId={sourceId} favCount={favCount} />
           <p className="muted mo-stats-hint">
             ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть момент.
           </p>
