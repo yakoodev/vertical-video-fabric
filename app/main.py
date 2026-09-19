@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -2347,6 +2347,67 @@ def api_create_post_from_clip(clip_id: int, payload: ClipPostRequest, _auth: Aut
         )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ClipPostBatchRequest(BaseModel):
+    clip_ids: list[int]
+    targets: list[int]
+    privacy: Literal["public", "unlisted", "private"] = "public"
+    allow_comments: bool = True
+    # First post goes at start_at (empty = now); each next one interval_minutes later.
+    start_at: str = ""
+    interval_minutes: int = 0
+
+
+@app.post(
+    "/api/clips/posts-batch",
+    tags=["Posts"],
+    summary="Queue publication of several rendered clips, each with its own title",
+)
+def api_create_posts_batch(payload: ClipPostBatchRequest, _auth: AuthDep) -> dict:
+    """The last step of «анализ → избранное → настройка → рендер → публикация».
+
+    Every clip goes out under ITS OWN title and description (set on the clip), to
+    the same accounts. With an interval the posts are spread out — a burst of ten
+    uploads in one minute is exactly what platforms rate-limit and viewers skip.
+    A clip that can't be posted (not rendered, gone) is reported, not fatal.
+    """
+    if not payload.clip_ids:
+        raise HTTPException(status_code=400, detail="clip_ids cannot be empty")
+    if not payload.targets:
+        raise HTTPException(status_code=400, detail="choose at least one account")
+    if payload.interval_minutes < 0 or payload.interval_minutes > 7 * 24 * 60:
+        raise HTTPException(status_code=400, detail="interval_minutes must be 0..10080")
+    try:
+        start_text = _normalize_schedule_text(payload.start_at)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    start = datetime.strptime(start_text, "%Y-%m-%d %H:%M:%S") if start_text else None
+    jobs: list[dict] = []
+    skipped: list[dict] = []
+    for index, clip_id in enumerate(dict.fromkeys(payload.clip_ids)):
+        scheduled = ""
+        if start is not None or payload.interval_minutes:
+            base = start or datetime.now()
+            scheduled = (base + timedelta(minutes=index * payload.interval_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+            if start is None and index == 0:
+                scheduled = ""  # the first one goes right away
+        try:
+            clip = store.get_clip(clip_id)
+            jobs.append(
+                store.create_clip_post_job(
+                    clip_id,
+                    clip.get("title") or f"Клип #{clip_id}",
+                    clip.get("description") or "",
+                    payload.targets,
+                    payload.privacy,
+                    payload.allow_comments,
+                    scheduled_at=scheduled,
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            skipped.append({"clip_id": clip_id, "reason": str(exc)})
+    return {"jobs": jobs, "skipped": skipped}
 
 
 @app.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")

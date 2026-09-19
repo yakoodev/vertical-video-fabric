@@ -7,7 +7,18 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Badge, formatDuration } from "@/components/ui";
 
-export function ClipCard({ clip, actions }: { clip: Clip; actions?: ReactNode }) {
+export function ClipCard({
+  clip,
+  actions,
+  selected,
+  onSelect,
+}: {
+  clip: Clip;
+  actions?: ReactNode;
+  /** Batch selection (publish several): undefined = card is not selectable. */
+  selected?: boolean;
+  onSelect?: (next: boolean) => void;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const name = clip.title || `Клип #${clip.id}`;
@@ -32,12 +43,24 @@ export function ClipCard({ clip, actions }: { clip: Clip; actions?: ReactNode })
   };
 
   return (
-    <div className="panel clip-card">
+    <div className={`panel clip-card${selected ? " clip-card--selected" : ""}`}>
       <div className="clip-video">
-        <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
+        {/* The cover (if the clip has one) instead of a black first frame. */}
+        <video
+          src={`/media/clips/${clip.id}`}
+          poster={clip.cover_url ?? undefined}
+          controls
+          preload="metadata"
+          playsInline
+        />
         <span className="clip-ov clip-ov--status">
           <Badge status={clip.status} />
         </span>
+        {onSelect ? (
+          <label className="clip-ov clip-ov--select" title="Выбрать для публикации пачкой">
+            <input type="checkbox" checked={Boolean(selected)} onChange={(e) => onSelect(e.target.checked)} />
+          </label>
+        ) : null}
         {clip.published_targets_count ? (
           <span className="clip-ov clip-ov--pub">опубликовано: {clip.published_targets_count}</span>
         ) : null}
@@ -78,6 +101,17 @@ export function ClipCard({ clip, actions }: { clip: Clip; actions?: ReactNode })
         <span>{formatDuration(clip.duration_sec)}</span>
         {clip.width ? <span>· {clip.width}×{clip.height}</span> : null}
       </div>
+      {clip.qc ? (
+        <div
+          className={`clip-qc${clip.qc.ok ? " clip-qc--ok" : " clip-qc--warn"}`}
+          title={clip.qc.issues.length ? clip.qc.issues.map((i) => i.text).join("\n") : "Замечаний нет"}
+        >
+          {clip.qc.ok
+            ? "✓ качество в порядке"
+            : `⚠ ${clip.qc.issues.filter((i) => i.level === "warn").length} замечан.: ${clip.qc.issues.find((i) => i.level === "warn")?.text ?? ""}`}
+          {clip.qc.loudness_lufs != null ? <span className="mono"> · {clip.qc.loudness_lufs.toFixed(0)} LUFS</span> : null}
+        </div>
+      ) : null}
       {clip.error ? <div style={{ color: "var(--danger)", fontSize: 12.5 }}>{clip.error}</div> : null}
       {actions ? <div className="clip-actions">{actions}</div> : null}
     </div>

@@ -39,6 +39,17 @@ export interface Source {
   cut_strategy?: string;
 }
 
+/** Quality report of a finished render (app/render_qc.py). */
+export interface RenderQc {
+  ok: boolean;
+  duration_sec: number;
+  width: number;
+  height: number;
+  loudness_lufs: number | null;
+  true_peak_dbfs: number | null;
+  issues: { level: "warn" | "info"; code: string; text: string }[];
+}
+
 export interface Clip {
   id: number;
   source_id: number;
@@ -54,6 +65,8 @@ export interface Clip {
   error: string;
   posts_count?: number;
   published_targets_count?: number;
+  qc?: RenderQc | null;
+  cover_url?: string | null;
   origin?: string;
   created_at: string;
   updated_at: string;

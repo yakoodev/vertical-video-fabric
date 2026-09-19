@@ -17,6 +17,15 @@ export const clipsApi = {
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/clips/${id}`),
   rename: (id: number | string, title: string) => api.patch<Clip>(`/api/clips/${id}`, { title }),
   publish: (id: number | string, body: PublishRequest) => api.post<Job>(`/api/clips/${id}/posts`, body),
+  // Several clips at once, each under its own title, optionally spread out in time.
+  publishBatch: (body: {
+    clip_ids: number[];
+    targets: number[];
+    privacy?: string;
+    allow_comments?: boolean;
+    start_at?: string;
+    interval_minutes?: number;
+  }) => api.post<{ jobs: Job[]; skipped: { clip_id: number; reason: string }[] }>(`/api/clips/posts-batch`, body),
   // Pre-edited vertical clip → standalone clips library. The /ui endpoint 303s to
   // the clip page; we don't need the body, callers just invalidate the clips list.
   uploadEdited: (file: File, title = "", description = "") => {
