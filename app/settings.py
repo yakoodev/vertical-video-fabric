@@ -85,6 +85,8 @@ class Settings:
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()
         self.gemini_video_model = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash").strip()
+        # Cheap text-only model for publishing metadata (title/description/hashtags).
+        self.gemini_text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash").strip()
         self.gemini_transcribe_model = os.getenv(
             "GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite"
         ).strip()

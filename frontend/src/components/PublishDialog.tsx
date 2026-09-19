@@ -32,6 +32,16 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось опубликовать"),
   });
 
+  const suggest = useMutation({
+    mutationFn: () => clipsApi.publishMeta(clip.id),
+    onSuccess: (m) => {
+      setTitle(m.title);
+      setDescription([m.description, m.hashtags.join(" ")].filter(Boolean).join("\n\n"));
+      toast.success(m.has_transcript ? "Сгенерировано по речи клипа" : "Сгенерировано по описанию момента (транскрипта нет)");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сгенерировать"),
+  });
+
   const toggle = (id: number) =>
     setTargets((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
@@ -49,13 +59,25 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
           <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
         </div>
         <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
+          <div className="pub-gen">
+            <button
+              type="button"
+              className="btn sm pub-gen-btn"
+              disabled={suggest.isPending}
+              onClick={() => suggest.mutate()}
+              title="Заголовок, описание и хэштеги по речи и сути клипа (Gemini). Стиль — пресет «Публикация» в Настройках → Промпты."
+            >
+              {suggest.isPending ? "Генерирую…" : "✨ Сгенерировать"}
+            </button>
+            <span className="muted">заголовок · описание · хэштеги</span>
+          </div>
           <label className="field">
-            <span>Заголовок</span>
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <span>Заголовок <span className="muted mono">{title.length}/100</span></span>
+            <input className="input" maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label className="field">
             <span>Описание</span>
-            <textarea className="input" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+            <textarea className="input" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
           <div className="field">
             <span>Аккаунты</span>

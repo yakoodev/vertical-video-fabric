@@ -2811,3 +2811,10 @@ button.task-link:disabled {
 .ed-crumb-title { font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ed-crumb-src { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab.disabled { opacity: 0.4; cursor: not-allowed; }
+.pub-gen { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.btn.pub-gen-btn {
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.25), rgba(160, 107, 255, 0.25));
+  border: 1px solid var(--accent);
+  color: var(--text);
+}
+.btn.pub-gen-btn:hover:not(:disabled) { background: var(--accent-soft); box-shadow: var(--accent-glow); }

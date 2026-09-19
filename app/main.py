@@ -36,6 +36,7 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
+from app.ai.publish_meta import generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
 from app.video_crop import detect_content_crop
@@ -2326,6 +2327,20 @@ def api_rename_clip(clip_id: int, payload: ClipRenamePayload, _auth: AuthDep) ->
         return store.update_clip(clip_id, title=payload.title.strip())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/clips/{clip_id}/publish-meta",
+    tags=["Render"],
+    summary="Generate title, description and hashtags for a clip",
+)
+def api_clip_publish_meta(clip_id: int, _auth: AuthDep) -> dict:
+    try:
+        return generate_publish_metadata(store, clip_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Не удалось сгенерировать: {exc}") from exc
 
 
 @app.post(

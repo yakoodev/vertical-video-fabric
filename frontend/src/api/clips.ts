@@ -17,6 +17,12 @@ export const clipsApi = {
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/clips/${id}`),
   rename: (id: number | string, title: string) => api.patch<Clip>(`/api/clips/${id}`, { title }),
   publish: (id: number | string, body: PublishRequest) => api.post<Job>(`/api/clips/${id}/posts`, body),
+  /** AI title / description / hashtags from the clip's own transcript + moment. */
+  publishMeta: (id: number | string) =>
+    api.post<{ title: string; description: string; hashtags: string[]; model: string; has_transcript: boolean }>(
+      `/api/clips/${id}/publish-meta`,
+      {},
+    ),
   // Several clips at once, each under its own title, optionally spread out in time.
   publishBatch: (body: {
     clip_ids: number[];
