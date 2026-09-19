@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Navigate, Route, Routes, useParams, Link } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useParams, useSearchParams, Link } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { qk } from "@/api/keys";
 import { Badge, ErrorState, Loading, formatDuration } from "@/components/ui";
@@ -9,15 +9,23 @@ import { CandidatesTab } from "@/pages/workspace/CandidatesTab";
 import { ClipsTab } from "@/pages/workspace/ClipsTab";
 import { MontagedTab } from "@/pages/workspace/MontagedTab";
 
+// "Монтаж" is not a route of its own: it opens the clip editor inside the
+// moments tab (?clip=<id>), so it shares the moments' selection and settings.
 const TABS = [
   { seg: "source", label: "Исходник" },
   { seg: "candidates", label: "Моменты" },
+  { seg: "edit", label: "Монтаж" },
   { seg: "clips", label: "Клипы" },
   { seg: "montaged", label: "Смонтированные" },
 ];
 
 export function ProjectWorkspace() {
   const { sourceId = "" } = useParams();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  // In the clip editor the project chrome gets out of the way: the editor shows
+  // only its own «← Назад к моментам» bar.
+  const editing = location.pathname.endsWith("/candidates") && searchParams.has("clip");
   const query = useQuery({
     queryKey: qk.source(sourceId),
     queryFn: () => sourcesApi.get(sourceId),
@@ -27,15 +35,21 @@ export function ProjectWorkspace() {
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const source = query.data!;
+  const visible = source.clip_plans.filter((p) => !p.hidden);
+  const favorites = visible.filter((p) => p.favorite);
+  const editTarget = favorites[0] ?? visible[0];
   const tabCount = (seg: string): number =>
     seg === "candidates"
-      ? source.clip_plans.filter((p) => !p.hidden).length
-      : seg === "clips"
-        ? source.clips_count ?? source.clips.length
-        : 0;
+      ? visible.length
+      : seg === "edit"
+        ? favorites.length
+        : seg === "clips"
+          ? source.clips_count ?? source.clips.length
+          : 0;
 
   return (
     <>
+      {editing ? null : (
       <div className="ws-head">
         <Link to="/projects" className="ws-back">
           ← Все проекты
@@ -49,6 +63,25 @@ export function ProjectWorkspace() {
         <nav className="pipeline">
           {TABS.map((tab, i) => {
             const n = tabCount(tab.seg);
+            if (tab.seg === "edit") {
+              return editTarget ? (
+                <Link
+                  key={tab.seg}
+                  to={`/projects/${sourceId}/candidates?clip=${editTarget.id}`}
+                  className="tab"
+                  title={favorites.length ? "Монтаж избранных моментов" : "Отметьте ★ моменты — здесь будут они"}
+                >
+                  <span className="tab-no">{String(i + 1).padStart(2, "0")}</span>
+                  <span>{tab.label}</span>
+                  {n ? <span className="tab-count">· {n} ★</span> : null}
+                </Link>
+              ) : (
+                <span key={tab.seg} className="tab disabled" title="Сначала запустите анализ — монтировать пока нечего">
+                  <span className="tab-no">{String(i + 1).padStart(2, "0")}</span>
+                  <span>{tab.label}</span>
+                </span>
+              );
+            }
             return (
               <NavLink
                 key={tab.seg}
@@ -63,6 +96,7 @@ export function ProjectWorkspace() {
           })}
         </nav>
       </div>
+      )}
 
       <Routes>
         <Route index element={<Navigate to="source" replace />} />

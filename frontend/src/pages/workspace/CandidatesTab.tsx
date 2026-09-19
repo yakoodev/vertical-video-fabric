@@ -1042,28 +1042,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           }}
         />
       ) : null}
-      <div className="ed-viewbar">
-        {view === "editor" ? (
+      {view === "editor" ? (
+        <div className="ed-viewbar">
           <button className="btn ed-back" onClick={backToMoments} title="Вернуться к списку моментов (или кнопка «Назад» браузера)">
             <span className="ed-back-arrow" aria-hidden>←</span>
             Назад к моментам
           </button>
-        ) : null}
-        <button
-          className={`ed-viewchip${view === "triage" ? " active" : ""}`}
-          onClick={() => (view === "editor" ? backToMoments() : undefined)}
-        >
-          🗂 Моменты · {plans.length}
-        </button>
-        <button
-          className={`ed-viewchip${view === "editor" ? " active" : ""}`}
-          disabled={!activePlan}
-          onClick={() => openEditor(activePlan?.id)}
-          title={activePlan ? "" : "Выберите момент, чтобы открыть редактор"}
-        >
-          ✂️ Редактор{activePlan ? `: ${activePlan.title || "клип"}` : ""}
-        </button>
-      </div>
+          <div className="ed-crumb">
+            <span className="ed-crumb-title">{activePlan?.title || (activePlan ? `План #${activePlan.id}` : "")}</span>
+            <span className="ed-crumb-src muted">
+              {source.original_filename || source.original_url || `Проект #${source.id}`}
+            </span>
+          </div>
+        </div>
+      ) : null}
       {view === "triage" && (
       <>
       <div className="mo-top">
