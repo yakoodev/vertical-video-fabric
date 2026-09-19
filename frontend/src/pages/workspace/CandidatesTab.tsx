@@ -244,6 +244,80 @@ function focusXAt(seg: AiSegment | undefined, t: number): number {
   return x;
 }
 
+type InsertPreview = {
+  at: number;
+  duration: number;
+  mode: "full" | "pip" | "sound";
+  label: string;
+  volume: number;
+  el: HTMLImageElement | HTMLVideoElement | HTMLAudioElement | null;
+};
+
+// Clip time of a source time for back-to-back pieces (null outside the clip).
+function clipTimeOf(segments: AiSegment[], cur: number): number | null {
+  let t = 0;
+  for (const s of segments) {
+    if (cur >= s.start_sec && cur <= s.end_sec) return t + (cur - s.start_sec);
+    t += s.end_sec - s.start_sec;
+  }
+  return null;
+}
+
+// Mirror of the render pass (app/montage_assets.py): full = letterboxed over the
+// whole 9:16 frame, pip = a window in the upper part, sound = just the audio.
+function drawInserts(
+  ctx: CanvasRenderingContext2D,
+  cv: HTMLCanvasElement,
+  inserts: InsertPreview[] | undefined,
+  segments: AiSegment[],
+  cur: number,
+  playing: boolean,
+) {
+  if (!inserts?.length) return;
+  const t = clipTimeOf(segments, cur);
+  for (const ins of inserts) {
+    const on = t != null && t >= ins.at && t < ins.at + ins.duration;
+    const media = ins.el;
+    const isAv = media instanceof HTMLMediaElement;
+    if (isAv) {
+      const m = media as HTMLMediaElement;
+      if (on && playing) {
+        m.volume = Math.min(1, ins.volume);
+        if (m.paused) {
+          m.currentTime = Math.max(0, (t ?? 0) - ins.at);
+          void m.play().catch(() => undefined);
+        }
+      } else if (!m.paused) {
+        m.pause();
+      }
+    }
+    if (!on) continue;
+    if (ins.mode === "sound" || media instanceof HTMLAudioElement || !media) {
+      ctx.fillStyle = "rgba(8,9,15,0.7)";
+      ctx.fillRect(10, cv.height - 44, cv.width - 20, 30);
+      ctx.fillStyle = "#ffc947";
+      ctx.font = "600 13px Inter, sans-serif";
+      ctx.fillText(`♪ ${ins.label}`.slice(0, 40), 18, cv.height - 24);
+      continue;
+    }
+    const w = media instanceof HTMLVideoElement ? media.videoWidth : (media as HTMLImageElement).naturalWidth;
+    const h = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight;
+    if (!w || !h) continue;
+    const boxW = ins.mode === "full" ? cv.width : cv.width * 0.82;
+    const boxH = ins.mode === "full" ? cv.height : cv.height * 0.42;
+    const k = Math.min(boxW / w, boxH / h);
+    const dw = w * k;
+    const dh = h * k;
+    const dx = (cv.width - dw) / 2;
+    const dy = ins.mode === "full" ? (cv.height - dh) / 2 : cv.height * 0.14;
+    if (ins.mode === "full") {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+    }
+    ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
+  }
+}
+
 function CropFrame({
   srcW,
   srcH,
@@ -259,6 +333,8 @@ function CropFrame({
   onManualX,
   mirror,
   phoneRef,
+  insertsPreview,
+  overlayRef,
 }: {
   srcW: number;
   srcH: number;
@@ -276,8 +352,15 @@ function CropFrame({
   // Optional canvas that receives the cropped 9:16 window every frame — a live
   // "phone" preview of exactly what the render will keep.
   phoneRef?: React.RefObject<HTMLCanvasElement>;
+  // «Файлы для монтажа» drawn on the phone at their clip seconds (preview of the render pass).
+  insertsPreview?: InsertPreview[];
+  // Separate unfiltered layer for the inserts: in the render they go on AFTER the
+  // look and the mirror, so the preview must not grade or flip them either.
+  overlayRef?: React.RefObject<HTMLCanvasElement>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const insertsRef = useRef(insertsPreview);
+  insertsRef.current = insertsPreview;
   const draggingRef = useRef(false);
   const dragXRef = useRef(0.5);
   // Refs so the drag handler always reads the latest callback/mirror without
@@ -344,6 +427,12 @@ function CropFrame({
             cv.width,
             cv.height,
           );
+          const ov = overlayRef?.current;
+          const octx = ov?.getContext("2d");
+          if (ov && octx) {
+            octx.clearRect(0, 0, ov.width, ov.height);
+            drawInserts(octx, ov, insertsRef.current, segments, cur, !v.paused);
+          }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -514,7 +603,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
+  const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
   const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
+  const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
   const triagePhoneRef = useRef<HTMLCanvasElement>(null);
@@ -1033,6 +1124,36 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       t += len;
     }
   };
+  // Preview media for the open clip's inserts (created once per file, reused).
+  const insertsPreview: InsertPreview[] = inserts.map((ins) => {
+    const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
+    let el = asset ? assetMediaRef.current.get(asset.id) ?? null : null;
+    if (asset && !el) {
+      if (asset.kind === "video") {
+        const vid = document.createElement("video");
+        vid.src = asset.url;
+        vid.loop = true;
+        vid.playsInline = true;
+        vid.preload = "auto";
+        el = vid;
+      } else if (asset.kind === "audio") {
+        el = new Audio(asset.url);
+      } else {
+        const img = new Image();
+        img.src = asset.url; // GIFs animate when drawn from an <img>
+        el = img;
+      }
+      assetMediaRef.current.set(asset.id, el);
+    }
+    return {
+      at: ins.at,
+      duration: ins.duration,
+      mode: asset?.kind === "audio" ? "sound" : ins.mode,
+      label: asset?.label ?? "файл удалён",
+      volume: ins.volume,
+      el,
+    };
+  });
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
   // with nothing starred yet, fall back to what the triage filters show.
@@ -1538,6 +1659,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   onManualX={activePlan ? (x) => setFixedFrame(activePlan.id, x) : undefined}
                   mirror={mirror}
                   phoneRef={phoneRef}
+                  insertsPreview={insertsPreview}
+                  overlayRef={phoneOverlayRef}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -1555,6 +1678,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     transform: mirror ? "scaleX(-1)" : undefined,
                   }}
                 />
+                <canvas ref={phoneOverlayRef} className="ed-phone-overlay" width={360} height={640} />
                 {selectedPreset?.vignette ? (
                   <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
                 ) : null}

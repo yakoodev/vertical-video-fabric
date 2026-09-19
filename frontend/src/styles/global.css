@@ -3174,3 +3174,4 @@ kbd {
 .ins-why { font-size: 11.5px; color: #e8d9a8; }
 .aim-ins { font-size: 13px; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); }
 .aim-ins ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.ed-phone-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
