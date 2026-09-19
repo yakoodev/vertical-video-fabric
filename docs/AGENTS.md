@@ -51,7 +51,8 @@ python tools/vvf.py sources
     "subs_on": true, "sub_id": 2, "sub_engine": "", "sub_pos_pct": 12,
     "banner_on": false, "banner_id": null, "banner_height_pct": 14, "banner_pos_pct": 4,
     "music_on": false, "track_id": null,
-    "transition": { "type": "fade", "duration": 0.35, "audio": "smooth", "sfx": "whoosh", "sfx_volume": 0.5 }
+    "transition": { "type": "fade", "duration": 0.35, "audio": "smooth", "sfx": "whoosh", "sfx_volume": 0.5 },
+    "cover": { "mode": "frame", "piece": 0, "offset": 2.4, "image": "", "burn": true, "burn_sec": 0.1 }
   },
   "renders": [ { "clip_id": 431, "status": "succeeded", "qc": { ... } } ]   // только чтение
 }
@@ -78,6 +79,10 @@ python tools/vvf.py sources
   - Типы: `cut`, `fade`, `fadeblack`, `fadewhite`, `flash`, `slide`, `smooth`, `wipe`, `zoom`, `dissolve`.
   - `audio`: `smooth` (звук перетекает, на резкой склейке нет щелчка) или `hard`.
   - `sfx` — звук на каждом стыке: `none`, `whoosh`, `click`, `pop`.
+- **Обложка** (`render.cover`):
+  - `mode`: `none`, `frame` — момент самого клипа (`piece` — номер куска с 0, `offset` — секунды от его начала), `image` — загруженная картинка (`POST /api/covers`, в `image` пишется имя, которое вернёт сервер).
+  - `burn: true` кладёт обложку на первые `burn_sec` секунд ролика (0.04–0.5): площадки, которые берут превью с первого кадра, покажут её.
+  - Готовая обложка лежит в `renders[].cover_url`.
 - **Не трогай** `clip_id`, `source`, `renders`: сервер их игнорирует.
 - **Не рендери всё подряд.** Рендер длинный. Меняй один клип, рендери, проверяй.
 
@@ -94,6 +99,7 @@ python tools/vvf.py sources
 - **Склейка разных сцен.** Встык даёт резкий перескок, `fadeblack` 0.3–0.5 с читается
   как «прошло время». Для мемного монтажа подходят `flash` или `zoom` со `sfx: whoosh`.
 - **Субтитры.** Для шортсов почти всегда включать: большинство смотрит без звука.
+- **Обложка.** Бери кадр с яркой эмоцией или самым смешным моментом, не первый попавшийся. Смотри кандидатов через `frame --x` и вшивай (`burn: true`).
 
 ## QC — что значит отчёт
 

@@ -19,6 +19,53 @@ from app.transitions import normalize_transition
 
 SUBTITLE_FRAME_HEIGHT = 1920
 
+COVER_MODES = ("none", "frame", "image")
+# Uploaded covers are stored under a generated name — only such names are accepted,
+# so a settings value can never point the renderer at an arbitrary file.
+COVER_NAME_CHARS = set("0123456789abcdef")
+
+
+def normalize_cover(raw: object) -> dict:
+    """Cover of the clip: none, a frame of the clip itself, or an uploaded image.
+
+    ``burn`` lays the cover over the first ``burn_sec`` of the video: platforms that
+    take the preview from the first frame then show it — the one trick that works
+    on every platform, including those with no cover upload in their API.
+    """
+    src = raw if isinstance(raw, dict) else {}
+    mode = src.get("mode") if src.get("mode") in COVER_MODES else "none"
+    try:
+        piece = max(0, int(src.get("piece", 0)))
+    except (TypeError, ValueError):
+        piece = 0
+    try:
+        offset = max(0.0, float(src.get("offset", 0.0)))
+    except (TypeError, ValueError):
+        offset = 0.0
+    image = src.get("image")
+    if not (
+        isinstance(image, str)
+        and image.endswith(".jpg")
+        and len(image) == 36
+        and set(image[:-4]) <= COVER_NAME_CHARS
+    ):
+        image = ""
+    try:
+        burn_sec = float(src.get("burn_sec", 0.1))
+    except (TypeError, ValueError):
+        burn_sec = 0.1
+    out = {
+        "mode": mode,
+        "piece": piece,
+        "offset": round(offset, 3),
+        "image": image,
+        "burn": _bool(src.get("burn", True)),
+        "burn_sec": min(0.5, max(0.04, burn_sec)),
+    }
+    if out["mode"] == "image" and not out["image"]:
+        out["mode"] = "none"
+    return out
+
 
 def _bool(value: object) -> bool:
     return value is True or value == 1 or value == "1" or value == "true"
@@ -58,6 +105,7 @@ def normalize_render_settings(raw: object) -> dict:
         "track_id": _opt_int(src.get("track_id")),
         "mirror": _bool(src.get("mirror")),
         "transition": normalize_transition(src.get("transition")),
+        "cover": normalize_cover(src.get("cover")),
     }
 
 
@@ -81,4 +129,5 @@ def settings_to_render_kwargs(settings: dict) -> dict:
         "music_track_id": s["track_id"] if s["music_on"] else None,
         "mirror": s["mirror"],
         "transition": s["transition"],
+        "cover": s["cover"],
     }

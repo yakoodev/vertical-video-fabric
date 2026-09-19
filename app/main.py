@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -907,6 +908,68 @@ def clip_media(clip_id: int, _auth: AuthDep) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="clip media not found")
     return FileResponse(path)
+
+
+@app.get("/media/clips/{clip_id}/cover", include_in_schema=False)
+def clip_cover_media(clip_id: int, _auth: AuthDep) -> FileResponse:
+    """The rendered clip's cover still (see app/cover.py)."""
+    try:
+        raw = store.get_clip_cover_path(clip_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="clip has no cover")
+    path = Path(raw)
+    try:
+        path.resolve(strict=False).relative_to(settings.clip_dir.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="cover not found") from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="cover not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+COVER_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
+
+@app.post("/api/covers", tags=["Render"], summary="Upload a cover image (fitted to 1080×1920 JPEG)")
+async def api_upload_cover(_auth: AuthDep, file: UploadFile = File(...)) -> dict:
+    """Store an uploaded picture as a cover. Normalised by ffmpeg into a 1080×1920
+    JPEG under a generated name — the only kind of name clip settings accept."""
+    covers = settings.data_dir / "covers"
+    covers.mkdir(parents=True, exist_ok=True)
+    data = await file.read(COVER_UPLOAD_MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="пустой файл")
+    if len(data) > COVER_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="картинка больше 20 МБ")
+    name = f"{uuid4().hex}.jpg"
+    raw = settings.tmp_dir / f"cover-upload-{name}.bin"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_bytes(data)
+    out = covers / name
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(raw),
+             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
+             "-frames:v", "1", "-q:v", "2", str(out)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    finally:
+        raw.unlink(missing_ok=True)
+    if proc.returncode != 0 or not out.exists():
+        raise HTTPException(status_code=400, detail="это не картинка (ffmpeg не смог её прочитать)")
+    return {"image": name, "url": f"/media/covers/{name}"}
+
+
+@app.get("/media/covers/{name}", include_in_schema=False)
+def cover_image_media(name: str, _auth: AuthDep) -> FileResponse:
+    if len(name) != 36 or not name.endswith(".jpg") or not set(name[:-4]) <= set("0123456789abcdef"):
+        raise HTTPException(status_code=404, detail="cover not found")
+    path = settings.data_dir / "covers" / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="cover not found")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @app.get("/media/banners/{banner_id}", include_in_schema=False)

@@ -6,7 +6,7 @@ import { clipPlansApi } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
 import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi, type FfmpegPreset } from "@/api/assets";
 import { qk } from "@/api/keys";
-import type { AiSegment, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
+import type { AiSegment, CoverSettings, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
@@ -212,6 +212,28 @@ const DEFAULT_TRANSITION: TransitionSettings = {
   sfx: "none",
   sfx_volume: 0.5,
 };
+
+const DEFAULT_COVER: CoverSettings = {
+  mode: "none",
+  piece: 0,
+  offset: 0,
+  image: "",
+  burn: true,
+  burn_sec: 0.1,
+};
+
+// Framing x of a piece at time t (seconds into the piece): the last track point
+// at or before t — what the cover preview crops to (the render smooths between
+// points, so this is close, not exact).
+function focusXAt(seg: AiSegment | undefined, t: number): number {
+  const pts = seg?.focus ?? [];
+  let x = 0.5;
+  for (const p of pts) {
+    if (p.t <= t) x = p.x;
+    else break;
+  }
+  return x;
+}
 
 function CropFrame({
   srcW,
@@ -591,6 +613,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // How the pieces of a multi-piece clip are joined, and the sound on the join.
   const [transition, setTransition] = useState<TransitionSettings>(DEFAULT_TRANSITION);
   const patchTransition = (next: Partial<TransitionSettings>) => setTransition((t) => ({ ...t, ...next }));
+  // Cover of the clip (see app/cover.py): a frame of the clip or an uploaded picture.
+  const [cover, setCover] = useState<CoverSettings>(DEFAULT_COVER);
+  const patchCover = (next: Partial<CoverSettings>) => setCover((c) => ({ ...c, ...next }));
+  const [coverUploading, setCoverUploading] = useState(false);
   // True while a clip's saved settings are being poured into the panel, so the
   // panel's own effects (autosave, subtitle position) don't react to it.
   const loadingSettingsRef = useRef(false);
@@ -653,6 +679,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     track_id: trackId || null,
     mirror,
     transition,
+    cover,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -704,6 +731,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       track_id: s.track_id ?? null,
       mirror: s.mirror,
       transition: { ...DEFAULT_TRANSITION, ...(s.transition ?? {}) },
+      cover: { ...DEFAULT_COVER, ...(s.cover ?? {}) },
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -720,6 +748,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setTrackId(s.track_id ?? 0);
     setMirror(s.mirror);
     setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
+    setCover({ ...DEFAULT_COVER, ...(s.cover ?? {}) });
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1655,6 +1684,137 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     onChange={(e) => patchTransition({ sfx_volume: Number(e.target.value) })}
                   />
                 </label>
+              ) : null}
+            </Group>
+
+            <Group
+              title="Обложка"
+              badge={cover.mode === "none" ? "нет" : cover.mode === "frame" ? "кадр" : "картинка"}
+            >
+              <div className="seg-toggle" role="radiogroup" aria-label="Источник обложки">
+                {([
+                  ["none", "Нет"],
+                  ["frame", "Кадр из клипа"],
+                  ["image", "Своя картинка"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={cover.mode === key}
+                    className={cover.mode === key ? "active" : ""}
+                    onClick={() => patchCover({ mode: key })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {cover.mode === "frame" && activePlan ? (() => {
+                const pieces = activePlan.segments;
+                const idx = Math.min(cover.piece, Math.max(0, pieces.length - 1));
+                const seg = pieces[idx];
+                const len = seg ? seg.end_sec - seg.start_sec : 0;
+                const off = Math.min(cover.offset, Math.max(0, len - 0.05));
+                const t = seg ? seg.start_sec + off : 0;
+                return (
+                  <>
+                    {pieces.length > 1 ? (
+                      <label className="field">
+                        <span>Кусок</span>
+                        <select
+                          className="input"
+                          value={idx}
+                          onChange={(e) => patchCover({ piece: Number(e.target.value), offset: 0 })}
+                        >
+                          {pieces.map((p, i) => (
+                            <option key={p.id} value={i}>
+                              {i + 1}. {p.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <label className="field">
+                      <span>Момент — {off.toFixed(1)} с от начала куска</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(0.1, len - 0.05)}
+                        step={0.1}
+                        value={off}
+                        onChange={(e) => patchCover({ offset: Number(e.target.value) })}
+                      />
+                    </label>
+                    {seg ? (
+                      <img
+                        className="cover-preview"
+                        alt="Кадр для обложки"
+                        src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&x=${focusXAt(seg, off).toFixed(3)}`}
+                      />
+                    ) : null}
+                    <p className="muted field-hint">В рендере кадр будет уже с цветом, субтитрами и баннером.</p>
+                  </>
+                );
+              })() : null}
+
+              {cover.mode === "image" ? (
+                <>
+                  <label className="btn cover-upload">
+                    {coverUploading ? "Загружаю…" : cover.image ? "Заменить картинку…" : "Выбрать картинку…"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      disabled={coverUploading}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!f) return;
+                        setCoverUploading(true);
+                        try {
+                          const res = await clipPlansApi.uploadCover(f);
+                          patchCover({ image: res.image });
+                        } catch (err) {
+                          toast.error(err instanceof ApiError ? err.message : "Не удалось загрузить картинку");
+                        } finally {
+                          setCoverUploading(false);
+                        }
+                      }}
+                    />
+                  </label>
+                  {cover.image ? (
+                    <img className="cover-preview" alt="Обложка" src={`/media/covers/${cover.image}`} />
+                  ) : (
+                    <p className="muted field-hint">Картинка подгонится под 1080×1920: заполнит кадр, лишнее обрежется.</p>
+                  )}
+                </>
+              ) : null}
+
+              {cover.mode !== "none" ? (
+                <>
+                  <label
+                    className="switch"
+                    title="Площадки, которые берут превью с первого кадра (Reels, лента TikTok), покажут обложку"
+                  >
+                    <input type="checkbox" checked={cover.burn} onChange={(e) => patchCover({ burn: e.target.checked })} />
+                    <span className="switch-track" />
+                    <span>Вшить первым кадром</span>
+                  </label>
+                  {cover.burn ? (
+                    <label className="field">
+                      <span>Сколько держать — {cover.burn_sec.toFixed(2)} с</span>
+                      <input
+                        type="range"
+                        min={0.04}
+                        max={0.5}
+                        step={0.02}
+                        value={cover.burn_sec}
+                        onChange={(e) => patchCover({ burn_sec: Number(e.target.value) })}
+                      />
+                    </label>
+                  ) : null}
+                </>
               ) : null}
             </Group>
 

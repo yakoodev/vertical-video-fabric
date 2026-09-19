@@ -36,6 +36,12 @@ export const clipPlansApi = {
   setRenderSettings: (clipPlanId: number, settings: RenderSettings) =>
     api.patch<ClipPlan>(`/api/clip-plans/${clipPlanId}/render-settings`, { settings }),
   transitionOptions: () => api.get<TransitionOptions>(`/api/render/transition-options`),
+  // Cover picture → fitted 1080×1920 JPEG on the server; returns its stored name.
+  uploadCover: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post<{ image: string; url: string }>(`/api/covers`, fd);
+  },
   // The clip file (vvf.clip/1): the whole clip as one document — see docs/AGENTS.md.
   getSpec: (clipPlanId: number) => api.get<Record<string, unknown>>(`/api/clip-plans/${clipPlanId}/spec`),
   validateSpec: (clipPlanId: number, spec: unknown) =>

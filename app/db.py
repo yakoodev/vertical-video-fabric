@@ -366,6 +366,9 @@ class Database:
             # Quality report of a finished render (black/frozen frames, silence,
             # loudness) — see app/render_qc.py.
             self._ensure_column(conn, "clips", "qc_json", "TEXT")
+            # Cover of the rendered clip (a still) and why it failed, if it did.
+            self._ensure_column(conn, "clips", "cover_path", "TEXT")
+            self._ensure_column(conn, "clips", "cover_error", "TEXT")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

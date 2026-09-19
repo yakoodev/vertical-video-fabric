@@ -57,6 +57,7 @@ def export_spec(store: AppStore, clip_plan_id: int) -> dict:
             "url": f"/media/clips/{c['id']}" if c["status"] == "succeeded" else None,
             "error": c.get("error") or None,
             "qc": c.get("qc"),
+            "cover_url": c.get("cover_url"),
             "finished_at": c.get("finished_at"),
         }
         for c in store.list_clips_for_plan(clip_plan_id)

@@ -16,8 +16,10 @@ from app.subtitles.ass import write_ass_subtitles
 from app.subtitles.contracts import SubtitleResult
 from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
 from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_timeline
+from app.clip_settings import normalize_cover
+from app.cover import build_burn_args, build_frame_args, build_image_args, cover_output_time
 from app.render_qc import run_qc
-from app.transitions import build_join_args, is_plain_concat, normalize_transition
+from app.transitions import build_join_args, effective_duration, is_plain_concat, normalize_transition
 from app.video_crop import build_reframe_x_expr
 
 
@@ -107,6 +109,7 @@ class ClipRenderService:
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
+        cover: dict | None = None,
     ) -> dict:
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
@@ -162,6 +165,10 @@ class ClipRenderService:
                 subtitle_profile_id=subtitle_profile_id,
             )
             temp_paths.extend(post_temps)
+            self._apply_cover(
+                clip["id"], render_id, final_output_path, preset, cover,
+                [float(segment["end_sec"]) - float(segment["start_sec"])], None,
+            )
             metadata = probe_media(final_output_path)
             _sha256, size_bytes = file_hash_and_size(final_output_path)
             clip = self.store.finish_clip_render(
@@ -217,6 +224,7 @@ class ClipRenderService:
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
         transition: dict | None = None,
+        cover: dict | None = None,
     ) -> dict:
         if not segment_ids:
             raise ValueError("at least one segment is required")
@@ -318,6 +326,10 @@ class ClipRenderService:
                 subtitle_profile_id=subtitle_profile_id,
             )
             temp_paths.extend(post_temps)
+            self._apply_cover(
+                clip["id"], render_id, final_output_path, preset, cover,
+                [float(seg["end_sec"]) - float(seg["start_sec"]) for seg in segments], join,
+            )
             metadata = probe_media(final_output_path)
             _sha256, size_bytes = file_hash_and_size(final_output_path)
             clip = self.store.finish_clip_render(
@@ -454,6 +466,58 @@ class ClipRenderService:
                 path.unlink(missing_ok=True)
             return clip
 
+    def _apply_cover(
+        self,
+        clip_id: int,
+        render_id: str,
+        video: Path,
+        preset: dict,
+        cover: dict | None,
+        durations: list[float],
+        join: dict | None,
+    ) -> Path | None:
+        """Make the clip's cover and, if asked, burn it in as the first frame.
+
+        A cover problem never fails the render: the clip is still good, it just
+        comes without a cover (the error is logged on the clip for the UI).
+        """
+        c = normalize_cover(cover)
+        if c["mode"] == "none":
+            return None
+        width = int(preset.get("output_width") or 1080)
+        height = int(preset.get("output_height") or 1920)
+        out = settings.clip_dir / f"{render_id}.cover.jpg"
+        try:
+            if c["mode"] == "frame":
+                overlap = effective_duration(join, durations) if join else 0.0
+                t = cover_output_time(durations, overlap, c["piece"], c["offset"])
+                _run_ffmpeg(build_frame_args(video, t, out), timeout=120)
+            else:
+                image = settings.data_dir / "covers" / c["image"]
+                if not image.exists():
+                    raise ValueError(f"cover image not found: {c['image']}")
+                _run_ffmpeg(build_image_args(image, width, height, out), timeout=120)
+            if c["burn"]:
+                burned = video.with_name(video.stem + ".cover.mp4")
+                extra = _json_dict(preset.get("extra_json"))
+                _run_ffmpeg(
+                    build_burn_args(
+                        video, out, burned,
+                        width=width, height=height, burn_sec=c["burn_sec"],
+                        video_codec=str(preset.get("video_codec") or "libx264"),
+                        video_bitrate=str(preset.get("video_bitrate") or "").strip(),
+                        crf=extra.get("crf"),
+                    ),
+                    timeout=60 * 20,
+                )
+                burned.replace(video)
+        except Exception as exc:  # noqa: BLE001 - the clip itself is fine
+            out.unlink(missing_ok=True)
+            self.store.set_clip_cover(clip_id, None, error=_safe_error(exc))
+            return None
+        self.store.set_clip_cover(clip_id, out)
+        return out
+
     def _attach_qc(self, clip: dict, path: Path, metadata) -> dict:
         """Quality report for a finished render (never fails the render itself)."""
         qc = run_qc(path, duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height)
@@ -477,6 +541,7 @@ class ClipRenderService:
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
         transition: dict | None = None,
+        cover: dict | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -499,6 +564,7 @@ class ClipRenderService:
                 banner_y_frac=banner_y_frac,
                 subtitle_margin_v=subtitle_margin_v,
                 mirror=mirror,
+                cover=cover,
             )
         else:
             clip = self.render_montage(
@@ -518,6 +584,7 @@ class ClipRenderService:
                 subtitle_margin_v=subtitle_margin_v,
                 mirror=mirror,
                 transition=transition,
+                cover=cover,
             )
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(

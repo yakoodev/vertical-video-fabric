@@ -1429,6 +1429,18 @@ class AppStore:
             )
         return self.get_clip_plan(clip_plan_id)
 
+    def set_clip_cover(self, clip_id: int, path, *, error: str | None = None) -> None:
+        self.db.execute(
+            "UPDATE clips SET cover_path = ?, cover_error = ? WHERE id = ?",
+            (str(path) if path else None, error, clip_id),
+        )
+
+    def get_clip_cover_path(self, clip_id: int) -> str | None:
+        row = self.db.query_one("SELECT cover_path FROM clips WHERE id = ?", (clip_id,))
+        if not row:
+            raise KeyError(f"clip not found: {clip_id}")
+        return row["cover_path"]
+
     def set_clip_qc(self, clip_id: int, qc: dict) -> None:
         self.db.execute(
             "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
@@ -2809,4 +2821,7 @@ def _decode_clip_qc(clip: dict) -> dict:
         if isinstance(parsed, dict):
             qc = parsed
     clip["qc"] = qc
+    # The cover is served by id, never by path: the path stays on the server.
+    clip["cover_url"] = f"/media/clips/{clip['id']}/cover" if clip.get("cover_path") else None
+    clip.pop("cover_path", None)
     return clip

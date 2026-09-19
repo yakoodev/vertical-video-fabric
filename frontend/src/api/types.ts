@@ -120,6 +120,16 @@ export interface TransitionSettings {
   sfx_volume: number;
 }
 
+/** Clip cover: a frame of the clip or an uploaded picture, optionally burned in first. */
+export interface CoverSettings {
+  mode: "none" | "frame" | "image";
+  piece: number;
+  offset: number;
+  image: string;
+  burn: boolean;
+  burn_sec: number;
+}
+
 /** Per-clip render settings — mirrors the editor's render panel one to one. */
 export interface RenderSettings {
   preset_id: number | null;
@@ -135,6 +145,7 @@ export interface RenderSettings {
   track_id: number | null;
   mirror: boolean;
   transition: TransitionSettings;
+  cover: CoverSettings;
 }
 
 export interface TransitionOptions {
