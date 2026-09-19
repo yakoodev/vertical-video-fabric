@@ -364,6 +364,27 @@ class Database:
             self._ensure_column(conn, "clip_plans", "montage_backup_json", "TEXT NOT NULL DEFAULT ''")
             # ✨ ИИ выбирает лучшие: {"score", "reason"} of an AI pick, shown on the card.
             self._ensure_column(conn, "clip_plans", "ai_pick_json", "TEXT NOT NULL DEFAULT ''")
+            # «Файлы для монтажа»: memes / reactions / sounds the AI may drop into clips.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS montage_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '',
+                    file_path TEXT NOT NULL,
+                    original_filename TEXT NOT NULL DEFAULT '',
+                    mime_type TEXT NOT NULL DEFAULT '',
+                    duration_sec REAL NOT NULL DEFAULT 0,
+                    width INTEGER NOT NULL DEFAULT 0,
+                    height INTEGER NOT NULL DEFAULT 0,
+                    has_audio INTEGER NOT NULL DEFAULT 0,
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             # Free-form notes of the clip file (why it is cut this way) — for the
             # human and for outside agents working through the clip file API.
             self._ensure_column(conn, "clip_plans", "notes", "TEXT NOT NULL DEFAULT ''")

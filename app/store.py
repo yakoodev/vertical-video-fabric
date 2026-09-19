@@ -1827,6 +1827,56 @@ class AppStore:
         self.get_banner(banner_id)
         self._delete_record("banners", banner_id)
 
+    # ---- «Файлы для монтажа» -------------------------------------------------
+
+    def create_montage_asset(self, **f: Any) -> dict:
+        cur = self.db.execute(
+            """
+            INSERT INTO montage_assets (kind, label, description, tags, file_path, original_filename,
+                                        mime_type, duration_sec, width, height, has_audio, size_bytes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f["kind"], str(f["label"]).strip()[:120] or "файл", str(f.get("description") or "")[:500],
+                str(f.get("tags") or "")[:200], str(f["file_path"]), f.get("original_filename") or "",
+                f.get("mime_type") or "", float(f.get("duration_sec") or 0), int(f.get("width") or 0),
+                int(f.get("height") or 0), int(bool(f.get("has_audio"))), int(f.get("size_bytes") or 0),
+            ),
+        )
+        return self.get_montage_asset(cur.lastrowid)
+
+    def list_montage_assets(self) -> list[dict]:
+        return [_decode_asset(dict(r)) for r in self.db.query_all("SELECT * FROM montage_assets ORDER BY id DESC")]
+
+    def get_montage_asset(self, asset_id: int) -> dict:
+        row = self.db.query_one("SELECT * FROM montage_assets WHERE id = ?", (asset_id,))
+        if not row:
+            raise KeyError(f"montage asset not found: {asset_id}")
+        return _decode_asset(dict(row))
+
+    def update_montage_asset(self, asset_id: int, **fields: Any) -> dict:
+        self.get_montage_asset(asset_id)
+        updates: dict[str, Any] = {}
+        if "label" in fields and str(fields["label"]).strip():
+            updates["label"] = str(fields["label"]).strip()[:120]
+        if "description" in fields:
+            updates["description"] = str(fields["description"] or "")[:500]
+        if "tags" in fields:
+            updates["tags"] = str(fields["tags"] or "")[:200]
+        if updates:
+            sets = ", ".join(f"{k} = ?" for k in updates)
+            self.db.execute(f"UPDATE montage_assets SET {sets} WHERE id = ?", (*updates.values(), asset_id))
+        return self.get_montage_asset(asset_id)
+
+    def delete_montage_asset(self, asset_id: int) -> dict:
+        asset = self.get_montage_asset(asset_id)
+        self.db.execute("DELETE FROM montage_assets WHERE id = ?", (asset_id,))
+        try:
+            Path(asset["file_path"]).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return asset
+
     def create_audio_track(self, label: str, file_path: str | Path, **fields: Any) -> dict:
         values = _prepare_audio_track_fields({"label": label, "file_path": file_path, **fields}, partial=False)
         cur = self.db.execute(
@@ -2809,6 +2859,12 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
         else:
             raise ValueError(f"unsupported subtitle profile field: {key}")
     return values
+
+
+def _decode_asset(asset: dict) -> dict:
+    asset["has_audio"] = bool(asset.get("has_audio"))
+    asset["url"] = f"/media/montage-assets/{asset['id']}"
+    return asset
 
 
 def _decode_plan_settings(plan: dict) -> dict:

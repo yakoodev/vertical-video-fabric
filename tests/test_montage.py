@@ -129,3 +129,26 @@ def test_montage_many_reports_each_clip_and_survives_failures(tmp_path, monkeypa
     by_id = {i["plan_id"]: i for i in items}
     assert by_id[plan["id"]]["status"] == "done" and rendered == [plan["id"]]
     assert by_id[other["id"]]["status"] == "failed" and "модель легла" in by_id[other["id"]]["error"]
+
+
+def test_ai_inserts_land_on_new_timeline_and_unknown_files_are_dropped():
+    spec = _spec()
+    spec["render"]["transition"] = {"type": "fade", "duration": 0.5, "sfx": "none"}
+    proposal = {
+        "pieces": [
+            {"source_piece": 0, "start_sec": 100, "end_sec": 110, "title": "A"},   # plays 0–10
+            {"source_piece": 1, "start_sec": 200, "end_sec": 208, "title": "B"},   # starts at 10 - 0.5 = 9.5
+        ],
+        "transition": {"type": "fade", "sfx": "none"},
+        "subtitles": True,
+        "cover": {"piece": 0, "offset": 1},
+        "rationale": ["мем на провал"],
+        "inserts": [
+            {"asset_id": 7, "piece": 1, "offset": 2, "duration": 1.5, "mode": "full", "reason": "bruh"},
+            {"asset_id": 999, "piece": 0, "offset": 1, "duration": 1, "mode": "sound", "reason": "выдумал"},
+        ],
+    }
+    out = to_spec(spec, proposal, library_ids={7})
+    ins = out["render"]["inserts"]
+    assert len(ins) == 1 and ins[0]["asset_id"] == 7
+    assert ins[0]["at"] == 11.5 and ins[0]["mode"] == "full" and ins[0]["reason"] == "bruh"

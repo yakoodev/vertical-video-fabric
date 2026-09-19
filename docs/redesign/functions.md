@@ -77,3 +77,6 @@ moving/regrouping is fine.
 - Editor: «🤖 ИИ-монтаж» dialog, «↩ Откатить ИИ-монтаж»; inspector footer rows: saved-state + «Зоны», «{ } Файл клипа» + «Ко всем ★», render (1) / Выбранные
 - Publish: «✨ Сгенерировать» (single), «✨ ИИ-заголовки…» toggle (batch + Авто); Авто: «🤖 ИИ-монтаж каждого клипа перед рендером»
 - Empty states with next-step buttons (Публикации, Авто, Клипы)
+- «Файлы для монтажа» /assets: drag-drop multi-upload (image/GIF/video/audio ≤300 MB), card preview, label, «когда уместно», tags (autosave on blur), delete (confirm); sidebar + palette entry
+- Editor «Вставки (мемы)» group: per insert file select, at (clip s), duration, mode (весь кадр / окном / звук), ⏱ сейчас, ▶ к месту, ✕; + Вставка на текущий момент; AI reason shown; «Ко всем ★» keeps each clip's own inserts
+- 🤖 ИИ-монтаж may add 0–3 inserts from the library (shown in «было → стало»)

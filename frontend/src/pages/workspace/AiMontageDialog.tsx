@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { montageAssetsApi } from "@/api/assets";
+import { qk } from "@/api/keys";
 import { clipPlansApi, type AiMontageProposal } from "@/api/clipPlans";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
@@ -28,6 +30,8 @@ export function AiMontageDialog({
   const toast = useToast();
   const [goal, setGoal] = useState("");
   const [proposal, setProposal] = useState<AiMontageProposal | null>(null);
+  const assets = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
+  const MODE: Record<string, string> = { full: "на весь кадр", pip: "окном", sound: "звук" };
 
   const propose = useMutation({
     mutationFn: () => clipPlansApi.aiMontage(clipPlanId, goal.trim()),
@@ -147,6 +151,21 @@ export function AiMontageDialog({
               {proposal.has_transcript ? "" : "⚠ транскрипта нет — монтаж вслепую · "}
               {proposal.model}
             </div>
+            {d.inserts?.length ? (
+              <div className="aim-ins">
+                <b>🧩 Вставки из «Файлов для монтажа»</b>
+                <ul>
+                  {d.inserts.map((ins, i) => (
+                    <li key={i}>
+                      <span className="mono">{formatDuration(ins.at)}</span> ·{" "}
+                      {assets.data?.find((a) => a.id === ins.asset_id)?.label ?? `файл #${ins.asset_id}`} ·{" "}
+                      {MODE[ins.mode] ?? ins.mode} · {ins.duration} с
+                      {ins.reason ? <span className="muted"> — {ins.reason}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {proposal.rationale.length ? (
               <ul className="aim-why">
                 {proposal.rationale.map((r, i) => (

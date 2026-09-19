@@ -53,8 +53,18 @@ RULES = f"""\
 - cover: номер НОВОГО куска и секунды от его начала — кадр с самой яркой эмоцией.
 - rationale: 2–5 коротких пунктов по-русски, что и зачем изменил.
 Если клип уже хорош — верни его почти без изменений и так и скажи в rationale.
+
+«Файлы для монтажа» (library): если библиотека дана, можешь вставить 0–3 файла в самые
+подходящие моменты (реакция на панчлайн, «bruh» на провал, мем-стоп-кадр). Вставка: asset_id из
+library, piece — номер НОВОГО куска (с 0), offset — секунды от начала этого куска, duration
+0.5–4 с (не длиннее самого файла, если это видео/звук), mode: full (мем на весь кадр), pip (окно
+поверх клипа) или sound (только звук), reason — зачем. Не вставляй ради вставки: только где
+файл по описанию реально усиливает момент; не перекрывай ключевую фразу мемом на весь кадр.
 Верни ТОЛЬКО JSON по схеме.
 """
+
+MAX_AI_INSERTS = 3
+MAX_LIBRARY = 60
 
 
 def _schema() -> dict[str, Any]:
@@ -85,6 +95,21 @@ def _schema() -> dict[str, Any]:
                 "required": ["piece", "offset"],
             },
             "rationale": {"type": "array", "items": {"type": "string"}},
+            "inserts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "asset_id": {"type": "integer"},
+                        "piece": {"type": "integer"},
+                        "offset": {"type": "number"},
+                        "duration": {"type": "number"},
+                        "mode": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["asset_id", "piece", "offset", "duration", "mode", "reason"],
+                },
+            },
         },
         "required": ["pieces", "transition", "subtitles", "cover", "rationale"],
         "propertyOrdering": ["pieces", "transition", "subtitles", "cover", "rationale"],
@@ -129,6 +154,19 @@ def build_context(store: Any, clip_plan_id: int) -> tuple[dict, dict]:
             }
         )
     last_qc = next((r.get("qc") for r in reversed(spec.get("renders") or []) if r.get("qc")), None)
+    library = []
+    if hasattr(store, "list_montage_assets"):
+        for a in store.list_montage_assets()[:MAX_LIBRARY]:
+            library.append(
+                {
+                    "asset_id": a["id"],
+                    "kind": a["kind"],
+                    "label": a["label"],
+                    "when": a.get("description") or "",
+                    "tags": a.get("tags") or "",
+                    "sec": round(float(a.get("duration_sec") or 0), 1),
+                }
+            )
     context = {
         "title": spec["title"],
         "description": spec["description"],
@@ -138,6 +176,8 @@ def build_context(store: Any, clip_plan_id: int) -> tuple[dict, dict]:
         "subtitles_on": spec["render"]["subs_on"],
         "last_render_qc": last_qc,
         "has_transcript": bool(cues),
+        "library": library,
+        "current_inserts": spec["render"].get("inserts") or [],
     }
     return spec, context
 
@@ -176,7 +216,40 @@ def carry_focus(spec: dict, start: float, end: float) -> list[dict] | None:
     return out
 
 
-def to_spec(spec: dict, proposal: dict) -> dict:
+def _inserts_on_timeline(pieces: list[dict], render: dict, raw: Any, library_ids: set[int] | None) -> list[dict]:
+    """Place the model's (piece, offset) inserts on the new clip's own timeline.
+
+    Pieces play back to back; a real transition overlaps neighbours by its
+    duration, so every later piece starts that much earlier.
+    """
+    from app.montage_assets import normalize_inserts
+
+    if not isinstance(raw, list) or not pieces:
+        return list(render.get("inserts") or [])
+    tr = render.get("transition") or {}
+    overlap = float(tr.get("duration") or 0) if tr.get("type") not in (None, "cut") and len(pieces) > 1 else 0.0
+    starts, t = [], 0.0
+    for p in pieces:
+        starts.append(t)
+        t += (p["end_sec"] - p["start_sec"]) - overlap
+    total = t + overlap
+    out = []
+    for item in raw[:MAX_AI_INSERTS]:
+        try:
+            aid = int(item["asset_id"])
+            k = min(len(pieces) - 1, max(0, int(item.get("piece", 0))))
+            at = starts[k] + max(0.0, float(item.get("offset", 0)))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if library_ids is not None and aid not in library_ids:
+            continue  # never reference a file the owner doesn't have
+        if at >= total - 0.3:
+            continue
+        out.append({**item, "asset_id": aid, "at": round(at, 2)})
+    return normalize_inserts(out)
+
+
+def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> dict:
     """Turn the model's answer into a full clip file (keeps render settings)."""
     old = spec["pieces"]
     used: set[int] = set()
@@ -224,6 +297,7 @@ def to_spec(spec: dict, proposal: dict) -> dict:
             }
         except (TypeError, ValueError):
             pass
+    render["inserts"] = _inserts_on_timeline(pieces, render, proposal.get("inserts"), library_ids)
     notes = "🤖 ИИ-монтаж:\n" + "\n".join(f"• {r}" for r in proposal.get("rationale") or [] if str(r).strip())
     return {
         "schema": spec["schema"],
@@ -257,6 +331,7 @@ def diff(old: dict, new: dict) -> dict:
         "transition": new["render"]["transition"]["type"],
         "sfx": new["render"]["transition"]["sfx"],
         "subtitles": new["render"]["subs_on"],
+        "inserts": new["render"].get("inserts") or [],
     }
 
 
@@ -291,7 +366,7 @@ def propose_montage(
         text = _extract_response_text(response)
         try:
             proposal = json.loads(text)
-            new_spec = to_spec(spec, proposal)
+            new_spec = to_spec(spec, proposal, {a["asset_id"] for a in context["library"]})
             problems = _in_windows(context, new_spec)
             if not problems:
                 validate_spec(store, clip_plan_id, new_spec)

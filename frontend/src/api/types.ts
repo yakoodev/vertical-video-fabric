@@ -163,6 +163,18 @@ export interface RenderSettings {
   mirror: boolean;
   transition: TransitionSettings;
   cover: CoverSettings;
+  /** «Файлы для монтажа» dropped into this clip (clip timeline seconds). */
+  inserts?: MontageInsert[];
+}
+
+export interface MontageInsert {
+  asset_id: number;
+  at: number;
+  duration: number;
+  mode: "full" | "pip" | "sound";
+  volume: number;
+  duck: boolean;
+  reason?: string;
 }
 
 export interface TransitionOptions {

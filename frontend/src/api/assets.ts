@@ -69,3 +69,35 @@ export const subtitleProfilesApi = {
   list: () => api.get<SubtitleProfile[]>("/api/subtitle-profiles"),
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/subtitle-profiles/${id}`),
 };
+
+// «Файлы для монтажа»: memes / reactions / stickers / sounds the AI montage may insert.
+export interface MontageAsset {
+  id: number;
+  kind: "image" | "gif" | "video" | "audio";
+  label: string;
+  description: string;
+  tags: string;
+  url: string;
+  original_filename: string;
+  duration_sec: number;
+  width: number;
+  height: number;
+  has_audio: boolean;
+  size_bytes: number;
+  created_at: string;
+}
+
+export const montageAssetsApi = {
+  list: () => api.get<MontageAsset[]>("/api/montage-assets"),
+  upload: (file: File, label = "", description = "", tags = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("label", label);
+    fd.append("description", description);
+    fd.append("tags", tags);
+    return api.form<MontageAsset>("/api/montage-assets", fd);
+  },
+  update: (id: number, patch: Partial<Pick<MontageAsset, "label" | "description" | "tags">>) =>
+    api.patch<MontageAsset>(`/api/montage-assets/${id}`, patch),
+  remove: (id: number) => api.del<{ deleted: boolean }>(`/api/montage-assets/${id}`),
+};

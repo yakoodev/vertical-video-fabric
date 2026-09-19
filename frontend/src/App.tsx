@@ -3,6 +3,7 @@ import { AppShell } from "@/components/AppShell";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
 import { ClipsPage } from "@/pages/ClipsPage";
+import { MontageAssetsPage } from "@/pages/MontageAssetsPage";
 import { AutomationPage } from "@/pages/AutomationPage";
 import { PublicationsPage } from "@/pages/PublicationsPage";
 import { AccountsPage } from "@/pages/AccountsPage";
@@ -34,6 +35,7 @@ export function App() {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:sourceId/*" element={<ProjectWorkspace />} />
         <Route path="clips" element={<ClipsPage />} />
+        <Route path="assets" element={<MontageAssetsPage />} />
         <Route path="automation" element={<AutomationPage />} />
         <Route path="publications" element={<PublicationsPage />} />
         <Route path="publications/:jobId" element={<PublicationsPage />} />

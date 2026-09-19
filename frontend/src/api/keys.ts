@@ -1,5 +1,6 @@
 // Single source of truth for query keys → predictable, narrow invalidation.
 export const qk = {
+  montageAssets: ["montage-assets"] as const,
   sources: ["sources"] as const,
   source: (id: number | string) => ["sources", String(id)] as const,
   sourceStats: (id: number | string) => ["sources", String(id), "stats"] as const,

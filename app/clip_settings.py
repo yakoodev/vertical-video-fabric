@@ -15,6 +15,8 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
+from app.montage_assets import normalize_inserts
+
 from app.transitions import normalize_transition
 
 SUBTITLE_FRAME_HEIGHT = 1920
@@ -106,6 +108,7 @@ def normalize_render_settings(raw: object) -> dict:
         "mirror": _bool(src.get("mirror")),
         "transition": normalize_transition(src.get("transition")),
         "cover": normalize_cover(src.get("cover")),
+        "inserts": normalize_inserts(src.get("inserts")),
     }
 
 

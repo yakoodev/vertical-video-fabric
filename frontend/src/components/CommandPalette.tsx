@@ -61,6 +61,7 @@ export function CommandPalette({
       { id: "queue", group: "Действия", label: "Открыть очередь задач", icon: "queue", run: go("/tasks") },
       { id: "p-projects", group: "Разделы", label: "Проекты", icon: "folder", run: go("/projects") },
       { id: "p-clips", group: "Разделы", label: "Клипы", icon: "scissors", run: go("/clips") },
+      { id: "p-assets", group: "Разделы", label: "Файлы для монтажа (мемы, звуки)", icon: "image", run: go("/assets") },
       { id: "p-pub", group: "Разделы", label: "Публикации", icon: "send", run: go("/publications") },
       { id: "p-auto", group: "Разделы", label: "Авто", icon: "zap", run: go("/automation") },
       { id: "p-acc", group: "Разделы", label: "Аккаунты", icon: "users", run: go("/accounts") },

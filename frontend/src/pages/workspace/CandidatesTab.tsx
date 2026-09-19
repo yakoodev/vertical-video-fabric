@@ -4,9 +4,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { clipPlansApi } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
-import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi, type FfmpegPreset } from "@/api/assets";
+import {
+  ffmpegPresetsApi,
+  bannersApi,
+  audioTracksApi,
+  subtitleProfilesApi,
+  montageAssetsApi,
+  type FfmpegPreset,
+} from "@/api/assets";
 import { qk } from "@/api/keys";
-import type { AiSegment, CoverSettings, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
+import type { AiSegment, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
@@ -507,6 +514,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
+  const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
   const triagePhoneRef = useRef<HTMLCanvasElement>(null);
@@ -617,6 +625,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const patchTransition = (next: Partial<TransitionSettings>) => setTransition((t) => ({ ...t, ...next }));
   // Cover of the clip (see app/cover.py): a frame of the clip or an uploaded picture.
   const [cover, setCover] = useState<CoverSettings>(DEFAULT_COVER);
+  // «Файлы для монтажа» placed in this clip (clip-timeline seconds).
+  const [inserts, setInserts] = useState<MontageInsert[]>([]);
   const patchCover = (next: Partial<CoverSettings>) => setCover((c) => ({ ...c, ...next }));
   const [coverUploading, setCoverUploading] = useState(false);
   // True while a clip's saved settings are being poured into the panel, so the
@@ -686,6 +696,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     mirror,
     transition,
     cover,
+    inserts,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -738,6 +749,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       mirror: s.mirror,
       transition: { ...DEFAULT_TRANSITION, ...(s.transition ?? {}) },
       cover: { ...DEFAULT_COVER, ...(s.cover ?? {}) },
+      inserts: s.inserts ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -755,6 +767,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setMirror(s.mirror);
     setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
     setCover({ ...DEFAULT_COVER, ...(s.cover ?? {}) });
+    setInserts(s.inserts ?? []);
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -776,7 +789,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       return;
     }
     const settings = panelSettings();
-    await Promise.all(targets.map((p) => saveSettings(p.id, settings)));
+    // Inserts are placed on each clip's own timeline — never copy them across.
+    await Promise.all(
+      targets.map((p) => saveSettings(p.id, { ...settings, inserts: p.render_settings?.inserts ?? [] })),
+    );
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
@@ -991,6 +1007,32 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  // Clip timeline ⇄ source time for the open clip (pieces play back to back).
+  const clipTimeNow = (): number => {
+    const segs = activePlan?.segments ?? [];
+    const cur = videoRef.current?.currentTime ?? 0;
+    let t = 0;
+    for (const s of segs) {
+      if (cur >= s.start_sec && cur <= s.end_sec) return Number((t + cur - s.start_sec).toFixed(1));
+      t += s.end_sec - s.start_sec;
+    }
+    return 0;
+  };
+  const seekClipTime = (clipT: number) => {
+    const segs = activePlan?.segments ?? [];
+    let t = 0;
+    for (const s of segs) {
+      const len = s.end_sec - s.start_sec;
+      if (clipT <= t + len) {
+        if (videoRef.current) {
+          videoRef.current.currentTime = s.start_sec + (clipT - t);
+          void videoRef.current.play();
+        }
+        return;
+      }
+      t += len;
+    }
+  };
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
   // with nothing starred yet, fall back to what the triage filters show.
@@ -1918,6 +1960,116 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     </label>
                   ) : null}
                 </>
+              ) : null}
+            </Group>
+
+            <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"}>
+              {!assetsQuery.data?.length ? (
+                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                  Библиотека пуста — закиньте мемы и звуки в{" "}
+                  <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
+                    «Файлы для монтажа»
+                  </a>
+                  . 🤖 ИИ-монтаж вставит подходящие сам.
+                </p>
+              ) : null}
+              {inserts.map((ins, i) => {
+                const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
+                const upd = (patchIns: Partial<MontageInsert>) =>
+                  setInserts((prev) => prev.map((x, j) => (j === i ? { ...x, ...patchIns } : x)));
+                return (
+                  <div key={i} className="ins-row">
+                    <select
+                      className="input"
+                      value={ins.asset_id}
+                      onChange={(e) => upd({ asset_id: Number(e.target.value) })}
+                    >
+                      {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
+                      {assetsQuery.data?.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label} · {a.kind}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="ins-grid">
+                      <label className="field">
+                        <span>с, от начала клипа</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={ins.at}
+                          onChange={(e) => upd({ at: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>длит., с</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0.3}
+                          max={8}
+                          step={0.1}
+                          value={ins.duration}
+                          onChange={(e) => upd({ duration: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>как</span>
+                        <select
+                          className="input"
+                          value={asset?.kind === "audio" ? "sound" : ins.mode}
+                          disabled={asset?.kind === "audio"}
+                          onChange={(e) => upd({ mode: e.target.value as MontageInsert["mode"], duck: e.target.value === "full" })}
+                        >
+                          <option value="full">на весь кадр</option>
+                          <option value="pip">окном</option>
+                          <option value="sound">только звук</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="ins-foot">
+                      <button type="button" className="btn sm" title="Поставить на текущий момент плеера" onClick={() => upd({ at: clipTimeNow() })}>
+                        ⏱ сейчас
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        title="Проиграть клип с этого места"
+                        onClick={() => seekClipTime(ins.at)}
+                      >
+                        ▶ к месту
+                      </button>
+                      <button type="button" className="btn ghost sm" title="Убрать вставку" onClick={() => setInserts((prev) => prev.filter((_, j) => j !== i))}>
+                        ✕
+                      </button>
+                    </div>
+                    {ins.reason ? <span className="ins-why">🤖 {ins.reason}</span> : null}
+                  </div>
+                );
+              })}
+              {assetsQuery.data?.length ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={inserts.length >= 6}
+                  onClick={() =>
+                    setInserts((prev) => [
+                      ...prev,
+                      {
+                        asset_id: assetsQuery.data![0].id,
+                        at: clipTimeNow(),
+                        duration: 1.5,
+                        mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
+                        volume: 1,
+                        duck: assetsQuery.data![0].kind !== "audio",
+                      },
+                    ])
+                  }
+                >
+                  + Вставка на текущий момент
+                </button>
               ) : null}
             </Group>
 

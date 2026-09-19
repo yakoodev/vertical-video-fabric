@@ -34,6 +34,7 @@ export interface AiMontageProposal {
     transition: string;
     sfx: string;
     subtitles: boolean;
+    inserts?: { asset_id: number; at: number; duration: number; mode: string; reason?: string }[];
   };
   rationale: string[];
   attempts: number;

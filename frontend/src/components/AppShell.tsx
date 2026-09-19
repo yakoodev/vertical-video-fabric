@@ -13,6 +13,7 @@ import { isActive } from "@/hooks/useActiveTasks";
 const NAV: { to: string; label: string; icon: string; badge?: "active" }[] = [
   { to: "/projects", label: "Проекты", icon: "folder" },
   { to: "/clips", label: "Клипы", icon: "scissors" },
+  { to: "/assets", label: "Файлы для монтажа", icon: "image" },
   { to: "/publications", label: "Публикации", icon: "send" },
   { to: "/automation", label: "Авто", icon: "zap" },
   { to: "/tasks", label: "Очередь", icon: "queue", badge: "active" },

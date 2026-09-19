@@ -44,6 +44,9 @@ from app.ai.montage import (
     undo_montage,
 )
 from app.ai.pick import pick_best
+from app.montage_assets import assets_dir as montage_assets_dir
+from app.montage_assets import kind_for as asset_kind_for
+from app.montage_assets import probe_asset as probe_montage_asset
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
@@ -2242,6 +2245,94 @@ def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -
                 render=_render_plan_own_settings if payload.render else None,
             )
     return result
+
+
+# ---- «Файлы для монтажа»: memes / reactions / sounds for the AI montage ------
+
+MAX_ASSET_BYTES = 300 * 1024 * 1024
+
+
+@app.get("/api/montage-assets", tags=["Montage assets"], summary="List the montage library")
+def api_list_montage_assets(_auth: AuthDep) -> list[dict]:
+    return store.list_montage_assets()
+
+
+@app.post("/api/montage-assets", tags=["Montage assets"], summary="Upload a meme / reaction / sound")
+async def api_upload_montage_asset(
+    _auth: AuthDep,
+    file: Annotated[UploadFile, File()],
+    label: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    tags: Annotated[str, Form()] = "",
+) -> dict:
+    safe_name = Path(file.filename or "asset").name
+    kind = asset_kind_for(safe_name, file.content_type or "")
+    if kind is None:
+        raise HTTPException(status_code=400, detail="нужна картинка, GIF, видео или звук")
+    dest = montage_assets_dir() / f"{uuid4().hex}-{safe_name}"
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_ASSET_BYTES:
+                    raise HTTPException(status_code=413, detail="файл больше 300 МБ — для мема многовато")
+                out.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+    meta = probe_montage_asset(dest)
+    return store.create_montage_asset(
+        kind=kind,
+        label=label.strip() or Path(safe_name).stem,
+        description=description,
+        tags=tags,
+        file_path=str(dest),
+        original_filename=safe_name,
+        mime_type=file.content_type or "",
+        size_bytes=size,
+        **meta,
+    )
+
+
+class MontageAssetPatch(BaseModel):
+    label: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    tags: str | None = Field(default=None, max_length=200)
+
+
+@app.patch("/api/montage-assets/{asset_id}", tags=["Montage assets"], summary="Rename / describe / tag a file")
+def api_patch_montage_asset(asset_id: int, payload: MontageAssetPatch, _auth: AuthDep) -> dict:
+    try:
+        return store.update_montage_asset(asset_id, **_payload_data(payload, exclude_none=True))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/api/montage-assets/{asset_id}", tags=["Montage assets"], summary="Delete a file from the library")
+def api_delete_montage_asset(asset_id: int, _auth: AuthDep) -> dict:
+    try:
+        store.delete_montage_asset(asset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
+@app.get("/media/montage-assets/{asset_id}", include_in_schema=False)
+def media_montage_asset(asset_id: int, _auth: AuthDep) -> FileResponse:
+    try:
+        asset = store.get_montage_asset(asset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    path = Path(asset["file_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="file missing")
+    return FileResponse(path, media_type=asset.get("mime_type") or None)
 
 
 @app.get(

@@ -593,6 +593,8 @@ class ClipRenderService:
                 transition=transition,
                 cover=cover,
             )
+        if clip["status"] == "succeeded":
+            clip = self._apply_inserts(clip, plan)
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
@@ -604,6 +606,41 @@ class ClipRenderService:
             "rendered" if clip["status"] == "succeeded" else "failed",
         )
         return clip
+
+    def _apply_inserts(self, clip: dict, plan: dict) -> dict:
+        """Overlay the clip's «Файлы для монтажа» inserts on the finished render.
+
+        One extra ffmpeg pass on the output file; a failure keeps the render
+        without inserts and says so in the clip's error, never loses the clip.
+        """
+        from app.montage_assets import build_inserts_args, normalize_inserts
+
+        inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
+        path = Path(clip.get("output_path") or "")
+        if not inserts or not path.exists():
+            return clip
+        assets = {}
+        for ins in inserts:
+            try:
+                assets[ins["asset_id"]] = self.store.get_montage_asset(ins["asset_id"])
+            except KeyError:
+                pass
+        try:
+            meta = probe_media(path)
+            has_audio = _has_audio_stream(path)
+            tmp = path.with_name(path.stem + ".inserts" + path.suffix)
+            args = build_inserts_args(
+                path, tmp, inserts, assets, meta.width, meta.height, meta.duration_sec, clip_has_audio=has_audio
+            )
+            if args is None:
+                return clip
+            _run_ffmpeg(args, timeout=60 * 20)
+            tmp.replace(path)
+            meta = probe_media(path)
+            clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
+            return self._attach_qc(clip, path, meta)
+        except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
+            return self.store.update_clip(clip["id"], error=f"вставки не наложены: {str(exc)[:200]}")
 
     def _render_subtitles(
         self,
@@ -1410,3 +1447,14 @@ def _source_looks_like_anime(source: dict) -> bool:
     original_filename = str(source.get("original_filename") or "").lower()
     haystack = f"{source_type} {original_url} {original_filename}"
     return any(marker in haystack for marker in ("smotvibe", "yummyani", "anime"))
+
+
+def _has_audio_stream(path: Path) -> bool:
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return bool(proc.stdout.strip())
