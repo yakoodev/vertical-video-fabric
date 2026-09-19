@@ -36,6 +36,7 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
+from app.ai.montage import propose_montage
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
@@ -2108,6 +2109,25 @@ def api_put_clip_spec(clip_plan_id: int, spec: Annotated[dict, Body()], _auth: A
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"spec": fresh, "changes": changes}
+
+
+class AiMontageRequest(BaseModel):
+    goal: str = Field(default="", max_length=500, description="пожелание: «короче», «больше мемности»…")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/ai-montage",
+    tags=["Clip file"],
+    summary="🤖 ИИ-монтаж: propose a re-edit of the clip (nothing is applied)",
+)
+def api_clip_plan_ai_montage(clip_plan_id: int, _auth: AuthDep, payload: AiMontageRequest | None = None) -> dict:
+    """Returns ``{spec, diff, rationale, attempts}``; apply with PUT …/spec."""
+    try:
+        return propose_montage(store, clip_plan_id, goal=(payload.goal if payload else ""))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post(

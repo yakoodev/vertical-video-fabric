@@ -87,6 +87,9 @@ class Settings:
         self.gemini_video_model = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash").strip()
         # Cheap text-only model for publishing metadata (title/description/hashtags).
         self.gemini_text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash").strip()
+        # 🤖 ИИ-монтаж reasons over timecodes and speech — defaults to the (smarter)
+        # analysis model; a few thousand tokens per clip.
+        self.gemini_montage_model = os.getenv("GEMINI_MONTAGE_MODEL", self.gemini_video_model).strip()
         self.gemini_transcribe_model = os.getenv(
             "GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite"
         ).strip()

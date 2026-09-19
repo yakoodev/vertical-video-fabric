@@ -11,6 +11,7 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
+import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
@@ -623,6 +624,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // «Файл клипа» dialog; bumping the nonce re-reads the clip's settings into the
   // panel after the file was applied (the file may have changed them).
   const [clipFileOpen, setClipFileOpen] = useState(false);
+  const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
@@ -1031,6 +1033,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   return (
     <div className="editor">
+      {aiMontageOpen && activePlan ? (
+        <AiMontageDialog
+          clipPlanId={activePlan.id}
+          clipTitle={activePlan.title || `План #${activePlan.id}`}
+          onClose={() => setAiMontageOpen(false)}
+          onApplied={async (changes, rendered) => {
+            toast.success(
+              (changes.length ? `ИИ-монтаж применён: ${changes.join(", ")}` : "Изменений нет") +
+                (rendered ? " · рендер запущен" : ""),
+            );
+            await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+            if (rendered) {
+              qc.invalidateQueries({ queryKey: qk.activeTasks });
+              qc.invalidateQueries({ queryKey: qk.clips(sourceId) });
+            }
+            setSettingsNonce((n) => n + 1);
+          }}
+        />
+      ) : null}
       {clipFileOpen && activePlan ? (
         <ClipFileDialog
           clipPlanId={activePlan.id}
@@ -1054,6 +1075,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               {source.original_filename || source.original_url || `Проект #${source.id}`}
             </span>
           </div>
+          <button
+            className="btn ed-ai-btn"
+            disabled={!activePlan}
+            onClick={async () => {
+              await flushSettings();
+              setAiMontageOpen(true);
+            }}
+            title="ИИ перемонтирует клип: хук в начало, без пауз и воды, переход, обложка — с предпросмотром «было → стало»"
+          >
+            🤖 ИИ-монтаж
+          </button>
         </div>
       ) : null}
       {view === "triage" && (

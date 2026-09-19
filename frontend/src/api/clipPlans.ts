@@ -19,7 +19,33 @@ export interface RenderClipPlansRequest extends RenderClipPlanRequest {
   clip_plan_ids: number[];
 }
 
+export interface AiMontagePiece {
+  start_sec: number;
+  end_sec: number;
+  title: string;
+}
+export interface AiMontageProposal {
+  spec: Record<string, unknown>;
+  diff: {
+    before: AiMontagePiece[];
+    after: AiMontagePiece[];
+    total_before: number;
+    total_after: number;
+    transition: string;
+    sfx: string;
+    subtitles: boolean;
+  };
+  rationale: string[];
+  attempts: number;
+  model: string;
+  has_transcript: boolean;
+  used_qc: boolean;
+}
+
 export const clipPlansApi = {
+  /** 🤖 ИИ-монтаж: a proposed re-edit (clip file + diff); nothing is applied. */
+  aiMontage: (clipPlanId: number, goal = "") =>
+    api.post<AiMontageProposal>(`/api/clip-plans/${clipPlanId}/ai-montage`, { goal }),
   render: (clipPlanId: number, body: RenderClipPlanRequest = {}) =>
     api.post<Clip>(`/api/clip-plans/${clipPlanId}/render`, body),
   renderBatch: (sourceId: number | string, body: RenderClipPlansRequest) =>
