@@ -1446,6 +1446,12 @@ class AppStore:
             "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
         )
 
+    def set_clip_plan_ai_pick(self, clip_plan_id: int, pick: dict | None) -> None:
+        self.db.execute(
+            "UPDATE clip_plans SET ai_pick_json = ? WHERE id = ?",
+            (json.dumps(pick, ensure_ascii=False) if pick else "", clip_plan_id),
+        )
+
     def get_clip_plan_montage_backup(self, clip_plan_id: int) -> dict | None:
         row = self.db.query_one("SELECT montage_backup_json FROM clip_plans WHERE id = ?", (clip_plan_id,))
         if not row:
@@ -2813,6 +2819,11 @@ def _decode_plan_settings(plan: dict) -> dict:
     request's values.
     """
     plan["has_montage_backup"] = bool(plan.pop("montage_backup_json", ""))
+    try:
+        pick = json.loads(plan.pop("ai_pick_json", "") or "null")
+    except (TypeError, ValueError):
+        pick = None
+    plan["ai_pick"] = pick if isinstance(pick, dict) else None
     raw = plan.pop("render_settings_json", None)
     settings = None
     if raw:

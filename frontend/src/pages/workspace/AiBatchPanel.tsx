@@ -27,6 +27,10 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
   const [goal, setGoal] = useState("");
   const [render, setRender] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [pickCount, setPickCount] = useState(10);
+  const [pickGoal, setPickGoal] = useState("");
+  const [pickMontage, setPickMontage] = useState(true);
 
   const job = useQuery({
     queryKey: ["ai-montage-batch", sourceId],
@@ -56,6 +60,23 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить"),
   });
 
+  const pick = useMutation({
+    mutationFn: () =>
+      clipPlansApi.aiPick(sourceId, { count: pickCount, goal: pickGoal.trim(), montage: pickMontage, render }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      if (r.montage_job) {
+        qc.setQueryData(["ai-montage-batch", sourceId], r.montage_job);
+        setDismissed(null);
+      }
+      setPickOpen(false);
+      toast.success(
+        `✨ Выбрал ${r.picks.length} из ${r.candidates}: они в ★` + (r.montage_job ? " · 🤖 ИИ-монтаж запущен" : ""),
+      );
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "ИИ не смог выбрать"),
+  });
+
   const undo = useMutation({
     mutationFn: (planId: number) => clipPlansApi.aiMontageUndo(planId),
     onSuccess: () => {
@@ -69,6 +90,58 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
 
   return (
     <div className="aib">
+      <button
+        className="btn mo-big aib-btn aib-pick"
+        disabled={pick.isPending || running}
+        onClick={() => setPickOpen((v) => !v)}
+        title="ИИ прочитает все моменты и отметит ★ самые вирусные — с оценкой и причиной на карточке"
+      >
+        {pick.isPending ? "✨ Выбираю… (~30 с)" : "✨ ИИ выберет лучшие"}
+      </button>
+      {pickOpen && !pick.isPending ? (
+        <div className="aib-form">
+          <div className="aib-row">
+            <span>Сколько</span>
+            <div className="seg" role="radiogroup" aria-label="Сколько выбрать">
+              {[5, 10, 20].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  role="radio"
+                  aria-checked={pickCount === n}
+                  className={`seg-item${pickCount === n ? " active" : ""}`}
+                  onClick={() => setPickCount(n)}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input
+            className="input"
+            placeholder="Что ищем (необязательно): смешное, эмоции, полезное…"
+            value={pickGoal}
+            maxLength={500}
+            onChange={(e) => setPickGoal(e.target.value)}
+          />
+          <label className="switch">
+            <input type="checkbox" checked={pickMontage} onChange={(e) => setPickMontage(e.target.checked)} />
+            <span className="switch-track" />
+            <span>и сразу 🤖 ИИ-монтаж выбранных</span>
+          </label>
+          {pickMontage ? (
+            <label className="switch">
+              <input type="checkbox" checked={render} onChange={(e) => setRender(e.target.checked)} />
+              <span className="switch-track" />
+              <span>и отрендерить</span>
+            </label>
+          ) : null}
+          <p className="muted aib-note">Твои ★ не снимаются — ИИ только добавляет. Выбор ≈30 с, копейки.</p>
+          <button className="btn primary" onClick={() => pick.mutate()}>
+            ✨ Выбрать
+          </button>
+        </div>
+      ) : null}
       <button
         className="btn mo-big aib-btn"
         disabled={running || !favCount}

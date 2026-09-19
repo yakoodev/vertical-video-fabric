@@ -74,6 +74,14 @@ export const clipPlansApi = {
   /** Background batch over the starred clips (or the given ids). */
   aiMontageBatch: (sourceId: number | string, body: { clip_plan_ids?: number[]; goal?: string; render?: boolean }) =>
     api.post<AiMontageJob>(`/api/sources/${sourceId}/ai-montage-batch`, body),
+  /** ✨ AI stars the N most shareable moments; optionally chains 🤖 ИИ-монтаж. */
+  aiPick: (sourceId: number | string, body: { count: number; goal?: string; montage?: boolean; render?: boolean }) =>
+    api.post<{
+      picks: { id: number; score: number; reason: string }[];
+      model: string;
+      candidates: number;
+      montage_job?: AiMontageJob;
+    }>(`/api/sources/${sourceId}/ai-pick`, body),
   aiMontageBatchStatus: (sourceId: number | string) =>
     api.get<AiMontageJob | null>(`/api/sources/${sourceId}/ai-montage-batch`),
   /** 🤖 ИИ-монтаж: a proposed re-edit (clip file + diff); nothing is applied. */

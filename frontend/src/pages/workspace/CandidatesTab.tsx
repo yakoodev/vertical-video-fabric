@@ -1333,6 +1333,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     </span>
                   ) : null}
                   {p.duplicate_of != null ? <span className="mo-dup">дубль</span> : null}
+                  {p.ai_pick ? (
+                    <span className="mo-ai" title={`✨ ИИ: ${p.ai_pick.score}/10 — ${p.ai_pick.reason}`}>
+                      ✨ {p.ai_pick.score}
+                    </span>
+                  ) : null}
                   <span className="mo-play">▶</span>
                   <span className="mo-dur mono">
                     {formatDuration(planDur(p))}
@@ -1346,6 +1351,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   {p.title || `План #${p.id}`}
                 </button>
+                {p.ai_pick?.reason ? <div className="mo-why">✨ {p.ai_pick.reason}</div> : null}
                 <div className="mo-foot">
                   <label className="check" title="Включить в рендер">
                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleChosen(p.id)} />

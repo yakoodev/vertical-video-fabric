@@ -121,6 +121,8 @@ export interface ClipPlan {
   render_settings?: RenderSettings | null;
   /** A 🤖 ИИ-монтаж was applied and the previous version can be restored. */
   has_montage_backup?: boolean;
+  /** ✨ Picked by AI as one of the best moments: 1–10 score + why. */
+  ai_pick?: { score: number; reason: string } | null;
 }
 
 export type TransitionType =

@@ -362,6 +362,8 @@ class Database:
             self._ensure_column(conn, "clip_plans", "render_settings_json", "TEXT NOT NULL DEFAULT '{}'")
             # The clip file as it was BEFORE the first 🤖 ИИ-монтаж — «↩ Откатить».
             self._ensure_column(conn, "clip_plans", "montage_backup_json", "TEXT NOT NULL DEFAULT ''")
+            # ✨ ИИ выбирает лучшие: {"score", "reason"} of an AI pick, shown on the card.
+            self._ensure_column(conn, "clip_plans", "ai_pick_json", "TEXT NOT NULL DEFAULT ''")
             # Free-form notes of the clip file (why it is cut this way) — for the
             # human and for outside agents working through the clip file API.
             self._ensure_column(conn, "clip_plans", "notes", "TEXT NOT NULL DEFAULT ''")

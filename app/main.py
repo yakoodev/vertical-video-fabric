@@ -43,6 +43,7 @@ from app.ai.montage import (
     start_montage_job,
     undo_montage,
 )
+from app.ai.pick import pick_best
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
@@ -2207,6 +2208,40 @@ def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, 
     return start_montage_job(
         store, source_id, ids, goal=payload.goal, render=_render_plan_own_settings if payload.render else None
     )
+
+
+class AiPickRequest(BaseModel):
+    count: int = Field(default=10, ge=1, le=50)
+    goal: str = Field(default="", max_length=500)
+    # Chain: start 🤖 ИИ-монтаж on the picks right away (optionally rendering).
+    montage: bool = False
+    render: bool = False
+
+
+@app.post(
+    "/api/sources/{source_id}/ai-pick",
+    tags=["Clip file"],
+    summary="✨ ИИ выбирает лучшие: star the N most shareable moments (score + reason)",
+)
+def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -> dict:
+    try:
+        store.get_source(source_id)
+        result = pick_best(store, source_id, count=payload.count, goal=payload.goal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if payload.montage:
+        running = latest_job_for_source(source_id)
+        if not (running and running.get("status") == "running"):
+            result["montage_job"] = start_montage_job(
+                store,
+                source_id,
+                [p["id"] for p in result["picks"]],
+                goal=payload.goal,
+                render=_render_plan_own_settings if payload.render else None,
+            )
+    return result
 
 
 @app.get(

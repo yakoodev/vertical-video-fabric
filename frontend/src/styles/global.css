@@ -2910,3 +2910,30 @@ button.task-link:disabled {
   cursor: pointer;
 }
 .aib-undo:hover { color: var(--text); border-color: var(--border-strong); }
+/* ✨ ИИ выбирает лучшие */
+.btn.aib-pick { background: linear-gradient(135deg, rgba(255, 201, 71, 0.18), rgba(123, 108, 255, 0.22)); border-color: #ffc947; }
+.aib-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-dim); }
+.aib-row .seg { flex: 1; }
+.mo-ai {
+  position: absolute;
+  top: 34px;
+  left: 7px;
+  z-index: 1;
+  background: rgba(8, 9, 15, 0.72);
+  border: 1px solid #ffc947;
+  color: #ffc947;
+  font-weight: 700;
+  font-size: 11.5px;
+  border-radius: 7px;
+  padding: 1px 6px;
+}
+.mo-why {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #e8d9a8;
+  padding: 0 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
