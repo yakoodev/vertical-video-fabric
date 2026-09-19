@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clipsApi } from "@/api/clips";
 import { qk } from "@/api/keys";
@@ -71,7 +72,16 @@ export function ClipsPage() {
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : !query.data?.length ? (
-        <EmptyState icon="✂️" title="Клипов пока нет" hint="Отрендерите сегменты или загрузите готовый клип" />
+        <EmptyState
+          icon="✂️"
+          title="Клипов пока нет"
+          hint="Отрендерите моменты в проекте или загрузите готовый клип"
+          actions={
+            <Link className="btn primary" to="/projects">
+              К проектам
+            </Link>
+          }
+        />
       ) : (
         <>
         <div className="proj-toolbar">

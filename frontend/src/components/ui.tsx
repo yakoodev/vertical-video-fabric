@@ -36,12 +36,24 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   );
 }
 
-export function EmptyState({ icon = "📭", title, hint }: { icon?: string; title: string; hint?: string }) {
+export function EmptyState({
+  icon = "📭",
+  title,
+  hint,
+  actions,
+}: {
+  icon?: string;
+  title: string;
+  hint?: string;
+  /** «What next» buttons/links — an empty screen should point somewhere. */
+  actions?: ReactNode;
+}) {
   return (
     <div className="empty">
       <div style={{ fontSize: 40 }}>{icon}</div>
       <strong>{title}</strong>
       {hint ? <span className="muted">{hint}</span> : null}
+      {actions ? <div className="empty-actions">{actions}</div> : null}
     </div>
   );
 }

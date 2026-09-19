@@ -78,7 +78,21 @@ export function PublicationsPage() {
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : !query.data?.length ? (
-        <EmptyState icon="📡" title="Публикаций пока нет" hint="Опубликуйте клип, чтобы поставить задачу в очередь" />
+        <EmptyState
+          icon="📡"
+          title="Публикаций пока нет"
+          hint="Опубликуйте клип, чтобы поставить задачу в очередь"
+          actions={
+            <>
+              <Link className="btn primary" to="/clips">
+                Открыть клипы
+              </Link>
+              <Link className="btn" to="/accounts">
+                Добавить аккаунт
+              </Link>
+            </>
+          }
+        />
       ) : (
         <div className="panel">
           <table className="table">

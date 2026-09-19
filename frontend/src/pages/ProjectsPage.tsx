@@ -109,7 +109,7 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
   );
 }
 
-function AddSource() {
+export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -118,6 +118,7 @@ function AddSource() {
   const [picking, setPicking] = useState("");
 
   const onDone = (s: Source) => {
+    onStarted?.();
     toast.success("Источник добавлен");
     qc.invalidateQueries({ queryKey: qk.sources });
     navigate(`/projects/${s.id}`);
@@ -130,8 +131,9 @@ function AddSource() {
   const ingest = useMutation({
     mutationFn: (u: string) => downloadsApi.start(u, quality),
     onSuccess: () => {
-      toast.success("Скачивание началось — прогресс в уведомлениях");
+      toast.success("Скачивание началось — прогресс в «Очереди»");
       setUrl("");
+      onStarted?.();
       qc.invalidateQueries({ queryKey: qk.activeTasks });
     },
     onError: onErr,
@@ -201,6 +203,7 @@ function AddSource() {
           onStarted={() => {
             setPicking("");
             setUrl("");
+            onStarted?.();
           }}
         />
       ) : null}
@@ -278,7 +281,8 @@ export function ProjectsPage() {
                 ["error", "Ошибка"],
               ] as const
             ).map(([key, label]) =>
-              key === "all" || counts[key] ? (
+              // All four always: the bar must not jump as projects change state.
+              true ? (
                 <button
                   key={key}
                   className={`schip schip--${key}${statusFilter === key ? " active" : ""}`}

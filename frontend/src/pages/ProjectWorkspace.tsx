@@ -59,6 +59,10 @@ export function ProjectWorkspace() {
           <Badge status={source.status} />
           <span className="ws-pill mono">⏱ {formatDuration(source.duration_sec)}</span>
           {source.width ? <span className="ws-pill mono">▭ {source.width}×{source.height}</span> : null}
+          <span className="ws-sum">
+            <b>{visible.length}</b> моментов · <b>{favorites.length}</b> ★ ·{" "}
+            <b>{source.clips_count ?? source.clips.length}</b> клипов
+          </span>
         </div>
         <nav className="pipeline">
           {TABS.map((tab, i) => {

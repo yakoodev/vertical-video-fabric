@@ -363,7 +363,16 @@ export function AutomationPage() {
           ) : query.isError ? (
             <ErrorState error={query.error} onRetry={() => query.refetch()} />
           ) : !query.data?.length ? (
-            <EmptyState icon="⚡" title="Запусков ещё не было" hint="Запустите конвейер слева" />
+            <EmptyState
+              icon="⚡"
+              title="Запусков ещё не было"
+              hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт моменты, смонтирует и опубликует"
+              actions={
+                <Link className="btn" to="/accounts">
+                  Аккаунты для публикации
+                </Link>
+              }
+            />
           ) : (
             query.data.map((run) => (
               <div key={run.id} className="run-card">

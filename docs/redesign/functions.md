@@ -67,3 +67,13 @@ moving/regrouping is fine.
 
 ## Помощь `/help`
 - TOC + static sections (update: «Кандидаты»→«Моменты», accounts live on /accounts)
+
+## Added after the codex audit (2026-09-20)
+- Shell: «＋ Создать» (N) → new-project dialog (same AddSource: file, URL, quality, «Серия и озвучка»); sidebar Проекты · Клипы · Публикации · Авто · Очередь (badge = active tasks) · Аккаунты; Горячие клавиши (?), Помощь, Настройки, Выйти
+- Top bar: «Поиск или команда…» (Ctrl/⌘ K palette: actions, sections, this project's tabs + moments → монтаж, projects incl. «твич/ютуб», clips), «N активн.» pill → /tasks, ActivityCenter bell
+- Keys: Ctrl K, N, ?, 1–5 project tabs, F ★ / X hide / E edit (moment under pointer), Esc back from the editor
+- Project header: summary «N моментов · N ★ · N клипов»
+- Моменты: sticky filter toolbar with «✂ Монтаж · N ★» and «▶ Рендер · N»; AI: «✨ ИИ выберет лучшие» (count, goal, chain ИИ-монтаж/render), «🤖 ИИ-монтаж всех ★» (goal, render, progress, ↩ per clip); card badge «✨ score» + reason
+- Editor: «🤖 ИИ-монтаж» dialog, «↩ Откатить ИИ-монтаж»; inspector footer rows: saved-state + «Зоны», «{ } Файл клипа» + «Ко всем ★», render (1) / Выбранные
+- Publish: «✨ Сгенерировать» (single), «✨ ИИ-заголовки…» toggle (batch + Авто); Авто: «🤖 ИИ-монтаж каждого клипа перед рендером»
+- Empty states with next-step buttons (Публикации, Авто, Клипы)

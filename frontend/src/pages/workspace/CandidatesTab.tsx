@@ -625,6 +625,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // «Файл клипа» dialog; bumping the nonce re-reads the clip's settings into the
   // panel after the file was applied (the file may have changed them).
   const [clipFileOpen, setClipFileOpen] = useState(false);
+  // Moment under the pointer — the target of the F / X / E shortcuts.
+  const hoverPlanRef = useRef<number | null>(null);
+  const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
@@ -959,6 +962,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return [0.2, 0.5, 0.8].map((p) => all[Math.floor(all.length * p)]);
   }, [storyboard.data]);
 
+  // Keyboard: F ★ / X hide / E edit the moment under the pointer; in the editor
+  // F stars the open clip and Esc goes back to the moments (see «?» in the shell).
+  // One stable listener (a hook must not sit after the early returns below); it
+  // calls whatever handler the latest render left in keyHandlerRef.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      if (document.querySelector(".modal-backdrop")) return;
+      keyHandlerRef.current?.(e);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   if (!plans.length) {
@@ -1030,6 +1049,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       },
       { replace: true },
     );
+  };
+
+  // Latest keyboard handler (reassigned every render, after all early returns).
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    const key = e.key.toLowerCase();
+    const target = view === "editor" ? activePlan : plans.find((p) => p.id === hoverPlanRef.current) ?? null;
+    if (view === "editor" && e.key === "Escape") {
+      backToMoments();
+    } else if ((key === "f" || key === "а") && target) {
+      setPlanFlag(target.id, { favorite: !target.favorite });
+    } else if ((key === "x" || key === "ч") && target && view === "triage") {
+      setPlanFlag(target.id, { hidden: !target.hidden });
+    } else if ((key === "e" || key === "у") && target && view === "triage") {
+      openEditor(target.id);
+    }
   };
 
   return (
@@ -1290,6 +1324,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           );
         })}
         {candidateSearch.trim() ? <span className="muted mo-count">{shownCount} из {plans.length}</span> : null}
+        <span className="mo-toolbar-acts">
+          <button
+            className="btn sm primary"
+            onClick={() => openEditor()}
+            title="Монтаж избранных (E — момент под курсором)"
+          >
+            ✂ Монтаж{favCount ? ` · ${favCount} ★` : ""}
+          </button>
+          <button
+            className="btn sm"
+            disabled={batch.isPending || !selected.size}
+            onClick={() => batch.mutate(undefined)}
+            title="Рендер отмеченных «в рендер»"
+          >
+            ▶ Рендер · {selected.size}
+          </button>
+        </span>
       </div>
 
       {!shownCount ? (
@@ -1320,6 +1371,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             {group.map((p) => (
               <article
                 key={p.id}
+                onMouseEnter={() => (hoverPlanRef.current = p.id)}
+                onMouseLeave={() => (hoverPlanRef.current = null)}
                 className={`mo-card${p.id === activePlan?.id ? " active" : ""}${p.hidden ? " is-hidden" : ""}`}
               >
                 <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть момент в плеере">
@@ -1984,17 +2037,24 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </div>
 
           <div className="ed-insp-foot">
-            <label className="switch" title="Показывать на превью, где окажутся баннер и субтитры">
-              <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
-              <span className="switch-track" />
-              <span>Зоны на превью</span>
-            </label>
-            <div className="ed-settings-note muted">
-              <span>
-                {activePlan?.render_settings
-                  ? "Настройки сохранены в этот клип — при рендере возьмутся они."
-                  : "У клипа пока нет своих настроек — возьмутся текущие с панели."}
+            <div className="ed-foot-row">
+              <span
+                className={`ed-saved${activePlan?.render_settings ? " on" : ""}`}
+                title={
+                  activePlan?.render_settings
+                    ? "Настройки сохранены в этот клип — при рендере возьмутся они."
+                    : "У клипа пока нет своих настроек — возьмутся текущие с панели."
+                }
+              >
+                {activePlan?.render_settings ? "● настройки клипа сохранены" : "○ настройки с панели"}
               </span>
+              <label className="switch" title="Показывать на превью, где окажутся баннер и субтитры">
+                <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
+                <span className="switch-track" />
+                <span>Зоны</span>
+              </label>
+            </div>
+            <div className="ed-foot-tools">
               <button
                 type="button"
                 className="btn ed-apply-fav"
@@ -2014,7 +2074,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 onClick={() => void applyToFavorites()}
                 title="Скопировать настройки этой панели во все остальные избранные клипы"
               >
-                Применить ко всем ★
+                Ко всем ★
               </button>
             </div>
             <div className="ed-render-btns">
