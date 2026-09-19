@@ -2,21 +2,21 @@ def test_core_api_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("POSTING_PROVIDER_MODE", "mock")
     from app.settings import settings
 
-    settings.auth_enabled = False
-    settings.api_token = ""
-    settings.data_dir = tmp_path / "data"
-    settings.upload_dir = settings.data_dir / "uploads"
-    settings.source_dir = settings.data_dir / "sources"
-    settings.clip_dir = settings.data_dir / "clips"
-    settings.banner_dir = settings.data_dir / "banners"
-    settings.audio_dir = settings.data_dir / "audio"
-    settings.subtitle_dir = settings.data_dir / "subtitles"
-    settings.storyboard_dir = settings.data_dir / "storyboards"
-    settings.tmp_dir = settings.data_dir / "tmp"
-    settings.runtime_dir = settings.data_dir / "runtime"
-    settings.log_dir = settings.data_dir / "logs"
-    settings.db_path = settings.data_dir / "app.sqlite"
-    settings.secret_key_path = settings.data_dir / "secret.key"
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    monkeypatch.setattr(settings, "api_token", "")
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    monkeypatch.setattr(settings, "upload_dir", settings.data_dir / "uploads")
+    monkeypatch.setattr(settings, "source_dir", settings.data_dir / "sources")
+    monkeypatch.setattr(settings, "clip_dir", settings.data_dir / "clips")
+    monkeypatch.setattr(settings, "banner_dir", settings.data_dir / "banners")
+    monkeypatch.setattr(settings, "audio_dir", settings.data_dir / "audio")
+    monkeypatch.setattr(settings, "subtitle_dir", settings.data_dir / "subtitles")
+    monkeypatch.setattr(settings, "storyboard_dir", settings.data_dir / "storyboards")
+    monkeypatch.setattr(settings, "tmp_dir", settings.data_dir / "tmp")
+    monkeypatch.setattr(settings, "runtime_dir", settings.data_dir / "runtime")
+    monkeypatch.setattr(settings, "log_dir", settings.data_dir / "logs")
+    monkeypatch.setattr(settings, "db_path", settings.data_dir / "app.sqlite")
+    monkeypatch.setattr(settings, "secret_key_path", settings.data_dir / "secret.key")
     settings.ensure_dirs()
 
     from fastapi.testclient import TestClient
