@@ -67,16 +67,19 @@ def test_dedup_clips_drops_overlapping_windows():
     assert [c.title for c in kept] == ["a", "b"]
 
 
-def test_analysis_windows_only_for_long_gemini_highlights():
+def test_analysis_windows_for_any_long_gemini_source():
+    # Every long gemini source is windowed, in any mode: a single pass over a
+    # multi-hour video blows Gemini's 1M input-token cap. Short sources and
+    # other providers stay single-pass.
     from app.ai.service import _analysis_windows, ANALYSIS_MODE_HIGHLIGHTS, ANALYSIS_MODE_NARRATIVE
 
     assert _analysis_windows(600, ANALYSIS_MODE_HIGHLIGHTS, "gemini") is None
-    assert _analysis_windows(3863, ANALYSIS_MODE_NARRATIVE, "gemini") is None
     assert _analysis_windows(3863, ANALYSIS_MODE_HIGHLIGHTS, "mock") is None
-    windows = _analysis_windows(3863, ANALYSIS_MODE_HIGHLIGHTS, "gemini")
-    assert windows and windows[0][0] == 0.0
-    assert abs(windows[-1][1] - 3863) < 0.01  # covers the full runtime
-    assert all(b > a for (a, b) in windows)
+    for mode in (ANALYSIS_MODE_HIGHLIGHTS, ANALYSIS_MODE_NARRATIVE):
+        windows = _analysis_windows(3863, mode, "gemini")
+        assert windows and windows[0][0] == 0.0
+        assert abs(windows[-1][1] - 3863) < 0.01  # covers the full runtime
+        assert all(b > a for (a, b) in windows)
 
 
 def test_gemini_payload_includes_recap_rules_only_for_recap_prompt():

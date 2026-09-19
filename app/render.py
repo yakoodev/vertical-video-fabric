@@ -86,9 +86,16 @@ class ClipRenderService:
         self._cancel_marks: dict[int, float] = {}
         self._cancel_lock = threading.Lock()
 
+    @staticmethod
+    def batch_clock() -> float:
+        """Clock for batch start / cancel marks. perf_counter, not monotonic:
+        on Windows monotonic ticks every ~16 ms, so a cancel and a batch start
+        in the same tick compared equal and the cancel was silently missed."""
+        return time.perf_counter()
+
     def request_render_cancel(self, source_id: int) -> None:
         with self._cancel_lock:
-            self._cancel_marks[int(source_id)] = time.monotonic()
+            self._cancel_marks[int(source_id)] = self.batch_clock()
 
     def render_batch_cancelled(self, source_id: int, started_at: float) -> bool:
         with self._cancel_lock:

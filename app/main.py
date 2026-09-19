@@ -771,7 +771,7 @@ def ui_render_clip_plans(
     music_in_play = use_music or str(music_track_id).strip() != "" or volume_provided
     selected_music_track_id = _optional_form_int(music_track_id) if music_in_play else None
     selected_music_volume = float(music_volume) if volume_provided else None
-    batch_started_at = time.monotonic()
+    batch_started_at = clip_render_service.batch_clock()
     try:
         for clip_plan_id in clip_plan_ids:
             if clip_render_service.render_batch_cancelled(source_id, batch_started_at):
@@ -2160,7 +2160,7 @@ def api_render_clip_plans(
     if not payload.clip_plan_ids:
         raise HTTPException(status_code=400, detail="clip_plan_ids cannot be empty")
     clips: list[dict] = []
-    batch_started_at = time.monotonic()
+    batch_started_at = clip_render_service.batch_clock()
     try:
         for clip_plan_id in payload.clip_plan_ids:
             if clip_render_service.render_batch_cancelled(source_id, batch_started_at):
