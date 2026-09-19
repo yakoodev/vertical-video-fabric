@@ -26,6 +26,7 @@ export function BatchPublishDialog({ clips, onClose }: { clips: Clip[]; onClose:
   const [privacy, setPrivacy] = useState<"public" | "unlisted" | "private">("public");
   const [startAt, setStartAt] = useState("");
   const [intervalMin, setIntervalMin] = useState(0);
+  const [aiMeta, setAiMeta] = useState(true);
 
   const publish = useMutation({
     mutationFn: () =>
@@ -35,10 +36,13 @@ export function BatchPublishDialog({ clips, onClose }: { clips: Clip[]; onClose:
         privacy,
         start_at: startAt ? startAt.replace("T", " ") : "",
         interval_minutes: intervalMin,
+        ai_metadata: aiMeta,
       }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.activeTasks });
+      const metaFailed = Object.keys(res.metadata_errors ?? {}).length;
+      if (metaFailed) toast.error(`ИИ-заголовки не вышли для ${metaFailed} клип(ов) — ушли со старыми`);
       if (res.skipped.length) {
         toast.error(`В очередь: ${res.jobs.length}. Пропущено ${res.skipped.length}: ${res.skipped[0].reason}`);
       } else {
@@ -126,6 +130,12 @@ export function BatchPublishDialog({ clips, onClose }: { clips: Clip[]; onClose:
           </div>
         </div>
 
+        <label className="switch" style={{ margin: "4px 0 10px" }} title="Перед постановкой в очередь ИИ пишет каждому клипу заголовок, описание и хэштеги по его речи (≈5 сек на клип, параллельно)">
+          <input type="checkbox" checked={aiMeta} onChange={(e) => setAiMeta(e.target.checked)} />
+          <span className="switch-track" />
+          <span>✨ ИИ-заголовки, описания и хэштеги для каждого клипа</span>
+        </label>
+
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <label className="field" style={{ flex: 1, minWidth: 200 }}>
             <span>Первый выходит</span>
@@ -157,7 +167,7 @@ export function BatchPublishDialog({ clips, onClose }: { clips: Clip[]; onClose:
             disabled={publish.isPending || !targets.length}
             onClick={() => publish.mutate()}
           >
-            {publish.isPending ? "…" : `В очередь · ${clips.length}`}
+            {publish.isPending ? (aiMeta ? "Пишу заголовки…" : "…") : `В очередь · ${clips.length}`}
           </button>
         </div>
       </div>

@@ -31,7 +31,12 @@ export const clipsApi = {
     allow_comments?: boolean;
     start_at?: string;
     interval_minutes?: number;
-  }) => api.post<{ jobs: Job[]; skipped: { clip_id: number; reason: string }[] }>(`/api/clips/posts-batch`, body),
+    ai_metadata?: boolean;
+  }) =>
+    api.post<{ jobs: Job[]; skipped: { clip_id: number; reason: string }[]; metadata_errors?: Record<string, string> }>(
+      `/api/clips/posts-batch`,
+      body,
+    ),
   // Pre-edited vertical clip → standalone clips library. The /ui endpoint 303s to
   // the clip page; we don't need the body, callers just invalidate the clips list.
   uploadEdited: (file: File, title = "", description = "") => {

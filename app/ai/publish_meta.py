@@ -134,3 +134,25 @@ def generate_publish_metadata(
     meta["model"] = used_model
     meta["has_transcript"] = bool(context["transcript"])
     return meta
+
+
+def apply_ai_metadata(store: Any, clip_ids: list[int], workers: int = 4) -> dict[int, str]:
+    """Generate metadata for several clips in parallel and SAVE it on each clip
+    (title; description with hashtags appended). Best effort: a clip whose
+    generation fails keeps its current title — returns {clip_id: error}."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    errors: dict[int, str] = {}
+
+    def one(clip_id: int) -> None:
+        try:
+            meta = generate_publish_metadata(store, clip_id)
+            description = "\n\n".join(x for x in (meta["description"], " ".join(meta["hashtags"])) if x)
+            store.update_clip(clip_id, title=meta["title"], description=description)
+        except Exception as exc:  # noqa: BLE001 - never block publishing on metadata
+            errors[clip_id] = str(exc)[:200]
+
+    ids = list(dict.fromkeys(int(c) for c in clip_ids))
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(ids) or 1))) as pool:
+        list(pool.map(one, ids))
+    return errors

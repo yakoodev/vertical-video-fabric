@@ -34,6 +34,7 @@ function StartAuto() {
   const [intervalHours, setIntervalHours] = useState(0);
   const [targets, setTargets] = useState<number[]>([]);
   const [useTranscript, setUseTranscript] = useState(true);
+  const [aiMeta, setAiMeta] = useState(true);
 
   // Оформление клипов (зеркалит панель рендера в кандидатах).
   const [renderPresetId, setRenderPresetId] = useState(0);
@@ -255,6 +256,11 @@ function StartAuto() {
             ))}
           </div>
         )}
+        <label className="switch" title="Каждому клипу ИИ пишет заголовок, описание и хэштеги по его речи — вместо сырого названия из анализа">
+          <input type="checkbox" checked={aiMeta} onChange={(e) => setAiMeta(e.target.checked)} />
+          <span className="switch-track" />
+          <span>✨ ИИ-заголовки, описания и хэштеги</span>
+        </label>
         <button
           className="btn primary auto-go"
           disabled={start.isPending || !url.trim()}
@@ -280,6 +286,7 @@ function StartAuto() {
               mirror,
               use_music: musicOn,
               music_track_id: trackId || undefined,
+              ai_metadata: aiMeta,
             })
           }
         >

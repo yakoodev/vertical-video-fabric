@@ -24,6 +24,8 @@ export interface AutoStartInput {
   mirror?: boolean;
   use_music?: boolean;
   music_track_id?: number;
+  /** AI title/description/hashtags per clip before publishing. */
+  ai_metadata?: boolean;
 }
 
 export const autoApi = {
@@ -56,6 +58,7 @@ export const autoApi = {
       if (input.banner_y_frac != null) fd.append("banner_y_frac", String(input.banner_y_frac));
     }
     if (input.mirror) fd.append("mirror", "true");
+    if (input.ai_metadata) fd.append("ai_metadata", "true");
     if (input.use_music) {
       fd.append("use_music", "true");
       if (input.music_track_id) fd.append("music_track_id", String(input.music_track_id));

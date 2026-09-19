@@ -36,7 +36,7 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
-from app.ai.publish_meta import generate_publish_metadata
+from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
 from app.video_crop import detect_content_crop
@@ -1463,6 +1463,7 @@ def ui_auto_start(
     schedule_start: Annotated[str, Form()] = "",
     interval_hours: Annotated[float, Form()] = 0,
     max_clips: Annotated[int, Form()] = 0,
+    ai_metadata: Annotated[bool, Form()] = False,
 ) -> RedirectResponse:
     if not url.strip():
         raise HTTPException(status_code=400, detail="url is required")
@@ -1516,6 +1517,7 @@ def ui_auto_start(
             "start_at": _parse_schedule_dt(schedule_start),
             "interval_hours": interval_hours,
             "max_clips": max_clips,
+            "ai_metadata": ai_metadata,
         },
     )
     return RedirectResponse(url="/auto", status_code=303)
@@ -2372,6 +2374,8 @@ class ClipPostBatchRequest(BaseModel):
     # First post goes at start_at (empty = now); each next one interval_minutes later.
     start_at: str = ""
     interval_minutes: int = 0
+    # Write each clip's title/description/hashtags with AI before queueing.
+    ai_metadata: bool = False
 
 
 @app.post(
@@ -2400,6 +2404,7 @@ def api_create_posts_batch(payload: ClipPostBatchRequest, _auth: AuthDep) -> dic
     start = datetime.strptime(start_text, "%Y-%m-%d %H:%M:%S") if start_text else None
     jobs: list[dict] = []
     skipped: list[dict] = []
+    meta_errors = apply_ai_metadata(store, payload.clip_ids) if payload.ai_metadata else {}
     for index, clip_id in enumerate(dict.fromkeys(payload.clip_ids)):
         scheduled = ""
         if start is not None or payload.interval_minutes:
@@ -2422,7 +2427,7 @@ def api_create_posts_batch(payload: ClipPostBatchRequest, _auth: AuthDep) -> dic
             )
         except (KeyError, ValueError) as exc:
             skipped.append({"clip_id": clip_id, "reason": str(exc)})
-    return {"jobs": jobs, "skipped": skipped}
+    return {"jobs": jobs, "skipped": skipped, "metadata_errors": meta_errors}
 
 
 @app.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")

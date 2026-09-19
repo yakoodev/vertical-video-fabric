@@ -114,6 +114,13 @@ class AutomationService:
             if not clips:
                 raise RuntimeError("ни один клип не отрендерился")
 
+            if publish.get("ai_metadata"):
+                self._update(run, message="Пишу заголовки и описания…")
+                from app.ai.publish_meta import apply_ai_metadata
+
+                apply_ai_metadata(self.store, [c["id"] for c in clips])
+                clips = [self.store.get_clip(c["id"]) for c in clips]
+
             jobs = 0
             targets = list(publish.get("targets") or [])
             if targets:
