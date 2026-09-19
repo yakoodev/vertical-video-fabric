@@ -1009,6 +1009,13 @@ class AppStore:
             (analysis_id,),
         )
 
+    def set_ai_analysis_progress(self, analysis_id: int, stage: str, done: int = 0, total: int = 0) -> None:
+        """Record which pipeline step a running analysis is on (also a heartbeat)."""
+        self.db.execute(
+            "UPDATE ai_analyses SET progress_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps({"stage": stage, "done": int(done), "total": int(total)}), analysis_id),
+        )
+
     def touch_ai_analysis(self, analysis_id: int) -> None:
         """Bump updated_at so a long-running analysis isn't misjudged as stale.
 

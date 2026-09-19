@@ -194,6 +194,7 @@ class GeminiVideoAnalyzer:
         transcript: list[dict] | None = None,
         should_cancel: Callable[[], bool] | None = None,
         heartbeat: Callable[[], None] | None = None,
+        progress: Callable[[str, int, int], None] | None = None,
     ) -> AnalysisResult:
         """Analyze the source video.
 
@@ -207,6 +208,8 @@ class GeminiVideoAnalyzer:
 
         source_path = Path(source.get("local_path") or "")
         mime_type = _guess_mime_type(source_path)
+        if progress:
+            progress("upload", 0, 0)
         file_info = self.client.upload_file(source_path, mime_type)
         file_info = self.client.wait_file_active(file_info)
         file_summary = {
@@ -221,6 +224,8 @@ class GeminiVideoAnalyzer:
             raise AnalysisCancelled()
 
         if not windows:
+            if progress:
+                progress("windows", 0, 1)
             return self._analyze_range(source, prompt, model, file_info, mime_type, None, None, file_summary, transcript)
 
         # Per-window fault tolerance: one window hitting a transient Gemini spike
@@ -231,7 +236,9 @@ class GeminiVideoAnalyzer:
         results: list[AnalysisResult] = []
         failed = 0
         last_error: Exception | None = None
-        for (start, end) in windows:
+        for index, (start, end) in enumerate(windows):
+            if progress:
+                progress("windows", index, len(windows))
             if should_cancel and should_cancel():
                 raise AnalysisCancelled()
             if heartbeat:

@@ -1,0 +1,5 @@
+SCREEN: «Проекты» (projects gallery), sidebar item Проекты active.
+Header: title «Проекты», subtitle «Исходные видео для анализа, нарезки и публикации».
+Add-source bar: button «📤 Загрузить файл», wide URL input with placeholder «…или ссылка (mp4, YouTube, Twitch и похожие плееры)», select «Качество: авто», button «🎞 Серия и озвучка», primary button «Добавить».
+Row: status chips «Все 12», «Обработка 2», «Готово 9», «Ошибка 1» and a search input «Поиск проекта по названию…».
+Grid of 8 project cards (4 per row): 16:9 cover thumbnail with duration label bottom-right and type label (Twitch / YouTube / Файл) top-left, one card shows a scrub progress bar; title with small ✎ icon; row: status pill (Готово green / Анализ amber with progress / Ошибка red), «1280×720», «88 моментов», «12 клипов»; small 🗑 icon in a card corner.

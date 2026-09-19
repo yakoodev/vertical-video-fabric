@@ -1,0 +1,4 @@
+SCREEN: «Авто» page (sidebar Авто active), the automation pipeline.
+Header «Авто», subtitle «Конвейер: скачать → проанализировать → отрендерить → опубликовать» shown as a 4-step horizontal pipeline graphic.
+Left card «Запустить конвейер»: input «Ссылка на видео…», selects «Пресет анализа», «Провайдер», number «Макс. клипов 10», select «Приватность», number «Интервал, ч (0 = сразу)», checkbox «Транскрипт (Whisper) в анализ». Sub-card «Оформление клипов»: select «Пресет рендера», toggles «Субтитры» (with «Движок», «Стиль», slider «Положение»), «Баннер», «🪞 Зеркало», «Музыка». Sub-card «Публиковать в аккаунты» with account checkboxes. Primary button «▶ Запустить».
+Right: «Запуски» list of run cards: «#14 MEME PARTY» with a mini 4-step progress (скачивание ✓, анализ ✓, рендер ●, публикация ○), status pill «рендер», counts «планов 10 · клипов 6 · постов 0», link «проект →»; other runs «готово» (green) and one «ошибка» with red error text.

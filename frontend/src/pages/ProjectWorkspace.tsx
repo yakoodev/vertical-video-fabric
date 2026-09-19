@@ -27,36 +27,40 @@ export function ProjectWorkspace() {
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const source = query.data!;
+  const tabCount = (seg: string): number =>
+    seg === "candidates"
+      ? source.clip_plans.filter((p) => !p.hidden).length
+      : seg === "clips"
+        ? source.clips_count ?? source.clips.length
+        : 0;
 
   return (
     <>
-      <div style={{ marginBottom: 18 }}>
-        <Link to="/projects" className="muted" style={{ fontSize: 13 }}>
+      <div className="ws-head">
+        <Link to="/projects" className="ws-back">
           ← Все проекты
         </Link>
-        <div className="page-head" style={{ marginTop: 8, marginBottom: 14 }}>
-          <div>
-            <h1 style={{ fontSize: 21, wordBreak: "break-word" }}>
-              {source.original_filename || source.original_url || `Проект #${source.id}`}
-            </h1>
-            <p className="sub" style={{ display: "flex", gap: 12 }}>
-              <Badge status={source.status} />
-              <span>{formatDuration(source.duration_sec)}</span>
-              {source.width ? <span>{source.width}×{source.height}</span> : null}
-            </p>
-          </div>
+        <h1 className="ws-title">{source.original_filename || source.original_url || `Проект #${source.id}`}</h1>
+        <div className="ws-pills">
+          <Badge status={source.status} />
+          <span className="ws-pill mono">⏱ {formatDuration(source.duration_sec)}</span>
+          {source.width ? <span className="ws-pill mono">▭ {source.width}×{source.height}</span> : null}
         </div>
         <nav className="pipeline">
-          {TABS.map((tab, i) => (
-            <NavLink
-              key={tab.seg}
-              to={`/projects/${sourceId}/${tab.seg}`}
-              className={({ isActive }) => `tab${isActive ? " active" : ""}`}
-            >
-              <span className="tab-no">{String(i + 1).padStart(2, "0")}</span>
-              <span>{tab.label}</span>
-            </NavLink>
-          ))}
+          {TABS.map((tab, i) => {
+            const n = tabCount(tab.seg);
+            return (
+              <NavLink
+                key={tab.seg}
+                to={`/projects/${sourceId}/${tab.seg}`}
+                className={({ isActive }) => `tab${isActive ? " active" : ""}`}
+              >
+                <span className="tab-no">{String(i + 1).padStart(2, "0")}</span>
+                <span>{tab.label}</span>
+                {n ? <span className="tab-count">· {n}</span> : null}
+              </NavLink>
+            );
+          })}
         </nav>
       </div>
 

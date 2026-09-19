@@ -1,0 +1,7 @@
+SCREEN: project workspace, tab «01 Исходник» active. Breadcrumb «← Все проекты». Project title «MEME PARTY — стрим 4ч 11м», under it status pill «Анализ идёт», «4:11:08», «1280×720». Tabs row: «01 Исходник», «02 Моменты · 88», «03 Клипы · 12», «04 Смонтированные».
+Left big column: 16:9 video player with a thin violet crop-frame overlay; meta line «4:11:08 · 1280×720 · 60 fps · 11.6 ГБ · twitch» and link «оригинал ↗».
+Below player: card «Кадр источника» with button «🔍 Найти полосы», four compact sliders «Сверху / Снизу / Слева / Справа» (0–45%), buttons «Сохранить кадр» «Сбросить».
+Right column top: card «Анализ идёт» showing a real progress view: step list «Подготовка видео ✓», «Загрузка в Gemini ✓», «Окна анализа 12 / 20» with a progress bar, «Сбор кандидатов», elapsed «18 мин», button «Отменить».
+Right column: card «Статус анализа» with three big numbers «88 моментов», «12 клипов», «74% ср. качество» and chips «Популярные темы: реакция 23, юмор 18, геймплей 12…».
+Right column: card «Запустить анализ»: select «Пресет анализа: Авто (по источнику)», select «Провайдер: gemini», textarea «Свой промпт (необязательно)», checkbox «Транскрипт (Whisper) в анализ · ✓ закэширован (1 240 сегм.)», primary button «Анализировать».
+Right column bottom: card «Анализы (3)»: rows with status pill, «Анализ #52 · 88 кандид.», «gemini · 3.1-pro · 18.09 14:20», trash icon; small link «Показать упавшие (2)».

@@ -42,7 +42,7 @@ export function ProjectClipsGrid({
 
   return (
     <>
-      <div className="card-grid">
+      <div className="card-grid clip-grid">
         {clips.map((clip) => (
           <ClipCard
             key={clip.id}
@@ -56,7 +56,7 @@ export function ProjectClipsGrid({
                 >
                   Опубликовать
                 </button>
-                <button className="btn ghost sm" onClick={() => setToDelete(clip)}>
+                <button className="btn danger-outline sm" onClick={() => setToDelete(clip)}>
                   Удалить
                 </button>
               </>

@@ -35,14 +35,11 @@ export function ClipCard({ clip, actions }: { clip: Clip; actions?: ReactNode })
     <div className="panel clip-card">
       <div className="clip-video">
         <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <Badge status={clip.status} />
+        <span className="clip-ov clip-ov--status">
+          <Badge status={clip.status} />
+        </span>
         {clip.published_targets_count ? (
-          <span className="badge ok">
-            <span className="dot" />
-            опубликовано: {clip.published_targets_count}
-          </span>
+          <span className="clip-ov clip-ov--pub">опубликовано: {clip.published_targets_count}</span>
         ) : null}
       </div>
       {editing ? (
@@ -77,9 +74,9 @@ export function ClipCard({ clip, actions }: { clip: Clip; actions?: ReactNode })
           </button>
         </div>
       )}
-      <div className="muted" style={{ fontSize: 12.5, display: "flex", gap: 12 }}>
+      <div className="muted mono" style={{ fontSize: 12, display: "flex", gap: 6 }}>
         <span>{formatDuration(clip.duration_sec)}</span>
-        {clip.width ? <span>{clip.width}×{clip.height}</span> : null}
+        {clip.width ? <span>· {clip.width}×{clip.height}</span> : null}
       </div>
       {clip.error ? <div style={{ color: "var(--danger)", fontSize: 12.5 }}>{clip.error}</div> : null}
       {actions ? <div className="clip-actions">{actions}</div> : null}

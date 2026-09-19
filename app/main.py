@@ -31,7 +31,7 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
-from app.storyboard import ensure_storyboard, frame_path
+from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
 from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
@@ -1742,6 +1742,37 @@ def media_source_storyboard_frame(source_id: int, index: int, _auth: AuthDep) ->
     if not path.exists():
         raise HTTPException(status_code=404, detail="frame not found")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/media/clip-plans/{clip_plan_id}/thumb", include_in_schema=False)
+def media_clip_plan_thumb(clip_plan_id: int, _auth: AuthDep) -> FileResponse:
+    """9:16 cover for a moment card: mid-point of its first segment, cropped at its focus."""
+    try:
+        plan = store.get_clip_plan(clip_plan_id)
+        source = store.get_source(int(plan["source_id"]))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    segments = plan.get("segments") or []
+    if not segments:
+        raise HTTPException(status_code=404, detail="clip plan has no segments")
+    seg = segments[0]
+    start, end = float(seg["start_sec"]), float(seg["end_sec"])
+    mid = start + max(0.0, end - start) / 2.0
+    focus = seg.get("focus") or []
+    if not focus and seg.get("focus_json"):
+        try:
+            focus = json.loads(seg["focus_json"]) or []
+        except (TypeError, ValueError):
+            focus = []
+    x = 0.5
+    if focus:
+        rel = mid - start
+        x = float(min(focus, key=lambda p: abs(float(p.get("t", 0)) - rel)).get("x", 0.5))
+    try:
+        path = plan_thumb(source, mid, x)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get(

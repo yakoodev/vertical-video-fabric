@@ -80,6 +80,28 @@ export function Timeline({
     };
   }, [videoRef, effPps]);
 
+  // Frame the clip being edited: on a 4-hour source a 40-second moment is a
+  // sliver at "whole video" zoom, so fit the view to the segments (with margin).
+  const fitClip = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !segments.length || !duration) return false;
+    const s = Math.min(...segments.map((x) => x.start_sec));
+    const e = Math.max(...segments.map((x) => x.end_sec));
+    const pad = Math.max(2, (e - s) * 0.15);
+    const a = Math.max(0, s - pad);
+    const b = Math.min(duration, e + pad);
+    const next = clamp(viewW / Math.max(1, b - a), fitPps, Math.max(maxPps, viewW / Math.max(1, b - a)));
+    setPps(next);
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollLeft = a * next;
+    });
+    return true;
+  }, [segments, duration, viewW, fitPps, maxPps]);
+  const segKey = segments.map((x) => x.id).join(",");
+  useEffect(() => {
+    fitClip();
+  }, [segKey, viewW > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const zoomBy = useCallback(
     (factor: number) => {
       const el = scrollRef.current;
@@ -193,14 +215,18 @@ export function Timeline({
         <button className="btn ghost sm" onClick={() => zoomBy(1 / 1.6)}>
           −
         </button>
+        <button className="btn ghost sm" title="Подогнать под клип" onClick={() => fitClip()}>
+          Fit
+        </button>
         <button
           className="btn ghost sm"
+          title="Показать всё видео"
           onClick={() => {
             setPps(fitPps);
             if (scrollRef.current) scrollRef.current.scrollLeft = 0;
           }}
         >
-          Fit
+          Всё
         </button>
         <button className="btn ghost sm" onClick={() => zoomBy(1.6)}>
           +

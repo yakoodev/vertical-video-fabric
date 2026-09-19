@@ -1,0 +1,6 @@
+Generate ONE high-fidelity desktop web-app UI mockup image (landscape, ~1600x1000) using your image generation tool.
+Product: "Fabric — Vertical Video", a tool that turns long videos/streams into vertical 9:16 clips with karaoke subtitles and auto-publishes to YouTube/TikTok/Instagram.
+Visual style: premium dark SaaS video editor (think Opus Clip / CapCut / Descript quality). Background #0c0a12, surfaces #15121e with 1px #262033 borders, violet accent #8b5cf6 with subtle glow, secondary accents: green for success, amber for processing, red for errors. Rounded 12px cards, Inter font, crisp hierarchy, generous spacing, small muted secondary text, pill chips, icon buttons. Everything readable, nothing cramped.
+ALL UI text must be in Russian, exactly the labels given below.
+Persistent layout: narrow left sidebar with logo "FABRIC · VERTICAL VIDEO" and nav groups — «Монтаж»: Проекты, Клипы; «Постинг»: Авто, Публикации, Аккаунты; «Мониторинг»: Задачи; pinned bottom: Помощь, Настройки, Выйти. Top bar right: bell icon with a small badge (activity center).
+Video thumbnails / frames: generic game-stream or desk/room scenes, abstract gameplay, landscapes. NO real people faces, NO recognizable characters, NO brand logos.

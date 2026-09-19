@@ -118,6 +118,9 @@ class VideoAnalysisService:
         def heartbeat() -> None:
             self.store.touch_ai_analysis(analysis_id)
 
+        def progress(stage: str, done: int = 0, total: int = 0) -> None:
+            self.store.set_ai_analysis_progress(analysis_id, stage, done, total)
+
         def check_cancel() -> None:
             heartbeat()
             if should_cancel():
@@ -128,6 +131,7 @@ class VideoAnalysisService:
         preprocessing_meta: dict = {}
         try:
             check_cancel()
+            progress("prepare")
             analyzer_source, preprocessing_meta = prepare_source_for_analysis(source, normalized_preprocessing)
             # Gemini rejects uploads over 2 GiB. Shrink an oversized source to a
             # downscaled analysis copy that fits, so long VODs analyze instead of
@@ -162,15 +166,23 @@ class VideoAnalysisService:
                 # multi-minute step) the first time.
                 transcript_cues = self.store.get_source_transcript(source_id)
                 if not transcript_cues:
+                    progress("transcript")
                     transcript_cues = transcribe_source_cues(analyzer_source.get("local_path"))
                     if transcript_cues:
                         self.store.set_source_transcript(source_id, transcript_cues, settings.whisper_model_size)
             check_cancel()
             gemini_kwargs = (
-                {"transcript": transcript_cues, "should_cancel": should_cancel, "heartbeat": heartbeat}
+                {
+                    "transcript": transcript_cues,
+                    "should_cancel": should_cancel,
+                    "heartbeat": heartbeat,
+                    "progress": progress,
+                }
                 if is_gemini
                 else {}
             )
+            if not is_gemini:
+                progress("windows", 0, 1)
             if windows and is_gemini:
                 result = analyzer.analyze(analyzer_source, analyzer_prompt, selected_model, windows=windows, **gemini_kwargs)
             else:
@@ -203,6 +215,7 @@ class VideoAnalysisService:
                 )
                 if quality_error:
                     raise RuntimeError(f"AI analyzer returned invalid narrative analysis: {quality_error}")
+            progress("collect")
             created_plans = _persist_clip_plans(
                 self.store,
                 source_id=source_id,

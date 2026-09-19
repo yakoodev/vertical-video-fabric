@@ -8,7 +8,7 @@ import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi } fro
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
-import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
+import { Badge, EmptyState, ErrorState, Loading } from "@/components/ui";
 
 const STATUS_RU: Record<string, string> = {
   queued: "в очереди",
@@ -75,8 +75,9 @@ function StartAuto() {
   const toggle = (id: number) => setTargets((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   return (
-    <div className="panel" style={{ display: "grid", gap: 12 }}>
-      <strong>Запустить конвейер</strong>
+    <div className="auto-form">
+    <div className="panel auto-card">
+      <strong className="src-h">Запустить конвейер</strong>
       <label className="field">
         <span>Ссылка на видео (mp4, YouTube, Twitch, Smotvibe и похожие плееры)</span>
         <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
@@ -134,13 +135,15 @@ function StartAuto() {
           />
         </label>
       </div>
-      <label className="check" title="Whisper-транскрипт в анализ — точнее границы и цитаты (для Gemini)">
+      <label className="switch" title="Whisper-транскрипт в анализ — точнее границы и цитаты (для Gemini)">
         <input type="checkbox" checked={useTranscript} onChange={(e) => setUseTranscript(e.target.checked)} />
+        <span className="switch-track" />
         <span>Транскрипт (Whisper) в анализ</span>
       </label>
+    </div>
 
-      <div className="field" style={{ display: "grid", gap: 10, borderTop: "1px solid var(--border, rgba(255,255,255,0.08))", paddingTop: 12 }}>
-        <span>Оформление клипов</span>
+      <div className="panel auto-card">
+        <strong className="src-h">Оформление клипов</strong>
         <label className="field">
           <span>Пресет рендера (фильтр/лук)</span>
           <select className="input" value={renderPresetId} onChange={(e) => setRenderPresetId(Number(e.target.value))}>
@@ -151,10 +154,28 @@ function StartAuto() {
           </select>
         </label>
 
-        <label className="check">
-          <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
-          <span>Субтитры</span>
-        </label>
+        <div className="auto-switches">
+          <label className="switch">
+            <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
+            <span className="switch-track" />
+            <span>Субтитры</span>
+          </label>
+          <label className="switch">
+            <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
+            <span className="switch-track" />
+            <span>Баннер</span>
+          </label>
+          <label className="switch">
+            <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+            <span className="switch-track" />
+            <span>🪞 Зеркало (лево↔право)</span>
+          </label>
+          <label className="switch">
+            <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
+            <span className="switch-track" />
+            <span>Музыка</span>
+          </label>
+        </div>
         {subsOn ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <label className="field">
@@ -181,10 +202,6 @@ function StartAuto() {
           </div>
         ) : null}
 
-        <label className="check">
-          <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
-          <span>Баннер</span>
-        </label>
         {bannerOn ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <label className="field">
@@ -207,15 +224,6 @@ function StartAuto() {
           </div>
         ) : null}
 
-        <label className="check">
-          <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
-          <span>🪞 Зеркало (лево↔право)</span>
-        </label>
-
-        <label className="check">
-          <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
-          <span>Музыка</span>
-        </label>
         {musicOn ? (
           <label className="field">
             <span>Трек</span>
@@ -229,16 +237,16 @@ function StartAuto() {
         ) : null}
       </div>
 
-      <div className="field">
-        <span>Публиковать в аккаунты</span>
+      <div className="panel auto-card">
+        <strong className="src-h">Публиковать в аккаунты</strong>
         {accounts.isLoading ? (
           <Loading />
         ) : !accounts.data?.length ? (
           <span className="muted">Нет аккаунтов — добавьте на вкладке «Аккаунты»</span>
         ) : (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div className="auto-accounts">
             {accounts.data.map((a) => (
-              <label key={a.id} className="check">
+              <label key={a.id} className="check auto-acc">
                 <input type="checkbox" checked={targets.includes(a.id)} onChange={() => toggle(a.id)} />
                 <span>
                   {a.platform} · {a.label}
@@ -247,10 +255,8 @@ function StartAuto() {
             ))}
           </div>
         )}
-      </div>
-      <div>
         <button
-          className="btn primary"
+          className="btn primary auto-go"
           disabled={start.isPending || !url.trim()}
           onClick={() =>
             start.mutate({
@@ -284,15 +290,60 @@ function StartAuto() {
   );
 }
 
+// Pipeline stages of an auto run. The run only reports its current status, so a
+// failed run is placed by what it had produced before failing.
+const STAGES = ["скачивание", "анализ", "рендер", "публикация"];
+const STAGE_OF: Record<string, number> = { queued: -1, downloading: 0, analyzing: 1, rendering: 2, scheduling: 3, done: 4 };
+function runStage(run: { status: string; source_id?: number | null; plans: number; clips: number }): number {
+  if (run.status === "failed") return run.clips ? 3 : run.plans ? 2 : run.source_id ? 1 : 0;
+  return STAGE_OF[run.status] ?? -1;
+}
+function RunSteps({ run }: { run: { status: string; source_id?: number | null; plans: number; clips: number } }) {
+  const at = runStage(run);
+  const failed = run.status === "failed";
+  return (
+    <ol className="run-steps">
+      {STAGES.map((label, i) => {
+        const state = i < at ? "done" : i === at ? (failed ? "fail" : "now") : "todo";
+        return (
+          <li key={label} className={`run-step ${state}`}>
+            <span className="run-dot">{state === "done" ? "✓" : state === "fail" ? "✕" : ""}</span>
+            <span className="run-label">{label}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function AutomationPage() {
   const query = useQuery({ queryKey: qk.autoRuns, queryFn: autoApi.runs, refetchInterval: 4000 });
 
   return (
     <>
-      <PageHead title="Авто" sub="Конвейер: скачать → проанализировать → отрендерить → опубликовать" />
+      <section className="auto-head">
+        <div className="auto-title">
+          <h1>Авто</h1>
+          <span className="muted">Конвейер: скачать → проанализировать → отрендерить → опубликовать</span>
+        </div>
+        <ol className="auto-flow" aria-hidden>
+          {[
+            ["⬇", "скачать"],
+            ["🔍", "проанализировать"],
+            ["⚙", "отрендерить"],
+            ["⬆", "опубликовать"],
+          ].map(([icon, label]) => (
+            <li key={label}>
+              <span className="auto-flow-ico">{icon}</span>
+              <span>{label}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
       <div className="auto-grid">
         <StartAuto />
-        <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
+        <div className="panel auto-runs">
+          <strong className="src-h">Запуски</strong>
           {query.isLoading ? (
             <Loading />
           ) : query.isError ? (
@@ -301,25 +352,37 @@ export function AutomationPage() {
             <EmptyState icon="⚡" title="Запусков ещё не было" hint="Запустите конвейер слева" />
           ) : (
             query.data.map((run) => (
-              <div key={run.id} className="panel" style={{ display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong>
-                    #{run.id} {run.label}
-                  </strong>
-                  <Badge status={run.status}>{STATUS_RU[run.status] ?? run.status}</Badge>
-                </div>
-                {run.message ? <div className="muted">{run.message}</div> : null}
-                <div className="muted" style={{ fontSize: 13, display: "flex", gap: 14 }}>
-                  <span>планов {run.plans}</span>
-                  <span>клипов {run.clips}</span>
-                  <span>постов {run.jobs}</span>
+              <div key={run.id} className="run-card">
+                {run.source_id ? (
+                  <img
+                    className="run-thumb"
+                    src={`/media/sources/${run.source_id}/storyboard/0`}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = "hidden")}
+                  />
+                ) : (
+                  <span className="run-thumb" />
+                )}
+                <div className="run-main">
+                  <div className="run-top">
+                    <strong className="run-title">
+                      #{run.id} {run.label}
+                    </strong>
+                    <Badge status={run.status}>{STATUS_RU[run.status] ?? run.status}</Badge>
+                  </div>
+                  <div className="muted run-counts">
+                    планов {run.plans} · клипов {run.clips} · постов {run.jobs}
+                  </div>
+                  <RunSteps run={run} />
+                  {run.message ? <div className="muted run-msg">{run.message}</div> : null}
+                  {run.error ? <div className="run-err">{run.error}</div> : null}
                   {run.source_id ? (
-                    <Link to={`/projects/${run.source_id}`} style={{ color: "var(--accent)" }}>
+                    <Link className="run-link" to={`/projects/${run.source_id}`}>
                       проект →
                     </Link>
                   ) : null}
                 </div>
-                {run.error ? <div style={{ color: "var(--danger)", fontSize: 13 }}>{run.error}</div> : null}
               </div>
             ))
           )}

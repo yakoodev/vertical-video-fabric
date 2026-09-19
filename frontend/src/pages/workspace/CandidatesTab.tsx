@@ -59,9 +59,9 @@ function FocusEditor({
   };
 
   return (
-    <div className="panel" style={{ display: "grid", gap: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <strong>Фокус кадра · {segment.title}</strong>
+    <div className="focus-ed">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <strong style={{ fontSize: 13 }}>{segment.title}</strong>
         <span className="muted" style={{ fontSize: 12 }}>
           {points.length ? `${points.length} точек` : "следует за центром"}
         </span>
@@ -216,6 +216,7 @@ function CropFrame({
   focusPreset,
   onManualX,
   mirror,
+  phoneRef,
 }: {
   srcW: number;
   srcH: number;
@@ -230,6 +231,9 @@ function CropFrame({
   focusPreset?: string;
   onManualX?: (x: number) => void;
   mirror?: boolean;
+  // Optional canvas that receives the cropped 9:16 window every frame — a live
+  // "phone" preview of exactly what the render will keep.
+  phoneRef?: React.RefObject<HTMLCanvasElement>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -282,6 +286,23 @@ function CropFrame({
         el.style.width = `${fw * c.w * 100}%`;
         el.style.top = `${(c.y + tc * c.h) * 100}%`;
         el.style.height = `${fh * c.h * 100}%`;
+        const cv = phoneRef?.current;
+        if (cv && v && v.readyState >= 2 && v.videoWidth) {
+          const ctx = cv.getContext("2d");
+          const vw = v.videoWidth;
+          const vh = v.videoHeight;
+          ctx?.drawImage(
+            v,
+            (c.x + lc * c.w) * vw,
+            (c.y + tc * c.h) * vh,
+            fw * c.w * vw,
+            fh * c.h * vh,
+            0,
+            0,
+            cv.width,
+            cv.height,
+          );
+        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -450,6 +471,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const phoneRef = useRef<HTMLCanvasElement>(null);
   const query = useQuery({ queryKey: qk.source(sourceId), queryFn: () => sourcesApi.get(sourceId) });
   const presets = useQuery({ queryKey: qk.ffmpegPresets, queryFn: ffmpegPresetsApi.list });
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
@@ -464,6 +486,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
+  // Two-stage flow: triage the moments list, then open one clip in the editor.
+  const [view, setView] = useState<"triage" | "editor">("triage");
   const [chosen, setChosen] = useState<Set<number> | null>(null);
   const [loop, setLoop] = useState(true);
   const loopRef = useRef(loop);
@@ -494,7 +518,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     };
     v.addEventListener("timeupdate", onTime);
     return () => v.removeEventListener("timeupdate", onTime);
-  }, []);
+    // Re-bind whenever the <video> element is (re)mounted: after load and on
+    // every triage ↔ editor switch — each view renders its own player.
+  }, [view, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opening a clip in the editor parks the player on its first frame, so the
+  // stage, crop window and phone preview show that moment, not 0:00.
+  const editorPlanId = view === "editor" ? activePlanId : null;
+  useEffect(() => {
+    const v = videoRef.current;
+    const plan = query.data?.clip_plans.find((p) => p.id === editorPlanId) ?? null;
+    const start = plan?.segments[0]?.start_sec;
+    if (!v || start == null) return;
+    const park = () => {
+      if (!playbackRef.current) v.currentTime = start;
+    };
+    if (v.readyState >= 1) park();
+    else v.addEventListener("loadedmetadata", park, { once: true });
+    return () => v.removeEventListener("loadedmetadata", park);
+  }, [editorPlanId, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const playRanges = (ranges: { start: number; end: number }[]) => {
     const v = videoRef.current;
@@ -524,8 +566,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
-  // Two-stage flow: triage the moments list, then open one clip in the editor.
-  const [view, setView] = useState<"triage" | "editor">("triage");
 
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
@@ -553,9 +593,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const selected = chosen ?? new Set<number>();
 
   const batch = useMutation({
-    mutationFn: () =>
+    // No ids = everything ticked «в рендер»; the editor passes just its clip.
+    mutationFn: (ids: number[] | undefined) =>
       clipPlansApi.renderBatch(sourceId, {
-        clip_plan_ids: [...selected],
+        clip_plan_ids: ids ?? [...selected],
         ffmpeg_preset_id: presetId || undefined,
         subtitle_profile_id: subsOn ? subId || undefined : undefined,
         subtitle_provider: subsOn ? subEngine || undefined : undefined,
@@ -741,78 +782,375 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  const visiblePlans = planGroups.flatMap(([, g]) => g);
+  // Editor rail: the starred moments (plus the open one if it isn't starred);
+  // with nothing starred yet, fall back to what the triage filters show.
+  const favPlans = plans.filter((p) => p.favorite && !p.hidden);
+  const railPlans = favPlans.length
+    ? activePlan && !favPlans.some((p) => p.id === activePlan.id)
+      ? [activePlan, ...favPlans]
+      : favPlans
+    : visiblePlans;
+  const planDur = (p: (typeof plans)[number]) =>
+    p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0);
+  // Cache-busted by the first segment's timing + focus so edits refresh the cover.
+  const planThumbUrl = (p: (typeof plans)[number]) => {
+    const s = p.segments[0];
+    const fx = s?.focus?.[0]?.x ?? 0.5;
+    return `/media/clip-plans/${p.id}/thumb?v=${s ? `${s.start_sec.toFixed(1)}_${s.end_sec.toFixed(1)}` : 0}_${fx.toFixed(2)}`;
+  };
+  const playPlan = (planId: number) => {
+    const p = plans.find((x) => x.id === planId);
+    if (!p) return;
+    setActivePlanId(p.id);
+    playRanges(p.segments.map((s) => ({ start: s.start_sec, end: s.end_sec })));
+  };
+  // The editor works on favourites: jump to the requested moment, else keep the
+  // current one if it's starred, else the first starred one.
+  const openEditor = (planId?: number) => {
+    const favs = plans.filter((p) => p.favorite && !p.hidden);
+    const target =
+      planId ??
+      (activePlan && (activePlan.favorite || !favs.length) ? activePlan.id : favs[0]?.id ?? activePlan?.id);
+    if (target == null) return;
+    stopPlayback();
+    setActivePlanId(target);
+    setSelectedSeg(null);
+    setView("editor");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <div className="editor">
-      <div className="editor-viewbar" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-        <button className={`chip${view === "triage" ? " active" : ""}`} onClick={() => setView("triage")}>
+      <div className="ed-viewbar">
+        {view === "editor" ? (
+          <button className="btn sm" onClick={() => { stopPlayback(); setView("triage"); }}>
+            ← к моментам
+          </button>
+        ) : null}
+        <button
+          className={`ed-viewchip${view === "triage" ? " active" : ""}`}
+          onClick={() => { stopPlayback(); setView("triage"); }}
+        >
           🗂 Моменты · {plans.length}
         </button>
         <button
-          className={`chip${view === "editor" ? " active" : ""}`}
+          className={`ed-viewchip${view === "editor" ? " active" : ""}`}
           disabled={!activePlan}
-          onClick={() => activePlan && setView("editor")}
+          onClick={() => openEditor(activePlan?.id)}
           title={activePlan ? "" : "Выберите момент, чтобы открыть редактор"}
         >
           ✂️ Редактор{activePlan ? `: ${activePlan.title || "клип"}` : ""}
         </button>
-        {view === "editor" ? (
-          <button className="btn ghost sm" onClick={() => setView("triage")} style={{ marginLeft: "auto" }}>
-            ← к моментам
-          </button>
-        ) : null}
       </div>
-      {view === "editor" && (
+      {view === "triage" && (
       <>
-      <div className="editor-top">
-        <div className="editor-stage-wrap">
-          <div className="editor-stage">
-            <div
-              className={`stage-frame${mirror ? " mirrored" : ""}`}
-              style={{
-                ...(source.width && source.height
-                  ? {
-                      aspectRatio: `${source.width} / ${source.height}`,
-                      maxWidth: `calc(64vh * ${source.width} / ${source.height})`,
-                      margin: "0 auto",
-                    }
-                  : {}),
-                // Mirror the whole stage so the crop window and zones stay aligned
-                // with what the render actually produces (hflip after the crop).
-                transform: mirror ? "scaleX(-1)" : undefined,
-              }}
-            >
-              <video
-                ref={videoRef}
-                src={`/media/sources/${source.id}`}
-                controls
-                preload="metadata"
-                style={lookCss ? { filter: lookCss } : undefined}
-              />
-              {selectedPreset?.vignette ? (
-                <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
-              ) : null}
-              <CropFrame
-                srcW={source.width}
-                srcH={source.height}
-                crop={source.content_crop}
-                segments={activePlan?.segments ?? []}
-                videoRef={videoRef}
-                showBanner={showZones && bannerOn}
-                bannerHeightPct={bannerHeightPct}
-                bannerPosPct={bannerPosPct}
-                showSubs={showZones && subsOn}
-                subPosPct={subPosPct}
-                focusPreset={source.focus_preset}
-                onManualX={activePlan ? (x) => setFixedFrame(activePlan.id, x) : undefined}
-                mirror={mirror}
-              />
+      <div className="mo-top">
+        <div className="panel mo-player">
+          <div
+            className="mo-player-frame"
+            style={source.width && source.height ? { aspectRatio: `${source.width} / ${source.height}` } : undefined}
+          >
+            <video ref={videoRef} src={`/media/sources/${source.id}`} controls preload="metadata" />
+          </div>
+          {source.duration_sec ? (
+            <div className="mo-heat" title="Где в видео найдены моменты — клик перематывает">
+              {visiblePlans.map((p) =>
+                p.segments.map((s) => (
+                  <button
+                    key={`${p.id}-${s.id}`}
+                    className={`mo-heat-tick${p.favorite ? " fav" : ""}${p.id === activePlan?.id ? " active" : ""}`}
+                    style={{
+                      left: `${(s.start_sec / source.duration_sec) * 100}%`,
+                      width: `max(3px, ${((s.end_sec - s.start_sec) / source.duration_sec) * 100}%)`,
+                    }}
+                    title={`${p.title || `План #${p.id}`} · ${formatDuration(s.start_sec)}`}
+                    onClick={() => playPlan(p.id)}
+                  />
+                )),
+              )}
             </div>
-            <div className="editor-stage-meta mono">
-              {formatDuration(source.duration_sec)} · {source.width}×{source.height} · 9:16
+          ) : null}
+          <div className="mo-heat-scale mono">
+            {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+              <span key={f}>{formatDuration(source.duration_sec * f)}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel mo-stats">
+          <div className="mo-stats-line">
+            <b>{plans.length} моментов</b>
+            <span>· {favCount} в избранном</span>
+            <span>· {hiddenCount} скрыто</span>
+          </div>
+          <div className="mo-stats-meta muted mono">
+            {formatDuration(source.duration_sec)}
+            {source.width ? ` · ${source.width}×${source.height}` : ""}
+            {` · ${analysisChips.filter(([a]) => a).length} анализ(а)`}
+          </div>
+          <button
+            className="btn primary mo-big"
+            onClick={() => openEditor()}
+            title={favCount ? "Работать над избранными моментами" : "Отметьте ★ моменты, чтобы работать над ними в редакторе"}
+          >
+            ✂️ Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
+          </button>
+          <button
+            className="btn mo-big"
+            disabled={batch.isPending || !selected.size}
+            onClick={() => batch.mutate(undefined)}
+            title="Рендер отмеченных «в рендер» с настройками из редактора"
+          >
+            {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
+          </button>
+          <p className="muted mo-stats-hint">
+            ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть момент.
+          </p>
+        </div>
+      </div>
+
+      <div className="mo-toolbar">
+        <div className="mo-search">
+          <span aria-hidden>⌕</span>
+          <input
+            className="input"
+            placeholder="Поиск по названию…"
+            value={candidateSearch}
+            onChange={(e) => setCandidateSearch(e.target.value)}
+          />
+        </div>
+        <button
+          className={`chip${onlyFavorites ? " active" : ""}`}
+          onClick={() => setOnlyFavorites((v) => !v)}
+          title="Показать только избранные"
+        >
+          ★ Избранное · {favCount}
+        </button>
+        {hiddenCount ? (
+          <label className="switch">
+            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+            <span className="switch-track" />
+            <span>скрытые ({hiddenCount})</span>
+          </label>
+        ) : null}
+        {plans.some((p) => p.duplicate_of != null) ? (
+          <label className="switch">
+            <input type="checkbox" checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />
+            <span className="switch-track" />
+            <span>скрыть дубли</span>
+          </label>
+        ) : null}
+        <button
+          className="btn sm"
+          onClick={() => setChosen(new Set(selected.size === plans.length ? [] : plans.map((p) => p.id)))}
+        >
+          {selected.size === plans.length ? "Снять все" : "Выбрать все"}
+        </button>
+        {analysisChips.map(([aid, count]) => {
+          const shown = !hiddenAnalyses.has(aid);
+          return (
+            <button
+              key={aid}
+              className={`chip${shown ? " active" : " off"}`}
+              title={shown ? "Скрыть этот анализ" : "Показать этот анализ"}
+              onClick={() =>
+                setHiddenAnalyses((prev) => {
+                  const next = new Set(prev);
+                  next.has(aid) ? next.delete(aid) : next.add(aid);
+                  return next;
+                })
+              }
+            >
+              {shown ? "" : "🚫 "}
+              {aid ? `Анализ #${aid}` : "Вручную"} · {count}
+            </button>
+          );
+        })}
+        {candidateSearch.trim() ? <span className="muted mo-count">{shownCount} из {plans.length}</span> : null}
+      </div>
+
+      {!shownCount ? (
+        <EmptyState icon="🔎" title="Ничего не показано" hint="Снимите фильтры или включите скрытые анализы" />
+      ) : null}
+
+      {planGroups.map(([analysisId, group]) => (
+        <section key={analysisId} className="mo-group">
+          <div className="mo-group-head">
+            <span className="mo-group-name">{analysisMeta(analysisId)}</span>
+            <span className="mo-group-count">· {group.length}</span>
+            <button
+              className="mo-group-sel"
+              onClick={() =>
+                setChosen((prev) => {
+                  const next = new Set(prev ?? []);
+                  const ids = group.map((p) => p.id);
+                  const allOn = ids.every((id) => next.has(id));
+                  ids.forEach((id) => (allOn ? next.delete(id) : next.add(id)));
+                  return next;
+                })
+              }
+            >
+              · {group.every((p) => selected.has(p.id)) ? "снять" : "выбрать"}
+            </button>
+          </div>
+          <div className="mo-grid">
+            {group.map((p) => (
+              <article
+                key={p.id}
+                className={`mo-card${p.id === activePlan?.id ? " active" : ""}${p.hidden ? " is-hidden" : ""}`}
+              >
+                <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть момент в плеере">
+                  <img src={planThumbUrl(p)} alt="" loading="lazy" />
+                  {typeof p.quality === "number" ? (
+                    <span
+                      className="mo-q"
+                      title={`Оценка качества ${(p.quality * 100).toFixed(0)}% (речь + длительность + оценка модели)`}
+                    >
+                      {(p.quality * 100).toFixed(0)}
+                    </span>
+                  ) : null}
+                  {p.duplicate_of != null ? <span className="mo-dup">дубль</span> : null}
+                  <span className="mo-play">▶</span>
+                  <span className="mo-dur mono">
+                    {formatDuration(planDur(p))}
+                    {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
+                  </span>
+                </button>
+                <button
+                  className="mo-title"
+                  onClick={() => openEditor(p.id)}
+                  title="Открыть в редакторе"
+                >
+                  {p.title || `План #${p.id}`}
+                </button>
+                <div className="mo-foot">
+                  <label className="check" title="Включить в рендер">
+                    <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleChosen(p.id)} />
+                    <span>в рендер</span>
+                  </label>
+                  <button
+                    className={`mo-act${p.favorite ? " fav" : ""}`}
+                    title={p.favorite ? "Убрать из избранного" : "В избранное"}
+                    onClick={() => setPlanFlag(p.id, { favorite: !p.favorite })}
+                  >
+                    {p.favorite ? "★" : "☆"}
+                  </button>
+                  <button
+                    className="mo-act"
+                    title={p.hidden ? "Вернуть кандидата" : "Скрыть кандидата"}
+                    onClick={() => setPlanFlag(p.id, { hidden: !p.hidden })}
+                  >
+                    {p.hidden ? "↩" : "✕"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+      </>
+      )}
+
+      {view === "editor" && (
+      <div className="ed">
+        <aside className="ed-rail" aria-label="Избранные моменты">
+          <div className="ed-rail-head muted">{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Моменты"}</div>
+          {railPlans.map((p) => (
+            <button
+              key={p.id}
+              className={`ed-rail-item${p.id === activePlan?.id ? " active" : ""}`}
+              onClick={() => openEditor(p.id)}
+              title={p.title || `План #${p.id}`}
+            >
+              <img src={planThumbUrl(p)} alt="" loading="lazy" />
+              {p.favorite ? <span className="ed-rail-star">★</span> : null}
+              <span className="ed-rail-dur mono">{formatDuration(planDur(p))}</span>
+            </button>
+          ))}
+        </aside>
+
+        <div className="ed-main">
+          <div className="ed-stage-row">
+            <div className="ed-stage">
+              <div
+                className={`stage-frame${mirror ? " mirrored" : ""}`}
+                style={{
+                  ...(source.width && source.height
+                    ? {
+                        aspectRatio: `${source.width} / ${source.height}`,
+                        // Cap by height too, or max-height would squash the frame and
+                        // the % -positioned crop window would drift off the video.
+                        maxWidth: `calc(52vh * ${source.width} / ${source.height})`,
+                        margin: "0 auto",
+                      }
+                    : {}),
+                  // Mirror the whole stage so the crop window and zones stay aligned
+                  // with what the render actually produces (hflip after the crop).
+                  transform: mirror ? "scaleX(-1)" : undefined,
+                }}
+              >
+                <video
+                  ref={videoRef}
+                  src={`/media/sources/${source.id}`}
+                  controls
+                  preload="metadata"
+                  style={lookCss ? { filter: lookCss } : undefined}
+                />
+                {selectedPreset?.vignette ? (
+                  <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
+                ) : null}
+                <CropFrame
+                  srcW={source.width}
+                  srcH={source.height}
+                  crop={source.content_crop}
+                  segments={activePlan?.segments ?? []}
+                  videoRef={videoRef}
+                  showBanner={showZones && bannerOn}
+                  bannerHeightPct={bannerHeightPct}
+                  bannerPosPct={bannerPosPct}
+                  showSubs={showZones && subsOn}
+                  subPosPct={subPosPct}
+                  focusPreset={source.focus_preset}
+                  onManualX={activePlan ? (x) => setFixedFrame(activePlan.id, x) : undefined}
+                  mirror={mirror}
+                  phoneRef={phoneRef}
+                />
+              </div>
+              <div className="editor-stage-meta mono">
+                {formatDuration(source.duration_sec)} · {source.width}×{source.height} · 16:9 → 9:16
+              </div>
+            </div>
+            <div className="ed-phone" title="Так будет выглядеть вертикальный клип">
+              <div className="ed-phone-screen">
+                <canvas
+                  ref={phoneRef}
+                  width={360}
+                  height={640}
+                  style={{
+                    filter: lookCss || undefined,
+                    transform: mirror ? "scaleX(-1)" : undefined,
+                  }}
+                />
+                {selectedPreset?.vignette ? (
+                  <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
+                ) : null}
+                {showZones && bannerOn ? (
+                  <div className="safe-zone safe-zone--banner" style={{ top: `${bannerPosPct}%`, height: `${bannerHeightPct}%` }}>
+                    <span>Баннер</span>
+                  </div>
+                ) : null}
+                {showZones && subsOn ? (
+                  <div className="safe-zone safe-zone--subs" style={{ bottom: `${subPosPct}%` }}>
+                    <span>Субтитры</span>
+                  </div>
+                ) : null}
+                <span className="ed-phone-tag mono">9:16</span>
+              </div>
             </div>
           </div>
-          <div className="stage-controls">
+
+          <div className="ed-transport">
             <button
               className="btn primary sm"
               disabled={!activePlan?.segments.length}
@@ -825,471 +1163,321 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <button
               className="btn sm"
               disabled={!selectedSegment}
+              title={selectedSegment ? "" : "Выберите сегмент на таймлайне"}
               onClick={() => selectedSegment && playRanges([{ start: selectedSegment.start_sec, end: selectedSegment.end_sec }])}
             >
               ▶ Сегмент
             </button>
-            <button className="btn ghost sm" onClick={stopPlayback}>
+            <button className="btn sm" onClick={stopPlayback}>
               ⏹ Стоп
             </button>
-            <label className="check" style={{ fontSize: 12.5 }}>
+            <label className="switch">
               <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
+              <span className="switch-track" />
               <span>Зациклить</span>
             </label>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {activePlan ? `${activePlan.title || "План"} · ${activePlan.segments.length} сегм.` : ""}
-            </span>
+            {activePlan
+              ? (() => {
+                  const fx = activePlan.segments[0]?.focus ?? [];
+                  const constant = fx.length > 0 && fx.every((p) => Math.abs(p.x - fx[0].x) < 0.001);
+                  const mx = constant ? fx[0].x : null;
+                  return (
+                    <div className="ed-fixed">
+                      <span className="muted">Фикс. рамка</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={Math.round((mx ?? 0.5) * 100)}
+                        onChange={(e) => setFixedFrame(activePlan.id, Number(e.target.value) / 100)}
+                        title="Зафиксировать кадр 9:16 по горизонтали (или тащи рамку на превью). Пишет точки фокуса, не конфликтует с кейфреймами."
+                      />
+                      <span className="mono ed-fixed-val">{mx == null ? "трек" : `${Math.round(mx * 100)}%`}</span>
+                      <button
+                        className="btn sm"
+                        disabled={autofocus.isPending || !activePlan.segments.length}
+                        onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                        title="Пересчитать автофокус для этого клипа"
+                      >
+                        🎯 Авто
+                      </button>
+                    </div>
+                  );
+                })()
+              : null}
           </div>
-          {activePlan
-            ? (() => {
-                const fx = activePlan.segments[0]?.focus ?? [];
-                const constant = fx.length > 0 && fx.every((p) => Math.abs(p.x - fx[0].x) < 0.001);
-                const mx = constant ? fx[0].x : null;
-                return (
-                  <div
-                    className="manual-frame"
-                    style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}
-                  >
-                    <span className="muted" style={{ fontSize: 12 }}>Фикс. рамка:</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={Math.round((mx ?? 0.5) * 100)}
-                      onChange={(e) => setFixedFrame(activePlan.id, Number(e.target.value) / 100)}
-                      style={{ width: 170 }}
-                      title="Зафиксировать кадр 9:16 по горизонтали (или тащи рамку на превью). Пишет точки фокуса, не конфликтует с кейфреймами."
-                    />
-                    <span className="mono" style={{ fontSize: 12, minWidth: 52 }}>
-                      {mx == null ? "трек" : `${Math.round(mx * 100)}%`}
-                    </span>
-                    <button
-                      className="btn ghost sm"
-                      disabled={autofocus.isPending || !activePlan.segments.length}
-                      onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                      title="Пересчитать автофокус для этого клипа"
-                    >
-                      🎯 Авто
-                    </button>
-                  </div>
-                );
-              })()
-            : null}
+
+          <div className="panel editor-timeline">
+            <div className="ed-tl-head">
+              <strong>{activePlan ? activePlan.title || `План #${activePlan.id}` : ""}</strong>
+              <span className="muted mono">
+                {activePlan ? `${formatDuration(planDur(activePlan))} · ${activePlan.segments.length} сегм.` : ""}
+              </span>
+              {activePlan ? (
+                <button
+                  className={`mo-act${activePlan.favorite ? " fav" : ""}`}
+                  title={activePlan.favorite ? "Убрать из избранного" : "В избранное"}
+                  onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
+                >
+                  {activePlan.favorite ? "★" : "☆"}
+                </button>
+              ) : null}
+            </div>
+            <Timeline
+              duration={source.duration_sec}
+              segments={activePlan?.segments ?? []}
+              videoRef={videoRef}
+              selectedId={selectedSeg}
+              onSelect={(id) => {
+                setSelectedSeg(id);
+                const seg = activePlan?.segments.find((s) => s.id === id);
+                if (seg && videoRef.current) {
+                  playbackRef.current = null;
+                  videoRef.current.currentTime = seg.start_sec;
+                }
+              }}
+              onCommit={(id, s, e) => commit.mutate({ id, s, e })}
+            />
+          </div>
         </div>
 
-        <div className="panel editor-render" style={{ display: "grid", gap: 12, alignContent: "start" }}>
-          <strong>Рендер</strong>
-
-          <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
-            <label className="field">
-              <span>Пресет</span>
-              <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-                <option value={0}>По умолчанию</option>
-                {uniquePresets.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </label>
-            <LookPicker frames={lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
-            <label className="check" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
-              <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
-              <span>🪞 Зеркало (лево↔право)</span>
-            </label>
-          </Group>
-
-          <Group title="Субтитры" badge={subsOn ? "вкл" : "выкл"}>
-            <label className="check">
-              <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
-              <span>Накладывать субтитры</span>
-            </label>
-            {subsOn ? (
-              <>
-                <div className="sub-options">
-                  <label className="field">
-                    <span>Движок</span>
-                    <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
-                      <option value="">из стиля</option>
-                      <option value="whisper">Whisper (локально)</option>
-                      <option value="gemini">Gemini</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Стиль</span>
-                    <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
-                      <option value={0}>по умолчанию</option>
-                      {subs.data?.map((s) => (
-                        <option key={s.id} value={s.id}>{s.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <label className="field range">
-                  <span>Положение · {subPosPct}% снизу</span>
-                  <input
-                    type="range" min={2} max={40} value={subPosPct}
-                    onChange={(e) => setSubPosPct(Number(e.target.value))}
-                  />
-                </label>
-              </>
-            ) : null}
-          </Group>
-
-          <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
-            <label className="check">
-              <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
-              <span>Накладывать баннер</span>
-            </label>
-            {bannerOn ? (
-              <>
-                <label className="field">
-                  <span>Картинка</span>
-                  <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
-                    <option value={0}>по умолчанию</option>
-                    {banners.data?.map((b) => (
-                      <option key={b.id} value={b.id}>{b.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field range">
-                  <span>Высота · {bannerHeightPct}%</span>
-                  <input
-                    type="range" min={6} max={30} value={bannerHeightPct}
-                    onChange={(e) => setBannerHeightPct(Number(e.target.value))}
-                  />
-                </label>
-                <label className="field range">
-                  <span>Положение · {bannerPosPct}% сверху</span>
-                  <input
-                    type="range" min={0} max={80} value={bannerPosPct}
-                    onChange={(e) => setBannerPosPct(Number(e.target.value))}
-                  />
-                </label>
-              </>
-            ) : null}
-          </Group>
-
-          <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
-            <label className="check">
-              <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
-              <span>Фоновый трек</span>
-            </label>
-            {musicOn ? (
+        <aside className="ed-inspector">
+          <div className="ed-insp-scroll">
+            <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
               <label className="field">
-                <span>Трек</span>
-                <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
-                  <option value={0}>по умолчанию</option>
-                  {tracks.data?.map((t) => (
-                    <option key={t.id} value={t.id}>{t.label}</option>
+                <span>Пресет</span>
+                <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
+                  <option value={0}>По умолчанию</option>
+                  {uniquePresets.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>
               </label>
-            ) : null}
-          </Group>
+              <LookPicker frames={lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
+              <label className="switch" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
+                <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+                <span className="switch-track" />
+                <span>🪞 Зеркало (лево↔право)</span>
+              </label>
+            </Group>
 
-          <label className="check" title="Показывать на превью, где окажутся баннер и субтитры">
-            <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
-            <span>Зоны на превью</span>
-          </label>
+            <Group title="Субтитры" badge={subsOn ? "вкл" : "выкл"} defaultOpen>
+              <label className="switch">
+                <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
+                <span className="switch-track" />
+                <span>Накладывать субтитры</span>
+              </label>
+              {subsOn ? (
+                <>
+                  <div className="sub-options">
+                    <label className="field">
+                      <span>Движок</span>
+                      <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
+                        <option value="">из стиля</option>
+                        <option value="whisper">Whisper (локально)</option>
+                        <option value="gemini">Gemini</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Стиль</span>
+                      <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
+                        <option value={0}>по умолчанию</option>
+                        {subs.data?.map((s) => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="field range">
+                    <span>Положение · {subPosPct}% снизу</span>
+                    <input
+                      type="range" min={2} max={40} value={subPosPct}
+                      onChange={(e) => setSubPosPct(Number(e.target.value))}
+                    />
+                  </label>
+                </>
+              ) : null}
+            </Group>
 
-          <button
-            className="btn primary"
-            disabled={batch.isPending || !selected.size}
-            onClick={() => batch.mutate()}
-          >
-            {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
-          </button>
+            <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
+              <label className="switch">
+                <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
+                <span className="switch-track" />
+                <span>Накладывать баннер</span>
+              </label>
+              {bannerOn ? (
+                <>
+                  <label className="field">
+                    <span>Картинка</span>
+                    <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
+                      <option value={0}>по умолчанию</option>
+                      {banners.data?.map((b) => (
+                        <option key={b.id} value={b.id}>{b.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field range">
+                    <span>Высота · {bannerHeightPct}%</span>
+                    <input
+                      type="range" min={6} max={30} value={bannerHeightPct}
+                      onChange={(e) => setBannerHeightPct(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="field range">
+                    <span>Положение · {bannerPosPct}% сверху</span>
+                    <input
+                      type="range" min={0} max={80} value={bannerPosPct}
+                      onChange={(e) => setBannerPosPct(Number(e.target.value))}
+                    />
+                  </label>
+                </>
+              ) : null}
+            </Group>
 
-          <Group
-            title="Умный кадр (автофокус)"
-            badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
-          >
-            <label className="field">
-              <span>Стратегия — как ведёт себя кадр</span>
+            <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
+              <label className="switch">
+                <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
+                <span className="switch-track" />
+                <span>Фоновый трек</span>
+              </label>
+              {musicOn ? (
+                <label className="field">
+                  <span>Трек</span>
+                  <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
+                    <option value={0}>по умолчанию</option>
+                    {tracks.data?.map((t) => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </Group>
+
+            <Group
+              title="Умный кадр"
+              badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
+            >
+              <label className="field">
+                <span>Стратегия — как ведёт себя кадр</span>
+                <select
+                  className="input"
+                  value={source.focus_strategy || "shot"}
+                  onChange={(e) => setFocus.mutate({ focus_strategy: e.target.value })}
+                  disabled={setFocus.isPending}
+                >
+                  {focusOptions.data?.strategies.map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <span className="muted" style={{ fontSize: 11 }}>
+                {focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.hint ?? ""}
+              </span>
+              <label className="field">
+                <span>Пресет детекции — под тип видео</span>
+                <select
+                  className="input"
+                  value={source.focus_preset || "balanced"}
+                  onChange={(e) => setFocus.mutate({ focus_preset: e.target.value })}
+                  disabled={setFocus.isPending}
+                >
+                  {focusOptions.data?.presets.map((p) => (
+                    <option key={p.key} value={p.key}>{p.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label
+                className="check"
+                title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."
+              >
+                <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
+                <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
+              </label>
+              <div className="ed-btn-row">
+                <button
+                  className="btn primary sm"
+                  disabled={autofocus.isPending || !plans.length}
+                  title="Детектор фокуса для всех кандидатов проекта (займёт время)"
+                  onClick={() => autofocus.mutate([])}
+                >
+                  {autofocus.isPending ? "Анализ кадров…" : "🎯 Авто-фокус: все клипы"}
+                </button>
+                <button
+                  className="btn sm"
+                  disabled={autofocus.isPending || !activePlan?.segments.length}
+                  title="Только сегменты активного плана"
+                  onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                >
+                  Только этот план
+                </button>
+              </div>
+            </Group>
+
+            <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
+              {selectedSegment ? (
+                <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
+              ) : (
+                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+                  Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
+                </p>
+              )}
+            </Group>
+
+            {/* cut refinement: compare boundary hypotheses without re-running the analysis */}
+            <Group title="Границы клипов" badge={cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.label ?? ""}>
               <select
                 className="input"
-                value={source.focus_strategy || "shot"}
-                onChange={(e) => setFocus.mutate({ focus_strategy: e.target.value })}
-                disabled={setFocus.isPending}
+                value={source.cut_strategy || "phrase"}
+                onChange={(e) => refineCuts.mutate(e.target.value)}
+                disabled={refineCuts.isPending}
               >
-                {focusOptions.data?.strategies.map((s) => (
+                {cutStrategies.data?.map((s) => (
                   <option key={s.key} value={s.key}>{s.label}</option>
                 ))}
               </select>
-            </label>
-            <span className="muted" style={{ fontSize: 11 }}>
-              {focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.hint ?? ""}
-            </span>
-            <label className="field">
-              <span>Пресет детекции — под тип видео</span>
-              <select
-                className="input"
-                value={source.focus_preset || "balanced"}
-                onChange={(e) => setFocus.mutate({ focus_preset: e.target.value })}
-                disabled={setFocus.isPending}
-              >
-                {focusOptions.data?.presets.map((p) => (
-                  <option key={p.key} value={p.key}>{p.label}</option>
-                ))}
-              </select>
-            </label>
-            <label
-              className="check"
-              title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."
-            >
-              <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
-              <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
-            </label>
-            <button
-              className="btn primary sm"
-              disabled={autofocus.isPending || !plans.length}
-              title="Детектор фокуса для всех кандидатов проекта"
-              onClick={() => autofocus.mutate([])}
-            >
-              {autofocus.isPending ? "Анализ кадров…" : "🎯 Авто-фокус: все клипы"}
-            </button>
-            <button
-              className="btn sm"
-              disabled={autofocus.isPending || !activePlan?.segments.length}
-              title="Только сегменты активного плана"
-              onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
-            >
-              Только этот план
-            </button>
-            <span className="muted" style={{ fontSize: 11 }}>
-              «Все клипы» проходит детектором по всем кандидатам сразу (займёт время). Потом можно точечно поправить.
-            </span>
-          </Group>
-        </div>
-      </div>
-
-      {/* cut refinement: compare boundary hypotheses without re-running the analysis */}
-      <div className="panel" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 13 }}>Границы клипов</strong>
-        <select
-          className="input"
-          style={{ width: "auto", minWidth: 220 }}
-          value={source.cut_strategy || "phrase"}
-          onChange={(e) => refineCuts.mutate(e.target.value)}
-          disabled={refineCuts.isPending}
-        >
-          {cutStrategies.data?.map((s) => (
-            <option key={s.key} value={s.key}>{s.label}</option>
-          ))}
-        </select>
-        <span className="muted" style={{ fontSize: 11.5, flex: 1, minWidth: 200 }}>
-          {cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.hint ??
-            "Подгоняет начало/конец клипов к фразам речи. Нужен транскрипт."}
-        </span>
-        <button
-          className="btn ghost sm"
-          disabled={refineCuts.isPending}
-          onClick={() => refineCuts.mutate(source.cut_strategy || "phrase")}
-        >
-          {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
-        </button>
-      </div>
-      </>
-      )}
-
-      {view === "triage" && (
-      <>
-      <div className="panel" style={{ marginBottom: 12 }}>
-        <div
-          className="crop-stage"
-          style={
-            source.width && source.height
-              ? {
-                  aspectRatio: `${source.width} / ${source.height}`,
-                  maxWidth: `calc(48vh * ${source.width} / ${source.height})`,
-                  margin: "0 auto",
-                }
-              : undefined
-          }
-        >
-          <video src={`/media/sources/${source.id}`} controls preload="metadata" />
-        </div>
-        <div className="muted ws-meta" style={{ marginTop: 8, justifyContent: "center" }}>
-          <span>{formatDuration(source.duration_sec)}</span>
-          {source.width ? <span>{source.width}×{source.height}</span> : null}
-          <span>{plans.length} моментов</span>
-        </div>
-      </div>
-      <div className="plan-groups">
-        <div className="plan-groups-head">
-          <strong style={{ fontSize: 13 }}>
-            Кандидаты · {candidateSearch.trim() ? `${shownCount} из ${plans.length}` : plans.length}
-          </strong>
-          <input
-            className="input"
-            style={{ height: 30, fontSize: 12.5, maxWidth: 200 }}
-            placeholder="Поиск по названию…"
-            value={candidateSearch}
-            onChange={(e) => setCandidateSearch(e.target.value)}
-          />
-          <button
-            className={`chip${onlyFavorites ? " active" : ""}`}
-            onClick={() => setOnlyFavorites((v) => !v)}
-            title="Показать только избранные"
-          >
-            ★ Избранное{favCount ? ` · ${favCount}` : ""}
-          </button>
-          {hiddenCount ? (
-            <label className="check" style={{ fontSize: 12 }}>
-              <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
-              <span>скрытые ({hiddenCount})</span>
-            </label>
-          ) : null}
-          {plans.some((p) => p.duplicate_of != null) ? (
-            <label className="check" style={{ fontSize: 12 }}>
-              <input type="checkbox" checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />
-              <span>скрыть дубли</span>
-            </label>
-          ) : null}
-          <button
-            className="btn ghost sm"
-            onClick={() => setChosen(new Set(selected.size === plans.length ? [] : plans.map((p) => p.id)))}
-          >
-            {selected.size === plans.length ? "Снять все" : "Выбрать все"}
-          </button>
-        </div>
-        {analysisChips.length > 1 ? (
-          <div className="analysis-filter" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-            {analysisChips.map(([aid, count]) => {
-              const shown = !hiddenAnalyses.has(aid);
-              return (
-                <button
-                  key={aid}
-                  className={`chip${shown ? " active" : ""}`}
-                  style={shown ? undefined : { opacity: 0.5 }}
-                  title={shown ? "Скрыть этот анализ" : "Показать этот анализ"}
-                  onClick={() =>
-                    setHiddenAnalyses((prev) => {
-                      const next = new Set(prev);
-                      next.has(aid) ? next.delete(aid) : next.add(aid);
-                      return next;
-                    })
-                  }
-                >
-                  {shown ? "" : "🚫 "}
-                  {aid ? `Анализ #${aid}` : "Вручную"} · {count}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        {planGroups.map(([analysisId, group]) => (
-          <div key={analysisId} className="plan-group">
-            <div className="plan-group-title">
-              <span className="plan-group-dot" />
-              <span className="plan-group-name">{analysisMeta(analysisId)}</span>
-              <span className="plan-group-count">{group.length}</span>
-              <span style={{ flex: 1 }} />
+              <span className="muted" style={{ fontSize: 11.5 }}>
+                {cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.hint ??
+                  "Подгоняет начало/конец клипов к фразам речи. Нужен транскрипт."}
+              </span>
               <button
-                className="btn ghost sm"
-                onClick={() =>
-                  setChosen((prev) => {
-                    const next = new Set(prev ?? []);
-                    const ids = group.map((p) => p.id);
-                    const allOn = ids.every((id) => next.has(id));
-                    ids.forEach((id) => (allOn ? next.delete(id) : next.add(id)));
-                    return next;
-                  })
-                }
+                className="btn sm"
+                disabled={refineCuts.isPending}
+                onClick={() => refineCuts.mutate(source.cut_strategy || "phrase")}
               >
-                {group.every((p) => selected.has(p.id)) ? "снять" : "выбрать"}
+                {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
+              </button>
+            </Group>
+          </div>
+
+          <div className="ed-insp-foot">
+            <label className="switch" title="Показывать на превью, где окажутся баннер и субтитры">
+              <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />
+              <span className="switch-track" />
+              <span>Зоны на превью</span>
+            </label>
+            <div className="ed-render-btns">
+              <button
+                className="btn primary"
+                disabled={batch.isPending || !activePlan}
+                onClick={() => activePlan && batch.mutate([activePlan.id])}
+                title="Рендер только этого клипа с текущими настройками"
+              >
+                {batch.isPending ? "Запуск…" : "▶ Рендерить (1)"}
+              </button>
+              <button
+                className="btn"
+                disabled={batch.isPending || !selected.size}
+                onClick={() => batch.mutate(undefined)}
+                title="Рендер всех отмеченных «в рендер» на странице моментов"
+              >
+                Выбранные ({selected.size})
               </button>
             </div>
-            <div className="plan-bar">
-              {group.map((p) => (
-                <div
-                  key={p.id}
-                  className={`plan-chip${p.id === activePlan?.id ? " active" : ""}${p.duplicate_of != null ? " dup" : ""}`}
-                >
-                  {typeof p.quality === "number" ? (
-                    <span
-                      className="plan-q"
-                      title={`Оценка качества ${(p.quality * 100).toFixed(0)}% (речь + длительность + оценка модели)`}
-                      style={{ "--q": p.quality } as React.CSSProperties}
-                    >
-                      {(p.quality * 100).toFixed(0)}
-                    </span>
-                  ) : null}
-                  <input
-                    type="checkbox"
-                    checked={selected.has(p.id)}
-                    onChange={() => toggleChosen(p.id)}
-                    title="Включить в рендер"
-                  />
-                  <button
-                    className="plan-chip-label"
-                    onClick={() => {
-                      setActivePlanId(p.id);
-                      setSelectedSeg(null);
-                      setView("editor");
-                    }}
-                  >
-                    <span>
-                      {p.title || `План #${p.id}`}
-                      {p.duplicate_of != null ? <span className="dup-tag"> · дубль</span> : null}
-                    </span>
-                    <span className="plan-chip-dur mono">
-                      {formatDuration(p.segments.reduce((s, seg) => s + Math.max(0, seg.end_sec - seg.start_sec), 0))}
-                      {p.segments.length > 1 ? ` · ${p.segments.length} сегм.` : ""}
-                    </span>
-                  </button>
-                  <button
-                    className="plan-chip-act"
-                    title={p.favorite ? "Убрать из избранного" : "В избранное"}
-                    style={{ color: p.favorite ? "var(--accent)" : undefined }}
-                    onClick={() => setPlanFlag(p.id, { favorite: !p.favorite })}
-                  >
-                    {p.favorite ? "★" : "☆"}
-                  </button>
-                  <button
-                    className="plan-chip-act"
-                    title={p.hidden ? "Вернуть кандидата" : "Скрыть кандидата"}
-                    onClick={() => setPlanFlag(p.id, { hidden: !p.hidden })}
-                  >
-                    {p.hidden ? "↩" : "✕"}
-                  </button>
-                </div>
-              ))}
-            </div>
           </div>
-        ))}
-      </div>
-      </>
-      )}
-
-      {view === "editor" && (
-      <div className="panel editor-timeline">
-        <Timeline
-          duration={source.duration_sec}
-          segments={activePlan?.segments ?? []}
-          videoRef={videoRef}
-          selectedId={selectedSeg}
-          onSelect={(id) => {
-            setSelectedSeg(id);
-            const seg = activePlan?.segments.find((s) => s.id === id);
-            if (seg && videoRef.current) {
-              playbackRef.current = null;
-              videoRef.current.currentTime = seg.start_sec;
-            }
-          }}
-          onCommit={(id, s, e) => commit.mutate({ id, s, e })}
-        />
+        </aside>
       </div>
       )}
-
-      {view === "editor" &&
-        (selectedSegment ? (
-          <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
-        ) : (
-          <p className="muted" style={{ fontSize: 13 }}>
-            Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
-          </p>
-        ))}
     </div>
   );
 }

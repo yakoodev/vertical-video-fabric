@@ -4,7 +4,7 @@ import { sourcesApi } from "@/api/sources";
 import { analysesApi, type AnalyzeRequest } from "@/api/analyses";
 import { promptsApi } from "@/api/prompts";
 import { qk } from "@/api/keys";
-import type { CropRect, SourceDetail } from "@/api/types";
+import type { AiAnalysis, CropRect, SourceDetail } from "@/api/types";
 import { useToast } from "@/components/Toast";
 import { ApiError } from "@/api/client";
 import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
@@ -34,10 +34,84 @@ function insetsToCrop(i: Insets): CropRect {
 }
 const isFullFrame = (i: Insets) => i.left < 0.001 && i.right < 0.001 && i.top < 0.001 && i.bottom < 0.001;
 
+// Real step list for a running analysis, fed by ai_analyses.progress_json —
+// no invented percentages: the bar only moves on counted analysis windows.
+const STEPS: { key: string; label: string }[] = [
+  { key: "prepare", label: "Подготовка видео" },
+  { key: "transcript", label: "Транскрипт (Whisper)" },
+  { key: "upload", label: "Загрузка в модель" },
+  { key: "windows", label: "Окна анализа" },
+  { key: "collect", label: "Сбор кандидатов" },
+];
+function sinceLabel(iso?: string | null): string {
+  if (!iso) return "";
+  const t = Date.parse(iso.includes("T") || iso.endsWith("Z") ? iso : `${iso.replace(" ", "T")}Z`);
+  if (Number.isNaN(t)) return "";
+  const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return min < 60 ? `${min} мин` : `${Math.floor(min / 60)} ч ${min % 60} мин`;
+}
+function AnalysisProgress({ analysis, onCancel }: { analysis: AiAnalysis; onCancel: () => void }) {
+  let prog: { stage?: string; done?: number; total?: number } = {};
+  try {
+    prog = JSON.parse(analysis.progress_json || "{}");
+  } catch {
+    prog = {};
+  }
+  // Transcript is skipped when cached / not used — only list it while it runs.
+  const steps = STEPS.filter((s) => s.key !== "transcript" || prog.stage === "transcript");
+  const cur = steps.findIndex((s) => s.key === prog.stage);
+  const winPct = prog.stage === "windows" && prog.total ? (prog.done ?? 0) / prog.total : null;
+  const pct = prog.stage === "collect" ? 0.97 : winPct != null ? 0.15 + winPct * 0.8 : cur >= 0 ? (cur / steps.length) * 0.5 : 0;
+  const title =
+    analysis.status === "cancelling" ? "Отменяю анализ…" : analysis.status === "queued" ? "Анализ в очереди" : "Анализ идёт";
+  return (
+    <div className="panel src-progress">
+      <div className="src-progress-head">
+        <strong className="src-h">{title}</strong>
+        <span className="muted mono">{sinceLabel(analysis.started_at || analysis.created_at)}</span>
+      </div>
+      <ol className="src-steps">
+        {steps.map((s, i) => {
+          const state = cur < 0 ? "todo" : i < cur ? "done" : i === cur ? "now" : "todo";
+          return (
+            <li key={s.key} className={`src-step ${state}`}>
+              <span className="src-step-dot">{state === "done" ? "✓" : ""}</span>
+              <span>
+                {s.label}
+                {s.key === "windows" && prog.stage === "windows" && prog.total
+                  ? ` ${Math.min(prog.total, (prog.done ?? 0) + 1)} / ${prog.total}`
+                  : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="src-bar">
+        <span style={{ width: `${Math.round(pct * 100)}%` }} />
+      </div>
+      <div className="src-progress-foot">
+        <span className="muted mono">
+          #{analysis.id} · {analysis.provider}
+          {analysis.model ? ` · ${analysis.model}` : ""}
+        </span>
+        <button className="btn danger sm" disabled={analysis.status === "cancelling"} onClick={onCancel}>
+          {analysis.status === "cancelling" ? "Отменяю…" : "Отменить"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function SourceTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const query = useQuery({ queryKey: qk.source(sourceId), queryFn: () => sourcesApi.get(sourceId) });
+  const query = useQuery({
+    queryKey: qk.source(sourceId),
+    queryFn: () => sourcesApi.get(sourceId),
+    // Poll while an analysis runs so its step list (and new moments) update live.
+    refetchInterval: (q) =>
+      q.state.data?.analyses?.some((a) => ["queued", "running", "cancelling"].includes(a.status)) ? 4000 : false,
+  });
   const [provider, setProvider] = useState(PROVIDERS[0]);
   const [prompt, setPrompt] = useState("");
   const [presetId, setPresetId] = useState(0);
@@ -117,9 +191,11 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"));
   };
   const ANALYSIS_ACTIVE = ["queued", "running", "cancelling"];
+  const running = [...source.analyses].sort((a, b) => b.id - a.id).find((a) => ANALYSIS_ACTIVE.includes(a.status));
 
   return (
-    <div className="ws-source">
+    <div className="src-grid">
+      <div className="src-left">
       <div className="ws-video panel">
         <div
           className="crop-stage"
@@ -152,66 +228,17 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
           {source.fps ? <span>{Math.round(source.fps)} fps</span> : null}
           <span>{formatBytes(source.size_bytes)}</span>
           <span>{source.source_type}</span>
+          {source.original_url ? (
+            <a className="src-orig" href={source.original_url} target="_blank" rel="noreferrer" title={source.original_url}>
+              оригинал ↗
+            </a>
+          ) : null}
         </div>
-        {source.original_url ? (
-          <a className="muted" style={{ fontSize: 12, wordBreak: "break-all" }} href={source.original_url} target="_blank" rel="noreferrer">
-            {source.original_url}
-          </a>
-        ) : null}
       </div>
 
-      {(source.clip_plans?.length ?? 0) > 0
-        ? (() => {
-            const plans = source.clip_plans ?? [];
-            const quals = plans.map((p) => p.quality ?? 0).filter((q) => q > 0);
-            const avgQ = quals.length ? Math.round((quals.reduce((a, b) => a + b, 0) / quals.length) * 100) : null;
-            const themes = Object.entries(
-              plans.reduce<Record<string, number>>((acc, p) => {
-                const c = (p.category || "").trim();
-                if (c) acc[c] = (acc[c] ?? 0) + 1;
-                return acc;
-              }, {}),
-            )
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5);
-            return (
-              <div className="panel analysis-status" style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-                <strong style={{ fontSize: 13 }}>Статус анализа</strong>
-                <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
-                  <div>
-                    <div className="mono" style={{ fontSize: 22 }}>{plans.length}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>моментов</div>
-                  </div>
-                  <div>
-                    <div className="mono" style={{ fontSize: 22 }}>{source.clips_count ?? 0}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>клипов</div>
-                  </div>
-                  {avgQ != null ? (
-                    <div>
-                      <div className="mono" style={{ fontSize: 22 }}>{avgQ}%</div>
-                      <div className="muted" style={{ fontSize: 12 }}>ср. качество</div>
-                    </div>
-                  ) : null}
-                </div>
-                {themes.length ? (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    <span className="muted" style={{ fontSize: 12 }}>Популярные темы:</span>
-                    {themes.map(([name, n]) => (
-                      <span key={name} className="chip" style={{ fontSize: 12 }}>
-                        {name} {n}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })()
-        : null}
-
-      <div className="ws-source-panels">
         <div className="panel" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong>Кадр источника</strong>
+            <strong className="src-h">Кадр источника</strong>
             <button className="btn ghost sm" disabled={detectCrop.isPending} onClick={() => detectCrop.mutate()}>
               {detectCrop.isPending ? "Поиск…" : "🔍 Найти полосы"}
             </button>
@@ -255,9 +282,61 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="src-right">
+        {running ? <AnalysisProgress analysis={running} onCancel={() => cancelAnalysis(running.id)} /> : null}
+      {(source.clip_plans?.length ?? 0) > 0
+        ? (() => {
+            const plans = source.clip_plans ?? [];
+            const quals = plans.map((p) => p.quality ?? 0).filter((q) => q > 0);
+            const avgQ = quals.length ? Math.round((quals.reduce((a, b) => a + b, 0) / quals.length) * 100) : null;
+            const themes = Object.entries(
+              plans.reduce<Record<string, number>>((acc, p) => {
+                const c = (p.category || "").trim();
+                if (c) acc[c] = (acc[c] ?? 0) + 1;
+                return acc;
+              }, {}),
+            )
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5);
+            return (
+              <div className="panel analysis-status" style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                <strong className="src-h">Статус анализа</strong>
+                <div className="src-stats">
+                  <div className="src-stat">
+                    <b>{plans.length}</b>
+                    <span>моментов</span>
+                  </div>
+                  <div className="src-stat">
+                    <b>{source.clips_count ?? source.clips?.length ?? 0}</b>
+                    <span>клипов</span>
+                  </div>
+                  {avgQ != null ? (
+                    <div className="src-stat">
+                      <b>{avgQ}%</b>
+                      <span>ср. качество</span>
+                    </div>
+                  ) : null}
+                </div>
+                {themes.length ? (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span className="muted" style={{ fontSize: 12 }}>Популярные темы:</span>
+                    {themes.map(([name, n]) => (
+                      <span key={name} className="chip" style={{ fontSize: 12 }}>
+                        {name} {n}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()
+        : null}
+
 
         <div className="panel" style={{ display: "grid", gap: 10 }}>
-          <strong>Запустить анализ</strong>
+          <strong className="src-h">Запустить анализ</strong>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <label className="field" style={{ flex: 1, minWidth: 200 }}>
               <span>Пресет анализа</span>
@@ -309,13 +388,12 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
               )
             }
           >
-            {analyze.isPending ? "Анализ идёт…" : "Анализировать"}
+            {analyze.isPending ? "Запуск…" : running ? "▶ Ещё один анализ" : "▶ Анализировать"}
           </button>
         </div>
-      </div>
 
       <div className="panel">
-        <strong>Анализы ({source.analyses.length})</strong>
+        <strong className="src-h">Анализы ({source.analyses.length})</strong>
         <div className="analysis-list">
           {!source.analyses.length ? (
             <EmptyState icon="🧠" title="Анализов ещё нет" hint="Запустите анализ выше — он найдёт моменты для клипов" />
@@ -385,6 +463,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
             })()
           )}
         </div>
+      </div>
       </div>
     </div>
   );

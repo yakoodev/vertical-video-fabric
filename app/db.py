@@ -308,6 +308,9 @@ class Database:
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.
             self._ensure_column(conn, "sources", "content_crop", "TEXT NOT NULL DEFAULT ''")
+            # Live progress of a running analysis: {"stage", "done", "total"} — drives
+            # the step list on the Source tab instead of a fake percentage.
+            self._ensure_column(conn, "ai_analyses", "progress_json", "TEXT NOT NULL DEFAULT '{}'")
             # Cached Whisper transcript (JSON [{start,end,text}]) so analysis does not
             # re-transcribe the same source every run.
             self._ensure_column(conn, "sources", "transcript_json", "TEXT NOT NULL DEFAULT '[]'")

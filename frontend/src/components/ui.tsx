@@ -46,11 +46,39 @@ export function EmptyState({ icon = "📭", title, hint }: { icon?: string; titl
   );
 }
 
+// Human (Russian) labels for backend status codes; unknown codes show as-is.
+const STATUS_LABEL: Record<string, string> = {
+  ready: "Готово",
+  analyzed: "Готово",
+  succeeded: "Готово",
+  done: "Готово",
+  ok: "Готово",
+  published: "Опубликовано",
+  analyzing: "Анализ",
+  downloading: "Скачивание",
+  uploading: "Загрузка",
+  queued: "В очереди",
+  pending: "Ожидание",
+  running: "В процессе",
+  rendering: "Рендер",
+  scheduling: "Планирование",
+  scheduled: "По расписанию",
+  cancelling: "Отменяю",
+  cancelled: "Отменено",
+  canceled: "Отменено",
+  failed: "Ошибка",
+  error: "Ошибка",
+  needs_reauth: "Нужен вход",
+  partial: "Частично",
+  draft: "Черновик",
+};
+export const statusLabel = (status: string): string => STATUS_LABEL[status] ?? status;
+
 export function Badge({ status, children }: { status: string; children?: ReactNode }) {
   return (
-    <span className={`badge ${status}`}>
+    <span className={`badge ${status}`} title={status}>
       <span className="dot" />
-      {children ?? status}
+      {children ?? statusLabel(status)}
     </span>
   );
 }
@@ -65,9 +93,12 @@ export function plural(n: number, one: string, few: string, many: string): strin
 
 export function formatDuration(sec: number): string {
   if (!sec || sec < 0) return "0:00";
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const ss = String(s).padStart(2, "0");
+  // Long streams read as 4:10:58, not 250:58.
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
 export function formatBytes(bytes: number): string {

@@ -11,12 +11,22 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
+const clipMatches = (c: Clip, f: "all" | "ready" | "published" | "error"): boolean =>
+  f === "all"
+    ? true
+    : f === "published"
+      ? (c.published_targets_count ?? 0) > 0
+      : f === "error"
+        ? ["failed", "error"].includes(c.status)
+        : c.status === "succeeded";
+
 export function ClipsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const query = useQuery({ queryKey: qk.clips(), queryFn: () => clipsApi.list() });
   const [toDelete, setToDelete] = useState<Clip | null>(null);
   const [toPublish, setToPublish] = useState<Clip | null>(null);
+  const [filter, setFilter] = useState<"all" | "ready" | "published" | "error">("all");
 
   const upload = useMutation({
     mutationFn: (file: File) => clipsApi.uploadEdited(file),
@@ -63,8 +73,30 @@ export function ClipsPage() {
       ) : !query.data?.length ? (
         <EmptyState icon="✂️" title="Клипов пока нет" hint="Отрендерите сегменты или загрузите готовый клип" />
       ) : (
-        <div className="card-grid">
-          {query.data.map((clip) => (
+        <>
+        <div className="proj-toolbar">
+          {(
+            [
+              ["all", "Все"],
+              ["ready", "Готово"],
+              ["published", "Опубликованные"],
+              ["error", "Ошибка"],
+            ] as const
+          ).map(([key, label]) => {
+            const n = query.data.filter((c) => clipMatches(c, key)).length;
+            return key === "all" || n ? (
+              <button
+                key={key}
+                className={`schip schip--${key === "ready" ? "done" : key === "published" ? "all" : key}${filter === key ? " active" : ""}`}
+                onClick={() => setFilter(key)}
+              >
+                {label} <span className="schip-n">{n}</span>
+              </button>
+            ) : null;
+          })}
+        </div>
+        <div className="card-grid clip-grid">
+          {query.data.filter((c) => clipMatches(c, filter)).map((clip) => (
             <ClipCard
               key={clip.id}
               clip={clip}
@@ -77,7 +109,7 @@ export function ClipsPage() {
                   >
                     Опубликовать
                   </button>
-                  <button className="btn ghost sm" onClick={() => setToDelete(clip)}>
+                  <button className="btn danger-outline sm" onClick={() => setToDelete(clip)}>
                     Удалить
                   </button>
                 </>
@@ -85,6 +117,7 @@ export function ClipsPage() {
             />
           ))}
         </div>
+        </>
       )}
 
       <ConfirmDialog

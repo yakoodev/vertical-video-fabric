@@ -11,7 +11,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { useToast } from "@/components/Toast";
-import { Badge, EmptyState, ErrorState, Loading, PageHead, formatDuration, plural } from "@/components/ui";
+import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
 function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Source) => void }) {
   const qc = useQueryClient();
@@ -46,16 +46,18 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
 
   return (
     <div className="project-card">
-      <button className="card-del" title="Удалить проект" onClick={() => onDelete(source)}>
-        🗑
-      </button>
-      <Link to={`/projects/${source.id}`} className="pcard-link" aria-label={name}>
-        <StoryboardPreview
-          sourceId={source.id}
-          type={source.source_type}
-          duration={formatDuration(source.duration_sec)}
-        />
-      </Link>
+      <div className="pcard-coverwrap">
+        <Link to={`/projects/${source.id}`} className="pcard-link" aria-label={name}>
+          <StoryboardPreview
+            sourceId={source.id}
+            type={SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+            duration={formatDuration(source.duration_sec)}
+          />
+        </Link>
+        <button className="card-del" title="Удалить проект" onClick={() => onDelete(source)}>
+          🗑
+        </button>
+      </div>
       <div className="pcard-body">
         {editing ? (
           <input
@@ -89,8 +91,15 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
             </button>
           </div>
         )}
-        <div className="pcard-stats">
+        <div className="pcard-statusrow">
           <Badge status={source.status} />
+          {statusGroup(source.status) === "processing" ? (
+            <span className="pcard-progress" title="Идёт обработка — детали в уведомлениях">
+              <span />
+            </span>
+          ) : null}
+        </div>
+        <div className="pcard-stats">
           {source.width ? <span className="mono">{source.width}×{source.height}</span> : null}
           <span>{plural(source.clip_plans_count ?? 0, "момент", "момента", "моментов")}</span>
           <span>{plural(source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
@@ -131,7 +140,7 @@ function AddSource() {
   const canPick = looksLikePlayerPage(url);
 
   return (
-    <div className="panel" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
+    <div className="proj-add">
       <label className={`btn ${busy ? "" : "primary"}`} style={{ cursor: busy ? "wait" : "pointer" }}>
         {upload.isPending ? "Загрузка…" : "📤 Загрузить файл"}
         <input
@@ -146,10 +155,10 @@ function AddSource() {
           }}
         />
       </label>
-      <div style={{ display: "flex", gap: 8, flex: 1, minWidth: 280 }}>
+      <div className="proj-add-row">
         <input
           className="input"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 200 }}
           placeholder="…или ссылка (mp4, YouTube, Twitch, Smotvibe и похожие плееры)"
           value={url}
           disabled={busy}
@@ -180,7 +189,7 @@ function AddSource() {
             🎞 Серия и озвучка
           </button>
         ) : null}
-        <button className="btn" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
+        <button className="btn primary" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
           {ingest.isPending ? "…" : "Добавить"}
         </button>
       </div>
@@ -214,6 +223,13 @@ const STATUS_GROUP: Record<string, StatusGroup> = {
   needs_reauth: "error",
 };
 const statusGroup = (s: string): StatusGroup => STATUS_GROUP[s] ?? "processing";
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  upload: "Файл",
+  direct_url: "Ссылка",
+  youtube_url: "YouTube",
+  twitch_url: "Twitch",
+  smotvibe_url: "Плеер",
+};
 
 export function ProjectsPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
@@ -240,8 +256,11 @@ export function ProjectsPage() {
 
   return (
     <>
-      <PageHead title="Проекты" sub="Исходные видео для анализа, нарезки и публикации" />
-      <AddSource />
+      <section className="proj-hero">
+        <h1>Проекты</h1>
+        <p className="sub">Исходные видео для анализа, нарезки и публикации</p>
+        <AddSource />
+      </section>
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (
@@ -250,7 +269,7 @@ export function ProjectsPage() {
         <EmptyState icon="🎬" title="Пока нет проектов" hint="Загрузите видео или добавьте ссылку, чтобы начать" />
       ) : (
         <>
-          <div className="status-filter" style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <div className="proj-toolbar">
             {(
               [
                 ["all", "Все"],
@@ -262,30 +281,28 @@ export function ProjectsPage() {
               key === "all" || counts[key] ? (
                 <button
                   key={key}
-                  className={`chip${statusFilter === key ? " active" : ""}`}
+                  className={`schip schip--${key}${statusFilter === key ? " active" : ""}`}
                   onClick={() => setStatusFilter(key)}
                 >
-                  {label} {counts[key]}
+                  {label} <span className="schip-n">{counts[key]}</span>
                 </button>
               ) : null,
             )}
-          </div>
-          {sources.length > 6 ? (
-            <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
+            <span className="muted proj-count">
+              {q ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
+            </span>
+            <div className="mo-search proj-search">
+              <span aria-hidden>⌕</span>
               <input
                 className="input"
-                style={{ maxWidth: 320 }}
                 placeholder="Поиск проекта по названию…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <span className="muted" style={{ fontSize: 13 }}>
-                {q ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
-              </span>
             </div>
-          ) : null}
+          </div>
           {filtered.length ? (
-            <div className="card-grid">
+            <div className="card-grid proj-grid">
               {filtered.map((source) => (
                 <ProjectCard key={source.id} source={source} onDelete={setPending} />
               ))}

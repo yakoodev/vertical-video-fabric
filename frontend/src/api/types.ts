@@ -68,6 +68,9 @@ export interface AiAnalysis {
   error: string;
   created_at: string;
   updated_at: string;
+  started_at?: string | null;
+  /** JSON {"stage","done","total"} while running */
+  progress_json?: string;
 }
 
 export interface AiSegment {

@@ -37,9 +37,18 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ margin: "0 0 14px" }}>Опубликовать клип</h3>
-        <div style={{ display: "grid", gap: 12 }}>
+      <div className="modal pub-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="pub-head">
+          <h3>Опубликовать клип</h3>
+          <button className="pub-x" title="Закрыть" onClick={onClose} disabled={publish.isPending}>
+            ×
+          </button>
+        </div>
+        <div className="pub-body">
+        <div className="pub-preview">
+          <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
+        </div>
+        <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
           <label className="field">
             <span>Заголовок</span>
             <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -53,7 +62,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
             {accounts.isLoading ? (
               <Loading />
             ) : !accounts.data?.length ? (
-              <span className="muted">Нет аккаунтов — добавьте в Настройках</span>
+              <span className="muted">Нет аккаунтов — добавьте на странице «Аккаунты»</span>
             ) : (
               <div style={{ display: "grid", gap: 6 }}>
                 {accounts.data.map((a) => (
@@ -67,15 +76,24 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
               </div>
             )}
           </div>
+          <div className="field">
+            <span>Приватность</span>
+            <div className="seg" role="radiogroup" aria-label="Приватность">
+              {["public", "unlisted", "private"].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  role="radio"
+                  aria-checked={privacy === p}
+                  className={`seg-item${privacy === p ? " active" : ""}`}
+                  onClick={() => setPrivacy(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <label className="field" style={{ flex: 1 }}>
-              <span>Приватность</span>
-              <select className="input" value={privacy} onChange={(e) => setPrivacy(e.target.value)}>
-                <option value="public">public</option>
-                <option value="unlisted">unlisted</option>
-                <option value="private">private</option>
-              </select>
-            </label>
             <label className="field" style={{ flex: 1 }}>
               <span>Расписание (необязательно)</span>
               <input
@@ -86,6 +104,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
               />
             </label>
           </div>
+        </div>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
           <button className="btn ghost" onClick={onClose} disabled={publish.isPending}>
