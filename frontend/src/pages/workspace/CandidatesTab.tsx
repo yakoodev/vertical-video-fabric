@@ -472,6 +472,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
+  // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
+  // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
+  const triagePhoneRef = useRef<HTMLCanvasElement>(null);
   const query = useQuery({ queryKey: qk.source(sourceId), queryFn: () => sourcesApi.get(sourceId) });
   const presets = useQuery({ queryKey: qk.ffmpegPresets, queryFn: ffmpegPresetsApi.list });
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
@@ -847,12 +850,57 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       <>
       <div className="mo-top">
         <div className="panel mo-player">
-          <div
-            className="mo-player-frame"
-            style={source.width && source.height ? { aspectRatio: `${source.width} / ${source.height}` } : undefined}
-          >
-            <video ref={videoRef} src={`/media/sources/${source.id}`} controls preload="metadata" />
+          <div className="mo-player-frame">
+            {/*
+              Сцена ровно по размеру кадра источника: рамка 9:16 ставится в
+              процентах от родителя, и при чёрных полях по бокам (видео уже
+              рамки плеера) она съезжала бы с картинки.
+            */}
+            <div
+              className="mo-stage"
+              style={
+                source.width && source.height
+                  ? {
+                      aspectRatio: `${source.width} / ${source.height}`,
+                      width: `min(100%, calc(46vh * ${source.width / source.height}))`,
+                    }
+                  : undefined
+              }
+            >
+              <video ref={videoRef} src={`/media/sources/${source.id}`} controls preload="metadata" />
+              {source.width && source.height ? (
+                <CropFrame
+                  srcW={source.width}
+                  srcH={source.height}
+                  crop={source.content_crop}
+                  segments={visiblePlans.flatMap((p) => p.segments)}
+                  videoRef={videoRef}
+                  showBanner={false}
+                  bannerHeightPct={0}
+                  bannerPosPct={0}
+                  showSubs={false}
+                  subPosPct={0}
+                  focusPreset={source.focus_preset}
+                  phoneRef={triagePhoneRef}
+                />
+              ) : null}
+            </div>
           </div>
+          {activePlan ? (
+            <div className="mo-now">
+              <span className="mo-now-title" title={activePlan.title || ""}>
+                {activePlan.title || `План #${activePlan.id}`}
+              </span>
+              <button
+                type="button"
+                className={`btn mo-now-fav${activePlan.favorite ? " fav" : ""}`}
+                onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
+                title="Избранные моменты попадают в редактор"
+              >
+                {activePlan.favorite ? "★ В избранном" : "☆ В избранное"}
+              </button>
+            </div>
+          ) : null}
           {source.duration_sec ? (
             <div className="mo-heat" title="Где в видео найдены моменты — клик перематывает">
               {visiblePlans.map((p) =>
@@ -879,6 +927,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         </div>
 
         <div className="panel mo-stats">
+          {/*
+            Так будет выглядеть вертикальный клип: рамка на плеере двигается по
+            треку фокуса момента под курсором, а сюда рисуется то, что в неё
+            попадает. Раньше это было только в редакторе — выбирать момент
+            вслепую, не видя кадрирования, неудобно.
+          */}
+          <div className="mo-phone" title="Так будет выглядеть вертикальный клип">
+            <div className="ed-phone-screen mo-phone-screen">
+              <canvas ref={triagePhoneRef} width={270} height={480} />
+              <span className="ed-phone-tag mono">9:16</span>
+            </div>
+          </div>
           <div className="mo-stats-line">
             <b>{plans.length} моментов</b>
             <span>· {favCount} в избранном</span>

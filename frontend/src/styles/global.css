@@ -1823,6 +1823,30 @@ button.task-link:disabled {
   display: block;
   object-fit: contain;
 }
+/* Сцена ровно по кадру источника — к ней привязана рамка 9:16 (.crop-9x16). */
+.mo-stage {
+  position: relative;
+  max-width: 100%;
+  max-height: 46vh;
+}
+.mo-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.mo-now-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.mo-now-fav { flex-shrink: 0; }
+.mo-now-fav.fav { color: #ffc947; border-color: rgba(255, 201, 71, 0.45); }
+.mo-phone { display: flex; justify-content: center; }
+.mo-phone .mo-phone-screen { height: min(34vh, 300px); }
 .mo-heat {
   position: relative;
   height: 26px;
