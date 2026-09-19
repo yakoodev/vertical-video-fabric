@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { clipPlansApi } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
@@ -9,6 +10,7 @@ import type { AiSegment, FocusPoint, RenderSettings, SourceDetail, TransitionSet
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
+import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
@@ -499,7 +501,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
   // Two-stage flow: triage the moments list, then open one clip in the editor.
-  const [view, setView] = useState<"triage" | "editor">("triage");
+  // The open editor lives in the URL (?clip=<id>): the browser's Back returns to
+  // the moments list instead of leaving the project, and a clip's editor can be
+  // opened by link. Before, the view was component state and Back threw you out.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const clipParam = Number(searchParams.get("clip")) || null;
+  const view: "triage" | "editor" = clipParam ? "editor" : "triage";
+  // Opened from the moments list in this visit → Back pops history; opened by a
+  // link → Back replaces the URL (there is nothing to pop to inside the app).
+  const openedFromListRef = useRef(false);
   const [chosen, setChosen] = useState<Set<number> | null>(null);
   const [loop, setLoop] = useState(true);
   const loopRef = useRef(loop);
@@ -536,7 +547,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   // Opening a clip in the editor parks the player on its first frame, so the
   // stage, crop window and phone preview show that moment, not 0:00.
-  const editorPlanId = view === "editor" ? activePlanId : null;
+  // The URL is the source of truth for which clip the editor shows (deep links,
+  // browser Back/Forward); the moments list's selection follows it.
+  const editorPlanId = view === "editor" ? clipParam : null;
+  useEffect(() => {
+    if (clipParam) setActivePlanId(clipParam);
+  }, [clipParam]);
   useEffect(() => {
     const v = videoRef.current;
     const plan = query.data?.clip_plans.find((p) => p.id === editorPlanId) ?? null;
@@ -578,6 +594,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // True while a clip's saved settings are being poured into the panel, so the
   // panel's own effects (autosave, subtitle position) don't react to it.
   const loadingSettingsRef = useRef(false);
+  // «Файл клипа» dialog; bumping the nonce re-reads the clip's settings into the
+  // panel after the file was applied (the file may have changed them).
+  const [clipFileOpen, setClipFileOpen] = useState(false);
+  const [settingsNonce, setSettingsNonce] = useState(0);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
@@ -667,6 +687,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (!editorPlanId) return;
     const s = plans.find((p) => p.id === editorPlanId)?.render_settings;
     if (!s) return;
+    // Same key order as panelSettings(): if the clip's settings already equal the
+    // panel, nothing changes, the autosave effect never runs — and a raised
+    // "loading" flag would then swallow the user's NEXT real edit.
+    const loaded: RenderSettings = {
+      preset_id: s.preset_id ?? null,
+      subs_on: s.subs_on,
+      sub_id: s.sub_id ?? null,
+      sub_engine: s.sub_engine ?? "",
+      sub_pos_pct: s.sub_pos_pct,
+      banner_on: s.banner_on,
+      banner_id: s.banner_id ?? null,
+      banner_height_pct: s.banner_height_pct,
+      banner_pos_pct: s.banner_pos_pct,
+      music_on: s.music_on,
+      track_id: s.track_id ?? null,
+      mirror: s.mirror,
+      transition: { ...DEFAULT_TRANSITION, ...(s.transition ?? {}) },
+    };
+    if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
     setPresetId(s.preset_id ?? 0);
     setSubsOn(s.subs_on);
@@ -681,7 +720,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setTrackId(s.track_id ?? 0);
     setMirror(s.mirror);
     setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
-  }, [editorPlanId, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (loadingSettingsRef.current) {
@@ -935,21 +974,55 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     stopPlayback();
     setActivePlanId(target);
     setSelectedSeg(null);
-    setView("editor");
+    openedFromListRef.current = true;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("clip", String(target));
+      return next;
+    });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const backToMoments = () => {
+    stopPlayback();
+    if (openedFromListRef.current) {
+      openedFromListRef.current = false;
+      navigate(-1);
+      return;
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("clip");
+        return next;
+      },
+      { replace: true },
+    );
   };
 
   return (
     <div className="editor">
+      {clipFileOpen && activePlan ? (
+        <ClipFileDialog
+          clipPlanId={activePlan.id}
+          onClose={() => setClipFileOpen(false)}
+          onApplied={async (changes) => {
+            toast.success(changes.length ? `Применено: ${changes.join(", ")}` : "Ничего не поменялось");
+            await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+            setSettingsNonce((n) => n + 1);
+          }}
+        />
+      ) : null}
       <div className="ed-viewbar">
         {view === "editor" ? (
-          <button className="btn sm" onClick={() => { stopPlayback(); setView("triage"); }}>
-            ← к моментам
+          <button className="btn ed-back" onClick={backToMoments} title="Вернуться к списку моментов (или кнопка «Назад» браузера)">
+            <span className="ed-back-arrow" aria-hidden>←</span>
+            Назад к моментам
           </button>
         ) : null}
         <button
           className={`ed-viewchip${view === "triage" ? " active" : ""}`}
-          onClick={() => { stopPlayback(); setView("triage"); }}
+          onClick={() => (view === "editor" ? backToMoments() : undefined)}
         >
           🗂 Моменты · {plans.length}
         </button>
@@ -1712,6 +1785,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   ? "Настройки сохранены в этот клип — при рендере возьмутся они."
                   : "У клипа пока нет своих настроек — возьмутся текущие с панели."}
               </span>
+              <button
+                type="button"
+                className="btn ed-apply-fav"
+                disabled={!activePlan}
+                onClick={async () => {
+                  // Unsaved panel edits go in first, so the file shows what is really saved.
+                  await flushSettings();
+                  setClipFileOpen(true);
+                }}
+                title="Весь клип одним JSON-файлом: править руками, скачать, отдать агенту, загрузить"
+              >
+                {"{ }"} Файл клипа
+              </button>
               <button
                 type="button"
                 className="btn ed-apply-fav"

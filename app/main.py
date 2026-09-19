@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
+from app.clip_spec import json_schema as clip_spec_json_schema
 from app.clip_settings import settings_to_render_kwargs
 from app.transitions import transition_options
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
@@ -1991,16 +1993,95 @@ def api_render_clip_plan(
     payload: RenderClipPlanRequest | None = None,
 ) -> dict:
     try:
-        return clip_render_service.render_clip_plan(
-            clip_plan_id,
-            ffmpeg_preset_id=payload.ffmpeg_preset_id if payload else None,
-            subtitle_profile_id=payload.subtitle_profile_id if payload else None,
-            banner_id=payload.banner_id if payload else None,
-            music_track_id=payload.music_track_id if payload else None,
-            music_volume=payload.music_volume if payload else None,
-        )
+        plan = store.get_clip_plan(clip_plan_id, include_segments=False)
+        # Same rule as the batch: a clip set up in the editor / clip file renders
+        # with its own settings; the request only fills in for a clip never set up.
+        if plan.get("render_settings"):
+            kwargs = settings_to_render_kwargs(plan["render_settings"])
+            kwargs["music_volume"] = payload.music_volume if payload else None
+        else:
+            kwargs = {
+                "ffmpeg_preset_id": payload.ffmpeg_preset_id if payload else None,
+                "subtitle_profile_id": payload.subtitle_profile_id if payload else None,
+                "banner_id": payload.banner_id if payload else None,
+                "music_track_id": payload.music_track_id if payload else None,
+                "music_volume": payload.music_volume if payload else None,
+            }
+        return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---- clip file (vvf.clip/1): one editable document per clip, see app/clip_spec.py
+
+
+@app.get(
+    "/api/clip-plans/{clip_plan_id}/spec",
+    tags=["Clip file"],
+    summary="Get the clip file: pieces, framing, render settings, renders with QC",
+)
+def api_get_clip_spec(clip_plan_id: int, _auth: AuthDep) -> dict:
+    try:
+        return export_spec(store, clip_plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put(
+    "/api/clip-plans/{clip_plan_id}/spec",
+    tags=["Clip file"],
+    summary="Validate the whole clip file, then apply it (all-or-nothing)",
+)
+def api_put_clip_spec(clip_plan_id: int, spec: Annotated[dict, Body()], _auth: AuthDep) -> dict:
+    try:
+        fresh, changes = apply_spec(store, clip_plan_id, spec)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"spec": fresh, "changes": changes}
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/spec/validate",
+    tags=["Clip file"],
+    summary="Check a clip file without applying it",
+)
+def api_validate_clip_spec(clip_plan_id: int, spec: Annotated[dict, Body()], _auth: AuthDep) -> dict:
+    try:
+        validate_spec(store, clip_plan_id, spec)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SpecError as exc:
+        return {"ok": False, "problems": exc.problems}
+    return {"ok": True, "problems": []}
+
+
+@app.get(
+    "/api/sources/{source_id}/frame",
+    tags=["Clip file"],
+    summary="A still of the source at t: full frame, or the 9:16 window at x",
+)
+def api_source_frame(source_id: int, _auth: AuthDep, t: float = 0.0, x: float | None = None, w: int = 960) -> FileResponse:
+    """For deciding framing without downloading the source. With ``x`` you get
+    exactly the 9:16 window the render keeps for that focus position."""
+    try:
+        source = store.get_source(source_id)
+        from app.storyboard import plan_thumb, source_frame
+
+        path = plan_thumb(source, t, x) if x is not None else source_frame(source, t, w)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/clip-spec/schema", tags=["Clip file"], summary="JSON Schema of the clip file")
+def api_clip_spec_schema(_auth: AuthDep) -> dict:
+    return clip_spec_json_schema()
 
 
 @app.post(

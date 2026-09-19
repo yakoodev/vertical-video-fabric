@@ -1329,8 +1329,17 @@ class AppStore:
         return self.get_clip_plan(plan_id)
 
     def set_clip_plan_manual_focus(self, clip_plan_id: int, x: float | None) -> dict:
-        """Set (or clear, x=None) a fixed manual frame position on every segment
-        of a clip plan. ``x`` is a full-frame horizontal centre in 0..1."""
+        """Fix the frame at ``x`` (full-frame horizontal centre, 0..1) on every
+        segment of a clip plan.
+
+        The focus track is the single source of truth for framing (the render
+        reads only it): a fixed frame is a one-point track, exactly what the
+        editor's «Фикс. рамка» writes. This endpoint used to set the legacy
+        ``manual_focus_x`` column instead, which the render had stopped reading —
+        the call "succeeded" and changed nothing. ``x=None`` only clears that
+        legacy column: the old autofocus track is not recoverable from here
+        (re-run autofocus for that).
+        """
         self.get_clip_plan(clip_plan_id, include_segments=False)
         value = None if x is None else min(1.0, max(0.0, float(x)))
         rows = self.db.query_all(
@@ -1338,10 +1347,10 @@ class AppStore:
             (clip_plan_id,),
         )
         for row in rows:
-            self.db.execute(
-                "UPDATE ai_segments SET manual_focus_x = ? WHERE id = ?",
-                (value, int(row["segment_id"])),
-            )
+            segment_id = int(row["segment_id"])
+            self.db.execute("UPDATE ai_segments SET manual_focus_x = NULL WHERE id = ?", (segment_id,))
+            if value is not None:
+                self.update_ai_segment_focus(segment_id, [{"t": 0.0, "x": value}])
         return {"clip_plan_id": clip_plan_id, "manual_focus_x": value, "segments": len(rows)}
 
     def set_clip_plan_flags(
@@ -1360,6 +1369,70 @@ class AppStore:
                 f"UPDATE clip_plans SET {cols} WHERE id = ?", (*updates.values(), clip_plan_id)
             )
         return self.get_clip_plan(clip_plan_id, include_segments=False)
+
+    # ---- clip file (app/clip_spec.py) helpers ------------------------------
+
+    def list_clips_for_plan(self, clip_plan_id: int) -> list[dict]:
+        rows = self.db.query_all(
+            "SELECT * FROM clips WHERE clip_plan_id = ? ORDER BY id DESC", (clip_plan_id,)
+        )
+        return [_decode_clip_qc(dict(row)) for row in rows]
+
+    def update_clip_plan_text(self, clip_plan_id: int, title: str, description: str, notes: str) -> dict:
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        self._update_record(
+            "clip_plans", clip_plan_id, {"title": title, "description": description, "notes": notes}
+        )
+        return self.get_clip_plan(clip_plan_id, include_segments=False)
+
+    def create_segment_for_plan(self, clip_plan_id: int, start_sec: float, end_sec: float, title: str) -> dict:
+        """A new segment in the plan's analysis, NOT yet linked (see set_clip_plan_segments)."""
+        plan = self.get_clip_plan(clip_plan_id, include_segments=False)
+        analysis_id = plan["analysis_id"]
+        if analysis_id is None:
+            analysis_id = self.create_ai_analysis(plan["source_id"], "mock", status="succeeded")["id"]
+        return self.create_ai_segment(
+            analysis_id,
+            {
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "title": title,
+                "description": "Clip file edit",
+                "score": plan.get("score") or 0.5,
+                "category": plan["category"] or "manual",
+                "color": plan["color"] or "#22D3EE",
+                "reason": "Created from the clip file.",
+            },
+        )
+
+    def segment_plan_count(self, segment_id: int) -> int:
+        row = self.db.query_one(
+            "SELECT COUNT(*) AS n FROM clip_plan_segments WHERE segment_id = ?", (segment_id,)
+        )
+        return int(row["n"]) if row else 0
+
+    def update_segment_title(self, segment_id: int, title: str) -> dict:
+        self.get_ai_segment(segment_id)
+        self._update_record("ai_segments", segment_id, {"title": title[:100]})
+        return self.get_ai_segment(segment_id)
+
+    def set_clip_plan_segments(self, clip_plan_id: int, segment_ids: list[int]) -> dict:
+        """Make the plan consist of exactly these segments, in this order."""
+        if not segment_ids:
+            raise ValueError("clip plan must keep at least one segment")
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        self.db.execute("DELETE FROM clip_plan_segments WHERE clip_plan_id = ?", (clip_plan_id,))
+        for order, segment_id in enumerate(segment_ids):
+            self.db.execute(
+                "INSERT INTO clip_plan_segments (clip_plan_id, segment_id, sort_order) VALUES (?, ?, ?)",
+                (clip_plan_id, segment_id, order),
+            )
+        return self.get_clip_plan(clip_plan_id)
+
+    def set_clip_qc(self, clip_id: int, qc: dict) -> None:
+        self.db.execute(
+            "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
+        )
 
     def set_clip_plan_render_settings(self, clip_plan_id: int, settings: dict) -> dict:
         """Save one clip's own render settings (normalized — junk never lands in the DB)."""
@@ -1925,7 +1998,7 @@ class AppStore:
                 """,
                 (source_id,),
             )
-        return [dict(row) for row in rows]
+        return [_decode_clip_qc(dict(row)) for row in rows]
 
     def get_clip(self, clip_id: int) -> dict:
         row = self.db.query_one(
@@ -1960,7 +2033,7 @@ class AppStore:
         )
         if not row:
             raise KeyError(f"clip not found: {clip_id}")
-        return dict(row)
+        return _decode_clip_qc(dict(row))
 
     def update_clip(self, clip_id: int, **fields: Any) -> dict:
         self.get_clip(clip_id)
@@ -2722,3 +2795,18 @@ def _decode_plan_settings(plan: dict) -> dict:
             settings = parsed
     plan["render_settings"] = settings
     return plan
+
+
+def _decode_clip_qc(clip: dict) -> dict:
+    """``qc_json`` → ``qc`` (None when the clip was rendered before QC existed)."""
+    raw = clip.pop("qc_json", None)
+    qc = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            qc = parsed
+    clip["qc"] = qc
+    return clip

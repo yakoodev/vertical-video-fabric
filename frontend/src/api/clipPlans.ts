@@ -1,4 +1,4 @@
-import { api } from "@/api/client";
+import { api, request } from "@/api/client";
 import type { Clip, ClipPlan, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
 
 export interface RenderClipPlanRequest {
@@ -36,4 +36,13 @@ export const clipPlansApi = {
   setRenderSettings: (clipPlanId: number, settings: RenderSettings) =>
     api.patch<ClipPlan>(`/api/clip-plans/${clipPlanId}/render-settings`, { settings }),
   transitionOptions: () => api.get<TransitionOptions>(`/api/render/transition-options`),
+  // The clip file (vvf.clip/1): the whole clip as one document — see docs/AGENTS.md.
+  getSpec: (clipPlanId: number) => api.get<Record<string, unknown>>(`/api/clip-plans/${clipPlanId}/spec`),
+  validateSpec: (clipPlanId: number, spec: unknown) =>
+    api.post<{ ok: boolean; problems: string[] }>(`/api/clip-plans/${clipPlanId}/spec/validate`, spec),
+  putSpec: (clipPlanId: number, spec: unknown) =>
+    request<{ spec: Record<string, unknown>; changes: string[] }>(`/api/clip-plans/${clipPlanId}/spec`, {
+      method: "PUT",
+      body: spec,
+    }),
 };

@@ -35,13 +35,15 @@ def test_segment_reframe_x_honours_manual_focus():
 
     source = {"width": 1920, "height": 1080, "focus_preset": "balanced"}
     preset = {"smart_reframe": True, "output_width": 1080, "output_height": 1920}
-    # Manual frame applies even with an empty autofocus track.
-    manual_seg = {"start_sec": 0.0, "end_sec": 5.0, "focus": [], "manual_focus_x": 0.2}
+    # A fixed (manual) frame is a one-point focus track — the track is the single
+    # source of truth for framing (the editor writes it this way).
+    manual_seg = {"start_sec": 0.0, "end_sec": 5.0, "focus": [{"t": 0.0, "x": 0.2}]}
     expr = _segment_reframe_x(manual_seg, preset, source)
     assert isinstance(expr, str) and expr
-    # No manual and no focus track → nothing to reframe.
-    auto_seg = {"start_sec": 0.0, "end_sec": 5.0, "focus": [], "manual_focus_x": None}
-    assert _segment_reframe_x(auto_seg, preset, source) is None
+    # The legacy manual_focus_x column is NOT read: a stale value must not
+    # override a real track (30 live segments still carry one).
+    stale = {"start_sec": 0.0, "end_sec": 5.0, "focus": [], "manual_focus_x": 0.2}
+    assert _segment_reframe_x(stale, preset, source) is None
 
 
 def test_render_batch_cancel_marks_are_batch_scoped(tmp_path, monkeypatch):

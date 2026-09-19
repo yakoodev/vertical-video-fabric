@@ -142,3 +142,29 @@ def plan_thumb(source: dict, t: float, focus_x: float) -> Path:
     if not out.exists():
         raise ValueError("ffmpeg produced no frame")
     return out
+
+
+def source_frame(source: dict, t: float, width: int = 960) -> Path:
+    """The full source frame at ``t`` (cached) — lets an outside agent LOOK at the
+    picture to decide framing, without downloading a multi-gigabyte source."""
+    source_id = int(source["id"])
+    local_path = str(source.get("local_path") or "")
+    if not local_path or not Path(local_path).exists():
+        raise ValueError("source has no playable file")
+    duration = float(source.get("duration_sec") or 0)
+    t = max(0.0, min(float(t), duration - 0.05 if duration > 0.1 else float(t)))
+    width = int(min(1920, max(160, width)))
+    out = storyboard_dir(source_id) / "frames" / f"{t:.2f}_w{width}.jpg"
+    if out.exists():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", local_path, "-frames:v", "1",
+         "-vf", f"scale={width}:-2", "-q:v", "4", str(out)],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if not out.exists():
+        raise ValueError("ffmpeg produced no frame")
+    return out

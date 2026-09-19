@@ -16,6 +16,7 @@ from app.subtitles.ass import write_ass_subtitles
 from app.subtitles.contracts import SubtitleResult
 from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
 from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_timeline
+from app.render_qc import run_qc
 from app.transitions import build_join_args, is_plain_concat, normalize_transition
 from app.video_crop import build_reframe_x_expr
 
@@ -173,6 +174,7 @@ class ClipRenderService:
                 height=metadata.height,
                 size_bytes=size_bytes,
             )
+            clip = self._attach_qc(clip, final_output_path, metadata)
             self.store.update_ai_segment_status(segment_id, "rendered")
             for path in temp_paths:
                 path.unlink(missing_ok=True)
@@ -328,6 +330,7 @@ class ClipRenderService:
                 height=metadata.height,
                 size_bytes=size_bytes,
             )
+            clip = self._attach_qc(clip, final_output_path, metadata)
             for segment in segments:
                 self.store.update_ai_segment_status(segment["id"], "rendered")
             for path in temp_paths:
@@ -440,6 +443,7 @@ class ClipRenderService:
                 height=metadata.height,
                 size_bytes=size_bytes,
             )
+            clip = self._attach_qc(clip, final_output_path, metadata)
             for path in temp_paths:
                 path.unlink(missing_ok=True)
             return clip
@@ -449,6 +453,14 @@ class ClipRenderService:
             for path in temp_paths:
                 path.unlink(missing_ok=True)
             return clip
+
+    def _attach_qc(self, clip: dict, path: Path, metadata) -> dict:
+        """Quality report for a finished render (never fails the render itself)."""
+        qc = run_qc(path, duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height)
+        if qc is None:
+            return clip
+        self.store.set_clip_qc(clip["id"], qc)
+        return self.store.get_clip(clip["id"])
 
     def render_clip_plan(
         self,

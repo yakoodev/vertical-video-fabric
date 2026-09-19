@@ -2742,3 +2742,41 @@ button.task-link:disabled {
 }
 .ed-apply-fav { flex-shrink: 0; font-size: 12px; padding: 4px 10px; }
 .field-hint { font-size: 12px; margin: 0 0 6px; }
+
+/* ---------- «Назад к моментам» — заметная, а не мелкая ссылка ---------- */
+.ed-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-color: var(--border-strong);
+}
+.ed-back:hover { border-color: var(--accent); color: var(--text); }
+.ed-back-arrow { font-size: 16px; line-height: 1; transition: transform 0.15s ease; }
+.ed-back:hover .ed-back-arrow { transform: translateX(-3px); }
+@media (prefers-reduced-motion: reduce) { .ed-back-arrow { transition: none; } }
+
+/* ---------- «Файл клипа» (vvf.clip/1) ---------- */
+.modal.clipfile { max-width: min(920px, 94vw); width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.clipfile-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.clipfile-head h3 { margin: 0 0 4px; }
+.clipfile-head p { margin: 0; font-size: 13px; line-height: 1.45; max-width: 64ch; }
+.clipfile-text {
+  width: 100%;
+  min-height: min(58vh, 560px);
+  resize: vertical;
+  font-size: 12.5px;
+  line-height: 1.5;
+  tab-size: 2;
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text);
+}
+.clipfile-text:focus { outline: none; border-color: var(--accent); }
+.clipfile-ok { color: #4ade80; font-size: 13px; font-weight: 600; }
+.clipfile-problems { margin: 0; padding: 10px 14px 10px 30px; border-radius: var(--r-sm); background: rgba(248, 113, 113, 0.08); color: #fca5a5; font-size: 13px; line-height: 1.5; max-height: 160px; overflow: auto; }
+.clipfile-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.clipfile-spacer { flex: 1; }
