@@ -104,6 +104,44 @@ export interface ClipPlan {
   duplicate_of?: number | null;
   favorite?: boolean | number;
   hidden?: boolean | number;
+  // Own render settings of this clip (null = never set up in the editor).
+  render_settings?: RenderSettings | null;
+}
+
+export type TransitionType =
+  | "cut" | "fade" | "fadeblack" | "fadewhite" | "flash"
+  | "slide" | "smooth" | "wipe" | "zoom" | "dissolve";
+
+export interface TransitionSettings {
+  type: TransitionType;
+  duration: number;
+  audio: "smooth" | "hard";
+  sfx: "none" | "whoosh" | "click" | "pop";
+  sfx_volume: number;
+}
+
+/** Per-clip render settings — mirrors the editor's render panel one to one. */
+export interface RenderSettings {
+  preset_id: number | null;
+  subs_on: boolean;
+  sub_id: number | null;
+  sub_engine: string;
+  sub_pos_pct: number;
+  banner_on: boolean;
+  banner_id: number | null;
+  banner_height_pct: number;
+  banner_pos_pct: number;
+  music_on: boolean;
+  track_id: number | null;
+  mirror: boolean;
+  transition: TransitionSettings;
+}
+
+export interface TransitionOptions {
+  types: { key: TransitionType; label: string }[];
+  audio: { key: "smooth" | "hard"; label: string }[];
+  sfx: { key: TransitionSettings["sfx"]; label: string }[];
+  default: TransitionSettings;
 }
 
 export interface SourceDetail extends Source {

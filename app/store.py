@@ -1361,6 +1361,18 @@ class AppStore:
             )
         return self.get_clip_plan(clip_plan_id, include_segments=False)
 
+    def set_clip_plan_render_settings(self, clip_plan_id: int, settings: dict) -> dict:
+        """Save one clip's own render settings (normalized — junk never lands in the DB)."""
+        from app.clip_settings import normalize_render_settings
+
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        clean = normalize_render_settings(settings)
+        self.db.execute(
+            "UPDATE clip_plans SET render_settings_json = ? WHERE id = ?",
+            (json.dumps(clean, ensure_ascii=False), clip_plan_id),
+        )
+        return self.get_clip_plan(clip_plan_id, include_segments=False)
+
     def list_clip_plans(
         self,
         source_id: int | None = None,
@@ -1379,7 +1391,7 @@ class AppStore:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY sort_order, id"
-        plans = [dict(row) for row in self.db.query_all(sql, params)]
+        plans = [_decode_plan_settings(dict(row)) for row in self.db.query_all(sql, params)]
         if include_segments:
             for plan in plans:
                 plan["segments"] = self._segments_for_clip_plan(plan["id"])
@@ -1425,7 +1437,7 @@ class AppStore:
         row = self.db.query_one("SELECT * FROM clip_plans WHERE id = ?", (clip_plan_id,))
         if not row:
             raise KeyError(f"clip plan not found: {clip_plan_id}")
-        data = dict(row)
+        data = _decode_plan_settings(dict(row))
         if include_segments:
             data["segments"] = self._segments_for_clip_plan(clip_plan_id)
         return data
@@ -2690,3 +2702,23 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
         else:
             raise ValueError(f"unsupported subtitle profile field: {key}")
     return values
+
+
+def _decode_plan_settings(plan: dict) -> dict:
+    """``render_settings_json`` → ``render_settings`` (None when never saved).
+
+    None, not defaults: the batch render must tell "this clip was set up in the
+    editor" from "nobody touched it" — only the latter falls back to the
+    request's values.
+    """
+    raw = plan.pop("render_settings_json", None)
+    settings = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed:
+            settings = parsed
+    plan["render_settings"] = settings
+    return plan

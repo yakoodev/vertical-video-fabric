@@ -219,3 +219,50 @@ def _require_ffmpeg() -> None:
         subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         pytest.skip("ffmpeg is not available")
+
+
+def test_each_clip_renders_with_its_own_saved_settings(tmp_path, monkeypatch):
+    """Per-clip settings: a saved transition applies to that clip only.
+
+    Two clip plans from the same two segments, rendered in one batch: the one
+    with saved settings (fade + whoosh) comes out shorter by the transition,
+    the untouched one keeps the request's plain hard cut.
+    """
+    _require_ffmpeg()
+    client, store = _client(tmp_path, monkeypatch)
+    source_fixture = tmp_path / "per-clip-source.mp4"
+    _make_test_video(source_fixture)
+    with source_fixture.open("rb") as fileobj:
+        source = client.post(
+            "/api/sources",
+            files={"file": ("per-clip-source.mp4", fileobj, "video/mp4")},
+        ).raise_for_status().json()
+    analysis = store.create_ai_analysis(source["id"], "mock", status="succeeded")
+    first = store.create_ai_segment(analysis["id"], {"start_sec": 0, "end_sec": 5, "title": "A"})
+    second = store.create_ai_segment(analysis["id"], {"start_sec": 1, "end_sec": 6, "title": "B"})
+    preset = client.post(
+        "/api/ffmpeg-presets",
+        json={"label": "per-clip", "output_width": 180, "output_height": 320, "fps": 25,
+              "scale_mode": "cover", "extra": {"crf": 30}},
+    ).raise_for_status().json()
+    tuned = store.create_clip_plan(source["id"], analysis["id"], "tuned", segment_ids=[first["id"], second["id"]])
+    plain = store.create_clip_plan(source["id"], analysis["id"], "plain", segment_ids=[first["id"], second["id"]])
+
+    saved = client.patch(
+        f"/api/clip-plans/{tuned['id']}/render-settings",
+        json={"settings": {"preset_id": preset["id"],
+                           "transition": {"type": "fade", "duration": 0.5, "sfx": "whoosh"}}},
+    ).raise_for_status().json()
+    assert saved["render_settings"]["transition"]["type"] == "fade"
+    assert store.get_clip_plan(plain["id"])["render_settings"] is None
+
+    clips = client.post(
+        f"/api/sources/{source['id']}/render-plans",
+        json={"clip_plan_ids": [tuned["id"], plain["id"]], "ffmpeg_preset_id": preset["id"],
+              "transition": {"type": "cut", "audio": "hard"}},
+    ).raise_for_status().json()
+    by_plan = {c["clip_plan_id"]: c for c in clips}
+    assert all(c["status"] == "succeeded" for c in clips), [c.get("error") for c in clips]
+    # 5 + 5 seconds; the fade overlaps 0.5 s, the hard cut does not.
+    assert by_plan[plain["id"]]["duration_sec"] == pytest.approx(10.0, abs=0.2)
+    assert by_plan[tuned["id"]]["duration_sec"] == pytest.approx(9.5, abs=0.2)

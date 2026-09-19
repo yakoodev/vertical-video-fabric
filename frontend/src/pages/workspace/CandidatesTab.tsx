@@ -5,7 +5,7 @@ import { clipPlansApi } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
 import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi, type FfmpegPreset } from "@/api/assets";
 import { qk } from "@/api/keys";
-import type { AiSegment, FocusPoint, SourceDetail } from "@/api/types";
+import type { AiSegment, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
@@ -201,6 +201,15 @@ function smoothFocus(focus: FocusPoint[], duration: number, feel = FOCUS_FEEL.ba
   }
   return out;
 }
+
+// Default join: hard cut with a 30 ms de-click on the sound (see app/transitions.py).
+const DEFAULT_TRANSITION: TransitionSettings = {
+  type: "cut",
+  duration: 0.35,
+  audio: "smooth",
+  sfx: "none",
+  sfx_volume: 0.5,
+};
 
 function CropFrame({
   srcW,
@@ -563,6 +572,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
   const [mirror, setMirror] = useState(false);
+  // How the pieces of a multi-piece clip are joined, and the sound on the join.
+  const [transition, setTransition] = useState<TransitionSettings>(DEFAULT_TRANSITION);
+  const patchTransition = (next: Partial<TransitionSettings>) => setTransition((t) => ({ ...t, ...next }));
+  // True while a clip's saved settings are being poured into the panel, so the
+  // panel's own effects (autosave, subtitle position) don't react to it.
+  const loadingSettingsRef = useRef(false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
@@ -580,6 +595,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // When a subtitle style is picked, derive its vertical position from margin_v
   // (ASS units on a 1920-tall frame) so the band matches the real output.
   useEffect(() => {
+    // A clip's saved settings carry their own position — loading them must not
+    // be overridden by the style's default right after.
+    if (loadingSettingsRef.current) return;
     const p = subs.data?.find((s) => s.id === subId);
     if (p && typeof p.margin_v === "number") {
       setSubPosPct(Math.round(Math.min(40, Math.max(2, (p.margin_v / 1920) * 100))));
@@ -595,10 +613,105 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   const selected = chosen ?? new Set<number>();
 
+  // ---- per-clip settings: each clip is set up on its own -------------------
+  const transitionOpts = useQuery({
+    queryKey: ["transition-options"],
+    queryFn: clipPlansApi.transitionOptions,
+    staleTime: Infinity,
+  });
+  const panelSettings = (): RenderSettings => ({
+    preset_id: presetId || null,
+    subs_on: subsOn,
+    sub_id: subId || null,
+    sub_engine: subEngine,
+    sub_pos_pct: subPosPct,
+    banner_on: bannerOn,
+    banner_id: bannerId || null,
+    banner_height_pct: bannerHeightPct,
+    banner_pos_pct: bannerPosPct,
+    music_on: musicOn,
+    track_id: trackId || null,
+    mirror,
+    transition,
+  });
+  const settingsKey = JSON.stringify(panelSettings());
+
+  const saveSettings = (planId: number, settings: RenderSettings) => {
+    const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
+    if (prev) {
+      qc.setQueryData<SourceDetail>(qk.source(sourceId), {
+        ...prev,
+        clip_plans: prev.clip_plans.map((p) => (p.id === planId ? { ...p, render_settings: settings } : p)),
+      });
+    }
+    return clipPlansApi
+      .setRenderSettings(planId, settings)
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить настройки клипа"));
+  };
+
+  // Autosave with a snapshot: the timer must save what was on the panel FOR THAT
+  // clip, not whatever the panel shows when it fires (you may have switched clips).
+  const pendingSaveRef = useRef<{ planId: number; settings: RenderSettings; timer: number } | null>(null);
+  const flushSettings = async () => {
+    const pending = pendingSaveRef.current;
+    if (!pending) return;
+    pendingSaveRef.current = null;
+    window.clearTimeout(pending.timer);
+    await saveSettings(pending.planId, pending.settings);
+  };
+
+  // Switching clips: save the previous clip's pending edits, then load this
+  // clip's own settings. A clip never set up keeps the panel as its start.
+  useEffect(() => {
+    void flushSettings();
+    if (!editorPlanId) return;
+    const s = plans.find((p) => p.id === editorPlanId)?.render_settings;
+    if (!s) return;
+    loadingSettingsRef.current = true;
+    setPresetId(s.preset_id ?? 0);
+    setSubsOn(s.subs_on);
+    setSubId(s.sub_id ?? 0);
+    setSubEngine(s.sub_engine ?? "");
+    setSubPosPct(s.sub_pos_pct);
+    setBannerOn(s.banner_on);
+    setBannerId(s.banner_id ?? 0);
+    setBannerHeightPct(s.banner_height_pct);
+    setBannerPosPct(s.banner_pos_pct);
+    setMusicOn(s.music_on);
+    setTrackId(s.track_id ?? 0);
+    setMirror(s.mirror);
+    setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
+  }, [editorPlanId, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (loadingSettingsRef.current) {
+      loadingSettingsRef.current = false;
+      return;
+    }
+    if (!editorPlanId) return;
+    const settings = panelSettings();
+    if (pendingSaveRef.current) window.clearTimeout(pendingSaveRef.current.timer);
+    const timer = window.setTimeout(() => void flushSettings(), 600);
+    pendingSaveRef.current = { planId: editorPlanId, settings, timer };
+  }, [settingsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyToFavorites = async () => {
+    const targets = plans.filter((p) => p.favorite && p.id !== editorPlanId);
+    if (!targets.length) {
+      toast.error("Нет других избранных клипов");
+      return;
+    }
+    const settings = panelSettings();
+    await Promise.all(targets.map((p) => saveSettings(p.id, settings)));
+    toast.success(`Настройки скопированы в избранные: ${targets.length}`);
+  };
+
   const batch = useMutation({
     // No ids = everything ticked «в рендер»; the editor passes just its clip.
-    mutationFn: (ids: number[] | undefined) =>
-      clipPlansApi.renderBatch(sourceId, {
+    mutationFn: async (ids: number[] | undefined) => {
+      // Unsaved edits of the open clip go in before the render reads them.
+      await flushSettings();
+      return clipPlansApi.renderBatch(sourceId, {
         clip_plan_ids: ids ?? [...selected],
         ffmpeg_preset_id: presetId || undefined,
         subtitle_profile_id: subsOn ? subId || undefined : undefined,
@@ -609,7 +722,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         banner_y_frac: bannerOn ? bannerPosPct / 100 : undefined,
         mirror: mirror || undefined,
         music_track_id: musicOn ? trackId || undefined : undefined,
-      }),
+        // Fallback for clips never set up in the editor; set-up clips use their own.
+        transition,
+      });
+    },
     onSuccess: (clips) => {
       toast.success(`Рендер запущен: ${clips.length} клип(ов)`);
       qc.invalidateQueries({ queryKey: qk.activeTasks });
@@ -1395,6 +1511,80 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
 
+            <Group
+              title="Переходы"
+              badge={transitionOpts.data?.types.find((t) => t.key === transition.type)?.label ?? "встык"}
+            >
+              {(activePlan?.segments.length ?? 0) < 2 ? (
+                <p className="muted field-hint">
+                  В этом клипе один кусок — склеивать нечего. Переход сработает, когда кусков станет больше.
+                </p>
+              ) : null}
+              <label className="field">
+                <span>Склейка кусков</span>
+                <select
+                  className="input"
+                  value={transition.type}
+                  onChange={(e) => patchTransition({ type: e.target.value as TransitionSettings["type"] })}
+                >
+                  {(transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]).map((t) => (
+                    <option key={t.key} value={t.key}>{t.label}</option>
+                  ))}
+                </select>
+              </label>
+              {transition.type !== "cut" && transition.type !== "flash" ? (
+                <label className="field">
+                  <span>Длительность — {transition.duration.toFixed(2)} с</span>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1.2}
+                    step={0.05}
+                    value={transition.duration}
+                    onChange={(e) => patchTransition({ duration: Number(e.target.value) })}
+                  />
+                </label>
+              ) : null}
+              <label className="field">
+                <span>Звук на стыке</span>
+                <select
+                  className="input"
+                  value={transition.audio}
+                  onChange={(e) => patchTransition({ audio: e.target.value as TransitionSettings["audio"] })}
+                  title="Плавно — звук перетекает (на резкой склейке — без щелчка). Резко — обрывается точно на стыке."
+                >
+                  {(transitionOpts.data?.audio ?? []).map((a) => (
+                    <option key={a.key} value={a.key}>{a.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Звук-эффект на каждом стыке</span>
+                <select
+                  className="input"
+                  value={transition.sfx}
+                  onChange={(e) => patchTransition({ sfx: e.target.value as TransitionSettings["sfx"] })}
+                >
+                  {(transitionOpts.data?.sfx ?? []).map((a) => (
+                    <option key={a.key} value={a.key}>{a.label}</option>
+                  ))}
+                </select>
+              </label>
+              {transition.sfx !== "none" ? (
+                <label className="field">
+                  <span>Громкость эффекта — {Math.round(transition.sfx_volume * 100)}%</span>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={transition.sfx_volume}
+                    onChange={(e) => patchTransition({ sfx_volume: Number(e.target.value) })}
+                  />
+                </label>
+              ) : null}
+            </Group>
+
             <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
               <label className="switch">
                 <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
@@ -1516,6 +1706,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <span className="switch-track" />
               <span>Зоны на превью</span>
             </label>
+            <div className="ed-settings-note muted">
+              <span>
+                {activePlan?.render_settings
+                  ? "Настройки сохранены в этот клип — при рендере возьмутся они."
+                  : "У клипа пока нет своих настроек — возьмутся текущие с панели."}
+              </span>
+              <button
+                type="button"
+                className="btn ed-apply-fav"
+                onClick={() => void applyToFavorites()}
+                title="Скопировать настройки этой панели во все остальные избранные клипы"
+              >
+                Применить ко всем ★
+              </button>
+            </div>
             <div className="ed-render-btns">
               <button
                 className="btn primary"

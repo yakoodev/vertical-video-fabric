@@ -357,6 +357,9 @@ class Database:
             # (dismiss a weak candidate from the moments list).
             self._ensure_column(conn, "clip_plans", "favorite", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "clip_plans", "hidden", "INTEGER NOT NULL DEFAULT 0")
+            # Per-clip render settings (subs, banner, music, mirror, transitions…):
+            # each clip is set up on its own in the editor, see app/clip_settings.py.
+            self._ensure_column(conn, "clip_plans", "render_settings_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

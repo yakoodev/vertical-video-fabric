@@ -16,6 +16,7 @@ from app.subtitles.ass import write_ass_subtitles
 from app.subtitles.contracts import SubtitleResult
 from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
 from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_timeline
+from app.transitions import build_join_args, is_plain_concat, normalize_transition
 from app.video_crop import build_reframe_x_expr
 
 
@@ -213,9 +214,11 @@ class ClipRenderService:
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
+        transition: dict | None = None,
     ) -> dict:
         if not segment_ids:
             raise ValueError("at least one segment is required")
+        join = normalize_transition(transition)
         segments = [self.store.get_ai_segment(segment_id) for segment_id in segment_ids]
         source_ids = {segment["source_id"] for segment in segments}
         if len(source_ids) != 1:
@@ -273,12 +276,37 @@ class ClipRenderService:
                     timeout=60 * 30,
                 )
                 rendered_parts.append(part_path)
-            concat_list_path = temp_dir / "concat.txt"
-            concat_list_path.write_text(
-                "\n".join(_concat_file_line(path) for path in rendered_parts) + "\n",
-                encoding="utf-8",
-            )
-            _run_ffmpeg(build_ffmpeg_concat_args(concat_list_path, base_output_path), timeout=60 * 30)
+            if is_plain_concat(join):
+                # Hard cut on picture and sound, nothing on the join: the old
+                # stream-copy concat is exact and much faster than re-encoding.
+                concat_list_path = temp_dir / "concat.txt"
+                concat_list_path.write_text(
+                    "\n".join(_concat_file_line(path) for path in rendered_parts) + "\n",
+                    encoding="utf-8",
+                )
+                _run_ffmpeg(build_ffmpeg_concat_args(concat_list_path, base_output_path), timeout=60 * 30)
+            else:
+                probes = [probe_media(path) for path in rendered_parts]
+                has_audio = all(
+                    any(st.get("codec_type") == "audio" for st in ((m.raw or {}).get("streams") or []))
+                    for m in probes
+                )
+                extra = _json_dict(preset.get("extra_json"))
+                _run_ffmpeg(
+                    build_join_args(
+                        rendered_parts,
+                        [m.duration_sec for m in probes],
+                        base_output_path,
+                        join,
+                        has_audio=has_audio,
+                        video_codec=str(preset.get("video_codec") or "libx264"),
+                        video_bitrate=str(preset.get("video_bitrate") or "").strip(),
+                        crf=extra.get("crf"),
+                        audio_codec=str(preset.get("audio_codec") or "aac"),
+                        audio_bitrate=str(preset.get("audio_bitrate") or "").strip(),
+                    ),
+                    timeout=60 * 30,
+                )
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -436,6 +464,7 @@ class ClipRenderService:
         banner_y_frac: float | None = None,
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
+        transition: dict | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -476,6 +505,7 @@ class ClipRenderService:
                 banner_y_frac=banner_y_frac,
                 subtitle_margin_v=subtitle_margin_v,
                 mirror=mirror,
+                transition=transition,
             )
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(

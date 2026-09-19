@@ -2730,3 +2730,15 @@ button.task-link:disabled {
 @media (max-width: 980px) {
   .auto-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- Настройки клипа: у каждого клипа свои ---------- */
+.ed-settings-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.ed-apply-fav { flex-shrink: 0; font-size: 12px; padding: 4px 10px; }
+.field-hint { font-size: 12px; margin: 0 0 6px; }

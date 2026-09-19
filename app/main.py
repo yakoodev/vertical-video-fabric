@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from app.clip_settings import settings_to_render_kwargs
+from app.transitions import transition_options
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.ai.service import VideoAnalysisService
 from app.automation import AutomationService
@@ -483,6 +485,8 @@ class RenderClipPlansRequest(BaseModel):
     mirror: bool | None = None
     music_track_id: int | None = None
     music_volume: float | None = None
+    # Join settings for plans that have no saved settings of their own.
+    transition: dict | None = None
 
 
 class ClipPostRequest(BaseModel):
@@ -2020,21 +2024,26 @@ def api_render_clip_plans(
             plan = store.get_clip_plan(clip_plan_id, include_segments=False)
             if plan["source_id"] != source_id:
                 raise ValueError("clip plan does not belong to source")
-            clips.append(
-                clip_render_service.render_clip_plan(
-                    clip_plan_id,
-                    ffmpeg_preset_id=payload.ffmpeg_preset_id,
-                    subtitle_profile_id=payload.subtitle_profile_id,
-                    banner_id=payload.banner_id,
-                    music_track_id=payload.music_track_id,
-                    music_volume=payload.music_volume,
-                    subtitle_provider=payload.subtitle_provider,
-                    banner_height_frac=payload.banner_height_frac,
-                    banner_y_frac=payload.banner_y_frac,
-                    subtitle_margin_v=payload.subtitle_margin_v,
-                    mirror=bool(payload.mirror),
-                )
-            )
+            # Each clip is set up on its own in the editor: its saved settings win.
+            # A clip nobody opened falls back to the request (the panel's values).
+            if plan.get("render_settings"):
+                kwargs = settings_to_render_kwargs(plan["render_settings"])
+                kwargs["music_volume"] = payload.music_volume
+            else:
+                kwargs = {
+                    "ffmpeg_preset_id": payload.ffmpeg_preset_id,
+                    "subtitle_profile_id": payload.subtitle_profile_id,
+                    "banner_id": payload.banner_id,
+                    "music_track_id": payload.music_track_id,
+                    "music_volume": payload.music_volume,
+                    "subtitle_provider": payload.subtitle_provider,
+                    "banner_height_frac": payload.banner_height_frac,
+                    "banner_y_frac": payload.banner_y_frac,
+                    "subtitle_margin_v": payload.subtitle_margin_v,
+                    "mirror": bool(payload.mirror),
+                    "transition": payload.transition,
+                }
+            clips.append(clip_render_service.render_clip_plan(clip_plan_id, **kwargs))
         return clips
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2075,6 +2084,33 @@ def api_set_clip_plan_focus(clip_plan_id: int, payload: ClipPlanFocusPayload, _a
 class ClipPlanFlagsPayload(BaseModel):
     favorite: bool | None = None
     hidden: bool | None = None
+
+
+class ClipPlanRenderSettingsPayload(BaseModel):
+    settings: dict
+
+
+@app.patch(
+    "/api/clip-plans/{clip_plan_id}/render-settings",
+    tags=["Render"],
+    summary="Save one clip's own render settings (subs, banner, music, transitions…)",
+)
+def api_set_clip_plan_render_settings(
+    clip_plan_id: int, payload: ClipPlanRenderSettingsPayload, _auth: AuthDep
+) -> dict:
+    try:
+        return store.set_clip_plan_render_settings(clip_plan_id, payload.settings)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/render/transition-options",
+    tags=["Render"],
+    summary="Transition types, join-sound modes and SFX the renderer supports",
+)
+def api_transition_options(_auth: AuthDep) -> dict:
+    return transition_options()
 
 
 @app.patch(

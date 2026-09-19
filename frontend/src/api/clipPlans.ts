@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { Clip } from "@/api/types";
+import type { Clip, ClipPlan, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
 
 export interface RenderClipPlanRequest {
   ffmpeg_preset_id?: number;
@@ -12,6 +12,7 @@ export interface RenderClipPlanRequest {
   mirror?: boolean;
   music_track_id?: number;
   music_volume?: number;
+  transition?: TransitionSettings;
 }
 
 export interface RenderClipPlansRequest extends RenderClipPlanRequest {
@@ -31,4 +32,8 @@ export const clipPlansApi = {
   // Triage flags: ⭐ favourite (promote to editor) and hidden (dismiss).
   setFlags: (clipPlanId: number, flags: { favorite?: boolean; hidden?: boolean }) =>
     api.patch<Clip>(`/api/clip-plans/${clipPlanId}/flags`, flags),
+  // Each clip is set up on its own: the editor saves the panel into the clip.
+  setRenderSettings: (clipPlanId: number, settings: RenderSettings) =>
+    api.patch<ClipPlan>(`/api/clip-plans/${clipPlanId}/render-settings`, { settings }),
+  transitionOptions: () => api.get<TransitionOptions>(`/api/render/transition-options`),
 };
