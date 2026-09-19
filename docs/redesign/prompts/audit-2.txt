@@ -1,0 +1,20 @@
+You are a senior product designer + frontend UX auditor. Audit the UI of this app and propose improvements to DESIGN and NAVIGATION. Do NOT modify any source code. Write only into docs/redesign/audit/.
+
+The app: "Fabric — Vertical Video" (React + Vite + TS SPA in frontend/src, dark violet theme, Russian UI). It turns long videos/streams into vertical 9:16 clips and auto-publishes them. Solo power user who mass-produces clips.
+
+Inputs:
+1. Source code of the UI: frontend/src (pages/, pages/workspace/, components/, styles/global.css, styles/tokens.css). Read it to understand every screen, control and flow.
+2. Target look: docs/redesign/ref-s1-projects.png … ref-s6-auto.png (earlier generated references — the visual direction the owner liked).
+3. Function checklist: docs/redesign/functions.md — no function may be lost. New since then: «Монтаж» project tab; editor hides project chrome and shows only «← Назад к моментам» + clip title + «🤖 ИИ-монтаж» / «↩ Откатить ИИ-монтаж»; on Моменты: «✨ ИИ выберет лучшие», «🤖 ИИ-монтаж всех ★» with live progress; ✨ AI title/description/hashtags in publish dialogs; real analysis progress on Исходник.
+4. The LIVE app is running at http://localhost:8089 (auth is already handled by a local proxy — no login needed). If you can, use your playwright skill (or any browser automation you have) to open and screenshot these pages at 1600x1000 and LOOK at them: /projects, /projects/50/source, /projects/50/candidates, /projects/50/candidates?clip=137, /clips, /automation, /publications, /accounts, /tasks, /settings, /help. Save screenshots to docs/redesign/audit/shots/. If browser automation is not possible, audit from the code and the references.
+
+Deliverables (all in docs/redesign/audit/):
+A) audit.md in Russian:
+   - Top: 5–8 most painful problems, ordered by impact on a user who does this workflow many times a day: create project → analyze → pick moments → edit clip → render → publish.
+   - Navigation: is the information architecture right (sidebar groups, project tabs, where the editor lives, how you get back, how you find running tasks, where publishing lives)? Propose a concrete better structure (what items, in what order, what is global vs per-project). Keyboard shortcuts worth adding.
+   - Per screen: concrete fixes (layout, hierarchy, spacing, density, empty states, feedback during long AI operations, consistency of buttons/chips/switches). Be specific: which element, what to change, why. Reference file/component names.
+   - A "quick wins" list (≤1 hour each) and a "bigger changes" list.
+   - Keep every function from functions.md — if you propose moving/removing a control, say where it goes.
+B) Using your image generation tool, generate 2–3 NEW reference images (landscape ~1600x1000, same visual style as ref-s*.png: dark #0c0a12, violet #8b5cf6 accent, Inter, Russian labels, NO real faces / recognizable characters / brand logos in thumbnails) showing your improved NAVIGATION: at least (1) the global shell (sidebar + top bar with global search / command palette + activity) and (2) the project workspace header + tabs + the clip editor's minimal "focus mode" bar. Copy them to docs/redesign/audit/ref-nav-1.png, ref-nav-2.png (…-3). Describe each in audit.md.
+
+Constraints: no code edits outside docs/redesign/audit/; do not run builds, docker, git commits or anything that changes the app's data. Read-only everywhere else. Finish with a short summary of what you wrote.
