@@ -112,7 +112,7 @@ def normalize_render_settings(raw: object) -> dict:
     }
 
 
-def settings_to_render_kwargs(settings: dict) -> dict:
+def settings_to_render_kwargs(settings: dict, default_subtitle_profile_id: int | None = None) -> dict:
     """Map stored settings onto ``ClipRenderService.render_clip_plan`` kwargs.
 
     Same rules as the editor panel always used when it sent a render request:
@@ -120,10 +120,13 @@ def settings_to_render_kwargs(settings: dict) -> dict:
     """
     s = normalize_render_settings(settings)
     subs = s["subs_on"]
+    # «Накладывать субтитры» with the style left on «по умолчанию» must still burn
+    # subtitles: without a profile id the render skips the subtitle pass entirely.
+    sub_id = s["sub_id"] or (default_subtitle_profile_id if subs else None)
     banner = s["banner_on"]
     return {
         "ffmpeg_preset_id": s["preset_id"],
-        "subtitle_profile_id": s["sub_id"] if subs else None,
+        "subtitle_profile_id": sub_id if subs else None,
         "subtitle_provider": (s["sub_engine"] or None) if subs else None,
         "subtitle_margin_v": round(s["sub_pos_pct"] / 100 * SUBTITLE_FRAME_HEIGHT) if subs else None,
         "banner_id": s["banner_id"] if banner else None,

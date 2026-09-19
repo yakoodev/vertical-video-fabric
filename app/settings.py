@@ -90,6 +90,9 @@ class Settings:
         # 🤖 ИИ-монтаж reasons over timecodes and speech — defaults to the (smarter)
         # analysis model; a few thousand tokens per clip.
         self.gemini_montage_model = os.getenv("GEMINI_MONTAGE_MODEL", self.gemini_video_model).strip()
+        # ✨ ИИ выбирает лучшие judges a few hundred moments in one call — worth the
+        # smarter model (a few cents), so it defaults to the montage/analysis one.
+        self.gemini_pick_model = os.getenv("GEMINI_PICK_MODEL", self.gemini_montage_model).strip()
         self.gemini_transcribe_model = os.getenv(
             "GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite"
         ).strip()

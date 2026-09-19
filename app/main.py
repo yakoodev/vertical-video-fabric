@@ -2076,7 +2076,7 @@ def api_render_clip_plan(
         # Same rule as the batch: a clip set up in the editor / clip file renders
         # with its own settings; the request only fills in for a clip never set up.
         if plan.get("render_settings"):
-            kwargs = settings_to_render_kwargs(plan["render_settings"])
+            kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
             kwargs["music_volume"] = payload.music_volume if payload else None
         else:
             kwargs = {
@@ -2176,10 +2176,23 @@ def api_clip_plan_ai_montage_undo(clip_plan_id: int, _auth: AuthDep) -> dict:
     return {"spec": spec, "changes": changes}
 
 
+def _default_subtitle_profile_id() -> int | None:
+    """The profile «по умолчанию» resolves to: the saved default, else the first one."""
+    saved = _setting_int(store.get_app_setting_value("default_subtitle_profile_id"))
+    if saved:
+        return saved
+    profiles = store.list_subtitle_profiles()
+    return profiles[0]["id"] if profiles else None
+
+
 def _render_plan_own_settings(clip_plan_id: int) -> dict:
     """Render a clip with its own saved settings (what the clip file says)."""
     plan = store.get_clip_plan(clip_plan_id, include_segments=False)
-    kwargs = settings_to_render_kwargs(plan["render_settings"]) if plan.get("render_settings") else {}
+    kwargs = (
+        settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
+        if plan.get("render_settings")
+        else {}
+    )
     return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
 
 
@@ -2408,7 +2421,7 @@ def api_render_clip_plans(
             # Each clip is set up on its own in the editor: its saved settings win.
             # A clip nobody opened falls back to the request (the panel's values).
             if plan.get("render_settings"):
-                kwargs = settings_to_render_kwargs(plan["render_settings"])
+                kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
                 kwargs["music_volume"] = payload.music_volume
             else:
                 kwargs = {
