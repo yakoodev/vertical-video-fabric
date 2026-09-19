@@ -100,4 +100,11 @@ export const montageAssetsApi = {
   update: (id: number, patch: Partial<Pick<MontageAsset, "label" | "description" | "tags">>) =>
     api.patch<MontageAsset>(`/api/montage-assets/${id}`, patch),
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/montage-assets/${id}`),
+  /** ✨ The AI looks at the file and writes what it is / when it fits / tags. */
+  describe: (id: number) => api.post<MontageAsset>(`/api/montage-assets/${id}/describe`, {}),
+  describeMissing: (asset_ids: number[] = []) =>
+    api.post<{ described: number; failed: number; errors: Record<string, string>; assets: MontageAsset[] }>(
+      `/api/montage-assets/describe`,
+      { asset_ids },
+    ),
 };

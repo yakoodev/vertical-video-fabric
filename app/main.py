@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -43,6 +44,7 @@ from app.ai.montage import (
     start_montage_job,
     undo_montage,
 )
+from app.ai.asset_describe import describe_asset, describe_missing
 from app.ai.pick import pick_best
 from app.montage_assets import assets_dir as montage_assets_dir
 from app.montage_assets import kind_for as asset_kind_for
@@ -2300,7 +2302,7 @@ async def api_upload_montage_asset(
     finally:
         await file.close()
     meta = probe_montage_asset(dest)
-    return store.create_montage_asset(
+    asset = store.create_montage_asset(
         kind=kind,
         label=label.strip() or Path(safe_name).stem,
         description=description,
@@ -2311,6 +2313,41 @@ async def api_upload_montage_asset(
         size_bytes=size,
         **meta,
     )
+    # Describe it right away: the montage agent matches files by their text, so a
+    # file uploaded without «когда уместно» would never be used.
+    threading.Thread(
+        target=lambda: describe_asset(store, asset["id"]),
+        name=f"describe-asset-{asset['id']}",
+        daemon=True,
+    ).start()
+    return asset
+
+
+class DescribeAssetsRequest(BaseModel):
+    asset_ids: list[int] = Field(default_factory=list, description="пусто = все без описания")
+
+
+@app.post(
+    "/api/montage-assets/describe",
+    tags=["Montage assets"],
+    summary="✨ Let the AI look at the files and fill in what they are / when they fit",
+)
+def api_describe_montage_assets(payload: DescribeAssetsRequest, _auth: AuthDep) -> dict:
+    return describe_missing(store, payload.asset_ids or None)
+
+
+@app.post(
+    "/api/montage-assets/{asset_id}/describe",
+    tags=["Montage assets"],
+    summary="✨ Describe one file",
+)
+def api_describe_montage_asset(asset_id: int, _auth: AuthDep) -> dict:
+    try:
+        return describe_asset(store, asset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 class MontageAssetPatch(BaseModel):

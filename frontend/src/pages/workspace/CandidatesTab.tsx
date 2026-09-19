@@ -19,7 +19,7 @@ import { useToast } from "@/components/Toast";
 import { Timeline } from "@/components/Timeline";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
-import { AiBatchPanel } from "@/pages/workspace/AiBatchPanel";
+import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
@@ -604,6 +604,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
   const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
+  const heatHeadRef = useRef<HTMLSpanElement>(null);
   const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
@@ -636,6 +637,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const openedFromListRef = useRef(false);
   const [chosen, setChosen] = useState<Set<number> | null>(null);
   const [loop, setLoop] = useState(true);
+  const [rate, setRate] = useState(1);
   const loopRef = useRef(loop);
   loopRef.current = loop;
   // Ordered ranges to play back as one clip preview (segments stitched in time).
@@ -689,10 +691,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return () => v.removeEventListener("loadedmetadata", park);
   }, [editorPlanId, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = rate;
+  }, [rate, view, query.isSuccess, editorPlanId]);
+
   const playRanges = (ranges: { start: number; end: number }[]) => {
     const v = videoRef.current;
     if (!v || !ranges.length) return;
     playbackRef.current = { ranges, idx: 0 };
+    v.playbackRate = rate;
     v.currentTime = ranges[0].start;
     void v.play();
   };
@@ -1069,6 +1076,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return [0.2, 0.5, 0.8].map((p) => all[Math.floor(all.length * p)]);
   }, [storyboard.data]);
 
+  // Playhead on the moments heat strip: where the source player is right now.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const head = heatHeadRef.current;
+      const v = videoRef.current;
+      const dur = query.data?.duration_sec ?? 0;
+      if (head && v && dur > 0) head.style.left = `${Math.min(100, (v.currentTime / dur) * 100)}%`;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [query.data?.duration_sec]);
+
   // Keyboard: F ★ / X hide / E edit the moment under the pointer; in the editor
   // F stars the open clip and Esc goes back to the moments (see «?» in the shell).
   // One stable listener (a hook must not sit after the early returns below); it
@@ -1361,6 +1382,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           ) : null}
           {source.duration_sec ? (
             <div className="mo-heat" title="Где в видео найдены моменты — клик перематывает">
+              <span ref={heatHeadRef} className="mo-heat-head" />
               {visiblePlans.map((p) =>
                 p.segments.map((s) => (
                   <button
@@ -1428,6 +1450,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </p>
         </div>
       </div>
+
+      <AiBatchReport sourceId={sourceId} onOpenClip={(id) => openEditor(id)} />
 
       <div className="mo-toolbar">
         <div className="mo-search">
@@ -1536,7 +1560,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 key={p.id}
                 onMouseEnter={() => (hoverPlanRef.current = p.id)}
                 onMouseLeave={() => (hoverPlanRef.current = null)}
-                className={`mo-card${p.id === activePlan?.id ? " active" : ""}${p.hidden ? " is-hidden" : ""}`}
+                className={`mo-card${p.id === activePlan?.id ? " active" : ""}${p.hidden ? " is-hidden" : ""}${
+                  p.favorite ? " fav" : ""
+                }`}
               >
                 <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть момент в плеере">
                   <img src={planThumbUrl(p)} alt="" loading="lazy" />
@@ -1723,6 +1749,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <span className="switch-track" />
               <span>Зациклить</span>
             </label>
+            <div className="seg speed-seg" role="radiogroup" aria-label="Скорость">
+              {[0.5, 1, 1.5, 2].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  role="radio"
+                  aria-checked={rate === r}
+                  className={`seg-item${rate === r ? " active" : ""}`}
+                  title="Скорость воспроизведения"
+                  onClick={() => setRate(r)}
+                >
+                  {r}×
+                </button>
+              ))}
+            </div>
             {activePlan
               ? (() => {
                   const fx = activePlan.segments[0]?.focus ?? [];

@@ -27,6 +27,18 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.montageAssets }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
   });
+  const describe = useMutation({
+    mutationFn: () => montageAssetsApi.describe(asset.id),
+    onSuccess: (a) => {
+      setLabel(a.label);
+      setDescription(a.description);
+      setTags(a.tags);
+      qc.invalidateQueries({ queryKey: qk.montageAssets });
+      toast.success("ИИ описал файл");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось описать"),
+  });
+
   const commit = (field: "label" | "description" | "tags", value: string) => {
     if (value.trim() !== (asset[field] ?? "").trim()) save.mutate({ [field]: value });
   };
@@ -58,6 +70,14 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
         onBlur={() => commit("label", label)}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       />
+      <button
+        className="btn sm asset-ai"
+        disabled={describe.isPending}
+        onClick={() => describe.mutate()}
+        title="ИИ посмотрит файл и напишет, что на нём и когда уместно"
+      >
+        {describe.isPending ? "✨ Смотрю…" : description.trim() ? "✨ Переписать" : "✨ Описать через ИИ"}
+      </button>
       <textarea
         className="input asset-desc"
         rows={2}
@@ -91,6 +111,7 @@ export function MontageAssetsPage() {
   const [pending, setPending] = useState<MontageAsset | null>(null);
   const [drag, setDrag] = useState(false);
   const [uploading, setUploading] = useState(0);
+  const [describing, setDescribing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const uploadAll = async (files: FileList | File[]) => {
@@ -108,7 +129,10 @@ export function MontageAssetsPage() {
       setUploading((n) => n - 1);
     }
     qc.invalidateQueries({ queryKey: qk.montageAssets });
-    if (ok) toast.success(`Загружено: ${ok}. Допишите «когда уместно» — по этому ИИ выбирает файл.`);
+    if (ok) toast.success(`Загружено: ${ok} — ИИ сейчас сам опишет, что на файлах (обновится через пару секунд)`);
+    // The server describes each upload in the background; pick the texts up.
+    setTimeout(() => qc.invalidateQueries({ queryKey: qk.montageAssets }), 6000);
+    setTimeout(() => qc.invalidateQueries({ queryKey: qk.montageAssets }), 15000);
   };
 
   const del = useMutation({
@@ -122,12 +146,38 @@ export function MontageAssetsPage() {
   });
 
   const assets = query.data ?? [];
+  const undescribed = assets.filter((a) => !a.description.trim());
   return (
     <>
       <PageHead
         title="Файлы для монтажа"
         sub="Мемы, реакции, стикеры и звуки — 🤖 ИИ-монтаж сам вставляет подходящие в клипы"
       />
+      {undescribed.length ? (
+        <div className="asset-hint">
+          <span>
+            <b>{undescribed.length}</b> файл(ов) без описания — ИИ-монтаж их почти не использует.
+          </span>
+          <button
+            className="btn primary sm"
+            disabled={describing}
+            onClick={async () => {
+              setDescribing(true);
+              try {
+                const r = await montageAssetsApi.describeMissing();
+                toast.success(`Описано: ${r.described}${r.failed ? `, не вышло: ${r.failed}` : ""}`);
+                qc.invalidateQueries({ queryKey: qk.montageAssets });
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : "Не удалось описать");
+              } finally {
+                setDescribing(false);
+              }
+            }}
+          >
+            {describing ? "✨ Описываю…" : `✨ Описать все (${undescribed.length})`}
+          </button>
+        </div>
+      ) : null}
       <div
         className={`asset-drop${drag ? " on" : ""}`}
         onDragOver={(e) => {

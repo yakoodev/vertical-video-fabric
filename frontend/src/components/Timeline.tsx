@@ -40,6 +40,10 @@ export function Timeline({
   const [playheadX, setPlayheadX] = useState(0);
   const [draft, setDraft] = useState<{ id: number; s: number; e: number } | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  // Scroll position that belongs to a zoom level we just set: applied once the
+  // new width is laid out, otherwise the browser clamps it to the OLD width and
+  // the view stays at 0:00 while the clip sits an hour in.
+  const pendingScrollRef = useRef<number | null>(null);
 
   const minSeg = Math.min(2, duration || 2);
   const fitPps = duration > 0 ? viewW / duration : 0;
@@ -91,16 +95,22 @@ export function Timeline({
     const a = Math.max(0, s - pad);
     const b = Math.min(duration, e + pad);
     const next = clamp(viewW / Math.max(1, b - a), fitPps, Math.max(maxPps, viewW / Math.max(1, b - a)));
+    pendingScrollRef.current = a * next;
     setPps(next);
-    requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollLeft = a * next;
-    });
     return true;
   }, [segments, duration, viewW, fitPps, maxPps]);
   const segKey = segments.map((x) => x.id).join(",");
   useEffect(() => {
     fitClip();
   }, [segKey, viewW > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && pendingScrollRef.current != null) {
+      el.scrollLeft = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+    }
+  }, [pps, innerW]);
 
   const zoomBy = useCallback(
     (factor: number) => {

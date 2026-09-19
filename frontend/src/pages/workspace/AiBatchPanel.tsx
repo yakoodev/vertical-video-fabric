@@ -26,7 +26,6 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
   const [open, setOpen] = useState(false);
   const [goal, setGoal] = useState("");
   const [render, setRender] = useState(false);
-  const [dismissed, setDismissed] = useState<string | null>(null);
   const [pickOpen, setPickOpen] = useState(false);
   const [pickCount, setPickCount] = useState(10);
   const [pickGoal, setPickGoal] = useState("");
@@ -54,7 +53,6 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
     onSuccess: (j) => {
       qc.setQueryData(["ai-montage-batch", sourceId], j);
       setOpen(false);
-      setDismissed(null);
       toast.success(`ИИ-монтаж запущен: ${j.total} клип(ов)`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить"),
@@ -67,7 +65,6 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
       qc.invalidateQueries({ queryKey: qk.source(sourceId) });
       if (r.montage_job) {
         qc.setQueryData(["ai-montage-batch", sourceId], r.montage_job);
-        setDismissed(null);
       }
       setPickOpen(false);
       toast.success(
@@ -76,17 +73,6 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "ИИ не смог выбрать"),
   });
-
-  const undo = useMutation({
-    mutationFn: (planId: number) => clipPlansApi.aiMontageUndo(planId),
-    onSuccess: () => {
-      toast.success("Откатил клип к версии до ИИ");
-      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось откатить"),
-  });
-
-  const showJob = data && data.id !== dismissed;
 
   return (
     <div className="aib">
@@ -175,46 +161,82 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
         </div>
       ) : null}
 
-      {showJob ? (
-        <div className="aib-job">
-          <div className="aib-head">
-            <b>
-              {running ? "🤖 Монтирую" : "🤖 ИИ-монтаж"} · {data.done}/{data.total}
-              {data.failed ? ` · ошибок ${data.failed}` : ""}
-            </b>
-            {!running ? (
-              <button className="aib-x" title="Скрыть отчёт" onClick={() => setDismissed(data.id)}>
-                ×
+    </div>
+  );
+}
+
+/**
+ * The batch report is its own full-width block under the player: a 10-clip run
+ * crammed into the narrow stats column cut the titles and the statuses off.
+ */
+export function AiBatchReport({ sourceId, onOpenClip }: { sourceId: string; onOpenClip?: (planId: number) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const job = useQuery({
+    queryKey: ["ai-montage-batch", sourceId],
+    queryFn: () => clipPlansApi.aiMontageBatchStatus(sourceId),
+    refetchInterval: (q) => (q.state.data?.status === "running" ? 3000 : false),
+  });
+  const data: AiMontageJob | null | undefined = job.data;
+  const running = data?.status === "running";
+
+  const undo = useMutation({
+    mutationFn: (planId: number) => clipPlansApi.aiMontageUndo(planId),
+    onSuccess: () => {
+      toast.success("Откатил клип к версии до ИИ");
+      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось откатить"),
+  });
+
+  if (!data || data.id === dismissed) return null;
+  return (
+    <div className="panel aib-report">
+      <div className="aib-head">
+        <b>
+          {running ? "🤖 Монтирую" : "🤖 ИИ-монтаж"} · {data.done}/{data.total}
+          {data.failed ? ` · ошибок ${data.failed}` : ""}
+          {data.goal ? <span className="muted"> · «{data.goal}»</span> : null}
+        </b>
+        {!running ? (
+          <button className="aib-x" title="Скрыть отчёт" onClick={() => setDismissed(data.id)}>
+            ×
+          </button>
+        ) : null}
+      </div>
+      <div className="src-bar">
+        <span style={{ width: `${data.total ? Math.round((data.done / data.total) * 100) : 0}%` }} />
+      </div>
+      <ul className="aib-items">
+        {data.items.map((it) => (
+          <li key={it.plan_id} className={`aib-item ${it.status}`}>
+            <button
+              className="aib-item-title"
+              onClick={() => onOpenClip?.(it.plan_id)}
+              title="Открыть этот клип в монтаже"
+            >
+              {it.title || `План #${it.plan_id}`}
+            </button>
+            <span className="aib-item-st">
+              {it.status === "done" && it.total_before != null
+                ? `${formatDuration(it.total_before)} → ${formatDuration(it.total_after ?? 0)}`
+                : STATUS[it.status] ?? it.status}
+            </span>
+            <span className="aib-item-why muted">{it.error || (it.rationale || [])[0] || ""}</span>
+            {it.status === "done" ? (
+              <button
+                className="aib-undo"
+                title="Откатить этот клип к версии до ИИ"
+                disabled={undo.isPending}
+                onClick={() => undo.mutate(it.plan_id)}
+              >
+                ↩
               </button>
             ) : null}
-          </div>
-          <div className="src-bar">
-            <span style={{ width: `${data.total ? Math.round((data.done / data.total) * 100) : 0}%` }} />
-          </div>
-          <ul className="aib-items">
-            {data.items.map((it) => (
-              <li key={it.plan_id} className={`aib-item ${it.status}`} title={it.error || (it.rationale || []).join("\n")}>
-                <span className="aib-item-title">{it.title || `План #${it.plan_id}`}</span>
-                <span className="aib-item-st">
-                  {it.status === "done" && it.total_before != null
-                    ? `${formatDuration(it.total_before)} → ${formatDuration(it.total_after ?? 0)}`
-                    : STATUS[it.status] ?? it.status}
-                </span>
-                {it.status === "done" ? (
-                  <button
-                    className="aib-undo"
-                    title="Откатить этот клип к версии до ИИ"
-                    disabled={undo.isPending}
-                    onClick={() => undo.mutate(it.plan_id)}
-                  >
-                    ↩
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
