@@ -624,6 +624,36 @@ def _matches_seeded_prompt_fingerprint(key: tuple[str, str], prompt: str) -> boo
                 "Do not return any finished clip around 3 minutes",
             ),
         ),
+        # Эти пресеты появились позже и отпечатков не имели — значит, обновить
+        # их сид не мог. Строки взяты из частей, которые правки длины не трогали.
+        ("analysis", "Action drama highlights"): (
+            (
+                "This is a live-action ACTION series",
+                "Your #1 job is to find the FIGHTS and the ACTION.",
+                "Never cut mid-punch, mid-line, or mid-action.",
+            ),
+        ),
+        ("analysis", "Подкаст: цитаты"): (
+            (
+                "Analyze this podcast, interview, or talking-head source for vertical short-form.",
+                "Find the most quotable, shareable spoken moments",
+                "Merge a setup question and its answer into one clip",
+            ),
+        ),
+        ("analysis", "Обучающее: тезисы"): (
+            (
+                "Analyze this educational, tutorial, lecture, or explainer source for vertical",
+                "Each clip teaches one",
+                "Skip long tangents, repeated recaps",
+            ),
+        ),
+        ("analysis", "Юмор: смешные моменты"): (
+            (
+                "Analyze this source for the funniest standalone moments for vertical short-form:",
+                "Always include the setup and the punchline",
+                "Never cut through the punchline or a key reaction.",
+            ),
+        ),
         ("publishing", "Publishing metadata"): (
             (
                 "Generate publishing metadata for a rendered vertical clip.",
