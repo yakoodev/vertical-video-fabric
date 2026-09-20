@@ -146,7 +146,7 @@ def test_run_analysis_honours_cooperative_cancel(tmp_path, monkeypatch):
             store.request_ai_analysis_cancel(aid)
             return AnalysisResult(segments=[], clips=[], response={}, usage={})
 
-    monkeypatch.setattr(service_mod, "get_video_analyzer", lambda provider: _CancelDuringAnalyze())
+    monkeypatch.setattr(service_mod, "get_video_analyzer", lambda provider, store=None: _CancelDuringAnalyze())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="mock")
 
@@ -207,7 +207,7 @@ def test_video_analysis_uses_anime_prompt_for_smotvibe_without_override(tmp_path
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -249,7 +249,7 @@ def test_video_analysis_coalesces_adjacent_single_segment_clips_for_real_provide
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -291,7 +291,7 @@ def test_video_analysis_does_not_coalesce_adjacent_single_segment_clips_over_bud
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -328,7 +328,7 @@ def test_video_analysis_expands_and_merges_tiny_anime_segments(tmp_path, monkeyp
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -369,7 +369,7 @@ def test_video_analysis_keeps_merged_anime_segments_under_store_limit(tmp_path, 
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -419,7 +419,7 @@ def test_video_analysis_merges_overlapping_padded_segments(tmp_path, monkeypatch
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -477,7 +477,7 @@ def test_video_analysis_retries_narrative_oversized_segments(tmp_path, monkeypat
                 usage={"attempt": 2},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -525,7 +525,7 @@ def test_video_analysis_does_not_auto_coalesce_narrative_single_segment_clips(tm
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -579,7 +579,7 @@ def test_video_analysis_retries_narrative_missing_episode_recap(tmp_path, monkey
                 usage={"attempt": 2},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -639,7 +639,7 @@ def test_video_analysis_retries_recap_that_misses_early_setup(tmp_path, monkeypa
                 usage={"attempt": 2},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -684,7 +684,7 @@ def test_video_analysis_accepts_recap_setup_inside_first_third_after_420_seconds
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -750,7 +750,7 @@ def test_video_analysis_retries_narrative_timeline_digest_that_is_too_broad(tmp_
                 usage={"attempt": 2},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -796,7 +796,7 @@ def test_video_analysis_fits_narrative_recap_that_is_too_long_to_render_budget(t
                 usage={"attempt": 1},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -840,7 +840,7 @@ def test_video_analysis_compacts_recap_padding_before_rejecting(tmp_path, monkey
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -890,7 +890,7 @@ def test_video_analysis_keeps_valid_recap_when_retry_still_has_too_many_optional
             calls["count"] += 1
             return broad_result(calls["count"])
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -949,7 +949,7 @@ def test_video_analysis_retries_narrative_invalid_timestamps(tmp_path, monkeypat
                 usage={"attempt": 2},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -992,7 +992,7 @@ def test_video_analysis_fails_when_narrative_retry_still_has_invalid_timestamps(
                 usage={"attempt": calls["count"]},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -1036,7 +1036,7 @@ def test_video_analysis_fails_when_narrative_retry_still_has_oversized_segments(
                 usage={"attempt": calls["count"]},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake", prompt=_NARRATIVE_PROMPT)
 
@@ -1081,7 +1081,7 @@ def test_video_analysis_keeps_distant_single_segment_clips_separate(tmp_path, mo
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -1120,7 +1120,7 @@ def test_video_analysis_keeps_previous_generated_clip_plans(tmp_path, monkeypatc
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     first_analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
     assert first_analysis["status"] == "succeeded"
@@ -1178,7 +1178,7 @@ def test_video_analysis_preprocesses_source_for_analyzer(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr("app.ai.service.prepare_source_for_analysis", fake_prepare)
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(
         source["id"],
@@ -1246,7 +1246,7 @@ def test_failed_video_analysis_is_recorded_without_losing_source(tmp_path, monke
         def analyze(self, source, prompt, model):
             raise RuntimeError("analyzer exploded")
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: _BoomAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: _BoomAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="polza")
 
@@ -1295,7 +1295,7 @@ def test_failed_video_analysis_cleans_partial_generated_outputs(tmp_path, monkey
             raise ValueError("persist exploded")
         return original_create_clip_plan(*args, **kwargs)
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
     monkeypatch.setattr(store, "create_clip_plan", flaky_create_clip_plan)
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
@@ -1408,7 +1408,7 @@ def test_video_analysis_anime_returns_standalone_highlights_without_forcing_reca
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 
@@ -1452,7 +1452,7 @@ def test_video_analysis_anime_caps_highlight_clip_count(tmp_path, monkeypatch):
                 usage={"fake": True},
             )
 
-    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider: FakeAnalyzer())
+    monkeypatch.setattr("app.ai.service.get_video_analyzer", lambda provider, store=None: FakeAnalyzer())
 
     analysis = VideoAnalysisService(store).run_analysis(source["id"], provider="gemini", model="fake")
 

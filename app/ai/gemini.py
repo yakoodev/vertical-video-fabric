@@ -4,6 +4,7 @@ import json
 import logging
 import mimetypes
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -16,6 +17,24 @@ from app.default_prompts import analysis_mode_instructions, analysis_output_rule
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
+
+# Файл в Files API живёт 48 часов. Берём его повторно, только если до конца
+# ещё есть запас: анализ длинного VOD идёт десятками минут.
+REMOTE_FILE_MIN_LEFT_SEC = 30 * 60
+
+
+def _expires_within(expiration_time: str, seconds: float) -> bool:
+    """True, если файл протухнет раньше, чем через ``seconds`` (или срок не разобрать)."""
+    stamp = str(expiration_time or "").strip()
+    if not stamp:
+        return True
+    try:
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment - datetime.now(timezone.utc)).total_seconds() < seconds
 
 
 class GeminiClient:
@@ -182,8 +201,10 @@ class GeminiClient:
 class GeminiVideoAnalyzer:
     provider = "gemini"
 
-    def __init__(self, client: GeminiClient | None = None) -> None:
+    def __init__(self, client: GeminiClient | None = None, store: Any | None = None) -> None:
         self.client = client or GeminiClient()
+        # Store — только ради кэша залитых файлов; без него всё работает как раньше.
+        self.store = store
 
     def analyze(
         self,
@@ -208,14 +229,20 @@ class GeminiVideoAnalyzer:
 
         source_path = Path(source.get("local_path") or "")
         mime_type = _guess_mime_type(source_path)
-        if progress:
-            progress("upload", 0, 0)
-        file_info = self.client.upload_file(source_path, mime_type)
-        file_info = self.client.wait_file_active(file_info)
+        reused = self._reuse_uploaded_file(source_path)
+        if reused:
+            file_info = reused
+        else:
+            if progress:
+                progress("upload", 0, 0)
+            file_info = self.client.upload_file(source_path, mime_type)
+            file_info = self.client.wait_file_active(file_info)
+            self._remember_uploaded_file(source_path, file_info, mime_type)
         file_summary = {
             "name": file_info.get("name", ""),
             "uri": file_info.get("uri", ""),
             "mimeType": file_info.get("mimeType") or mime_type,
+            "reused": bool(reused),
         }
 
         if heartbeat:
@@ -276,6 +303,57 @@ class GeminiVideoAnalyzer:
             response={"gemini_file": file_summary, "windows": [r.response.get("parsed") for r in results]},
             usage=usage,
         )
+
+    def _reuse_uploaded_file(self, path: Path) -> dict[str, Any] | None:
+        """Уже залитый в Gemini файл, если он ещё жив и это тот же самый файл.
+
+        Files API хранит загруженное 48 часов и разрешает ссылаться на него из
+        любого числа запросов. Гонять 12 ГБ заново на каждый повторный анализ
+        (и ещё раз — на ретрае внутри того же прогона) незачем.
+        """
+
+        if self.store is None:
+            return None
+        try:
+            known = self.store.get_gemini_file(str(path))
+            if not known or not known.get("name"):
+                return None
+            stat = path.stat()
+            # Файл на диске мог смениться (пересжали, перекачали) — тогда кэш не наш.
+            if int(known.get("size_bytes") or 0) != stat.st_size:
+                return None
+            if abs(float(known.get("mtime") or 0) - stat.st_mtime) > 1:
+                return None
+            if _expires_within(str(known.get("expires_at") or ""), REMOTE_FILE_MIN_LEFT_SEC):
+                return None
+            remote = self.client.get_file(str(known["name"]))
+        except FileNotFoundError:
+            return None
+        except (OSError, RuntimeError, httpx.HTTPError) as exc:
+            _log.info("gemini: не вышло переиспользовать залитый файл (%s)", str(exc)[:200])
+            return None
+        if _state_name(remote.get("state")) not in {"ACTIVE", ""} or not remote.get("uri"):
+            self.store.forget_gemini_file(str(path))
+            return None
+        _log.info("gemini: переиспользую уже залитый файл %s", remote.get("name"))
+        return remote
+
+    def _remember_uploaded_file(self, path: Path, file_info: dict[str, Any], mime_type: str) -> None:
+        if self.store is None or not file_info.get("name"):
+            return
+        try:
+            stat = path.stat()
+            self.store.save_gemini_file(
+                str(path),
+                name=str(file_info.get("name") or ""),
+                uri=str(file_info.get("uri") or ""),
+                mime_type=str(file_info.get("mimeType") or mime_type),
+                size_bytes=stat.st_size,
+                mtime=stat.st_mtime,
+                expires_at=str(file_info.get("expirationTime") or ""),
+            )
+        except (OSError, RuntimeError) as exc:  # кэш — удобство, не причина падать
+            _log.info("gemini: не записал залитый файл в кэш (%s)", str(exc)[:200])
 
     def _analyze_range(
         self,

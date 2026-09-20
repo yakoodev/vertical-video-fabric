@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.ai.action_detect import ActionVideoAnalyzer
 from app.ai.artemox import ArtemoxVideoAnalyzer
 from app.ai.contracts import VideoAnalyzer
@@ -16,14 +18,15 @@ class NotConfiguredVideoAnalyzer:
         raise RuntimeError(f"{self.provider} video analyzer is not implemented yet")
 
 
-def get_video_analyzer(provider: str) -> VideoAnalyzer:
+def get_video_analyzer(provider: str, store: Any | None = None) -> VideoAnalyzer:
+    """``store`` нужен только Gemini — чтобы не заливать один файл дважды."""
     normalized = provider.strip().lower()
     if normalized == "mock":
         return MockVideoAnalyzer()
     if normalized == "artemox":
         return ArtemoxVideoAnalyzer()
     if normalized == "gemini":
-        return GeminiVideoAnalyzer()
+        return GeminiVideoAnalyzer(store=store)
     if normalized == "action":
         return ActionVideoAnalyzer()
     if normalized == "polza":

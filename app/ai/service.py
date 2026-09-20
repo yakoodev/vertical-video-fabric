@@ -148,7 +148,7 @@ class VideoAnalysisService:
                 analyzer_source,
                 float(source.get("duration_sec") or 0),
             )
-            analyzer = get_video_analyzer(selected_provider)
+            analyzer = get_video_analyzer(selected_provider, self.store)
             windows = _analysis_windows(
                 float(source.get("duration_sec") or 0),
                 _analysis_mode(analysis_segment_options),

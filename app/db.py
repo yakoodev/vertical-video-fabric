@@ -368,6 +368,22 @@ class Database:
             self._ensure_column(conn, "clip_plans", "subtitles_json", "TEXT NOT NULL DEFAULT ''")
             # Стили с провайдером «mock» жгли текст-заглушку вместо распознанной речи.
             conn.execute("UPDATE subtitle_profiles SET provider = '' WHERE provider = 'mock'")
+            # Что уже залито в Gemini Files API: файл живёт там 48 часов и его
+            # можно переиспользовать — повторный анализ не гоняет гигабайты заново.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gemini_files (
+                    local_path TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    uri TEXT NOT NULL,
+                    mime_type TEXT NOT NULL DEFAULT '',
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    mtime REAL NOT NULL DEFAULT 0,
+                    expires_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             # «Файлы для монтажа»: memes / reactions / sounds the AI may drop into clips.
             conn.execute(
                 """

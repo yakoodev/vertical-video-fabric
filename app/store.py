@@ -1845,6 +1845,41 @@ class AppStore:
 
     # ---- «Файлы для монтажа» -------------------------------------------------
 
+    # ---- Gemini Files API: что уже залито и до какого времени живёт ----------
+
+    def get_gemini_file(self, local_path: str) -> dict | None:
+        row = self.db.query_one("SELECT * FROM gemini_files WHERE local_path = ?", (str(local_path),))
+        return dict(row) if row else None
+
+    def save_gemini_file(self, local_path: str, **fields: Any) -> dict:
+        self.db.execute(
+            """
+            INSERT INTO gemini_files (local_path, name, uri, mime_type, size_bytes, mtime, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(local_path) DO UPDATE SET
+                name = excluded.name,
+                uri = excluded.uri,
+                mime_type = excluded.mime_type,
+                size_bytes = excluded.size_bytes,
+                mtime = excluded.mtime,
+                expires_at = excluded.expires_at,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (
+                str(local_path),
+                str(fields.get("name") or ""),
+                str(fields.get("uri") or ""),
+                str(fields.get("mime_type") or ""),
+                int(fields.get("size_bytes") or 0),
+                float(fields.get("mtime") or 0),
+                str(fields.get("expires_at") or ""),
+            ),
+        )
+        return self.get_gemini_file(local_path) or {}
+
+    def forget_gemini_file(self, local_path: str) -> None:
+        self.db.execute("DELETE FROM gemini_files WHERE local_path = ?", (str(local_path),))
+
     def create_montage_asset(self, **f: Any) -> dict:
         cur = self.db.execute(
             """

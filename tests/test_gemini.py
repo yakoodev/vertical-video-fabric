@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from app.ai.gemini import (
 )
 from app.ai import gemini as gemini_module
 from app.settings import settings
+from test_clip_spec import _client as _client_and_store
 
 
 def test_gemini_payload_uses_file_data_and_response_format():
@@ -223,3 +225,108 @@ def test_default_gemini_video_model_uses_3_5_flash():
 
     assert settings.gemini_video_model == "gemini-3.5-flash"
     assert _default_model("gemini") == "gemini-3.5-flash"
+
+
+class _ReuseClient:
+    """Fake Gemini: считает заливки и отдаёт статус файла как настоящий Files API."""
+
+    def __init__(self, remote_state="ACTIVE"):
+        self.uploads = 0
+        self.remote_state = remote_state
+
+    def upload_file(self, path, mime_type):
+        self.uploads += 1
+        return {
+            "name": "files/abc",
+            "uri": "https://file-uri",
+            "mimeType": "video/mp4",
+            "state": "PROCESSING",
+            "expirationTime": _in_hours(48),
+        }
+
+    def wait_file_active(self, file_info):
+        return {**file_info, "state": "ACTIVE"}
+
+    def get_file(self, name):
+        if self.remote_state == "GONE":
+            raise RuntimeError("404 file not found")
+        return {
+            "name": name,
+            "uri": "https://file-uri",
+            "mimeType": "video/mp4",
+            "state": self.remote_state,
+            "expirationTime": _in_hours(40),
+        }
+
+    def generate_content(self, model, payload):
+        return {
+            "candidates": [{"content": {"parts": [{"text": json.dumps({"segments": []})}]}}],
+            "usageMetadata": {},
+        }
+
+
+def _in_hours(hours: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+
+
+def _analyze(client, store, path):
+    return GeminiVideoAnalyzer(client, store=store).analyze(
+        {"local_path": str(path), "duration_sec": 60}, "Find clips", "gemini-2.5-pro"
+    )
+
+
+def test_uploaded_video_is_reused_instead_of_uploading_it_again(tmp_path, monkeypatch):
+    """Files API держит файл 48 часов — второй анализ не должен гнать гигабайты заново."""
+
+    _client, store = _client_and_store(tmp_path, monkeypatch)
+    source_path = tmp_path / "source.mp4"
+    source_path.write_bytes(b"video")
+    client = _ReuseClient()
+
+    first = _analyze(client, store, source_path)
+    second = _analyze(client, store, source_path)
+
+    assert client.uploads == 1
+    assert first.response["gemini_file"]["reused"] is False
+    assert second.response["gemini_file"]["reused"] is True
+    assert store.get_gemini_file(str(source_path))["name"] == "files/abc"
+
+
+def test_changed_or_expired_file_is_uploaded_again(tmp_path, monkeypatch):
+    _client, store = _client_and_store(tmp_path, monkeypatch)
+    source_path = tmp_path / "source.mp4"
+    source_path.write_bytes(b"video")
+    client = _ReuseClient()
+    _analyze(client, store, source_path)
+
+    # Файл на диске пересобрали — залитая копия больше не та.
+    source_path.write_bytes(b"another video")
+    _analyze(client, store, source_path)
+    assert client.uploads == 2
+
+    # Срок вышел — тоже заливаем заново.
+    store.save_gemini_file(
+        str(source_path),
+        name="files/abc",
+        uri="https://file-uri",
+        mime_type="video/mp4",
+        size_bytes=source_path.stat().st_size,
+        mtime=source_path.stat().st_mtime,
+        expires_at=_in_hours(0.1),
+    )
+    _analyze(client, store, source_path)
+    assert client.uploads == 3
+
+
+def test_file_deleted_on_googles_side_falls_back_to_upload(tmp_path, monkeypatch):
+    _client, store = _client_and_store(tmp_path, monkeypatch)
+    source_path = tmp_path / "source.mp4"
+    source_path.write_bytes(b"video")
+    client = _ReuseClient()
+    _analyze(client, store, source_path)
+
+    client.remote_state = "GONE"
+    result = _analyze(client, store, source_path)
+
+    assert client.uploads == 2
+    assert result.response["gemini_file"]["reused"] is False
