@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +46,8 @@ from app.ai.montage import (
 )
 from app.ai.asset_describe import describe_asset, describe_missing
 from app.ai.asset_generate import add_from_url as add_asset_from_url
+from app.ai.asset_search import fetch_preview as fetch_asset_preview
+from app.ai.asset_search import search_images
 from app.ai.asset_generate import generate_asset
 from app.ai.pick import pick_best
 from app.clip_subtitles import generate_for_plan as generate_plan_subtitles
@@ -2402,6 +2404,37 @@ def api_generate_montage_asset(payload: GenerateAssetRequest, _auth: AuthDep) ->
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class SearchAssetsRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=200)
+    count: int = Field(default=6, ge=1, le=8)
+
+
+@app.post(
+    "/api/montage-assets/search",
+    tags=["Montage assets"],
+    summary="🔎 ИИ ищет картинку в интернете — возвращает кандидатов, НИЧЕГО не скачивая",
+)
+def api_search_montage_assets(payload: SearchAssetsRequest, _auth: AuthDep) -> dict:
+    try:
+        return search_images(payload.query, payload.count)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/media/asset-preview", include_in_schema=False)
+def media_asset_preview(url: str, _auth: AuthDep) -> Response:
+    """Превью найденной картинки: многие сайты не отдают файл напрямую в <img>."""
+    try:
+        blob, mime = fetch_asset_preview(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - remote errors
+        raise HTTPException(status_code=502, detail=f"не удалось загрузить: {str(exc)[:120]}") from exc
+    return Response(content=blob, media_type=mime, headers={"Cache-Control": "private, max-age=600"})
 
 
 class AssetFromUrlRequest(BaseModel):

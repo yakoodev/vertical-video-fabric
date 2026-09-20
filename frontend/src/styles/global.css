@@ -3406,3 +3406,35 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .adrawer-ico { display: grid; place-items: center; aspect-ratio: 1 / 1; font-size: 26px; color: var(--accent-2); background: var(--bg-2); border-radius: 6px; }
 .adrawer-name { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adrawer-dur { position: absolute; right: 7px; top: 7px; font-size: 10px; background: rgba(0,0,0,.6); border-radius: 4px; padding: 0 4px; }
+
+/* ---------- ИИ ищет / рисует картинки ---------- */
+.asset-ai-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; align-items: start; }
+.asearch { display: grid; gap: 8px; }
+.asearch > .btn { justify-self: start; }
+.asearch-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.asearch-head { display: flex; gap: 8px; }
+.asearch-head .input { flex: 1; }
+.asearch-note { font-size: 11.5px; line-height: 1.45; margin: 0; }
+.asearch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.asearch-item {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.asearch-item img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: var(--bg-2); border-radius: 6px; }
+.asearch-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asearch-src { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asearch-acts { display: flex; gap: 6px; }
+.asearch-acts .btn { flex: 1; justify-content: center; }
+.asearch-acts .btn:first-child { flex: 0 0 34px; }
+@media (max-width: 1000px) { .asset-ai-row { grid-template-columns: 1fr; } }

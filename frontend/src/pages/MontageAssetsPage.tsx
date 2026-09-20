@@ -6,6 +6,8 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/components/ui";
+import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
+import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
 
 const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   image: "Картинка",
@@ -178,6 +180,10 @@ export function MontageAssetsPage() {
           </button>
         </div>
       ) : null}
+      <div className="asset-ai-row">
+        <AssetSearchPanel />
+        <AssetGeneratePanel />
+      </div>
       <div
         className={`asset-drop${drag ? " on" : ""}`}
         onDragOver={(e) => {

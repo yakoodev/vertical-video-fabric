@@ -87,6 +87,15 @@ export interface MontageAsset {
   created_at: string;
 }
 
+export interface AssetSearchResult {
+  url: string;
+  title: string;
+  source: string;
+  license: string;
+  mime?: string;
+  size_bytes?: number;
+}
+
 export const montageAssetsApi = {
   list: () => api.get<MontageAsset[]>("/api/montage-assets"),
   upload: (file: File, label = "", description = "", tags = "") => {
@@ -102,6 +111,18 @@ export const montageAssetsApi = {
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/montage-assets/${id}`),
   /** ✨ The AI looks at the file and writes what it is / when it fits / tags. */
   describe: (id: number) => api.post<MontageAsset>(`/api/montage-assets/${id}/describe`, {}),
+  /** 🔎 ИИ ищет картинки в интернете: только кандидаты, без скачивания. */
+  search: (query: string, count = 6) =>
+    api.post<{ query: string; results: AssetSearchResult[]; model: string; searched: string[] }>(
+      `/api/montage-assets/search`,
+      { query, count },
+    ),
+  /** Скачать выбранного кандидата (или любую прямую ссылку) в библиотеку. */
+  fromUrl: (url: string, label = "", description = "") =>
+    api.post<MontageAsset>(`/api/montage-assets/from-url`, { url, label, description }),
+  /** ✨ ИИ рисует оригинальную картинку по описанию. */
+  generate: (prompt: string, label = "", when = "") =>
+    api.post<MontageAsset>(`/api/montage-assets/generate`, { prompt, label, when }),
   describeMissing: (asset_ids: number[] = []) =>
     api.post<{ described: number; failed: number; errors: Record<string, string>; assets: MontageAsset[] }>(
       `/api/montage-assets/describe`,
