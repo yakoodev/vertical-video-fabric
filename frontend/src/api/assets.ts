@@ -112,10 +112,10 @@ export const montageAssetsApi = {
   /** ✨ The AI looks at the file and writes what it is / when it fits / tags. */
   describe: (id: number) => api.post<MontageAsset>(`/api/montage-assets/${id}/describe`, {}),
   /** 🔎 ИИ ищет картинки в интернете: только кандидаты, без скачивания. */
-  search: (query: string, count = 6) =>
+  search: (query: string, count = 6, free_only = true) =>
     api.post<{ query: string; results: AssetSearchResult[]; model: string; searched: string[] }>(
       `/api/montage-assets/search`,
-      { query, count },
+      { query, count, free_only },
     ),
   /** Скачать выбранного кандидата (или любую прямую ссылку) в библиотеку. */
   fromUrl: (url: string, label = "", description = "") =>

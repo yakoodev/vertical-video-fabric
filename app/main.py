@@ -2409,6 +2409,7 @@ def api_generate_montage_asset(payload: GenerateAssetRequest, _auth: AuthDep) ->
 class SearchAssetsRequest(BaseModel):
     query: str = Field(min_length=2, max_length=200)
     count: int = Field(default=6, ge=1, le=8)
+    free_only: bool = True
 
 
 @app.post(
@@ -2418,7 +2419,7 @@ class SearchAssetsRequest(BaseModel):
 )
 def api_search_montage_assets(payload: SearchAssetsRequest, _auth: AuthDep) -> dict:
     try:
-        return search_images(payload.query, payload.count)
+        return search_images(payload.query, payload.count, free_only=payload.free_only)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

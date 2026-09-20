@@ -17,9 +17,11 @@ export function AssetSearchPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AssetSearchResult[]>([]);
   const [adding, setAdding] = useState<string | null>(null);
+  // По умолчанию ищем только там, откуда картинку можно взять законно.
+  const [freeOnly, setFreeOnly] = useState(true);
 
   const search = useMutation({
-    mutationFn: () => montageAssetsApi.search(query.trim(), 6),
+    mutationFn: () => montageAssetsApi.search(query.trim(), 6, freeOnly),
     onSuccess: (r) => {
       setResults(r.results);
       if (!r.results.length) toast.push("Ничего подходящего не нашлось — попробуйте другой запрос", "info");
@@ -61,9 +63,16 @@ export function AssetSearchPanel() {
               {search.isPending ? "Ищу…" : "Искать"}
             </button>
           </div>
+          <label className="switch">
+            <input type="checkbox" checked={freeOnly} onChange={(e) => setFreeOnly(e.target.checked)} />
+            <span className="switch-track" />
+            <span>только свободные источники (Wikimedia, openclipart, CC0)</span>
+          </label>
           <p className="muted asearch-note">
-            ИИ ищет прежде всего свободные источники (Wikimedia Commons, openclipart, CC0). Ничего не скачивается, пока
-            вы не нажмёте «Добавить». Проверяйте права: за то, что попадёт в опубликованный клип, отвечаете вы.
+            {freeOnly
+              ? "Ищем там, откуда картинку можно взять законно. Мемов с таких сайтов мало — снимите галочку, чтобы искать по всему интернету."
+              : "Ищем по всему интернету, включая мем-сайты. Это чужие картинки: смотрите источник и решайте сами — за опубликованный клип отвечаете вы."}{" "}
+            Ничего не скачивается, пока вы не нажмёте «Добавить».
           </p>
           {results.length ? (
             <div className="asearch-grid">
