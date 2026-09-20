@@ -84,6 +84,79 @@ def generate_asset(
     return {**asset, "prompt": wish, "model": used_model}
 
 
+# Картинка меньше этого на кадре 1080×1920 — мыло: мелкие превьюшки из поиска
+# выглядят как артефакт, а не как вставка.
+MIN_FOUND_SIDE = 400
+# Владелец ждёт монтаж, а не загрузку: пробуем три кандидата и не залипаем на медленном.
+MAX_TRIES = 3
+MIN_FOUND_BYTES = 8000
+
+
+def _download_first_usable(
+    store: Any, query: str, label: str, when: str, client: GeminiClient | None = None
+) -> dict | None:
+    """Качаем кандидатов по очереди, пока не попадётся картинка нормального размера."""
+    from app.ai.asset_search import find_candidates
+
+    tries = 0
+    for found in find_candidates(query, client=client):
+        if tries >= MAX_TRIES:
+            break
+        # Размер уже известен из проверки ссылки — крошечные не качаем вовсе.
+        known = int(found.get("size_bytes") or 0)
+        if 0 < known < MIN_FOUND_BYTES:
+            continue
+        tries += 1
+        note = f"🔎 Найдено в интернете по запросу «{query}». Источник: {found['source']}"
+        if found.get("license"):
+            note += f" · {found['license']}"
+        try:
+            asset = add_from_url(
+                store,
+                found["url"],
+                label=(label or found.get("title") or query)[:120],
+                description=" ".join(x for x in (found.get("title"), when, note) if x)[:500],
+                timeout=25,
+            )
+        except Exception:  # noqa: BLE001 - не скачалось, пробуем следующего
+            continue
+        if max(asset.get("width") or 0, asset.get("height") or 0) < MIN_FOUND_SIDE:
+            # Превьюшка 161×81 на вертикальном кадре — мусор: удаляем и идём дальше.
+            store.delete_montage_asset(asset["id"])
+            continue
+        return {**asset, "origin": "found", "source": found["source"]}
+    return None
+
+
+def obtain_assets(store: Any, wishes: list[dict], client: GeminiClient | None = None) -> list[dict]:
+    """Добыть картинки, которые заказал ИИ-монтаж: сначала найти, иначе нарисовать.
+
+    Владелец не должен искать руками: если агент написал search_query — лезем в
+    интернет и скачиваем первого подходящего кандидата, и только когда поиск
+    ничего не дал (или картинка нужна своя), рисуем оригинал. Возвращаем пары
+    «заказ → файл», чтобы вызывающий знал, что к какому месту ставить.
+    """
+    got: list[dict] = []
+    for wish in (wishes or [])[:3]:
+        if not isinstance(wish, dict):
+            continue
+        query = " ".join(str(wish.get("search_query") or "").split())[:200]
+        label = str(wish.get("label") or "")
+        when = str(wish.get("when") or "")
+        found = _download_first_usable(store, query, label, when, client) if query else None
+        if found:
+            got.append({**found, "wish": wish})
+            continue
+        try:
+            asset = generate_asset(
+                store, str(wish.get("prompt") or ""), label=label, when=when, client=client
+            )
+        except Exception:  # noqa: BLE001 - лишняя картинка, монтаж важнее
+            continue
+        got.append({**asset, "wish": wish, "origin": "drawn", "source": ""})
+    return got
+
+
 def ensure_assets(store: Any, wishes: list[dict], client: GeminiClient | None = None) -> list[dict]:
     """Draw the pictures an agent asked for; a failed one never breaks the rest."""
     made: list[dict] = []
@@ -105,16 +178,22 @@ def ensure_assets(store: Any, wishes: list[dict], client: GeminiClient | None = 
     return made
 
 
-def add_from_url(store: Any, url: str, label: str = "", description: str = "") -> dict:
+def add_from_url(store: Any, url: str, label: str = "", description: str = "", timeout: float = 60) -> dict:
     """Save a file the owner (or an agent) points at by a direct link."""
     import httpx
 
+    from app.ai.asset_search import BROWSER_UA, _is_public_url
     from app.montage_assets import kind_for
 
     link = str(url or "").strip()
     if not link.lower().startswith(("http://", "https://")):
         raise ValueError("нужна прямая ссылка http(s) на файл")
-    with httpx.stream("GET", link, timeout=60, follow_redirects=True) as response:
+    # Ссылку может принести и агент из поиска — внутренние адреса не качаем.
+    if not _is_public_url(link):
+        raise ValueError("ссылка недоступна для загрузки")
+    with httpx.stream(
+        "GET", link, timeout=timeout, follow_redirects=True, headers={"User-Agent": BROWSER_UA}
+    ) as response:
         response.raise_for_status()
         mime = (response.headers.get("content-type") or "").split(";")[0].strip()
         name = Path(link.split("?")[0]).name or "asset"

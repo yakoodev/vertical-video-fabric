@@ -202,6 +202,20 @@ def _probe_url(url: str) -> dict | None:
         return None
 
 
+def find_candidates(query: str, free_only: bool = False, client: GeminiClient | None = None) -> list[dict]:
+    """Кандидаты для агента, который выбирает сам, без владельца.
+
+    Во время монтажа никто не сидит и не тыкает: агент скачивает первую
+    картинку, которая подойдёт по размеру, и идёт дальше по списку, если нет.
+    Ошибка поиска тут не фатальна — монтаж просто нарисует картинку сам.
+    """
+    try:
+        found = search_images(query, count=4, free_only=free_only, client=client)
+    except Exception:  # noqa: BLE001 - поиск не должен ронять монтаж
+        return []
+    return found.get("results") or []
+
+
 def fetch_preview(url: str) -> tuple[bytes, str]:
     """Bytes of a candidate image for the preview (never saved to the library)."""
     if not _is_public_url(url):

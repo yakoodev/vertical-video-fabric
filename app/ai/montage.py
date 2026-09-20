@@ -61,10 +61,16 @@ library, piece — номер НОВОГО куска (с 0), offset — сек�
 поверх клипа) или sound (только звук), reason — зачем. Не вставляй ради вставки: только где
 файл по описанию реально усиливает момент; не перекрывай ключевую фразу мемом на весь кадр.
 Если в библиотеке НЕТ подходящего файла, а картинка сильно усилила бы момент — закажи её в
-wanted_images: prompt (что нарисовать, простыми словами), label (короткое название), when (когда
-уместна), и куда поставить (piece, offset, duration, mode). Рисуется ОРИГИНАЛЬНАЯ картинка:
-никаких реальных людей, известных персонажей, логотипов и брендов — только простой свой рисунок
-(смайлик, стрелка, табличка, предмет). Максимум 2 заказа, только если правда нужно.
+wanted_images, и сервис добудет её сам: label (короткое название), when (когда уместна), куда
+поставить (piece, offset, duration, mode) и ОДИН из двух способов:
+• search_query — что найти в интернете. Так заказывай готовое: мем-реакцию, известную картинку,
+  фото предмета или места («шокированный кот мем», «уставший кот gif», «знак стоп»). Пиши запрос
+  так, как его вбивают в поиск картинок.
+• prompt — что нарисовать, если готовой картинки не бывает или нужна своя простая графика
+  (стрелка, подпись, табличка, схема). Рисуется ОРИГИНАЛ: никаких реальных людей, известных
+  персонажей, логотипов и брендов.
+Заполняй оба поля: search_query — чем искать, prompt — чем заменить, если не найдётся (пустая
+строка, если способ не нужен). Максимум 2 заказа, только если правда нужно.
 Верни ТОЛЬКО JSON по схеме.
 """
 
@@ -107,6 +113,7 @@ def _schema() -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string"},
+                        "search_query": {"type": "string"},
                         "label": {"type": "string"},
                         "when": {"type": "string"},
                         "piece": {"type": "integer"},
@@ -114,7 +121,16 @@ def _schema() -> dict[str, Any]:
                         "duration": {"type": "number"},
                         "mode": {"type": "string"},
                     },
-                    "required": ["prompt", "label", "when", "piece", "offset", "duration", "mode"],
+                    "required": [
+                        "prompt",
+                        "search_query",
+                        "label",
+                        "when",
+                        "piece",
+                        "offset",
+                        "duration",
+                        "mode",
+                    ],
                 },
             },
             "inserts": {
@@ -322,7 +338,7 @@ def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> 
     render["inserts"] = _inserts_on_timeline(pieces, render, proposal.get("inserts"), library_ids)
     wanted = []
     for item in (proposal.get("wanted_images") or [])[:MAX_WANTED_IMAGES]:
-        if not isinstance(item, dict) or not str(item.get("prompt") or "").strip():
+        if not isinstance(item, dict) or not str(item.get("prompt") or item.get("search_query") or "").strip():
             continue
         placed = _inserts_on_timeline(pieces, render, [{**item, "asset_id": 0}], None)
         if placed:
@@ -435,25 +451,35 @@ _EDITABLE = ("schema", "title", "description", "notes", "favorite", "pieces", "r
 
 
 def _draw_wanted(store: Any, spec: dict) -> dict:
-    """Рисуем заказанные ИИ картинки и превращаем их во вставки (файлы остаются в библиотеке)."""
-    from app.ai.asset_generate import ensure_assets
+    """Добываем заказанные ИИ картинки (поиск или рисунок) и ставим их вставками.
+
+    Файлы остаются в библиотеке: следующий клип возьмёт их оттуда, не тратя
+    ни поиск, ни генерацию.
+    """
+    from app.ai.asset_generate import obtain_assets
     from app.montage_assets import normalize_inserts
 
     wishes = spec.pop("wanted_images", None)
     if not wishes:
         return spec
-    made = ensure_assets(store, wishes)
+    made = obtain_assets(store, wishes)
     if not made:
         return spec
     extra = []
-    for asset, wish in zip(made, wishes):
+    for asset in made:
+        wish = asset["wish"]
+        name = wish.get("label") or wish.get("search_query") or wish.get("prompt", "")
+        if asset["origin"] == "found":
+            reason = f"ИИ нашёл в интернете ({asset['source']}): {name[:60]}"
+        else:
+            reason = f"ИИ нарисовал: {name[:60]}"
         extra.append(
             {
                 "asset_id": asset["id"],
                 "at": wish.get("at", 0),
                 "duration": wish.get("duration", 1.5),
                 "mode": wish.get("mode", "pip"),
-                "reason": f"ИИ нарисовал: {wish.get('label') or wish.get('prompt', '')[:60]}",
+                "reason": reason,
             }
         )
     render = spec.get("render") or {}
