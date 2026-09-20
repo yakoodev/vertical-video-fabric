@@ -11,11 +11,19 @@ from app.subtitles.contracts import SubtitleResult, SubtitleWord
 MAX_SUBTITLE_HOLD_AFTER_WORD_SEC = 0.2
 # Words further apart than this start a new subtitle page (text disappears in the gap).
 MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC = 0.75
-# Soft cap on characters per rendered line before we wrap to the next line.
-MAX_SUBTITLE_CHARS_PER_LINE = 24
-# Never show more than this many lines stacked on screen at once. One line keeps
-# the reveal tight and avoids reading ahead of the audio.
-MAX_SUBTITLE_LINES_PER_PAGE = 1
+# Поля по бокам кадра (совпадают с MarginL/MarginR стиля).
+SUBTITLE_SIDE_MARGIN = 80
+# Сколько символов влезает в строку — считаем от ширины кадра и кегля, потому
+# что при крупном шрифте «24 символа» уезжают далеко за край кадра.
+MIN_SUBTITLE_CHARS_PER_LINE = 12
+MAX_SUBTITLE_CHARS_PER_LINE = 42
+# Средняя ширина символа в долях кегля — померено по жирному DejaVu Sans,
+# которым кадр и рендерится: капс заметно шире строчных.
+CHAR_WIDTH_RATIO = 0.58
+CHAR_WIDTH_RATIO_UPPERCASE = 0.66
+# Сколько строк показываем разом. Две: фраза целиком не влезает в одну, а
+# читать вперёд звука не даёт прозрачность — несказанные слова не видно.
+MAX_SUBTITLE_LINES_PER_PAGE = 2
 
 
 def write_ass_subtitles(
@@ -33,7 +41,9 @@ def write_ass_subtitles(
         path = settings.subtitle_dir / path
     path.parent.mkdir(parents=True, exist_ok=True)
     text = _ass_header(profile, width, height)
-    text += "\n".join(_dialogue_events(result.words, profile, max_duration=float(result.duration or 0)))
+    text += "\n".join(
+        _dialogue_events(result.words, profile, max_duration=float(result.duration or 0), width=width)
+    )
     text += "\n"
     path.write_text(text, encoding="utf-8")
     return path
@@ -55,30 +65,34 @@ def _ass_header(profile: dict, width: int, height: int) -> str:
         f"PlayResX: {int(width or 1080)}\n"
         f"PlayResY: {int(height or 1920)}\n"
         "ScaledBorderAndShadow: yes\n"
-        "WrapStyle: 2\n\n"
+        "WrapStyle: 0\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Karaoke,{font_family},{font_size},{primary},{primary},{outline},{back},"
-        f"-1,0,0,0,100,100,0,0,1,{_ass_number(outline_width)},{_ass_number(shadow)},{alignment},80,80,{margin_v},1\n\n"
+        f"-1,0,0,0,100,100,0,0,1,{_ass_number(outline_width)},{_ass_number(shadow)},{alignment},"
+        f"{SUBTITLE_SIDE_MARGIN},{SUBTITLE_SIDE_MARGIN},{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
 
-def _dialogue_events(words: list[SubtitleWord], profile: dict, max_duration: float = 0.0) -> list[str]:
+def _dialogue_events(
+    words: list[SubtitleWord], profile: dict, max_duration: float = 0.0, width: int = 1080
+) -> list[str]:
     primary = ass_color(profile.get("primary_color") or "#FFFFFF")
     active = ass_color(profile.get("active_word_color") or "#FACC15")
     max_words_per_line = max(1, int(profile.get("max_words_per_line") or 5))
     uppercase = bool(profile.get("uppercase"))
+    chars_per_line = _chars_per_line(profile, width, uppercase)
     normalized = _normalized_words(words, uppercase)
     if not normalized:
         return []
     events: list[str] = []
-    for page_indices in _subtitle_page_indices(normalized, max_words_per_line):
+    for page_indices in _subtitle_page_indices(normalized, max_words_per_line, chars_per_line):
         page = [normalized[index] for index in page_indices]
-        lines = _line_layout(page, max_words_per_line)
+        lines = _pack_lines(page, max_words_per_line, chars_per_line)
         for local_index, word_index in enumerate(page_indices):
             word = normalized[word_index]
             next_start = normalized[word_index + 1].start if word_index + 1 < len(normalized) else None
@@ -103,7 +117,23 @@ def _dialogue_events(words: list[SubtitleWord], profile: dict, max_duration: flo
     return events
 
 
-def _line_layout(page: list[SubtitleWord], max_words_per_line: int) -> list[list[int]]:
+def _chars_per_line(profile: dict, width: int, uppercase: bool) -> int:
+    """Сколько символов помещается в строку на этом кадре с этим кеглем.
+
+    Раньше предел был жёстким (24 символа) и при крупном шрифте строка просто
+    уезжала за край кадра — конец фразы обрезался. Теперь считаем от реальной
+    ширины: кадр минус поля, делённые на среднюю ширину символа.
+    """
+
+    font_size = max(8, int(profile.get("font_size") or 64))
+    frame = max(1, int(width or 1080))
+    usable = max(int(frame * 0.4), frame - 2 * SUBTITLE_SIDE_MARGIN)
+    per_char = font_size * (CHAR_WIDTH_RATIO_UPPERCASE if uppercase else CHAR_WIDTH_RATIO)
+    fits = int(usable / per_char)
+    return max(MIN_SUBTITLE_CHARS_PER_LINE, min(MAX_SUBTITLE_CHARS_PER_LINE, fits))
+
+
+def _pack_lines(page: list[SubtitleWord], max_words_per_line: int, chars_per_line: int) -> list[list[int]]:
     """Split a page into a fixed set of lines once, so layout never reflows.
 
     The whole page text is shown for the entire page lifetime; only the
@@ -112,30 +142,21 @@ def _line_layout(page: list[SubtitleWord], max_words_per_line: int) -> list[list
     never jumps vertically while the karaoke highlight moves.
     """
 
-    if not page:
-        return []
-    lines: list[list[int]] = [[]]
-    current_chars = 0
+    lines: list[list[int]] = []
+    current: list[int] = []
+    used = 0
     for index, word in enumerate(page):
         word_len = len(word.word)
-        line = lines[-1]
-        would_overflow = line and (
-            len(line) >= max_words_per_line
-            or current_chars + 1 + word_len > MAX_SUBTITLE_CHARS_PER_LINE
-        )
-        if would_overflow and len(lines) < MAX_SUBTITLE_LINES_PER_PAGE:
-            lines.append([])
-            line = lines[-1]
-            current_chars = 0
-        elif would_overflow:
-            # Already at the line cap for this page: keep filling the last line
-            # rather than dropping words, even if it grows a little long.
-            pass
-        if line:
-            current_chars += 1
-        current_chars += word_len
-        line.append(index)
-    return [line for line in lines if line]
+        if current and (len(current) >= max_words_per_line or used + 1 + word_len > chars_per_line):
+            lines.append(current)
+            current, used = [], 0
+        if current:
+            used += 1
+        used += word_len
+        current.append(index)
+    if current:
+        lines.append(current)
+    return lines
 
 
 def _page_text(
@@ -204,16 +225,18 @@ def _normalized_words(words: list[SubtitleWord], uppercase: bool) -> list[Subtit
     return normalized
 
 
-def _subtitle_page_indices(words: list[SubtitleWord], page_size: int) -> list[list[int]]:
+def _subtitle_page_indices(words: list[SubtitleWord], page_size: int, chars_per_line: int) -> list[list[int]]:
+    """Страницы режем так, чтобы текст помещался в отведённые строки целиком."""
+
     pages: list[list[int]] = []
     current: list[int] = []
-    max_words_per_page = max(1, page_size) * MAX_SUBTITLE_LINES_PER_PAGE
     for index, word in enumerate(words):
         if current:
             previous = words[current[-1]]
             gap = word.start - previous.end
-            ends_sentence = _ends_sentence(previous.word)
-            if gap > MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC or len(current) >= max_words_per_page or ends_sentence:
+            candidate = [words[i] for i in (*current, index)]
+            overflows = len(_pack_lines(candidate, page_size, chars_per_line)) > MAX_SUBTITLE_LINES_PER_PAGE
+            if gap > MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC or overflows or _ends_sentence(previous.word):
                 pages.append(current)
                 current = []
         current.append(index)

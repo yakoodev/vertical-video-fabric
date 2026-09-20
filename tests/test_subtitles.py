@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,8 @@ def test_ass_renderer_writes_karaoke_dialogues(tmp_path, monkeypatch):
     assert r"{\c&H0015CCFA&\alpha&H00&}ONE" in first_dialogue
     assert r"{\c&H00FFFFFF&\alpha&HFF&}TWO" in first_dialogue
     assert "PlayResX: 180" in text
-    assert "WrapStyle: 2" in text
+    # Перенос отдаём libass на подстраховку: длинная строка не обрежется краем кадра.
+    assert "WrapStyle: 0" in text
 
 
 def test_ass_renderer_keeps_layout_fixed_while_highlight_moves(tmp_path, monkeypatch):
@@ -85,7 +87,8 @@ def test_ass_renderer_keeps_layout_fixed_while_highlight_moves(tmp_path, monkeyp
     # and which words are visible vs transparent changes.
     for dialogue in dialogues:
         body = dialogue.split(",,", 1)[1]
-        words = [chunk.split("}")[-1].strip() for chunk in body.split(r"{\c")[1:]]
+        # Раскладка фиксирована, но строк на странице может быть две — \\N не часть слова.
+        words = [chunk.split("}")[-1].strip().removesuffix(r"\N") for chunk in body.split(r"{\c")[1:]]
         assert words == ["alpha", "beta", "gamma"]
     assert r"{\c&H0015CCFA&\alpha&H00&}alpha" in dialogues[0]
     assert r"{\c&H0015CCFA&\alpha&H00&}beta" in dialogues[1]
@@ -550,3 +553,36 @@ def test_default_gemini_transcribe_model_uses_3_1_flash_lite():
         subtitle_model_for_profile({"provider": "gemini", "model": "openai/gpt-4o-transcribe"})
         == "gemini-3.1-flash-lite"
     )
+
+
+def test_ass_renderer_wraps_long_phrase_instead_of_running_off_frame(tmp_path, monkeypatch):
+    """Длинная фраза крупным капсом раньше уезжала за край кадра и обрезалась."""
+
+    monkeypatch.setattr(settings, "subtitle_dir", tmp_path)
+    phrase = "чё сделайте часовую нарезку пять чисто отрыжек"
+    words = []
+    start = 0.0
+    for word in phrase.split():
+        words.append(SubtitleWord(word, start, start + 0.35))
+        start += 0.4
+    result = SubtitleResult(text=phrase, language="ru", duration=start + 1, words=words)
+
+    path = write_ass_subtitles(
+        result,
+        {"font_size": 76, "uppercase": True, "max_words_per_line": 5},
+        width=1080,
+        height=1920,
+    )
+
+    text = path.read_text(encoding="utf-8")
+    rendered = []
+    for line in text.splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        body = re.sub(r"\{[^}]*\}", "", line.split(",,0,0,0,,", 1)[1])
+        rows = body.split(chr(92) + "N")
+        assert len(rows) <= 2, f"страница из {len(rows)} строк: {rows}"
+        rendered.extend(rows)
+    # 19 символов капсом при кегле 76 — это примерно 900 px из 920 доступных.
+    assert max(len(row) for row in rendered) <= 20
+    assert any(chr(92) + "N" in line for line in text.splitlines() if line.startswith("Dialogue:"))
