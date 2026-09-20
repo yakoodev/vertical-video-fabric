@@ -60,10 +60,16 @@ library, piece — номер НОВОГО куска (с 0), offset — сек�
 0.5–4 с (не длиннее самого файла, если это видео/звук), mode: full (мем на весь кадр), pip (окно
 поверх клипа) или sound (только звук), reason — зачем. Не вставляй ради вставки: только где
 файл по описанию реально усиливает момент; не перекрывай ключевую фразу мемом на весь кадр.
+Если в библиотеке НЕТ подходящего файла, а картинка сильно усилила бы момент — закажи её в
+wanted_images: prompt (что нарисовать, простыми словами), label (короткое название), when (когда
+уместна), и куда поставить (piece, offset, duration, mode). Рисуется ОРИГИНАЛЬНАЯ картинка:
+никаких реальных людей, известных персонажей, логотипов и брендов — только простой свой рисунок
+(смайлик, стрелка, табличка, предмет). Максимум 2 заказа, только если правда нужно.
 Верни ТОЛЬКО JSON по схеме.
 """
 
 MAX_AI_INSERTS = 3
+MAX_WANTED_IMAGES = 2
 MAX_LIBRARY = 60
 
 
@@ -95,6 +101,22 @@ def _schema() -> dict[str, Any]:
                 "required": ["piece", "offset"],
             },
             "rationale": {"type": "array", "items": {"type": "string"}},
+            "wanted_images": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "label": {"type": "string"},
+                        "when": {"type": "string"},
+                        "piece": {"type": "integer"},
+                        "offset": {"type": "number"},
+                        "duration": {"type": "number"},
+                        "mode": {"type": "string"},
+                    },
+                    "required": ["prompt", "label", "when", "piece", "offset", "duration", "mode"],
+                },
+            },
             "inserts": {
                 "type": "array",
                 "items": {
@@ -298,8 +320,15 @@ def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> 
         except (TypeError, ValueError):
             pass
     render["inserts"] = _inserts_on_timeline(pieces, render, proposal.get("inserts"), library_ids)
+    wanted = []
+    for item in (proposal.get("wanted_images") or [])[:MAX_WANTED_IMAGES]:
+        if not isinstance(item, dict) or not str(item.get("prompt") or "").strip():
+            continue
+        placed = _inserts_on_timeline(pieces, render, [{**item, "asset_id": 0}], None)
+        if placed:
+            wanted.append({**item, "at": placed[0]["at"], "duration": placed[0]["duration"], "mode": placed[0]["mode"]})
     notes = "🤖 ИИ-монтаж:\n" + "\n".join(f"• {r}" for r in proposal.get("rationale") or [] if str(r).strip())
-    return {
+    out = {
         "schema": spec["schema"],
         "title": spec["title"],
         "description": spec["description"],
@@ -307,6 +336,10 @@ def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> 
         "pieces": pieces,
         "render": render,
     }
+    if wanted:
+        # Not part of the clip file: the pictures are drawn when the owner applies.
+        out["wanted_images"] = wanted
+    return out
 
 
 def _in_windows(context: dict, new_spec: dict) -> list[str]:
@@ -332,6 +365,7 @@ def diff(old: dict, new: dict) -> dict:
         "sfx": new["render"]["transition"]["sfx"],
         "subtitles": new["render"]["subs_on"],
         "inserts": new["render"].get("inserts") or [],
+        "wanted_images": new.get("wanted_images") or [],
     }
 
 
@@ -400,6 +434,34 @@ def propose_montage(
 _EDITABLE = ("schema", "title", "description", "notes", "favorite", "pieces", "render")
 
 
+def _draw_wanted(store: Any, spec: dict) -> dict:
+    """Рисуем заказанные ИИ картинки и превращаем их во вставки (файлы остаются в библиотеке)."""
+    from app.ai.asset_generate import ensure_assets
+    from app.montage_assets import normalize_inserts
+
+    wishes = spec.pop("wanted_images", None)
+    if not wishes:
+        return spec
+    made = ensure_assets(store, wishes)
+    if not made:
+        return spec
+    extra = []
+    for asset, wish in zip(made, wishes):
+        extra.append(
+            {
+                "asset_id": asset["id"],
+                "at": wish.get("at", 0),
+                "duration": wish.get("duration", 1.5),
+                "mode": wish.get("mode", "pip"),
+                "reason": f"ИИ нарисовал: {wish.get('label') or wish.get('prompt', '')[:60]}",
+            }
+        )
+    render = spec.get("render") or {}
+    render["inserts"] = normalize_inserts([*(render.get("inserts") or []), *extra])
+    spec["render"] = render
+    return spec
+
+
 def apply_montage(store: Any, clip_plan_id: int, spec: dict) -> tuple[dict, list[str]]:
     """Apply an AI re-edit, keeping the pre-AI clip file for «↩ Откатить».
 
@@ -408,6 +470,7 @@ def apply_montage(store: Any, clip_plan_id: int, spec: dict) -> tuple[dict, list
     """
     from app.clip_spec import apply_spec
 
+    spec = _draw_wanted(store, dict(spec))
     if store.get_clip_plan_montage_backup(clip_plan_id) is None:
         current = export_spec(store, clip_plan_id)
         store.set_clip_plan_montage_backup(clip_plan_id, {k: current[k] for k in _EDITABLE if k in current})

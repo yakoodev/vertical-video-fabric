@@ -3259,3 +3259,150 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 }
 .asset-hint button { margin-left: auto; }
 .btn.asset-ai { justify-content: center; font-size: 12px; height: 28px; }
+
+/* ---------- Субтитры в редакторе (до рендера) ---------- */
+.subed { display: grid; gap: 8px; }
+.subed-top { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.subed-top .input { height: 30px; font-size: 12px; }
+.subed-empty { font-size: 12px; line-height: 1.45; margin: 0; }
+.subed-list { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+.subed-line {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.subed-line.on { border-color: var(--accent); background: var(--accent-soft); }
+.subed-line-head { display: flex; align-items: center; gap: 4px; }
+.subed-time {
+  border: 0;
+  background: none;
+  color: var(--accent-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.subed-time:hover { text-decoration: underline; }
+.subed-num { width: 62px; height: 24px; font-size: 11px; padding: 0 4px; }
+.subed-act {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+.subed-act:hover { background: var(--surface-3); color: var(--text); }
+.subed-act + .subed-act { margin-left: 0; }
+.subed-text { font-size: 12.5px; resize: vertical; min-height: 44px; }
+.subed-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+
+/* ---------- Таймлайн клипа: дорожки, блоки, drag-n-drop ---------- */
+.ctl { display: grid; gap: 8px; }
+.ctl-bar { display: flex; align-items: center; gap: 6px; }
+.ctl-time { margin-left: 6px; font-size: 12px; }
+.ctl-hint { font-size: 11.5px; margin-left: auto; }
+.ctl-body { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0; }
+.ctl-labels { display: grid; grid-template-rows: 22px 46px 30px 42px; gap: 4px; }
+.ctl-label {
+  display: flex;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding-right: 8px;
+}
+.ctl-label--ruler { border: 0; }
+.ctl-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.ctl-inner { position: relative; display: grid; grid-template-rows: 22px 46px 30px 42px; gap: 4px; min-width: 100%; }
+.ctl-ruler { position: relative; height: 22px; cursor: text; border-bottom: 1px solid var(--border); }
+.ctl-tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--hairline); }
+.ctl-tick span { position: absolute; left: 4px; top: 3px; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.ctl-track {
+  position: relative;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ctl-track--sub { background: rgba(58, 210, 159, 0.06); }
+.ctl-track--ins { background: rgba(255, 201, 71, 0.07); }
+.ctl-empty {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+.ctl-block {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  border-radius: 6px;
+  cursor: grab;
+  overflow: hidden;
+  user-select: none;
+  border: 1px solid transparent;
+}
+.ctl-block:active { cursor: grabbing; }
+.ctl-block.on { border-color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.ctl-block--piece { background: linear-gradient(180deg, var(--accent), #6a5cf0); color: #fff; }
+.ctl-block--sub { background: rgba(58, 210, 159, 0.35); border-color: rgba(58, 210, 159, 0.55); color: #d9fff1; }
+.ctl-block--ins { background: rgba(255, 201, 71, 0.28); border-color: rgba(255, 201, 71, 0.6); color: #ffe9b0; }
+.ctl-block-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.ctl-ins-thumb { width: 26px; height: 26px; object-fit: cover; border-radius: 4px; pointer-events: none; }
+.ctl-ins-ico { font-size: 13px; pointer-events: none; }
+.ctl-grip { width: 7px; align-self: stretch; cursor: ew-resize; border-radius: 3px; background: rgba(255, 255, 255, 0.28); flex: none; }
+.ctl-grip:hover { background: rgba(255, 255, 255, 0.6); }
+.ctl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; box-shadow: 0 0 8px rgba(255, 255, 255, 0.7); }
+.ctl-dropline { position: absolute; top: 0; bottom: 0; width: 2px; background: #ffc947; box-shadow: 0 0 10px #ffc947; }
+
+/* Библиотека внутри редактора */
+.adrawer { display: grid; gap: 8px; margin-top: 8px; }
+.adrawer-toggle { justify-self: start; }
+.adrawer-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.adrawer-head { display: flex; gap: 8px; }
+.adrawer-head .input { height: 30px; font-size: 12.5px; }
+.adrawer-empty { font-size: 12.5px; margin: 0; }
+.adrawer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; max-height: 210px; overflow-y: auto; }
+.adrawer-item {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: grab;
+  text-align: center;
+}
+.adrawer-item:hover { border-color: var(--accent); }
+.adrawer-item img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; border-radius: 6px; background: var(--bg-2); }
+.adrawer-ico { display: grid; place-items: center; aspect-ratio: 1 / 1; font-size: 26px; color: var(--accent-2); background: var(--bg-2); border-radius: 6px; }
+.adrawer-name { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adrawer-dur { position: absolute; right: 7px; top: 7px; font-size: 10px; background: rgba(0,0,0,.6); border-radius: 4px; padding: 0 4px; }

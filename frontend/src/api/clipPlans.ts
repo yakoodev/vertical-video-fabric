@@ -66,7 +66,28 @@ export interface AiMontageJob {
   total: number;
 }
 
+export interface SubtitleLine {
+  start: number;
+  end: number;
+  text: string;
+}
+export interface PlanSubtitles {
+  lines: SubtitleLine[];
+  words?: { word: string; start: number; end: number }[];
+  language?: string;
+  provider?: string;
+  model?: string;
+  edited?: boolean;
+  duration?: number;
+}
+
 export const clipPlansApi = {
+  /** Субтитры клипа: сделать до рендера и править как текст. */
+  getSubtitles: (clipPlanId: number) => api.get<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`),
+  generateSubtitles: (clipPlanId: number, provider?: string) =>
+    api.post<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { provider: provider || null }),
+  saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
+    request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
   /** Apply an AI re-edit; the server keeps the pre-AI version for undo. */
   aiMontageApply: (clipPlanId: number, spec: unknown) =>
     api.post<{ spec: Record<string, unknown>; changes: string[] }>(`/api/clip-plans/${clipPlanId}/ai-montage/apply`, { spec }),

@@ -93,6 +93,8 @@ class Settings:
         # ✨ ИИ выбирает лучшие judges a few hundred moments in one call — worth the
         # smarter model (a few cents), so it defaults to the montage/analysis one.
         self.gemini_pick_model = os.getenv("GEMINI_PICK_MODEL", self.gemini_montage_model).strip()
+        # Рисует недостающие стикеры для «Файлов для монтажа» (только оригинальные).
+        self.gemini_image_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image").strip()
         self.gemini_transcribe_model = os.getenv(
             "GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite"
         ).strip()

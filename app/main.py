@@ -45,7 +45,11 @@ from app.ai.montage import (
     undo_montage,
 )
 from app.ai.asset_describe import describe_asset, describe_missing
+from app.ai.asset_generate import add_from_url as add_asset_from_url
+from app.ai.asset_generate import generate_asset
 from app.ai.pick import pick_best
+from app.clip_subtitles import generate_for_plan as generate_plan_subtitles
+from app.clip_subtitles import save_lines as save_plan_subtitle_lines
 from app.montage_assets import assets_dir as montage_assets_dir
 from app.montage_assets import kind_for as asset_kind_for
 from app.montage_assets import probe_asset as probe_montage_asset
@@ -2144,6 +2148,63 @@ def api_clip_plan_ai_montage(clip_plan_id: int, _auth: AuthDep, payload: AiMonta
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+class PlanSubtitlesRequest(BaseModel):
+    provider: str | None = Field(default=None, description="whisper | gemini — иначе как в стиле клипа")
+    model: str | None = None
+
+
+class PlanSubtitleLine(BaseModel):
+    start: float
+    end: float
+    text: str = Field(max_length=300)
+
+
+class PlanSubtitleLines(BaseModel):
+    lines: list[PlanSubtitleLine]
+
+
+@app.get(
+    "/api/clip-plans/{clip_plan_id}/subtitles",
+    tags=["Subtitles"],
+    summary="Субтитры клипа (строки для правки до рендера)",
+)
+def api_get_plan_subtitles(clip_plan_id: int, _auth: AuthDep) -> dict:
+    try:
+        return store.get_clip_plan_subtitles(clip_plan_id) or {"lines": [], "words": []}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/subtitles",
+    tags=["Subtitles"],
+    summary="Распознать речь клипа и сохранить строки (ДО рендера)",
+)
+def api_generate_plan_subtitles(
+    clip_plan_id: int, _auth: AuthDep, payload: PlanSubtitlesRequest | None = None
+) -> dict:
+    try:
+        return generate_plan_subtitles(
+            store, clip_plan_id, provider=payload.provider if payload else None, model=payload.model if payload else None
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put(
+    "/api/clip-plans/{clip_plan_id}/subtitles",
+    tags=["Subtitles"],
+    summary="Сохранить правку субтитров (текст и тайминги строк)",
+)
+def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth: AuthDep) -> dict:
+    try:
+        return save_plan_subtitle_lines(store, clip_plan_id, [line.model_dump() for line in payload.lines])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 class AiMontageApplyRequest(BaseModel):
     spec: dict
 
@@ -2320,6 +2381,48 @@ async def api_upload_montage_asset(
         name=f"describe-asset-{asset['id']}",
         daemon=True,
     ).start()
+    return asset
+
+
+class GenerateAssetRequest(BaseModel):
+    prompt: str = Field(min_length=3, max_length=400, description="что нарисовать")
+    label: str = Field(default="", max_length=120)
+    when: str = Field(default="", max_length=300, description="когда уместно вставлять")
+
+
+@app.post(
+    "/api/montage-assets/generate",
+    tags=["Montage assets"],
+    summary="✨ ИИ рисует оригинальную картинку и кладёт её в библиотеку",
+)
+def api_generate_montage_asset(payload: GenerateAssetRequest, _auth: AuthDep) -> dict:
+    try:
+        return generate_asset(store, payload.prompt, label=payload.label, when=payload.when)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class AssetFromUrlRequest(BaseModel):
+    url: str = Field(max_length=2000)
+    label: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=500)
+
+
+@app.post(
+    "/api/montage-assets/from-url",
+    tags=["Montage assets"],
+    summary="Добавить файл в библиотеку по прямой ссылке",
+)
+def api_add_montage_asset_from_url(payload: AssetFromUrlRequest, _auth: AuthDep) -> dict:
+    try:
+        asset = add_asset_from_url(store, payload.url, label=payload.label, description=payload.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - network/remote errors
+        raise HTTPException(status_code=502, detail=f"не удалось скачать: {str(exc)[:200]}") from exc
+    threading.Thread(target=lambda: describe_asset(store, asset["id"]), daemon=True).start()
     return asset
 
 

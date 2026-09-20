@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
-import { clipPlansApi } from "@/api/clipPlans";
+import { clipPlansApi, type SubtitleLine } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
 import {
   ffmpegPresetsApi,
@@ -16,10 +16,12 @@ import { qk } from "@/api/keys";
 import type { AiSegment, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
-import { Timeline } from "@/components/Timeline";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
+import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
+import { ClipTimeline, clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
+import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
@@ -318,6 +320,46 @@ function drawInserts(
   }
 }
 
+// Текущая строка субтитров на превью — то, что увидит зритель, ещё до рендера.
+function drawSubtitle(
+  ctx: CanvasRenderingContext2D,
+  cv: HTMLCanvasElement,
+  lines: SubtitleLine[] | undefined,
+  segments: AiSegment[],
+  cur: number,
+  posPct: number,
+) {
+  if (!lines?.length) return;
+  const t = clipTimeOf(segments, cur);
+  if (t == null) return;
+  const line = lines.find((l) => t >= l.start && t < l.end);
+  if (!line?.text) return;
+  const size = Math.round(cv.width * 0.075);
+  ctx.font = `800 ${size}px Inter, sans-serif`;
+  ctx.textAlign = "center";
+  const maxWidth = cv.width * 0.86;
+  const words = line.text.split(/\s+/);
+  const rows: string[] = [];
+  let row = "";
+  for (const word of words) {
+    const candidate = row ? `${row} ${word}` : word;
+    if (ctx.measureText(candidate).width > maxWidth && row) {
+      rows.push(row);
+      row = word;
+    } else row = candidate;
+  }
+  if (row) rows.push(row);
+  const baseY = cv.height * (1 - posPct / 100);
+  rows.slice(-3).forEach((text, i, all) => {
+    const y = baseY - (all.length - 1 - i) * size * 1.15;
+    ctx.lineWidth = Math.max(3, size * 0.16);
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(text, cv.width / 2, y);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(text, cv.width / 2, y);
+  });
+}
+
 function CropFrame({
   srcW,
   srcH,
@@ -335,6 +377,8 @@ function CropFrame({
   phoneRef,
   insertsPreview,
   overlayRef,
+  subLinesRef,
+  subPosPctRef,
 }: {
   srcW: number;
   srcH: number;
@@ -357,6 +401,10 @@ function CropFrame({
   // Separate unfiltered layer for the inserts: in the render they go on AFTER the
   // look and the mirror, so the preview must not grade or flip them either.
   overlayRef?: React.RefObject<HTMLCanvasElement>;
+  /** Строки субтитров клипа (их текущая строка рисуется поверх превью). */
+  subLinesRef?: React.MutableRefObject<SubtitleLine[]>;
+  /** Положение субтитров, % снизу. */
+  subPosPctRef: React.MutableRefObject<number>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const insertsRef = useRef(insertsPreview);
@@ -432,6 +480,7 @@ function CropFrame({
           if (ov && octx) {
             octx.clearRect(0, 0, ov.width, ov.height);
             drawInserts(octx, ov, insertsRef.current, segments, cur, !v.paused);
+            drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
           }
         }
       }
@@ -605,6 +654,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const phoneRef = useRef<HTMLCanvasElement>(null);
   const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
   const heatHeadRef = useRef<HTMLSpanElement>(null);
+  // Строки субтитров открытого клипа — рисуются на превью-телефоне.
+  const subLinesRef = useRef<SubtitleLine[]>([]);
+  const subPosPctRef = useRef(12);
+  // Что выбрано на таймлайне: кусок, строка субтитров или вставка.
+  const [tlSelected, setTlSelected] = useState<Selection>(null);
+  const [subLines, setSubLines] = useState<SubtitleLine[]>([]);
   const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
@@ -1130,20 +1185,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     }
     return 0;
   };
-  const seekClipTime = (clipT: number) => {
-    const segs = activePlan?.segments ?? [];
-    let t = 0;
-    for (const s of segs) {
-      const len = s.end_sec - s.start_sec;
-      if (clipT <= t + len) {
-        if (videoRef.current) {
-          videoRef.current.currentTime = s.start_sec + (clipT - t);
-          void videoRef.current.play();
-        }
-        return;
-      }
-      t += len;
-    }
+  const seekClipTime = (clipT: number, play = true) => {
+    const src = clipToSource(activePlan?.segments ?? [], clipT);
+    if (src == null || !videoRef.current) return;
+    playbackRef.current = null;
+    videoRef.current.currentTime = src;
+    if (play) void videoRef.current.play();
   };
   // Preview media for the open clip's inserts (created once per file, reused).
   const insertsPreview: InsertPreview[] = inserts.map((ins) => {
@@ -1175,6 +1222,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       el,
     };
   });
+  subPosPctRef.current = subPosPct;
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
   // with nothing starred yet, fall back to what the triage filters show.
@@ -1361,6 +1409,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   subPosPct={0}
                   focusPreset={source.focus_preset}
                   phoneRef={triagePhoneRef}
+                  subPosPctRef={subPosPctRef}
                 />
               ) : null}
             </div>
@@ -1687,6 +1736,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   phoneRef={phoneRef}
                   insertsPreview={insertsPreview}
                   overlayRef={phoneOverlayRef}
+                  subLinesRef={subLinesRef}
+                  subPosPctRef={subPosPctRef}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -1812,20 +1863,60 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </button>
               ) : null}
             </div>
-            <Timeline
-              duration={source.duration_sec}
-              segments={activePlan?.segments ?? []}
+            <ClipTimeline
+              pieces={activePlan?.segments ?? []}
+              inserts={inserts}
+              subLines={subLines}
+              assets={assetsQuery.data ?? []}
               videoRef={videoRef}
-              selectedId={selectedSeg}
-              onSelect={(id) => {
-                setSelectedSeg(id);
-                const seg = activePlan?.segments.find((s) => s.id === id);
-                if (seg && videoRef.current) {
-                  playbackRef.current = null;
-                  videoRef.current.currentTime = seg.start_sec;
+              selected={tlSelected}
+              onSelect={(sel) => {
+                setTlSelected(sel);
+                if (sel?.kind === "piece") {
+                  const seg = activePlan?.segments[sel.index];
+                  if (seg) setSelectedSeg(seg.id);
                 }
               }}
-              onCommit={(id, s, e) => commit.mutate({ id, s, e })}
+              onSeekClip={(t) => seekClipTime(t, false)}
+              onPieceCommit={(id, s, e) => commit.mutate({ id, s, e })}
+              onInsertsChange={setInserts}
+              onSubLinesChange={(next) => {
+                setSubLines(next);
+                subLinesRef.current = next;
+                if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
+              }}
+              onDropAsset={(assetId, at) => {
+                const asset = assetsQuery.data?.find((a) => a.id === assetId);
+                setInserts((prev) => [
+                  ...prev,
+                  {
+                    asset_id: assetId,
+                    at,
+                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
+                    mode: asset?.kind === "audio" ? "sound" : "full",
+                    volume: 1,
+                    duck: asset?.kind !== "audio",
+                  },
+                ]);
+                setTlSelected({ kind: "insert", index: inserts.length });
+                toast.success(`«${asset?.label ?? "файл"}» на ${formatDuration(at)} — тяните блок, чтобы подвинуть`);
+              }}
+            />
+            <AssetDrawer
+              onAdd={(assetId) => {
+                const asset = assetsQuery.data?.find((a) => a.id === assetId);
+                setInserts((prev) => [
+                  ...prev,
+                  {
+                    asset_id: assetId,
+                    at: clipTimeNow(),
+                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
+                    mode: asset?.kind === "audio" ? "sound" : "full",
+                    volume: 1,
+                    duck: asset?.kind !== "audio",
+                  },
+                ]);
+              }}
             />
           </div>
         </div>
@@ -1884,6 +1975,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       onChange={(e) => setSubPosPct(Number(e.target.value))}
                     />
                   </label>
+                  {activePlan ? (
+                    <SubtitleEditor
+                      key={activePlan.id}
+                      clipPlanId={activePlan.id}
+                      clipTime={clipTimeNow}
+                      onSeek={seekClipTime}
+                      onLines={(lines) => {
+                        subLinesRef.current = lines;
+                        setSubLines(lines);
+                      }}
+                    />
+                  ) : null}
                 </>
               ) : null}
             </Group>

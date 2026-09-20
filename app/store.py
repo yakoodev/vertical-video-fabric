@@ -1446,6 +1446,22 @@ class AppStore:
             "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
         )
 
+    def get_clip_plan_subtitles(self, clip_plan_id: int) -> dict | None:
+        row = self.db.query_one("SELECT subtitles_json FROM clip_plans WHERE id = ?", (clip_plan_id,))
+        if not row:
+            raise KeyError(f"clip plan not found: {clip_plan_id}")
+        try:
+            parsed = json.loads(row["subtitles_json"] or "null")
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def set_clip_plan_subtitles(self, clip_plan_id: int, payload: dict | None) -> None:
+        self.db.execute(
+            "UPDATE clip_plans SET subtitles_json = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False) if payload else "", clip_plan_id),
+        )
+
     def set_clip_plan_ai_pick(self, clip_plan_id: int, pick: dict | None) -> None:
         self.db.execute(
             "UPDATE clip_plans SET ai_pick_json = ? WHERE id = ?",
@@ -2805,7 +2821,9 @@ def _prepare_banner_fields(fields: dict[str, Any], partial: bool) -> dict[str, A
 def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> dict[str, Any]:
     defaults = {
         "label": "",
-        "provider": "mock",
+        # Пусто = взять движок из настроек (SUBTITLE_PROVIDER). «mock» по умолчанию
+        # означал, что стиль «из стиля» жёг тестовую заглушку вместо речи.
+        "provider": "",
         "model": "openai/gpt-4o-transcribe",
         "language": "",
         "timing_offset_sec": 0.0,
@@ -2875,6 +2893,12 @@ def _decode_plan_settings(plan: dict) -> dict:
     request's values.
     """
     plan["has_montage_backup"] = bool(plan.pop("montage_backup_json", ""))
+    try:
+        subs = json.loads(plan.pop("subtitles_json", "") or "null")
+    except (TypeError, ValueError):
+        subs = None
+    # The editor needs the lines; the words only matter to the renderer.
+    plan["subtitles"] = subs if isinstance(subs, dict) else None
     try:
         pick = json.loads(plan.pop("ai_pick_json", "") or "null")
     except (TypeError, ValueError):

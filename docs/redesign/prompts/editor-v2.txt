@@ -1,0 +1,36 @@
+You are a senior product designer for video editing tools. Design a PROPER clip editor («Монтаж») for this app: what functions it must have and how it should look. Do NOT modify source code. Write only into docs/redesign/editor/.
+
+The product: "Fabric — Vertical Video" (React+Vite+TS SPA in frontend/src, FastAPI backend in app/, Russian UI, dark violet theme). It turns long streams/videos into vertical 9:16 clips with karaoke subtitles, memes/sound inserts, and publishes them. One power user makes many clips a day.
+
+Read first:
+1. frontend/src/pages/workspace/CandidatesTab.tsx — the current editor (view "editor"): stage with a draggable 9:16 crop window, live phone canvas preview, transport, timeline (components/Timeline.tsx), right inspector with groups: Картинка (лук), Субтитры, Баннер, Переходы, Обложка, Вставки (мемы), Музыка, Умный кадр, Фокус кадра, Границы клипов; footer with «{ } Файл клипа», «Ко всем ★», «Рендерить (1)», «Выбранные».
+2. frontend/src/pages/workspace/AiMontageDialog.tsx + app/ai/montage.py — 🤖 ИИ-монтаж (agent re-edits the clip through the clip file vvf.clip/1, app/clip_spec.py).
+3. app/montage_assets.py + frontend/src/pages/MontageAssetsPage.tsx — «Файлы для монтажа» (memes/sounds) and inserts {asset_id, at, duration, mode: full|pip|sound, volume, duck}.
+4. app/subtitles/* and app/render.py — how subtitles are produced today: they are burned during render (Whisper or Gemini), the user can only pick a style and position BEFORE rendering and sees the result only after.
+5. docs/redesign/functions.md (function checklist), docs/redesign/ref-s4-editor.png and docs/redesign/audit/ref-nav-3.png (the visual direction the owner already approved), docs/redesign/audit/audit.md.
+6. The LIVE app runs at http://localhost:8089 (auth already handled, no login). Use your playwright skill if you can: open /projects/50/candidates (moments) and /projects/50/candidates?clip=<any id from the page> (the editor) at 1600x1000, screenshot into docs/redesign/editor/shots/, and LOOK at them.
+
+The owner's complaints and wishes, in his words (translate into design decisions):
+- «вынести создание субтитров на монтаж, чтобы их можно было отредактировать до рендера» — subtitles must be generated IN the editor, shown as editable text lines on the timeline, fixable (typos, timing, splitting) before any render.
+- «монтаж с картинками — хуйня» — placing memes/inserts feels bad and he «не может редактировать картинки на монтаже»: inserts are a collapsed inspector group with number fields, not visible on the timeline, not draggable, no preview of which file it is.
+- «дать возможность ИИ скачивать доп картинки и сохранять их в сервисе для переиспользования» — the AI should be able to obtain a missing meme/sticker (generate or fetch) and save it into «Файлы для монтажа» for reuse.
+- He wants a real editor, not a settings panel.
+
+Deliverables in docs/redesign/editor/:
+A) editor.md (Russian):
+   1. Диагноз: why the current editor feels like a form, not an editor (be concrete, name components).
+   2. Полный список функций нового редактора, сгруппированный, с пометкой [есть] / [новое] — nothing from functions.md may be lost.
+   3. Раскладка: what is where, at 1600x1000 and at 2560 wide; what is always visible vs on demand.
+   4. МНОГОДОРОЖЕЧНЫЙ таймлайн: which tracks (video pieces, focus/framing, subtitles, inserts/memes, music), what you can do on each (drag, trim, split, snap, zoom, keyboard), how selection works, how the inspector follows the selection.
+   5. Субтитры в редакторе: generate → edit lines (text, time, split/merge) → styles → burn at render. What the UI looks like, what the API needs (endpoints and data), how karaoke word timing is preserved.
+   6. Вставки (мемы): placing from a library drawer by drag onto the timeline, editing on the timeline (move/trim), preview on the phone, per-insert settings.
+   7. ИИ в редакторе: 🤖 ИИ-монтаж (what it shows/applies), ИИ-субтитры, and «ИИ добывает картинку» — describe the safest sane flow (generate an original image vs fetch by URL), where it appears, how the file lands in the library.
+   8. Горячие клавиши.
+   9. План внедрения по этапам (what to build first for maximum effect), each step ≤1 day.
+B) Reference images with your image generation tool (landscape ~1600x1000, style of docs/redesign/ref-s4-editor.png: dark #0c0a12, violet #8b5cf6, Inter, Russian labels; NO real faces, NO recognizable characters, NO brand logos — abstract/gameplay/landscape placeholders only):
+   - ref-editor-1.png: the whole editor with the multi-track timeline, stage + phone preview, inspector.
+   - ref-editor-2.png: the subtitle editing mode (line list + waveform + karaoke words).
+   - ref-editor-3.png: inserts/memes — library drawer open, a meme being dragged onto the timeline, insert settings.
+   Describe each in editor.md.
+
+Constraints: no code edits outside docs/redesign/editor/; do not run docker, git, builds, or anything that changes app data. Finish with a short summary.

@@ -607,6 +607,26 @@ class ClipRenderService:
         )
         return clip
 
+    def _plan_subtitles_for_clip(self, clip_id: int):
+        """Субтитры, сделанные в редакторе до рендера (если есть)."""
+        from app.clip_subtitles import result_from_payload, shift_for_transition
+
+        try:
+            clip = self.store.get_clip(clip_id)
+            plan_id = clip.get("clip_plan_id")
+            if not plan_id:
+                return None
+            payload = self.store.get_clip_plan_subtitles(int(plan_id))
+            if not payload or not (payload.get("lines") or payload.get("words")):
+                return None
+            plan = self.store.get_clip_plan(int(plan_id))
+            pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
+            transition = (plan.get("render_settings") or {}).get("transition") or {}
+            overlap = float(transition.get("duration") or 0) if transition.get("type") not in (None, "cut") else 0.0
+            return result_from_payload(shift_for_transition(payload, pieces, overlap))
+        except (KeyError, ValueError, TypeError):
+            return None
+
     def _apply_inserts(self, clip: dict, plan: dict) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.
 
@@ -652,6 +672,7 @@ class ClipRenderService:
     ) -> None:
         profile = self.store.get_subtitle_profile(subtitle_profile_id)
         profile["prompt"] = _subtitle_prompt_for_clip(self.store, clip_id)
+        ready = self._plan_subtitles_for_clip(clip_id)
         # A per-render nudge (set on the preset) overrides the profile's saved
         # timing offset, so a single drifting clip can be pulled into sync without
         # changing the shared subtitle style.
@@ -686,10 +707,15 @@ class ClipRenderService:
             # karaoke highlight stays locked to the speech. Per-part chunked
             # transcription used to re-seek into the stitched file and could land a
             # couple of seconds off on real concatenated media, drifting the words.
-            _run_ffmpeg(build_ffmpeg_extract_audio_args(input_path, audio_path), timeout=60 * 10)
-            result = provider.transcribe(audio_path, profile, model)
-            audio_duration = probe_media(audio_path).duration_sec
-            result = normalize_subtitle_timeline(result, min(audio_duration, input_duration))
+            if ready is not None:
+                # Прошли правку в редакторе — жжём ровно их, без новой транскрипции.
+                result = ready
+                result = normalize_subtitle_timeline(result, input_duration)
+            else:
+                _run_ffmpeg(build_ffmpeg_extract_audio_args(input_path, audio_path), timeout=60 * 10)
+                result = provider.transcribe(audio_path, profile, model)
+                audio_duration = probe_media(audio_path).duration_sec
+                result = normalize_subtitle_timeline(result, min(audio_duration, input_duration))
             result = _apply_subtitle_timing_offset(result, profile, input_duration)
             ass_path = write_ass_subtitles(
                 result,

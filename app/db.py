@@ -364,6 +364,10 @@ class Database:
             self._ensure_column(conn, "clip_plans", "montage_backup_json", "TEXT NOT NULL DEFAULT ''")
             # ✨ ИИ выбирает лучшие: {"score", "reason"} of an AI pick, shown on the card.
             self._ensure_column(conn, "clip_plans", "ai_pick_json", "TEXT NOT NULL DEFAULT ''")
+            # Субтитры клипа, сделанные ДО рендера и правленные в редакторе.
+            self._ensure_column(conn, "clip_plans", "subtitles_json", "TEXT NOT NULL DEFAULT ''")
+            # Стили с провайдером «mock» жгли текст-заглушку вместо распознанной речи.
+            conn.execute("UPDATE subtitle_profiles SET provider = '' WHERE provider = 'mock'")
             # «Файлы для монтажа»: memes / reactions / sounds the AI may drop into clips.
             conn.execute(
                 """
