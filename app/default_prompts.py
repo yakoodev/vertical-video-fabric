@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 DEFAULT_PROMPT_SEED_KEY = "default_prompt_presets_seeded"
-DEFAULT_PROMPT_SEED_VERSION = "20260619-prompts-v20"
+DEFAULT_PROMPT_SEED_VERSION = "20260920-prompts-v21"
 
 # Universal editing rules appended to EVERY analysis. These must be mode-neutral:
 # no recap mandate and no "reject action unless it explains the plot" — that
@@ -31,6 +31,12 @@ Editing contract:
   inside the same clip.
 - Do not create micro-segments. Each segment should be a complete watchable
   source range with full lines/actions and natural entry/exit points.
+- Length floor: a finished clip (all its segments combined) must be at least 30
+  seconds, and 35 to 75 seconds is the sweet spot. A 10 to 20 second clip has no
+  room for hook, context and payoff, and an editor pass will trim it further.
+- If a moment cannot reach 30 seconds even with its setup and its reaction,
+  extend it with the neighbouring beats of the same scene or drop it. Never
+  return a short fragment just because the punchline itself is short.
 - Never cut a segment in the middle of a spoken sentence, reaction sound,
   subtitle line, or obvious character action. Start 1 to 2 seconds before it
   begins; end 1 to 2 seconds after the line, reaction, or action resolves.
@@ -201,7 +207,8 @@ Selection rules:
 - Prefer 1 to 3 stronger multi-segment clips over 5 weak isolated cuts when the
   source is one episode, match, or continuous scene.
 - Prefer clips that have a fast hook, clear context, escalation, and payoff.
-- Prefer 5 to 180 seconds total per clip after its segments are combined.
+- Aim for 35 to 75 seconds total per clip after its segments are combined.
+  Never return a finished clip shorter than 30 seconds, never longer than 180.
 - If a clip needs context, include a short setup segment before the payoff.
 - Do not solve context by making one huge continuous range. Use several tighter
   segments in the same clip when the source has distinct beats.
@@ -403,7 +410,7 @@ Rules:
 - Pick action a viewer understands from the clip itself. If a hit needs a one-line
   setup, include that setup as an earlier segment in the SAME clip.
 - Segments can be punchy: about 8 to 35 seconds each, never longer than 75. Keep
-  each finished clip under about 90 seconds.
+  each finished clip between about 35 and 90 seconds — never under 30.
 - Never cut mid-punch, mid-line, or mid-action. Start ~1 second before the action
   or line begins; end ~1 second after the hit, reaction, or line resolves.
   Include the full exchange rather than trimming through it.
@@ -527,8 +534,8 @@ Rules:
   segment in the SAME clip.
 - Prefer self-contained thoughts that start and end on complete sentences. Never
   cut in the middle of a spoken line.
-- Prefer 15 to 60 seconds per clip; keep the strongest hook in the first 3
-  seconds.
+- Prefer 35 to 75 seconds per clip, never under 30; keep the strongest hook in
+  the first 3 seconds.
 - Merge a setup question and its answer into one clip with two segments instead
   of two separate clips.
 - Use only timestamps from the uploaded source.
@@ -550,7 +557,8 @@ Rules:
 - Each clip must deliver one full, understandable takeaway on its own. Include the
   short setup (the question or problem) plus the answer in the same clip.
 - Open on the hook or the promise of the payoff, not on throat-clearing.
-- Prefer 20 to 75 seconds per clip. Never cut through a sentence or mid-step.
+- Prefer 35 to 75 seconds per clip, never under 30. Never cut through a
+  sentence or mid-step.
 - Skip long tangents, repeated recaps, and "like and subscribe" asides.
 - Use only timestamps from the uploaded source.
 
@@ -571,8 +579,9 @@ Rules:
   joke) in the SAME clip as ordered segments. A punchline with no setup is weak.
 - Start right before the setup; end right after the laugh/reaction resolves.
   Never cut through the punchline or a key reaction.
-- Prefer 8 to 45 seconds per clip. Cut dead air and slow build-up that does not
-  serve the joke.
+- Prefer 30 to 60 seconds per clip. Cut dead air and slow build-up that does not
+  serve the joke — but if the joke itself is short, keep the build-up and the
+  reaction so the clip still runs at least 30 seconds.
 - Use only timestamps from the uploaded source.
 
 Write every title, description, and reason in natural Russian. The title should

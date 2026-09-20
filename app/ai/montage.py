@@ -26,6 +26,10 @@ from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC
 from app.transitions import SFX_KINDS, TRANSITIONS
 
 CONTEXT_PAD_SEC = 10.0  # the model may extend a piece this far to finish a phrase
+# Клип короче этого не смотрят: агент любит резать «мусор» до огрызка на 15 с.
+MIN_MONTAGE_TOTAL_SEC = 30.0
+# И даже длинный клип нельзя ужимать сильнее, чем до этой доли исходного.
+MIN_MONTAGE_KEEP_RATIO = 0.7
 PAUSE_SEC = 0.8  # gaps between lines at least this long are listed as pauses
 MAX_ATTEMPTS = 3
 MAX_LINES = 400
@@ -42,14 +46,19 @@ RULES = f"""\
    Длинный кусок с паузами внутри разрежь на несколько кусков по паузам (jump-cut).
 3. Не режь посреди фразы: границы ставь на начало/конец реплик (±0.1 с).
 4. Смысл и развязка должны остаться: не выкидывай панчлайн и контекст, без которого не смешно.
-5. Итоговая длина: по возможности 15–60 с, никогда не больше 175 с.
+5. Итоговая длина: 35–75 с — то, что досматривают. Никогда не больше 175 с и
+   НИКОГДА короче 30 с (и не короче 70% исходной длины клипа): вырезать мусор —
+   да, превращать клип в 15-секундный огрызок — нет. Если резать нечего, верни
+   клип почти как есть.
 
 Ограничения (иначе правка не пройдёт проверку):
 - каждый кусок {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с, не больше 12 кусков;
 - куски берутся только из переданных окон реплик (исходный кусок ± {CONTEXT_PAD_SEC:.0f} с);
 - source_piece — номер исходного куска (с 0), из которого взят новый кусок.
 - transition.type: одно из {", ".join(TRANSITIONS)}; sfx: одно из {", ".join(SFX_KINDS)}.
-  Для одного куска переход не важен. Мемный монтаж — flash/zoom + whoosh; «прошло время» — fadeblack.
+  Для одного куска переход не важен. Мемный монтаж — whip/zoompunch/glitch/flash + whoosh;
+  «прошло время» — fadeblack. Склейки внутри одной сцены (вырезанная пауза) всё равно
+  останутся встык — эффект тратится только на смену сцены, так что бери резкий.
 - cover: номер НОВОГО куска и секунды от его начала — кадр с самой яркой эмоцией.
 - rationale: 2–5 коротких пунктов по-русски, что и зачем изменил.
 Если клип уже хорош — верни его почти без изменений и так и скажи в rationale.
@@ -358,6 +367,23 @@ def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> 
     return out
 
 
+def _length_problems(old_spec: dict, new_spec: dict) -> list[str]:
+    """Не даём агенту ужать клип до огрызка — это главная претензия к монтажу."""
+
+    before = sum(p["end_sec"] - p["start_sec"] for p in old_spec["pieces"])
+    after = sum(p["end_sec"] - p["start_sec"] for p in new_spec["pieces"])
+    floor = before * MIN_MONTAGE_KEEP_RATIO
+    if before > MIN_MONTAGE_TOTAL_SEC:
+        # Клип был нормальной длины — ниже порога опускать его нельзя вообще.
+        floor = max(floor, MIN_MONTAGE_TOTAL_SEC)
+    if after + 0.5 < floor:
+        return [
+            f"итог {after:.1f} с — слишком коротко: было {before:.1f} с, "
+            f"нужно минимум {floor:.1f} с (верни куски или не режь так сильно)"
+        ]
+    return []
+
+
 def _in_windows(context: dict, new_spec: dict) -> list[str]:
     """Keep the agent inside the material it was shown."""
     windows = [p["window"] for p in context["pieces"]]
@@ -417,7 +443,7 @@ def propose_montage(
         try:
             proposal = json.loads(text)
             new_spec = to_spec(spec, proposal, {a["asset_id"] for a in context["library"]})
-            problems = _in_windows(context, new_spec)
+            problems = _in_windows(context, new_spec) + _length_problems(spec, new_spec)
             if not problems:
                 validate_spec(store, clip_plan_id, new_spec)
         except json.JSONDecodeError:

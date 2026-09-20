@@ -73,7 +73,7 @@ def test_agent_loop_fixes_invalid_answer_and_writes_nothing(tmp_path, monkeypatc
     before = store.get_clip_plan(plan["id"])
     base = {"transition": {"type": "cut", "sfx": "none"}, "subtitles": True, "cover": {"piece": 0, "offset": 1}}
     bad = {**base, "pieces": [{"source_piece": 0, "start_sec": 500, "end_sec": 506, "title": "x"}], "rationale": ["?"]}
-    good = {**base, "pieces": [{"source_piece": 1, "start_sec": 1, "end_sec": 6, "title": "Хук"}], "rationale": ["ок"]}
+    good = {**base, "pieces": [{"source_piece": 1, "start_sec": 0, "end_sec": 7, "title": "Хук"}], "rationale": ["ок"]}
     client = LoopClient(bad, good)
 
     out = propose_montage(store, plan["id"], goal="короче", client=client, model="m")
@@ -83,7 +83,7 @@ def test_agent_loop_fixes_invalid_answer_and_writes_nothing(tmp_path, monkeypatc
     assert "вне переданных окон" in feedback
     assert "короче" in client.requests[0]["contents"][0]["parts"][0]["text"]
     assert out["spec"]["pieces"][0]["segment_id"] == b["id"]
-    assert out["diff"]["total_after"] == 5.0
+    assert out["diff"]["total_after"] == 7.0
     # A proposal only — the clip is untouched until the owner applies it.
     after = store.get_clip_plan(plan["id"])
     assert [s["id"] for s in after["segments"]] == [s["id"] for s in before["segments"]]
@@ -152,3 +152,25 @@ def test_ai_inserts_land_on_new_timeline_and_unknown_files_are_dropped():
     ins = out["render"]["inserts"]
     assert len(ins) == 1 and ins[0]["asset_id"] == 7
     assert ins[0]["at"] == 11.5 and ins[0]["mode"] == "full" and ins[0]["reason"] == "bruh"
+
+
+def test_agent_may_not_trim_the_clip_down_to_a_stub(tmp_path, monkeypatch):
+    """Главная претензия к монтажу: из клипа делали огрызок на 15 секунд."""
+
+    _require_ffmpeg()
+    _client, store, source, plan, _a, b = _setup(tmp_path, monkeypatch)
+    store.set_source_transcript(source["id"], [{"start": 0.2, "end": 4.8, "text": "привет"}])
+    base = {"transition": {"type": "cut", "sfx": "none"}, "subtitles": True, "cover": {"piece": 0, "offset": 1}}
+    stub = {**base, "pieces": [{"source_piece": 1, "start_sec": 2, "end_sec": 4, "title": "огрызок"}],
+            "rationale": ["вырезал всё"]}
+    whole = {**base, "pieces": [{"source_piece": 1, "start_sec": 0, "end_sec": 7, "title": "Хук"}],
+             "rationale": ["ок"]}
+    client = LoopClient(stub, whole)
+
+    out = propose_montage(store, plan["id"], client=client, model="m")
+
+    assert out["attempts"] == 2
+    feedback = client.requests[1]["contents"][-1]["parts"][0]["text"]
+    assert "слишком коротко" in feedback
+    assert out["diff"]["total_after"] == 7.0
+    assert out["spec"]["pieces"][0]["segment_id"] == b["id"]
