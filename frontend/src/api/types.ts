@@ -128,14 +128,17 @@ export interface ClipPlan {
 }
 
 export type TransitionType =
-  | "cut" | "fade" | "fadeblack" | "fadewhite" | "flash"
+  | "cut" | "whip" | "zoompunch" | "glitch" | "flash"
+  | "fade" | "fadeblack" | "fadewhite"
   | "slide" | "smooth" | "wipe" | "zoom" | "dissolve";
 
 export interface TransitionSettings {
   type: TransitionType;
   duration: number;
+  /** Умные склейки: jump-cut внутри сцены — встык, эффект только на смене сцены. */
+  smart: boolean;
   audio: "smooth" | "hard";
-  sfx: "none" | "whoosh" | "click" | "pop";
+  sfx: "none" | "whoosh" | "click" | "pop" | "boom";
   sfx_volume: number;
 }
 
@@ -183,6 +186,8 @@ export interface TransitionOptions {
   types: { key: TransitionType; label: string }[];
   audio: { key: "smooth" | "hard"; label: string }[];
   sfx: { key: TransitionSettings["sfx"]; label: string }[];
+  /** Переходы с фиксированной длиной — для них ползунок длительности не нужен. */
+  snap: Partial<Record<TransitionType, number>>;
   default: TransitionSettings;
 }
 

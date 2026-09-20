@@ -14,19 +14,29 @@ from app.transitions import (
     is_plain_concat,
     join_times,
     normalize_transition,
+    plan_joins,
 )
 
 
 def test_normalize_fills_defaults_and_rejects_junk():
-    t = normalize_transition({"type": "nope", "duration": "x", "audio": "loud", "sfx": "boom", "sfx_volume": 9})
-    assert t == {"type": "cut", "duration": 0.35, "audio": "smooth", "sfx": "none", "sfx_volume": 1.0}
+    t = normalize_transition({"type": "nope", "duration": "x", "audio": "loud", "sfx": "хлопок", "sfx_volume": 9})
+    assert t == {
+        "type": "cut",
+        "duration": 0.25,
+        "smart": True,
+        "audio": "smooth",
+        "sfx": "none",
+        "sfx_volume": 1.0,
+    }
     assert normalize_transition(None)["type"] == "cut"
 
 
 def test_duration_is_clamped_and_flash_is_forced_short():
     assert normalize_transition({"type": "fade", "duration": 99})["duration"] == 1.5
     assert normalize_transition({"type": "fade", "duration": 0})["duration"] == 0.08
-    assert normalize_transition({"type": "flash", "duration": 1.0})["duration"] == 0.16
+    # Резкие переходы читаются только короткими, длину для них не спрашиваем.
+    assert normalize_transition({"type": "flash", "duration": 1.0})["duration"] == 0.12
+    assert normalize_transition({"type": "whip", "duration": 1.0})["duration"] == 0.14
 
 
 def test_plain_concat_only_for_hard_cut_hard_sound_no_sfx():
@@ -63,6 +73,33 @@ def test_no_audio_means_no_audio_chain():
     args = build_join_args([Path("a.mp4"), Path("b.mp4")], [3.0, 3.0], Path("o.mp4"), t, has_audio=False)
     assert "-an" in args
     assert "acrossfade" not in args[args.index("-filter_complex") + 1]
+
+
+def test_smart_joins_keep_a_jump_cut_hard_and_spend_the_effect_on_a_scene_change():
+    t = normalize_transition({"type": "fade", "duration": 0.4})
+    # Дырка 0.6 с — та же сцена (вырезали паузу), 40 с — другая сцена.
+    assert plan_joins(t, [5.0, 5.0, 5.0], [0.6, 40.0]) == pytest.approx([0.0, 0.4])
+    # Без подсказок переход везде, как раньше.
+    assert plan_joins(t, [5.0, 5.0], None) == pytest.approx([0.4])
+    # Владелец может выключить умный выбор.
+    dumb = normalize_transition({"type": "fade", "duration": 0.4, "smart": False})
+    assert plan_joins(dumb, [5.0, 5.0], [0.6]) == pytest.approx([0.4])
+
+
+def test_smart_join_mixes_a_hard_cut_and_an_xfade_in_one_graph():
+    t = normalize_transition({"type": "fade", "duration": 0.4})
+    args = build_join_args(
+        [Path("a.mp4"), Path("b.mp4"), Path("c.mp4")],
+        [4.0, 5.0, 3.0],
+        Path("out.mp4"),
+        t,
+        has_audio=True,
+        gaps=[0.5, 30.0],
+    )
+    graph = args[args.index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=0" in graph  # jump-cut остался встык
+    assert "xfade=transition=fade:duration=0.400:offset=8.600" in graph
+    assert "acrossfade=d=0.400" in graph
 
 
 # ---- real ffmpeg: every transition must actually run on the installed ffmpeg ----

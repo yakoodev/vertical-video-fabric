@@ -20,18 +20,25 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def cover_output_time(durations: list[float], overlap: float, piece: int, offset: float) -> float:
+def cover_output_time(
+    durations: list[float], overlap: float | list[float], piece: int, offset: float
+) -> float:
     """Where (piece, offset) lands on the output timeline.
 
-    Every join before ``piece`` shortened the output by ``overlap`` (the
-    transition). The time is clamped inside the piece and inside the video.
+    Каждая склейка перед ``piece`` укоротила выход на длину своего перехода.
+    Переходы теперь бывают разной длины (где-то встык, где-то эффект), поэтому
+    ``overlap`` — это либо одно число на все склейки, либо список по склейкам.
+    Время зажимается внутри куска и внутри видео.
     """
     if not durations:
         return 0.0
+    joins = len(durations) - 1
+    per_join = [float(overlap)] * joins if isinstance(overlap, (int, float)) else list(overlap)
+    per_join = (per_join + [0.0] * joins)[:joins]
     piece = min(max(0, piece), len(durations) - 1)
-    start = sum(durations[:piece]) - piece * overlap
+    start = sum(durations[:piece]) - sum(per_join[:piece])
     inside = min(max(0.0, offset), max(0.0, durations[piece] - 0.05))
-    total = sum(durations) - (len(durations) - 1) * overlap
+    total = sum(durations) - sum(per_join)
     return round(min(max(0.0, start + inside), max(0.0, total - 0.05)), 3)
 
 

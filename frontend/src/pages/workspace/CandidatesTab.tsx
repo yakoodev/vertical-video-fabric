@@ -220,6 +220,7 @@ const DEFAULT_TRANSITION: TransitionSettings = {
   type: "cut",
   duration: 0.35,
   audio: "smooth",
+  smart: true,
   sfx: "none",
   sfx_volume: 0.5,
 };
@@ -2047,7 +2048,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   ))}
                 </select>
               </label>
-              {transition.type !== "cut" && transition.type !== "flash" ? (
+              {transition.type !== "cut" ? (
+                <label className="switch" title="Внутри одной сцены (вырезанная пауза) склейка остаётся встык — эффект тратится только на смену сцены.">
+                  <input
+                    type="checkbox"
+                    checked={transition.smart !== false}
+                    onChange={(e) => patchTransition({ smart: e.target.checked })}
+                  />
+                  <span className="switch-track" />
+                  <span>умные склейки: внутри сцены — встык</span>
+                </label>
+              ) : null}
+              {transition.type !== "cut" && !(transitionOpts.data?.snap ?? {})[transition.type] ? (
                 <label className="field">
                   <span>Длительность — {transition.duration.toFixed(2)} с</span>
                   <input

@@ -19,8 +19,23 @@ from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_tim
 from app.clip_settings import normalize_cover
 from app.cover import build_burn_args, build_frame_args, build_image_args, cover_output_time
 from app.render_qc import run_qc
-from app.transitions import build_join_args, effective_duration, is_plain_concat, normalize_transition
+from app.transitions import build_join_args, is_plain_concat, normalize_transition, plan_joins
 from app.video_crop import build_reframe_x_expr
+
+
+def _source_gaps(segments: list[dict]) -> list[float | None]:
+    """Сколько секунд исходника выброшено между соседними кусками.
+
+    Маленькая дырка — это jump-cut внутри одной сцены, и склейка должна быть
+    встык: наплыв посреди фразы читается как брак. Куски могут идти и не по
+    порядку (хук вперёд) — тогда дырки нет, это смена сцены.
+    """
+
+    gaps: list[float | None] = []
+    for left, right in zip(segments, segments[1:]):
+        gap = float(right["start_sec"]) - float(left["end_sec"])
+        gaps.append(gap if gap >= 0 else None)
+    return gaps
 
 
 def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
@@ -316,6 +331,7 @@ class ClipRenderService:
                         base_output_path,
                         join,
                         has_audio=has_audio,
+                        gaps=_source_gaps(segments),
                         video_codec=str(preset.get("video_codec") or "libx264"),
                         video_bitrate=str(preset.get("video_bitrate") or "").strip(),
                         crf=extra.get("crf"),
@@ -336,6 +352,7 @@ class ClipRenderService:
             self._apply_cover(
                 clip["id"], render_id, final_output_path, preset, cover,
                 [float(seg["end_sec"]) - float(seg["start_sec"]) for seg in segments], join,
+                gaps=_source_gaps(segments),
             )
             metadata = probe_media(final_output_path)
             _sha256, size_bytes = file_hash_and_size(final_output_path)
@@ -473,7 +490,7 @@ class ClipRenderService:
                 path.unlink(missing_ok=True)
             return clip
 
-    def _apply_cover(
+    def _apply_cover(  # noqa: PLR0913 - обложке нужен весь контекст рендера
         self,
         clip_id: int,
         render_id: str,
@@ -482,6 +499,7 @@ class ClipRenderService:
         cover: dict | None,
         durations: list[float],
         join: dict | None,
+        gaps: list[float | None] | None = None,
     ) -> Path | None:
         """Make the clip's cover and, if asked, burn it in as the first frame.
 
@@ -496,8 +514,8 @@ class ClipRenderService:
         out = settings.clip_dir / f"{render_id}.cover.jpg"
         try:
             if c["mode"] == "frame":
-                overlap = effective_duration(join, durations) if join else 0.0
-                t = cover_output_time(durations, overlap, c["piece"], c["offset"])
+                overlaps = plan_joins(join, durations, gaps) if join else 0.0
+                t = cover_output_time(durations, overlaps, c["piece"], c["offset"])
                 _run_ffmpeg(build_frame_args(video, t, out), timeout=120)
             else:
                 image = settings.data_dir / "covers" / c["image"]
