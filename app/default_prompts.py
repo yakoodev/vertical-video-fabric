@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 DEFAULT_PROMPT_SEED_KEY = "default_prompt_presets_seeded"
-DEFAULT_PROMPT_SEED_VERSION = "20260920-prompts-v21"
+DEFAULT_PROMPT_SEED_VERSION = "20260920-prompts-v22"
 
 # Universal editing rules appended to EVERY analysis. These must be mode-neutral:
 # no recap mandate and no "reject action unless it explains the plot" — that
@@ -588,6 +588,50 @@ Write every title, description, and reason in natural Russian. The title should
 tease the joke or reaction without fully spoiling the punchline.
 """.strip()
 
+VTUBER_STREAM_PROMPT = """
+Analyze this VTuber / streamer VOD for vertical short-form. The source is a live
+stream: an animated avatar (or a webcam), the streamer talking to chat, chat
+messages and alerts on screen, and whatever the stream is about (drawing, a
+game, just chatting, reacting to videos).
+
+What makes a good stream short — look for these first:
+- A loud emotional reaction: a scream, a jump-scare, a fail, a rage moment, a
+  genuine laugh, an "oh no" realization.
+- A punchy line, a rant, an unfiltered opinion, an accidental confession, a
+  story with a payoff.
+- A chat interaction where the joke belongs to both sides: chat baits the
+  streamer, a donation/alert derails them, a viewer question lands, a name
+  gets read out, they argue with chat.
+- A fail or a mistake in whatever they are doing: deleted work, a wrong click,
+  a ban, a broken setup, a misread word.
+- Singing, an impression, a voice crack, a character bit, the avatar doing
+  something expressive.
+
+Rules:
+- The viewer never saw the stream. Include the tiny bit of setup that makes the
+  moment make sense (the question asked, what they were doing, what chat wrote)
+  as an EARLIER segment of the SAME clip — not as a separate clip.
+- If the punchline is a reaction to a chat message or an alert, the clip must
+  contain the moment that message is visible or read out loud.
+- Hook first: the first 1 to 2 seconds must already have voice or motion. Never
+  open on silence, on an empty pause, or mid-loading.
+- Prefer 35 to 75 seconds per clip, never under 30. If the reaction itself is
+  short, keep the build-up and the aftermath so the clip still runs 30+ seconds.
+- Cut dead air: long silent drawing/gameplay with no commentary, "щас, секунду",
+  reading chat silently, technical fiddling, repeated intros, sponsor/subscribe
+  asides.
+- Never cut through a spoken sentence, a laugh, or a reaction. Start about 1
+  second before the line begins, end about 1 second after it resolves.
+- A long bit with pauses inside is fine as one clip split into ordered segments
+  (jump-cut on the pauses), not as several clips.
+- Use only timestamps from the uploaded source.
+
+Write every title, description, and reason in natural Russian, the way a clips
+channel writes them: the title teases the reaction or quotes the line without
+explaining the whole joke.
+""".strip()
+
+
 DEFAULT_PROMPT_PRESETS = (
     {
         "task": "analysis",
@@ -623,6 +667,12 @@ DEFAULT_PROMPT_PRESETS = (
         "task": "analysis",
         "label": "Обучающее: тезисы",
         "prompt": EDUCATIONAL_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "VTuber-стрим: моменты",
+        "prompt": VTUBER_STREAM_PROMPT,
         "is_default": False,
     },
     {
