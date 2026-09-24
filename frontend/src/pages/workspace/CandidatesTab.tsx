@@ -943,6 +943,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Правка строк в узкой колонке инспектора — микроскоп, поэтому у неё есть
   // широкий режим на всё окно (референс editor2: компактный вход, широкая работа).
   const [subsWide, setSubsWide] = useState(false);
+  const planWave = useQuery({
+    queryKey: ["plan-waveform", editorPlanId],
+    queryFn: () => clipPlansApi.waveform(editorPlanId as number),
+    enabled: Boolean(editorPlanId),
+    staleTime: 5 * 60 * 1000,
+  });
   const planSubs = useQuery({
     queryKey: ["plan-subtitles", editorPlanId],
     queryFn: () => clipPlansApi.getSubtitles(editorPlanId as number),
@@ -2239,6 +2245,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
             <ClipTimeline
               sourceId={source.id}
+              peaks={planWave.data?.peaks}
               pieces={activePlan?.segments ?? []}
               inserts={inserts}
               subLines={subLines}

@@ -2150,6 +2150,22 @@ def api_clip_plan_timeline(clip_plan_id: int, _auth: AuthDep, format: str = "oti
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
+@app.get(
+    "/api/clip-plans/{clip_plan_id}/waveform",
+    tags=["Clip file"],
+    summary="Волна звука клипа для таймлайна (речь и паузы)",
+)
+def api_clip_plan_waveform(clip_plan_id: int, _auth: AuthDep, buckets: int = 600) -> dict:
+    from app.clip_waveform import clip_waveform
+
+    try:
+        return clip_waveform(store, clip_plan_id, buckets)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post(
     "/api/clip-plans/{clip_plan_id}/undo",
     tags=["Clip file"],

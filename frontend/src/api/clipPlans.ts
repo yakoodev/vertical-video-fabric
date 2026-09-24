@@ -98,6 +98,9 @@ export const clipPlansApi = {
       {},
     ),
   undoDepth: (clipPlanId: number) => api.get<{ left: number }>(`/api/clip-plans/${clipPlanId}/undo`),
+  /** Волна звука клипа для таймлайна: по ней видно речь и паузы. */
+  waveform: (clipPlanId: number) =>
+    api.get<{ duration: number; peaks: number[] }>(`/api/clip-plans/${clipPlanId}/waveform`),
   /** Apply an AI re-edit; the server keeps the pre-AI version for undo. */
   aiMontageApply: (clipPlanId: number, spec: unknown) =>
     api.post<{ spec: Record<string, unknown>; changes: string[] }>(`/api/clip-plans/${clipPlanId}/ai-montage/apply`, { spec }),

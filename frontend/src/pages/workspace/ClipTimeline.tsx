@@ -72,6 +72,27 @@ function pieceThumbs(sourceId: number, piece: AiSegment, widthPx: number) {
   });
 }
 
+/** Волна на канвасе: перерисовывается на смену ширины или самих пиков. */
+function Waveform({ peaks, width }: { peaks: number[]; width: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    cv.width = Math.max(1, Math.round(width));
+    cv.height = 40;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!peaks.length) return;
+    ctx.fillStyle = "rgba(124, 58, 237, 0.75)";
+    const step = cv.width / peaks.length;
+    peaks.forEach((value, i) => {
+      const h = Math.max(1, value * (cv.height - 4));
+      ctx.fillRect(i * step, (cv.height - h) / 2, Math.max(1, step - 0.5), h);
+    });
+  }, [peaks, width]);
+  return <canvas ref={ref} className="ctl-wave" />;
+}
+
 export function ClipTimeline({
   pieces,
   inserts,
@@ -88,6 +109,7 @@ export function ClipTimeline({
   onSplitAt,
   onDeleteSelected,
   sourceId,
+  peaks,
 }: {
   pieces: AiSegment[];
   inserts: MontageInsert[];
@@ -107,6 +129,8 @@ export function ClipTimeline({
   onDeleteSelected: () => void;
   /** Источник клипа: по нему дорожка «Клипы» показывает кадры, а не пустые блоки. */
   sourceId: number;
+  /** Громкость по корзинам 0..1 — дорожка «Звук». Пусто, пока не посчиталась. */
+  peaks?: number[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -299,6 +323,7 @@ export function ClipTimeline({
           <div className="ctl-label">Клипы</div>
           <div className="ctl-label">Субтитры</div>
           <div className="ctl-label">Вставки</div>
+          <div className="ctl-label">Звук</div>
         </div>
 
         <div
@@ -419,6 +444,14 @@ export function ClipTimeline({
               {!inserts.length && dropX == null ? (
                 <span className="ctl-empty muted">перетащите сюда мем или звук из библиотеки</span>
               ) : null}
+            </div>
+
+            {/* Звук клипа: речь видно глазами, паузы искать не надо. */}
+            <div
+              className="ctl-track ctl-track--wave"
+              onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}
+            >
+              <Waveform peaks={peaks ?? []} width={innerW} />
             </div>
 
             <div className="ctl-playhead" style={{ left: playhead * pps }} />
