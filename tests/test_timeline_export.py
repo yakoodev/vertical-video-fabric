@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import opentimelineio as otio
 
-from app.settings import settings
-from app.timeline_export import build_timeline, save_project, write_timeline
+from app.timeline_export import build_timeline, write_timeline
 from test_api_pipeline import _require_ffmpeg
 from test_clip_spec import _setup
 
@@ -46,16 +45,6 @@ def test_writes_otio_edl_and_fcp_xml(tmp_path, monkeypatch):
     back = otio.adapters.read_from_file(str(written["otio"]))
     assert len(list(back.find_clips())) == 2
     assert "TITLE:" in written["edl"].read_text(encoding="utf-8")
-
-
-def test_project_lands_on_the_shared_volume_for_the_web_editor(tmp_path, monkeypatch):
-    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
-
-    path = save_project(store, plan["id"])
-
-    assert path.parent == settings.data_dir / "projects"
-    assert path.suffix == ".otio"
-    assert path.exists()
 
 
 def test_inserts_become_markers_a_foreign_editor_can_see(tmp_path, monkeypatch):

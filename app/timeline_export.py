@@ -10,8 +10,8 @@
 импорт сможет вернуть настройки как были. В .edl и .xml метаданные не едут,
 там остаются только куски: это осознанный размен на совместимость.
 
-Пути к медиа абсолютные (``/data/sources/…``) — редактор в соседнем контейнере
-монтирует тот же том, поэтому ссылки открываются без перепривязки.
+Пути к медиа абсолютные (``/data/sources/…``): монтажка открывает файл там же,
+где он лежит у сервиса, без перепривязки.
 """
 
 from __future__ import annotations
@@ -33,19 +33,6 @@ TIMELINE_FORMATS: dict[str, tuple[str, str]] = {
 }
 DEFAULT_FPS = 30.0
 SAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
-
-
-def projects_dir() -> Path:
-    """Куда кладём проекты, чтобы их увидел редактор в соседнем контейнере."""
-    path = settings.data_dir / "projects"
-    path.mkdir(parents=True, exist_ok=True)
-    try:
-        # Редактор в соседнем контейнере ходит под своим пользователем — ему
-        # нужно не только прочитать проект, но и сохранить правки.
-        path.chmod(0o777)
-    except OSError:
-        pass
-    return path
 
 
 def _safe_name(text: str, fallback: str) -> str:
@@ -144,32 +131,3 @@ def write_timeline(store: Any, clip_plan_id: int, fmt: str = "otio", out_dir: Pa
     path = directory / f"{clip_plan_id}-{_safe_name(timeline.name, 'clip')}{suffix}"
     otio.adapters.write_to_file(timeline, str(path), adapter_name=adapter)
     return path
-
-
-def save_project(store: Any, clip_plan_id: int) -> Path:
-    """Положить .otio туда, где его откроет веб-редактор (общий том /data)."""
-    return write_timeline(store, clip_plan_id, "otio", out_dir=projects_dir())
-
-
-EDITOR_START_CMD = "docker compose --profile editor up -d editor"
-
-
-def editor_is_up(timeout: float = 1.5) -> bool:
-    """Поднят ли контейнер редактора.
-
-    Он живёт под отдельным профилем и по умолчанию выключен — незачем держать
-    GUI-контейнер в памяти ради кнопки. Проверяем перед тем, как открывать
-    вкладку, иначе владелец упрётся в «сайт недоступен» и будет гадать.
-
-    Стучимся по имени сервиса (``https://editor:3001``), а не по тому адресу,
-    который открывает браузер: внутри контейнера localhost — это сам сервис.
-    Самоподписанный сертификат и 401 basic-auth — признаки, что он как раз жив.
-    """
-
-    import httpx
-
-    try:
-        response = httpx.get(settings.editor_probe_url, timeout=timeout, verify=False)  # noqa: S501
-    except httpx.HTTPError:
-        return False
-    return response.status_code < 500

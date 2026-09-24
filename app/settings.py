@@ -81,10 +81,6 @@ class Settings:
         self.polza_frame_width = int(os.getenv("POLZA_FRAME_WIDTH", "512"))
         self.polza_window_seconds = float(os.getenv("POLZA_WINDOW_SECONDS", "600"))
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        # Веб-редактор (Kdenlive в браузере) живёт соседним контейнером на том же томе.
-        self.editor_url = os.getenv("EDITOR_URL", "https://localhost:3001").strip()
-        # Проверяем редактор по имени сервиса: localhost внутри контейнера — это мы сами.
-        self.editor_probe_url = os.getenv("EDITOR_PROBE_URL", "https://editor:3001").strip()
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()

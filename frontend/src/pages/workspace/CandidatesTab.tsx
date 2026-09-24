@@ -950,24 +950,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
-  // Веб-редактор живёт соседним контейнером на том же томе: кладём туда проект
-  // и отправляем владельца открывать его по пути.
-  const [editorHint, setEditorHint] = useState("");
-  const openEditorWeb = useMutation({
-    mutationFn: (clipPlanId: number) => clipPlansApi.saveTimelineProject(clipPlanId),
-    onSuccess: (r) => {
-      setEditorHint(r.path);
-      if (r.editor_up) {
-        toast.success(`Проект сохранён: ${r.path}`);
-        window.open(r.editor_url, "_blank", "noopener");
-        return;
-      }
-      // Редактор — GUI-контейнер на гигабайты памяти, поэтому по умолчанию выключен.
-      toast.push(`Проект сохранён: ${r.path}. Редактор не запущен — подними: ${r.start_cmd}`, "info");
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось собрать проект"),
-  });
-
   const batch = useMutation({
     // No ids = everything ticked «в рендер»; the editor passes just its clip.
     mutationFn: async (ids: number[] | undefined) => {
@@ -2516,24 +2498,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   ⬇ .xml
                 </a>
               </div>
-              <button
-                className="btn sm primary"
-                disabled={!activePlan || openEditorWeb.isPending}
-                onClick={() => activePlan && openEditorWeb.mutate(activePlan.id)}
-                title="Сохранить проект на общий том и открыть Kdenlive в браузере (контейнер editor)"
-              >
-                {openEditorWeb.isPending ? "Готовлю проект…" : "🌐 Доделать в веб-редакторе"}
-              </button>
-              {editorHint ? (
-                <span className="muted" style={{ fontSize: 11.5 }}>
-                  В редакторе: Project → Open → <b>{editorHint}</b>
-                </span>
-              ) : null}
-              <span className="muted" style={{ fontSize: 11.5 }}>
-                Редактор не держим запущенным (он ест память): поднимается командой{" "}
-                <code>docker compose --profile editor up -d editor</code>, гасится{" "}
-                <code>docker compose stop editor</code>.
-              </span>
             </Group>
           </div>
 
