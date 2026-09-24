@@ -82,6 +82,15 @@ export interface PlanSubtitles {
 }
 
 export const clipPlansApi = {
+  /** 🎬 Отдать клип в монтажку: ссылка на выгрузку таймлайна (cookie-авторизация). */
+  timelineUrl: (clipPlanId: number, format: "otio" | "edl" | "fcpxml") =>
+    `/api/clip-plans/${clipPlanId}/timeline?format=${format}`,
+  /** Сохранить проект на общий том и узнать адрес веб-редактора. */
+  saveTimelineProject: (clipPlanId: number) =>
+    api.post<{ path: string; name: string; editor_url: string; formats: string[] }>(
+      `/api/clip-plans/${clipPlanId}/timeline/project`,
+      {},
+    ),
   /** Субтитры клипа: сделать до рендера и править как текст. */
   getSubtitles: (clipPlanId: number) => api.get<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`),
   generateSubtitles: (clipPlanId: number, provider?: string) =>

@@ -58,6 +58,7 @@ from app.montage_assets import probe_asset as probe_montage_asset
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
+from app.timeline_export import TIMELINE_FORMATS, save_project, write_timeline
 from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
@@ -2129,6 +2130,40 @@ def api_put_clip_spec(clip_plan_id: int, spec: Annotated[dict, Body()], _auth: A
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"spec": fresh, "changes": changes}
+
+
+@app.get(
+    "/api/clip-plans/{clip_plan_id}/timeline",
+    tags=["Clip file"],
+    summary="🎬 Отдать клип в монтажку: .otio / .edl / FCP7 .xml",
+)
+def api_clip_plan_timeline(clip_plan_id: int, _auth: AuthDep, format: str = "otio") -> FileResponse:
+    """OTIO и его диалекты: .otio открывает Kdenlive, .edl и .xml — Resolve и Premiere."""
+    try:
+        path = write_timeline(store, clip_plan_id, format)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/timeline/project",
+    tags=["Clip file"],
+    summary="Сохранить проект для веб-редактора (общий том) и дать адрес редактора",
+)
+def api_clip_plan_timeline_project(clip_plan_id: int, _auth: AuthDep) -> dict:
+    try:
+        path = save_project(store, clip_plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "path": str(path),
+        "name": path.name,
+        "editor_url": settings.editor_url,
+        "formats": sorted(TIMELINE_FORMATS),
+    }
 
 
 class AiMontageRequest(BaseModel):

@@ -13,11 +13,34 @@ services:
       POSTING_AUTH_ENABLED: ${POSTING_AUTH_ENABLED:-true}
       POSTING_API_TOKEN: ${POSTING_API_TOKEN:-}
       WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+      EDITOR_URL: ${EDITOR_URL:-https://localhost:3001}
     ports:
       - "8088:8088"
     volumes:
       - vv-fabric-data:/data
     restart: unless-stopped
 
+  # Веб-редактор: настоящий Kdenlive, отданный в браузер (LinuxServer/Selkies).
+  # Смонтирован тот же том /data, что и у сервиса, поэтому проект из
+  # «Отдать в монтажку» открывается по своему пути, а исходники и клипы видны
+  # без перепривязки. Kdenlive 25.04+ читает .otio нативно.
+  # Наружу не выставляем: в его вебе есть терминал с sudo без пароля.
+  editor:
+    image: lscr.io/linuxserver/kdenlive:latest
+    environment:
+      PUID: ${EDITOR_PUID:-1000}
+      PGID: ${EDITOR_PGID:-1000}
+      TZ: ${TZ:-Europe/Moscow}
+      CUSTOM_USER: ${EDITOR_USER:-fabric}
+      PASSWORD: ${EDITOR_PASSWORD:-fabric}
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - vv-fabric-data:/data
+      - vv-editor-config:/config
+    shm_size: "1gb"
+    restart: unless-stopped
+
 volumes:
   vv-fabric-data:
+  vv-editor-config:
