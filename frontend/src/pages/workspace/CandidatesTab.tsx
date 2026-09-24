@@ -1455,6 +1455,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       startY: py,
       from: { x: ins.x, y: ins.y, scale: ins.scale },
     };
+    // Взяли мем на кадре — на таймлайне подсвечивается его блок: одно выделение
+    // на обе стороны редактора.
+    setTlSelected({ kind: "insert", index: hit.index });
     cv.setPointerCapture?.(e.pointerId);
     e.preventDefault();
   };
@@ -1550,6 +1553,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setTlSelected(null);
   };
 
+  // Выбрали вставку на таймлайне — везём превью к ней: иначе рамку и ручки не
+  // видно, мем показывается только в свои секунды.
+  const selectOnTimeline = (next: Selection) => {
+    setTlSelected(next);
+    if (next?.kind !== "insert") return;
+    const ins = inserts[next.index];
+    if (!ins) return;
+    const now = clipTimeNow();
+    if (now < ins.at || now > ins.at + ins.duration) seekClipTime(ins.at + 0.15, false);
+  };
+
   subPosPctRef.current = subPosPct;
   // «По умолчанию» на панели = первый стиль в списке, как и на сервере.
   subStyleRef.current = (subs.data?.find((s) => s.id === subId) ?? subs.data?.[0] ?? null) as SubtitleStyle | null;
@@ -1630,6 +1644,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setPlanFlag(target.id, { hidden: !target.hidden });
     } else if ((key === "e" || key === "у") && target && view === "triage") {
       openEditor(target.id);
+    } else if ((key === "s" || key === "ы") && view === "editor") {
+      // S — разрезать кусок по курсору, Del — убрать выбранный блок:
+      // те же действия, что кнопками над таймлайном.
+      splitAtClip(clipTimeNow());
+    } else if ((e.key === "Delete" || e.key === "Backspace") && view === "editor" && tlSelected) {
+      deleteSelected();
     }
   };
 
@@ -2258,7 +2278,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               videoRef={videoRef}
               selected={tlSelected}
               onSelect={(sel) => {
-                setTlSelected(sel);
+                selectOnTimeline(sel);
                 if (sel?.kind === "piece") {
                   const seg = activePlan?.segments[sel.index];
                   if (seg) setSelectedSeg(seg.id);
