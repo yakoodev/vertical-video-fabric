@@ -20,6 +20,7 @@ import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
+import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import { ClipTimeline, clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
 import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
@@ -444,6 +445,8 @@ function CropFrame({
   insertsPreview,
   overlayRef,
   subLinesRef,
+  subWordsRef,
+  subStyleRef,
   subPosPctRef,
 }: {
   srcW: number;
@@ -469,6 +472,9 @@ function CropFrame({
   overlayRef?: React.RefObject<HTMLCanvasElement>;
   /** Строки субтитров клипа (их текущая строка рисуется поверх превью). */
   subLinesRef?: React.MutableRefObject<SubtitleLine[]>;
+  /** Пословные тайминги клипа (караоке) и стиль субтитров — как в рендере. */
+  subWordsRef?: React.MutableRefObject<SubtitleWord[]>;
+  subStyleRef?: React.MutableRefObject<SubtitleStyle | null>;
   /** Положение субтитров, % снизу. */
   subPosPctRef: React.MutableRefObject<number>;
 }) {
@@ -546,7 +552,16 @@ function CropFrame({
           if (ov && octx) {
             octx.clearRect(0, 0, ov.width, ov.height);
             drawInserts(octx, ov, insertsRef.current, segments, cur, !v.paused);
-            drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
+            // Караоке по стилю клипа; без пословных таймингов (ещё не распознали)
+            // остаётся старая строка — лучше грубое превью, чем пустой кадр.
+            const t = clipTimeOf(segments, cur);
+            const style = subStyleRef?.current;
+            const words = subWordsRef?.current;
+            const drawn =
+              style && words?.length
+                ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current)
+                : false;
+            if (!drawn) drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
           }
         }
       }
@@ -722,6 +737,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const heatHeadRef = useRef<HTMLSpanElement>(null);
   // Строки субтитров открытого клипа — рисуются на превью-телефоне.
   const subLinesRef = useRef<SubtitleLine[]>([]);
+  // Пословные тайминги и стиль клипа: с ними превью рисует те же субтитры,
+  // что выжжет рендер, а не «примерно похожие».
+  const subWordsRef = useRef<SubtitleWord[]>([]);
+  const subStyleRef = useRef<SubtitleStyle | null>(null);
   const subPosPctRef = useRef(12);
   // Что выбрано на таймлайне: кусок, строка субтитров или вставка.
   const [tlSelected, setTlSelected] = useState<Selection>(null);
@@ -864,6 +883,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
+  const planSubs = useQuery({
+    queryKey: ["plan-subtitles", editorPlanId],
+    queryFn: () => clipPlansApi.getSubtitles(editorPlanId as number),
+    enabled: Boolean(editorPlanId),
+  });
   // Ctrl+Z: снимок состояния делает сервер перед каждой правкой, здесь только
   // просим шаг назад и перечитываем клип в панель.
   const undoRef = useRef<() => void>(() => undefined);
@@ -1391,6 +1415,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
   };
   subPosPctRef.current = subPosPct;
+  // «По умолчанию» на панели = первый стиль в списке, как и на сервере.
+  subStyleRef.current = (subs.data?.find((s) => s.id === subId) ?? subs.data?.[0] ?? null) as SubtitleStyle | null;
+  // Субтитры для превью тянем здесь, а не из панели субтитров: иначе караоке
+  // пропадало бы, когда панель свёрнута или не помещается в узкое окно.
+  subLinesRef.current = planSubs.data?.lines ?? subLinesRef.current;
+  subWordsRef.current = (planSubs.data?.words ?? subWordsRef.current) as SubtitleWord[];
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
   // with nothing starred yet, fall back to what the triage filters show.
@@ -1913,6 +1943,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   insertsPreview={insertsPreview}
                   overlayRef={phoneOverlayRef}
                   subLinesRef={subLinesRef}
+                  subWordsRef={subWordsRef}
+                  subStyleRef={subStyleRef}
                   subPosPctRef={subPosPctRef}
                 />
               </div>
@@ -2171,6 +2203,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       onLines={(lines) => {
                         subLinesRef.current = lines;
                         setSubLines(lines);
+                      }}
+                      onWords={(words) => {
+                        subWordsRef.current = words;
                       }}
                     />
                   ) : null}

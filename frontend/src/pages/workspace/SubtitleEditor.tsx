@@ -17,18 +17,22 @@ const ENGINES: [string, string][] = [
  * опечатку можно было увидеть только после рендера.
  *
  * `onLines` отдаёт строки наверх: редактор рисует текущую на превью-телефоне.
+ * `onWords` — пословные тайминги: по ним превью рисует караоке ровно так же,
+ * как его выжжет рендер.
  */
 export function SubtitleEditor({
   clipPlanId,
   clipTime,
   onSeek,
   onLines,
+  onWords,
 }: {
   clipPlanId: number;
   /** Текущая позиция плеера в секундах клипа (для подсветки строки). */
   clipTime: () => number;
   onSeek: (clipSec: number) => void;
   onLines: (lines: SubtitleLine[]) => void;
+  onWords?: (words: { word: string; start: number; end: number }[]) => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -49,6 +53,7 @@ export function SubtitleEditor({
       setLines(query.data.lines ?? []);
       setDirty(false);
       onLines(query.data.lines ?? []);
+      onWords?.(query.data.words ?? []);
     }
   }, [query.data, clipPlanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
