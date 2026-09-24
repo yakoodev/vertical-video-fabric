@@ -33,8 +33,17 @@ MAX_INSERTS = 6
 MAX_INSERT_SEC = 8.0
 MIN_INSERT_SEC = 0.3
 DUCK_VOLUME = 0.2
-PIP_WIDTH = 0.82  # of the frame width
+PIP_WIDTH = 0.82  # доля ширины кадра — ширина вставки по умолчанию
 PIP_TOP = 0.14  # of the frame height
+# Где стоит вставка: центр в долях кадра плюс ширина в долях ширины. Раньше
+# коробка была прибита гвоздями (по центру, сверху), и подвинуть мем было нельзя.
+INSERT_DEFAULT_X = 0.5
+INSERT_DEFAULT_Y = 0.32
+MIN_INSERT_SCALE = 0.1
+MAX_INSERT_SCALE = 1.0
+# Сколько высоты кадра вставке разрешено занять: очень высокая картинка иначе
+# вылезет за кадр целиком.
+INSERT_MAX_HEIGHT = 0.9
 
 
 def assets_dir() -> Path:
@@ -84,6 +93,17 @@ def probe_asset(path: Path) -> dict:
     }
 
 
+def _fraction(value: Any, default: float) -> float:
+    """Доля кадра 0..1; мусор и пустое — значение по умолчанию."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:  # NaN
+        return default
+    return min(1.0, max(0.0, number))
+
+
 def normalize_inserts(raw: Any) -> list[dict]:
     """Coerce stored/requested inserts into a safe list (junk entries dropped)."""
     out: list[dict] = []
@@ -108,6 +128,11 @@ def normalize_inserts(raw: Any) -> list[dict]:
             "mode": mode,
             "volume": round(volume, 2),
             "duck": bool(item.get("duck", mode == "full")),
+            "x": round(_fraction(item.get("x"), INSERT_DEFAULT_X), 4),
+            "y": round(_fraction(item.get("y"), INSERT_DEFAULT_Y), 4),
+            "scale": round(
+                min(MAX_INSERT_SCALE, max(MIN_INSERT_SCALE, _fraction(item.get("scale"), PIP_WIDTH))), 4
+            ),
         }
         reason = item.get("reason")
         if isinstance(reason, str) and reason.strip():
@@ -170,8 +195,11 @@ def build_inserts_args(
                 box_w, box_h, x, y = width, height, "(W-w)/2", "(H-h)/2"
                 pad = f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
             else:
-                box_w, box_h = int(width * PIP_WIDTH) // 2 * 2, int(height * 0.42) // 2 * 2
-                x, y, pad = "(W-w)/2", f"{int(height * PIP_TOP)}", ""
+                # Вставка шириной scale от кадра, высота по пропорциям картинки;
+                # x/y — центр вставки в долях кадра (их двигают ручками в редакторе).
+                box_w = max(2, int(width * ins["scale"]) // 2 * 2)
+                box_h = max(2, int(height * INSERT_MAX_HEIGHT) // 2 * 2)
+                x, y, pad = f"(W*{ins['x']:.4f})-(w/2)", f"(H*{ins['y']:.4f})-(h/2)", ""
             graph.append(
                 f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                 f"scale=trunc(iw/2)*2:trunc(ih/2)*2{pad},format=yuva420p,"

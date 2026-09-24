@@ -253,8 +253,34 @@ type InsertPreview = {
   mode: "full" | "pip" | "sound";
   label: string;
   volume: number;
+  /** Геометрия pip-вставки в долях кадра; во время перетаскивания меняется здесь же. */
+  x: number;
+  y: number;
+  scale: number;
   el: HTMLImageElement | HTMLVideoElement | HTMLAudioElement | null;
 };
+
+/** Значения по умолчанию должны совпадать с бэкендом (montage_assets.py). */
+export const INSERT_GEOM = { x: 0.5, y: 0.32, scale: 0.82, min: 0.1, max: 1 };
+/** Где на кадре лежит pip-вставка: в тех же пикселях, что и канвас превью. */
+function insertBox(
+  ins: InsertPreview,
+  cv: { width: number; height: number },
+  mediaW: number,
+  mediaH: number,
+) {
+  if (ins.mode === "full") {
+    const k = Math.min(cv.width / mediaW, cv.height / mediaH);
+    const dw = mediaW * k;
+    const dh = mediaH * k;
+    return { dx: (cv.width - dw) / 2, dy: (cv.height - dh) / 2, dw, dh };
+  }
+  const maxH = cv.height * 0.9;
+  const k = Math.min((cv.width * ins.scale) / mediaW, maxH / mediaH);
+  const dw = mediaW * k;
+  const dh = mediaH * k;
+  return { dx: cv.width * ins.x - dw / 2, dy: cv.height * ins.y - dh / 2, dw, dh };
+}
 
 // Clip time of a source time for back-to-back pieces (null outside the clip).
 function clipTimeOf(segments: AiSegment[], cur: number): number | null {
@@ -306,19 +332,58 @@ function drawInserts(
     const w = media instanceof HTMLVideoElement ? media.videoWidth : (media as HTMLImageElement).naturalWidth;
     const h = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight;
     if (!w || !h) continue;
-    const boxW = ins.mode === "full" ? cv.width : cv.width * 0.82;
-    const boxH = ins.mode === "full" ? cv.height : cv.height * 0.42;
-    const k = Math.min(boxW / w, boxH / h);
-    const dw = w * k;
-    const dh = h * k;
-    const dx = (cv.width - dw) / 2;
-    const dy = ins.mode === "full" ? (cv.height - dh) / 2 : cv.height * 0.14;
+    const { dx, dy, dw, dh } = insertBox(ins, cv, w, h);
     if (ins.mode === "full") {
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, cv.width, cv.height);
     }
     ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
+    if (ins.mode === "pip" && !playing) {
+      // На паузе показываем рамку и угол: за них вставку двигают и растягивают.
+      ctx.save();
+      ctx.strokeStyle = "rgba(167,139,250,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(dx, dy, dw, dh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(167,139,250,0.95)";
+      ctx.fillRect(dx + dw - INSERT_HANDLE, dy + dh - INSERT_HANDLE, INSERT_HANDLE, INSERT_HANDLE);
+      ctx.restore();
+    }
   }
+}
+
+/** Размер уголка-ручки на превью, px канваса. */
+const INSERT_HANDLE = 12;
+
+/** За что взялись на превью: двигаем вставку, тянем угол или ничего. */
+function insertHit(
+  inserts: InsertPreview[] | undefined,
+  t: number | null,
+  cv: { width: number; height: number },
+  px: number,
+  py: number,
+): { index: number; mode: "move" | "resize" } | null {
+  if (!inserts?.length || t == null) return null;
+  // Сверху вниз: последняя нарисованная вставка перехватывает клик первой.
+  for (let i = inserts.length - 1; i >= 0; i--) {
+    const ins = inserts[i];
+    if (ins.mode !== "pip" || !ins.el) continue;
+    if (!(t >= ins.at && t < ins.at + ins.duration)) continue;
+    const media = ins.el;
+    const w = media instanceof HTMLVideoElement ? media.videoWidth : (media as HTMLImageElement).naturalWidth;
+    const h = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight;
+    if (!w || !h) continue;
+    const { dx, dy, dw, dh } = insertBox(ins, cv, w, h);
+    const onHandle =
+      px >= dx + dw - INSERT_HANDLE * 1.5 &&
+      px <= dx + dw + INSERT_HANDLE * 0.5 &&
+      py >= dy + dh - INSERT_HANDLE * 1.5 &&
+      py <= dy + dh + INSERT_HANDLE * 0.5;
+    if (onHandle) return { index: i, mode: "resize" };
+    if (px >= dx && px <= dx + dw && py >= dy && py <= dy + dh) return { index: i, mode: "move" };
+  }
+  return null;
 }
 
 // Текущая строка субтитров на превью — то, что увидит зритель, ещё до рендера.
@@ -781,6 +846,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [cover, setCover] = useState<CoverSettings>(DEFAULT_COVER);
   // «Файлы для монтажа» placed in this clip (clip-timeline seconds).
   const [inserts, setInserts] = useState<MontageInsert[]>([]);
+  // Перетаскивание мема по кадру: что схватили и с чего начали.
+  const insertsPreviewRef = useRef<InsertPreview[]>([]);
+  const insertDragRef = useRef<
+    { index: number; mode: "move" | "resize"; startX: number; startY: number; from: { x: number; y: number; scale: number } } | null
+  >(null);
   const patchCover = (next: Partial<CoverSettings>) => setCover((c) => ({ ...c, ...next }));
   const [coverUploading, setCoverUploading] = useState(false);
   // True while a clip's saved settings are being poured into the panel, so the
@@ -1220,9 +1290,76 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       mode: asset?.kind === "audio" ? "sound" : ins.mode,
       label: asset?.label ?? "файл удалён",
       volume: ins.volume,
+      x: ins.x ?? INSERT_GEOM.x,
+      y: ins.y ?? INSERT_GEOM.y,
+      scale: ins.scale ?? INSERT_GEOM.scale,
       el,
     };
   });
+  // Во время перетаскивания правим объекты превью напрямую: кадр перерисовывается
+  // каждый rAF, а состояние обновляем один раз на отпускании — иначе весь
+  // редактор перерисовывался бы на каждое движение мыши.
+  insertsPreviewRef.current = insertsPreview;
+  // Мем двигают прямо по кадру: тянут за картинку — едет, тянут за уголок —
+  // меняет размер. Пока тянем, правим объект превью (кадр рисуется каждый rAF),
+  // а в состояние клипа пишем один раз на отпускании.
+  const canvasPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const cv = e.currentTarget;
+    const r = cv.getBoundingClientRect();
+    return {
+      px: ((e.clientX - r.left) / (r.width || 1)) * cv.width,
+      py: ((e.clientY - r.top) / (r.height || 1)) * cv.height,
+      cv,
+    };
+  };
+  const onInsertPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const { px, py, cv } = canvasPoint(e);
+    const hit = insertHit(insertsPreviewRef.current, clipTimeNow(), cv, px, py);
+    if (!hit) return;
+    const ins = insertsPreviewRef.current[hit.index];
+    insertDragRef.current = {
+      ...hit,
+      startX: px,
+      startY: py,
+      from: { x: ins.x, y: ins.y, scale: ins.scale },
+    };
+    cv.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  };
+  const onInsertPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = insertDragRef.current;
+    const { px, py, cv } = canvasPoint(e);
+    if (!drag) {
+      // Курсор подсказывает, что вставку можно взять.
+      const hover = insertHit(insertsPreviewRef.current, clipTimeNow(), cv, px, py);
+      cv.style.cursor = hover ? (hover.mode === "resize" ? "nwse-resize" : "grab") : "default";
+      return;
+    }
+    const ins = insertsPreviewRef.current[drag.index];
+    if (!ins) return;
+    if (drag.mode === "move") {
+      ins.x = Math.min(1, Math.max(0, drag.from.x + (px - drag.startX) / cv.width));
+      ins.y = Math.min(1, Math.max(0, drag.from.y + (py - drag.startY) / cv.height));
+    } else {
+      // Тянем угол: ширина растёт вдвое быстрее сдвига, потому что центр на месте.
+      ins.scale = Math.min(
+        INSERT_GEOM.max,
+        Math.max(INSERT_GEOM.min, drag.from.scale + (2 * (px - drag.startX)) / cv.width),
+      );
+    }
+    e.preventDefault();
+  };
+  const onInsertPointerUp = () => {
+    const drag = insertDragRef.current;
+    insertDragRef.current = null;
+    if (!drag) return;
+    const ins = insertsPreviewRef.current[drag.index];
+    if (!ins) return;
+    const next = { x: Number(ins.x.toFixed(4)), y: Number(ins.y.toFixed(4)), scale: Number(ins.scale.toFixed(4)) };
+    if (next.x === drag.from.x && next.y === drag.from.y && next.scale === drag.from.scale) return;
+    setInserts((prev) => prev.map((item, i) => (i === drag.index ? { ...item, ...next } : item)));
+  };
+
   subPosPctRef.current = subPosPct;
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
@@ -1756,7 +1893,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     transform: mirror ? "scaleX(-1)" : undefined,
                   }}
                 />
-                <canvas ref={phoneOverlayRef} className="ed-phone-overlay" width={360} height={640} />
+                <canvas
+                  ref={phoneOverlayRef}
+                  className="ed-phone-overlay"
+                  width={360}
+                  height={640}
+                  style={{ pointerEvents: "auto", touchAction: "none" }}
+                  title="Мем можно двигать мышкой, а за уголок — менять размер (на паузе)"
+                  onPointerDown={onInsertPointerDown}
+                  onPointerMove={onInsertPointerMove}
+                  onPointerUp={onInsertPointerUp}
+                  onPointerCancel={onInsertPointerUp}
+                />
                 {selectedPreset?.vignette ? (
                   <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
                 ) : null}

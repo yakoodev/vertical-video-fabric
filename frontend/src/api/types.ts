@@ -179,6 +179,12 @@ export interface MontageInsert {
   mode: "full" | "pip" | "sound";
   volume: number;
   duck: boolean;
+  /** Центр вставки в долях кадра (двигается ручками на превью).
+   *  Новую вставку можно создать без геометрии — сервер подставит умолчания. */
+  x?: number;
+  y?: number;
+  /** Ширина вставки в долях ширины кадра. */
+  scale?: number;
   reason?: string;
 }
 

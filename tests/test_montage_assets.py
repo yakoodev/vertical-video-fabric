@@ -18,7 +18,19 @@ def test_normalize_clamps_and_drops_junk():
             {"asset_id": 1, "at": -2, "duration": 0.01, "mode": "pip", "reason": "  смешно  "},
         ]
     )
-    assert out[0] == {"asset_id": 1, "at": 0.0, "duration": 0.3, "mode": "pip", "volume": 1.0, "duck": False, "reason": "смешно"}
+    assert out[0] == {
+        "asset_id": 1,
+        "at": 0.0,
+        "duration": 0.3,
+        "mode": "pip",
+        "volume": 1.0,
+        "duck": False,
+        # Геометрия вставки: центр и ширина в долях кадра — по умолчанию как было.
+        "x": 0.5,
+        "y": 0.32,
+        "scale": 0.82,
+        "reason": "смешно",
+    }
     assert out[1]["duration"] == 8.0 and out[1]["mode"] == "full" and out[1]["volume"] == 2.0 and out[1]["duck"] is True
 
 
@@ -76,3 +88,43 @@ def test_full_image_and_sound_inserts_render(tmp_path):
     assert r > 120 and b < 90, (r, g, b)  # the meme covers the frame (square letterboxed on black)
     r, g, b = _mean_rgb(out, 3.3, tmp_path)
     assert b > 150 and r < 60, (r, g, b)  # back to the clip after the insert
+
+
+def test_pip_insert_lands_where_the_editor_put_it(tmp_path):
+    """Мем-вставку двигают ручками на превью — рендер обязан поставить её туда же."""
+
+    _require_ffmpeg()
+    clip = tmp_path / "clip.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "color=c=black:s=360x640:d=3", "-t", "3",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip))
+    meme = tmp_path / "meme.png"
+    _ffmpeg("-f", "lavfi", "-i", "color=c=red:s=100x100", "-frames:v", "1", str(meme))
+
+    assets = {1: {"kind": "image", "file_path": str(meme), "has_audio": False}}
+    # Четверть ширины, центр — в левом верхнем углу кадра.
+    inserts = normalize_inserts(
+        [{"asset_id": 1, "at": 0.5, "duration": 2.0, "mode": "pip", "x": 0.25, "y": 0.2, "scale": 0.25}]
+    )
+    assert inserts[0]["x"] == 0.25 and inserts[0]["scale"] == 0.25
+
+    out = tmp_path / "out.mp4"
+    args = build_inserts_args(clip, out, inserts, assets, 360, 640, 3.0, clip_has_audio=False)
+    assert args is not None
+    graph = args[args.index("-filter_complex") + 1]
+    assert "overlay=x=(W*0.2500)-(w/2):y=(H*0.2000)-(h/2)" in graph
+    subprocess.run(args, check=True, timeout=120)
+
+    frame = tmp_path / "frame.png"
+    _ffmpeg("-ss", "1.5", "-i", str(out), "-frames:v", "1", str(frame))
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(frame), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True, timeout=60,
+    ).stdout
+
+    def pixel(fx: float, fy: float) -> tuple[int, int, int]:
+        x, y = int(360 * fx), int(640 * fy)
+        i = (y * 360 + x) * 3
+        return raw[i], raw[i + 1], raw[i + 2]
+
+    assert pixel(0.25, 0.2)[0] > 150  # красный мем там, куда его поставили
+    assert pixel(0.5, 0.32)[0] < 60  # и его нет на старом прибитом месте
