@@ -354,6 +354,22 @@ function drawInserts(
   }
 }
 
+/** Настоящий баннер на превью: та же геометрия, что в рендере.
+ *  Высота — доля кадра, ширина по пропорциям, верх по доле кадра, по центру. */
+function drawBanner(
+  ctx: CanvasRenderingContext2D,
+  cv: { width: number; height: number },
+  banner: HTMLImageElement | null,
+  heightPct: number,
+  posPct: number,
+) {
+  if (!banner?.naturalWidth || !banner.naturalHeight) return false;
+  const dh = cv.height * (heightPct / 100);
+  const dw = (banner.naturalWidth / banner.naturalHeight) * dh;
+  ctx.drawImage(banner, (cv.width - dw) / 2, cv.height * (posPct / 100), dw, dh);
+  return true;
+}
+
 /** Размер уголка-ручки на превью, px канваса. */
 const INSERT_HANDLE = 12;
 
@@ -448,6 +464,8 @@ function CropFrame({
   subWordsRef,
   subStyleRef,
   subPosPctRef,
+  bannerRef,
+  bannerGeomRef,
 }: {
   srcW: number;
   srcH: number;
@@ -475,6 +493,9 @@ function CropFrame({
   /** Пословные тайминги клипа (караоке) и стиль субтитров — как в рендере. */
   subWordsRef?: React.MutableRefObject<SubtitleWord[]>;
   subStyleRef?: React.MutableRefObject<SubtitleStyle | null>;
+  /** Картинка баннера и её геометрия (% высоты кадра и % сверху). */
+  bannerRef?: React.MutableRefObject<HTMLImageElement | null>;
+  bannerGeomRef?: React.MutableRefObject<{ height: number; pos: number } | null>;
   /** Положение субтитров, % снизу. */
   subPosPctRef: React.MutableRefObject<number>;
 }) {
@@ -551,6 +572,10 @@ function CropFrame({
           const octx = ov?.getContext("2d");
           if (ov && octx) {
             octx.clearRect(0, 0, ov.width, ov.height);
+            // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
+            if (bannerRef?.current) {
+              drawBanner(octx, ov, bannerRef.current, bannerGeomRef?.current?.height ?? 12, bannerGeomRef?.current?.pos ?? 4);
+            }
             drawInserts(octx, ov, insertsRef.current, segments, cur, !v.paused);
             // Караоке по стилю клипа; без пословных таймингов (ещё не распознали)
             // остаётся старая строка — лучше грубое превью, чем пустой кадр.
@@ -740,6 +765,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Пословные тайминги и стиль клипа: с ними превью рисует те же субтитры,
   // что выжжет рендер, а не «примерно похожие».
   const subWordsRef = useRef<SubtitleWord[]>([]);
+  // Баннер рисуем настоящий: раньше в превью была серая плашка с надписью.
+  const bannerImgRef = useRef<HTMLImageElement | null>(null);
+  const bannerGeomRef = useRef<{ height: number; pos: number } | null>(null);
   const subStyleRef = useRef<SubtitleStyle | null>(null);
   const subPosPctRef = useRef(12);
   // Что выбрано на таймлайне: кусок, строка субтитров или вставка.
@@ -1262,6 +1290,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   }, [query.data?.duration_sec]);
 
   // Keyboard: F ★ / X hide / E edit the moment under the pointer; in the editor
+  // Картинка баннера для превью: грузим один раз на выбранный баннер.
+  useEffect(() => {
+    if (!bannerOn || !bannerId) {
+      bannerImgRef.current = null;
+      return;
+    }
+    const img = new Image();
+    img.src = `/media/banners/${bannerId}`;
+    img.onload = () => (bannerImgRef.current = img);
+    img.onerror = () => (bannerImgRef.current = null);
+  }, [bannerOn, bannerId]);
+
   // F stars the open clip and Esc goes back to the moments (see «?» in the shell).
   // One stable listener (a hook must not sit after the early returns below); it
   // calls whatever handler the latest render left in keyHandlerRef.
@@ -1419,6 +1459,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   subStyleRef.current = (subs.data?.find((s) => s.id === subId) ?? subs.data?.[0] ?? null) as SubtitleStyle | null;
   // Субтитры для превью тянем здесь, а не из панели субтитров: иначе караоке
   // пропадало бы, когда панель свёрнута или не помещается в узкое окно.
+  bannerGeomRef.current = bannerOn && bannerId ? { height: bannerHeightPct, pos: bannerPosPct } : null;
   subLinesRef.current = planSubs.data?.lines ?? subLinesRef.current;
   subWordsRef.current = (planSubs.data?.words ?? subWordsRef.current) as SubtitleWord[];
   const visiblePlans = planGroups.flatMap(([, g]) => g);
@@ -1945,6 +1986,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   subLinesRef={subLinesRef}
                   subWordsRef={subWordsRef}
                   subStyleRef={subStyleRef}
+                  bannerRef={bannerImgRef}
+                  bannerGeomRef={bannerGeomRef}
                   subPosPctRef={subPosPctRef}
                 />
               </div>
@@ -1978,12 +2021,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 {selectedPreset?.vignette ? (
                   <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
                 ) : null}
-                {showZones && bannerOn ? (
+                {showZones && bannerOn && !bannerId ? (
                   <div className="safe-zone safe-zone--banner" style={{ top: `${bannerPosPct}%`, height: `${bannerHeightPct}%` }}>
                     <span>Баннер</span>
                   </div>
                 ) : null}
-                {showZones && subsOn ? (
+                {showZones && subsOn && !planSubs.data?.words?.length ? (
                   <div className="safe-zone safe-zone--subs" style={{ bottom: `${subPosPct}%` }}>
                     <span>Субтитры</span>
                   </div>
