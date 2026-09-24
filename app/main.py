@@ -58,7 +58,13 @@ from app.montage_assets import probe_asset as probe_montage_asset
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
 from app.store import AppStore
-from app.timeline_export import TIMELINE_FORMATS, save_project, write_timeline
+from app.timeline_export import (
+    EDITOR_START_CMD,
+    TIMELINE_FORMATS,
+    editor_is_up,
+    save_project,
+    write_timeline,
+)
 from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
@@ -2162,6 +2168,8 @@ def api_clip_plan_timeline_project(clip_plan_id: int, _auth: AuthDep) -> dict:
         "path": str(path),
         "name": path.name,
         "editor_url": settings.editor_url,
+        "editor_up": editor_is_up(),
+        "start_cmd": EDITOR_START_CMD,
         "formats": sorted(TIMELINE_FORMATS),
     }
 

@@ -21,12 +21,17 @@ services:
     restart: unless-stopped
 
   # Веб-редактор: настоящий Kdenlive, отданный в браузер (LinuxServer/Selkies).
+  # Профиль editor: обычный `docker compose up -d` его НЕ поднимает — GUI-контейнер
+  # держит гигабайты памяти, а нужен он только когда клип доделывают руками:
+  #   docker compose --profile editor up -d editor
+  #   docker compose stop editor
   # Смонтирован тот же том /data, что и у сервиса, поэтому проект из
   # «Отдать в монтажку» открывается по своему пути, а исходники и клипы видны
   # без перепривязки. Kdenlive 25.04+ читает .otio нативно.
   # Наружу не выставляем: в его вебе есть терминал с sudo без пароля.
   editor:
     image: lscr.io/linuxserver/kdenlive:latest
+    profiles: ["editor"]
     environment:
       PUID: ${EDITOR_PUID:-1000}
       PGID: ${EDITOR_PGID:-1000}

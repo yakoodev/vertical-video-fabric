@@ -957,8 +957,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     mutationFn: (clipPlanId: number) => clipPlansApi.saveTimelineProject(clipPlanId),
     onSuccess: (r) => {
       setEditorHint(r.path);
-      toast.success(`Проект сохранён: ${r.path}`);
-      window.open(r.editor_url, "_blank", "noopener");
+      if (r.editor_up) {
+        toast.success(`Проект сохранён: ${r.path}`);
+        window.open(r.editor_url, "_blank", "noopener");
+        return;
+      }
+      // Редактор — GUI-контейнер на гигабайты памяти, поэтому по умолчанию выключен.
+      toast.push(`Проект сохранён: ${r.path}. Редактор не запущен — подними: ${r.start_cmd}`, "info");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось собрать проект"),
   });
@@ -2515,7 +2520,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 className="btn sm primary"
                 disabled={!activePlan || openEditorWeb.isPending}
                 onClick={() => activePlan && openEditorWeb.mutate(activePlan.id)}
-                title="Сохранить проект на общий том и открыть Kdenlive в браузере"
+                title="Сохранить проект на общий том и открыть Kdenlive в браузере (контейнер editor)"
               >
                 {openEditorWeb.isPending ? "Готовлю проект…" : "🌐 Доделать в веб-редакторе"}
               </button>
@@ -2524,6 +2529,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   В редакторе: Project → Open → <b>{editorHint}</b>
                 </span>
               ) : null}
+              <span className="muted" style={{ fontSize: 11.5 }}>
+                Редактор не держим запущенным (он ест память): поднимается командой{" "}
+                <code>docker compose --profile editor up -d editor</code>, гасится{" "}
+                <code>docker compose stop editor</code>.
+              </span>
             </Group>
           </div>
 

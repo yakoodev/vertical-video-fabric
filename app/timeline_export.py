@@ -149,3 +149,24 @@ def write_timeline(store: Any, clip_plan_id: int, fmt: str = "otio", out_dir: Pa
 def save_project(store: Any, clip_plan_id: int) -> Path:
     """Положить .otio туда, где его откроет веб-редактор (общий том /data)."""
     return write_timeline(store, clip_plan_id, "otio", out_dir=projects_dir())
+
+
+EDITOR_START_CMD = "docker compose --profile editor up -d editor"
+
+
+def editor_is_up(timeout: float = 1.5) -> bool:
+    """Поднят ли контейнер редактора.
+
+    Он живёт под отдельным профилем и по умолчанию выключен — незачем держать
+    GUI-контейнер в памяти ради кнопки. Проверяем перед тем, как открывать
+    вкладку, иначе владелец упрётся в «сайт недоступен» и будет гадать.
+    Самоподписанный сертификат и 401 basic-auth — признаки, что он как раз жив.
+    """
+
+    import httpx
+
+    try:
+        response = httpx.get(settings.editor_url, timeout=timeout, verify=False)  # noqa: S501
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 500
