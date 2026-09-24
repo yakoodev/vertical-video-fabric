@@ -21,14 +21,17 @@ export function AiMontageDialog({
   clipTitle,
   onClose,
   onApplied,
+  initialGoal = "",
 }: {
   clipPlanId: number;
   clipTitle: string;
   onClose: () => void;
   onApplied: (changes: string[], rendered: boolean) => void;
+  /** С чем открыли диалог: например «только расставь мемы» с полки вставок. */
+  initialGoal?: string;
 }) {
   const toast = useToast();
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(initialGoal);
   const [proposal, setProposal] = useState<AiMontageProposal | null>(null);
   const assets = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   const MODE: Record<string, string> = { full: "на весь кадр", pip: "окном", sound: "звук" };

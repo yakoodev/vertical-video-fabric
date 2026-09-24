@@ -940,6 +940,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
+  // С чем открыт диалог ИИ-монтажа: с полки вставок он приходит с готовым
+  // пожеланием «только мемы», чтобы не перекраивать уже собранный клип.
+  const [aiGoal, setAiGoal] = useState("");
   // Правка строк в узкой колонке инспектора — микроскоп, поэтому у неё есть
   // широкий режим на всё окно (референс editor2: компактный вход, широкая работа).
   const [subsWide, setSubsWide] = useState(false);
@@ -1634,6 +1637,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     <div className="editor">
       {aiMontageOpen && activePlan ? (
         <AiMontageDialog
+          initialGoal={aiGoal}
           clipPlanId={activePlan.id}
           clipTitle={activePlan.title || `План #${activePlan.id}`}
           onClose={() => setAiMontageOpen(false)}
@@ -1705,6 +1709,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             disabled={!activePlan}
             onClick={async () => {
               await flushSettings();
+              setAiGoal("");
               setAiMontageOpen(true);
             }}
             title="ИИ перемонтирует клип: хук в начало, без пауз и воды, переход, обложка — с предпросмотром «было → стало»"
@@ -2286,6 +2291,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 toast.success(`«${asset?.label ?? "файл"}» на ${formatDuration(at)} — тяните блок, чтобы подвинуть`);
               }}
             />
+            <div className="ed-shelf-head">
+              <span className="ed-shelf-title">Полка вставок</span>
+              <span className="muted ed-shelf-hint">перетащи файл на дорожку «Вставки» или кликни дважды — встанет под курсором</span>
+              <button
+                className="btn sm"
+                disabled={!activePlan}
+                onClick={async () => {
+                  await flushSettings();
+                  setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
+                  setAiMontageOpen(true);
+                }}
+                title="ИИ разложит мемы по клипу, не трогая куски"
+              >
+                ✨ ИИ подберёт мемы
+              </button>
+            </div>
             <AssetDrawer
               onAdd={(assetId) => {
                 const asset = assetsQuery.data?.find((a) => a.id === assetId);
@@ -2317,6 +2338,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   disabled={!activePlan}
                   onClick={async () => {
                     await flushSettings();
+                    setAiGoal("");
                     setAiMontageOpen(true);
                   }}
                   title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"

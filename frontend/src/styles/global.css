@@ -3340,6 +3340,17 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .ctl-time { margin-left: 6px; font-size: 12px; }
 .ctl-hint { font-size: 11.5px; margin-left: auto; }
 .ctl-tools { display: flex; gap: 6px; margin-left: 10px; }
+/* Полка вставок — продолжение дорожки «Вставки», а не отдельный виджет. */
+.ed-shelf-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+}
+.ed-shelf-title { font-size: 12.5px; font-weight: 600; }
+.ed-shelf-hint { font-size: 11.5px; margin-right: auto; }
 .ctl-body { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0; }
 .ctl-labels { display: grid; grid-template-rows: 24px 58px 44px 54px 40px; gap: 6px; }
 .ctl-label {
