@@ -340,15 +340,36 @@ function drawInserts(
     }
     ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
     if (ins.mode === "pip" && !playing) {
-      // На паузе показываем рамку и угол: за них вставку двигают и растягивают.
+      // На паузе показываем рамку, уголки и подпись: за картинку вставку двигают,
+      // за правый нижний угол — растягивают.
       ctx.save();
-      ctx.strokeStyle = "rgba(167,139,250,0.9)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "rgba(167,139,250,0.95)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
       ctx.strokeRect(dx, dy, dw, dh);
       ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(167,139,250,0.95)";
+      // Метки по трём углам — чтобы рамка читалась как выделение…
+      const mark = Math.min(14, dw / 4, dh / 4);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(dx, dy + mark); ctx.lineTo(dx, dy); ctx.lineTo(dx + mark, dy);
+      ctx.moveTo(dx + dw - mark, dy); ctx.lineTo(dx + dw, dy); ctx.lineTo(dx + dw, dy + mark);
+      ctx.moveTo(dx, dy + dh - mark); ctx.lineTo(dx, dy + dh); ctx.lineTo(dx + mark, dy + dh);
+      ctx.stroke();
+      // …а правый нижний — как ручка размера.
+      ctx.fillStyle = "#a78bfa";
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
       ctx.fillRect(dx + dw - INSERT_HANDLE, dy + dh - INSERT_HANDLE, INSERT_HANDLE, INSERT_HANDLE);
+      ctx.strokeRect(dx + dw - INSERT_HANDLE, dy + dh - INSERT_HANDLE, INSERT_HANDLE, INSERT_HANDLE);
+      const caption = `${ins.label}`.slice(0, 22) + ` · ${Math.round(ins.scale * 100)}%`;
+      ctx.font = "600 11px Inter, sans-serif";
+      const tw = ctx.measureText(caption).width + 10;
+      const ty = dy > 18 ? dy - 16 : dy + 2;
+      ctx.fillStyle = "rgba(15,12,24,0.85)";
+      ctx.fillRect(dx, ty, tw, 15);
+      ctx.fillStyle = "#d8ccff";
+      ctx.fillText(caption, dx + 5, ty + 11);
       ctx.restore();
     }
   }
@@ -371,7 +392,7 @@ function drawBanner(
 }
 
 /** Размер уголка-ручки на превью, px канваса. */
-const INSERT_HANDLE = 12;
+const INSERT_HANDLE = 16;
 
 /** За что взялись на превью: двигаем вставку, тянем угол или ничего. */
 function insertHit(

@@ -2218,11 +2218,17 @@ button.task-link:disabled {
   gap: 12px;
   min-width: 0;
 }
+/* Главный объект редактора — вертикальный кадр: именно он отвечает на вопрос
+   «что выйдет в клипе». Исходник рядом нужен для кадрирования, поэтому он ужат. */
 .ed-stage-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: stretch;
+}
+@media (min-width: 1500px) {
+  .ed-stage-row { grid-template-columns: minmax(0, 0.82fr) auto; }
+  .ed-phone-screen { height: min(64vh, 620px); }
 }
 .ed-stage {
   position: relative;
