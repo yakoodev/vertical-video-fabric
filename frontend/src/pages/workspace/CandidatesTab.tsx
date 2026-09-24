@@ -2190,6 +2190,41 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
         <aside className="ed-inspector">
           <div className="ed-insp-scroll">
+            {/* Быстрые ИИ-действия сверху: их зовут на каждом клипе, а искать их
+                по свёрнутым группам — лишний скролл (ref2-inspector.png). */}
+            <div className="ed-quick">
+              <span className="ed-quick-title">Быстрые ИИ-действия</span>
+              <div className="ed-quick-row">
+                <button
+                  className="btn sm primary"
+                  disabled={!activePlan}
+                  onClick={async () => {
+                    await flushSettings();
+                    setAiMontageOpen(true);
+                  }}
+                  title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"
+                >
+                  🤖 ИИ-монтаж
+                </button>
+                <a
+                  className="btn sm"
+                  href="/assets"
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Библиотека мемов: ИИ ищет картинки в интернете и описывает файлы"
+                >
+                  🔎 Найти мемы
+                </a>
+                <button
+                  className="btn sm"
+                  disabled={!activePlan?.segments.length || autofocus.isPending}
+                  onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                  title="Пересчитать автофокус для всех кусков клипа"
+                >
+                  {autofocus.isPending ? "Считаю…" : "🎯 Автофокус"}
+                </button>
+              </div>
+            </div>
             <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
               <label className="field">
                 <span>Пресет</span>
@@ -2261,39 +2296,124 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
 
-            <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
-              <label className="switch">
-                <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
-                <span className="switch-track" />
-                <span>Накладывать баннер</span>
-              </label>
-              {bannerOn ? (
-                <>
-                  <label className="field">
-                    <span>Картинка</span>
-                    <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
-                      <option value={0}>по умолчанию</option>
-                      {banners.data?.map((b) => (
-                        <option key={b.id} value={b.id}>{b.label}</option>
+            <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"} defaultOpen>
+              {!assetsQuery.data?.length ? (
+                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                  Библиотека пуста — закиньте мемы и звуки в{" "}
+                  <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
+                    «Файлы для монтажа»
+                  </a>
+                  . 🤖 ИИ-монтаж вставит подходящие сам.
+                </p>
+              ) : null}
+              {inserts.map((ins, i) => {
+                const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
+                const upd = (patchIns: Partial<MontageInsert>) =>
+                  setInserts((prev) => prev.map((x, j) => (j === i ? { ...x, ...patchIns } : x)));
+                return (
+                  <div key={i} className="ins-row">
+                    <select
+                      className="input"
+                      value={ins.asset_id}
+                      onChange={(e) => upd({ asset_id: Number(e.target.value) })}
+                    >
+                      {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
+                      {assetsQuery.data?.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label} · {a.kind}
+                        </option>
                       ))}
                     </select>
-                  </label>
-                  <label className="field range">
-                    <span>Высота · {bannerHeightPct}%</span>
-                    <input
-                      type="range" min={6} max={30} value={bannerHeightPct}
-                      onChange={(e) => setBannerHeightPct(Number(e.target.value))}
-                    />
-                  </label>
-                  <label className="field range">
-                    <span>Положение · {bannerPosPct}% сверху</span>
-                    <input
-                      type="range" min={0} max={80} value={bannerPosPct}
-                      onChange={(e) => setBannerPosPct(Number(e.target.value))}
-                    />
-                  </label>
-                </>
+                    <div className="ins-grid">
+                      <label className="field">
+                        <span>с, от начала клипа</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={ins.at}
+                          onChange={(e) => upd({ at: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>длит., с</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0.3}
+                          max={8}
+                          step={0.1}
+                          value={ins.duration}
+                          onChange={(e) => upd({ duration: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>как</span>
+                        <select
+                          className="input"
+                          value={asset?.kind === "audio" ? "sound" : ins.mode}
+                          disabled={asset?.kind === "audio"}
+                          onChange={(e) => upd({ mode: e.target.value as MontageInsert["mode"], duck: e.target.value === "full" })}
+                        >
+                          <option value="full">на весь кадр</option>
+                          <option value="pip">окном</option>
+                          <option value="sound">только звук</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="ins-foot">
+                      <button type="button" className="btn sm" title="Поставить на текущий момент плеера" onClick={() => upd({ at: clipTimeNow() })}>
+                        ⏱ сейчас
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        title="Проиграть клип с этого места"
+                        onClick={() => seekClipTime(ins.at)}
+                      >
+                        ▶ к месту
+                      </button>
+                      <button type="button" className="btn ghost sm" title="Убрать вставку" onClick={() => setInserts((prev) => prev.filter((_, j) => j !== i))}>
+                        ✕
+                      </button>
+                    </div>
+                    {ins.reason ? <span className="ins-why">🤖 {ins.reason}</span> : null}
+                  </div>
+                );
+              })}
+              {assetsQuery.data?.length ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={inserts.length >= 6}
+                  onClick={() =>
+                    setInserts((prev) => [
+                      ...prev,
+                      {
+                        asset_id: assetsQuery.data![0].id,
+                        at: clipTimeNow(),
+                        duration: 1.5,
+                        mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
+                        volume: 1,
+                        duck: assetsQuery.data![0].kind !== "audio",
+                      },
+                    ])
+                  }
+                >
+                  + Вставка на текущий момент
+                </button>
               ) : null}
+            </Group>
+
+            <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
+              {selectedSegment ? (
+                <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
+              ) : (
+                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+                  Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
+                </p>
+              )}
             </Group>
 
             <Group
@@ -2512,113 +2632,38 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
 
-            <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"}>
-              {!assetsQuery.data?.length ? (
-                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                  Библиотека пуста — закиньте мемы и звуки в{" "}
-                  <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
-                    «Файлы для монтажа»
-                  </a>
-                  . 🤖 ИИ-монтаж вставит подходящие сам.
-                </p>
-              ) : null}
-              {inserts.map((ins, i) => {
-                const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
-                const upd = (patchIns: Partial<MontageInsert>) =>
-                  setInserts((prev) => prev.map((x, j) => (j === i ? { ...x, ...patchIns } : x)));
-                return (
-                  <div key={i} className="ins-row">
-                    <select
-                      className="input"
-                      value={ins.asset_id}
-                      onChange={(e) => upd({ asset_id: Number(e.target.value) })}
-                    >
-                      {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
-                      {assetsQuery.data?.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label} · {a.kind}
-                        </option>
+            <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
+              <label className="switch">
+                <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
+                <span className="switch-track" />
+                <span>Накладывать баннер</span>
+              </label>
+              {bannerOn ? (
+                <>
+                  <label className="field">
+                    <span>Картинка</span>
+                    <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
+                      <option value={0}>по умолчанию</option>
+                      {banners.data?.map((b) => (
+                        <option key={b.id} value={b.id}>{b.label}</option>
                       ))}
                     </select>
-                    <div className="ins-grid">
-                      <label className="field">
-                        <span>с, от начала клипа</span>
-                        <input
-                          className="input"
-                          type="number"
-                          min={0}
-                          step={0.1}
-                          value={ins.at}
-                          onChange={(e) => upd({ at: Number(e.target.value) })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>длит., с</span>
-                        <input
-                          className="input"
-                          type="number"
-                          min={0.3}
-                          max={8}
-                          step={0.1}
-                          value={ins.duration}
-                          onChange={(e) => upd({ duration: Number(e.target.value) })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>как</span>
-                        <select
-                          className="input"
-                          value={asset?.kind === "audio" ? "sound" : ins.mode}
-                          disabled={asset?.kind === "audio"}
-                          onChange={(e) => upd({ mode: e.target.value as MontageInsert["mode"], duck: e.target.value === "full" })}
-                        >
-                          <option value="full">на весь кадр</option>
-                          <option value="pip">окном</option>
-                          <option value="sound">только звук</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="ins-foot">
-                      <button type="button" className="btn sm" title="Поставить на текущий момент плеера" onClick={() => upd({ at: clipTimeNow() })}>
-                        ⏱ сейчас
-                      </button>
-                      <button
-                        type="button"
-                        className="btn sm"
-                        title="Проиграть клип с этого места"
-                        onClick={() => seekClipTime(ins.at)}
-                      >
-                        ▶ к месту
-                      </button>
-                      <button type="button" className="btn ghost sm" title="Убрать вставку" onClick={() => setInserts((prev) => prev.filter((_, j) => j !== i))}>
-                        ✕
-                      </button>
-                    </div>
-                    {ins.reason ? <span className="ins-why">🤖 {ins.reason}</span> : null}
-                  </div>
-                );
-              })}
-              {assetsQuery.data?.length ? (
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={inserts.length >= 6}
-                  onClick={() =>
-                    setInserts((prev) => [
-                      ...prev,
-                      {
-                        asset_id: assetsQuery.data![0].id,
-                        at: clipTimeNow(),
-                        duration: 1.5,
-                        mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
-                        volume: 1,
-                        duck: assetsQuery.data![0].kind !== "audio",
-                      },
-                    ])
-                  }
-                >
-                  + Вставка на текущий момент
-                </button>
+                  </label>
+                  <label className="field range">
+                    <span>Высота · {bannerHeightPct}%</span>
+                    <input
+                      type="range" min={6} max={30} value={bannerHeightPct}
+                      onChange={(e) => setBannerHeightPct(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="field range">
+                    <span>Положение · {bannerPosPct}% сверху</span>
+                    <input
+                      type="range" min={0} max={80} value={bannerPosPct}
+                      onChange={(e) => setBannerPosPct(Number(e.target.value))}
+                    />
+                  </label>
+                </>
               ) : null}
             </Group>
 
@@ -2701,17 +2746,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </div>
             </Group>
 
-            <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
-              {selectedSegment ? (
-                <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
-              ) : (
-                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                  Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
-                </p>
-              )}
-            </Group>
-
-            {/* cut refinement: compare boundary hypotheses without re-running the analysis */}
             <Group title="Границы клипов" badge={cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.label ?? ""}>
               <select
                 className="input"
