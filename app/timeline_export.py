@@ -160,13 +160,16 @@ def editor_is_up(timeout: float = 1.5) -> bool:
     Он живёт под отдельным профилем и по умолчанию выключен — незачем держать
     GUI-контейнер в памяти ради кнопки. Проверяем перед тем, как открывать
     вкладку, иначе владелец упрётся в «сайт недоступен» и будет гадать.
+
+    Стучимся по имени сервиса (``https://editor:3001``), а не по тому адресу,
+    который открывает браузер: внутри контейнера localhost — это сам сервис.
     Самоподписанный сертификат и 401 basic-auth — признаки, что он как раз жив.
     """
 
     import httpx
 
     try:
-        response = httpx.get(settings.editor_url, timeout=timeout, verify=False)  # noqa: S501
+        response = httpx.get(settings.editor_probe_url, timeout=timeout, verify=False)  # noqa: S501
     except httpx.HTTPError:
         return False
     return response.status_code < 500
