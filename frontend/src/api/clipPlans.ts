@@ -91,6 +91,13 @@ export const clipPlansApi = {
     api.post<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { provider: provider || null }),
   saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
     request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
+  /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
+  undo: (clipPlanId: number) =>
+    api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(
+      `/api/clip-plans/${clipPlanId}/undo`,
+      {},
+    ),
+  undoDepth: (clipPlanId: number) => api.get<{ left: number }>(`/api/clip-plans/${clipPlanId}/undo`),
   /** Apply an AI re-edit; the server keeps the pre-AI version for undo. */
   aiMontageApply: (clipPlanId: number, spec: unknown) =>
     api.post<{ spec: Record<string, unknown>; changes: string[] }>(`/api/clip-plans/${clipPlanId}/ai-montage/apply`, { spec }),

@@ -1845,6 +1845,52 @@ class AppStore:
 
     # ---- «Файлы для монтажа» -------------------------------------------------
 
+    # ---- История правок клипа: шаг назад (Ctrl+Z) ----------------------------
+
+    def push_clip_plan_history(self, clip_plan_id: int, state: dict, label: str, depth: int = 20) -> None:
+        """Положить снимок состояния. Одинаковый подряд не дублируем."""
+        payload = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        last = self.db.query_one(
+            "SELECT state_json FROM clip_plan_history WHERE clip_plan_id = ? ORDER BY id DESC LIMIT 1",
+            (clip_plan_id,),
+        )
+        if last and last["state_json"] == payload:
+            return
+        self.db.execute(
+            "INSERT INTO clip_plan_history (clip_plan_id, state_json, label) VALUES (?, ?, ?)",
+            (clip_plan_id, payload, str(label or "")[:120]),
+        )
+        self.db.execute(
+            """
+            DELETE FROM clip_plan_history
+            WHERE clip_plan_id = ? AND id NOT IN (
+                SELECT id FROM clip_plan_history WHERE clip_plan_id = ? ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (clip_plan_id, clip_plan_id, int(depth)),
+        )
+
+    def pop_clip_plan_history(self, clip_plan_id: int) -> dict | None:
+        """Снять последний снимок (он же удаляется — иначе отмена топталась бы на месте)."""
+        row = self.db.query_one(
+            "SELECT id, state_json, label FROM clip_plan_history WHERE clip_plan_id = ? ORDER BY id DESC LIMIT 1",
+            (clip_plan_id,),
+        )
+        if not row:
+            return None
+        self.db.execute("DELETE FROM clip_plan_history WHERE id = ?", (row["id"],))
+        try:
+            state = json.loads(row["state_json"])
+        except (TypeError, ValueError):
+            return None
+        return {"state": state, "label": row["label"]}
+
+    def count_clip_plan_history(self, clip_plan_id: int) -> int:
+        row = self.db.query_one(
+            "SELECT COUNT(*) AS n FROM clip_plan_history WHERE clip_plan_id = ?", (clip_plan_id,)
+        )
+        return int(row["n"]) if row else 0
+
     # ---- Gemini Files API: что уже залито и до какого времени живёт ----------
 
     def get_gemini_file(self, local_path: str) -> dict | None:

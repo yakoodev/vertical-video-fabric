@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
 from app.clip_spec import json_schema as clip_spec_json_schema
+from app.clip_history import snapshot as snapshot_clip, undo as undo_clip
 from app.clip_settings import settings_to_render_kwargs
 from app.transitions import transition_options
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
@@ -2122,6 +2123,7 @@ def api_get_clip_spec(clip_plan_id: int, _auth: AuthDep) -> dict:
 )
 def api_put_clip_spec(clip_plan_id: int, spec: Annotated[dict, Body()], _auth: AuthDep) -> dict:
     try:
+        snapshot_clip(store, clip_plan_id, "правка клип-файла")
         fresh, changes = apply_spec(store, clip_plan_id, spec)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2146,6 +2148,36 @@ def api_clip_plan_timeline(clip_plan_id: int, _auth: AuthDep, format: str = "oti
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/undo",
+    tags=["Clip file"],
+    summary="↩ Шаг назад: вернуть клип к состоянию перед последней правкой",
+)
+def api_clip_plan_undo(clip_plan_id: int, _auth: AuthDep) -> dict:
+    """Одна отмена на любую правку: настройки, куски, субтитры, ИИ-монтаж."""
+    try:
+        fresh, changes, label = undo_clip(store, clip_plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
+    return {
+        "spec": fresh,
+        "changes": changes,
+        "label": label,
+        "left": store.count_clip_plan_history(clip_plan_id),
+    }
+
+
+@app.get(
+    "/api/clip-plans/{clip_plan_id}/undo",
+    tags=["Clip file"],
+    summary="Сколько шагов назад доступно",
+)
+def api_clip_plan_undo_depth(clip_plan_id: int, _auth: AuthDep) -> dict:
+    return {"left": store.count_clip_plan_history(clip_plan_id)}
 
 
 class AiMontageRequest(BaseModel):
@@ -2219,6 +2251,7 @@ def api_generate_plan_subtitles(
 )
 def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth: AuthDep) -> dict:
     try:
+        snapshot_clip(store, clip_plan_id, "правка субтитров")
         return save_plan_subtitle_lines(store, clip_plan_id, [line.model_dump() for line in payload.lines])
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2235,6 +2268,7 @@ class AiMontageApplyRequest(BaseModel):
 )
 def api_clip_plan_ai_montage_apply(clip_plan_id: int, payload: AiMontageApplyRequest, _auth: AuthDep) -> dict:
     try:
+        snapshot_clip(store, clip_plan_id, "ИИ-монтаж")
         spec, changes = apply_montage(store, clip_plan_id, payload.spec)
     except SpecError as exc:
         raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
@@ -2684,6 +2718,7 @@ def api_set_clip_plan_render_settings(
     clip_plan_id: int, payload: ClipPlanRenderSettingsPayload, _auth: AuthDep
 ) -> dict:
     try:
+        snapshot_clip(store, clip_plan_id, "настройки клипа")
         return store.set_clip_plan_render_settings(clip_plan_id, payload.settings)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -864,6 +864,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
+  // Ctrl+Z: снимок состояния делает сервер перед каждой правкой, здесь только
+  // просим шаг назад и перечитываем клип в панель.
+  const undoRef = useRef<() => void>(() => undefined);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
@@ -1019,6 +1022,24 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     );
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
+
+  const undoEdit = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      // Незаписанные правки панели сначала уезжают на сервер: иначе автосохранение
+      // сработает после отмены и вернёт то, что мы только что откатили.
+      await flushSettings();
+      return clipPlansApi.undo(clipPlanId);
+    },
+    onSuccess: async (r) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+      toast.success(`Шаг назад: ${r.label}${r.left ? ` · осталось ${r.left}` : ""}`);
+    },
+    onError: (e) =>
+      e instanceof ApiError && e.status === 404
+        ? toast.push("Отменять нечего", "info")
+        : toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"),
+  });
 
   const batch = useMutation({
     // No ids = everything ticked «в рендер»; the editor passes just its clip.
@@ -1223,6 +1244,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
+        e.preventDefault();
+        undoRef.current();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
       if (document.querySelector(".modal-backdrop")) return;
@@ -1360,6 +1387,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setInserts((prev) => prev.map((item, i) => (i === drag.index ? { ...item, ...next } : item)));
   };
 
+  undoRef.current = () => {
+    if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
+  };
   subPosPctRef.current = subPosPct;
   const visiblePlans = planGroups.flatMap(([, g]) => g);
   // Editor rail: the starred moments (plus the open one if it isn't starred);
@@ -1480,6 +1510,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               {source.original_filename || source.original_url || `Проект #${source.id}`}
             </span>
           </div>
+          <button
+            className="btn ed-undo-btn"
+            disabled={!activePlan || undoEdit.isPending}
+            onClick={() => activePlan && undoEdit.mutate(activePlan.id)}
+            title="Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, мемы"
+          >
+            {undoEdit.isPending ? "…" : "↩ Шаг назад"}
+          </button>
           {activePlan?.has_montage_backup ? (
             <button
               className="btn ed-undo-btn"
