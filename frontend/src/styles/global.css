@@ -3093,6 +3093,20 @@ kbd {
 .modal.create-modal { max-width: 860px; }
 .create-modal .proj-add { border-top: 0; padding-top: 0; }
 .modal.keys-modal { max-width: 560px; }
+/* Широкая правка субтитров: строки и таймкоды на всё окно, а не в колонке 300 px. */
+.modal.subs-wide {
+  max-width: min(1200px, 95vw);
+  width: 100%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal.subs-wide .subed { flex: 1; min-height: 0; }
+.modal.subs-wide .subed-list { max-height: calc(88vh - 150px); gap: 8px; }
+.modal.subs-wide .subed-line { padding: 10px 12px; }
+.modal.subs-wide .subed-line textarea { min-height: 52px; font-size: 14px; line-height: 1.4; }
+.modal.subs-wide .subed-top { grid-template-columns: 1fr 1fr auto; }
 .keys-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .keys-table td { padding: 7px 6px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
 .keys-table td:first-child { width: 150px; white-space: nowrap; }

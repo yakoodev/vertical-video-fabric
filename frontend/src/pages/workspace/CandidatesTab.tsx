@@ -937,6 +937,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
+  // Правка строк в узкой колонке инспектора — микроскоп, поэтому у неё есть
+  // широкий режим на всё окно (референс editor2: компактный вход, широкая работа).
+  const [subsWide, setSubsWide] = useState(false);
   const planSubs = useQuery({
     queryKey: ["plan-subtitles", editorPlanId],
     queryFn: () => clipPlansApi.getSubtitles(editorPlanId as number),
@@ -1646,6 +1649,31 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </button>
         </div>
       ) : null}
+      {subsWide && activePlan ? (
+        <div className="modal-backdrop" onClick={() => setSubsWide(false)}>
+          <div className="modal subs-wide" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="pub-head">
+              <h3>Субтитры клипа · {activePlan.title || `План #${activePlan.id}`}</h3>
+              <button className="pub-x" title="Закрыть" onClick={() => setSubsWide(false)}>
+                ×
+              </button>
+            </div>
+            <SubtitleEditor
+              key={`wide-${activePlan.id}`}
+              clipPlanId={activePlan.id}
+              clipTime={clipTimeNow}
+              onSeek={seekClipTime}
+              onLines={(lines) => {
+                subLinesRef.current = lines;
+                setSubLines(lines);
+              }}
+              onWords={(words) => {
+                subWordsRef.current = words;
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
       {view === "triage" && (
       <>
       <div className="mo-top">
@@ -2298,6 +2326,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       onChange={(e) => setSubPosPct(Number(e.target.value))}
                     />
                   </label>
+                  {activePlan ? (
+                    <button
+                      className="btn sm"
+                      onClick={() => setSubsWide(true)}
+                      title="Открыть строки на всё окно: широкий текст и таймкоды"
+                    >
+                      ⛶ Править строки широко
+                    </button>
+                  ) : null}
                   {activePlan ? (
                     <SubtitleEditor
                       key={activePlan.id}
