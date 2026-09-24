@@ -647,13 +647,18 @@ function CropFrame({
 
 // Approximate the render-side ffmpeg color grade with a CSS filter so the look
 // preset is visible right in the preview. Mirrors _color_style_filters in render.py.
+// Лук в превью считается по тем же числам, что уходят в ffmpeg (_color_style_filters
+// в app/render.py): contrast и saturation переносятся один в один, сдвиг каналов
+// (colorbalance) приближается лёгкой сепией для тёплого и поворотом тона для
+// холодного. Раньше превью врало направлением: у «холодного» насыщенность падала,
+// хотя рендер её поднимает, а «нуар» не реагировал на силу лука вовсе.
 const LOOK_CSS: Record<string, (s: number) => string> = {
-  warm: (s) => `sepia(${(0.18 * s).toFixed(3)}) saturate(${(1 + 0.06 * s).toFixed(3)}) brightness(${(1 + 0.02 * s).toFixed(3)})`,
-  cold: (s) => `saturate(${(1 - 0.12 * s).toFixed(3)}) contrast(${(1 + 0.05 * s).toFixed(3)}) hue-rotate(-8deg)`,
+  warm: (s) => `sepia(${(0.12 * s).toFixed(3)}) saturate(${(1 + 0.08 * s).toFixed(3)}) contrast(${(1 + 0.06 * s).toFixed(3)})`,
+  cold: (s) => `hue-rotate(${(-6 * s).toFixed(1)}deg) saturate(${(1 + 0.05 * s).toFixed(3)}) contrast(${(1 + 0.05 * s).toFixed(3)})`,
   cinematic: (s) => `contrast(${(1 + 0.08 * s).toFixed(3)}) saturate(${(1 + 0.06 * s).toFixed(3)})`,
   vibrant: (s) => `saturate(${(1 + 0.35 * s).toFixed(3)}) contrast(${(1 + 0.08 * s).toFixed(3)})`,
-  noir: () => `grayscale(1) contrast(1.1)`,
-  vintage: (s) => `sepia(${(0.3 * s).toFixed(3)}) saturate(${(1 + 0.1 * s).toFixed(3)}) contrast(${(1 - 0.05 * s).toFixed(3)})`,
+  noir: (s) => `grayscale(1) contrast(${(1 + 0.25 * s).toFixed(3)}) brightness(${(1 - 0.02 * s).toFixed(3)})`,
+  vintage: (s) => `sepia(${(0.25 * s).toFixed(3)}) saturate(${(1 - 0.15 * s).toFixed(3)}) contrast(${(1 + 0.05 * s).toFixed(3)})`,
 };
 function lookFilterCss(preset?: FfmpegPreset): string {
   if (!preset) return "";
