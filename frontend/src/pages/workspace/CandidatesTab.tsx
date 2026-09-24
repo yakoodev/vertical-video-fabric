@@ -2180,6 +2180,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </div>
             <ClipTimeline
+              sourceId={source.id}
               pieces={activePlan?.segments ?? []}
               inserts={inserts}
               subLines={subLines}

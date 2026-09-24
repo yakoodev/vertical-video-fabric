@@ -58,6 +58,20 @@ export function sourceToClip(pieces: AiSegment[], sourceSec: number): number | n
  * куски, субтитры и вставки можно двигать и тянуть мышью, а не набирать
  * числами в правой панели.
  */
+/** Кадры куска для полосы: столько, сколько влезает, но без фанатизма —
+ *  каждый кадр это ffmpeg на сервере (он их кэширует). */
+const THUMB_W = 64;
+const MAX_THUMBS = 10;
+function pieceThumbs(sourceId: number, piece: AiSegment, widthPx: number) {
+  const length = piece.end_sec - piece.start_sec;
+  if (length <= 0 || widthPx < 40) return [];
+  const count = Math.max(1, Math.min(MAX_THUMBS, Math.round(widthPx / THUMB_W)));
+  return Array.from({ length: count }, (_, i) => {
+    const at = piece.start_sec + (length * (i + 0.5)) / count;
+    return { at: Math.round(at * 10) / 10, url: `/api/sources/${sourceId}/frame?t=${at.toFixed(1)}&w=160` };
+  });
+}
+
 export function ClipTimeline({
   pieces,
   inserts,
@@ -71,6 +85,7 @@ export function ClipTimeline({
   onInsertsChange,
   onSubLinesChange,
   onDropAsset,
+  sourceId,
 }: {
   pieces: AiSegment[];
   inserts: MontageInsert[];
@@ -84,6 +99,8 @@ export function ClipTimeline({
   onInsertsChange: (next: MontageInsert[]) => void;
   onSubLinesChange: (next: SubtitleLine[]) => void;
   onDropAsset: (assetId: number, atClipSec: number) => void;
+  /** Источник клипа: по нему дорожка «Клипы» показывает кадры, а не пустые блоки. */
+  sourceId: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -299,6 +316,11 @@ export function ClipTimeline({
                     onPointerDown={(e) => startDrag(e, { kind: "piece", index: i, mode: "move", a: row.start, b: row.end })}
                     title={`${row.piece.title || "кусок"} · исходник ${formatDuration(row.piece.start_sec)}`}
                   >
+                    <span className="ctl-thumbs" aria-hidden>
+                      {pieceThumbs(sourceId, row.piece, (l.b - l.a) * pps).map((t) => (
+                        <img key={t.at} src={t.url} alt="" loading="lazy" draggable={false} />
+                      ))}
+                    </span>
                     <span className="ctl-grip" data-resize="start" />
                     <span className="ctl-block-label">{row.piece.title || `Кусок ${i + 1}`}</span>
                     <span className="ctl-grip" data-resize="end" />

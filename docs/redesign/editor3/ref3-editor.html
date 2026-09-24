@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ref3 Editor</title>
+    <link rel="stylesheet" href="../../../frontend/src/styles/global.css">
+    <link rel="stylesheet" href="./ref3-shared.css">
+  </head>
+  <body class="ref3">
+    <main class="ref3-stage">
+      <header class="ref3-topbar">
+        <button class="btn ghost ref3-back"><span>←</span> Назад к моментам</button>
+        <div class="ref3-crumb">
+          <strong>Почему стрим разогнал чат за 20 секунд</strong>
+          <span>Stream_2026-09-24 · клип 04 · 00:18.4</span>
+        </div>
+        <span class="ref3-chip on"><i class="ref3-dot"></i> автосохранение</span>
+        <span class="spacer"></span>
+        <button class="btn">Шаг назад</button>
+        <button class="btn primary">ИИ-монтаж</button>
+        <span class="ref3-kbd">Ctrl Z</span>
+      </header>
+
+      <section class="ref3-editor-grid">
+        <aside class="ref3-panel ref3-moments">
+          <div class="ref3-panel-head">
+            <div class="ref3-panel-title">
+              <strong>Моменты</strong>
+              <span>избранное и кандидаты для Reels</span>
+            </div>
+            <span class="ref3-chip">12</span>
+          </div>
+          <div class="ref3-moment-filter">
+            <button class="active">★ Избранное</button>
+            <button>Все</button>
+            <button>Рендер</button>
+          </div>
+          <div class="ref3-moment-list">
+            <button class="ref3-moment-card active">
+              <span class="ref3-thumb"></span>
+              <span class="ref3-moment-meta">
+                <strong>Хук про донат и реакцию</strong>
+                <span class="mono">00:12:44 → 00:13:03 · 18.4 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 92%"><i></i></span>92</span>
+              </span>
+            </button>
+            <button class="ref3-moment-card">
+              <span class="ref3-thumb alt"></span>
+              <span class="ref3-moment-meta">
+                <strong>Чат просит повторить фразу</strong>
+                <span class="mono">00:18:22 → 00:18:39 · 17.0 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 86%"><i></i></span>86</span>
+              </span>
+            </button>
+            <button class="ref3-moment-card">
+              <span class="ref3-thumb"></span>
+              <span class="ref3-moment-meta">
+                <strong>Мемная пауза перед ответом</strong>
+                <span class="mono">00:31:08 → 00:31:25 · 16.8 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 81%"><i></i></span>81</span>
+              </span>
+            </button>
+            <button class="ref3-moment-card">
+              <span class="ref3-thumb alt"></span>
+              <span class="ref3-moment-meta">
+                <strong>Неожиданная смена темы</strong>
+                <span class="mono">00:42:16 → 00:42:34 · 18.1 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 78%"><i></i></span>78</span>
+              </span>
+            </button>
+            <button class="ref3-moment-card">
+              <span class="ref3-thumb"></span>
+              <span class="ref3-moment-meta">
+                <strong>Финальная шутка с баннером</strong>
+                <span class="mono">01:02:10 → 01:02:28 · 18.0 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 74%"><i></i></span>74</span>
+              </span>
+            </button>
+            <button class="ref3-moment-card">
+              <span class="ref3-thumb alt"></span>
+              <span class="ref3-moment-meta">
+                <strong>Резкий ответ на вопрос</strong>
+                <span class="mono">01:17:55 → 01:18:12 · 16.9 с</span>
+                <span class="ref3-score"><span class="ref3-score-bar" style="--w: 71%"><i></i></span>71</span>
+              </span>
+            </button>
+          </div>
+        </aside>
+
+        <section class="ref3-editor-main">
+          <div class="ref3-panel ref3-preview-panel">
+            <div class="ref3-stage-label">
+              <span class="ref3-chip on">Сегмент 02</span>
+              <span class="mono">00:06.20 / 00:18.40</span>
+            </div>
+            <div class="ref3-phone" aria-label="Вертикальное превью 9:16">
+              <div class="ref3-phone-screen">
+                <span class="ref3-phone-top"></span>
+                <span class="ref3-phone-tag">9:16</span>
+                <span class="ref3-safe banner">Баннер</span>
+                <span class="ref3-safe subs">safe zone</span>
+                <div class="ref3-caption">чат <mark>взорвался</mark> ровно здесь</div>
+              </div>
+            </div>
+            <div class="ref3-segment-stack">
+              <div class="ref3-segment">
+                <strong>Сегмент 01</strong>
+                <span class="mono">00:00.0 → 00:06.2 · вступление</span>
+              </div>
+              <div class="ref3-segment active">
+                <strong>Сегмент 02</strong>
+                <span class="mono">00:06.2 → 00:13.8 · хук и реакция</span>
+              </div>
+              <div class="ref3-segment">
+                <strong>Сегмент 03</strong>
+                <span class="mono">00:13.8 → 00:18.4 · добивка</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ref3-panel ref3-transport">
+            <button class="btn sm primary">Превью клипа</button>
+            <button class="btn sm danger">Стоп</button>
+            <span class="time">00:08.48</span>
+            <span class="scrub"><i></i></span>
+            <span class="time">00:18.40</span>
+            <label class="ref3-check"><input type="checkbox" checked> Зациклить</label>
+            <span class="ref3-chip">1.25x</span>
+          </div>
+
+          <div class="ref3-panel ref3-timeline-panel">
+            <div class="ref3-timeline-head">
+              <h2>Таймлайн клипа</h2>
+              <span class="muted">перетаскивайте блоки · мемы и звук кладутся на «Вставки»</span>
+              <div class="zoom">Зум <span class="ref3-zoom-track"><i></i></span> 146%</div>
+            </div>
+            <div class="ref3-timeline">
+              <div class="ref3-labels">
+                <span></span>
+                <span>Клипы</span>
+                <span>Субтитры</span>
+                <span>Вставки</span>
+              </div>
+              <div class="ref3-ruler-area">
+                <div class="ref3-ruler">
+                  <span class="ref3-tick" style="left: 0%"><strong>0:00</strong></span>
+                  <span class="ref3-tick" style="left: 20%"><strong>0:04</strong></span>
+                  <span class="ref3-tick" style="left: 40%"><strong>0:08</strong></span>
+                  <span class="ref3-tick" style="left: 60%"><strong>0:12</strong></span>
+                  <span class="ref3-tick" style="left: 80%"><strong>0:16</strong></span>
+                </div>
+                <div class="ref3-track">
+                  <div class="ref3-block clip" style="left: 2%; width: 31%"><span class="ref3-handle"></span><b>Вступление</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block clip selected" style="left: 34%; width: 41%"><span class="ref3-handle"></span><b>Хук + реакция</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block clip" style="left: 76%; width: 20%"><span class="ref3-handle"></span><b>Добивка</b><span class="ref3-handle"></span></div>
+                </div>
+                <div class="ref3-track">
+                  <div class="ref3-block sub" style="left: 7%; width: 26%"><span class="ref3-handle"></span><b>сейчас покажу...</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block sub" style="left: 36%; width: 39%"><span class="ref3-handle"></span><b>чат взорвался ровно здесь</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block sub" style="left: 77%; width: 17%"><span class="ref3-handle"></span><b>и это главное</b><span class="ref3-handle"></span></div>
+                </div>
+                <div class="ref3-track">
+                  <div class="ref3-block insert" style="left: 29%; width: 12%"><span class="ref3-handle"></span><b>zoom pop</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block insert" style="left: 58%; width: 18%"><span class="ref3-handle"></span><b>реакция.png</b><span class="ref3-handle"></span></div>
+                  <div class="ref3-block insert" style="left: 82%; width: 10%"><span class="ref3-handle"></span><b>hit.wav</b><span class="ref3-handle"></span></div>
+                </div>
+                <span class="ref3-snapline"></span>
+                <span class="ref3-playhead"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="ref3-panel ref3-inspector">
+          <div class="ref3-inspector-scroll">
+            <div class="ref3-quick">
+              <span class="ref3-quick-title">Быстрые ИИ-действия</span>
+              <div class="ref3-quick-row">
+                <button class="btn sm primary">ИИ-монтаж</button>
+                <button class="btn sm">Найти мемы</button>
+                <button class="btn sm">Автофокус</button>
+              </div>
+            </div>
+
+            <section class="ref3-group">
+              <div class="ref3-group-head"><strong>Картинка (лук)</strong><span class="badge">контраст</span></div>
+              <div class="ref3-group-body">
+                <label class="ref3-field">Пресет<select class="input"><option>Контрастный стрим</option></select></label>
+                <label class="ref3-switch"><input type="checkbox" checked> Зеркало (лево↔право)</label>
+              </div>
+            </section>
+            <section class="ref3-group">
+              <div class="ref3-group-head"><strong>Субтитры</strong><span class="badge">вкл</span></div>
+              <div class="ref3-group-body">
+                <div class="ref3-mini-row">
+                  <label class="ref3-field">Движок<select class="input"><option>Whisper</option></select></label>
+                  <label class="ref3-field">Стиль<select class="input"><option>Karaoke bold</option></select></label>
+                </div>
+                <label class="ref3-field">Положение · 18% снизу<input type="range" value="58"></label>
+              </div>
+            </section>
+            <section class="ref3-group">
+              <div class="ref3-group-head"><strong>Вставки (мемы)</strong><span class="badge">3</span></div>
+              <div class="ref3-group-body">
+                <label class="ref3-field">Файл<select class="input"><option>reaction-face.png · image</option></select></label>
+                <div class="ref3-mini-row">
+                  <label class="ref3-field">с, от начала<input class="input" value="10.6"></label>
+                  <label class="ref3-field">как<select class="input"><option>окном</option></select></label>
+                </div>
+              </div>
+            </section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Фокус кадра</strong><span class="badge">4 точ.</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Переходы</strong><span class="badge">встык</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Обложка</strong><span class="badge">кадр</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Баннер</strong><span class="badge">вкл</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Музыка</strong><span class="badge">duck 42%</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Умный кадр</strong><span class="badge">shot</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Границы клипов</strong><span class="badge">по фразам</span></div></section>
+            <section class="ref3-group"><div class="ref3-group-head"><strong>Отдать в монтажку</strong><span class="badge">OTIO</span></div></section>
+          </div>
+
+          <footer class="ref3-inspector-foot">
+            <div class="ref3-foot-row">
+              <span>● настройки клипа сохранены</span>
+              <label class="ref3-check"><input type="checkbox" checked> Зоны</label>
+            </div>
+            <div class="ref3-foot-tools">
+              <button class="btn sm">Файл клипа</button>
+              <button class="btn sm">Ко всем ★</button>
+            </div>
+            <div class="ref3-render-row">
+              <button class="btn primary">Рендерить</button>
+              <button class="btn">Выбранные (4)</button>
+            </div>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>
