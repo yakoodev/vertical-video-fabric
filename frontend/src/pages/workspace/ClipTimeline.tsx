@@ -85,6 +85,8 @@ export function ClipTimeline({
   onInsertsChange,
   onSubLinesChange,
   onDropAsset,
+  onSplitAt,
+  onDeleteSelected,
   sourceId,
 }: {
   pieces: AiSegment[];
@@ -99,6 +101,10 @@ export function ClipTimeline({
   onInsertsChange: (next: MontageInsert[]) => void;
   onSubLinesChange: (next: SubtitleLine[]) => void;
   onDropAsset: (assetId: number, atClipSec: number) => void;
+  /** Разрезать кусок под курсором надвое. */
+  onSplitAt: (clipSec: number) => void;
+  /** Удалить выбранный блок (кусок, строку субтитров или вставку). */
+  onDeleteSelected: () => void;
   /** Источник клипа: по нему дорожка «Клипы» показывает кадры, а не пустые блоки. */
   sourceId: number;
 }) {
@@ -266,6 +272,23 @@ export function ClipTimeline({
         </button>
         <span className="muted mono ctl-time">
           {formatDuration(playhead)} / {formatDuration(duration)}
+        </span>
+        <span className="ctl-tools">
+          <button
+            className="btn ghost sm"
+            onClick={() => onSplitAt(playhead)}
+            title="Разрезать кусок по курсору (S)"
+          >
+            ✂ Разделить
+          </button>
+          <button
+            className="btn ghost sm"
+            disabled={!selected}
+            onClick={onDeleteSelected}
+            title="Удалить выбранный блок (Del)"
+          >
+            🗑 Удалить
+          </button>
         </span>
         <span className="muted ctl-hint">перетаскивайте блоки · файл из библиотеки — на дорожку «Вставки»</span>
       </div>

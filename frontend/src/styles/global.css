@@ -3339,6 +3339,7 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .ctl-bar { display: flex; align-items: center; gap: 6px; }
 .ctl-time { margin-left: 6px; font-size: 12px; }
 .ctl-hint { font-size: 11.5px; margin-left: auto; }
+.ctl-tools { display: flex; gap: 6px; margin-left: 10px; }
 .ctl-body { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0; }
 .ctl-labels { display: grid; grid-template-rows: 24px 58px 44px 54px; gap: 6px; }
 .ctl-label {

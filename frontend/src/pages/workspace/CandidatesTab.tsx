@@ -21,7 +21,10 @@ import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
-import { ClipTimeline, clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
+
+/** Кусок клип-файла: столько, сколько нужно для ✂ и 🗑 на таймлайне. */
+type SpecPiece = { segment_id?: number; title?: string; start_sec: number; end_sec: number };
+import { ClipTimeline, clipToSource, pieceBounds, type Selection } from "@/pages/workspace/ClipTimeline";
 import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
 import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
 
@@ -1483,6 +1486,61 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   undoRef.current = () => {
     if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
   };
+  // ✂ и 🗑 на таймлайне. Куски живут в клип-файле, поэтому правим его целиком
+  // через тот же эндпоинт, что и ручная правка: одна проверка, один снимок для Ctrl+Z.
+  const editPieces = useMutation({
+    mutationFn: async (make: (pieces: SpecPiece[]) => SpecPiece[]) => {
+      if (!activePlan) throw new ApiError(400, "клип не открыт");
+      const spec = (await clipPlansApi.getSpec(activePlan.id)) as Record<string, unknown>;
+      const pieces = make(spec.pieces as SpecPiece[]);
+      if (!pieces.length) throw new ApiError(400, "в клипе должен остаться хотя бы один кусок");
+      return clipPlansApi.putSpec(activePlan.id, { ...spec, pieces });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не вышло изменить куски"),
+  });
+
+  const splitAtClip = (clipSec: number) => {
+    const segs = activePlan?.segments ?? [];
+    const bounds = pieceBounds(segs);
+    const hit = bounds.findIndex((r) => clipSec > r.start + 0.4 && clipSec < r.end - 0.4);
+    if (hit < 0) {
+      toast.push("Курсор не внутри куска — двигать нечего", "info");
+      return;
+    }
+    const cutAt = segs[hit].start_sec + (clipSec - bounds[hit].start);
+    editPieces.mutate((pieces) => [
+      ...pieces.slice(0, hit),
+      { ...pieces[hit], end_sec: Number(cutAt.toFixed(2)) },
+      // Второй кусок — новый: без segment_id сервер создаст его сам.
+      {
+        ...pieces[hit],
+        segment_id: undefined,
+        start_sec: Number(cutAt.toFixed(2)),
+        title: `${pieces[hit].title || "Кусок"} · хвост`,
+      },
+      ...pieces.slice(hit + 1),
+    ]);
+  };
+
+  const deleteSelected = () => {
+    if (!tlSelected) return;
+    if (tlSelected.kind === "piece") {
+      editPieces.mutate((pieces) => pieces.filter((_, i) => i !== tlSelected.index));
+    } else if (tlSelected.kind === "insert") {
+      setInserts((prev) => prev.filter((_, i) => i !== tlSelected.index));
+    } else {
+      const next = subLines.filter((_, i) => i !== tlSelected.index);
+      setSubLines(next);
+      subLinesRef.current = next;
+      if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
+    }
+    setTlSelected(null);
+  };
+
   subPosPctRef.current = subPosPct;
   // «По умолчанию» на панели = первый стиль в списке, как и на сервере.
   subStyleRef.current = (subs.data?.find((s) => s.id === subId) ?? subs.data?.[0] ?? null) as SubtitleStyle | null;
@@ -2196,6 +2254,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               }}
               onSeekClip={(t) => seekClipTime(t, false)}
               onPieceCommit={(id, s, e) => commit.mutate({ id, s, e })}
+              onSplitAt={splitAtClip}
+              onDeleteSelected={deleteSelected}
               onInsertsChange={setInserts}
               onSubLinesChange={(next) => {
                 setSubLines(next);
