@@ -544,6 +544,8 @@ type MotionView = {
   selected: string | null;
   words?: CaptionWord[];
   chat?: ChatMessage[];
+  /** Направляющие прилипания во время перетаскивания слоя (центр кадра). */
+  guides?: { v: boolean; h: boolean };
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -737,6 +739,24 @@ function CropFrame({
               const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat });
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
+            }
+            const g = motion?.guides;
+            if (g && (g.v || g.h)) {
+              octx.save();
+              octx.strokeStyle = "#ff3b8d";
+              octx.lineWidth = 2;
+              octx.setLineDash([12, 8]);
+              octx.beginPath();
+              if (g.v) {
+                octx.moveTo(ov.width / 2, 0);
+                octx.lineTo(ov.width / 2, ov.height);
+              }
+              if (g.h) {
+                octx.moveTo(0, ov.height / 2);
+                octx.lineTo(ov.width, ov.height / 2);
+              }
+              octx.stroke();
+              octx.restore();
             }
           }
         }
@@ -1933,6 +1953,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         if (Math.abs(nx - 0.5) < 0.012) nx = 0.5;
         if (Math.abs(ny - 0.5) < 0.008) ny = 0.5;
         next = setAnimated(setAnimated(next, "x", nx, ld.localT), "y", ny, ld.localT);
+        motionViewRef.current = { ...motionViewRef.current, guides: { v: nx === 0.5, h: ny === 0.5 } };
       } else if (ld.handle === "scale") {
         const d0 = Math.hypot(ld.startX - ld.cx, ld.startY - ld.cy) || 1;
         const d1 = Math.hypot(px - ld.cx, py - ld.cy);
@@ -2019,6 +2040,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const ld = layerDragRef.current;
     if (ld) {
       layerDragRef.current = null;
+      motionViewRef.current = { ...motionViewRef.current, guides: undefined };
       const moved = motionViewRef.current.layers.find((l) => l.id === ld.id);
       if (moved && moved !== ld.from) setLayers(motionViewRef.current.layers);
       return;
