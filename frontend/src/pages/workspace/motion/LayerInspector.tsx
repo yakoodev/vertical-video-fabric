@@ -64,6 +64,64 @@ type Props = {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
+/**
+ * Поле числа с черновиком: пока печатаешь, значение не зажимается и не
+ * сохраняется (иначе «12» при минимуме 5 превращалось в 5.12, а «−» не набирался);
+ * применяется на Enter или при уходе из поля.
+ */
+function NumInput({
+  value,
+  onCommit,
+  step = 1,
+  min,
+  max,
+  className = "input",
+}: {
+  value: number;
+  onCommit: (v: number) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+  className?: string;
+}) {
+  const shown = Number.isFinite(value) ? String(r2(value)) : "0";
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft == null) return;
+    const v = Number(draft.replace(",", "."));
+    setDraft(null);
+    if (draft.trim() === "" || !Number.isFinite(v)) return;
+    const clamped = Math.min(max ?? v, Math.max(min ?? v, v));
+    if (clamped !== value) onCommit(clamped);
+  };
+  return (
+    <input
+      className={className}
+      type="text"
+      inputMode="decimal"
+      value={draft ?? shown}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          commit();
+          (e.currentTarget as HTMLInputElement).blur();
+        } else if (e.key === "Escape") {
+          setDraft(null);
+          (e.currentTarget as HTMLInputElement).blur();
+        } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const base = Number((draft ?? shown).replace(",", "."));
+          const next = (Number.isFinite(base) ? base : 0) + (e.key === "ArrowUp" ? step : -step) * (e.shiftKey ? 10 : 1);
+          setDraft(null);
+          onCommit(Math.min(max ?? next, Math.max(min ?? next, r2(next))));
+        }
+      }}
+    />
+  );
+}
+
 function Num({
   label,
   value,
@@ -84,18 +142,7 @@ function Num({
   return (
     <label className="li-num">
       <span>{label}</span>
-      <input
-        className="input"
-        type="number"
-        value={Number.isFinite(value) ? r2(value) : 0}
-        step={step}
-        min={min}
-        max={max}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (Number.isFinite(v)) onChange(min != null || max != null ? Math.min(max ?? v, Math.max(min ?? v, v)) : v);
-        }}
-      />
+      <NumInput value={value} onCommit={onChange} step={step} min={min} max={max} />
       {suffix ? <em>{suffix}</em> : null}
     </label>
   );
@@ -371,17 +418,12 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           ◆
         </button>
         <span className="li-tr-label">{label}</span>
-        <input
-          className="input"
-          type="number"
+<NumInput
+          value={valueOf(prop) * k}
           step={step}
           min={min * k}
           max={max * k}
-          value={r2(valueOf(prop) * k)}
-          onChange={(e) => {
-            const v = Number(e.target.value) / k;
-            if (Number.isFinite(v)) onChange(setAnimated(layer, prop, Math.min(max, Math.max(min, v)), localT));
-          }}
+          onCommit={(v) => onChange(setAnimated(layer, prop, Math.min(max, Math.max(min, v / k)), localT))}
         />
         <em>{suffix}</em>
       </div>
@@ -764,7 +806,12 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             </div>
           ) : null}
           <div className="li-row">
-            <button type="button" className="btn ghost sm" onClick={() => onChange({ ...layer, x: 0.5, y: 0.5, keys: { ...layer.keys, x: undefined, y: undefined } })}>
+            <button type="button" className="btn ghost sm" onClick={() => {
+                const keys = { ...(layer.keys ?? {}) };
+                delete keys.x;
+                delete keys.y;
+                onChange({ ...layer, x: 0.5, y: 0.5, keys });
+              }}>
               ⊕ В центр
             </button>
             {layer.keys && Object.keys(layer.keys).length ? (

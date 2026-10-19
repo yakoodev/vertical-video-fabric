@@ -1281,6 +1281,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setCamera([]);
       setInserts([]);
       setCuts([]);
+      // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
+      setCover(DEFAULT_COVER);
+      setTlSelected(null);
       return;
     }
     // Same key order as panelSettings(): if the clip's settings already equal the
@@ -1328,6 +1331,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setCamera(s.camera ?? []);
     setLayout(normalizeLayout(s.layout));
     setCuts(s.cuts ?? []);
+    // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
+    // он указывал бы на чужой блок, и Delete удалил бы не то.
+    setTlSelected(null);
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1357,6 +1363,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           inserts: p.render_settings?.inserts ?? [],
           layers: p.render_settings?.layers ?? [],
           camera: p.render_settings?.camera ?? [],
+          // Вырезы — диапазоны времени ЭТОГО клипа, обложка-картинка — его кадр: не копируем.
+          cuts: p.render_settings?.cuts ?? [],
+          cover: settings.cover.mode === "image" ? (p.render_settings?.cover ?? DEFAULT_COVER) : settings.cover,
         }),
       ),
     );
@@ -1407,6 +1416,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [autoProgress, setAutoProgress] = useState("");
   const batchAuto = useMutation({
     mutationFn: async (ids: number[]) => {
+      await flushSettings();
       let done = 0;
       const failed: string[] = [];
       for (const id of ids) {
@@ -1663,19 +1673,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // на каждый кадр перерисовывал бы весь редактор 60 раз в секунду.
   const tcSegsRef = useRef<AiSegment[]>([]);
   tcSegsRef.current = activePlan?.segments ?? [];
+  // Вырезы и звуки-слои — свойства открытого в монтаже клипа: в списке моментов
+  // превью играет другой клип, и чужие вырезы/звуки к нему не относятся.
+  const inEditorRef = useRef(false);
+  inEditorRef.current = view === "editor";
   // Звуки-слои звучат в превью в такт видео.
-  useLayerAudio(videoRef, motionViewRef, () => clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0));
+  useLayerAudio(videoRef, motionViewRef, () =>
+    inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null,
+  );
   // Вырезанные паузы превью перепрыгивает на ходу — смотришь клип таким, каким он выйдет.
   useEffect(() => {
     let raf = 0;
     const tick = () => {
       const v = videoRef.current;
-      if (v && !v.paused && cutsRef.current.length) {
+      if (v && !v.paused && inEditorRef.current && cutsRef.current.length) {
         const t = clipTimeOf(tcSegsRef.current, v.currentTime);
         const jump = t == null ? null : previewSkip(cutsRef.current, t);
         if (jump != null) {
           const src = clipToSource(tcSegsRef.current, jump);
-          if (src != null) v.currentTime = src;
+          if (src != null) {
+            v.currentTime = src;
+            // Прыжок мог перейти в другой кусок — плеер кусков должен знать, где он.
+            const pb = playbackRef.current;
+            if (pb) {
+              const idx = pb.ranges.findIndex((r) => src >= r.start - 0.05 && src < r.end);
+              if (idx >= 0) pb.idx = idx;
+            }
+          }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -1752,6 +1776,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // ✂ и 🗑 на таймлайне. Куски живут в клип-файле, поэтому правим его целиком
+  // через тот же эндпоинт, что и ручная правка: одна проверка, один снимок для Ctrl+Z.
+  const editPieces = useMutation({
+    mutationFn: async (make: (pieces: SpecPiece[]) => SpecPiece[]) => {
+      if (!activePlan) throw new ApiError(400, "клип не открыт");
+      // Несохранённые правки панели — сначала на сервер, иначе перезагрузка их потеряет.
+      await flushSettings();
+      const spec = (await clipPlansApi.getSpec(activePlan.id)) as Record<string, unknown>;
+      const pieces = make(spec.pieces as SpecPiece[]);
+      if (!pieces.length) throw new ApiError(400, "в клипе должен остаться хотя бы один кусок");
+      return clipPlansApi.putSpec(activePlan.id, { ...spec, pieces });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не вышло изменить куски"),
+  });
 
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
@@ -2056,6 +2099,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   };
 
   copyLayerRef.current = () => {
+    if (view !== "editor") return false;
     const layer = tlSelected?.kind === "layer" ? layers.find((l) => l.id === tlSelected.id) : null;
     if (!layer) return false;
     try {
@@ -2067,6 +2111,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return true;
   };
   pasteLayerRef.current = () => {
+    if (view !== "editor" || document.querySelector(".modal-backdrop")) return false;
     let raw: string | null = null;
     try {
       raw = localStorage.getItem("vvf.layerClipboard");
@@ -2078,6 +2123,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return true;
   };
   nudgeLayerRef.current = (key, big) => {
+    if (view !== "editor") return false;
     const layer = tlSelected?.kind === "layer" ? layers.find((l) => l.id === tlSelected.id) : null;
     if (!layer || layer.locked || layer.type === "audio") return false;
     const step = big ? 0.02 : 0.004;
@@ -2091,7 +2137,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return true;
   };
   duplicateRef.current = () => {
-    if (tlSelected?.kind !== "layer") return;
+    if (view !== "editor" || tlSelected?.kind !== "layer") return;
     const r = duplicateLayer(layers, tlSelected.id, clipDuration);
     setLayers(r.layers);
     if (r.id) setTlSelected({ kind: "layer", id: r.id });
@@ -2099,22 +2145,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   undoRef.current = () => {
     if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
   };
-  // ✂ и 🗑 на таймлайне. Куски живут в клип-файле, поэтому правим его целиком
-  // через тот же эндпоинт, что и ручная правка: одна проверка, один снимок для Ctrl+Z.
-  const editPieces = useMutation({
-    mutationFn: async (make: (pieces: SpecPiece[]) => SpecPiece[]) => {
-      if (!activePlan) throw new ApiError(400, "клип не открыт");
-      const spec = (await clipPlansApi.getSpec(activePlan.id)) as Record<string, unknown>;
-      const pieces = make(spec.pieces as SpecPiece[]);
-      if (!pieces.length) throw new ApiError(400, "в клипе должен остаться хотя бы один кусок");
-      return clipPlansApi.putSpec(activePlan.id, { ...spec, pieces });
-    },
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-      setSettingsNonce((n) => n + 1);
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не вышло изменить куски"),
-  });
 
   const splitAtClip = (clipSec: number) => {
     const segs = activePlan?.segments ?? [];
@@ -2165,8 +2195,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (!incoming.length && !cameraKeys?.length) return;
     const minStart = incoming.length ? Math.min(...incoming.map((l) => l.start)) : at;
     const shift = at - minStart;
-    const moved = incoming.map((l) => ({ ...l, start: l.start + shift, end: l.end + shift, ...(track != null ? { track } : {}) }) as Layer);
-    const next = placeLayers(layers, moved, clipDuration);
+    const moved = incoming.map((l) => ({ ...l, start: l.start + shift, end: l.end + shift }) as Layer);
+    const next = placeLayers(layers, moved, clipDuration, track);
     setLayers(next);
     if (cameraKeys?.length) {
       const camShift = cameraKeys.map((k) => ({ ...k, t: Number((k.t + shift).toFixed(3)) }));
@@ -2373,6 +2403,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               className="btn ed-undo-btn"
               onClick={async () => {
                 try {
+                  await flushSettings();
                   await clipPlansApi.aiMontageUndo(activePlan.id);
                   toast.success("Откатил к версии до ИИ-монтажа");
                   await qc.invalidateQueries({ queryKey: qk.source(sourceId) });

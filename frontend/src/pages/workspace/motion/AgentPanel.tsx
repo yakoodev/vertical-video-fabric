@@ -49,9 +49,15 @@ export function AgentPanel({
   });
   const send = useMutation({
     mutationFn: (message: string) => api.post(`/api/clip-plans/${clipPlanId}/agent`, { message }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setText("");
-      void chat.refetch();
+      const fresh = await chat.refetch();
+      // Агент упал сразу (нет ключа, ошибка модели): «работает» так и не появилось —
+      // возвращаем редактору автосохранение и подтягиваем то, что успело поменяться.
+      if (!fresh.data?.running) {
+        onRunningChange?.(false);
+        onChanged();
+      }
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отправить"),
   });
@@ -73,6 +79,15 @@ export function AgentPanel({
     if (wasRunning.current && !running) onChanged();
     wasRunning.current = running;
   }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ушли со вкладки ИИ — флаг «агент работает» не должен навсегда выключить
+  // автосохранение редактора. Клип перечитаем, чтобы не затереть правки агента.
+  useEffect(
+    () => () => {
+      onRunningChange?.(false);
+      if (wasRunning.current) onChanged();
+    },
+    [clipPlanId], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const listRef = useRef<HTMLDivElement>(null);
   const messages = chat.data?.messages ?? [];

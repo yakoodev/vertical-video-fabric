@@ -173,7 +173,7 @@ export function freeTrack(layers: Layer[], start: number, end: number, skipId?: 
  * нескольких слоёв) — на одну свободную дорожку. Порядок внутри пачки
  * сохраняется: в кадре слои шаблона лежат друг над другом так, как задумано.
  */
-export function placeLayers(existing: Layer[], incoming: Layer[], clipDuration: number): Layer[] {
+export function placeLayers(existing: Layer[], incoming: Layer[], clipDuration: number, track?: number | null): Layer[] {
   const fitted = incoming.map((raw) => {
     const len = Math.max(0.1, raw.end - raw.start);
     const start = clipDuration > 0 ? Math.max(0, Math.min(raw.start, clipDuration - Math.min(len, clipDuration))) : Math.max(0, raw.start);
@@ -184,8 +184,9 @@ export function placeLayers(existing: Layer[], incoming: Layer[], clipDuration: 
   if (graphics.length) {
     const from = Math.min(...graphics.map((l) => l.start));
     const to = Math.max(...graphics.map((l) => l.end));
-    const track = freeTrack(existing, from, to);
-    for (const l of graphics) l.track = track;
+    // Бросили на конкретную дорожку — туда и кладём; иначе — на свободную.
+    const target = track != null ? Math.max(0, Math.min(MAX_TRACK, track)) : freeTrack(existing, from, to);
+    for (const l of graphics) l.track = target;
   }
   for (const l of fitted) if (l.type === "audio") l.track = 0;
   return [...existing, ...fitted];
