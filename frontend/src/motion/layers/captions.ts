@@ -48,7 +48,7 @@ export const CAPTION_STYLES: CaptionStyle[] = [
     props: {
       font: "Rubik", weight: 900, size: 132, color: "#ffffff", activeColor: "#FFD400",
       stroke: { color: "#000000", width: 15 }, uppercase: true, maxWords: 2, maxLines: 1,
-      animation: "bounce", wordScale: 1.08, maxWidth: 960,
+      animation: "bounce", wordScale: 1.08, maxWidth: 880,
     },
   },
   {
@@ -185,7 +185,7 @@ const BASE: ResolvedCaptions = {
   punctuation: false,
   maxWords: 3,
   maxLines: 2,
-  maxWidth: 900,
+  maxWidth: 860,
   lineHeight: 1.12,
   letterSpacing: 0,
   highlightWords: [],
@@ -241,6 +241,8 @@ export type CaptionPage = {
   lines: number[];
   w: number;
   h: number;
+  /** Масштаб страницы ≤ 1: одно длинное слово («САКТИВИРОВАТЬ») шире строки — ужимаем, а не выпускаем за кадр. */
+  fit: number;
 };
 
 /** Новая страница после паузы длиннее этой. */
@@ -387,6 +389,7 @@ export function captionPages(
       lines: pk.lines,
       w: Math.max(...pk.lines),
       h: lineH * pk.lines.length,
+      fit: Math.min(1, maxW / Math.max(1, ...pk.lines)),
     };
   });
   // Страница не налезает на следующую, а короткую паузу между ними перекрывает.
@@ -497,6 +500,17 @@ function wordColor(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, hl: 
 }
 
 function drawPage(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: number, env: RenderEnv, font: string, all: CaptionWord[]): void {
+  if (page.fit < 0.999) {
+    ctx.save();
+    ctx.scale(page.fit, page.fit);
+    drawPageInner(ctx, r, page, t, env, font, all);
+    ctx.restore();
+    return;
+  }
+  drawPageInner(ctx, r, page, t, env, font, all);
+}
+
+function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: number, env: RenderEnv, font: string, all: CaptionWord[]): void {
   const lineH = r.size * r.lineHeight;
   // Шрифт ставим до замеров: высота заглавной кэшируется по строке шрифта.
   ctx.font = font;
