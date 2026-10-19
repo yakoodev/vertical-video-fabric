@@ -3954,3 +3954,6 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .bz-handle { fill: #fff; stroke: #7c5cff; stroke-width: 2; cursor: grab; }
 .bz-value { font-size: 10.5px; }
 .cover-compose { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: 10px; margin-bottom: 8px; }
+.help-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.help-table td { padding: 7px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.help-table td:first-child { width: 38%; font-weight: 600; }
