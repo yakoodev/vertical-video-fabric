@@ -469,7 +469,9 @@ def build_audio_layers_args(
     else:
         mix_duration = "longest"
     # Без своего звука у клипа дорожка звуков короче видео — дотягиваем тишиной.
-    tail = "" if clip_has_audio else ",apad"
+    # Звуки ложатся поверх речи и легко перегоняют 0 dBFS — площадки потом хрипят.
+    # Лимитер держит пик около −1 dBFS, тише он ничего не делает.
+    tail = ",alimiter=limit=0.89:attack=5:release=60:level=disabled" + ("" if clip_has_audio else ",apad")
     graph.append(
         "".join(parts)
         + f"amix=inputs={len(parts)}:duration={mix_duration}:normalize=0:dropout_transition=0{tail}[aout]"

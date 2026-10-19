@@ -744,7 +744,8 @@ def _norm_anim(raw: Any, rep: _Report, where: str, layer: dict) -> dict:
         rep(f"{where}.type", "«draw» бывает только у формы line/arrow/ellipse — заменено на fade")
         anim["type"] = "fade"
     half = round((layer["end"] - layer["start"]) / 2, 3)
-    if anim["duration"] > half:
+    # У «без анимации» длительность ничего не значит — не придираемся к ней.
+    if anim["type"] != "none" and anim["duration"] > half:
         rep(f"{where}.duration", f"{_fmt(anim['duration'])} с — больше половины длины слоя ({_fmt(half)} с)")
         anim["duration"] = max(MIN_ANIM_SEC, half)
     return anim
