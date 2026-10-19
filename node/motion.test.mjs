@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(ROOT, "node", "motion-render.mjs");
@@ -368,4 +369,90 @@ test("CLI: понятные ошибки аргументов", () => {
   assert.match(r.stderr, /ошибка аргументов/);
   const r2 = spawnSync(process.execPath, [CLI, "--comp", join(tmp, "nope.json"), "--output", join(tmp, "x.mp4")], { encoding: "utf8" });
   assert.equal(r2.status, 1);
+});
+
+/* ---------- анимированные субтитры ---------- */
+
+const SPEECH = [
+  { t0: 0.3, t1: 0.7, w: "Ребята," },
+  { t0: 0.75, t1: 1.0, w: "вы" },
+  { t0: 1.05, t1: 1.3, w: "это" },
+  { t0: 1.35, t1: 1.8, w: "видите?" }, // конец предложения
+  { t0: 1.9, t1: 2.2, w: "Он" },
+  { t0: 3.5, t1: 3.9, w: "сделал" }, // пауза 1.3 с перед словом
+  { t0: 3.95, t1: 4.3, w: "это!" },
+];
+
+test("субтитры: пресет + свои props, null перекрывает, рамки зажаты", () => {
+  const r = E.resolveCaptions({ style: "box", size: 70, activeBg: null, maxWords: 20, wordScale: 3 });
+  assert.equal(r.size, 70);
+  assert.equal(r.activeBg, null); // явный null выключает плашку пресета
+  assert.equal(r.font, "Montserrat"); // остальное — из пресета box
+  assert.equal(r.maxWords, 8);
+  assert.equal(r.wordScale, 1.4);
+  assert.equal(E.resolveCaptions({ style: "нет-такого" }).activeColor, E.resolveCaptions({}).activeColor);
+  assert.ok(E.CAPTION_STYLES.length >= 10);
+  for (const s of E.CAPTION_STYLES) assert.ok(s.id && s.name && s.description && s.props, s.id);
+});
+
+test("субтитры: страницы по числу слов, паузам и концу предложения", () => {
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const pages = E.captionPages(ctx, SPEECH, { style: "hormozi", maxWords: 3 }, 0, 10, "Montserrat");
+  assert.deepEqual(pages.map((p) => p.words.map((w) => w.text)), [
+    ["РЕБЯТА", "ВЫ"], // фраза из 4 слов при maxWords 3 — поровну, 2 + 2
+    ["ЭТО", "ВИДИТЕ"],
+    ["ОН"], // после «видите?» — новое предложение, после «Он» — пауза
+    ["СДЕЛАЛ", "ЭТО"],
+  ]);
+  // Страницы не перекрываются; короткий зазор перекрыт, пауза — пустой экран.
+  for (let k = 1; k < pages.length; k++) assert.ok(pages[k - 1].t1 <= pages[k].t0 + 1e-9);
+  assert.equal(pages[0].t1, pages[1].t0);
+  assert.equal(E.captionPageAt(pages, 2.9), null);
+  assert.equal(E.captionPageAt(pages, 1.0).index, 0);
+  assert.equal(E.captionPageAt(pages, 4.0).index, 3);
+  // Окно слоя: слова до start и после end не показываются.
+  const late = E.captionPages(ctx, SPEECH, { style: "hormozi" }, 3, 10, "Montserrat");
+  assert.deepEqual(late.flatMap((p) => p.words.map((w) => w.i)), [5, 6]);
+  // Знаки препинания у «минимала» остаются, регистр — как сказано.
+  const minimal = E.captionPages(ctx, SPEECH, { style: "minimal" }, 0, 10, "Montserrat");
+  assert.equal(minimal[0].words[0].text, "Ребята,");
+  assert.deepEqual(E.captionWordsFrom([{ word: "да", start: 1, end: 2 }]), [{ t0: 1, t1: 2, w: "да" }]);
+});
+
+/** Сколько непрозрачных пикселей в горизонтальной полосе кадра. */
+async function inkInBand(png, y0, y1) {
+  const img = await loadImage(readFileSync(png));
+  const c = createCanvas(img.width, img.height);
+  const cx = c.getContext("2d");
+  cx.drawImage(img, 0, 0);
+  const data = cx.getImageData(0, Math.round(img.height * y0), img.width, Math.round(img.height * (y1 - y0))).data;
+  let n = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 40) n++;
+  return n;
+}
+
+test("CLI: слой субтитров рисует слова из comp.words каждым стилем и молчит в паузе", async () => {
+  for (const style of E.CAPTION_STYLES.map((s) => s.id)) {
+    const comp = {
+      width: 540,
+      height: 960,
+      fps: 30,
+      duration: 5,
+      words: SPEECH,
+      layers: [{ id: "cap", type: "captions", start: 0, end: 5, x: 0.5, y: 0.68, props: { style, emoji: [{ i: 1, char: "😀" }] } }],
+    };
+    const p = writeInputs(`cap-${style}`, comp);
+    const png = join(tmp, `cap-${style}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", "0.9", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok((await inkInBand(png, 0.55, 0.8)) > 500, `${style}: нет текста в зоне субтитров`);
+    assert.equal(await inkInBand(png, 0.82, 1), 0, `${style}: залез под интерфейс площадки`);
+  }
+  const p = writeInputs("cap-pause", {
+    width: 540, height: 960, fps: 30, duration: 5, words: SPEECH,
+    layers: [{ id: "cap", type: "captions", start: 0, end: 5, y: 0.68, props: {} }],
+  });
+  const png = join(tmp, "cap-pause.png");
+  assert.equal(run(["--comp", p.comp, "--assets", p.assets, "--frame", "2.9", "--png", png]).status, 0);
+  assert.equal(await inkInBand(png, 0, 1), 0);
 });

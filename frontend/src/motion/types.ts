@@ -201,6 +201,59 @@ export type AudioProps = {
   duck?: boolean;
 };
 
+/* ---------- анимированные субтитры ---------- */
+
+/** Слово речи во времени клипа (секунды) — из субтитров клипа, их подаёт хост. */
+export type CaptionWord = { t0: number; t1: number; w: string };
+
+export type CaptionAnimation = "pop" | "bounce" | "fade" | "karaoke" | "typewriter" | "none";
+
+/**
+ * Субтитры-слой. Всё, кроме `style`, необязательно: не заданное берётся из
+ * пресета `style` (CAPTION_STYLES), заданное — перекрывает пресет.
+ */
+export type CaptionsProps = {
+  /** id пресета из CAPTION_STYLES; неизвестный — «hormozi». */
+  style?: string;
+  font?: string;
+  weight?: number;
+  size?: number;
+  /** Цвет слов. */
+  color?: string;
+  /** Цвет ещё не сказанных слов (karaoke) или null — как `color`. */
+  dimColor?: string | null;
+  /** Цвет активного (звучащего) слова. */
+  activeColor?: string;
+  /** Плашка за активным словом или null. */
+  activeBg?: string | null;
+  /** Градиент букв сверху вниз или null. */
+  gradient?: [string, string] | null;
+  stroke?: Stroke | null;
+  /** Неоновое свечение букв (цвет) или null. */
+  glow?: string | null;
+  /** Плашка под всей страницей (как у text.bg) или null. */
+  bg?: TextBg | null;
+  uppercase?: boolean;
+  /** Оставлять ли знаки препинания (вирусные стили их обычно убирают). */
+  punctuation?: boolean;
+  /** Слов на странице 1..8 и строк 1..3. */
+  maxWords?: number;
+  maxLines?: number;
+  /** Ширина строки, опорн. px. */
+  maxWidth?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
+  /** Ключевые слова цветом: i — номер слова в `comp.words`. */
+  highlightWords?: { i: number; color: string }[];
+  /** Эмодзи, выпрыгивающий над строкой, когда сказано слово i. */
+  emoji?: { i: number; char: string }[];
+  animation?: CaptionAnimation;
+  /** Масштаб активного слова 1..1.4. */
+  wordScale?: number;
+  /** Наклон страниц в градусах (чередуется ±) — «комикс». */
+  tilt?: number;
+};
+
 export type LayerPropsMap = {
   text: TextProps;
   shape: ShapeProps;
@@ -210,6 +263,7 @@ export type LayerPropsMap = {
   progress: ProgressProps;
   chart: ChartProps;
   callout: CalloutProps;
+  captions: CaptionsProps;
   audio: AudioProps;
 };
 
@@ -247,6 +301,7 @@ export type CounterLayer = LayerOf<"counter">;
 export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
 export type CalloutLayer = LayerOf<"callout">;
+export type CaptionsLayer = LayerOf<"captions">;
 export type AudioLayer = LayerOf<"audio">;
 
 export type Layer =
@@ -258,6 +313,7 @@ export type Layer =
   | ProgressLayer
   | ChartLayer
   | CalloutLayer
+  | CaptionsLayer
   | AudioLayer;
 
 export type CameraKey = {
@@ -276,6 +332,8 @@ export type Composition = {
   duration: number;
   layers: Layer[];
   camera?: CameraKey[];
+  /** Слова речи клипа для слоёв `captions` (клиповое время). */
+  words?: CaptionWord[];
 };
 
 /**

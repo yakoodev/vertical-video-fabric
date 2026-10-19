@@ -11,6 +11,7 @@ import {
   visibleLayers,
   newLayerId,
   type AnimatableProp,
+  type CaptionWord,
   type Ctx2D,
   type KeyPoint,
   type Layer,
@@ -26,10 +27,18 @@ const ROTATE_GAP_CSS = 26;
 export type TransformHandle = "move" | "scale" | "rotate";
 
 /** Верхний видимый слой под точкой холста (звуки не рисуются — их не выбрать). */
-export function layerAt(ctx: Ctx2D, layers: Layer[], t: number, env: RenderEnv, px: number, py: number): Layer | null {
+export function layerAt(
+  ctx: Ctx2D,
+  layers: Layer[],
+  t: number,
+  env: RenderEnv,
+  px: number,
+  py: number,
+  words?: CaptionWord[],
+): Layer | null {
   const drawn = visibleLayers(layers, t).filter((l) => l.type !== "audio" && !l.hidden);
   for (let i = drawn.length - 1; i >= 0; i--) {
-    const box = layerBox(ctx, drawn[i], t, env);
+    const box = layerBox(ctx, drawn[i], t, env, words);
     if (box && hitLayer(box, px, py)) return drawn[i];
   }
   return null;

@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CAPTION_STYLES,
   TEMPLATES,
   TEMPLATE_CATEGORIES,
   drawFrame,
@@ -330,9 +331,22 @@ const TEXT_PRESETS: TextPreset[] = [
   },
 ];
 
-export function TextPanel({ onAdd }: { onAdd: AddLayers }) {
+export function TextPanel({ onAdd, onCaptions }: { onAdd: AddLayers; onCaptions?: (style: string) => void }) {
   return (
     <div className="lib-panel">
+      {onCaptions ? (
+        <>
+          <div className="lib-sub">Анимированные субтитры на весь клип</div>
+          <div className="lib-cap-grid">
+            {CAPTION_STYLES.map((st) => (
+              <button key={st.id} type="button" className="lib-cap" title={st.description} onClick={() => onCaptions(st.id)}>
+                {st.name}
+              </button>
+            ))}
+          </div>
+          <div className="lib-sub">Текст</div>
+        </>
+      ) : null}
       <div className="lib-text-grid">
         {TEXT_PRESETS.map((p) => (
           <button

@@ -8,6 +8,7 @@
  * Визуальная планка — эфирная графика TikTok/CapCut: жирный капс с обводкой,
  * скошенные плашки, неоновое свечение, «пружинящие» появления.
  */
+import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE } from "./layers/captions";
 import type { CameraKey, Layer, LayerBase, LayerPropsMap, LayerType, Shadow } from "./types";
 
 export type TemplateParamType = "text" | "number" | "color" | "emoji" | "select" | "bool" | "sound";
@@ -914,6 +915,98 @@ const boom: MotionTemplate = {
   },
 };
 
+const captions: MotionTemplate = {
+  id: "captions",
+  name: "Анимированные субтитры",
+  category: "Титры",
+  description: "Слова речи клипа страницами, звучащее слово подсвечено — стиль на выбор",
+  duration: 60,
+  params: [
+    { name: "style", label: "Стиль", type: "select", default: DEFAULT_CAPTION_STYLE, options: CAPTION_STYLES.map((s) => s.id) },
+    { name: "y", label: "Высота", type: "number", default: 0.68, min: 0.1, max: 0.8 },
+    durationParam(60),
+  ],
+  build(p, at) {
+    return {
+      layers: [
+        layer(
+          "captions",
+          { start: at, end: at + dur(p, 60), y: num(p, "y", 0.68), track: 3, name: "Субтитры", shadow: { color: "#000000", blur: 18, x: 0, y: 6, opacity: 0.5 } },
+          { style: str(p, "style", DEFAULT_CAPTION_STYLE) },
+        ),
+      ],
+    };
+  },
+};
+
+const keywordBig: MotionTemplate = {
+  id: "keyword-big",
+  name: "Ключевое слово крупно",
+  category: "Титры",
+  description: "Одно слово на весь экран: удар, тряска, эмодзи и наезд камеры",
+  duration: 1.6,
+  params: [
+    { name: "text", label: "Слово", type: "text", default: "Невероятно" },
+    { name: "emoji", label: "Эмодзи", type: "emoji", default: "🤯" },
+    { name: "color", label: "Цвет", type: "color", default: YELLOW },
+    { name: "zoom", label: "Наезд камеры", type: "bool", default: true },
+    durationParam(1.6),
+  ],
+  build(p, at) {
+    const len = dur(p, 1.6);
+    const end = at + len;
+    const color = str(p, "color", YELLOW);
+    const layers: Layer[] = [
+      layer(
+        "text",
+        {
+          start: at,
+          end,
+          y: 0.45,
+          rotation: -4,
+          track: 2,
+          name: "Ключевое слово",
+          in: { type: "pop", duration: 0.25 },
+          out: { type: "zoom", duration: 0.2 },
+          loop: { type: "shake", speed: 0.8, amount: 0.7 },
+          shadow: glow(color, 50, 0.6),
+        },
+        {
+          text: str(p, "text", "Невероятно"),
+          font: FONT,
+          weight: 900,
+          size: 170,
+          color,
+          gradient: ["#ffffff", color],
+          stroke: { color: "#000000", width: 14 },
+          uppercase: true,
+          maxWidth: 1000,
+          lineHeight: 0.95,
+        },
+      ),
+    ];
+    const emoji = str(p, "emoji", "");
+    if (emoji) {
+      layers.push(
+        layer(
+          "emoji",
+          { start: at + 0.12, end, x: 0.5, y: 0.35, track: 3, rotation: 10, name: "Эмодзи", in: { type: "pop", duration: 0.3 }, out: { type: "fade", duration: 0.2 }, loop: { type: "wiggle", speed: 1.5, amount: 1 }, shadow: SOFT },
+          { char: emoji, size: 220 },
+        ),
+      );
+    }
+    const camera: CameraKey[] | undefined = bool(p, "zoom", true)
+      ? [
+          { t: Math.max(0, at - 0.01), zoom: 1, x: 0.5, y: 0.45, ease: "outCubic" },
+          { t: at + 0.18, zoom: 1.18, x: 0.5, y: 0.45, ease: "inOutCubic" },
+          { t: end - 0.15, zoom: 1.18, x: 0.5, y: 0.45, ease: "inOutCubic" },
+          { t: end + 0.1, zoom: 1, x: 0.5, y: 0.5 },
+        ]
+      : undefined;
+    return { layers, camera };
+  },
+};
+
 const memeCaption: MotionTemplate = {
   id: "meme-caption",
   name: "Мем-подпись",
@@ -1028,6 +1121,8 @@ function shadeHex(color: string, k: number): string {
 
 export const TEMPLATES: MotionTemplate[] = [
   titlePop,
+  captions,
+  keywordBig,
   punchline,
   quoteCard,
   memeCaption,

@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import {
+  CAPTION_STYLES,
   EASING_NAMES,
   interpolateKeys,
   type AnimatableProp,
@@ -359,6 +360,69 @@ export function LayerInspector({ layer, fonts, now, clipDuration, onChange, onDe
             placeholder="Текст титра"
           />
           <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} />
+        </Section>
+      ) : null}
+
+      {layer.type === "captions" ? (
+        <Section title="Анимированные субтитры">
+          <div className="li-cap-styles">
+            {CAPTION_STYLES.map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                className={`li-cap-style${(layer.props.style ?? "hormozi") === st.id ? " on" : ""}`}
+                title={st.description}
+                onClick={() =>
+                  // Смена стиля сбрасывает ручные цвета/шрифт — иначе пресет «не включится».
+                  onChange({
+                    ...layer,
+                    props: { style: st.id, highlightWords: layer.props.highlightWords, emoji: layer.props.emoji },
+                  } as Layer)
+                }
+              >
+                {st.name}
+              </button>
+            ))}
+          </div>
+          <div className="li-row">
+            <Num label="Слов" value={layer.props.maxWords ?? 3} min={1} max={8} onChange={(maxWords) => patchProps({ maxWords })} />
+            <Num label="Строк" value={layer.props.maxLines ?? 2} min={1} max={3} onChange={(maxLines) => patchProps({ maxLines })} />
+            <Num label="Размер" value={layer.props.size ?? 90} min={30} max={220} onChange={(size) => patchProps({ size })} />
+          </div>
+          <div className="li-row">
+            <Color label="Слова" value={layer.props.color ?? "#ffffff"} onChange={(color) => patchProps({ color })} />
+            <Color label="Активное" value={layer.props.activeColor ?? "#ffd600"} onChange={(activeColor) => patchProps({ activeColor })} />
+            <Toggle
+              label="Плашка у слова"
+              checked={Boolean(layer.props.activeBg)}
+              onChange={(on) => patchProps({ activeBg: on ? "#7c5cff" : null })}
+            />
+            {layer.props.activeBg ? (
+              <Color label="Плашка" value={layer.props.activeBg} onChange={(activeBg) => patchProps({ activeBg })} />
+            ) : null}
+          </div>
+          <div className="li-row">
+            <label className="li-grow">
+              <span className="li-cap">Анимация слова</span>
+              <select className="input" value={layer.props.animation ?? "pop"} onChange={(e) => patchProps({ animation: e.target.value })}>
+                <option value="pop">Поп</option>
+                <option value="bounce">Прыжок</option>
+                <option value="fade">Проявление</option>
+                <option value="karaoke">Караоке</option>
+                <option value="typewriter">Печать</option>
+                <option value="none">Без анимации</option>
+              </select>
+            </label>
+            <Num label="Рост ×" value={layer.props.wordScale ?? 1.15} step={0.05} min={1} max={1.4} onChange={(wordScale) => patchProps({ wordScale })} />
+          </div>
+          <div className="li-row">
+            <Toggle label="ЗАГЛАВНЫЕ" checked={Boolean(layer.props.uppercase)} onChange={(uppercase) => patchProps({ uppercase })} />
+            <Toggle label="Знаки препинания" checked={Boolean(layer.props.punctuation)} onChange={(punctuation) => patchProps({ punctuation })} />
+          </div>
+          <div className="li-note muted">
+            Слова берутся из субтитров клипа (правка — «Субтитры» в инспекторе). Ключевые слова цветом и эмодзи над словами
+            расставляет ИИ-ассистент.
+          </div>
         </Section>
       ) : null}
 

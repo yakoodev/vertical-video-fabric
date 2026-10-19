@@ -32,6 +32,20 @@ export { invalidateTextCache, layoutText, type TextLayout } from "./layers/text"
 export { formatCounter, counterValue } from "./layers/counter";
 export { DEFAULT_PALETTE } from "./layers/chart";
 export {
+  CAPTION_STYLES,
+  DEFAULT_CAPTION_STYLE,
+  captionStyle,
+  resolveCaptions,
+  captionPages,
+  captionPageAt,
+  captionWordsFrom,
+  type CaptionStyle,
+  type CaptionPage,
+  type CaptionPageWord,
+  type ResolvedCaptions,
+} from "./layers/captions";
+export type { FrameInfo } from "./layers/common";
+export {
   TEMPLATES,
   TEMPLATE_CATEGORIES,
   getTemplate,

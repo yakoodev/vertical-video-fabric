@@ -21,7 +21,16 @@ import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
-import { cameraMatrix, drawFrame, interpolateKeys, layerBox, type CameraKey, type Layer } from "@/motion";
+import {
+  cameraMatrix,
+  captionWordsFrom,
+  drawFrame,
+  interpolateKeys,
+  layerBox,
+  type CameraKey,
+  type CaptionWord,
+  type Layer,
+} from "@/motion";
 import { browserEnv, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import {
   drawSelection,
@@ -526,7 +535,19 @@ function drawSubtitle(
 }
 
 /** Что рисует превью из моушн-слоёв: живой черновик (во время перетаскивания) и выделение. */
-type MotionView = { layers: Layer[]; camera: CameraKey[]; selected: string | null };
+type MotionView = { layers: Layer[]; camera: CameraKey[]; selected: string | null; words?: CaptionWord[] };
+
+// Слова клипа для анимированных субтитров: конвертируем один раз на массив.
+const captionWordsCache = new WeakMap<object, CaptionWord[]>();
+function captionWordsOf(words: SubtitleWord[] | undefined): CaptionWord[] {
+  if (!words?.length) return [];
+  let hit = captionWordsCache.get(words);
+  if (!hit) {
+    hit = captionWordsFrom(words);
+    captionWordsCache.set(words, hit);
+  }
+  return hit;
+}
 
 function CropFrame({
   srcW,
@@ -677,7 +698,7 @@ function CropFrame({
             // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
             if (motion?.layers.length) {
               const env = browserEnv(ov.width, ov.height);
-              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden) }, clipT, env);
+              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden), words: motion.words }, clipT, env);
             }
             // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
             if (bannerRef?.current) {
@@ -694,16 +715,17 @@ function CropFrame({
             const t = clipTimeOf(segments, cur);
             const style = subStyleRef?.current;
             const words = subWordsRef?.current;
+            // Анимированные субтитры-слой заменяют обычные (так же делает рендер).
+            const captionsOn = Boolean(motion?.layers.some((l) => l.type === "captions" && !l.hidden) && motion?.words?.length);
             const drawn =
-              style && words?.length
-                ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current)
-                : false;
+              captionsOn ||
+              (style && words?.length ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current) : false);
             if (!drawn) drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
             // Рамка выделенного слоя — поверх всего, только в редакторе.
             const sel = motion?.selected ? motion.layers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
               const env = browserEnv(ov.width, ov.height);
-              const box = layerBox(octx, sel, clipT, env);
+              const box = layerBox(octx, sel, clipT, env, motion?.words);
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
             }
@@ -1682,8 +1704,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   clipNowRef.current = clipTimeExact;
   const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
-  if (!layerDragRef.current) motionViewRef.current = { layers, camera, selected: selectedLayerId };
-  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId };
+  const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
+  if (!layerDragRef.current) motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords };
+  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId, words: captionWords };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
   // за рамку), потом сами слои сверху вниз.
@@ -1696,13 +1719,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const view = motionViewRef.current;
     const sel = view.selected ? view.layers.find((l) => l.id === view.selected) : null;
     if (sel && !sel.locked && sel.type !== "audio") {
-      const box = layerBox(ctx, sel, t, env);
+      const box = layerBox(ctx, sel, t, env, view.words);
       const handle = box ? handleAt(box, px, py, cssScale) : null;
       if (box && handle) return { layer: sel, handle, box, t };
     }
-    const hit = layerAt(ctx, view.layers, t, env, px, py);
+    const hit = layerAt(ctx, view.layers, t, env, px, py, view.words);
     if (!hit) return null;
-    const box = layerBox(ctx, hit, t, env);
+    const box = layerBox(ctx, hit, t, env, view.words);
     return box ? { layer: hit, handle: "move" as TransformHandle, box, t } : null;
   };
 
@@ -2616,7 +2639,27 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             />
           ) : null}
           {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} /> : null}
-          {libTab === "text" ? <TextPanel onAdd={addAtCursor} /> : null}
+          {libTab === "text" ? (
+            <TextPanel
+              onAdd={addAtCursor}
+              onCaptions={(style) => {
+                // Один слой субтитров на клип: повторный выбор меняет стиль.
+                const existing = layers.find((l) => l.type === "captions");
+                if (existing) {
+                  setLayers((prev) =>
+                    prev.map((l) => (l.id === existing.id ? ({ ...l, hidden: false, props: { ...l.props, style } } as Layer) : l)),
+                  );
+                  setTlSelected({ kind: "layer", id: existing.id });
+                } else {
+                  addLayers(
+                    [{ id: "new", type: "captions", start: 0, end: clipDuration, x: 0.5, y: 0.68, props: { style } } as Layer],
+                    0,
+                  );
+                }
+                if (!planSubs.data?.words?.length) toast.push("Нужны субтитры клипа: «Распознать речь» в группе «Субтитры»", "info");
+              }}
+            />
+          ) : null}
           {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
           {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
           {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={assetsQuery.data ?? []} /> : null}

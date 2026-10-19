@@ -75,13 +75,16 @@ export function invalidateTextCache(): void {
   generation++;
 }
 
-function setLetterSpacing(ctx: Ctx2D, px: number): void {
+/** Номер поколения кэша замеров — для своих кэшей раскладки (субтитры). */
+export const textCacheGeneration = () => generation;
+
+export function setLetterSpacing(ctx: Ctx2D, px: number): void {
   // letterSpacing есть в Chrome/Node, в старом Safari — нет: тогда просто без разрядки.
   const c = ctx as unknown as { letterSpacing?: string };
   if ("letterSpacing" in c) c.letterSpacing = `${px}px`;
 }
 
-function measure(ctx: Ctx2D, font: string, ls: number, text: string): number {
+export function measure(ctx: Ctx2D, font: string, ls: number, text: string): number {
   const key = `${font}|${ls}|${text}`;
   let w = widthCache.get(key);
   if (w === undefined) {
@@ -92,7 +95,7 @@ function measure(ctx: Ctx2D, font: string, ls: number, text: string): number {
   return w;
 }
 
-function capHeight(ctx: Ctx2D, font: string, size: number): number {
+export function capHeight(ctx: Ctx2D, font: string, size: number): number {
   let h = capCache.get(font);
   if (h === undefined) {
     const m = ctx.measureText("НH");

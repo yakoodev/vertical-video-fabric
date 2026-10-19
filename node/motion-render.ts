@@ -98,6 +98,13 @@ function readComp(path: string): Composition {
     duration: Math.max(0, duration),
     layers: Array.isArray(raw.layers) ? raw.layers : [],
     camera: Array.isArray(raw.camera) ? raw.camera : [],
+    // Слова речи для слоёв captions: только целые записи {t0, t1, w}, по времени.
+    words: Array.isArray(raw.words)
+      ? raw.words
+          .filter((w) => w && Number.isFinite(Number(w.t0)) && Number.isFinite(Number(w.t1)) && typeof w.w === "string")
+          .map((w) => ({ t0: Number(w.t0), t1: Number(w.t1), w: w.w }))
+          .sort((a, b) => a.t0 - b.t0)
+      : [],
   };
 }
 

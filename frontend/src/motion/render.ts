@@ -8,7 +8,8 @@
  * холст размером со свою рамку и уже оттуда кладётся в кадр.
  */
 import { isLayerActive, resolveLayer, type LayerState } from "./animate";
-import type { LayerRenderer } from "./layers/common";
+import type { FrameInfo, LayerRenderer } from "./layers/common";
+import { captionsRenderer } from "./layers/captions";
 import { rgba } from "./layers/common";
 import { calloutRenderer } from "./layers/callout";
 import { chartRenderer } from "./layers/chart";
@@ -16,7 +17,7 @@ import { counterRenderer, progressRenderer } from "./layers/counter";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
-import type { BlendMode, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas } from "./types";
+import type { BlendMode, CaptionWord, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas } from "./types";
 import { REF_W } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
@@ -28,7 +29,10 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   progress: progressRenderer as LayerRenderer,
   chart: chartRenderer as LayerRenderer,
   callout: calloutRenderer as LayerRenderer,
+  captions: captionsRenderer as LayerRenderer,
 };
+
+const NO_WORDS: CaptionWord[] = [];
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
   normal: "source-over",
@@ -47,9 +51,18 @@ export function visibleLayers(layers: Layer[], t: number): Layer[] {
     .map(({ layer }) => layer);
 }
 
-/** Нарисовать все слои композиции в момент клипового времени `t`. */
-export function drawFrame(ctx: Ctx2D, comp: Pick<Composition, "layers">, t: number, env: RenderEnv): void {
-  for (const layer of visibleLayers(comp.layers || [], t)) drawLayer(ctx, layer, t, env);
+/**
+ * Нарисовать все слои композиции в момент клипового времени `t`.
+ * `comp.words` — слова речи клипа для слоёв `captions` (нет — субтитры пустые).
+ */
+export function drawFrame(
+  ctx: Ctx2D,
+  comp: Pick<Composition, "layers"> & { words?: CaptionWord[] },
+  t: number,
+  env: RenderEnv,
+): void {
+  const words = comp.words || NO_WORDS;
+  for (const layer of visibleLayers(comp.layers || [], t)) drawLayer(ctx, layer, t, env, words);
 }
 
 /* ---------- геометрия слоя на кадре ---------- */
@@ -69,12 +82,12 @@ export type LayerBox = {
  * Рамка слоя на холсте в момент `t` — для рамки выделения и попадания мышью в
  * редакторе. null — слой сейчас не виден.
  */
-export function layerBox(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv): LayerBox | null {
+export function layerBox(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, words?: CaptionWord[]): LayerBox | null {
   const r = RENDERERS[layer.type];
   const st = resolveLayer(layer, t);
   if (!r || !st) return null;
   ctx.save();
-  const size = r.measure(ctx, layer, st, env);
+  const size = r.measure(ctx, layer, st, env, { t, words: words || NO_WORDS });
   ctx.restore();
   const k = (env.width / REF_W) * st.scale;
   return { cx: st.x * env.width, cy: st.y * env.height, w: size.w * k, h: size.h * k, rotation: st.rotation };
@@ -161,7 +174,8 @@ function shadowParams(layer: Layer, st: LayerState, env: RenderEnv) {
 }
 
 /** Нарисовать один слой в момент `t` (ничего не делает, если он не виден). */
-export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv): void {
+export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, words?: CaptionWord[]): void {
+  const frame: FrameInfo = { t, words: words || NO_WORDS };
   const r = RENDERERS[layer.type];
   if (!r) return;
   const st = resolveLayer(layer, t);
@@ -177,7 +191,7 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv): 
   const needsScratch = (st.opacity < 0.999 && r.multipart) || blurPx > 0 || blend !== "source-over";
 
   ctx.save();
-  const size = r.measure(ctx, layer, st, env);
+  const size = r.measure(ctx, layer, st, env, frame);
   ctx.restore();
 
   if (needsScratch) {
@@ -197,7 +211,7 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv): 
       if (shadow) setShadow(sc, shadow);
       applyLayerTransform(sc, st, env, b.x, b.y);
       applyWipe(sc, st, size);
-      r.draw(sc, layer, st, env);
+      r.draw(sc, layer, st, env, frame);
       sc.restore();
 
       ctx.save();
@@ -217,7 +231,7 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv): 
   if (shadow) setShadow(ctx, shadow);
   applyLayerTransform(ctx, st, env);
   applyWipe(ctx, st, size);
-  r.draw(ctx, layer, st, env);
+  r.draw(ctx, layer, st, env, frame);
   ctx.restore();
 }
 

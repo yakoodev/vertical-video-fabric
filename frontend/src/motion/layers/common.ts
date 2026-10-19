@@ -4,14 +4,17 @@
  * Своя реализация скругления вместо `ctx.roundRect`: его нет в старом Safari, а
  * форма плашки должна совпадать пиксель в пиксель в превью и в рендере.
  */
-import type { Ctx2D, ImageLike, Layer, RenderEnv, ScratchCanvas } from "../types";
+import type { CaptionWord, Ctx2D, ImageLike, Layer, RenderEnv, ScratchCanvas } from "../types";
 import type { LayerState } from "../animate";
+
+/** Что знает кадр целиком: клиповое время и слова речи (для субтитров). */
+export type FrameInfo = { t: number; words: CaptionWord[] };
 
 /** Слой в своей системе координат: опорные px, якорь (центр) в (0, 0). */
 export type LayerRenderer<L extends Layer = Layer> = {
   /** Размер содержимого в опорных px (для маски wipe, рамки выделения, промежуточного холста). */
-  measure(ctx: Ctx2D, layer: L, st: LayerState, env: RenderEnv): { w: number; h: number };
-  draw(ctx: Ctx2D, layer: L, st: LayerState, env: RenderEnv): void;
+  measure(ctx: Ctx2D, layer: L, st: LayerState, env: RenderEnv, frame: FrameInfo): { w: number; h: number };
+  draw(ctx: Ctx2D, layer: L, st: LayerState, env: RenderEnv, frame: FrameInfo): void;
   /**
    * Рисуется в несколько проходов, которые перекрываются (обводка + заливка,
    * плашка + текст). Такой слой при полупрозрачности гасится целиком через
