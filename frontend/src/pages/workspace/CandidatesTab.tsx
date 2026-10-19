@@ -296,6 +296,26 @@ function clipTimeOf(segments: AiSegment[], cur: number): number | null {
   return null;
 }
 
+// Вкладки левой панели студии. Порядок — по частоте: клипы проекта, кадрирование,
+// файлы для монтажа; графика, звуки и ИИ встают сюда же по мере готовности.
+type LibTab = "moments" | "frame" | "media";
+const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string }[] = [
+  { key: "moments", icon: "🎬", label: "Моменты", hint: "Другие клипы этого проекта" },
+  { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник 16:9 и рамка 9:16: кадрирование и фокус" },
+  { key: "media", icon: "🖼", label: "Медиа", hint: "Файлы для монтажа: мемы, картинки, звуки" },
+];
+
+// Кадр рендера — 1/30 с: шаг стрелками и кнопками «кадр назад/вперёд».
+const FRAME_SEC = 1 / 30;
+
+// «01:02.40» — минуты, секунды и сотые: по сотым видно, куда встал курсор после шага.
+function formatTimecode(sec: number): string {
+  const s = Math.max(0, sec);
+  const m = Math.floor(s / 60);
+  const rest = s - m * 60;
+  return `${String(m).padStart(2, "0")}:${rest.toFixed(2).padStart(5, "0")}`;
+}
+
 // Mirror of the render pass (app/montage_assets.py): full = letterboxed over the
 // whole 9:16 frame, pip = a window in the upper part, sound = just the audio.
 function drawInserts(
@@ -789,6 +809,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const phoneRef = useRef<HTMLCanvasElement>(null);
   const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
   const heatHeadRef = useRef<HTMLSpanElement>(null);
+  const tcRef = useRef<HTMLSpanElement>(null);
+  const [libTab, setLibTab] = useState<LibTab>(() => {
+    try {
+      const saved = localStorage.getItem("vvf.ed.libTab");
+      return LIB_TABS.some((t) => t.key === saved) ? (saved as LibTab) : "moments";
+    } catch {
+      return "moments";
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("vvf.ed.libTab", libTab);
+    } catch {
+      /* приватное окно — просто не запоминаем */
+    }
+  }, [libTab]);
   // Строки субтитров открытого клипа — рисуются на превью-телефоне.
   const subLinesRef = useRef<SubtitleLine[]>([]);
   // Пословные тайминги и стиль клипа: с ними превью рисует те же субтитры,
@@ -872,6 +908,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // The URL is the source of truth for which clip the editor shows (deep links,
   // browser Back/Forward); the moments list's selection follows it.
   const editorPlanId = view === "editor" ? clipParam : null;
+  // Студия на весь экран: боковое меню сервиса в монтаже только отнимает место
+  // у превью и таймлайна, а назад ведёт кнопка «Назад к моментам».
+  useEffect(() => {
+    if (view !== "editor") return;
+    document.body.classList.add("vvf-studio");
+    return () => document.body.classList.remove("vvf-studio");
+  }, [view]);
   useEffect(() => {
     if (clipParam) setActivePlanId(clipParam);
   }, [clipParam]);
@@ -1330,6 +1373,26 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return () => cancelAnimationFrame(raf);
   }, [query.data?.duration_sec]);
 
+  // Таймкод клипа под превью. Пишем прямо в DOM из кадра анимации: React-стейт
+  // на каждый кадр перерисовывал бы весь редактор 60 раз в секунду.
+  const tcSegsRef = useRef<AiSegment[]>([]);
+  tcSegsRef.current = activePlan?.segments ?? [];
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const el = tcRef.current;
+      const v = videoRef.current;
+      if (el && v) {
+        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
+        const text = t == null ? "—" : formatTimecode(t);
+        if (el.textContent !== text) el.textContent = text;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   // Keyboard: F ★ / X hide / E edit the moment under the pointer; in the editor
   // Картинка баннера для превью: грузим один раз на выбранный баннер.
   useEffect(() => {
@@ -1394,6 +1457,37 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     playbackRef.current = null;
     videoRef.current.currentTime = src;
     if (play) void videoRef.current.play();
+  };
+  // Шаг по клипу в его собственном времени: на стыке кусков курсор перепрыгивает
+  // в следующий кусок исходника, а не уезжает в вырезанное.
+  const stepClip = (deltaSec: number) => {
+    const v = videoRef.current;
+    if (!v || !activePlan) return;
+    v.pause();
+    const now = clipTimeOf(activePlan.segments, v.currentTime) ?? 0;
+    const total = activePlan.segments.reduce((acc, s) => acc + (s.end_sec - s.start_sec), 0);
+    seekClipTime(Math.min(Math.max(0, now + deltaSec), Math.max(0, total - 0.001)), false);
+  };
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v || !activePlan?.segments.length) return;
+    if (!v.paused) {
+      stopPlayback();
+      return;
+    }
+    // Плей с места курсора до конца клипа (если курсор вне клипа — с начала).
+    const now = clipTimeOf(activePlan.segments, v.currentTime);
+    let acc = 0;
+    const ranges: { start: number; end: number }[] = [];
+    for (const s of activePlan.segments) {
+      const len = s.end_sec - s.start_sec;
+      if (now == null || now < acc + len - 0.05) {
+        const from = now != null && now > acc ? s.start_sec + (now - acc) : s.start_sec;
+        ranges.push({ start: from, end: s.end_sec });
+      }
+      acc += len;
+    }
+    playRanges(ranges.length ? ranges : activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec })));
   };
   // Preview media for the open clip's inserts (created once per file, reused).
   const insertsPreview: InsertPreview[] = inserts.map((ins) => {
@@ -1650,6 +1744,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       splitAtClip(clipTimeNow());
     } else if ((e.key === "Delete" || e.key === "Backspace") && view === "editor" && tlSelected) {
       deleteSelected();
+    } else if (view === "editor" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      // ←/→ — кадр, Shift — секунда: точная подгонка титра или склейки на паузе.
+      e.preventDefault();
+      const dir = e.key === "ArrowLeft" ? -1 : 1;
+      stepClip(dir * (e.shiftKey ? 1 : FRAME_SEC));
+    } else if (
+      view === "editor" &&
+      e.key === " " &&
+      // На кнопке пробел и так её нажимает, а у <video> свой плей — не дублируем.
+      !(e.target instanceof HTMLButtonElement || e.target instanceof HTMLVideoElement)
+    ) {
+      e.preventDefault();
+      togglePlay();
+    } else if (view === "editor" && e.key === "Home") {
+      e.preventDefault();
+      stepClip(-1e6);
     }
   };
 
@@ -2062,10 +2172,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       )}
 
       {view === "editor" && (
-      <div className="ed">
-        <aside className="ed-rail" aria-label="Избранные моменты">
-          <div className="ed-rail-head muted">{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Моменты"}</div>
-          {railPlans.map((p) => (
+      <div className={`ed${libTab === "frame" ? " ed--wide-lib" : ""}`}>
+        <nav className="ed-tabs" aria-label="Библиотека">
+          {LIB_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`ed-tab${libTab === tab.key ? " active" : ""}`}
+              onClick={() => setLibTab(tab.key)}
+              title={tab.hint}
+            >
+              <span className="ed-tab-ico" aria-hidden>
+                {tab.icon}
+              </span>
+              <span className="ed-tab-label">{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <aside className="ed-lib" aria-label={LIB_TABS.find((t) => t.key === libTab)?.label}>
+          {libTab === "moments" ? (
+            <>
+              <div className="ed-lib-head">
+                <strong>{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Моменты"}</strong>
+                <span className="muted">{railPlans.length}</span>
+              </div>
+              <div className="ed-lib-moments">
+                {railPlans.map((p) => (
             <button
               key={p.id}
               className={`ed-rail-item${p.id === activePlan?.id ? " active" : ""}`}
@@ -2077,10 +2210,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <span className="ed-rail-dur mono">{formatDuration(planDur(p))}</span>
             </button>
           ))}
-        </aside>
-
-        <div className="ed-main">
-          <div className="ed-stage-row">
+              </div>
+            </>
+          ) : null}
+          {/* Исходник с рамкой 9:16 живёт всегда: из его <video> рисуется превью.
+              На других вкладках он «припаркован» — невидим, но играет. */}
+          <div className={`ed-lib-frame${libTab === "frame" ? "" : " parked"}`}>
+            <div className="ed-lib-head">
+              <strong>Кадр исходника</strong>
+              <span className="muted">тащи рамку — так встанет кадр 9:16</span>
+            </div>
             <div className="ed-stage">
               <div
                 className={`stage-frame${mirror ? " mirrored" : ""}`}
@@ -2138,7 +2277,47 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 {formatDuration(source.duration_sec)} · {source.width}×{source.height} · 16:9 → 9:16
               </div>
             </div>
-            <div className="ed-phone" title="Так будет выглядеть вертикальный клип">
+          </div>
+          {libTab === "media" ? (
+            <div className="ed-lib-media">
+              <div className="ed-shelf-head">
+              <span className="ed-shelf-title">Полка вставок</span>
+              <span className="muted ed-shelf-hint">перетащи файл на дорожку «Вставки» или кликни дважды — встанет под курсором</span>
+              <button
+                className="btn sm"
+                disabled={!activePlan}
+                onClick={async () => {
+                  await flushSettings();
+                  setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
+                  setAiMontageOpen(true);
+                }}
+                title="ИИ разложит мемы по клипу, не трогая куски"
+              >
+                ✨ ИИ подберёт мемы
+              </button>
+            </div>
+            <AssetDrawer
+              onAdd={(assetId) => {
+                const asset = assetsQuery.data?.find((a) => a.id === assetId);
+                setInserts((prev) => [
+                  ...prev,
+                  {
+                    asset_id: assetId,
+                    at: clipTimeNow(),
+                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
+                    mode: asset?.kind === "audio" ? "sound" : "full",
+                    volume: 1,
+                    duck: asset?.kind !== "audio",
+                  },
+                ]);
+              }}
+            />
+            </div>
+          ) : null}
+        </aside>
+
+        <div className="ed-center">
+          <div className="ed-phone" title="Так будет выглядеть вертикальный клип">
               <div className="ed-phone-screen">
                 <canvas
                   ref={phoneRef}
@@ -2177,8 +2356,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <span className="ed-phone-tag mono">9:16</span>
               </div>
             </div>
-          </div>
-
           <div className="ed-transport">
             <button
               className="btn primary sm"
@@ -2200,6 +2377,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <button className="btn sm" onClick={stopPlayback}>
               ⏹ Стоп
             </button>
+            <div className="ed-tc" title="Время клипа · ←/→ — кадр, Shift+←/→ — секунда, пробел — плей/пауза">
+              <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-1e6)} aria-label="В начало клипа">
+                ⏮
+              </button>
+              <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-FRAME_SEC)} aria-label="Кадр назад">
+                ◂
+              </button>
+              <span className="ed-tc-now mono" ref={tcRef}>
+                00:00.00
+              </span>
+              <span className="ed-tc-total mono muted">/ {formatTimecode(activePlan ? planDur(activePlan) : 0)}</span>
+              <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(FRAME_SEC)} aria-label="Кадр вперёд">
+                ▸
+              </button>
+            </div>
             <label className="switch">
               <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
               <span className="switch-track" />
@@ -2250,99 +2442,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   );
                 })()
               : null}
-          </div>
-
-          <div className="panel editor-timeline">
-            <div className="ed-tl-head">
-              <strong>{activePlan ? activePlan.title || `План #${activePlan.id}` : ""}</strong>
-              <span className="muted mono">
-                {activePlan ? `${formatDuration(planDur(activePlan))} · ${activePlan.segments.length} сегм.` : ""}
-              </span>
-              {activePlan ? (
-                <button
-                  className={`mo-act${activePlan.favorite ? " fav" : ""}`}
-                  title={activePlan.favorite ? "Убрать из избранного" : "В избранное"}
-                  onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
-                >
-                  {activePlan.favorite ? "★" : "☆"}
-                </button>
-              ) : null}
-            </div>
-            <ClipTimeline
-              sourceId={source.id}
-              peaks={planWave.data?.peaks}
-              pieces={activePlan?.segments ?? []}
-              inserts={inserts}
-              subLines={subLines}
-              assets={assetsQuery.data ?? []}
-              videoRef={videoRef}
-              selected={tlSelected}
-              onSelect={(sel) => {
-                selectOnTimeline(sel);
-                if (sel?.kind === "piece") {
-                  const seg = activePlan?.segments[sel.index];
-                  if (seg) setSelectedSeg(seg.id);
-                }
-              }}
-              onSeekClip={(t) => seekClipTime(t, false)}
-              onPieceCommit={(id, s, e) => commit.mutate({ id, s, e })}
-              onSplitAt={splitAtClip}
-              onDeleteSelected={deleteSelected}
-              onInsertsChange={setInserts}
-              onSubLinesChange={(next) => {
-                setSubLines(next);
-                subLinesRef.current = next;
-                if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
-              }}
-              onDropAsset={(assetId, at) => {
-                const asset = assetsQuery.data?.find((a) => a.id === assetId);
-                setInserts((prev) => [
-                  ...prev,
-                  {
-                    asset_id: assetId,
-                    at,
-                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
-                    mode: asset?.kind === "audio" ? "sound" : "full",
-                    volume: 1,
-                    duck: asset?.kind !== "audio",
-                  },
-                ]);
-                setTlSelected({ kind: "insert", index: inserts.length });
-                toast.success(`«${asset?.label ?? "файл"}» на ${formatDuration(at)} — тяните блок, чтобы подвинуть`);
-              }}
-            />
-            <div className="ed-shelf-head">
-              <span className="ed-shelf-title">Полка вставок</span>
-              <span className="muted ed-shelf-hint">перетащи файл на дорожку «Вставки» или кликни дважды — встанет под курсором</span>
-              <button
-                className="btn sm"
-                disabled={!activePlan}
-                onClick={async () => {
-                  await flushSettings();
-                  setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
-                  setAiMontageOpen(true);
-                }}
-                title="ИИ разложит мемы по клипу, не трогая куски"
-              >
-                ✨ ИИ подберёт мемы
-              </button>
-            </div>
-            <AssetDrawer
-              onAdd={(assetId) => {
-                const asset = assetsQuery.data?.find((a) => a.id === assetId);
-                setInserts((prev) => [
-                  ...prev,
-                  {
-                    asset_id: assetId,
-                    at: clipTimeNow(),
-                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
-                    mode: asset?.kind === "audio" ? "sound" : "full",
-                    volume: 1,
-                    duck: asset?.kind !== "audio",
-                  },
-                ]);
-              }}
-            />
           </div>
         </div>
 
@@ -3033,6 +3132,67 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
           </div>
         </aside>
+
+        <div className="panel editor-timeline ed-bottom">
+            <div className="ed-tl-head">
+              <strong>{activePlan ? activePlan.title || `План #${activePlan.id}` : ""}</strong>
+              <span className="muted mono">
+                {activePlan ? `${formatDuration(planDur(activePlan))} · ${activePlan.segments.length} сегм.` : ""}
+              </span>
+              {activePlan ? (
+                <button
+                  className={`mo-act${activePlan.favorite ? " fav" : ""}`}
+                  title={activePlan.favorite ? "Убрать из избранного" : "В избранное"}
+                  onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
+                >
+                  {activePlan.favorite ? "★" : "☆"}
+                </button>
+              ) : null}
+            </div>
+            <ClipTimeline
+              sourceId={source.id}
+              peaks={planWave.data?.peaks}
+              pieces={activePlan?.segments ?? []}
+              inserts={inserts}
+              subLines={subLines}
+              assets={assetsQuery.data ?? []}
+              videoRef={videoRef}
+              selected={tlSelected}
+              onSelect={(sel) => {
+                selectOnTimeline(sel);
+                if (sel?.kind === "piece") {
+                  const seg = activePlan?.segments[sel.index];
+                  if (seg) setSelectedSeg(seg.id);
+                }
+              }}
+              onSeekClip={(t) => seekClipTime(t, false)}
+              onPieceCommit={(id, s, e) => commit.mutate({ id, s, e })}
+              onSplitAt={splitAtClip}
+              onDeleteSelected={deleteSelected}
+              onInsertsChange={setInserts}
+              onSubLinesChange={(next) => {
+                setSubLines(next);
+                subLinesRef.current = next;
+                if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
+              }}
+              onDropAsset={(assetId, at) => {
+                const asset = assetsQuery.data?.find((a) => a.id === assetId);
+                setInserts((prev) => [
+                  ...prev,
+                  {
+                    asset_id: assetId,
+                    at,
+                    duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
+                    mode: asset?.kind === "audio" ? "sound" : "full",
+                    volume: 1,
+                    duck: asset?.kind !== "audio",
+                  },
+                ]);
+                setTlSelected({ kind: "insert", index: inserts.length });
+                toast.success(`«${asset?.label ?? "файл"}» на ${formatDuration(at)} — тяните блок, чтобы подвинуть`);
+              }}
+            />
+        </div>
       </div>
       )}
     </div>
