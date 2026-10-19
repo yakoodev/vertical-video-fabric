@@ -1331,6 +1331,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
+  // ⚡ Автомонтаж без ИИ — правила по словам и громкости (app/auto_edit.py).
+  const autoEdit = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      await flushSettings();
+      return api.post<{ layers: number; camera: number }>(`/api/clip-plans/${clipPlanId}/auto-edit`, {
+        keep_layers: true,
+      });
+    },
+    onSuccess: async (r) => {
+      toast.success(`Автомонтаж: ${r.layers} слоёв, ${r.camera ? "наезды по речи" : "без наездов"} — Ctrl+Z откатит`);
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автомонтаж не удался"),
+  });
   const undoEdit = useMutation({
     mutationFn: async (clipPlanId: number) => {
       // Незаписанные правки панели сначала уезжают на сервер: иначе автосохранение
@@ -2964,6 +2979,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"
                 >
                   🤖 ИИ-монтаж
+                </button>
+                <button
+                  className="btn sm"
+                  disabled={!activePlan || autoEdit.isPending}
+                  onClick={() => activePlan && autoEdit.mutate(activePlan.id)}
+                  title="Без ИИ, за секунду: хук-титр, анимированные субтитры по словам с эмодзи, наезды и звуки на ударные слова. Ctrl+Z откатит."
+                >
+                  {autoEdit.isPending ? "Собираю…" : "⚡ Автомонтаж"}
                 </button>
                 <a
                   className="btn sm"

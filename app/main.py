@@ -2753,6 +2753,28 @@ def api_set_clip_plan_render_settings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class AutoEditRequest(BaseModel):
+    style: str = Field(default="hormozi", max_length=40, description="стиль анимированных субтитров")
+    keep_layers: bool = Field(default=False, description="оставить свои слои, заменить только авто-слои")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/auto-edit",
+    tags=["Render"],
+    summary="⚡ Автомонтаж без ИИ: хук, субтитры по словам, наезды и звуки по речи",
+)
+def api_clip_plan_auto_edit(clip_plan_id: int, _auth: AuthDep, payload: AutoEditRequest | None = None) -> dict:
+    from app.auto_edit import apply_auto_edit
+
+    body = payload or AutoEditRequest()
+    try:
+        return apply_auto_edit(store, clip_plan_id, style=body.style, keep_layers=body.keep_layers)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get(
     "/api/render/transition-options",
     tags=["Render"],
