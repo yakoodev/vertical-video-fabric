@@ -104,6 +104,12 @@ class VideoAnalysisService:
         chat_block = chat_prompt_block(self.store, source_id)
         if chat_block:
             analyzer_prompt = f"{analyzer_prompt}\n\n{chat_block}".strip()
+        # YouTube «самые пересматриваемые» места — такая же подсказка модели.
+        from app.youtube_heatmap import heatmap_prompt_block
+
+        heat_block = heatmap_prompt_block(self.store, source_id)
+        if heat_block:
+            analyzer_prompt = f"{analyzer_prompt}\n\n{heat_block}".strip()
         if source["status"] == "failed":
             raise ValueError("failed source cannot be analyzed")
         normalized_preprocessing = normalize_analysis_preprocessing(preprocessing)
