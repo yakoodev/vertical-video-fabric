@@ -3788,3 +3788,18 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .agent-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: end; }
 .agent-input textarea { resize: none; min-height: 44px; }
 .agent-input .btn { height: 44px; min-width: 44px; justify-content: center; }
+.ed-inline-text {
+  position: absolute;
+  z-index: 5;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(10, 8, 20, 0.88);
+  color: #fff;
+  font: 800 16px/1.25 Montserrat, Inter, sans-serif;
+  text-align: center;
+  resize: none;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.cam-auto { width: 100%; justify-content: center; background: linear-gradient(90deg, rgba(56,189,248,.25), rgba(139,92,246,.25)); }

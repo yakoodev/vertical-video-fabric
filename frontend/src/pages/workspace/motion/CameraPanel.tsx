@@ -6,6 +6,9 @@
 import { EASING_NAMES, type CameraKey } from "@/motion";
 
 type Props = {
+  /** Слова клипа (время клипа) и громкость по корзинам — для «Наездов по речи». */
+  words?: { word: string; start: number; end: number }[];
+  peaks?: number[];
   camera: CameraKey[];
   selectedIndex: number | null;
   now: () => number;
@@ -63,7 +66,58 @@ const MOVES: { id: string; label: string; hint: string; build: (t: number) => Ca
   },
 ];
 
-export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange, onSelect }: Props) {
+/**
+ * Наезды по речи: монтажёр бьёт зумом в ударные слова — громкие и стоящие перед
+ * паузой (панчлайн «повисает»). Берём такие слова, не чаще раза в ~4 с, и
+ * ставим на каждое короткий панч-ин 1.18–1.3× с возвратом.
+ */
+export function speechPunchIns(
+  words: { word: string; start: number; end: number }[],
+  peaks: number[],
+  clipDuration: number,
+): CameraKey[] {
+  if (!words.length || clipDuration <= 0) return [];
+  const loud = (a: number, b: number) => {
+    if (!peaks.length) return 0.5;
+    const i0 = Math.max(0, Math.floor((a / clipDuration) * peaks.length));
+    const i1 = Math.min(peaks.length, Math.ceil((b / clipDuration) * peaks.length) + 1);
+    let m = 0;
+    for (let i = i0; i < i1; i++) m = Math.max(m, peaks[i]);
+    return m;
+  };
+  const scored = words.map((w, i) => {
+    const gap = (words[i + 1]?.start ?? clipDuration) - w.end;
+    const len = w.word.replace(/[^\p{L}\p{N}]/gu, "").length;
+    const exclaim = /[!?]/.test(w.word) ? 0.25 : 0;
+    return { w, score: loud(w.start, w.end) + Math.min(0.6, gap) * 0.8 + exclaim + (len >= 5 ? 0.1 : 0) };
+  });
+  const sorted = [...scored].sort((a, b) => b.score - a.score);
+  const picked: typeof scored = [];
+  const budget = Math.max(1, Math.round(clipDuration / 6));
+  for (const c of sorted) {
+    if (picked.length >= budget) break;
+    if (c.w.start < 0.6 || c.w.end > clipDuration - 0.8) continue;
+    if (picked.some((p) => Math.abs(p.w.start - c.w.start) < 4)) continue;
+    picked.push(c);
+  }
+  const keys: CameraKey[] = [];
+  picked
+    .sort((a, b) => a.w.start - b.w.start)
+    .forEach((p, n) => {
+      const t = Math.max(0, p.w.start - 0.06);
+      const zoom = n % 2 ? 1.18 : 1.28;
+      const hold = Math.min(1.4, Math.max(0.6, p.w.end - p.w.start + 0.6));
+      keys.push(
+        { t: r3(t), zoom: 1, ease: "outCubic" },
+        { t: r3(t + 0.16), zoom, ease: "linear" },
+        { t: r3(t + 0.16 + hold), zoom, ease: "inOutCubic" },
+        { t: r3(t + 0.46 + hold), zoom: 1 },
+      );
+    });
+  return keys;
+}
+
+export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange, onSelect, words = [], peaks = [] }: Props) {
   const key = selectedIndex != null ? camera[selectedIndex] : null;
   const patch = (p: Partial<CameraKey>) =>
     selectedIndex != null && onChange(camera.map((k, i) => (i === selectedIndex ? { ...k, ...p } : k)));
@@ -78,6 +132,15 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
   };
   return (
     <div className="cam-panel">
+      <button
+        type="button"
+        className="btn sm cam-auto"
+        disabled={!words.length}
+        title={words.length ? "Короткие наезды на ударные слова — громкие и перед паузой. Заменяет текущие наезды." : "Нужны субтитры клипа (распознать речь)"}
+        onClick={() => onChange(speechPunchIns(words, peaks, clipDuration))}
+      >
+        ✨ Наезды по речи
+      </button>
       <div className="cam-moves">
         {MOVES.map((m) => (
           <button key={m.id} type="button" className="btn sm" title={m.hint} onClick={() => addMove(m.build)}>

@@ -35,6 +35,7 @@ import {
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
+import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import {
   GeneratePanel,
   MemesPanel,
@@ -1032,6 +1033,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [camera, setCamera] = useState<CameraKey[]>([]);
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
+  // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
+  const [inlineEdit, setInlineEdit] = useState<{ id: string; field: string; text: string; left: number; top: number; width: number } | null>(null);
   // Шрифты движка — один раз; картинки слоёв — как только слой появился,
   // чтобы к моменту его показа в превью они уже были в кэше.
   useEffect(() => {
@@ -1490,6 +1493,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // на каждый кадр перерисовывал бы весь редактор 60 раз в секунду.
   const tcSegsRef = useRef<AiSegment[]>([]);
   tcSegsRef.current = activePlan?.segments ?? [];
+  // Звуки-слои звучат в превью в такт видео.
+  useLayerAudio(videoRef, motionViewRef, () => clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0));
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -1794,6 +1799,37 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     }
     e.preventDefault();
   };
+  // Двойной клик по тексту на кадре — поле ввода прямо поверх слоя.
+  const onOverlayDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const cv = e.currentTarget;
+    const r = cv.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / (r.width || 1)) * cv.width;
+    const py = ((e.clientY - r.top) / (r.height || 1)) * cv.height;
+    const picked = pickLayer(cv, px, py);
+    if (!picked || picked.layer.locked) return;
+    const l = picked.layer;
+    const field = l.type === "text" ? "text" : l.type === "callout" ? "title" : l.type === "chart" ? "title" : null;
+    if (!field) return;
+    const text = String((l.props as Record<string, unknown>)[field] ?? "");
+    const w = Math.max(picked.box.w, cv.width * 0.5);
+    setInlineEdit({
+      id: l.id,
+      field,
+      text,
+      left: (Math.max(0, picked.box.cx - w / 2) / cv.width) * 100,
+      top: (Math.max(0, picked.box.cy - picked.box.h / 2) / cv.height) * 100,
+      width: (Math.min(w, cv.width) / cv.width) * 100,
+    });
+  };
+  const commitInlineEdit = (value: string) => {
+    const edit = inlineEdit;
+    setInlineEdit(null);
+    if (!edit || value === edit.text) return;
+    setLayers((prev) =>
+      prev.map((l) => (l.id === edit.id ? ({ ...l, props: { ...l.props, [edit.field]: value } } as Layer) : l)),
+    );
+  };
+
   const onInsertPointerUp = () => {
     const ld = layerDragRef.current;
     if (ld) {
@@ -2624,12 +2660,31 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   width={1080}
                   height={1920}
                   style={{ pointerEvents: "auto", touchAction: "none" }}
-                  title="Мем можно двигать мышкой, а за уголок — менять размер (на паузе)"
+                  title="Слой или мем можно двигать мышкой, тянуть за уголок, крутить за кружок; двойной клик по тексту — править"
                   onPointerDown={onInsertPointerDown}
                   onPointerMove={onInsertPointerMove}
                   onPointerUp={onInsertPointerUp}
                   onPointerCancel={onInsertPointerUp}
+                  onDoubleClick={onOverlayDoubleClick}
                 />
+                {inlineEdit ? (
+                  <textarea
+                    className="ed-inline-text"
+                    autoFocus
+                    defaultValue={inlineEdit.text}
+                    style={{ left: `${inlineEdit.left}%`, top: `${inlineEdit.top}%`, width: `${inlineEdit.width}%` }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={(e) => commitInlineEdit(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Escape") setInlineEdit(null);
+                      else if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        commitInlineEdit(e.currentTarget.value);
+                      }
+                    }}
+                  />
+                ) : null}
                 {selectedPreset?.vignette ? (
                   <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
                 ) : null}
@@ -2759,6 +2814,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             ) : null}
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
               <CameraPanel
+                words={(planSubs.data?.words ?? []) as SubtitleWord[]}
+                peaks={planWave.data?.peaks ?? []}
                 camera={camera}
                 selectedIndex={tlSelected?.kind === "cam" ? tlSelected.index : null}
                 now={clipNow}
