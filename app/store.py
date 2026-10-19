@@ -776,6 +776,7 @@ class AppStore:
             raise KeyError(f"source not found: {source_id}")
         data = dict(row)
         data["content_crop"] = _parse_content_crop(data.get("content_crop"))
+        data["facecam"] = _parse_facecam(data.pop("facecam_json", ""))
         # Don't ship the (potentially huge) cached transcript in every source
         # response — expose only a presence flag + size for the UI.
         raw_transcript = data.pop("transcript_json", "") or ""
@@ -928,6 +929,12 @@ class AppStore:
                 updates["metadata_json"] = _json_text(value)
             elif key == "content_crop":
                 updates["content_crop"] = _normalize_content_crop(value)
+            elif key == "facecam":
+                # Вебка стримера {x,y,w,h} (доли кадра) или None — сбросить.
+                from app.stream_layout import normalize_cam
+
+                cam = normalize_cam(value, default=None) if isinstance(value, dict) else None
+                updates["facecam_json"] = _json_text(cam) if cam else ""
             elif key == "focus_preset":
                 updates["focus_preset"] = _choice(str(value or ""), VALID_FOCUS_PRESETS | {""}, "focus_preset")
             elif key == "focus_strategy":
@@ -1891,6 +1898,69 @@ class AppStore:
         )
         return int(row["n"]) if row else 0
 
+    # ---- 💬 Чат с ИИ-монтажёром клипа ------------------------------------------
+
+    def add_clip_agent_message(
+        self,
+        clip_plan_id: int,
+        role: str,
+        text: str,
+        steps: list | None = None,
+        status: str = "done",
+        run_id: str = "",
+        model: str = "",
+    ) -> dict:
+        cur = self.db.execute(
+            """
+            INSERT INTO clip_agent_messages (clip_plan_id, role, text, steps_json, status, run_id, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(clip_plan_id), str(role), str(text or "")[:20000],
+                json.dumps(steps or [], ensure_ascii=False), str(status), str(run_id), str(model),
+            ),
+        )
+        return self.get_clip_agent_message(int(cur.lastrowid))
+
+    def get_clip_agent_message(self, message_id: int) -> dict:
+        row = self.db.query_one("SELECT * FROM clip_agent_messages WHERE id = ?", (message_id,))
+        if not row:
+            raise KeyError(f"agent message not found: {message_id}")
+        return _decode_agent_message(dict(row))
+
+    def update_clip_agent_message(
+        self, message_id: int, *, text: str | None = None, steps: list | None = None, status: str | None = None
+    ) -> None:
+        """Живое обновление ответа: шаги дописываются по мере работы агента."""
+        sets, params = [], []
+        if text is not None:
+            sets.append("text = ?")
+            params.append(str(text)[:20000])
+        if steps is not None:
+            sets.append("steps_json = ?")
+            params.append(json.dumps(steps, ensure_ascii=False))
+        if status is not None:
+            sets.append("status = ?")
+            params.append(str(status))
+        if not sets:
+            return
+        self.db.execute(f"UPDATE clip_agent_messages SET {', '.join(sets)} WHERE id = ?", (*params, message_id))
+
+    def list_clip_agent_messages(self, clip_plan_id: int, limit: int = 200) -> list[dict]:
+        rows = self.db.query_all(
+            """
+            SELECT * FROM (
+                SELECT * FROM clip_agent_messages WHERE clip_plan_id = ? ORDER BY id DESC LIMIT ?
+            ) ORDER BY id
+            """,
+            (int(clip_plan_id), int(limit)),
+        )
+        return [_decode_agent_message(dict(r)) for r in rows]
+
+    def clear_clip_agent_messages(self, clip_plan_id: int) -> int:
+        cur = self.db.execute("DELETE FROM clip_agent_messages WHERE clip_plan_id = ?", (int(clip_plan_id),))
+        return int(cur.rowcount or 0)
+
     # ---- Gemini Files API: что уже залито и до какого времени живёт ----------
 
     def get_gemini_file(self, local_path: str) -> dict | None:
@@ -2591,6 +2661,12 @@ def _parse_content_crop(value: Any) -> dict | None:
         return None
 
 
+def _parse_facecam(value: Any) -> dict | None:
+    """Сохранённая вебка источника ``{x,y,w,h}`` или None."""
+    parsed = _parse_content_crop(value)
+    return parsed if parsed and all(k in parsed for k in ("x", "y", "w", "h")) else None
+
+
 def _parse_transcript(value: Any) -> list[dict]:
     if not value:
         return []
@@ -2964,6 +3040,15 @@ def _decode_asset(asset: dict) -> dict:
     asset["has_audio"] = bool(asset.get("has_audio"))
     asset["url"] = f"/media/montage-assets/{asset['id']}"
     return asset
+
+
+def _decode_agent_message(row: dict) -> dict:
+    try:
+        steps = json.loads(row.pop("steps_json", "") or "[]")
+    except (TypeError, ValueError):
+        steps = []
+    row["steps"] = steps if isinstance(steps, list) else []
+    return row
 
 
 def _decode_plan_settings(plan: dict) -> dict:

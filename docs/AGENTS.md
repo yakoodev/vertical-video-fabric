@@ -12,6 +12,85 @@ export VVF_TOKEN_FILE=/data/api_token.txt   # или VVF_TOKEN=<токен>
 python tools/vvf.py sources
 ```
 
+## Подключение по MCP (Claude Code, Codex, любой MCP-клиент)
+
+Сервис сам является MCP-сервером: `http://<хост>:8088/mcp`, транспорт **Streamable HTTP**,
+авторизация тем же токеном API (`Authorization: Bearer <токен>`; токен — `data/api_token.txt`
+или `POSTING_API_TOKEN`). Через MCP доступны те же инструменты, что у встроенного
+ИИ-монтажёра в редакторе: смотреть клип и его кадры, ставить титры/эмодзи/стикеры/графику,
+делать наезды камеры, искать картинки и звуки, править субтитры, переходы и подрезку.
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http vvf http://localhost:8088/mcp --header "Authorization: Bearer <токен>"
+```
+
+**Codex** (`~/.codex/config.toml`; токен в переменной окружения `VVF_TOKEN`):
+
+```toml
+[mcp_servers.vvf]
+url = "http://localhost:8088/mcp"
+bearer_token_env_var = "VVF_TOKEN"
+```
+
+Сервер stateless: отвечает на POST обычным JSON (GET `/mcp` → 405, SSE-потока нет) —
+это допустимый режим Streamable HTTP, все клиенты с ним работают.
+
+### Инструменты
+
+Инструментам клипа нужен `clip_id` (его дают `list_projects` → `list_clips`).
+Каждая правка через MCP делает снимок истории: владелец откатит её Ctrl+Z в редакторе.
+Ошибка — это `isError: true` и список `problems`: исправь и повтори.
+
+| Инструмент | Что делает |
+|---|---|
+| `list_projects`, `list_clips(project_id)` | найти проект и клип |
+| `get_clip(clip_id)` | куски, настройки, слои, камера, вставки, субтитры со временем слов (секунды клипа), предупреждения |
+| `get_transcript(clip_id, from_sec?, to_sec?)` | реплики исходника (время исходника) — для подрезки |
+| `view_frame(clip_id, t, with_layers?)` | **картинка** кадра готового вида (слои + камера) — смотри, что получилось |
+| `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
+| `set_camera(keys)` | все ключи камеры разом (наезды) |
+| `get_motion_reference` | шпаргалка по слоям |
+| `list_fonts`, `search_emoji(q)`, `list_packs`, `search_pack(pack, q)` | шрифты, эмодзи, паки стикеров/звуков/мемов |
+| `list_assets(q?)` | «Файлы для монтажа» владельца (asset_id) |
+| `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
+| `list_subtitle_styles`, `set_subtitles`, `edit_subtitle_lines` | субтитры: вкл/стиль/высота, правка текста строк |
+| `set_transition`, `trim_piece`, `add_insert`, `remove_insert` | переход, подрезка куска, вставки-мемы |
+
+Полный список с JSON Schema параметров: `GET /api/agent/tools`.
+
+### Моушн-слои: шпаргалка
+
+Контракт — [`docs/motion/spec.md`](motion/spec.md), схема полей — `GET /api/motion/schema`.
+
+- Кадр 1080×1920; `x`, `y` — центр слоя в долях кадра; размеры — опорные пиксели.
+- Время `start`/`end` — секунды **готового** клипа; `keys` — время от начала слоя.
+- Безопасная зона для текста: `y` 0.15–0.72 (внизу интерфейс площадки и субтитры, вверху шапка).
+- Типы: `text`, `emoji`, `image` (`asset_id` или `src: "emoji:1f525" | "sticker:<pack>/<file>"`),
+  `shape` (arrow/ellipse/…), `counter`, `progress`, `chart`, `callout`, `audio` (`sfx:<pack>/<file>`).
+- Вход/выход: `pop`, `words`, `typewriter`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
+- Камера: `[{t, zoom 1..4, x, y, ease}]` — панч-ин на панчлайн 1.0 → 1.2–1.35 за 0.2 с.
+
+```json
+{"type":"text","start":0.0,"end":2.2,"x":0.5,"y":0.24,
+ "props":{"text":"ОН ЭТО СДЕЛАЛ","size":100,"weight":900,"color":"#FFFFFF","stroke":{"color":"#000000","width":10}},
+ "in":{"type":"words","duration":0.35},"out":{"type":"fade","duration":0.2}}
+```
+
+### Без MCP: встроенный ИИ-монтажёр и слои из терминала
+
+```bash
+python tools/vvf.py agent 812 "добавь хук и подпиши цифры"   # встроенный агент, печатает шаги
+python tools/vvf.py layers 812                                # слои и камера
+python tools/vvf.py layers 812 --json > layers.json           # → правишь → обратно:
+python tools/vvf.py layers-set 812 layers.json                # проверка + замена (Ctrl+Z откатит)
+python tools/vvf.py frame-motion 812 --at 3.2 -o f.png        # кадр со слоями и камерой
+```
+
+Встроенный агент — это `POST /api/clip-plans/{id}/agent` `{message}` и опрос
+`GET /api/clip-plans/{id}/agent` (шаги видны по мере работы); модель — `GEMINI_AGENT_MODEL`.
+
 ## Цикл работы
 
 1. **Выбрать клип.** `vvf.py clips <проект> --favorites` — избранные (★) владелец
@@ -52,7 +131,10 @@ python tools/vvf.py sources
     "banner_on": false, "banner_id": null, "banner_height_pct": 14, "banner_pos_pct": 4,
     "music_on": false, "track_id": null,
     "transition": { "type": "fade", "duration": 0.35, "audio": "smooth", "sfx": "whoosh", "sfx_volume": 0.5 },
-    "cover": { "mode": "frame", "piece": 0, "offset": 2.4, "image": "", "burn": true, "burn_sec": 0.1 }
+    "cover": { "mode": "frame", "piece": 0, "offset": 2.4, "image": "", "burn": true, "burn_sec": 0.1 },
+    "layers": [ { "type": "text", "start": 3.2, "end": 6.0, "x": 0.5, "y": 0.3,
+                  "props": { "text": "ПАНЧЛАЙН" }, "in": { "type": "pop", "duration": 0.35 } } ],
+    "camera": [ { "t": 4.0, "zoom": 1.0 }, { "t": 4.3, "zoom": 1.35, "y": 0.4 } ]
   },
   "renders": [ { "clip_id": 431, "status": "succeeded", "qc": { ... } } ]   // только чтение
 }
@@ -83,6 +165,23 @@ python tools/vvf.py sources
   - `mode`: `none`, `frame` — момент самого клипа (`piece` — номер куска с 0, `offset` — секунды от его начала), `image` — загруженная картинка (`POST /api/covers`, в `image` пишется имя, которое вернёт сервер).
   - `burn: true` кладёт обложку на первые `burn_sec` секунд ролика (0.04–0.5): площадки, которые берут превью с первого кадра, покажут её.
   - Готовая обложка лежит в `renders[].cover_url`.
+- **Моушн-слои и камера** (`render.layers`, `render.camera`): титры, плашки, стикеры,
+  стрелки, счётчики, графики, звуки на акценты и наезды камеры. Контракт —
+  `docs/motion/spec.md`, схема полей — `GET /api/motion/schema`.
+  - Время слоя — секунды готового клипа (`start`/`end`), `x`/`y` — доли кадра 9:16.
+  - Проверить без сохранения: `POST /api/clip-plans/{id}/layers/validate`; посмотреть
+    кадр: `POST /api/clip-plans/{id}/motion/frame?t=3.2` (PNG).
+  - Ошибки формы слоёв отклоняют файл клипа целиком — сервер перечислит все.
+- **Раскладка стрима** (`render.layout`): самый частый формат стрим-шортсов — вебка
+  сверху, игра снизу.
+  - `mode`: `single` (обычный кадр 9:16, по умолчанию), `split` (вебка полосой сверху
+    или снизу, `cam_pos: top|bottom`, `ratio` 0.2–0.6 — её доля высоты), `pip_cam`
+    (обычный кадр + вебка окошком: `pip {x, y, w}` — центр и ширина в долях кадра 9:16).
+  - `cam {x, y, w, h}` — где вебка в исходнике (доли всего кадра). Найти сама:
+    `POST /api/sources/{id}/detect-facecam` (вернёт `{cam, confidence}` и запомнит
+    на источнике); сохранённая — `GET /api/sources/{id}/facecam`.
+  - `border {color: "#rrggbb", width}` и `gap` — рамка вебки и зазор (px кадра 1080×1920).
+  - В `split` трек `focus` ведёт окно игры (оно шире 9:16), `x` значит то же самое.
 - **Не трогай** `clip_id`, `source`, `renders`: сервер их игнорирует.
 - **Не рендери всё подряд.** Рендер длинный. Меняй один клип, рендери, проверяй.
 

@@ -319,6 +319,9 @@ class Database:
             self._ensure_column(conn, "sources", "focus_preset", "TEXT NOT NULL DEFAULT ''")
             # Global autofocus strategy (shot / follow / center / auto).
             self._ensure_column(conn, "sources", "focus_strategy", "TEXT NOT NULL DEFAULT ''")
+            # Вебка стримера (JSON {x,y,w,h} в долях кадра) — раскладки split/pip_cam
+            # (app/stream_layout.py); новые клипы источника берут её по умолчанию.
+            self._ensure_column(conn, "sources", "facecam_json", "TEXT NOT NULL DEFAULT ''")
             # Cut-refinement hypothesis + cached scene-cut times for it.
             self._ensure_column(conn, "sources", "cut_strategy", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "sources", "scene_cuts_json", "TEXT NOT NULL DEFAULT ''")
@@ -420,6 +423,31 @@ class Database:
                 )
                 """
             )
+            # 💬 Чат с ИИ-монтажёром в редакторе: разговор продолжается между
+            # заходами, а шаги (вызовы инструментов) видны под ответом.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clip_agent_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_plan_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    steps_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'done',
+                    run_id TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_clip_agent_messages ON clip_agent_messages(clip_plan_id, id)"
+            )
+            # 💬 Чат Twitch-VOD источника (source_chat — статус импорта и карты
+            # смайлов/значков, chat_messages — сами сообщения), см. app/twitch_chat.py.
+            from app.twitch_chat import ensure_chat_schema
+
+            ensure_chat_schema(conn)
             # Free-form notes of the clip file (why it is cut this way) — for the
             # human and for outside agents working through the clip file API.
             self._ensure_column(conn, "clip_plans", "notes", "TEXT NOT NULL DEFAULT ''")

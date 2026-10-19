@@ -42,6 +42,15 @@ RUN apt-get update \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# Content packs for motion layers (Twemoji, stickers, SFX, meme templates):
+# fetched at build time with pinned versions + sha256 (stdlib-only script, data
+# only — nothing downloaded is executed). Placed early and copied alone so the
+# layer stays cached until the script itself changes. PACKS_SKIP=imgflip skips
+# the meme templates if i.imgflip.com is unreachable from the build network.
+ARG PACKS_SKIP=""
+COPY tools/fetch_packs.py /app/tools/fetch_packs.py
+RUN python3 /app/tools/fetch_packs.py /app/vendor/packs --skip "${PACKS_SKIP}"
+
 RUN python3 -m venv /opt/venv
 
 COPY requirements.txt /app/requirements.txt
@@ -55,6 +64,8 @@ ENV YUNET_MODEL=/opt/models/yunet.onnx \
     YOLOX_MODEL=/opt/models/yolox_nano.onnx
 COPY vendor/yunet.onnx /opt/models/yunet.onnx
 COPY vendor/yolox_nano.onnx /opt/models/yolox_nano.onnx
+# Fonts for motion layers (OFL, committed to the repo — see vendor/fonts/LICENSES.md).
+COPY vendor/fonts /app/vendor/fonts
 
 RUN git clone https://github.com/makiisthenes/TiktokAutoUploader.git /opt/TiktokAutoUploader \
     && cd /opt/TiktokAutoUploader \

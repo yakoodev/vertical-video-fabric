@@ -63,6 +63,7 @@ from app.timeline_export import write_timeline
 from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
+from app.agent_api import router as agent_router
 
 settings.ensure_dirs()
 settings.ensure_api_token()
@@ -3426,6 +3427,30 @@ def _normalize_schedule_text(value: str | None) -> str:
         except ValueError:
             continue
     raise ValueError("scheduled_at must be YYYY-MM-DD HH:MM or datetime-local format")
+
+
+# Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
+from app.motion_api import build_motion_router  # noqa: E402
+
+app.include_router(build_motion_router(AuthDep, lambda: store))
+
+# Раскладки стрима: автопоиск и сохранённая вебка источника (app/layout_api.py).
+from app.layout_api import build_layout_router  # noqa: E402
+
+app.include_router(build_layout_router(AuthDep, lambda: store))
+
+
+app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки
+
+# 💬 Чат Twitch-VOD: импорт (авто для Twitch-источников), активность, чат клипа (app/chat_api.py).
+from app.chat_api import build_chat_router  # noqa: E402
+
+app.include_router(build_chat_router(AuthDep, lambda: store, ingestor=source_ingestor))
+
+# Контент моушн-слоёв: шрифты, эмодзи, стикеры, звуки, мемы (app/motion_assets.py).
+from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402
+
+app.include_router(build_motion_assets_router(AuthDep, lambda: store))
 
 
 # --------------------------------------------------------------------------- #

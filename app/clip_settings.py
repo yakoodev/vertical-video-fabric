@@ -16,7 +16,8 @@ plan's settings back verbatim.
 from __future__ import annotations
 
 from app.montage_assets import normalize_inserts
-
+from app.motion import normalize_camera, normalize_layers
+from app.stream_layout import normalize_layout
 from app.transitions import normalize_transition
 
 SUBTITLE_FRAME_HEIGHT = 1920
@@ -109,6 +110,13 @@ def normalize_render_settings(raw: object) -> dict:
         "transition": normalize_transition(src.get("transition")),
         "cover": normalize_cover(src.get("cover")),
         "inserts": normalize_inserts(src.get("inserts")),
+        # Моушн-слои и наезды камеры (docs/motion/spec.md). Рендер читает их
+        # прямо из настроек плана, как и вставки, — в kwargs рендера их нет.
+        "layers": normalize_layers(src.get("layers")),
+        "camera": normalize_camera(src.get("camera")),
+        # Раскладка стрима: вебка сверху + геймплей и т.п. (app/stream_layout.py).
+        # Как и слои, рендер читает её прямо из настроек плана; single — как раньше.
+        "layout": normalize_layout(src.get("layout")),
     }
 
 

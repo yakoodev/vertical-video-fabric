@@ -19,6 +19,11 @@ the service's code or database. Standard library only.
     vvf.py frame 50 --at 812.4 -o f.jpg        # a still of the source (to look at)
     vvf.py frame 50 --at 812.4 --x 0.62 -o c.jpg  # exactly the 9:16 window at x
     vvf.py schema                              # JSON Schema of the clip file
+    vvf.py layers 812                          # motion layers + camera of a clip
+    vvf.py layers 812 --json > layers.json     # the same as an editable file
+    vvf.py layers-set 812 layers.json          # validate, then replace layers (+camera)
+    vvf.py frame-motion 812 --at 3.2 -o f.png  # a frame of the finished look (layers, camera)
+    vvf.py agent 812 "сделай динамичнее"       # the built-in AI editor; waits, prints steps
 
 See docs/AGENTS.md for the workflow and the rules of the file.
 """
@@ -27,6 +32,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import List, Optional
@@ -208,6 +214,97 @@ def cmd_frame(args) -> None:
     print(f"сохранено: {args.output}")
 
 
+def _layer_line(layer: dict) -> str:
+    props = layer.get("props") or {}
+    what = props.get("text") or props.get("title") or props.get("char") or props.get("kind") or         props.get("asset_id") or props.get("src") or ""
+    what = " ".join(str(what).split())[:40]
+    flags = (" скрыт" if layer.get("hidden") else "") + (" 🔒" if layer.get("locked") else "")
+    return (f"  {layer.get('id', '?'):<10} {layer.get('type', ''):8} {float(layer.get('start', 0)):6.2f}–"
+            f"{float(layer.get('end', 0)):6.2f} с  x={layer.get('x')} y={layer.get('y')}  {what}{flags}")
+
+
+def cmd_layers(args) -> None:
+    render = call("GET", f"/api/clip-plans/{args.clip}/spec").get("render") or {}
+    layers, camera = render.get("layers") or [], render.get("camera") or []
+    if args.json:
+        print(json.dumps({"layers": layers, "camera": camera}, ensure_ascii=False, indent=2))
+        return
+    print(f"слоёв: {len(layers)}")
+    for layer in sorted(layers, key=lambda l: (float(l.get("start", 0)), l.get("track", 0))):
+        print(_layer_line(layer))
+    if camera:
+        print("камера: " + ", ".join(f"{k.get('t')} с ×{k.get('zoom')}" for k in camera))
+
+
+def cmd_layers_set(args) -> None:
+    try:
+        with open(args.file, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as err:
+        print(f"{args.file}: {err}", file=sys.stderr)
+        sys.exit(2)
+    if isinstance(data, list):
+        data = {"layers": data}
+    if not isinstance(data, dict) or not isinstance(data.get("layers"), list):
+        print("нужен список слоёв или объект {\"layers\": [...], \"camera\": [...]}", file=sys.stderr)
+        sys.exit(2)
+    body = {"layers": data["layers"]}
+    if isinstance(data.get("camera"), list):
+        body["camera"] = data["camera"]
+    check = call("POST", f"/api/clip-plans/{args.clip}/layers/validate", body)
+    if check.get("problems"):
+        print("слои не приняты:")
+        for p in check["problems"]:
+            print(f"  - {p}")
+        sys.exit(1)
+    spec = call("GET", f"/api/clip-plans/{args.clip}/spec")
+    spec["render"] = {**(spec.get("render") or {}), **body}
+    result = call("PUT", f"/api/clip-plans/{args.clip}/spec", spec)
+    render = result["spec"].get("render") or {}
+    print(f"применено: слоёв {len(render.get('layers') or [])}, ключей камеры {len(render.get('camera') or [])}"
+          " (Ctrl+Z в редакторе откатит)")
+
+
+def cmd_frame_motion(args) -> None:
+    body = {"layers": [], "camera": []} if args.no_layers else None
+    data = call("POST", f"/api/clip-plans/{args.clip}/motion/frame?t={args.at}", body, raw=True)
+    with open(args.output, "wb") as f:
+        f.write(data)
+    print(f"сохранено: {args.output}")
+
+
+def cmd_agent(args) -> None:
+    path = f"/api/clip-plans/{args.clip}/agent"
+    started = call("POST", path, {"message": args.message})
+    print(f"ИИ-монтажёр ({started.get('model')}) работает…", file=sys.stderr)
+    shown = 0
+    deadline = time.time() + args.timeout
+    while True:
+        chat = call("GET", path)
+        reply = next((m for m in reversed(chat["messages"]) if m["id"] == started["message_id"]), None)
+        steps = (reply or {}).get("steps") or []
+        for step in steps[shown:]:
+            if step.get("ok") is None:
+                break
+            mark = "✓" if step["ok"] else "✗"
+            print(f"  {mark} {step.get('label')}")
+            for problem in (step.get("problems") or [])[:5]:
+                print(f"      - {problem}")
+            shown += 1
+        if not chat.get("running"):
+            break
+        if time.time() > deadline:
+            call("POST", path + "/cancel", {})
+            print("время вышло — ход остановлен", file=sys.stderr)
+            sys.exit(1)
+        time.sleep(1.5)
+    reply = next((m for m in reversed(chat["messages"]) if m["id"] == started["message_id"]), None) or {}
+    print()
+    print(reply.get("text") or "(без ответа)")
+    if reply.get("status") not in ("done", None):
+        sys.exit(1)
+
+
 def cmd_schema(_args) -> None:
     print(json.dumps(call("GET", "/api/clip-spec/schema"), ensure_ascii=False, indent=2))
 
@@ -251,6 +348,25 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(fn=cmd_frame)
     sub.add_parser("schema", help="JSON Schema файла клипа").set_defaults(fn=cmd_schema)
+    p = sub.add_parser("layers", help="моушн-слои и камера клипа")
+    p.add_argument("clip", type=int)
+    p.add_argument("--json", action="store_true", help="вывести JSON {layers, camera} для правки")
+    p.set_defaults(fn=cmd_layers)
+    p = sub.add_parser("layers-set", help="заменить слои (и камеру) клипа из файла JSON")
+    p.add_argument("clip", type=int)
+    p.add_argument("file", help="[слои] или {\"layers\": [...], \"camera\": [...]}")
+    p.set_defaults(fn=cmd_layers_set)
+    p = sub.add_parser("frame-motion", help="кадр готового вида клипа (слои + камера) в PNG")
+    p.add_argument("clip", type=int)
+    p.add_argument("--at", type=float, required=True, help="секунда готового клипа")
+    p.add_argument("--no-layers", action="store_true", help="без слоёв и камеры — только основа")
+    p.add_argument("-o", "--output", required=True)
+    p.set_defaults(fn=cmd_frame_motion)
+    p = sub.add_parser("agent", help="попросить встроенного ИИ-монтажёра и дождаться ответа")
+    p.add_argument("clip", type=int)
+    p.add_argument("message")
+    p.add_argument("--timeout", type=float, default=900, help="секунд ждать (по умолчанию 900)")
+    p.set_defaults(fn=cmd_agent)
     args = parser.parse_args(argv)
     args.fn(args)
 

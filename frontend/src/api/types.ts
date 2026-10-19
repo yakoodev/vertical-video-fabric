@@ -1,4 +1,5 @@
 import type { CameraKey, Layer } from "@/motion";
+import type { StreamLayout } from "@/pages/workspace/layout";
 export interface CropRect {
   x: number;
   y: number;
@@ -19,6 +20,8 @@ export interface Source {
   status: string;
   source_type: string;
   content_crop?: CropRect | null;
+  /** Вебка стримера (доли кадра) — по умолчанию для раскладок split/pip_cam. */
+  facecam?: CropRect | null;
   original_url: string;
   original_filename: string;
   local_path: string;
@@ -175,6 +178,8 @@ export interface RenderSettings {
   layers?: Layer[];
   /** Наезды камеры: ключи зума по времени клипа. */
   camera?: CameraKey[];
+  /** Раскладка стрима: вебка сверху + игра снизу и т.п. (app/stream_layout.py). */
+  layout?: StreamLayout;
 }
 
 export interface MontageInsert {

@@ -44,7 +44,8 @@ def undo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
     state = entry.get("state") or {}
     spec = dict(state.get("spec") or {})
     spec["pieces"] = _relink_pieces(store, clip_plan_id, spec.get("pieces") or [])
-    fresh, changes = apply_spec(store, clip_plan_id, spec)
+    # Снимок — то, что уже было сохранено: возвращаем как есть, без придирок к слоям.
+    fresh, changes = apply_spec(store, clip_plan_id, spec, check_motion=False)
     if "subtitles" in state:
         store.set_clip_plan_subtitles(clip_plan_id, state["subtitles"])
     return fresh, changes, str(entry.get("label") or "правка")

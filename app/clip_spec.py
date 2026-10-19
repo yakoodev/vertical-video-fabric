@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.clip_settings import normalize_render_settings
+from app.motion import validate_camera, validate_layers
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, AppStore
 
 SCHEMA_ID = "vvf.clip/1"
@@ -100,8 +101,12 @@ def _num(value: Any) -> float | None:
     return number if number == number else None  # NaN guard
 
 
-def validate_spec(store: AppStore, clip_plan_id: int, spec: Any) -> dict:
-    """Check the whole file; return the normalized operations or raise SpecError."""
+def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion: bool = True) -> dict:
+    """Check the whole file; return the normalized operations or raise SpecError.
+
+    ``check_motion=False`` — моушн-слои только нормализуются, без отказа: так
+    работает отмена (Ctrl+Z), которая обязана вернуть снимок как есть.
+    """
     plan = store.get_clip_plan(clip_plan_id)
     source = store.get_source(plan["source_id"])
     duration = float(source.get("duration_sec") or 0)
@@ -187,6 +192,12 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any) -> dict:
     render = spec.get("render")
     if render is not None and not isinstance(render, dict):
         problems.append("render: нужен объект настроек (или не указывать)")
+    elif isinstance(render, dict) and check_motion:
+        # Слои правят руками и агенты: молча чинить их нельзя — человек должен
+        # узнать, что «end 2 при start 3» не сработает. Проверяем только форму:
+        # слой за концом клипа не ошибка (ИИ-монтаж может укоротить клип).
+        problems.extend(f"render.{p}" for p in validate_layers(render.get("layers")))
+        problems.extend(f"render.{p}" for p in validate_camera(render.get("camera")))
 
     if problems:
         raise SpecError(problems)
@@ -200,9 +211,11 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any) -> dict:
     }
 
 
-def apply_spec(store: AppStore, clip_plan_id: int, spec: Any) -> tuple[dict, list[str]]:
+def apply_spec(
+    store: AppStore, clip_plan_id: int, spec: Any, *, check_motion: bool = True
+) -> tuple[dict, list[str]]:
     """Validate everything, then apply. Returns (fresh file, human-readable changes)."""
-    ops = validate_spec(store, clip_plan_id, spec)
+    ops = validate_spec(store, clip_plan_id, spec, check_motion=check_motion)
     plan = store.get_clip_plan(clip_plan_id)
     current = {seg["id"]: seg for seg in plan.get("segments") or []}
     changes: list[str] = []
@@ -305,6 +318,24 @@ def json_schema() -> dict:
                 },
                 "description": f"куски по порядку; каждый {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с",
             },
-            "render": {"type": "object", "description": "настройки рендера клипа, см. GET /api/render/transition-options"},
+            "render": {
+                "type": "object",
+                "description": (
+                    "настройки рендера клипа, см. GET /api/render/transition-options; "
+                    "render.layers (моушн-слои) и render.camera (наезды) — схема в GET /api/motion/schema "
+                    "и docs/motion/spec.md"
+                ),
+                "properties": {
+                    "layers": {"type": "array", "description": "моушн-слои: text/shape/image/emoji/counter/"
+                               "progress/chart/callout/audio; время — секунды готового клипа"},
+                    "camera": {"type": "array", "description": "ключи камеры {t, zoom 1..4, x, y, ease?, shake?}"},
+                    "layout": {
+                        "type": "object",
+                        "description": "раскладка стрима: mode single|split|pip_cam; cam {x,y,w,h} — вебка в долях "
+                        "исходника; ratio 0.2..0.6 (split, доля высоты под вебку); cam_pos top|bottom; "
+                        "pip {x,y,w} — центр/ширина окошка в долях выхода; border {color,width}; gap (px 1080×1920)",
+                    },
+                },
+            },
         },
     }

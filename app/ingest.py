@@ -170,6 +170,9 @@ class SourceIngestor:
         self.youtube_downloader = youtube_downloader or download_youtube_url
         self.smotvibe_downloader = smotvibe_downloader or download_smotvibe_url
         self.twitch_downloader = twitch_downloader or download_twitch_url
+        # Колбэк «источник создан» (dict источника). main.py вешает сюда фоновый
+        # импорт чата Twitch (app/chat_api.py); ошибки колбэка загрузку не ломают.
+        self.on_source_created: Callable[[dict], None] | None = None
 
     def ingest_upload(self, fileobj: BinaryIO, filename: str) -> dict:
         stored = save_upload_to_sources(fileobj, filename)
@@ -225,7 +228,7 @@ class SourceIngestor:
     ) -> dict:
         try:
             metadata = self.probe(stored.path)
-            return self.store.create_source(
+            source = self.store.create_source(
                 source_type,
                 stored.path,
                 original_url=original_url,
@@ -251,6 +254,12 @@ class SourceIngestor:
                 status="failed",
                 error=_safe_error(exc),
             )
+        if self.on_source_created is not None:
+            try:
+                self.on_source_created(source)
+            except Exception:  # noqa: BLE001 - хук необязателен
+                pass
+        return source
 
 
 def classify_source_url(url: str) -> str:

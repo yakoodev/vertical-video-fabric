@@ -23,10 +23,23 @@ class Settings:
         self.log_dir = self.data_dir / "logs"
         self.db_path = self.data_dir / "app.sqlite"
         self.secret_key_path = self.data_dir / "secret.key"
+        # Контент моушн-слоёв: шрифты лежат в репозитории, паки (эмодзи, стикеры,
+        # звуки, мемы) качает tools/fetch_packs.py при сборке образа.
+        self.motion_fonts_dir = Path(os.getenv("MOTION_FONTS_DIR", root / "vendor" / "fonts")).resolve()
+        self.motion_packs_dir = Path(os.getenv("MOTION_PACKS_DIR", root / "vendor" / "packs")).resolve()
         self.node_bin = os.getenv("NODE_BIN", "node")
         self.youtube_helper = Path(
             os.getenv("YOUTUBE_HELPER", root / "node" / "youtube-upload.mjs")
         ).resolve()
+        # Моушн-слои (docs/motion/spec.md): Node-компоновщик рисует слои и камеру
+        # тем же TS-кодом, что и превью в браузере. Пути по умолчанию — от корня
+        # репозитория, в контейнере это /app/node/… и /app/vendor/fonts.
+        self.motion_node = os.getenv("MOTION_NODE", "node").strip() or "node"
+        self.motion_compositor = Path(
+            os.getenv("MOTION_COMPOSITOR", root / "node" / "motion-render.mjs")
+        ).resolve()
+        self.motion_fonts_dir = Path(os.getenv("MOTION_FONTS_DIR", root / "vendor" / "fonts")).resolve()
+        self.motion_timeout_seconds = int(os.getenv("MOTION_TIMEOUT_SECONDS", str(60 * 30)))
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
@@ -93,6 +106,11 @@ class Settings:
         # ✨ ИИ выбирает лучшие judges a few hundred moments in one call — worth the
         # smarter model (a few cents), so it defaults to the montage/analysis one.
         self.gemini_pick_model = os.getenv("GEMINI_PICK_MODEL", self.gemini_montage_model).strip()
+        # 💬 ИИ-монтажёр в редакторе (app/ai/editor_agent.py): десятки шагов с
+        # инструментами и картинками кадра — нужна самая сильная Pro-модель.
+        # Лимиты у владельца большие, экономить на ней незачем.
+        self.gemini_agent_model = os.getenv("GEMINI_AGENT_MODEL", "gemini-3.1-pro-preview").strip()
+        self.agent_max_steps = int(os.getenv("AGENT_MAX_STEPS", "25"))
         # Рисует недостающие стикеры для «Файлов для монтажа» (только оригинальные).
         self.gemini_image_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image").strip()
         self.gemini_transcribe_model = os.getenv(

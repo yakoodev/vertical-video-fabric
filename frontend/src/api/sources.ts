@@ -71,6 +71,26 @@ export const sourcesApi = {
   playerOptions: (url: string) => api.post<PlayerOption[]>("/api/smotvibe/options", { url }),
 };
 
+/** Вебка стримера для раскладок split / pip_cam (app/layout_api.py). */
+export interface FacecamDetect {
+  cam: CropRect | null;
+  /** Доля кадров, где лицо стояло на месте (0..1). */
+  confidence: number;
+  frames: number;
+  /** Найденная вебка запомнена на источнике. */
+  saved: boolean;
+}
+
+export const facecamApi = {
+  /** Найти вебку по ~20 кадрам VOD; найденная сохраняется на источнике. */
+  detect: (sourceId: number | string) => api.post<FacecamDetect>(`/api/sources/${sourceId}/detect-facecam`),
+  /** Сохранённая вебка источника (null — не задана). */
+  get: (sourceId: number | string) => api.get<{ cam: CropRect | null }>(`/api/sources/${sourceId}/facecam`),
+  /** Запомнить вебку для новых клипов источника (null — сбросить). */
+  save: (sourceId: number | string, cam: CropRect | null) =>
+    api.patch<{ cam: CropRect | null }>(`/api/sources/${sourceId}/facecam`, { cam }),
+};
+
 // Player pages hide their episode list behind a Kinobox iframe, so the picker is
 // only offered for links that are not already a plain file or a known platform.
 export function looksLikePlayerPage(url: string): boolean {

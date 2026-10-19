@@ -22,6 +22,8 @@ import pytest
 _TEST_DATA = tempfile.mkdtemp(prefix="vvf-tests-")
 os.environ["DATA_DIR"] = _TEST_DATA
 os.environ.setdefault("POSTING_PROVIDER_MODE", "mock")
+# Автоимпорт чата Twitch ходит в сеть — в тестах только явно (monkeypatch.setenv).
+os.environ.setdefault("TWITCH_CHAT_AUTO_IMPORT", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

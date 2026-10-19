@@ -101,15 +101,20 @@ export function AgentPanel({ clipPlanId, onChanged }: { clipPlanId: number; onCh
           <div key={m.id} className={`agent-msg agent-msg--${m.role}`}>
             {m.role === "assistant" && m.steps.length ? (
               <ul className="agent-steps">
-                {m.steps
-                  .filter((s) => s.tool !== "say")
-                  .map((s, i) => (
+                {m.steps.map((s, i) =>
+                  s.tool === "_say" ? (
+                    <li key={i} className="say">
+                      <span className="agent-step-ico">💭</span>
+                      <span>{s.label}</span>
+                    </li>
+                  ) : (
                     <li key={i} className={s.ok === false ? "bad" : s.ok ? "ok" : "run"}>
                       <span className="agent-step-ico">{s.ok === false ? "✕" : s.ok ? "✓" : "…"}</span>
                       <span>{s.label}</span>
                       {s.problems?.length ? <em className="muted">{s.problems.slice(0, 2).join("; ")}</em> : null}
                     </li>
-                  ))}
+                  ),
+                )}
               </ul>
             ) : null}
             {m.text ? <div className="agent-text">{m.text}</div> : null}

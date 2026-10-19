@@ -19,6 +19,15 @@ from app.subtitles.timing import normalize_subtitle_timeline, shift_subtitle_tim
 from app.clip_settings import normalize_cover
 from app.cover import build_burn_args, build_frame_args, build_image_args, cover_output_time
 from app.render_qc import run_qc
+from app.stream_layout import (
+    even_px,
+    ff_color,
+    gameplay_height,
+    layout_active,
+    normalize_layout,
+    scaled_px,
+    split_geometry,
+)
 from app.transitions import build_join_args, is_plain_concat, normalize_transition, plan_joins
 from app.video_crop import build_reframe_x_expr
 
@@ -58,6 +67,9 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     eff_h = sh * (float(crop["h"]) if crop else 1.0)
     out_w = int(preset.get("output_width") or 1080)
     out_h = int(preset.get("output_height") or 1920)
+    # В split окно геймплея ниже кадра (W×(1-ratio)·H) — шире по пропорции, но
+    # ширина кропа та же out_w, так что выражение x(t) строится как обычно.
+    out_h = gameplay_height(preset.get("layout"), out_w, out_h)
     if eff_h <= 0 or out_h <= 0 or (eff_w / eff_h) <= (out_w / out_h) + 1e-3:
         return None
     duration = float(segment.get("end_sec", 0)) - float(segment.get("start_sec", 0))
@@ -132,7 +144,10 @@ class ClipRenderService:
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
         cover: dict | None = None,
+        motion: dict | None = None,
+        layout: dict | None = None,
     ) -> dict:
+        """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше."""
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
@@ -146,6 +161,7 @@ class ClipRenderService:
             subtitle_provider=subtitle_provider,
             subtitle_margin_v=subtitle_margin_v,
             mirror=mirror,
+            layout=layout,
         )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
@@ -173,11 +189,13 @@ class ClipRenderService:
                 start_sec=float(segment["start_sec"]),
                 end_sec=float(segment["end_sec"]),
                 preset=preset,
-                banner=banner,
+                # С моушном баннер кладётся после камеры и слоёв, а не в основу.
+                banner=None if motion else banner,
                 source_crop=source.get("content_crop"),
                 reframe_x=_segment_reframe_x(segment, preset, source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
+            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -203,6 +221,8 @@ class ClipRenderService:
                 height=metadata.height,
                 size_bytes=size_bytes,
             )
+            if motion_notes:
+                clip = self._note_clip_error(clip["id"], "; ".join(motion_notes))
             clip = self._attach_qc(clip, final_output_path, metadata)
             self.store.update_ai_segment_status(segment_id, "rendered")
             for path in temp_paths:
@@ -247,6 +267,8 @@ class ClipRenderService:
         mirror: bool = False,
         transition: dict | None = None,
         cover: dict | None = None,
+        motion: dict | None = None,
+        layout: dict | None = None,
     ) -> dict:
         if not segment_ids:
             raise ValueError("at least one segment is required")
@@ -267,6 +289,7 @@ class ClipRenderService:
             subtitle_provider=subtitle_provider,
             subtitle_margin_v=subtitle_margin_v,
             mirror=mirror,
+            layout=layout,
         )
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
@@ -301,7 +324,7 @@ class ClipRenderService:
                         start_sec=float(segment["start_sec"]),
                         end_sec=float(segment["end_sec"]),
                         preset=preset,
-                        banner=banner,
+                        banner=None if motion else banner,
                         source_crop=source.get("content_crop"),
                         reframe_x=_segment_reframe_x(segment, preset, source),
                     ),
@@ -340,6 +363,7 @@ class ClipRenderService:
                     ),
                     timeout=60 * 30,
                 )
+            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -366,6 +390,8 @@ class ClipRenderService:
                 height=metadata.height,
                 size_bytes=size_bytes,
             )
+            if motion_notes:
+                clip = self._note_clip_error(clip["id"], "; ".join(motion_notes))
             clip = self._attach_qc(clip, final_output_path, metadata)
             for segment in segments:
                 self.store.update_ai_segment_status(segment["id"], "rendered")
@@ -567,6 +593,7 @@ class ClipRenderService:
         mirror: bool = False,
         transition: dict | None = None,
         cover: dict | None = None,
+        layout: dict | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -574,6 +601,24 @@ class ClipRenderService:
             raise ValueError("clip plan has no segments")
         self.store.update_clip_plan_status(clip_plan_id, "rendering")
         segment_ids = [segment["id"] for segment in segments]
+        # Моушн, как и вставки, живёт в настройках самого клипа. Нет слоёв и
+        # камеры — рендер ровно прежний (те же команды ffmpeg).
+        from app.motion import plan_motion, visual_motion
+
+        motion = plan_motion(plan.get("render_settings"))
+        visual = visual_motion(motion)
+        if visual:
+            from app.motion_render import attach_caption_words
+
+            # Слою «субтитры» нужны слова речи клипа (comp.words).
+            visual = attach_caption_words(self.store, plan, visual)
+            if visual and visual.get("words") and subtitle_profile_id is not None:
+                # Анимированные субтитры-слой заменяют прожигаемые: два текста речи
+                # друг на друге — брак.
+                subtitle_profile_id = None
+        # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
+        if layout is None:
+            layout = (plan.get("render_settings") or {}).get("layout")
         if len(segment_ids) == 1:
             clip = self.render_segment(
                 segment_ids[0],
@@ -590,6 +635,8 @@ class ClipRenderService:
                 subtitle_margin_v=subtitle_margin_v,
                 mirror=mirror,
                 cover=cover,
+                motion=visual,
+                layout=layout,
             )
         else:
             clip = self.render_montage(
@@ -610,9 +657,13 @@ class ClipRenderService:
                 mirror=mirror,
                 transition=transition,
                 cover=cover,
+                motion=visual,
+                layout=layout,
             )
         if clip["status"] == "succeeded":
             clip = self._apply_inserts(clip, plan)
+            if motion:
+                clip = self._apply_audio_layers(clip, motion)
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
@@ -678,7 +729,121 @@ class ClipRenderService:
             clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
             return self._attach_qc(clip, path, meta)
         except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
-            return self.store.update_clip(clip["id"], error=f"вставки не наложены: {str(exc)[:200]}")
+            return self._note_clip_error(clip["id"], f"вставки не наложены: {str(exc)[:200]}")
+
+    def _note_clip_error(self, clip_id: int, text: str) -> dict:
+        """Дописать пометку в ошибку удачного клипа (моушн, вставки), не затирая прежние."""
+        current = str(self.store.get_clip(clip_id).get("error") or "").strip()
+        merged = f"{current}; {text}" if current else text
+        return self.store.update_clip(clip_id, error=merged[:1000])
+
+    def _apply_motion(
+        self,
+        render_id: str,
+        video: Path,
+        preset: dict,
+        banner: dict | None,
+        motion: dict,
+    ) -> list[str]:
+        """Камера и слои поверх основы (на месте ``video``), затем баннер.
+
+        Основа отрендерена без баннера — он ложится тут, поверх слоёв, чтобы
+        камера его не зумила. Падение компоновщика не теряет клип: остаётся
+        основа (с баннером), а причина — в пометках для ошибки клипа.
+        Возвращает пометки.
+        """
+        from app.motion_render import (
+            build_compositor_args,
+            build_motion_mux_args,
+            resolve_layer_assets,
+            write_comp,
+        )
+
+        notes: list[str] = []
+        work = settings.tmp_dir / f"motion-{render_id}"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            layers, assets, missing = resolve_layer_assets(self.store, motion.get("layers") or [])
+            notes.extend(missing)
+            notes.extend(motion.get("caption_notes") or [])
+            camera = motion.get("camera") or []
+            drawn = video
+            if layers or camera:
+                try:
+                    meta = probe_media(video)
+                    comp = write_comp(
+                        work / "comp.json",
+                        width=meta.width or int(preset.get("output_width") or 1080),
+                        height=meta.height or int(preset.get("output_height") or 1920),
+                        fps=float(preset.get("fps") or 30),
+                        duration=meta.duration_sec,
+                        layers=layers,
+                        camera=camera,
+                        words=motion.get("words"),
+                    )
+                    assets_path = work / "assets.json"
+                    assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
+                    out = work / "motion.mp4"
+                    _run_compositor(
+                        build_compositor_args(
+                            comp, assets_path, input_path=video, output_path=out,
+                            crf=_json_dict(preset.get("extra_json")).get("crf"),
+                        ),
+                        timeout=settings.motion_timeout_seconds,
+                    )
+                    if not out.is_file() or out.stat().st_size == 0:
+                        raise RuntimeError("компоновщик не записал видео")
+                    drawn = out
+                except Exception as exc:  # noqa: BLE001 - моушн — надстройка, клип важнее
+                    notes.append(f"моушн не наложен: {_safe_error(exc)[:300]}")
+            if drawn is video and not banner:
+                return notes
+            muxed = work / "muxed.mp4"
+            try:
+                _run_ffmpeg(build_motion_mux_args(drawn, video, muxed, preset, banner), timeout=60 * 20)
+            except Exception as exc:  # noqa: BLE001
+                if drawn is video:
+                    raise  # баннер на голую основу не лёг — это настоящая ошибка рендера
+                notes.append(f"моушн не наложен: {_safe_error(exc)[:300]}")
+                if not banner:
+                    return notes
+                _run_ffmpeg(build_motion_mux_args(video, video, muxed, preset, banner), timeout=60 * 20)
+            shutil.move(str(muxed), str(video))
+            return notes
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def _apply_audio_layers(self, clip: dict, motion: dict) -> dict:
+        """Звуки ``audio``-слоёв в готовый клип — последним проходом, видео копией.
+
+        Последним, а не в моушн-проходе: субтитры распознаются по звуку основы,
+        и бум/свист поверх речи мешал бы распознаванию (как и музыка). Ошибка не
+        теряет клип — пишется в его ошибку.
+        """
+        from app.motion_render import build_audio_layers_args, resolve_layer_assets
+
+        layers = [layer for layer in motion.get("layers") or [] if layer["type"] == "audio"]
+        path = Path(clip.get("output_path") or "")
+        if not layers or not path.exists():
+            return clip
+        try:
+            layers, assets, notes = resolve_layer_assets(self.store, layers)
+            meta = probe_media(path)
+            tmp = path.with_name(path.stem + ".sfx" + path.suffix)
+            args = build_audio_layers_args(
+                path, tmp, layers, assets, meta.duration_sec, clip_has_audio=_has_audio_stream(path)
+            )
+            if args is not None:
+                _run_ffmpeg(args, timeout=60 * 20)
+                tmp.replace(path)
+                meta = probe_media(path)
+                clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
+                clip = self._attach_qc(clip, path, meta)
+            if notes:
+                clip = self._note_clip_error(clip["id"], "; ".join(notes))
+            return clip
+        except Exception as exc:  # noqa: BLE001 - звуки слоёв — надстройка, клип важнее
+            return self._note_clip_error(clip["id"], f"звуки слоёв не наложены: {str(exc)[:200]}")
 
     def _render_subtitles(
         self,
@@ -813,6 +978,7 @@ class ClipRenderService:
         subtitle_provider: str | None = None,
         subtitle_margin_v: int | None = None,
         mirror: bool = False,
+        layout: dict | None = None,
     ) -> dict:
         """Stash per-render overrides on the preset dict so they reach the ffmpeg
         builder / subtitle pass without changing the saved preset or profile.
@@ -824,16 +990,23 @@ class ClipRenderService:
         - subtitle_provider swaps the transcription engine (e.g. whisper vs gemini)
           regardless of what the style profile saved.
         - subtitle_margin_v pins the subtitle band vertical position (ASS units).
+        - layout (app/stream_layout.py) — split / pip_cam; single changes nothing.
         """
+        layout = normalize_layout(layout) if layout else None
+        if not layout_active(layout):
+            layout = None
         if (
             banner_height_frac is None
             and banner_y_frac is None
             and not subtitle_provider
             and subtitle_margin_v is None
             and not mirror
+            and layout is None
         ):
             return preset
         preset = dict(preset)
+        if layout is not None:
+            preset["layout"] = layout
         if banner_height_frac is not None:
             preset["banner_height_frac"] = max(0.02, min(0.6, float(banner_height_frac)))
         if banner_y_frac is not None:
@@ -1211,7 +1384,11 @@ def _render_filter(
 ) -> str:
     mode = preset.get("scale_mode") or "cover"
     anchor = preset.get("crop_anchor") or "center"
-    if mode == "blur_background":
+    layout = preset.get("layout")
+    if layout_active(layout):
+        # Раскладка стрима (вебка + геймплей): своя основа, дальше — как всегда.
+        base = _layout_filter(width, height, fps, mode, anchor, normalize_layout(layout), source_crop, reframe_x)
+    elif mode == "blur_background":
         prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
         base = (
             f"{prefix}[{bg_in}]scale={width}:{height}:force_original_aspect_ratio=increase,"
@@ -1248,6 +1425,99 @@ def _render_filter(
         source_label = "vstyled"
     if not banner:
         return f"{base};[{source_label}]copy[vout]"
+    return f"{base};{_banner_overlay(banner, preset, height, '1:v', source_label)}"
+
+
+def _fit_box(
+    mode: str,
+    anchor: str,
+    width: int,
+    height: int,
+    source_crop: dict | None,
+    reframe_x: str | None,
+    out: str,
+) -> str:
+    """Геймплей в коробку ``width``×``height`` тем же способом, что и обычная
+    основа (cover с x(t) рефрейма / contain / blur_background) → ``[out]``."""
+    if mode == "blur_background":
+        prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
+        return (
+            f"{prefix}[{bg_in}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=24:2[{out}bg];"
+            f"[{fg_in}]scale={width}:{height}:force_original_aspect_ratio=decrease[{out}fg];"
+            f"[{out}bg][{out}fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,setsar=1[{out}]"
+        )
+    prefix, (vin,) = _crop_prefix(source_crop, 1)
+    if mode == "contain":
+        return (
+            f"{prefix}[{vin}]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[{out}]"
+        )
+    crop_y = {"top": "0", "bottom": f"ih-{height}"}.get(anchor, f"(ih-{height})/2")
+    crop_x = reframe_x if reframe_x else f"(iw-{width})/2"
+    return (
+        f"{prefix}[{vin}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}:{crop_x}:{crop_y},setsar=1[{out}]"
+    )
+
+
+def _layout_filter(
+    width: int,
+    height: int,
+    fps: float,
+    mode: str,
+    anchor: str,
+    layout: dict,
+    source_crop: dict | None,
+    reframe_x: str | None,
+) -> str:
+    """Основа ``[vbase]`` для раскладки стрима (app/stream_layout.py).
+
+    Вебка вырезается из ВСЕГО кадра исходника (``cam`` — доли исходника, до
+    content-crop), геймплей идёт обычным путём (content-crop, рефрейм x(t)).
+    Зеркало, лук, баннер, моушн и склейки работают уже с собранным кадром.
+    """
+    cam = layout["cam"]
+    cam_crop = (
+        f"[0:v]crop=iw*{cam['w']:.5f}:ih*{cam['h']:.5f}:iw*{cam['x']:.5f}:ih*{cam['y']:.5f}"
+    )
+    border = scaled_px(float(layout["border"]["width"]), height)
+    color = ff_color(layout["border"]["color"])
+    tail = f"fps={_fps(fps)},format=yuv420p[vbase]"
+    if layout["mode"] == "split":
+        cam_h, gap, game_h = split_geometry(layout, height)
+        top = layout["cam_pos"] != "bottom"
+        game = _fit_box(mode, anchor, width, game_h, source_crop, reframe_x, "lgame")
+        # cover: вебка заполняет полосу целиком, лишнее срезается по центру.
+        cam_chain = (
+            f"{cam_crop},scale={width}:{cam_h}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{cam_h},setsar=1"
+        )
+        if border:
+            cam_chain += f",drawbox=x=0:y=0:w=iw:h=ih:color={color}:t={border}"
+        if gap:
+            cam_chain += f",pad={width}:{cam_h + gap}:0:{0 if top else gap}:color={color}"
+        order = "[lcam][lgame]" if top else "[lgame][lcam]"
+        return f"{game};{cam_chain}[lcam];{order}vstack=inputs=2,{tail}"
+    # pip_cam: обычный кадр + окошко вебки (центр и ширина — доли выхода).
+    pip = layout["pip"]
+    game = _fit_box(mode, anchor, width, height, source_crop, reframe_x, "lgame")
+    box_w = min(width, even_px(float(pip["w"]) * width))
+    inner = max(2, box_w - 2 * border)
+    cam_chain = f"{cam_crop},scale={inner}:-2,setsar=1"
+    if border:
+        cam_chain += f",pad=iw+{2 * border}:ih+{2 * border}:{border}:{border}:color={color}"
+    pos_x = f"clip({float(pip['x']):.4f}*W-w/2\\,0\\,W-w)"
+    pos_y = f"clip({float(pip['y']):.4f}*H-h/2\\,0\\,H-h)"
+    return f"{game};{cam_chain}[lcam];[lgame][lcam]overlay=x={pos_x}:y={pos_y},{tail}"
+
+
+def _banner_overlay(banner: dict, preset: dict, height: int, banner_input: str, source_label: str) -> str:
+    """Баннер поверх ``source_label`` → ``[vout]``.
+
+    Отдельно от основы, потому что с моушном баннер кладётся позже — поверх
+    камеры и слоёв (см. app/motion_render.py), а выглядеть должен так же.
+    """
     opacity = max(0, min(1, float(banner.get("opacity") if banner.get("opacity") is not None else 1)))
     x_expr, y_expr = _banner_position_expr(banner)
     # Per-render vertical position overrides the banner asset's saved placement so
@@ -1255,14 +1525,13 @@ def _render_filter(
     y_frac = preset.get("banner_y_frac")
     if y_frac is not None:
         y_expr = str(int(round(float(y_frac) * height)))
-    banner_chain = f"[1:v]format=rgba,colorchannelmixer=aa={opacity}"
+    banner_chain = f"[{banner_input}]format=rgba,colorchannelmixer=aa={opacity}"
     bh_frac = preset.get("banner_height_frac")
     if bh_frac:
         banner_h = max(1, int(round(float(bh_frac) * height)))
         banner_chain += f",scale=-1:{banner_h}:flags=lanczos"
     banner_chain += "[banner]"
     return (
-        f"{base};"
         f"{banner_chain};"
         f"[{source_label}][banner]overlay={x_expr}:{y_expr}:shortest=1,format=yuv420p[vout]"
     )
@@ -1460,6 +1729,25 @@ def _run_ffmpeg(args: list[str], timeout: int, cwd: Path | None = None) -> None:
     )
     if proc.returncode != 0:
         raise RuntimeError(_safe_error(proc.stderr or proc.stdout or "ffmpeg failed"))
+
+
+def _run_compositor(args: list[str], timeout: int) -> None:
+    """Node-компоновщик моушна. Строки ``progress i/n`` в stderr — не ошибка, их
+    в сообщение не тащим: прогресса рендера в сервисе нет, а причину падения
+    из-за них не было бы видно."""
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0:
+        lines = [line for line in (proc.stderr or "").splitlines() if not line.startswith("progress ")]
+        detail = "\n".join(lines[-15:]).strip() or (proc.stdout or "").strip()[-500:]
+        raise RuntimeError(_safe_error(detail or f"компоновщик завершился с кодом {proc.returncode}"))
 
 
 def _safe_error(exc) -> str:

@@ -37,6 +37,8 @@ import {
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
+import { DEFAULT_LAYOUT, drawLayoutFrame, gameplayAspect, normalizeLayout, type StreamLayout } from "@/pages/workspace/layout";
+import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import {
   GeneratePanel,
@@ -550,6 +552,7 @@ function CropFrame({
   bannerRef,
   bannerGeomRef,
   motionRef,
+  layout,
 }: {
   srcW: number;
   srcH: number;
@@ -584,6 +587,8 @@ function CropFrame({
   subPosPctRef: React.MutableRefObject<number>;
   /** Слои, камера и выделенный слой — рисуются тем же движком, что и рендер. */
   motionRef?: React.MutableRefObject<MotionView>;
+  /** Раскладка стрима (вебка сверху / картинка-в-картинке): меняет окно геймплея. */
+  layout?: StreamLayout;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const insertsRef = useRef(insertsPreview);
@@ -608,7 +613,8 @@ function CropFrame({
 
   useEffect(() => {
     if (!srcW || !srcH) return;
-    const targetAR = 9 / 16;
+    // Окно геймплея: 9:16 или шире, если сверху стоит вебка (split).
+    const targetAR = gameplayAspect(layout, 9, 16);
     const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
     const effAR = (srcW * c.w) / (srcH * c.h);
     const fw = effAR >= targetAR ? targetAR / effAR : 1;
@@ -648,17 +654,21 @@ function CropFrame({
           // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
           if (ctx && cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-          ctx?.drawImage(
-            v,
-            (c.x + lc * c.w) * vw,
-            (c.y + tc * c.h) * vh,
-            fw * c.w * vw,
-            fh * c.h * vh,
-            0,
-            0,
-            cv.width,
-            cv.height,
-          );
+          if (ctx) {
+            drawLayoutFrame(
+              ctx,
+              v,
+              layout,
+              {
+                x: (c.x + lc * c.w) * vw,
+                y: (c.y + tc * c.h) * vh,
+                w: fw * c.w * vw,
+                h: fh * c.h * vh,
+              },
+              cv.width,
+              cv.height,
+            );
+          }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
           const ov = overlayRef?.current;
           const octx = ov?.getContext("2d");
@@ -722,7 +732,7 @@ function CropFrame({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [srcW, srcH, crop, segments, videoRef, focusPreset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [srcW, srcH, crop, segments, videoRef, focusPreset, layout]); // eslint-disable-line react-hooks/exhaustive-deps
   const draggable = Boolean(onManualX);
   // Zones live inside the 9:16 crop window, so they track the real output frame.
   return (
@@ -1034,6 +1044,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Моушн-слои и камера клипа — часть его настроек рендера (как вставки).
   const [layers, setLayers] = useState<Layer[]>([]);
   const [camera, setCamera] = useState<CameraKey[]>([]);
+  const [layout, setLayout] = useState<StreamLayout>(DEFAULT_LAYOUT);
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const [inlineEdit, setInlineEdit] = useState<{ id: string; field: string; text: string; left: number; top: number; width: number } | null>(null);
@@ -1160,6 +1171,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     inserts,
     layers,
     camera,
+    layout,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1222,6 +1234,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       inserts: s.inserts ?? [],
       layers: s.layers ?? [],
       camera: s.camera ?? [],
+      layout: normalizeLayout(s.layout),
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1242,6 +1255,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setInserts(s.inserts ?? []);
     setLayers(s.layers ?? []);
     setCamera(s.camera ?? []);
+    setLayout(normalizeLayout(s.layout));
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -2584,6 +2598,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   bannerGeomRef={bannerGeomRef}
                   subPosPctRef={subPosPctRef}
                   motionRef={motionViewRef}
+                  layout={layout}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -2849,6 +2864,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : (
                 <div className="muted li-note">Слоёв пока нет — возьмите шаблон, текст или стикер в библиотеке слева, или попросите ИИ.</div>
               )}
+            </Group>
+            <Group title="Раскладка (вебка)" badge={layout.mode === "single" ? "обычная" : layout.mode === "split" ? "вебка + игра" : "вебка в углу"}>
+              <LayoutPanel sourceId={source.id} layout={layout} onChange={setLayout} frameAt={videoRef.current?.currentTime ?? 0} />
             </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
               <CameraPanel

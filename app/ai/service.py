@@ -97,6 +97,13 @@ class VideoAnalysisService:
         analyzer_prompt = selected_prompt
         if selected_provider in {"gemini", "polza", "artemox"}:
             analyzer_prompt = f"{selected_prompt}\n\n{FOCUS_TRACK_INSTRUCTION}".strip()
+        # 💬 Импортированный чат Twitch: всплески реакций зрителей — подсказка, где
+        # искать моменты. Тоже только модели; выключается настройкой analysis_use_chat.
+        from app.twitch_chat import chat_prompt_block
+
+        chat_block = chat_prompt_block(self.store, source_id)
+        if chat_block:
+            analyzer_prompt = f"{analyzer_prompt}\n\n{chat_block}".strip()
         if source["status"] == "failed":
             raise ValueError("failed source cannot be analyzed")
         normalized_preprocessing = normalize_analysis_preprocessing(preprocessing)
