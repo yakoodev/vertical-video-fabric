@@ -76,6 +76,9 @@ class Settings:
         self.action_merge_gap_seconds = float(os.getenv("ACTION_MERGE_GAP_SECONDS", "12"))
         # Local Whisper (faster-whisper) — accurate word-level timestamps with VAD,
         # which is far more reliable than LLM-guessed timings for karaoke subtitles.
+        # Финальная громкость клипа под площадки (два прохода loudnorm, видео копией).
+        self.render_loudnorm = os.getenv("RENDER_LOUDNORM", "1").strip().lower() not in ("0", "false", "no")
+        self.render_loudnorm_target = float(os.getenv("RENDER_LOUDNORM_TARGET", "-14"))
         self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"
         self.whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
         self.whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"

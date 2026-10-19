@@ -664,6 +664,7 @@ class ClipRenderService:
             clip = self._apply_inserts(clip, plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion)
+            clip = self._normalize_loudness(clip)
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
@@ -846,6 +847,51 @@ class ClipRenderService:
             return clip
         except Exception as exc:  # noqa: BLE001 - звуки слоёв — надстройка, клип важнее
             return self._note_clip_error(clip["id"], f"звуки слоёв не наложены: {str(exc)[:200]}")
+
+    def _normalize_loudness(self, clip: dict) -> dict:
+        """Громкость под площадки: −14 LUFS и пик не выше −1.5 dBFS.
+
+        Тихий рэп выходил на −20 LUFS, а клип со звуками — с пиком выше нуля:
+        TikTok/Shorts всё равно приводят громкость к своей, только тихий ролик
+        тогда звучит хуже соседей, а громкий хрипит. Два прохода loudnorm:
+        замер, потом линейная поправка по замеру — без «качелей» громкости.
+        Сбой не теряет клип.
+        """
+        if not settings.render_loudnorm:
+            return clip
+        path = Path(clip.get("output_path") or "")
+        if not path.exists() or not _has_audio_stream(path):
+            return clip
+        target = settings.render_loudnorm_target
+        try:
+            probe = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn",
+                 "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+                capture_output=True, text=True, timeout=60 * 10,
+            )
+            tail = probe.stderr[probe.stderr.rfind("{"):]
+            measured = json.loads(tail[: tail.find("}") + 1])
+            current = float(measured["input_i"])
+            peak = float(measured["input_tp"])
+            if abs(current - target) < 1.0 and peak <= -1.0:
+                return clip
+            tmp = path.with_name(path.stem + ".loud" + path.suffix)
+            af = (
+                f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+                f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+                f":offset={measured['target_offset']}:linear=true,aresample=48000"
+            )
+            _run_ffmpeg(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
+                 "-c:v", "copy", "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)],
+                timeout=60 * 10,
+            )
+            tmp.replace(path)
+            meta = probe_media(path)
+            clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
+            return self._attach_qc(clip, path, meta)
+        except Exception as exc:  # noqa: BLE001 - громкость — надстройка, клип важнее
+            return self._note_clip_error(clip["id"], f"громкость не выровнена: {str(exc)[:200]}")
 
     def _render_subtitles(
         self,
