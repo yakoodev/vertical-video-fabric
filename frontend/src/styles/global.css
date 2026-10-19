@@ -3874,3 +3874,13 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .li-cap-style.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .lib-cap { background: linear-gradient(180deg, #1d1830, #141022); }
 .lib-cap:hover, .li-cap-style:hover { border-color: var(--accent); }
+.li-words { display: grid; gap: 6px; }
+.li-words-list { display: flex; flex-wrap: wrap; gap: 3px; max-height: 180px; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); scrollbar-width: thin; }
+.li-word { position: relative; border: 1px solid transparent; background: transparent; color: var(--text); border-radius: 6px; padding: 1px 5px; font: inherit; font-size: 12px; cursor: pointer; }
+.li-word:hover { background: var(--surface-3); }
+.li-word.on { background: var(--accent-soft); border-color: var(--accent); }
+.li-word-emoji { position: absolute; top: -9px; right: -6px; font-size: 11px; }
+.li-word-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.li-word-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+.li-word-em { border: 0; background: transparent; font-size: 17px; cursor: pointer; padding: 0 2px; }
+.li-word-em:hover { transform: scale(1.2); }

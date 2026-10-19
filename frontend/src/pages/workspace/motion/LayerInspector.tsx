@@ -10,6 +10,7 @@ import {
   EASING_NAMES,
   interpolateKeys,
   type AnimatableProp,
+  type CaptionWord,
   type ChartDatum,
   type InOutType,
   type Layer,
@@ -60,6 +61,8 @@ const EASE_LABEL: Record<string, string> = {
 
 type Props = {
   layer: Layer;
+  /** Слова клипа (для субтитров-слоя: подсветка слов и эмодзи над словами). */
+  words?: CaptionWord[];
   fonts: MotionFont[];
   /** Текущее время клипа (для ◆ ключей), читается периодически. */
   now: () => number;
@@ -272,7 +275,80 @@ function TextStyleFields({
   );
 }
 
-export function LayerInspector({ layer, fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek }: Props) {
+const WORD_COLORS = ["#ffd600", "#22c55e", "#ff3b30", "#22d3ee", "#ff3b8d"];
+const WORD_EMOJI = ["🔥", "😂", "💀", "😱", "💸", "❤️", "👀", "🤯", "😭", "🗿"];
+
+/** Слова субтитров-слоя: клик — выбрать слово, дальше цвет или эмодзи над ним. */
+function CaptionWords({
+  layer,
+  words,
+  onChange,
+  onSeek,
+}: {
+  layer: Extract<Layer, { type: "captions" }>;
+  words: CaptionWord[];
+  onChange: (next: Layer) => void;
+  onSeek: (t: number) => void;
+}) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const hl = new Map((layer.props.highlightWords ?? []).map((h) => [h.i, h.color]));
+  const em = new Map((layer.props.emoji ?? []).map((e) => [e.i, e.char]));
+  const inRange = words
+    .map((w, i) => ({ w, i }))
+    .filter(({ w }) => w.t0 >= layer.start - 0.05 && w.t1 <= layer.end + 0.05)
+    .slice(0, 400);
+  const setProps = (patch: Record<string, unknown>) => onChange({ ...layer, props: { ...layer.props, ...patch } } as Layer);
+  const setColor = (i: number, color: string | null) =>
+    setProps({
+      highlightWords: [...(layer.props.highlightWords ?? []).filter((h) => h.i !== i), ...(color ? [{ i, color }] : [])].sort((a, b) => a.i - b.i),
+    });
+  const setEmoji = (i: number, char: string | null) =>
+    setProps({ emoji: [...(layer.props.emoji ?? []).filter((e) => e.i !== i), ...(char ? [{ i, char }] : [])].sort((a, b) => a.i - b.i) });
+  if (!inRange.length) return <div className="li-note muted">Слов нет — сначала «Распознать речь» в группе «Субтитры».</div>;
+  return (
+    <div className="li-words">
+      <div className="li-words-list">
+        {inRange.map(({ w, i }) => (
+          <button
+            key={i}
+            type="button"
+            className={`li-word${picked === i ? " on" : ""}`}
+            style={hl.has(i) ? { color: hl.get(i), borderColor: hl.get(i) } : undefined}
+            onClick={() => {
+              setPicked(i);
+              onSeek(w.t0 + 0.02);
+            }}
+            title={`${w.t0.toFixed(2)} с`}
+          >
+            {w.w}
+            {em.has(i) ? <span className="li-word-emoji">{em.get(i)}</span> : null}
+          </button>
+        ))}
+      </div>
+      {picked != null ? (
+        <div className="li-word-tools">
+          <span className="li-cap">«{words[picked]?.w}»:</span>
+          {WORD_COLORS.map((c) => (
+            <button key={c} type="button" className="li-swatch" style={{ background: c }} onClick={() => setColor(picked, c)} aria-label={c} />
+          ))}
+          <button type="button" className="btn ghost sm" onClick={() => setColor(picked, null)} title="Без цвета">
+            ⌀
+          </button>
+          <span className="li-word-sep" />
+          {WORD_EMOJI.map((ch) => (
+            <button key={ch} type="button" className="li-word-em" onClick={() => setEmoji(picked, em.get(picked) === ch ? null : ch)}>
+              {ch}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="li-note muted">Кликни слово — покрась его или поставь над ним эмодзи.</div>
+      )}
+    </div>
+  );
+}
+
+export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
   const [t, setT] = useState(now());
@@ -419,10 +495,7 @@ export function LayerInspector({ layer, fonts, now, clipDuration, onChange, onDe
             <Toggle label="ЗАГЛАВНЫЕ" checked={Boolean(layer.props.uppercase)} onChange={(uppercase) => patchProps({ uppercase })} />
             <Toggle label="Знаки препинания" checked={Boolean(layer.props.punctuation)} onChange={(punctuation) => patchProps({ punctuation })} />
           </div>
-          <div className="li-note muted">
-            Слова берутся из субтитров клипа (правка — «Субтитры» в инспекторе). Ключевые слова цветом и эмодзи над словами
-            расставляет ИИ-ассистент.
-          </div>
+          <CaptionWords layer={layer} words={words} onChange={onChange} onSeek={onSeek} />
         </Section>
       ) : null}
 

@@ -2880,6 +2880,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <LayerInspector
                 key={selectedLayerId}
                 layer={layers.find((l) => l.id === selectedLayerId)!}
+                words={captionWords}
                 fonts={motionFonts.data ?? []}
                 now={clipNow}
                 clipDuration={clipDuration}
