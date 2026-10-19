@@ -71,6 +71,11 @@ def build_compositor_args(
     if output_path is not None:
         args += ["--output", str(output_path)]
     args += ["--assets", str(assets_path), "--fonts-dir", str(settings.motion_fonts_dir), "--ffmpeg", "ffmpeg"]
+    # Эмодзи внутри текста (титр «ОН ЭТО СДЕЛАЛ 🔥») не попадают в карту ассетов —
+    # компоновщик берёт их прямо из пака Twemoji по имени файла.
+    emoji_dir = Path(settings.motion_packs_dir) / "twemoji"
+    if emoji_dir.is_dir():
+        args += ["--emoji-dir", str(emoji_dir)]
     args += ["--crf", str(crf if crf not in (None, "") else DEFAULT_CRF)]
     if frame is not None:
         args += ["--frame", f"{max(0.0, float(frame)):.3f}"]

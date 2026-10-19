@@ -39,6 +39,11 @@ function defaultsOf(t: MotionTemplate): TemplateParams {
 
 /* ---------- живое превью шаблона ---------- */
 
+// Слова-образец, чтобы карточка «Анимированные субтитры» не была пустой.
+const DEMO_WORDS = "это был самый лучший момент всего стрима"
+  .split(" ")
+  .map((w, i) => ({ t0: 0.2 + i * 0.32, t1: 0.2 + i * 0.32 + 0.28, w }));
+
 const PREVIEW_W = 135;
 const PREVIEW_H = 240;
 
@@ -57,18 +62,30 @@ function TemplatePreview({ template, params, autoplay = false }: { template: Mot
     const poster = Math.min(dur * 0.55, 1.4);
     let raf = 0;
     const started = performance.now();
-    const paint = () => {
-      const t = hover ? ((performance.now() - started) / 1000) % (dur + 0.4) : poster;
+    const paint = (t: number) => {
       ctx.clearRect(0, 0, cv.width, cv.height);
-      drawFrame(ctx, { layers: built.layers.filter((l) => l.type !== "audio") }, t, env);
-      raf = requestAnimationFrame(paint);
+      try {
+        drawFrame(ctx, { layers: built.layers.filter((l) => l.type !== "audio"), words: DEMO_WORDS }, t, env);
+      } catch {
+        /* шаблон без данных (субтитры без слов) — просто пустая карточка */
+      }
     };
-    raf = requestAnimationFrame(paint);
-    // Без наведения достаточно пары кадров (догрузились шрифты/картинки) — дальше стоп.
-    const stop = hover ? 0 : window.setTimeout(() => cancelAnimationFrame(raf), 1500);
+    if (hover) {
+      const loop = () => {
+        paint(((performance.now() - started) / 1000) % (dur + 0.4));
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+      return () => cancelAnimationFrame(raf);
+    }
+    // «Плакат»: рисуем сразу и ещё пару раз — когда догрузятся шрифты и картинки.
+    paint(poster);
+    const timers = [300, 1200, 3000].map((ms) => window.setTimeout(() => paint(poster), ms));
+    const onFonts = () => paint(poster);
+    document.fonts?.addEventListener?.("loadingdone", onFonts);
     return () => {
-      cancelAnimationFrame(raf);
-      if (stop) window.clearTimeout(stop);
+      timers.forEach((id) => window.clearTimeout(id));
+      document.fonts?.removeEventListener?.("loadingdone", onFonts);
     };
   }, [built, hover, template.duration]);
   return (
