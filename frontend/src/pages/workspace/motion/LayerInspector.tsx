@@ -7,11 +7,11 @@
 import { useEffect, useState } from "react";
 import {
   CAPTION_STYLES,
-  EASING_NAMES,
   interpolateKeys,
   type AnimatableProp,
   type CaptionWord,
   type ChartDatum,
+  type Easing,
   type InOutType,
   type Layer,
   type LoopType,
@@ -19,6 +19,7 @@ import {
 } from "@/motion";
 import type { MotionFont } from "@/api/motion";
 import { fontFamilies } from "@/pages/workspace/motion/runtime";
+import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
 import { LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
@@ -47,18 +48,6 @@ const LOOP_TYPES: { v: LoopType; label: string }[] = [
   { v: "spin", label: "Вращение" },
   { v: "blink", label: "Мигание" },
 ];
-const EASE_LABEL: Record<string, string> = {
-  linear: "Линейно",
-  inOutCubic: "Плавно",
-  outCubic: "Плавный выход",
-  inCubic: "Плавный вход",
-  outBack: "С перелётом",
-  inOutBack: "Перелёт туда-обратно",
-  outElastic: "Пружина",
-  outBounce: "Отскок",
-  step: "Скачком",
-};
-
 type Props = {
   layer: Layer;
   /** Слова клипа (для субтитров-слоя: подсветка слов и эмодзи над словами). */
@@ -761,25 +750,18 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           {transformRow("rotation", "Поворот", 1, 1, -3600, 3600, "°")}
           {transformRow("opacity", "Непрозр.", 100, 1, 0, 1, "%")}
           {commonEase ? (
-            <label>
+            <div className="li-ease">
               <span className="li-cap">Переход между ключами</span>
-              <select
-                className="input"
-                value={EASING_NAMES.includes(commonEase as never) ? commonEase : "inOutCubic"}
-                onChange={(e) => {
+              <BezierEditor
+                value={commonEase as Easing}
+                onChange={(ease) => {
                   const next = Object.fromEntries(
-                    Object.entries(layer.keys ?? {}).map(([k, pts]) => [k, pts?.map((p) => ({ ...p, ease: e.target.value as never }))]),
+                    Object.entries(layer.keys ?? {}).map(([k, pts]) => [k, pts?.map((p) => ({ ...p, ease }))]),
                   );
                   onChange({ ...layer, keys: next });
                 }}
-              >
-                {EASING_NAMES.map((n) => (
-                  <option key={n} value={n}>
-                    {EASE_LABEL[n] ?? n}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           ) : null}
           <div className="li-row">
             <button type="button" className="btn ghost sm" onClick={() => onChange({ ...layer, x: 0.5, y: 0.5, keys: { ...layer.keys, x: undefined, y: undefined } })}>

@@ -3941,3 +3941,15 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .cut-len { font-family: var(--mono); font-size: 11px; color: var(--danger); }
 .cut-apply { width: 100%; justify-content: center; }
 .cut-empty { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+/* Кривая перехода между ключами */
+.li-ease { display: grid; gap: 4px; }
+.bz { display: grid; gap: 6px; }
+.bz-presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.bz-chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 11px; cursor: pointer; }
+.bz-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.bz-graph { width: 100%; max-width: 280px; aspect-ratio: 200 / 140; background: #0f0c1b; border: 1px solid var(--border); border-radius: 10px; touch-action: none; }
+.bz-box { fill: rgba(124, 92, 255, 0.06); stroke: rgba(255, 255, 255, 0.12); stroke-dasharray: 3 3; }
+.bz-curve { fill: none; stroke: #a78bfa; stroke-width: 2.5; }
+.bz-arm { stroke: rgba(255, 255, 255, 0.45); stroke-width: 1; }
+.bz-handle { fill: #fff; stroke: #7c5cff; stroke-width: 2; cursor: grab; }
+.bz-value { font-size: 10.5px; }
