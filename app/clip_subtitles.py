@@ -32,16 +32,24 @@ MAX_LINES = 400
 
 
 def build_clip_audio_args(source_path: Path, pieces: list[tuple[float, float]], out_path: Path) -> list[str]:
-    """One wav with the clip's pieces played back to back — the audio the render burns onto."""
+    """One wav with the clip's pieces played back to back — the audio the render burns onto.
+
+    Каждый кусок — свой вход с быстрым поиском (``-ss``/``-t`` до ``-i``): ffmpeg читает
+    только нужные секунды. Раньше был один вход и ``atrim``: ffmpeg декодировал весь
+    4-часовой исходник с начала до конца — 11 ГБ через кэш WSL на каждый клип, и
+    Docker Desktop падал от нехватки памяти.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    parts = []
-    for i, (start, end) in enumerate(pieces):
-        parts.append(f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]")
-    graph = ";".join(parts) + ";" + "".join(f"[a{i}]" for i in range(len(pieces)))
-    graph += f"concat=n={len(pieces)}:v=0:a=1[out]" if len(pieces) > 1 else "anull[out]"
+    inputs: list[str] = []
+    for start, end in pieces:
+        inputs += ["-ss", f"{start:.3f}", "-t", f"{max(0.01, end - start):.3f}", "-i", str(source_path)]
+    if len(pieces) > 1:
+        graph = "".join(f"[{i}:a]" for i in range(len(pieces))) + f"concat=n={len(pieces)}:v=0:a=1[out]"
+    else:
+        graph = "[0:a]anull[out]"
     return [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(source_path),
+        *inputs,
         "-filter_complex", graph,
         "-map", "[out]", "-ac", "1", "-ar", "16000", str(out_path),
     ]
@@ -201,9 +209,27 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
         audio_path.unlink(missing_ok=True)
 
 
-def save_lines(store: Any, clip_plan_id: int, lines: Any) -> dict:
-    """Store the owner's edited lines (word timing follows the text)."""
+def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> dict:
+    """Store the owner's edited lines (word timing follows the text).
+
+    ``words`` — пословные тайминги, распознанные снаружи (агент или распознавание на
+    хосте): тогда караоке и анимированные субтитры идут по ним, а не по словам,
+    равномерно разложенным по строке.
+    """
     current = store.get_clip_plan_subtitles(clip_plan_id) or {}
+    if isinstance(words, list) and words:
+        clean_words = []
+        for w in words:
+            try:
+                clean_words.append({"word": str(w["word"])[:80], "start": round(float(w["start"]), 3), "end": round(float(w["end"]), 3)})
+            except (KeyError, TypeError, ValueError):
+                continue
+        current = {**current, "words": clean_words}
+        if not current.get("duration"):
+            plan = store.get_clip_plan(clip_plan_id)
+            current["duration"] = round(
+                sum(float(seg["end_sec"]) - float(seg["start_sec"]) for seg in plan.get("segments") or []), 3
+            )
     clean = normalize_lines(lines, current.get("duration"))
     if not clean:
         store.set_clip_plan_subtitles(clip_plan_id, None)

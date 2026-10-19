@@ -2227,8 +2227,15 @@ class PlanSubtitleLine(BaseModel):
     text: str = Field(max_length=300)
 
 
+class PlanSubtitleWord(BaseModel):
+    word: str = Field(max_length=80)
+    start: float
+    end: float
+
+
 class PlanSubtitleLines(BaseModel):
     lines: list[PlanSubtitleLine]
+    words: list[PlanSubtitleWord] | None = Field(default=None, description="пословные тайминги, если распознавали снаружи")
 
 
 @app.get(
@@ -2269,7 +2276,12 @@ def api_generate_plan_subtitles(
 def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth: AuthDep) -> dict:
     try:
         snapshot_clip(store, clip_plan_id, "правка субтитров")
-        return save_plan_subtitle_lines(store, clip_plan_id, [line.model_dump() for line in payload.lines])
+        return save_plan_subtitle_lines(
+            store,
+            clip_plan_id,
+            [line.model_dump() for line in payload.lines],
+            [w.model_dump() for w in payload.words] if payload.words else None,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

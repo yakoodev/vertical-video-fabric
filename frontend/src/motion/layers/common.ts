@@ -4,11 +4,11 @@
  * Своя реализация скругления вместо `ctx.roundRect`: его нет в старом Safari, а
  * форма плашки должна совпадать пиксель в пиксель в превью и в рендере.
  */
-import type { CaptionWord, Ctx2D, ImageLike, Layer, RenderEnv, ScratchCanvas } from "../types";
+import type { CaptionWord, ChatMessage, Ctx2D, ImageLike, Layer, RenderEnv, ScratchCanvas } from "../types";
 import type { LayerState } from "../animate";
 
 /** Что знает кадр целиком: клиповое время и слова речи (для субтитров). */
-export type FrameInfo = { t: number; words: CaptionWord[] };
+export type FrameInfo = { t: number; words: CaptionWord[]; chat: ChatMessage[] };
 
 /** Слой в своей системе координат: опорные px, якорь (центр) в (0, 0). */
 export type LayerRenderer<L extends Layer = Layer> = {

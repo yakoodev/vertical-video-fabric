@@ -556,7 +556,7 @@ def test_caption_words_from_subtitles_and_transition_shift(tmp_path, monkeypatch
     motion = {"layers": [{"type": "captions", "props": {}}], "camera": []}
 
     out = attach_caption_words(store, store.get_clip_plan(plan["id"]), motion)
-    assert "words" not in out and "нет сохранённых субтитров" in out["caption_notes"][0]
+    assert "words" not in out and "нет сохранённых субтитров" in out["host_notes"][0]
 
     store.set_clip_plan_subtitles(plan["id"], {"lines": [{"start": 1, "end": 7, "text": "раз два"}],
                                                "words": [{"word": "раз", "start": 1, "end": 1.4},
@@ -593,3 +593,100 @@ def test_captions_without_saved_subtitles_keep_burned_ones_and_say_why(tmp_path,
     assert "words" not in comps[0]
     assert "нет сохранённых субтитров" in clip["error"]
     assert "subtitles" in [kind for kind, _ in calls]
+
+
+# ---------------------------------------------------------------- чат стрима
+
+
+def _seed_chat(store, source_id: int, messages: list[tuple[float, str, str]]) -> None:
+    from app import twitch_chat as tc
+
+    tc._upsert_status(store, source_id, status="succeeded")
+    store.db.execute(
+        "UPDATE source_chat SET emotes_json = ?, badges_json = ? WHERE source_id = ?",
+        ('{"KEKW": "https://cdn.test/kekw.png", "LUL": "https://cdn.test/broken.png"}',
+         '{"subscriber/12": "https://cdn.test/sub.png"}', source_id),
+    )
+    tc.insert_messages(store, source_id, [
+        {"msg_id": f"m{i}", "offset_sec": t, "user_name": user, "color": "#ff0000", "text": text,
+         "badges_json": '["subscriber/12"]' if i == 0 else ""}
+        for i, (t, user, text) in enumerate(messages)
+    ])
+
+
+def test_chat_layer_normalization_and_schema():
+    [layer] = normalize_layers([{"type": "chat", "props": {"style": "bubbles"}}])
+    props = layer["props"]
+    assert props["style"] == "bubbles" and props["w"] == 760 and props["maxMessages"] == 6
+    assert props["filter"] == {"minLength": 0, "hideLinks": True, "hideCommands": True}
+    assert props["highlightUsers"] == [] and props["delay"] == 0 and props["bg"] == 0.75
+    problems = validate_layers([{"type": "chat", "props": {"style": "irc", "maxMessages": 40, "delay": -3,
+                                                           "filter": {"minLength": 2}, "highlightUsers": ["mod"]}}])
+    assert any("irc" in p for p in problems) and any("maxMessages" in p for p in problems)
+    [clean] = normalize_layers([{"type": "chat", "props": {"maxMessages": 40, "filter": {"minLength": 2},
+                                                           "highlightUsers": ["mod"]}}])
+    assert clean["props"]["maxMessages"] == 12
+    assert clean["props"]["filter"] == {"minLength": 2, "hideLinks": True, "hideCommands": True}
+    assert clean["props"]["highlightUsers"] == ["mod"]
+    assert schema_summary()["chat"]["styles"][0] == "twitch-dark" and "chat" in schema_summary()["props"]
+
+
+def test_attach_chat_filters_by_layer_window_and_caches_emotes(tmp_path, monkeypatch):
+    from app.motion_render import attach_chat, attach_host_data
+
+    store = _store(tmp_path, monkeypatch)
+    source = store.create_source("upload", settings.source_dir / "s.mp4", duration_sec=60, status="ready")
+    analysis = store.create_ai_analysis(source["id"], "mock", status="succeeded")
+    seg = store.create_ai_segment(analysis["id"], {"start_sec": 10, "end_sec": 30, "title": "A"})
+    plan = store.create_clip_plan(source["id"], analysis["id"], "План", segment_ids=[seg["id"]])
+    motion = {"layers": [{"id": "c", "type": "chat", "start": 2, "end": 8, "props": {"delay": 1}}], "camera": []}
+
+    out = attach_host_data(store, store.get_clip_plan(plan["id"]), motion)
+    assert "chat" not in out and "нет чата" in out["host_notes"][0]
+
+    _seed_chat(store, source["id"], [(12.5, "a", "рано"), (13.5, "b", "KEKW KEKW"), (18.5, "c", "LUL"),
+                                     (19.5, "d", "поздно")])
+    fetched: list[str] = []
+
+    def fake_fetch(url: str) -> bytes | None:
+        fetched.append(url)
+        return None if "broken" in url else b"\x89PNG fake"
+
+    fresh = store.get_clip_plan(plan["id"])
+    out = attach_chat(store, fresh, motion, fetch=fake_fetch)
+    # Время клипа: 13.5 → 3.5; видно, если 2 ≤ t − delay < 8 → t ∈ [3, 9).
+    assert [m["t"] for m in out["chat"]] == [3.5, 8.5]
+    assert out["chat"][0]["fragments"][0] == {"emote": "KEKW", "url": "https://cdn.test/kekw.png"}
+    assert set(fetched) == {"https://cdn.test/kekw.png", "https://cdn.test/broken.png"}
+    assert list(out["chat_assets"]) == ["url:https://cdn.test/kekw.png"]  # битая картинка — пропущена
+    cached = Path(out["chat_assets"]["url:https://cdn.test/kekw.png"])
+    assert cached.parent == settings.runtime_dir / "emote-cache" and cached.read_bytes() == b"\x89PNG fake"
+
+    fetched.clear()
+    again = attach_chat(store, fresh, motion, fetch=fake_fetch)
+    assert fetched == ["https://cdn.test/broken.png"]  # скачанное берётся из кэша
+    assert again["chat_assets"] == out["chat_assets"]
+    no_emotes = {"layers": [{**motion["layers"][0], "props": {"delay": 1, "showEmotes": False, "showBadges": False}}]}
+    fetched.clear()
+    assert attach_chat(store, fresh, no_emotes, fetch=fake_fetch)["chat_assets"] == {} and fetched == []
+
+
+def test_chat_layer_gets_messages_and_emote_assets_in_render(tmp_path, monkeypatch):
+    store, service, plan, _banner, calls, comps, kwargs = _render_fixture(tmp_path, monkeypatch)
+    _seed_chat(store, plan["source_id"], [(1.0, "viewer", "KEKW ахах"), (2.0, "mod", "!команда")])
+    monkeypatch.setattr("app.motion_render._download", lambda url: b"img")
+    assets_seen: list[dict] = []
+    real = __import__("app.render", fromlist=["_run_compositor"])._run_compositor
+
+    def spy(args, timeout):
+        assets_seen.append(json.loads(Path(args[args.index("--assets") + 1]).read_text(encoding="utf-8")))
+        return real(args, timeout)
+
+    monkeypatch.setattr("app.render._run_compositor", spy)
+    store.set_clip_plan_render_settings(plan["id"], {"layers": [{"id": "chat", "type": "chat", "start": 0, "end": 5}]})
+    clip = service.render_clip_plan(plan["id"], **kwargs)
+
+    assert clip["status"] == "succeeded", clip.get("error")
+    assert [m["user"] for m in comps[0]["chat"]] == ["viewer", "mod"]  # фильтр команд — дело движка
+    assert "url:https://cdn.test/kekw.png" in assets_seen[0]
+    assert "subtitles" in [kind for kind, _ in calls]  # чат не отменяет обычные субтитры

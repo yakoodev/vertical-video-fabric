@@ -79,6 +79,8 @@ export function graphemes(s: string): string[] {
  */
 export function assetUrl(ref: string): string {
   if (ref.startsWith("emoji:")) return `/api/motion/emoji/${encodeURIComponent(ref.slice(6))}.svg`;
+  // Эмоуты и значки чата — прямо по их адресу (CDN Twitch / 7TV / BTTV / FFZ).
+  if (ref.startsWith("url:")) return ref.slice(4);
   if (ref.startsWith("sticker:")) return `/api/motion/packs/${ref.slice(8).split("/").map(encodeURIComponent).join("/")}`;
   return `/media/montage-assets/${encodeURIComponent(ref)}`;
 }

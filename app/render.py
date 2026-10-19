@@ -608,10 +608,10 @@ class ClipRenderService:
         motion = plan_motion(plan.get("render_settings"))
         visual = visual_motion(motion)
         if visual:
-            from app.motion_render import attach_caption_words
+            from app.motion_render import attach_host_data
 
-            # Слою «субтитры» нужны слова речи клипа (comp.words).
-            visual = attach_caption_words(self.store, plan, visual)
+            # Слоям «субтитры» и «чат» нужны данные клипа: слова речи и сообщения чата.
+            visual = attach_host_data(self.store, plan, visual)
             if visual and visual.get("words") and subtitle_profile_id is not None:
                 # Анимированные субтитры-слой заменяют прожигаемые: два текста речи
                 # друг на друге — брак.
@@ -765,7 +765,8 @@ class ClipRenderService:
         try:
             layers, assets, missing = resolve_layer_assets(self.store, motion.get("layers") or [])
             notes.extend(missing)
-            notes.extend(motion.get("caption_notes") or [])
+            notes.extend(motion.get("host_notes") or [])
+            assets.update(motion.get("chat_assets") or {})
             camera = motion.get("camera") or []
             drawn = video
             if layers or camera:
@@ -780,6 +781,7 @@ class ClipRenderService:
                         layers=layers,
                         camera=camera,
                         words=motion.get("words"),
+                        chat=motion.get("chat"),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

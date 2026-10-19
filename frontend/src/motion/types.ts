@@ -254,6 +254,55 @@ export type CaptionsProps = {
   tilt?: number;
 };
 
+/* ---------- чат стрима ---------- */
+
+/** Кусок сообщения: текст или эмоут-картинка (Twitch / 7TV / BTTV / FFZ). */
+export type ChatFragment = { text: string; emote?: undefined; url?: undefined } | { emote: string; url: string; text?: undefined };
+
+export type ChatBadge = { id: string; url: string };
+
+/** Сообщение чата во времени клипа (`GET /api/clip-plans/{id}/chat`). */
+export type ChatMessage = {
+  t: number;
+  user: string;
+  color?: string;
+  text: string;
+  fragments?: ChatFragment[];
+  badges?: ChatBadge[];
+};
+
+export type ChatStyle = "twitch-dark" | "bubbles" | "minimal" | "neon";
+
+export type ChatFilter = {
+  /** Короче — не показывать (символов). */
+  minLength?: number;
+  /** Прятать сообщения со ссылками. */
+  hideLinks?: boolean;
+  /** Прятать команды ботам («!розыгрыш»). */
+  hideCommands?: boolean;
+};
+
+export type ChatProps = {
+  style?: ChatStyle;
+  /** Ширина колонки чата, опорн. px. */
+  w?: number;
+  /** Сколько сообщений видно одновременно 1..12. */
+  maxMessages?: number;
+  fontSize?: number;
+  font?: string;
+  showBadges?: boolean;
+  showEmotes?: boolean;
+  filter?: ChatFilter;
+  /** Ники, которые выделяются (модер, гость, сам стример). */
+  highlightUsers?: string[];
+  /** Чат отстаёт от момента: сообщения показываются на `delay` секунд раньше. */
+  delay?: number;
+  /** Непрозрачность подложки 0..1. */
+  bg?: number;
+  /** Через сколько секунд сообщение гаснет само (0 — висит, пока не вытеснят). */
+  ttl?: number;
+};
+
 export type LayerPropsMap = {
   text: TextProps;
   shape: ShapeProps;
@@ -264,6 +313,7 @@ export type LayerPropsMap = {
   chart: ChartProps;
   callout: CalloutProps;
   captions: CaptionsProps;
+  chat: ChatProps;
   audio: AudioProps;
 };
 
@@ -302,6 +352,7 @@ export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
 export type CalloutLayer = LayerOf<"callout">;
 export type CaptionsLayer = LayerOf<"captions">;
+export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
 
 export type Layer =
@@ -314,6 +365,7 @@ export type Layer =
   | ChartLayer
   | CalloutLayer
   | CaptionsLayer
+  | ChatLayer
   | AudioLayer;
 
 export type CameraKey = {
@@ -334,6 +386,8 @@ export type Composition = {
   camera?: CameraKey[];
   /** Слова речи клипа для слоёв `captions` (клиповое время). */
   words?: CaptionWord[];
+  /** Сообщения чата для слоёв `chat` (клиповое время, по возрастанию `t`). */
+  chat?: ChatMessage[];
 };
 
 /**

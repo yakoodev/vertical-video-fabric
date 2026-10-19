@@ -51,7 +51,9 @@ SHORT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3}$")
 BEZIER_RE = re.compile(r"^bezier\(\s*([-+0-9.eE\s,]+)\)$")
 PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
-LAYER_TYPES = ("text", "shape", "image", "emoji", "counter", "progress", "chart", "callout", "captions", "audio")
+LAYER_TYPES = (
+    "text", "shape", "image", "emoji", "counter", "progress", "chart", "callout", "captions", "chat", "audio",
+)
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
     "linear", "inQuad", "outQuad", "inOutQuad", "inCubic", "outCubic", "inOutCubic",
@@ -80,6 +82,9 @@ CAPTION_ANIMATIONS = ("pop", "bounce", "fade", "karaoke", "typewriter", "none")
 # Где субтитры по умолчанию: выше интерфейса площадки (нижние ~18% кадра заняты).
 DEFAULT_CAPTIONS_Y = 0.68
 MAX_CAPTION_MARKS = 200
+# Чат стрима: вид колонки сообщений (CHAT_STYLES движка).
+CHAT_STYLES = ("twitch-dark", "bubbles", "minimal", "neon")
+MAX_CHAT_HIGHLIGHT_USERS = 50
 # Анимируемые свойства и рамки значений ключевых кадров. У масштаба в ключах
 # разрешён 0 — «вырасти из точки» делают именно так.
 ANIMATABLE: dict[str, tuple[float, float]] = {
@@ -574,6 +579,27 @@ PROPS: dict[str, dict] = {
         "wordScale": Opt(Num(1.12, 1, 1.4, 3)),
         "tilt": Opt(Num(0, -20, 20, 2)),
     },
+    # Сообщения берутся не из слоя, а из чата клипа (comp.chat) — слой задаёт вид и фильтры.
+    "chat": {
+        "style": Choice("twitch-dark", CHAT_STYLES),
+        "w": Num(760, 200, 1080, 1),
+        "maxMessages": Num(6, 1, 12, integer=True),
+        "fontSize": Num(34, 14, 80, 1),
+        "font": Opt(FONT),
+        "showBadges": Flag(True),
+        "showEmotes": Flag(True),
+        "filter": Obj(
+            {
+                "minLength": Num(0, 0, 200, integer=True),
+                "hideLinks": Flag(True),
+                "hideCommands": Flag(True),
+            }
+        ),
+        "highlightUsers": ListOf(Text("", 40), MAX_CHAT_HIGHLIGHT_USERS),
+        "delay": Num(0, 0, 30, 2),
+        "bg": Num(0.75, 0, 1, 3),
+        "ttl": Num(15, 0, 600, 1),
+    },
     "audio": {
         "asset_id": AssetRef(prefixes=("sfx",)),
         "volume": Num(1, 0, 2, 3),
@@ -999,6 +1025,14 @@ def has_captions(layers: Any) -> bool:
     )
 
 
+def has_chat(layers: Any) -> bool:
+    """Есть ли видимый слой чата (тогда компоновщику нужны сообщения и картинки эмоутов)."""
+    return any(
+        isinstance(layer, dict) and layer.get("type") == "chat" and not layer.get("hidden")
+        for layer in layers or []
+    )
+
+
 def caption_words(payload: Any) -> list[dict]:
     """Слова субтитров клипа (``{word, start, end}``) → ``comp.words`` (``{t0, t1, w}``)."""
     out: list[dict] = []
@@ -1071,6 +1105,11 @@ def schema_summary() -> dict:
             "default_y": DEFAULT_CAPTIONS_Y,
             "words": "comp.words = [{t0, t1, w}] — слова субтитров клипа в клиповом времени; "
                      "их подставляет сервер (рендер) и редактор (превью)",
+        },
+        "chat": {
+            "styles": list(CHAT_STYLES),
+            "messages": "comp.chat = [{t, user, color, text, fragments, badges}] — чат клипа "
+                        "(GET /api/clip-plans/{id}/chat); подставляет сервер и редактор",
         },
         "easings": list(EASINGS),
         "custom_easing": "bezier(x1,y1,x2,y2) — CSS cubic-bezier, x 0..1, y -1..2",

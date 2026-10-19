@@ -9,7 +9,8 @@
  * скошенные плашки, неоновое свечение, «пружинящие» появления.
  */
 import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE } from "./layers/captions";
-import type { CameraKey, Layer, LayerBase, LayerPropsMap, LayerType, Shadow } from "./types";
+import { CHAT_STYLES } from "./layers/chat";
+import type { CameraKey, ChatStyle, Layer, LayerBase, LayerPropsMap, LayerType, Shadow } from "./types";
 
 export type TemplateParamType = "text" | "number" | "color" | "emoji" | "select" | "bool" | "sound";
 
@@ -939,6 +940,37 @@ const captions: MotionTemplate = {
   },
 };
 
+const streamChat: MotionTemplate = {
+  id: "stream-chat",
+  name: "Чат стрима",
+  category: "Акценты",
+  description: "Сообщения Twitch-чата всплывают в такт клипу: ники цветом, эмоуты картинками",
+  duration: 60,
+  params: [
+    { name: "style", label: "Стиль", type: "select", default: "twitch-dark", options: CHAT_STYLES.map((s) => s.id) },
+    { name: "maxMessages", label: "Сообщений на экране", type: "number", default: 6, min: 1, max: 12 },
+    { name: "delay", label: "Задержка чата, с", type: "number", default: 0, min: 0, max: 30 },
+    { name: "y", label: "Высота", type: "number", default: 0.36, min: 0.1, max: 0.8 },
+    durationParam(60),
+  ],
+  build(p, at) {
+    const style = str(p, "style", "twitch-dark");
+    return {
+      layers: [
+        layer(
+          "chat",
+          { start: at, end: at + dur(p, 60), x: 0.5, y: num(p, "y", 0.36), track: 2, name: "Чат" },
+          {
+            style: (CHAT_STYLES.some((s) => s.id === style) ? style : "twitch-dark") as ChatStyle,
+            maxMessages: Math.max(1, Math.min(12, Math.round(num(p, "maxMessages", 6)))),
+            delay: Math.max(0, num(p, "delay", 0)),
+          },
+        ),
+      ],
+    };
+  },
+};
+
 const keywordBig: MotionTemplate = {
   id: "keyword-big",
   name: "Ключевое слово крупно",
@@ -1123,6 +1155,7 @@ export const TEMPLATES: MotionTemplate[] = [
   titlePop,
   captions,
   keywordBig,
+  streamChat,
   punchline,
   quoteCard,
   memeCaption,

@@ -15,6 +15,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import { createCanvas, GlobalFonts, ImageData, loadImage, type Image } from "@napi-rs/canvas";
 import {
   cameraMatrix,
+  collectChatImageRefs,
   collectImageRefs,
   drawFrame,
   isIdentityCamera,
@@ -105,6 +106,10 @@ function readComp(path: string): Composition {
           .map((w) => ({ t0: Number(w.t0), t1: Number(w.t1), w: w.w }))
           .sort((a, b) => a.t0 - b.t0)
       : [],
+    // Сообщения чата для слоёв chat: время — число, остальное движок проверит сам.
+    chat: Array.isArray(raw.chat)
+      ? raw.chat.filter((m) => m && Number.isFinite(Number(m.t))).sort((a, b) => Number(a.t) - Number(b.t))
+      : [],
   };
 }
 
@@ -184,7 +189,7 @@ async function loadImages(comp: Composition, assetsPath: string | undefined, emo
   const images = new Map<string, Image>();
   const base = assetsPath ? dirname(resolve(assetsPath)) : process.cwd();
   await Promise.all(
-    collectImageRefs(comp.layers).map(async (ref) => {
+    [...collectImageRefs(comp.layers), ...chatRefs(comp)].map(async (ref) => {
       let path = map[ref];
       if (!path && ref.startsWith("emoji:") && emojiDir) path = join(emojiDir, `${ref.slice(6)}.svg`);
       if (!path) return;
@@ -201,6 +206,16 @@ async function loadImages(comp: Composition, assetsPath: string | undefined, emo
     }),
   );
   return images;
+}
+
+/** Эмоуты и значки, которые реально покажут слои чата (с их настройками). */
+function chatRefs(comp: Composition): string[] {
+  const out = new Set<string>();
+  for (const layer of comp.layers) {
+    if (layer.type !== "chat" || layer.hidden) continue;
+    for (const ref of collectChatImageRefs(comp.chat || [], layer.props)) out.add(ref);
+  }
+  return [...out];
 }
 
 /* ---------- ffmpeg ---------- */

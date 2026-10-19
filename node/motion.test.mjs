@@ -456,3 +456,59 @@ test("CLI: слой субтитров рисует слова из comp.words �
   assert.equal(run(["--comp", p.comp, "--assets", p.assets, "--frame", "2.9", "--png", png]).status, 0);
   assert.equal(await inkInBand(png, 0, 1), 0);
 });
+
+/* ---------- чат стрима ---------- */
+
+const CHAT = [
+  { t: 0.5, user: "Tanya", color: "#FF69B4", text: "привет KEKW", fragments: [{ text: "привет " }, { emote: "KEKW", url: "https://cdn.test/kekw.png" }], badges: [{ id: "sub/1", url: "https://cdn.test/sub.png" }] },
+  { t: 0.9, user: "bot", color: "#00FF00", text: "!розыгрыш" },
+  { t: 1.2, user: "spam", color: "#00FF00", text: "го www.example.com" },
+  { t: 1.6, user: "Дима", color: "#1E90FF", text: "ЧТО ОН СДЕЛАЛ" },
+  { t: 2.4, user: "a", text: "+" },
+  { t: 3.0, user: "Мод", color: "#9ACD32", text: "имба" },
+];
+
+test("чат: фильтры, задержка и окно слоя", () => {
+  const r = E.resolveChat({ maxMessages: 40, filter: { minLength: 2 } });
+  assert.equal(r.maxMessages, 12);
+  assert.deepEqual(r.filter, { minLength: 2, hideLinks: true, hideCommands: true });
+  assert.equal(E.resolveChat({ style: "irc" }).style, "twitch-dark");
+  const props = { filter: { minLength: 2 }, delay: 0.5 };
+  const list = E.chatEntries(CHAT, props, 0, 2.5);
+  // Команда, ссылка и «+» короче 2 символов отброшены; время показа — t − delay; 3.0 − 0.5 = 2.5 — уже за концом окна [0, 2.5).
+  assert.deepEqual(list.map((e) => [e.msg.user, e.ts]), [["Tanya", 0], ["Дима", 1.1]]);
+  assert.deepEqual(E.collectChatImageRefs(CHAT).sort(), ["url:https://cdn.test/kekw.png", "url:https://cdn.test/sub.png"]);
+  assert.deepEqual(E.collectChatImageRefs(CHAT, { showEmotes: false, showBadges: false }), []);
+  assert.equal(E.assetUrl("url:https://cdn.test/kekw.png"), "https://cdn.test/kekw.png");
+  assert.ok(E.CHAT_STYLES.length === 4 && E.getTemplate("stream-chat"));
+});
+
+test("CLI: слой чата рисует сообщения с эмоутами каждым стилем, до первого сообщения — пусто", async () => {
+  // Эмоут и значок — настоящие PNG, как из кэша бэкенда.
+  const emote = createCanvas(56, 56);
+  const ec = emote.getContext("2d");
+  ec.fillStyle = "#FFB000";
+  ec.beginPath();
+  ec.arc(28, 28, 26, 0, Math.PI * 2);
+  ec.fill();
+  writeFileSync(join(tmp, "kekw.png"), await emote.encode("png"));
+  writeFileSync(join(tmp, "sub.png"), await emote.encode("png"));
+  const assets = { "url:https://cdn.test/kekw.png": join(tmp, "kekw.png"), "url:https://cdn.test/sub.png": join(tmp, "sub.png") };
+  writeFileSync(join(tmp, "chat.assets.json"), JSON.stringify(assets));
+  for (const style of E.CHAT_STYLES.map((s) => s.id)) {
+    const comp = {
+      width: 540, height: 960, fps: 30, duration: 5, chat: CHAT,
+      layers: [{ id: "chat", type: "chat", start: 0, end: 5, x: 0.5, y: 0.4, props: { style, highlightUsers: ["Мод"] } }],
+    };
+    writeFileSync(join(tmp, `chat-${style}.json`), JSON.stringify(comp));
+    const png = join(tmp, `chat-${style}.png`);
+    const r = run(["--comp", join(tmp, `chat-${style}.json`), "--assets", join(tmp, "chat.assets.json"), "--frame", "3.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok((await inkInBand(png, 0.2, 0.6)) > 2000, `${style}: сообщений не видно`);
+    assert.equal(await inkInBand(png, 0.7, 1), 0, `${style}: чат вылез из своей колонки вниз`);
+  }
+  const png = join(tmp, "chat-early.png");
+  const r = run(["--comp", join(tmp, "chat-twitch-dark.json"), "--assets", join(tmp, "chat.assets.json"), "--frame", "0.3", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(await inkInBand(png, 0, 1), 0);
+});

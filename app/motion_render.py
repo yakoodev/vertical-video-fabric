@@ -18,13 +18,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
-from app.motion import asset_key, caption_words, has_captions, layer_asset_refs
+from app.motion import asset_key, caption_words, has_captions, has_chat, layer_asset_refs
 
 # Насколько приглушать исходник под звуком слоя с ``duck`` (как у вставок).
 AUDIO_DUCK_VOLUME = 0.3
@@ -94,6 +96,7 @@ def write_comp(
     layers: list[dict],
     camera: list[dict],
     words: list[dict] | None = None,
+    chat: list[dict] | None = None,
 ) -> Path:
     comp = {
         "width": int(width),
@@ -105,6 +108,8 @@ def write_comp(
     }
     if words:
         comp["words"] = words
+    if chat:
+        comp["chat"] = chat
     path.write_text(json.dumps(comp, ensure_ascii=False), encoding="utf-8")
     return path
 
@@ -134,14 +139,151 @@ def attach_caption_words(store: Any, plan: dict, motion: dict | None) -> dict | 
     """Добавить в моушн слова речи, если есть видимый слой субтитров.
 
     Слов нет (субтитры клипа ещё не сделаны) — слой ничего не покажет; это
-    пометка для ошибки клипа (``caption_notes``), а не сбой рендера.
+    пометка для ошибки клипа (``host_notes``), а не сбой рендера.
     """
     if not motion or not has_captions(motion.get("layers")):
         return motion
     words = plan_caption_words(store, plan)
     if words:
         return {**motion, "words": words}
-    return {**motion, "caption_notes": ["у клипа нет сохранённых субтитров — слой «субтитры» пуст (сделайте субтитры в редакторе)"]}
+    return _with_note(motion, "у клипа нет сохранённых субтитров — слой «субтитры» пуст (сделайте субтитры в редакторе)")
+
+
+def _with_note(motion: dict, note: str) -> dict:
+    """Пометка для ошибки клипа: слой пуст, но рендер идёт дальше."""
+    return {**motion, "host_notes": [*(motion.get("host_notes") or []), note]}
+
+
+# ---------------------------------------------------------------- чат стрима
+
+# Сколько сообщений и картинок эмоутов/значков отдаём компоновщику на клип.
+MAX_CHAT_MESSAGES = 5000
+MAX_CHAT_IMAGES = 400
+CHAT_IMAGE_TIMEOUT = 5.0
+CHAT_IMAGE_MAX_BYTES = 3 * 1024 * 1024
+
+
+def chat_windows(layers: list[dict]) -> list[tuple[float, float, float]]:
+    """Окна видимых слоёв чата: (start, end, delay) — сообщение t видно, если start <= t - delay < end."""
+    out = []
+    for layer in layers or []:
+        if layer.get("type") != "chat" or layer.get("hidden"):
+            continue
+        delay = float((layer.get("props") or {}).get("delay") or 0)
+        out.append((float(layer["start"]), float(layer["end"]), delay))
+    return out
+
+
+def plan_chat_messages(store: Any, plan: dict, layers: list[dict]) -> list[dict]:
+    """Сообщения чата клипа (время клипа, как GET /api/clip-plans/{id}/chat), попадающие в слои чата."""
+    try:
+        from app.twitch_chat import clip_messages
+
+        messages = clip_messages(store, plan, limit=20000)
+    except Exception:  # noqa: BLE001 - нет чата/таблиц — слой просто пуст
+        return []
+    windows = chat_windows(layers)
+    keep = [
+        {k: m.get(k) for k in ("t", "user", "color", "text", "fragments", "badges")}
+        for m in messages
+        if any(start <= float(m["t"]) - delay < end for start, end, delay in windows)
+    ]
+    return keep[:MAX_CHAT_MESSAGES]
+
+
+def chat_image_urls(messages: list[dict], layers: list[dict]) -> list[str]:
+    """Адреса эмоутов и значков, которые покажут слои чата (с учётом showEmotes/showBadges)."""
+    chat_layers = [layer for layer in layers or [] if layer.get("type") == "chat" and not layer.get("hidden")]
+    emotes = any((layer.get("props") or {}).get("showEmotes", True) for layer in chat_layers)
+    badges = any((layer.get("props") or {}).get("showBadges", True) for layer in chat_layers)
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def add(url: Any) -> None:
+        if isinstance(url, str) and url.startswith(("http://", "https://")) and url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    for message in messages:
+        if emotes:
+            for frag in message.get("fragments") or []:
+                if isinstance(frag, dict) and frag.get("emote"):
+                    add(frag.get("url"))
+        if badges:
+            for badge in message.get("badges") or []:
+                if isinstance(badge, dict):
+                    add(badge.get("url"))
+    return urls[:MAX_CHAT_IMAGES]
+
+
+def _download(url: str) -> bytes | None:
+    import httpx
+
+    with httpx.Client(timeout=CHAT_IMAGE_TIMEOUT, follow_redirects=True) as client:
+        response = client.get(url)
+        if response.status_code != 200 or len(response.content) > CHAT_IMAGE_MAX_BYTES:
+            return None
+        return response.content
+
+
+def fetch_chat_images(
+    urls: list[str],
+    cache_dir: Path,
+    fetch: Callable[[str], bytes | None] | None = None,
+) -> dict[str, str]:
+    """Скачать эмоуты/значки в кэш (имя — sha1 адреса) → записи assets.json ``url:<адрес>``.
+
+    Картинка, которую не скачать (таймаут, 404, CDN лёг), пропускается: эмоут
+    нарисуется своим именем, значок — не нарисуется. Рендер из-за этого не падает.
+    """
+    fetch = fetch or _download
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def one(url: str) -> tuple[str, str | None]:
+        path = cache_dir / (hashlib.sha1(url.encode("utf-8")).hexdigest() + ".img")
+        if path.is_file() and path.stat().st_size > 0:
+            return url, str(path)
+        try:
+            data = fetch(url)
+        except Exception:  # noqa: BLE001 - сеть — не повод ронять рендер
+            data = None
+        if not data:
+            return url, None
+        tmp = path.with_name(f"{path.name}.{uuid4().hex}.part")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+        return url, str(path)
+
+    assets: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for url, path in pool.map(one, urls):
+            if path:
+                assets[f"url:{url}"] = path
+    return assets
+
+
+def attach_chat(
+    store: Any,
+    plan: dict,
+    motion: dict | None,
+    fetch: Callable[[str], bytes | None] | None = None,
+) -> dict | None:
+    """Сообщения чата и картинки эмоутов — в моушн, если есть видимый слой чата."""
+    if not motion or not has_chat(motion.get("layers")):
+        return motion
+    from app.settings import settings
+
+    layers = motion.get("layers") or []
+    messages = plan_chat_messages(store, plan, layers)
+    if not messages:
+        return _with_note(motion, "у клипа нет чата Twitch — слой «чат» пуст (импортируйте чат источника)")
+    assets = fetch_chat_images(chat_image_urls(messages, layers), settings.runtime_dir / "emote-cache", fetch)
+    return {**motion, "chat": messages, "chat_assets": assets}
+
+
+def attach_host_data(store: Any, plan: dict, motion: dict | None) -> dict | None:
+    """Данные клипа для слоёв, которые рисуют не свои props: слова речи и чат."""
+    return attach_chat(store, plan, attach_caption_words(store, plan, motion))
 
 
 def pack_refs_available() -> bool:
@@ -451,9 +593,11 @@ def render_frame_png(
         )
         layers, assets, _notes = resolve_layer_assets(store, layers)
         words = plan_caption_words(store, plan) if has_captions(layers) else None
+        host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
+        assets.update(host.get("chat_assets") or {})
         comp = write_comp(
             work / "comp.json", width=width, height=height, fps=fps,
-            duration=max(total, t + 0.5), layers=layers, camera=camera, words=words,
+            duration=max(total, t + 0.5), layers=layers, camera=camera, words=words, chat=host.get("chat"),
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

@@ -31,7 +31,15 @@ const SUGGESTIONS = [
   "Убери всё лишнее с кадра, оставь только самое сильное",
 ];
 
-export function AgentPanel({ clipPlanId, onChanged }: { clipPlanId: number; onChanged: () => void }) {
+export function AgentPanel({
+  clipPlanId,
+  onChanged,
+  onRunningChange,
+}: {
+  clipPlanId: number;
+  onChanged: () => void;
+  onRunningChange?: (running: boolean) => void;
+}) {
   const toast = useToast();
   const [text, setText] = useState("");
   const chat = useQuery({
@@ -61,9 +69,10 @@ export function AgentPanel({ clipPlanId, onChanged }: { clipPlanId: number; onCh
   const wasRunning = useRef(false);
   const running = Boolean(chat.data?.running);
   useEffect(() => {
+    onRunningChange?.(running);
     if (wasRunning.current && !running) onChanged();
     wasRunning.current = running;
-  }, [running, onChanged]);
+  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const listRef = useRef<HTMLDivElement>(null);
   const messages = chat.data?.messages ?? [];
@@ -75,7 +84,9 @@ export function AgentPanel({ clipPlanId, onChanged }: { clipPlanId: number; onCh
   const submit = (message: string) => {
     const m = message.trim();
     if (!m || running || send.isPending) return;
-    send.mutate(m);
+    // Сначала несохранённые правки панели уезжают на сервер — агент должен видеть их.
+    onRunningChange?.(true);
+    send.mutate(m, { onError: () => onRunningChange?.(false) });
   };
 
   return (

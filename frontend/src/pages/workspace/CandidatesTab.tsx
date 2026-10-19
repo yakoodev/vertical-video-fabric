@@ -14,7 +14,7 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import type { AiSegment, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
-import { ApiError } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
@@ -29,6 +29,7 @@ import {
   layerBox,
   type CameraKey,
   type CaptionWord,
+  type ChatMessage,
   type Layer,
 } from "@/motion";
 import { browserEnv, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
@@ -535,7 +536,13 @@ function drawSubtitle(
 }
 
 /** Что рисует превью из моушн-слоёв: живой черновик (во время перетаскивания) и выделение. */
-type MotionView = { layers: Layer[]; camera: CameraKey[]; selected: string | null; words?: CaptionWord[] };
+type MotionView = {
+  layers: Layer[];
+  camera: CameraKey[];
+  selected: string | null;
+  words?: CaptionWord[];
+  chat?: ChatMessage[];
+};
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
 const captionWordsCache = new WeakMap<object, CaptionWord[]>();
@@ -698,7 +705,7 @@ function CropFrame({
             // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
             if (motion?.layers.length) {
               const env = browserEnv(ov.width, ov.height);
-              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden), words: motion.words }, clipT, env);
+              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat }, clipT, env);
             }
             // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
             if (bannerRef?.current) {
@@ -725,7 +732,7 @@ function CropFrame({
             const sel = motion?.selected ? motion.layers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
               const env = browserEnv(ov.width, ov.height);
-              const box = layerBox(octx, sel, clipT, env, motion?.words);
+              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat });
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
             }
@@ -1076,6 +1083,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     void loadMotionFonts();
   }, []);
   useEffect(() => preloadLayerImages(layers), [layers]);
+  // Чат стрима для слоя «чат на экране» — грузим, только когда такой слой есть.
+  const hasChatLayer = layers.some((l) => l.type === "chat");
+  const planChat = useQuery({
+    queryKey: ["plan-chat", editorPlanId],
+    queryFn: () => api.get<ChatMessage[]>(`/api/clip-plans/${editorPlanId}/chat?limit=5000`),
+    enabled: Boolean(editorPlanId && hasChatLayer),
+    staleTime: 300_000,
+  });
   const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });
   // Стабильная «который сейчас час клипа» для панелей, которые опрашивают время сами.
   const clipNowRef = useRef<() => number>(() => 0);
@@ -1213,6 +1228,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Autosave with a snapshot: the timer must save what was on the panel FOR THAT
   // clip, not whatever the panel shows when it fires (you may have switched clips).
   const pendingSaveRef = useRef<{ planId: number; settings: RenderSettings; timer: number } | null>(null);
+  // Пока ИИ-ассистент правит клип на сервере, панель не сохраняется: иначе
+  // автосохранение затёрло бы его правки старым состоянием редактора.
+  const agentRunningRef = useRef(false);
   const flushSettings = async () => {
     const pending = pendingSaveRef.current;
     if (!pending) return;
@@ -1285,7 +1303,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       loadingSettingsRef.current = false;
       return;
     }
-    if (!editorPlanId) return;
+    if (!editorPlanId || agentRunningRef.current) return;
     const settings = panelSettings();
     if (pendingSaveRef.current) window.clearTimeout(pendingSaveRef.current.timer);
     const timer = window.setTimeout(() => void flushSettings(), 600);
@@ -1705,8 +1723,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
   const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
-  if (!layerDragRef.current) motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords };
-  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId, words: captionWords };
+  const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
+  if (!layerDragRef.current)
+    motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages };
+  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
   // за рамку), потом сами слои сверху вниз.
@@ -1719,13 +1739,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const view = motionViewRef.current;
     const sel = view.selected ? view.layers.find((l) => l.id === view.selected) : null;
     if (sel && !sel.locked && sel.type !== "audio") {
-      const box = layerBox(ctx, sel, t, env, view.words);
+      const box = layerBox(ctx, sel, t, env, { words: view.words, chat: view.chat });
       const handle = box ? handleAt(box, px, py, cssScale) : null;
       if (box && handle) return { layer: sel, handle, box, t };
     }
     const hit = layerAt(ctx, view.layers, t, env, px, py, view.words);
     if (!hit) return null;
-    const box = layerBox(ctx, hit, t, env, view.words);
+    const box = layerBox(ctx, hit, t, env, { words: view.words, chat: view.chat });
     return box ? { layer: hit, handle: "move" as TransformHandle, box, t } : null;
   };
 
@@ -2632,6 +2652,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           {libTab === "ai" && activePlan ? (
             <AgentPanel
               clipPlanId={activePlan.id}
+              onRunningChange={(on) => {
+                agentRunningRef.current = on;
+                if (on) void flushSettings();
+              }}
               onChanged={async () => {
                 await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
                 setSettingsNonce((n) => n + 1);

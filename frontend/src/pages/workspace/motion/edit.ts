@@ -226,6 +226,8 @@ export function layerTitle(layer: Layer): string {
       return "Звук";
     case "captions":
       return "Субтитры";
+    case "chat":
+      return "Чат стрима";
     default:
       return "Слой";
   }
@@ -241,5 +243,6 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   chart: "📊",
   callout: "▤",
   captions: "💬",
+  chat: "🗨",
   audio: "♪",
 };

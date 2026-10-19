@@ -45,6 +45,17 @@ export {
   type ResolvedCaptions,
 } from "./layers/captions";
 export type { FrameInfo } from "./layers/common";
+export type { FrameData } from "./render";
+export {
+  CHAT_STYLES,
+  chatImageRef,
+  resolveChat,
+  chatEntries,
+  chatMessagePasses,
+  collectChatImageRefs,
+  type ChatStyleInfo,
+  type ResolvedChat,
+} from "./layers/chat";
 export {
   TEMPLATES,
   TEMPLATE_CATEGORIES,
