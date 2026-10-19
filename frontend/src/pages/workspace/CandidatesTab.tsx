@@ -1340,6 +1340,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
+  // ⚡ Автомонтаж всех избранных подряд: речь распознаётся, где её ещё нет.
+  const [autoProgress, setAutoProgress] = useState("");
+  const batchAuto = useMutation({
+    mutationFn: async (ids: number[]) => {
+      let done = 0;
+      const failed: string[] = [];
+      for (const id of ids) {
+        setAutoProgress(`${done + 1}/${ids.length}…`);
+        try {
+          const subs = await clipPlansApi.getSubtitles(id);
+          if (!subs?.words?.length) await clipPlansApi.generateSubtitles(id, "whisper");
+          await api.post(`/api/clip-plans/${id}/auto-edit`, { keep_layers: true });
+          done += 1;
+        } catch (e) {
+          failed.push(`#${id}: ${e instanceof ApiError ? e.message : "ошибка"}`);
+        }
+      }
+      return { done, failed };
+    },
+    onSuccess: async ({ done, failed }) => {
+      setAutoProgress("");
+      if (failed.length) toast.error(`Автомонтаж: готово ${done}, не вышло ${failed.length} — ${failed.slice(0, 2).join("; ")}`);
+      else toast.success(`Автомонтаж готов у ${done} клипов — открой любой в монтаже, Ctrl+Z откатит`);
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+  });
   // ⚡ Автомонтаж без ИИ — правила по словам и громкости (app/auto_edit.py).
   const autoEdit = useMutation({
     mutationFn: async (clipPlanId: number) => {
@@ -2478,6 +2505,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             title="Монтаж избранных (E — момент под курсором)"
           >
             ✂ Монтаж{favCount ? ` · ${favCount} ★` : ""}
+          </button>
+          <button
+            className="btn sm"
+            disabled={!favCount || batchAuto.isPending}
+            onClick={() => batchAuto.mutate(plans.filter((p) => p.favorite).map((p) => p.id))}
+            title="Каждому избранному клипу: распознать речь (если ещё нет) и ⚡ автомонтаж — хук, субтитры, эмодзи, наезды. Без ИИ."
+          >
+            {batchAuto.isPending ? `⚡ ${autoProgress}` : `⚡ Автомонтаж ★${favCount ? ` · ${favCount}` : ""}`}
           </button>
           <button
             className="btn sm"
