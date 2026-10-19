@@ -104,6 +104,7 @@ class GeminiClient:
                         },
                         content=chunk,
                         timeout=self.timeout,
+                        **_proxy_kw(),
                     )
                 except httpx.TransportError as exc:
                     remote_offset = self._query_upload_offset(upload_url)
@@ -143,6 +144,7 @@ class GeminiClient:
                 upload_url,
                 headers={"X-Goog-Upload-Command": "query"},
                 timeout=self.timeout,
+                **_proxy_kw(),
             )
         except httpx.TransportError:
             return 0
@@ -703,6 +705,17 @@ def _state_name(state: Any) -> str:
     return str(state or "").upper()
 
 
+def _proxy_kw() -> dict:
+    """Прокси только для Google: без VPN Gemini отвечает «User location is not
+    supported». Остальной сервис (Twitch, загрузки) ходит напрямую."""
+    proxy = settings.gemini_proxy_url
+    return {"proxy": proxy} if proxy else {}
+
+
+def _with_proxy(kwargs: dict) -> dict:
+    return {**_proxy_kw(), **kwargs}
+
+
 def _request_with_retries(method: str, url: str, **kwargs) -> httpx.Response:
     attempts = max(1, int(settings.gemini_http_retries))
     last_response: httpx.Response | None = None
@@ -713,7 +726,7 @@ def _request_with_retries(method: str, url: str, **kwargs) -> httpx.Response:
     retry_statuses = {408, 429, 500, 502, 503, 504}
     for attempt in range(attempts):
         try:
-            response = httpx.request(method, url, **kwargs)
+            response = httpx.request(method, url, **_with_proxy(kwargs))
         except httpx.TransportError as exc:
             last_error = exc
             if attempt + 1 >= attempts:
