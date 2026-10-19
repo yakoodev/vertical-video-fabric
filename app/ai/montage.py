@@ -526,7 +526,9 @@ def apply_montage(store: Any, clip_plan_id: int, spec: dict) -> tuple[dict, list
     if store.get_clip_plan_montage_backup(clip_plan_id) is None:
         current = export_spec(store, clip_plan_id)
         store.set_clip_plan_montage_backup(clip_plan_id, {k: current[k] for k in _EDITABLE if k in current})
-    return apply_spec(store, clip_plan_id, spec)
+    # Недоделанные слои из автосохранения не должны блокировать применение:
+    # моушн-часть только нормализуется (как при откате).
+    return apply_spec(store, clip_plan_id, spec, check_motion=False)
 
 
 def undo_montage(store: Any, clip_plan_id: int) -> tuple[dict, list[str]]:
@@ -544,7 +546,8 @@ def undo_montage(store: Any, clip_plan_id: int) -> tuple[dict, list[str]]:
         if piece.get("segment_id") not in own:
             piece.pop("segment_id", None)
         pieces.append(piece)
-    result = apply_spec(store, clip_plan_id, {**backup, "pieces": pieces})
+    # Откат обязан вернуть снимок как есть (как Ctrl+Z), без отказа из-за слоёв.
+    result = apply_spec(store, clip_plan_id, {**backup, "pieces": pieces}, check_motion=False)
     store.set_clip_plan_montage_backup(clip_plan_id, None)
     return result
 

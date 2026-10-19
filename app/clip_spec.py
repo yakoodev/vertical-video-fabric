@@ -26,11 +26,12 @@ The PUT is all-or-nothing: every check runs before the first write.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.clip_settings import normalize_render_settings
-from app.cuts import MAX_CUTS, MIN_CUT_SEC, validate_cuts
-from app.motion import validate_camera, validate_layers
+from app.cuts import MAX_CUTS, MIN_CUT_SEC, normalize_cuts, validate_cuts
+from app.motion import normalize_camera, normalize_layers, validate_camera, validate_layers
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, AppStore
 
 SCHEMA_ID = "vvf.clip/1"
@@ -100,6 +101,32 @@ def _num(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number == number else None  # NaN guard
+
+
+_LAYER_WHERE_RE = re.compile(r"^layers\[(\d+)\]")
+
+
+def _changed_layer_problems(raw_layers: Any, stored_layers: list[dict]) -> list[str]:
+    """Проблемы слоёв, кроме тех, что относятся к слоям без изменений.
+
+    Слой «без изменений» — после нормализации ровно такой же, как сохранённый.
+    Проблемы всего списка (не про конкретный слой) остаются блокирующими.
+    """
+    problems = validate_layers(raw_layers)
+    if not problems or not isinstance(raw_layers, list):
+        return problems
+    unchanged: set[int] = set()
+    for index, raw in enumerate(raw_layers):
+        clean = normalize_layers([raw])
+        if clean and clean[0] in stored_layers:
+            unchanged.add(index)
+    kept = []
+    for problem in problems:
+        match = _LAYER_WHERE_RE.match(problem)
+        if match and int(match.group(1)) in unchanged:
+            continue
+        kept.append(problem)
+    return kept
 
 
 def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion: bool = True) -> dict:
@@ -197,9 +224,15 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
         # Слои правят руками и агенты: молча чинить их нельзя — человек должен
         # узнать, что «end 2 при start 3» не сработает. Проверяем только форму:
         # слой за концом клипа не ошибка (ИИ-монтаж может укоротить клип).
-        problems.extend(f"render.{p}" for p in validate_layers(render.get("layers")))
-        problems.extend(f"render.{p}" for p in validate_camera(render.get("camera")))
-        problems.extend(f"render.{p}" for p in validate_cuts(render.get("cuts")))
+        # Но блокируем только то, что меняется в этом PUT: автосохранение
+        # хранит недоделанные слои (пустой текст, картинка без файла), и из-за
+        # них не должна ломаться правка кусков, откат или ИИ-монтаж.
+        stored = normalize_render_settings(plan.get("render_settings") or {})
+        problems.extend(f"render.{p}" for p in _changed_layer_problems(render.get("layers"), stored["layers"]))
+        if normalize_camera(render.get("camera")) != stored["camera"]:
+            problems.extend(f"render.{p}" for p in validate_camera(render.get("camera")))
+        if normalize_cuts(render.get("cuts")) != stored["cuts"]:
+            problems.extend(f"render.{p}" for p in validate_cuts(render.get("cuts")))
 
     if problems:
         raise SpecError(problems)

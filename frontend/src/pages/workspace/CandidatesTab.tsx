@@ -1101,6 +1101,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   cutsRef.current = cuts;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
+  const inlineCancelRef = useRef(false);
   const [inlineEdit, setInlineEdit] = useState<{ id: string; field: string; text: string; left: number; top: number; width: number } | null>(null);
   // Шрифты движка — один раз; картинки слоёв — как только слой появился,
   // чтобы к моменту его показа в превью они уже были в кэше.
@@ -2071,6 +2072,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     });
   };
   const commitInlineEdit = (value: string) => {
+    if (inlineCancelRef.current) {
+      inlineCancelRef.current = false;
+      return;
+    }
     const edit = inlineEdit;
     setInlineEdit(null);
     if (!edit || value === edit.text) return;
@@ -2991,7 +2996,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     onBlur={(e) => commitInlineEdit(e.currentTarget.value)}
                     onKeyDown={(e) => {
                       e.stopPropagation();
-                      if (e.key === "Escape") setInlineEdit(null);
+                      if (e.key === "Escape") {
+                        // Отмена: blur от размонтирования поля не должен сохранить текст.
+                        inlineCancelRef.current = true;
+                        setInlineEdit(null);
+                      }
                       else if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
                         commitInlineEdit(e.currentTarget.value);
