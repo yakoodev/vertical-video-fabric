@@ -117,3 +117,72 @@ def run_qc(path: Path, *, duration_sec: float = 0.0, width: int = 0, height: int
     if proc.returncode != 0:
         return None
     return parse_qc(proc.stderr, duration_sec=duration_sec, width=width, height=height)
+
+
+# ---------------------------------------------------------------- синхронность субтитров
+
+SYNC_WARN_SEC = 0.25
+SYNC_RANGE_SEC = 2.5
+
+
+def estimate_subtitle_offset(path: Path, words: list[dict]) -> float | None:
+    """На сколько секунд слова субтитров сдвинуты относительно речи в готовом клипе.
+
+    Плюс — слова надо сдвинуть ПОЗЖЕ (субтитры спешат), минус — раньше.
+    Считаем огибающую громкости (10 мс) и ищем сдвиг ±2.5 с, при котором
+    «слова звучат» лучше всего совпадает с «есть голос». None — мало данных.
+    """
+    import array
+
+    if len(words) < 8:
+        return None
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+            capture_output=True, timeout=300, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    pcm = array.array("h")
+    pcm.frombytes(proc.stdout[: len(proc.stdout) - len(proc.stdout) % 2])
+    step = 80  # 10 мс при 8 кГц
+    env = []
+    for i in range(0, len(pcm) - step, step):
+        chunk = pcm[i : i + step]
+        env.append(sum(abs(v) for v in chunk) / step)
+    if len(env) < 200:
+        return None
+    threshold = sorted(env)[int(len(env) * 0.6)]
+    voice = [1 if v > threshold else 0 for v in env]
+    sig = [0] * len(env)
+    for w in words:
+        a = max(0, int(float(w.get("start", w.get("t0", 0))) * 100))
+        b = min(len(sig), int(float(w.get("end", w.get("t1", 0))) * 100))
+        for k in range(a, b):
+            sig[k] = 1
+    span = int(SYNC_RANGE_SEC * 100)
+    on = [k for k, v in enumerate(sig) if v]
+    if not on:
+        return None
+    best_shift, best_score = 0, -1
+    for shift in range(-span, span + 1, 2):
+        score = 0
+        for k in on:
+            j = k + shift
+            if 0 <= j < len(voice):
+                score += voice[j]
+        if score > best_score:
+            best_shift, best_score = shift, score
+    return round(best_shift / 100, 2)
+
+
+def subtitle_sync_issue(offset: float | None) -> dict | None:
+    if offset is None or abs(offset) < SYNC_WARN_SEC:
+        return None
+    if offset > 0:
+        text = f"субтитры спешат на {offset:.2f} с — сдвиньте их позже (или проверьте обрезку кусков)"
+    else:
+        text = f"субтитры опаздывают на {-offset:.2f} с — сдвиньте их раньше"
+    return {"level": "warn", "code": "subs_sync", "text": text}

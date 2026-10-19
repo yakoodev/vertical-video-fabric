@@ -584,8 +584,48 @@ class ClipRenderService:
         qc = run_qc(path, duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height)
         if qc is None:
             return clip
+        qc = self._qc_subtitle_sync(clip, path, qc)
         self.store.set_clip_qc(clip["id"], qc)
         return self.store.get_clip(clip["id"])
+
+    def _qc_subtitle_sync(self, clip: dict, path: Path, qc: dict) -> dict:
+        """Совпадают ли сохранённые субтитры клипа с речью в готовом файле.
+
+        Ловит класс ошибок «обрезали кусок, а слова не сдвинули»: субтитры
+        уезжают на секунды, и на глаз это видно только на просмотре.
+        """
+        from app.render_qc import estimate_subtitle_offset, subtitle_sync_issue
+
+        try:
+            plan_id = clip.get("clip_plan_id")
+            if not plan_id:
+                return qc
+            plan = self.store.get_clip_plan(int(plan_id))
+            from app.motion_render import plan_caption_words
+
+            words = [{"start": w["t0"], "end": w["t1"]} for w in plan_caption_words(self.store, plan)]
+            cuts = (plan.get("render_settings") or {}).get("cuts") or []
+            if cuts:
+                from app.cuts import apply_cuts_to_timeline
+
+                mapper = apply_cuts_to_timeline(cuts)
+                mapped = []
+                for w in words:
+                    a, b = mapper(w["start"]), mapper(w["end"])
+                    if a is not None and b is not None:
+                        mapped.append({"start": a, "end": b})
+                words = mapped
+            offset = estimate_subtitle_offset(path, words)
+            if offset is None:
+                return qc
+            qc = {**qc, "subtitle_offset_sec": offset}
+            issue = subtitle_sync_issue(offset)
+            if issue:
+                qc["issues"] = [*qc.get("issues", []), issue]
+                qc["ok"] = False
+        except Exception:  # noqa: BLE001 - QC никогда не ломает рендер
+            return qc
+        return qc
 
     def render_clip_plan(
         self,

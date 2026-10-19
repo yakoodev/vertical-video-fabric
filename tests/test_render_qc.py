@@ -66,3 +66,28 @@ def test_real_file_with_black_start_and_silence(tmp_path: Path):
     assert qc is not None
     codes = {i["code"] for i in qc["issues"]}
     assert "black" in codes and "silence" in codes
+
+
+def test_subtitle_sync_detects_shift(tmp_path):
+    """Тон звучит 1–2 и 4–5 с; слова на 0–1 и 3–4 с — субтитры спешат на 1 с."""
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from app.render_qc import estimate_subtitle_offset, subtitle_sync_issue
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg не найден")
+    out = tmp_path / "a.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=300:d=7",
+         "-af", "volume=enable='between(t,1,2)+between(t,4,5)':volume=1,volume=enable='not(between(t,1,2)+between(t,4,5))':volume=0",
+         str(out)],
+        check=True,
+    )
+    words = [{"start": s / 10, "end": s / 10 + 0.1} for s in list(range(0, 10)) + list(range(30, 40))]
+    offset = estimate_subtitle_offset(out, words)
+    assert offset is not None and 0.8 <= offset <= 1.2
+    assert subtitle_sync_issue(offset)["code"] == "subs_sync"
+    assert subtitle_sync_issue(0.05) is None
