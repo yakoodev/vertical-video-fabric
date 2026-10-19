@@ -5,6 +5,12 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 COPY frontend ./
 RUN npm run build
+# Motion compositor: the same engine as the editor preview (frontend/src/motion),
+# bundled into one .mjs for Node; @napi-rs/canvas stays external (runtime npm install).
+COPY frontend/src/motion /motion/frontend/src/motion
+COPY node/motion-render.ts /motion/node/motion-render.ts
+RUN npx --yes esbuild@0.28.2 /motion/node/motion-render.ts --bundle --platform=node --format=esm \
+    --target=node20 --external:@napi-rs/canvas --outfile=/motion/motion-render.mjs --log-level=warning
 
 # --- Stage 2: runtime ---
 FROM node:24-bookworm-slim
@@ -65,6 +71,7 @@ COPY node /app/node
 COPY tests /app/tests
 COPY pytest.ini /app/pytest.ini
 COPY --from=frontend-build /build/dist /app/frontend/dist
+COPY --from=frontend-build /motion/motion-render.mjs /app/node/motion-render.mjs
 
 RUN mkdir -p /data && chown -R node:node /data /app
 

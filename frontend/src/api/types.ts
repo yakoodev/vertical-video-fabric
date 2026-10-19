@@ -1,3 +1,4 @@
+import type { CameraKey, Layer } from "@/motion";
 export interface CropRect {
   x: number;
   y: number;
@@ -170,6 +171,10 @@ export interface RenderSettings {
   cover: CoverSettings;
   /** «Файлы для монтажа» dropped into this clip (clip timeline seconds). */
   inserts?: MontageInsert[];
+  /** Моушн-слои поверх клипа (docs/motion/spec.md). */
+  layers?: Layer[];
+  /** Наезды камеры: ключи зума по времени клипа. */
+  camera?: CameraKey[];
 }
 
 export interface MontageInsert {

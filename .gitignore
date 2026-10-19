@@ -22,3 +22,9 @@ frontend/dist/
 # Local agent artifacts (Claude Code session config + auto-memory)
 .claude/
 /memory/
+
+# Паки моушн-слоёв (эмодзи/стикеры/звуки/мемы) — качаются tools/fetch_packs.py
+/vendor/packs/
+
+# Собирается из node/motion-render.ts + frontend/src/motion (npm run build:motion; в Docker — свой шаг)
+/node/motion-render.mjs

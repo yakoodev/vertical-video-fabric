@@ -3,8 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build:motion": "esbuild node/motion-render.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=node/motion-render.mjs --log-level=warning",
+    "test:motion": "npm run build:motion && node --test node/motion.test.mjs"
+  },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.10",
     "undici": "7.26.0",
     "youtubei.js": "17.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

@@ -3,22 +3,31 @@ import type { MontageAsset } from "@/api/assets";
 import type { SubtitleLine } from "@/api/clipPlans";
 import type { AiSegment, MontageInsert } from "@/api/types";
 import { formatDuration } from "@/components/ui";
+import type { CameraKey, Layer } from "@/motion";
+import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const SNAP_PX = 7;
 const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
 const MIN_PIECE = 5; // как в clip_spec.py
 const MIN_INSERT = 0.3;
+const MIN_LAYER = 0.1;
+/** Слой, брошенный из библиотеки на дорожку графики (JSON в dataTransfer). */
+export const LAYER_DND = "application/x-vvf-layers";
 
 export type Selection =
   | { kind: "piece"; index: number }
   | { kind: "insert"; index: number }
   | { kind: "sub"; index: number }
+  | { kind: "layer"; id: string }
+  | { kind: "cam"; index: number }
   | null;
 
 type Drag = {
-  kind: "piece" | "insert" | "sub";
+  kind: "piece" | "insert" | "sub" | "layer" | "cam";
   index: number;
+  /** Слой: дорожка, на которую его сейчас тянут (вверх/вниз между дорожками графики). */
+  track?: number;
   mode: "move" | "start" | "end";
   startX: number;
   a: number;
@@ -110,6 +119,11 @@ export function ClipTimeline({
   onDeleteSelected,
   sourceId,
   peaks,
+  layers = [],
+  camera = [],
+  onLayersChange,
+  onCameraChange,
+  onDropLayers,
 }: {
   pieces: AiSegment[];
   inserts: MontageInsert[];
@@ -131,6 +145,14 @@ export function ClipTimeline({
   sourceId: number;
   /** Громкость по корзинам 0..1 — дорожка «Звук». Пусто, пока не посчиталась. */
   peaks?: number[];
+  /** Моушн-слои: графика на своих дорожках, звуки — на дорожке «Звуки». */
+  layers?: Layer[];
+  /** Ключи камеры (наезды) — ромбы на дорожке «Камера». */
+  camera?: CameraKey[];
+  onLayersChange?: (next: Layer[]) => void;
+  onCameraChange?: (next: CameraKey[]) => void;
+  /** Брошены слои из библиотеки: время клипа и дорожка графики (null — звуки). */
+  onDropLayers?: (payload: string, atClipSec: number, track: number | null) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -139,7 +161,7 @@ export function ClipTimeline({
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dropX, setDropX] = useState<number | null>(null);
   const dragRef = useRef<Drag | null>(null);
-  const liveRef = useRef<{ a: number; b: number } | null>(null);
+  const liveRef = useRef<{ a: number; b: number; track?: number } | null>(null);
 
   const bounds = pieceBounds(pieces);
   const duration = bounds.length ? bounds[bounds.length - 1].end : 0;
@@ -191,6 +213,9 @@ export function ClipTimeline({
       inserts.forEach((ins, i) => {
         if (!(skip?.kind === "insert" && skip.index === i)) anchors.push(ins.at, ins.at + ins.duration);
       });
+      layers.forEach((l, i) => {
+        if (!(skip?.kind === "layer" && skip.index === i)) anchors.push(l.start, l.end);
+      });
       let best = t;
       let dist = SNAP_PX;
       for (const a of anchors) {
@@ -202,7 +227,7 @@ export function ClipTimeline({
       }
       return Number(best.toFixed(2));
     },
-    [bounds, subLines, inserts, duration, playhead, pps],
+    [bounds, subLines, inserts, layers, duration, playhead, pps],
   );
 
   // Перетаскивание блоков: живое состояние в ref, коммит на отпускании.
@@ -214,7 +239,7 @@ export function ClipTimeline({
       let a = d.a;
       let b = d.b;
       const len = d.b - d.a;
-      const min = d.kind === "piece" ? MIN_PIECE : MIN_INSERT;
+      const min = d.kind === "piece" ? MIN_PIECE : d.kind === "layer" || d.kind === "cam" ? MIN_LAYER : MIN_INSERT;
       if (d.mode === "move") {
         a = clamp(snap(d.a + dt, d), 0, Math.max(0, duration - len));
         b = a + len;
@@ -223,8 +248,18 @@ export function ClipTimeline({
       } else {
         b = clamp(snap(d.b + dt, d), d.a + min, duration);
       }
-      liveRef.current = { a, b };
-      setDrag({ ...d, a, b });
+      if (d.kind === "cam") {
+        // Ключ камеры — точка: двигается целиком, без «длины».
+        a = clamp(snap(d.a + dt, d), 0, duration);
+        b = a;
+      }
+      let track = d.track;
+      if (d.kind === "layer") {
+        const row = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-gtrack]");
+        if (row) track = Number(row.getAttribute("data-gtrack"));
+      }
+      liveRef.current = { a, b, track };
+      setDrag({ ...d, a, b, track });
     };
     const onUp = () => {
       const d = dragRef.current;
@@ -233,7 +268,21 @@ export function ClipTimeline({
       liveRef.current = null;
       setDrag(null);
       if (!d || !live) return;
-      if (d.kind === "insert") {
+      if (d.kind === "layer") {
+        const src = layers[d.index];
+        if (!src || !onLayersChange) return;
+        const a2 = Number(live.a.toFixed(3));
+        const b2 = Number(live.b.toFixed(3));
+        const track = src.type === "audio" ? src.track : live.track ?? src.track;
+        if (a2 === src.start && b2 === src.end && track === src.track) return;
+        onLayersChange(layers.map((l, i) => (i === d.index ? ({ ...l, start: a2, end: b2, track } as Layer) : l)));
+      } else if (d.kind === "cam") {
+        if (!onCameraChange) return;
+        const t = Number(live.a.toFixed(3));
+        onCameraChange(
+          camera.map((k, i) => (i === d.index ? { ...k, t } : k)).sort((x, y) => x.t - y.t),
+        );
+      } else if (d.kind === "insert") {
         onInsertsChange(
           inserts.map((ins, i) =>
             i === d.index ? { ...ins, at: Number(live.a.toFixed(2)), duration: Number((live.b - live.a).toFixed(2)) } : ins,
@@ -260,7 +309,7 @@ export function ClipTimeline({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [pps, duration, snap, inserts, subLines, bounds, onInsertsChange, onSubLinesChange, onPieceCommit]);
+  }, [pps, duration, snap, inserts, subLines, bounds, layers, camera, onInsertsChange, onSubLinesChange, onPieceCommit, onLayersChange, onCameraChange]);
 
   const startDrag = (e: React.PointerEvent, d: Omit<Drag, "startX">) => {
     const mode = ((e.target as HTMLElement).closest("[data-resize]")?.getAttribute("data-resize") as Drag["mode"]) || "move";
@@ -268,7 +317,8 @@ export function ClipTimeline({
     dragRef.current = next;
     liveRef.current = { a: d.a, b: d.b };
     setDrag(next);
-    onSelect({ kind: d.kind, index: d.index } as Selection);
+    if (d.kind === "layer") onSelect({ kind: "layer", id: layers[d.index]?.id ?? "" });
+    else onSelect({ kind: d.kind, index: d.index } as Selection);
     e.preventDefault();
   };
 
@@ -281,6 +331,47 @@ export function ClipTimeline({
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 0.001; t += step) ticks.push(Number(t.toFixed(2)));
   const assetById = new Map(assets.map((a) => [a.id, a]));
+  // Дорожки графики: сколько занято плюс одна пустая сверху — туда бросают новое.
+  const maxTrack = layers.reduce((m, l) => (l.type === "audio" ? m : Math.max(m, l.track ?? 0)), -1);
+  const gTracks = Array.from({ length: Math.min(MAX_TRACK + 1, maxTrack + 2) }, (_, i) => Math.min(MAX_TRACK + 1, maxTrack + 2) - 1 - i);
+  const rows = ["24px", ...gTracks.map(() => "34px"), "58px", "44px", "54px", "34px", "28px", "40px"].join(" ");
+  const layerIndex = new Map(layers.map((l, i) => [l.id, i]));
+  const selectedLayer = selected?.kind === "layer" ? selected.id : null;
+  const dropLayers = (e: React.DragEvent, track: number | null) => {
+    if (!e.dataTransfer.types.includes(LAYER_DND)) return;
+    e.preventDefault();
+    setDropX(null);
+    onDropLayers?.(e.dataTransfer.getData(LAYER_DND), Number(xToClip(e.clientX).toFixed(2)), track);
+  };
+  const overLayers = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(LAYER_DND)) {
+      e.preventDefault();
+      setDropX(xToClip(e.clientX) * pps);
+    }
+  };
+  const layerBlock = (l: Layer) => {
+    const i = layerIndex.get(l.id) ?? 0;
+    const lv = live("layer", i, l.start, l.end);
+    const keyTimes = new Set<number>();
+    Object.values(l.keys ?? {}).forEach((pts) => pts?.forEach((p) => keyTimes.add(Number(p.t.toFixed(2)))));
+    return (
+      <div
+        key={l.id}
+        className={`ctl-block ctl-block--layer ctl-block--${l.type}${selectedLayer === l.id ? " on" : ""}${l.hidden ? " is-hidden" : ""}`}
+        style={{ left: lv.a * pps, width: Math.max(8, (lv.b - lv.a) * pps) }}
+        onPointerDown={(e) => startDrag(e, { kind: "layer", index: i, mode: "move", a: l.start, b: l.end, track: l.track ?? 0 })}
+        title={`${layerTitle(l)} · ${formatDuration(l.start)}–${formatDuration(l.end)}`}
+      >
+        <span className="ctl-grip" data-resize="start" />
+        <span className="ctl-layer-ico">{LAYER_ICON[l.type]}</span>
+        <span className="ctl-block-label">{layerTitle(l)}</span>
+        {[...keyTimes].map((kt) => (
+          <span key={kt} className="ctl-key" style={{ left: kt * pps }} />
+        ))}
+        <span className="ctl-grip" data-resize="end" />
+      </div>
+    );
+  };
 
   return (
     <div className="ctl">
@@ -318,11 +409,18 @@ export function ClipTimeline({
       </div>
 
       <div className="ctl-body">
-        <div className="ctl-labels">
+        <div className="ctl-labels" style={{ gridTemplateRows: rows }}>
           <div className="ctl-label ctl-label--ruler" />
+          {gTracks.map((tr) => (
+            <div key={tr} className="ctl-label ctl-label--g">
+              Графика {tr + 1}
+            </div>
+          ))}
           <div className="ctl-label">Клипы</div>
           <div className="ctl-label">Субтитры</div>
           <div className="ctl-label">Вставки</div>
+          <div className="ctl-label ctl-label--g">Звуки</div>
+          <div className="ctl-label ctl-label--cam">Камера</div>
           <div className="ctl-label">Звук</div>
         </div>
 
@@ -336,7 +434,7 @@ export function ClipTimeline({
             }
           }}
         >
-          <div className="ctl-inner" style={{ width: innerW }}>
+          <div className="ctl-inner" style={{ width: innerW, gridTemplateRows: rows }}>
             <div
               className="ctl-ruler"
               onPointerDown={(e) => {
@@ -351,6 +449,23 @@ export function ClipTimeline({
                 </div>
               ))}
             </div>
+
+            {/* Дорожки графики: выше дорожка — выше слой в кадре. */}
+            {gTracks.map((tr) => (
+              <div
+                key={tr}
+                className={`ctl-track ctl-track--g${drag?.kind === "layer" && drag.track === tr ? " is-target" : ""}`}
+                data-gtrack={tr}
+                onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}
+                onDragOver={overLayers}
+                onDragLeave={() => setDropX(null)}
+                onDrop={(e) => dropLayers(e, tr)}
+              >
+                {layers
+                  .filter((l) => l.type !== "audio" && (drag?.kind === "layer" && layers[drag.index]?.id === l.id ? drag.track ?? 0 : l.track ?? 0) === tr)
+                  .map(layerBlock)}
+              </div>
+            ))}
 
             {/* Куски клипа */}
             <div className="ctl-track" onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}>
@@ -444,6 +559,47 @@ export function ClipTimeline({
               {!inserts.length && dropX == null ? (
                 <span className="ctl-empty muted">перетащите сюда мем или звук из библиотеки</span>
               ) : null}
+            </div>
+
+            {/* Звуки-слои: whoosh, boom, музыкальные акценты. */}
+            <div
+              className="ctl-track ctl-track--sfx"
+              onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}
+              onDragOver={overLayers}
+              onDragLeave={() => setDropX(null)}
+              onDrop={(e) => dropLayers(e, null)}
+            >
+              {layers.filter((l) => l.type === "audio").map(layerBlock)}
+              {!layers.some((l) => l.type === "audio") ? (
+                <span className="ctl-empty muted">звуки из библиотеки — сюда</span>
+              ) : null}
+            </div>
+
+            {/* Камера: ромб — ключ наезда, тянется по времени. */}
+            <div className="ctl-track ctl-track--cam" onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}>
+              {camera.length > 1 ? (
+                <svg className="ctl-cam-line" width={innerW} height={28} aria-hidden>
+                  <polyline
+                    fill="none"
+                    points={camera
+                      .map((k) => `${(k.t * pps).toFixed(1)},${(24 - ((k.zoom ?? 1) - 1) * 14).toFixed(1)}`)
+                      .join(" ")}
+                  />
+                </svg>
+              ) : null}
+              {camera.map((k, i) => {
+                const lv = live("cam", i, k.t, k.t);
+                return (
+                  <span
+                    key={i}
+                    className={`ctl-cam-key${selected?.kind === "cam" && selected.index === i ? " on" : ""}`}
+                    style={{ left: lv.a * pps }}
+                    title={`Камера ${(k.zoom ?? 1).toFixed(2)}× на ${formatDuration(k.t)}`}
+                    onPointerDown={(e) => startDrag(e, { kind: "cam", index: i, mode: "move", a: k.t, b: k.t })}
+                  />
+                );
+              })}
+              {!camera.length ? <span className="ctl-empty muted">наездов нет — «＋ Наезд» в инспекторе</span> : null}
             </div>
 
             {/* Звук клипа: речь видно глазами, паузы искать не надо. */}

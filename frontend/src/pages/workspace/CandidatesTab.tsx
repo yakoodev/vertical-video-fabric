@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
@@ -21,6 +21,28 @@ import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
+import { cameraMatrix, drawFrame, interpolateKeys, layerBox, type CameraKey, type Layer } from "@/motion";
+import { browserEnv, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
+import {
+  drawSelection,
+  duplicateLayer,
+  handleAt,
+  layerAt,
+  placeLayers,
+  setAnimated,
+  type TransformHandle,
+} from "@/pages/workspace/motion/edit";
+import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
+import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
+import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
+import {
+  GeneratePanel,
+  MemesPanel,
+  SoundsPanel,
+  StickersPanel,
+  TemplatesPanel,
+  TextPanel,
+} from "@/pages/workspace/motion/LibraryPanels";
 
 /** Кусок клип-файла: столько, сколько нужно для ✂ и 🗑 на таймлайне. */
 type SpecPiece = { segment_id?: number; title?: string; start_sec: number; end_sec: number };
@@ -298,11 +320,18 @@ function clipTimeOf(segments: AiSegment[], cur: number): number | null {
 
 // Вкладки левой панели студии. Порядок — по частоте: клипы проекта, кадрирование,
 // файлы для монтажа; графика, звуки и ИИ встают сюда же по мере готовности.
-type LibTab = "moments" | "frame" | "media";
+type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "media";
 const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string }[] = [
   { key: "moments", icon: "🎬", label: "Моменты", hint: "Другие клипы этого проекта" },
   { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник 16:9 и рамка 9:16: кадрирование и фокус" },
-  { key: "media", icon: "🖼", label: "Медиа", hint: "Файлы для монтажа: мемы, картинки, звуки" },
+  { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует" },
+  { key: "templates", icon: "✦", label: "Шаблоны", hint: "Готовая анимированная графика: титры, плашки, инфографика, призывы" },
+  { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
+  { key: "stickers", icon: "😀", label: "Стикеры", hint: "Эмодзи (поиск по-русски) и паки стикеров" },
+  { key: "sounds", icon: "♪", label: "Звуки", hint: "Звуковые эффекты: whoosh, boom, pop, ding…" },
+  { key: "memes", icon: "🐸", label: "Мемы", hint: "Шаблоны мемов и картинки из ваших файлов" },
+  { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете" },
+  { key: "media", icon: "🖼", label: "Вставки", hint: "Файлы для монтажа как вставки (видео-мемы, звуки)" },
 ];
 
 // Кадр рендера — 1/30 с: шаг стрелками и кнопками «кадр назад/вперёд».
@@ -320,7 +349,7 @@ function formatTimecode(sec: number): string {
 // whole 9:16 frame, pip = a window in the upper part, sound = just the audio.
 function drawInserts(
   ctx: CanvasRenderingContext2D,
-  cv: HTMLCanvasElement,
+  cv: { width: number; height: number },
   inserts: InsertPreview[] | undefined,
   segments: AiSegment[],
   cur: number,
@@ -416,6 +445,10 @@ function drawBanner(
 
 /** Размер уголка-ручки на превью, px канваса. */
 const INSERT_HANDLE = 16;
+/** Сетка, в которой исторически рисуются вставки на превью. */
+const LEGACY_W = 360;
+const LEGACY_H = 640;
+const LEGACY_CV = { width: LEGACY_W, height: LEGACY_H };
 
 /** За что взялись на превью: двигаем вставку, тянем угол или ничего. */
 function insertHit(
@@ -487,6 +520,9 @@ function drawSubtitle(
   });
 }
 
+/** Что рисует превью из моушн-слоёв: живой черновик (во время перетаскивания) и выделение. */
+type MotionView = { layers: Layer[]; camera: CameraKey[]; selected: string | null };
+
 function CropFrame({
   srcW,
   srcH,
@@ -510,6 +546,7 @@ function CropFrame({
   subPosPctRef,
   bannerRef,
   bannerGeomRef,
+  motionRef,
 }: {
   srcW: number;
   srcH: number;
@@ -542,6 +579,8 @@ function CropFrame({
   bannerGeomRef?: React.MutableRefObject<{ height: number; pos: number } | null>;
   /** Положение субтитров, % снизу. */
   subPosPctRef: React.MutableRefObject<number>;
+  /** Слои, камера и выделенный слой — рисуются тем же движком, что и рендер. */
+  motionRef?: React.MutableRefObject<MotionView>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const insertsRef = useRef(insertsPreview);
@@ -601,6 +640,11 @@ function CropFrame({
           const ctx = cv.getContext("2d");
           const vw = v.videoWidth;
           const vh = v.videoHeight;
+          const clipT = clipTimeOf(segments, cur) ?? 0;
+          const motion = motionRef?.current;
+          // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
+          const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
+          if (ctx && cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
           ctx?.drawImage(
             v,
             (c.x + lc * c.w) * vw,
@@ -612,15 +656,26 @@ function CropFrame({
             cv.width,
             cv.height,
           );
+          if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
           const ov = overlayRef?.current;
           const octx = ov?.getContext("2d");
           if (ov && octx) {
             octx.clearRect(0, 0, ov.width, ov.height);
+            // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
+            if (motion?.layers.length) {
+              const env = browserEnv(ov.width, ov.height);
+              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden) }, clipT, env);
+            }
             // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
             if (bannerRef?.current) {
               drawBanner(octx, ov, bannerRef.current, bannerGeomRef?.current?.height ?? 12, bannerGeomRef?.current?.pos ?? 4);
             }
-            drawInserts(octx, ov, insertsRef.current, segments, cur, !v.paused);
+            // Вставки рисуются в старой сетке 360×640 (их ручки и подписи заданы в
+            // пикселях той сетки), холст же теперь в полном разрешении кадра.
+            octx.save();
+            octx.scale(ov.width / LEGACY_W, ov.height / LEGACY_H);
+            drawInserts(octx, LEGACY_CV, insertsRef.current, segments, cur, !v.paused);
+            octx.restore();
             // Караоке по стилю клипа; без пословных таймингов (ещё не распознали)
             // остаётся старая строка — лучше грубое превью, чем пустой кадр.
             const t = clipTimeOf(segments, cur);
@@ -631,6 +686,14 @@ function CropFrame({
                 ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current)
                 : false;
             if (!drawn) drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
+            // Рамка выделенного слоя — поверх всего, только в редакторе.
+            const sel = motion?.selected ? motion.layers.find((l) => l.id === motion.selected) : null;
+            if (sel && sel.type !== "audio") {
+              const env = browserEnv(ov.width, ov.height);
+              const box = layerBox(octx, sel, clipT, env);
+              const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
+              if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
+            }
           }
         }
       }
@@ -965,6 +1028,34 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [cover, setCover] = useState<CoverSettings>(DEFAULT_COVER);
   // «Файлы для монтажа» placed in this clip (clip-timeline seconds).
   const [inserts, setInserts] = useState<MontageInsert[]>([]);
+  // Моушн-слои и камера клипа — часть его настроек рендера (как вставки).
+  const [layers, setLayers] = useState<Layer[]>([]);
+  const [camera, setCamera] = useState<CameraKey[]>([]);
+  const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
+  // Шрифты движка — один раз; картинки слоёв — как только слой появился,
+  // чтобы к моменту его показа в превью они уже были в кэше.
+  useEffect(() => {
+    void loadMotionFonts();
+  }, []);
+  useEffect(() => preloadLayerImages(layers), [layers]);
+  const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });
+  // Стабильная «который сейчас час клипа» для панелей, которые опрашивают время сами.
+  const clipNowRef = useRef<() => number>(() => 0);
+  const clipNow = useCallback(() => clipNowRef.current(), []);
+  const layerDragRef = useRef<{
+    id: string;
+    handle: TransformHandle;
+    startX: number;
+    startY: number;
+    cx: number;
+    cy: number;
+    from: Layer;
+    localT: number;
+    x: number;
+    y: number;
+    scale: number;
+    rotation: number;
+  } | null>(null);
   // Перетаскивание мема по кадру: что схватили и с чего начали.
   const insertsPreviewRef = useRef<InsertPreview[]>([]);
   const insertDragRef = useRef<
@@ -1003,6 +1094,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Ctrl+Z: снимок состояния делает сервер перед каждой правкой, здесь только
   // просим шаг назад и перечитываем клип в панель.
   const undoRef = useRef<() => void>(() => undefined);
+  // Ctrl+D — копия выделенного слоя (ставится обработчиком последнего рендера).
+  const duplicateRef = useRef<() => void>(() => undefined);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
@@ -1060,6 +1153,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     transition,
     cover,
     inserts,
+    layers,
+    camera,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1093,7 +1188,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     void flushSettings();
     if (!editorPlanId) return;
     const s = plans.find((p) => p.id === editorPlanId)?.render_settings;
-    if (!s) return;
+    if (!s) {
+      // Ручки панели остаются стартом для нового клипа, но то, что лежит на
+      // таймлайне прошлого клипа (слои, вставки), сюда не переезжает.
+      setLayers([]);
+      setCamera([]);
+      setInserts([]);
+      return;
+    }
     // Same key order as panelSettings(): if the clip's settings already equal the
     // panel, nothing changes, the autosave effect never runs — and a raised
     // "loading" flag would then swallow the user's NEXT real edit.
@@ -1113,6 +1215,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       transition: { ...DEFAULT_TRANSITION, ...(s.transition ?? {}) },
       cover: { ...DEFAULT_COVER, ...(s.cover ?? {}) },
       inserts: s.inserts ?? [],
+      layers: s.layers ?? [],
+      camera: s.camera ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1131,6 +1235,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
     setCover({ ...DEFAULT_COVER, ...(s.cover ?? {}) });
     setInserts(s.inserts ?? []);
+    setLayers(s.layers ?? []);
+    setCamera(s.camera ?? []);
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1154,7 +1260,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const settings = panelSettings();
     // Inserts are placed on each clip's own timeline — never copy them across.
     await Promise.all(
-      targets.map((p) => saveSettings(p.id, { ...settings, inserts: p.render_settings?.inserts ?? [] })),
+      targets.map((p) =>
+        saveSettings(p.id, {
+          ...settings,
+          inserts: p.render_settings?.inserts ?? [],
+          layers: p.render_settings?.layers ?? [],
+          camera: p.render_settings?.camera ?? [],
+        }),
+      ),
     );
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
@@ -1418,6 +1531,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         undoRef.current();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "d") {
+        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
+        e.preventDefault();
+        duplicateRef.current();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
       if (document.querySelector(".modal-backdrop")) return;
@@ -1538,10 +1657,67 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       cv,
     };
   };
+  const clipTimeExact = () => clipTimeOf(activePlan?.segments ?? [], videoRef.current?.currentTime ?? 0) ?? 0;
+  clipNowRef.current = clipTimeExact;
+  const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
+  // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
+  if (!layerDragRef.current) motionViewRef.current = { layers, camera, selected: selectedLayerId };
+  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId };
+
+  // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
+  // за рамку), потом сами слои сверху вниз.
+  const pickLayer = (cv: HTMLCanvasElement, px: number, py: number) => {
+    const ctx = cv.getContext("2d");
+    if (!ctx) return null;
+    const t = clipTimeExact();
+    const env = browserEnv(cv.width, cv.height);
+    const cssScale = cv.width / (cv.getBoundingClientRect().width || cv.width);
+    const view = motionViewRef.current;
+    const sel = view.selected ? view.layers.find((l) => l.id === view.selected) : null;
+    if (sel && !sel.locked && sel.type !== "audio") {
+      const box = layerBox(ctx, sel, t, env);
+      const handle = box ? handleAt(box, px, py, cssScale) : null;
+      if (box && handle) return { layer: sel, handle, box, t };
+    }
+    const hit = layerAt(ctx, view.layers, t, env, px, py);
+    if (!hit) return null;
+    const box = layerBox(ctx, hit, t, env);
+    return box ? { layer: hit, handle: "move" as TransformHandle, box, t } : null;
+  };
+
   const onInsertPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { px, py, cv } = canvasPoint(e);
-    const hit = insertHit(insertsPreviewRef.current, clipTimeNow(), cv, px, py);
-    if (!hit) return;
+    const picked = pickLayer(cv, px, py);
+    if (picked) {
+      const { layer, handle, box, t } = picked;
+      setTlSelected({ kind: "layer", id: layer.id });
+      motionViewRef.current = { ...motionViewRef.current, selected: layer.id };
+      if (layer.locked) return;
+      const localT = t - layer.start;
+      layerDragRef.current = {
+        id: layer.id,
+        handle,
+        startX: px,
+        startY: py,
+        cx: box.cx,
+        cy: box.cy,
+        from: layer,
+        localT,
+        x: interpolateKeys(layer.keys?.x, localT, layer.x ?? 0.5),
+        y: interpolateKeys(layer.keys?.y, localT, layer.y ?? 0.5),
+        scale: interpolateKeys(layer.keys?.scale, localT, layer.scale ?? 1),
+        rotation: interpolateKeys(layer.keys?.rotation, localT, layer.rotation ?? 0),
+      };
+      cv.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+    const k = LEGACY_W / cv.width;
+    const hit = insertHit(insertsPreviewRef.current, clipTimeNow(), LEGACY_CV, px * k, py * k);
+    if (!hit) {
+      if (tlSelected?.kind === "layer") setTlSelected(null);
+      return;
+    }
     const ins = insertsPreviewRef.current[hit.index];
     insertDragRef.current = {
       ...hit,
@@ -1556,11 +1732,51 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     e.preventDefault();
   };
   const onInsertPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const drag = insertDragRef.current;
     const { px, py, cv } = canvasPoint(e);
+    const ld = layerDragRef.current;
+    if (ld) {
+      let next = ld.from;
+      if (ld.handle === "move") {
+        let nx = ld.x + (px - ld.startX) / cv.width;
+        let ny = ld.y + (py - ld.startY) / cv.height;
+        // Прилипание к центру кадра — самое частое место для титра.
+        if (Math.abs(nx - 0.5) < 0.012) nx = 0.5;
+        if (Math.abs(ny - 0.5) < 0.008) ny = 0.5;
+        next = setAnimated(setAnimated(next, "x", nx, ld.localT), "y", ny, ld.localT);
+      } else if (ld.handle === "scale") {
+        const d0 = Math.hypot(ld.startX - ld.cx, ld.startY - ld.cy) || 1;
+        const d1 = Math.hypot(px - ld.cx, py - ld.cy);
+        next = setAnimated(next, "scale", Math.min(10, Math.max(0.05, ld.scale * (d1 / d0))), ld.localT);
+      } else {
+        const a0 = Math.atan2(ld.startY - ld.cy, ld.startX - ld.cx);
+        const a1 = Math.atan2(py - ld.cy, px - ld.cx);
+        let rot = ld.rotation + ((a1 - a0) * 180) / Math.PI;
+        if (e.shiftKey) rot = Math.round(rot / 15) * 15;
+        next = setAnimated(next, "rotation", Number(rot.toFixed(1)), ld.localT);
+      }
+      motionViewRef.current = {
+        ...motionViewRef.current,
+        layers: motionViewRef.current.layers.map((l) => (l.id === ld.id ? next : l)),
+      };
+      e.preventDefault();
+      return;
+    }
+    const drag = insertDragRef.current;
     if (!drag) {
-      // Курсор подсказывает, что вставку можно взять.
-      const hover = insertHit(insertsPreviewRef.current, clipTimeNow(), cv, px, py);
+      // Курсор подсказывает, что слой или вставку можно взять.
+      const picked = pickLayer(cv, px, py);
+      if (picked) {
+        cv.style.cursor = picked.layer.locked
+          ? "not-allowed"
+          : picked.handle === "rotate"
+            ? "crosshair"
+            : picked.handle === "scale"
+              ? "nwse-resize"
+              : "move";
+        return;
+      }
+      const k = LEGACY_W / cv.width;
+      const hover = insertHit(insertsPreviewRef.current, clipTimeNow(), LEGACY_CV, px * k, py * k);
       cv.style.cursor = hover ? (hover.mode === "resize" ? "nwse-resize" : "grab") : "default";
       return;
     }
@@ -1579,6 +1795,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     e.preventDefault();
   };
   const onInsertPointerUp = () => {
+    const ld = layerDragRef.current;
+    if (ld) {
+      layerDragRef.current = null;
+      const moved = motionViewRef.current.layers.find((l) => l.id === ld.id);
+      if (moved && moved !== ld.from) setLayers(motionViewRef.current.layers);
+      return;
+    }
     const drag = insertDragRef.current;
     insertDragRef.current = null;
     if (!drag) return;
@@ -1589,6 +1812,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setInserts((prev) => prev.map((item, i) => (i === drag.index ? { ...item, ...next } : item)));
   };
 
+  duplicateRef.current = () => {
+    if (tlSelected?.kind !== "layer") return;
+    const r = duplicateLayer(layers, tlSelected.id, clipDuration);
+    setLayers(r.layers);
+    if (r.id) setTlSelected({ kind: "layer", id: r.id });
+  };
   undoRef.current = () => {
     if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
   };
@@ -1638,6 +1867,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       editPieces.mutate((pieces) => pieces.filter((_, i) => i !== tlSelected.index));
     } else if (tlSelected.kind === "insert") {
       setInserts((prev) => prev.filter((_, i) => i !== tlSelected.index));
+    } else if (tlSelected.kind === "layer") {
+      setLayers((prev) => prev.filter((l) => l.id !== tlSelected.id));
+    } else if (tlSelected.kind === "cam") {
+      setCamera((prev) => prev.filter((_, i) => i !== tlSelected.index));
     } else {
       const next = subLines.filter((_, i) => i !== tlSelected.index);
       setSubLines(next);
@@ -1645,6 +1878,47 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
     }
     setTlSelected(null);
+  };
+
+  // Положить слои (из шаблона, библиотеки, ИИ) в клип с момента `at`: времена
+  // сдвигаются целиком, дорожки — свободные. Новый верхний слой сразу выделен.
+  const clipDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
+  const addLayers = (incoming: Layer[], at: number, cameraKeys?: CameraKey[], track?: number | null) => {
+    if (!incoming.length && !cameraKeys?.length) return;
+    const minStart = incoming.length ? Math.min(...incoming.map((l) => l.start)) : at;
+    const shift = at - minStart;
+    const moved = incoming.map((l) => ({ ...l, start: l.start + shift, end: l.end + shift, ...(track != null ? { track } : {}) }) as Layer);
+    const next = placeLayers(layers, moved, clipDuration);
+    setLayers(next);
+    if (cameraKeys?.length) {
+      const camShift = cameraKeys.map((k) => ({ ...k, t: Number((k.t + shift).toFixed(3)) }));
+      setCamera((prev) => [...prev, ...camShift].sort((a, b) => a.t - b.t));
+    }
+    // Выделяем главный слой пачки — у шаблонов он первый (титр), а искры и
+    // подложки идут следом.
+    const main = next.slice(layers.length).find((l) => l.type !== "audio") ?? next[next.length - 1];
+    if (main) setTlSelected({ kind: "layer", id: main.id });
+  };
+  const addAtCursor = (incoming: Layer[], cameraKeys?: CameraKey[]) => {
+    if (!activePlan) return;
+    const at = Number(clipTimeExact().toFixed(2));
+    addLayers(incoming, at, cameraKeys);
+    // В самый момент начала слой ещё «влетает» (масштаб 0 у pop) — подводим
+    // курсор чуть вперёд, чтобы новый слой сразу было видно целиком.
+    const graphics = incoming.filter((l) => l.type !== "audio");
+    if (graphics.length && videoRef.current?.paused) {
+      const minStart = Math.min(...graphics.map((l) => l.start));
+      const span = Math.max(...graphics.map((l) => l.end)) - minStart;
+      seekClipTime(Math.min(clipDuration - 0.05, at + Math.min(0.7, span * 0.4)), false);
+    }
+  };
+  const dropLayersAt = (payload: string, at: number, track: number | null) => {
+    try {
+      const data = JSON.parse(payload) as { layers?: Layer[]; camera?: CameraKey[] };
+      addLayers(data.layers ?? [], at, data.camera, track);
+    } catch {
+      toast.error("Не понял, что брошено на таймлайн");
+    }
   };
 
   // Выбрали вставку на таймлайне — везём превью к ней: иначе рамку и ручки не
@@ -2271,6 +2545,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   bannerRef={bannerImgRef}
                   bannerGeomRef={bannerGeomRef}
                   subPosPctRef={subPosPctRef}
+                  motionRef={motionViewRef}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -2278,6 +2553,21 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </div>
             </div>
           </div>
+          {libTab === "ai" && activePlan ? (
+            <AgentPanel
+              clipPlanId={activePlan.id}
+              onChanged={async () => {
+                await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                setSettingsNonce((n) => n + 1);
+              }}
+            />
+          ) : null}
+          {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} /> : null}
+          {libTab === "text" ? <TextPanel onAdd={addAtCursor} /> : null}
+          {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
+          {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
+          {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={assetsQuery.data ?? []} /> : null}
+          {libTab === "generate" ? <GeneratePanel onAdd={addAtCursor} /> : null}
           {libTab === "media" ? (
             <div className="ed-lib-media">
               <div className="ed-shelf-head">
@@ -2321,8 +2611,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               <div className="ed-phone-screen">
                 <canvas
                   ref={phoneRef}
-                  width={360}
-                  height={640}
+                  width={540}
+                  height={960}
                   style={{
                     filter: lookCss || undefined,
                     transform: mirror ? "scaleX(-1)" : undefined,
@@ -2331,8 +2621,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <canvas
                   ref={phoneOverlayRef}
                   className="ed-phone-overlay"
-                  width={360}
-                  height={640}
+                  width={1080}
+                  height={1920}
                   style={{ pointerEvents: "auto", touchAction: "none" }}
                   title="Мем можно двигать мышкой, а за уголок — менять размер (на паузе)"
                   onPointerDown={onInsertPointerDown}
@@ -2447,6 +2737,36 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
         <aside className="ed-inspector">
           <div className="ed-insp-scroll">
+            {selectedLayerId && layers.find((l) => l.id === selectedLayerId) ? (
+              <LayerInspector
+                key={selectedLayerId}
+                layer={layers.find((l) => l.id === selectedLayerId)!}
+                fonts={motionFonts.data ?? []}
+                now={clipNow}
+                clipDuration={clipDuration}
+                onChange={(next) => setLayers((prev) => prev.map((l) => (l.id === next.id ? next : l)))}
+                onDelete={() => {
+                  setLayers((prev) => prev.filter((l) => l.id !== selectedLayerId));
+                  setTlSelected(null);
+                }}
+                onDuplicate={() => {
+                  const r = duplicateLayer(layers, selectedLayerId, clipDuration);
+                  setLayers(r.layers);
+                  if (r.id) setTlSelected({ kind: "layer", id: r.id });
+                }}
+                onSeek={(t) => seekClipTime(t, false)}
+              />
+            ) : null}
+            <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
+              <CameraPanel
+                camera={camera}
+                selectedIndex={tlSelected?.kind === "cam" ? tlSelected.index : null}
+                now={clipNow}
+                clipDuration={clipDuration}
+                onChange={setCamera}
+                onSelect={(i) => setTlSelected(i == null ? null : { kind: "cam", index: i })}
+              />
+            </Group>
             {/* Быстрые ИИ-действия сверху: их зовут на каждом клипе, а искать их
                 по свёрнутым группам — лишний скролл (ref2-inspector.png). */}
             <div className="ed-quick">
@@ -3170,6 +3490,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               onSplitAt={splitAtClip}
               onDeleteSelected={deleteSelected}
               onInsertsChange={setInserts}
+              layers={layers}
+              camera={camera}
+              onLayersChange={setLayers}
+              onCameraChange={setCamera}
+              onDropLayers={(payload, at, track) => dropLayersAt(payload, at, track)}
               onSubLinesChange={(next) => {
                 setSubLines(next);
                 subLinesRef.current = next;

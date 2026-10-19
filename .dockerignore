@@ -13,3 +13,4 @@ runtime
 logs
 .env
 
+vendor/packs
