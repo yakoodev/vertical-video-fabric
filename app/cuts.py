@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+LONG_PAUSE_SEC = 2.5
 MIN_CUT_SEC = 0.08
 MAX_CUTS = 200
 # Под-кусок короче этого не рендерим отдельно (2–3 кадра мелькания) — его
@@ -591,7 +592,13 @@ def _pause_items(words: list[dict], duration: float, min_pause: float, keep_pad:
         tail = 0.0 if (index == len(bounds) - 1 and right >= duration - 1e-6 and index > 0) else keep_pad
         start, end = left + lead, right - tail
         if end - start >= MIN_CUT_SEC:
-            items.append({"start": start, "end": end, "reason": f"пауза {_fmt_sec(gap)} с"})
+            item = {"start": start, "end": end, "reason": f"пауза {_fmt_sec(gap)} с"}
+            # Длинная тишина в реакционном контенте часто и есть момент (стример молча
+            # смотрит на скример, муху под Bad Apple) — предлагаем, но не отмечаем.
+            if gap >= LONG_PAUSE_SEC and 0 < index < len(bounds) - 1:
+                item["reason"] += " — проверь: может, это и есть момент"
+                item["risky"] = True
+            items.append(item)
     return items
 
 
@@ -688,10 +695,13 @@ def suggest_cuts(
             last["end"] = max(last["end"], end)
             if item["reason"] not in last["reason"]:
                 last["reason"] = f"{last['reason']} + {item['reason']}"
+            if item.get("risky"):
+                last["risky"] = True
             continue
-        items.append({"start": start, "end": end, "reason": item["reason"]})
+        items.append({"start": start, "end": end, "reason": item["reason"], **({"risky": True} if item.get("risky") else {})})
     items = [{**it, "start": round(it["start"], 3), "end": round(it["end"], 3)} for it in items[:MAX_CUTS]]
-    cuts = normalize_cuts(items)
+    # Рекомендованный набор — без «рискованных» длинных пауз: их владелец отмечает сам.
+    cuts = normalize_cuts([it for it in items if not it.get("risky")])
     saved = cuts_total(cuts)
     return {
         "cuts": cuts,

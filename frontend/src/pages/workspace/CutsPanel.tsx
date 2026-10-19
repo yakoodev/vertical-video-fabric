@@ -68,7 +68,7 @@ export function CutsPanel({ clipPlanId, cuts, onChange, onSeek }: Props) {
     setBusy(mode);
     try {
       const res = await cutsApi.suggest(clipPlanId, { mode, min_pause: minPause, keep_pad: keepPad });
-      setRows(res.items.map((it) => ({ ...it, on: true })));
+      setRows(res.items.map((it) => ({ ...it, on: !(it as { risky?: boolean }).risky })));
       setSummary({ saved_sec: res.saved_sec, before_sec: res.before_sec, after_sec: res.after_sec });
       if (!res.items.length) toast.success(mode === "pauses" ? "Длинных пауз нет" : "Слов-паразитов не нашлось");
     } catch (e) {
