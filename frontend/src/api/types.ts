@@ -180,6 +180,8 @@ export interface RenderSettings {
   camera?: CameraKey[];
   /** Раскладка стрима: вебка сверху + игра снизу и т.п. (app/stream_layout.py). */
   layout?: StreamLayout;
+  /** ✂ Джамп-каты: вырезанные паузы/слова-паразиты, секунды клипа ДО вырезов (app/cuts.py). */
+  cuts?: { start: number; end: number }[];
 }
 
 export interface MontageInsert {

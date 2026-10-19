@@ -49,6 +49,8 @@ import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import { DEFAULT_LAYOUT, drawLayoutFrame, gameplayAspect, normalizeLayout, type StreamLayout } from "@/pages/workspace/layout";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
+import { CutsPanel } from "@/pages/workspace/CutsPanel";
+import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import {
   GeneratePanel,
@@ -1074,6 +1076,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [camera, setCamera] = useState<CameraKey[]>([]);
   const [layout, setLayout] = useState<StreamLayout>(DEFAULT_LAYOUT);
+  const [cuts, setCuts] = useState<JumpCut[]>([]);
+  const cutsRef = useRef<JumpCut[]>([]);
+  cutsRef.current = cuts;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const [inlineEdit, setInlineEdit] = useState<{ id: string; field: string; text: string; left: number; top: number; width: number } | null>(null);
@@ -1209,6 +1214,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     layers,
     camera,
     layout,
+    cuts,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1251,6 +1257,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setLayers([]);
       setCamera([]);
       setInserts([]);
+      setCuts([]);
       return;
     }
     // Same key order as panelSettings(): if the clip's settings already equal the
@@ -1275,6 +1282,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       layers: s.layers ?? [],
       camera: s.camera ?? [],
       layout: normalizeLayout(s.layout),
+      cuts: s.cuts ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1296,6 +1304,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setLayers(s.layers ?? []);
     setCamera(s.camera ?? []);
     setLayout(normalizeLayout(s.layout));
+    setCuts(s.cuts ?? []);
   }, [editorPlanId, query.isSuccess, settingsNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1566,6 +1575,24 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   tcSegsRef.current = activePlan?.segments ?? [];
   // Звуки-слои звучат в превью в такт видео.
   useLayerAudio(videoRef, motionViewRef, () => clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0));
+  // Вырезанные паузы превью перепрыгивает на ходу — смотришь клип таким, каким он выйдет.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v && !v.paused && cutsRef.current.length) {
+        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
+        const jump = t == null ? null : previewSkip(cutsRef.current, t);
+        if (jump != null) {
+          const src = clipToSource(tcSegsRef.current, jump);
+          if (src != null) v.currentTime = src;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -2947,6 +2974,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : (
                 <div className="muted li-note">Слоёв пока нет — возьмите шаблон, текст или стикер в библиотеке слева, или попросите ИИ.</div>
               )}
+            </Group>
+            <Group
+              title="Паузы и слова-паразиты"
+              badge={cuts.length ? `−${cutsTotal(cuts).toFixed(1)} с` : "нет"}
+            >
+              {activePlan ? (
+                <CutsPanel
+                  clipPlanId={activePlan.id}
+                  cuts={cuts}
+                  onChange={(next) => {
+                    // Панель уже сохранила вырезы; автосохранение повторит то же самое — не страшно.
+                    setCuts(next);
+                    void qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                  }}
+                  onSeek={(t) => seekClipTime(t, false)}
+                />
+              ) : null}
             </Group>
             <Group title="Раскладка (вебка)" badge={layout.mode === "single" ? "обычная" : layout.mode === "split" ? "вебка + игра" : "вебка в углу"}>
               <LayoutPanel sourceId={source.id} layout={layout} onChange={setLayout} frameAt={videoRef.current?.currentTime ?? 0} />

@@ -15,6 +15,7 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
+from app.cuts import normalize_cuts
 from app.montage_assets import normalize_inserts
 from app.motion import normalize_camera, normalize_layers
 from app.stream_layout import normalize_layout
@@ -117,6 +118,9 @@ def normalize_render_settings(raw: object) -> dict:
         # Раскладка стрима: вебка сверху + геймплей и т.п. (app/stream_layout.py).
         # Как и слои, рендер читает её прямо из настроек плана; single — как раньше.
         "layout": normalize_layout(src.get("layout")),
+        # Джамп-каты: вырезанные паузы и слова-паразиты, {start, end} во времени
+        # клипа до вырезов (app/cuts.py). Пусто — рендер ровно прежний.
+        "cuts": normalize_cuts(src.get("cuts")),
     }
 
 

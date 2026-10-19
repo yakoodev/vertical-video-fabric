@@ -2747,8 +2747,14 @@ def api_set_clip_plan_render_settings(
     clip_plan_id: int, payload: ClipPlanRenderSettingsPayload, _auth: AuthDep
 ) -> dict:
     try:
+        settings_in = dict(payload.settings)
+        if "cuts" not in settings_in:
+            # Редактор, который ещё не знает о вырезах, не должен стирать их
+            # автосохранением: нет ключа — остаются сохранённые. [] — убрать все.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["cuts"] = current.get("cuts") or []
         snapshot_clip(store, clip_plan_id, "настройки клипа")
-        return store.set_clip_plan_render_settings(clip_plan_id, payload.settings)
+        return store.set_clip_plan_render_settings(clip_plan_id, settings_in)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -3472,6 +3478,11 @@ app.include_router(build_motion_router(AuthDep, lambda: store))
 from app.layout_api import build_layout_router  # noqa: E402
 
 app.include_router(build_layout_router(AuthDep, lambda: store))
+
+# ✂ Джамп-каты: найти паузы/слова-паразиты и сохранить вырезы клипа (app/cuts.py).
+from app.cuts_api import build_cuts_router  # noqa: E402
+
+app.include_router(build_cuts_router(AuthDep, lambda: store))
 
 
 app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки

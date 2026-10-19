@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.clip_settings import normalize_render_settings
+from app.cuts import MAX_CUTS, MIN_CUT_SEC, validate_cuts
 from app.motion import validate_camera, validate_layers
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, AppStore
 
@@ -198,6 +199,7 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
         # слой за концом клипа не ошибка (ИИ-монтаж может укоротить клип).
         problems.extend(f"render.{p}" for p in validate_layers(render.get("layers")))
         problems.extend(f"render.{p}" for p in validate_camera(render.get("camera")))
+        problems.extend(f"render.{p}" for p in validate_cuts(render.get("cuts")))
 
     if problems:
         raise SpecError(problems)
@@ -329,6 +331,20 @@ def json_schema() -> dict:
                     "layers": {"type": "array", "description": "моушн-слои: text/shape/image/emoji/counter/"
                                "progress/chart/callout/audio; время — секунды готового клипа"},
                     "camera": {"type": "array", "description": "ключи камеры {t, zoom 1..4, x, y, ease?, shake?}"},
+                    "cuts": {
+                        "type": "array",
+                        "maxItems": MAX_CUTS,
+                        "description": (
+                            "джамп-каты: вырезанные паузы/слова-паразиты {start, end} в секундах клипа "
+                            f"ДО вырезов (куски подряд), по порядку, без пересечений, каждый ≥ {MIN_CUT_SEC} с; "
+                            "подсказки — POST /api/clip-plans/{id}/cuts/suggest"
+                        ),
+                        "items": {
+                            "type": "object",
+                            "required": ["start", "end"],
+                            "properties": {"start": {"type": "number", "minimum": 0}, "end": {"type": "number"}},
+                        },
+                    },
                     "layout": {
                         "type": "object",
                         "description": "раскладка стрима: mode single|split|pip_cam; cam {x,y,w,h} — вебка в долях "

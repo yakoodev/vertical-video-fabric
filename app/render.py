@@ -269,7 +269,11 @@ class ClipRenderService:
         cover: dict | None = None,
         motion: dict | None = None,
         layout: dict | None = None,
+        cut_parts: list[dict] | None = None,
+        jump_joins: list[bool] | None = None,
     ) -> dict:
+        """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
+        рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
         if not segment_ids:
             raise ValueError("at least one segment is required")
         join = normalize_transition(transition)
@@ -314,8 +318,11 @@ class ClipRenderService:
             temp_paths.append(base_output_path)
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
+            # Без вырезов части — это сами куски (рендер ровно прежний).
+            parts = cut_parts or segments
+            jumps = list(jump_joins or []) if cut_parts else None
             rendered_parts: list[Path] = []
-            for index, segment in enumerate(segments):
+            for index, segment in enumerate(parts):
                 part_path = temp_dir / f"part-{index:03d}.mp4"
                 _run_ffmpeg(
                     build_ffmpeg_render_args(
@@ -331,7 +338,7 @@ class ClipRenderService:
                     timeout=60 * 30,
                 )
                 rendered_parts.append(part_path)
-            if is_plain_concat(join):
+            if is_plain_concat(join) and not any(jumps or []):
                 # Hard cut on picture and sound, nothing on the join: the old
                 # stream-copy concat is exact and much faster than re-encoding.
                 concat_list_path = temp_dir / "concat.txt"
@@ -354,12 +361,13 @@ class ClipRenderService:
                         base_output_path,
                         join,
                         has_audio=has_audio,
-                        gaps=_source_gaps(segments),
+                        gaps=_source_gaps(parts),
                         video_codec=str(preset.get("video_codec") or "libx264"),
                         video_bitrate=str(preset.get("video_bitrate") or "").strip(),
                         crf=extra.get("crf"),
                         audio_codec=str(preset.get("audio_codec") or "aac"),
                         audio_bitrate=str(preset.get("audio_bitrate") or "").strip(),
+                        jump_joins=jumps,
                     ),
                     timeout=60 * 30,
                 )
@@ -375,8 +383,9 @@ class ClipRenderService:
             temp_paths.extend(post_temps)
             self._apply_cover(
                 clip["id"], render_id, final_output_path, preset, cover,
-                [float(seg["end_sec"]) - float(seg["start_sec"]) for seg in segments], join,
-                gaps=_source_gaps(segments),
+                [float(seg["end_sec"]) - float(seg["start_sec"]) for seg in parts], join,
+                gaps=_source_gaps(parts),
+                jump_joins=jumps,
             )
             metadata = probe_media(final_output_path)
             _sha256, size_bytes = file_hash_and_size(final_output_path)
@@ -526,6 +535,7 @@ class ClipRenderService:
         durations: list[float],
         join: dict | None,
         gaps: list[float | None] | None = None,
+        jump_joins: list[bool] | None = None,
     ) -> Path | None:
         """Make the clip's cover and, if asked, burn it in as the first frame.
 
@@ -540,7 +550,7 @@ class ClipRenderService:
         out = settings.clip_dir / f"{render_id}.cover.jpg"
         try:
             if c["mode"] == "frame":
-                overlaps = plan_joins(join, durations, gaps) if join else 0.0
+                overlaps = plan_joins(join, durations, gaps, jump_joins) if join else 0.0
                 t = cover_output_time(durations, overlaps, c["piece"], c["offset"])
                 _run_ffmpeg(build_frame_args(video, t, out), timeout=120)
             else:
@@ -599,6 +609,9 @@ class ClipRenderService:
         segments = plan.get("segments") or []
         if not segments:
             raise ValueError("clip plan has no segments")
+        # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
+        # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
+        cut_plan = self._cut_plan(plan, ffmpeg_preset_id)
         self.store.update_clip_plan_status(clip_plan_id, "rendering")
         segment_ids = [segment["id"] for segment in segments]
         # Моушн, как и вставки, живёт в настройках самого клипа. Нет слоёв и
@@ -611,15 +624,47 @@ class ClipRenderService:
             from app.motion_render import attach_host_data
 
             # Слоям «субтитры» и «чат» нужны данные клипа: слова речи и сообщения чата.
+            # Берутся во времени клипа ДО вырезов (чат фильтруется по исходным
+            # слоям), а сдвигаются ниже — вместе со слоями.
             visual = attach_host_data(self.store, plan, visual)
             if visual and visual.get("words") and subtitle_profile_id is not None:
                 # Анимированные субтитры-слой заменяют прожигаемые: два текста речи
                 # друг на друге — брак.
                 subtitle_profile_id = None
+        if cut_plan is not None:
+            visual = self._cut_motion(plan, cut_plan, visual)
+            from app.cuts import remap_motion
+
+            motion = remap_motion(motion, cut_plan.mapper)
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
-        if len(segment_ids) == 1:
+        if cut_plan is not None:
+            # Куски делятся на части в обход вырезов — это всегда путь монтажа.
+            clip = self.render_montage(
+                segment_ids,
+                ffmpeg_preset_id=ffmpeg_preset_id,
+                subtitle_profile_id=subtitle_profile_id,
+                banner_id=banner_id,
+                clip_plan_id=clip_plan_id,
+                title=plan["title"],
+                description=plan["description"],
+                music_track_id=music_track_id,
+                music_volume=music_volume,
+                subtitle_offset_sec=subtitle_offset_sec,
+                subtitle_provider=subtitle_provider,
+                banner_height_frac=banner_height_frac,
+                banner_y_frac=banner_y_frac,
+                subtitle_margin_v=subtitle_margin_v,
+                mirror=mirror,
+                transition=transition,
+                cover=cut_plan.remap_cover(cover),
+                motion=visual,
+                layout=layout,
+                cut_parts=cut_plan.parts,
+                jump_joins=cut_plan.jump_joins,
+            )
+        elif len(segment_ids) == 1:
             clip = self.render_segment(
                 segment_ids[0],
                 ffmpeg_preset_id=ffmpeg_preset_id,
@@ -661,7 +706,7 @@ class ClipRenderService:
                 layout=layout,
             )
         if clip["status"] == "succeeded":
-            clip = self._apply_inserts(clip, plan)
+            clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion)
             clip = self._normalize_loudness(clip)
@@ -677,7 +722,35 @@ class ClipRenderService:
         )
         return clip
 
-    def _plan_subtitles_for_clip(self, clip_id: int):
+    def _cut_plan(self, plan: dict, ffmpeg_preset_id: int | None = None, fps: float | None = None):
+        """План джамп-катов клипа (app/cuts.py) или None, если вырезов нет.
+
+        Пресет читается только при вырезах: без них рендер не делает ни
+        одного лишнего шага."""
+        from app.cuts import normalize_cuts, plan_cuts
+
+        cuts = normalize_cuts((plan.get("render_settings") or {}).get("cuts"))
+        if not cuts:
+            return None
+        if fps is None:
+            fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
+        return plan_cuts(plan.get("segments") or [], cuts, fps)
+
+    def _cut_motion(self, plan: dict, cut_plan, visual: dict | None) -> dict | None:
+        """Видимый моушн (слои, камера, слова, чат) — во время клипа после вырезов."""
+        from app.cuts import cut_caption_words, remap_motion
+
+        if not visual:
+            return visual
+        had_words = bool(visual.get("words"))
+        fresh = remap_motion(visual, cut_plan.mapper)
+        if had_words:
+            # Слова пересчитываются из субтитров: вырез — до сдвига на переходы.
+            fresh = {**fresh, "words": cut_caption_words(self.store, plan, cut_plan)}
+        # Слой целиком в вырезе пропал — может не остаться ничего видимого.
+        return fresh if (fresh.get("layers") or fresh.get("camera")) else None
+
+    def _plan_subtitles_for_clip(self, clip_id: int, fps: float | None = None):
         """Субтитры, сделанные в редакторе до рендера (если есть)."""
         from app.clip_subtitles import result_from_payload, shift_for_transition
 
@@ -693,11 +766,18 @@ class ClipRenderService:
             pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
             transition = (plan.get("render_settings") or {}).get("transition") or {}
             overlap = float(transition.get("duration") or 0) if transition.get("type") not in (None, "cut") else 0.0
+            cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"), fps)
+            if cut_plan is not None:
+                # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на переходы.
+                from app.cuts import remap_subtitles
+
+                payload = remap_subtitles(payload, cut_plan.mapper)
+                pieces = cut_plan.piece_spans()
             return result_from_payload(shift_for_transition(payload, pieces, overlap))
         except (KeyError, ValueError, TypeError):
             return None
 
-    def _apply_inserts(self, clip: dict, plan: dict) -> dict:
+    def _apply_inserts(self, clip: dict, plan: dict, cut_plan=None) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.
 
         One extra ffmpeg pass on the output file; a failure keeps the render
@@ -706,6 +786,10 @@ class ClipRenderService:
         from app.montage_assets import build_inserts_args, normalize_inserts
 
         inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
+        if cut_plan is not None and inserts:
+            from app.cuts import remap_inserts
+
+            inserts = remap_inserts(inserts, cut_plan.mapper)
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
@@ -903,7 +987,7 @@ class ClipRenderService:
     ) -> None:
         profile = self.store.get_subtitle_profile(subtitle_profile_id)
         profile["prompt"] = _subtitle_prompt_for_clip(self.store, clip_id)
-        ready = self._plan_subtitles_for_clip(clip_id)
+        ready = self._plan_subtitles_for_clip(clip_id, float(preset.get("fps") or 30))
         # A per-render nudge (set on the preset) overrides the profile's saved
         # timing offset, so a single drifting clip can be pulled into sync without
         # changing the shared subtitle style.

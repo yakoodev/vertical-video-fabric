@@ -89,6 +89,9 @@ MAX_DURATION = 1.5
 SAME_SCENE_GAP_SEC = 2.5
 # De-click fade on hard cuts: long enough to kill the pop, too short to hear.
 DECLICK_SEC = 0.03
+# Джамп-кат (вырезанная пауза внутри куска, app/cuts.py): склейка посреди
+# речи — фейд короче, чтобы не «проглотить» начало слога, но щелчка нет.
+JUMP_DECLICK_SEC = 0.018
 
 
 def normalize_transition(raw: object) -> dict:
@@ -130,13 +133,25 @@ def effective_duration(transition: dict, durations: list[float]) -> float:
     return max(0.0, min(float(transition["duration"]), shortest * 0.4))
 
 
-def plan_joins(transition: dict, durations: list[float], gaps: list[float | None] | None = None) -> list[float]:
+def _is_jump(jump_joins: list[bool] | None, index: int) -> bool:
+    return bool(jump_joins) and index < len(jump_joins) and bool(jump_joins[index])
+
+
+def plan_joins(
+    transition: dict,
+    durations: list[float],
+    gaps: list[float | None] | None = None,
+    jump_joins: list[bool] | None = None,
+) -> list[float]:
     """Overlap for every join: 0 = hard cut, >0 = xfade of that length.
 
     ``gaps[i]`` — сколько секунд исходника выброшено между частями i и i+1.
     Маленькая дырка значит, что это та же сцена и склейка должна быть встык:
     наплыв посреди фразы выглядит как ошибка монтажа. Дырки нет (None) —
     считаем сменой сцены.
+
+    ``jump_joins[i]`` — склейка i это джамп-кат (вырез внутри одного куска,
+    app/cuts.py): всегда встык, что бы ни было в настройках перехода.
     """
 
     joins = max(0, len(durations) - 1)
@@ -145,6 +160,9 @@ def plan_joins(transition: dict, durations: list[float], gaps: list[float | None
     smart = bool(transition.get("smart", True))
     out: list[float] = []
     for index in range(joins):
+        if _is_jump(jump_joins, index):
+            out.append(0.0)
+            continue
         gap = None
         if gaps is not None and index < len(gaps):
             gap = gaps[index]
@@ -233,13 +251,18 @@ def build_join_args(
     crf: object = None,
     audio_codec: str = "aac",
     audio_bitrate: str = "",
+    jump_joins: list[bool] | None = None,
 ) -> list[str]:
-    """ffmpeg args joining ``parts`` with the given transition settings."""
+    """ffmpeg args joining ``parts`` with the given transition settings.
+
+    ``jump_joins`` — какие склейки это джамп-каты (app/cuts.py): встык, без
+    звука стыка и всегда с коротким фейдом звука против щелчка.
+    """
     if len(parts) != len(durations) or not parts:
         raise ValueError("parts and durations must be non-empty and the same length")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     n = len(parts)
-    overlaps = plan_joins(transition, durations, gaps)
+    overlaps = plan_joins(transition, durations, gaps, jump_joins)
     xfade_name = TRANSITIONS[transition["type"]][1]
 
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
@@ -282,11 +305,12 @@ def build_join_args(
                 if overlap > 0:
                     filters.append(f"[{previous}][{k}:a]acrossfade=d={overlap:.3f}:c1=tri:c2=tri[{label}]")
                 else:
+                    fade = JUMP_DECLICK_SEC if _is_jump(jump_joins, k - 1) else DECLICK_SEC
                     filters.append(
-                        f"[{previous}]afade=t=out:st={max(0.0, _elapsed(durations, overlaps, k) - DECLICK_SEC):.3f}:"
-                        f"d={DECLICK_SEC}[{label}f]"
+                        f"[{previous}]afade=t=out:st={max(0.0, _elapsed(durations, overlaps, k) - fade):.3f}:"
+                        f"d={fade}[{label}f]"
                     )
-                    filters.append(f"[{k}:a]afade=t=in:st=0:d={DECLICK_SEC}[{label}i]")
+                    filters.append(f"[{k}:a]afade=t=in:st=0:d={fade}[{label}i]")
                     filters.append(f"[{label}f][{label}i]concat=n=2:v=0:a=1[{label}]")
                 previous = label
         else:
@@ -298,21 +322,28 @@ def build_join_args(
                 right = overlaps[k] / 2 if k < n - 1 else 0.0
                 start, end = left, durations[k] - right
                 chain = f"[{k}:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS"
-                if declick:
-                    length = max(0.0, end - start)
-                    if k > 0:
-                        chain += f",afade=t=in:st=0:d={DECLICK_SEC}"
-                    if k < n - 1 and length > DECLICK_SEC:
-                        chain += f",afade=t=out:st={length - DECLICK_SEC:.3f}:d={DECLICK_SEC}"
+                length = max(0.0, end - start)
+                jump_in = k > 0 and _is_jump(jump_joins, k - 1)
+                jump_out = k < n - 1 and _is_jump(jump_joins, k)
+                if k > 0 and (declick or jump_in):
+                    fade = JUMP_DECLICK_SEC if jump_in else DECLICK_SEC
+                    chain += f",afade=t=in:st=0:d={fade}"
+                if k < n - 1 and (declick or jump_out):
+                    fade = JUMP_DECLICK_SEC if jump_out else DECLICK_SEC
+                    if length > fade:
+                        chain += f",afade=t=out:st={length - fade:.3f}:d={fade}"
                 pieces.append(f"{chain}[p{k}]")
             filters.extend(pieces)
             filters.append("".join(f"[p{k}]" for k in range(n)) + f"concat=n={n}:v=0:a=1[amain]")
         audio_label = "amain"
 
-        if transition["sfx"] != "none" and n > 1 and transition["sfx_volume"] > 0:
+        sfx_joins = [i for i in range(n - 1) if not _is_jump(jump_joins, i)]
+        if transition["sfx"] != "none" and sfx_joins and transition["sfx_volume"] > 0:
             times = join_times(durations, overlaps)
             delayed = []
             for i, t in enumerate(times):
+                if i not in sfx_joins:
+                    continue  # джамп-кат — не смена сцены, звук стыка не нужен
                 chains, label, lead = _sfx_chain(transition["sfx"], f"x{i}")
                 filters.extend(chains)
                 ms = max(0, int(round((t - lead) * 1000)))
