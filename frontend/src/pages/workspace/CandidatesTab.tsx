@@ -1154,6 +1154,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const undoRef = useRef<() => void>(() => undefined);
   // Ctrl+D — копия выделенного слоя (ставится обработчиком последнего рендера).
   const duplicateRef = useRef<() => void>(() => undefined);
+  const copyLayerRef = useRef<() => boolean>(() => false);
+  const pasteLayerRef = useRef<() => boolean>(() => false);
+  const nudgeLayerRef = useRef<(key: string, big: boolean) => boolean>(() => false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
@@ -1701,6 +1704,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         undoRef.current();
         return;
       }
+      // Ctrl+C / Ctrl+V — слой в буфер и обратно (в том числе в другой клип).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && ["c", "v", "с", "м"].includes(e.key.toLowerCase())) {
+        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
+        if (window.getSelection()?.toString()) return;
+        const copy = ["c", "с"].includes(e.key.toLowerCase());
+        if ((copy ? copyLayerRef : pasteLayerRef).current()) e.preventDefault();
+        return;
+      }
+      // Alt+стрелки — подвинуть выделенный слой (Shift — крупнее).
+      if (e.altKey && !e.ctrlKey && e.key.startsWith("Arrow")) {
+        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+        if (nudgeLayerRef.current(e.key, e.shiftKey)) e.preventDefault();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "d") {
         if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
         e.preventDefault();
@@ -2016,6 +2033,41 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setInserts((prev) => prev.map((item, i) => (i === drag.index ? { ...item, ...next } : item)));
   };
 
+  copyLayerRef.current = () => {
+    const layer = tlSelected?.kind === "layer" ? layers.find((l) => l.id === tlSelected.id) : null;
+    if (!layer) return false;
+    try {
+      localStorage.setItem("vvf.layerClipboard", JSON.stringify({ layers: [layer] }));
+    } catch {
+      return false;
+    }
+    toast.push(`Слой «${layerTitle(layer)}» скопирован — Ctrl+V вставит его под курсор (и в другом клипе)`, "info");
+    return true;
+  };
+  pasteLayerRef.current = () => {
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem("vvf.layerClipboard");
+    } catch {
+      return false;
+    }
+    if (!raw || !activePlan) return false;
+    dropLayersAt(raw, Number(clipTimeExact().toFixed(2)), null);
+    return true;
+  };
+  nudgeLayerRef.current = (key, big) => {
+    const layer = tlSelected?.kind === "layer" ? layers.find((l) => l.id === tlSelected.id) : null;
+    if (!layer || layer.locked || layer.type === "audio") return false;
+    const step = big ? 0.02 : 0.004;
+    const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+    const dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    const localT = Math.max(0, clipTimeExact() - layer.start);
+    const x = interpolateKeys(layer.keys?.x, localT, layer.x ?? 0.5) + dx;
+    const y = interpolateKeys(layer.keys?.y, localT, layer.y ?? 0.5) + dy;
+    const next = setAnimated(setAnimated(layer, "x", x, localT), "y", y, localT);
+    setLayers((prev) => prev.map((l) => (l.id === layer.id ? next : l)));
+    return true;
+  };
   duplicateRef.current = () => {
     if (tlSelected?.kind !== "layer") return;
     const r = duplicateLayer(layers, tlSelected.id, clipDuration);
