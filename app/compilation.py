@@ -21,6 +21,19 @@ from app.motion import normalize_layers
 CARD_SEC = 1.6
 
 
+def _unique_ids(plan_ids: Any) -> list[int]:
+    """id клипов по порядку, без повторов (один момент дважды — не «ТОП-N»)."""
+    out: list[int] = []
+    for raw in plan_ids or []:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"неверный id клипа: {raw!r}") from None
+        if pid not in out:
+            out.append(pid)
+    return out
+
+
 def build_compilation(
     store: Any,
     source_id: int,
@@ -31,7 +44,13 @@ def build_compilation(
     caption_style: str = "hormozi",
 ) -> dict:
     """Создать клип-компиляцию; вернуть {clip_plan_id, pieces, skipped, duration}."""
-    plans = [store.get_clip_plan(pid) for pid in plan_ids]
+    ids = _unique_ids(plan_ids)
+    plans = []
+    for pid in ids:
+        try:
+            plans.append(store.get_clip_plan(pid))
+        except KeyError:
+            raise ValueError(f"клип {pid} не найден") from None
     plans = [p for p in plans if p["source_id"] == source_id and p.get("segments")]
     if len(plans) < 2:
         raise ValueError("для компиляции нужно хотя бы два клипа этого проекта")
@@ -104,6 +123,9 @@ def build_compilation(
         "camera": [],
         "inserts": [],
         "cuts": [],
+        # Обложка первого клипа указывает на его кусок и секунду — в компиляции
+        # это другой кадр (и другой порядок кусков): обложку выбирают заново.
+        "cover": {"mode": "none"},
         "subs_on": False,
         # Склейка встык: номера и whoosh отмечают смену момента, а время слоёв и
         # субтитров совпадает с кусками точно (переход-наплыв съел бы доли секунды).

@@ -17,7 +17,7 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.cuts import cuts_total, normalize_cuts, plan_duration, suggest_for_plan, validate_cuts
+from app.cuts import check_cuts_for_plan, cuts_total, plan_duration, suggest_for_plan, validate_cuts
 
 
 class CutsSuggestPayload(BaseModel):
@@ -67,7 +67,11 @@ def build_cuts_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
             raise HTTPException(status_code=422, detail={"problems": problems})
         try:
             plan = store.get_clip_plan(clip_plan_id)
-            cuts = normalize_cuts(payload.cuts)
+            # Проверка по самому клипу (как его разложит рендер): за концом
+            # клипа или на весь клип — 400 сразу, а не упавший рендер потом.
+            cuts, problems = check_cuts_for_plan(plan, payload.cuts)
+            if problems:
+                raise HTTPException(status_code=400, detail="; ".join(problems))
             snapshot(store, clip_plan_id, "джамп-каты" if cuts else "вернуть вырезанное")
             settings = {**(plan.get("render_settings") or {}), "cuts": cuts}
             fresh = store.set_clip_plan_render_settings(clip_plan_id, settings)

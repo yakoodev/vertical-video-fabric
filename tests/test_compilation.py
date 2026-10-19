@@ -36,3 +36,25 @@ def test_compilation_needs_two_clips(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError):
         build_compilation(store, source["id"], [plan["id"]])
+
+
+def test_compilation_dedupes_resets_cover_and_rejects_unknown_ids(tmp_path, monkeypatch):
+    import pytest
+
+    from test_clip_spec import _store_plan
+
+    store, plan = _store_plan(tmp_path, monkeypatch, [])
+    segs = plan["segments"]
+    first = store.create_clip_plan(plan["source_id"], plan["analysis_id"], "Первый", segment_ids=[segs[0]["id"]])
+    second = store.create_clip_plan(plan["source_id"], plan["analysis_id"], "Второй", segment_ids=[segs[1]["id"]])
+    store.set_clip_plan_render_settings(first["id"], {"cover": {"mode": "frame", "piece": 0, "offset": 3.0}})
+
+    res = build_compilation(store, plan["source_id"], [first["id"], second["id"], first["id"]], countdown=False)
+    comp = store.get_clip_plan(res["clip_plan_id"])
+    assert res["clips"] == 2 and [s["id"] for s in comp["segments"]] == [segs[0]["id"], segs[1]["id"]]
+    assert comp["render_settings"]["cover"]["mode"] == "none"  # обложка первого клипа не переезжает
+
+    with pytest.raises(ValueError, match="не найден"):
+        build_compilation(store, plan["source_id"], [first["id"], 99999])
+    with pytest.raises(ValueError):
+        build_compilation(store, plan["source_id"], [first["id"], first["id"]])  # один клип дважды — не два

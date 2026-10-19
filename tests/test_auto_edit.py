@@ -37,3 +37,29 @@ def test_punch_moments_respect_spacing_and_edges():
 def test_auto_edit_without_words_has_no_captions():
     result = build_auto_edit("Клип", [], [], 20.0)
     assert not any(l["type"] == "captions" for l in result["layers"])
+
+
+def test_apply_auto_edit_places_pops_in_finished_time_with_transition(tmp_path, monkeypatch):
+    """Слова — во времени кусков подряд, слои — во времени готового клипа:
+    с наплывом между кусками звук эмодзи во втором куске встаёт раньше на overlap."""
+    import pytest
+
+    from app.auto_edit import apply_auto_edit
+    from test_clip_spec import _store_plan
+
+    store, plan = _store_plan(tmp_path, monkeypatch, [])  # куски 0–10 и 20–30 исходника
+    store.set_clip_plan_render_settings(plan["id"], {"transition": {"type": "fade", "duration": 0.5}})
+    store.set_clip_plan_subtitles(plan["id"], {"lines": [], "words": [
+        {"word": "привет", "start": 0.5, "end": 0.8},
+        {"word": "денег", "start": 15.0, "end": 15.4},
+    ]})
+
+    def no_waveform(*a, **k):
+        raise RuntimeError("нет волны")
+
+    monkeypatch.setattr("app.clip_waveform.clip_waveform", no_waveform)
+    out = apply_auto_edit(store, plan["id"])
+    assert out["duration"] == pytest.approx(19.5)
+    layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
+    pop = next(l for l in layers if l["id"].startswith("auto_pop"))
+    assert pop["start"] == pytest.approx(14.5)  # 15.0 − наплыв 0.5

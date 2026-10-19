@@ -852,3 +852,50 @@ def _require_ffmpeg_filter(filter_name: str) -> None:
         pytest.skip("ffmpeg filters cannot be inspected")
     if filter_name not in proc.stdout:
         pytest.skip(f"ffmpeg {filter_name} filter is not available")
+
+
+# ---------------------------------------------------------------- регрессия: громкость немого клипа
+
+
+def _loud(i, tp="-3.0"):
+    return {"input_i": i, "input_tp": tp, "input_lra": "0.0", "input_thresh": "-70.0", "target_offset": "0.0"}
+
+
+def test_loudnorm_skips_second_pass_on_silent_clip():
+    from app.render import loudnorm_needed
+
+    assert loudnorm_needed(_loud("-inf", "-inf"), -14.0) is False
+    assert loudnorm_needed(_loud("-75.0"), -14.0) is False
+    assert loudnorm_needed(_loud("nan"), -14.0) is False
+    assert loudnorm_needed(_loud("-20.0"), -14.0) is True
+    assert loudnorm_needed(_loud("-14.2", "-2.0"), -14.0) is False
+
+
+def test_normalize_loudness_leaves_silent_clip_without_error(tmp_path, monkeypatch):
+    from app.render import ClipRenderService
+
+    store = _store(tmp_path, monkeypatch)
+    src = settings.source_dir / "s.mp4"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"src")
+    source = store.create_source("upload", src, duration_sec=5, width=1280, height=720, status="ready")
+    path = settings.clip_dir / "silent.mp4"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"video")
+    clip = store.create_clip(source["id"])
+    clip = store.finish_clip_render(clip["id"], status="succeeded", output_path=path, preview_path=path)
+    monkeypatch.setattr(settings, "render_loudnorm", True)
+    monkeypatch.setattr("app.render._has_audio_stream", lambda p: True)
+    measured = json.dumps({**_loud("-inf", "-inf"), "input_thresh": "-inf"})
+
+    class _Done:
+        stderr = "[Parsed_loudnorm_0] \n" + measured
+
+    monkeypatch.setattr("app.render.subprocess.run", lambda *a, **k: _Done())
+
+    def no_second_pass(*a, **k):
+        raise AssertionError("второй проход loudnorm на тишине")
+
+    monkeypatch.setattr("app.render._run_ffmpeg", no_second_pass)
+    out = ClipRenderService(store)._normalize_loudness(clip)
+    assert not (out.get("error") or "")

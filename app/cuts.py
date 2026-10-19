@@ -191,6 +191,100 @@ def apply_cuts_to_timeline(cuts: Iterable[dict] | Iterable[tuple[float, float]])
     return CutMap(cuts)
 
 
+class _Joins:
+    """Склейка частей подряд → готовый клип: каждая склейка съедает свой overlap.
+
+    ``forward`` — время «части подряд» → время готового клипа (как
+    ``shift_for_transition``); ``inverse`` — обратно (момент внутри наплыва
+    относится к следующей части).
+    """
+
+    def __init__(self, parts: list[dict], transition: Any, jump_joins: list[bool] | None = None):
+        from app.transitions import part_overlaps
+
+        overlaps = part_overlaps(parts, transition, jump_joins) if parts else []
+        self.plain_starts: list[float] = []
+        self.eaten: list[float] = []
+        plain = eaten = 0.0
+        for index, part in enumerate(parts):
+            self.plain_starts.append(plain)
+            self.eaten.append(eaten)
+            plain += max(0.0, float(part["end_sec"]) - float(part["start_sec"]))
+            eaten += overlaps[index] if index < len(overlaps) else 0.0
+        self.final_starts = [p - e for p, e in zip(self.plain_starts, self.eaten)]
+
+    def forward(self, t: float) -> float:
+        if not self.plain_starts:
+            return t
+        k = max(0, bisect.bisect_right(self.plain_starts, t) - 1)
+        return max(0.0, t - self.eaten[k])
+
+    def inverse(self, t: float) -> float:
+        if not self.final_starts:
+            return t
+        k = max(0, bisect.bisect_right(self.final_starts, t) - 1)
+        return t + self.eaten[k]
+
+
+class FinishedCutMap:
+    """Время ГОТОВОГО клипа без вырезов → время готового клипа с вырезами.
+
+    Слои, камера, чат и вставки живут во времени готового клипа (после
+    переходов), а вырезы — во времени кусков подряд. Поэтому: готовое → подряд
+    (переходы до вырезов), вырезы, подряд → готовое (настоящие overlap после
+    вырезов: короткий под-кусок урезает наплыв, джамп-каты встык). Интерфейс —
+    как у ``CutMap`` (``m(t)``, ``clamp``, ``range``, ``duration``), так что все
+    ``remap_*`` работают с ним без изменений.
+    """
+
+    def __init__(self, segments: list[dict], transition: Any, cut_plan: "CutPlan"):
+        self.pre = _Joins(list(segments or []), transition)
+        self.post = _Joins(cut_plan.parts, transition, cut_plan.jump_joins)
+        self.cut = cut_plan.mapper
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __call__(self, t: float) -> float | None:
+        mapped = self.cut(self.pre.inverse(float(t)))
+        return None if mapped is None else self.post.forward(mapped)
+
+    def clamp(self, t: float) -> float:
+        return self.post.forward(self.cut.clamp(self.pre.inverse(float(t))))
+
+    def inside(self, t: float) -> bool:
+        return self(t) is None
+
+    def range(self, start: float, end: float, min_len: float = 1e-6) -> tuple[float, float] | None:
+        a, b = self.clamp(start), self.clamp(end)
+        if b - a < min_len:
+            return None
+        return a, b
+
+    def duration(self, total: float) -> float:
+        return max(0.0, self.clamp(total))
+
+
+def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut_plan: "CutPlan | None" = None) -> dict:
+    """Субтитры клипа (куски подряд, до вырезов) → время готового клипа.
+
+    Сначала вырезы, потом сдвиг на НАСТОЯЩИЕ overlap склеек — те же, что
+    спланирует рендер (``part_overlaps`` по рендерящимся частям и дыркам в
+    исходнике): наплыв урезан до 40% соседней части, «умная» склейка соседних
+    кусков исходника и джамп-каты — встык.
+    """
+    from app.clip_subtitles import shift_for_transition
+    from app.transitions import part_overlaps
+
+    if cut_plan is not None:
+        payload = remap_subtitles(payload, cut_plan.mapper)
+        parts, jumps = cut_plan.parts, cut_plan.jump_joins
+    else:
+        parts, jumps = list(segments or []), None
+    spans = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+    return shift_for_transition(payload, spans, part_overlaps(parts, transition, jumps))
+
+
 # ---------------------------------------------------------------- что сдвигается
 
 
@@ -386,6 +480,10 @@ class CutPlan:
     def part_durations(self) -> list[float]:
         return [float(p["end_sec"]) - float(p["start_sec"]) for p in self.parts]
 
+    def finished_mapper(self, segments: list[dict], transition: Any) -> "FinishedCutMap":
+        """Время готового клипа без вырезов → с вырезами (с настоящими переходами)."""
+        return FinishedCutMap(segments, transition, self)
+
     def remap_cover(self, cover: dict | None) -> dict | None:
         """Обложка «кусок + секунда в нём» → под-кусок + секунда в нём."""
         if not isinstance(cover, dict) or cover.get("mode") != "frame":
@@ -522,7 +620,6 @@ def plan_cuts_for_plan(plan: dict, fps: float = 30.0) -> CutPlan | None:
 def cut_caption_words(store: Any, plan: dict, cut_plan: CutPlan) -> list[dict]:
     """Слова для слоя «субтитры» после вырезов — как ``plan_caption_words``, но
     вырезы применяются ДО сдвига на переходы (слова лежат в склейке кусков)."""
-    from app.clip_subtitles import shift_for_transition
     from app.motion import caption_words
 
     try:
@@ -531,10 +628,8 @@ def cut_caption_words(store: Any, plan: dict, cut_plan: CutPlan) -> list[dict]:
         return []
     if not payload or not payload.get("words"):
         return []
-    transition = (plan.get("render_settings") or {}).get("transition") or {}
-    overlap = float(transition.get("duration") or 0) if transition.get("type") not in (None, "cut") else 0.0
-    payload = remap_subtitles(payload, cut_plan.mapper)
-    return caption_words(shift_for_transition(payload, cut_plan.piece_spans(), overlap))
+    transition = (plan.get("render_settings") or {}).get("transition")
+    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
 
 
 # ---------------------------------------------------------------- подсказки
@@ -551,6 +646,9 @@ STANDALONE_GAP_SEC = 0.2
 # Повтор слова («я я я») — заикание; эти повторы обычно нарочно.
 EMPHATIC_REPEATS = {"да", "нет", "давай", "стоп", "тихо", "очень", "ха", "хаха", "го", "все", "ну"}
 STUTTER_MAX_GAP_SEC = 1.0
+# Фраза из двух слов («это самое», «в общем») — паразит, только если рядом
+# пауза: «это самое главное», «в общем смысле» подряд — настоящая речь.
+PHRASE_PAUSE_SEC = 0.25
 _WORD_CLEAN_RE = re.compile(r"[^\w-]+", re.UNICODE)
 
 
@@ -595,7 +693,9 @@ def _pause_items(words: list[dict], duration: float, min_pause: float, keep_pad:
             item = {"start": start, "end": end, "reason": f"пауза {_fmt_sec(gap)} с"}
             # Длинная тишина в реакционном контенте часто и есть момент (стример молча
             # смотрит на скример, муху под Bad Apple) — предлагаем, но не отмечаем.
-            if gap >= LONG_PAUSE_SEC and 0 < index < len(bounds) - 1:
+            # Внутренняя пауза — между двумя словами (bounds[1..len(words)-1]);
+            # хвост после последнего слова может и отсутствовать в bounds.
+            if gap >= LONG_PAUSE_SEC and 0 < index < len(words):
                 item["reason"] += " — проверь: может, это и есть момент"
                 item["risky"] = True
             items.append(item)
@@ -608,6 +708,12 @@ def _filler_span(words: list[dict], first: int, last: int, duration: float, keep
     next_start = words[last + 1]["start"] if last + 1 < len(words) else max(duration, words[last]["end"])
     start = min(words[first]["start"], prev_end + keep_pad)
     end = max(words[last]["end"], next_start - keep_pad)
+    # Длинную паузу внутри клипа паразит не забирает: она «рискованная» и
+    # предлагается отдельно — может, это и есть момент (см. _pause_items).
+    if first > 0 and words[first]["start"] - prev_end >= LONG_PAUSE_SEC:
+        start = words[first]["start"]
+    if last + 1 < len(words) and next_start - words[last]["end"] >= LONG_PAUSE_SEC:
+        end = words[last]["end"]
     return max(prev_end, start), min(next_start, end)
 
 
@@ -621,7 +727,9 @@ def _filler_items(words: list[dict], duration: float, keep_pad: float) -> list[d
         # Фразы из двух слов: «как бы», «в общем», «это самое».
         if i + 1 < n:
             pair = (token, words[i + 1]["norm"])
-            if pair in FILLER_PHRASES:
+            gap_before = w["start"] - (words[i - 1]["end"] if i > 0 else 0.0)
+            gap_after = (words[i + 2]["start"] if i + 2 < n else max(duration, words[i + 1]["end"])) - words[i + 1]["end"]
+            if pair in FILLER_PHRASES and max(gap_before, gap_after) >= PHRASE_PAUSE_SEC - 1e-9:
                 start, end = _filler_span(words, i, i + 1, duration, keep_pad)
                 items.append({"start": start, "end": end, "reason": f"слова «{w['word'].strip()} {words[i + 1]['word'].strip()}»"})
                 i += 2
@@ -685,20 +793,38 @@ def suggest_cuts(
     if mode in ("fillers", "both"):
         raw += _filler_items(clean, duration, keep_pad)
     raw.sort(key=lambda it: (it["start"], it["end"]))
-    items: list[dict] = []
-    for item in raw:
-        start, end = max(0.0, item["start"]), min(duration, item["end"])
-        if end - start < MIN_CUT_SEC:
-            continue
-        if items and start <= items[-1]["end"] + MERGE_GAP_SEC:
-            last = items[-1]
-            last["end"] = max(last["end"], end)
-            if item["reason"] not in last["reason"]:
-                last["reason"] = f"{last['reason']} + {item['reason']}"
-            if item.get("risky"):
-                last["risky"] = True
-            continue
-        items.append({"start": start, "end": end, "reason": item["reason"], **({"risky": True} if item.get("risky") else {})})
+
+    def merged(group: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        for item in group:
+            start, end = max(0.0, item["start"]), min(duration, item["end"])
+            if end - start < MIN_CUT_SEC:
+                continue
+            if out and start <= out[-1]["end"] + MERGE_GAP_SEC:
+                last = out[-1]
+                last["end"] = max(last["end"], end)
+                if item["reason"] not in last["reason"]:
+                    last["reason"] = f"{last['reason']} + {item['reason']}"
+                continue
+            out.append({"start": start, "end": end, "reason": item["reason"], **({"risky": True} if item.get("risky") else {})})
+        return out
+
+    # Рискованное (длинная пауза) с обычным не сливаем: иначе пауза «съест»
+    # соседний паразит и он выпадет из рекомендованного набора. Обычные вырезы
+    # остаются целиком, рискованные — только то, что вне них.
+    safe = merged([it for it in raw if not it.get("risky")])
+    risky: list[dict] = []
+    for item in merged([it for it in raw if it.get("risky")]):
+        pieces = [(item["start"], item["end"])]
+        for cut in safe:
+            pieces = [
+                part
+                for a, b in pieces
+                for part in ((a, min(b, cut["start"])), (max(a, cut["end"]), b))
+                if part[1] - part[0] > 1e-9
+            ]
+        risky += [{**item, "start": a, "end": b} for a, b in pieces if b - a >= MIN_CUT_SEC]
+    items = sorted(safe + risky, key=lambda it: (it["start"], it["end"]))
     items = [{**it, "start": round(it["start"], 3), "end": round(it["end"], 3)} for it in items[:MAX_CUTS]]
     # Рекомендованный набор — без «рискованных» длинных пауз: их владелец отмечает сам.
     cuts = normalize_cuts([it for it in items if not it.get("risky")])
@@ -714,6 +840,35 @@ def suggest_cuts(
 
 def plan_duration(plan: dict) -> float:
     return round(sum(max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in plan.get("segments") or []), 3)
+
+
+def check_cuts_for_plan(plan: dict, raw: Any, fps: float = 30.0) -> tuple[list[dict], list[str]]:
+    """Вырезы, которые можно сохранить в этот клип: (канонические вырезы, проблемы).
+
+    Кроме формы (``validate_cuts``) — проверка по самому клипу, как его
+    разложит рендер (``plan_cuts``): вырез за концом клипа и вырезы на весь
+    клип — ошибка сразу, а не упавший рендер потом. Хвост выреза за концом
+    клипа обрезается по концу.
+    """
+    problems = validate_cuts(raw)
+    if problems:
+        return [], problems
+    total = plan_duration(plan)
+    cuts = normalize_cuts(raw)
+    for cut in cuts:
+        if total > 0 and cut["start"] >= total - 1e-6:
+            problems.append(
+                f"cuts: вырез {cut['start']}–{cut['end']} за концом клипа ({total:.2f} с)"
+            )
+    if problems:
+        return [], problems
+    if total > 0:
+        cuts = normalize_cuts([{"start": c["start"], "end": min(c["end"], total)} for c in cuts])
+    try:
+        plan_cuts(plan.get("segments") or [], cuts, fps)
+    except ValueError as exc:
+        return [], [f"cuts: {exc}"]
+    return cuts, []
 
 
 def suggest_for_plan(store: Any, clip_plan_id: int, mode: str, min_pause: float, keep_pad: float) -> dict:

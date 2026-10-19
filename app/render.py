@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import threading
@@ -30,6 +31,31 @@ from app.stream_layout import (
 )
 from app.transitions import build_join_args, is_plain_concat, normalize_transition, plan_joins
 from app.video_crop import build_reframe_x_expr
+
+
+# Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
+LOUDNORM_SILENCE_LUFS = -70.0
+
+
+def loudnorm_needed(measured: dict, target: float) -> bool:
+    """Нужен ли второй проход loudnorm по замеру первого.
+
+    Тихий/немой клип: input_i = "-inf" (или ниже -70) — поднимать нечего, а
+    ffmpeg с measured_I=-inf падает. Тогда звук оставляем как есть.
+    """
+    try:
+        current = float(measured["input_i"])
+        peak = float(measured["input_tp"])
+        lra = float(measured["input_lra"])
+        thresh = float(measured["input_thresh"])
+        offset = float(measured["target_offset"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all(math.isfinite(v) for v in (current, peak, lra, thresh, offset)):
+        return False
+    if current < LOUDNORM_SILENCE_LUFS:
+        return False
+    return not (abs(current - target) < 1.0 and peak <= -1.0)
 
 
 def _source_gaps(segments: list[dict]) -> list[float | None]:
@@ -601,20 +627,18 @@ class ClipRenderService:
             if not plan_id:
                 return qc
             plan = self.store.get_clip_plan(int(plan_id))
-            from app.motion_render import plan_caption_words
+            # Ровно те тайминги слов, что рендер прожёг/отдал слою «субтитры»:
+            # вырезы, потом настоящие overlap склеек после вырезов.
+            cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"))
+            if cut_plan is not None:
+                from app.cuts import cut_caption_words
 
-            words = [{"start": w["t0"], "end": w["t1"]} for w in plan_caption_words(self.store, plan)]
-            cuts = (plan.get("render_settings") or {}).get("cuts") or []
-            if cuts:
-                from app.cuts import apply_cuts_to_timeline
+                final = cut_caption_words(self.store, plan, cut_plan)
+            else:
+                from app.motion_render import plan_caption_words
 
-                mapper = apply_cuts_to_timeline(cuts)
-                mapped = []
-                for w in words:
-                    a, b = mapper(w["start"]), mapper(w["end"])
-                    if a is not None and b is not None:
-                        mapped.append({"start": a, "end": b})
-                words = mapped
+                final = plan_caption_words(self.store, plan)
+            words = [{"start": w["t0"], "end": w["t1"]} for w in final]
             offset = estimate_subtitle_offset(path, words)
             if offset is None:
                 return qc
@@ -672,10 +696,12 @@ class ClipRenderService:
                 # друг на друге — брак.
                 subtitle_profile_id = None
         if cut_plan is not None:
+            # Слои, камера и чат — во времени ГОТОВОГО клипа (после переходов),
+            # вырезы — во времени кусков подряд: переводим туда и обратно.
             visual = self._cut_motion(plan, cut_plan, visual)
             from app.cuts import remap_motion
 
-            motion = remap_motion(motion, cut_plan.mapper)
+            motion = remap_motion(motion, self._finished_cut_mapper(plan, cut_plan))
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
@@ -776,6 +802,12 @@ class ClipRenderService:
             fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
         return plan_cuts(plan.get("segments") or [], cuts, fps)
 
+    @staticmethod
+    def _finished_cut_mapper(plan: dict, cut_plan):
+        """Время готового клипа без вырезов → с вырезами (app/cuts.FinishedCutMap)."""
+        transition = (plan.get("render_settings") or {}).get("transition")
+        return cut_plan.finished_mapper(plan.get("segments") or [], transition)
+
     def _cut_motion(self, plan: dict, cut_plan, visual: dict | None) -> dict | None:
         """Видимый моушн (слои, камера, слова, чат) — во время клипа после вырезов."""
         from app.cuts import cut_caption_words, remap_motion
@@ -783,7 +815,7 @@ class ClipRenderService:
         if not visual:
             return visual
         had_words = bool(visual.get("words"))
-        fresh = remap_motion(visual, cut_plan.mapper)
+        fresh = remap_motion(visual, self._finished_cut_mapper(plan, cut_plan))
         if had_words:
             # Слова пересчитываются из субтитров: вырез — до сдвига на переходы.
             fresh = {**fresh, "words": cut_caption_words(self.store, plan, cut_plan)}
@@ -792,7 +824,8 @@ class ClipRenderService:
 
     def _plan_subtitles_for_clip(self, clip_id: int, fps: float | None = None):
         """Субтитры, сделанные в редакторе до рендера (если есть)."""
-        from app.clip_subtitles import result_from_payload, shift_for_transition
+        from app.clip_subtitles import result_from_payload
+        from app.cuts import subtitles_to_final
 
         try:
             clip = self.store.get_clip(clip_id)
@@ -803,17 +836,11 @@ class ClipRenderService:
             if not payload or not (payload.get("lines") or payload.get("words")):
                 return None
             plan = self.store.get_clip_plan(int(plan_id))
-            pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
-            transition = (plan.get("render_settings") or {}).get("transition") or {}
-            overlap = float(transition.get("duration") or 0) if transition.get("type") not in (None, "cut") else 0.0
+            transition = (plan.get("render_settings") or {}).get("transition")
             cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"), fps)
-            if cut_plan is not None:
-                # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на переходы.
-                from app.cuts import remap_subtitles
-
-                payload = remap_subtitles(payload, cut_plan.mapper)
-                pieces = cut_plan.piece_spans()
-            return result_from_payload(shift_for_transition(payload, pieces, overlap))
+            # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на
+            # настоящие overlap склеек (как их спланирует рендер).
+            return result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
         except (KeyError, ValueError, TypeError):
             return None
 
@@ -829,7 +856,7 @@ class ClipRenderService:
         if cut_plan is not None and inserts:
             from app.cuts import remap_inserts
 
-            inserts = remap_inserts(inserts, cut_plan.mapper)
+            inserts = remap_inserts(inserts, self._finished_cut_mapper(plan, cut_plan))
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
@@ -995,9 +1022,7 @@ class ClipRenderService:
             )
             tail = probe.stderr[probe.stderr.rfind("{"):]
             measured = json.loads(tail[: tail.find("}") + 1])
-            current = float(measured["input_i"])
-            peak = float(measured["input_tp"])
-            if abs(current - target) < 1.0 and peak <= -1.0:
+            if not loudnorm_needed(measured, target):
                 return clip
             tmp = path.with_name(path.stem + ".loud" + path.suffix)
             af = (

@@ -176,6 +176,25 @@ def plan_joins(
     return out
 
 
+def part_overlaps(
+    parts: list[dict],
+    transition: object,
+    jump_joins: list[bool] | None = None,
+) -> list[float]:
+    """Overlap каждой склейки этих частей — ровно как их спланирует рендер.
+
+    ``parts`` — то, что рендерится подряд (куски клипа или под-куски после
+    вырезов, app/cuts.py) с ``start_sec``/``end_sec`` исходника: длины частей
+    и дырки в исходнике между ними — те же входы, что у ``render_montage``.
+    """
+    durations = [max(0.0, float(p["end_sec"]) - float(p["start_sec"])) for p in parts]
+    gaps: list[float | None] = []
+    for left, right in zip(parts, parts[1:]):
+        gap = float(right["start_sec"]) - float(left["end_sec"])
+        gaps.append(gap if gap >= 0 else None)
+    return plan_joins(normalize_transition(transition), durations, gaps, jump_joins)
+
+
 def join_times(durations: list[float], overlaps: float | list[float]) -> list[float]:
     """Where each join lands on the OUTPUT timeline (middle of the transition)."""
     joins = max(0, len(durations) - 1)

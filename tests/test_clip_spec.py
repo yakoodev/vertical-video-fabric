@@ -120,3 +120,72 @@ def test_render_uses_the_file_and_reports_qc(tmp_path, monkeypatch):
     assert any(i["code"] == "size" for i in clip["qc"]["issues"])
     renders = client.get(f"/api/clip-plans/{plan['id']}/spec").json()["renders"]
     assert renders[0]["clip_id"] == clip["id"] and renders[0]["qc"] is not None
+
+
+# ---------------------------------------------------------------- регрессии: недоделанные слои
+
+
+def _store_plan(tmp_path, monkeypatch, layers):
+    """Клип без ffmpeg: исходник-заглушка, два куска, слои как сохранило автосохранение."""
+    from app.settings import settings
+    from test_render import _store
+
+    store = _store(tmp_path, monkeypatch)
+    path = settings.source_dir / "s.mp4"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"src")
+    source = store.create_source("upload", path, duration_sec=60, width=1280, height=720, status="ready")
+    analysis = store.create_ai_analysis(source["id"], "mock", status="succeeded")
+    a = store.create_ai_segment(analysis["id"], {"start_sec": 0, "end_sec": 10, "title": "A"})
+    b = store.create_ai_segment(analysis["id"], {"start_sec": 20, "end_sec": 30, "title": "B"})
+    plan = store.create_clip_plan(source["id"], analysis["id"], "План", segment_ids=[a["id"], b["id"]])
+    store.set_clip_plan_render_settings(plan["id"], {"layers": layers})
+    return store, plan
+
+
+INCOMPLETE = [
+    {"id": "t_empty", "type": "text", "start": 0, "end": 2, "props": {"text": ""}},
+    {"id": "img_new", "type": "image", "start": 1, "end": 3},
+    {"id": "snd_new", "type": "audio", "start": 0, "end": 1},
+]
+
+
+def test_saved_incomplete_layers_do_not_block_piece_trim(tmp_path, monkeypatch):
+    from app.clip_spec import SpecError, apply_spec, export_spec
+
+    store, plan = _store_plan(tmp_path, monkeypatch, INCOMPLETE)
+    spec = export_spec(store, plan["id"])
+    assert len(spec["render"]["layers"]) == 3
+    spec["pieces"][0] = {**spec["pieces"][0], "start_sec": 0.5}  # подрезать кусок
+    fresh, changes = apply_spec(store, plan["id"], spec)
+    assert fresh["pieces"][0]["start_sec"] == 0.5 and any("таймкоды" in c for c in changes)
+
+    # Новый (или изменённый) слой без содержимого — по-прежнему отказ, с понятной причиной.
+    spec = export_spec(store, plan["id"])
+    spec["render"]["layers"].append({"id": "t_new", "type": "text", "start": 0, "end": 1, "props": {"text": " "}})
+    with pytest.raises(SpecError) as err:
+        apply_spec(store, plan["id"], spec)
+    assert len(err.value.problems) == 1 and "t_new" in err.value.problems[0]
+    spec = export_spec(store, plan["id"])
+    spec["render"]["layers"][0]["start"] = 0.5  # изменили недоделанный слой — проверяем его
+    with pytest.raises(SpecError):
+        apply_spec(store, plan["id"], spec)
+
+
+def test_agent_trim_piece_and_ai_montage_survive_incomplete_layers(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, run_tool
+    from app.ai.montage import apply_montage, undo_montage
+    from app.clip_spec import export_spec
+
+    store, plan = _store_plan(tmp_path, monkeypatch, INCOMPLETE)
+    original = export_spec(store, plan["id"])
+    ai = {**original, "pieces": [{**original["pieces"][1], "start_sec": 21.0}]}
+    apply_montage(store, plan["id"], ai)
+    restored, _changes = undo_montage(store, plan["id"])
+    assert [(p["start_sec"], p["end_sec"]) for p in restored["pieces"]] == [(0.0, 10.0), (20.0, 30.0)]
+    assert [l["id"] for l in restored["render"]["layers"]] == ["t_empty", "img_new", "snd_new"]
+
+    out, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"]), "trim_piece",
+                       {"index": 0, "start_sec": 0.5, "end_sec": 10.0})
+    assert ok, out
+    assert export_spec(store, plan["id"])["pieces"][0]["start_sec"] == 0.5

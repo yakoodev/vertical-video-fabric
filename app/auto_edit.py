@@ -171,10 +171,19 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
 
     plan = store.get_clip_plan(clip_plan_id)
     subs = store.get_clip_plan_subtitles(clip_plan_id) or {}
-    words = [w for w in subs.get("words") or [] if str(w.get("word", "")).strip()]
-    if not words:
+    if not [w for w in subs.get("words") or [] if str(w.get("word", "")).strip()]:
         raise ValueError("у клипа нет распознанной речи — сначала «Распознать речь»")
-    duration = sum(float(s["end_sec"]) - float(s["start_sec"]) for s in plan.get("segments") or [])
+    # Слова сохранены во времени кусков подряд, а слои и камера — во времени
+    # готового клипа (после переходов): переводим той же функцией, что и
+    # слой «субтитры», иначе наезды и звуки встают позже речи.
+    from app.cuts import subtitles_to_final
+    from app.motion import clip_timeline
+
+    segments = plan.get("segments") or []
+    transition = (plan.get("render_settings") or {}).get("transition")
+    final = subtitles_to_final({"words": subs.get("words") or []}, segments, transition)
+    words = [w for w in final.get("words") or [] if str(w.get("word", "")).strip()]
+    _starts, duration = clip_timeline([(float(s["start_sec"]), float(s["end_sec"])) for s in segments], transition)
     try:
         peaks = clip_waveform(store, clip_plan_id).get("peaks") or []
     except Exception:  # noqa: BLE001 - без волны наезды встанут только по паузам

@@ -149,20 +149,36 @@ def result_from_payload(payload: dict) -> SubtitleResult:
     )
 
 
-def shift_for_transition(payload: dict, pieces: list[tuple[float, float]], overlap: float) -> dict:
+def shift_for_transition(
+    payload: dict, pieces: list[tuple[float, float]], overlap: float | list[float]
+) -> dict:
     """A real transition overlaps neighbours, so every piece after the first
-    starts `overlap` earlier in the rendered clip than in the plain concatenation
-    the subtitles were timed against."""
-    if overlap <= 0 or len(pieces) < 2:
+    starts earlier in the rendered clip than in the plain concatenation the
+    subtitles were timed against.
+
+    ``overlap`` — одно число на все склейки или список overlap по склейкам
+    (``app.transitions.part_overlaps``): рендер режет переход до 40% соседней
+    части, а «умная» склейка соседних кусков исходника идёт встык (0).
+    """
+    joins = max(0, len(pieces) - 1)
+    if isinstance(overlap, (int, float)):
+        per_join = [float(overlap)] * joins
+    else:
+        per_join = [float(o) for o in list(overlap)[:joins]]
+        per_join += [0.0] * (joins - len(per_join))
+    if joins == 0 or not any(o > 0 for o in per_join):
         return payload
     bounds, t = [], 0.0
     for start, end in pieces:
         t += end - start
         bounds.append(t)
+    eaten = [0.0]
+    for o in per_join:
+        eaten.append(eaten[-1] + o)
 
     def shift(value: float) -> float:
         k = sum(1 for b in bounds[:-1] if value >= b)
-        return max(0.0, value - overlap * k)
+        return max(0.0, value - eaten[k])
 
     return {
         **payload,

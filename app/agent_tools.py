@@ -437,18 +437,21 @@ def h_suggest_cuts(ctx: ToolContext, args: dict) -> dict:
     from app.cuts import suggest_for_plan
 
     mode = args.get("mode") if args.get("mode") in ("pauses", "fillers", "both") else "both"
-    return suggest_for_plan(ctx.store, ctx.plan_id, mode, float(_num(args.get("min_pause"), 0.45) or 0.45),
-                            float(_num(args.get("keep_pad"), 0.12) or 0.12))
+    # Явная проверка на None: keep_pad=0 («тишину у слов не оставлять») — законное значение.
+    min_pause = _num(args.get("min_pause"))
+    keep_pad = _num(args.get("keep_pad"))
+    return suggest_for_plan(ctx.store, ctx.plan_id, mode, 0.45 if min_pause is None else float(min_pause),
+                            0.12 if keep_pad is None else float(keep_pad))
 
 
 def h_apply_cuts(ctx: ToolContext, args: dict) -> dict:
-    from app.cuts import cuts_total, normalize_cuts, validate_cuts
+    from app.cuts import check_cuts_for_plan, cuts_total
 
-    problems = validate_cuts(args.get("cuts") or [])
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    cuts, problems = check_cuts_for_plan(plan, args.get("cuts") or [])
     if problems:
         raise ToolError("вырезы не приняты", problems)
     ctx.before_change()
-    cuts = normalize_cuts(args.get("cuts") or [])
     settings = dict(_current_render(ctx))
     settings["cuts"] = cuts
     ctx.store.set_clip_plan_render_settings(ctx.plan_id, settings)
@@ -475,10 +478,18 @@ def h_compose_cover(ctx: ToolContext, args: dict) -> dict:
 def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
     from app.compilation import build_compilation
 
-    ids = [int(x) for x in args.get("clip_ids") or []]
+    from app.compilation import _unique_ids
+
+    try:
+        ids = _unique_ids(args.get("clip_ids") or [])
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
     if len(ids) < 2:
-        raise ToolError("нужно хотя бы два clip_ids")
-    first = ctx.store.get_clip_plan(ids[0])
+        raise ToolError("нужно хотя бы два разных clip_ids")
+    try:
+        first = ctx.store.get_clip_plan(ids[0])
+    except KeyError:
+        raise ToolError(f"клип {ids[0]} не найден") from None
     return build_compilation(ctx.store, first["source_id"], ids, title=str(args.get("title") or ""),
                              countdown=args.get("countdown", True) is not False)
 

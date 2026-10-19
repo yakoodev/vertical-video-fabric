@@ -121,7 +121,7 @@ def plan_caption_words(store: Any, plan: dict) -> list[dict]:
     (``ClipRenderService._plan_subtitles_for_clip``): анимированные субтитры
     совпадают с речью ровно так же. Нет субтитров — пусто.
     """
-    from app.clip_subtitles import shift_for_transition
+    from app.cuts import subtitles_to_final
 
     try:
         payload = store.get_clip_plan_subtitles(int(plan["id"]))
@@ -129,10 +129,9 @@ def plan_caption_words(store: Any, plan: dict) -> list[dict]:
         return []
     if not payload or not payload.get("words"):
         return []
-    pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
-    transition = (plan.get("render_settings") or {}).get("transition") or {}
-    overlap = float(transition.get("duration") or 0) if transition.get("type") not in (None, "cut") else 0.0
-    return caption_words(shift_for_transition(payload, pieces, overlap))
+    transition = (plan.get("render_settings") or {}).get("transition")
+    # Настоящие overlap склеек (как спланирует рендер), а не полная длина перехода.
+    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition))
 
 
 def attach_caption_words(store: Any, plan: dict, motion: dict | None) -> dict | None:

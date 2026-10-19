@@ -443,3 +443,162 @@ def test_real_ffmpeg_two_cuts_shorten_the_clip(tmp_path, monkeypatch):
         for st in (out.raw or {}).get("streams") or []
     }
     assert abs(streams["video"] - streams["audio"]) < 0.1
+
+
+# ---------------------------------------------------------------- регрессии: вырезы + переходы
+
+
+FADE = {"type": "fade", "duration": 0.5, "smart": True}
+
+
+def _two_pieces(tmp_path, monkeypatch, settings_extra=None, pieces=((0, 10), (30, 40))):
+    store, service, plan, preset, _calls = _mock_render(tmp_path, monkeypatch, list(pieces))
+    store.set_clip_plan_render_settings(plan["id"], {"transition": FADE, **(settings_extra or {})})
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 12.0, "end": 12.5, "text": "два"}],
+        "words": [{"word": "раз", "start": 5.0, "end": 5.5}, {"word": "два", "start": 12.0, "end": 12.5}],
+    })
+    return store, service, store.get_clip_plan(plan["id"]), preset
+
+
+def test_subtitles_shift_by_real_overlap_after_cuts(tmp_path, monkeypatch):
+    # Два куска по 10 с, наплыв 0.5, вырез 9.0–9.7: от первого куска остаётся
+    # хвост 0.3 с, и рендер урезает наплыв до 40% от него (0.12), а не 0.5.
+    from app.cuts import cut_caption_words
+
+    store, service, plan, preset = _two_pieces(tmp_path, monkeypatch, {"cuts": [{"start": 9.0, "end": 9.7}]})
+    clip = store.create_clip(plan["source_id"], clip_plan_id=plan["id"], ffmpeg_preset_id=preset["id"])
+    result = service._plan_subtitles_for_clip(clip["id"], 30.0)
+    assert result.words[0].start == pytest.approx(5.0)
+    assert result.words[1].start == pytest.approx(12.0 - 0.7 - 0.12)  # не на 0.38 с раньше
+    assert result.segments[0].start == pytest.approx(12.0 - 0.7 - 0.12)
+    words = cut_caption_words(store, plan, plan_cuts(plan["segments"], plan["render_settings"]["cuts"], 30.0))
+    assert words[1]["t0"] == pytest.approx(11.18)
+
+
+def test_smart_join_between_adjacent_source_pieces_does_not_shift(tmp_path, monkeypatch):
+    from app.motion_render import plan_caption_words
+
+    store, service, plan, preset = _two_pieces(tmp_path, monkeypatch, pieces=((0, 10), (10, 20)))
+    assert plan_caption_words(store, plan)[1]["t0"] == pytest.approx(12.0)  # «умная» склейка встык
+    clip = store.create_clip(plan["source_id"], clip_plan_id=plan["id"], ffmpeg_preset_id=preset["id"])
+    assert service._plan_subtitles_for_clip(clip["id"], 30.0).words[1].start == pytest.approx(12.0)
+
+
+def test_far_pieces_still_shift_by_the_full_transition(tmp_path, monkeypatch):
+    from app.motion_render import plan_caption_words
+
+    store, _service, plan, _preset = _two_pieces(tmp_path, monkeypatch)
+    assert plan_caption_words(store, plan)[1]["t0"] == pytest.approx(11.5)
+
+
+def test_layers_camera_chat_inserts_follow_cuts_in_finished_time():
+    segs = [{"id": 1, "start_sec": 0.0, "end_sec": 10.0}, {"id": 2, "start_sec": 30.0, "end_sec": 40.0}]
+    cut_plan = plan_cuts(segs, [{"start": 9.0, "end": 9.7}], 30.0)
+    m = cut_plan.finished_mapper(segs, FADE)
+    # Слой во времени готового клипа без вырезов: кусок 2 начинается в 10 − 0.5 = 9.5,
+    # 11.5 — это 2 с от его начала. После выреза кусок 2 начинается в 9.3 − 0.12 = 9.18,
+    # значит слой — в 11.18 (по «кускам подряд» он уезжал на 10.8).
+    layers = remap_layers([{"id": "a", "start": 11.5, "end": 12.5}, {"id": "b", "start": 2.0, "end": 3.0}], m)
+    assert [l["start"] for l in layers] == pytest.approx([11.18, 2.0])
+    assert [k["t"] for k in remap_camera([{"t": 11.5, "zoom": 1.2}], m)] == pytest.approx([11.18])
+    chat = remap_motion({"layers": [], "camera": [], "chat": [{"t": 11.5}, {"t": 9.2}]}, m)["chat"]
+    assert [c["t"] for c in chat] == pytest.approx([11.18])  # 9.2 готового = 9.2 подряд — в вырезе
+    assert remap_inserts([{"asset_id": 1, "at": 11.5}], m)[0]["at"] == pytest.approx(11.18, abs=0.01)
+
+
+def test_render_remaps_layers_through_finished_time(tmp_path, monkeypatch):
+    store, service, plan, preset = _two_pieces(tmp_path, monkeypatch, {
+        "cuts": [{"start": 9.0, "end": 9.7}],
+        "layers": [{"id": "t1", "type": "text", "start": 11.5, "end": 12.5, "props": {"text": "Хук"}}],
+    })
+    seen: dict = {}
+
+    def fake_motion(render_id, base, preset, banner, motion):
+        seen.update(motion)
+        return []
+
+    monkeypatch.setattr(service, "_apply_motion", fake_motion)
+    clip = service.render_clip_plan(plan["id"], ffmpeg_preset_id=preset["id"], transition=FADE)
+    assert clip["status"] == "succeeded", clip.get("error")
+    assert seen["layers"][0]["start"] == pytest.approx(11.18)
+
+
+def test_subtitle_sync_qc_uses_the_rendered_word_timing(tmp_path, monkeypatch):
+    store, service, plan, preset = _two_pieces(tmp_path, monkeypatch, {"cuts": [{"start": 9.0, "end": 9.7}]})
+    clip = store.create_clip(plan["source_id"], clip_plan_id=plan["id"], ffmpeg_preset_id=preset["id"])
+    got: dict = {}
+
+    def fake_offset(path, words):
+        got["words"] = words
+        return None
+
+    monkeypatch.setattr("app.render_qc.estimate_subtitle_offset", fake_offset)
+    service._qc_subtitle_sync(store.get_clip(clip["id"]), Path("x.mp4"), {"ok": True, "issues": []})
+    rendered = service._plan_subtitles_for_clip(clip["id"], float(preset.get("fps") or 30))
+    assert [w["start"] for w in got["words"]] == pytest.approx([w.start for w in rendered.words])
+    assert got["words"][1]["start"] == pytest.approx(11.18, abs=0.02)
+
+
+# ---------------------------------------------------------------- регрессии: подсказки
+
+
+def test_two_word_phrase_needs_a_pause_to_be_a_filler():
+    tight = [_w("это", 0.0, 0.2), _w("самое", 0.2, 0.5), _w("главное", 0.52, 0.9), _w("в", 1.0, 1.05),
+             _w("общем", 1.05, 1.4), _w("смысле", 1.42, 1.8)]
+    assert suggest_cuts(tight, 1.8, mode="fillers")["items"] == []
+    paused = [_w("я", 0.0, 0.2), _w("это", 0.25, 0.4), _w("самое", 0.4, 0.7), _w("пришёл", 1.1, 1.5)]
+    items = suggest_cuts(paused, 1.5, mode="fillers")["items"]
+    assert len(items) == 1 and "это самое" in items[0]["reason"]
+
+
+def test_risky_long_pause_does_not_swallow_a_neighbouring_filler():
+    words = [_w("раз", 0.0, 0.4), _w("ээ", 0.5, 0.8), _w("два", 4.0, 4.4)]
+    out = suggest_cuts(words, 4.4, mode="both", min_pause=0.45, keep_pad=0.12)
+    assert out["cuts"] == [{"start": 0.5, "end": 0.8}]  # паразит — рекомендован отдельно
+    risky = [it for it in out["items"] if it.get("risky")]
+    assert len(risky) == 1 and risky[0]["start"] >= 0.8 and risky[0]["end"] == pytest.approx(3.88)
+    safe = [it for it in out["items"] if not it.get("risky")]
+    assert len(safe) == 1 and "ээ" in safe[0]["reason"]
+
+
+# ---------------------------------------------------------------- регрессии: сохранение вырезов
+
+
+def test_check_cuts_for_plan_rejects_past_end_and_whole_clip():
+    from app.cuts import check_cuts_for_plan
+
+    plan = {"segments": [{"start_sec": 10.0, "end_sec": 16.0}]}
+    cuts, problems = check_cuts_for_plan(plan, [{"start": 7, "end": 8}])
+    assert cuts == [] and "за концом клипа" in problems[0]
+    cuts, problems = check_cuts_for_plan(plan, [{"start": 0, "end": 6}])
+    assert cuts == [] and "весь клип" in problems[0]
+    cuts, problems = check_cuts_for_plan(plan, [{"start": 5, "end": 9}])
+    assert problems == [] and cuts == [{"start": 5.0, "end": 6.0}]  # хвост за концом обрезан
+
+
+def test_api_and_agent_apply_cuts_validate_against_the_clip(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, ToolError, h_apply_cuts, h_suggest_cuts
+
+    client, store, plan = _api_plan(tmp_path, monkeypatch)
+    pid = plan["id"]
+    bad = client.post(f"/api/clip-plans/{pid}/cuts/apply", json={"cuts": [{"start": 0, "end": 6}]})
+    assert bad.status_code == 400 and "весь клип" in bad.json()["detail"]
+    bad = client.post(f"/api/clip-plans/{pid}/cuts/apply", json={"cuts": [{"start": 20, "end": 21}]})
+    assert bad.status_code == 400 and "за концом" in bad.json()["detail"]
+    assert not (store.get_clip_plan(pid).get("render_settings") or {}).get("cuts")
+
+    ctx = ToolContext(store=store, clip_plan_id=pid)
+    with pytest.raises(ToolError):
+        h_apply_cuts(ctx, {"cuts": [{"start": 0, "end": 6}]})
+    assert h_apply_cuts(ctx, {"cuts": [{"start": 1, "end": 2}]})["cuts"] == 1
+
+    seen: dict = {}
+
+    def fake_suggest(store, plan_id, mode, min_pause, keep_pad):
+        seen.update(min_pause=min_pause, keep_pad=keep_pad)
+        return {}
+
+    monkeypatch.setattr("app.cuts.suggest_for_plan", fake_suggest)
+    h_suggest_cuts(ctx, {"keep_pad": 0})
+    assert seen == {"min_pause": 0.45, "keep_pad": 0.0}  # keep_pad=0 — законное значение, не 0.12
