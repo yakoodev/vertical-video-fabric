@@ -49,6 +49,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `get_clip(clip_id)` | куски, настройки, слои, камера, вставки, субтитры со временем слов (секунды клипа), предупреждения |
 | `get_transcript(clip_id, from_sec?, to_sec?)` | реплики исходника (время исходника) — для подрезки |
 | `view_frame(clip_id, t, with_layers?)` | **картинка** кадра готового вида (слои + камера) — смотри, что получилось |
+| `contact_sheet(clip_id, n?)` | **сетка** из n кадров по всему клипу — ритм графики и перегруз видно сразу (`vvf.py contact`) |
 | `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
 | `set_camera(keys)` | все ключи камеры разом (наезды) |
 | `get_motion_reference` | шпаргалка по слоям |

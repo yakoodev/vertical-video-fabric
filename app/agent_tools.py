@@ -421,6 +421,14 @@ def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
     return ImageResult(data=data, mime_type=mime, info={"t": round(t, 3), "with_layers": with_layers, **info})
 
 
+def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
+    from app.motion_render import contact_sheet_jpeg
+
+    n = int(_num(args.get("n"), 8) or 8)
+    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=220)
+    return ImageResult(data=data, mime_type="image/jpeg", info={"n": n})
+
+
 def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True) -> tuple[bytes, str, dict]:
     """Кадр готового вида на клиповом времени ``t``.
 
@@ -1107,6 +1115,13 @@ def _build_registry() -> list[Tool]:
             "Проверяй так размещение, читаемость, что титр не закрыл лицо. / Render the clip frame at t.",
             _obj({"t": {"type": "number"}, "with_layers": {"type": "boolean"}}, ["t"]), h_view_frame,
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
+        ),
+        Tool(
+            "contact_sheet", "Смотрю весь клип",
+            "Сетка из n кадров равномерно по клипу (с временем) — весь монтаж одним взглядом: "
+            "проверить ритм графики, не перегружен ли кадр, где пусто. / Contact sheet of n frames.",
+            _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16}}), h_contact_sheet,
+            label=lambda a: "Смотрю весь клип сеткой кадров",
         ),
         Tool(
             "get_motion_reference", "Справка по слоям",

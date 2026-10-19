@@ -613,3 +613,47 @@ def render_frame_png(
         return out.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 240) -> bytes:
+    """Лист кадров клипа: ``n`` моментов равномерно по клипу, с подписью времени.
+
+    Весь монтаж одним взглядом — агенту (одна картинка вместо восьми запросов
+    кадра) и человеку на проверке. Кадры — тем же компоновщиком, что и рендер.
+    """
+    import subprocess
+    import tempfile
+
+    from app.settings import settings as app_settings
+
+    n = max(2, min(16, int(n)))
+    width = max(120, min(540, int(width)))
+    plan = store.get_clip_plan(clip_plan_id)
+    duration = sum(float(s["end_sec"]) - float(s["start_sec"]) for s in plan.get("segments") or [])
+    if duration <= 0:
+        raise ValueError("у клипа нет кусков")
+    times = [round(duration * (k + 0.5) / n, 2) for k in range(n)]
+    font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
+    with tempfile.TemporaryDirectory() as tmp:
+        inputs: list[str] = []
+        for k, t in enumerate(times):
+            path = Path(tmp) / f"f{k:02d}.png"
+            path.write_bytes(render_frame_png(store, clip_plan_id, t))
+            inputs += ["-i", str(path)]
+        cols = min(n, 4)
+        chains = [
+            f"[{k}:v]scale={width}:-2,drawtext=fontfile='{font}':text='{times[k]:.1f} s':x=8:y=8:fontsize={max(14, width // 12)}"
+            f":fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=4[v{k}]"
+            for k in range(n)
+        ]
+        # xstack: координаты плиток суммой ширин/высот первой плитки.
+        layout = "|".join(f"{'+'.join(['w0'] * (k % cols)) or '0'}_{'+'.join(['h0'] * (k // cols)) or '0'}" for k in range(n))
+        graph = ";".join(chains) + ";" + "".join(f"[v{k}]" for k in range(n)) + f"xstack=inputs={n}:layout={layout}:fill=black[out]"
+        out = Path(tmp) / "sheet.jpg"
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", graph, "-map", "[out]", "-q:v", "4", str(out)],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        if proc.returncode != 0 or not out.exists():
+            raise RuntimeError(f"лист кадров не собран: {proc.stderr[-300:]}")
+        return out.read_bytes()

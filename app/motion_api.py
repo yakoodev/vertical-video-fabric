@@ -123,4 +123,31 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
             raise HTTPException(status_code=500, detail=f"кадр не нарисован: {str(exc)[:500]}") from exc
         return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
+    @router.get(
+        "/api/clip-plans/{clip_plan_id}/contact-sheet",
+        summary="Лист кадров клипа (JPEG-сетка) — увидеть весь монтаж одним взглядом",
+        response_class=Response,
+        responses={200: {"content": {"image/jpeg": {}}}},
+    )
+    def api_contact_sheet(
+        clip_plan_id: int,
+        _auth: auth_dep,  # type: ignore[valid-type]
+        n: int = Query(8, ge=2, le=16, description="сколько кадров"),
+        width: int = Query(240, ge=120, le=540, description="ширина одного кадра"),
+    ) -> Response:
+        """Кадры равномерно по клипу с подписью времени — для агента и для проверки глазами."""
+        from app.motion_render import CompositorMissing, contact_sheet_jpeg
+
+        try:
+            data = contact_sheet_jpeg(get_store(), clip_plan_id, n=n, width=width)
+        except CompositorMissing as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+        return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
     return router

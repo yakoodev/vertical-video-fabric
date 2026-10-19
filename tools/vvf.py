@@ -23,6 +23,7 @@ the service's code or database. Standard library only.
     vvf.py layers 812 --json > layers.json     # the same as an editable file
     vvf.py layers-set 812 layers.json          # validate, then replace layers (+camera)
     vvf.py frame-motion 812 --at 3.2 -o f.png  # a frame of the finished look (layers, camera)
+    vvf.py contact 812 -n 8 -o sheet.jpg       # contact sheet: the whole edit at a glance
     vvf.py agent 812 "сделай динамичнее"       # the built-in AI editor; waits, prints steps
 
 See docs/AGENTS.md for the workflow and the rules of the file.
@@ -273,6 +274,13 @@ def cmd_frame_motion(args) -> None:
     print(f"сохранено: {args.output}")
 
 
+def cmd_contact(args) -> None:
+    data = call("GET", f"/api/clip-plans/{args.clip}/contact-sheet?n={args.n}", None, raw=True)
+    with open(args.output, "wb") as f:
+        f.write(data)
+    print(f"сохранено: {args.output}")
+
+
 def cmd_agent(args) -> None:
     path = f"/api/clip-plans/{args.clip}/agent"
     started = call("POST", path, {"message": args.message})
@@ -362,6 +370,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--no-layers", action="store_true", help="без слоёв и камеры — только основа")
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(fn=cmd_frame_motion)
+    p = sub.add_parser("contact", help="лист кадров клипа (JPEG-сетка) — весь монтаж одним взглядом")
+    p.add_argument("clip", type=int)
+    p.add_argument("-n", type=int, default=8, help="сколько кадров (2..16)")
+    p.add_argument("-o", "--output", required=True)
+    p.set_defaults(fn=cmd_contact)
     p = sub.add_parser("agent", help="попросить встроенного ИИ-монтажёра и дождаться ответа")
     p.add_argument("clip", type=int)
     p.add_argument("message")
