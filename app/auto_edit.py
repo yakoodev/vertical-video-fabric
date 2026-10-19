@@ -96,7 +96,22 @@ def punch_moments(words: list[dict], peaks: list[float], duration: float) -> lis
     return [(p[1]["start"], p[1]["end"] - p[1]["start"], p[0]) for p in picked]
 
 
-def build_auto_edit(title: str, words: list[dict], peaks: list[float], duration: float, *, style: str = "hormozi") -> dict:
+def caption_y_for(settings: dict | None) -> float:
+    """Где ставить субтитры, чтобы не закрыть лицо.
+
+    В раскладке «видео сверху, вебка снизу» лицо стримера — в нижней части кадра,
+    и обычные 0.72 легли бы ему на лицо: ставим субтитры на шов, чуть выше вебки.
+    """
+    layout = (settings or {}).get("layout") or {}
+    if layout.get("mode") == "split" and layout.get("cam_pos", "top") == "bottom":
+        ratio = float(layout.get("ratio") or 0.38)
+        return round(max(0.3, 1.0 - ratio - 0.05), 3)
+    return 0.72
+
+
+def build_auto_edit(
+    title: str, words: list[dict], peaks: list[float], duration: float, *, style: str = "hormozi", caption_y: float = 0.72
+) -> dict:
     """Слои и камера автомонтажа. ``words`` — [{word, start, end}] во времени клипа."""
     layers: list[dict] = []
     hook = (title or "").strip().upper()[:60]
@@ -126,7 +141,7 @@ def build_auto_edit(title: str, words: list[dict], peaks: list[float], duration:
     if words:
         layers.append({
             "id": "auto_caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": duration, "track": 0,
-            "x": 0.5, "y": 0.72, "props": {"style": style, "maxWords": 3, "highlightWords": highlights[:40], "emoji": emojis[:20]},
+            "x": 0.5, "y": caption_y, "props": {"style": style, "maxWords": 3, "highlightWords": highlights[:40], "emoji": emojis[:20]},
         })
 
     camera: list[dict] = []
@@ -164,7 +179,9 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
         peaks = clip_waveform(store, clip_plan_id).get("peaks") or []
     except Exception:  # noqa: BLE001 - без волны наезды встанут только по паузам
         peaks = []
-    result = build_auto_edit(plan.get("title") or "", words, peaks, duration, style=style)
+    result = build_auto_edit(
+        plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y_for(plan.get("render_settings"))
+    )
     settings = dict(plan.get("render_settings") or {})
     old_layers = settings.get("layers") or []
     if keep_layers:

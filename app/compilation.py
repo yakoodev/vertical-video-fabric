@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.auto_edit import caption_y_for
 from app.clip_spec import MAX_PIECES
 from app.motion import normalize_layers
 
@@ -92,7 +93,8 @@ def build_compilation(
         offset += dur
     if words:
         layers.append({"id": "comp_caps", "type": "captions", "start": 0.0, "end": round(offset, 2), "track": 0,
-                       "x": 0.5, "y": 0.72, "props": {"style": caption_style, "maxWords": 3}})
+                       "x": 0.5, "y": caption_y_for(order[0].get("render_settings")),
+                       "props": {"style": caption_style, "maxWords": 3}})
         store.set_clip_plan_subtitles(plan["id"], {"lines": lines, "words": words, "duration": round(offset, 3), "edited": True})
 
     # Раскладку и прочие ручки берём у первого клипа (чаще всего у всех одинаковые).
