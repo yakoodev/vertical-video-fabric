@@ -2759,6 +2759,32 @@ def api_set_clip_plan_render_settings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class CompilationRequest(BaseModel):
+    plan_ids: list[int] = Field(min_length=2, max_length=12)
+    title: str = Field(default="", max_length=100)
+    countdown: bool = Field(default=True, description="#N … #1 — лучший последним")
+    caption_style: str = Field(default="hormozi", max_length=40)
+
+
+@app.post(
+    "/api/sources/{source_id}/compilation",
+    tags=["Render"],
+    summary="🧩 Компиляция «ТОП-N»: моменты подряд с номерами, субтитрами и whoosh",
+)
+def api_source_compilation(source_id: int, payload: CompilationRequest, _auth: AuthDep) -> dict:
+    from app.compilation import build_compilation
+
+    try:
+        return build_compilation(
+            store, source_id, payload.plan_ids, title=payload.title, countdown=payload.countdown,
+            caption_style=payload.caption_style,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class AutoEditRequest(BaseModel):
     style: str = Field(default="hormozi", max_length=40, description="стиль анимированных субтитров")
     keep_layers: bool = Field(default=False, description="оставить свои слои, заменить только авто-слои")

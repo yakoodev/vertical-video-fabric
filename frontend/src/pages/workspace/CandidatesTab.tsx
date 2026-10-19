@@ -1340,6 +1340,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
+  // 🧩 Компиляция избранных в один клип «ТОП-N» — открывается сразу в монтаже.
+  const compile = useMutation({
+    mutationFn: (ids: number[]) =>
+      api.post<{ clip_plan_id: number; clips: number; skipped: number[]; duration: number }>(
+        `/api/sources/${sourceId}/compilation`,
+        { plan_ids: ids, countdown: true },
+      ),
+    onSuccess: async (r) => {
+      toast.success(
+        `Компиляция из ${r.clips} моментов, ${Math.round(r.duration)} с` +
+          (r.skipped.length ? ` · не влезло ${r.skipped.length} (лимит 12 кусков)` : ""),
+      );
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      openEditor(r.clip_plan_id);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Компиляция не собралась"),
+  });
   // ⚡ Автомонтаж всех избранных подряд: речь распознаётся, где её ещё нет.
   const [autoProgress, setAutoProgress] = useState("");
   const batchAuto = useMutation({
@@ -2513,6 +2530,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             title="Каждому избранному клипу: распознать речь (если ещё нет) и ⚡ автомонтаж — хук, субтитры, эмодзи, наезды. Без ИИ."
           >
             {batchAuto.isPending ? `⚡ ${autoProgress}` : `⚡ Автомонтаж ★${favCount ? ` · ${favCount}` : ""}`}
+          </button>
+          <button
+            className="btn sm"
+            disabled={favCount < 2 || compile.isPending}
+            onClick={() => compile.mutate(plans.filter((p) => p.favorite).map((p) => p.id))}
+            title="Склеить избранные в один клип «ТОП-N»: номера обратным отсчётом, названия, субтитры, whoosh между моментами"
+          >
+            {compile.isPending ? "Собираю…" : "🧩 Компиляция ★"}
           </button>
           <button
             className="btn sm"
