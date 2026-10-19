@@ -2759,6 +2759,33 @@ def api_set_clip_plan_render_settings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class CoverComposeRequest(BaseModel):
+    t: float = Field(ge=0, description="секунда готового клипа — кадр обложки")
+    title: str = Field(min_length=1, max_length=80)
+    emoji: str = Field(default="", max_length=16)
+    style: str = Field(default="yellow", max_length=20, description="yellow | fire | white | plate")
+    y: float = Field(default=0.2, ge=0.05, le=0.9)
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/cover/compose",
+    tags=["Render"],
+    summary="🖼 Обложка с заголовком: кадр клипа + крупный титр, включается сразу",
+)
+def api_cover_compose(clip_plan_id: int, payload: CoverComposeRequest, _auth: AuthDep) -> dict:
+    from app.cover_compose import compose_cover
+    from app.motion_render import CompositorMissing
+
+    try:
+        return compose_cover(store, clip_plan_id, payload.t, payload.title, emoji=payload.emoji, style=payload.style, y=payload.y)
+    except CompositorMissing as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class CompilationRequest(BaseModel):
     plan_ids: list[int] = Field(min_length=2, max_length=12)
     title: str = Field(default="", max_length=100)

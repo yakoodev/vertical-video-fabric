@@ -1340,6 +1340,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     toast.success(`Настройки скопированы в избранные: ${targets.length}`);
   };
 
+  // 🖼 Обложка с заголовком: кадр под курсором + крупный титр (app/cover_compose.py).
+  const [coverTitle, setCoverTitle] = useState("");
+  const [coverStyle, setCoverStyle] = useState("yellow");
+  const composeCover = useMutation({
+    mutationFn: async () => {
+      const plan = activePlan;
+      if (!plan) throw new ApiError(400, "клип не открыт");
+      await flushSettings();
+      const segs = plan.segments;
+      const t = clipTimeOf(segs, videoRef.current?.currentTime ?? 0) ?? 0;
+      return api.post<{ url: string }>(`/api/clip-plans/${plan.id}/cover/compose`, {
+        t: Number(t.toFixed(2)),
+        title: coverTitle.trim() || plan.title || "СМОТРИ",
+        style: coverStyle,
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Обложка готова и включена — вшита в первые кадры");
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Обложка не получилась"),
+  });
   // 🧩 Компиляция избранных в один клип «ТОП-N» — открывается сразу в монтаже.
   const compile = useMutation({
     mutationFn: (ids: number[]) =>
@@ -3400,6 +3423,32 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               title="Обложка"
               badge={cover.mode === "none" ? "нет" : cover.mode === "frame" ? "кадр" : "картинка"}
             >
+              <div className="cover-compose">
+                <span className="li-cap">✨ Обложка с заголовком — кадр под курсором + крупный текст</span>
+                <div className="li-row">
+                  <input
+                    className="input li-grow"
+                    placeholder={activePlan?.title ? activePlan.title.toUpperCase() : "ЗАГОЛОВОК"}
+                    value={coverTitle}
+                    onChange={(e) => setCoverTitle(e.target.value)}
+                    maxLength={80}
+                  />
+                  <select className="input" value={coverStyle} onChange={(e) => setCoverStyle(e.target.value)}>
+                    <option value="yellow">Жёлтый</option>
+                    <option value="fire">Огонь</option>
+                    <option value="white">Белый</option>
+                    <option value="plate">Плашка</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={!activePlan || composeCover.isPending}
+                  onClick={() => composeCover.mutate()}
+                >
+                  {composeCover.isPending ? "Рисую…" : "🖼 Сделать обложку"}
+                </button>
+              </div>
               <div className="seg-toggle" role="radiogroup" aria-label="Источник обложки">
                 {([
                   ["none", "Нет"],

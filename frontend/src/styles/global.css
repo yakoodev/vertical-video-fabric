@@ -3953,3 +3953,4 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .bz-arm { stroke: rgba(255, 255, 255, 0.45); stroke-width: 1; }
 .bz-handle { fill: #fff; stroke: #7c5cff; stroke-width: 2; cursor: grab; }
 .bz-value { font-size: 10.5px; }
+.cover-compose { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: 10px; margin-bottom: 8px; }
