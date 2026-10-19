@@ -41,7 +41,7 @@ STRONG_STEMS = ("бляд", "пизд", "хуй", "хуё", "ебат", "еба�
 
 HOOK_Y = 0.13
 EMOJI_GAP_SEC = 4.0
-PUNCH_EVERY_SEC = 5.0
+PUNCH_EVERY_SEC = 6.5
 
 _PUNCT = re.compile(r"[^\w\-]+", re.UNICODE)
 
