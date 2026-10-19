@@ -429,6 +429,60 @@ def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     return ImageResult(data=data, mime_type="image/jpeg", info={"n": n})
 
 
+
+# ---------------------------------------------------------------- монтаж «кнопками»
+
+
+def h_suggest_cuts(ctx: ToolContext, args: dict) -> dict:
+    from app.cuts import suggest_for_plan
+
+    mode = args.get("mode") if args.get("mode") in ("pauses", "fillers", "both") else "both"
+    return suggest_for_plan(ctx.store, ctx.plan_id, mode, float(_num(args.get("min_pause"), 0.45) or 0.45),
+                            float(_num(args.get("keep_pad"), 0.12) or 0.12))
+
+
+def h_apply_cuts(ctx: ToolContext, args: dict) -> dict:
+    from app.cuts import cuts_total, normalize_cuts, validate_cuts
+
+    problems = validate_cuts(args.get("cuts") or [])
+    if problems:
+        raise ToolError("вырезы не приняты", problems)
+    ctx.before_change()
+    cuts = normalize_cuts(args.get("cuts") or [])
+    settings = dict(_current_render(ctx))
+    settings["cuts"] = cuts
+    ctx.store.set_clip_plan_render_settings(ctx.plan_id, settings)
+    return {"cuts": len(cuts), "saved_sec": round(cuts_total(cuts), 2)}
+
+
+def h_auto_edit(ctx: ToolContext, args: dict) -> dict:
+    from app.auto_edit import apply_auto_edit
+
+    ctx.before_change()
+    return apply_auto_edit(ctx.store, ctx.plan_id, style=str(args.get("style") or "hormozi"),
+                           keep_layers=args.get("keep_layers", True) is not False)
+
+
+def h_compose_cover(ctx: ToolContext, args: dict) -> dict:
+    from app.cover_compose import compose_cover
+
+    ctx.before_change()
+    return compose_cover(ctx.store, ctx.plan_id, float(_num(args.get("t"), 0.0) or 0.0), str(args.get("title") or ""),
+                         emoji=str(args.get("emoji") or ""), style=str(args.get("style") or "yellow"),
+                         y=float(_num(args.get("y"), 0.2) or 0.2))
+
+
+def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
+    from app.compilation import build_compilation
+
+    ids = [int(x) for x in args.get("clip_ids") or []]
+    if len(ids) < 2:
+        raise ToolError("нужно хотя бы два clip_ids")
+    first = ctx.store.get_clip_plan(ids[0])
+    return build_compilation(ctx.store, first["source_id"], ids, title=str(args.get("title") or ""),
+                             countdown=args.get("countdown", True) is not False)
+
+
 def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True) -> tuple[bytes, str, dict]:
     """Кадр готового вида на клиповом времени ``t``.
 
@@ -1243,6 +1297,43 @@ def _build_registry() -> list[Tool]:
             _obj({"edits": {"type": "array", "items": _obj({"i": {"type": "integer"}, "text": {"type": "string"}},
                                                            ["i", "text"])}}, ["edits"]),
             h_edit_subtitle_lines, mutating=True, label=lambda a: f"Правлю субтитры ({len(a.get('edits') or [])} стр.)",
+        ),
+        Tool(
+            "suggest_cuts", "Ищу паузы и паразиты",
+            "Найти паузы и слова-паразиты по словам клипа (ничего не меняет). mode: pauses|fillers|both. "
+            "Длинные паузы помечены risky — в реакциях это часто сам момент, не вырезай их вслепую. / Suggest jump cuts.",
+            _obj({"mode": {"type": "string"}, "min_pause": {"type": "number"}, "keep_pad": {"type": "number"}}),
+            h_suggest_cuts, label=lambda a: "Ищу паузы и слова-паразиты",
+        ),
+        Tool(
+            "apply_cuts", "Вырезаю паузы",
+            "Сохранить вырезы [{start,end}] в секундах клипа ДО вырезов; [] — вернуть всё. / Save jump cuts.",
+            _obj({"cuts": {"type": "array", "items": {"type": "object", "properties": {
+                "start": {"type": "number"}, "end": {"type": "number"}}}}}, ["cuts"]),
+            h_apply_cuts, mutating=True, label=lambda a: f"Вырезаю {len(a.get('cuts') or [])} кусочков",
+        ),
+        Tool(
+            "auto_edit", "Автомонтаж",
+            "Без ИИ за секунду: хук-титр, анимированные субтитры с эмодзи, наезды и удары по речи. "
+            "Хорошая основа — дальше правь слои. style — стиль субтитров. / Rule-based auto edit.",
+            _obj({"style": {"type": "string"}, "keep_layers": {"type": "boolean"}}),
+            h_auto_edit, mutating=True, label=lambda a: "Делаю автомонтаж",
+        ),
+        Tool(
+            "compose_cover", "Рисую обложку",
+            "Обложка: кадр клипа в момент t + крупный заголовок (2–4 слова), style yellow|fire|white|plate; "
+            "включается сразу и вшивается в первые кадры. / Compose a cover with a title.",
+            _obj({"t": {"type": "number"}, "title": {"type": "string"}, "emoji": {"type": "string"},
+                  "style": {"type": "string"}, "y": {"type": "number"}}, ["t", "title"]),
+            h_compose_cover, mutating=True, label=lambda a: f"Обложка «{(a.get('title') or '')[:30]}»",
+        ),
+        Tool(
+            "make_compilation", "Собираю компиляцию",
+            "Новый клип «ТОП-N» из клипов одного проекта: номера обратным отсчётом, названия, субтитры, whoosh. "
+            "clip_ids — от худшего к лучшему не важно, countdown ставит лучший (первый в списке) последним. / Compilation.",
+            _obj({"clip_ids": {"type": "array", "items": {"type": "integer"}}, "title": {"type": "string"},
+                  "countdown": {"type": "boolean"}}, ["clip_ids"]),
+            h_make_compilation, mutating=True, scope="global", label=lambda a: "Собираю компиляцию",
         ),
         Tool(
             "set_transition", "Ставлю переход",

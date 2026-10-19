@@ -50,6 +50,10 @@ bearer_token_env_var = "VVF_TOKEN"
 | `get_transcript(clip_id, from_sec?, to_sec?)` | реплики исходника (время исходника) — для подрезки |
 | `view_frame(clip_id, t, with_layers?)` | **картинка** кадра готового вида (слои + камера) — смотри, что получилось |
 | `contact_sheet(clip_id, n?)` | **сетка** из n кадров по всему клипу — ритм графики и перегруз видно сразу (`vvf.py contact`) |
+| `suggest_cuts`, `apply_cuts` | найти и вырезать паузы/слова-паразиты (длинные паузы помечены `risky` — не режь вслепую) |
+| `auto_edit(clip_id, style?)` | автомонтаж без ИИ: хук, субтитры с эмодзи, наезды и удары по речи — основа для правки |
+| `compose_cover(clip_id, t, title, style?)` | обложка: кадр + крупный заголовок, включается сразу |
+| `make_compilation(clip_ids, title?)` | новый клип «ТОП-N» из нескольких клипов проекта |
 | `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
 | `set_camera(keys)` | все ключи камеры разом (наезды) |
 | `get_motion_reference` | шпаргалка по слоям |
