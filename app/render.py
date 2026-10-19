@@ -963,7 +963,7 @@ class ClipRenderService:
             af = (
                 f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
                 f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
-                f":offset={measured['target_offset']}:linear=true,aresample=48000"
+                f":offset={measured['target_offset']}:linear=true,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
             )
             _run_ffmpeg(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
