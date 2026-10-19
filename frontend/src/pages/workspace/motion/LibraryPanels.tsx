@@ -44,6 +44,15 @@ const DEMO_WORDS = "это был самый лучший момент всег�
   .split(" ")
   .map((w, i) => ({ t0: 0.2 + i * 0.32, t1: 0.2 + i * 0.32 + 0.28, w }));
 
+// Сообщения-образец для карточки «Чат стрима».
+const DEMO_CHAT = [
+  ["benzin_fan", "#ff6b6b", "АХАХАХ КЕК"],
+  ["yakoodev", "#8b5cf6", "это легендарно"],
+  ["ChefaChefa", "#22c55e", "W W W"],
+  ["eklsn99", "#38bdf8", "клип в студию!!"],
+  ["murrcka", "#f59e0b", "ору"],
+].map(([user, color, text], i) => ({ t: 0.1 + i * 0.25, user, color, text, fragments: [{ text }], badges: [] }));
+
 const PREVIEW_W = 135;
 const PREVIEW_H = 240;
 
@@ -65,7 +74,7 @@ function TemplatePreview({ template, params, autoplay = false }: { template: Mot
     const paint = (t: number) => {
       ctx.clearRect(0, 0, cv.width, cv.height);
       try {
-        drawFrame(ctx, { layers: built.layers.filter((l) => l.type !== "audio"), words: DEMO_WORDS }, t, env);
+        drawFrame(ctx, { layers: built.layers.filter((l) => l.type !== "audio"), words: DEMO_WORDS, chat: DEMO_CHAT }, t, env);
       } catch {
         /* шаблон без данных (субтитры без слов) — просто пустая карточка */
       }
