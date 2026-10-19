@@ -42,10 +42,11 @@ const PREVIEW_W = 135;
 const PREVIEW_H = 240;
 
 /** Мини-кадр 9:16: на наведении шаблон проигрывается по кругу, иначе стоит «плакат». */
-function TemplatePreview({ template }: { template: MotionTemplate }) {
+function TemplatePreview({ template, params, autoplay = false }: { template: MotionTemplate; params?: TemplateParams; autoplay?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const [hover, setHover] = useState(false);
-  const built = useMemo(() => template.build(defaultsOf(template), 0), [template]);
+  const [hoverState, setHover] = useState(false);
+  const hover = autoplay || hoverState;
+  const built = useMemo(() => template.build(params ?? defaultsOf(template), 0), [template, params]);
   useEffect(() => {
     const cv = ref.current;
     const ctx = cv?.getContext("2d");
@@ -81,7 +82,90 @@ function TemplatePreview({ template }: { template: MotionTemplate }) {
   );
 }
 
+const NEWLINE = String.fromCharCode(10);
+
+/** Настройка шаблона перед вставкой: поля параметров и живое превью. */
+function TemplateDialog({ template, onClose, onInsert }: { template: MotionTemplate; onClose: () => void; onInsert: AddLayers }) {
+  const [params, setParams] = useState<TemplateParams>(() => defaultsOf(template));
+  const set = (name: string, value: string | number | boolean) => setParams((p) => ({ ...p, [name]: value }));
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal tpl-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="pub-head">
+          <h3>{template.name}</h3>
+          <button className="pub-x" title="Закрыть" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="tpl-dialog-body">
+          <div className="tpl-dialog-preview">
+            <TemplatePreview template={template} params={params} autoplay />
+          </div>
+          <div className="tpl-dialog-fields">
+            <p className="muted">{template.description}</p>
+            {template.params.map((p) => {
+              const v = params[p.name] ?? p.default;
+              if (p.type === "bool")
+                return (
+                  <label key={p.name} className="switch">
+                    <input type="checkbox" checked={Boolean(v)} onChange={(e) => set(p.name, e.target.checked)} />
+                    <span className="switch-track" />
+                    <span>{p.label}</span>
+                  </label>
+                );
+              return (
+                <label key={p.name} className="field">
+                  <span>{p.label}</span>
+                  {p.type === "select" ? (
+                    <select className="input" value={String(v)} onChange={(e) => set(p.name, e.target.value)}>
+                      {(p.options ?? []).map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                  ) : p.type === "color" ? (
+                    <input type="color" value={String(v).slice(0, 7)} onChange={(e) => set(p.name, e.target.value)} />
+                  ) : p.type === "number" ? (
+                    <input
+                      className="input"
+                      type="number"
+                      value={Number(v)}
+                      min={p.min}
+                      max={p.max}
+                      onChange={(e) => set(p.name, Number(e.target.value))}
+                    />
+                  ) : String(v).length > 40 || String(v).includes(NEWLINE) ? (
+                    <textarea className="input" rows={3} value={String(v)} onChange={(e) => set(p.name, e.target.value)} />
+                  ) : (
+                    <input className="input" value={String(v)} onChange={(e) => set(p.name, e.target.value)} />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <div className="tpl-dialog-foot">
+          <span className="muted">{template.category} · {template.duration} с</span>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => {
+              const r = template.build(params, 0);
+              onInsert(r.layers, r.camera);
+              onClose();
+            }}
+          >
+            ＋ Вставить в клип
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TemplatesPanel({ onAdd }: { onAdd: AddLayers }) {
+  const [tuning, setTuning] = useState<MotionTemplate | null>(null);
   const [cat, setCat] = useState<string>("Все");
   const [q, setQ] = useState("");
   const list = TEMPLATES.filter(
@@ -117,12 +201,26 @@ export function TemplatesPanel({ onAdd }: { onAdd: AddLayers }) {
             }}
           >
             <TemplatePreview template={t} />
+            {t.params.length ? (
+              <span
+                className="lib-tpl-tune"
+                role="button"
+                title="Настроить текст, цвета и числа перед вставкой"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTuning(t);
+                }}
+              >
+                ⚙
+              </span>
+            ) : null}
             <span className="lib-tpl-name">{t.name}</span>
             <span className="lib-tpl-desc muted">{t.description}</span>
           </button>
         ))}
         {!list.length ? <div className="muted">Ничего не нашлось</div> : null}
       </div>
+      {tuning ? <TemplateDialog template={tuning} onClose={() => setTuning(null)} onInsert={onAdd} /> : null}
     </div>
   );
 }

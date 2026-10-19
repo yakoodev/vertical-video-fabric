@@ -27,6 +27,8 @@ import {
   drawSelection,
   duplicateLayer,
   handleAt,
+  LAYER_ICON,
+  layerTitle,
   layerAt,
   placeLayers,
   setAnimated,
@@ -2812,6 +2814,42 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 onSeek={(t) => seekClipTime(t, false)}
               />
             ) : null}
+            <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>
+              {layers.length ? (
+                <div className="ed-layer-list">
+                  {[...layers]
+                    .sort((a, b) => a.start - b.start)
+                    .map((l) => (
+                      <div
+                        key={l.id}
+                        className={`ed-layer-row${selectedLayerId === l.id ? " on" : ""}${l.hidden ? " off" : ""}`}
+                        onClick={() => {
+                          setTlSelected({ kind: "layer", id: l.id });
+                          const now = clipTimeExact();
+                          if (now < l.start || now > l.end) seekClipTime(l.start + Math.min(0.6, (l.end - l.start) / 2), false);
+                        }}
+                      >
+                        <span className="ed-layer-ico">{LAYER_ICON[l.type]}</span>
+                        <span className="ed-layer-name">{layerTitle(l)}</span>
+                        <span className="mono muted ed-layer-time">{formatDuration(l.start)}</span>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          title={l.hidden ? "Показать" : "Скрыть"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLayers((prev) => prev.map((x) => (x.id === l.id ? ({ ...x, hidden: !x.hidden } as Layer) : x)));
+                          }}
+                        >
+                          {l.hidden ? "🙈" : "👁"}
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="muted li-note">Слоёв пока нет — возьмите шаблон, текст или стикер в библиотеке слева, или попросите ИИ.</div>
+              )}
+            </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
               <CameraPanel
                 words={(planSubs.data?.words ?? []) as SubtitleWord[]}
