@@ -124,8 +124,51 @@ def _download_first_usable(
             # Превьюшка 161×81 на вертикальном кадре — мусор: удаляем и идём дальше.
             store.delete_montage_asset(asset["id"])
             continue
+        if not image_matches(asset, query, client):
+            # Поиск по имени приносит мимо (на «Олег Монгол» — фото БелАЗа): Gemini смотрит.
+            store.delete_montage_asset(asset["id"])
+            continue
         return {**asset, "origin": "found", "source": found["source"]}
     return None
+
+
+MATCH_PROMPT = (
+    "Это картинка, найденная в интернете по запросу «{q}» для вставки в смешной ролик. "
+    "Она действительно показывает то, что просили (тот самый человек/персонаж/мем/предмет), "
+    "а не что-то постороннее? Ответь ТОЛЬКО JSON: {{\"match\": true|false}}."
+)
+
+
+def image_matches(asset: dict, query: str, client: GeminiClient | None = None) -> bool:
+    """Gemini смотрит на скачанную картинку: она про запрос или мимо.
+
+    Нет Gemini или проверка сломалась — считаем, что подходит (лучше мем, чем
+    ничего); выкидываем только явное «нет»."""
+    import base64
+    import json
+    import subprocess
+
+    if client is None:
+        if not settings.gemini_api_key:
+            return True
+        client = GeminiClient()
+    try:
+        frame = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(asset["file_path"]), "-frames:v", "1",
+             "-vf", "scale='min(512,iw)':-2", "-f", "image2", "-c:v", "mjpeg", "-"],
+            capture_output=True, check=True, timeout=30,
+        ).stdout
+        response = client.generate_content(
+            settings.gemini_text_model,
+            {"contents": [{"role": "user", "parts": [
+                {"text": MATCH_PROMPT.format(q=query[:120])},
+                {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(frame).decode()}},
+            ]}], "generationConfig": {"responseMimeType": "application/json", "temperature": 0}},
+        )
+        text = "".join(p.get("text", "") for p in response["candidates"][0]["content"]["parts"])
+        return json.loads(text[text.index("{"):text.rindex("}") + 1]).get("match") is not False
+    except Exception:  # noqa: BLE001 - проверка не главное
+        return True
 
 
 def obtain_assets(store: Any, wishes: list[dict], client: GeminiClient | None = None) -> list[dict]:
