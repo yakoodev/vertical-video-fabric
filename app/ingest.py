@@ -542,6 +542,11 @@ def _download_with_ytdlp(
     command_args.append(url)
     try:
         proc = _run_ytdlp(command_args)
+        if proc.returncode != 0 and settings.download_proxy_url:
+            # Напрямую не вышло (CDN режет соединение) — повторяем через прокси.
+            # Трафик через прокси чужой: из одинаковых по высоте берём меньший битрейт.
+            _remove_partials(output_basename)
+            proc = _run_ytdlp(["--proxy", settings.download_proxy_url, "-S", "res,fps,+br", *command_args])
     except DownloadCancelled:
         _remove_partials(output_basename)
         raise

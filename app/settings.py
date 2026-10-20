@@ -99,6 +99,9 @@ class Settings:
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         # HTTP(S)-прокси для запросов к Gemini (Google режет запросы из РФ).
         self.gemini_proxy_url = os.getenv("GEMINI_PROXY_URL", "").strip()
+        # Прокси для скачивания исходников, когда напрямую не выходит (видео-CDN
+        # Twitch бывает недоступен). Только запасной путь: сначала качаем напрямую.
+        self.download_proxy_url = os.getenv("DOWNLOAD_PROXY_URL", "").strip()
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()

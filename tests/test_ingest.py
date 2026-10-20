@@ -754,3 +754,32 @@ def test_classify_source_url_detects_smotvibe():
 def test_classify_source_url_detects_twitch():
     assert classify_source_url("https://www.twitch.tv/videos/123456789") == "twitch_url"
     assert classify_source_url("https://clips.twitch.tv/GoodClipSlug") == "twitch_url"
+
+
+def test_twitch_download_retries_through_proxy_when_direct_fails(tmp_path, monkeypatch):
+    """CDN Twitch режет соединение напрямую — повтор через DOWNLOAD_PROXY_URL, меньший битрейт."""
+    import subprocess
+
+    monkeypatch.setattr(settings, "source_dir", tmp_path)
+    monkeypatch.setattr(settings, "download_proxy_url", "http://proxy.example:3128")
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if "--proxy" not in args:
+            return subprocess.CompletedProcess(args, 1, "", "ERROR: ffmpeg exited with code 1")
+        template = args[args.index("-o") + 1]
+        Path(template.replace("%(ext)s", "mp4")).write_bytes(b"video")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(ingest_module, "_run_ytdlp", fake_run)
+    stored = ingest_module.download_twitch_url("https://www.twitch.tv/videos/2905714957")
+    assert stored.path.exists() and len(calls) == 2
+    assert calls[1][:4] == ["--proxy", "http://proxy.example:3128", "-S", "res,fps,+br"]
+
+
+def test_download_error_shows_ytdlp_error_lines():
+    from app.ingest import _safe_error
+
+    log = "[twitch:vod] Extracting\n" * 40 + "ERROR: ffmpeg exited with code 1\n  File x"
+    assert _safe_error(log) == "ERROR: ffmpeg exited with code 1"
