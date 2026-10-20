@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import re
 import logging
 import threading
 import time
@@ -370,7 +371,7 @@ def run_agent(
             )}]})
             continue
         if not calls or not tools_on:
-            final_text = _parts_text(parts)
+            final_text = _clean_reply(_parts_text(parts))
             break
         said = _parts_text(parts)
         if said:
@@ -411,6 +412,19 @@ def run_agent(
     if not final_text:
         final_text = _fallback_summary(steps)
     return {"text": final_text, "steps": steps, "changed": ctx.changed, "model": used_model, "rounds": rounds}
+
+
+_ECHO_RE = re.compile(
+    r"[^.!?\n]*(?:view_frame|contact_sheet|Вызывай инструменты|Выше \d+ картинк)[^.!?\n]*[.!?]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_reply(text: str) -> str:
+    """Убрать из ответа эхо служебных подсказок («Выше 2 картинки. Вызывай инструменты…»):
+    Gemini иногда пересказывает их владельцу."""
+    cleaned = re.sub(r"^\W*Успешно!\s*", "", _ECHO_RE.sub("", text).lstrip(" .\n"))
+    return cleaned or text
 
 
 def _brief_args(args: dict) -> dict:

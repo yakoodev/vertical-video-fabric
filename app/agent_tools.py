@@ -1037,8 +1037,62 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"вставок уже {MAX_INSERTS} — больше нельзя; для картинок используй слой image")
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason") if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
+    note = _fit_pip_insert(render, entry, asset) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
-    return {"ok": True, "inserts": fresh["inserts"]}
+    out: dict = {"ok": True, "inserts": fresh["inserts"]}
+    if note:
+        out["warnings"] = [note]
+    return out
+
+
+CAPTION_HALF = 0.075  # половина высоты двух строк субтитров в долях кадра
+HOOK_BOTTOM = 0.2
+
+
+def _fit_pip_insert(render: dict, entry: dict, asset: dict) -> str | None:
+    """Окошко мема не должно лечь на субтитры и хук: ставим его над субтитрами
+    и, если не влезает, уменьшаем. Вставки ложатся поверх субтитров при рендере,
+    а агент их в view_frame не видит — поэтому подгоняем здесь."""
+    from app.montage_assets import MIN_INSERT_SCALE, PIP_WIDTH
+
+    at = float(entry.get("at") or 0.0)
+    end = at + float(entry.get("duration") or 1.5)
+    layers = [l for l in render.get("layers") or [] if not l.get("hidden")]
+
+    def active(l: dict) -> bool:
+        return float(l.get("start") or 0) < end and float(l.get("end") or 0) > at
+
+    caps = [l for l in layers if l.get("type") == "captions" and active(l)]
+    if not caps:
+        return None
+    cap_top = float(caps[0].get("y", 0.68)) - CAPTION_HALF
+    moved = ""
+    hook = next((l for l in layers if l.get("id") == "auto_hook" and active(l)), None)
+    if hook and cap_top - 0.015 - HOOK_BOTTOM < 0.12:
+        # Между хуком и субтитрами мему не уместиться — пусть выходит сразу после хука.
+        at = round(float(hook.get("end") or 0), 2)
+        entry["at"] = at
+        hook = None
+        moved = f"сдвинул на {at} с (после хука), "
+    top = HOOK_BOTTOM if hook else 0.07
+    room = cap_top - 0.015 - top
+    if room < 0.08:
+        return None  # субтитры у самого верха — не трогаем, пусть решает агент
+    aw, ah = float(asset.get("width") or 0), float(asset.get("height") or 0)
+    ratio = ah / aw if aw > 0 and ah > 0 else 1.0  # высота / ширина
+    scale = float(entry.get("scale") or PIP_WIDTH)
+    height = scale * 1080 * ratio / 1920
+    y = float(entry.get("y") if entry.get("y") is not None else 0.5)
+    if y - height / 2 >= top and y + height / 2 <= cap_top - 0.015:
+        return f"вставку {moved.rstrip(', ')}" if moved else None
+    if height > room:
+        scale = max(MIN_INSERT_SCALE, int(room * 1920 / (1080 * ratio) * 1000) / 1000)
+        height = scale * 1080 * ratio / 1920
+    entry["scale"] = scale
+    entry["y"] = round(cap_top - 0.015 - height / 2, 3)
+    entry["x"] = 0.5
+    return (f"вставку {moved}подвинул/уменьшил, чтобы не закрыть субтитры и хук: y={entry['y']}, "
+            f"scale={entry['scale']}")
 
 
 def h_remove_insert(ctx: ToolContext, args: dict) -> dict:

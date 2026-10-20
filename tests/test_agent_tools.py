@@ -206,3 +206,23 @@ def test_emoji_is_banned_for_the_agent(tmp_path, monkeypatch):
     assert any("эмодзи" in w for w in out["warnings"])
     layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
     assert layers[0]["props"]["text"] == "ОН ЭТО СДЕЛАЛ"
+
+
+def test_pip_insert_is_fitted_above_captions():
+    """Гифка-окошко не ложится на субтитры: агент её не видит в view_frame."""
+    from app.agent_tools import _fit_pip_insert
+
+    render = {"layers": [{"id": "auto_caps", "type": "captions", "start": 0, "end": 40, "y": 0.365},
+                         {"id": "auto_hook", "type": "text", "start": 0, "end": 3, "y": 0.13}]}
+    entry = {"at": 35.5, "duration": 2.5, "x": 0.4, "y": 0.245, "scale": 0.6}
+    note = _fit_pip_insert(render, entry, {"width": 498, "height": 278})
+    assert note and entry["x"] == 0.5
+    height = entry["scale"] * 1080 * 278 / 498 / 1920
+    assert entry["y"] + height / 2 <= 0.365 - 0.075 + 1e-6
+    assert entry["y"] - height / 2 >= 0.07 - 1e-6
+    # Во время хука между ним и субтитрами места нет — мем выходит после хука.
+    early = {"at": 1.0, "duration": 2.0, "y": 0.25, "scale": 0.6}
+    note = _fit_pip_insert(render, early, {"width": 500, "height": 500})
+    assert early["at"] == 3.0 and "после хука" in note
+    h2 = early["scale"] * 1080 / 1920
+    assert early["y"] - h2 / 2 >= 0.07 - 1e-6 and early["y"] + h2 / 2 <= 0.29 + 1e-6
