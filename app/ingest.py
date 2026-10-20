@@ -520,9 +520,14 @@ def _download_with_ytdlp(
         "--socket-timeout",
         "20",
         "--retries",
-        "3",
+        "5",
+        # Многочасовой VOD — тысячи фрагментов: при плохой сети 3 попыток мало.
         "--fragment-retries",
-        "3",
+        "20",
+        "--retry-sleep",
+        "fragment:exp=1:20",
+        "--concurrent-fragments",
+        "4",
         "--file-access-retries",
         "3",
         # One progress line per update instead of \r-rewrites, so the reader below
@@ -768,8 +773,13 @@ def _float_or_zero(value) -> float:
 
 
 def _safe_error(exc) -> str:
+    """Причина ошибки для UI: строки ERROR из лога yt-dlp (они в конце, после
+    болтовни про метаданные), иначе — хвост текста."""
     text = str(exc or "").strip()
-    return text[:500] or "unknown error"
+    errors = [line for line in text.splitlines() if line.startswith("ERROR")]
+    if errors:
+        return "\n".join(errors)[-500:]
+    return (text[-500:] if len(text) > 500 else text) or "unknown error"
 
 
 def _retryable_http_error(exc: Exception) -> bool:
