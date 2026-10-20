@@ -775,6 +775,8 @@ def _request_with_retries(method: str, url: str, **kwargs) -> httpx.Response:
             continue
         if response.status_code not in retry_statuses or attempt + 1 >= attempts:
             return response
+        if _billing_exhausted(_gemini_error_detail(response)):
+            return response  # кредиты кончились — ждать бесполезно, сразу понятная ошибка
         last_response = response
         time.sleep(_retry_delay(attempt, response))
     if last_response is not None:
@@ -809,7 +811,21 @@ def _raise_gemini_status(response: httpx.Response, fallback: str) -> None:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = _gemini_error_detail(response)
+        if _billing_exhausted(detail):
+            raise GeminiBillingError(
+                "Закончились кредиты Gemini — пополните баланс проекта в AI Studio (ai.studio → Billing). "
+                "Без них не работают анализ, ИИ-выбор и ИИ-монтаж."
+            ) from exc
         raise RuntimeError(f"{fallback}: {detail}") from exc
+
+
+class GeminiBillingError(RuntimeError):
+    """Кредиты/квота Gemini кончились — нужно действие владельца, повтор не поможет."""
+
+
+def _billing_exhausted(detail: str) -> bool:
+    text = (detail or "").lower()
+    return any(marker in text for marker in ("prepayment credits are depleted", "billing", "credits"))
 
 
 def _gemini_error_detail(response: httpx.Response) -> str:
