@@ -281,7 +281,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
             if len(str(props.get("text") or "")) > 60:
                 warnings.append(f"{lid}: длинный титр — на экране читают 3–6 слов")
         start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
-        if duration and end > duration + 0.05:
+        whole_clip = layer.get("type") == "captions" or start <= 0.05
+        if duration and end > duration + 0.05 and not (whole_clip and start < duration):
+            # Слой «на весь клип» (субтитры, плашка с 0 с) просто обрежется по концу — не шум.
             warnings.append(f"{lid}: заканчивается на {end:.2f} с, а клип длится {duration:.2f} с")
         if textual and end - start < 0.6:
             warnings.append(f"{lid}: титр виден {end - start:.2f} с — не успеют прочитать")
