@@ -91,7 +91,8 @@ CRAFT = """\
    • звук ровно на слово: удар sfx:kenney-impact/impactPunch_heavy_001.ogg или
      sfx:generated/boom.ogg (volume 0.4–0.6); вжух sfx:generated/whoosh.ogg на смену темы;
    • наезд: оставь наезд auto_edit или поставь свой (set_camera ЗАМЕНЯЕТ все ключи — передавай
-     вместе с существующими).
+     вместе с существующими). Новым ключам наезда НЕ ставь x/y — камера сама зумит в героя
+     так, что он не заезжает под субтитры.
 4. Мем или гифка из интернета на 1–2 самых смешных/шоковых реакции (если владелец не против):
    search_web_images (free_only:false; запрос по сути реакции, лучше по-английски: «shocked cat
    reaction gif», «crying laughing meme», «sad hamster meme») → выбери кандидата с говорящим

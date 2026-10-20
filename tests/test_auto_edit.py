@@ -63,3 +63,26 @@ def test_apply_auto_edit_places_punches_in_finished_time_with_transition(tmp_pat
     assert out["duration"] == pytest.approx(19.5)
     camera = store.get_clip_plan(plan["id"])["render_settings"]["camera"]
     assert camera and camera[0]["t"] == pytest.approx(14.44)  # 15.0 − наплыв 0.5 − 0.06
+
+
+def test_zoom_keeps_subject_edge_next_to_text_in_place():
+    """Наезд в героя: макушка (субтитры над ним) остаётся на месте и не заезжает под текст."""
+    import pytest
+
+    from app.ai.subject_box import camera_center, zoom_anchor
+
+    box = {"x0": 0.31, "y0": 0.43, "x1": 1.0, "y1": 0.96}
+    anchor = zoom_anchor(box, captions_y=0.37)
+    assert anchor["y"] == 0.43
+    for zoom in (1.18, 1.3):
+        c = camera_center(anchor, zoom)
+        assert 0.5 + (anchor["y"] - c["y"]) * zoom == pytest.approx(0.43, abs=1e-3)
+        assert 0.5 + (anchor["x"] - c["x"]) * zoom == pytest.approx(anchor["x"], abs=1e-3)
+    assert camera_center(anchor, 1.0) == {"x": 0.5, "y": 0.5}
+    # Субтитры под героем — на месте низ тела.
+    assert zoom_anchor({"x0": 0.2, "y0": 0.2, "x1": 0.8, "y1": 0.6}, captions_y=0.7)["y"] == 0.6
+
+    words = _words("я хочу столько денег чтобы взять ипотеку это пиздец как страшно " * 3)
+    result = build_auto_edit("Клип", words, [], words[-1]["end"] + 1, caption_y=0.37, anchor=anchor)
+    zoomed = [k for k in result["camera"] if k["zoom"] > 1]
+    assert zoomed and all(k["y"] < 0.5 for k in zoomed)

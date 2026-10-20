@@ -138,3 +138,25 @@ def text_positions(box: dict | None, fallback_caption_y: float = DEFAULT_CAPTION
     else:
         punch_y = 0.3
     return {"captions_y": captions_y, "punchline_y": punch_y, "subject": box}
+
+
+def zoom_anchor(box: dict | None, captions_y: float) -> dict | None:
+    """Точка кадра, которая при наезде стоит на месте.
+
+    Камера по умолчанию зумит в центр кадра — герой снизу растёт вверх и
+    заезжает под субтитры над ним (владелец: «субтитры опять на персонаже»).
+    Держим на месте край героя со стороны текста: макушку, если субтитры над
+    ним, или низ тела, если под ним; по горизонтали — центр героя.
+    """
+    if not box:
+        return None
+    ay = box["y0"] if captions_y < box["y0"] else box["y1"]
+    return {"x": round((box["x0"] + box["x1"]) / 2, 4), "y": round(ay, 4)}
+
+
+def camera_center(anchor: dict | None, zoom: float) -> dict:
+    """x, y ключа камеры (точка, встающая в центр кадра), при которых ``anchor``
+    при этом ``zoom`` остаётся на своём месте: 0.5 + (a − c)·zoom = a."""
+    if not anchor or zoom <= 1.0:
+        return {"x": 0.5, "y": 0.5}
+    return {k: round(anchor[k] - (anchor[k] - 0.5) / zoom, 4) for k in ("x", "y")}

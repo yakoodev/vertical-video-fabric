@@ -111,9 +111,21 @@ def caption_y_for(settings: dict | None) -> float:
 
 
 def build_auto_edit(
-    title: str, words: list[dict], peaks: list[float], duration: float, *, style: str = "hormozi", caption_y: float = 0.72
+    title: str,
+    words: list[dict],
+    peaks: list[float],
+    duration: float,
+    *,
+    style: str = "hormozi",
+    caption_y: float = 0.72,
+    anchor: dict | None = None,
 ) -> dict:
-    """Слои и камера автомонтажа. ``words`` — [{word, start, end}] во времени клипа."""
+    """Слои и камера автомонтажа. ``words`` — [{word, start, end}] во времени клипа.
+
+    ``anchor`` — точка, которая при наезде стоит на месте (``subject_box.zoom_anchor``):
+    герой растёт в сторону от текста, а не под него."""
+    from app.ai.subject_box import camera_center
+
     layers: list[dict] = []
     hook = (title or "").strip().upper()[:60]
     if hook:
@@ -150,10 +162,11 @@ def build_auto_edit(
         zoom = 1.3 if big else 1.18
         hold = min(1.3, max(0.6, length + 0.5))
         t0 = max(0.0, t - 0.06)
+        at = camera_center(anchor, zoom)
         camera += [
             {"t": round(t0, 3), "zoom": 1.0, "ease": "outCubic"},
-            {"t": round(t0 + 0.14, 3), "zoom": zoom, "shake": 0.6 if big else 0.0, "ease": "linear"},
-            {"t": round(t0 + 0.14 + hold, 3), "zoom": zoom, "shake": 0.0, "ease": "inOutCubic"},
+            {"t": round(t0 + 0.14, 3), "zoom": zoom, **at, "shake": 0.6 if big else 0.0, "ease": "linear"},
+            {"t": round(t0 + 0.14 + hold, 3), "zoom": zoom, **at, "shake": 0.0, "ease": "inOutCubic"},
             {"t": round(min(duration, t0 + 0.44 + hold), 3), "zoom": 1.0},
         ]
         if big:
@@ -187,16 +200,20 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
     except Exception:  # noqa: BLE001 - без волны наезды встанут только по паузам
         peaks = []
     caption_y = caption_y_for(plan.get("render_settings"))
+    anchor = None
     try:
         # Где герой на кадре (Gemini-зрение): субтитры — в свободную зону, не на персонажа.
-        from app.ai.subject_box import subject_box, text_positions
+        from app.ai.subject_box import subject_box, text_positions, zoom_anchor
 
         box = subject_box(store, clip_plan_id)
         if box:
             caption_y = text_positions(box, caption_y)["captions_y"]
+            anchor = zoom_anchor(box, caption_y)
     except Exception:  # noqa: BLE001 - без зрения — место по раскладке
         pass
-    result = build_auto_edit(plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y)
+    result = build_auto_edit(
+        plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y, anchor=anchor
+    )
     settings = dict(plan.get("render_settings") or {})
     old_layers = settings.get("layers") or []
     if keep_layers:

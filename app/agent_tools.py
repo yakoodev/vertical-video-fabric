@@ -757,6 +757,7 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     problems = motion.validate_camera(keys, duration)
     if problems:
         raise ToolError("камера не принята", problems)
+    keys = _anchor_zoom_keys(ctx, keys)
     clean = motion.normalize_camera(keys)
     render = _current_render(ctx)
     fresh = _save_render(ctx, {**render, "camera": clean})
@@ -766,6 +767,34 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
         if (_num(key.get("zoom"), 1.0) or 1.0) > 1.6:
             warnings.append(f"наезд {key.get('zoom')}× на {key.get('t')} с — сильнее 1.6× мылит картинку")
     return {"ok": True, "camera": camera, "dropped": len(keys) - len(camera), "warnings": warnings}
+
+
+def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
+    """Наезд без своих x/y — в героя: край героя со стороны текста стоит на месте,
+    и при zoom он не заезжает под субтитры (по умолчанию камера зумит в центр кадра)."""
+    if not any(isinstance(k, dict) and "x" not in k and "y" not in k for k in keys):
+        return keys
+    try:
+        from app.ai.subject_box import camera_center, subject_box, text_positions, zoom_anchor
+        from app.auto_edit import caption_y_for
+
+        box = subject_box(ctx.store, ctx.plan_id)
+        render = _current_render(ctx)
+        caption_y = next((float(l.get("y", 0.7)) for l in _layers_of(render) if l.get("type") == "captions"), None)
+        if caption_y is None:
+            caption_y = text_positions(box, caption_y_for(render))["captions_y"]
+        anchor = zoom_anchor(box, caption_y)
+    except Exception:  # noqa: BLE001 - без зрения — как просили
+        return keys
+    if not anchor:
+        return keys
+    out = []
+    for key in keys:
+        if isinstance(key, dict) and "x" not in key and "y" not in key:
+            zoom = _num(key.get("zoom"), 1.0) or 1.0
+            key = {**key, **camera_center(anchor, zoom)}
+        out.append(key)
+    return out
 
 
 def h_get_motion_reference(_ctx: ToolContext, _args: dict) -> dict:
