@@ -542,8 +542,13 @@ def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     from app.motion_render import contact_sheet_jpeg
 
     n = int(_num(args.get("n"), 8) or 8)
-    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=220)
-    return ImageResult(data=data, mime_type="image/jpeg", info={"n": n})
+    times = args.get("times")
+    if times is not None and (not isinstance(times, list) or not all(_num(t) is not None for t in times)):
+        raise ToolError("times: список секунд готового клипа, до 16")
+    times = [float(_num(t)) for t in times] if times else None
+    width = 220 if not times or len(times) > 4 else 300
+    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times)
+    return ImageResult(data=data, mime_type="image/jpeg", info={"n": len(times) if times else n, "times": times})
 
 
 
@@ -1560,8 +1565,11 @@ def _build_registry() -> list[Tool]:
         Tool(
             "contact_sheet", "Смотрю весь клип",
             "Сетка из n кадров равномерно по клипу (с временем) — весь монтаж одним взглядом: "
-            "проверить ритм графики, не перегружен ли кадр, где пусто. / Contact sheet of n frames.",
-            _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16}}), h_contact_sheet,
+            "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты (секунды "
+            "готового клипа, до 16): все панчлайны или последние 3 с разом. / Contact sheet of n frames "
+            "or of chosen times.",
+            _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
+                  "times": {"type": "array", "items": {"type": "number"}}}), h_contact_sheet,
             label=lambda a: "Смотрю весь клип сеткой кадров",
         ),
         Tool(

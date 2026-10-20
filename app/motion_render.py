@@ -667,18 +667,23 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
         return
 
 
-def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 240) -> bytes:
+def contact_sheet_jpeg(
+    store: Any, clip_plan_id: int, n: int = 8, width: int = 240, times: list[float] | None = None
+) -> bytes:
     """Лист кадров клипа: ``n`` моментов равномерно по клипу, с подписью времени.
 
     Весь монтаж одним взглядом — агенту (одна картинка вместо восьми запросов
     кадра) и человеку на проверке. Кадры — тем же компоновщиком, что и рендер.
+    ``times`` — свои моменты (секунды готового клипа, как подписи на листе) вместо
+    равномерных: проверить разом все панчлайны или финал.
     """
     import subprocess
     import tempfile
 
     from app.settings import settings as app_settings
 
-    n = max(2, min(16, int(n)))
+    picked = sorted({round(float(t), 2) for t in times or [] if t is not None and float(t) >= 0})[:16]
+    n = len(picked) if picked else max(2, min(16, int(n)))
     width = max(120, min(540, int(width)))
     plan = store.get_clip_plan(clip_plan_id)
     duration = sum(float(s["end_sec"]) - float(s["start_sec"]) for s in plan.get("segments") or [])
@@ -695,6 +700,10 @@ def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 2
         final = mapper.duration(duration)
         times = [round(final * (k + 0.5) / n, 2) for k in range(n)]
         shots = [round(mapper.source_time(t), 3) for t in times]
+    if picked:
+        final = mapper.duration(duration) if mapper else duration
+        times = [min(t, max(0.0, final - 0.05)) for t in picked]
+        shots = [round(mapper.source_time(t), 3) for t in times] if mapper else list(times)
     font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
     with tempfile.TemporaryDirectory() as tmp:
         inputs: list[str] = []
