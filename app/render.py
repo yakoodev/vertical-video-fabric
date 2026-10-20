@@ -772,8 +772,6 @@ class ClipRenderService:
                 layout=layout,
             )
         if clip["status"] == "succeeded":
-            # Голос — до мемов и звуков-эффектов: их модель приняла бы за «музыку».
-            clip = self._apply_voice_forward(clip, plan)
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion)
@@ -1000,28 +998,6 @@ class ClipRenderService:
             return clip
         except Exception as exc:  # noqa: BLE001 - звуки слоёв — надстройка, клип важнее
             return self._note_clip_error(clip["id"], f"звуки слоёв не наложены: {str(exc)[:200]}")
-
-    def _apply_voice_forward(self, clip: dict, plan: dict) -> dict:
-        """«Голос вперёд»: приглушить фоновую музыку стрима под речью (app/voice_forward.py).
-
-        Только если включено в клипе, модель скачана и своя музыка клипа не
-        выбрана (её владелец ставил сам). Сбой не теряет клип — звук как был."""
-        from app import voice_forward
-        from app.clip_settings import normalize_render_settings
-
-        rs = normalize_render_settings(plan.get("render_settings") or {})
-        if not rs["voice_forward"] or rs["music_on"] or not voice_forward.available():
-            return clip
-        path = Path(clip.get("output_path") or "")
-        if not path.exists() or not _has_audio_stream(path):
-            return clip
-        try:
-            voice_forward.apply_voice_forward(path, rs["music_db"])
-        except Exception as exc:  # noqa: BLE001 - без разделения клип всё равно годен
-            import logging
-
-            logging.getLogger(__name__).warning("voice forward failed for clip %s: %s", clip.get("id"), exc)
-        return clip
 
     def _normalize_loudness(self, clip: dict) -> dict:
         """Громкость под площадки: −14 LUFS и пик не выше −1.5 dBFS.
