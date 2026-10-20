@@ -300,9 +300,21 @@ def apply_spec(
         else:
             changes.append("порядок кусков")
 
-    if ops["render"] is not None and ops["render"] != normalize_render_settings(plan.get("render_settings") or {}):
+    stored_render = normalize_render_settings(plan.get("render_settings") or {})
+    if ops["render"] is not None and ops["render"] != stored_render:
         store.set_clip_plan_render_settings(clip_plan_id, ops["render"])
         changes.append("настройки рендера")
+    else:
+        # Куски поменяли, монтаж не трогали — его времена едут за кусками
+        # (подрезка начала не сдвигает титры на чужие фразы).
+        from app.piece_remap import remap_render
+
+        after = store.get_clip_plan(clip_plan_id).get("segments") or []
+        moved, note = remap_render(stored_render, plan.get("segments") or [], after)
+        if moved is not stored_render and moved != stored_render:
+            store.set_clip_plan_render_settings(clip_plan_id, moved)
+        if note:
+            changes.append(note)
 
     return export_spec(store, clip_plan_id), changes
 

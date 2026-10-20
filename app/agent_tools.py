@@ -1167,7 +1167,7 @@ def h_trim_piece(ctx: ToolContext, args: dict) -> dict:
     _fresh, changes = apply_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
     timeline = clip_timeline(ctx.store, ctx.plan_id)
     out = {"ok": True, "changes": changes, "duration": timeline["duration"],
-           "note": "время клипа сдвинулось — проверь start/end слоёв после этого куска"}
+           "note": "слои, камера, вставки и субтитры сдвинуты вслед за куском; если кусок расширили на новую речь — generate_subtitles"}
     if index == len(pieces) - 1:
         warn = ending_warning(ctx.store, int(spec["source"]["id"]), float(end))
         if warn:
