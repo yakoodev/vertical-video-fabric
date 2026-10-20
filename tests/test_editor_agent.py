@@ -198,3 +198,9 @@ def test_content_filter_mid_run_keeps_work_and_reports(tmp_path, monkeypatch):
     out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=Fake(), model="m")
     assert "фильтр" in out["text"] and out["changed"]
     assert store.get_clip_plan(plan["id"])["render_settings"]["layers"]
+
+
+def test_degenerate_model_text_is_detected():
+    assert editor_agent.degenerate("Готово. " + "- " * 200)
+    assert editor_agent.degenerate('{"id": "c+oGNRzQ==", "type": "tag", "time": "2024-11-20"}' * 20)
+    assert not editor_agent.degenerate("Готово! Поставил хук «МУХА ПИЛОТИРУЕТ», два панчлайна и гифку на 3 с.")

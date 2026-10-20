@@ -330,6 +330,8 @@ def run_agent(
             "systemInstruction": {"parts": [{"text": system_prompt()}]},
             "contents": contents,
             # Температуру не трогаем: Gemini 3 рассчитана на 1.0, ниже — зацикливается.
+            # Потолок ответа: иногда модель «плывёт» в бесконечный повтор («- - - …»).
+            "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
         }
         if tools_on:
             payload["tools"] = [{"functionDeclarations": function_declarations(use_json_schema)}]
@@ -386,8 +388,12 @@ def run_agent(
             continue
         if not calls or not tools_on:
             final_text = _clean_reply(_parts_text(parts))
+            if degenerate(final_text):
+                final_text = ""  # ниже — отчёт по сделанным шагам
             break
         said = _parts_text(parts)
+        if said and degenerate(said):
+            said = ""  # мусор между шагами владельцу не показываем
         if said:
             # Пояснение модели между вызовами («Ставлю хук и наезд») — тоже видно в чате.
             steps.append({"tool": SAY, "label": said[:400], "ok": True})
@@ -426,6 +432,20 @@ def run_agent(
     if not final_text:
         final_text = _fallback_summary(steps)
     return {"text": final_text, "steps": steps, "changed": ctx.changed, "model": used_model, "rounds": rounds}
+
+
+MAX_OUTPUT_TOKENS = 8192
+_REPEAT_RE = re.compile(r"(.{1,12}?)\1{15,}", re.DOTALL)
+
+
+def degenerate(text: str) -> bool:
+    """Модель «поплыла»: длинный повтор одного куска («- - - - …») или простыня
+    кода/JSON вместо пояснения по-русски."""
+    if _REPEAT_RE.search(text):
+        return True
+    letters = sum(ch.isalpha() for ch in text)
+    cyrillic = sum("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in text)
+    return len(text) > 600 and letters and cyrillic / letters < 0.3
 
 
 _ECHO_RE = re.compile(
