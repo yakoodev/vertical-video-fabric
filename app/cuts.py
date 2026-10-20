@@ -185,6 +185,16 @@ class CutMap:
         """Длина клипа длиной ``total`` после вырезов."""
         return max(0.0, self.clamp(total))
 
+    def source_time(self, t: float) -> float:
+        """Обратно: время готового клипа → время до вырезов (точка сразу после склейки)."""
+        t = float(t)
+        for a, b in self.spans:
+            if t >= a:
+                t += b - a
+            else:
+                break
+        return t
+
 
 def apply_cuts_to_timeline(cuts: Iterable[dict] | Iterable[tuple[float, float]]) -> CutMap:
     """Одна функция времени на всё: клиповое время до вырезов → после (или None)."""
@@ -326,6 +336,9 @@ def _remap_keys(keys: dict, start: float, new_start: float, mapper: CutMap) -> d
     return out
 
 
+PINNED_START_SEC = 0.05
+
+
 def remap_layers(layers: list[dict], mapper: CutMap, min_len: float = 0.1) -> list[dict]:
     """Моушн-слои: start/end сдвигаются; слой целиком в вырезе — пропадает.
 
@@ -338,6 +351,11 @@ def remap_layers(layers: list[dict], mapper: CutMap, min_len: float = 0.1) -> li
     for layer in layers or []:
         start, end = float(layer["start"]), float(layer["end"])
         got = mapper.range(start, end, min_len)
+        if start <= PINNED_START_SEC and (got is None or got[1] - got[0] < (end - start) / 2):
+            # Титр с первой секунды (хук) — часть начала клипа, а не речи под ним:
+            # вырезали начало — хук остаётся в начале той же длины.
+            out.append({**layer, "start": 0.0, "end": round(end - start, 3)})
+            continue
         if got is None:
             continue
         new_start, new_end = round(got[0], 3), round(got[1], 3)

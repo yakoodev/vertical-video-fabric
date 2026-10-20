@@ -602,3 +602,24 @@ def test_api_and_agent_apply_cuts_validate_against_the_clip(tmp_path, monkeypatc
     monkeypatch.setattr("app.cuts.suggest_for_plan", fake_suggest)
     h_suggest_cuts(ctx, {"keep_pad": 0})
     assert seen == {"min_pause": 0.45, "keep_pad": 0.0}  # keep_pad=0 — законное значение, не 0.12
+
+
+def test_source_time_inverts_cut_map():
+    from app.cuts import CutMap
+
+    m = CutMap([{"start": 0.0, "end": 7.77}, {"start": 16.91, "end": 21.78}])
+    for pre in (8.0, 10.0, 16.0, 22.5, 30.0):
+        assert abs(m.source_time(m(pre)) - pre) < 1e-9
+    assert m.source_time(0.0) == 7.77  # начало готового клипа — сразу после первого выреза
+
+
+def test_hook_survives_cut_of_clip_start():
+    from app.cuts import CutMap, remap_layers
+
+    hook = {"id": "auto_hook", "type": "text", "start": 0.0, "end": 2.5, "props": {}}
+    punch = {"id": "p", "type": "text", "start": 3.0, "end": 4.0, "props": {}}
+    late = {"id": "l", "type": "text", "start": 10.0, "end": 11.0, "props": {}}
+    out = {l["id"]: l for l in remap_layers([hook, punch, late], CutMap([{"start": 0.0, "end": 7.77}]))}
+    assert (out["auto_hook"]["start"], out["auto_hook"]["end"]) == (0.0, 2.5)
+    assert "p" not in out  # обычный слой целиком в вырезе — пропадает, как раньше
+    assert abs(out["l"]["start"] - 2.23) < 1e-6

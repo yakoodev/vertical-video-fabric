@@ -685,12 +685,22 @@ def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 2
     if duration <= 0:
         raise ValueError("у клипа нет кусков")
     times = [round(duration * (k + 0.5) / n, 2) for k in range(n)]
+    shots = times
+    # Есть вырезы — кадры только из того, что останется, с временем готового клипа:
+    # агент и человек видят монтаж, а не вырезанные паузы.
+    from app.cuts import CutMap, normalize_cuts
+
+    mapper = CutMap(normalize_cuts((plan.get("render_settings") or {}).get("cuts")))
+    if mapper:
+        final = mapper.duration(duration)
+        times = [round(final * (k + 0.5) / n, 2) for k in range(n)]
+        shots = [round(mapper.source_time(t), 3) for t in times]
     font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
     with tempfile.TemporaryDirectory() as tmp:
         inputs: list[str] = []
         for k, t in enumerate(times):
             path = Path(tmp) / f"f{k:02d}.png"
-            path.write_bytes(render_frame_png(store, clip_plan_id, t, inserts=True))
+            path.write_bytes(render_frame_png(store, clip_plan_id, shots[k], inserts=True))
             inputs += ["-i", str(path)]
         cols = min(n, 4)
         chains = [

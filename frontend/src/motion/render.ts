@@ -87,11 +87,11 @@ export function drawFrame(
 }
 
 /** Крупный текст (панчлайн, счётчик) рядом с субтитрами по высоте — ближе 0.16 кадра.
- *  Хук и мелкие подписи (size < 120) субтитры не прячут. */
+ *  Хук и мелкие подписи (size < 80) субтитры не прячут. */
 function isNearText(other: Layer, captions: Layer): boolean {
-  if (other.hidden || (other.type !== "text" && other.type !== "counter")) return false;
+  if (other.hidden || (other.type !== "text" && other.type !== "counter") || other.id === "auto_hook") return false;
   const size = Number((other.props as { size?: unknown } | undefined)?.size ?? 0);
-  if (other.type === "text" && size < 120) return false;
+  if (other.type === "text" && size < 80) return false;
   return Math.abs((other.y ?? 0.5) - (captions.y ?? 0.68)) < 0.16;
 }
 
