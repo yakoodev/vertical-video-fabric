@@ -445,6 +445,10 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
             f"На кусках {', '.join(map(str, gaps))} речь есть, а субтитров нет — субтитры устарели. "
             "Сначала generate_subtitles (распознать заново), потом auto_edit."
         ))
+    if timeline["pieces"]:
+        ending = ending_warning(ctx.store, int(plan["source_id"]), float(timeline["pieces"][-1]["source_end"]))
+        if ending:
+            warnings.append(f"Концовка: {ending} (trim_piece последнего куска).")
     return warnings
 
 
@@ -1115,6 +1119,27 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
     return {"ok": True, "transition": fresh["transition"]}
 
 
+def ending_warning(store: Any, source_id: int, end_sec: float) -> str | None:
+    """Совет, если клип кончается на полуслове или вплотную к последнему слову.
+
+    Владелец: «только концовки обрываются». Конец последнего куска — время
+    исходника; сверяем с расшифровкой: внутри фразы → договорить; ровно на
+    её конце (меньше 0.3 с) → оставить хвост, Whisper ставит конец рано."""
+    try:
+        cues = store.get_source_transcript(source_id)
+    except KeyError:
+        return None
+    for cue in cues:
+        s, e = float(cue.get("start") or 0), float(cue.get("end") or 0)
+        if s + 0.1 < end_sec < e - 0.05:
+            text = " ".join(str(cue.get("text") or "").split())[-60:]
+            return (f"клип обрывается на полуслове: фраза «…{text}» идёт до {e:.2f} с исходника — "
+                    f"продли последний кусок до ≈{e + 0.5:.2f}")
+        if e - 0.05 <= end_sec < e + 0.3:
+            return f"конец вплотную к последнему слову ({e:.2f}) — оставь хвост 0.4–0.8 с (до ≈{e + 0.6:.2f})"
+    return None
+
+
 def h_trim_piece(ctx: ToolContext, args: dict) -> dict:
     from app.clip_spec import SpecError, apply_spec, export_spec
 
@@ -1141,8 +1166,13 @@ def h_trim_piece(ctx: ToolContext, args: dict) -> dict:
     ctx.before_change()
     _fresh, changes = apply_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
     timeline = clip_timeline(ctx.store, ctx.plan_id)
-    return {"ok": True, "changes": changes, "duration": timeline["duration"],
-            "note": "время клипа сдвинулось — проверь start/end слоёв после этого куска"}
+    out = {"ok": True, "changes": changes, "duration": timeline["duration"],
+           "note": "время клипа сдвинулось — проверь start/end слоёв после этого куска"}
+    if index == len(pieces) - 1:
+        warn = ending_warning(ctx.store, int(spec["source"]["id"]), float(end))
+        if warn:
+            out["warnings"] = [warn]
+    return out
 
 
 def h_add_insert(ctx: ToolContext, args: dict) -> dict:

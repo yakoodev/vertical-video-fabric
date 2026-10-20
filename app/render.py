@@ -58,6 +58,27 @@ def loudnorm_needed(measured: dict, target: float) -> bool:
     return not (abs(current - target) < 1.0 and peak <= -1.0)
 
 
+# Короткое затухание звука в самом конце ролика: финал не «щёлкает» обрывом
+# слова, даже если последний кусок резали вплотную к речи.
+END_AUDIO_FADE_SEC = 0.3
+
+
+def audible(measured: dict) -> bool:
+    """Есть ли в клипе слышимый звук (по замеру loudnorm)."""
+    try:
+        current = float(measured["input_i"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return math.isfinite(current) and current >= LOUDNORM_SILENCE_LUFS
+
+
+def end_fade_filter(duration: float, fade: float = END_AUDIO_FADE_SEC) -> str:
+    """afade на последние ``fade`` секунд (пусто, если ролик слишком короткий)."""
+    if duration <= fade * 4 or fade <= 0:
+        return ""
+    return f"afade=t=out:st={duration - fade:.3f}:d={fade:.3f}"
+
+
 def _source_gaps(segments: list[dict]) -> list[float | None]:
     """Сколько секунд исходника выброшено между соседними кусками.
 
@@ -1006,9 +1027,10 @@ class ClipRenderService:
         TikTok/Shorts всё равно приводят громкость к своей, только тихий ролик
         тогда звучит хуже соседей, а громкий хрипит. Два прохода loudnorm:
         замер, потом линейная поправка по замеру — без «качелей» громкости.
+        Заодно — короткое затухание в конце (финал не обрывается щелчком).
         Сбой не теряет клип.
         """
-        if not settings.render_loudnorm:
+        if not settings.render_loudnorm:  # RENDER_LOUDNORM=0 выключает весь финальный проход звука
             return clip
         path = Path(clip.get("output_path") or "")
         if not path.exists() or not _has_audio_stream(path):
@@ -1022,14 +1044,22 @@ class ClipRenderService:
             )
             tail = probe.stderr[probe.stderr.rfind("{"):]
             measured = json.loads(tail[: tail.find("}") + 1])
-            if not loudnorm_needed(measured, target):
+            if not audible(measured):
+                return clip  # немой клип: ни громкость, ни затухание не нужны
+            filters = []
+            if loudnorm_needed(measured, target):
+                filters.append(
+                    f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+                    f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+                    f":offset={measured['target_offset']}:linear=true"
+                )
+            fade = end_fade_filter(float(probe_media(path).duration_sec or 0))
+            if fade:
+                filters.append(fade)
+            if not filters:
                 return clip
             tmp = path.with_name(path.stem + ".loud" + path.suffix)
-            af = (
-                f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
-                f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
-                f":offset={measured['target_offset']}:linear=true,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
-            )
+            af = ",".join(filters + ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"])
             _run_ffmpeg(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
                  "-c:v", "copy", "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)],
@@ -1040,7 +1070,7 @@ class ClipRenderService:
             clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
             return self._attach_qc(clip, path, meta)
         except Exception as exc:  # noqa: BLE001 - громкость — надстройка, клип важнее
-            return self._note_clip_error(clip["id"], f"громкость не выровнена: {str(exc)[:200]}")
+            return self._note_clip_error(clip["id"], f"громкость/затухание не применены: {str(exc)[:200]}")
 
     def _render_subtitles(
         self,

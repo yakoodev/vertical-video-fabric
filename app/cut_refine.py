@@ -27,6 +27,7 @@ CUT_STRATEGIES: dict[str, dict] = {
         "enabled": True,
         "start_window": 2.5,   # как далеко искать начало фразы у старта
         "end_extend": 3.0,     # насколько тянуть конец, чтобы договорить фразу
+        "end_tail": 0.6,       # хвост после последней фразы: Whisper ставит конец рано, реакция/выдох
         "trim_edges": True,    # обрезать тишину по краям до речи
         "snap_cuts": False,
         "cut_window": 0.0,
@@ -37,6 +38,7 @@ CUT_STRATEGIES: dict[str, dict] = {
         "enabled": True,
         "start_window": 4.0,
         "end_extend": 2.0,
+        "end_tail": 0.35,
         "trim_edges": True,
         "trim_internal": False,
         "snap_cuts": False,
@@ -48,6 +50,7 @@ CUT_STRATEGIES: dict[str, dict] = {
         "enabled": True,
         "start_window": 2.5,
         "end_extend": 3.0,
+        "end_tail": 0.6,
         "trim_edges": True,
         "snap_cuts": True,
         "cut_window": 0.6,     # притянуть к стыку, если он в этом окне
@@ -117,6 +120,16 @@ def refine_boundaries(
         before = [p["e"] for p in phrases if p["e"] <= end]
         if before and end - before[-1] > 0.4:
             new_end = before[-1]
+
+    # --- TAIL: don't stop on the exact last-word timestamp ---
+    # Whisper's phrase end is usually early: cutting right there chops the last
+    # syllable and the reaction after it («концовки обрываются»). Leave a short
+    # tail, but never run into the next phrase.
+    tail = float(cfg.get("end_tail", 0.0))
+    if tail > 0:
+        nxt = next((p["s"] for p in phrases if p["s"] > new_end + 0.05), None)
+        limit = new_end + tail if nxt is None else min(new_end + tail, max(new_end, nxt - 0.1))
+        new_end = max(new_end, limit)
 
     # --- optional: nudge onto the nearest scene cut ---
     if cfg.get("snap_cuts") and cut_times:
