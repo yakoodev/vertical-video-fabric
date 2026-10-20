@@ -140,7 +140,10 @@ def prepare_source_for_analysis(source: dict, preprocessing: dict[str, Any] | No
     output_path = output_dir / f"source-{source['id']}-{_cache_key(input_path, options)}.mp4"
     audio_count = _audio_stream_count(input_path)
     if not output_path.exists():
-        _run_ffmpeg(build_analysis_preprocess_args(input_path, output_path, options, audio_count))
+        _run_ffmpeg(
+            build_analysis_preprocess_args(input_path, output_path, options, audio_count),
+            timeout=preprocess_timeout(_duration_sec(input_path)),
+        )
 
     prepared = dict(source)
     prepared["local_path"] = str(output_path)
@@ -230,6 +233,23 @@ def _audio_stream_count(path: Path) -> int:
         return 0
     streams = payload.get("streams")
     return len(streams) if isinstance(streams, list) else 0
+
+
+def preprocess_timeout(duration_sec: float) -> int:
+    """Перекодирование идёт примерно в реальном времени и быстрее: стрим на 4.7 часа
+    в 20 минут не влезал. Не меньше 20 минут и не меньше длины видео."""
+    return int(max(60 * 20, duration_sec * 1.0 + 300))
+
+
+def _duration_sec(path: Path) -> float:
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        return float((proc.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0.0
 
 
 def _run_ffmpeg(args: list[str], timeout: int = 60 * 20) -> None:
