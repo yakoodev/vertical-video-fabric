@@ -384,13 +384,22 @@ def remap_camera(camera: list[dict], mapper: CutMap) -> list[dict]:
 
 
 def remap_inserts(inserts: list[dict], mapper: CutMap) -> list[dict]:
-    """Вставки: ``at`` сдвигается; вставка, начавшаяся в вырезе, — с точки склейки."""
+    """Вставки: ``at`` сдвигается; вставка, начавшаяся в вырезе, — с точки склейки.
+
+    Длительность тоже: вырез внутри окна вставки укорачивает её, иначе мем
+    вылезает дальше задуманного и налезает на следующий титр."""
     if not mapper:
         return inserts
-    return sorted(
-        ({**ins, "at": round(mapper.clamp(float(ins["at"])), 2)} for ins in inserts or []),
-        key=lambda ins: ins["at"],
-    )
+    out = []
+    for ins in inserts or []:
+        start = float(ins["at"])
+        end = start + float(ins.get("duration") or 0)
+        a, b = mapper.clamp(start), mapper.clamp(end)
+        fresh = {**ins, "at": round(a, 2)}
+        if ins.get("duration") is not None:
+            fresh["duration"] = round(max(0.3, b - a), 2)
+        out.append(fresh)
+    return sorted(out, key=lambda ins: ins["at"])
 
 
 def remap_points(items: list[dict], mapper: CutMap, key: str = "t") -> list[dict]:

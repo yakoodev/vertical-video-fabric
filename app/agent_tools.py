@@ -393,7 +393,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "source": {"id": source["id"], "name": source.get("original_filename") or "",
                    "width": source.get("width"), "height": source.get("height")},
         "duration": timeline["duration"],
-        "time_note": "все времена (слои, камера, субтитры, clip_start) — секунды готового клипа",
+        **_cuts_view(render, timeline["duration"]),
         "frame": {"width": 1080, "height": 1920, "safe_zone": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM}},
         "pieces": timeline["pieces"],
         "render": {
@@ -415,6 +415,25 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "inserts": inserts,
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
+    }
+
+
+def _cuts_view(render: dict, duration: float) -> dict:
+    """Вырезы и длина ГОТОВОГО ролика: агент не должен гадать, сколько останется."""
+    from app.cuts import CutMap, normalize_cuts
+
+    cuts = normalize_cuts(render.get("cuts"))
+    if not cuts:
+        return {"time_note": "все времена (слои, камера, субтитры, clip_start) — секунды клипа"}
+    final = round(CutMap(cuts).duration(duration), 2)
+    return {
+        "cuts": cuts,
+        "finished_duration": final,
+        "time_note": (
+            f"Есть вырезы: готовый ролик {final} с (duration {duration} — до вырезов). Слои, камера, "
+            "вставки и субтитры задаются во времени ДО вырезов (как duration) и при рендере сдвигаются сами; "
+            "то, что целиком внутри выреза, пропадает. Хук с 0 с остаётся в начале."
+        ),
     }
 
 
@@ -1455,7 +1474,8 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "add_layers", "Добавляю слои",
-            "Добавить моушн-слои (титры, эмодзи, картинки, фигуры, счётчики, графики, плашки, звуки). "
+            "Добавить моушн-слои (титры, картинки, фигуры, счётчики, графики, плашки, звуки). "
+            "Слой image рисует картинку статично (у GIF — первый кадр): анимированные гифки — add_insert. "
             "Проверяется как правка человека; при ошибке вернёт problems — исправь и повтори. "
             "Возвращает id и предупреждения (безопасные зоны, перегруз). / Add motion layers.",
             _obj({"layers": {"type": "array", "items": layer}}, ["layers"]), h_add_layers,
@@ -1527,8 +1547,9 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "search_web_images", "Ищу картинку в интернете",
-            "Найти картинку в интернете (Google). Ничего не скачивает — только кандидаты. free_only=true — "
-            "только свободные лицензии. / Web image search.",
+            "Найти картинку/мем в интернете (Gemini + Google; без Gemini — Imgflip-мемы, Wikimedia Commons, "
+            "Giphy при GIPHY_API_KEY — запрос лучше по-английски). Ничего не скачивает — только кандидаты. "
+            "free_only=true — только свободные лицензии. / Web image search.",
             _obj({"query": {"type": "string"}, "free_only": {"type": "boolean"}, "count": {"type": "integer"}},
                  ["query"]),
             h_search_web_images, scope="global", label=lambda a: f"Ищу в интернете «{_short(a.get('query'), 30)}»",

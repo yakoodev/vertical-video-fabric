@@ -213,7 +213,16 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
         _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path), timeout=60 * 10)
-        result = engine.transcribe(audio_path, profile, used_model)
+        try:
+            result = engine.transcribe(audio_path, profile, used_model)
+        except RuntimeError:
+            if str(profile.get("provider") or "").lower() == "whisper":
+                raise
+            # Облачный движок недоступен (кончились кредиты Gemini, нет ключа) —
+            # распознаём локальным whisper, он есть в контейнере всегда.
+            profile = {**profile, "provider": "whisper"}
+            used_model = subtitle_model_for_profile(profile)
+            result = get_subtitle_provider("whisper").transcribe(audio_path, profile, used_model)
         total = sum(e - s for s, e in pieces)
         result = normalize_subtitle_timeline(result, total)
         payload = payload_from_result(result, str(profile.get("provider") or ""), used_model)

@@ -623,3 +623,10 @@ def test_hook_survives_cut_of_clip_start():
     assert (out["auto_hook"]["start"], out["auto_hook"]["end"]) == (0.0, 2.5)
     assert "p" not in out  # обычный слой целиком в вырезе — пропадает, как раньше
     assert abs(out["l"]["start"] - 2.23) < 1e-6
+
+
+def test_insert_duration_shrinks_when_cut_runs_through_it():
+    from app.cuts import CutMap, remap_inserts
+
+    out = remap_inserts([{"asset_id": 1, "at": 10.0, "duration": 4.0}], CutMap([{"start": 11.0, "end": 13.0}]))
+    assert out[0]["at"] == 10.0 and out[0]["duration"] == 2.0

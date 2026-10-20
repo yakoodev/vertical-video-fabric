@@ -131,6 +131,8 @@ def search_images(
         raise ValueError("нужен запрос")
     n = max(1, min(int(count), MAX_RESULTS))
     used_model = model or settings.gemini_text_model
+    if client is None and not settings.gemini_api_key:
+        return _free_result(wish, n, free_only, "Gemini не настроен")
     payload = {
         # просим вдвое больше: часть ссылок окажется страницами или мёртвой
         "contents": [
@@ -149,7 +151,11 @@ def search_images(
         ],
         "tools": [{"google_search": {}}],
     }
-    response = (client or GeminiClient()).generate_content(used_model, payload)
+    try:
+        response = (client or GeminiClient()).generate_content(used_model, payload)
+    except RuntimeError as exc:
+        # Кредиты Gemini кончились / нет доступа — ищем в открытых источниках.
+        return _free_result(wish, n, free_only, str(exc)[:120])
     candidate = (response.get("candidates") or [{}])[0]  # noqa: PLR2004
     text = "".join(
         part.get("text", "") for part in (candidate.get("content") or {}).get("parts") or [] if isinstance(part, dict)
@@ -176,6 +182,16 @@ def search_images(
         "searched": [s for s in sources if s][:5],
         "raw": text[:400] if not checked else "",
     }
+
+
+def _free_result(wish: str, n: int, free_only: bool, reason: str) -> dict:
+    """Поиск без Gemini: Giphy (если есть ключ), Imgflip, Wikimedia Commons."""
+    from app.ai.image_search_free import search_free
+
+    results = search_free(wish, n)
+    return {"query": wish, "results": results, "model": "free-sources", "free_only": free_only,
+            "searched": sorted({r["source"] for r in results}),
+            "raw": "" if results else f"без Gemini ({reason}) ничего не нашлось — запрос лучше по-английски"}
 
 
 def _probe_url(url: str) -> dict | None:
