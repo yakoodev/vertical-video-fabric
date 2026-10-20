@@ -138,20 +138,8 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
     },
     onError: onErr,
   });
-  const live = useMutation({
-    mutationFn: (u: string) => downloadsApi.recordLive(u),
-    onSuccess: () => {
-      toast.success("Пишу эфир — до конца стрима. Остановить и сохранить можно в «Очереди»");
-      setUrl("");
-      onStarted?.();
-      qc.invalidateQueries({ queryKey: qk.activeTasks });
-    },
-    onError: onErr,
-  });
-  const busy = upload.isPending || ingest.isPending || live.isPending;
+  const busy = upload.isPending || ingest.isPending;
   const canPick = looksLikePlayerPage(url);
-  // Ссылка на канал Twitch (не на запись): его эфир можно писать.
-  const isChannel = /twitch\.tv\/[A-Za-z0-9_]+\/?$/i.test(url.trim()) && !/twitch\.tv\/videos/i.test(url);
 
   return (
     <div className="proj-add">
@@ -201,16 +189,6 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
             onClick={() => setPicking(url.trim())}
           >
             🎞 Серия и озвучка
-          </button>
-        ) : null}
-        {isChannel ? (
-          <button
-            className="btn"
-            disabled={busy}
-            title="Записать прямой эфир канала в проект — пока стрим идёт. Помогает, когда записи (VOD) не скачиваются. Чат подтянется из архива стрима."
-            onClick={() => live.mutate(url.trim())}
-          >
-            {live.isPending ? "…" : "● Записать эфир"}
           </button>
         ) : null}
         <button className="btn primary" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
