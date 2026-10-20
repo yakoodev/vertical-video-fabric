@@ -448,8 +448,11 @@ def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
 def h_generate_subtitles(ctx: ToolContext, _args: dict) -> dict:
     from app.clip_subtitles import generate_for_plan
 
+    from app.subtitles.registry import QUALITY_WHISPER_MODEL
+
     ctx.before_change()
-    payload = generate_for_plan(ctx.store, ctx.plan_id)
+    # Точная модель: small на стримах выдумывает фразы под чужими голосами и музыкой.
+    payload = generate_for_plan(ctx.store, ctx.plan_id, provider="whisper", model=QUALITY_WHISPER_MODEL)
     return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or [])}
 
 

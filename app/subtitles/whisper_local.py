@@ -139,6 +139,9 @@ class WhisperSubtitleProvider:
         with self._lock:
             model = self._models.get(key)
             if model is None:
+                # Держим в памяти одну модель: память машины небольшая, а large
+                # рядом со small — лишние полтора гигабайта.
+                self._models.clear()
                 model = self._load(size)
                 self._models[key] = model
             return model

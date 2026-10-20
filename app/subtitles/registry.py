@@ -10,8 +10,13 @@ from app.subtitles.whisper_local import WhisperSubtitleProvider
 WHISPER_MODEL_SIZES = {
     "tiny", "tiny.en", "base", "base.en", "small", "small.en",
     "medium", "medium.en", "large-v1", "large-v2", "large-v3", "large",
-    "distil-small.en", "distil-medium.en", "distil-large-v2", "distil-large-v3",
+    "distil-small.en", "distil-medium.en", "distil-large-v2", "distil-large-v3", "distil-large-v3.5",
+    # Почти large-v3 по качеству и в разы быстрее: русская речь стримов под музыкой и
+    # чужими голосами — small там выдумывает фразы.
+    "large-v3-turbo", "turbo",
 }
+# Модель для субтитров клипа, когда важна точность (агент, перераспознавание).
+QUALITY_WHISPER_MODEL = "large-v3-turbo"
 
 
 def get_subtitle_provider(provider: str | None = None) -> SubtitleProvider:
