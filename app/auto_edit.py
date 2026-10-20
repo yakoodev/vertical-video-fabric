@@ -186,9 +186,17 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
         peaks = clip_waveform(store, clip_plan_id).get("peaks") or []
     except Exception:  # noqa: BLE001 - без волны наезды встанут только по паузам
         peaks = []
-    result = build_auto_edit(
-        plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y_for(plan.get("render_settings"))
-    )
+    caption_y = caption_y_for(plan.get("render_settings"))
+    try:
+        # Где герой на кадре (Gemini-зрение): субтитры — в свободную зону, не на персонажа.
+        from app.ai.subject_box import subject_box, text_positions
+
+        box = subject_box(store, clip_plan_id)
+        if box:
+            caption_y = text_positions(box, caption_y)["captions_y"]
+    except Exception:  # noqa: BLE001 - без зрения — место по раскладке
+        pass
+    result = build_auto_edit(plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y)
     settings = dict(plan.get("render_settings") or {})
     old_layers = settings.get("layers") or []
     if keep_layers:

@@ -379,7 +379,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
         # субтитры строго по центру под лицом (с учётом раскладки «вебка снизу»).
-        "positions": _recommended_positions(render),
+        "positions": _recommended_positions(ctx, render),
         "layers": layers,
         "camera": _camera_of(render),
         "inserts": inserts,
@@ -388,14 +388,25 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
     }
 
 
-def _recommended_positions(render: dict) -> dict:
+def _recommended_positions(ctx: ToolContext, render: dict) -> dict:
+    """Места для текста с учётом того, где на кадре герой (рамку даёт Gemini-зрение)."""
     from app.auto_edit import HOOK_Y, caption_y_for
 
     layout = (render.get("layout") or {}).get("mode") or "single"
+    places = {"captions_y": caption_y_for(render), "punchline_y": 0.3, "subject": None}
+    try:
+        from app.ai.subject_box import subject_box, text_positions
+
+        box = subject_box(ctx.store, ctx.plan_id)
+        if box:
+            places = text_positions(box, caption_y_for(render))
+    except Exception:  # noqa: BLE001 - без зрения — привычные места
+        pass
     return {
         "hook": {"x": 0.5, "y": HOOK_Y, "note": "заголовок-хук: строго по центру сверху"},
-        "captions": {"x": 0.5, "y": caption_y_for(render), "note": "субтитры: строго x=0.5, это y"},
-        "punchline_text": {"x": 0.5, "y": 0.3, "note": "крупное слово-панчлайн: по центру, верхняя треть"},
+        "captions": {"x": 0.5, "y": places["captions_y"], "note": "субтитры: строго x=0.5 и этот y — свободное от героя место"},
+        "punchline_text": {"x": 0.5, "y": places["punchline_y"], "note": "крупное слово-панчлайн: по центру, не на герое"},
+        "subject_box": places["subject"],
         "layout": layout,
     }
 
