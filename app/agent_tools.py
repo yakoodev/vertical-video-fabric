@@ -1185,12 +1185,24 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict) -> str | None:
     а агент их в view_frame не видит — поэтому подгоняем здесь."""
     from app.montage_assets import MIN_INSERT_SCALE, PIP_WIDTH
 
-    at = float(entry.get("at") or 0.0)
+    from app.cuts import PINNED_START_SEC, CutMap, normalize_cuts
+
+    # Сравниваем во времени ГОТОВОГО клипа: вырезанное начало сдвигает мем к хуку.
+    mapper = CutMap(normalize_cuts(render.get("cuts")))
+    to_final = mapper.clamp if mapper else (lambda t: t)
+    at = to_final(float(entry.get("at") or 0.0))
     end = at + float(entry.get("duration") or 1.5)
     layers = [l for l in render.get("layers") or [] if not l.get("hidden")]
 
+    def window(l: dict) -> tuple[float, float]:
+        a, b = float(l.get("start") or 0), float(l.get("end") or 0)
+        if a <= PINNED_START_SEC:  # хук остаётся в начале и после вырезов
+            return 0.0, b - a
+        return to_final(a), to_final(b)
+
     def active(l: dict) -> bool:
-        return float(l.get("start") or 0) < end and float(l.get("end") or 0) > at
+        a, b = window(l)
+        return a < end and b > at
 
     caps = [l for l in layers if l.get("type") == "captions" and active(l)]
     if not caps:
@@ -1200,8 +1212,8 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict) -> str | None:
     hook = next((l for l in layers if l.get("id") == "auto_hook" and active(l)), None)
     if hook and cap_top - 0.015 - HOOK_BOTTOM < 0.12:
         # Между хуком и субтитрами мему не уместиться — пусть выходит сразу после хука.
-        at = round(float(hook.get("end") or 0), 2)
-        entry["at"] = at
+        at = round(window(hook)[1], 2)
+        entry["at"] = round(mapper.source_time(at), 2) if mapper else at
         hook = None
         moved = f"сдвинул на {at} с (после хука), "
     top = HOOK_BOTTOM if hook else 0.07

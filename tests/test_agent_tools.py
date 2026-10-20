@@ -266,3 +266,16 @@ def test_add_image_from_url_drops_off_topic_picture(monkeypatch):
     monkeypatch.setattr("app.ai.asset_generate.image_matches", lambda asset, query, client=None: True)
     out, ok = run_tool(ToolContext(store=Store()), "add_image_from_url", {"url": "https://x/oleg.jpg", "query": "Олег Монгол"})
     assert ok and out["asset_id"] == 5
+
+
+def test_pip_insert_fit_counts_cuts_that_pull_it_onto_the_hook():
+    """Вырезали начало: мем на 7.9 с оказывается в начале готового клипа, под хуком."""
+    from app.agent_tools import _fit_pip_insert
+
+    render = {"cuts": [{"start": 0.0, "end": 7.77}],
+              "layers": [{"id": "auto_caps", "type": "captions", "start": 0, "end": 40, "y": 0.37},
+                         {"id": "auto_hook", "type": "text", "start": 0, "end": 2.5, "y": 0.13}]}
+    entry = {"at": 7.89, "duration": 2.7, "y": 0.175, "scale": 0.66}
+    note = _fit_pip_insert(render, entry, {"width": 500, "height": 500})
+    assert note and "после хука" in note
+    assert abs(entry["at"] - (7.77 + 2.5)) < 0.02  # в исходном времени — сразу после хука готового клипа
