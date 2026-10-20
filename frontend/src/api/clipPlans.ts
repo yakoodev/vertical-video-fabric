@@ -46,12 +46,15 @@ export interface AiMontageProposal {
 export interface AiMontageJobItem {
   plan_id: number;
   title?: string;
-  status: "queued" | "thinking" | "rendering" | "done" | "failed" | string;
+  status: "queued" | "thinking" | "polishing" | "rendering" | "done" | "failed" | string;
   total_before?: number;
   total_after?: number;
   pieces_after?: number;
   rationale?: string[];
   error?: string;
+  /** Отчёт Gemini-монтажёра (второй проход) и его ошибка, если он не справился. */
+  polish?: string;
+  polish_error?: string;
   clip_id?: number | null;
 }
 export interface AiMontageJob {

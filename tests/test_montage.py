@@ -131,6 +131,36 @@ def test_montage_many_reports_each_clip_and_survives_failures(tmp_path, monkeypa
     assert by_id[other["id"]]["status"] == "failed" and "модель легла" in by_id[other["id"]]["error"]
 
 
+def test_montage_many_polishes_with_agent_before_render_and_survives_its_failure(tmp_path, monkeypatch):
+    """Батч сервиса: склейка → моушн-монтаж агентом → рендер; сбой агента клип не роняет."""
+    _require_ffmpeg()
+    from app.ai.montage import montage_many
+    from app.clip_spec import export_spec
+
+    _client, store, source, plan, a, _b = _setup(tmp_path, monkeypatch)
+    other = store.create_clip_plan(source["id"], plan["analysis_id"], "Второй", segment_ids=[a["id"]])
+
+    def fake_propose(st, plan_id, goal=""):
+        spec = export_spec(st, plan_id)
+        return {"spec": spec, "diff": {"total_before": 10, "total_after": 10, "after": spec["pieces"]}}
+
+    order = []
+
+    def fake_polish(st, plan_id, goal=""):
+        order.append(("polish", plan_id))
+        if plan_id == other["id"]:
+            raise RuntimeError("фильтр")
+        return {"text": "Поставил хук"}
+
+    items = montage_many(store, [plan["id"], other["id"]], propose=fake_propose, polish=fake_polish,
+                         render=lambda pid: order.append(("render", pid)) or {"id": 7})
+    by_id = {i["plan_id"]: i for i in items}
+    assert by_id[plan["id"]]["status"] == "done" and by_id[plan["id"]]["polish"] == "Поставил хук"
+    assert by_id[other["id"]]["status"] == "done" and "фильтр" in by_id[other["id"]]["polish_error"]
+    for pid in (plan["id"], other["id"]):
+        assert order.index(("polish", pid)) < order.index(("render", pid))
+
+
 def test_ai_inserts_land_on_new_timeline_and_unknown_files_are_dropped():
     spec = _spec()
     spec["render"]["transition"] = {"type": "fade", "duration": 0.5, "sfx": "none"}

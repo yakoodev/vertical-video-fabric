@@ -2345,6 +2345,8 @@ class AiMontageBatchRequest(BaseModel):
     clip_plan_ids: list[int] = Field(default_factory=list, description="пусто = все ★ избранные (не скрытые)")
     goal: str = Field(default="", max_length=500)
     render: bool = False
+    # Второй проход: моушн-монтаж Gemini-агентом (хук, субтитры, панчлайны, звук, мемы).
+    polish: bool = True
 
 
 @app.post(
@@ -2367,7 +2369,8 @@ def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, 
     if running and running.get("status") == "running":
         raise HTTPException(status_code=409, detail="ИИ-монтаж этого проекта уже идёт")
     return start_montage_job(
-        store, source_id, ids, goal=payload.goal, render=_render_plan_own_settings if payload.render else None
+        store, source_id, ids, goal=payload.goal, render=_render_plan_own_settings if payload.render else None,
+        polish=payload.polish and bool(settings.gemini_api_key),
     )
 
 
@@ -2377,6 +2380,7 @@ class AiPickRequest(BaseModel):
     # Chain: start 🤖 ИИ-монтаж on the picks right away (optionally rendering).
     montage: bool = False
     render: bool = False
+    polish: bool = True  # моушн-монтаж Gemini-агентом после склейки
 
 
 @app.post(
@@ -2401,6 +2405,7 @@ def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -
                 [p["id"] for p in result["picks"]],
                 goal=payload.goal,
                 render=_render_plan_own_settings if payload.render else None,
+                polish=payload.polish and bool(settings.gemini_api_key),
             )
     return result
 

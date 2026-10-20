@@ -8,7 +8,8 @@ import { formatDuration } from "@/components/ui";
 
 const STATUS: Record<string, string> = {
   queued: "в очереди",
-  thinking: "монтирую…",
+  thinking: "склеиваю…",
+  polishing: "моушн-монтаж…",
   rendering: "рендер…",
   done: "готово",
   failed: "ошибка",
@@ -223,7 +224,7 @@ export function AiBatchReport({ sourceId, onOpenClip }: { sourceId: string; onOp
                 ? `${formatDuration(it.total_before)} → ${formatDuration(it.total_after ?? 0)}`
                 : STATUS[it.status] ?? it.status}
             </span>
-            <span className="aib-item-why muted">{it.error || (it.rationale || [])[0] || ""}</span>
+            <span className="aib-item-why muted">{it.error || it.polish_error || (it.rationale || [])[0] || ""}</span>
             {it.status === "done" ? (
               <button
                 className="aib-undo"

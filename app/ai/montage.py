@@ -559,6 +559,22 @@ import uuid  # noqa: E402
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
 BATCH_WORKERS = 3
+# Моушн-монтаж агентом (хук, субтитры, панчлайны, звук, мемы) — по одному клипу
+# за раз: агент может распознавать речь, а память машины небольшая.
+_POLISH_LOCK = threading.Lock()
+POLISH_MESSAGE = (
+    "Смонтируй этот клип по-взрослому: хук, субтитры, панчлайны, звук, наезды, "
+    "мем или гифка из интернета на самой смешной реакции."
+)
+
+
+def polish_with_agent(store: Any, clip_plan_id: int, goal: str = "") -> dict:
+    """Довести склеенный клип ИИ-монтажёром (app.ai.editor_agent), как владелец руками."""
+    from app.ai.editor_agent import run_agent
+
+    message = POLISH_MESSAGE + (f" Цель: {goal}" if goal else "")
+    with _POLISH_LOCK:
+        return run_agent(store, clip_plan_id, message)
 
 
 def montage_many(
@@ -569,9 +585,13 @@ def montage_many(
     progress: Callable[[dict], None] | None = None,
     propose: Callable[..., dict] | None = None,
     on_items: Callable[[list[dict]], None] | None = None,
+    polish: Callable[..., dict] | None = None,
 ) -> list[dict]:
-    """Propose + apply (+ render) for several clips, 3 at a time. Never raises:
-    each clip's outcome is reported in its item."""
+    """Propose + apply (+ polish) (+ render) for several clips, 3 at a time. Never raises:
+    each clip's outcome is reported in its item.
+
+    ``polish`` — второй проход: моушн-монтаж агентом (``polish_with_agent``).
+    Его сбой клип не роняет — остаётся склейка, ошибка в ``polish_error``."""
     from concurrent.futures import ThreadPoolExecutor
 
     propose = propose or propose_montage
@@ -599,6 +619,15 @@ def montage_many(
                 changes=changes,
                 rationale=proposal.get("rationale") or [],
             )
+            if polish:
+                item["status"] = "polishing"
+                if progress:
+                    progress(item)
+                try:
+                    report = polish(store, item["plan_id"], goal=goal)
+                    item["polish"] = str((report or {}).get("text") or "")[:1500]
+                except Exception as exc:  # noqa: BLE001 - без моушна клип всё равно годен
+                    item["polish_error"] = str(exc)[:300]
             if render:
                 item["status"] = "rendering"
                 if progress:
@@ -618,13 +647,19 @@ def montage_many(
 
 
 def start_montage_job(
-    store: Any, source_id: int, clip_plan_ids: list[int], goal: str = "", render: Callable[[int], Any] | None = None
+    store: Any,
+    source_id: int,
+    clip_plan_ids: list[int],
+    goal: str = "",
+    render: Callable[[int], Any] | None = None,
+    polish: bool = False,
 ) -> dict:
     job = {
         "id": uuid.uuid4().hex[:12],
         "source_id": source_id,
         "goal": goal,
         "render": render is not None,
+        "polish": polish,
         "status": "running",
         "started_at": time.time(),
         "items": [],
@@ -647,6 +682,7 @@ def start_montage_job(
                 render=render,
                 progress=on_progress,
                 on_items=lambda live: job.__setitem__("items", live),
+                polish=polish_with_agent if polish else None,
             )
             job["items"] = items
             job["status"] = "done"
