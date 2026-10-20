@@ -23,7 +23,7 @@ TITLE = {
 def test_registry_is_complete_and_json_serializable():
     names = {tool.name for tool in agent_tools.list_tools(include_discovery=True)}
     for required in ("get_clip", "view_frame", "add_layers", "update_layer", "remove_layers", "clear_layers",
-                     "set_camera", "search_emoji", "list_packs", "search_pack", "search_web_images",
+                     "set_camera", "search_emoji", "list_packs", "search_pack", "search_web_images", "generate_subtitles",
                      "add_image_from_url", "generate_image", "list_fonts", "set_subtitles", "set_transition",
                      "trim_piece", "add_insert", "list_projects", "list_clips"):
         assert required in names, required
@@ -226,3 +226,22 @@ def test_pip_insert_is_fitted_above_captions():
     assert early["at"] == 3.0 and "после хука" in note
     h2 = early["scale"] * 1080 / 1920
     assert early["y"] - h2 / 2 >= 0.07 - 1e-6 and early["y"] + h2 / 2 <= 0.29 + 1e-6
+
+
+def test_subtitle_gaps_find_pieces_with_speech_but_no_words():
+    """Субтитры устарели после смены кусков: на куске с речью ни слова — агент должен узнать."""
+    from app.agent_tools import subtitle_gaps
+
+    class Store:
+        def get_clip_plan_subtitles(self, _id):
+            # слова только в третьем куске (время кусков подряд: 0–10, 10–20, 20–30)
+            return {"words": [{"word": "привет", "start": 21.0, "end": 21.5}]}
+
+        def get_source_transcript(self, _id):
+            return [{"start": 101, "end": 105, "text": "тут говорят много слов"},
+                    {"start": 221, "end": 222, "text": "привет"}]
+
+    pieces = [{"source_start": 100, "source_end": 110}, {"source_start": 300, "source_end": 310},
+              {"source_start": 220, "source_end": 230}]
+    # Второй кусок без речи в исходнике — не дыра; первый — дыра.
+    assert subtitle_gaps(Store(), {"id": 1, "source_id": 5}, pieces) == [0]

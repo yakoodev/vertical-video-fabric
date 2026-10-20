@@ -346,6 +346,36 @@ def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
     return {"has_subtitles": bool(lines), "edited": bool(payload.get("edited")), "lines": lines}
 
 
+def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
+    """Куски клипа, где в исходнике есть речь, а в субтитрах клипа — ни слова.
+
+    Так бывает, когда куски поменяли после распознавания: субтитры остались от
+    старого набора, и у части клипа текста нет (владелец: «у второго клипа
+    субтитров почему то нет»).
+    """
+    payload = store.get_clip_plan_subtitles(plan["id"]) or {}
+    words = payload.get("words") or []
+    try:
+        cues = store.get_source_transcript(int(plan["source_id"])) or []
+    except Exception:  # noqa: BLE001 - нет транскрипта — судим только по субтитрам
+        cues = []
+    gaps, offset = [], 0.0
+    for index, piece in enumerate(pieces):
+        length = float(piece["source_end"]) - float(piece["source_start"])
+        lo, hi = offset, offset + length
+        offset = hi
+        if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
+            continue
+        spoken = sum(
+            len(str(c.get("text") or "").split())
+            for c in cues
+            if float(c.get("start", 0)) < float(piece["source_end"]) and float(c.get("end", 0)) > float(piece["source_start"])
+        )
+        if spoken >= 3 or (not cues and words):
+            gaps.append(index)
+    return gaps
+
+
 def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
     timeline = clip_timeline(ctx.store, ctx.plan_id)
     plan, render = timeline["plan"], timeline["render"]
@@ -384,8 +414,27 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "camera": _camera_of(render),
         "inserts": inserts,
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
-        "warnings": lint_layers(layers, timeline["duration"]) if layers else [],
+        "warnings": _clip_warnings(ctx, plan, timeline, layers),
     }
+
+
+def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -> list[str]:
+    warnings = lint_layers(layers, timeline["duration"]) if layers else []
+    gaps = subtitle_gaps(ctx.store, plan, timeline["pieces"])
+    if gaps:
+        warnings.insert(0, (
+            f"На кусках {', '.join(map(str, gaps))} речь есть, а субтитров нет — субтитры устарели. "
+            "Сначала generate_subtitles (распознать заново), потом auto_edit."
+        ))
+    return warnings
+
+
+def h_generate_subtitles(ctx: ToolContext, _args: dict) -> dict:
+    from app.clip_subtitles import generate_for_plan
+
+    ctx.before_change()
+    payload = generate_for_plan(ctx.store, ctx.plan_id)
+    return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or [])}
 
 
 def _recommended_positions(ctx: ToolContext, render: dict) -> dict:
@@ -1418,6 +1467,14 @@ def _build_registry() -> list[Tool]:
             _obj({"edits": {"type": "array", "items": _obj({"i": {"type": "integer"}, "text": {"type": "string"}},
                                                            ["i", "text"])}}, ["edits"]),
             h_edit_subtitle_lines, mutating=True, label=lambda a: f"Правлю субтитры ({len(a.get('edits') or [])} стр.)",
+        ),
+        Tool(
+            "generate_subtitles", "Распознаю речь заново",
+            "Заново распознать речь всего клипа и заменить субтитры (ручные правки текста пропадут). "
+            "Нужно, когда get_clip предупреждает, что на кусках с речью субтитров нет. После — auto_edit. "
+            "/ Re-transcribe the clip.",
+            _obj({}, []),
+            h_generate_subtitles, mutating=True, label=lambda a: "Распознаю речь клипа заново",
         ),
         Tool(
             "suggest_cuts", "Ищу паузы и паразиты",
