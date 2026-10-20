@@ -245,3 +245,24 @@ def test_subtitle_gaps_find_pieces_with_speech_but_no_words():
               {"source_start": 220, "source_end": 230}]
     # Второй кусок без речи в исходнике — не дыра; первый — дыра.
     assert subtitle_gaps(Store(), {"id": 1, "source_id": 5}, pieces) == [0]
+
+
+def test_add_image_from_url_drops_off_topic_picture(monkeypatch):
+    """Агент скачал картинку мимо запроса — она удаляется, агент получает ошибку и берёт другую."""
+    from app.agent_tools import ToolContext, run_tool
+
+    deleted = []
+
+    class Store:
+        def delete_montage_asset(self, asset_id):
+            deleted.append(asset_id)
+
+    monkeypatch.setattr("app.ai.asset_generate.add_from_url",
+                        lambda store, url, label="", description="": {"id": 5, "kind": "image", "label": label})
+    monkeypatch.setattr("app.ai.asset_generate.image_matches", lambda asset, query, client=None: False)
+    out, ok = run_tool(ToolContext(store=Store()), "add_image_from_url",
+                       {"url": "https://x/belaz.jpg", "label": "Олег", "query": "Олег Монгол"})
+    assert not ok and "не про" in out["error"] and deleted == [5]
+    monkeypatch.setattr("app.ai.asset_generate.image_matches", lambda asset, query, client=None: True)
+    out, ok = run_tool(ToolContext(store=Store()), "add_image_from_url", {"url": "https://x/oleg.jpg", "query": "Олег Монгол"})
+    assert ok and out["asset_id"] == 5

@@ -98,7 +98,8 @@ CRAFT = """\
 4. Мем или гифка из интернета на 1–2 самых смешных/шоковых реакции (если владелец не против):
    search_web_images (free_only:false; запрос по сути реакции, лучше по-английски: «shocked cat
    reaction gif», «crying laughing meme», «sad hamster meme») → выбери кандидата с говорящим
-   названием → add_image_from_url → если kind gif или video — add_insert (mode pip, x 0.5,
+   названием → add_image_from_url (query — что должно быть на картинке; ошибка «не про…» — бери
+   следующего кандидата) → если kind gif или video — add_insert (mode pip, x 0.5,
    y = positions.punchline_text.y, scale 0.55–0.7, duration 1.5–3, volume 0.6–1); если картинка —
    слой image (x 0.5, y = positions.punchline_text.y, w 600–760, in pop, out fade, 1.5–2.5 с).
    Мем не должен закрывать героя (positions.subject_box). Не больше 2 мемов на клип.

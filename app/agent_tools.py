@@ -977,6 +977,14 @@ def h_add_image_from_url(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
         raise ToolError(f"не удалось скачать: {str(exc)[:200]}") from exc
+    query = str(args.get("query") or "").strip()
+    if query:
+        from app.ai.asset_generate import image_matches
+
+        if not image_matches(asset, query):
+            # Поиск по названию приносит мимо (на «Олег Монгол» — фото БелАЗа).
+            ctx.store.delete_montage_asset(asset["id"])
+            raise ToolError(f"картинка не про «{query[:60]}» — возьми другого кандидата из search_web_images")
     return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
             "width": asset.get("width"), "height": asset.get("height")}
 
@@ -1507,9 +1515,11 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "add_image_from_url", "Скачиваю картинку",
-            "Скачать картинку по прямой ссылке в библиотеку; вернёт asset_id для слоя image. / Download to library.",
-            _obj({"url": {"type": "string"}, "label": {"type": "string"}, "description": {"type": "string"}},
-                 ["url"]),
+            "Скачать картинку по прямой ссылке в библиотеку; вернёт asset_id для слоя image. query — что "
+            "искал (кого/что должна показывать картинка): Gemini проверит, что она про это, иначе ошибка и "
+            "бери следующего кандидата. / Download to library.",
+            _obj({"url": {"type": "string"}, "label": {"type": "string"}, "description": {"type": "string"},
+                  "query": {"type": "string"}}, ["url"]),
             h_add_image_from_url, scope="global", label=lambda a: f"Скачиваю картинку {(a.get('label') or '')[:40]}",
         ),
         Tool(
