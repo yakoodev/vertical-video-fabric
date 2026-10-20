@@ -290,3 +290,26 @@ def test_pip_insert_stays_above_active_punchline():
     _fit_pip_insert(render, entry, {"width": 500, "height": 500})
     height = entry["scale"] * 1080 / 1920
     assert entry["y"] + height / 2 <= 0.28 - 150 * 0.65 / 1920 + 1e-6
+
+
+def test_layer_on_word(tmp_path, monkeypatch):
+    """«Поставь звук на слово»: at_word вместо секунд."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    store.set_clip_plan_subtitles(plan["id"], {
+        "words": [{"word": "Пиздец,", "start": 1.0, "end": 1.4}, {"word": "Артас.", "start": 1.5, "end": 2.0},
+                  {"word": "Артас!", "start": 6.0, "end": 6.4}],
+        "lines": [{"start": 1.0, "end": 2.0, "text": "Пиздец, Артас."}, {"start": 6.0, "end": 6.4, "text": "Артас!"}],
+        "duration": 10.0,
+    })
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        {**TITLE, "start": None, "end": None, "at_word": {"text": "артас", "nth": 2}, "duration": 1.0},
+        {**TITLE, "at_word": {"line": 0, "word": 1}, "word_offset": -0.1},
+    ]})
+    assert ok, out
+    layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
+    assert (layers[0]["start"], layers[0]["end"]) == (6.0, 7.0)
+    assert (layers[1]["start"], layers[1]["end"]) == (1.4, 3.4)  # длина прежняя: 2 с
+    out, ok = run_tool(ctx, "add_layers", {"layers": [{**TITLE, "at_word": {"text": "нет такого"}}]})
+    assert not ok and "нет в субтитрах" in str(out)

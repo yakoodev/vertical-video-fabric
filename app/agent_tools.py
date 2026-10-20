@@ -689,6 +689,56 @@ def _no_emoji_layers(items: list[dict]) -> tuple[list[dict], int]:
     return kept, len(items) - len(kept)
 
 
+def _norm_word(text: str) -> str:
+    return re.sub(r"[^\wё]+", "", str(text or "").lower().replace("ё", "е"))
+
+
+def word_time(ctx: ToolContext, ref: Any) -> float:
+    """Начало слова субтитров в секундах клипа (как в get_clip).
+
+    ``ref`` — {"line": i, "word": j} (номера из get_clip.subtitles.lines) или
+    {"text": "Артас", "nth": 1} / просто строка: n-е вхождение слова. Агент-монтажёр
+    просил «поставь звук на слово», а не считать секунды руками."""
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    lines = _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"])["lines"]
+    if not lines:
+        raise ToolError("at_word: у клипа нет субтитров — сначала generate_subtitles")
+    if isinstance(ref, str):
+        ref = {"text": ref}
+    if not isinstance(ref, dict):
+        raise ToolError("at_word: {line, word} или {text, nth}")
+    if ref.get("text") is not None:
+        want, nth, seen = _norm_word(ref["text"]), int(ref.get("nth") or 1), 0
+        for line in lines:
+            for word in line["words"]:
+                if want and want in _norm_word(word[0]):
+                    seen += 1
+                    if seen == nth:
+                        return float(word[1])
+        raise ToolError(f"at_word: слова «{ref['text']}» (вхождение {nth}) нет в субтитрах")
+    try:
+        line = lines[int(ref.get("line"))]
+        return float(line["words"][int(ref.get("word", 0))][1])
+    except (TypeError, ValueError, IndexError) as exc:
+        raise ToolError("at_word: нет такой строки/слова (см. get_clip.subtitles.lines[i].words[j])") from exc
+
+
+def _place_on_word(ctx: ToolContext, item: dict) -> dict:
+    """at_word → start (+word_offset); длина — duration, иначе прежняя end-start, иначе 1.2 с."""
+    if item.get("at_word") is None:
+        return item
+    item = dict(item)
+    start = round(word_time(ctx, item.pop("at_word")) + float(item.pop("word_offset", 0) or 0), 3)
+    if item.get("duration") is not None:
+        length = float(item.pop("duration"))
+    elif item.get("start") is not None and item.get("end") is not None:
+        length = float(item["end"]) - float(item["start"])
+    else:
+        length = 1.2
+    item["start"], item["end"] = max(0.0, start), round(max(0.0, start) + max(0.1, length), 3)
+    return item
+
+
 def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     raw = args.get("layers")
     if isinstance(raw, dict):
@@ -705,7 +755,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     for item in raw:
         if not isinstance(item, dict):
             raise ToolError("каждый слой — объект", ["layers[]: ожидается объект"])
-        item = dict(item)
+        item = _place_on_word(ctx, item)
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
@@ -1189,6 +1239,10 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     inserts = list(render.get("inserts") or [])
     if len(inserts) >= MAX_INSERTS:
         raise ToolError(f"вставок уже {MAX_INSERTS} — больше нельзя; для картинок используй слой image")
+    if args.get("at_word") is not None:
+        args = {**args, "at": round(word_time(ctx, args["at_word"]) + float(args.get("word_offset") or 0), 3)}
+    if args.get("at") is None:
+        raise ToolError("нужно at (секунды клипа) или at_word")
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason") if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset) if mode == "pip" else None
@@ -1426,6 +1480,16 @@ def _obj(properties: dict, required: list[str] | None = None) -> dict:
     return schema
 
 
+_AT_WORD_SCHEMA = {
+    "type": "object",
+    "description": "вместо времени: начало слова субтитров — {line, word} из get_clip или {text, nth}",
+    "properties": {
+        "line": {"type": "integer"}, "word": {"type": "integer"},
+        "text": {"type": "string"}, "nth": {"type": "integer", "description": "какое по счёту вхождение, с 1"},
+    },
+}
+
+
 def _layer_schema() -> dict:
     enums = motion_enums()
     anim = _obj({"type": {"type": "string", "enum": enums["anims"]}, "duration": {"type": "number"}})
@@ -1456,6 +1520,9 @@ def _layer_schema() -> dict:
             "shadow": {"type": "object"},
             "blend": {"type": "string", "enum": ["normal", "multiply", "screen", "overlay", "add"]},
             "props": {"type": "object", "description": "свои поля у каждого типа — см. get_motion_reference"},
+            "at_word": _AT_WORD_SCHEMA,
+            "word_offset": {"type": "number", "description": "сдвиг от начала слова, с (−0.1 — чуть раньше)"},
+            "duration": {"type": "number", "description": "с at_word: длина слоя, с (иначе end-start или 1.2)"},
         },
         ["type", "start", "end"],
     )
@@ -1505,6 +1572,7 @@ def _build_registry() -> list[Tool]:
         Tool(
             "add_layers", "Добавляю слои",
             "Добавить моушн-слои (титры, картинки, фигуры, счётчики, графики, плашки, звуки). "
+            "Звук или титр ровно на слово — at_word {line, word} или {text: \"Артас\"} вместо start. "
             "Слой image рисует картинку статично (у GIF — первый кадр): анимированные гифки — add_insert. "
             "Проверяется как правка человека; при ошибке вернёт problems — исправь и повтори. "
             "Возвращает id и предупреждения (безопасные зоны, перегруз). / Add motion layers.",
@@ -1700,9 +1768,12 @@ def _build_registry() -> list[Tool]:
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
-                  "reason": {"type": "string"}}, ["asset_id", "at"]),
+                  "reason": {"type": "string"},
+                  "at_word": _AT_WORD_SCHEMA,
+                  "word_offset": {"type": "number"}}, ["asset_id"]),
             h_add_insert, mutating=True,
-            label=lambda a: f"Вставляю мем #{a.get('asset_id')} на {(_num(a.get('at'), 0.0) or 0.0):.1f} с",
+            label=lambda a: (f"Вставляю мем #{a.get('asset_id')} на слово" if a.get("at_word") is not None
+                             else f"Вставляю мем #{a.get('asset_id')} на {(_num(a.get('at'), 0.0) or 0.0):.1f} с"),
         ),
         Tool(
             "remove_insert", "Убираю вставку",
