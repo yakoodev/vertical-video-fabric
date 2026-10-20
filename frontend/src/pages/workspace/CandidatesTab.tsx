@@ -3225,7 +3225,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   className="btn sm"
                   disabled={!activePlan || autoEdit.isPending}
                   onClick={() => activePlan && autoEdit.mutate(activePlan.id)}
-                  title="Без ИИ, за секунду: хук-титр, анимированные субтитры по словам с эмодзи, наезды и звуки на ударные слова. Ctrl+Z откатит."
+                  title="Без ИИ, за секунду: хук-титр, анимированные субтитры по словам (ключевые цветом, другие голоса отдельно), наезды в героя и звуки на ударные слова. Ctrl+Z откатит."
                 >
                   {autoEdit.isPending ? "Собираю…" : "⚡ Автомонтаж"}
                 </button>
@@ -3266,7 +3266,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </label>
             </Group>
 
-            <Group title="Субтитры" badge={subsOn ? "вкл" : "выкл"} defaultOpen>
+            <Group title="Субтитры" badge={subsOn ? "вкл" : subLines.length ? "текст" : "выкл"} defaultOpen>
               <label className="switch">
                 <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
                 <span className="switch-track" />
@@ -3300,31 +3300,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       onChange={(e) => setSubPosPct(Number(e.target.value))}
                     />
                   </label>
-                  {activePlan ? (
-                    <button
-                      className="btn sm"
-                      onClick={() => setSubsWide(true)}
-                      title="Открыть строки на всё окно: широкий текст и таймкоды"
-                    >
-                      ⛶ Править строки широко
-                    </button>
-                  ) : null}
-                  {activePlan ? (
-                    <SubtitleEditor
-                      key={activePlan.id}
-                      clipPlanId={activePlan.id}
-                      clipTime={clipTimeNow}
-                      onSeek={seekClipTime}
-                      onLines={(lines) => {
-                        subLinesRef.current = lines;
-                        setSubLines(lines);
-                      }}
-                      onWords={(words) => {
-                        subWordsRef.current = words;
-                      }}
-                    />
-                  ) : null}
                 </>
+              ) : null}
+              {/* Текст речи нужен и выжженным субтитрам, и слою «Анимированные субтитры»
+                  (автомонтаж выключает первые и ставит слой) — правка и «Голоса» видны всегда. */}
+              {activePlan ? (
+                <button
+                  className="btn sm"
+                  onClick={() => setSubsWide(true)}
+                  title="Открыть строки на всё окно: широкий текст и таймкоды"
+                >
+                  ⛶ Править строки широко
+                </button>
+              ) : null}
+              {activePlan ? (
+                <SubtitleEditor
+                  key={activePlan.id}
+                  clipPlanId={activePlan.id}
+                  clipTime={clipTimeNow}
+                  onSeek={seekClipTime}
+                  onLines={(lines) => {
+                    subLinesRef.current = lines;
+                    setSubLines(lines);
+                  }}
+                  onWords={(words) => {
+                    subWordsRef.current = words;
+                  }}
+                />
               ) : null}
             </Group>
 

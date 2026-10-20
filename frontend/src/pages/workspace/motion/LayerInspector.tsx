@@ -312,9 +312,12 @@ function TextStyleFields({
 }
 
 const WORD_COLORS = ["#ffd600", "#22c55e", "#ff3b30", "#22d3ee", "#ff3b8d"];
-const WORD_EMOJI = ["🔥", "😂", "💀", "😱", "💸", "❤️", "👀", "🤯", "😭", "🗿"];
+/** Фильтр голосов слоя субтитров: все, только главный (A), только остальные. */
+const VOICE_FILTERS = { all: [] as string[], main: ["A"], others: ["B", "C", "D"] };
+const voiceFilter = (speakers: string[] | undefined): keyof typeof VOICE_FILTERS =>
+  !speakers?.length ? "all" : speakers.includes("A") ? "main" : "others";
 
-/** Слова субтитров-слоя: клик — выбрать слово, дальше цвет или эмодзи над ним. */
+/** Слова субтитров-слоя: клик — выбрать слово, дальше его цвет. */
 function CaptionWords({
   layer,
   words,
@@ -328,7 +331,6 @@ function CaptionWords({
 }) {
   const [picked, setPicked] = useState<number | null>(null);
   const hl = new Map((layer.props.highlightWords ?? []).map((h) => [h.i, h.color]));
-  const em = new Map((layer.props.emoji ?? []).map((e) => [e.i, e.char]));
   const inRange = words
     .map((w, i) => ({ w, i }))
     .filter(({ w }) => w.t0 >= layer.start - 0.05 && w.t1 <= layer.end + 0.05)
@@ -338,8 +340,6 @@ function CaptionWords({
     setProps({
       highlightWords: [...(layer.props.highlightWords ?? []).filter((h) => h.i !== i), ...(color ? [{ i, color }] : [])].sort((a, b) => a.i - b.i),
     });
-  const setEmoji = (i: number, char: string | null) =>
-    setProps({ emoji: [...(layer.props.emoji ?? []).filter((e) => e.i !== i), ...(char ? [{ i, char }] : [])].sort((a, b) => a.i - b.i) });
   if (!inRange.length) return <div className="li-note muted">Слов нет — сначала «Распознать речь» в группе «Субтитры».</div>;
   return (
     <div className="li-words">
@@ -357,7 +357,6 @@ function CaptionWords({
             title={`${w.t0.toFixed(2)} с`}
           >
             {w.w}
-            {em.has(i) ? <span className="li-word-emoji">{em.get(i)}</span> : null}
           </button>
         ))}
       </div>
@@ -370,15 +369,9 @@ function CaptionWords({
           <button type="button" className="btn ghost sm" onClick={() => setColor(picked, null)} title="Без цвета">
             ⌀
           </button>
-          <span className="li-word-sep" />
-          {WORD_EMOJI.map((ch) => (
-            <button key={ch} type="button" className="li-word-em" onClick={() => setEmoji(picked, em.get(picked) === ch ? null : ch)}>
-              {ch}
-            </button>
-          ))}
         </div>
       ) : (
-        <div className="li-note muted">Кликни слово — покрась его или поставь над ним эмодзи.</div>
+        <div className="li-note muted">Кликни слово — покрась его.</div>
       )}
     </div>
   );
@@ -483,7 +476,12 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                   // Смена стиля сбрасывает ручные цвета/шрифт — иначе пресет «не включится».
                   onChange({
                     ...layer,
-                    props: { style: st.id, highlightWords: layer.props.highlightWords, emoji: layer.props.emoji },
+                    props: {
+                      style: st.id,
+                      highlightWords: layer.props.highlightWords,
+                      speakers: layer.props.speakers,
+                      speakerColors: layer.props.speakerColors,
+                    },
                   } as Layer)
                 }
               >
@@ -526,6 +524,22 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             <Toggle label="ЗАГЛАВНЫЕ" checked={Boolean(layer.props.uppercase)} onChange={(uppercase) => patchProps({ uppercase })} />
             <Toggle label="Знаки препинания" checked={Boolean(layer.props.punctuation)} onChange={(punctuation) => patchProps({ punctuation })} />
           </div>
+          {words.some((w) => w.s && w.s !== "A") ? (
+            <div className="li-row">
+              <label className="li-grow" title="Голоса разбираются кнопкой «Голоса» в субтитрах. Второй слой с «только другие» — мельче и в другом месте, чтобы одновременная речь не мешалась.">
+                <span className="li-cap">Голоса</span>
+                <select
+                  className="input"
+                  value={voiceFilter(layer.props.speakers)}
+                  onChange={(e) => patchProps({ speakers: VOICE_FILTERS[e.target.value as keyof typeof VOICE_FILTERS] })}
+                >
+                  <option value="all">Все (другие — своим цветом)</option>
+                  <option value="main">Только главный</option>
+                  <option value="others">Только другие голоса</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
           <CaptionWords layer={layer} words={words} onChange={onChange} onSeek={onSeek} />
         </Section>
       ) : null}

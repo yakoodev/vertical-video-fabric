@@ -4,6 +4,15 @@ import { clipPlansApi, type SubtitleLine } from "@/api/clipPlans";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { formatDuration } from "@/components/ui";
+import { resolveCaptions, speakerColor } from "@/motion";
+
+const VOICES = ["A", "B", "C", "D"];
+const PLAIN = resolveCaptions({});
+/** Цвет голоса как в субтитрах-слое: главный — белый, остальные — палитра движка. */
+const voiceColor = (s: string | undefined) => speakerColor(PLAIN, s) ?? "#ffffff";
+/** Плашка голоса в списке: цвет субтитров фоном (главный — нейтральной). */
+const voiceTag = (s: string | undefined) =>
+  s && s !== "A" ? { background: voiceColor(s), color: "#0b0b0f" } : { background: "var(--surface-3)", color: "var(--text)" };
 
 const ENGINES: [string, string][] = [
   ["", "как в стиле"],
@@ -124,7 +133,52 @@ export function SubtitleEditor({
     setDirty(true);
   };
 
-  const busy = generate.isPending || save.isPending;
+  const applyFresh = (data: { lines?: SubtitleLine[]; words?: { word: string; start: number; end: number }[] }) => {
+    setLines(data.lines ?? []);
+    setDirty(false);
+    onLines(data.lines ?? []);
+    onWords?.(data.words ?? []);
+    qc.invalidateQueries({ queryKey: ["plan-subtitles", clipPlanId] });
+  };
+
+  const voices = useMutation({
+    mutationFn: () => clipPlansApi.separateVoices(clipPlanId, true),
+    onSuccess: (data) => {
+      applyFresh(data.subtitles);
+      const n = Object.keys(data.counts).length;
+      if (data.warning) toast.error(data.warning);
+      else
+        toast.success(
+          n > 1
+            ? `Голосов: ${n}${data.added ? ` · вернул ${data.added} потерянных слов` : ""}`
+            : "Голос один — субтитры уточнены",
+        );
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось разобрать голоса"),
+  });
+
+  const assign = useMutation({
+    mutationFn: ({ line, speaker }: { line: SubtitleLine; speaker: string }) =>
+      clipPlansApi.assignVoice(clipPlanId, line.start, line.end + 0.001, speaker),
+    onSuccess: (data) => applyFresh(data.subtitles),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сменить голос"),
+  });
+
+  const speakers = query.data?.speakers ?? {};
+  const hasVoices = lines.some((l) => l.speaker && l.speaker !== "A");
+  const counts: Record<string, number> = {};
+  for (const w of query.data?.words ?? []) counts[w.speaker || "A"] = (counts[w.speaker || "A"] ?? 0) + 1;
+  // Клик по метке строки — следующий голос по кругу (A → B → C → D → A).
+  const nextVoice = (line: SubtitleLine) => {
+    if (dirty) {
+      toast.error("Сначала сохраните правку строк");
+      return;
+    }
+    const cur = VOICES.indexOf(line.speaker || "A");
+    assign.mutate({ line, speaker: VOICES[(cur + 1) % VOICES.length] });
+  };
+
+  const busy = generate.isPending || save.isPending || voices.isPending || assign.isPending;
   return (
     <div className="subed">
       <div className="subed-top">
@@ -138,7 +192,28 @@ export function SubtitleEditor({
         <button className="btn sm" disabled={busy} onClick={() => generate.mutate()}>
           {generate.isPending ? "Слушаю…" : lines.length ? "↻ Распознать заново" : "🎙 Распознать речь"}
         </button>
+        <button
+          className="btn sm"
+          disabled={busy}
+          onClick={() => voices.mutate()}
+          title="Gemini слушает клип и расшифровывает каждый голос отдельно: стример, гость, донат, ролик. Перебитые чужим голосом фразы возвращаются, субтитры разных людей — разным цветом и не в одной строке. Сначала речь распознаётся точной моделью — это 1–3 минуты."
+        >
+          {voices.isPending ? "Разбираю голоса…" : "Голоса"}
+        </button>
       </div>
+
+      {hasVoices ? (
+        <div className="subed-voices">
+          {VOICES.filter((v) => counts[v]).map((v) => (
+            <span key={v} className="subed-voice" title={`${counts[v]} слов`}>
+              <i style={voiceTag(v)} />
+              <b>{v}</b> {speakers[v] || (v === "A" ? "главный" : "голос")}
+              <span className="muted"> · {counts[v]}</span>
+            </span>
+          ))}
+          <span className="muted subed-voices-hint">Метка у строки — сменить голос</span>
+        </div>
+      ) : null}
 
       {!lines.length ? (
         <p className="muted subed-empty">
@@ -151,6 +226,17 @@ export function SubtitleEditor({
             {lines.map((line, i) => (
               <div key={i} className={`subed-line${i === active ? " on" : ""}`}>
                 <div className="subed-line-head">
+                  {hasVoices ? (
+                    <button
+                      className="subed-voice-tag"
+                      style={voiceTag(line.speaker)}
+                      title={`Голос ${line.speaker || "A"}${speakers[line.speaker || "A"] ? ` — ${speakers[line.speaker || "A"]}` : ""}. Клик — следующий голос`}
+                      disabled={busy}
+                      onClick={() => nextVoice(line)}
+                    >
+                      {line.speaker || "A"}
+                    </button>
+                  ) : null}
                   <button className="subed-time mono" title="Перейти к строке" onClick={() => onSeek(line.start)}>
                     {formatDuration(line.start)}
                   </button>

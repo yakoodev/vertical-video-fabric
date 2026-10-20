@@ -3366,7 +3366,30 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 
 /* ---------- Субтитры в редакторе (до рендера) ---------- */
 .subed { display: grid; gap: 8px; }
-.subed-top { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.subed-top { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; }
+/* Голоса клипа: чипы «кто говорит» и метка голоса у строки. */
+.subed-voices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.subed-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.subed-voice i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border-strong, var(--border)); }
+.subed-voices-hint { font-size: 11px; }
+.subed-voice-tag {
+  border: 0;
+  border-radius: 6px;
+  min-width: 22px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.subed-voice-tag:disabled { opacity: 0.6; cursor: wait; }
 .subed-top .input { height: 30px; font-size: 12px; }
 .subed-empty { font-size: 12px; line-height: 1.45; margin: 0; }
 .subed-list { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }

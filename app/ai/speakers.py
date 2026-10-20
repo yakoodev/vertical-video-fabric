@@ -298,7 +298,9 @@ def assign_voice(
     if description:
         speakers[speaker] = description[:60]
     speakers.setdefault(speaker, "голос " + speaker)
-    fresh = {**payload, "words": words, "lines": lines_from_words(words), "speakers": speakers, "edited": True}
+    used = set(_counts(words))
+    speakers = {k: v for k, v in speakers.items() if k in used}
+    fresh ={**payload, "words": words, "lines": lines_from_words(words), "speakers": speakers, "edited": True}
     fresh["speakers_key"] = _words_key(words)
     store.set_clip_plan_subtitles(clip_plan_id, fresh)
     return {"speakers": speakers, "counts": _counts(words), "moved": hit, "subtitles": fresh}

@@ -73,15 +73,30 @@ export interface SubtitleLine {
   start: number;
   end: number;
   text: string;
+  /** Чей голос (A — главный, B, C, D — другие), если голоса разобраны. */
+  speaker?: string;
 }
 export interface PlanSubtitles {
   lines: SubtitleLine[];
-  words?: { word: string; start: number; end: number }[];
+  words?: { word: string; start: number; end: number; speaker?: string }[];
+  /** Голоса клипа: буква → кто это («стример», «донат»…). */
+  speakers?: Record<string, string>;
   language?: string;
   provider?: string;
   model?: string;
   edited?: boolean;
   duration?: number;
+}
+
+export interface VoicesResult {
+  speakers: Record<string, string>;
+  counts: Record<string, number>;
+  changed?: boolean;
+  added?: number;
+  moved?: number;
+  retranscribed?: boolean;
+  warning?: string;
+  subtitles: PlanSubtitles;
 }
 
 export const clipPlansApi = {
@@ -92,6 +107,12 @@ export const clipPlansApi = {
   getSubtitles: (clipPlanId: number) => api.get<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`),
   generateSubtitles: (clipPlanId: number, provider?: string) =>
     api.post<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { provider: provider || null }),
+  /** Голоса: Gemini расшифровывает каждый голос отдельно (и возвращает перебитые фразы). */
+  separateVoices: (clipPlanId: number, retranscribe = true) =>
+    api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices`, { retranscribe }),
+  /** Отдать слова отрезка другому голосу (поправить модель руками). */
+  assignVoice: (clipPlanId: number, start: number, end: number, speaker: string) =>
+    api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices/assign`, { start, end, speaker }),
   saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
     request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
