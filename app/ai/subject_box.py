@@ -129,6 +129,12 @@ def text_positions(box: dict | None, fallback_caption_y: float = DEFAULT_CAPTION
     else:
         # Герой во весь кадр: лучше по ногам, чем по лицу.
         captions_y = 0.78
-    # Панчлайн — в другой свободной зоне, иначе над героем.
-    punch_y = round(max(0.24, min(0.4, (above[0] + above[1]) / 2)), 3) if size_above >= 0.08 else 0.3
+    # Панчлайн — над субтитрами, если те тоже над героем (иначе наложатся), или в
+    # середине зоны над героем.
+    if captions_y < box["y0"]:
+        punch_y = round(max(0.2, captions_y - 0.12), 3)
+    elif size_above >= 0.08:
+        punch_y = round(max(0.24, min(0.4, (above[0] + above[1]) / 2)), 3)
+    else:
+        punch_y = 0.3
     return {"captions_y": captions_y, "punchline_y": punch_y, "subject": box}
