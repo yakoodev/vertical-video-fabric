@@ -23,7 +23,7 @@ TITLE = {
 def test_registry_is_complete_and_json_serializable():
     names = {tool.name for tool in agent_tools.list_tools(include_discovery=True)}
     for required in ("get_clip", "view_frame", "add_layers", "update_layer", "remove_layers", "clear_layers",
-                     "set_camera", "search_emoji", "list_packs", "search_pack", "search_web_images", "generate_subtitles",
+                     "set_camera", "search_emoji", "list_packs", "search_pack", "search_web_images", "generate_subtitles", "separate_voices",
                      "add_image_from_url", "generate_image", "list_fonts", "set_subtitles", "set_transition",
                      "trim_piece", "add_insert", "list_projects", "list_clips"):
         assert required in names, required

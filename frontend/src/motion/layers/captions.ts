@@ -165,6 +165,7 @@ export type ResolvedCaptions = {
   highlightWords: { i: number; color: string }[];
   emoji: { i: number; char: string }[];
   speakerColors: { s: string; color: string }[];
+  speakers: string[];
   animation: CaptionAnimation;
   wordScale: number;
   tilt: number;
@@ -195,6 +196,7 @@ const BASE: ResolvedCaptions = {
   highlightWords: [],
   emoji: [],
   speakerColors: [],
+  speakers: [],
   animation: "pop",
   wordScale: 1.12,
   tilt: 0,
@@ -333,6 +335,8 @@ export function captionPages(
     const t0 = Number(wd.t0);
     const t1 = Math.max(t0 + 0.05, Number(wd.t1));
     if (!Number.isFinite(t0) || t0 < from - 0.05 || t0 >= to) return;
+    // Фильтр голосов: слова без метки — главного (A).
+    if (r.speakers.length && !r.speakers.includes(wd.s || "A")) return;
     const text = cleanWord(String(wd.w ?? ""), r);
     if (!text) return;
     items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "" });

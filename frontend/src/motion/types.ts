@@ -250,6 +250,8 @@ export type CaptionsProps = {
   emoji?: { i: number; char: string }[];
   /** Цвет слов других говорящих (s у слова). Не задано — свой цвет на каждого, кроме A. */
   speakerColors?: { s: string; color: string }[];
+  /** Чьи слова показывает слой: пусто — всех; ["A"] — только главного; ["B","C","D"] — остальных. */
+  speakers?: string[];
   animation?: CaptionAnimation;
   /** Масштаб активного слова 1..1.4. */
   wordScale?: number;

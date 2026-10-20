@@ -530,3 +530,16 @@ test("субтитры: два голоса — разные страницы и
   assert.equal(E.speakerColor(own, "B"), "#ff00ff");
   assert.deepEqual(E.captionWordsFrom([{ word: "да", start: 1, end: 2, speaker: "B" }]), [{ t0: 1, t1: 2, w: "да", s: "B" }]);
 });
+
+test("субтитры: фильтр голосов — главный слой без чужих слов, второй — только они", () => {
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const talk = [
+    { t0: 0.0, t1: 0.3, w: "я", s: "A" },
+    { t0: 0.2, t1: 0.5, w: "передач", s: "B" }, // говорят одновременно
+    { t0: 0.4, t1: 0.7, w: "смотрю" }, // без метки — главный
+  ];
+  const main = E.captionPages(ctx, talk, { style: "hormozi", speakers: ["A"] }, 0, 5, "Montserrat");
+  assert.deepEqual(main.flatMap((p) => p.words.map((w) => w.text)), ["Я", "СМОТРЮ"]);
+  const others = E.captionPages(ctx, talk, { style: "hormozi", speakers: ["B", "C", "D"] }, 0, 5, "Montserrat");
+  assert.deepEqual(others.flatMap((p) => p.words.map((w) => w.text)), ["ПЕРЕДАЧ"]);
+});

@@ -429,17 +429,19 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
     return warnings
 
 
-def h_label_speakers(ctx: ToolContext, _args: dict) -> dict:
-    from app.ai.speakers import label_speakers
+def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
+    from app.ai.speakers import separate_voices
 
     ctx.before_change()
     try:
-        out = label_speakers(ctx.store, ctx.plan_id)
+        out = separate_voices(ctx.store, ctx.plan_id)
     except (RuntimeError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
     voices = len(out["counts"])
     note = ("голос один — субтитры обычные" if voices <= 1 else
-            f"голосов {voices}: субтитры каждого — своим цветом и своей строкой (слой captions делает это сам)")
+            f"голосов {voices}: слова каждого помечены. Главный слой captions — props.speakers ['A'], "
+            "другие голоса — второй слой captions с speakers ['B','C','D'], мельче (size ~60) и рядом "
+            "(auto_edit ставит оба сам)")
     return {"ok": True, **out, "note": note}
 
 
@@ -1512,12 +1514,12 @@ def _build_registry() -> list[Tool]:
             h_edit_subtitle_lines, mutating=True, label=lambda a: f"Правлю субтитры ({len(a.get('edits') or [])} стр.)",
         ),
         Tool(
-            "label_speakers", "Разбираю, кто говорит",
-            "Послушать звук клипа и разметить, где чей голос (стример A, гость/донат/ролик — B, C). "
-            "Субтитры разных людей станут разного цвета и не смешаются в одной строке. auto_edit "
-            "делает это сам; вызывай, если перераспознал речь после auto_edit. / Diarize speakers.",
+            "separate_voices", "Разбираю голоса",
+            "Послушать звук клипа и расшифровать каждый голос отдельно (стример A, гость/донат/ролик — B, C): "
+            "возвращает потерянные под чужим голосом фразы, метит слова, строки не смешивают людей. "
+            "auto_edit делает это сам; вызывай, если перераспознал речь после auto_edit. / Separate voices.",
             _obj({}, []),
-            h_label_speakers, mutating=True, label=lambda a: "Разбираю, кто говорит",
+            h_separate_voices, mutating=True, label=lambda a: "Разбираю голоса",
         ),
         Tool(
             "generate_subtitles", "Распознаю речь заново",

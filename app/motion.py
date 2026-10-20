@@ -578,6 +578,9 @@ PROPS: dict[str, dict] = {
         # Цвет слов второго, третьего… говорящего (метка s у слова в comp.words: A, B, C…).
         # Не задано — свой цвет на каждого, кроме главного (A).
         "speakerColors": Opt(ListOf(Obj({"s": Text("B", 8), "color": Color("#7dd3fc")}), 8)),
+        # Чьи слова показывает слой: [] — всех; ["A"] — только главного, ["B", "C", "D"] — остальных
+        # (второй слой субтитров другим местом и мельче — голоса не мешают друг другу).
+        "speakers": Opt(ListOf(Text("A", 8), 8)),
         "animation": Opt(Choice("pop", CAPTION_ANIMATIONS)),
         "wordScale": Opt(Num(1.12, 1, 1.4, 3)),
         "tilt": Opt(Num(0, -20, 20, 2)),

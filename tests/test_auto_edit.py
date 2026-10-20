@@ -86,3 +86,19 @@ def test_zoom_keeps_subject_edge_next_to_text_in_place():
     result = build_auto_edit("Клип", words, [], words[-1]["end"] + 1, caption_y=0.37, anchor=anchor)
     zoomed = [k for k in result["camera"] if k["zoom"] > 1]
     assert zoomed and all(k["y"] < 0.5 for k in zoomed)
+
+
+def test_other_voices_get_their_own_smaller_captions_layer():
+    words = _words("я хочу столько денег чтобы взять ипотеку это страшно " * 2)
+    for w in words[3:6]:
+        w["speaker"] = "B"
+    result = build_auto_edit("Клип", words, [], words[-1]["end"] + 1, caption_y=0.37)
+    caps = {l["id"]: l for l in result["layers"] if l["type"] == "captions"}
+    assert caps["auto_caps"]["props"]["speakers"] == ["A"]
+    other = caps["auto_caps_voices"]
+    assert other["props"]["speakers"] == ["B"] and other["props"]["size"] < 80
+    assert abs(other["y"] - 0.27) < 1e-6
+    # Голос один — один слой без фильтра.
+    single = build_auto_edit("Клип", _words("раз два три четыре"), [], 3.0)
+    assert [l["id"] for l in single["layers"] if l["type"] == "captions"] == ["auto_caps"]
+    assert "speakers" not in single["layers"][-1]["props"] or not single["layers"][-1]["props"]["speakers"]

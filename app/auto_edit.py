@@ -149,10 +149,24 @@ def build_auto_edit(
             highlights.append({"i": i, "color": "#22c55e"})
             last_key = w["start"]
     if words:
+        voices = sorted({w.get("speaker") for w in words if w.get("speaker") and w.get("speaker") != "A"})
+        caps = {"style": style, "maxWords": 3, "highlightWords": highlights[:60]}
+        if voices:
+            caps["speakers"] = ["A"]
         layers.append({
             "id": "auto_caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": duration, "track": 0,
-            "x": 0.5, "y": caption_y, "props": {"style": style, "maxWords": 3, "highlightWords": highlights[:60]},
+            "x": 0.5, "y": caption_y, "props": caps,
         })
+        if voices:
+            # Другие голоса (гость, донат, ролик) — своим слоем, мельче и рядом с главными:
+            # одновременная речь не мешается в одну строку и не перебивает стримера.
+            other_y = caption_y - 0.1 if caption_y < 0.6 else caption_y + 0.075
+            layers.append({
+                "id": "auto_caps_voices", "type": "captions", "name": "Субтитры: другие голоса", "start": 0.0,
+                "end": duration, "track": 0, "x": 0.5, "y": round(min(0.8, max(0.2, other_y)), 3),
+                "props": {"style": "hormozi", "size": 60, "maxWords": 4, "speakers": voices,
+                          "stroke": {"color": "#000000", "width": 7}, "wordScale": 1.05},
+            })
 
     camera: list[dict] = []
     moments = punch_moments(words, peaks, duration)
