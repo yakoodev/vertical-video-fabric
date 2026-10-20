@@ -106,3 +106,25 @@ def test_caption_words_carry_speaker():
     words = caption_words({"words": [{"word": "да", "start": 1, "end": 2, "speaker": "B"},
                                      {"word": "нет", "start": 2, "end": 3}]})
     assert words == [{"t0": 1.0, "t1": 2.0, "w": "да", "s": "B"}, {"t0": 2.0, "t1": 3.0, "w": "нет"}]
+
+
+def test_unheard_start_of_utterance_goes_before_first_matched_word():
+    """Gemini поставил начало реплики позже, чем whisper услышал её середину:
+    «Как устроена муха?» не должно стать «муха как устроена»."""
+    whisper = [{"word": "муха", "start": 11.9, "end": 12.2}, {"word": "да", "start": 12.4, "end": 12.6}]
+    merged = merge_voices(whisper, [{"s": "A", "start": 12.2, "end": 13.0, "text": "Как устроена муха? Да"}])
+    assert [w["word"] for w in merged] == ["Как", "устроена", "муха?", "Да"]
+    assert merged[1]["end"] <= 11.9 + 1e-9
+
+
+def test_assign_voice_moves_words_and_rebuilds_lines():
+    from app.ai.speakers import assign_voice
+
+    store = _Store("ну что привет всем")  # слова в 0.0, 0.4, 0.8, 1.2
+    out = assign_voice(store, 1, 0.8, 2.0, "B", "донат")
+    assert out["moved"] == 2 and out["speakers"]["B"] == "донат"
+    assert [l["text"] for l in store.subs["lines"]] == ["ну что", "привет всем"]
+    assert [w["speaker"] for w in store.subs["words"]] == ["A", "A", "B", "B"]
+    # Вернули всё главному — меток нет.
+    assign_voice(store, 1, 0.0, 9.0, "A")
+    assert not any("speaker" in w for w in store.subs["words"])

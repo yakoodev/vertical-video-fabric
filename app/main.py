@@ -2286,6 +2286,54 @@ def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class SeparateVoicesRequest(BaseModel):
+    retranscribe: bool = Field(default=True, description="сначала распознать речь точной моделью (large-v3-turbo)")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/voices",
+    tags=["Subtitles"],
+    summary="Голоса: Gemini расшифровывает каждый голос отдельно, слова субтитров получают метку говорящего",
+)
+def api_separate_voices(clip_plan_id: int, _auth: AuthDep, payload: SeparateVoicesRequest | None = None) -> dict:
+    from app.ai.speakers import separate_voices
+
+    try:
+        snapshot_clip(store, clip_plan_id, "голоса")
+        result = separate_voices(
+            store, clip_plan_id, force=True, retranscribe=payload.retranscribe if payload else True
+        )
+        return {**result, "subtitles": store.get_clip_plan_subtitles(clip_plan_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class AssignVoiceRequest(BaseModel):
+    start: float
+    end: float
+    speaker: str = Field(pattern="^[A-D]$")
+    description: str | None = Field(default=None, max_length=60)
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/voices/assign",
+    tags=["Subtitles"],
+    summary="Голоса: отдать слова отрезка [start, end) другому голосу (поправить модель руками)",
+)
+def api_assign_voice(clip_plan_id: int, payload: AssignVoiceRequest, _auth: AuthDep) -> dict:
+    from app.ai.speakers import assign_voice
+
+    try:
+        snapshot_clip(store, clip_plan_id, "голос строки")
+        return assign_voice(store, clip_plan_id, payload.start, payload.end, payload.speaker, payload.description)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class AiMontageApplyRequest(BaseModel):
     spec: dict
 

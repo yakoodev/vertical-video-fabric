@@ -146,13 +146,20 @@ def _fill_timing(tokens: list[str], timing: list, u: dict) -> list[dict]:
         j = k
         while j < len(tokens) and timing[j] is None:
             j += 1
-        left = timing[k - 1][1] if k > 0 and timing[k - 1] else (words[-1]["end"] if words else u["start"])
-        right = timing[j][0] if j < len(tokens) else u["end"]
-        right = max(right, left + 0.12 * (j - k))
-        step = (right - left) / (j - k)
-        for n in range(k, j):
-            a = left + step * (n - k)
-            words.append({"word": tokens[n], "start": round(a, 3), "end": round(a + step * 0.9, 3), "speaker": u["s"]})
+        n = j - k
+        right = timing[j][0] if j < len(tokens) else max(u["end"], (words[-1]["end"] if words else u["start"]) + 0.2 * n)
+        if words:
+            left = words[-1]["end"]
+        else:
+            # Начало реплики whisper не расслышал: слова встают ДО первого совпавшего,
+            # даже если Gemini поставил начало реплики чуть позже.
+            left = max(0.0, min(u["start"], right - 0.2 * n))
+        if right <= left:
+            right = left + 0.04 * n  # зажаты между соседями — порядок важнее длительности
+        step = (right - left) / n
+        for m in range(k, j):
+            a = left + step * (m - k)
+            words.append({"word": tokens[m], "start": round(a, 3), "end": round(a + step * 0.9, 3), "speaker": u["s"]})
         k = j
     return words
 
@@ -195,16 +202,31 @@ def _words_key(words: list[dict]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def separate_voices(store: Any, clip_plan_id: int, client: Any = None, *, force: bool = False) -> dict:
+def separate_voices(
+    store: Any, clip_plan_id: int, client: Any = None, *, force: bool = False, retranscribe: bool = False
+) -> dict:
     """Разобрать голоса клипа и переписать субтитры: у каждого слова — чей голос,
     потерянные whisper'ом слова — на месте. Возвращает
-    ``{speakers, counts, changed, added, warning?}``."""
+    ``{speakers, counts, changed, added, retranscribed, warning?}``.
+
+    ``retranscribe`` — сначала распознать речь точной моделью (large-v3-turbo), если
+    субтитры сделаны более слабой: время слов берётся у whisper, и от small под
+    чужими голосами толку мало."""
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
+    retranscribed = False
+    if retranscribe:
+        from app.clip_subtitles import generate_for_plan
+        from app.subtitles.registry import QUALITY_WHISPER_MODEL
+
+        if payload.get("model") != QUALITY_WHISPER_MODEL or not payload.get("words"):
+            payload = generate_for_plan(store, clip_plan_id, provider="whisper", model=QUALITY_WHISPER_MODEL)
+            retranscribed, force = True, True
     words = [dict(w) for w in payload.get("words") or [] if str(w.get("word") or "").strip()]
     if not words:
         raise ValueError("у клипа нет распознанной речи — сначала распознайте субтитры")
     if not force and payload.get("speakers_key") and payload.get("speakers_key") == _words_key(words):
-        return {"speakers": payload.get("speakers") or {}, "counts": _counts(words), "changed": False, "added": 0}
+        return {"speakers": payload.get("speakers") or {}, "counts": _counts(words), "changed": False, "added": 0,
+                "retranscribed": False}
     if client is None:
         if not settings.gemini_api_key:
             raise RuntimeError("Gemini не настроен — разобрать голоса нечем")
@@ -232,8 +254,9 @@ def separate_voices(store: Any, clip_plan_id: int, client: Any = None, *, force:
     speakers, utterances = parse_utterances(text)
     said = sum(len(u["text"].split()) for u in utterances)
     if not utterances or said < MIN_COVERAGE * len(draft):
-        return {"speakers": speakers, "counts": _counts(words), "changed": False, "added": 0,
-                "warning": f"модель расслышала {said} слов из {len(draft)} — субтитры не трогаю"}
+        return {"speakers": speakers, "counts": _counts(words), "changed": retranscribed, "added": 0,
+                "retranscribed": retranscribed,
+                "warning": f"модель расслышала {said} слов из {len(draft)} — голоса не разбираю"}
     merged = merge_voices(draft, utterances)
     if len({w["speaker"] for w in merged}) <= 1:
         for w in merged:
@@ -244,7 +267,41 @@ def separate_voices(store: Any, clip_plan_id: int, client: Any = None, *, force:
     fresh["speakers_key"] = _words_key(merged)
     store.set_clip_plan_subtitles(clip_plan_id, fresh)
     return {"speakers": speakers, "counts": _counts(merged), "changed": True,
-            "added": max(0, len(merged) - len(draft))}
+            "added": max(0, len(merged) - len(draft)), "retranscribed": retranscribed}
+
+
+def assign_voice(
+    store: Any, clip_plan_id: int, start: float, end: float, speaker: str, description: str | None = None
+) -> dict:
+    """Отдать слова, начинающиеся в [start, end), голосу ``speaker`` — правка ошибки
+    модели руками. Строки пересобираются; голос один — метки снимаются."""
+    speaker = str(speaker).strip().upper()[:1]
+    if speaker not in LETTERS:
+        raise ValueError("голос — одна из букв A, B, C, D")
+    payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
+    words = [dict(w) for w in payload.get("words") or []]
+    hit = 0
+    for w in words:
+        if start - 1e-6 <= float(w["start"]) < end:
+            w["speaker"] = speaker
+            hit += 1
+    if not hit:
+        raise ValueError("в этом отрезке нет слов")
+    labels = {w.get("speaker") or "A" for w in words}
+    if labels == {"A"}:
+        for w in words:
+            w.pop("speaker", None)
+    else:
+        for w in words:
+            w.setdefault("speaker", "A")
+    speakers = dict(payload.get("speakers") or {})
+    if description:
+        speakers[speaker] = description[:60]
+    speakers.setdefault(speaker, "голос " + speaker)
+    fresh = {**payload, "words": words, "lines": lines_from_words(words), "speakers": speakers, "edited": True}
+    fresh["speakers_key"] = _words_key(words)
+    store.set_clip_plan_subtitles(clip_plan_id, fresh)
+    return {"speakers": speakers, "counts": _counts(words), "moved": hit, "subtitles": fresh}
 
 
 # Прежнее имя (агентский инструмент, автомонтаж).
