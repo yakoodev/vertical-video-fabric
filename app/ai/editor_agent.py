@@ -326,6 +326,7 @@ def run_agent(
                 return gemini.generate_content(used_model, payload)
             raise
 
+    nudged = False
     while True:
         if should_cancel and should_cancel():
             raise AgentCancelled()
@@ -346,6 +347,16 @@ def run_agent(
         calls = [p for p in parts if isinstance(p.get("functionCall"), dict)]
         if parts:
             contents.append({"role": "model", "parts": parts})
+        idle = _parts_text(parts).strip().lower()
+        if not calls and tools_on and not steps and not nudged and (not idle or "ничего не" in idle):
+            # Модель иногда отвечает текстом («ничего не поменял»), не тронув клип,
+            # хотя её просили монтировать. Один раз напоминаем, что работа — инструментами.
+            nudged = True
+            contents.append({"role": "user", "parts": [{"text": (
+                "Ты ещё ничего не сделал с клипом. Работай инструментами по ПОРЯДКУ РАБОТЫ "
+                "(начни с auto_edit, если просили смонтировать), а не текстом."
+            )}]})
+            continue
         if not calls or not tools_on:
             final_text = _parts_text(parts)
             break
