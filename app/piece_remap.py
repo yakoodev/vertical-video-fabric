@@ -130,3 +130,27 @@ def remap_render(render: dict, old_pieces: list[dict], new_pieces: list[dict]) -
     if lost > 0:
         note += f"; {lost} слоёв были целиком в отрезанном — убраны"
     return fresh, note
+
+
+def retime_segment(store: Any, segment_id: int, start_sec: float, end_sec: float) -> dict:
+    """Поменять таймкоды куска и сдвинуть монтаж всех клипов, где он стоит.
+
+    Перетаскивание края куска в редакторе идёт сюда, мимо клип-файла
+    (app/clip_spec.apply_spec) — без этого титры оставались на старых секундах."""
+    from app.clip_settings import normalize_render_settings
+
+    rows = store.db.query_all(
+        "SELECT DISTINCT clip_plan_id FROM clip_plan_segments WHERE segment_id = ?", (segment_id,)
+    )
+    before = {}
+    for row in rows:
+        plan = store.get_clip_plan(int(row["clip_plan_id"]))
+        before[plan["id"]] = plan
+    segment = store.update_ai_segment_timecodes(segment_id, start_sec, end_sec)
+    for plan_id, plan in before.items():
+        stored = normalize_render_settings(plan.get("render_settings") or {})
+        after = store.get_clip_plan(plan_id).get("segments") or []
+        moved, _note = remap_render(stored, plan.get("segments") or [], after)
+        if moved is not stored and moved != stored:
+            store.set_clip_plan_render_settings(plan_id, moved)
+    return segment

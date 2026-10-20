@@ -2036,7 +2036,10 @@ def api_update_segment_timecodes(
     _auth: AuthDep,
 ) -> dict:
     try:
-        return store.update_ai_segment_timecodes(segment_id, payload.start_sec, payload.end_sec)
+        from app.piece_remap import retime_segment
+
+        # Монтаж клипов с этим куском (титры, камера, вставки) едет вслед за краем.
+        return retime_segment(store, segment_id, payload.start_sec, payload.end_sec)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

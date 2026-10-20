@@ -49,3 +49,21 @@ def test_unchanged_and_reordered():
     assert remap_render(render, OLD, OLD) == (render, None)
     out, note = remap_render(render, OLD, list(reversed(OLD)))
     assert out is render and "переставлены" in note
+
+
+def test_dragging_piece_edge_moves_layers(tmp_path, monkeypatch):
+    """Край куска тянут в редакторе (PATCH timecodes) — титр едет за своей фразой."""
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+
+    _require_ffmpeg()
+    client, store, _source, plan, a, _b = _setup(tmp_path, monkeypatch)  # куски [0,5] и [1,6]
+    render = dict(store.get_clip_plan(plan["id"])["render_settings"] or {})
+    layer = {"id": "t1", "type": "text", "start": 7.0, "end": 8.0, "x": 0.5, "y": 0.3, "props": {"text": "ДА"}}
+    store.set_clip_plan_render_settings(plan["id"], {**render, "layers": [layer]})
+    client.patch(f"/api/segments/{a['id']}/timecodes", json={"start_sec": 1.0, "end_sec": 6.0}).raise_for_status()
+    moved = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]
+    assert (moved["start"], moved["end"]) == (7.0, 8.0)  # длина первого куска та же (5 с) — на месте
+    client.patch(f"/api/segments/{a['id']}/timecodes", json={"start_sec": 1.0, "end_sec": 7.0}).raise_for_status()
+    moved = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]
+    assert (moved["start"], moved["end"]) == (8.0, 9.0)  # первый кусок длиннее на 1 с
