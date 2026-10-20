@@ -184,6 +184,17 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
     subs = store.get_clip_plan_subtitles(clip_plan_id) or {}
     if not [w for w in subs.get("words") or [] if str(w.get("word", "")).strip()]:
         raise ValueError("у клипа нет распознанной речи — сначала «Распознать речь»")
+    from app.settings import settings as app_settings
+
+    if app_settings.gemini_api_key:
+        try:
+            # Разные голоса (гость, донат, ролик) — разным цветом субтитров (кэш по словам).
+            from app.ai.speakers import label_speakers
+
+            label_speakers(store, clip_plan_id)
+            subs = store.get_clip_plan_subtitles(clip_plan_id) or subs
+        except Exception:  # noqa: BLE001 - без разметки голосов субтитры всё равно будут
+            pass
     # Слова сохранены во времени кусков подряд, а слои и камера — во времени
     # готового клипа (после переходов): переводим той же функцией, что и
     # слой «субтитры», иначе наезды и звуки встают позже речи.

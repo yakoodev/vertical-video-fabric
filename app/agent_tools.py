@@ -429,6 +429,20 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
     return warnings
 
 
+def h_label_speakers(ctx: ToolContext, _args: dict) -> dict:
+    from app.ai.speakers import label_speakers
+
+    ctx.before_change()
+    try:
+        out = label_speakers(ctx.store, ctx.plan_id)
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+    voices = len(out["counts"])
+    note = ("голос один — субтитры обычные" if voices <= 1 else
+            f"голосов {voices}: субтитры каждого — своим цветом и своей строкой (слой captions делает это сам)")
+    return {"ok": True, **out, "note": note}
+
+
 def h_generate_subtitles(ctx: ToolContext, _args: dict) -> dict:
     from app.clip_subtitles import generate_for_plan
 
@@ -1496,6 +1510,14 @@ def _build_registry() -> list[Tool]:
             _obj({"edits": {"type": "array", "items": _obj({"i": {"type": "integer"}, "text": {"type": "string"}},
                                                            ["i", "text"])}}, ["edits"]),
             h_edit_subtitle_lines, mutating=True, label=lambda a: f"Правлю субтитры ({len(a.get('edits') or [])} стр.)",
+        ),
+        Tool(
+            "label_speakers", "Разбираю, кто говорит",
+            "Послушать звук клипа и разметить, где чей голос (стример A, гость/донат/ролик — B, C). "
+            "Субтитры разных людей станут разного цвета и не смешаются в одной строке. auto_edit "
+            "делает это сам; вызывай, если перераспознал речь после auto_edit. / Diarize speakers.",
+            _obj({}, []),
+            h_label_speakers, mutating=True, label=lambda a: "Разбираю, кто говорит",
         ),
         Tool(
             "generate_subtitles", "Распознаю речь заново",

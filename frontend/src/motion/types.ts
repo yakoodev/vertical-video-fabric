@@ -204,7 +204,8 @@ export type AudioProps = {
 /* ---------- анимированные субтитры ---------- */
 
 /** Слово речи во времени клипа (секунды) — из субтитров клипа, их подаёт хост. */
-export type CaptionWord = { t0: number; t1: number; w: string };
+/** Слово речи. `s` — кто говорит (A — главный, B, C… — другие голоса): свой цвет и своя страница. */
+export type CaptionWord = { t0: number; t1: number; w: string; s?: string };
 
 export type CaptionAnimation = "pop" | "bounce" | "fade" | "karaoke" | "typewriter" | "none";
 
@@ -247,6 +248,8 @@ export type CaptionsProps = {
   highlightWords?: { i: number; color: string }[];
   /** Эмодзи, выпрыгивающий над строкой, когда сказано слово i. */
   emoji?: { i: number; char: string }[];
+  /** Цвет слов других говорящих (s у слова). Не задано — свой цвет на каждого, кроме A. */
+  speakerColors?: { s: string; color: string }[];
   animation?: CaptionAnimation;
   /** Масштаб активного слова 1..1.4. */
   wordScale?: number;

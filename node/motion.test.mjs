@@ -512,3 +512,21 @@ test("CLI: слой чата рисует сообщения с эмоутами
   assert.equal(r.status, 0, r.stderr);
   assert.equal(await inkInBand(png, 0, 1), 0);
 });
+
+test("субтитры: два голоса — разные страницы и цвет второго", () => {
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const talk = [
+    { t0: 0.0, t1: 0.3, w: "ну", s: "A" },
+    { t0: 0.3, t1: 0.6, w: "что", s: "A" },
+    { t0: 0.6, t1: 0.9, w: "привет", s: "B" }, // второй голос вступил без паузы
+    { t0: 0.9, t1: 1.2, w: "всем", s: "B" },
+  ];
+  const pages = E.captionPages(ctx, talk, { style: "hormozi", maxWords: 4 }, 0, 5, "Montserrat");
+  assert.deepEqual(pages.map((p) => p.words.map((w) => w.s)), [["A", "A"], ["B", "B"]]);
+  const r = E.resolveCaptions({ style: "hormozi" });
+  assert.equal(E.speakerColor(r, "A"), null);
+  assert.ok(E.speakerColor(r, "B"));
+  const own = E.resolveCaptions({ style: "hormozi", speakerColors: [{ s: "B", color: "#ff00ff" }] });
+  assert.equal(E.speakerColor(own, "B"), "#ff00ff");
+  assert.deepEqual(E.captionWordsFrom([{ word: "да", start: 1, end: 2, speaker: "B" }]), [{ t0: 1, t1: 2, w: "да", s: "B" }]);
+});

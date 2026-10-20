@@ -39,6 +39,7 @@ export {
   captionPages,
   captionPageAt,
   captionWordsFrom,
+  speakerColor,
   type CaptionStyle,
   type CaptionPage,
   type CaptionPageWord,

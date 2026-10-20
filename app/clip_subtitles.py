@@ -88,7 +88,8 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
         inside = _words_of_line(old_words, start, end)
         if inside and _same_text(" ".join(w["word"] for w in inside), line["text"]):
             words.extend(
-                {"word": w["word"], "start": max(start, float(w["start"])), "end": min(end, float(w["end"]))}
+                {"word": w["word"], "start": max(start, float(w["start"])), "end": min(end, float(w["end"])),
+                 **({"speaker": w["speaker"]} if w.get("speaker") else {})}
                 for w in inside
             )
         else:

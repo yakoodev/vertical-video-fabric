@@ -164,10 +164,14 @@ export type ResolvedCaptions = {
   letterSpacing: number;
   highlightWords: { i: number; color: string }[];
   emoji: { i: number; char: string }[];
+  speakerColors: { s: string; color: string }[];
   animation: CaptionAnimation;
   wordScale: number;
   tilt: number;
 };
+
+/** Цвета других голосов по умолчанию: главный (A) — обычным цветом стиля. */
+const SPEAKER_PALETTE: Record<string, string> = { B: "#7DD3FC", C: "#F9A8D4", D: "#86EFAC", E: "#FDBA74" };
 
 const BASE: ResolvedCaptions = {
   font: "Montserrat",
@@ -190,6 +194,7 @@ const BASE: ResolvedCaptions = {
   letterSpacing: 0,
   highlightWords: [],
   emoji: [],
+  speakerColors: [],
   animation: "pop",
   wordScale: 1.12,
   tilt: 0,
@@ -223,6 +228,8 @@ export type CaptionPageWord = {
   /** Номер слова в comp.words. */
   i: number;
   text: string;
+  /** Кто говорит (comp.words[i].s). */
+  s?: string;
   t0: number;
   t1: number;
   /** Ширина слова и его левый край в строке (опорн. px). */
@@ -320,7 +327,7 @@ export function captionPages(
   // Запас под увеличенное активное слово, чтобы оно не вылезало за maxWidth.
   const maxW = r.maxWidth / Math.max(1, r.wordScale * 0.97);
 
-  type Item = { i: number; text: string; raw: string; t0: number; t1: number; w: number };
+  type Item = { i: number; text: string; raw: string; t0: number; t1: number; w: number; s: string };
   const items: Item[] = [];
   words.forEach((wd, i) => {
     const t0 = Number(wd.t0);
@@ -328,7 +335,7 @@ export function captionPages(
     if (!Number.isFinite(t0) || t0 < from - 0.05 || t0 >= to) return;
     const text = cleanWord(String(wd.w ?? ""), r);
     if (!text) return;
-    items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text) });
+    items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "" });
   });
   items.sort((a, b) => a.t0 - b.t0);
 
@@ -338,7 +345,8 @@ export function captionPages(
   for (const it of items) {
     if (cur.length) {
       const prev = cur[cur.length - 1];
-      if (it.t0 - prev.t1 > PAUSE_SPLIT || SENTENCE_END.test(prev.raw.trim())) {
+      // Сменился говорящий — новая страница: реплики двух людей не смешиваются.
+      if (it.t0 - prev.t1 > PAUSE_SPLIT || SENTENCE_END.test(prev.raw.trim()) || it.s !== prev.s) {
         phrases.push(cur);
         cur = [];
       }
@@ -383,7 +391,7 @@ export function captionPages(
     const pk = packLines(g.map((x) => x.w), space, maxW);
     return {
       index,
-      words: g.map((x, k) => ({ i: x.i, text: x.text, t0: x.t0, t1: x.t1, w: x.w, x: pk.x[k], line: pk.line[k] })),
+      words: g.map((x, k) => ({ i: x.i, text: x.text, s: x.s || undefined, t0: x.t0, t1: x.t1, w: x.w, x: pk.x[k], line: pk.line[k] })),
       t0: g[0].t0,
       t1: g[g.length - 1].t1 + HOLD,
       lines: pk.lines,
@@ -496,7 +504,17 @@ function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scal
 function wordColor(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, hl: Map<number, string>): string {
   const key = hl.get(w.i);
   if (key) return key;
+  const voice = speakerColor(r, w.s);
+  // Другой голос — своим цветом и пока звучит: так видно, что это не главный.
+  if (voice) return voice;
   return look.active ? r.activeColor : r.color;
+}
+
+/** Цвет говорящего s или null для главного (A) и слов без метки. */
+export function speakerColor(r: ResolvedCaptions, s: string | undefined): string | null {
+  if (!s || s === "A") return null;
+  const own = r.speakerColors.find((c) => c.s === s);
+  return own ? own.color : SPEAKER_PALETTE[s] || SPEAKER_PALETTE.B;
 }
 
 function drawPage(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: number, env: RenderEnv, font: string, all: CaptionWord[]): void {
@@ -718,6 +736,11 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
 };
 
 /** Слова из субтитров редактора (`{word, start, end}`) в формат `comp.words`. */
-export function captionWordsFrom(list: { word: string; start: number; end: number }[]): CaptionWord[] {
-  return (list || []).map((w) => ({ t0: Number(w.start), t1: Number(w.end), w: String(w.word ?? "") }));
+export function captionWordsFrom(list: { word: string; start: number; end: number; speaker?: string }[]): CaptionWord[] {
+  return (list || []).map((w) => ({
+    t0: Number(w.start),
+    t1: Number(w.end),
+    w: String(w.word ?? ""),
+    ...(w.speaker ? { s: String(w.speaker) } : {}),
+  }));
 }

@@ -575,6 +575,9 @@ PROPS: dict[str, dict] = {
             ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "color": Color("#2bff6b")}), MAX_CAPTION_MARKS)
         ),
         "emoji": Opt(ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "char": Text("", 32)}), MAX_CAPTION_MARKS)),
+        # Цвет слов второго, третьего… говорящего (метка s у слова в comp.words: A, B, C…).
+        # Не задано — свой цвет на каждого, кроме главного (A).
+        "speakerColors": Opt(ListOf(Obj({"s": Text("B", 8), "color": Color("#7dd3fc")}), 8)),
         "animation": Opt(Choice("pop", CAPTION_ANIMATIONS)),
         "wordScale": Opt(Num(1.12, 1, 1.4, 3)),
         "tilt": Opt(Num(0, -20, 20, 2)),
@@ -1045,7 +1048,11 @@ def caption_words(payload: Any) -> list[dict]:
         text = str(item.get("word") or "").strip()
         if t0 is None or t1 is None or not text:
             continue
-        out.append({"t0": round(max(0.0, t0), 3), "t1": round(max(t0, t1), 3), "w": text[:60]})
+        word = {"t0": round(max(0.0, t0), 3), "t1": round(max(t0, t1), 3), "w": text[:60]}
+        speaker = str(item.get("speaker") or "").strip()[:8]
+        if speaker:
+            word["s"] = speaker  # кто говорит (app.ai.speakers): свой цвет и своя страница
+        out.append(word)
     out.sort(key=lambda w: w["t0"])
     return out
 
