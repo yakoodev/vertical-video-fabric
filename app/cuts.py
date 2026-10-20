@@ -954,3 +954,27 @@ def suggest_for_plan(store: Any, clip_plan_id: int, mode: str, min_pause: float,
     if not words:
         raise ValueError("у клипа нет пословных субтитров — сначала сделайте субтитры в редакторе")
     return suggest_cuts(words, plan_duration(plan), mode=mode, min_pause=min_pause, keep_pad=keep_pad)
+
+
+def cut_edge_warnings(cuts: list[dict], words: list[dict], total: float) -> list[str]:
+    """Огрызки на стыках вырезов: слово, разрезанное пополам, и обрывок речи
+    короче 0.6 с между вырезами (агент так оставил лишнее «я» перед финалом).
+
+    ``cuts`` и ``words`` — во времени клипа до вырезов."""
+    out: list[str] = []
+    spans = sorted((float(c["start"]), float(c["end"])) for c in cuts)
+    for word in words or []:
+        a, b = float(word["start"]), float(word["end"])
+        for s, e in spans:
+            inside = max(0.0, min(b, e) - max(a, s))
+            if 0.04 < inside < (b - a) - 0.04:
+                out.append(f"вырез {s:.2f}–{e:.2f} режет слово «{word['word']}» ({a:.2f}–{b:.2f}) — сдвинь край на границу слова")
+                break
+    edges = [0.0] + [x for span in spans for x in span] + [total]
+    for k in range(0, len(edges) - 1, 2):
+        lo, hi = edges[k], edges[k + 1]
+        if 0 < hi - lo < 0.6 and lo > 0 and hi < total:
+            heard = [w["word"] for w in words or [] if lo <= (float(w["start"]) + float(w["end"])) / 2 <= hi]
+            if heard:
+                out.append(f"между вырезами {lo:.2f}–{hi:.2f} остался обрывок «{' '.join(heard)}» — вырежи его или расширь")
+    return out[:6]

@@ -447,6 +447,12 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
             f"На кусках {', '.join(map(str, gaps))} речь есть, а субтитров нет — субтитры устарели. "
             "Сначала generate_subtitles (распознать заново), потом auto_edit."
         ))
+    cuts = (timeline.get("render") or {}).get("cuts") or []
+    if cuts:
+        from app.cuts import cut_edge_warnings
+
+        words = (ctx.store.get_clip_plan_subtitles(plan["id"]) or {}).get("words") or []
+        warnings.extend(f"Вырезы: {w}" for w in cut_edge_warnings(cuts, words, float(timeline["duration"])))
     if timeline["pieces"]:
         ending = ending_warning(ctx.store, int(plan["source_id"]), float(timeline["pieces"][-1]["source_end"]))
         if ending:
@@ -588,7 +594,14 @@ def h_apply_cuts(ctx: ToolContext, args: dict) -> dict:
     settings = dict(_current_render(ctx))
     settings["cuts"] = cuts
     ctx.store.set_clip_plan_render_settings(ctx.plan_id, settings)
-    return {"cuts": len(cuts), "saved_sec": round(cuts_total(cuts), 2)}
+    out: dict = {"cuts": len(cuts), "saved_sec": round(cuts_total(cuts), 2)}
+    from app.cuts import cut_edge_warnings
+
+    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+    warnings = cut_edge_warnings(cuts, words, _clip_duration(ctx))
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 def h_auto_edit(ctx: ToolContext, args: dict) -> dict:

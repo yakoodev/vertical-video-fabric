@@ -648,3 +648,14 @@ def test_cut_drops_words_mostly_inside_and_rebuilds_line():
     # «колы» и «я» серединой в вырезе — пропали, хоть и торчат краем; «картошку» серединой до выреза — осталась
     assert [w["word"] for w in fresh["words"]] == ["Я", "картошку", "везу"]
     assert [l["text"] for l in fresh["lines"]] == ["Я картошку везу"]
+
+
+def test_cut_edge_warnings_split_word_and_scrap():
+    from app.cuts import cut_edge_warnings
+
+    words = [{"word": "Кока-Колы", "start": 1.0, "end": 1.6}, {"word": "я", "start": 2.1, "end": 2.3},
+             {"word": "орешки", "start": 4.0, "end": 4.5}]
+    out = cut_edge_warnings([{"start": 1.3, "end": 2.0}, {"start": 2.4, "end": 3.9}], words, 6.0)
+    assert any("режет слово «Кока-Колы»" in w for w in out)
+    assert any("обрывок «я»" in w for w in out)
+    assert cut_edge_warnings([{"start": 1.7, "end": 3.9}], words, 6.0) == []
