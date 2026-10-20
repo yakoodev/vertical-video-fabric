@@ -317,7 +317,53 @@ def remap_subtitles(payload: dict, mapper: CutMap) -> dict:
             out.append({**item, "start": round(got[0], 3), "end": round(got[1], 3)})
         return out
 
-    fresh = {**payload, "lines": spans(payload.get("lines"), 0.05), "words": spans(payload.get("words"), 0.02)}
+    def words_kept(items: Any) -> list[tuple[dict, dict]]:
+        """(исходное слово, слово после вырезов). Слово живёт, если не вырезана его
+        середина: тайминги Whisper неточные, и слово, лишь краем торчащее из выреза,
+        раньше оставалось на экране, хотя в ролике его уже не слышно."""
+        out = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            s, e = _finite(item.get("start")), _finite(item.get("end"))
+            if s is None or e is None or mapper((s + e) / 2) is None:
+                continue
+            a, b = mapper.clamp(s), mapper.clamp(e)
+            out.append((item, {**item, "start": round(a, 3), "end": round(max(b, a + 0.05), 3)}))
+        return out
+
+    kept = words_kept(payload.get("words"))
+    source_lines = [l for l in payload.get("lines") or [] if isinstance(l, dict)
+                    and _finite(l.get("start")) is not None and _finite(l.get("end")) is not None]
+
+    def owner(word: Any) -> dict | None:
+        """Строка слова: та, где его середина (из перекрывающихся — начавшаяся позже)."""
+        if not isinstance(word, dict) or _finite(word.get("start")) is None or _finite(word.get("end")) is None:
+            return None
+        mid = (float(word["start"]) + float(word["end"])) / 2
+        hits = [l for l in source_lines if float(l["start"]) - 0.001 <= mid <= float(l["end"]) + 0.001]
+        return max(hits, key=lambda l: float(l["start"])) if hits else None
+
+    lines = []
+    for line in spans(payload.get("lines"), 0.05):
+        original = next(
+            (l for l in payload.get("lines") or [] if isinstance(l, dict) and l.get("text") == line.get("text")
+             and mapper.range(float(l["start"]), float(l["end"]), 0.05) == (line["start"], line["end"])),
+            None,
+        )
+        if original is not None and (line["end"] - line["start"]) < float(original["end"]) - float(original["start"]) - 1e-3:
+            # Строку задел вырез — текст только из прозвучавших слов.
+            all_words = [w for w in payload.get("words") or [] if owner(w) is original]
+            inside = [new for old, new in kept if owner(old) is original]
+            if len(inside) == len(all_words):
+                lines.append(line)  # ни одно слово строки не вырезано — текст (и правки) как был
+                continue
+            if not inside:
+                continue
+            line = {**line, "text": " ".join(str(w.get("word") or "").strip() for w in inside).strip(),
+                    "start": min(w["start"] for w in inside), "end": max(w["end"] for w in inside)}
+        lines.append(line)
+    fresh = {**payload, "lines": lines, "words": [new for _old, new in kept]}
     if _finite(payload.get("duration")) is not None:
         fresh["duration"] = round(mapper.duration(float(payload["duration"])), 3)
     return fresh
@@ -419,9 +465,11 @@ def remap_caption_words(words: list[dict], mapper: CutMap) -> list[dict]:
     """``comp.words`` ({t0, t1, w}) → после вырезов; вырезанные слова выпадают."""
     out = []
     for word in words or []:
-        got = mapper.range(float(word["t0"]), float(word["t1"]), 0.02)
-        if got is not None:
-            out.append({**word, "t0": round(got[0], 3), "t1": round(got[1], 3)})
+        t0, t1 = float(word["t0"]), float(word["t1"])
+        if mapper((t0 + t1) / 2) is None:
+            continue  # середина слова вырезана — в ролике его не слышно
+        a, b = mapper.clamp(t0), mapper.clamp(t1)
+        out.append({**word, "t0": round(a, 3), "t1": round(max(b, a + 0.05), 3)})
     return out
 
 

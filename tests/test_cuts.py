@@ -630,3 +630,21 @@ def test_insert_duration_shrinks_when_cut_runs_through_it():
 
     out = remap_inserts([{"asset_id": 1, "at": 10.0, "duration": 4.0}], CutMap([{"start": 11.0, "end": 13.0}]))
     assert out[0]["at"] == 10.0 and out[0]["duration"] == 2.0
+
+
+def test_cut_drops_words_mostly_inside_and_rebuilds_line():
+    """Агент-монтажёр: «слова из вырезанного всё равно попадали в субтитры»."""
+    from app.cuts import CutMap, remap_subtitles
+
+    m = CutMap([(2.0, 5.0)])
+    payload = {
+        "lines": [{"start": 0.0, "end": 6.0, "text": "Я везу не картошку колы я везу"}],
+        "words": [{"word": "Я", "start": 0.0, "end": 0.4}, {"word": "картошку", "start": 1.5, "end": 2.2},
+                  {"word": "колы", "start": 2.1, "end": 3.0}, {"word": "я", "start": 4.6, "end": 5.2},
+                  {"word": "везу", "start": 5.2, "end": 5.8}],
+        "duration": 8.0,
+    }
+    fresh = remap_subtitles(payload, m)
+    # «колы» и «я» серединой в вырезе — пропали, хоть и торчат краем; «картошку» серединой до выреза — осталась
+    assert [w["word"] for w in fresh["words"]] == ["Я", "картошку", "везу"]
+    assert [l["text"] for l in fresh["lines"]] == ["Я картошку везу"]
