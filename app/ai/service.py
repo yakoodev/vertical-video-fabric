@@ -1188,7 +1188,9 @@ def _narrative_retry_prompt(
         return (
             f"{shared}"
             "Return 3 to 5 strong standalone clips. Each clip must work on its own with a fast "
-            "hook, just enough context, and a clear payoff or punchline. Do not build an episode "
+            "hook, just enough context, and a clear payoff or punchline. The clip must END on that "
+            "payoff: the last segment ends about one second after the punchline/reaction lands, never "
+            "on a neutral line, a trailing ramble, or the first words of the next topic. Do not build an episode "
             "recap and do not cover the timeline in order. Group several closely related shots into "
             "one clip with multiple ordered segments[] only when they belong to the same moment; "
             "otherwise keep moments as separate clips. Keep each finished clip under "
