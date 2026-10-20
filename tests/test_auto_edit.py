@@ -102,3 +102,12 @@ def test_other_voices_get_their_own_smaller_captions_layer():
     single = build_auto_edit("Клип", _words("раз два три четыре"), [], 3.0)
     assert [l["id"] for l in single["layers"] if l["type"] == "captions"] == ["auto_caps"]
     assert "speakers" not in single["layers"][-1]["props"] or not single["layers"][-1]["props"]["speakers"]
+
+
+def test_long_hook_gets_smaller_font():
+    from app.auto_edit import hook_size
+
+    assert hook_size("Я ПРОДАМСЯ") == 96
+    assert hook_size("КОЛОБОК ПОХОЖ НА ОЛЕГА МОНГОЛА") < 80
+    hook = next(l for l in build_auto_edit("Колобок похож на Олега Монгола", [], [], 10.0)["layers"] if l["id"] == "auto_hook")
+    assert hook["props"]["size"] < 80

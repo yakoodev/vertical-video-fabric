@@ -110,6 +110,12 @@ def caption_y_for(settings: dict | None) -> float:
     return 0.72
 
 
+def hook_size(text: str) -> int:
+    """Кегль хука по длине: до двух строк в ширине 980 px."""
+    n = len(text)
+    return 96 if n <= 18 else 84 if n <= 26 else 72 if n <= 36 else 64
+
+
 def build_auto_edit(
     title: str,
     words: list[dict],
@@ -132,7 +138,8 @@ def build_auto_edit(
         layers.append({
             "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(3.0, duration), "track": 3,
             "x": 0.5, "y": HOOK_Y, "in": {"type": "pop", "duration": 0.35}, "out": {"type": "fade", "duration": 0.2},
-            "props": {"text": hook, "font": "Montserrat", "weight": 900, "size": 96,
+            # Длинный заголовок мельче: в 96 px он ложится в три строки и упирается в верх кадра.
+            "props": {"text": hook, "font": "Montserrat", "weight": 900, "size": hook_size(hook),
                       "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980},
         })
         layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),

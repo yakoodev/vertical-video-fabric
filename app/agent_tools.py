@@ -1142,6 +1142,31 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def refit_inserts(store: Any, clip_plan_id: int) -> list[str]:
+    """Подогнать все окошки-вставки клипа под текущие субтитры и хук (как add_insert).
+
+    Вставки ставит и первый шаг ИИ-монтажа (склейка), когда субтитров ещё нет, —
+    после моушн-прохода их надо развести с текстом. Возвращает пояснения."""
+    from app.montage_assets import normalize_inserts
+
+    plan = store.get_clip_plan(clip_plan_id, include_segments=False)
+    render = dict(plan.get("render_settings") or {})
+    notes, out = [], []
+    for ins in render.get("inserts") or []:
+        entry = dict(ins)
+        if entry.get("mode") == "pip":
+            try:
+                note = _fit_pip_insert(render, entry, store.get_montage_asset(int(entry["asset_id"])))
+            except (KeyError, TypeError, ValueError):
+                note = None
+            if note:
+                notes.append(note)
+        out.append(entry)
+    if notes:
+        store.set_clip_plan_render_settings(clip_plan_id, {**render, "inserts": normalize_inserts(out)})
+    return notes
+
+
 CAPTION_HALF = 0.075  # половина высоты двух строк субтитров в долях кадра
 HOOK_BOTTOM = 0.2
 

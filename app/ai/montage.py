@@ -572,9 +572,14 @@ def polish_with_agent(store: Any, clip_plan_id: int, goal: str = "") -> dict:
     """Довести склеенный клип ИИ-монтажёром (app.ai.editor_agent), как владелец руками."""
     from app.ai.editor_agent import run_agent
 
+    from app.agent_tools import refit_inserts
+
     message = POLISH_MESSAGE + (f" Цель: {goal}" if goal else "")
     with _POLISH_LOCK:
-        return run_agent(store, clip_plan_id, message)
+        report = run_agent(store, clip_plan_id, message)
+    # Мемы первого шага ставились до субтитров — разводим их с текстом.
+    refit_inserts(store, clip_plan_id)
+    return report
 
 
 def montage_many(
