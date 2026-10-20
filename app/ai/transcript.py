@@ -31,31 +31,62 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None) -> 
     if not path.exists():
         return []
 
-    # Lazy imports keep this off the hot import path and avoid an import cycle
-    # (render imports subtitle/AI helpers).
+    # Импорты внутри _transcribe_piece: render импортирует AI-хелперы (цикл).
+    duration = _duration_sec(path)
+    cues: list[dict] = []
+    try:
+        # Кусками: whisper держит весь звук в памяти, а 4.7 часа стрима — это
+        # гигабайты; целиком они выбивали сервис за лимит памяти контейнера.
+        start = 0.0
+        while True:
+            length = CHUNK_SEC if duration > CHUNK_SEC else None
+            cues.extend(_transcribe_piece(path, start, length, model))
+            start += CHUNK_SEC
+            if not length or start >= duration:
+                break
+        return cues
+    except Exception:  # noqa: BLE001 - transcript is an optional enhancement
+        log.warning("analysis transcript failed for %s", path.name, exc_info=True)
+        return cues
+
+
+CHUNK_SEC = 20 * 60
+
+
+def _transcribe_piece(path: Path, start: float, length: float | None, model: str | None) -> list[dict]:
+    """Кусок звука [start, start+length) → реплики во времени исходника."""
     from app.render import _run_ffmpeg, build_ffmpeg_extract_audio_args
     from app.subtitles.whisper_local import WhisperSubtitleProvider
 
     audio_path = settings.tmp_dir / f"analysis-{uuid4().hex}.wav"
     try:
-        _run_ffmpeg(build_ffmpeg_extract_audio_args(path, audio_path), timeout=60 * 30)
-        result = WhisperSubtitleProvider().transcribe(
-            audio_path,
-            {"language": ""},
-            (model or settings.whisper_model_size),
+        _run_ffmpeg(
+            build_ffmpeg_extract_audio_args(path, audio_path, start_sec=start if length else None, duration_sec=length),
+            timeout=60 * 30,
         )
-        cues: list[dict] = []
+        result = WhisperSubtitleProvider().transcribe(audio_path, {"language": ""}, (model or settings.whisper_model_size))
+        out: list[dict] = []
         for seg in result.segments:
             text = str(getattr(seg, "text", "") or "").strip()
-            if not text:
-                continue
-            cues.append({"start": round(float(seg.start), 2), "end": round(float(seg.end), 2), "text": text})
-        return cues
-    except Exception:  # noqa: BLE001 - transcript is an optional enhancement
-        log.warning("analysis transcript failed for %s", path.name, exc_info=True)
-        return []
+            if text:
+                out.append({"start": round(start + float(seg.start), 2), "end": round(start + float(seg.end), 2),
+                            "text": text})
+        return out
     finally:
         audio_path.unlink(missing_ok=True)
+
+
+def _duration_sec(path: Path) -> float:
+    import subprocess
+
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        return float((proc.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0.0
 
 
 def format_transcript_block(cues: list[dict], start_sec: float | None, end_sec: float | None) -> str:
