@@ -562,6 +562,7 @@ BATCH_WORKERS = 3
 # Моушн-монтаж агентом (хук, субтитры, панчлайны, звук, мемы) — по одному клипу
 # за раз: агент может распознавать речь, а память машины небольшая.
 _POLISH_LOCK = threading.Lock()
+_RENDER_LOCK = threading.Lock()
 POLISH_MESSAGE = (
     "Смонтируй этот клип по-взрослому: хук, субтитры, панчлайны, звук, наезды, "
     "мем или гифка из интернета на самой смешной реакции."
@@ -637,7 +638,8 @@ def montage_many(
                 item["status"] = "rendering"
                 if progress:
                     progress(item)
-                clip = render(item["plan_id"])
+                with _RENDER_LOCK:  # рендер тяжёлый: по одному, иначе память машины кончается
+                    clip = render(item["plan_id"])
                 item["clip_id"] = (clip or {}).get("id") if isinstance(clip, dict) else None
             item["status"] = "done"
         except Exception as exc:  # noqa: BLE001 - one clip never stops the batch

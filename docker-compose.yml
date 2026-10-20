@@ -18,6 +18,11 @@ services:
     volumes:
       - vv-fabric-data:/data
     restart: unless-stopped
+    # Потолок памяти: распознавание (whisper large) + рендер могли выесть память
+    # машины, и Windows роняла весь Docker вместе с чужими контейнерами. С лимитом
+    # при перерасходе падает только наш процесс.
+    mem_limit: ${APP_MEM_LIMIT:-6g}
+    memswap_limit: ${APP_MEM_LIMIT:-6g}
 
 volumes:
   vv-fabric-data:
