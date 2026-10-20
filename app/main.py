@@ -36,6 +36,7 @@ from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT,
 from app.downloads import DownloadService
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
+from app import proxy_config
 from app.settings import settings
 from app.smotvibe import discover_smotvibe_download_options
 from app.ai.montage import (
@@ -70,6 +71,7 @@ settings.ensure_api_token()
 db = Database(settings.db_path)
 db.init()
 store = AppStore(db, CookieCipher(settings.secret_key_path))
+proxy_config.register(lambda: store)
 seed_default_pack(store)
 worker = JobWorker(store)
 source_ingestor = SourceIngestor(store)
@@ -291,6 +293,45 @@ class SourceCreateRequest(BaseModel):
     smotvibe_referer: str = ""
     smotvibe_audio_format_id: str = ""
     smotvibe_filename_label: str = ""
+
+
+class ProxySettingsRequest(BaseModel):
+    url: str = Field(default="", max_length=500, description="http://логин:пароль@хост:порт, socks5://… или логин:пароль:хост:порт")
+    expires_on: str = Field(default="", max_length=10, description="YYYY-MM-DD — когда прокси протухнет")
+    for_gemini: bool = True
+
+
+@app.get("/api/settings/proxy", tags=["Settings"], summary="Прокси сервиса (без секретов)")
+def api_get_proxy(_auth: AuthDep) -> dict:
+    return proxy_config.status()
+
+
+@app.put("/api/settings/proxy", tags=["Settings"], summary="Задать прокси (загрузки, при желании — Gemini)")
+def api_put_proxy(payload: ProxySettingsRequest, _auth: AuthDep) -> dict:
+    try:
+        url = payload.url.strip() or proxy_config.load().get("url", "")
+        if not url:
+            raise ValueError("прокси: укажите адрес")
+        return proxy_config.save(url, payload.expires_on or None, payload.for_gemini)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/settings/proxy", tags=["Settings"], summary="Убрать прокси сервиса")
+def api_delete_proxy(_auth: AuthDep) -> dict:
+    return proxy_config.clear()
+
+
+class ProxyTestRequest(BaseModel):
+    url: str = Field(default="", max_length=500)
+
+
+@app.post("/api/settings/proxy/test", tags=["Settings"], summary="Проверить прокси: видео-CDN Twitch и Google")
+def api_test_proxy(_auth: AuthDep, payload: ProxyTestRequest | None = None) -> dict:
+    try:
+        return proxy_config.test((payload.url if payload else "") or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class SourceDownloadRequest(BaseModel):

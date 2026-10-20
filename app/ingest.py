@@ -19,6 +19,7 @@ from uuid import uuid4
 import httpx
 
 from app.smotvibe import discover_smotvibe_download_targets, is_player_page_url
+from app.proxy_config import download_proxy
 from app.settings import settings
 from app.store import AppStore
 
@@ -542,11 +543,13 @@ def _download_with_ytdlp(
     command_args.append(url)
     try:
         proc = _run_ytdlp(command_args)
-        if proc.returncode != 0 and settings.download_proxy_url:
-            # Напрямую не вышло (CDN режет соединение) — повторяем через прокси.
-            # Трафик через прокси чужой: из одинаковых по высоте берём меньший битрейт.
+        proxy = download_proxy()
+        if proc.returncode != 0 and proxy:
+            # Напрямую не вышло (CDN режет соединение) — повторяем через прокси
+            # (настройки сервиса → «Прокси», запасной — DOWNLOAD_PROXY_URL).
+            # Трафик через прокси платный: из одинаковых по высоте берём меньший битрейт.
             _remove_partials(output_basename)
-            proc = _run_ytdlp(["--proxy", settings.download_proxy_url, "-S", "res,fps,+br", *command_args])
+            proc = _run_ytdlp(["--proxy", proxy, "-S", "res,fps,+br", *command_args])
     except DownloadCancelled:
         _remove_partials(output_basename)
         raise

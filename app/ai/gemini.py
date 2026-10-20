@@ -713,8 +713,16 @@ _PROXY_ON = False
 def _proxy_kw() -> dict:
     """Прокси только для Google и только при геоблоке («User location is not
     supported»). Остальной сервис (Twitch, загрузки) ходит напрямую."""
-    proxy = settings.gemini_proxy_url
+    from app.proxy_config import gemini_proxy
+
+    proxy = gemini_proxy()
     return {"proxy": proxy} if proxy and _PROXY_ON else {}
+
+
+def _has_proxy() -> bool:
+    from app.proxy_config import gemini_proxy
+
+    return bool(gemini_proxy())
 
 
 def _with_proxy(kwargs: dict) -> dict:
@@ -736,7 +744,7 @@ def _request_once(method: str, url: str, kwargs: dict) -> httpx.Response:
             _PROXY_ON = False
             return httpx.request(method, url, **kwargs)
         raise
-    if not _PROXY_ON and settings.gemini_proxy_url and _geo_blocked(response):
+    if not _PROXY_ON and _geo_blocked(response) and _has_proxy():
         _PROXY_ON = True
         try:
             return httpx.request(method, url, **_with_proxy(kwargs))

@@ -4,6 +4,7 @@ import { RenderPresetsSettings, BannersSettings, AudioSettings, SubtitlesSetting
 import { PromptsSettings } from "@/pages/settings/PromptsSettings";
 import { DefaultsSettings } from "@/pages/settings/DefaultsSettings";
 import { BackupSettings } from "@/pages/settings/BackupSettings";
+import { ProxySettings } from "@/pages/settings/ProxySettings";
 
 const TABS = [
   { seg: "render", label: "Пресеты рендера" },
@@ -12,6 +13,7 @@ const TABS = [
   { seg: "subtitles", label: "Субтитры" },
   { seg: "prompts", label: "Промпты" },
   { seg: "defaults", label: "По умолчанию" },
+  { seg: "proxy", label: "Прокси" },
   { seg: "backup", label: "Экспорт/импорт" },
 ];
 
@@ -41,6 +43,7 @@ export function SettingsPage() {
             <Route path="prompts" element={<PromptsSettings />} />
             <Route path="defaults" element={<DefaultsSettings />} />
             <Route path="backup" element={<BackupSettings />} />
+            <Route path="proxy" element={<ProxySettings />} />
             <Route path="*" element={<Navigate to="render" replace />} />
           </Routes>
         </div>
