@@ -705,15 +705,47 @@ def _state_name(state: Any) -> str:
     return str(state or "").upper()
 
 
+# Прокси включается только после того, как прямой запрос упёрся в геоблок: когда
+# VPN включён, Google отвечает напрямую, а мёртвый прокси ломал бы всё подряд.
+_PROXY_ON = False
+
+
 def _proxy_kw() -> dict:
-    """Прокси только для Google: без VPN Gemini отвечает «User location is not
-    supported». Остальной сервис (Twitch, загрузки) ходит напрямую."""
+    """Прокси только для Google и только при геоблоке («User location is not
+    supported»). Остальной сервис (Twitch, загрузки) ходит напрямую."""
     proxy = settings.gemini_proxy_url
-    return {"proxy": proxy} if proxy else {}
+    return {"proxy": proxy} if proxy and _PROXY_ON else {}
 
 
 def _with_proxy(kwargs: dict) -> dict:
     return {**_proxy_kw(), **kwargs}
+
+
+def _geo_blocked(response: httpx.Response) -> bool:
+    return response.status_code == 400 and "location is not supported" in response.text
+
+
+def _request_once(method: str, url: str, kwargs: dict) -> httpx.Response:
+    """Запрос с переключением «напрямую ↔ через прокси» по факту ответа."""
+    global _PROXY_ON
+    try:
+        response = httpx.request(method, url, **_with_proxy(kwargs))
+    except httpx.TransportError:
+        if _PROXY_ON:
+            # Прокси умер — пробуем напрямую (вдруг включили VPN).
+            _PROXY_ON = False
+            return httpx.request(method, url, **kwargs)
+        raise
+    if not _PROXY_ON and settings.gemini_proxy_url and _geo_blocked(response):
+        _PROXY_ON = True
+        try:
+            return httpx.request(method, url, **_with_proxy(kwargs))
+        except httpx.TransportError:
+            _PROXY_ON = False
+            return response
+    if _PROXY_ON and _geo_blocked(response):
+        _PROXY_ON = False
+    return response
 
 
 def _request_with_retries(method: str, url: str, **kwargs) -> httpx.Response:
@@ -726,7 +758,7 @@ def _request_with_retries(method: str, url: str, **kwargs) -> httpx.Response:
     retry_statuses = {408, 429, 500, 502, 503, 504}
     for attempt in range(attempts):
         try:
-            response = httpx.request(method, url, **_with_proxy(kwargs))
+            response = _request_once(method, url, kwargs)
         except httpx.TransportError as exc:
             last_error = exc
             if attempt + 1 >= attempts:
