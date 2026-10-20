@@ -121,6 +121,11 @@ def normalize_render_settings(raw: object) -> dict:
         # Джамп-каты: вырезанные паузы и слова-паразиты, {start, end} во времени
         # клипа до вырезов (app/cuts.py). Пусто — рендер ровно прежний.
         "cuts": normalize_cuts(src.get("cuts")),
+        # «Голос вперёд» (app/voice_forward.py): нейронка отделяет речь от фоновой
+        # музыки стрима и приглушает музыку на music_db. По умолчанию включено —
+        # работает, если модель скачана; иначе рендер как раньше.
+        "voice_forward": src.get("voice_forward") is None or _bool(src.get("voice_forward")),
+        "music_db": _pct(src.get("music_db"), -12.0, -30.0, 0.0),
     }
 
 
