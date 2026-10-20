@@ -279,3 +279,14 @@ def test_pip_insert_fit_counts_cuts_that_pull_it_onto_the_hook():
     note = _fit_pip_insert(render, entry, {"width": 500, "height": 500})
     assert note and "после хука" in note
     assert abs(entry["at"] - (7.77 + 2.5)) < 0.02  # в исходном времени — сразу после хука готового клипа
+
+
+def test_pip_insert_stays_above_active_punchline():
+    from app.agent_tools import _fit_pip_insert
+
+    render = {"layers": [{"id": "auto_caps", "type": "captions", "start": 0, "end": 40, "y": 0.37},
+                         {"id": "p", "type": "text", "start": 10.0, "end": 12.0, "y": 0.28, "props": {"size": 150}}]}
+    entry = {"at": 10.5, "duration": 2.0, "y": 0.175, "scale": 0.66}
+    _fit_pip_insert(render, entry, {"width": 500, "height": 500})
+    height = entry["scale"] * 1080 / 1920
+    assert entry["y"] + height / 2 <= 0.28 - 150 * 0.65 / 1920 + 1e-6

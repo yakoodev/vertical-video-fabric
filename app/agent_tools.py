@@ -1208,6 +1208,14 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict) -> str | None:
     if not caps:
         return None
     cap_top = float(caps[0].get("y", 0.68)) - CAPTION_HALF
+    # Крупные титры (панчлайны) выше субтитров — тоже потолок для окошка мема.
+    for l in layers:
+        if l.get("type") != "text" or l.get("id") == "auto_hook" or not active(l):
+            continue
+        y = float(l.get("y", 0.5))
+        if y < cap_top:
+            size = float((l.get("props") or {}).get("size") or 96)
+            cap_top = min(cap_top, y - size * 0.65 / 1920)
     moved = ""
     hook = next((l for l in layers if l.get("id") == "auto_hook" and active(l)), None)
     if hook and cap_top - 0.015 - HOOK_BOTTOM < 0.12:
