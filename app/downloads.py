@@ -74,6 +74,49 @@ class DownloadService:
         thread.start()
         return self.get(task["id"])
 
+    def record_live(self, channel: str) -> dict:
+        """● Запись эфира Twitch-канала (app/live_record.py) — когда VOD не скачать.
+
+        Отмена у записи — «остановить и сохранить»: записанное становится источником."""
+        from app.live_record import parse_channel
+
+        channel = parse_channel(channel)
+        with self._lock:
+            busy = any(t.get("live") == channel and t["status"] in ACTIVE_STATUSES for t in self._tasks)
+        if busy:
+            raise ValueError(f"эфир {channel} уже пишется")
+        task = self._new_task(url=f"https://www.twitch.tv/{channel}", quality="", label=f"● эфир {channel}",
+                              live=channel)
+        threading.Thread(target=self._run_live, args=(task["id"], channel), name=f"live-{task['id']}",
+                         daemon=True).start()
+        return self.get(task["id"])
+
+    def _run_live(self, task_id: int, channel: str) -> None:
+        from app.live_record import record_to_source
+
+        token = CancelToken()
+        with self._lock:
+            self._tokens[task_id] = token
+        self._update(task_id, status="downloading", message="Подключаюсь к эфиру…")
+        try:
+            source = record_to_source(
+                self.ingestor, channel, token,
+                on_progress=lambda message: self._update(task_id, message=message),
+                on_recorded=self.on_live_recorded,
+            )
+        except Exception as exc:  # noqa: BLE001 - любая беда — на задачу
+            self._update(task_id, status="failed", message="", error=_safe_error(exc))
+            return
+        finally:
+            with self._lock:
+                self._tokens.pop(task_id, None)
+        self._update(task_id, status="succeeded", progress=100.0, source_id=source.get("id"),
+                     message=source.get("original_filename") or "Запись сохранена")
+
+    # Колбэк «эфир записан» (source, vod_id, vod_start_sec): main.py вешает сюда
+    # импорт чата архива со сдвигом.
+    on_live_recorded = None
+
     def cancel(self, task_id: int) -> dict:
         with self._lock:
             task = next((t for t in self._tasks if t["id"] == task_id), None)
@@ -82,7 +125,8 @@ class DownloadService:
             if task["status"] not in ACTIVE_STATUSES:
                 return dict(task)
             token = self._tokens.get(task_id)
-            task.update(status="cancelling", message="Отменяю…", updated_at=_now_text())
+            message = "Останавливаю и сохраняю…" if task.get("live") else "Отменяю…"
+            task.update(status="cancelling", message=message, updated_at=_now_text())
             result = dict(task)
         if token:
             token.cancel()

@@ -293,6 +293,23 @@ class SourceCreateRequest(BaseModel):
     smotvibe_filename_label: str = ""
 
 
+class LiveRecordRequest(BaseModel):
+    channel: str = Field(max_length=200, description="имя канала Twitch или ссылка на него")
+
+
+@app.post(
+    "/api/sources/record-live",
+    tags=["Sources"],
+    summary="● Записать эфир Twitch-канала в источник (когда VOD не скачать)",
+    description="Пишет, пока эфир не кончится; отмена задачи — «остановить и сохранить». Чат — из архива стрима.",
+)
+def api_record_live(payload: LiveRecordRequest, _auth: AuthDep) -> dict:
+    try:
+        return download_service.record_live(payload.channel)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class SourceDownloadRequest(BaseModel):
     url: str
     quality: str = ""
@@ -3596,7 +3613,17 @@ app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат реда�
 # 💬 Чат Twitch-VOD: импорт (авто для Twitch-источников), активность, чат клипа (app/chat_api.py).
 from app.chat_api import build_chat_router  # noqa: E402
 
-app.include_router(build_chat_router(AuthDep, lambda: store, ingestor=source_ingestor))
+_chat_router = build_chat_router(AuthDep, lambda: store, ingestor=source_ingestor)
+app.include_router(_chat_router)
+
+
+def _import_live_chat(source: dict, vod_id: str | None, vod_start_sec: float) -> None:
+    """Записанный эфир → чат из архива стрима, со сдвигом на начало записи."""
+    if vod_id:
+        _chat_router.chat_service.start(int(source["id"]), vod=vod_id, vod_start_sec=vod_start_sec)
+
+
+download_service.on_live_recorded = _import_live_chat
 
 # Контент моушн-слоёв: шрифты, эмодзи, стикеры, звуки, мемы (app/motion_assets.py).
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402

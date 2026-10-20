@@ -146,7 +146,14 @@ export function ActivityCenter() {
                             disabled={t.status === "cancelling" || cancelDownload.isPending}
                             onClick={() => cancelDownload.mutate(t.id)}
                           >
-                            {t.status === "cancelling" ? "отменяю…" : "отменить"}
+                            {/* Запись эфира: «отмена» сохраняет записанное. */}
+                            {t.label.startsWith("● эфир")
+                              ? t.status === "cancelling"
+                                ? "сохраняю…"
+                                : "остановить и сохранить"
+                              : t.status === "cancelling"
+                                ? "отменяю…"
+                                : "отменить"}
                           </button>
                         ) : null}
                         {t.kind === "analysis" && isActive(t.status) ? (
