@@ -347,6 +347,8 @@ def run_agent(
             raise
 
     nudged = False
+    nudged_continue = False
+    nudged_report = False
     while True:
         if should_cancel and should_cancel():
             raise AgentCancelled()
@@ -386,10 +388,35 @@ def run_agent(
                 "(начни с auto_edit, если просили смонтировать), а не текстом."
             )}]})
             continue
+        done_tools = {st.get("tool") for st in steps if st.get("ok")}
+        if (
+            not calls and tools_on and not nudged_continue
+            and "auto_edit" in done_tools and not done_tools & CRAFT_TOOLS
+        ):
+            # Остановился сразу после автомонтажа: хук не переписан, панчлайнов нет.
+            nudged_continue = True
+            contents.append({"role": "user", "parts": [{"text": (
+                "Ты остановился после auto_edit — это только основа. Продолжай по ПОРЯДКУ РАБОТЫ: "
+                "перепиши хук (update_layer auto_hook), поставь 1–3 панчлайна со звуком и наездом, "
+                "ключевые слова цветом, проверь contact_sheet. Потом короткий отчёт по-русски."
+            )}]})
+            continue
         if not calls or not tools_on:
             final_text = _clean_reply(_parts_text(parts))
             if degenerate(final_text):
                 final_text = ""  # ниже — отчёт по сделанным шагам
+            elif final_text and not report_like(final_text) and not nudged_report:
+                # Вместо отчёта — рассуждения по-английски или эхо служебного вывода:
+                # один раз просим нормальный отчёт (без инструментов).
+                nudged_report = True
+                contents.append({"role": "user", "parts": [{"text": (
+                    "Это не отчёт. Напиши владельцу по-русски 3–6 пунктов: что сделал и на какой секунде. "
+                    "Без рассуждений, без английского, без служебных данных."
+                )}]})
+                limit = rounds  # следующий ответ — без инструментов
+                continue
+            elif final_text and not report_like(final_text):
+                final_text = ""
             break
         said = _parts_text(parts)
         if said and degenerate(said):
@@ -435,6 +462,20 @@ def run_agent(
 
 
 MAX_OUTPUT_TOKENS = 8192
+# Инструменты, которыми агент доводит основу auto_edit до монтажа.
+CRAFT_TOOLS = {"update_layer", "add_layers", "set_camera", "add_insert", "remove_layers"}
+
+
+def report_like(text: str) -> bool:
+    """Похоже на отчёт владельцу: по-русски, без кода и служебных выкладок."""
+    letters = sum(ch.isalpha() for ch in text)
+    if not letters:
+        return False
+    cyrillic = sum("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in text)
+    if cyrillic / letters < 0.6 or "```" in text:
+        return False
+    service = ("track 0", "слои:\n", "Камера: zoom", "Вставки:\n")
+    return not any(marker in text for marker in service)
 _REPEAT_RE = re.compile(r"(.{1,12}?)\1{15,}", re.DOTALL)
 
 

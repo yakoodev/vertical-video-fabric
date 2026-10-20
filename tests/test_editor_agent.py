@@ -204,3 +204,21 @@ def test_degenerate_model_text_is_detected():
     assert editor_agent.degenerate("Готово. " + "- " * 200)
     assert editor_agent.degenerate('{"id": "c+oGNRzQ==", "type": "tag", "time": "2024-11-20"}' * 20)
     assert not editor_agent.degenerate("Готово! Поставил хук «МУХА ПИЛОТИРУЕТ», два панчлайна и гифку на 3 с.")
+
+
+def test_report_like_rejects_english_reasoning_and_tool_echo():
+    assert editor_agent.report_like("Готово:\n1. Хук «ЕЁ НАПУГАЛ СКРИМЕР» на 0 с.\n2. Панчлайн на 17.9 с.")
+    assert not editor_agent.report_like("```\n\nLet's review the frames.\n- Contact sheet shows good distribution.")
+    assert not editor_agent.report_like('1.0 с, слои:\n  captions "Субтитры" (track 0) — x: 0.5, y: 0.37\nКамера: zoom 1.0')
+
+
+def test_english_reasoning_instead_of_report_gets_one_rewrite_without_tools(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [{"text": "```\nLet's review the frames. Contact sheet shows good distribution."}],
+        [{"text": "Готово: посмотрел клип, правок не понадобилось."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "что тут?", client=fake, model="m")
+    assert out["text"].startswith("Готово")
+    assert "tools" not in fake.requests[-1][1]
