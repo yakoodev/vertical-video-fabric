@@ -690,3 +690,33 @@ def test_chat_layer_gets_messages_and_emote_assets_in_render(tmp_path, monkeypat
     assert [m["user"] for m in comps[0]["chat"]] == ["viewer", "mod"]  # фильтр команд — дело движка
     assert "url:https://cdn.test/kekw.png" in assets_seen[0]
     assert "subtitles" in [kind for kind, _ in calls]  # чат не отменяет обычные субтитры
+
+
+def test_agent_frame_shows_active_pip_insert(tmp_path):
+    """Вставка-мем, активная в t, видна на кадре агента — тем же местом, что в рендере."""
+    import subprocess
+
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.motion_render import _overlay_inserts
+
+    _require_ffmpeg()
+    frame, meme = tmp_path / "frame.png", tmp_path / "meme.png"
+    for path, color, size in ((frame, "black", "108x192"), (meme, "red", "50x50")):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color={color}:s={size}",
+                        "-frames:v", "1", str(path)], check=True)
+
+    class Store:
+        def get_montage_asset(self, asset_id):
+            return {"id": asset_id, "kind": "image", "file_path": str(meme)}
+
+    def pixel(y):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(frame), "-vf", f"crop=1:1:54:{y}",
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        return tuple(raw[:3])
+
+    ins = {"asset_id": 1, "at": 2.0, "duration": 2.0, "mode": "pip", "x": 0.5, "y": 0.25, "scale": 0.4}
+    _overlay_inserts(Store(), [ins], 1.0, frame, 108, 192)  # ещё не началась
+    assert pixel(48)[0] < 30
+    _overlay_inserts(Store(), [ins], 3.0, frame, 108, 192)
+    assert pixel(48)[0] > 200 and pixel(150)[0] < 30

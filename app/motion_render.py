@@ -514,8 +514,12 @@ def render_frame_png(
     t: float,
     layers: Any = None,
     camera: Any = None,
+    inserts: bool = False,
 ) -> bytes:
     """PNG кадра клипа в момент ``t`` с камерой и слоями — для ИИ-агента и превью.
+
+    ``inserts`` — наложить поверх вставки-мемы (гифки, картинки, видео), активные
+    в ``t``: в рендере они ложатся отдельным проходом, а агенту их надо видеть.
 
     Основа берётся из исходника (тот же кроп/рефрейм/лук, что в рендере, без
     баннера и субтитров), а не из готового рендера: в рендере слои и камера уже
@@ -609,9 +613,58 @@ def render_frame_png(
         )
         if not out.is_file():
             raise RuntimeError("компоновщик не записал кадр")
+        if inserts:
+            _overlay_inserts(store, rs.get("inserts") or [], t, out, width, height)
         return out.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width: int, height: int) -> None:
+    """Наложить на кадр ``png`` вставки, активные в ``t`` (кадр самой вставки на t − at),
+    тем же размером и местом, что в рендере (``app.montage_assets``). Ошибка — кадр как был."""
+    from app import render as _render
+    from app.montage_assets import INSERT_MAX_HEIGHT
+
+    active = []
+    for ins in inserts:
+        if ins.get("mode") == "sound" or not (ins["at"] <= t < ins["at"] + ins["duration"]):
+            continue
+        try:
+            asset = store.get_montage_asset(int(ins["asset_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if asset["kind"] != "audio" and Path(asset["file_path"]).is_file():
+            active.append((ins, asset))
+    if not active:
+        return
+    args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(png)]
+    graph, last = [], "[0:v]"
+    for n, (ins, asset) in enumerate(active, start=1):
+        offset = max(0.0, t - ins["at"])
+        if asset["kind"] in ("image", "gif"):
+            # Гифка — первым кадром: агенту важны место и размер, а «гифки» бывают
+            # и из одного кадра — перемотка ушла бы за конец.
+            args += ["-i", asset["file_path"]]
+        else:
+            args += ["-stream_loop", "-1", "-ss", f"{offset:.3f}", "-i", asset["file_path"]]
+        if ins["mode"] == "full":
+            box_w, box_h, x, y = width, height, "(W-w)/2", "(H-h)/2"
+        else:
+            box_w = max(2, int(width * ins["scale"]) // 2 * 2)
+            box_h = max(2, int(height * INSERT_MAX_HEIGHT) // 2 * 2)
+            x, y = f"(W*{ins['x']:.4f})-(w/2)", f"(H*{ins['y']:.4f})-(h/2)"
+        graph.append(f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,format=rgba[i{n}]")
+        graph.append(f"{last}[i{n}]overlay=x={x}:y={y}[o{n}]")
+        last = f"[o{n}]"
+    tmp = png.with_name("frame-inserts.png")
+    try:
+        _render._run_ffmpeg(
+            [*args, "-filter_complex", ";".join(graph), "-map", last, "-frames:v", "1", str(tmp)], timeout=60,
+        )
+        tmp.replace(png)
+    except Exception:  # noqa: BLE001 - без вставок кадр всё равно полезен
+        return
 
 
 def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 240) -> bytes:
@@ -637,7 +690,7 @@ def contact_sheet_jpeg(store: Any, clip_plan_id: int, n: int = 8, width: int = 2
         inputs: list[str] = []
         for k, t in enumerate(times):
             path = Path(tmp) / f"f{k:02d}.png"
-            path.write_bytes(render_frame_png(store, clip_plan_id, t))
+            path.write_bytes(render_frame_png(store, clip_plan_id, t, inserts=True))
             inputs += ["-i", str(path)]
         cols = min(n, 4)
         chains = [

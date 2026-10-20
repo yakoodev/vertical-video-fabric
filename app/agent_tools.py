@@ -534,7 +534,7 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
 
         layers = None if with_layers else []
         camera = None if with_layers else []
-        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera)
+        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers)
         return data, "image/png", {"kind": "motion"}
     except ImportError:
         problem = "моушн-кадр недоступен"
@@ -1476,8 +1476,8 @@ def _build_registry() -> list[Tool]:
             "add_insert", "Вставляю мем",
             "Вставка из библиотеки поверх клипа (видео-мем/картинка/звук): asset_id, at (с клипа), duration, "
             "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. Вставки "
-            "накладываются при рендере: в view_frame и contact_sheet их НЕ видно — это нормально, не удаляй их; "
-            "проверяй по get_clip (inserts). / Insert (not visible in view_frame).",
+            "видны в view_frame и contact_sheet (первые кадры гифки). Окошко само встаёт между хуком и "
+            "субтитрами. / Insert.",
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},

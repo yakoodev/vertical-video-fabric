@@ -97,8 +97,8 @@ CRAFT = """\
    y = positions.punchline_text.y, scale 0.55–0.7, duration 1.5–3, volume 0.6–1); если картинка —
    слой image (x 0.5, y = positions.punchline_text.y, w 600–760, in pop, out fade, 1.5–2.5 с).
    Мем не должен закрывать героя (positions.subject_box). Не больше 2 мемов на клип.
-   Гифки и видео-вставки (add_insert) в view_frame/contact_sheet НЕ видны — они ложатся при рендере.
-   Не удаляй и не заменяй их картинкой из-за этого: проверяй по inserts в get_clip.
+   Гифки (add_insert) видны в view_frame/contact_sheet; окошко само встаёт между хуком и субтитрами.
+   Не заменяй гифку статичной картинкой.
 5. Цифры в речи («миллион», «300 тысяч», «12 квадратов») — counter по центру y≈0.28 на слове.
 6. Ключевые слова субтитров: update_layer на captions (id auto_caps) — props.highlightWords [{i, color}]:
    мат и эмоции — #FF3B30, главное по смыслу — #FFD600 или #22C55E. 1 слово на 2–3 с, не больше.
