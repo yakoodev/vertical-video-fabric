@@ -313,3 +313,28 @@ def test_layer_on_word(tmp_path, monkeypatch):
     assert (layers[1]["start"], layers[1]["end"]) == (1.4, 3.4)  # длина прежняя: 2 с
     out, ok = run_tool(ctx, "add_layers", {"layers": [{**TITLE, "at_word": {"text": "нет такого"}}]})
     assert not ok and "нет в субтитрах" in str(out)
+
+
+def test_listen_maps_finished_range_to_source(tmp_path, monkeypatch):
+    """listen: последние 6 с готового клипа (после вырезов) → нужные секунды исходника."""
+    _require_ffmpeg()
+    from app.subtitles.contracts import SubtitleResult, SubtitleWord
+
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)  # куски [0,5] и [1,6]
+    render = dict(store.get_clip_plan(plan["id"])["render_settings"] or {})
+    store.set_clip_plan_render_settings(plan["id"], {**render, "cuts": [{"start": 6.0, "end": 7.0}]})
+    seen = {}
+    monkeypatch.setattr("app.render._run_ffmpeg", lambda args, timeout=0: seen.setdefault("args", args))
+
+    class Whisper:
+        def transcribe(self, *_a):
+            return SubtitleResult(text="да", language="ru", duration=1.0, segments=[],
+                                  words=[SubtitleWord(word="да", start=0.5, end=0.9)])
+
+    monkeypatch.setattr("app.clip_subtitles.get_subtitle_provider", lambda name: Whisper())
+    out, ok = run_tool(_ctx(store, plan["id"]), "listen", {})
+    assert ok, out
+    assert out["clip_duration"] == 9.0 and (out["from"], out["to"]) == (3.0, 9.0)
+    assert out["words"] == [["да", 3.5, 3.9]] and out["silence_after_last_word"] == 5.1
+    seeks = [seen["args"][i + 1] for i, a in enumerate(seen["args"]) if a == "-ss"]
+    assert seeks == ["3.000", "1.000", "3.000"]  # [3,5] первого, [1,2] и [3,6] второго куска (вырез 2..3)

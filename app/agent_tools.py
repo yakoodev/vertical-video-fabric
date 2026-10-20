@@ -481,6 +481,15 @@ def h_generate_subtitles(ctx: ToolContext, _args: dict) -> dict:
     return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or [])}
 
 
+def h_listen(ctx: ToolContext, args: dict) -> dict:
+    from app.clip_subtitles import listen_range
+
+    try:
+        return listen_range(ctx.store, ctx.plan_id, _num(args.get("from_sec")), _num(args.get("to_sec")))
+    except ValueError as exc:
+        raise ToolError(f"listen: {exc}") from exc
+
+
 def _recommended_positions(ctx: ToolContext, render: dict) -> dict:
     """Места для текста с учётом того, где на кадре герой (рамку даёт Gemini-зрение)."""
     from app.auto_edit import HOOK_Y, caption_y_for
@@ -1563,6 +1572,15 @@ def _build_registry() -> list[Tool]:
             "Проверяй так размещение, читаемость, что титр не закрыл лицо. / Render the clip frame at t.",
             _obj({"t": {"type": "number"}, "with_layers": {"type": "boolean"}}, ["t"]), h_view_frame,
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
+        ),
+        Tool(
+            "listen", "Слушаю отрезок",
+            "Распознать, что РЕАЛЬНО звучит в готовом клипе между from_sec и to_sec (с вырезами, до 30 с): "
+            "слова с временем и тишина после последнего слова. Без параметров — последние 6 с: проверь, "
+            "договорена ли развязка и есть ли хвост реакции. / Transcribe the finished clip audio in a range.",
+            _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"}}), h_listen,
+            label=lambda a: "Слушаю финал клипа" if a.get("from_sec") is None else
+            f"Слушаю {(_num(a.get('from_sec'), 0.0) or 0.0):.1f}–{(_num(a.get('to_sec'), 0.0) or 0.0):.1f} с",
         ),
         Tool(
             "contact_sheet", "Смотрю весь клип",

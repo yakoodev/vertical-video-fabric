@@ -363,3 +363,63 @@ def _default_profile(store: Any) -> dict:
     if not profiles:
         raise ValueError("нет ни одного стиля субтитров")
     return profiles[0]
+
+
+MAX_LISTEN_SEC = 30.0
+
+
+def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: float | None) -> dict:
+    """Что реально звучит в готовом клипе между from_sec и to_sec (с учётом кусков
+    и вырезов): распознаём именно этот звук, а не верим субтитрам.
+
+    Агент-монтажёр проверял так финалы вручную (рендер → распознать хвост mp4):
+    договорена ли фраза, сколько тишины после последнего слова, не торчит ли
+    слово из выреза. Здесь — без рендера, по исходнику."""
+    from app.cuts import plan_cuts_for_plan
+    from app.render import _run_ffmpeg  # local import: render imports this module
+    from app.subtitles.registry import QUALITY_WHISPER_MODEL
+
+    plan = store.get_clip_plan(clip_plan_id)
+    source = store.get_source(int(plan["source_id"]))
+    source_path = Path(str(source.get("local_path") or ""))
+    if not source_path.exists():
+        raise ValueError("исходник недоступен")
+    cut_plan = plan_cuts_for_plan(plan)
+    parts = cut_plan.parts if cut_plan else (plan.get("segments") or [])
+    total = sum(float(p["end_sec"]) - float(p["start_sec"]) for p in parts)
+    # Без границ — последние 6 с (проверка финала).
+    hi = min(total, float(to_sec)) if to_sec is not None else total
+    lo = max(0.0, float(from_sec)) if from_sec is not None else max(0.0, hi - 6.0)
+    if to_sec is None and from_sec is not None:
+        hi = min(total, lo + 6.0)
+    if hi - lo < 0.3:
+        raise ValueError(f"пустой отрезок: клип длится {total:.2f} с")
+    if hi - lo > MAX_LISTEN_SEC:
+        hi = lo + MAX_LISTEN_SEC
+    pieces, offset = [], 0.0
+    for part in parts:
+        start, end = float(part["start_sec"]), float(part["end_sec"])
+        a, b = max(lo, offset), min(hi, offset + end - start)
+        if b > a:
+            pieces.append((start + a - offset, start + b - offset))
+        offset += end - start
+    try:
+        profile = {**_default_profile(store), "provider": "whisper"}
+    except ValueError:  # стилей нет — распознаванию стиль и не нужен
+        profile = {"provider": "whisper"}
+    audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
+    try:
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path), timeout=60 * 5)
+        result = get_subtitle_provider("whisper").transcribe(audio_path, profile, QUALITY_WHISPER_MODEL)
+    finally:
+        audio_path.unlink(missing_ok=True)
+    words = [[w.word, round(lo + w.start, 2), round(lo + w.end, 2)] for w in result.words]
+    return {
+        "from": round(lo, 2),
+        "to": round(hi, 2),
+        "clip_duration": round(total, 2),
+        "text": " ".join(w[0] for w in words).strip(),
+        "words": words,
+        "silence_after_last_word": round(hi - words[-1][2], 2) if words else round(hi - lo, 2),
+        "note": "секунды готового клипа (после вырезов); переходы с наплывом сдвигают на доли секунды",
+    }
