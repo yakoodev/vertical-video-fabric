@@ -38,8 +38,8 @@ def test_add_update_remove_layers_with_one_history_step(tmp_path, monkeypatch):
     _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     ctx = _ctx(store, plan["id"])
 
-    out, ok = run_tool(ctx, "add_layers", {"layers": [TITLE, {"type": "emoji", "start": 3, "end": 4.5,
-                                                              "x": 0.7, "y": 0.35, "props": {"char": "🔥", "size": 200}}]})
+    out, ok = run_tool(ctx, "add_layers", {"layers": [TITLE, {"type": "shape", "start": 3, "end": 4.5,
+                                                              "x": 0.7, "y": 0.35, "props": {"kind": "star", "w": 200, "h": 200, "fill": "#FFD600"}}]})
     assert ok, out
     ids = [item["id"] for item in out["added"]]
     assert len(ids) == 2 and "титр «ОН ЭТО СДЕЛАЛ»" in out["added"][0]["summary"]
@@ -87,8 +87,8 @@ def test_craft_warnings_for_unsafe_zone_and_overload(tmp_path, monkeypatch):
     _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     ctx = _ctx(store, plan["id"])
     low = {**TITLE, "y": 0.9}
-    crowd = [{"type": "emoji", "start": 1, "end": 3, "x": 0.2 + i * 0.15, "y": 0.4, "props": {"char": "😂"}}
-             for i in range(3)]
+    crowd = [{"type": "text", "start": 1, "end": 3, "x": 0.5, "y": 0.25 + i * 0.1,
+              "props": {"text": f"СЛОВО {i}", "size": 80}} for i in range(3)]
     out, ok = run_tool(ctx, "add_layers", {"layers": [low, *crowd]})
     assert ok, out
     text = " ".join(out["warnings"])
@@ -189,3 +189,20 @@ def test_emoji_and_pack_search_give_layer_refs():
     assert ok and out["results"] and all(r["ref"].startswith("sfx:") for r in out["results"])
     out, ok = run_tool(ctx, "search_pack", {"pack": "нет-такого"})
     assert not ok
+
+
+
+def test_emoji_is_banned_for_the_agent(tmp_path, monkeypatch):
+    """Владелец запретил эмодзи: слой emoji отбрасывается, символы из текста вычищаются."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        {**TITLE, "props": {**TITLE["props"], "text": "ОН ЭТО СДЕЛАЛ 🔥"}},
+        {"type": "emoji", "start": 3, "end": 4.5, "props": {"char": "🔥"}},
+    ]})
+    assert ok, out
+    assert len(out["added"]) == 1
+    assert any("эмодзи" in w for w in out["warnings"])
+    layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
+    assert layers[0]["props"]["text"] == "ОН ЭТО СДЕЛАЛ"

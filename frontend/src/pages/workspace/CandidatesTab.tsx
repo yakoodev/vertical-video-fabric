@@ -344,7 +344,7 @@ const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string }[] = [
   { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует" },
   { key: "templates", icon: "✦", label: "Шаблоны", hint: "Готовая анимированная графика: титры, плашки, инфографика, призывы" },
   { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
-  { key: "stickers", icon: "😀", label: "Стикеры", hint: "Эмодзи (поиск по-русски) и паки стикеров" },
+  { key: "stickers", icon: "✳", label: "Стикеры", hint: "Паки стикеров: искры, дым, вспышки, значки" },
   { key: "sounds", icon: "♪", label: "Звуки", hint: "Звуковые эффекты: whoosh, boom, pop, ding…" },
   { key: "memes", icon: "🐸", label: "Мемы", hint: "Шаблоны мемов и картинки из ваших файлов" },
   { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете" },

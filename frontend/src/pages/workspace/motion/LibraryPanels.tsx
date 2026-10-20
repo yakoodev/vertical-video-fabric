@@ -437,21 +437,6 @@ export function TextPanel({ onAdd, onCaptions }: { onAdd: AddLayers; onCaptions?
 
 /* ---------- эмодзи и стикеры ---------- */
 
-const QUICK_EMOJI = ["🔥", "😂", "💀", "😱", "🤯", "👀", "💯", "❤️", "👍", "🤡", "😭", "🗿", "⚡", "🎉", "❗", "❓", "✅", "❌", "💸", "🏆"];
-
-const emojiLayer = (char: string): Layer =>
-  ({
-    id: newLayerId(),
-    type: "emoji",
-    start: 0,
-    end: 2,
-    x: 0.72,
-    y: 0.3,
-    in: { type: "pop", duration: 0.3 },
-    out: { type: "fade", duration: 0.2 },
-    loop: { type: "float", speed: 1, amount: 1 },
-    props: { char, size: 220 },
-  }) as Layer;
 
 const imageLayer = (ref: { asset_id?: string; src?: string }, w = 640, end = 2.5): Layer =>
   ({
@@ -477,33 +462,14 @@ export function StickersPanel({ onAdd }: { onAdd: AddLayers }) {
     const id = window.setTimeout(() => setDebounced(q.trim()), 250);
     return () => window.clearTimeout(id);
   }, [q]);
-  const emoji = useQuery({ queryKey: ["motion-emoji", debounced], queryFn: () => motionApi.emoji(debounced, 160), enabled: debounced.length > 0 });
   const packs = useQuery({ queryKey: ["motion-packs"], queryFn: motionApi.packs, staleTime: 300_000 });
   const stickerPacks = (packs.data ?? []).filter((p) => p.kind === "sticker");
   const [pack, setPack] = useState<string>("");
   const activePack = pack || stickerPacks[0]?.id || "";
   const items = useQuery({ queryKey: ["motion-pack", activePack, debounced], queryFn: () => motionApi.pack(activePack, debounced), enabled: Boolean(activePack) });
-  const emojiList = debounced ? emoji.data ?? [] : QUICK_EMOJI.map((char) => ({ code: char, char }));
   return (
     <div className="lib-panel">
-      <input className="input lib-search" placeholder="Поиск: огонь, смех, череп, сердце…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <div className="lib-sub">Эмодзи</div>
-      <div className="lib-emoji-grid">
-        {emojiList.map((e) => (
-          <button
-            key={e.code}
-            type="button"
-            className="lib-emoji"
-            title={"name" in e && e.name ? String(e.name) : e.char}
-            draggable
-            onDragStart={(ev) => dragPayload(ev, [emojiLayer(e.char)])}
-            onClick={() => onAdd([emojiLayer(e.char)])}
-          >
-            {e.char}
-          </button>
-        ))}
-        {debounced && emoji.isSuccess && !emojiList.length ? <span className="muted">не нашлось</span> : null}
-      </div>
+      <input className="input lib-search" placeholder="Поиск стикера: искры, дым, стрелка…" value={q} onChange={(e) => setQ(e.target.value)} />
       {stickerPacks.length ? (
         <>
           <div className="lib-sub">Стикеры</div>

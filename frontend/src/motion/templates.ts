@@ -130,7 +130,7 @@ const titlePop: MotionTemplate = {
   description: "Крупный капс с обводкой выпрыгивает и «дышит», вокруг искры",
   duration: 3,
   params: [
-    { name: "text", label: "Текст", type: "text", default: "ОН ЭТО СДЕЛАЛ 🔥" },
+    { name: "text", label: "Текст", type: "text", default: "ОН ЭТО СДЕЛАЛ" },
     { name: "color", label: "Цвет", type: "color", default: YELLOW },
     { name: "y", label: "Высота (0 — верх)", type: "number", default: 0.42, min: 0, max: 1 },
     { name: "sparkles", label: "Искры", type: "bool", default: true },
@@ -154,7 +154,7 @@ const titlePop: MotionTemplate = {
         shadow: SOFT,
       },
       {
-        text: str(p, "text", "ОН ЭТО СДЕЛАЛ 🔥"),
+        text: str(p, "text", "ОН ЭТО СДЕЛАЛ"),
         font: FONT,
         weight: 900,
         size: 132,
@@ -228,7 +228,7 @@ function lowerThird(style: "bar" | "box" | "pill" | "neon", name: string, descri
     params: [
       { name: "title", label: "Заголовок", type: "text", default: "Лучший момент" },
       { name: "subtitle", label: "Подзаголовок", type: "text", default: style === "bar" ? "" : "Стрим · 12 марта" },
-      { name: "icon", label: "Значок", type: "emoji", default: "👑" },
+      { name: "icon", label: "Значок", type: "emoji", default: "" },
       { name: "accent", label: "Акцент", type: "color", default: accent },
       { name: "y", label: "Высота", type: "number", default: 0.8, min: 0, max: 1 },
       durationParam(4),
@@ -297,7 +297,7 @@ const subscribe: MotionTemplate = {
           "text",
           { start: at, end, y, name: "Кнопка", ...common, keys: pressKeys, shadow: glow(color, 46, 0.75) },
           {
-            text: `🔔 ${str(p, "text", "Подписаться")}`,
+            text: str(p, "text", "Подписаться"),
             font: FONT,
             weight: 900,
             size: 74,
@@ -305,22 +305,6 @@ const subscribe: MotionTemplate = {
             uppercase: true,
             bg: { color, opacity: 1, radius: 40, padX: 46, padY: 30, gradient: [color, "#FF5A3C"] },
           },
-        ),
-        layer(
-          "emoji",
-          {
-            start: at + 0.5,
-            end,
-            track: 1,
-            x: 0.76,
-            y: y + 0.062,
-            name: "Курсор",
-            in: { type: "slideLeft", duration: 0.45 },
-            out: { type: "fade", duration: 0.2 },
-            keys: { scale: [{ t: click - 0.58, v: 1 }, { t: click - 0.5, v: 0.8, ease: "outBack" }, { t: click - 0.32, v: 1 }] },
-            shadow: SOFT,
-          },
-          { char: "👆", size: 130 },
         ),
       ],
     };
@@ -597,57 +581,6 @@ const pieChart: MotionTemplate = {
   },
 };
 
-const emojiBurst: MotionTemplate = {
-  id: "emoji-burst",
-  name: "Взрыв эмодзи",
-  category: "Акценты",
-  description: "Эмодзи разлетаются кольцом с задержкой и покачиваются",
-  duration: 2.5,
-  params: [
-    { name: "emojis", label: "Эмодзи", type: "text", default: "🔥😂💯😱🔥😂" },
-    { name: "x", label: "Центр: x", type: "number", default: 0.5, min: 0, max: 1 },
-    { name: "y", label: "Центр: y", type: "number", default: 0.45, min: 0, max: 1 },
-    durationParam(2.5),
-  ],
-  build(p, at) {
-    const end = at + dur(p, 2.5);
-    const chars = splitEmoji(str(p, "emojis", "🔥😂💯😱🔥😂"));
-    const cx = num(p, "x", 0.5);
-    const cy = num(p, "y", 0.45);
-    const n = Math.max(1, Math.min(10, chars.length));
-    return {
-      layers: chars.slice(0, n).map((char, i) => {
-        const a = -Math.PI / 2 + (i / n) * Math.PI * 2 + (i % 2) * 0.25;
-        const r = 0.2 + (i % 3) * 0.05;
-        const tx = cx + (Math.cos(a) * r * 1920) / 1080 / 1.6;
-        const ty = cy + Math.sin(a) * r * 0.6;
-        return layer(
-          "emoji",
-          {
-            start: at + i * 0.06,
-            end,
-            track: 1,
-            x: tx,
-            y: ty,
-            rotation: ((i * 37) % 50) - 25,
-            name: "Эмодзи",
-            // Вылет из центра к своей точке + pop.
-            keys: {
-              x: [{ t: 0, v: cx, ease: "outCubic" }, { t: 0.45, v: tx }],
-              y: [{ t: 0, v: cy, ease: "outCubic" }, { t: 0.45, v: ty }],
-            },
-            in: { type: "pop", duration: 0.4 },
-            out: { type: "fade", duration: 0.3 },
-            loop: { type: "float", speed: 0.8 + (i % 3) * 0.3, amount: 1.2 },
-            shadow: SOFT,
-          },
-          { char, size: 140 + (i % 3) * 30 },
-        );
-      }),
-    };
-  },
-};
-
 const beforeAfter: MotionTemplate = {
   id: "before-after",
   name: "ДО / ПОСЛЕ",
@@ -780,9 +713,9 @@ const top3: MotionTemplate = {
   duration: 6,
   params: [
     { name: "title", label: "Заголовок", type: "text", default: "ТОП-3" },
-    { name: "item1", label: "Пункт 1", type: "text", default: "🏆 Лучший выбор" },
-    { name: "item2", label: "Пункт 2", type: "text", default: "🔥 Высокое качество" },
-    { name: "item3", label: "Пункт 3", type: "text", default: "⭐ Отличный результат" },
+    { name: "item1", label: "Пункт 1", type: "text", default: "Лучший выбор" },
+    { name: "item2", label: "Пункт 2", type: "text", default: "Высокое качество" },
+    { name: "item3", label: "Пункт 3", type: "text", default: "Отличный результат" },
     { name: "accent", label: "Акцент", type: "color", default: YELLOW },
     durationParam(6),
   ],
@@ -798,7 +731,7 @@ const top3: MotionTemplate = {
       ),
     ];
     const plateW = 820;
-    [str(p, "item1", "🏆 Лучший выбор"), str(p, "item2", "🔥 Высокое качество"), str(p, "item3", "⭐ Отличный результат")].forEach((item, i) => {
+    [str(p, "item1", "Лучший выбор"), str(p, "item2", "Высокое качество"), str(p, "item3", "Отличный результат")].forEach((item, i) => {
       const y = 0.39 + i * 0.085;
       const start = at + 0.35 + i * 0.25;
       const anim = { in: { type: "slideLeft" as const, duration: 0.4 }, out };
@@ -827,7 +760,7 @@ const alertBanner: MotionTemplate = {
   description: "Жёлтая предупреждающая плашка трясётся, по краю кадра мигает красная рамка",
   duration: 3,
   params: [
-    { name: "text", label: "Текст", type: "text", default: "🚨 Внимание" },
+    { name: "text", label: "Текст", type: "text", default: "Внимание" },
     { name: "subtitle", label: "Подпись", type: "text", default: "Сейчас будет жёстко" },
     { name: "frame", label: "Рамка по краю", type: "bool", default: true },
     durationParam(3),
@@ -839,7 +772,7 @@ const alertBanner: MotionTemplate = {
         "text",
         { start: at, end, y: 0.3, rotation: -2, name: "Внимание", in: { type: "drop", duration: 0.5 }, out: { type: "zoom", duration: 0.25 }, loop: { type: "shake", speed: 0.6, amount: 0.8 }, shadow: SOFT },
         {
-          text: str(p, "text", "🚨 Внимание"),
+          text: str(p, "text", "Внимание"),
           font: FONT,
           weight: 900,
           size: 96,
@@ -975,11 +908,11 @@ const keywordBig: MotionTemplate = {
   id: "keyword-big",
   name: "Ключевое слово крупно",
   category: "Титры",
-  description: "Одно слово на весь экран: удар, тряска, эмодзи и наезд камеры",
+  description: "Одно слово на весь экран: удар, тряска и наезд камеры",
   duration: 1.6,
   params: [
     { name: "text", label: "Слово", type: "text", default: "Невероятно" },
-    { name: "emoji", label: "Эмодзи", type: "emoji", default: "🤯" },
+    { name: "emoji", label: "Эмодзи (необязательно)", type: "emoji", default: "" },
     { name: "color", label: "Цвет", type: "color", default: YELLOW },
     { name: "zoom", label: "Наезд камеры", type: "bool", default: true },
     durationParam(1.6),
@@ -1124,12 +1057,6 @@ function parseData(labels: string, values: string) {
   return Array.from({ length: n }, (_, i) => ({ label: ls[i] ?? "", value: Number.isFinite(vs[i]) ? vs[i] : 0 }));
 }
 
-function splitEmoji(s: string): string[] {
-  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: object) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
-  const parts = Seg ? Array.from(new Seg(undefined, { granularity: "grapheme" }).segment(s), (x) => x.segment) : Array.from(s);
-  return parts.filter((g) => g.trim());
-}
-
 /** n цветов плавно от `a` к `b` — столбцы одного тона, светлеющие к росту. */
 function ramp(a: string, b: string, n: number): string[] {
   const pa = parseInt(a.slice(1, 7), 16);
@@ -1171,7 +1098,6 @@ export const TEMPLATES: MotionTemplate[] = [
   pieChart,
   subscribe,
   lookHere,
-  emojiBurst,
   beforeAfter,
   countdown,
   alertBanner,

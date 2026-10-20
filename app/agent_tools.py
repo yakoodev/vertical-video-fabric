@@ -377,11 +377,26 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "transition": render.get("transition"),
             "cover": (render.get("cover") or {}).get("mode"),
         },
+        # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
+        # субтитры строго по центру под лицом (с учётом раскладки «вебка снизу»).
+        "positions": _recommended_positions(render),
         "layers": layers,
         "camera": _camera_of(render),
         "inserts": inserts,
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": lint_layers(layers, timeline["duration"]) if layers else [],
+    }
+
+
+def _recommended_positions(render: dict) -> dict:
+    from app.auto_edit import HOOK_Y, caption_y_for
+
+    layout = (render.get("layout") or {}).get("mode") or "single"
+    return {
+        "hook": {"x": 0.5, "y": HOOK_Y, "note": "заголовок-хук: строго по центру сверху"},
+        "captions": {"x": 0.5, "y": caption_y_for(render), "note": "субтитры: строго x=0.5, это y"},
+        "punchline_text": {"x": 0.5, "y": 0.3, "note": "крупное слово-панчлайн: по центру, верхняя треть"},
+        "layout": layout,
     }
 
 
@@ -546,6 +561,32 @@ def _focus_x_at(track: list, t: float) -> float:
     return x
 
 
+
+# Владелец: «эмодзи в монтаже выглядят хуёво». Модель всё равно норовит их ставить —
+# режем на входе: слои emoji отбрасываем, из текстов вычищаем символы-эмодзи.
+_EMOJI_RE = re.compile(
+    "[🀀-🫿☀-➿🇦-🇿⭐⭕‼⁉️‍⃣]+"
+)
+
+
+def _strip_emoji(layer: dict) -> dict:
+    props = layer.get("props")
+    if not isinstance(props, dict):
+        return layer
+    props = dict(props)
+    for key in ("text", "title", "subtitle", "prefix", "suffix", "icon"):
+        if isinstance(props.get(key), str):
+            props[key] = _EMOJI_RE.sub("", props[key]).strip()
+    if layer.get("type") == "captions":
+        props["emoji"] = []
+    return {**layer, "props": props}
+
+
+def _no_emoji_layers(items: list[dict]) -> tuple[list[dict], int]:
+    kept = [_strip_emoji(l) for l in items if l.get("type") != "emoji"]
+    return kept, len(items) - len(kept)
+
+
 def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     raw = args.get("layers")
     if isinstance(raw, dict):
@@ -567,6 +608,9 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
         prepared.append(item)
+    prepared, dropped_emoji = _no_emoji_layers(prepared)
+    if not prepared:
+        raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
     problems = _validate_new_layers(ctx, prepared, duration)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
@@ -578,7 +622,8 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "ok": True,
         "added": [{"id": l.get("id"), "summary": _layer_summary(l)} for l in added],
         "layers_total": len(layers),
-        "warnings": lint_layers(layers, duration, only_ids=new_ids),
+        "warnings": lint_layers(layers, duration, only_ids=new_ids)
+        + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else []),
     }
 
 
@@ -606,7 +651,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     if index is None:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
-    merged = _deep_merge(layers[index], patch)
+    merged = _strip_emoji(_deep_merge(layers[index], patch))
     problems = _validate_new_layers(ctx, [merged], duration)
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)

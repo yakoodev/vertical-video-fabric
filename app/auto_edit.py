@@ -4,13 +4,13 @@
 «динамику» шортса можно собрать и без модели — по словам клипа и громкости:
 
 * хук — название клипа крупно в первые ~3 с (+ whoosh);
-* субтитры-слой по словам, ключевые слова цветом, эмодзи над словами по словарю;
+* субтитры-слой по словам, ключевые слова цветом (без эмодзи — владелец против);
 * наезды камеры на ударные слова (громкие и перед паузой), не чаще раза в ~5 с,
   на самый сильный — тряска и удар;
-* лёгкий pop на эмодзи.
+* без эмодзи и без «попов» на них.
 
-Правило «не перегружать»: на экране максимум пара элементов, эмодзи не чаще
-раза в 4 с. Всё ставится слоями — дальше руками в студии или ИИ, если он есть.
+Правило «не перегружать»: на экране максимум пара элементов, смысловое слово
+цветом не чаще раза в 2 с. Всё ставится слоями — дальше руками в студии или ИИ, если он есть.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ from typing import Any
 
 from app.motion import normalize_camera, normalize_layers
 
-# Корни слов → эмодзи. Берём начало слова (без регистра), первое совпадение.
+# Корни смысловых слов (бывший словарь эмодзи): теперь по ним слово красится в
+# субтитрах — сами эмодзи в монтаж не ставим.
 EMOJI_STEMS: list[tuple[str, str]] = [
     ("деньг", "💸"), ("денег", "💸"), ("бабк", "💸"), ("рубл", "💸"), ("доллар", "💵"), ("ипотек", "🏠"), ("квартир", "🏠"),
     ("смешн", "😂"), ("ржу", "😂"), ("ахах", "😂"), ("хаха", "😂"), ("угар", "😂"),
@@ -40,7 +41,7 @@ EMOJI_STEMS: list[tuple[str, str]] = [
 STRONG_STEMS = ("бляд", "пизд", "хуй", "хуё", "ебат", "ебал", "нахуй", "никогда", "всегда", "самый", "миллион", "реально", "серьёзн")
 
 HOOK_Y = 0.13
-EMOJI_GAP_SEC = 4.0
+KEYWORD_GAP_SEC = 2.0
 PUNCH_EVERY_SEC = 6.5
 
 _PUNCT = re.compile(r"[^\w\-]+", re.UNICODE)
@@ -116,32 +117,29 @@ def build_auto_edit(
     layers: list[dict] = []
     hook = (title or "").strip().upper()[:60]
     if hook:
-        hook_emoji = next((e for w in hook.split() if (e := _emoji_for(w))), "")
         layers.append({
             "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(3.0, duration), "track": 3,
             "x": 0.5, "y": HOOK_Y, "in": {"type": "pop", "duration": 0.35}, "out": {"type": "fade", "duration": 0.2},
-            "props": {"text": f"{hook} {hook_emoji}".strip(), "font": "Montserrat", "weight": 900, "size": 96,
+            "props": {"text": hook, "font": "Montserrat", "weight": 900, "size": 96,
                       "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980},
         })
         layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
                        "props": {"asset_id": "sfx:generated/whoosh.ogg", "volume": 0.7}})
 
-    highlights, emojis, last_emoji = [], [], -99.0
+    # Эмодзи в монтаже владелец не хочет («хуёво выглядят»): акцент — цвет слова.
+    # Сильные слова — жёлтым, смысловые (деньги, страх, еда…) — зелёным, не чаще раза в 2 с.
+    highlights, last_key = [], -99.0
     for i, w in enumerate(words):
         clean = _clean(w["word"])
         if any(clean.startswith(s) for s in STRONG_STEMS):
             highlights.append({"i": i, "color": "#ffd600"})
-        emoji = _emoji_for(w["word"])
-        if emoji and w["start"] - last_emoji >= EMOJI_GAP_SEC and w["start"] > 2.5:
-            emojis.append({"i": i, "char": emoji})
-            last_emoji = w["start"]
-            layers.append({"id": f"auto_pop{i}", "type": "audio", "start": round(w["start"], 2),
-                           "end": round(min(duration, w["start"] + 0.5), 2),
-                           "props": {"asset_id": "sfx:generated/pop.ogg", "volume": 0.5}})
+        elif _emoji_for(w["word"]) and w["start"] - last_key >= KEYWORD_GAP_SEC:
+            highlights.append({"i": i, "color": "#22c55e"})
+            last_key = w["start"]
     if words:
         layers.append({
             "id": "auto_caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": duration, "track": 0,
-            "x": 0.5, "y": caption_y, "props": {"style": style, "maxWords": 3, "highlightWords": highlights[:40], "emoji": emojis[:20]},
+            "x": 0.5, "y": caption_y, "props": {"style": style, "maxWords": 3, "highlightWords": highlights[:60]},
         })
 
     camera: list[dict] = []

@@ -18,10 +18,11 @@ def test_auto_edit_builds_hook_captions_and_punches():
     hook = next(l for l in result["layers"] if l["id"] == "auto_hook")
     assert "СТРИМЕРША" in hook["props"]["text"]
     caps = next(l for l in result["layers"] if l["type"] == "captions")
-    assert caps["props"]["emoji"], "словарь эмодзи должен сработать на «денег/ипотеку/страшно»"
-    # эмодзи не чаще раза в 4 с
-    times = [words[e["i"]]["start"] for e in caps["props"]["emoji"]]
-    assert all(b - a >= 4.0 for a, b in zip(times, times[1:]))
+    assert any(h["color"] == "#22c55e" for h in caps["props"]["highlightWords"]), "смысловые слова цветом"
+    assert not caps["props"].get("emoji")
+    # смысловые слова цветом — не чаще раза в 2 с
+    times = [words[h["i"]]["start"] for h in caps["props"]["highlightWords"] if h["color"] == "#22c55e"]
+    assert all(b - a >= 2.0 for a, b in zip(times, times[1:]))
     assert result["camera"], "наезды по речи"
 
 
@@ -39,9 +40,9 @@ def test_auto_edit_without_words_has_no_captions():
     assert not any(l["type"] == "captions" for l in result["layers"])
 
 
-def test_apply_auto_edit_places_pops_in_finished_time_with_transition(tmp_path, monkeypatch):
-    """Слова — во времени кусков подряд, слои — во времени готового клипа:
-    с наплывом между кусками звук эмодзи во втором куске встаёт раньше на overlap."""
+def test_apply_auto_edit_places_punches_in_finished_time_with_transition(tmp_path, monkeypatch):
+    """Слова — во времени кусков подряд, камера — во времени готового клипа:
+    с наплывом между кусками наезд во втором куске встаёт раньше на overlap."""
     import pytest
 
     from app.auto_edit import apply_auto_edit
@@ -60,6 +61,5 @@ def test_apply_auto_edit_places_pops_in_finished_time_with_transition(tmp_path, 
     monkeypatch.setattr("app.clip_waveform.clip_waveform", no_waveform)
     out = apply_auto_edit(store, plan["id"])
     assert out["duration"] == pytest.approx(19.5)
-    layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
-    pop = next(l for l in layers if l["id"].startswith("auto_pop"))
-    assert pop["start"] == pytest.approx(14.5)  # 15.0 − наплыв 0.5
+    camera = store.get_clip_plan(plan["id"])["render_settings"]["camera"]
+    assert camera and camera[0]["t"] == pytest.approx(14.44)  # 15.0 − наплыв 0.5 − 0.06
