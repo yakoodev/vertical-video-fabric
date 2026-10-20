@@ -292,19 +292,23 @@ def build_join_args(
 
     # ---- picture ---------------------------------------------------------
     if xfade_name and n > 1 and any(o > 0 for o in overlaps):
-        previous = "0:v"
+        # Одна шкала времени у всех входов: concat (встык) отдаёт 1/1000000, а
+        # сам кусок — 1/15360, и следующий xfade падает «timebase do not match».
+        for k in range(n):
+            filters.append(f"[{k}:v]settb=AVTB,setpts=PTS-STARTPTS[p{k}]")
+        previous = "p0"
         elapsed = durations[0]
         for k in range(1, n):
             overlap = overlaps[k - 1]
             label = "vout" if k == n - 1 else f"v{k}"
             if overlap > 0:
                 filters.append(
-                    f"[{previous}][{k}:v]xfade=transition={xfade_name}:"
+                    f"[{previous}][p{k}]xfade=transition={xfade_name}:"
                     f"duration={overlap:.3f}:offset={elapsed - overlap:.3f}[{label}]"
                 )
                 elapsed += durations[k] - overlap
             else:
-                filters.append(f"[{previous}][{k}:v]concat=n=2:v=1:a=0[{label}]")
+                filters.append(f"[{previous}][p{k}]concat=n=2:v=1:a=0[{label}]")
                 elapsed += durations[k]
             previous = label
     else:
