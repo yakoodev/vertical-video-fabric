@@ -506,11 +506,16 @@ def _download_with_ytdlp(
     format_selector: str = "bv*+ba/b",
 ) -> StoredSourceFile:
     settings.source_dir.mkdir(parents=True, exist_ok=True)
-    token = uuid4().hex
+    # Имя загрузки постоянное для ссылки: оборвалась (упал Docker, сеть) — повтор
+    # докачивает недостающие фрагменты, а не начинает 7 ГБ стрима с нуля.
+    token = "dl-" + hashlib.sha1(url.strip().encode()).hexdigest()[:16]
     safe_stem = _safe_filename_stem(filename_stem)
     output_basename = f"{token}-{safe_stem}" if safe_stem else token
     output_template = settings.source_dir / f"{output_basename}.%(ext)s"
     command_args = [
+        "--continue",
+        # Свой загрузчик HLS (не ffmpeg): он помнит скачанные фрагменты и умеет докачку.
+        "--hls-prefer-native",
         "--user-agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
         "--no-playlist",
@@ -548,18 +553,21 @@ def _download_with_ytdlp(
             # Напрямую не вышло (CDN режет соединение) — повторяем через прокси
             # (настройки сервиса → «Прокси», запасной — DOWNLOAD_PROXY_URL).
             # Трафик через прокси платный: из одинаковых по высоте берём меньший битрейт.
-            _remove_partials(output_basename)
             proc = _run_ytdlp(["--proxy", proxy, "-S", "res,fps,+br", *command_args])
     except DownloadCancelled:
         _remove_partials(output_basename)
         raise
     if proc.returncode != 0:
-        _remove_partials(output_basename)
+        # Недокачанное не удаляем: следующая попытка продолжит с того же места.
         raise ValueError(f"{source_label} download failed: {_safe_error(proc.stderr or proc.stdout)}")
-    matches = sorted(settings.source_dir.glob(f"{output_basename}.*"))
+    matches = sorted(
+        m for m in settings.source_dir.glob(f"{output_basename}.*")
+        if not m.name.endswith((".part", ".ytdl", ".temp")) and ".part-Frag" not in m.name
+    )
     if not matches:
         raise ValueError(f"{source_label} download did not produce a file")
-    path = matches[0]
+    # Готовый файл — под уникальным именем: две загрузки одной ссылки не делят файл.
+    path = matches[0].rename(matches[0].with_name(f"{uuid4().hex}-{safe_stem or 'source'}{matches[0].suffix}"))
     sha256, size_bytes = file_hash_and_size(path)
     original_filename = f"{safe_stem}{path.suffix}" if safe_stem else path.name
     return StoredSourceFile(path, original_filename, sha256, size_bytes)

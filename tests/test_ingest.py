@@ -783,3 +783,37 @@ def test_download_error_shows_ytdlp_error_lines():
 
     log = "[twitch:vod] Extracting\n" * 40 + "ERROR: ffmpeg exited with code 1\n  File x"
     assert _safe_error(log) == "ERROR: ffmpeg exited with code 1"
+
+
+def test_failed_download_keeps_partial_and_retry_resumes_same_name(tmp_path, monkeypatch):
+    """Оборвалось на 80% (упал Docker) — повтор той же ссылки докачивает, а не с нуля."""
+    import subprocess
+
+    monkeypatch.setattr(settings, "source_dir", tmp_path)
+    monkeypatch.setattr(settings, "download_proxy_url", "")
+    templates = []
+
+    def failing(args):
+        template = args[args.index("-o") + 1]
+        templates.append(template)
+        Path(template.replace("%(ext)s", "mp4.part")).write_bytes(b"80%")
+        return subprocess.CompletedProcess(args, 1, "", "ERROR: connection reset")
+
+    monkeypatch.setattr(ingest_module, "_run_ytdlp", failing)
+    with pytest.raises(ValueError):
+        ingest_module.download_twitch_url("https://www.twitch.tv/videos/2905714957")
+    assert list(tmp_path.glob("*.part")), "недокачанное должно остаться"
+
+    def finishing(args):
+        template = args[args.index("-o") + 1]
+        templates.append(template)
+        assert "--continue" in args
+        part = Path(template.replace("%(ext)s", "mp4.part"))
+        assert part.exists()
+        part.rename(Path(template.replace("%(ext)s", "mp4")))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(ingest_module, "_run_ytdlp", finishing)
+    stored = ingest_module.download_twitch_url("https://www.twitch.tv/videos/2905714957")
+    assert templates[0] == templates[1]
+    assert stored.path.exists() and not stored.path.name.startswith("dl-")
