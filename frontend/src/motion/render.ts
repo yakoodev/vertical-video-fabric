@@ -77,7 +77,22 @@ export function drawFrame(
   env: RenderEnv,
 ): void {
   const data: FrameData = { words: comp.words, chat: comp.chat };
-  for (const layer of visibleLayers(comp.layers || [], t)) drawLayer(ctx, layer, t, env, data);
+  const visible = visibleLayers(comp.layers || [], t);
+  for (const layer of visible) {
+    // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
+    // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
+    if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;
+    drawLayer(ctx, layer, t, env, data);
+  }
+}
+
+/** Крупный текст (панчлайн, счётчик) рядом с субтитрами по высоте — ближе 0.16 кадра.
+ *  Хук и мелкие подписи (size < 120) субтитры не прячут. */
+function isNearText(other: Layer, captions: Layer): boolean {
+  if (other.hidden || (other.type !== "text" && other.type !== "counter")) return false;
+  const size = Number((other.props as { size?: unknown } | undefined)?.size ?? 0);
+  if (other.type === "text" && size < 120) return false;
+  return Math.abs((other.y ?? 0.5) - (captions.y ?? 0.68)) < 0.16;
 }
 
 /* ---------- геометрия слоя на кадре ---------- */

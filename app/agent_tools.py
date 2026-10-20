@@ -1421,7 +1421,9 @@ def _build_registry() -> list[Tool]:
         Tool(
             "add_insert", "Вставляю мем",
             "Вставка из библиотеки поверх клипа (видео-мем/картинка/звук): asset_id, at (с клипа), duration, "
-            "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. / Insert.",
+            "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. Вставки "
+            "накладываются при рендере: в view_frame и contact_sheet их НЕ видно — это нормально, не удаляй их; "
+            "проверяй по get_clip (inserts). / Insert (not visible in view_frame).",
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
