@@ -354,6 +354,15 @@ def run_agent(
         candidates = response.get("candidates") if isinstance(response, dict) else None
         if not candidates:
             feedback = (response or {}).get("promptFeedback") if isinstance(response, dict) else None
+            blocked = (feedback or {}).get("blockReason")
+            if blocked:
+                # Фильтр Gemini (мат, кадры с персонажем) срабатывает и посреди работы:
+                # сделанное не теряем — отчитываемся тем, что успели.
+                note = f"Gemini остановился на своём фильтре контента ({blocked})."
+                if steps:
+                    final_text = f"{note}\n{_fallback_summary(steps)}"
+                    break
+                raise RuntimeError(f"{note} Попробуйте ещё раз или другую модель.")
             raise RuntimeError(f"модель не ответила{': ' + json.dumps(feedback, ensure_ascii=False) if feedback else ''}")
         content = candidates[0].get("content") or {}
         parts = [p for p in content.get("parts") or [] if isinstance(p, dict)]

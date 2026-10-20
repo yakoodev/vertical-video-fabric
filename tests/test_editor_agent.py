@@ -179,3 +179,22 @@ def test_chat_api_errors(tmp_path, monkeypatch):
     assert editor_agent.wait_run(plan["id"], timeout=60)
     reply = client.get(f"/api/clip-plans/{plan['id']}/agent").json()["messages"][-1]
     assert reply["status"] == "error" and reply["text"].startswith("Ошибка")
+
+
+def test_content_filter_mid_run_keeps_work_and_reports(tmp_path, monkeypatch):
+    """Фильтр Gemini посреди работы: сделанное остаётся, ответ — понятный отчёт, не падение."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    replies = iter([
+        {"candidates": [{"content": {"parts": [{"functionCall": {"name": "add_layers", "args": {"layers": [
+            {"type": "text", "start": 0, "end": 2, "x": 0.5, "y": 0.13, "props": {"text": "ХУК"}}]}}}]}}]},
+        {"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}},
+    ])
+
+    class Fake:
+        def generate_content(self, model, payload):
+            return next(replies)
+
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=Fake(), model="m")
+    assert "фильтр" in out["text"] and out["changed"]
+    assert store.get_clip_plan(plan["id"])["render_settings"]["layers"]
