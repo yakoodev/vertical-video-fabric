@@ -134,8 +134,33 @@ class WhisperSubtitleProvider:
             },
         )
 
+    # Модель (large — полтора гигабайта) выгружается после простоя: память машины
+    # небольшая, а распознают клипы редко и пачками.
+    IDLE_UNLOAD_SEC = 600.0
+    _unload_timer: threading.Timer | None = None
+
+    @classmethod
+    def _schedule_unload(cls) -> None:
+        with cls._lock:
+            if cls._unload_timer is not None:
+                cls._unload_timer.cancel()
+            timer = threading.Timer(cls.IDLE_UNLOAD_SEC, cls._unload)
+            timer.daemon = True
+            cls._unload_timer = timer
+            timer.start()
+
+    @classmethod
+    def _unload(cls) -> None:
+        with cls._lock:
+            cls._models.clear()
+            cls._unload_timer = None
+        import gc
+
+        gc.collect()
+
     def _get_model(self, size: str) -> Any:
         key = (size, settings.whisper_device, settings.whisper_compute_type)
+        self._schedule_unload()
         with self._lock:
             model = self._models.get(key)
             if model is None:
