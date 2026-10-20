@@ -1461,9 +1461,40 @@ class AppStore:
             parsed = json.loads(row["subtitles_json"] or "null")
         except (TypeError, ValueError):
             return None
-        return parsed if isinstance(parsed, dict) else None
+        if not isinstance(parsed, dict):
+            return None
+        stamped = parsed.get("pieces")
+        if isinstance(stamped, list) and stamped:
+            current = self._plan_piece_layout(clip_plan_id)
+            if current and not _same_layout(stamped, current):
+                # Куски поменяли после распознавания — субтитры едут за своими словами.
+                from app.clip_subtitles import remap_to_pieces
+
+                parsed = remap_to_pieces(parsed, stamped, current)
+                self.db.execute(
+                    "UPDATE clip_plans SET subtitles_json = ? WHERE id = ?",
+                    (json.dumps(parsed, ensure_ascii=False), clip_plan_id),
+                )
+        return parsed
+
+    def _plan_piece_layout(self, clip_plan_id: int) -> list[list[float]]:
+        rows = self.db.query_all(
+            """
+            SELECT s.start_sec, s.end_sec FROM clip_plan_segments cps
+            JOIN ai_segments s ON s.id = cps.segment_id
+            WHERE cps.clip_plan_id = ? ORDER BY cps.sort_order
+            """,
+            (clip_plan_id,),
+        )
+        return [[round(float(r["start_sec"]), 3), round(float(r["end_sec"]), 3)] for r in rows]
 
     def set_clip_plan_subtitles(self, clip_plan_id: int, payload: dict | None) -> None:
+        """Сохранить субтитры. Без штампа кусков они сняты по ТЕКУЩИМ кускам —
+        штампуем их, чтобы при правке кусков перенести слова (см. get_clip_plan_subtitles)."""
+        if payload and not payload.get("pieces"):  # свой штамп (снимок отмены) не трогаем
+            layout = self._plan_piece_layout(clip_plan_id)
+            if layout:
+                payload = {**payload, "pieces": layout}
         self.db.execute(
             "UPDATE clip_plans SET subtitles_json = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False) if payload else "", clip_plan_id),
@@ -2665,6 +2696,15 @@ def _parse_facecam(value: Any) -> dict | None:
     """Сохранённая вебка источника ``{x,y,w,h}`` или None."""
     parsed = _parse_content_crop(value)
     return parsed if parsed and all(k in parsed for k in ("x", "y", "w", "h")) else None
+
+
+def _same_layout(a: list, b: list) -> bool:
+    try:
+        return len(a) == len(b) and all(
+            abs(float(x[0]) - float(y[0])) < 0.002 and abs(float(x[1]) - float(y[1])) < 0.002 for x, y in zip(a, b)
+        )
+    except (TypeError, ValueError, IndexError):
+        return True  # мусорный штамп — не трогаем
 
 
 def _parse_transcript(value: Any) -> list[dict]:

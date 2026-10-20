@@ -188,6 +188,88 @@ def shift_for_transition(
     }
 
 
+def _layout(pieces: list) -> list[tuple[float, float, float]]:
+    """[(src_start, src_end, clip_offset)] — где каждый кусок лежит в склейке."""
+    out, offset = [], 0.0
+    for start, end in pieces:
+        start, end = float(start), float(end)
+        if end > start:
+            out.append((start, end, offset))
+            offset += end - start
+    return out
+
+
+def _old_index(layout: list, t: float) -> int:
+    for index, (start, end, offset) in enumerate(layout):
+        if t < offset + (end - start):
+            return index
+    return len(layout) - 1
+
+
+def _to_source(layout: list, t: float, index: int | None = None) -> float:
+    start, _end, offset = layout[_old_index(layout, t) if index is None else index]
+    return start + max(0.0, t - offset)
+
+
+def _piece_at(layout: list, x: float, prefer: int) -> tuple[float, float, float] | None:
+    """Новый кусок, где лежит момент исходника ``x``; сначала тот же по номеру
+    (куски могут перекрываться — слово остаётся в своём)."""
+    inside = lambda p: p[0] - 0.001 <= x < p[1] + 0.001  # noqa: E731
+    if prefer < len(layout) and inside(layout[prefer]):
+        return layout[prefer]
+    return next((p for p in layout if inside(p)), None)
+
+
+def _to_clip(piece: tuple[float, float, float], x: float) -> float:
+    start, end, offset = piece
+    return round(offset + min(max(x, start), end) - start, 3)
+
+
+def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
+    """Перенести субтитры на новый набор кусков: слово привязано ко времени
+    исходника и уезжает вместе со своим куском; слова из вырезанного пропадают.
+
+    Агент-монтажёр: «после правки кусков субтитры не переезжают» — подрезал
+    кусок, а текст остался на старых секундах и разъехался с речью."""
+    old, new = _layout(old_pieces), _layout(new_pieces)
+    if not old or not new:
+        return payload
+
+    def move(item: dict) -> dict | None:
+        a, b = float(item["start"]), float(item["end"])
+        index = _old_index(old, (a + b) / 2)
+        piece = _piece_at(new, _to_source(old, (a + b) / 2, index), index)
+        if piece is None:
+            return None
+        src_a, src_b = _to_source(old, a, index), _to_source(old, b, index)
+        start, end = _to_clip(piece, src_a), _to_clip(piece, src_b)
+        return {**item, "start": start, "end": max(end, round(start + 0.05, 3))}
+
+    old_words = payload.get("words") or []
+    words = [m for m in (move(w) for w in old_words) if m]
+    lines = []
+    for line in payload.get("lines") or []:
+        inside = _words_of_line(old_words, float(line["start"]), float(line["end"]))
+        if not inside:
+            moved = move(line)
+            if moved:
+                lines.append(moved)
+            continue
+        kept = [m for m in (move(w) for w in inside) if m]
+        if not kept:
+            continue
+        text = line["text"] if len(kept) == len(inside) else " ".join(w["word"] for w in kept)
+        lines.append({**line, "text": text, "start": min(w["start"] for w in kept), "end": max(w["end"] for w in kept)})
+    total = round(sum(e - s for s, e, _o in new), 3)
+    return {
+        **payload,
+        "words": sorted(words, key=lambda w: w["start"]),
+        "lines": normalize_lines(lines, total),
+        "duration": total,
+        "pieces": [[s, e] for s, e, _o in new],
+    }
+
+
 def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None, model: str | None = None) -> dict:
     """Cut the clip's audio, transcribe it, store editable lines on the plan."""
     from app.render import _run_ffmpeg  # local import: render imports this module
