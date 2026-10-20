@@ -419,8 +419,8 @@ def run_agent(
                 final_text = ""
             break
         said = _parts_text(parts)
-        if said and degenerate(said):
-            said = ""  # мусор между шагами владельцу не показываем
+        if said and (degenerate(said) or not report_like(said)):
+            said = ""  # мусор между шагами («.», не по-русски, служебное) владельцу не показываем
         if said:
             # Пояснение модели между вызовами («Ставлю хук и наезд») — тоже видно в чате.
             steps.append({"tool": SAY, "label": said[:400], "ok": True})
