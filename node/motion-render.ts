@@ -99,11 +99,11 @@ function readComp(path: string): Composition {
     duration: Math.max(0, duration),
     layers: Array.isArray(raw.layers) ? raw.layers : [],
     camera: Array.isArray(raw.camera) ? raw.camera : [],
-    // Слова речи для слоёв captions: только целые записи {t0, t1, w}, по времени.
+    // Слова речи для слоёв captions: только целые записи {t0, t1, w} (+ s — кто говорит), по времени.
     words: Array.isArray(raw.words)
       ? raw.words
           .filter((w) => w && Number.isFinite(Number(w.t0)) && Number.isFinite(Number(w.t1)) && typeof w.w === "string")
-          .map((w) => ({ t0: Number(w.t0), t1: Number(w.t1), w: w.w }))
+          .map((w) => ({ t0: Number(w.t0), t1: Number(w.t1), w: w.w, ...(typeof w.s === "string" && w.s ? { s: w.s } : {}) }))
           .sort((a, b) => a.t0 - b.t0)
       : [],
     // Сообщения чата для слоёв chat: время — число, остальное движок проверит сам.
