@@ -23,6 +23,7 @@ const CHOICES: Choice[] = [
   { id: "split-top", label: "Вебка сверху", hint: "Лицо стримера полосой сверху, игра снизу", mode: "split", pos: "top" },
   { id: "split-bottom", label: "Вебка снизу", hint: "Игра сверху, лицо стримера полосой снизу", mode: "split", pos: "bottom" },
   { id: "pip", label: "Окошко", hint: "Обычный кадр 9:16 и вебка окошком поверх", mode: "pip_cam" },
+  { id: "meme", label: "Мем", hint: "Горизонтальное видео целиком сверху, ниже фон под картинки и титры", mode: "meme" },
 ];
 
 const sameCam = (a: LayoutRect, b: LayoutRect) =>
@@ -45,6 +46,13 @@ function Thumb({ choice }: { choice: Choice }) {
         <>
           <rect x="0" y="0" width="18" height="32" rx="2" fill={game} />
           <rect x="4" y="3" width="10" height="7" rx="1.5" fill={cam} />
+        </>
+      )}
+      {choice.mode === "meme" && (
+        <>
+          <rect x="0" y="0" width="18" height="32" rx="2" fill="var(--surface-2)" />
+          <rect x="0" y="2" width="18" height="10" rx="1" fill={game} />
+          <rect x="4" y="15" width="10" height="14" rx="1.5" fill={cam} />
         </>
       )}
     </svg>
@@ -223,12 +231,25 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt }: Props)
         ))}
       </div>
 
-      <button type="button" className="btn sm lay-detect" disabled={busy} onClick={detect}>
-        {busy ? "Ищу лицо в кадрах…" : "🎯 Найти вебку автоматически"}
-      </button>
+      {layout.mode !== "meme" ? (
+        <button type="button" className="btn sm lay-detect" disabled={busy} onClick={detect}>
+          {busy ? "Ищу лицо в кадрах…" : "🎯 Найти вебку автоматически"}
+        </button>
+      ) : null}
       {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
 
-      {layout.mode !== "single" ? (
+      {layout.mode === "meme" ? (
+        <>
+          <label className="field range">
+            <span>Видео от верха · {Math.round(layout.video_y * 100)}% кадра</span>
+            <input type="range" min={0} max={60} value={Math.round(layout.video_y * 100)} onChange={(e) => patch({ video_y: Number(e.target.value) / 100 })} />
+          </label>
+          <div className="lay-row">
+            <span className="lay-grow muted">Фон под видео — место для картинок и титров</span>
+            <input type="color" className="lay-color" value={layout.bg} title="Цвет фона" onChange={(e) => patch({ bg: e.target.value })} />
+          </div>
+        </>
+      ) : layout.mode !== "single" ? (
         <>
           <div className="li-cap">Где вебка в исходнике</div>
           <CamEditor src={frameSrc} cam={layout.cam} onCommit={(cam) => patch({ cam })} />

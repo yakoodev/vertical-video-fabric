@@ -1750,6 +1750,13 @@ def _layout_filter(
             cam_chain += f",pad={width}:{cam_h + gap}:0:{0 if top else gap}:color={color}"
         order = "[lcam][lgame]" if top else "[lgame][lcam]"
         return f"{game};{cam_chain}[lcam];{order}vstack=inputs=2,{tail}"
+    if layout["mode"] == "meme":
+        # Видео целиком (после обрезки полей) во всю ширину, сверху; ниже — фон.
+        prefix, (vin,) = _crop_prefix(source_crop, 1)
+        top = even_px(float(layout["video_y"]) * height) if layout["video_y"] > 0 else 0
+        video = f"{prefix}[{vin}]scale={width}:-2,setsar=1[lvid]"
+        background = f"color=c={ff_color(layout['bg'])}:s={width}x{height}:r={_fps(fps)}[lbg]"
+        return f"{video};{background};[lbg][lvid]overlay=x=0:y={top}:shortest=1,{tail}"
     # pip_cam: обычный кадр + окошко вебки (центр и ширина — доли выхода).
     pip = layout["pip"]
     game = _fit_box(mode, anchor, width, height, source_crop, reframe_x, "lgame")

@@ -5,13 +5,19 @@
 
 ``render.layout`` клипа::
 
-    {"mode": "single" | "split" | "pip_cam",
+    {"mode": "single" | "split" | "pip_cam" | "meme",
      "cam": {"x", "y", "w", "h"},   # прямоугольник вебки в долях ИСХОДНИКА (весь кадр)
      "ratio": 0.38,                  # split: доля высоты кадра под вебку, 0.2..0.6
      "cam_pos": "top" | "bottom",    # split: где вебка
      "pip": {"x", "y", "w"},         # pip_cam: центр и ширина окошка в долях выхода
      "border": {"color": "#000000", "width": 0},
-     "gap": 0}
+     "gap": 0,
+     "video_y": 0.04,                 # meme: верх видео в долях высоты выхода
+     "bg": "#0b0d14"}                 # meme: фон под видео (место для картинок и титров)
+
+«meme» — мем-формат: горизонтальное видео целиком во всю ширину сверху, ниже —
+однотонный фон под скриншоты и титры (как «Борат × сайт»). Раньше агент собирал
+это из split с «вебкой» на весь кадр и закрывал низ прямоугольником.
 
 ``gap`` и ``border.width`` — пиксели кадра 1080×1920; на другом размере
 выхода масштабируются пропорционально высоте (превью считает так же, см.
@@ -28,7 +34,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-LAYOUT_MODES = ("single", "split", "pip_cam")
+LAYOUT_MODES = ("single", "split", "pip_cam", "meme")
 CAM_POSITIONS = ("top", "bottom")
 REFERENCE_HEIGHT = 1920
 
@@ -82,12 +88,14 @@ def normalize_layout(raw: object) -> dict:
             "width": int(round(_num(border_raw.get("width"), 0, 0, 40))),
         },
         "gap": int(round(_num(src.get("gap"), 0, 0, 200))),
+        "video_y": round(_num(src.get("video_y"), 0.04, 0.0, 0.6), 4),
+        "bg": src["bg"].lower() if isinstance(src.get("bg"), str) and _COLOR_RE.match(src["bg"]) else "#0b0d14",
     }
 
 
 def layout_active(layout: object) -> bool:
     """Раскладка что-то меняет (не single)? Только тогда рендер идёт по новому пути."""
-    return isinstance(layout, dict) and layout.get("mode") in ("split", "pip_cam")
+    return isinstance(layout, dict) and layout.get("mode") in ("split", "pip_cam", "meme")
 
 
 def even_px(value: float) -> int:

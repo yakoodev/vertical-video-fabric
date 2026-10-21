@@ -392,9 +392,11 @@ def json_schema() -> dict:
                     },
                     "layout": {
                         "type": "object",
-                        "description": "раскладка стрима: mode single|split|pip_cam; cam {x,y,w,h} — вебка в долях "
+                        "description": "раскладка: mode single|split|pip_cam|meme; cam {x,y,w,h} — вебка в долях "
                         "исходника; ratio 0.2..0.6 (split, доля высоты под вебку); cam_pos top|bottom; "
-                        "pip {x,y,w} — центр/ширина окошка в долях выхода; border {color,width}; gap (px 1080×1920)",
+                        "pip {x,y,w} — центр/ширина окошка в долях выхода; border {color,width}; gap (px 1080×1920); "
+                        "meme — горизонтальное видео целиком сверху во всю ширину, ниже фон bg (#rrggbb) под "
+                        "картинки и титры; video_y 0..0.6 — верх видео в долях высоты",
                     },
                 },
             },

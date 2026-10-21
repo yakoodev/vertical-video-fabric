@@ -334,3 +334,29 @@ def test_pip_and_split_montage_with_transition_render(tmp_path, monkeypatch):
         )
         assert clip["status"] == "succeeded", clip.get("error")
         assert (clip["width"], clip["height"]) == (180, 320)
+
+
+def test_meme_layout_puts_whole_video_on_top(tmp_path):
+    """meme: горизонтальное видео целиком сверху во всю ширину, ниже — однотонный фон."""
+    import subprocess
+
+    from app.render import build_ffmpeg_render_args
+    from app.stream_layout import normalize_layout
+
+    _require_ffmpeg()
+    source = tmp_path / "wide.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=320x180:r=25",
+                    "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=44100", "-t", "2", "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-c:a", "aac", str(source)], check=True)
+    out = tmp_path / "meme.mp4"
+    preset = {"output_width": 180, "output_height": 320, "fps": 25, "scale_mode": "cover",
+              "layout": normalize_layout({"mode": "meme", "video_y": 0.1, "bg": "#000000"})}
+    subprocess.run(build_ffmpeg_render_args(source, out, 0, 1.5, preset), check=True)
+    frame = tmp_path / "f.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(out), "-frames:v", "1",
+                    "-f", "rawvideo", "-pix_fmt", "gray", str(frame)], check=True)
+    pixels = frame.read_bytes()
+    row = lambda y: pixels[y * 180:(y + 1) * 180]  # noqa: E731
+    assert max(row(10)) < 40          # над видео (верх 10% = 32 px) — фон
+    assert min(row(60)) > 200         # видео 180×~101 с y=32 — белое во всю ширину
+    assert max(row(250)) < 40         # ниже видео — фон под картинки

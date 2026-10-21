@@ -100,7 +100,8 @@ def normalize_render_settings(raw: object) -> dict:
         "subs_on": _bool(src.get("subs_on")),
         "sub_id": _opt_int(src.get("sub_id")),
         "sub_engine": engine if isinstance(engine, str) and len(engine) <= 40 else "",
-        "sub_pos_pct": _pct(src.get("sub_pos_pct"), 12.0, 2.0, 40.0),
+        # До 85 %: в раскладке meme субтитры идут по видео сверху (агент упирался в 40 %).
+        "sub_pos_pct": _pct(src.get("sub_pos_pct"), 12.0, 2.0, 85.0),
         "banner_on": _bool(src.get("banner_on")),
         "banner_id": _opt_int(src.get("banner_id")),
         "banner_height_pct": _pct(src.get("banner_height_pct"), 14.0, 4.0, 40.0),

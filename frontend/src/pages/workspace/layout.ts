@@ -3,7 +3,9 @@
  *
  * - single  — обычный кадр 9:16 (как раньше);
  * - split   — вебка полосой сверху/снизу (`ratio` — её доля высоты), под ней игра;
- * - pip_cam — обычный кадр 9:16 и вебка окошком поверх (`pip` — центр/ширина в долях выхода).
+ * - pip_cam — обычный кадр 9:16 и вебка окошком поверх (`pip` — центр/ширина в долях выхода);
+ * - meme    — горизонтальное видео целиком сверху во всю ширину (`video_y` — его верх в долях
+ *             высоты), ниже однотонный фон `bg` под картинки и титры.
  *
  * `cam` — прямоугольник вебки в долях ВСЕГО кадра исходника (до content-crop).
  * `gap` и `border.width` — пиксели кадра 1080×1920 (на других размерах — пропорционально).
@@ -13,7 +15,7 @@
  * одного drawImage вызывается `drawLayoutFrame(ctx, video, layout, rect, W, H)`.
  */
 
-export type LayoutMode = "single" | "split" | "pip_cam";
+export type LayoutMode = "single" | "split" | "pip_cam" | "meme";
 
 export interface LayoutRect {
   x: number;
@@ -36,6 +38,10 @@ export interface StreamLayout {
   border: { color: string; width: number };
   /** split: зазор цвета рамки между вебкой и игрой (px кадра 1080×1920). */
   gap: number;
+  /** meme: верх видео в долях высоты кадра, 0..0.6. */
+  video_y: number;
+  /** meme: фон под видео (#rrggbb). */
+  bg: string;
 }
 
 /** Прямоугольник в пикселях исходника (videoWidth × videoHeight). */
@@ -56,9 +62,11 @@ export const DEFAULT_LAYOUT: StreamLayout = {
   pip: { x: 0.5, y: 0.12, w: 0.42 },
   border: { color: "#000000", width: 0 },
   gap: 0,
+  video_y: 0.04,
+  bg: "#0b0d14",
 };
 
-const MODES: LayoutMode[] = ["single", "split", "pip_cam"];
+const MODES: LayoutMode[] = ["single", "split", "pip_cam", "meme"];
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
 
 function num(v: unknown, def: number, lo: number, hi: number): number {
@@ -100,11 +108,13 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
       width: Math.round(num(border.width, 0, 0, 40)),
     },
     gap: Math.round(num(s.gap, 0, 0, 200)),
+    video_y: r4(num(s.video_y, DEFAULT_LAYOUT.video_y, 0, 0.6)),
+    bg: typeof s.bg === "string" && /^#[0-9a-f]{6}$/i.test(s.bg) ? s.bg.toLowerCase() : DEFAULT_LAYOUT.bg,
   };
 }
 
 export function layoutActive(layout: StreamLayout | null | undefined): boolean {
-  return !!layout && (layout.mode === "split" || layout.mode === "pip_cam");
+  return !!layout && (layout.mode === "split" || layout.mode === "pip_cam" || layout.mode === "meme");
 }
 
 const evenPx = (v: number) => Math.max(2, Math.round(v / 2) * 2);
@@ -189,6 +199,18 @@ export function drawLayoutFrame(
   const kx = W / out.w;
   const border = scaledPx(layout.border.width, out.h);
   const color = layout.border.color;
+
+  if (layout.mode === "meme") {
+    // Как render._layout_filter: фон, видео целиком во всю ширину с y = video_y.
+    ctx.save();
+    ctx.fillStyle = layout.bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    const top = layout.video_y > 0 ? evenPx(layout.video_y * out.h) : 0;
+    const vidH = (out.w * vh) / vw;
+    ctx.drawImage(video, 0, 0, vw, vh, 0, top * k, W, vidH * k);
+    return;
+  }
 
   if (layout.mode === "split") {
     const { camH, gap, gameH } = splitGeometry(layout, out.h);

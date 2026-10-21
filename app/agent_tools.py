@@ -1150,6 +1150,22 @@ def h_set_subtitles(ctx: ToolContext, args: dict) -> dict:
             "note": note}
 
 
+def h_set_layout(ctx: ToolContext, args: dict) -> dict:
+    """Раскладка кадра: single, split (вебка+игра), pip_cam, meme (видео сверху, фон снизу)."""
+    from app.stream_layout import LAYOUT_MODES, normalize_layout
+
+    if args.get("mode") is not None and args["mode"] not in LAYOUT_MODES:
+        raise ToolError(f"mode: одно из {', '.join(LAYOUT_MODES)}")
+    render = _current_render(ctx)
+    merged = {**(render.get("layout") or {}), **{k: v for k, v in args.items() if v is not None}}
+    fresh = _save_render(ctx, {**render, "layout": normalize_layout(merged)})
+    out: dict = {"ok": True, "layout": fresh["layout"]}
+    if fresh["layout"]["mode"] == "meme":
+        out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
+                       "проверь view_frame")
+    return out
+
+
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import save_lines
 
@@ -1787,13 +1803,24 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_subtitles", "Настраиваю субтитры",
-            "Субтитры: on (вкл/выкл), style_id (см. list_subtitle_styles), position_pct (отступ снизу, 2..40 % "
-            "высоты; 12–22 — над интерфейсом площадки). / Subtitle settings.",
+            "Субтитры: on (вкл/выкл), style_id (см. list_subtitle_styles), position_pct (отступ снизу, 2..85 % "
+            "высоты; 12–22 — над интерфейсом площадки; 60–80 — над видео в раскладке meme). / Subtitle settings.",
             _obj({"on": {"type": "boolean"}, "style_id": {"type": "integer"}, "position_pct": {"type": "number"}}),
             h_set_subtitles, mutating=True,
             label=lambda a: "Субтитры " + ("выкл" if a.get("on") is False else "вкл")
             + (f", стиль {a['style_id']}" if a.get("style_id") else "")
             + (f", {a['position_pct']}% снизу" if a.get("position_pct") is not None else ""),
+        ),
+        Tool(
+            "set_layout", "Меняю раскладку кадра",
+            "Раскладка кадра 9:16: mode single (обычный кадр) | split (вебка сверху/снизу + игра; cam {x,y,w,h} "
+            "в долях исходника, ratio, cam_pos) | pip_cam (окошко вебки pip {x,y,w}) | meme (горизонтальное видео "
+            "целиком сверху во всю ширину, ниже фон bg #rrggbb под картинки и титры; video_y — верх видео в долях "
+            "высоты). Передавай только то, что меняешь. / Frame layout.",
+            _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme"]},
+                  "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
+                  "pip": {"type": "object"}, "bg": {"type": "string"}, "video_y": {"type": "number"}}),
+            h_set_layout, mutating=True, label=lambda a: f"Раскладка: {a.get('mode') or 'правка'}",
         ),
         Tool(
             "edit_subtitle_lines", "Правлю субтитры",
