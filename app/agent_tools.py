@@ -1401,6 +1401,39 @@ def h_list_projects(ctx: ToolContext, _args: dict) -> dict:
     }
 
 
+def _project_id(args: dict) -> int:
+    try:
+        return int(args.get("project_id"))
+    except (TypeError, ValueError) as exc:
+        raise ToolError("нужен project_id (см. list_projects)") from exc
+
+
+def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
+    from app.manual_clips import source_transcript
+
+    try:
+        out = source_transcript(ctx.store, _project_id(args))
+    except (KeyError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+    lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
+    cues = [c for c in out["cues"] if float(c["end"]) > lo and (hi is None or float(c["start"]) < hi)]
+    return {"project_id": out["source_id"], "duration_sec": out["duration_sec"],
+            "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
+
+
+def h_create_clip(ctx: ToolContext, args: dict) -> dict:
+    from app.manual_clips import create_manual_clip
+
+    try:
+        plan = create_manual_clip(ctx.store, _project_id(args), str(args.get("title") or ""),
+                                  args.get("pieces") or [], str(args.get("description") or ""))
+    except (KeyError, ValueError) as exc:
+        raise ToolError(f"клип не создан: {exc}") from exc
+    segs = plan.get("segments") or []
+    return {"ok": True, "clip_id": plan["id"], "title": plan["title"],
+            "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2)}
+
+
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
     try:
         project = int(args.get("project_id"))
@@ -1839,6 +1872,25 @@ DISCOVERY_TOOLS = [
         "Клипы проекта: clip_id, название, ★, длина, число слоёв. / Clips of a project.",
         _obj({"project_id": {"type": "integer"}, "favorites_only": {"type": "boolean"}}, ["project_id"]),
         h_list_clips, scope="global",
+    ),
+    Tool(
+        "get_source_transcript", "Расшифровка проекта",
+        "Реплики ВСЕГО исходника проекта [{start, end, text}] (время исходника) — выбрать моменты "
+        "для клипов без анализа Gemini. Первый вызов — локальный Whisper, несколько минут, потом кэш. "
+        "/ Whole-source transcript.",
+        _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
+             ["project_id"]),
+        h_source_transcript, scope="global",
+    ),
+    Tool(
+        "create_clip", "Создаю клип",
+        "Новый клип проекта из кусков исходника: title, pieces [{start_sec, end_sec, title?}] "
+        "(каждый 5–180 с, до 12). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
+        _obj({"project_id": {"type": "integer"}, "title": {"type": "string"}, "description": {"type": "string"},
+              "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},
+                                                          "title": {"type": "string"}}, ["start_sec", "end_sec"])}},
+             ["project_id", "title", "pieces"]),
+        h_create_clip, scope="global",
     ),
 ]
 

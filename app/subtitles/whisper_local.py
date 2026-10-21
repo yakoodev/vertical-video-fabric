@@ -11,17 +11,23 @@ from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWor
 # the decoder's own "this is not speech" probability, and a floor on confidence.
 _NO_SPEECH_THRESHOLD = 0.6
 _MIN_AVG_LOGPROB = -1.0
+_SURE_NO_SPEECH = 0.9  # выше — не речь при любой уверенности
+_MUSIC_LOGPROB = -0.5  # «песня» под музыкой обычно декодируется неуверенно
 
 
 def _is_hallucination(segment: Any) -> bool:
     """True when a decoded segment looks like non-speech (music, silence) rather
     than real dialogue — the usual source of phantom subtitles."""
     no_speech = _num(getattr(segment, "no_speech_prob", None))
-    if no_speech is not None and no_speech > _NO_SPEECH_THRESHOLD:
-        return True
     avg_logprob = _num(getattr(segment, "avg_logprob", None))
     if avg_logprob is not None and avg_logprob < _MIN_AVG_LOGPROB:
         return True
+    if no_speech is not None and no_speech > _NO_SPEECH_THRESHOLD:
+        # Как у самого Whisper: «не речь» — когда высокая вероятность тишины И декодер
+        # не уверен. Под дубляжом с музыкой no_speech ≈ 0.7 даже на чистых фразах
+        # (уверенность −0.2): по одному no_speech выпадало 85% реплик серии.
+        if no_speech > _SURE_NO_SPEECH or avg_logprob is None or avg_logprob < _MUSIC_LOGPROB:
+            return True
     return False
 
 
