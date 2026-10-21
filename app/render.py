@@ -1072,6 +1072,13 @@ class ClipRenderService:
                 return clip  # немой клип: ни громкость, ни затухание не нужны
             hold = max(0.0, float(settings.render_end_hold_sec or 0))
             filters = [f"apad=pad_dur={hold:.3f}"] if hold > 0 else []
+            import logging
+
+            logging.getLogger("uvicorn.error").info(
+                "loudness clip=%s input_i=%s input_tp=%s needed=%s gain=%.2f",
+                clip.get("id"), measured.get("input_i"), measured.get("input_tp"),
+                loudnorm_needed(measured, target), linear_gain_db(measured, target),
+            )
             if loudnorm_needed(measured, target):
                 # Только линейная поправка (одно число на весь клип) + лимитер на пики.
                 # loudnorm второго прохода, когда линейно не влезает в пик, молча
