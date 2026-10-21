@@ -368,3 +368,17 @@ def test_counter_prefix_suffix_keep_spaces(tmp_path, monkeypatch):
     assert ok, out
     props = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]["props"]
     assert (props["prefix"], props["suffix"]) == ("от ", " ₽")
+
+
+def test_big_opaque_panel_over_video_is_rejected(tmp_path, monkeypatch):
+    """Владелец: «плашки перекрывают видео». Непрозрачная плашка больше 40 % кадра — отказ."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    panel = {"type": "shape", "start": 0, "end": 3, "x": 0.5, "y": 0.3,
+             "props": {"kind": "rect", "w": 1080, "h": 1000, "fill": "#101010"}}
+    out, ok = run_tool(ctx, "add_layers", {"layers": [panel]})
+    assert not ok and "закрывает" in str(out)
+    frame = {**panel, "props": {**panel["props"], "fill": None, "stroke": {"color": "#FFFFFF", "width": 6}}}
+    out, ok = run_tool(ctx, "add_layers", {"layers": [frame]})
+    assert ok, out  # рамка без заливки видео не закрывает

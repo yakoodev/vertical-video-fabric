@@ -254,6 +254,37 @@ def _layer_box(layer: dict) -> tuple[float, float]:
     return height * scale / 1920 / 2, 0.0
 
 
+MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура больше 40 % кадра — «закрыли видео»
+
+
+def cover_share(layer: dict) -> float:
+    """Какую долю кадра 1080×1920 непрозрачно закрывает слой-картинка/фигура (0, если прозрачный)."""
+    if layer.get("type") not in ("shape", "image"):
+        return 0.0
+    props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
+        return 0.0
+    if layer.get("type") == "shape" and props.get("fill") in (None, "", "none"):
+        return 0.0  # контур (рамка, стрелка) видео не закрывает
+    scale = _num(layer.get("scale"), 1.0) or 1.0
+    w = (_num(props.get("w"), 400.0) or 400.0) * scale
+    h = (_num(props.get("h"), w) or w) * scale
+    return min(1.0, (w * h) / (1080 * 1920))
+
+
+def covering_problems(layers: list[dict]) -> list[str]:
+    """Ошибки: слой закрывает собой видео. Владелец: «плашки перекрывают видео — говно».
+    Картинки и плашки ставим на пустое место, а не поверх героя/кадра."""
+    out = []
+    for layer in layers:
+        share = cover_share(layer)
+        if share > MAX_COVER_SHARE:
+            out.append(f"{layer.get('id') or layer.get('type')}: закрывает {share:.0%} кадра — видео не перекрывать, "
+                       f"картинки и плашки ≤ {MAX_COVER_SHARE:.0%} кадра и на пустом месте (раскладка «Мем» даёт "
+                       "свободный фон под видео)")
+    return out
+
+
 def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None) -> list[str]:
     """Предупреждения ремесла (не ошибки): безопасные зоны, перегруз, мелкий текст.
 
@@ -813,7 +844,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     prepared, dropped_emoji = _no_emoji_layers(prepared)
     if not prepared:
         raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
-    problems = _validate_new_layers(ctx, prepared, duration)
+    problems = _validate_new_layers(ctx, prepared, duration) + covering_problems(prepared)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
     added = motion.normalize_layers(prepared)
@@ -854,7 +885,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
     merged = _strip_emoji(_deep_merge(layers[index], patch))
-    problems = _validate_new_layers(ctx, [merged], duration)
+    problems = _validate_new_layers(ctx, [merged], duration) + covering_problems([merged])
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
     normalized = motion.normalize_layers([merged])

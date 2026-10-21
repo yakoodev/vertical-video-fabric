@@ -332,6 +332,21 @@ def _parse_ref(ref: str) -> tuple[str, str, str] | None:
     return m.group(1), m.group(2), m.group(3)
 
 
+# Синтетические паки убраны (владелец: «металлические звуки — убрать нахуй»);
+# ссылки старых клипов ведут на настоящие записи пака freesound.
+LEGACY_SFX: dict[str, dict[str, str]] = {
+    "generated": {
+        "whoosh.ogg": "whoosh-1.ogg", "swoosh.ogg": "whoosh-4.ogg", "whoosh-deep.ogg": "whoosh-3.ogg",
+        "riser.ogg": "riser.ogg", "boom.ogg": "drama-boom.ogg", "bass-drop.ogg": "bass-drop.ogg",
+        "pop.ogg": "pop.ogg", "click.ogg": "click.ogg", "ding.ogg": "ding.ogg",
+        "record-scratch.ogg": "record-scratch.ogg", "camera-shutter.ogg": "camera.ogg",
+        "typing.ogg": "typing.ogg", "glitch.ogg": "glitch.ogg", "buzzer.ogg": "fail-horn.ogg",
+        "*": "pop.ogg",
+    },
+    "kenney-digital": {"*": "glitch.ogg"},
+}
+
+
 def resolve_pack_ref(ref: str) -> Path | None:
     """Путь к файлу по ссылке ``emoji:…`` / ``sticker:…`` / ``meme:…`` / ``sfx:…``.
 
@@ -343,6 +358,9 @@ def resolve_pack_ref(ref: str) -> Path | None:
     kind, pack_id, file = parsed
     if kind == "emoji":
         return emoji_path(file[:-4])
+    if kind == "sfx" and pack_id in LEGACY_SFX:
+        # Старые клипы ссылаются на убранные синтетические паки — играем замену.
+        pack_id, file = "freesound", LEGACY_SFX[pack_id].get(file, LEGACY_SFX[pack_id]["*"])
     pack = load_packs().get(pack_id)
     if not pack or pack.get("kind") not in REF_PACK_KINDS[kind]:
         return None
