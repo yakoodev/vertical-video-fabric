@@ -11,22 +11,34 @@ from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWor
 # the decoder's own "this is not speech" probability, and a floor on confidence.
 _NO_SPEECH_THRESHOLD = 0.6
 _MIN_AVG_LOGPROB = -1.0
-_SURE_NO_SPEECH = 0.9  # выше — не речь при любой уверенности
+_SURE_NO_SPEECH = 0.9  # выше — нужна высокая уверенность декодера
 _MUSIC_LOGPROB = -0.5  # «песня» под музыкой обычно декодируется неуверенно
+_CONFIDENT_LOGPROB = -0.3  # так уверенно Whisper декодирует только настоящую речь
+# Известные «субтитры из ниоткуда» Whisper на тишине и музыке (из обучающих титров).
+_KNOWN_PHANTOMS = (
+    "субтитры сделал", "субтитры создавал", "редактор субтитров", "корректор",
+    "продолжение следует", "спасибо за просмотр", "подписывайтесь на канал",
+    "amara.org", "dimatorzok",
+)
 
 
 def _is_hallucination(segment: Any) -> bool:
     """True when a decoded segment looks like non-speech (music, silence) rather
     than real dialogue — the usual source of phantom subtitles."""
+    text = str(getattr(segment, "text", "") or "").lower()
+    if any(phrase in text for phrase in _KNOWN_PHANTOMS):
+        return True
     no_speech = _num(getattr(segment, "no_speech_prob", None))
     avg_logprob = _num(getattr(segment, "avg_logprob", None))
     if avg_logprob is not None and avg_logprob < _MIN_AVG_LOGPROB:
         return True
     if no_speech is not None and no_speech > _NO_SPEECH_THRESHOLD:
         # Как у самого Whisper: «не речь» — когда высокая вероятность тишины И декодер
-        # не уверен. Под дубляжом с музыкой no_speech ≈ 0.7 даже на чистых фразах
-        # (уверенность −0.2): по одному no_speech выпадало 85% реплик серии.
-        if no_speech > _SURE_NO_SPEECH or avg_logprob is None or avg_logprob < _MUSIC_LOGPROB:
+        # не уверен. Под дубляжом с музыкой no_speech ≈ 0.7–0.93 даже на чистых
+        # фразах (уверенность −0.16): по одному no_speech выпадало 85% реплик серии
+        # и целые сцены по минуте.
+        floor = _CONFIDENT_LOGPROB if no_speech > _SURE_NO_SPEECH else _MUSIC_LOGPROB
+        if avg_logprob is None or avg_logprob < floor:
             return True
     return False
 
