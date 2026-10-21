@@ -899,3 +899,12 @@ def test_normalize_loudness_leaves_silent_clip_without_error(tmp_path, monkeypat
     monkeypatch.setattr("app.render._run_ffmpeg", no_second_pass)
     out = ClipRenderService(store)._normalize_loudness(clip)
     assert not (out.get("error") or "")
+
+
+def test_loudness_is_one_linear_gain_not_dynamic():
+    """Тихие места не вытягиваются: одна поправка на клип, не больше +8 дБ."""
+    from app.render import linear_gain_db
+
+    assert linear_gain_db(_loud("-20.0"), -14.0) == 6.0
+    assert linear_gain_db(_loud("-30.0"), -14.0) == 8.0
+    assert linear_gain_db(_loud("-9.0"), -14.0) == -5.0

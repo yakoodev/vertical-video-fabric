@@ -41,6 +41,16 @@ LOUDNORM_SILENCE_LUFS = -70.0
 _RENDER_LOCK = threading.RLock()
 
 
+MAX_LOUDNESS_BOOST_DB = 8.0
+
+
+def linear_gain_db(measured: dict, target: float) -> float:
+    """Одна поправка громкости на весь клип: к цели по LUFS, но не больше +8 дБ
+    (тихий клип не превращаем в шум) — пики дальше держит лимитер."""
+    gain = target - float(measured["input_i"])
+    return max(-20.0, min(MAX_LOUDNESS_BOOST_DB, gain))
+
+
 def loudnorm_needed(measured: dict, target: float) -> bool:
     """Нужен ли второй проход loudnorm по замеру первого.
 
@@ -1063,11 +1073,13 @@ class ClipRenderService:
             hold = max(0.0, float(settings.render_end_hold_sec or 0))
             filters = [f"apad=pad_dur={hold:.3f}"] if hold > 0 else []
             if loudnorm_needed(measured, target):
-                filters.append(
-                    f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
-                    f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
-                    f":offset={measured['target_offset']}:linear=true"
-                )
+                # Только линейная поправка (одно число на весь клип) + лимитер на пики.
+                # loudnorm второго прохода, когда линейно не влезает в пик, молча
+                # переходит в динамический режим и вытягивает тихие места на 10–14 дБ:
+                # фоновые звуки и эффекты становились громче речи («звуки пердежа
+                # во всю громкость»).
+                filters.append(f"volume={linear_gain_db(measured, target):.2f}dB")
+                filters.append("alimiter=limit=0.84:attack=5:release=80:level=disabled")
             fade = end_fade_filter(float(probe_media(path).duration_sec or 0) + hold)
             if fade:
                 filters.append(fade)
