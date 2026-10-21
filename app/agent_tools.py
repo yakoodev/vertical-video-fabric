@@ -300,7 +300,7 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         together = [
             o for o in visible
             if (_num(o.get("start"), 0.0) or 0.0) <= t < (_num(o.get("end"), 0.0) or 0.0)
-            and o.get("type") not in ("shape",)
+            and o.get("type") not in ("shape", "captions")  # фон и субтитры — не «графика» поверх
         ]
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
