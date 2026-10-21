@@ -531,6 +531,15 @@ def h_listen(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"listen: {exc}") from exc
 
 
+def h_find_noises(ctx: ToolContext, args: dict) -> dict:
+    from app.clip_subtitles import find_noises
+
+    try:
+        return find_noises(ctx.store, ctx.plan_id, float(_num(args.get("threshold_db"), -32.0)))
+    except ValueError as exc:
+        raise ToolError(f"find_noises: {exc}") from exc
+
+
 def _recommended_positions(ctx: ToolContext, render: dict) -> dict:
     """Места для текста с учётом того, где на кадре герой (рамку даёт Gemini-зрение)."""
     from app.auto_edit import HOOK_Y, caption_y_for
@@ -1205,6 +1214,38 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
+    """Заменить слова субтитров целиком: текст и тайминг каждого слова (секунды клипа до вырезов).
+
+    Агент-монтажёр правил распознанные слова («2D модели» → «дорого») и сдвигал опоздавшее
+    «Художник» через REST — инструмента не было. Строки пересобираются из слов."""
+    from app.ai.speakers import lines_from_words
+    from app.clip_subtitles import save_lines
+
+    raw = args.get("words")
+    if not isinstance(raw, list) or not raw:
+        raise ToolError("нужен список words [{word, start, end}]")
+    words, problems = [], []
+    for i, w in enumerate(raw):
+        try:
+            word = str(w["word"]).strip()
+            start, end = float(w["start"]), float(w["end"])
+        except (KeyError, TypeError, ValueError):
+            problems.append(f"words[{i}]: нужны word, start, end")
+            continue
+        if not word or end <= start:
+            problems.append(f"words[{i}]: пустое слово или end ≤ start")
+            continue
+        words.append({"word": word[:80], "start": round(start, 3), "end": round(end, 3)})
+    if problems:
+        raise ToolError("слова не приняты", problems)
+    words.sort(key=lambda w: w["start"])
+    ctx.before_change()
+    lines = lines_from_words(words)
+    payload = save_lines(ctx.store, ctx.plan_id, lines, words)
+    return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or [])}
+
+
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import save_lines
 
@@ -1713,6 +1754,14 @@ def _build_registry() -> list[Tool]:
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
         ),
         Tool(
+            "find_noises", "Ищу посторонние звуки",
+            "Громкие места звука клипа без речи — вшитые эффекты старого монтажа, музыка, шум (распознавание "
+            "их не видит). Секунды клипа до вырезов: в паузе — вырежи apply_cuts. threshold_db — порог "
+            "громкости, по умолчанию −32. / Loud non-speech moments in the clip audio.",
+            _obj({"threshold_db": {"type": "number"}}), h_find_noises,
+            label=lambda a: "Ищу посторонние звуки",
+        ),
+        Tool(
             "listen", "Слушаю отрезок",
             "Распознать, что РЕАЛЬНО звучит в готовом клипе между from_sec и to_sec (с вырезами, до 30 с): "
             "слова с временем и тишина после последнего слова. Без параметров — последние 6 с: проверь, "
@@ -1860,6 +1909,16 @@ def _build_registry() -> list[Tool]:
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
                   "pip": {"type": "object"}, "bg": {"type": "string"}, "video_y": {"type": "number"}}),
             h_set_layout, mutating=True, label=lambda a: f"Раскладка: {a.get('mode') or 'правка'}",
+        ),
+        Tool(
+            "set_subtitle_words", "Задаю слова субтитров",
+            "Заменить слова субтитров целиком: words [{word, start, end}] — текст и время каждого слова "
+            "(секунды клипа до вырезов, как в get_clip). Для исправления ошибок распознавания и опоздавших "
+            "слов; строки соберутся из слов сами. / Replace subtitle words with exact timings.",
+            _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
+                                                              "end": {"type": "number"}}, ["word", "start", "end"])}},
+                 ["words"]),
+            h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
         ),
         Tool(
             "edit_subtitle_lines", "Правлю субтитры",

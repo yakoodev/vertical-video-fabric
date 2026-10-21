@@ -382,3 +382,29 @@ def test_big_opaque_panel_over_video_is_rejected(tmp_path, monkeypatch):
     frame = {**panel, "props": {**panel["props"], "fill": None, "stroke": {"color": "#FFFFFF", "width": 6}}}
     out, ok = run_tool(ctx, "add_layers", {"layers": [frame]})
     assert ok, out  # рамка без заливки видео не закрывает
+
+
+def test_find_noises_reports_sound_outside_speech(tmp_path, monkeypatch):
+    """Звук там, где по субтитрам никто не говорит, — находка (вшитый эффект, шум)."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)  # тон 600 Гц на всём исходнике
+    store.set_clip_plan_subtitles(plan["id"], {
+        "words": [{"word": "раз", "start": 0.0, "end": 2.0}],
+        "lines": [{"start": 0.0, "end": 2.0, "text": "раз"}], "duration": 10.0,
+    })
+    out, ok = run_tool(_ctx(store, plan["id"]), "find_noises", {})
+    assert ok, out
+    assert out["noises"] and out["noises"][0]["start"] >= 2.0
+    assert all(n["start"] >= 2.0 for n in out["noises"])
+
+
+def test_set_subtitle_words_replaces_text_and_timing(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    out, ok = run_tool(_ctx(store, plan["id"]), "set_subtitle_words", {"words": [
+        {"word": "Художник,", "start": 1.0, "end": 1.6}, {"word": "риггер,", "start": 1.7, "end": 2.2},
+        {"word": "ожидание.", "start": 2.3, "end": 3.0}]})
+    assert ok, out
+    payload = store.get_clip_plan_subtitles(plan["id"])
+    assert [w["word"] for w in payload["words"]] == ["Художник,", "риггер,", "ожидание."]
+    assert payload["words"][0]["start"] == 1.0 and payload["lines"]
