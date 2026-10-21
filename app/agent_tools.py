@@ -608,7 +608,8 @@ def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
         raise ToolError("times: список секунд готового клипа, до 16")
     times = [float(_num(t)) for t in times] if times else None
     width = 220 if not times or len(times) > 4 else 300
-    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times)
+    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times,
+                              before_cuts=bool(args.get("before_cuts")))
     return ImageResult(data=data, mime_type="image/jpeg", info={"n": len(times) if times else n, "times": times})
 
 
@@ -1777,7 +1778,10 @@ def _build_registry() -> list[Tool]:
             "готового клипа, до 16): все панчлайны или последние 3 с разом. / Contact sheet of n frames "
             "or of chosen times.",
             _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
-                  "times": {"type": "array", "items": {"type": "number"}}}), h_contact_sheet,
+                  "times": {"type": "array", "items": {"type": "number"}},
+                  "before_cuts": {"type": "boolean",
+                                  "description": "times в секундах ДО вырезов — как у слоёв, камеры и view_frame"}}),
+            h_contact_sheet,
             label=lambda a: "Смотрю весь клип сеткой кадров",
         ),
         Tool(

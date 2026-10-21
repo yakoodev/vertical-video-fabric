@@ -721,14 +721,16 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
 
 
 def contact_sheet_jpeg(
-    store: Any, clip_plan_id: int, n: int = 8, width: int = 240, times: list[float] | None = None
+    store: Any, clip_plan_id: int, n: int = 8, width: int = 240, times: list[float] | None = None,
+    before_cuts: bool = False,
 ) -> bytes:
     """Лист кадров клипа: ``n`` моментов равномерно по клипу, с подписью времени.
 
     Весь монтаж одним взглядом — агенту (одна картинка вместо восьми запросов
     кадра) и человеку на проверке. Кадры — тем же компоновщиком, что и рендер.
     ``times`` — свои моменты (секунды готового клипа, как подписи на листе) вместо
-    равномерных: проверить разом все панчлайны или финал.
+    равномерных: проверить разом все панчлайны или финал. ``before_cuts`` — ``times``
+    в секундах клипа ДО вырезов (как у слоёв, камеры и view_frame), подписи тоже в них.
     """
     import subprocess
     import tempfile
@@ -753,7 +755,11 @@ def contact_sheet_jpeg(
         final = mapper.duration(duration)
         times = [round(final * (k + 0.5) / n, 2) for k in range(n)]
         shots = [round(mapper.source_time(t), 3) for t in times]
-    if picked:
+    if picked and before_cuts:
+        # Время слоёв: кадр берём ровно там, подпись — то же число, что в слоях.
+        times = [min(t, max(0.0, duration - 0.2)) for t in picked]
+        shots = list(times)
+    elif picked:
         final = mapper.duration(duration) if mapper else duration
         # Последний кадр компоновщик не отдаёт (агент: падение на 21.5 из 21.55 с) — с запасом в кадры.
         times = [min(t, max(0.0, final - 0.2)) for t in picked]
