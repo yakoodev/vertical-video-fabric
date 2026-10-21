@@ -35,9 +35,10 @@ VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
-VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action"}
+# manual — клипы, которые агент создал по таймкодам сам (app/manual_clips.py).
+VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action", "manual"}
 # Subtitles can additionally use the local Whisper engine (analysis cannot).
-VALID_SUBTITLE_PROVIDERS = VALID_AI_PROVIDERS | {"whisper"}
+VALID_SUBTITLE_PROVIDERS = (VALID_AI_PROVIDERS - {"manual"}) | {"whisper"}
 VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
 VALID_ANALYSIS_STATUSES = {"queued", "running", "cancelling", "cancelled", "succeeded", "failed"}
 VALID_SEGMENT_STATUSES = {"candidate", "rendering", "rendered", "rejected"}

@@ -1937,6 +1937,62 @@ def api_source_clip_plans(source_id: int, _auth: AuthDep) -> list[dict]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class ManualClipPiece(BaseModel):
+    start_sec: float
+    end_sec: float
+    title: str | None = None
+
+
+class ManualClipRequest(BaseModel):
+    title: str
+    description: str = ""
+    pieces: list[ManualClipPiece]
+
+
+@app.post(
+    "/api/sources/{source_id}/manual-clips",
+    tags=["Render"],
+    summary="Create a clip from source timecodes (no AI analysis needed)",
+)
+def api_create_manual_clip(source_id: int, payload: ManualClipRequest, _auth: AuthDep) -> dict:
+    from app.manual_clips import create_manual_clip
+
+    try:
+        return create_manual_clip(
+            store, source_id, payload.title, [p.model_dump() for p in payload.pieces], payload.description
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/sources/{source_id}/transcript",
+    tags=["Sources"],
+    summary="Source transcript (local Whisper, cached; the first call takes minutes)",
+)
+def api_source_transcript(
+    source_id: int,
+    _auth: AuthDep,
+    refresh: bool = False,
+    from_sec: float | None = None,
+    to_sec: float | None = None,
+) -> dict:
+    from app.manual_clips import source_transcript
+
+    try:
+        out = source_transcript(store, source_id, refresh=refresh)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if from_sec is not None or to_sec is not None:
+        lo, hi = from_sec or 0.0, to_sec if to_sec is not None else float("inf")
+        out["cues"] = [c for c in out["cues"] if float(c["end"]) > lo and float(c["start"]) < hi]
+    return out
+
+
 @app.post(
     "/api/sources/{source_id}/analyze",
     tags=["Sources"],

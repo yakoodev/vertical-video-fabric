@@ -96,6 +96,18 @@ python tools/vvf.py frame-motion 812 --at 3.2 -o f.png        # кадр со с
 Встроенный агент — это `POST /api/clip-plans/{id}/agent` `{message}` и опрос
 `GET /api/clip-plans/{id}/agent` (шаги видны по мере работы); модель — `GEMINI_AGENT_MODEL`.
 
+## Клипы без Gemini: сам выбираешь моменты
+
+Анализ Gemini не обязателен. Чтобы нарезать исходник (серию, стрим) самому:
+
+1. `GET /api/sources/{id}/transcript` — расшифровка всего исходника `[{start, end, text}]`
+   во времени исходника. Первый вызов — локальный Whisper, несколько минут; потом из кэша.
+   `?from_sec=&to_sec=` — только окно.
+2. Выбери моменты: завязка → развязка, клип 30–75 с, самодостаточный. Посмотри кадры
+   (`GET /api/sources/{id}/frame?t=`), чтобы смешное не было только в звуке.
+3. `POST /api/sources/{id}/manual-clips` `{title, description?, pieces: [{start_sec, end_sec, title?}]}` —
+   клип из кусков исходника (каждый 5–180 с, до 12). Ответ — клип с `id`; дальше обычный цикл ниже.
+
 ## Цикл работы
 
 1. **Выбрать клип.** `vvf.py clips <проект> --favorites` — избранные (★) владелец
