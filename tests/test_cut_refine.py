@@ -26,8 +26,8 @@ def test_off_strategy_keeps_raw_end():
 
 
 def test_end_fade_filter():
-    assert end_fade_filter(30.0) == "afade=t=out:st=29.700:d=0.300"
-    assert end_fade_filter(0.5) == ""
+    assert end_fade_filter(30.0) == "afade=t=out:st=29.400:d=0.600"
+    assert end_fade_filter(2.0) == ""
 
 
 def test_audible():

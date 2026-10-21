@@ -64,7 +64,7 @@ def loudnorm_needed(measured: dict, target: float) -> bool:
 
 # Короткое затухание звука в самом конце ролика: финал не «щёлкает» обрывом
 # слова, даже если последний кусок резали вплотную к речи.
-END_AUDIO_FADE_SEC = 0.3
+END_AUDIO_FADE_SEC = 0.6  # владелец: «концовки иногда резко обрезаются» — 0.3 с было мало
 
 
 def audible(measured: dict) -> bool:
