@@ -408,7 +408,8 @@ class ClipRenderService:
                 _run_ffmpeg(
                     build_join_args(
                         rendered_parts,
-                        [m.duration_sec for m in probes],
+                        # По картинке, а не по контейнеру: звук подгоняется под неё.
+                        [_video_duration(m) for m in probes],
                         base_output_path,
                         join,
                         has_audio=has_audio,
@@ -1356,6 +1357,10 @@ def build_ffmpeg_render_args(
             "2",
             "-ar",
             "48000",
+            # Ровно столько кадров, сколько в куске: иначе fps-фильтр добавляет кадр
+            # на каждый кусок, и при 18 вырезах картинка уезжала от звука на 0.57 с.
+            "-frames:v",
+            str(max(1, int(duration * fps + 0.5))),
             "-shortest",
             "-movflags",
             "+faststart",
@@ -1872,6 +1877,19 @@ def _audio_filter(preset: dict) -> str:
     if primary_stream != 0 or primary_volume != 1:
         return f"[0:a:{primary_stream}]volume={_ff_number(primary_volume)},aresample=48000[aout]"
     return ""
+
+
+def _video_duration(meta: Any) -> float:
+    """Длина видеодорожки куска (контейнер берёт самую длинную дорожку)."""
+    for stream in (getattr(meta, "raw", None) or {}).get("streams") or []:
+        if stream.get("codec_type") == "video":
+            try:
+                value = float(stream.get("duration") or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                return value
+    return float(getattr(meta, "duration_sec", 0) or 0)
 
 
 def _audio_map(preset: dict) -> str:

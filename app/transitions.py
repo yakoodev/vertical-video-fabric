@@ -312,7 +312,11 @@ def build_join_args(
                 elapsed += durations[k]
             previous = label
     else:
-        inputs = "".join(f"[{k}:v]" for k in range(n))
+        # Метки времени каждого куска — с нуля: после -ss кусок начинается не с 0,
+        # и concat оставлял щели (10 кусков — картинка на 0.16 с длиннее звука).
+        for k in range(n):
+            filters.append(f"[{k}:v]setpts=PTS-STARTPTS[c{k}]")
+        inputs = "".join(f"[c{k}]" for k in range(n))
         filters.append(f"{inputs}concat=n={n}:v=1:a=0[vout]")
 
     # ---- sound -----------------------------------------------------------
@@ -321,19 +325,23 @@ def build_join_args(
         smooth = transition["audio"] == "smooth"
         if smooth and any(o > 0 for o in overlaps):
             # Плавно: кроссфейд под переходом, встык — микрофейд от щелчка.
-            previous = "0:a"
+            # Звук каждого куска — ровно длины его картинки (apad+atrim), иначе
+            # склейки копят сдвиг звука относительно картинки.
+            for k in range(n):
+                filters.append(f"[{k}:a]apad,atrim=end={durations[k]:.3f},asetpts=PTS-STARTPTS[n{k}]")
+            previous = "n0"
             for k in range(1, n):
                 overlap = overlaps[k - 1]
                 label = "amain" if k == n - 1 else f"a{k}"
                 if overlap > 0:
-                    filters.append(f"[{previous}][{k}:a]acrossfade=d={overlap:.3f}:c1=tri:c2=tri[{label}]")
+                    filters.append(f"[{previous}][n{k}]acrossfade=d={overlap:.3f}:c1=tri:c2=tri[{label}]")
                 else:
                     fade = JUMP_DECLICK_SEC if _is_jump(jump_joins, k - 1) else DECLICK_SEC
                     filters.append(
                         f"[{previous}]afade=t=out:st={max(0.0, _elapsed(durations, overlaps, k) - fade):.3f}:"
                         f"d={fade}[{label}f]"
                     )
-                    filters.append(f"[{k}:a]afade=t=in:st=0:d={fade}[{label}i]")
+                    filters.append(f"[n{k}]afade=t=in:st=0:d={fade}[{label}i]")
                     filters.append(f"[{label}f][{label}i]concat=n=2:v=0:a=1[{label}]")
                 previous = label
         else:
@@ -344,7 +352,9 @@ def build_join_args(
                 left = overlaps[k - 1] / 2 if k > 0 else 0.0
                 right = overlaps[k] / 2 if k < n - 1 else 0.0
                 start, end = left, durations[k] - right
-                chain = f"[{k}:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS"
+                # apad: звук куска бывает короче картинки — добиваем тишиной до её
+                # длины, иначе каждая склейка сдвигала звук раньше картинки.
+                chain = f"[{k}:a]apad,atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS"
                 length = max(0.0, end - start)
                 jump_in = k > 0 and _is_jump(jump_joins, k - 1)
                 jump_out = k < n - 1 and _is_jump(jump_joins, k)

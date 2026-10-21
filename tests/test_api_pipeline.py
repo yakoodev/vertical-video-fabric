@@ -266,3 +266,35 @@ def test_each_clip_renders_with_its_own_saved_settings(tmp_path, monkeypatch):
     # 5 + 5 seconds; the fade overlaps 0.5 s, the hard cut does not.
     assert by_plan[plain["id"]]["duration_sec"] == pytest.approx(10.0, abs=0.2)
     assert by_plan[tuned["id"]]["duration_sec"] == pytest.approx(9.5, abs=0.2)
+
+
+def test_many_cuts_keep_picture_and_sound_in_sync(tmp_path, monkeypatch):
+    """Агент-монтажёр: при 18 вырезах картинка уехала от звука на 0.57 с —
+    каждый кусок кодировался с лишним кадром. Дорожки должны совпадать."""
+    import json as _json
+    import subprocess as _sp
+
+    _require_ffmpeg()
+    client, store = _client(tmp_path, monkeypatch)
+    fixture = tmp_path / "sync-source.mp4"
+    _make_test_video(fixture)
+    with fixture.open("rb") as fileobj:
+        source = client.post("/api/sources", files={"file": ("sync-source.mp4", fileobj, "video/mp4")}).json()
+    analysis = store.create_ai_analysis(source["id"], "mock", status="succeeded")
+    seg = store.create_ai_segment(analysis["id"], {"start_sec": 0, "end_sec": 7, "title": "A"})
+    plan = store.create_clip_plan(source["id"], analysis["id"], "sync", segment_ids=[seg["id"]])
+    preset = client.post("/api/ffmpeg-presets", json={
+        "label": "sync", "output_width": 180, "output_height": 320, "fps": 25, "scale_mode": "cover",
+        "extra": {"crf": 30}}).raise_for_status().json()
+    # 9 вырезов по 0.13 с — 10 кусков с длинами не в целое число кадров.
+    cuts = [{"start": round(0.5 + k * 0.65, 3), "end": round(0.63 + k * 0.65, 3)} for k in range(9)]
+    client.patch(f"/api/clip-plans/{plan['id']}/render-settings",
+                 json={"settings": {"preset_id": preset["id"], "cuts": cuts}}).raise_for_status()
+    clips = client.post(f"/api/sources/{source['id']}/render-plans",
+                        json={"clip_plan_ids": [plan["id"]], "ffmpeg_preset_id": preset["id"]}).json()
+    assert clips[0]["status"] == "succeeded", clips[0].get("error")
+    path = store.get_clip(clips[0]["id"])["output_path"]
+    probe = _json.loads(_sp.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration",
+                                 "-of", "json", path], capture_output=True, text=True).stdout)
+    lengths = {s["codec_type"]: float(s["duration"]) for s in probe["streams"]}
+    assert abs(lengths["video"] - lengths["audio"]) < 0.08, lengths
