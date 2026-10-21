@@ -844,7 +844,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     prepared, dropped_emoji = _no_emoji_layers(prepared)
     if not prepared:
         raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
-    problems = _validate_new_layers(ctx, prepared, duration) + covering_problems(prepared)
+    problems = covering_problems(prepared) + _validate_new_layers(ctx, prepared, duration)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
     added = motion.normalize_layers(prepared)
@@ -885,7 +885,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
     merged = _strip_emoji(_deep_merge(layers[index], patch))
-    problems = _validate_new_layers(ctx, [merged], duration) + covering_problems([merged])
+    problems = covering_problems([merged]) + _validate_new_layers(ctx, [merged], duration)
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
     normalized = motion.normalize_layers([merged])
