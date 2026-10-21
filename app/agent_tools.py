@@ -710,8 +710,12 @@ def _strip_emoji(layer: dict) -> dict:
         return layer
     props = dict(props)
     for key in ("text", "title", "subtitle", "prefix", "suffix", "icon"):
-        if isinstance(props.get(key), str):
-            props[key] = _EMOJI_RE.sub("", props[key]).strip()
+        value = props.get(key)
+        if isinstance(value, str) and _EMOJI_RE.search(value):
+            cleaned = _EMOJI_RE.sub("", value)
+            # Пробелы префикса/суффикса счётчика — часть оформления («от 50 000 ₽»):
+            # раньше strip() съедал их у всех строк, и выходило «от50 000₽».
+            props[key] = cleaned if key in ("prefix", "suffix") else cleaned.strip()
     if layer.get("type") == "captions":
         props["emoji"] = []
     return {**layer, "props": props}
@@ -1622,7 +1626,7 @@ def _layer_schema() -> dict:
             "end": {"type": "number", "description": "секунды клипа, end - start ≥ 0.1"},
             "track": {"type": "integer", "description": "0..7, выше = поверх"},
             "x": {"type": "number", "description": "центр по ширине, доля кадра"},
-            "y": {"type": "number", "description": "центр по высоте, доля кадра (безопасно 0.12..0.75)"},
+            "y": {"type": "number", "description": "центр по высоте, доля кадра (безопасно 0.15..0.72 для центра текста; края текста — не выше 10% и не ниже 80% кадра)"},
             "scale": {"type": "number"},
             "rotation": {"type": "number"},
             "opacity": {"type": "number"},

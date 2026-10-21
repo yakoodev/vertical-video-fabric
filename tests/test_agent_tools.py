@@ -356,3 +356,15 @@ def test_layer_until_word(tmp_path, monkeypatch):
     assert (layer["start"], layer["end"]) == (1.0, 3.5)
     out, ok = run_tool(ctx, "add_layers", {"layers": [{**TITLE, "at_word": {"text": "камин"}, "until_word": {"text": "окно"}}]})
     assert not ok and "раньше начала" in str(out)
+
+
+def test_counter_prefix_suffix_keep_spaces(tmp_path, monkeypatch):
+    """Агент: «от 50 000 ₽» рендерился как «от50 000₽» — фильтр эмодзи обрезал пробелы."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [{"type": "counter", "start": 0, "end": 2, "x": 0.5, "y": 0.3,
+                                                       "props": {"from": 0, "to": 50000, "prefix": "от ", "suffix": " ₽"}}]})
+    assert ok, out
+    props = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]["props"]
+    assert (props["prefix"], props["suffix"]) == ("от ", " ₽")
