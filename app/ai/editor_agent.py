@@ -91,7 +91,7 @@ CRAFT = """\
    • крупное слово-панчлайн по центру (text, size 130–170, КАПСОМ, обводка 14, in pop 0.2–0.3,
      loop shake amount 0.3–0.5, 0.8–1.5 с) — только на 1–2 самых сильных местах;
    • звук ровно на слово: удар sfx:kenney-impact/impactPunch_heavy_001.ogg или
-     sfx:generated/boom.ogg (volume 0.4–0.6); вжух sfx:generated/whoosh.ogg на смену темы;
+     sfx:generated/boom.ogg (volume 0.3–0.5 — громче перекроет речь); вжух sfx:generated/whoosh.ogg на смену темы;
    • наезд: оставь наезд auto_edit или поставь свой (set_camera ЗАМЕНЯЕТ все ключи — передавай
      вместе с существующими). Новым ключам наезда НЕ ставь x/y — камера сама зумит в героя
      так, что он не заезжает под субтитры.
