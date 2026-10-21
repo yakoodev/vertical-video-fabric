@@ -11,9 +11,7 @@ from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWor
 # the decoder's own "this is not speech" probability, and a floor on confidence.
 _NO_SPEECH_THRESHOLD = 0.6
 _MIN_AVG_LOGPROB = -1.0
-_SURE_NO_SPEECH = 0.9  # выше — нужна высокая уверенность декодера
 _MUSIC_LOGPROB = -0.5  # «песня» под музыкой обычно декодируется неуверенно
-_CONFIDENT_LOGPROB = -0.3  # так уверенно Whisper декодирует только настоящую речь
 # Известные «субтитры из ниоткуда» Whisper на тишине и музыке (из обучающих титров).
 _KNOWN_PHANTOMS = (
     "субтитры сделал", "субтитры создавал", "редактор субтитров", "корректор",
@@ -37,8 +35,9 @@ def _is_hallucination(segment: Any) -> bool:
         # не уверен. Под дубляжом с музыкой no_speech ≈ 0.7–0.93 даже на чистых
         # фразах (уверенность −0.16): по одному no_speech выпадало 85% реплик серии
         # и целые сцены по минуте.
-        floor = _CONFIDENT_LOGPROB if no_speech > _SURE_NO_SPEECH else _MUSIC_LOGPROB
-        if avg_logprob is None or avg_logprob < floor:
+        # Порог «почти наверняка тишина» (0.9) не годится: реальные сцены под
+        # музыкой шли с 0.92 и уверенностью −0.33 — и выпадали по 2 минуты.
+        if avg_logprob is None or avg_logprob < _MUSIC_LOGPROB:
             return True
     return False
 

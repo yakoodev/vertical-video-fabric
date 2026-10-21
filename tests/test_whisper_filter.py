@@ -18,7 +18,8 @@ def test_dub_over_music_is_speech():
 
 def test_music_and_garbage_dropped():
     assert _is_hallucination(_seg(0.7, -0.8))  # «ла-ла-ла» под музыку: и тишина, и неуверенно
-    assert _is_hallucination(_seg(0.95, -0.4))  # почти наверняка не речь и не очень уверенно
+    assert _is_hallucination(_seg(0.95, -0.6))  # почти наверняка не речь и неуверенно
+    assert not _is_hallucination(_seg(0.92, -0.33))  # сцена 307–439 с: речь под музыкой
     assert _is_hallucination(_seg(0.1, -1.3))  # мусор декодера
     assert _is_hallucination(_seg(0.2, -0.1, "Субтитры сделал DimaTorzok"))  # известный фантом
     assert not _is_hallucination(_seg(0.1, -0.3))
