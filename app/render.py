@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from app.focus_presets import get_focus_preset
@@ -35,6 +36,9 @@ from app.video_crop import build_reframe_x_expr
 
 # Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
 LOUDNORM_SILENCE_LUFS = -70.0
+
+# Один рендер клипа на весь сервис (см. ClipRenderService.render_clip_plan).
+_RENDER_LOCK = threading.RLock()
 
 
 def loudnorm_needed(measured: dict, target: float) -> bool:
@@ -672,7 +676,16 @@ class ClipRenderService:
             return qc
         return qc
 
-    def render_clip_plan(
+    def render_clip_plan(self, clip_plan_id: int, *args: Any, **kwargs: Any) -> dict:
+        """Рендер клипа — по одному на весь сервис.
+
+        Рендер тяжёлый (ffmpeg + компоновщик моушна). Два одновременных — два агента
+        или агент и кнопка в редакторе — уже трижды роняли Docker по памяти; очередь
+        дешевле. RLock: рендер может позвать рендер в том же потоке (подборка)."""
+        with _RENDER_LOCK:
+            return self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+
+    def _render_clip_plan_unlocked(
         self,
         clip_plan_id: int,
         ffmpeg_preset_id: int | None = None,
