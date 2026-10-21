@@ -338,3 +338,21 @@ def test_listen_maps_finished_range_to_source(tmp_path, monkeypatch):
     assert out["words"] == [["да", 3.5, 3.9]] and out["silence_after_last_word"] == 5.1
     seeks = [seen["args"][i + 1] for i, a in enumerate(seen["args"]) if a == "-ss"]
     assert seeks == ["3.000", "1.000", "3.000"]  # [3,5] первого, [1,2] и [3,6] второго куска (вырез 2..3)
+
+
+def test_layer_until_word(tmp_path, monkeypatch):
+    """until_word: титр держится ровно до следующей реплики, конец не считать руками."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    store.set_clip_plan_subtitles(plan["id"], {
+        "words": [{"word": "окно", "start": 1.0, "end": 1.4}, {"word": "камин", "start": 3.5, "end": 4.0}],
+        "lines": [{"start": 1.0, "end": 1.4, "text": "окно"}, {"start": 3.5, "end": 4.0, "text": "камин"}],
+        "duration": 10.0,
+    })
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [{**TITLE, "at_word": {"text": "окно"}, "until_word": {"text": "камин"}}]})
+    assert ok, out
+    layer = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]
+    assert (layer["start"], layer["end"]) == (1.0, 3.5)
+    out, ok = run_tool(ctx, "add_layers", {"layers": [{**TITLE, "at_word": {"text": "камин"}, "until_word": {"text": "окно"}}]})
+    assert not ok and "раньше начала" in str(out)

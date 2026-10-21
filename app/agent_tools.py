@@ -753,11 +753,24 @@ def word_time(ctx: ToolContext, ref: Any) -> float:
 
 
 def _place_on_word(ctx: ToolContext, item: dict) -> dict:
-    """at_word → start (+word_offset); длина — duration, иначе прежняя end-start, иначе 1.2 с."""
-    if item.get("at_word") is None:
+    """at_word → start (+word_offset); конец — until_word (начало того слова), иначе duration,
+    иначе прежняя end-start, иначе 1.2 с. Агент: «слой на слове держится до следующей реплики»
+    — раньше конец приходилось считать руками."""
+    if item.get("at_word") is None and item.get("until_word") is None:
         return item
     item = dict(item)
-    start = round(word_time(ctx, item.pop("at_word")) + float(item.pop("word_offset", 0) or 0), 3)
+    until = item.pop("until_word", None)
+    if item.get("at_word") is None:
+        start = float(item.get("start") or 0)
+    else:
+        start = round(word_time(ctx, item.pop("at_word")) + float(item.pop("word_offset", 0) or 0), 3)
+    if until is not None:
+        end = word_time(ctx, until)
+        if end <= start + 0.1:
+            raise ToolError("until_word: это слово раньше начала слоя — выбери более позднее")
+        item.pop("duration", None)
+        item["start"], item["end"] = max(0.0, start), round(end, 3)
+        return item
     if item.get("duration") is not None:
         length = float(item.pop("duration"))
     elif item.get("start") is not None and item.get("end") is not None:
@@ -1608,6 +1621,8 @@ def _layer_schema() -> dict:
             "at_word": _AT_WORD_SCHEMA,
             "word_offset": {"type": "number", "description": "сдвиг от начала слова, с (−0.1 — чуть раньше)"},
             "duration": {"type": "number", "description": "с at_word: длина слоя, с (иначе end-start или 1.2)"},
+            "until_word": {**_AT_WORD_SCHEMA,
+                           "description": "вместо end: слой держится до начала этого слова ({line, word} или {text, nth})"},
         },
         ["type"],  # start/end или at_word — проверяет _validate_new_layers
     )
@@ -1669,7 +1684,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "add_layers", "Добавляю слои",
             "Добавить моушн-слои (титры, картинки, фигуры, счётчики, графики, плашки, звуки). "
-            "Звук или титр ровно на слово — at_word {line, word} или {text: \"Артас\"} вместо start. "
+            "Звук или титр ровно на слово — at_word {line, word} или {text: \"Артас\"} вместо start, "
+            "until_word — держать до начала другого слова. Не больше 30 слоёв за вызов. "
             "Слой image рисует картинку статично (у GIF — первый кадр): анимированные гифки — add_insert. "
             "Проверяется как правка человека; при ошибке вернёт problems — исправь и повтори. "
             "Возвращает id и предупреждения (безопасные зоны, перегруз). / Add motion layers.",

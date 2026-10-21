@@ -702,7 +702,8 @@ def contact_sheet_jpeg(
         shots = [round(mapper.source_time(t), 3) for t in times]
     if picked:
         final = mapper.duration(duration) if mapper else duration
-        times = [min(t, max(0.0, final - 0.05)) for t in picked]
+        # Последний кадр компоновщик не отдаёт (агент: падение на 21.5 из 21.55 с) — с запасом в кадры.
+        times = [min(t, max(0.0, final - 0.2)) for t in picked]
         shots = [round(mapper.source_time(t), 3) for t in times] if mapper else list(times)
     font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
     with tempfile.TemporaryDirectory() as tmp:

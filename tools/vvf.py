@@ -190,6 +190,8 @@ def cmd_render(args) -> None:
           + (f" · {clip.get('duration_sec'):.1f} с" if clip.get("duration_sec") else "")
           + (f" · ошибка: {clip.get('error')}" if clip.get("error") else ""))
     _print_qc(clip.get("qc"))
+    if clip.get("output_path"):
+        print(f"  файл: {clip['output_path']}  (скачать: vvf.py download {clip['id']} -o out.mp4)")
     if clip["status"] != "succeeded":
         sys.exit(1)
 
