@@ -46,6 +46,13 @@ MAX_INSERT_SCALE = 1.0
 INSERT_MAX_HEIGHT = 0.9
 
 
+
+def _insert_volume(ins: dict) -> float:
+    """Звук вставки — к общему уровню эффектов (на 6 дБ тише речи) × volume ≤ 1."""
+    from app.motion_render import effect_volume
+
+    return effect_volume(str(ins["asset"]["file_path"]), ins.get("volume", 1.0))
+
 def assets_dir() -> Path:
     path = settings.data_dir / "montage_assets"
     path.mkdir(parents=True, exist_ok=True)
@@ -216,7 +223,8 @@ def build_inserts_args(
             delay = int(round(at * 1000))
             graph.append(
                 f"[{n}:a]aresample=48000,atrim=0:{ins['len']:.3f},asetpts=PTS-STARTPTS,"
-                f"volume={ins['volume']:.2f},adelay={delay}|{delay}[a{n}]"
+                # Громкость выравнивается системно, как у звуков-слоёв (motion_render.effect_volume).
+                f"volume={_insert_volume(ins):.4f},adelay={delay}|{delay}[a{n}]"
             )
             audio_parts.append(f"[a{n}]")
 

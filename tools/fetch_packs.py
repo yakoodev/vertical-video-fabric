@@ -1,7 +1,7 @@
 """Скачивает паки контента для моушн-слоёв: эмодзи, стикеры, звуки, мем-шаблоны.
 
     python3 tools/fetch_packs.py [TARGET]        # по умолчанию vendor/packs
-    python3 tools/fetch_packs.py /app/vendor/packs --only twemoji,generated
+    python3 tools/fetch_packs.py /app/vendor/packs --only twemoji,freesound
 
 Запускается при сборке docker-образа (слой кэшируется, пока не меняется этот
 файл) и локально у разработчика. Только стандартная библиотека Python 3.11+.
@@ -20,8 +20,8 @@
 версия совпадает и файлы на месте — пак пропускается. ``packs.json`` (индекс для
 API) пересобирается всегда — это быстро.
 
-Звуки «generated» синтезируются здесь же (чистый Python: шум, фильтры,
-огибающие), ffmpeg только кодирует их в OGG. Нет ffmpeg — останутся WAV.
+Монтажные звуки «freesound» — настоящие записи CC0 с freesound.org (закреплены
+sha256); ffmpeg режет тишину, ограничивает длину и кодирует в OGG.
 """
 
 from __future__ import annotations
@@ -107,13 +107,7 @@ KENNEY_PACKS: list[dict] = [
         "member": re.compile(r"^Audio/([^/]+\.ogg)$"),
         "page": "https://kenney.nl/assets/ui-audio",
     },
-    {
-        "id": "kenney-digital", "kind": "sfx", "name": "Цифровые: лазеры, пауэр-апы",
-        "path": "digital-audio/216eac4753-1677590265/kenney_digital-audio.zip",
-        "sha256": "24e6ce28b76a6d8c89cff4d331e0965ff5c3de8a73c612028e9d363cc64e4f06",
-        "member": re.compile(r"^Audio/([^/]+\.ogg)$"),
-        "page": "https://kenney.nl/assets/digital-audio",
-    },
+    # kenney-digital (лазеры, пауэр-апы) убран: синтетика, владелец просил её убрать.
 ]
 
 IMGFLIP_API = "https://api.imgflip.com/get_memes"
@@ -624,285 +618,101 @@ def fetch_imgflip(target: Path, dl: Path) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Синтез звуков «generated»
+# Монтажные звуки «freesound» — настоящие записи CC0 с freesound.org
 # --------------------------------------------------------------------------- #
+# Владелец: «синтетические звуки убрать нахуй из проекта, найди готовые
+# библиотеки звуковых эффектов». Синтез (шум + фильтры) звучал металлически.
+# Берём превью HQ (128 кбит/с MP3) звуков с лицензией CC0 — без указания
+# автора, можно в монетизацию. Каждый файл закреплён sha256: подмена на CDN
+# роняет сборку. Обработка: тишина в начале срезается, длина ограничивается,
+# короткое затухание в конце и одинаковая громкость у всех звуков (ниже речи),
+# чтобы громкость 1.0 у любого эффекта значила одно и то же.
 SR = 44100
-
-
-class SVF:
-    """Простой state-variable фильтр (Chamberlin, с запасом устойчивости):
-    частоту можно менять на каждом сэмпле — на этом держатся свипы шума."""
-
-    def __init__(self) -> None:
-        self.low = 0.0
-        self.band = 0.0
-
-    def step(self, x: float, freq: float, q: float) -> tuple[float, float, float]:
-        f = 2.0 * math.sin(math.pi * min(freq, SR / 6.0) / SR)
-        damp = 1.0 / max(q, 0.5)
-        # два полушага — устойчивее на высоких частотах
-        for _ in range(2):
-            self.low += f * 0.5 * self.band
-            high = x - self.low - damp * self.band
-            self.band += f * 0.5 * high
-        return self.low, self.band, high
-
-
-def _env(t: float, attack: float, decay: float) -> float:
-    """Атака по синусу, затем экспоненциальный спад."""
-    if t < attack:
-        return math.sin(0.5 * math.pi * t / attack) if attack > 0 else 1.0
-    return math.exp(-(t - attack) / decay) if decay > 0 else 0.0
-
-
-def _logsweep(a: float, b: float, x: float) -> float:
-    x = min(1.0, max(0.0, x))
-    return a * (b / a) ** x
-
-
-def synth_whoosh(dur: float, f0: float, f1: float, f2: float, peak: float, q: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    flt, flt2 = SVF(), SVF()
-    out = []
-    for i in range(n):
-        x = i / n
-        # частота: f0 -> f1 к пику, потом f1 -> f2
-        freq = _logsweep(f0, f1, x / peak) if x < peak else _logsweep(f1, f2, (x - peak) / (1 - peak))
-        amp = (x / peak) ** 2 if x < peak else (1 - (x - peak) / (1 - peak)) ** 1.6
-        noise = rnd.uniform(-1, 1)
-        _, band, _ = flt.step(noise, freq, q)
-        _, band2, _ = flt2.step(noise, freq * 1.9, q * 1.3)
-        out.append((band + 0.35 * band2) * amp)
-    return out
-
-
-def synth_riser(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    flt = SVF()
-    phase = phase2 = 0.0
-    out = []
-    for i in range(n):
-        x = i / n
-        t = i / SR
-        freq = _logsweep(250, 9000, x ** 1.4)
-        _, band, _ = flt.step(rnd.uniform(-1, 1), freq, 2.5)
-        pitch = _logsweep(110, 880, x ** 1.2) * (1 + 0.012 * math.sin(2 * math.pi * 6 * t))
-        phase += pitch / SR
-        phase2 += pitch * 1.005 / SR
-        saw = (2 * (phase % 1.0) - 1) * 0.5 + (2 * (phase2 % 1.0) - 1) * 0.5
-        amp = x ** 2.2
-        out.append((0.8 * band + 0.25 * saw * x) * amp)
-    # короткий хвост, чтобы не было щелчка
-    tail = int(0.01 * SR)
-    for k in range(tail):
-        out[-tail + k] *= 1 - k / tail
-    return out
-
-
-def synth_boom(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    lp = SVF()
-    phase = 0.0
-    out = []
-    for i in range(n):
-        t = i / SR
-        f = 35 + 95 * math.exp(-t / 0.09)
-        phase += f / SR
-        body = math.sin(2 * math.pi * phase) * math.exp(-t / 0.55)
-        low, _, _ = lp.step(rnd.uniform(-1, 1), 180 + 2500 * math.exp(-t / 0.05), 0.7)
-        crack = low * math.exp(-t / 0.25) * 1.6
-        click = rnd.uniform(-1, 1) * math.exp(-t / 0.004)
-        s = 1.2 * body + crack + 0.5 * click
-        out.append(math.tanh(1.8 * s))
-    return out
-
-
-def synth_bass_drop(dur: float) -> list[float]:
-    n = int(dur * SR)
-    phase = 0.0
-    out = []
-    for i in range(n):
-        t = i / SR
-        f = 32 + 120 * math.exp(-t / 0.18)
-        phase += f / SR
-        s = math.sin(2 * math.pi * phase) + 0.25 * math.sin(4 * math.pi * phase)
-        env = _env(t, 0.004, 0.9)
-        out.append(math.tanh(2.2 * s * env) * 0.9)
-    return out
-
-
-def synth_pop(dur: float) -> list[float]:
-    n = int(dur * SR)
-    phase = 0.0
-    out = []
-    for i in range(n):
-        t = i / SR
-        f = 380 + 1100 * math.exp(-t / 0.012)
-        phase += f / SR
-        out.append(math.sin(2 * math.pi * phase) * _env(t, 0.0015, 0.028))
-    return out
-
-
-def synth_click(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    flt = SVF()
-    out = []
-    for i in range(n):
-        t = i / SR
-        _, band, _ = flt.step(rnd.uniform(-1, 1), 3800, 3)
-        tick = math.sin(2 * math.pi * 2200 * t)
-        out.append((band * 0.8 + 0.6 * tick) * math.exp(-t / 0.0045))
-    return out
-
-
-def synth_ding(dur: float) -> list[float]:
-    n = int(dur * SR)
-    base = 1318.5  # E6
-    partials = [(1.0, 1.0, 0.9), (2.76, 0.45, 0.45), (5.40, 0.25, 0.22), (8.93, 0.12, 0.12), (0.5, 0.15, 1.1)]
-    out = []
-    for i in range(n):
-        t = i / SR
-        s = sum(a * math.sin(2 * math.pi * base * r * t) * math.exp(-t / d) for r, a, d in partials)
-        out.append(s * min(1.0, t / 0.002))
-    return out
-
-
-def synth_scratch(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    flt = SVF()
-    phase = 0.0
-    out = []
-    for i in range(n):
-        t = i / SR
-        x = i / n
-        # «рука» гоняет пластинку туда-сюда: скорость — синус с ускорением
-        speed = math.sin(2 * math.pi * (2.2 * t + 3.5 * t * t))
-        mag = abs(speed)
-        f = 180 + 2200 * mag
-        _, band, _ = flt.step(rnd.uniform(-1, 1), f, 4)
-        phase += (120 + 520 * mag) / SR
-        tone = (2 * (phase % 1.0) - 1)
-        env = min(1.0, x / 0.03) * (1 - x) ** 0.6
-        out.append((band * 1.2 + 0.35 * tone * mag) * env * (0.3 + 0.7 * mag))
-    return out
-
-
-def synth_shutter(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    hp = SVF()
-    out = [0.0] * n
-    for start, amp, decay, freq in ((0.0, 1.0, 0.012, 2600), (0.085, 0.7, 0.02, 1700), (0.16, 0.45, 0.01, 3200)):
-        s0 = int(start * SR)
-        for i in range(s0, n):
-            t = (i - s0) / SR
-            if t > 0.12:
-                break
-            _, band, high = hp.step(rnd.uniform(-1, 1), freq, 1.2)
-            body = math.sin(2 * math.pi * 180 * t) * math.exp(-t / 0.02)
-            out[i] += amp * (0.6 * high + 0.6 * band + 0.4 * body) * math.exp(-t / decay)
-    return out
-
-
-def synth_typing(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    out = [0.0] * n
-    t0 = 0.02
-    while t0 < dur - 0.08:
-        s0 = int(t0 * SR)
-        flt = SVF()
-        freq = rnd.uniform(2400, 4200)
-        amp = rnd.uniform(0.6, 1.0)
-        thock = rnd.uniform(140, 220)
-        for i in range(s0, min(n, s0 + int(0.05 * SR))):
-            t = (i - s0) / SR
-            _, band, _ = flt.step(rnd.uniform(-1, 1), freq, 2)
-            s = 0.9 * band * math.exp(-t / 0.006) + 0.5 * math.sin(2 * math.pi * thock * t) * math.exp(-t / 0.012)
-            out[i] += amp * s
-        t0 += rnd.choice((0.07, 0.09, 0.11, 0.13, 0.16, 0.22))
-    return out
-
-
-def synth_glitch(dur: float, seed: int) -> list[float]:
-    rnd = random.Random(seed)
-    n = int(dur * SR)
-    out = []
-    i = 0
-    while i < n:
-        seg = int(rnd.uniform(0.018, 0.06) * SR)
-        mode = rnd.random()
-        f = rnd.choice((110, 220, 440, 660, 880, 1760, 3520))
-        hold = rnd.choice((1, 4, 8, 16))  # «понижение частоты дискретизации»
-        held = 0.0
-        for k in range(min(seg, n - i)):
-            t = k / SR
-            if k % hold == 0:
-                if mode < 0.45:
-                    held = 1.0 if math.sin(2 * math.pi * f * t) > 0 else -1.0
-                elif mode < 0.8:
-                    held = rnd.uniform(-1, 1)
-                else:
-                    held = 0.0  # дырка — заикание
-            out.append(round(held * 6) / 6 * 0.7)
-        i += seg
-    for k in range(int(0.005 * SR)):  # мягкие края
-        out[k] *= k / (0.005 * SR)
-        out[-1 - k] *= k / (0.005 * SR)
-    return out
-
-
-def synth_buzzer(dur: float) -> list[float]:
-    n = int(dur * SR)
-    out = []
-    lp = SVF()
-    for i in range(n):
-        t = i / SR
-        s = 0.0
-        for f in (146.8, 151.0, 293.0):
-            s += 1.0 if math.sin(2 * math.pi * f * t) > 0 else -1.0
-        low, _, _ = lp.step(s / 3, 1800, 0.8)
-        env = min(1.0, t / 0.01) * (1.0 if t < dur - 0.06 else max(0.0, (dur - t) / 0.06))
-        out.append(low * env)
-    return out
-
-
-GENERATED: list[dict] = [
-    {"file": "whoosh", "name": "Вжух", "tags": ["вжух", "переход", "whoosh", "движение"],
-     "fn": lambda: synth_whoosh(0.75, 280, 2600, 700, 0.55, 1.6, 1)},
-    {"file": "swoosh", "name": "Быстрый свист", "tags": ["свист", "переход", "swoosh", "быстро"],
-     "fn": lambda: synth_whoosh(0.35, 900, 6500, 2500, 0.45, 2.0, 2)},
-    {"file": "whoosh-deep", "name": "Глубокий вжух", "tags": ["вжух", "переход", "низкий", "whoosh"],
-     "fn": lambda: synth_whoosh(1.1, 120, 900, 250, 0.6, 1.2, 3)},
-    {"file": "riser", "name": "Нарастание", "tags": ["нарастание", "напряжение", "riser", "перед дропом"],
-     "fn": lambda: synth_riser(2.2, 4)},
-    {"file": "boom", "name": "Бум", "tags": ["бум", "удар", "взрыв", "boom", "акцент"],
-     "fn": lambda: synth_boom(1.8, 5), "gain_db": 5},
-    {"file": "bass-drop", "name": "Бас-дроп", "tags": ["бас", "дроп", "808", "удар", "акцент"],
-     "fn": lambda: synth_bass_drop(1.6), "gain_db": 5},
-    {"file": "pop", "name": "Поп", "tags": ["поп", "появление", "pop", "пузырь"],
-     "fn": lambda: synth_pop(0.12)},
-    {"file": "click", "name": "Клик", "tags": ["клик", "щелчок", "click"],
-     "fn": lambda: synth_click(0.05, 6)},
-    {"file": "ding", "name": "Дзынь", "tags": ["дзынь", "колокольчик", "уведомление", "ding", "правильно"],
-     "fn": lambda: synth_ding(1.6)},
-    {"file": "record-scratch", "name": "Скрэтч пластинки", "tags": ["скрэтч", "пластинка", "стоп", "scratch"],
-     "fn": lambda: synth_scratch(0.6, 7)},
-    {"file": "camera-shutter", "name": "Затвор камеры", "tags": ["камера", "фото", "затвор", "снимок"],
-     "fn": lambda: synth_shutter(0.32, 8)},
-    {"file": "typing", "name": "Печать на клавиатуре", "tags": ["клавиатура", "печать", "текст", "typing"],
-     "fn": lambda: synth_typing(1.6, 9)},
-    {"file": "glitch", "name": "Глитч", "tags": ["глитч", "помехи", "сбой", "glitch"],
-     "fn": lambda: synth_glitch(0.6, 10)},
-    {"file": "buzzer", "name": "Неправильно (зуммер)", "tags": ["ошибка", "неправильно", "зуммер", "buzzer"],
-     "fn": lambda: synth_buzzer(0.6)},
+FREESOUND_SFX = [  # (файл, id звука, превью, sha256, подпись, теги, макс. секунд) — всё CC0
+    ("whoosh-1", 60013, "https://cdn.freesound.org/previews/60/60013_71257-hq.mp3",
+     "ebdb219e7f36f7e1aecdb045d6d8bdad059119af319863777c7302a69fa41a92", "Вжух короткий", ["вжух", "whoosh", "переход"], 1.0),
+    ("whoosh-2", 332003, "https://cdn.freesound.org/previews/332/332003_2567799-hq.mp3",
+     "7cd36e4623e0d316277827c14b0647f086436f9abacf52bd127f98a6438fd357", "Вжух", ["вжух", "whoosh", "переход"], 1.2),
+    ("whoosh-3", 169867, "https://cdn.freesound.org/previews/169/169867_2834921-hq.mp3",
+     "5cc27a658b5cdbbfed83c4986c5d94de98d83c146ac0158a43750d3cd77479ff", "Свуш длинный", ["вжух", "swoosh", "переход"], 2.0),
+    ("whoosh-4", 683101, "https://cdn.freesound.org/previews/683/683101_6253486-hq.mp3",
+     "3319e044194b8185671ff8d3a2c9660d101fbae67ea31c2f6460e9cf6c1eac9d", "Быстрый вжух", ["вжух", "whoosh"], 1.6),
+    ("whip", 346373, "https://cdn.freesound.org/previews/346/346373_4882199-hq.mp3",
+     "1f79dfeca3b8bc99a98df74ee2ff3fcff249fd9f0bb73495dfca40a62afed5cc", "Хлыст", ["хлыст", "whip", "вжух"], 0.8),
+    ("impact-big", 430977, "https://cdn.freesound.org/previews/430/430977_8698658-hq.mp3",
+     "76b8435cf9f536ed689c774e111341b3e89ed0bcf8f75394757055844642aa42", "Мощный удар", ["удар", "impact", "бум"], 2.5),
+    ("impact-low", 430978, "https://cdn.freesound.org/previews/430/430978_8698658-hq.mp3",
+     "bcf27da9931daf7030a8a4954235e1cf91eaecd1a7da254b9e2b748aa3c55a39", "Низкий удар", ["удар", "impact", "бум"], 2.5),
+    ("hit-transition", 648534, "https://cdn.freesound.org/previews/648/648534_8698658-hq.mp3",
+     "bd8652a2aaef4eaeb18be1fb54c1cc90917dd7d849c2cf74aef6c8950d00edee", "Удар-переход", ["удар", "hit", "переход"], 2.5),
+    ("drama-boom", 802074, "https://cdn.freesound.org/previews/802/802074_15956618-hq.mp3",
+     "dc9d06afa0890cd889671b4c19d0dd4996309702a57d18024eadac53b530fd66", "Драма-бум (вайн-бум)", ["бум", "vine boom", "драма", "панчлайн"], 2.5),
+    ("bass-drop", 212768, "https://cdn.freesound.org/previews/212/212768_71257-hq.mp3",
+     "6a964a1b97bfdfccafbc05169029690f60ddf00959f3d341c8a941b02e9ebb71", "Бас-дроп", ["бас", "drop", "бум"], 3.0),
+    ("bass-drop-2", 165320, "https://cdn.freesound.org/previews/165/165320_3008343-hq.mp3",
+     "6cd2374163d1a77de222668d003ab7cff14b0ed93bd055f93c0511a2759cf299", "Бас-дроп резкий", ["бас", "drop"], 2.4),
+    ("riser", 685256, "https://cdn.freesound.org/previews/685/685256_12265588-hq.mp3",
+     "1a48f213348b8b362844c6ba1f87cf30dc69873e16c8cfb58d9211dc2348f726", "Райзер короткий", ["райзер", "riser", "нагнетание"], 3.0),
+    ("riser-2", 561207, "https://cdn.freesound.org/previews/561/561207_10825267-hq.mp3",
+     "c512a725e9c866277b3fa0f8e7f8f311d5cca619bb0fac2e3620958f2a8b7e49", "Райзер", ["райзер", "riser"], 2.0),
+    ("record-scratch", 43404, "https://cdn.freesound.org/previews/43/43404_465423-hq.mp3",
+     "ee71af1d2da7d46916a5ab06a9a5d5ec7ec307bb7deb98f556853d000c7fa0ad", "Скретч пластинки", ["скретч", "scratch", "стоп"], 1.6),
+    ("record-scratch-2", 431780, "https://cdn.freesound.org/previews/431/431780_817038-hq.mp3",
+     "1a5793f33a416ed82b687abe06417f17e7dbcf50244e0b5b710369286e5fc538", "Скретч пластинки 2", ["скретч", "scratch"], 1.9),
+    ("ding", 571513, "https://cdn.freesound.org/previews/571/571513_2226836-hq.mp3",
+     "de3aedd444fb21e4c46bb581f069a6e3fdd98afc475d2bf235939a0452e7fcc6", "Динь-дон уведомление", ["динь", "уведомление", "ding"], 1.0),
+    ("triangle", 349503, "https://cdn.freesound.org/previews/349/349503_5450487-hq.mp3",
+     "def3410155c9d8246054c98e495f54e8e466c56c19b440654ff583da3f2fe1a8", "Треугольник динь", ["динь", "ding", "колокольчик"], 1.8),
+    ("pop", 202230, "https://cdn.freesound.org/previews/202/202230_3725006-hq.mp3",
+     "f710da77f4fcafb1dafb16b677b108469ee4127f03198738c3c0d3f39608aec7", "Поп", ["поп", "pop", "появление"], 0.7),
+    ("pop-cartoon", 245646, "https://cdn.freesound.org/previews/245/245646_1038806-hq.mp3",
+     "5c766933e63fa3e7dda8531899fd69544e5a5e4c19c34af50418335962423e5c", "Мультяшный поп", ["поп", "pop"], 0.3),
+    ("camera", 431588, "https://cdn.freesound.org/previews/431/431588_2339776-hq.mp3",
+     "e805680b4ee8a48bc537f266c866e74d60b076a76e52af3acbaacf77e8cb7392", "Камера телефона", ["камера", "затвор", "фото"], 0.6),
+    ("camera-2", 170229, "https://cdn.freesound.org/previews/170/170229_3133582-hq.mp3",
+     "b5c29f81b6daedb089273859ce88575549154cbe33fb13d37c12795364f95a5f", "Затвор камеры", ["камера", "затвор"], 0.4),
+    ("laugh-sitcom", 371562, "https://cdn.freesound.org/previews/371/371562_2247456-hq.mp3",
+     "9b8129273534e3199a48360c462b3a33a903f2328051b2cda6689b698475a53f", "Смех зала (ситком)", ["смех", "laugh", "ситком"], 4.0),
+    ("laugh-crowd", 138112, "https://cdn.freesound.org/previews/138/138112_1572282-hq.mp3",
+     "e782571b5d06fba33343ff013cbc4218c9b8e5c8f5d8b633f8cb105c31fe51c0", "Смех толпы", ["смех", "laugh"], 3.5),
+    ("applause", 462362, "https://cdn.freesound.org/previews/462/462362_9159316-hq.mp3",
+     "0297dc19883bf2ffd6ea2634101eb744c6d52acb588a7b8eab1760d6ebd543ba", "Аплодисменты", ["аплодисменты", "applause"], 4.0),
+    ("cheer", 400590, "https://cdn.freesound.org/previews/400/400590_3372256-hq.mp3",
+     "8f702343651525abc1814211b1b122c697019e0070572cabe4e8a4ca0bed4753", "Радостные крики", ["аплодисменты", "ура", "cheer"], 4.0),
+    ("boing", 161122, "https://cdn.freesound.org/previews/161/161122_2750714-hq.mp3",
+     "c354584c0d083c13444a8acb6be4726a90b420463e5a66cec58769f7bb98acf3", "Боинг", ["боинг", "мульт", "прыжок"], 1.5),
+    ("boing-2", 540790, "https://cdn.freesound.org/previews/540/540790_11537497-hq.mp3",
+     "83a4c9e99ed1397f3938fbaf0f2aafae7826e04a101bb84bc576845543613743", "Боинг 2", ["боинг", "мульт"], 1.2),
+    ("glitch", 332711, "https://cdn.freesound.org/previews/332/332711_5695297-hq.mp3",
+     "3c0563b52882b6b74d68435cbe9e583aa5a48a5ad82e2631275e087d56d24aeb", "Глитч", ["глитч", "glitch", "сбой"], 1.6),
+    ("glitch-2", 2314, "https://cdn.freesound.org/previews/2/2314_3619-hq.mp3",
+     "0b4dcd0959fc7f36641773af8324a7a5a4cf7cf6dc88eaba9bd4a914f1981a47", "Глитч 2", ["глитч", "glitch"], 1.6),
+    ("typing", 447909, "https://cdn.freesound.org/previews/447/447909_9159316-hq.mp3",
+     "9777520f7b6a68f2b33104ee908437a78c434fb643a3038fab3fbdf235a848c5", "Печать на клавиатуре", ["клавиатура", "печать", "typing"], 3.0),
+    ("typing-digital", 416777, "https://cdn.freesound.org/previews/416/416777_7935195-hq.mp3",
+     "8b055da73040ccfcd8efb3c47b9c8071218d33b3a1311f47653600a75e4497f8", "Цифровая печать", ["печать", "typing"], 1.0),
+    ("cash", 209578, "https://cdn.freesound.org/previews/209/209578_2558531-hq.mp3",
+     "7459185c471d0b8ce87f8616f6f48f6e372be9c89f1ae86c6982618ab74e96d3", "Касса", ["касса", "деньги", "покупка"], 2.5),
+    ("cha-ching", 351304, "https://cdn.freesound.org/previews/351/351304_96253-hq.mp3",
+     "89a3e797b08677dbf298dc50aed4b52df045e9471934839ef9ed18a526c1398c", "Ча-чинг", ["деньги", "касса", "ча-чинг"], 2.5),
+    ("sad-trombone", 175409, "https://cdn.freesound.org/previews/175/175409_1326576-hq.mp3",
+     "de4a029a0537dbecaf49b4936b0969919f5b7b54083d3859d584b5c4cc7dee3d", "Грустный тромбон", ["фейл", "тромбон", "провал"], 4.0),
+    ("fail-horn", 362206, "https://cdn.freesound.org/previews/362/362206_6629901-hq.mp3",
+     "6e540e4fbbd2c7a13ecd8c8bf39ff607f145e6ff0ef6df907f54ee64974e5259", "Фейл-рожок", ["фейл", "провал"], 4.0),
+    ("tension", 506295, "https://cdn.freesound.org/previews/506/506295_10643288-hq.mp3",
+     "4085d585111f39a9ba84b252bfca3ae5f8a41254e288048e9de1501eb12a5fd8", "Напряжение", ["саспенс", "напряжение"], 3.5),
+    ("sting", 578363, "https://cdn.freesound.org/previews/578/578363_10522382-hq.mp3",
+     "518636593dcd5195ab885fcf55ce481b37c99a0621333f7e58220a9b7c051aae", "Резкий аккорд", ["саспенс", "sting", "шок"], 3.0),
+    ("punch", 118513, "https://cdn.freesound.org/previews/118/118513_2136023-hq.mp3",
+     "3843df72e4433db9cf6ebc68314494ad843b6ab97c2f16df33728cb4488504a3", "Удар кулаком", ["удар", "punch"], 0.7),
+    ("chop", 423526, "https://cdn.freesound.org/previews/423/423526_4586522-hq.mp3",
+     "d4ac685208fbf3bc141b450f772c14fe48b8e1bf48433de6ee6e57a4b8a72c2b", "Каратэ-удар", ["удар", "chop"], 0.6),
+    ("click", 678248, "https://cdn.freesound.org/previews/678/678248_7806746-hq.mp3",
+     "a8d0369a986abe53067b160e0fe902e1a6ebfdfc5ce443ac67a37185fc04462d", "Клик мыши", ["клик", "click"], 0.6),
 ]
-GENERATED_VERSION = "4"
+FREESOUND_VERSION = "1"
+FREESOUND_RMS_DB = -20.0  # «громкая часть» звука; речь клипа после нормализации ~ −14 LUFS
+FREESOUND_PEAK_DB = -4.0
 
 
 def _normalize(samples: list[float], target_rms_db: float = -15.0, peak_db: float = -1.0) -> list[float]:
@@ -916,6 +726,13 @@ def _normalize(samples: list[float], target_rms_db: float = -15.0, peak_db: floa
     return [s * gain for s in samples]
 
 
+def _read_wav(path: Path) -> list[float]:
+    with wave.open(str(path), "rb") as w:
+        raw = w.readframes(w.getnframes())
+    count = len(raw) // 2
+    return [v / 32768.0 for v in struct.unpack(f"<{count}h", raw[: count * 2])]
+
+
 def _write_wav(path: Path, samples: list[float]) -> None:
     frames = b"".join(struct.pack("<h", int(max(-1.0, min(1.0, s)) * 32767)) for s in samples)
     with wave.open(str(path), "wb") as w:
@@ -925,57 +742,64 @@ def _write_wav(path: Path, samples: list[float]) -> None:
         w.writeframes(frames)
 
 
-def build_generated(target: Path, dl: Path) -> dict:
-    pack_id = "generated"
+def fetch_freesound(target: Path, dl: Path) -> dict:
+    pack_id = "freesound"
     pack_dir = target / pack_id
     ffmpeg = shutil.which("ffmpeg")
-    stamp = f"generated v{GENERATED_VERSION} {'ogg' if ffmpeg else 'wav'} idx{INDEX_VERSION}"
+    if not ffmpeg:
+        raise RuntimeError("для звуков нужен ffmpeg")
+    stamp = f"freesound v{FREESOUND_VERSION} n{len(FREESOUND_SFX)} idx{INDEX_VERSION}"
     meta_path = pack_dir / "items.json"
     if read_stamp(pack_dir) != stamp or not meta_path.exists():
         fresh_dir(pack_dir)
-        work = fresh_dir(dl / "generated-wav")
+        work = fresh_dir(dl / "freesound")
         items: list[dict] = []
-        for spec in GENERATED:
-            # басы на слух тише при том же RMS — им даём запас сверху
-            samples = _normalize(spec["fn"](), target_rms_db=-15.0 + spec.get("gain_db", 0))
-            wav = work / f"{spec['file']}.wav"
+        for name, sound_id, url, sha, label, tags, max_sec in FREESOUND_SFX:
+            mp3 = download(url, work / f"{name}.mp3", sha)
+            wav = work / f"{name}.wav"
+            fade = min(0.25, max_sec / 4)
+            subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp3),
+                 "-af", f"silenceremove=start_periods=1:start_threshold=-45dB,atrim=0:{max_sec},"
+                        f"afade=t=out:st={max(0.0, max_sec - fade):.3f}:d={fade:.3f}",
+                 "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(wav)],
+                check=True, timeout=60,
+            )
+            samples = _normalize(_read_wav(wav), FREESOUND_RMS_DB, FREESOUND_PEAK_DB)
             _write_wav(wav, samples)
-            if ffmpeg:
-                dest = pack_dir / f"{spec['file']}.ogg"
-                subprocess.run(
-                    [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(wav),
-                     "-c:a", "libvorbis", "-q:a", "6", "-ar", "44100", str(dest)],
-                    check=True, timeout=60,
-                )
-            else:
-                dest = pack_dir / wav.name
-                shutil.copyfile(wav, dest)
-            items.append(describe_item(dest, "sfx", spec["name"], spec["tags"]))
+            dest = pack_dir / f"{safe_name(name)}.ogg"
+            subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(wav),
+                 "-c:a", "libvorbis", "-q:a", "5", "-ar", str(SR), str(dest)],
+                check=True, timeout=60,
+            )
+            items.append(describe_item(dest, "sfx", label, list(tags),
+                                       source_url=f"https://freesound.org/s/{sound_id}/"))
         (pack_dir / "LICENSE.txt").write_text(
-            "Звуки синтезированы tools/fetch_packs.py (vertical-video-fabric). CC0 1.0 — без ограничений.\n",
+            "Звуки с freesound.org под лицензией CC0 1.0 (public domain). Источник каждого — source_url в items.json.\n",
             encoding="utf-8",
         )
         meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
         write_stamp(pack_dir, stamp)
-        log(f"generated: {len(items)} звуков ({'ogg' if ffmpeg else 'wav — нет ffmpeg'})")
+        log(f"freesound: {len(items)} звуков")
     items = json.loads(meta_path.read_text(encoding="utf-8"))
     return {
         "id": pack_id,
-        "name": "Монтажные звуки (свои)",
+        "name": "Монтажные звуки (Freesound, CC0)",
         "kind": "sfx",
         "license": "CC0-1.0",
         "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
         "attribution": "",
-        "source": "tools/fetch_packs.py",
-        "version": GENERATED_VERSION,
+        "source": "https://freesound.org",
+        "version": FREESOUND_VERSION,
         "items": items,
     }
 
 
 # --------------------------------------------------------------------------- #
 
-PACK_ORDER = ["twemoji", "openmoji-extras", "kenney-particles", "generated",
-              "kenney-impact", "kenney-interface", "kenney-ui", "kenney-digital", "imgflip"]
+PACK_ORDER = ["twemoji", "openmoji-extras", "kenney-particles", "freesound",
+              "kenney-impact", "kenney-interface", "kenney-ui", "imgflip"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1008,7 +832,7 @@ def main(argv: list[str] | None = None) -> int:
     builders = {
         "twemoji": lambda: fetch_twemoji(target, dl),
         "openmoji-extras": lambda: fetch_openmoji_extras(target, dl),
-        "generated": lambda: build_generated(target, dl),
+        "freesound": lambda: fetch_freesound(target, dl),
         "imgflip": lambda: fetch_imgflip(target, dl),
         **{spec["id"]: (lambda spec=spec: fetch_kenney(target, dl, spec)) for spec in KENNEY_PACKS},
     }

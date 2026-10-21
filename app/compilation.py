@@ -108,7 +108,7 @@ def build_compilation(
         })
         if index:
             layers.append({"id": f"comp_w{index}", "type": "audio", "start": round(max(0.0, offset - 0.2), 2),
-                           "end": round(offset + 0.6, 2), "props": {"asset_id": "sfx:generated/whoosh.ogg", "volume": 0.7}})
+                           "end": round(offset + 0.6, 2), "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}})
         offset += dur
     if words:
         layers.append({"id": "comp_caps", "type": "captions", "start": 0.0, "end": round(offset, 2), "track": 0,

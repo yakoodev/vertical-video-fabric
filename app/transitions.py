@@ -211,49 +211,37 @@ def join_times(durations: list[float], overlaps: float | list[float]) -> list[fl
     return times
 
 
+# Звук стыка — настоящая запись из пака freesound (tools/fetch_packs.py).
+# Владелец: синтетика (шум + свип) звучала металлически — «убрать нахуй».
+# kind → (файл, громкость, сколько секунд до склейки начинается звук).
+JOIN_SFX_FILES: dict[str, tuple[str, float, float]] = {
+    "whoosh": ("whoosh-1.ogg", 0.7, 0.22),
+    "boom": ("impact-low.ogg", 0.8, 0.03),
+    "pop": ("pop.ogg", 0.7, 0.02),
+    "click": ("click.ogg", 0.7, 0.0),
+}
+
+
+def _filter_path(path: Path) -> str:
+    """Путь для movie/amovie в графе фильтров: прямые слэши, «:» и «'» экранированы."""
+    bs = chr(92)  # обратная косая
+    text = path.resolve().as_posix()
+    return text.replace(bs, bs * 2).replace(":", bs + ":").replace("'", bs + "'")
+
+
 def _sfx_chain(kind: str, index_label: str) -> tuple[list[str], str, float]:
-    """Filter statements making one join sound, its output label and its lead.
+    """Filter statements making one join sound, its output label and its lead."""
+    from app.settings import settings
 
-    Звук стыка раньше был или шипением, или писком 2200 Гц — дёшево. Теперь
-    вжух это шум со свипом вниз, щелчок мягкий, поп и удар — низкие.
-    """
-
-    if kind == "whoosh":
-        # Шум + падающий свип: вместе читается как рывок камеры, а не как шип.
-        return (
-            [
-                f"anoisesrc=d=0.42:c=pink:a=0.7,highpass=f=300,lowpass=f=6000,"
-                f"afade=t=in:st=0:d=0.10:curve=exp,afade=t=out:st=0.12:d=0.30[{index_label}n]",
-                f"aevalsrc='0.35*sin(2*PI*(2600*exp(-5*t))*t)':d=0.42,"
-                f"afade=t=out:st=0.06:d=0.36[{index_label}s]",
-                f"[{index_label}n][{index_label}s]amix=inputs=2:normalize=0[{index_label}]",
-            ],
-            index_label,
-            0.22,
-        )
-    if kind == "boom":
-        return (
-            [
-                f"aevalsrc='0.9*sin(2*PI*(90*exp(-3*t))*t)':d=0.5,lowpass=f=220,"
-                f"afade=t=out:st=0.05:d=0.45[{index_label}]"
-            ],
-            index_label,
-            0.03,
-        )
-    if kind == "pop":
-        return (
-            [
-                f"aevalsrc='0.8*sin(2*PI*180*t)':d=0.12,lowpass=f=400,"
-                f"afade=t=out:st=0.01:d=0.11[{index_label}]"
-            ],
-            index_label,
-            0.02,
-        )
-    # click — мягкий тик вместо писка
+    name, volume, lead = JOIN_SFX_FILES.get(kind, JOIN_SFX_FILES["click"])
+    path = Path(settings.motion_packs_dir) / "freesound" / name
+    if not path.exists():
+        # Пака нет (локальная разработка без fetch_packs) — тишина, но граф цел.
+        return ([f"anullsrc=r=48000:cl=stereo,atrim=0:0.05[{index_label}]"], index_label, 0.0)
     return (
-        [f"sine=f=1200:d=0.05,lowpass=f=3000,afade=t=out:st=0.006:d=0.044[{index_label}]"],
+        [f"amovie='{_filter_path(path)}',volume={volume:.2f}[{index_label}]"],
         index_label,
-        0.0,
+        lead,
     )
 
 

@@ -285,10 +285,10 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         if duration and end > duration + 0.05 and not (whole_clip and start < duration):
             # Слой «на весь клип» (субтитры, плашка с 0 с) просто обрежется по концу — не шум.
             warnings.append(f"{lid}: заканчивается на {end:.2f} с, а клип длится {duration:.2f} с")
-        if layer.get("type") == "audio" and (_num(props.get("volume"), 1.0) or 0.0) > 0.6:
-            # Владелец: «звуковой эффект слишком громкий» — скретч на 1.0 перекрыл речь.
-            warnings.append(f"{lid}: звук на громкости {_num(props.get('volume'), 1.0):.2f} перекроет речь — "
-                            "эффекты обычно 0.3–0.5")
+        if layer.get("type") == "audio" and (_num(props.get("volume"), 1.0) or 0.0) > 1.0:
+            # Громкость эффектов выравнивает сервис (на 6 дБ тише речи); выше 1 — срежется.
+            warnings.append(f"{lid}: volume {_num(props.get('volume'), 1.0):.2f} срежется до 1 — звуки уже "
+                            "выровнены ниже речи, обычно 0.3–0.6")
         if textual and end - start < 0.6:
             warnings.append(f"{lid}: титр виден {end - start:.2f} с — не успеют прочитать")
     # Перегруз: сколько видимых слоёв одновременно в момент начала каждого слоя.

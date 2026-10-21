@@ -90,8 +90,10 @@ CRAFT = """\
 3. Найди 1–3 панчлайна в субтитрах (самая громкая реакция, мат-взрыв, неожиданный поворот, цифра):
    • крупное слово-панчлайн по центру (text, size 130–170, КАПСОМ, обводка 14, in pop 0.2–0.3,
      loop shake amount 0.3–0.5, 0.8–1.5 с) — только на 1–2 самых сильных местах;
-   • звук ровно на слово: удар sfx:kenney-impact/impactPunch_heavy_001.ogg или
-     sfx:generated/boom.ogg (volume 0.3–0.5 — громче перекроет речь); вжух sfx:generated/whoosh.ogg на смену темы;
+   • звук ровно на слово (at_word): драма-бум sfx:freesound/drama-boom.ogg, удар sfx:freesound/punch.ogg,
+     бас-дроп sfx:freesound/bass-drop.ogg, скретч sfx:freesound/record-scratch.ogg, смех sfx:freesound/laugh-sitcom.ogg;
+     вжух sfx:freesound/whoosh-1.ogg на смену темы (весь список — search_pack freesound). Громкость 0.3–0.5:
+     звуки уже выровнены ниже речи, сервис сам не даст эффекту перекрыть голос;
    • наезд: оставь наезд auto_edit или поставь свой (set_camera ЗАМЕНЯЕТ все ключи — передавай
      вместе с существующими). Новым ключам наезда НЕ ставь x/y — камера сама зумит в героя
      так, что он не заезжает под субтитры.
@@ -144,7 +146,7 @@ add_layers: [
            "stroke":{"color":"#000000","width":16},"uppercase":true},
   "in":{"type":"pop","duration":0.25},"loop":{"type":"shake","speed":1.4,"amount":0.4},
   "out":{"type":"fade","duration":0.2}},
- {"type":"audio","start":17.85,"end":18.6,"props":{"asset_id":"sfx:kenney-impact/impactPunch_heavy_001.ogg","volume":0.5}}]
+ {"type":"audio","start":17.85,"end":18.6,"props":{"asset_id":"sfx:freesound/drama-boom.ogg","volume":0.4}}]
 
 Число в речи «миллион баннеров» на 9.1 с:
 {"type":"counter","start":8.8,"end":11.7,"x":0.5,"y":0.27,"track":3,

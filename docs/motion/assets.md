@@ -41,11 +41,10 @@ Impact свободной версии не бывает, у Anton и Bebas Neue
 | `twemoji` | emoji | Twemoji v17.0.3, весь набор SVG + `emoji.json` | 4009 (1914 в индексе + тона кожи) | 10 МБ | **CC-BY 4.0** |
 | `openmoji-extras` | sticker | OpenMoji 17 — свои (не-Unicode) символы, без логотипов брендов | 352 | 0.9 МБ | **CC-BY-SA 4.0** |
 | `kenney-particles` | sticker | Kenney Particle Pack: искры, звёзды, дым, вспышки, следы (белые PNG 512px — подкрашиваются) | 80 | 4.7 МБ | CC0 |
-| `generated` | sfx | свои синтезированные: вжух ×3, нарастание, бум, бас-дроп, поп, клик, дзынь, скрэтч, затвор, клавиатура, глитч, зуммер | 14 | 0.2 МБ | CC0 |
+| `freesound` | sfx | настоящие записи с freesound.org: вжухи, удары, драма-бум, бас-дроп, райзеры, скретч, динь, поп, камера, смех, аплодисменты, боинг, глитч, клавиатура, касса, грустный тромбон, саспенс, удар, клик (выровнены по громкости ниже речи) | 40 | 0.9 МБ | CC0 |
 | `kenney-impact` | sfx | удары (металл, стекло, кулак, дерево…) и шаги | 130 | 1 МБ | CC0 |
 | `kenney-interface` | sfx | клики, ошибки, подтверждения, глитчи, скрэтчи | 100 | 1 МБ | CC0 |
 | `kenney-ui` | sfx | кнопки, переключатели | 51 | 0.3 МБ | CC0 |
-| `kenney-digital` | sfx | лазеры, пауэр-апы, фазеры | 62 | 0.5 МБ | CC0 |
 | `imgflip` | meme | топ-100 мем-шаблонов imgflip (`box_count` — сколько подписей) | ≤100 | ~10 МБ | права у авторов исходников |
 
 `emoji.json`: `{groups:[{key,label}], emoji:[{code, char, name, en, tags, en_tags, group, order, skins?}]}` —
@@ -66,7 +65,7 @@ Impact свободной версии не бывает, у Anton и Bebas Neue
 
 ```python
 from app.motion_assets import resolve_pack_ref, pack_item_info, emoji_code_for_char
-resolve_pack_ref("sfx:generated/boom.ogg")   # -> Path | None (None: битая/чужая/опасная ссылка)
+resolve_pack_ref("sfx:freesound/drama-boom.ogg")   # -> Path | None (None: битая/чужая/опасная ссылка)
 pack_item_info("emoji:🔥")                     # -> {ref, kind, pack, file, path, name, tags, duration|width/height, license, attribution, url} | None
 ```
 

@@ -143,7 +143,7 @@ def build_auto_edit(
                       "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980},
         })
         layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
-                       "props": {"asset_id": "sfx:generated/whoosh.ogg", "volume": 0.7}})
+                       "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}})
 
     # Эмодзи в монтаже владелец не хочет («хуёво выглядят»): акцент — цвет слова.
     # Сильные слова — жёлтым, смысловые (деньги, страх, еда…) — зелёным, не чаще раза в 2 с.
@@ -192,7 +192,7 @@ def build_auto_edit(
         ]
         if big:
             layers.append({"id": "auto_boom", "type": "audio", "start": round(t0, 2), "end": round(min(duration, t0 + 1.2), 2),
-                           "props": {"asset_id": "sfx:kenney-impact/impactPunch_heavy_001.ogg", "volume": 0.5}})
+                           "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}})
     return {"layers": normalize_layers(layers), "camera": normalize_camera(camera)}
 
 

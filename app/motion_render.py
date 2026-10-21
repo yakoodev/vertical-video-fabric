@@ -32,6 +32,58 @@ from app.motion import asset_key, caption_words, has_captions, has_chat, layer_a
 AUDIO_DUCK_VOLUME = 0.3
 DEFAULT_CRF = 18
 
+# Громкость звуков слоёв — системно, а не советом в промпте. Владелец: «эффекты
+# очень громкие (громкость — системная ошибка)». Каждый файл сначала приводится
+# к одному уровню («громкая часть» −20 дБ, речь клипа ~ −14 LUFS — эффект на 6 дБ
+# тише), потом умножается на volume слоя, а volume ограничен сверху. Что бы ни
+# поставил агент, эффект не перекроет голос.
+EFFECT_TARGET_DB = -20.0
+EFFECT_PEAK_DB = -3.0
+MAX_EFFECT_VOLUME = 1.0
+_GAIN_CACHE: dict[tuple[str, float], float] = {}
+
+
+def effect_gain_db(path: str) -> float:
+    """Поправка в дБ, чтобы громкая часть звука была на EFFECT_TARGET_DB (кэш по файлу)."""
+    import re
+    import subprocess
+
+    try:
+        key = (str(path), Path(path).stat().st_mtime)
+    except OSError:
+        return 0.0
+    if key in _GAIN_CACHE:
+        return _GAIN_CACHE[key]
+    gain = 0.0
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-t", "30",
+             "-af", "astats=metadata=0:reset=0", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+        overall = proc.stderr[proc.stderr.rfind("Overall"):]
+        rms = re.search(r"RMS peak dB:\s*(-?[\d.]+)", overall)
+        peak = re.search(r"Peak level dB:\s*(-?[\d.]+)", overall)
+        if rms:
+            gain = EFFECT_TARGET_DB - float(rms.group(1))
+            if peak:
+                gain = min(gain, EFFECT_PEAK_DB - float(peak.group(1)))
+            gain = max(-30.0, min(12.0, gain))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        gain = 0.0
+    _GAIN_CACHE[key] = gain
+    return gain
+
+
+def effect_volume(path: str, volume: Any) -> float:
+    """Итоговый множитель громкости слоя-звука: выравнивание файла × volume (≤ MAX)."""
+    try:
+        user = float(volume if volume is not None else 1)
+    except (TypeError, ValueError):
+        user = 1.0
+    user = max(0.0, min(MAX_EFFECT_VOLUME, user))
+    return user * 10 ** (effect_gain_db(path) / 20)
+
 
 class CompositorMissing(RuntimeError):
     """Компоновщик не собран или Node не найден — моушн нарисовать нечем."""
@@ -444,7 +496,8 @@ def build_audio_layers_args(
     for n, item in enumerate(usable, start=1):
         props = item["layer"]["props"]
         length = item["len"]
-        chain = [f"[{n}:a]aresample=48000", "asetpts=PTS-STARTPTS", f"volume={float(props.get('volume', 1)):.3f}"]
+        chain = [f"[{n}:a]aresample=48000", "asetpts=PTS-STARTPTS",
+                 f"volume={effect_volume(item['path'], props.get('volume', 1)):.4f}"]
         fade_in = min(float(props.get("fadeIn") or 0), length)
         if fade_in > 0:
             chain.append(f"afade=t=in:st=0:d={fade_in:.3f}")
