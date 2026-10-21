@@ -79,6 +79,8 @@ class Settings:
         # Финальная громкость клипа под площадки (два прохода loudnorm, видео копией).
         self.render_loudnorm = os.getenv("RENDER_LOUDNORM", "1").strip().lower() not in ("0", "false", "no")
         self.render_loudnorm_target = float(os.getenv("RENDER_LOUDNORM_TARGET", "-14"))
+        # Стоп-кадр в конце клипа (с), пока затухает звук; 0 — без него.
+        self.render_end_hold_sec = float(os.getenv("RENDER_END_HOLD_SEC", "0.5"))
         self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"
         self.whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
         self.whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"

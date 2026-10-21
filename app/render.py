@@ -1041,7 +1041,7 @@ class ClipRenderService:
         TikTok/Shorts всё равно приводят громкость к своей, только тихий ролик
         тогда звучит хуже соседей, а громкий хрипит. Два прохода loudnorm:
         замер, потом линейная поправка по замеру — без «качелей» громкости.
-        Заодно — короткое затухание в конце (финал не обрывается щелчком).
+        Заодно — финал: стоп-кадр RENDER_END_HOLD_SEC и затухание звука на нём.
         Сбой не теряет клип.
         """
         if not settings.render_loudnorm:  # RENDER_LOUDNORM=0 выключает весь финальный проход звука
@@ -1060,23 +1060,29 @@ class ClipRenderService:
             measured = json.loads(tail[: tail.find("}") + 1])
             if not audible(measured):
                 return clip  # немой клип: ни громкость, ни затухание не нужны
-            filters = []
+            hold = max(0.0, float(settings.render_end_hold_sec or 0))
+            filters = [f"apad=pad_dur={hold:.3f}"] if hold > 0 else []
             if loudnorm_needed(measured, target):
                 filters.append(
                     f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
                     f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
                     f":offset={measured['target_offset']}:linear=true"
                 )
-            fade = end_fade_filter(float(probe_media(path).duration_sec or 0))
+            fade = end_fade_filter(float(probe_media(path).duration_sec or 0) + hold)
             if fade:
                 filters.append(fade)
             if not filters:
                 return clip
             tmp = path.with_name(path.stem + ".loud" + path.suffix)
             af = ",".join(filters + ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"])
+            # Стоп-кадр в конце: последний кадр держится, пока затухает звук —
+            # владелец: «сейчас она просто обрывается жёстко». Тогда картинку надо
+            # перекодировать (tpad), иначе — копия без потерь.
+            video = (["-vf", f"tpad=stop_mode=clone:stop_duration={hold:.3f}", "-c:v", "libx264", "-crf", "18",
+                      "-preset", "veryfast", "-pix_fmt", "yuv420p"] if hold > 0 else ["-c:v", "copy"])
             _run_ffmpeg(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
-                 "-c:v", "copy", "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)],
+                 *video, "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)],
                 timeout=60 * 10,
             )
             tmp.replace(path)
