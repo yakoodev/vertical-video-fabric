@@ -1527,8 +1527,22 @@ class AppStore:
         """Save one clip's own render settings (normalized — junk never lands in the DB)."""
         from app.clip_settings import normalize_render_settings
 
-        self.get_clip_plan(clip_plan_id, include_segments=False)
+        plan = self.get_clip_plan(clip_plan_id)
         clean = normalize_render_settings(settings)
+        before = normalize_render_settings(plan.get("render_settings") or {})
+        if (
+            plan.get("render_settings")
+            and clean["transition"] != before["transition"]
+            and all(clean[k] == before[k] for k in ("layers", "camera", "inserts"))
+        ):
+            # Поменяли только переход — монтаж (во времени готового клипа) едет за
+            # новыми наплывами, как субтитры. Правили слои в том же сохранении —
+            # значит, их уже выставили под новый переход, не трогаем.
+            from app.piece_remap import remap_for_transition
+
+            clean = normalize_render_settings(
+                remap_for_transition(clean, plan.get("segments") or [], before["transition"])
+            )
         self.db.execute(
             "UPDATE clip_plans SET render_settings_json = ? WHERE id = ?",
             (json.dumps(clean, ensure_ascii=False), clip_plan_id),

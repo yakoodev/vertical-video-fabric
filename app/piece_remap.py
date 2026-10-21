@@ -154,3 +154,49 @@ def retime_segment(store: Any, segment_id: int, start_sec: float, end_sec: float
         if moved is not stored and moved != stored:
             store.set_clip_plan_render_settings(plan_id, moved)
     return segment
+
+
+class TransitionMap:
+    """Готовое время при старом переходе → при новом (куски те же).
+
+    Слои, камера и вставки живут во времени ГОТОВОГО клипа: наплыв съедает
+    секунды на каждой склейке. Поменяли «встык» на «наплыв» — субтитры
+    сдвигались сами (они во времени кусков подряд), а титры оставались на
+    старых секундах и уезжали от речи (отзыв агента-монтажёра)."""
+
+    def __init__(self, segments: list[dict], old_transition: Any, new_transition: Any):
+        from app.cuts import _Joins
+
+        self.old = _Joins(list(segments or []), old_transition)
+        self.new = _Joins(list(segments or []), new_transition)
+
+    def __bool__(self) -> bool:
+        return self.old.eaten != self.new.eaten
+
+    def clamp(self, t: float) -> float:
+        return round(self.new.forward(self.old.inverse(float(t))), 3)
+
+    def __call__(self, t: float) -> float:
+        return self.clamp(t)
+
+    def range(self, start: float, end: float, min_len: float = 1e-6) -> tuple[float, float] | None:
+        a, b = self.clamp(start), self.clamp(end)
+        return None if b - a < min_len else (a, b)
+
+    def duration(self, total: float) -> float:
+        return self.clamp(total)
+
+
+def remap_for_transition(render: dict, segments: list[dict], old_transition: Any) -> dict:
+    """Перенести титры, камеру и вставки на новый переход (render уже с новым)."""
+    from app.cuts import remap_camera, remap_inserts, remap_layers
+
+    mapper = TransitionMap(segments, old_transition, render.get("transition"))
+    if not mapper or len(segments or []) < 2:
+        return render
+    return {
+        **render,
+        "layers": remap_layers(render.get("layers") or [], mapper),
+        "camera": remap_camera(render.get("camera") or [], mapper),
+        "inserts": remap_inserts(render.get("inserts") or [], mapper),
+    }
