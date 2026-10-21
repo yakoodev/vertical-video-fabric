@@ -41,12 +41,12 @@ LOUDNORM_SILENCE_LUFS = -70.0
 _RENDER_LOCK = threading.RLock()
 
 
-MAX_LOUDNESS_BOOST_DB = 8.0
+MAX_LOUDNESS_BOOST_DB = 12.0  # клип с резкими пиками (−25 LUFS при пике −1) иначе оставался тихим (−19)
 
 
 def linear_gain_db(measured: dict, target: float) -> float:
-    """Одна поправка громкости на весь клип: к цели по LUFS, но не больше +8 дБ
-    (тихий клип не превращаем в шум) — пики дальше держит лимитер."""
+    """Одна поправка громкости на весь клип: к цели по LUFS, но не больше потолка
+    (тихий клип не превращаем в шум; потолок +12 дБ) — пики дальше держит лимитер."""
     gain = target - float(measured["input_i"])
     return max(-20.0, min(MAX_LOUDNESS_BOOST_DB, gain))
 
@@ -74,7 +74,7 @@ def loudnorm_needed(measured: dict, target: float) -> bool:
 
 # Короткое затухание звука в самом конце ролика: финал не «щёлкает» обрывом
 # слова, даже если последний кусок резали вплотную к речи.
-END_AUDIO_FADE_SEC = 0.6  # владелец: «концовки иногда резко обрезаются» — 0.3 с было мало
+END_AUDIO_FADE_SEC = 0.35  # затухание кончается ровно на последнем звуке клипа; стоп-кадр после — тишина
 
 
 def audible(measured: dict) -> bool:
@@ -1087,7 +1087,9 @@ class ClipRenderService:
                 # во всю громкость»).
                 filters.append(f"volume={linear_gain_db(measured, target):.2f}dB")
                 filters.append("alimiter=limit=0.84:attack=5:release=80:level=disabled")
-            fade = end_fade_filter(float(probe_media(path).duration_sec or 0) + hold)
+            # Затухание — на конце самого звука, а не на добавленной тишине стоп-кадра:
+            # иначе на речь приходилась 0.1 с и звук обрывался.
+            fade = end_fade_filter(float(probe_media(path).duration_sec or 0))
             if fade:
                 filters.append(fade)
             if not filters:

@@ -906,5 +906,5 @@ def test_loudness_is_one_linear_gain_not_dynamic():
     from app.render import linear_gain_db
 
     assert linear_gain_db(_loud("-20.0"), -14.0) == 6.0
-    assert linear_gain_db(_loud("-30.0"), -14.0) == 8.0
+    assert linear_gain_db(_loud("-30.0"), -14.0) == 12.0
     assert linear_gain_db(_loud("-9.0"), -14.0) == -5.0
