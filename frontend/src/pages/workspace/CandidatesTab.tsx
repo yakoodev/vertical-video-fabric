@@ -3189,7 +3189,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 />
               ) : null}
             </Group>
-            <Group title="Раскладка (вебка)" badge={layout.mode === "single" ? "обычная" : layout.mode === "split" ? "вебка + игра" : "вебка в углу"}>
+            <Group
+              title="Раскладка кадра"
+              badge={{ single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"}
+            >
               <LayoutPanel sourceId={source.id} layout={layout} onChange={setLayout} frameAt={videoRef.current?.currentTime ?? 0} />
             </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>

@@ -245,7 +245,7 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt }: Props)
             <input type="range" min={0} max={60} value={Math.round(layout.video_y * 100)} onChange={(e) => patch({ video_y: Number(e.target.value) / 100 })} />
           </label>
           <div className="lay-row">
-            <span className="lay-grow muted">Фон под видео — место для картинок и титров</span>
+            <span className="lay-grow muted li-note">Фон под видео — место для картинок и титров</span>
             <input type="color" className="lay-color" value={layout.bg} title="Цвет фона" onChange={(e) => patch({ bg: e.target.value })} />
           </div>
         </>
