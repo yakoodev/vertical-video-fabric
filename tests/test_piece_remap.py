@@ -67,3 +67,14 @@ def test_dragging_piece_edge_moves_layers(tmp_path, monkeypatch):
     client.patch(f"/api/segments/{a['id']}/timecodes", json={"start_sec": 1.0, "end_sec": 7.0}).raise_for_status()
     moved = store.get_clip_plan(plan["id"])["render_settings"]["layers"][0]
     assert (moved["start"], moved["end"]) == (8.0, 9.0)  # первый кусок длиннее на 1 с
+
+
+def test_splitting_a_piece_keeps_layers_in_place():
+    """Агент разрезал кусок надвое (время клипа то же) — сервер убирал слои второй половины."""
+    old = [{"id": 1, "start_sec": 782.0, "end_sec": 803.6}]
+    new = [{"id": 1, "start_sec": 782.0, "end_sec": 797.8}, {"id": None, "start_sec": 797.8, "end_sec": 803.6}]
+    render = {"layers": [{"id": "late", "type": "text", "start": 17.0, "end": 19.0}],
+              "camera": [{"t": 18.0, "zoom": 1.3}], "inserts": [], "cuts": []}
+    out, _note = remap_render(render, old, new)
+    assert [(l["id"], l["start"], l["end"]) for l in out["layers"]] == [("late", 17.0, 19.0)]
+    assert out["camera"][0]["t"] == 18.0

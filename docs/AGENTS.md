@@ -46,6 +46,10 @@ bearer_token_env_var = "VVF_TOKEN"
 | Инструмент | Что делает |
 |---|---|
 | `list_projects`, `list_clips(project_id)` | найти проект и клип |
+| `get_source_transcript(project_id, from_sec?, to_sec?)` | реплики всего исходника — выбрать моменты без Gemini |
+| `get_shots(project_id, from_sec?, to_sec?)` | склейки планов исходника — куда ставить жёсткую смену кадра (`cut: true`) |
+| `create_clip(project_id, title, pieces)` | новый клип из таймкодов исходника |
+| `listen(clip_id, from_sec?, to_sec?)` | что реально звучит в готовом клипе (с вырезами); по умолчанию последние 6 с |
 | `get_clip(clip_id)` | куски, настройки, слои, камера, вставки, субтитры со временем слов (секунды клипа), предупреждения |
 | `get_transcript(clip_id, from_sec?, to_sec?)` | реплики исходника (время исходника) — для подрезки |
 | `view_frame(clip_id, t, with_layers?)` | **картинка** кадра готового вида (слои + камера) — смотри, что получилось |

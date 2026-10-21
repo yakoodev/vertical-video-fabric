@@ -73,6 +73,19 @@ class PieceMap:
                 return index
         return len(self.old) - 1
 
+    def _home(self, index: int, source: float) -> Piece | None:
+        """Новый кусок, где теперь лежит момент исходника: сначала свой (тот же id),
+        иначе ближайший по месту кусок, который его содержит — кусок разрезали
+        надвое, и вторая половина стала новым куском (агент: «разрезал — слои убраны»)."""
+        target = self.match[index]
+        if target is not None and target.start - 1e-3 <= source <= target.end + 1e-3:
+            return target
+        holders = [p for p in self.new if p.start - 1e-3 <= source <= p.end + 1e-3]
+        if not holders:
+            return None
+        anchor = target.offset if target is not None else self.old[index].offset
+        return min(holders, key=lambda p: abs(p.offset - anchor))
+
     def clamp(self, t: float) -> float:
         t = float(t)
         if self.old and t >= self.old[-1].offset + self.old[-1].length - 1e-3:
@@ -80,6 +93,9 @@ class PieceMap:
         index = self._old_index(t)
         piece = self.old[index]
         source = piece.start + max(0.0, t - piece.offset)
+        home = self._home(index, source)
+        if home is not None:
+            return round(home.offset + source - home.start, 3)
         target = self.match[index]
         if target is None:  # кусок удалили — к месту, где он был
             following = next((m for m in self.match[index + 1:] if m is not None), None)
@@ -90,9 +106,8 @@ class PieceMap:
     def __call__(self, t: float) -> float | None:
         t = float(t)
         index = self._old_index(t)
-        piece, target = self.old[index], self.match[index]
-        source = piece.start + max(0.0, t - piece.offset)
-        if target is None or not target.start - 1e-3 <= source <= target.end + 1e-3:
+        piece = self.old[index]
+        if self._home(index, piece.start + max(0.0, t - piece.offset)) is None:
             return None
         return self.clamp(t)
 

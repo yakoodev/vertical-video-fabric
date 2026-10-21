@@ -35,3 +35,18 @@ def test_source_transcript_cached_and_filtered(tmp_path, monkeypatch):
     assert not out["cached"] and len(out["cues"]) == 2
     out = client.get(f"/api/sources/{source['id']}/transcript", params={"from_sec": 3}).json()
     assert out["cached"] and [c["text"] for c in out["cues"]] == ["два"] and len(calls) == 1
+
+
+def test_get_shots_cached_and_filtered(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    from app.agent_tools import ToolContext, run_tool
+
+    _client, store, source, _plan, _a, _b = _setup(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr("app.scene_cuts.detect_scene_cuts", lambda path: calls.append(path) or [1.5, 3.25, 6.0])
+    ctx = ToolContext(store=store, clip_plan_id=None)
+    out, ok = run_tool(ctx, "get_shots", {"project_id": source["id"], "from_sec": 2})
+    assert ok, out
+    assert out["shot_changes"] == [3.25, 6.0]
+    out, ok = run_tool(ctx, "get_shots", {"project_id": source["id"]})
+    assert out["shot_changes"] == [1.5, 3.25, 6.0] and len(calls) == 1

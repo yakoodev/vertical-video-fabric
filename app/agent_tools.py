@@ -1421,6 +1421,29 @@ def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
             "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
 
 
+def h_source_shots(ctx: ToolContext, args: dict) -> dict:
+    """Склейки планов исходника (секунды исходника) — куда ставить смену кадра (cut)."""
+    from app.store import _json_text, _parse_transcript
+
+    project = _project_id(args)
+    try:
+        row = ctx.store.db.query_one("SELECT local_path, scene_cuts_json FROM sources WHERE id = ?", (project,))
+    except Exception as exc:  # noqa: BLE001
+        raise ToolError(str(exc)) from exc
+    if not row:
+        raise ToolError("нет такого проекта (см. list_projects)")
+    cuts = _parse_transcript(row["scene_cuts_json"])
+    if not cuts:
+        from app.scene_cuts import detect_scene_cuts
+
+        cuts = detect_scene_cuts(row["local_path"])
+        ctx.store.db.execute("UPDATE sources SET scene_cuts_json = ? WHERE id = ?", (_json_text(cuts), project))
+    lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
+    shown = [round(float(t), 3) for t in cuts if float(t) >= lo and (hi is None or float(t) <= hi)]
+    return {"project_id": project, "shot_changes": shown,
+            "note": "секунды исходника; в кадрировании куска ставь точку {t: склейка − начало куска, x, cut: true}"}
+
+
 def h_create_clip(ctx: ToolContext, args: dict) -> dict:
     from app.manual_clips import create_manual_clip
 
@@ -1586,7 +1609,7 @@ def _layer_schema() -> dict:
             "word_offset": {"type": "number", "description": "сдвиг от начала слова, с (−0.1 — чуть раньше)"},
             "duration": {"type": "number", "description": "с at_word: длина слоя, с (иначе end-start или 1.2)"},
         },
-        ["type", "start", "end"],
+        ["type"],  # start/end или at_word — проверяет _validate_new_layers
     )
 
 
@@ -1881,6 +1904,15 @@ DISCOVERY_TOOLS = [
         _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
              ["project_id"]),
         h_source_transcript, scope="global",
+    ),
+    Tool(
+        "get_shots", "Склейки планов",
+        "Моменты смены плана в исходнике (секунды исходника) между from_sec и to_sec — чтобы ставить "
+        "жёсткую смену кадрирования ровно на склейку. Первый вызов — ffmpeg по всему видео (минута-две), "
+        "потом кэш. / Shot boundaries of the source.",
+        _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
+             ["project_id"]),
+        h_source_shots, scope="global",
     ),
     Tool(
         "create_clip", "Создаю клип",
