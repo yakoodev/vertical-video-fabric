@@ -7,6 +7,7 @@ into a smooth, velocity-limited ffmpeg crop-x expression (see Stage B).
 
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 from collections import Counter
@@ -163,20 +164,32 @@ def build_reframe_x_expr(
 
     xs = [interp(i * dt) for i in range(n)]
     # Dense indices where a cut lands — the smoother teleports there instead of easing.
-    cut_idx = {min(n - 1, max(0, round(t / dt))) for (t, _x, cut) in pts if cut}
+    cut_idx = {min(n - 1, max(0, math.ceil(t / dt - 1e-9))) for (t, _x, cut) in pts if cut}
     xs = _smooth_damp_series(xs, dt, smooth_time, rubber=rubber, cut_idx=cut_idx, deadzone=deadzone)
 
     if n > max_anchors:
-        idxs = [round(i * (n - 1) / (max_anchors - 1)) for i in range(max_anchors)]
+        idxs = {round(i * (n - 1) / (max_anchors - 1)) for i in range(max_anchors)}
     else:
-        idxs = list(range(n))
-    anchors = [(round(i * dt, 3), round(xs[i], 5)) for i in idxs]
+        idxs = set(range(n))
+    # Склейка кадра должна остаться ступенькой: прореживание до max_anchors
+    # выкидывало точки у стыка, и между соседними опорами шла интерполяция —
+    # кадр «проезжал» через смену плана за 0.3–0.8 с. Держим обе точки стыка.
+    cut_time = {min(n - 1, max(0, math.ceil(t / dt - 1e-9))): t for (t, _x, cut) in pts if cut}
+    for c in cut_time:
+        idxs.update({max(0, c - 1), c})
+    order = sorted(idxs)
+    anchors = [(round(i * dt, 3), round(xs[i], 5)) for i in order]
 
     # Build the normalized X(t) as a nested piecewise-linear expression.
     expr = f"{anchors[-1][1]:.5f}"
     for i in range(len(anchors) - 2, -1, -1):
         t0, x0 = anchors[i]
         t1, x1 = anchors[i + 1]
+        if order[i + 1] in cut_time:
+            # Стык: старый кадр до точного времени склейки, дальше — новый.
+            at = max(t0, cut_time[order[i + 1]])
+            expr = f"if(lt(t\\,{at:.3f})\\,{x0:.5f}\\,{expr})"
+            continue
         seg = max(1e-3, t1 - t0)
         lerp = f"({x0:.5f}+({x1 - x0:.5f})*(t-{t0:.3f})/{seg:.3f})"
         expr = f"if(lt(t\\,{t1:.3f})\\,{lerp}\\,{expr})"
