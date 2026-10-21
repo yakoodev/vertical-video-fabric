@@ -91,3 +91,11 @@ def test_subtitle_sync_detects_shift(tmp_path):
     assert offset is not None and 0.8 <= offset <= 1.2
     assert subtitle_sync_issue(offset)["code"] == "subs_sync"
     assert subtitle_sync_issue(0.05) is None
+
+
+def test_av_length_mismatch_is_flagged():
+    from app.render_qc import av_length_issue
+
+    assert av_length_issue({"video": 54.97, "audio": 54.4})["code"] == "av_drift"
+    assert av_length_issue({"video": 30.0, "audio": 29.98}) is None
+    assert av_length_issue({"video": 30.0}) is None

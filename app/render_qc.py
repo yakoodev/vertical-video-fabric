@@ -116,7 +116,45 @@ def run_qc(path: Path, *, duration_sec: float = 0.0, width: int = 0, height: int
         return None
     if proc.returncode != 0:
         return None
-    return parse_qc(proc.stderr, duration_sec=duration_sec, width=width, height=height)
+    report = parse_qc(proc.stderr, duration_sec=duration_sec, width=width, height=height)
+    drift = av_length_issue(stream_lengths(path))
+    if drift:
+        report["issues"].append(drift)
+        report["ok"] = False
+    return report
+
+
+AV_DRIFT_WARN_SEC = 0.1
+
+
+def stream_lengths(path: Path) -> dict:
+    """Длины дорожек файла: {"video": с, "audio": с} (что смог прочитать ffprobe)."""
+    import json
+
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        streams = json.loads(proc.stdout or "{}").get("streams") or []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {}
+    out: dict = {}
+    for stream in streams:
+        try:
+            out.setdefault(stream["codec_type"], float(stream["duration"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def av_length_issue(lengths: dict) -> dict | None:
+    """Картинка и звук разной длины — значит, где-то разъехались (агент нашёл 0.57 с при «QC ок»)."""
+    video, audio = lengths.get("video"), lengths.get("audio")
+    if video is None or audio is None or abs(video - audio) <= AV_DRIFT_WARN_SEC:
+        return None
+    return {"level": "warn", "code": "av_drift",
+            "text": f"картинка {video:.2f} с, звук {audio:.2f} с — дорожки разъехались на {abs(video - audio):.2f} с"}
 
 
 # ---------------------------------------------------------------- синхронность субтитров
