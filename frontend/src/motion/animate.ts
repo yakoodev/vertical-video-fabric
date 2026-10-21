@@ -109,7 +109,9 @@ function applyInOut(st: LayerState, type: InOutType, a: number): void {
       if (type === "slideDown") st.y -= 0.15 * rest;
       if (type === "slideLeft") st.x += 0.15 * rest;
       if (type === "slideRight") st.x -= 0.15 * rest;
-      st.opacity *= ease("outQuad", p);
+      // Видимым — за первую треть: иначе на коротком въезде (0.2 с) движение
+      // проходит почти прозрачным и слайд выглядит как простой фейд.
+      st.opacity *= clamp01(p * 3);
       return;
     }
     case "drop":
