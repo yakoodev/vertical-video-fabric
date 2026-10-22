@@ -155,6 +155,9 @@ def normalize_brand(raw: Any) -> dict:
     src = raw if isinstance(raw, dict) else {}
     colors_src = src.get("colors") if isinstance(src.get("colors"), dict) else {}
     colors = {k: _color(colors_src.get(k)) or v for k, v in DEFAULT_COLORS.items()}
+    # Второй цвет бренда — подсветка ключевых слов субтитров (необязательный).
+    if _color(colors_src.get("highlight")):
+        colors["highlight"] = _color(colors_src.get("highlight"))
     backdrop_src = src.get("backdrop") if isinstance(src.get("backdrop"), dict) else {}
     corner = src.get("logo_corner")
     policy = src.get("sfx_policy")
@@ -252,9 +255,31 @@ def caption_props(props: dict, brand: dict) -> dict:
         else:
             out.pop(key, None)  # как в пресете стиля
     if isinstance(out.get("highlightWords"), list):
-        # Выделенные слова — акцентом бренда, а не жёлтым/зелёным автомонтажа.
-        out["highlightWords"] = [{**w, "color": colors["accent"]} for w in out["highlightWords"] if isinstance(w, dict)]
+        # Выделенные слова — цветом бренда, а не жёлтым/зелёным автомонтажа; и не тем же, что
+        # звучащее слово (акцент), иначе подсветки не видно.
+        color = highlight_color(brand, out["activeColor"], out["color"])
+        out["highlightWords"] = [{**w, "color": color} for w in out["highlightWords"] if isinstance(w, dict)]
     return out
+
+
+# Контрастные цвета подсветки по порядку предпочтения (красный — эмоция, зелёный — смысл).
+HIGHLIGHT_FALLBACKS = ("#ff3b30", "#22c55e", "#3b82f6", "#ff4fd8", "#ffffff", "#ffd600")
+
+
+def highlight_color(brand: dict, active: str, text: str) -> str:
+    """Цвет выделенных слов субтитров: виден и рядом со звучащим словом, и на обычном тексте.
+
+    Раньше выделенные слова красились акцентом бренда — тем же цветом, что и звучащее слово,
+    и подсветки не было видно (проверка контраста в add_layers на это ругалась). Порядок:
+    второй цвет бренда (``colors.highlight``), акцент, контрастный из запасных — первый,
+    что не похож ни на звучащее слово, ни на обычный текст."""
+    from app.agent_tools import colors_close
+
+    colors = brand["colors"]
+    for candidate in (colors.get("highlight"), colors.get("accent"), *HIGHLIGHT_FALLBACKS):
+        if candidate and not colors_close(candidate, active) and not colors_close(candidate, text):
+            return candidate
+    return HIGHLIGHT_FALLBACKS[0]
 
 
 def hook_props(props: dict, brand: dict) -> dict:

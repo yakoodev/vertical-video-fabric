@@ -182,7 +182,9 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
                 problems.append(f"{where}.segment_id: кусок {seg_id} указан дважды")
                 continue
             seen.add(seg_id)
-        start, end = _num(raw.get("start_sec")), _num(raw.get("end_sec"))
+        # source_start/source_end — прежние имена из get_clip (алиасы start_sec/end_sec).
+        start = _num(raw.get("start_sec", raw.get("source_start")))
+        end = _num(raw.get("end_sec", raw.get("source_end")))
         if start is None or end is None:
             problems.append(f"{where}: start_sec и end_sec должны быть числами")
             continue

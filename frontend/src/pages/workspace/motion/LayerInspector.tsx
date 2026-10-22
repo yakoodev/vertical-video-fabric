@@ -340,7 +340,8 @@ function CaptionWords({
   const setProps = (patch: Record<string, unknown>) => onChange({ ...layer, props: { ...layer.props, ...patch } } as Layer);
   const setColor = (i: number, color: string | null) =>
     setProps({
-      highlightWords: [...(layer.props.highlightWords ?? []).filter((h) => h.i !== i), ...(color ? [{ i, color }] : [])].sort((a, b) => a.i - b.i),
+      // w — якорь: сервер переставит подсветку на то же слово, если слова субтитров перепишут.
+      highlightWords: [...(layer.props.highlightWords ?? []).filter((h) => h.i !== i), ...(color ? [{ i, color, w: words[i]?.w }] : [])].sort((a, b) => a.i - b.i),
     });
   if (!inRange.length) return <div className="li-note muted">Слов нет — сначала «Распознать речь» в группе «Субтитры».</div>;
   return (

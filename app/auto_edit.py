@@ -130,11 +130,13 @@ def build_auto_edit(
     style: str = "hormozi",
     caption_y: float = 0.72,
     anchor: dict | None = None,
+    hook_top: float | None = None,
 ) -> dict:
     """Слои и камера автомонтажа. ``words`` — [{word, start, end}] во времени клипа.
 
     ``anchor`` — точка, которая при наезде стоит на месте (``subject_box.zoom_anchor``):
-    герой растёт в сторону от текста, а не под него."""
+    герой растёт в сторону от текста, а не под него. ``hook_top`` — верх зоны текста (в split
+    с вебкой сверху — под полосой вебки, ``agent_tools.text_band``)."""
     from app.ai.subject_box import camera_center
 
     from app.agent_tools import safe_text_y
@@ -148,7 +150,8 @@ def build_auto_edit(
         layers.append({
             "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(3.0, duration), "track": 3,
             # Две строки на 0.13 вылезают верхом за безопасную зону 0.10 — центр ниже на высоту текста.
-            "x": 0.5, "y": safe_text_y(hook_props, HOOK_Y), "in": {"type": "pop", "duration": 0.35},
+            "x": 0.5, "y": safe_text_y(hook_props, HOOK_Y, **({"top": hook_top} if hook_top else {})),
+            "in": {"type": "pop", "duration": 0.35},
             "out": {"type": "fade", "duration": 0.2}, "props": hook_props,
         })
         layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
@@ -255,8 +258,11 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
             anchor = zoom_anchor(box, caption_y)
     except Exception:  # noqa: BLE001 - без зрения — место по раскладке
         pass
+    from app.agent_tools import text_band
+
     result = build_auto_edit(
-        plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y, anchor=anchor
+        plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y, anchor=anchor,
+        hook_top=text_band(plan.get("render_settings"))[0],
     )
     settings = dict(plan.get("render_settings") or {})
     old_layers = settings.get("layers") or []

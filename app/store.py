@@ -866,9 +866,12 @@ class AppStore:
         data = dict(row)
         data["content_crop"] = _parse_content_crop(data.get("content_crop"))
         data["chroma_key"] = _parse_chroma_key(data.get("chroma_key"))
-        from app.source_audio import normalize_tracks
+        from app.source_audio import normalize_mix, normalize_tracks
 
+        # audio_mix — дорожки с громкостью [{track, gain_db}]; audio_tracks — прежние номера.
+        data["audio_mix"] = normalize_mix(data.get("audio_tracks"))
         data["audio_tracks"] = normalize_tracks(data.get("audio_tracks"))
+        data["speech_tracks"] = normalize_tracks(data.get("speech_tracks"))
         data["facecam"] = _parse_facecam(data.pop("facecam_json", ""))
         # Don't ship the (potentially huge) cached transcript in every source
         # response — expose only a presence flag + size for the UI.
@@ -1036,15 +1039,15 @@ class AppStore:
 
                 key_value = normalize_key(value)
                 updates["chroma_key"] = _json_text(key_value) if key_value else ""
-            elif key == "audio_tracks":
-                # Какие звуковые дорожки брать ([0,1] — смешать игру и микрофон); None — первая.
-                # Расшифровка исходника была по прежнему звуку — сбрасываем кэш.
-                from app.source_audio import normalize_tracks
+            elif key in ("audio_tracks", "speech_tracks"):
+                # audio_tracks — дорожки для рендера ([0,1] — смешать игру и микрофон, или
+                # [{track, gain_db}] со своей громкостью); speech_tracks — для распознавания
+                # речи. None — по умолчанию. Сброс расшифровки — ниже, если звук для
+                # распознавания сменился.
+                from app.source_audio import mix_storage, normalize_mix, normalize_tracks
 
-                tracks = normalize_tracks(value)
-                updates["audio_tracks"] = _json_text(tracks) if tracks else ""
-                updates["transcript_json"] = "[]"
-                updates["transcript_model"] = ""
+                stored = mix_storage(normalize_mix(value)) if key == "audio_tracks" else normalize_tracks(value)
+                updates[key] = _json_text(stored) if stored else ""
             elif key == "facecam":
                 # Вебка стримера {x,y,w,h} (доли кадра) или None — сбросить.
                 from app.stream_layout import normalize_cam
@@ -1072,6 +1075,16 @@ class AppStore:
                 updates[key] = float(value)
             else:
                 raise ValueError(f"unsupported source field: {key}")
+        if "audio_tracks" in updates or "speech_tracks" in updates:
+            # Расшифровка исходника была по прежнему звуку для распознавания — сбрасываем кэш.
+            from app.source_audio import normalize_mix, speech_mix
+
+            current = self.get_source(source_id)
+            after = {**current, **{k: updates[k] for k in ("audio_tracks", "speech_tracks") if k in updates}}
+            after["audio_mix"] = normalize_mix(after.get("audio_tracks"))
+            if speech_mix(after) != speech_mix(current):
+                updates["transcript_json"] = "[]"
+                updates["transcript_model"] = ""
         self._update_record("sources", source_id, updates)
         return self.get_source(source_id)
 

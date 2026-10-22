@@ -244,10 +244,11 @@ export type CaptionsProps = {
   maxWidth?: number;
   lineHeight?: number;
   letterSpacing?: number;
-  /** Ключевые слова цветом: i — номер слова в `comp.words`. */
-  highlightWords?: { i: number; color: string }[];
+  /** Ключевые слова цветом: i — номер слова в `comp.words`; w и t — якорь (текст и начало
+   * слова): сервер переставляет i на то же слово, когда слова субтитров переписали. */
+  highlightWords?: { i: number; color: string; w?: string; t?: number }[];
   /** Эмодзи, выпрыгивающий над строкой, когда сказано слово i. */
-  emoji?: { i: number; char: string }[];
+  emoji?: { i: number; char: string; w?: string; t?: number }[];
   /** Цвет слов других говорящих (s у слова). Не задано — свой цвет на каждого, кроме A. */
   speakerColors?: { s: string; color: string }[];
   /** Чьи слова показывает слой: пусто — всех; ["A"] — только главного; ["B","C","D"] — остальных. */

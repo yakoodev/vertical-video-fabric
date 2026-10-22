@@ -42,6 +42,45 @@ def _is_hallucination(segment: Any) -> bool:
     return False
 
 
+# Спасение слов из «не речи»: пение, TTS-донаты и речь под громкой игрой декодер видит
+# неуверенно (средняя уверенность сегмента низкая), и фильтр выкидывал сегмент целиком —
+# в расшифровке исходника выходили дыры по 30 с, которые listen на клипе слышал. Слова,
+# в которых модель сама уверена, оставляем, если их несколько, они не «ла-ла-ла» и модель
+# не считает отрезок тишиной почти наверняка.
+_SALVAGE_WORD_PROB = 0.8
+_SALVAGE_MIN_WORDS = 3
+_SALVAGE_MIN_SHARE = 0.6
+_SALVAGE_MAX_NO_SPEECH = 0.9
+_SALVAGE_MIN_DISTINCT = 0.5
+
+
+def _is_phantom(segment: Any) -> bool:
+    text = str(getattr(segment, "text", "") or "").lower()
+    return any(phrase in text for phrase in _KNOWN_PHANTOMS)
+
+
+def _salvage_words(segment: Any) -> list[Any]:
+    """Уверенные слова сегмента, который фильтр счёл «не речью» (пение, TTS, речь под игрой).
+
+    Пусто — сегмент действительно мусор: известный фантом, почти наверняка тишина,
+    мало уверенных слов или повтор одного слога («ла-ла-ла»)."""
+    if _is_phantom(segment):
+        return []
+    no_speech = _num(getattr(segment, "no_speech_prob", None))
+    if no_speech is not None and no_speech >= _SALVAGE_MAX_NO_SPEECH:
+        return []
+    words = [w for w in getattr(segment, "words", None) or [] if str(getattr(w, "word", "") or "").strip()]
+    if not words:
+        return []
+    sure = [w for w in words if (_num(getattr(w, "probability", None)) or 0.0) >= _SALVAGE_WORD_PROB]
+    if len(sure) < _SALVAGE_MIN_WORDS or len(sure) < len(words) * _SALVAGE_MIN_SHARE:
+        return []
+    tokens = [str(getattr(w, "word", "")).strip(" .,!?…-").lower() for w in sure]
+    if len(set(tokens)) < len(tokens) * _SALVAGE_MIN_DISTINCT:
+        return []
+    return sure
+
+
 class WhisperSubtitleProvider:
     """Local forced-alignment transcription via faster-whisper.
 
@@ -94,13 +133,19 @@ class WhisperSubtitleProvider:
         texts: list[str] = []
         decoded_any = False
         dropped = 0
+        salvaged = 0
         for segment in segments_iter:
             decoded_any = True
             # Belt-and-braces on top of the decoder thresholds: never emit words
             # for a window that scores as non-speech / low confidence.
             if _is_hallucination(segment):
-                dropped += 1
-                continue
+                kept = _salvage_words(segment)
+                if not kept:
+                    dropped += 1
+                    continue
+                # Пение / TTS / речь под игрой: только уверенные слова, своим сегментом.
+                salvaged += 1
+                segment = _Salvaged(kept)
             text = str(getattr(segment, "text", "") or "").strip()
             if text:
                 texts.append(text)
@@ -148,6 +193,8 @@ class WhisperSubtitleProvider:
                 "model": size,
                 "requestedModel": model,
                 "whisperLanguageProbability": round(_num(getattr(info, "language_probability", None)) or 0.0, 3),
+                "droppedNonSpeech": dropped,
+                "salvagedSegments": salvaged,
             },
         )
 
@@ -204,6 +251,16 @@ class WhisperSubtitleProvider:
             compute_type=settings.whisper_compute_type,
             download_root=str(settings.whisper_model_dir),
         )
+
+
+class _Salvaged:
+    """Сегмент из спасённых слов: текст и границы — по ним."""
+
+    def __init__(self, words: list[Any]):
+        self.words = words
+        self.text = " ".join(str(getattr(w, "word", "")).strip() for w in words)
+        self.start = _num(getattr(words[0], "start", None))
+        self.end = _num(getattr(words[-1], "end", None))
 
 
 def _num(value: Any) -> float | None:

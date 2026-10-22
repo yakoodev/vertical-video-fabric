@@ -27,13 +27,13 @@ from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWor
 from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_profile
 from app.subtitles.timing import normalize_subtitle_timeline
 from app.settings import settings
-from app.source_audio import mix_chain, source_tracks
+from app.source_audio import is_default_mix, mix_chain, source_mix, speech_mix
 
 MAX_LINES = 400
 
 
 def build_clip_audio_args(
-    source_path: Path, pieces: list[tuple[float, float]], out_path: Path, tracks: list[int] | None = None,
+    source_path: Path, pieces: list[tuple[float, float]], out_path: Path, tracks: Any = None,
 ) -> list[str]:
     """One wav with the clip's pieces played back to back — the audio the render burns onto.
 
@@ -42,14 +42,14 @@ def build_clip_audio_args(
     4-часовой исходник с начала до конца — 11 ГБ через кэш WSL на каждый клип, и
     Docker Desktop падал от нехватки памяти.
 
-    ``tracks`` — звуковые дорожки источника (``source_tracks``): запись игры с микрофоном
-    слышна так же, как в рендере. None — первая дорожка (граф прежний).
+    ``tracks`` — звуковые дорожки источника (``source_mix`` — как в рендере, ``speech_mix`` —
+    для распознавания): номера или ``[{track, gain_db}]``. None — первая дорожка (граф прежний).
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     inputs: list[str] = []
     for start, end in pieces:
         inputs += ["-ss", f"{start:.3f}", "-t", f"{max(0.01, end - start):.3f}", "-i", str(source_path)]
-    if tracks and list(tracks) != [0]:
+    if tracks and not is_default_mix(tracks):
         chains = [mix_chain(i, list(tracks), f"p{i}") for i in range(len(pieces))]
         if len(pieces) > 1:
             joined = "".join(f"[p{i}]" for i in range(len(pieces)))
@@ -376,7 +376,8 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
     pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_tracks(source)), timeout=60 * 10)
+        # Распознаём по дорожке речи (микрофон без игры — меньше выдумок), не по смеси рендера.
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source)), timeout=60 * 10)
         try:
             result = engine.transcribe(audio_path, profile, used_model)
         except RuntimeError:
@@ -457,51 +458,69 @@ def _default_profile(store: Any) -> dict:
 MAX_LISTEN_SEC = 30.0
 
 
-def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: float | None) -> dict:
-    """Что реально звучит в готовом клипе между from_sec и to_sec (с учётом кусков
-    и вырезов): распознаём именно этот звук, а не верим субтитрам.
+def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: float | None,
+                 before_cuts: bool = False) -> dict:
+    """Что реально звучит в готовом клипе между from_sec и to_sec (с учётом кусков,
+    вырезов и наплывов переходов): распознаём именно этот звук, а не верим субтитрам.
 
     Агент-монтажёр проверял так финалы вручную (рендер → распознать хвост mp4):
     договорена ли фраза, сколько тишины после последнего слова, не торчит ли
-    слово из выреза. Здесь — без рендера, по исходнику."""
-    from app.cuts import plan_cuts_for_plan
+    слово из выреза. Здесь — без рендера, по исходнику.
+
+    Время — шкала ``final`` (готовый ролик, app/timebase.py); ``before_cuts`` — шкала
+    ``clip`` (до вырезов, как слои и субтитры). Раньше части клеились встык, без наплывов,
+    и слово выходило позже, чем в ролике (15.62 против 15.23). Распознаётся дорожка речи
+    (``speech_mix``), громкость ``level`` — по смеси рендера."""
     from app.render import _run_ffmpeg  # local import: render imports this module
+    from app.source_audio import separate_speech
     from app.subtitles.registry import QUALITY_WHISPER_MODEL
+    from app.timebase import ClipClock, scale_note
 
     plan = store.get_clip_plan(clip_plan_id)
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.exists():
         raise ValueError("исходник недоступен")
-    cut_plan = plan_cuts_for_plan(plan)
-    parts = cut_plan.parts if cut_plan else (plan.get("segments") or [])
-    total = sum(float(p["end_sec"]) - float(p["start_sec"]) for p in parts)
+    clock = ClipClock.for_plan(plan)
+    scale = "clip" if before_cuts else "final"
+    total = clock.clip_duration if before_cuts else clock.final_duration
     # Без границ — последние 6 с (проверка финала).
     hi = min(total, float(to_sec)) if to_sec is not None else total
     lo = max(0.0, float(from_sec)) if from_sec is not None else max(0.0, hi - 6.0)
     if to_sec is None and from_sec is not None:
         hi = min(total, lo + 6.0)
     if hi - lo < 0.3:
-        raise ValueError(f"пустой отрезок: клип длится {total:.2f} с")
+        raise ValueError(f"пустой отрезок: клип длится {total:.2f} с ({scale_note(scale)})")
     if hi - lo > MAX_LISTEN_SEC:
         hi = lo + MAX_LISTEN_SEC
+    lo_f, hi_f = (clock.clip_to_final(lo), clock.clip_to_final(hi)) if before_cuts else (lo, hi)
+    # Части подряд (после вырезов, без наплывов) — так режется звук.
+    p_lo, p_hi = clock.final_to_parts(lo_f), clock.final_to_parts(hi_f)
     pieces, offset = [], 0.0
-    for part in parts:
+    for part in clock.parts():
         start, end = float(part["start_sec"]), float(part["end_sec"])
-        a, b = max(lo, offset), min(hi, offset + end - start)
+        a, b = max(p_lo, offset), min(p_hi, offset + end - start)
         if b > a:
             pieces.append((start + a - offset, start + b - offset))
         offset += end - start
+    if not pieces:
+        raise ValueError(f"пустой отрезок: клип длится {total:.2f} с ({scale_note(scale)})")
     try:
         profile = {**_default_profile(store), "provider": "whisper"}
     except ValueError:  # стилей нет — распознаванию стиль и не нужен
         profile = {"provider": "whisper"}
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
+    mix_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_tracks(source)), timeout=60 * 5)
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source)), timeout=60 * 5)
         from app.speech_onsets import snap_words, voiced_frames, wav_pcm
 
         pcm = wav_pcm(audio_path)
+        level_pcm = pcm
+        if separate_speech(source):
+            # Громкость — того, что услышит зритель (смесь рендера), а не одного микрофона.
+            _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source)), timeout=60 * 5)
+            level_pcm = wav_pcm(mix_path)
         try:
             result = get_subtitle_provider("whisper").transcribe(audio_path, profile, QUALITY_WHISPER_MODEL)
             raw_words = [w.to_dict() for w in result.words]
@@ -514,18 +533,27 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
         heard, _moved = snap_words(raw_words, voiced_frames(pcm)) if raw_words else ([], 0)
     finally:
         audio_path.unlink(missing_ok=True)
-    words = [[w["word"], round(lo + w["start"], 2), round(lo + w["end"], 2)] for w in heard]
-    note = "секунды готового клипа (после вырезов); переходы с наплывом сдвигают на доли секунды"
+        mix_path.unlink(missing_ok=True)
+
+    def back(t: float) -> float:
+        final = clock.parts_to_final(p_lo + t)
+        return round(clock.final_to_clip(final) if before_cuts else final, 2)
+
+    words = [[w["word"], back(float(w["start"])), back(float(w["end"]))] for w in heard]
+    note = scale_note(scale) + ("; без before_cuts — шкала final (готовый ролик)" if before_cuts else
+                                 "; before_cuts=true — шкала clip (как слои и субтитры get_clip)")
     if not words:
         note = "речи нет — громкость отрезка в level (RMS дБ); " + note
     return {
+        "time": scale,
         "from": round(lo, 2),
         "to": round(hi, 2),
         "clip_duration": round(total, 2),
+        "finished_duration": clock.final_duration,
         "text": " ".join(w[0] for w in words).strip(),
         "words": words,
         "silence_after_last_word": round(hi - words[-1][2], 2) if words else round(hi - lo, 2),
-        "level": _pcm_level(pcm),
+        "level": _pcm_level(level_pcm),
         "note": note,
     }
 
@@ -543,13 +571,17 @@ def find_noises(store: Any, clip_plan_id: int, threshold_db: float | None = None
     """Громкие места звука клипа, где никто не говорит: вшитые эффекты, музыка, шум, выстрелы.
 
     Агент-монтажёр искал такие «пердежи» старого монтажа вручную спектрограммами —
-    распознавание их не видит. Время — клип до вырезов (как у субтитров и вырезов).
-    Окна по 0.1 с сливаются в отрезки (разрыв до 0.3 с — тот же звук): раньше ответ был
-    сотнями кусков по 0.1 с. Порог по умолчанию — медиана клипа + 6 дБ (громче фона
-    ЭТОГО клипа без речи: у игры фон громкий, у разговорного — тишина пауз). Речь — по словам субтитров
-    (±0.08 с); субтитров нет — ищем без вычитания речи (игра без голоса)."""
+    распознавание их не видит. Время — шкала ``clip`` (до вырезов, с наплывами, как у
+    слоёв: отрезок сразу годится в mute_audio). Окна по 0.1 с сливаются в отрезки
+    (разрыв до 0.3 с — тот же звук): раньше ответ был сотнями кусков по 0.1 с. Порог по
+    умолчанию — медиана клипа + 6 дБ (громче фона ЭТОГО клипа без речи: у игры фон
+    громкий, у разговорного — тишина пауз). Речь — по словам субтитров (±0.08 с);
+    субтитров нет, а у источника своя дорожка речи — по голосу на ней; иначе ищем без
+    вычитания речи (игра без голоса)."""
     from app.render import _run_ffmpeg  # local import: render imports this module
+    from app.source_audio import separate_speech
     from app.source_loudness import LOUD_OVER_MEDIAN_DB, loud_spans, median, pcm_levels
+    from app.timebase import ClipClock, scale_note
 
     plan = store.get_clip_plan(clip_plan_id)
     source = store.get_source(int(plan["source_id"]))
@@ -561,37 +593,58 @@ def find_noises(store: Any, clip_plan_id: int, threshold_db: float | None = None
         raise ValueError("у клипа нет кусков")
     words = (store.get_clip_plan_subtitles(clip_plan_id) or {}).get("words") or []
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
+    voice_path = settings.tmp_dir / f"{uuid4().hex}.wav"
+    voiced: list[bool] = []
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_tracks(source)), timeout=60 * 5)
-        from app.speech_onsets import wav_pcm
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_mix(source)), timeout=60 * 5)
+        from app.speech_onsets import FRAME_SEC, voiced_frames, wav_pcm
 
         raw = wav_pcm(audio_path)
+        if not words and separate_speech(source):
+            _run_ffmpeg(build_clip_audio_args(source_path, pieces, voice_path, speech_mix(source)), timeout=60 * 5)
+            voiced = voiced_frames(wav_pcm(voice_path))
     finally:
         audio_path.unlink(missing_ok=True)
+        voice_path.unlink(missing_ok=True)
     step = 0.1
     levels = pcm_levels(raw, 16000, step)
 
     def talking(a: float, b: float) -> bool:
         mid = (a + b) / 2
-        return any(float(w["start"]) - 0.08 <= mid <= float(w["end"]) + 0.08 for w in words)
+        if words:
+            return any(float(w["start"]) - 0.08 <= mid <= float(w["end"]) + 0.08 for w in words)
+        k = int(mid / FRAME_SEC)
+        return any(voiced[j] for j in range(max(0, k - 4), min(len(voiced), k + 5)))
 
+    by_speech = bool(words) or any(voiced)
     # Фон — медиана окон без речи: у разговорного клипа это тишина пауз, у игры — её звук.
-    background = [db for i, db in enumerate(levels) if not (words and talking(i * step, (i + 1) * step))]
+    background = [db for i, db in enumerate(levels) if not (by_speech and talking(i * step, (i + 1) * step))]
     med = median(background or levels)
     threshold = float(threshold_db) if threshold_db is not None else med + LOUD_OVER_MEDIAN_DB
 
-    found = loud_spans(levels, step, threshold, gap=0.3, min_len=min_len, skip=talking if words else None)
+    found = loud_spans(levels, step, threshold, gap=0.3, min_len=min_len, skip=talking if by_speech else None)
+    # Шкала clip: отрезок через стык кусков с наплывом — двумя частями (piece — чей).
+    clock = ClipClock(plan.get("segments") or [], (plan.get("render_settings") or {}).get("transition"))
+    noises = []
+    for item in found:
+        for part in clock.plain_range_to_clip(item["start"], item["end"]):
+            noises.append({**item, "start": round(part["start"], 2), "end": round(part["end"], 2),
+                           **({"piece": part["piece"]} if len(pieces) > 1 else {})})
     out = {
-        "noises": found[:80],
+        "time": "clip",
+        "noises": noises[:80],
         "threshold_db": round(threshold, 1),
         "median_db": round(med, 1),
-        "speech_excluded": bool(words),
-        "note": ("громкий звук без речи (секунды клипа до вырезов). Если это вшитый эффект/шум в паузе — "
-                 "вырежи apply_cuts или заглуши mute_audio; если он поверх слова — не трогай, проверь listen"),
+        "speech_excluded": by_speech,
+        "note": (f"громкий звук без речи ({scale_note('clip')}) — отрезки годятся прямо в mute_audio и "
+                 "set_source_gain. Если это вшитый эффект/шум в паузе — вырежи apply_cuts или заглуши "
+                 "mute_audio; если он поверх слова — не трогай, проверь listen"),
     }
-    if not words:
+    if not by_speech:
         out["note"] += ("; субтитров нет — речь не вычтена: это просто громкие места клипа "
                         "(в игре — выстрелы, взрывы, реакции)")
-    if len(found) > 80:
-        out["note"] += f"; показаны первые 80 из {len(found)} — подними threshold_db"
+    elif not words:
+        out["note"] += "; речь вычтена по голосу на дорожке речи (speech_tracks)"
+    if len(noises) > 80:
+        out["note"] += f"; показаны первые 80 из {len(noises)} — подними threshold_db"
     return out

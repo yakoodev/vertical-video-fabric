@@ -853,29 +853,28 @@ def contact_sheet_jpeg(
     n = len(picked) if picked else max(2, min(16, int(n)))
     width = max(120, min(540, int(width)))
     plan = store.get_clip_plan(clip_plan_id)
-    duration = sum(float(s["end_sec"]) - float(s["start_sec"]) for s in plan.get("segments") or [])
+    # Шкалы времени (app/timebase.py): подписи — готовый ролик (final) или clip, кадр
+    # компоновщик берёт на шкале clip. Раньше длина и вырезы считались «кусками подряд»
+    # и при переходе с наплывом кадр уезжал от подписи на длину наплыва.
+    from app.timebase import ClipClock
+
+    clock = ClipClock.for_plan(plan)
+    duration = clock.clip_duration
     if duration <= 0:
         raise ValueError("у клипа нет кусков")
-    times = [round(duration * (k + 0.5) / n, 2) for k in range(n)]
-    shots = times
     # Есть вырезы — кадры только из того, что останется, с временем готового клипа:
     # агент и человек видят монтаж, а не вырезанные паузы.
-    from app.cuts import CutMap, normalize_cuts
-
-    mapper = CutMap(normalize_cuts((plan.get("render_settings") or {}).get("cuts")))
-    if mapper:
-        final = mapper.duration(duration)
-        times = [round(final * (k + 0.5) / n, 2) for k in range(n)]
-        shots = [round(mapper.source_time(t), 3) for t in times]
+    final = clock.final_duration
+    times = [round(final * (k + 0.5) / n, 2) for k in range(n)]
+    shots = [clock.final_to_clip(t) for t in times]
     if picked and before_cuts:
         # Время слоёв: кадр берём ровно там, подпись — то же число, что в слоях.
         times = [min(t, max(0.0, duration - 0.2)) for t in picked]
         shots = list(times)
     elif picked:
-        final = mapper.duration(duration) if mapper else duration
         # Последний кадр компоновщик не отдаёт (агент: падение на 21.5 из 21.55 с) — с запасом в кадры.
         times = [min(t, max(0.0, final - 0.2)) for t in picked]
-        shots = [round(mapper.source_time(t), 3) for t in times] if mapper else list(times)
+        shots = [clock.final_to_clip(t) for t in times]
     with tempfile.TemporaryDirectory() as tmp:
         paths: list[Path] = []
         for k in range(n):
@@ -932,6 +931,9 @@ def _drawtext_escape(text: str) -> str:
 MAX_SOURCE_SHEET = 24
 
 
+MIN_SOURCE_SHEET_STEP = 0.04
+
+
 def source_sheet_times(from_sec: float, to_sec: float, step: float | None, duration: float | None) -> list[float]:
     """Моменты листа кадров исходника: через ``step`` (не больше 24), иначе 12 равномерно."""
     lo = max(0.0, float(from_sec))
@@ -941,19 +943,21 @@ def source_sheet_times(from_sec: float, to_sec: float, step: float | None, durat
     if hi <= lo:
         raise ValueError("to_sec должен быть больше from_sec (и внутри исходника)")
     if step:
-        step = max(0.2, float(step))
+        # До 0.04 с — покадрово (25 кадр/с) на коротком окне: агент апекса искал кадр выстрела.
+        step = max(MIN_SOURCE_SHEET_STEP, float(step))
         count = min(MAX_SOURCE_SHEET, int((hi - lo) / step + 1e-6) + 1)
-        return [round(lo + k * step, 2) for k in range(count)]
+        return [round(lo + k * step, 3) for k in range(count)]
     count = 12 if hi - lo >= 6 else max(2, int(hi - lo) + 1)
     return [round(lo + (hi - lo) * (k + 0.5) / count, 2) for k in range(count)]
 
 
-def source_time_label(t: float) -> str:
-    """Секунды исходника → «1:02:03.5» / «2:03.5»."""
+def source_time_label(t: float, digits: int = 1) -> str:
+    """Секунды исходника → «1:02:03.5» / «2:03.5» (``digits`` знаков после точки)."""
     t = max(0.0, float(t))
     hours, rest = divmod(t, 3600)
     minutes, seconds = divmod(rest, 60)
-    return f"{int(hours)}:{int(minutes):02d}:{seconds:04.1f}" if hours >= 1 else f"{int(minutes)}:{seconds:04.1f}"
+    sec = f"{seconds:0{3 + digits}.{digits}f}"
+    return f"{int(hours)}:{int(minutes):02d}:{sec}" if hours >= 1 else f"{int(minutes)}:{sec}"
 
 
 def source_contact_sheet_jpeg(store: Any, source_id: int, from_sec: float, to_sec: float,
@@ -993,4 +997,6 @@ def source_contact_sheet_jpeg(store: Any, source_id: int, from_sec: float, to_se
                 timeout=60,
             )
             paths.append(out)
-        return tile_frames_jpeg(paths, [source_time_label(t) for t in times], width, cols=cols), times
+        # Шаг мельче 0.1 с — подписи до сотых, иначе соседние кадры подписаны одинаково.
+        digits = 2 if len(times) > 1 and min(b - a for a, b in zip(times, times[1:])) < 0.1 else 1
+        return tile_frames_jpeg(paths, [source_time_label(t, digits) for t in times], width, cols=cols), times

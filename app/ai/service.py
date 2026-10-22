@@ -180,11 +180,11 @@ class VideoAnalysisService:
                 transcript_cues = self.store.get_source_transcript(source_id)
                 if not transcript_cues:
                     progress("transcript")
-                    from app.source_audio import source_tracks
+                    from app.source_audio import speech_mix
 
-                    # Выбраны дорожки (игра + микрофон) — слушаем оригинал: в сжатой
-                    # для анализа копии дорожки уже сведены по-своему.
-                    tracks = source_tracks(source)
+                    # Выбраны дорожки (игра + микрофон или своя дорожка речи) — слушаем
+                    # оригинал: в сжатой для анализа копии дорожки уже сведены по-своему.
+                    tracks = speech_mix(source)
                     transcript_cues = transcribe_source_cues(
                         (source if tracks else analyzer_source).get("local_path"), tracks=tracks)
                     if transcript_cues:

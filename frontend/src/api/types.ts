@@ -188,6 +188,8 @@ export interface RenderSettings {
   backdrop?: { color: string; color2: string };
   /** Тишина вместо звука исходника на отрезках (секунды клипа до вырезов). */
   mute?: { start: number; end: number }[];
+  /** Громкость звука исходника на отрезках, дБ (секунды клипа до вырезов, app/audio_mute.py). */
+  gain?: { start: number; end: number; gain_db: number }[];
 }
 
 export interface MontageInsert {

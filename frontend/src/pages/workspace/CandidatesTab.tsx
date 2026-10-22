@@ -61,6 +61,7 @@ import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, typ
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
+import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import {
   GeneratePanel,
@@ -1189,6 +1190,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   cutsRef.current = cuts;
   const muteRef = useRef<MuteSpan[]>([]);
   muteRef.current = mute;
+  // 🔊 Громкость звука исходника на отрезках (render.gain): поднять тихий кусок, приглушить
+  // громкий; агент ставит её инструментом set_source_gain.
+  const [gain, setGain] = useState<GainSpan[]>([]);
+  const gainRef = useRef<GainSpan[]>([]);
+  gainRef.current = gain;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
@@ -1331,6 +1337,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     cuts,
     backdrop,
     mute,
+    gain,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1375,6 +1382,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setInserts([]);
       setCuts([]);
       setMute([]);
+      setGain([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
       setTlSelected(null);
@@ -1405,6 +1413,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       cuts: s.cuts ?? [],
       backdrop: normalizeBackdrop(s.backdrop),
       mute: s.mute ?? [],
+      gain: s.gain ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1429,6 +1438,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setCuts(s.cuts ?? []);
     setBackdrop(normalizeBackdrop(s.backdrop));
     setMute(s.mute ?? []);
+    setGain(s.gain ?? []);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);
@@ -1464,6 +1474,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           // Вырезы — диапазоны времени ЭТОГО клипа, обложка-картинка — его кадр: не копируем.
           cuts: p.render_settings?.cuts ?? [],
           mute: p.render_settings?.mute ?? [],
+          gain: p.render_settings?.gain ?? [],
           cover: settings.cover.mode === "image" ? (p.render_settings?.cover ?? DEFAULT_COVER) : settings.cover,
         }),
       ),
@@ -1821,6 +1832,37 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+  }, []);
+  // Громкость исходника на отрезках — в превью тоже: громче 1 тег <video> не умеет, поэтому при
+  // подъёмах всё превью тише на самый большой подъём (баланс кусков как в рендере). Свою громкость
+  // плеера владелец не теряет: base — то, что он выставил, мы только умножаем.
+  useEffect(() => {
+    let raf = 0;
+    let base: number | null = null;
+    let lastSet = -1;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) {
+        const spans = inEditorRef.current ? gainRef.current : [];
+        if (spans.length) {
+          if (base == null || Math.abs(v.volume - lastSet) > 0.005) base = v.volume; // владелец двинул громкость
+          const t = clipTimeOf(tcSegsRef.current, v.currentTime);
+          const want = t == null ? base : previewVolume(spans, t, base);
+          if (Math.abs(v.volume - want) > 0.005) v.volume = want;
+          lastSet = v.volume;
+        } else if (base != null) {
+          v.volume = base;
+          base = null;
+          lastSet = -1;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (base != null && videoRef.current) videoRef.current.volume = base;
+    };
   }, []);
   // Заглушённые отрезки превью проигрывает без звука видео — как выйдет в рендере
   // (звуки слоёв и музыка играют). Глушим только то, что заглушили сами: свой
@@ -3377,6 +3419,67 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   ))}
                 </div>
               ) : null}
+            </Group>
+            <Group title="Громкость исходника" badge={gain.length ? `${gain.length} отр.` : "как есть"}>
+              <div className="muted li-note">
+                Поднять тихий кусок (голос под игрой) или приглушить громкий: звук исходника на отрезке громче/тише
+                на столько дБ, картинка та же; звуки слоёв и музыка не меняются. Тихий микрофон по всему ролику —
+                громкость дорожки в звуке проекта.
+              </div>
+              {gain.length ? (
+                <div className="ed-layer-list">
+                  {gain.map((g, i) => (
+                    <div key={`${g.start}-${g.end}`} className="ed-layer-row" title="Перейти на секунду раньше отрезка">
+                      <span className="ed-layer-ico">🔊</span>
+                      <span
+                        className="ed-layer-name mono"
+                        onClick={() => seekClipTime(Math.max(0, g.start - 1), false)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        {formatTimecode(g.start)} – {formatTimecode(g.end)}
+                      </span>
+                      <input
+                        type="number"
+                        className="input mono"
+                        style={{ width: 70 }}
+                        step={1}
+                        min={GAIN_MIN_DB}
+                        max={GAIN_MAX_DB}
+                        value={g.gain_db}
+                        title="дБ: плюс — громче, минус — тише"
+                        onChange={(e) => {
+                          const db = Number(e.target.value);
+                          if (!Number.isFinite(db)) return;
+                          const clamped = Math.round(Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, db)) * 10) / 10;
+                          setGain((prev) => prev.map((x, j) => (j === i ? { ...x, gain_db: clamped } : x)));
+                        }}
+                      />
+                      <span className="muted">дБ</span>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        title="Убрать отрезок"
+                        onClick={() => setGain((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="btn ghost sm"
+                title="Отрезок 3 с от курсора, +6 дБ — потом поправьте дБ"
+                onClick={() => {
+                  const v = videoRef.current;
+                  const t = v ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
+                  const at = t ?? 0;
+                  setGain((prev) => normalizeGain([...prev, { start: at, end: at + 3, gain_db: 6 }]));
+                }}
+              >
+                🔊 Громче у курсора
+              </button>
             </Group>
             <Group
               title="Раскладка кадра"

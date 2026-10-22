@@ -1884,11 +1884,14 @@ def api_source_audio(source_id: int, _auth: AuthDep) -> dict:
 
 @app.patch("/api/sources/{source_id}/audio", tags=["Sources"], summary="Choose (and mix) the source audio tracks")
 def api_set_source_audio(source_id: int, payload: dict, _auth: AuthDep) -> dict:
-    """``{"audio_tracks": [0, 1]}`` — смешать игру и микрофон; ``[1]`` — только вторую; null — первая."""
-    from app.source_audio import set_source_audio
+    """``{"audio_tracks": [0, 1]}`` — смешать игру и микрофон; ``[1]`` — только вторую; null — первая.
+    ``[{"track": 1, "gain_db": 12}]`` — своя громкость дорожки (``"auto"`` — замерить);
+    ``{"speech_tracks": [1]}`` — дорожка для распознавания речи (null — как audio_tracks)."""
+    from app.source_audio import _KEEP, set_source_audio
 
+    tracks = payload.get("audio_tracks", payload.get("tracks", _KEEP))
     try:
-        return set_source_audio(store, source_id, payload.get("audio_tracks", payload.get("tracks")))
+        return set_source_audio(store, source_id, tracks, payload.get("speech_tracks", _KEEP))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

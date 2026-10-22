@@ -98,11 +98,12 @@ def summary(levels: list[float]) -> dict:
             "max_db": round(max(levels), 1) if levels else SILENCE_DB}
 
 
-def read_window_pcm(source: dict, start: float, length: float, rate: int = RATE) -> bytes:
-    """Звук окна исходника (выбранные дорожки, моно ``rate`` Гц) — сырые 16-битные сэмплы."""
+def read_window_pcm(source: dict, start: float, length: float, rate: int = RATE, tracks: Any = None) -> bytes:
+    """Звук окна исходника (выбранная смесь дорожек или ``tracks``, моно ``rate`` Гц) —
+    сырые 16-битные сэмплы."""
     from app.render import _run_ffmpeg
     from app.settings import settings
-    from app.source_audio import extract_args, source_tracks
+    from app.source_audio import extract_args, source_mix
     from app.speech_onsets import wav_pcm
 
     path = Path(str(source.get("local_path") or ""))
@@ -110,7 +111,8 @@ def read_window_pcm(source: dict, start: float, length: float, rate: int = RATE)
         raise ValueError("файла исходника нет")
     out = settings.tmp_dir / f"loudness-{uuid4().hex}.wav"
     try:
-        _run_ffmpeg(extract_args(path, out, source_tracks(source), start=start, duration=length, rate=rate),
+        _run_ffmpeg(extract_args(path, out, tracks if tracks is not None else source_mix(source), start=start,
+                                 duration=length, rate=rate),
                     timeout=60 * 5)
         return wav_pcm(out)
     finally:
@@ -118,9 +120,18 @@ def read_window_pcm(source: dict, start: float, length: float, rate: int = RATE)
 
 
 def source_loudness(store: Any, source_id: int, from_sec: float | None = None, to_sec: float | None = None,
-                    step: float | None = None, top: int = 10) -> dict:
-    """Профиль громкости окна исходника (секунды исходника)."""
+                    step: float | None = None, top: int = 10, track: int | None = None) -> dict:
+    """Профиль громкости окна исходника (секунды исходника). ``track`` — одна дорожка
+    записи вместо смеси (сравнить игру и микрофон перед set_source_audio gain_db)."""
     source = store.get_source(int(source_id))
+    tracks = None
+    if track is not None:
+        from app.source_audio import audio_streams
+
+        total = len(audio_streams(source))
+        if track < 0 or (total and track >= total):
+            raise ValueError(f"track: в записи {total} звуковых дорожек (0..{max(0, total - 1)})")
+        tracks = [int(track)]
     total = float(source.get("duration_sec") or 0)
     lo = max(0.0, float(from_sec or 0.0))
     if total and lo >= total:
@@ -135,13 +146,15 @@ def source_loudness(store: Any, source_id: int, from_sec: float | None = None, t
     if hi - lo < 1.0:
         raise ValueError("окно короче секунды")
     step = min(MAX_STEP, max(MIN_STEP, float(step or 1.0)))
-    levels = pcm_levels(read_window_pcm(source, lo, hi - lo), RATE, step)
+    levels = pcm_levels(read_window_pcm(source, lo, hi - lo, **({"tracks": tracks} if tracks else {})), RATE, step)
     if not levels:
         raise ValueError("в этом окне нет звука (или нет звуковой дорожки)")
     info = summary(levels)
     top = max(1, min(MAX_PEAKS, int(top or 10)))
     return {
         "project_id": source["id"],
+        "time": "source",
+        "audio": f"дорожка {track}" if tracks else "смесь рендера (set_source_audio)",
         "from_sec": round(lo, 2),
         "to_sec": round(lo + len(levels) * step, 2),
         "step": step,

@@ -195,6 +195,74 @@ def part_overlaps(
     return plan_joins(normalize_transition(transition), durations, gaps, jump_joins)
 
 
+SPEECH_MARGIN_SEC = 0.05
+
+
+def speech_under_joins(segments: list[dict], transition: object, words: list[dict]) -> dict:
+    """Наплыв перехода на речь: где склейка уводит слова под переход и какой длины он не мешал бы.
+
+    Агент стримов: fadeblack ложился на последние слова куска — речь звучала на чёрном.
+    Наплыв длиной ``o`` занимает последние ``o`` секунд куска A и первые ``o`` куска B
+    (картинка и звук перетекают). ``words`` — слова субтитров «кусками подряд».
+    Возвращает ``{joins: [{join, overlap, safe, words_a, words_b, extend_a, extend_b}],
+    safe_duration}``: ``safe`` — наплыв, который не задевает речь на этом стыке;
+    ``extend_a``/``extend_b`` — на сколько продлить конец A / начало B, чтобы речь ушла из-под
+    перехода при текущей длине."""
+    overlaps = part_overlaps(segments, transition)
+    joins = []
+    bound = 0.0
+    lengths = [max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in segments]
+    clean = []
+    for w in words or []:
+        try:
+            clean.append((float(w["start"]), float(w["end"]), str(w.get("word") or "").strip()))
+        except (KeyError, TypeError, ValueError):
+            continue
+    for index, overlap in enumerate(overlaps):
+        start_a = bound
+        bound += lengths[index]
+        end_b = bound + lengths[index + 1]
+        if overlap <= 0:
+            continue
+        in_a = [w for w in clean if start_a <= w[0] < bound]
+        in_b = [w for w in clean if bound <= w[0] < end_b]
+        last_a = max((min(w[1], bound) for w in in_a), default=None)
+        first_b = min((w[0] for w in in_b), default=None)
+        room_a = bound - last_a if last_a is not None else lengths[index]
+        room_b = first_b - bound if first_b is not None else lengths[index + 1]
+        safe = max(0.0, min(room_a, room_b) - SPEECH_MARGIN_SEC)
+        under_a = [w[2] for w in in_a if w[1] > bound - overlap]
+        under_b = [w[2] for w in in_b if w[0] < bound + overlap]
+        joins.append({
+            "join": index, "overlap": round(overlap, 3), "safe": round(safe, 3),
+            "words_a": under_a[-4:], "words_b": under_b[:4],
+            "extend_a": round(max(0.0, overlap - room_a + SPEECH_MARGIN_SEC), 2) if under_a else 0.0,
+            "extend_b": round(max(0.0, overlap - room_b + SPEECH_MARGIN_SEC), 2) if under_b else 0.0,
+        })
+    hit = [j for j in joins if j["words_a"] or j["words_b"]]
+    return {"joins": joins, "hit": hit,
+            "safe_duration": round(min((j["safe"] for j in joins), default=MAX_DURATION), 3)}
+
+
+def speech_join_warnings(report: dict, transition: object) -> list[str]:
+    """Человеческие предупреждения по ``speech_under_joins``."""
+    kind = normalize_transition(transition)["type"]
+    out = []
+    for j in report.get("hit") or []:
+        said = " / ".join(x for x in ("«" + " ".join(j["words_a"]) + "»" if j["words_a"] else "",
+                                      "«" + " ".join(j["words_b"]) + "»" if j["words_b"] else "") if x)
+        fix = []
+        if j["safe"] >= MIN_DURATION:
+            fix.append(f"короче: duration ≤ {j['safe']:.2f} (или set_transition fit_speech: true)")
+        if j["extend_a"]:
+            fix.append(f"продли кусок {j['join']} в конце на {j['extend_a']:.2f} с (trim_piece end_sec)")
+        if j["extend_b"]:
+            fix.append(f"начни кусок {j['join'] + 1} раньше на {j['extend_b']:.2f} с (trim_piece start_sec)")
+        out.append(f"переход {kind} {j['overlap']:.2f} с на стыке кусков {j['join']}→{j['join'] + 1} ложится на речь "
+                   f"{said} — слова уйдут под переход" + (": " + "; ".join(fix) if fix else ""))
+    return out
+
+
 def join_times(durations: list[float], overlaps: float | list[float]) -> list[float]:
     """Where each join lands on the OUTPUT timeline (middle of the transition)."""
     joins = max(0, len(durations) - 1)
