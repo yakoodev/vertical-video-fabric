@@ -112,7 +112,7 @@ _NEAR_PREV_WEIGHT = 3.0  # how strongly we stick to the previously tracked objec
 
 # Cap the VLM batch: one request per segment stays cheap, and the tail of very
 # choppy segments keeps its CV framing.
-_VLM_MAX_SHOTS = 12
+_VLM_MAX_SHOTS = 24  # один запрос на кусок; 50 с мультфильма — 10–20 планов
 
 
 def _motion_focus(
@@ -246,7 +246,8 @@ def compute_segment_focus(
     samples: int | None = None,
     preset: str | None = None,
     strategy: str | None = None,
-    vlm_resolver: Callable[[list[bytes]], list[float | None]] | None = None,
+    vlm_resolver: Callable[..., list[float | None]] | None = None,
+    speech_hint: Callable[[float, float], str] | None = None,
 ) -> list[dict]:
     """Focus track for a segment.
 
@@ -407,7 +408,14 @@ def compute_segment_focus(
     # which is exactly what the CV heuristics can only approximate. Anything it
     # doesn't answer keeps the CV value.
     if vlm_batch:
-        answers = vlm_resolver([img for (_lo, _hi, img) in vlm_batch]) or []
+        images = [img for (_lo, _hi, img) in vlm_batch]
+        if speech_hint is not None:
+            # Что звучит на каждом плане (секунды от начала куска) — подсказка, кто говорит.
+            hints = [speech_hint(float(points[lo]["t"]), float(points[min(hi, len(points)) - 1]["t"]))
+                     for (lo, hi, _img) in vlm_batch]
+            answers = vlm_resolver(images, hints=hints) or []
+        else:
+            answers = vlm_resolver(images) or []
         for (lo, hi, _img), x in zip(vlm_batch, answers):
             if x is None:
                 continue

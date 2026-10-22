@@ -31,6 +31,10 @@ _PROMPT = (
     "For every image, decide where the MAIN SUBJECT sits HORIZONTALLY — the thing a "
     "viewer actually looks at: the person speaking, the meme/graphic/text being shown, "
     "the character in the action. Ignore background, decorations and empty space.\n"
+    "When a person or character is the subject, give the centre of their FACE/HEAD, not of "
+    "the body (the crop must keep the face fully inside).\n"
+    "Some images come with the line spoken during that shot: pick the character who says it "
+    "(open mouth, facing the listener), not just the biggest one.\n"
     "Answer with x for each image: 0.0 = left edge, 0.5 = centre, 1.0 = right edge — "
     "the horizontal centre of the subject.\n"
     "If the subject spans the whole width, or there is no single clear subject, answer 0.5.\n"
@@ -68,17 +72,25 @@ def _loads_json_object(text: str) -> dict:
     return parsed
 
 
-def shots_focus_x(images: list[bytes], model: str | None = None, client: GeminiClient | None = None) -> list[float | None]:
+def shots_focus_x(
+    images: list[bytes],
+    model: str | None = None,
+    client: GeminiClient | None = None,
+    hints: list[str] | None = None,
+) -> list[float | None]:
     """One x per input frame (None where the model didn't answer). Never raises —
     callers fall back to the CV framing."""
     if not images:
         return []
     try:
         gemini = client or GeminiClient()
-        parts: list[dict] = [
-            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(img).decode("ascii")}}
-            for img in images
-        ]
+        parts: list[dict] = []
+        for i, img in enumerate(images):
+            # Реплика плана — чтобы выбрать того, кто говорит (проверочный прогон: в кадре
+            # оставалась рука Рика, пока говорил другой герой).
+            hint = (hints[i] if hints and i < len(hints) else "") or ""
+            parts.append({"text": f"Image {i}" + (f" — spoken in this shot: «{hint[:200]}»" if hint else "")})
+            parts.append({"inline_data": {"mime_type": "image/png", "data": base64.b64encode(img).decode("ascii")}})
         parts.append({"text": _PROMPT})
         payload = {
             "contents": [{"role": "user", "parts": parts}],

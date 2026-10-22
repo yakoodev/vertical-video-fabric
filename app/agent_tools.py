@@ -2186,6 +2186,15 @@ def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
     return []
 
 
+def _piece_speech(words: list[dict], clip_start: float):
+    """Слова субтитров клипа, звучащие в отрезке куска (секунды от его начала) — одной строкой."""
+    def speech(a: float, b: float) -> str:
+        lo, hi = clip_start + a, clip_start + b
+        return " ".join(str(w.get("word") or "") for w in words
+                        if lo - 0.2 <= float(w.get("start", 0)) <= hi + 0.2).strip()
+    return speech
+
+
 def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
     """Кадрирование 9:16 сам: лица/движение по планам (app/autofocus), для мультфильмов —
     ещё и Gemini по кадру на план. Проверочный прогон: встроенный монтажёр 8 шагов
@@ -2205,11 +2214,14 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         resolver = shots_focus_x
     plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
     source = ctx.store.get_source(int(plan["source_id"]))
+    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
     done = []
     for index in indexes:
         piece = pieces[index]
+        hint = _piece_speech(words, float(piece.get("clip_start") or 0.0)) if resolver and words else None
+        kwargs = {"speech_hint": hint} if hint else {}
         points = compute_segment_focus(source, float(piece["source_start"]), float(piece["source_end"]),
-                                       vlm_resolver=resolver)
+                                       vlm_resolver=resolver, **kwargs)
         local = []
         for point in points:  # время точек — уже от начала куска
             item = {"t": round(float(point["t"]), 3), "x": round(float(point["x"]), 4)}
