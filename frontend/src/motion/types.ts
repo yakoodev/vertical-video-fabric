@@ -398,8 +398,13 @@ export type Composition = {
   chat?: ChatMessage[];
   /** Хромакей основы: компоновщик вырезает фон, кладёт `background` и слои `behind`. */
   key?: ChromaKey;
-  /** Фон за вырезанной основой: цвет или вертикальный градиент `color` → `color2`. */
-  background?: { color: string; color2?: string };
+  /** Фон за вырезанной основой (backgrounds.ts; старый `{color, color2}` тоже читается). */
+  background?: Background;
+  /**
+   * Анимированный фон основы без ключа (раскладка meme, кусок «шире окна»): с `t0` по `t1`
+   * (время клипа) фон рисуется на кадре основы вне `hole` (там видео), до камеры и слоёв.
+   */
+  backgrounds?: BackgroundZone[];
   /** Раскладка стрима: камера двигает только этот прямоугольник кадра (окно игры), px. */
   cameraBox?: PixelRect;
   /** Прямоугольники основы, которые камера не трогает (окошко вебки pip), px. */
@@ -407,6 +412,22 @@ export type Composition = {
 };
 
 export type PixelRect = { x: number; y: number; w: number; h: number };
+
+/** Стиль фона: четыре анимированных (по умолчанию) и две статичные заливки. */
+export type BackgroundKind = "aurora" | "grid" | "bokeh" | "waves" | "gradient" | "solid";
+
+/** Процедурный фон (backgrounds.ts): цвета `[]` — «в цветах клипа» (тёмный + акцент). */
+export type Background = {
+  kind: BackgroundKind;
+  /** До трёх #rrggbb: [основа, акцент, второй акцент]; у solid/gradient — цвета заливки. */
+  colors: string[];
+  /** Скорость 0.1..4; цикл — 10 / speed секунд. */
+  speed: number;
+  /** Яркость свечения 0..1. */
+  intensity: number;
+};
+
+export type BackgroundZone = { t0: number; t1: number; bg: Background; hole?: PixelRect | null };
 
 export type ChromaKey = {
   /** Цвет фона основы, `0xrrggbb`. */

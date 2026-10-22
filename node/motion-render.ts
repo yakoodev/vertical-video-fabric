@@ -15,10 +15,15 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import { createCanvas, GlobalFonts, ImageData, loadImage, type Image } from "@napi-rs/canvas";
 import {
   cameraMatrix,
+  clipAccent,
   collectChatImageRefs,
   collectImageRefs,
   drawFrame,
   isIdentityCamera,
+  normalizeBackground,
+  paintBackground,
+  paintBackgroundAround,
+  type BackgroundZone,
   type Composition,
   type Ctx2D,
   type PixelRect,
@@ -113,7 +118,23 @@ function readComp(path: string): Composition {
       : [],
     ...readKey(raw),
     ...readRegions(raw, width - (width % 2), height - (height % 2)),
+    ...readZones(raw, width - (width % 2), height - (height % 2)),
   };
+}
+
+/** Зоны анимированного фона основы (meme, кусок «шире окна»): целые, по времени. */
+function readZones(raw: Partial<Composition>, W: number, H: number): Pick<Composition, "backgrounds"> {
+  if (!Array.isArray(raw.backgrounds)) return {};
+  const zones: BackgroundZone[] = [];
+  for (const z of raw.backgrounds.slice(0, 200)) {
+    if (!z || typeof z !== "object") continue;
+    const t0 = Number(z.t0);
+    const t1 = Number(z.t1);
+    if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) continue;
+    zones.push({ t0, t1, bg: normalizeBackground(z.bg), hole: readRect(z.hole, W, H) });
+  }
+  zones.sort((a, b) => a.t0 - b.t0);
+  return zones.length ? { backgrounds: zones } : {};
 }
 
 /** Прямоугольник в пикселях кадра, обрезанный по кадру; мусор — null. */
@@ -137,8 +158,6 @@ function readRegions(raw: Partial<Composition>, W: number, H: number): Pick<Comp
   return { ...(box ? { cameraBox: box } : {}), ...(pinned.length ? { pinned } : {}) };
 }
 
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-
 /** Хромакей и фон за основой. Лук идёт прямо в граф ffmpeg — только безопасные символы. */
 function readKey(raw: Partial<Composition>): Pick<Composition, "key" | "background"> {
   const k = raw.key;
@@ -157,10 +176,8 @@ function readKey(raw: Partial<Composition>): Pick<Composition, "key" | "backgrou
       despill: k.despill === "blue" ? "blue" : "green",
       grade,
     },
-    background: {
-      color: bg && HEX_COLOR.test(String(bg.color)) ? String(bg.color) : "#0b0d14",
-      color2: bg && HEX_COLOR.test(String(bg.color2)) ? String(bg.color2) : "",
-    },
+    // Новый {kind, colors, speed} и старый {color, color2} — app/backgrounds.py.
+    background: normalizeBackground(bg),
   };
 }
 
@@ -375,6 +392,10 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
   let frameCanvas: ReturnType<typeof createCanvas> | null = null;
   // Последний кадр основы: если основа короче композиции, держим его до конца.
   let last: ImageData | null = null;
+  // Фон «в цветах клипа» берёт акцент из субтитров — один раз на композицию.
+  const bgOpts = { accent: clipAccent(comp.layers), createCanvas: env.createCanvas };
+  const zones = comp.backgrounds ?? [];
+  const zoneAt = (t: number) => zones.find((z) => t >= z.t0 && t < z.t1) ?? null;
 
   return {
     canvas,
@@ -386,7 +407,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       if (comp.key) {
         // Хромакей: фон → слои «за персонажем» → вырезанная основа → остальные слои.
-        paintBackdrop(ctx, comp, W, H);
+        paintBackground(ctx, comp.background ?? normalizeBackground(null), t, W, H, bgOpts);
         drawFrame(ctx, comp, t, env, "behind");
         if (last) {
           frameCanvas ??= createCanvas(W, H);
@@ -401,14 +422,29 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         drawFrame(ctx, comp, t, env, "front");
         return;
       }
-      if (!last) ctx.clearRect(0, 0, W, H);
-      else if (isIdentityCamera(m)) ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
-      else if (comp.cameraBox || comp.pinned) {
+      // Анимированный фон основы (meme, кусок «шире окна») — часть основы: рисуется
+      // на её кадре вне видео до камеры, чтобы наезд двигал их вместе, как в ffmpeg.
+      const zone = zoneAt(t);
+      let staged = false;
+      if (zone && last) {
+        frameCanvas ??= createCanvas(W, H);
+        const fctx = frameCanvas.getContext("2d") as unknown as Ctx2D;
+        fctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
+        paintBackgroundAround(fctx, zone.bg, t, W, H, zone.hole, bgOpts);
+        staged = true;
+      }
+      if (!last) {
+        ctx.clearRect(0, 0, W, H);
+        if (zone) paintBackgroundAround(ctx, zone.bg, t, W, H, zone.hole, bgOpts);
+      } else if (isIdentityCamera(m)) {
+        if (staged) ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0);
+        else ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
+      } else if (comp.cameraBox || comp.pinned) {
         // Раскладка стрима: камера двигает только окно игры, окошко вебки и полоса
         // вебки стоят на месте (раньше зум увеличивал весь собранный кадр с окошком).
         frameCanvas ??= createCanvas(W, H);
-        frameCanvas.getContext("2d").putImageData(last, 0, 0);
-        ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
+        if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
+        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0);
         const box = comp.cameraBox ?? { x: 0, y: 0, w: W, h: H };
         const bm = cameraMatrix(comp.camera, t, box.w, box.h);
         ctx.save();
@@ -426,7 +462,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         }
       } else {
         frameCanvas ??= createCanvas(W, H);
-        frameCanvas.getContext("2d").putImageData(last, 0, 0);
+        if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
         // Зум ≥ 1 и центр зажат — кадр основы всегда закрывает холст целиком.
         ctx.save();
         ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
@@ -438,17 +474,6 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       drawFrame(ctx, comp, t, env);
     },
   };
-}
-
-function paintBackdrop(ctx: Ctx2D, comp: Composition, W: number, H: number): void {
-  const bg = comp.background ?? { color: "#0b0d14" };
-  if (bg.color2) {
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, bg.color);
-    g.addColorStop(1, bg.color2);
-    ctx.fillStyle = g;
-  } else ctx.fillStyle = bg.color;
-  ctx.fillRect(0, 0, W, H);
 }
 
 /* ---------- режимы ---------- */

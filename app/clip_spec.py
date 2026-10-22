@@ -218,7 +218,7 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
             fit = raw.get("fit")
             problem = fit_problem(fit)
             if problem:
-                problems.append(f"{where}.fit: {problem} (null — обычный кадр, {{w {FIT_MIN_W}..1, bg blur|black|#rrggbb}})")
+                problems.append(f"{where}.fit: {problem} (null — обычный кадр, {{w {FIT_MIN_W}..1, bg blur|aurora|grid|bokeh|waves|{{фон}}|black|#rrggbb}})")
                 continue
             fit = normalize_fit(fit)
         piece_title = raw.get("title")
@@ -382,7 +382,8 @@ def json_schema() -> dict:
                                      "description": "сокращение: фиксированный кадр = focus [{t:0, x}]"},
                         "fit": {"type": ["object", "number", "null"],
                                 "description": "кадр шире окна 9:16 на весь кусок (двое по краям): {w 0.35..1 — доля "
-                                               "ширины исходника в кадре, bg blur|black|#rrggbb}; null — обычный кадр"},
+                                               "ширины исходника в кадре, bg blur | анимированный фон (aurora|grid|bokeh|waves или "
+                                               "{kind, colors, speed, intensity}) | black|#rrggbb}; null — обычный кадр"},
                     },
                 },
                 "description": f"куски по порядку; каждый {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с",
@@ -417,7 +418,8 @@ def json_schema() -> dict:
                         "description": "раскладка: mode single|split|pip_cam|meme; cam {x,y,w,h} — вебка в долях "
                         "исходника; ratio 0.2..0.6 (split, доля высоты под вебку); cam_pos top|bottom; "
                         "pip {x,y,w} — центр/ширина окошка в долях выхода; border {color,width}; gap (px 1080×1920); "
-                        "meme — горизонтальное видео целиком сверху во всю ширину, ниже фон bg (#rrggbb) под "
+                        "meme — горизонтальное видео целиком сверху во всю ширину, ниже фон bg (анимированный "
+                        "{kind aurora|grid|bokeh|waves, colors, speed, intensity}; #rrggbb — заливка) под "
                         "картинки и титры; video_y 0..0.6 — верх видео в долях высоты",
                     },
                 },

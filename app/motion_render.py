@@ -232,6 +232,7 @@ def write_comp(
     background: dict | None = None,
     camera_box: dict | None = None,
     pinned: list[dict] | None = None,
+    backgrounds: list[dict] | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте."""
@@ -251,6 +252,9 @@ def write_comp(
         comp["words"] = words
     if chat:
         comp["chat"] = chat
+    if backgrounds and not key:
+        # Анимированный фон основы (app/backgrounds.py): вне видео, до камеры и слоёв.
+        comp["backgrounds"] = backgrounds
     if key:
         # Хромакей основы (app/chroma_key.py): компоновщик вырезает зелёнку,
         # кладёт фон и слои «за персонажем», сверху — основу.
@@ -721,6 +725,7 @@ def render_frame_png(
         source = store.get_source(int(segment.get("source_id") or plan["source_id"]))
         source_path = Path(source.get("local_path") or "")
         keyed: dict = {}
+        zone = None
         if source_path.is_file():
             # Зелёнка: основа как в рендере (без лука, поля цвета ключа), вырез — в компоновщике.
             preset, keyed = _render._keyed_render(preset, {"key": source.get("chroma_key")})
@@ -731,6 +736,11 @@ def render_frame_png(
                 framed["focus"] = [{"t": 0.0, "x": x}]
             # Кусок «шире окна» (fit) — своя основа, как в рендере.
             piece = _render._preset_for_segment(preset, segment)
+            if not keyed.get("key"):
+                # Анимированный фон meme / куска «шире окна» — как в рендере (app/backgrounds.py).
+                from app.backgrounds import piece_zone
+
+                zone = piece_zone(preset.get("layout"), segment, source, source.get("content_crop"), width, height)
             reframe = _render._segment_reframe_x(framed, piece, source)
             graph = _render._render_filter(width, height, fps, piece, None, _render._base_crop(source, keyed), reframe)
             _render._run_ffmpeg(
@@ -771,6 +781,7 @@ def render_frame_png(
             duration=max(total, t + 0.5), layers=hold_final_layers(layers, total), camera=camera, words=words,
             chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
             camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
+            backgrounds=[{"t0": 0.0, "t1": round(max(total, t) + 60.0, 3), **zone}] if zone else None,
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

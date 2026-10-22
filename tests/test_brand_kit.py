@@ -80,7 +80,8 @@ def test_normalize_brand_fills_defaults_and_drops_junk():
     assert brand["hook_style"]["stroke"] == {"color": "#000000", "width": 10}
     assert normalize_brand({"hook_style": {"stroke": None}})["hook_style"]["stroke"] is None
     # Фон за персонажем по умолчанию — цвет плашки бренда.
-    assert brand["backdrop"] == {"color": "#0b0d14", "color2": ""}
+    # Фон бренда — анимированный, цвета [] — «цвета бренда» (app/backgrounds.py).
+    assert brand["backdrop"] == {"kind": "aurora", "colors": [], "speed": 1.0, "intensity": 0.7}
     assert normalize_brand(brand) == brand  # повторная нормализация ничего не меняет
 
 
@@ -173,7 +174,8 @@ def test_apply_brand_styles_clip_and_is_idempotent(tmp_path, monkeypatch):
 
     # Музыка, фон, эффекты: minimal — не больше двух, свой оставлен.
     assert render["music_on"] is True and render["track_id"] == track["id"]
-    assert render["backdrop"] == {"color": "#0b0d14", "color2": "#1a1f33"}
+    # Фон — анимированный в цветах бренда (старый {color, color2} бренда — тоже), и под видео meme.
+    assert render["backdrop"] == {"kind": "aurora", "colors": ["#0b0d14", "#ff6b2c"], "speed": 1.0, "intensity": 0.7}
     sfx = [l["id"] for l in render["layers"] if l["type"] == "audio"]
     assert sorted(sfx) == ["auto_whoosh", "my_click"]
 

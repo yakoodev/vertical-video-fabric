@@ -67,3 +67,21 @@ export {
   type TemplateParam,
   type TemplateResult,
 } from "./templates";
+export {
+  BACKGROUND_KINDS,
+  ANIMATED_BACKGROUNDS,
+  BACKGROUND_INFO,
+  BACKGROUND_PERIOD,
+  DEFAULT_BACKGROUND,
+  DEFAULT_ACCENT,
+  LEGACY_DEFAULT_COLOR,
+  normalizeBackground,
+  isAnimatedBackground,
+  backgroundLoop,
+  backgroundPhase,
+  backgroundPalette,
+  clipAccent,
+  paintBackground,
+  paintBackgroundAround,
+  type BackgroundOptions,
+} from "./backgrounds";

@@ -6,27 +6,28 @@
  * прозрачно, дальше мягкий край шириной `blend`, плюс подавление зелёного ореола.
  */
 
+import {
+  DEFAULT_BACKGROUND,
+  normalizeBackground,
+  paintBackground,
+  type Background,
+  type BackgroundOptions,
+} from "@/motion";
+
 export interface ChromaKey {
   color: string;
   similarity: number;
   blend: number;
 }
 
-export interface Backdrop {
-  color: string;
-  color2: string;
-}
+/** Фон за персонажем — процедурный фон движка (анимированный по умолчанию, motion/backgrounds.ts). */
+export type Backdrop = Background;
 
-export const DEFAULT_BACKDROP: Backdrop = { color: "#0b0d14", color2: "" };
+export const DEFAULT_BACKDROP: Backdrop = DEFAULT_BACKGROUND;
 
-const HEX = /^#[0-9a-f]{6}$/i;
-
+/** Как app/chroma_key.normalize_backdrop: старый {color, color2} — заливка, не выбран — аврора. */
 export function normalizeBackdrop(raw: unknown): Backdrop {
-  const s = (raw && typeof raw === "object" ? raw : {}) as Partial<Backdrop>;
-  return {
-    color: typeof s.color === "string" && HEX.test(s.color) ? s.color.toLowerCase() : DEFAULT_BACKDROP.color,
-    color2: typeof s.color2 === "string" && HEX.test(s.color2) ? s.color2.toLowerCase() : "",
-  };
+  return normalizeBackground(raw);
 }
 
 function rgb(color: string): [number, number, number] {
@@ -66,12 +67,14 @@ export function applyChromaKey(ctx: CanvasRenderingContext2D, w: number, h: numb
   ctx.putImageData(img, 0, 0);
 }
 
-export function paintBackdrop(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Backdrop): void {
-  if (bg.color2) {
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, bg.color);
-    g.addColorStop(1, bg.color2);
-    ctx.fillStyle = g;
-  } else ctx.fillStyle = bg.color;
-  ctx.fillRect(0, 0, w, h);
+/** Фон за персонажем в момент t клипа — тем же кодом, что и в рендере. */
+export function paintBackdrop(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  bg: Backdrop,
+  t = 0,
+  opts: BackgroundOptions = {},
+): void {
+  paintBackground(ctx, bg, t, w, h, opts);
 }

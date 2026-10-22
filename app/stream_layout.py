@@ -14,10 +14,11 @@
      "gap": 0,
      "video_y": 0.04,                 # meme: верх видео в долях высоты выхода
      "video_scale": 1.0,              # meme: ширина видео в ширинах кадра (>1 — крупнее, края срезаны)
-     "bg": "#0b0d14"}                 # meme: фон под видео (место для картинок и титров)
+     "bg": {"kind": "aurora", ...}}   # meme: фон под видео (app/backgrounds.py), анимированный
 
 «meme» — мем-формат: горизонтальное видео целиком во всю ширину сверху, ниже —
-однотонный фон под скриншоты и титры (как «Борат × сайт»). Раньше агент собирал
+фон под скриншоты и титры (как «Борат × сайт»): ffmpeg заливает его первым цветом,
+анимированный фон поверх рисует компоновщик моушна. Раньше агент собирал
 это из split с «вебкой» на весь кадр и закрывал низ прямоугольником.
 
 ``gap`` и ``border.width`` — пиксели кадра 1080×1920; на другом размере
@@ -34,6 +35,8 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+
+from app.backgrounds import normalize_background
 
 LAYOUT_MODES = ("single", "split", "pip_cam", "meme")
 CAM_POSITIONS = ("top", "bottom")
@@ -91,7 +94,8 @@ def normalize_layout(raw: object) -> dict:
         "gap": int(round(_num(src.get("gap"), 0, 0, 200))),
         "video_y": round(_num(src.get("video_y"), 0.04, 0.0, 0.6), 4),
         "video_scale": round(_num(src.get("video_scale"), 1.0, 1.0, 4.0), 4),
-        "bg": src["bg"].lower() if isinstance(src.get("bg"), str) and _COLOR_RE.match(src["bg"]) else "#0b0d14",
+        # Фон meme (app/backgrounds.py): по умолчанию анимированный; старый "#rrggbb" — заливка.
+        "bg": normalize_background(src.get("bg")),
     }
 
 

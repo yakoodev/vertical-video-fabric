@@ -543,3 +543,90 @@ test("субтитры: фильтр голосов — главный слой 
   const others = E.captionPages(ctx, talk, { style: "hormozi", speakers: ["B", "C", "D"] }, 0, 5, "Montserrat");
   assert.deepEqual(others.flatMap((p) => p.words.map((w) => w.text)), ["ПЕРЕДАЧ"]);
 });
+
+/* ---------- анимированные фоны ---------- */
+
+test("фон: старый {color, color2} — заливка, не выбран — аврора, имя стиля строкой", () => {
+  const A = { kind: "aurora", colors: [], speed: 1, intensity: 0.7 };
+  assert.deepEqual(E.normalizeBackground(null), A);
+  assert.deepEqual(E.normalizeBackground({ color: "#0b0d14", color2: "" }), A); // фон никто не выбирал
+  assert.deepEqual(E.normalizeBackground({ color: "#FF0000" }), { ...A, kind: "solid", colors: ["#ff0000"] });
+  assert.deepEqual(E.normalizeBackground({ color: "#112233", color2: "#445566" }), { ...A, kind: "gradient", colors: ["#112233", "#445566"] });
+  assert.deepEqual(E.normalizeBackground("grid"), { ...A, kind: "grid" });
+  assert.deepEqual(E.normalizeBackground({ kind: "waves", colors: ["#ABCDEF", "bad"], speed: 9, intensity: -2 }), { kind: "waves", colors: ["#abcdef"], speed: 4, intensity: 0 });
+  // Палитра «в цветах клипа»: тёмная основа + акцент субтитров; белый акцент не годится.
+  assert.equal(E.backgroundPalette(A, "#ff6b2c")[1], "#ff6b2c");
+  assert.equal(E.backgroundPalette(A, "#ffffff")[1], E.DEFAULT_ACCENT);
+  assert.equal(E.clipAccent([{ id: "c", type: "captions", props: { style: "hormozi" } }]), "#ffe81f");
+});
+
+function bgPixels(bg, t, w = 216, h = 384) {
+  const cv = createCanvas(w, h);
+  E.paintBackground(cv.getContext("2d"), bg, t, w, h, { accent: "#22d3ee", createCanvas: (a, b) => createCanvas(a, b) });
+  return cv.getContext("2d").getImageData(0, 0, w, h).data;
+}
+
+const maxDiff = (a, b) => {
+  let m = 0;
+  for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i]));
+  return m;
+};
+
+test("фон: цикл бесшовный — кадр в t и t + цикл совпадает, а в середине цикла другой", () => {
+  for (const kind of E.ANIMATED_BACKGROUNDS) {
+    for (const speed of [1, 1.7]) {
+      const bg = E.normalizeBackground({ kind, speed });
+      const loop = E.backgroundLoop(bg);
+      for (const t of [0, 0.37, 4.2]) {
+        assert.ok(maxDiff(bgPixels(bg, t), bgPixels(bg, t + loop)) <= 1, `${kind} ×${speed}: шов на t=${t}`);
+      }
+      assert.ok(maxDiff(bgPixels(bg, 0.37), bgPixels(bg, 0.37 + loop / 2)) > 20, `${kind}: фон не двигается`);
+    }
+  }
+});
+
+test("CLI: зона фона рисуется вне видео, видео в дыре не тронуто; кадр 1080×1920 быстрый", async () => {
+  const base = join(tmp, "bgbase.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xff0000:size=1080x1920:rate=30", "-t", "1", "-pix_fmt", "yuv420p", base], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const hole = { x: 0, y: 78, w: 1080, h: 604 };
+  for (const kind of E.ANIMATED_BACKGROUNDS) {
+    const p = writeInputs(`bgzone-${kind}`, { width: 1080, height: 1920, fps: 30, duration: 1, layers: [], backgrounds: [{ t0: 0, t1: 5, bg: { kind }, hole }] });
+    const png = join(tmp, `bgzone-${kind}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(await loadImage(readFileSync(png)), 0, 0);
+    const px = (x, y) => [...ctx.getImageData(x, y, 1, 1).data.slice(0, 3)];
+    const red = ([r0, g0, b0]) => r0 > 200 && g0 < 40 && b0 < 40;
+    assert.ok(red(px(540, 380)), `${kind}: видео в дыре закрыто фоном`);
+    assert.ok(!red(px(540, 1400)) && !red(px(540, 30)), `${kind}: вне видео нет фона`);
+  }
+  // Скорость: 30 кадров фона-сетки (самый тяжёлый: линии на весь кадр) во весь кадр.
+  const p = writeInputs("bgspeed", { width: 1080, height: 1920, fps: 30, duration: 1, layers: [], backgrounds: [{ t0: 0, t1: 5, bg: { kind: "grid" } }] });
+  const t0 = Date.now();
+  const r = run(["--comp", p.comp, "--assets", p.assets, "--output", join(tmp, "bgspeed.mp4"), "--preset", "ultrafast"]);
+  assert.equal(r.status, 0, r.stderr);
+  console.log(`# фон grid: 30 кадров 1080×1920 за ${((Date.now() - t0) / 1000).toFixed(1)} с (с запуском и кодированием)`);
+});
+
+test("CLI: хромакей кладёт анимированный фон, старый {color} — заливкой", async () => {
+  const base = join(tmp, "green.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1", "-pix_fmt", "yuv420p", base], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const key = { color: "0x00fe00", similarity: 0.3, blend: 0.05 };
+  const colorAt = async (background, x, y) => {
+    const p = writeInputs("keyed", { width: 270, height: 480, fps: 30, duration: 1, layers: [], key, background });
+    const png = join(tmp, "keyed.png");
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const cv = createCanvas(270, 480);
+    cv.getContext("2d").drawImage(await loadImage(readFileSync(png)), 0, 0);
+    return [...cv.getContext("2d").getImageData(x, y, 1, 1).data.slice(0, 3)];
+  };
+  assert.deepEqual(await colorAt({ color: "#336699" }, 135, 240), [0x33, 0x66, 0x99]);
+  const a = await colorAt({ kind: "aurora", colors: ["#101020", "#ff00aa"] }, 135, 120);
+  const b = await colorAt({ kind: "aurora", colors: ["#101020", "#ff00aa"] }, 135, 400);
+  assert.notDeepEqual(a, b, "аврора — не одна заливка");
+});

@@ -3474,7 +3474,7 @@ def api_brands(_auth: AuthDep) -> list[dict]:
 @app.post("/api/brands", tags=["Brands"], summary="Create a brand kit (font, colors, logo, CTA, music)")
 def api_create_brand(_auth: AuthDep, payload: dict = Body(...)) -> dict:
     """Поля — как в ответе: name, font, colors{text,accent,plate}, logo_asset_id, caption_style,
-    hook_style, cta{text,url_text,duration_sec}, music_track_id, backdrop{color,color2}, sfx_policy."""
+    hook_style, cta{text,url_text,duration_sec}, music_track_id, backdrop{kind,colors,speed,intensity} (анимированный фон, app/backgrounds.py), sfx_policy."""
     try:
         return store.create_brand(str(payload.get("name") or ""), **{k: v for k, v in payload.items() if k != "name"})
     except ValueError as exc:

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { brandsApi, type Brand, type BrandInput } from "@/api/brands";
 import { audioTracksApi, montageAssetsApi } from "@/api/assets";
@@ -7,7 +7,8 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ErrorState, Loading } from "@/components/ui";
-import { CAPTION_STYLES } from "@/motion";
+import { CAPTION_STYLES, DEFAULT_BACKGROUND, paintBackground, type Background } from "@/motion";
+import { BackgroundPicker } from "@/pages/workspace/BackgroundPicker";
 
 // Новый бренд начинается с нейтральной формы — те же умолчания, что у normalize_brand.
 const EMPTY: BrandInput = {
@@ -20,7 +21,7 @@ const EMPTY: BrandInput = {
   hook_style: { font: "", color: null, size: null, plate: false, stroke: { color: "#000000", width: 10 }, uppercase: true },
   cta: { text: "", url_text: "", duration_sec: 3 },
   music_track_id: null,
-  backdrop: { color: "#0b0d14", color2: "" },
+  backdrop: DEFAULT_BACKGROUND,
   sfx_policy: "minimal",
 };
 
@@ -38,13 +39,39 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
+/** Цвета «бренда» для фона без своих цветов — как app/brand_kit.resolved_backdrop. */
+function brandPalette(b: BrandInput): string[] {
+  return [b.colors.plate, b.colors.accent, ...(b.colors.highlight ? [b.colors.highlight] : [])];
+}
+
+/** Живой фон бренда под схемой кадра — тем же движком, что и рендер. */
+function BrandBackdrop({ bg, auto }: { bg: Background; auto: string[] }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const state = useRef({ bg, auto });
+  state.current = { bg, auto };
+  useEffect(() => {
+    let raf = 0;
+    const scratch = (w: number, h: number) => Object.assign(document.createElement("canvas"), { width: w, height: h });
+    const draw = (now: number) => {
+      const cv = ref.current;
+      const ctx = cv?.getContext("2d");
+      const { bg: v, auto: a } = state.current;
+      if (cv && ctx) paintBackground(ctx, v.colors.length ? v : { ...v, colors: a }, now / 1000, cv.width, cv.height, { createCanvas: scratch });
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <canvas ref={ref} className="brand-preview-bg" width={180} height={320} aria-hidden="true" />;
+}
+
 /** Схематичный кадр 9:16: хук, логотип, субтитры и призыв в цветах бренда. */
 function BrandPreview({ b, logoUrl }: { b: BrandInput; logoUrl?: string }) {
   const font = b.font ? `'${b.font}', sans-serif` : undefined;
-  const bg = b.backdrop.color2 ? `linear-gradient(${b.backdrop.color}, ${b.backdrop.color2})` : b.backdrop.color;
   const hookColor = b.hook_style.color || b.colors.accent;
   return (
-    <div className="brand-preview" style={{ background: bg, fontFamily: font }}>
+    <div className="brand-preview" style={{ background: b.colors.plate, fontFamily: font }}>
+      <BrandBackdrop bg={b.backdrop} auto={brandPalette(b)} />
       <div
         className="brand-preview-hook"
         style={{
@@ -279,19 +306,14 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
           </label>
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <ColorField label="Фон (зелёнка)" value={b.backdrop.color} onChange={(v) => set("backdrop", { ...b.backdrop, color: v })} />
-          {b.backdrop.color2 ? (
-            <ColorField label="Низ градиента" value={b.backdrop.color2} onChange={(v) => set("backdrop", { ...b.backdrop, color2: v })} />
-          ) : null}
-          <label className="check" title="Фон за вырезанным персонажем — градиентом сверху вниз">
-            <input
-              type="checkbox"
-              checked={Boolean(b.backdrop.color2)}
-              onChange={(e) => set("backdrop", { ...b.backdrop, color2: e.target.checked ? b.colors.plate : "" })}
-            />
-            <span>градиент</span>
-          </label>
+        <div style={{ display: "grid", gap: 6, maxWidth: 420 }}>
+          <span className="muted" style={{ fontSize: 12 }}>Фон за персонажем (зелёнка) и под видео meme</span>
+          <BackgroundPicker
+            value={b.backdrop}
+            onChange={(v) => set("backdrop", v)}
+            autoLabel="цвета бренда"
+            autoColors={brandPalette(b)}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>

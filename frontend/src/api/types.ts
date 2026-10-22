@@ -1,4 +1,4 @@
-import type { CameraKey, Layer } from "@/motion";
+import type { Background, CameraKey, Layer } from "@/motion";
 import type { StreamLayout } from "@/pages/workspace/layout";
 export interface CropRect {
   x: number;
@@ -190,8 +190,8 @@ export interface RenderSettings {
   layout?: StreamLayout;
   /** ✂ Джамп-каты: вырезанные паузы/слова-паразиты, секунды клипа ДО вырезов (app/cuts.py). */
   cuts?: { start: number; end: number }[];
-  /** Фон за вырезанным персонажем (источник с хромакеем). */
-  backdrop?: { color: string; color2: string };
+  /** Фон за вырезанным персонажем (источник с хромакеем), анимированный — app/backgrounds.py. */
+  backdrop?: Background;
   /** Тишина вместо звука исходника на отрезках (секунды клипа до вырезов). */
   mute?: { start: number; end: number }[];
   /** Громкость звука исходника на отрезках, дБ (секунды клипа до вырезов, app/audio_mute.py). */

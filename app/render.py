@@ -30,7 +30,8 @@ from app.stream_layout import (
     scaled_px,
     split_geometry,
 )
-from app.transitions import build_join_args, is_plain_concat, normalize_transition, plan_joins
+from app.transitions import build_join_args, is_plain_concat, normalize_transition, part_overlaps, plan_joins
+from app.backgrounds import background_zones, fill_color, needs_zones
 from app.video_crop import build_reframe_x_expr
 
 
@@ -187,6 +188,20 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     return {**preset, "layout": None, "piece_fit": fit}
 
 
+def _with_background_zones(
+    motion: dict | None, preset: dict, parts: list[dict], overlaps: list[float], source: dict
+) -> dict | None:
+    """Зоны анимированного фона основы (meme, кусок «шире окна») — в моушн для
+    компоновщика (app/backgrounds.py). С хромакеем фон один на весь кадр (backdrop)."""
+    if not motion or motion.get("key"):
+        return motion
+    zones = background_zones(
+        preset.get("layout"), parts, overlaps, source, source.get("content_crop"),
+        int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920),
+    )
+    return {**motion, "backgrounds": zones} if zones else motion
+
+
 class ClipRenderService:
     def __init__(self, store: AppStore) -> None:
         self.store = store
@@ -269,6 +284,7 @@ class ClipRenderService:
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
             base_preset, motion = _keyed_render(preset, motion)
+            motion = _with_background_zones(motion, preset, [segment], [], source)
             piece_preset = _preset_for_segment(base_preset, segment)
             args = build_ffmpeg_render_args(
                 source_path=Path(source["local_path"]),
@@ -410,6 +426,7 @@ class ClipRenderService:
             # Без вырезов части — это сами куски (рендер ровно прежний).
             parts = cut_parts or segments
             jumps = list(jump_joins or []) if cut_parts else None
+            motion = _with_background_zones(motion, preset, parts, part_overlaps(parts, join, jumps), source)
             rendered_parts: list[Path] = []
             for index, segment in enumerate(parts):
                 part_path = temp_dir / f"part-{index:03d}.mp4"
@@ -823,6 +840,10 @@ class ClipRenderService:
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
+        if not (visual or {}).get("key") and needs_zones(layout, segments):
+            # Анимированный фон meme / куска «шире окна» рисует компоновщик — он нужен
+            # и клипу без слоёв (зоны фона считает рендер, app/backgrounds.py).
+            visual = visual or {"layers": [], "camera": []}
         if cut_plan is not None:
             # Куски делятся на части в обход вырезов — это всегда путь монтажа.
             clip = self.render_montage(
@@ -1094,7 +1115,7 @@ class ClipRenderService:
             assets.update(motion.get("chat_assets") or {})
             camera = motion.get("camera") or []
             drawn = video
-            if layers or camera or motion.get("key"):
+            if layers or camera or motion.get("key") or motion.get("backgrounds"):
                 try:
                     meta = probe_media(video)
                     comp_w = meta.width or int(preset.get("output_width") or 1080)
@@ -1112,6 +1133,7 @@ class ClipRenderService:
                         chat=motion.get("chat"),
                         key=motion.get("key"),
                         background=motion.get("background"),
+                        backgrounds=motion.get("backgrounds"),
                         camera_box=(regions or {}).get("box"),
                         pinned=(regions or {}).get("pinned"),
                     )
@@ -1894,7 +1916,7 @@ def _piece_fit_filter(
     w = min(1.0, max(0.05, float(fit.get("w") or 1.0)))
     video_w = even_px(width / w)
     crop_x = reframe_x if reframe_x else f"(iw-{width})/2"
-    bg = str(fit.get("bg") or "blur")
+    bg = fit.get("bg") or "blur"
     if bg == "blur":
         prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
         background = (
@@ -1903,7 +1925,8 @@ def _piece_fit_filter(
         )
     else:
         prefix, (fg_in,) = _crop_prefix(source_crop, 1)
-        color = "black" if bg == "black" else ff_color(bg)
+        # Анимированный фон (app/backgrounds.py) кладёт компоновщик, тут — его первый цвет.
+        color = "black" if bg == "black" else ff_color(fill_color(bg))
         background = f"color=c={color}:s={width}x{height}:r={_fps(fps)}[pbg]"
     video = (
         f"[{fg_in}]scale={video_w}:-2,"
@@ -1994,7 +2017,8 @@ def _layout_filter(
         top = even_px(float(layout["video_y"]) * height) if layout["video_y"] > 0 else 0
         video_w = even_px(width * float(layout.get("video_scale") or 1.0))
         video = f"{prefix}[{vin}]scale={video_w}:-2,setsar=1[lvid]"
-        background = f"color=c={ff_color(layout['bg'])}:s={width}x{height}:r={_fps(fps)}[lbg]"
+        # Анимированный фон (app/backgrounds.py) рисует компоновщик поверх — тут его первый цвет.
+        background = f"color=c={ff_color(fill_color(layout['bg']))}:s={width}x{height}:r={_fps(fps)}[lbg]"
         return f"{video};{background};[lbg][lvid]overlay=x={(width - video_w) // 2}:y={top}:shortest=1,{tail}"
     # pip_cam: обычный кадр + окошко вебки (центр и ширина — доли выхода).
     pip = layout["pip"]
