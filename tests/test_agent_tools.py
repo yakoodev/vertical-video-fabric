@@ -408,3 +408,27 @@ def test_set_subtitle_words_replaces_text_and_timing(tmp_path, monkeypatch):
     payload = store.get_clip_plan_subtitles(plan["id"])
     assert [w["word"] for w in payload["words"]] == ["Художник,", "риггер,", "ожидание."]
     assert payload["words"][0]["start"] == 1.0 and payload["lines"]
+
+
+def test_upload_image_tool_takes_base64(tmp_path, monkeypatch):
+    import base64
+    import subprocess
+
+    from app.agent_tools import ToolError, h_upload_image
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    png = tmp_path / "shot.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x32", "-frames:v", "1", str(png)],
+                   check=True)
+    ctx = _ctx(store, plan["id"])
+    out = h_upload_image(ctx, {"data_base64": base64.b64encode(png.read_bytes()).decode(), "filename": "shot.png",
+                               "label": "Скрин"})
+    assert out["ok"] and out["width"] == 64 and out["height"] == 32
+    assert store.get_montage_asset(out["asset_id"])["label"] == "Скрин"
+    for bad in (base64.b64encode(b"not an image").decode(), "!!"):
+        try:
+            h_upload_image(ctx, {"data_base64": bad, "filename": "x.png"})
+        except ToolError:
+            continue
+        raise AssertionError("ожидалась ошибка")

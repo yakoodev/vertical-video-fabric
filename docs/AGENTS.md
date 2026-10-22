@@ -66,6 +66,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `list_fonts`, `search_emoji(q)`, `list_packs`, `search_pack(pack, q)` | шрифты, эмодзи, паки стикеров/звуков/мемов |
 | `list_assets(q?)` | «Файлы для монтажа» владельца (asset_id) |
 | `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
+| `upload_image(data_base64, filename, label?)` | своя картинка (скриншот сайта, сделанный у себя) → asset_id |
 | `list_subtitle_styles`, `set_subtitles`, `edit_subtitle_lines` | субтитры: вкл/стиль/высота, правка текста строк |
 | `set_transition`, `trim_piece`, `add_insert`, `remove_insert` | переход, подрезка куска, вставки-мемы |
 | `list_music`, `set_music(on, track_id)` | фоновая музыка (пак CC0 + загруженная владельцем), громкость сама под голос |

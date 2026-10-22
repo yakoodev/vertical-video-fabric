@@ -27,6 +27,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from app import motion
@@ -1183,6 +1184,56 @@ def h_add_image_from_url(ctx: ToolContext, args: dict) -> dict:
             "width": asset.get("width"), "height": asset.get("height")}
 
 
+MAX_UPLOAD_IMAGE_BYTES = 12 * 1024 * 1024
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def h_upload_image(ctx: ToolContext, args: dict) -> dict:
+    """Своя картинка агента (скриншот сайта и т.п.) в библиотеку — base64 в аргументах.
+
+    Агент-монтажёр снимал скрины vtubika.store у себя и собирал multipart-запрос
+    к /api/montage-assets руками: по MCP загрузить файл было нечем."""
+    import base64
+    import binascii
+    from uuid import uuid4
+
+    from app.montage_assets import assets_dir, kind_for, probe_asset
+
+    name = Path(str(args.get("filename") or "image.png")).name
+    if Path(name).suffix.lower() not in _IMAGE_EXTS:
+        raise ToolError("filename — картинка: .png, .jpg, .webp или .gif")
+    raw = str(args.get("data_base64") or "")
+    if "," in raw[:100] and raw.startswith("data:"):
+        raw = raw.split(",", 1)[1]  # data:image/png;base64,...
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ToolError("data_base64 — не base64") from exc
+    if not data:
+        raise ToolError("пустой файл")
+    if len(data) > MAX_UPLOAD_IMAGE_BYTES:
+        raise ToolError("картинка больше 12 МБ — уменьши или сожми")
+    dest = assets_dir() / f"{uuid4().hex}-{name}"
+    dest.write_bytes(data)
+    meta = probe_asset(dest)
+    if not meta.get("width"):
+        dest.unlink(missing_ok=True)
+        raise ToolError("это не картинка — файл не читается")
+    asset = ctx.store.create_montage_asset(
+        kind=kind_for(name, "") or "image",
+        label=str(args.get("label") or Path(name).stem)[:120],
+        description=str(args.get("description") or "")[:500],
+        tags="",
+        file_path=str(dest),
+        original_filename=name,
+        mime_type="",
+        size_bytes=len(data),
+        **meta,
+    )
+    return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
+            "width": asset.get("width"), "height": asset.get("height")}
+
+
 def h_generate_image(ctx: ToolContext, args: dict) -> dict:
     from app.ai.asset_generate import generate_asset
 
@@ -1977,6 +2028,15 @@ def _build_registry() -> list[Tool]:
             _obj({"url": {"type": "string"}, "label": {"type": "string"}, "description": {"type": "string"},
                   "query": {"type": "string"}}, ["url"]),
             h_add_image_from_url, scope="global", label=lambda a: f"Скачиваю картинку {(a.get('label') or '')[:40]}",
+        ),
+        Tool(
+            "upload_image", "Загружаю картинку",
+            "Своя картинка (скриншот сайта, кадр) в библиотеку: data_base64 — содержимое файла в base64 "
+            "(можно data:-URL), filename с расширением .png/.jpg/.webp/.gif, label. До 12 МБ. Вернёт asset_id "
+            "для слоя image. / Upload a local image as base64.",
+            _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "label": {"type": "string"},
+                  "description": {"type": "string"}}, ["data_base64", "filename"]),
+            h_upload_image, scope="global", label=lambda a: f"Загружаю {(a.get('label') or a.get('filename') or '')[:40]}",
         ),
         Tool(
             "generate_image", "Рисую картинку",
