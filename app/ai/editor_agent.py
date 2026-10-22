@@ -471,7 +471,7 @@ def run_agent(
             elif final_text and not report_like(final_text):
                 final_text = ""
             break
-        said = _parts_text(parts)
+        said = _strip_leaks(_parts_text(parts))
         if said and (degenerate(said) or not report_like(said)):
             said = ""  # мусор между шагами («.», не по-русски, служебное) владельцу не показываем
         if said:
@@ -550,10 +550,21 @@ _ECHO_RE = re.compile(
 )
 
 
+# Обрывки служебного, которые Gemini приклеивает к реплике (проверочный прогон: «strueПроверяю…»,
+# «-0.5}Готово!», «. . . (изображение не показано) . . .Применяю»).
+_MARKER_RE = re.compile(r"\((?:изображение не показано|старый кадр убран из контекста)\)", re.IGNORECASE)
+_LEAK_PREFIX_RE = re.compile(r"^[^А-Яа-яЁё\s]{1,12}?(?=[А-ЯЁ])")
+
+
+def _strip_leaks(text: str) -> str:
+    cleaned = _MARKER_RE.sub("", text).lstrip(" .\n")
+    return _LEAK_PREFIX_RE.sub("", cleaned, count=1).strip()
+
+
 def _clean_reply(text: str) -> str:
     """Убрать из ответа эхо служебных подсказок («Выше 2 картинки. Вызывай инструменты…»):
     Gemini иногда пересказывает их владельцу."""
-    cleaned = re.sub(r"^\W*Успешно!\s*", "", _ECHO_RE.sub("", text).lstrip(" .\n"))
+    cleaned = re.sub(r"^\W*Успешно!\s*", "", _strip_leaks(_ECHO_RE.sub("", text)))
     return cleaned or text
 
 

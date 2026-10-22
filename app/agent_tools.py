@@ -3363,6 +3363,15 @@ def _build_registry() -> list[Tool]:
             h_trim_piece, mutating=True, label=lambda a: f"Подрезаю кусок {a.get('index')}",
         ),
         Tool(
+            "auto_focus", "Ищу говорящего в кадре",
+            "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
+            "без него — все), с жёсткой сменой на склейках. Для мультфильмов и аниме use_vlm:true (Gemini "
+            "смотрит кадр каждого плана). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
+            "поправь промахи set_focus. / Automatic 9:16 framing.",
+            _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
+            h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
+        ),
+        Tool(
             "set_focus", "Кадрирую 9:16",
             "Кадрирование куска piece в 9:16: points [{t, x, cut?}] — центр окна x(t) внутри куска (t — секунды "
             "от начала куска, или source_t — секунды исходника прямо из get_shots; x 0..1 — доля ширины "
@@ -3446,15 +3455,6 @@ DISCOVERY_TOOLS = [
         _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
              ["project_id"]),
         h_source_transcript, scope="global",
-    ),
-    Tool(
-        "auto_focus", "Ищу говорящего в кадре",
-        "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
-        "без него — все), с жёсткой сменой на склейках. Для мультфильмов и аниме use_vlm:true (Gemini "
-        "смотрит кадр каждого плана). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
-        "поправь промахи set_focus. / Automatic 9:16 framing.",
-        _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
-        h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
     ),
     Tool(
         "get_shots", "Склейки планов",

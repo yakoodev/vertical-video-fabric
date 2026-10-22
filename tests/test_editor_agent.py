@@ -238,3 +238,14 @@ def test_empty_reply_mid_work_is_nudged_to_continue(tmp_path, monkeypatch):
     assert out["text"] == "Готово: хук на 0–2 с."
     assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
     assert "Ответ пустой" in fake.requests[2][1]["contents"][-1]["parts"][0]["text"]
+
+
+def test_reply_leaks_are_stripped_and_auto_focus_is_offered():
+    from app import agent_tools
+
+    assert editor_agent._clean_reply("-0.5}Готово! Всё") == "Готово! Всё"
+    assert editor_agent._clean_reply("strueПроверяю концовку") == "Проверяю концовку"
+    assert editor_agent._clean_reply(". . . (изображение не показано) . . .Применяю") == "Применяю"
+    assert editor_agent._clean_reply("Хук «ЕЁ» на 2 с") == "Хук «ЕЁ» на 2 с"
+    # Встроенный монтажёр видит auto_focus (раньше он лежал среди инструментов поиска и был скрыт).
+    assert "auto_focus" in {t.name for t in agent_tools.list_tools()}
