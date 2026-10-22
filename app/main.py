@@ -3380,6 +3380,17 @@ async def api_create_audio_track(
         await file.close()
 
 
+@app.post("/api/audio-tracks/from-url", tags=["Render"], summary="Background music from a link (YouTube etc.)")
+def api_audio_track_from_url(payload: dict, _auth: AuthDep) -> dict:
+    """``{"url", "label"?}`` — скачать звук ссылки (yt-dlp) и завести дорожку фона."""
+    from app.music_import import import_music_from_url
+
+    try:
+        return import_music_from_url(store, str(payload.get("url") or ""), str(payload.get("label") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.patch("/api/audio-tracks/{track_id}", tags=["Render"], summary="Update music track")
 def api_update_audio_track(track_id: int, payload: AudioTrackPatchPayload, _auth: AuthDep) -> dict:
     try:

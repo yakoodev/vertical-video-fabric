@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app import motion_render
 from app.motion_render import effect_gain_db
 
@@ -49,3 +51,35 @@ def test_music_pack_becomes_tracks_once(tmp_path, monkeypatch):
     tracks = [t for t in store.list_audio_tracks() if t["label"] == "Фон: Бодрый фон"]
     assert len(store.list_audio_tracks()) == before + 1 and len(tracks) == 1
     assert tracks[0]["volume"] == 0.5
+
+
+def test_music_from_url_downloads_audio_only(tmp_path, monkeypatch):
+    import subprocess
+
+    from app import music_import
+    from app.settings import settings
+    from test_clip_spec import _client
+
+    _c, store = _client(tmp_path, monkeypatch)
+    calls = []
+    real_run = subprocess.run
+
+    def fake_run(args, **kw):
+        if args[0] != "yt-dlp":
+            return real_run(args, **kw)  # ffprobe и прочее — настоящие
+        calls.append(args)
+        out = Path(str(args[args.index("-o") + 1]).replace("%(ext)s", "mp3"))
+        real_run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=2", str(out)], check=True)
+        return subprocess.CompletedProcess(args, 0, "Cool Track\n", "")
+
+    monkeypatch.setattr(music_import.subprocess, "run", fake_run)
+    track = music_import.import_music_from_url(store, "https://www.youtube.com/watch?v=abc")
+    assert track["label"] == "Cool Track" and track["volume"] == 0.5
+    assert Path(track["file_path"]).parent == settings.audio_dir
+    assert "--no-playlist" in calls[0] and "-x" in calls[0]
+    try:
+        music_import.import_music_from_url(store, "file:///etc/passwd")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("не http(s) — ошибка")

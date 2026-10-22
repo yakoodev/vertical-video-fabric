@@ -1305,6 +1305,18 @@ def h_list_music(ctx: ToolContext, _args: dict) -> dict:
     return {"tracks": tracks, "note": "громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь"}
 
 
+def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
+    """Музыка по ссылке (YouTube и т.п.) → новый трек фона."""
+    from app.music_import import import_music_from_url
+
+    try:
+        track = import_music_from_url(ctx.store, str(args.get("url") or ""), str(args.get("label") or ""))
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "track_id": track["id"], "label": track["label"],
+            "duration": round(float(track.get("duration_sec") or 0), 1)}
+
+
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
     """Фоновая музыка клипа: on + track_id (list_music)."""
     render = _current_render(ctx)
@@ -2086,6 +2098,13 @@ def _build_registry() -> list[Tool]:
             "list_music", "Смотрю фоновую музыку",
             "Треки фоновой музыки (id, название, длина). / Background music tracks.",
             _obj({}), h_list_music, scope="global",
+        ),
+        Tool(
+            "add_music_from_url", "Скачиваю музыку",
+            "Трек фоновой музыки по ссылке (YouTube и всё, что умеет yt-dlp; до 15 мин) → track_id для "
+            "set_music. Только когда владелец дал ссылку. / Background music from a link.",
+            _obj({"url": {"type": "string"}, "label": {"type": "string"}}, ["url"]),
+            h_add_music_from_url, scope="global", label=lambda a: "Скачиваю музыку по ссылке",
         ),
         Tool(
             "set_music", "Подкладываю музыку",
