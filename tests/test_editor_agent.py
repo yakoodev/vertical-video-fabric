@@ -222,3 +222,19 @@ def test_english_reasoning_instead_of_report_gets_one_rewrite_without_tools(tmp_
     out = editor_agent.run_agent(store, plan["id"], "что тут?", client=fake, model="m")
     assert out["text"].startswith("Готово")
     assert "tools" not in fake.requests[-1][1]
+
+
+def test_empty_reply_mid_work_is_nudged_to_continue(tmp_path, monkeypatch):
+    """Проверочный прогон: Gemini замолчал после листа кадров — ход не должен «закончиться»."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("get_clip", {})],
+        [],  # пустой ответ посреди работы
+        [_call("add_layers", {"layers": [HOOK]})],
+        [{"text": "Готово: хук на 0–2 с."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: хук на 0–2 с."
+    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
+    assert "Ответ пустой" in fake.requests[2][1]["contents"][-1]["parts"][0]["text"]

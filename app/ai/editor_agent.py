@@ -383,6 +383,7 @@ def run_agent(
     nudged = False
     nudged_continue = False
     nudged_report = False
+    silent_nudges = 0
     while True:
         if should_cancel and should_cancel():
             raise AgentCancelled()
@@ -420,6 +421,17 @@ def run_agent(
             contents.append({"role": "user", "parts": [{"text": (
                 "Ты ещё ничего не сделал с клипом. Работай инструментами по ПОРЯДКУ РАБОТЫ "
                 "(начни с auto_edit, если просили смонтировать), а не текстом."
+            )}]})
+            continue
+        if not calls and tools_on and steps and not idle and silent_nudges < MAX_SILENT_NUDGES:
+            # Пустой ответ посреди работы (проверочный прогон: после листа кадров исходника
+            # Gemini замолчал на 6-м шаге из ~30, и ход «закончился» без отчёта).
+            silent_nudges += 1
+            _log.warning("agent: пустой ответ модели посреди хода (finishReason=%s), подталкиваю",
+                         candidates[0].get("finishReason"))
+            contents.append({"role": "user", "parts": [{"text": (
+                "Ответ пустой. Продолжай работу по задаче владельца инструментами со следующего шага; "
+                "когда всё сделано — короткий отчёт по-русски."
             )}]})
             continue
         done_tools = {st.get("tool") for st in steps if st.get("ok")}
@@ -496,6 +508,8 @@ def run_agent(
 
 
 MAX_OUTPUT_TOKENS = 8192
+# Сколько раз подталкивать модель, замолчавшую посреди работы (пустой ответ без вызовов).
+MAX_SILENT_NUDGES = 2
 # Инструменты, которыми агент доводит основу auto_edit до монтажа.
 CRAFT_TOOLS = {"update_layer", "add_layers", "set_camera", "add_insert", "remove_layers"}
 
