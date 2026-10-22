@@ -728,9 +728,27 @@ def _cuts_view(clock: Any, render: dict, duration: float) -> dict:
     }
 
 
+MIN_FINISHED_SEC = 12.0
+
+
+def short_clip_warning(finished_sec: float) -> str | None:
+    """Проверочный прогон Gemini: апекс подрезан до 6 с — голая реакция без завязки."""
+    if finished_sec >= MIN_FINISHED_SEC:
+        return None
+    return (f"Готовый ролик {finished_sec:.1f} с — слишком коротко: нет завязки, зритель не поймёт, что "
+            f"случилось. Шортс 15–60 с: верни 5–15 с до момента (trim_piece, cuts), не режь до голой реакции.")
+
+
 def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -> list[str]:
     layout = (timeline.get("render") or {}).get("layout")
     warnings = lint_layers(layers, timeline["duration"], layout=layout) if layers else []
+    from app.cuts import CutMap, normalize_cuts
+
+    cut_list = normalize_cuts((timeline.get("render") or {}).get("cuts"))
+    finished = CutMap(cut_list).duration(float(timeline["duration"])) if cut_list else float(timeline["duration"])
+    short = short_clip_warning(finished)
+    if short:
+        warnings.insert(0, short)
     gaps = subtitle_gaps(ctx.store, plan, timeline["pieces"])
     if gaps:
         warnings.insert(0, (

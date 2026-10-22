@@ -508,3 +508,10 @@ def test_moving_main_captions_drags_voices_layer_and_overlap_is_warned(tmp_path,
     assert abs(layers["auto_caps_voices"]["y"] - 0.71) < 1e-6  # уехал вместе, зазор тот же
     assert caption_overlap_warnings([{**caps, "id": "a", "y": 0.78}, {**caps, "id": "b", "y": 0.8}])
     assert not caption_overlap_warnings([{**caps, "id": "a", "y": 0.6}, {**caps, "id": "b", "y": 0.75}])
+
+
+def test_too_short_finished_clip_is_warned():
+    from app.agent_tools import short_clip_warning
+
+    assert "слишком коротко" in short_clip_warning(6.0)
+    assert short_clip_warning(20.0) is None
