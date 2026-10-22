@@ -3960,6 +3960,13 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .lay-ne { right: -7px; top: -7px; cursor: nesw-resize; }
 .lay-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
 .lay-row { display: flex; align-items: center; gap: 8px; }
+.src-audio { display: flex; flex-direction: column; gap: 8px; }
+.src-audio-list { display: flex; flex-direction: column; gap: 4px; }
+.src-audio-row { display: grid; grid-template-columns: minmax(0, 1fr) 78px auto; align-items: center; gap: 6px; font-size: 12px; }
+.src-audio-row.off .src-audio-name span { color: var(--text-dim); }
+.src-audio-name { display: flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
+.src-audio-name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-audio-gain { width: 78px; }
 .lay-grow { flex: 1; min-width: 0; }
 .lay-color { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: none; cursor: pointer; }
 .agent-steps li.say { background: transparent; font-style: italic; color: var(--text-dim); }

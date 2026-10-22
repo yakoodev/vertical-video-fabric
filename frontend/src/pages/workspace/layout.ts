@@ -309,3 +309,109 @@ export function cameraRegions(
   const p = pipBox(layout, srcW, srcH, out);
   return { box: { x: 0, y: 0, w: W, h: H }, pinned: [{ x: p.x * W, y: p.y * H, w: p.w * W, h: p.h * H }] };
 }
+
+/* ---------- кусок «шире окна» (segment.fit) ---------- */
+
+/**
+ * «Кусок шире окна 9:16» — `fit` куска (set_piece_fit, app/video_crop.normalize_fit):
+ * в кадре доля `w` ширины исходника (после обрезки полей), по вертикали посередине,
+ * сверху и снизу — размытый тот же кадр (`blur`), чёрный или цвет `#rrggbb`.
+ * Раскладка клипа на таком куске не действует — так же, как в рендере.
+ */
+export interface PieceFit {
+  w: number;
+  bg: string;
+}
+
+export const FIT_MIN_W = 0.35;
+
+/** Как app/video_crop.normalize_fit: число — `{w, bg: "blur"}`, пусто — null. */
+export function normalizeFit(raw: unknown): PieceFit | null {
+  if (raw == null || raw === "" || raw === false || raw === 0) return null;
+  let value: unknown = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+    if (!value) return null;
+  }
+  if (typeof value === "number") value = { w: value };
+  if (!value || typeof value !== "object") return null;
+  const obj = value as { w?: unknown; bg?: unknown };
+  const w = Number(obj.w ?? 1);
+  if (!Number.isFinite(w)) return null;
+  let bg = String(obj.bg || "blur").trim().toLowerCase();
+  if (bg !== "blur" && bg !== "black" && !/^#[0-9a-f]{6}$/.test(bg)) bg = "blur";
+  return { w: Math.round(Math.min(1, Math.max(FIT_MIN_W, w)) * 1000) / 1000, bg };
+}
+
+/**
+ * Какая доля окна исходника (после обрезки полей) видна на куске с `fit`: по ширине — `w`,
+ * по высоте — сколько влезает в кадр (render: `scale=W/w:-2,crop=W:min(ih,H)`), обычно вся.
+ * `effAR` — пропорция исходника после обрезки, `outAR` — кадра (9/16).
+ */
+export function fitWindow(fit: PieceFit, effAR: number, outAR = 9 / 16): { fw: number; fh: number } {
+  return { fw: fit.w, fh: Math.min(1, (fit.w * effAR) / outAR) };
+}
+
+let fitBgCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Нарисовать кусок с `fit`, как render._piece_fit_filter: фон (размытый кадр «cover» по
+ * обрезке полей / чёрный / цвет), поверх — окно `rect` исходника во всю ширину кадра,
+ * по вертикали посередине. `content` — область исходника после обрезки полей (px).
+ */
+export function drawFitFrame(
+  ctx: CanvasRenderingContext2D,
+  video: CanvasImageSource,
+  fit: PieceFit,
+  rect: SourceRect,
+  content: SourceRect,
+  W: number,
+  H: number,
+  out: { w: number; h: number } = { w: 1080, h: 1920 },
+): void {
+  if (fit.bg === "blur") {
+    // boxblur=24:2 на кадре 1080 ≈ размытие ~20 px; считаем на холсте в 4 раза меньше —
+    // размывать полный кадр на каждом кадре превью дорого. Поля с запасом — края не темнеют.
+    const bc = (fitBgCanvas ??= document.createElement("canvas"));
+    const sw = Math.max(8, Math.round(W / 4));
+    const sh = Math.max(8, Math.round(H / 4));
+    if (bc.width !== sw || bc.height !== sh) {
+      bc.width = sw;
+      bc.height = sh;
+    }
+    const bctx = bc.getContext("2d");
+    if (bctx) {
+      const cAR = content.w / Math.max(1, content.h);
+      const tAR = sw / sh;
+      let cx = content.x;
+      let cy = content.y;
+      let cw = content.w;
+      let ch = content.h;
+      if (cAR > tAR) {
+        cw = content.h * tAR;
+        cx += (content.w - cw) / 2;
+      } else {
+        ch = content.w / tAR;
+        cy += (content.h - ch) / 2;
+      }
+      const radius = (20 * sw) / out.w;
+      const pad = radius * 2;
+      bctx.save();
+      bctx.filter = `blur(${radius.toFixed(2)}px)`;
+      bctx.drawImage(video, cx, cy, cw, ch, -pad, -pad, sw + 2 * pad, sh + 2 * pad);
+      bctx.restore();
+      ctx.drawImage(bc, 0, 0, W, H);
+    }
+  } else {
+    ctx.save();
+    ctx.fillStyle = fit.bg === "black" ? "#000000" : fit.bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  const dh = Math.min(H, (rect.h * W) / Math.max(1e-6, rect.w));
+  ctx.drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, (H - dh) / 2, W, dh);
+}

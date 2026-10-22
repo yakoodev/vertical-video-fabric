@@ -4,6 +4,7 @@ export const qk = {
   sources: ["sources"] as const,
   source: (id: number | string) => ["sources", String(id)] as const,
   sourceStats: (id: number | string) => ["sources", String(id), "stats"] as const,
+  sourceAudio: (id: number | string) => ["sources", String(id), "audio"] as const,
   clipPlans: (id: number | string) => ["sources", String(id), "clip-plans"] as const,
 
   clips: (sourceId?: number | string) =>

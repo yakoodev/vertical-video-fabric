@@ -15,6 +15,7 @@ def test_spoken_line_goes_with_each_shot_frame():
     out = shots_focus_x([b"a", b"b"], client=fake, hints=["Морти, ты что делаешь?", ""])
     assert out == [0.2, 0.8]
     texts = [p["text"] for p in fake.payload["contents"][0]["parts"] if "text" in p]
-    assert texts[0] == "Image 0 — spoken in this shot: «Морти, ты что делаешь?»"
+    assert texts[0] == "Image 0 — spoken at this moment: «Морти, ты что делаешь?»"
     assert texts[1] == "Image 1"
     assert "FACE/HEAD" in texts[-1]  # центр лица, не тела
+    assert "SAME shot at different lines" in texts[-1]  # кадры одного плана по репликам
