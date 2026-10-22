@@ -219,7 +219,12 @@ const FOCUS_FEEL: Record<string, { smoothTime: number; rubber: number; deadzone:
   action: { smoothTime: 0.45, rubber: 3.5, deadzone: 0.02 },
   static: { smoothTime: 1.6, rubber: 2.0, deadzone: 0.035 },
 };
-const focusFeel = (preset?: string) => FOCUS_FEEL[preset || ""] ?? FOCUS_FEEL.balanced;
+// Как app/render.REFRAME_MAX_SMOOTH_SEC: владелец просил переход на говорящего быстрее, но плавно.
+const REFRAME_MAX_SMOOTH_SEC = 0.45;
+const focusFeel = (preset?: string) => {
+  const feel = FOCUS_FEEL[preset || ""] ?? FOCUS_FEEL.balanced;
+  return { ...feel, smoothTime: Math.min(feel.smoothTime, REFRAME_MAX_SMOOTH_SEC) };
+};
 
 function smoothFocus(focus: FocusPoint[], duration: number, feel = FOCUS_FEEL.balanced): number[] {
   const n = Math.max(2, Math.round(duration / DT) + 1);

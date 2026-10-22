@@ -114,6 +114,9 @@ def _source_gaps(segments: list[dict]) -> list[float | None]:
     return gaps
 
 
+REFRAME_MAX_SMOOTH_SEC = 0.45
+
+
 def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     """Build a smoothed crop-x expression for a segment, or None when smart
     reframing is off, there's no focus track, or the source has no horizontal
@@ -164,7 +167,9 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
         remapped,
         duration,
         out_w,
-        smooth_time=float(cfg["smooth_time"]),
+        # Владелец: «фокус будто бы надо делать быстрее но плавно» — пресеты держали
+        # 0.6–1.6 с на подход, переход на говорящего тянулся секунды.
+        smooth_time=min(float(cfg["smooth_time"]), REFRAME_MAX_SMOOTH_SEC),
         rubber=float(cfg["rubber"]),
         deadzone=float(cfg["deadzone"]),
     )

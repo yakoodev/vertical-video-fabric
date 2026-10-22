@@ -175,12 +175,44 @@ def _smooth_damp_series(
     return out
 
 
+def _simplify_indices(xs: list[float], limit: int, tolerance: float = 0.003) -> set[int]:
+    """Индексы опор ломаной, которая отклоняется от ``xs`` не больше ``tolerance`` (доли
+    ширины), но не больше ``limit`` штук — при нехватке допуск растёт."""
+    n = len(xs)
+
+    def rdp(tol: float) -> set[int]:
+        keep = {0, n - 1}
+        stack = [(0, n - 1)]
+        while stack:
+            a, b = stack.pop()
+            if b - a < 2:
+                continue
+            worst, worst_i = -1.0, -1
+            for i in range(a + 1, b):
+                line = xs[a] + (xs[b] - xs[a]) * (i - a) / (b - a)
+                err = abs(xs[i] - line)
+                if err > worst:
+                    worst, worst_i = err, i
+            if worst > tol:
+                keep.add(worst_i)
+                stack.append((a, worst_i))
+                stack.append((worst_i, b))
+        return keep
+
+    tol = tolerance
+    keep = rdp(tol)
+    while len(keep) > limit and tol < 0.2:
+        tol *= 1.6
+        keep = rdp(tol)
+    return keep
+
+
 def build_reframe_x_expr(
     focus_points: list[dict],
     duration: float,
     output_width: int,
     *,
-    max_anchors: int = 40,
+    max_anchors: int = 120,
     smooth_time: float = 1.1,
     rubber: float = 2.2,
     deadzone: float = 0.012,
@@ -236,7 +268,10 @@ def build_reframe_x_expr(
     xs = _smooth_damp_series(xs, dt, smooth_time, rubber=rubber, cut_idx=cut_idx, deadzone=deadzone)
 
     if n > max_anchors:
-        idxs = {round(i * (n - 1) / (max_anchors - 1)) for i in range(max_anchors)}
+        # Опоры там, где кривая меняется (Дуглас–Пекер), а не через равные 1.3 с: при
+        # равномерном прореживании быстрый переход на говорящего растягивался на весь
+        # промежуток между опорами (владелец: «фокус надо делать быстрее но плавно»).
+        idxs = _simplify_indices(xs, max_anchors)
     else:
         idxs = set(range(n))
     # Склейка кадра должна остаться ступенькой: прореживание до max_anchors
