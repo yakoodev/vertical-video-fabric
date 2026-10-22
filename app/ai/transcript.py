@@ -20,9 +20,14 @@ from app.settings import settings
 log = logging.getLogger(__name__)
 
 
-def transcribe_source_cues(local_path: str | None, model: str | None = None) -> list[dict]:
+def transcribe_source_cues(local_path: str | None, model: str | None = None,
+                           tracks: list[int] | None = None, strict: bool = False) -> list[dict]:
     """Transcribe a source file into ``[{start, end, text}]`` cues on the source
     timeline. Returns ``[]`` on any failure so analysis never breaks because of it.
+
+    ``tracks`` — звуковые дорожки источника (app/source_audio.py); None — первая.
+    ``strict`` — сбой распознавания поднимается, а не превращается в «пусто»: пустой
+    список тогда честно значит «речи нет».
     """
 
     if not local_path:
@@ -40,12 +45,14 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None) -> 
         start = 0.0
         while True:
             length = CHUNK_SEC if duration > CHUNK_SEC else None
-            cues.extend(_transcribe_piece(path, start, length, model))
+            cues.extend(_transcribe_piece(path, start, length, model, tracks))
             start += CHUNK_SEC
             if not length or start >= duration:
                 break
         return cues
     except Exception:  # noqa: BLE001 - transcript is an optional enhancement
+        if strict:
+            raise
         log.warning("analysis transcript failed for %s", path.name, exc_info=True)
         return cues
 
@@ -53,7 +60,8 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None) -> 
 CHUNK_SEC = 20 * 60
 
 
-def _transcribe_piece(path: Path, start: float, length: float | None, model: str | None) -> list[dict]:
+def _transcribe_piece(path: Path, start: float, length: float | None, model: str | None,
+                      tracks: list[int] | None = None) -> list[dict]:
     """Кусок звука [start, start+length) → реплики во времени исходника."""
     from app.render import _run_ffmpeg, build_ffmpeg_extract_audio_args
     from app.subtitles.whisper_local import WhisperSubtitleProvider
@@ -61,10 +69,18 @@ def _transcribe_piece(path: Path, start: float, length: float | None, model: str
     audio_path = settings.tmp_dir / f"analysis-{uuid4().hex}.wav"
     try:
         _run_ffmpeg(
-            build_ffmpeg_extract_audio_args(path, audio_path, start_sec=start if length else None, duration_sec=length),
+            build_ffmpeg_extract_audio_args(path, audio_path, start_sec=start if length else None, duration_sec=length,
+                                            tracks=tracks),
             timeout=60 * 30,
         )
-        result = WhisperSubtitleProvider().transcribe(audio_path, {"language": ""}, (model or settings.whisper_model_size))
+        try:
+            result = WhisperSubtitleProvider().transcribe(audio_path, {"language": ""}, (model or settings.whisper_model_size))
+        except RuntimeError as exc:
+            # Кусок без речи (игра, музыка) — это ответ «речи нет», а не сбой: иначе
+            # расшифровка 4-часовой записи обрывалась на первых 20 минутах без слов.
+            if "no word-level timestamps" in str(exc):
+                return []
+            raise
         out: list[dict] = []
         for seg in result.segments:
             text = str(getattr(seg, "text", "") or "").strip()

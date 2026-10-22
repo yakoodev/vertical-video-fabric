@@ -48,7 +48,14 @@ import {
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
-import { DEFAULT_LAYOUT, drawLayoutFrame, gameplayAspect, normalizeLayout, type StreamLayout } from "@/pages/workspace/layout";
+import {
+  DEFAULT_LAYOUT,
+  cameraRegions,
+  drawLayoutFrame,
+  gameplayAspect,
+  normalizeLayout,
+  type StreamLayout,
+} from "@/pages/workspace/layout";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
@@ -637,6 +644,8 @@ function CropFrame({
   backdropRef.current = backdrop ?? DEFAULT_BACKDROP;
   // Маленький холст под вырез: пиксели считаются в JS, полный кадр 1080×1920 — дорого.
   const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Собранный кадр раскладки до камеры: камера зумит только игру, окошко вебки — на месте.
+  const layoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const insertsRef = useRef(insertsPreview);
   insertsRef.current = insertsPreview;
   const draggingRef = useRef(false);
@@ -728,8 +737,34 @@ function CropFrame({
               ctx.drawImage(kc, 0, 0, cv.width, cv.height);
             }
           } else if (ctx) {
-            if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-            drawLayoutFrame(ctx, v, layout, rect, cv.width, cv.height);
+            const regions = cam && motion ? cameraRegions(layout, vw, vh, cv.width, cv.height) : null;
+            if (regions && motion) {
+              // Как компоновщик рендера: камера двигает окно игры, окошко/полоса вебки стоят.
+              const lc = (layoutCanvasRef.current ??= document.createElement("canvas"));
+              if (lc.width !== cv.width || lc.height !== cv.height) {
+                lc.width = cv.width;
+                lc.height = cv.height;
+              }
+              const lctx = lc.getContext("2d");
+              if (lctx) {
+                drawLayoutFrame(lctx, v, layout, rect, cv.width, cv.height);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.drawImage(lc, 0, 0);
+                const box = regions.box;
+                const bm = cameraMatrix(motion.camera, clipT, box.w, box.h);
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(box.x, box.y, box.w, box.h);
+                ctx.clip();
+                ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
+                ctx.drawImage(lc, 0, 0);
+                ctx.restore();
+                for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+              }
+            } else {
+              if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+              drawLayoutFrame(ctx, v, layout, rect, cv.width, cv.height);
+            }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
           const ov = overlayRef?.current;

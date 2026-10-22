@@ -230,6 +230,7 @@ class ClipRenderService:
             mirror=mirror,
             layout=layout,
         )
+        preset = _preset_with_source_audio(preset, source)
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
@@ -263,7 +264,7 @@ class ClipRenderService:
                 reframe_x=_segment_reframe_x(segment, preset, source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
-            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion) if motion else []
+            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -363,6 +364,7 @@ class ClipRenderService:
             mirror=mirror,
             layout=layout,
         )
+        preset = _preset_with_source_audio(preset, source)
         if subtitle_profile_id is None:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
@@ -441,7 +443,7 @@ class ClipRenderService:
                     ),
                     timeout=60 * 30,
                 )
-            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion) if motion else []
+            motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
                 render_id=render_id,
@@ -829,7 +831,7 @@ class ClipRenderService:
             clip = self._apply_mute(clip, plan, cut_plan)
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
-                clip = self._apply_audio_layers(clip, motion)
+                clip = self._apply_audio_layers(clip, motion, plan)
             clip = self._normalize_loudness(clip)
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
@@ -990,6 +992,7 @@ class ClipRenderService:
         preset: dict,
         banner: dict | None,
         motion: dict,
+        source: dict | None = None,
     ) -> list[str]:
         """Камера и слои поверх основы (на месте ``video``), затем баннер.
 
@@ -1018,10 +1021,13 @@ class ClipRenderService:
             if layers or camera or motion.get("key"):
                 try:
                     meta = probe_media(video)
+                    comp_w = meta.width or int(preset.get("output_width") or 1080)
+                    comp_h = meta.height or int(preset.get("output_height") or 1920)
+                    regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
                     comp = write_comp(
                         work / "comp.json",
-                        width=meta.width or int(preset.get("output_width") or 1080),
-                        height=meta.height or int(preset.get("output_height") or 1920),
+                        width=comp_w,
+                        height=comp_h,
                         fps=float(preset.get("fps") or 30),
                         duration=meta.duration_sec,
                         layers=layers,
@@ -1030,6 +1036,8 @@ class ClipRenderService:
                         chat=motion.get("chat"),
                         key=motion.get("key"),
                         background=motion.get("background"),
+                        camera_box=(regions or {}).get("box"),
+                        pinned=(regions or {}).get("pinned"),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
@@ -1063,7 +1071,7 @@ class ClipRenderService:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-    def _apply_audio_layers(self, clip: dict, motion: dict) -> dict:
+    def _apply_audio_layers(self, clip: dict, motion: dict, plan: dict | None = None) -> dict:
         """Звуки ``audio``-слоёв в готовый клип — последним проходом, видео копией.
 
         Последним, а не в моушн-проходе: субтитры распознаются по звуку основы,
@@ -1080,12 +1088,14 @@ class ClipRenderService:
             layers, assets, notes = resolve_layer_assets(self.store, layers)
             meta = probe_media(path)
             tmp = path.with_name(path.stem + ".sfx" + path.suffix)
-            from app.motion_render import speech_level_db
+            from app.motion_render import plan_is_speechless, speech_level_db
 
             has_audio = _has_audio_stream(path)
+            # Без речи (игра) «голос» — громкие места клипа: эффект чуть ниже них, а не на 10 дБ.
+            speechless = bool(plan) and has_audio and plan_is_speechless(self.store, plan)
             args = build_audio_layers_args(
                 path, tmp, layers, assets, meta.duration_sec, clip_has_audio=has_audio,
-                speech_db=speech_level_db(path) if has_audio else None,
+                speech_db=speech_level_db(path) if has_audio else None, speechless=speechless,
             )
             if args is not None:
                 _run_ffmpeg(args, timeout=60 * 20)
@@ -1471,8 +1481,14 @@ def build_ffmpeg_extract_audio_args(
     output_path: Path,
     start_sec: float | None = None,
     duration_sec: float | None = None,
+    tracks: list[int] | None = None,
 ) -> list[str]:
+    """``tracks`` — звуковые дорожки исходника (app/source_audio.py); None — первая."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if tracks and list(tracks) != [0]:
+        from app.source_audio import extract_args
+
+        return extract_args(input_path, output_path, list(tracks), start=start_sec, duration=duration_sec)
     args = [
         "ffmpeg",
         "-y",
@@ -2014,7 +2030,49 @@ def _banner_input_args(banner: dict) -> list[str]:
     return args
 
 
+def effective_preset(store: AppStore, preset_id: int | None) -> dict | None:
+    """Пресет, которым отрендерится клип: свой ``preset_id`` или (null) тот же, что берёт
+    ``ClipRenderService._preset`` — но без создания нового (для показа в get_clip)."""
+    if preset_id is not None:
+        try:
+            return store.get_ffmpeg_preset(int(preset_id))
+        except (KeyError, TypeError, ValueError):
+            return None
+    presets = store.list_ffmpeg_presets()
+    return presets[-1] if presets else None
+
+
+def layout_camera_regions(preset: dict, source: dict | None, width: int, height: int) -> dict | None:
+    """Окно игры и окошко вебки раскладки (app/stream_layout.camera_regions) для камеры
+    компоновщика: зум двигает игру, окошко pip / полоса вебки стоят на месте."""
+    from app.stream_layout import camera_regions
+
+    layout = preset.get("layout")
+    if not layout_active(layout):
+        return None
+    source = source or {}
+    return camera_regions(layout, width, height, source.get("width"), source.get("height"),
+                          mirror=bool(preset.get("mirror")))
+
+
+def _preset_with_source_audio(preset: dict, source: dict) -> dict:
+    """Дорожки звука, выбранные у источника (app/source_audio.py), — поверх пресета.
+
+    Не выбраны — пресет как был (первая дорожка или его собственное смешивание)."""
+    from app.source_audio import source_tracks
+
+    tracks = source_tracks(source)
+    return {**preset, "source_audio_tracks": tracks} if tracks else preset
+
+
 def _audio_filter(preset: dict) -> str:
+    tracks = preset.get("source_audio_tracks")
+    if tracks:
+        # Выбор источника важнее пресета: запись с игрой и микрофоном смешивается всегда.
+        from app.source_audio import mix_chain
+
+        volume = _volume(preset.get("audio_primary_volume"), 1)
+        return f"{mix_chain(0, list(tracks), 'a_src')};[a_src]volume={_ff_number(volume)},aresample=48000[aout]"
     mode = str(preset.get("audio_mix_mode") or "primary").strip().lower()
     primary_stream = _stream_index(preset.get("audio_primary_stream"), 0)
     primary_volume = _volume(preset.get("audio_primary_volume"), 1)
@@ -2048,6 +2106,8 @@ def _video_duration(meta: Any) -> float:
 
 
 def _audio_map(preset: dict) -> str:
+    if preset.get("source_audio_tracks"):
+        return "[aout]"
     mode = str(preset.get("audio_mix_mode") or "primary").strip().lower()
     primary_stream = _stream_index(preset.get("audio_primary_stream"), 0)
     primary_volume = _volume(preset.get("audio_primary_volume"), 1)

@@ -392,7 +392,7 @@ def test_find_noises_reports_sound_outside_speech(tmp_path, monkeypatch):
         "words": [{"word": "раз", "start": 0.0, "end": 2.0}],
         "lines": [{"start": 0.0, "end": 2.0, "text": "раз"}], "duration": 10.0,
     })
-    out, ok = run_tool(_ctx(store, plan["id"]), "find_noises", {})
+    out, ok = run_tool(_ctx(store, plan["id"]), "find_noises", {"threshold_db": -32})
     assert ok, out
     assert out["noises"] and out["noises"][0]["start"] >= 2.0
     assert all(n["start"] >= 2.0 for n in out["noises"])

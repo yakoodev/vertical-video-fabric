@@ -514,7 +514,7 @@ def test_render_remaps_layers_through_finished_time(tmp_path, monkeypatch):
     })
     seen: dict = {}
 
-    def fake_motion(render_id, base, preset, banner, motion):
+    def fake_motion(render_id, base, preset, banner, motion, source=None):
         seen.update(motion)
         return []
 

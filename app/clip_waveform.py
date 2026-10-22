@@ -45,7 +45,12 @@ def clip_waveform(store: Any, clip_plan_id: int, buckets: int = BUCKETS) -> dict
         return {"duration": 0.0, "peaks": []}
     duration = round(sum(b - a for a, b in pieces), 3)
     buckets = max(40, min(2000, int(buckets)))
-    cache = _cache_path(clip_plan_id, f"{_pieces_key(pieces)}-{buckets}")
+    from app.source_audio import source_tracks
+
+    tracks = source_tracks(source)
+    # Сменили дорожки звука у источника — волна другая, кэш свой.
+    track_key = "" if not tracks else "-a" + "_".join(map(str, tracks))
+    cache = _cache_path(clip_plan_id, f"{_pieces_key(pieces)}-{buckets}{track_key}")
     if cache.exists():
         try:
             return json.loads(cache.read_text(encoding="utf-8"))
@@ -56,7 +61,7 @@ def clip_waveform(store: Any, clip_plan_id: int, buckets: int = BUCKETS) -> dict
     wav.parent.mkdir(parents=True, exist_ok=True)
     if not wav.exists():
         subprocess.run(
-            build_clip_audio_args(Path(source["local_path"]), pieces, wav),
+            build_clip_audio_args(Path(source["local_path"]), pieces, wav, tracks),
             check=True,
             timeout=60 * 20,
             capture_output=True,

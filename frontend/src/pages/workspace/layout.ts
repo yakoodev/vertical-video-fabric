@@ -285,3 +285,27 @@ export function pipBox(
   const by = Math.min(Math.max(layout.pip.y * out.h - bh / 2, 0), out.h - bh);
   return { x: bx / out.w, y: by / out.h, w: bw / out.w, h: bh / out.h };
 }
+
+/**
+ * Где камера (наезды) двигает кадр при раскладке — как app/stream_layout.camera_regions,
+ * в px холста W×H: `box` — окно игры, `pinned` — окошко вебки, оно стоит на месте.
+ * null — single/meme: камера двигает весь кадр.
+ */
+export function cameraRegions(
+  layout: StreamLayout | null | undefined,
+  srcW: number,
+  srcH: number,
+  W: number,
+  H: number,
+  out: { w: number; h: number } = { w: 1080, h: 1920 },
+): { box: LayoutRect; pinned: LayoutRect[] } | null {
+  if (!layout || (layout.mode !== "split" && layout.mode !== "pip_cam")) return null;
+  if (layout.mode === "split") {
+    const { camH, gap, gameH } = splitGeometry(layout, out.h);
+    const k = H / out.h;
+    const top = layout.cam_pos !== "bottom";
+    return { box: { x: 0, y: (top ? camH + gap : 0) * k, w: W, h: gameH * k }, pinned: [] };
+  }
+  const p = pipBox(layout, srcW, srcH, out);
+  return { box: { x: 0, y: 0, w: W, h: H }, pinned: [{ x: p.x * W, y: p.y * H, w: p.w * W, h: p.h * H }] };
+}

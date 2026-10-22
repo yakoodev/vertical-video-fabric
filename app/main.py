@@ -1872,6 +1872,29 @@ def api_set_chroma_key(source_id: int, payload: dict, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/api/sources/{source_id}/audio", tags=["Sources"], summary="Audio tracks of the source and the chosen ones")
+def api_source_audio(source_id: int, _auth: AuthDep) -> dict:
+    from app.source_audio import audio_view
+
+    try:
+        return audio_view(store.get_source(source_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/sources/{source_id}/audio", tags=["Sources"], summary="Choose (and mix) the source audio tracks")
+def api_set_source_audio(source_id: int, payload: dict, _auth: AuthDep) -> dict:
+    """``{"audio_tracks": [0, 1]}`` — смешать игру и микрофон; ``[1]`` — только вторую; null — первая."""
+    from app.source_audio import set_source_audio
+
+    try:
+        return set_source_audio(store, source_id, payload.get("audio_tracks", payload.get("tracks")))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.patch("/api/sources/{source_id}/crop", tags=["Sources"], summary="Set the content crop rect")
 def api_set_crop(source_id: int, payload: SourceCropPayload, _auth: AuthDep) -> dict:
     crop = payload.crop.model_dump() if payload.crop else None

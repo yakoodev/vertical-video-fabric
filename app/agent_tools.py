@@ -443,12 +443,15 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "title": plan["title"],
         "description": plan.get("description") or "",
         "source": {"id": source["id"], "name": source.get("original_filename") or "",
-                   "width": source.get("width"), "height": source.get("height")},
+                   "width": source.get("width"), "height": source.get("height"),
+                   "audio": _source_audio_view(source)},
         "duration": timeline["duration"],
         **_cuts_view(render, timeline["duration"]),
         "frame": {"width": 1080, "height": 1920, "safe_zone": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM}},
         "pieces": timeline["pieces"],
         "render": {
+            "preset_id": render.get("preset_id"),
+            "effective_preset": _effective_preset_view(ctx.store, render.get("preset_id")),
             "subs_on": render.get("subs_on"),
             "sub_id": render.get("sub_id"),
             "sub_pos_pct": render.get("sub_pos_pct"),
@@ -470,6 +473,27 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
     }
+
+
+def _source_audio_view(source: dict) -> dict:
+    """Звуковые дорожки источника: сколько и какие выбраны (игра + микрофон — set_source_audio)."""
+    from app.source_audio import audio_view
+
+    try:
+        return audio_view(source)
+    except Exception:  # noqa: BLE001 - справка, не роняет get_clip
+        return {}
+
+
+def _effective_preset_view(store: Any, preset_id: Any) -> dict | None:
+    """Каким пресетом отрендерится клип (при preset_id null — пресет по умолчанию)."""
+    from app.render import effective_preset
+
+    preset = effective_preset(store, preset_id)
+    if not preset:
+        return None
+    return {"id": preset["id"], "name": preset.get("label") or "", "default": preset_id is None,
+            "size": f"{preset.get('output_width')}×{preset.get('output_height')}"}
 
 
 def _key_view(source: dict, render: dict) -> dict:
@@ -567,7 +591,8 @@ def h_find_noises(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import find_noises
 
     try:
-        return find_noises(ctx.store, ctx.plan_id, float(_num(args.get("threshold_db"), -32.0)))
+        # Порог не задан — от медианы звука клипа (игра громкая, разговор — тихий).
+        return find_noises(ctx.store, ctx.plan_id, _num(args.get("threshold_db")))
     except ValueError as exc:
         raise ToolError(f"find_noises: {exc}") from exc
 
@@ -987,7 +1012,13 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     for key in camera:
         if (_num(key.get("zoom"), 1.0) or 1.0) > 1.6:
             warnings.append(f"наезд {key.get('zoom')}× на {key.get('t')} с — сильнее 1.6× мылит картинку")
-    return {"ok": True, "camera": camera, "dropped": len(keys) - len(camera), "warnings": warnings}
+    out = {"ok": True, "camera": camera, "dropped": len(keys) - len(camera), "warnings": warnings}
+    mode = (fresh.get("layout") or {}).get("mode")
+    if camera and mode in ("pip_cam", "split"):
+        # Компоновщик зумит только окно игры (app/stream_layout.camera_regions).
+        out["note"] = ("раскладка " + mode + ": камера двигает только игру — окошко pip / полоса вебки стоят "
+                       "на месте; x/y камеры — доли окна игры. Проверь view_frame на пике наезда")
+    return out
 
 
 def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
@@ -1457,8 +1488,13 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import save_lines
 
     raw = args.get("words")
-    if not isinstance(raw, list) or not raw:
-        raise ToolError("нужен список words [{word, start, end}]")
+    if not isinstance(raw, list):
+        raise ToolError("нужен список words [{word, start, end}] ([] — убрать субтитры клипа)")
+    if not raw:
+        # Пустой список — очистить: клип без речи (игра), распознались фантомные слова.
+        ctx.before_change()
+        save_lines(ctx.store, ctx.plan_id, [], [])
+        return {"ok": True, "lines": 0, "words": 0, "note": "субтитры клипа убраны"}
     words, problems = [], []
     for i, w in enumerate(raw):
         try:
@@ -1738,10 +1774,19 @@ def h_list_projects(ctx: ToolContext, _args: dict) -> dict:
     return {
         "projects": [
             {"id": s["id"], "name": s.get("original_filename") or "", "status": s.get("status"),
-             "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count")}
+             "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count"),
+             "audio_tracks": _audio_brief(s)}
             for s in ctx.store.list_sources()
         ]
     }
+
+
+def _audio_brief(source: dict) -> dict:
+    """Сколько звуковых дорожек у записи и какие выбраны (по метаданным загрузки, без ffprobe)."""
+    from app.source_audio import audio_streams, normalize_tracks
+
+    return {"total": len(audio_streams(source, probe=False)),
+            "selected": normalize_tracks(source.get("audio_tracks")) or [0]}
 
 
 def _project_id(args: dict) -> int:
@@ -1760,8 +1805,66 @@ def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
     lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
     cues = [c for c in out["cues"] if float(c["end"]) > lo and (hi is None or float(c["start"]) < hi)]
-    return {"project_id": out["source_id"], "duration_sec": out["duration_sec"],
-            "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
+    result = {"project_id": out["source_id"], "duration_sec": out["duration_sec"],
+              "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
+    if out.get("no_speech"):
+        result.update(no_speech=True, note=out["note"])
+    return result
+
+
+def _project_or_clip_source(ctx: ToolContext, args: dict) -> int:
+    """project_id из аргументов, а у встроенного монтажёра — источник его клипа."""
+    if args.get("project_id") is None and ctx.clip_plan_id is not None:
+        plan = ctx.store.get_clip_plan(int(ctx.clip_plan_id), include_segments=False)
+        return int(plan["source_id"])
+    return _project_id(args)
+
+
+def h_set_source_audio(ctx: ToolContext, args: dict) -> dict:
+    """Звуковые дорожки исходника: [0] — первая, [1] — вторая, [0, 1] — смешать (игра + микрофон)."""
+    from app.source_audio import set_source_audio
+
+    project = _project_or_clip_source(ctx, args)
+    tracks = args.get("tracks")
+    if tracks is not None and not isinstance(tracks, list):
+        raise ToolError("tracks — список номеров дорожек с 0: [0], [1] или [0, 1]; [] — по умолчанию (первая)")
+    try:
+        return set_source_audio(ctx.store, project, tracks)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_source_loudness(ctx: ToolContext, args: dict) -> dict:
+    """Громкость исходника по времени: пики и громкие места — перестрелки и реакции без Gemini."""
+    from app.source_loudness import source_loudness
+
+    project = _project_or_clip_source(ctx, args)
+    try:
+        return source_loudness(ctx.store, project, _num(args.get("from_sec")), _num(args.get("to_sec")),
+                               _num(args.get("step")), int(_num(args.get("top"), 10) or 10))
+    except ValueError as exc:
+        raise ToolError(f"source_loudness: {exc}") from exc
+
+
+def h_source_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
+    """Лист кадров исходника с временем (до 24): что на экране в громких местах."""
+    from app.motion_render import source_contact_sheet_jpeg
+
+    project = _project_or_clip_source(ctx, args)
+    lo, hi = _num(args.get("from_sec")), _num(args.get("to_sec"))
+    if lo is None or hi is None:
+        raise ToolError("нужны from_sec и to_sec (секунды исходника)")
+    x = _num(args.get("x"))
+    if x is not None and not 0.0 <= x <= 1.0:
+        raise ToolError("x — центр окна 9:16 в долях ширины, 0..1")
+    try:
+        data, times = source_contact_sheet_jpeg(ctx.store, project, lo, hi, _num(args.get("step")), x)
+    except ValueError as exc:
+        raise ToolError(f"source_contact_sheet: {exc}") from exc
+    return ImageResult(data=data, mime_type="image/jpeg",
+                       info={"project_id": project, "times": times, "x": x,
+                             "note": "подписи — время исходника; окна рабочего стола/уведомления на кадрах — "
+                                     "такие места в клип не брать"})
 
 
 def h_source_shots(ctx: ToolContext, args: dict) -> dict:
@@ -1853,7 +1956,7 @@ def motion_reference() -> str:
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
 Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее), x, y, scale, rotation, opacity,
   keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress,
-  in {{type, duration}}, out {{type, duration}}, loop {{type, speed 0.1..5, amount 0..3}},
+  in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
 type: {', '.join(enums['types'])}
 in/out: {', '.join(enums['anims'])} (typewriter/words — только text; draw — shape line/arrow/ellipse)
@@ -1872,7 +1975,7 @@ props по типу:
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
   audio: asset_id ИЛИ "sfx:<pack>/<file>", volume 0..2, fadeIn, fadeOut, offset, duck (не рисуется)
 Все допустимые поля props (остальное отбрасывается): {fields}
-Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео.
+Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте).
 Цвета: #rrggbb или #rrggbbaa."""
 
 
@@ -1920,7 +2023,8 @@ _AT_WORD_SCHEMA = {
 
 def _layer_schema() -> dict:
     enums = motion_enums()
-    anim = _obj({"type": {"type": "string", "enum": enums["anims"]}, "duration": {"type": "number"}})
+    anim = {**_obj({"type": {"type": "string", "enum": enums["anims"]}, "duration": {"type": "number"}}),
+            "description": "null, type none или duration 0 — без анимации"}
     key_point = _obj({"t": {"type": "number"}, "v": {"type": "number"},
                       "ease": {"type": "string", "enum": enums["easings"]}}, ["t", "v"])
     return _obj(
@@ -1969,8 +2073,9 @@ def _build_registry() -> list[Tool]:
     return [
         Tool(
             "get_clip", "Смотрю клип",
-            "Весь клип: куски (время исходника и клипа), настройки, слои, камера, вставки, субтитры с "
-            "временем слов (в секундах клипа) и предупреждения. Зови первым. / Full clip state incl. "
+            "Весь клип: куски (время исходника и клипа), настройки (и каким пресетом отрендерится — "
+            "render.effective_preset), слои, камера, вставки, субтитры с временем слов (в секундах клипа), "
+            "звуковые дорожки исходника (source.audio) и предупреждения. Зови первым. / Full clip state incl. "
             "subtitle word timings in clip seconds.",
             _obj({}), h_get_clip,
         ),
@@ -1990,17 +2095,19 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "find_noises", "Ищу посторонние звуки",
-            "Громкие места звука клипа без речи — вшитые эффекты старого монтажа, музыка, шум (распознавание "
-            "их не видит). Секунды клипа до вырезов: в паузе — вырежи apply_cuts. threshold_db — порог "
-            "громкости, по умолчанию −32. / Loud non-speech moments in the clip audio.",
+            "Громкие места звука клипа без речи — вшитые эффекты старого монтажа, музыка, шум, в игре — "
+            "выстрелы и взрывы (распознавание их не видит). Отрезки уже слиты, секунды клипа до вырезов: в "
+            "паузе — вырежи apply_cuts или mute_audio. threshold_db — порог громкости, по умолчанию медиана "
+            "звука клипа без речи + 6 дБ. Без субтитров речь не вычитается. / Loud non-speech spans in the clip audio.",
             _obj({"threshold_db": {"type": "number"}}), h_find_noises,
             label=lambda a: "Ищу посторонние звуки",
         ),
         Tool(
             "listen", "Слушаю отрезок",
             "Распознать, что РЕАЛЬНО звучит в готовом клипе между from_sec и to_sec (с вырезами, до 30 с): "
-            "слова с временем и тишина после последнего слова. Без параметров — последние 6 с: проверь, "
-            "договорена ли развязка и есть ли хвост реакции. / Transcribe the finished clip audio in a range.",
+            "слова с временем и тишина после последнего слова, громкость отрезка (level, RMS дБ). Без "
+            "параметров — последние 6 с: проверь, договорена ли развязка и есть ли хвост реакции. Речи нет "
+            "(игра, музыка) — words [] и пометка. / Transcribe the finished clip audio in a range.",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"}}), h_listen,
             label=lambda a: "Слушаю финал клипа" if a.get("from_sec") is None else
             f"Слушаю {(_num(a.get('from_sec'), 0.0) or 0.0):.1f}–{(_num(a.get('to_sec'), 0.0) or 0.0):.1f} с",
@@ -2008,15 +2115,53 @@ def _build_registry() -> list[Tool]:
         Tool(
             "contact_sheet", "Смотрю весь клип",
             "Сетка из n кадров равномерно по клипу (с временем) — весь монтаж одним взглядом: "
-            "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты (секунды "
-            "готового клипа, до 16): все панчлайны или последние 3 с разом. / Contact sheet of n frames "
-            "or of chosen times.",
+            "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты, до 16: по "
+            "умолчанию секунды ГОТОВОГО ролика (после вырезов, как подписи на листе); before_cuts=true — "
+            "секунды ДО вырезов, как у слоёв и камеры. Кадры исходника вне клипа — source_contact_sheet. / "
+            "Contact sheet of n frames or of chosen times.",
             _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
                   "times": {"type": "array", "items": {"type": "number"}},
                   "before_cuts": {"type": "boolean",
                                   "description": "times в секундах ДО вырезов — как у слоёв, камеры и view_frame"}}),
             h_contact_sheet,
             label=lambda a: "Смотрю весь клип сеткой кадров",
+        ),
+        Tool(
+            "source_contact_sheet", "Смотрю кадры исходника",
+            "Сетка кадров ИСХОДНИКА между from_sec и to_sec (секунды исходника, подписи — время исходника): "
+            "step — шаг в секундах (до 24 кадров), без него 12 равномерно; x 0..1 — показать окно 9:16 с "
+            "центром x, как оно встанет в вертикальный кадр. Выбирать моменты без Gemini: громкие места "
+            "source_loudness → что там на экране. Окна рабочего стола, Alt-Tab, уведомления — такие места не "
+            "брать. project_id — проект (у встроенного монтажёра — источник клипа). / Contact sheet of the source.",
+            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+                  "step": {"type": "number"}, "x": {"type": "number"}}, ["from_sec", "to_sec"]),
+            h_source_contact_sheet, scope="global",
+            label=lambda a: f"Смотрю кадры исходника {(_num(a.get('from_sec'), 0.0) or 0.0):.0f}–"
+                            f"{(_num(a.get('to_sec'), 0.0) or 0.0):.0f} с",
+        ),
+        Tool(
+            "source_loudness", "Слушаю громкость исходника",
+            "Профиль громкости ИСХОДНИКА: RMS дБ по шагу step (≥ 0.5 с, по умолчанию 1) в окне from_sec..to_sec "
+            "(не больше 10 мин за вызов, по умолчанию 10 мин от from_sec), пики (top, по умолчанию 10) и "
+            "громкие отрезки, сводка: медиана и порог «громко» (медиана + 6 дБ). Для игр и стримов без речи — "
+            "так ищут перестрелки, взрывы, реакции; потом source_contact_sheet на пиках. Звук — выбранные "
+            "дорожки источника (set_source_audio). / Loudness profile of the source over time.",
+            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+                  "step": {"type": "number"}, "top": {"type": "integer"}}),
+            h_source_loudness, scope="global",
+            label=lambda a: f"Слушаю громкость исходника с {(_num(a.get('from_sec'), 0.0) or 0.0):.0f} с",
+        ),
+        Tool(
+            "set_source_audio", "Выбираю звуковую дорожку",
+            "Звуковые дорожки исходника (запись NVIDIA/OBS: часто 0 — игра, 1 — микрофон): tracks [0] — "
+            "первая, [1] — вторая, [0, 1] — смешать; [] — по умолчанию. Действует везде: рендер, субтитры, "
+            "listen, find_noises, громкость; расшифровка исходника сбрасывается. Сколько дорожек — "
+            "get_clip.source.audio / list_projects. project_id — проект (у встроенного монтажёра — источник "
+            "клипа). / Choose and mix the source audio tracks.",
+            _obj({"project_id": {"type": "integer"}, "tracks": {"type": "array", "items": {"type": "integer"}}},
+                 ["tracks"]),
+            h_set_source_audio, mutating=True, scope="global",
+            label=lambda a: f"Звук исходника: дорожки {a.get('tracks')}",
         ),
         Tool(
             "get_motion_reference", "Справка по слоям",
@@ -2029,6 +2174,10 @@ def _build_registry() -> list[Tool]:
             "Звук или титр ровно на слово — at_word {line, word} или {text: \"Артас\"} вместо start, "
             "until_word — держать до начала другого слова. Не больше 30 слоёв за вызов. "
             "Слой image рисует картинку статично (у GIF — первый кадр): анимированные гифки — add_insert. "
+            "Звук (audio) сервис выравнивает сам: при речи — на 10 дБ тише голоса, в клипе без речи (игра) — "
+            "на 4 дБ ниже его громких мест, не громче; volume 0.3–0.6, выше 1 срезается. "
+            "Слой до самого конца клипа держится на финальном стоп-кадре — out у него не играет; "
+            "out null или {duration: 0} — без анимации. "
             "Проверяется как правка человека; при ошибке вернёт problems — исправь и повтори. "
             "Возвращает id и предупреждения (безопасные зоны, перегруз). / Add motion layers.",
             _obj({"layers": {"type": "array", "items": layer}}, ["layers"]), h_add_layers,
@@ -2056,7 +2205,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_camera", "Наезды камеры",
             "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?}]. Пустой список — без наездов. "
-            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. / Replace camera keys.",
+            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. В раскладках pip_cam/split "
+            "камера двигает только игру: окошко вебки/килфида и полоса вебки стоят на месте. / Replace camera keys.",
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
@@ -2243,7 +2393,8 @@ def _build_registry() -> list[Tool]:
             "set_subtitle_words", "Задаю слова субтитров",
             "Заменить слова субтитров целиком: words [{word, start, end}] — текст и время каждого слова "
             "(секунды клипа до вырезов, как в get_clip). Для исправления ошибок распознавания и опоздавших "
-            "слов; строки соберутся из слов сами. / Replace subtitle words with exact timings.",
+            "слов; строки соберутся из слов сами. Пустой список [] — убрать субтитры клипа (клип без речи). "
+            "/ Replace subtitle words with exact timings; [] clears them.",
             _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
                                                               "end": {"type": "number"}}, ["word", "start", "end"])}},
                  ["words"]),
@@ -2370,6 +2521,7 @@ DISCOVERY_TOOLS = [
         "get_source_transcript", "Расшифровка проекта",
         "Реплики ВСЕГО исходника проекта [{start, end, text}] (время исходника) — выбрать моменты "
         "для клипов без анализа Gemini. Первый вызов — локальный Whisper, несколько минут, потом кэш. "
+        "Звук без речи (игра) — пустой список и no_speech: ищи моменты source_loudness. "
         "/ Whole-source transcript.",
         _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
              ["project_id"]),
