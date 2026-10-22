@@ -571,10 +571,14 @@ PROPS: dict[str, dict] = {
         "maxWidth": Opt(Num(900, 100, 2160, 1)),
         "lineHeight": Opt(Num(1.12, 0.8, 2, 3)),
         "letterSpacing": Opt(Num(0, -20, 100, 1)),
+        # i — номер слова в comp.words; w и t — якорь (текст и начало слова, секунды кусков
+        # подряд): после перезаписи слов номер ищется заново по ним (app/caption_marks.py).
         "highlightWords": Opt(
-            ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "color": Color("#2bff6b")}), MAX_CAPTION_MARKS)
+            ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "color": Color("#2bff6b"),
+                        "w": Opt(Text("", 60)), "t": Opt(Num(0, 0, MAX_TIME_SEC, 3))}), MAX_CAPTION_MARKS)
         ),
-        "emoji": Opt(ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "char": Text("", 32)}), MAX_CAPTION_MARKS)),
+        "emoji": Opt(ListOf(Obj({"i": Num(0, 0, 100000, integer=True), "char": Text("", 32),
+                                 "w": Opt(Text("", 60)), "t": Opt(Num(0, 0, MAX_TIME_SEC, 3))}), MAX_CAPTION_MARKS)),
         # Цвет слов второго, третьего… говорящего (метка s у слова в comp.words: A, B, C…).
         # Не задано — свой цвет на каждого, кроме главного (A).
         "speakerColors": Opt(ListOf(Obj({"s": Text("B", 8), "color": Color("#7dd3fc")}), 8)),

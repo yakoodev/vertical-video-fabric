@@ -45,11 +45,12 @@ def clip_waveform(store: Any, clip_plan_id: int, buckets: int = BUCKETS) -> dict
         return {"duration": 0.0, "peaks": []}
     duration = round(sum(b - a for a, b in pieces), 3)
     buckets = max(40, min(2000, int(buckets)))
-    from app.source_audio import source_tracks
+    from app.source_audio import source_mix
 
-    tracks = source_tracks(source)
-    # Сменили дорожки звука у источника — волна другая, кэш свой.
-    track_key = "" if not tracks else "-a" + "_".join(map(str, tracks))
+    tracks = source_mix(source)
+    # Сменили дорожки звука (или их громкость) у источника — волна другая, кэш свой.
+    track_key = "" if not tracks else "-a" + "_".join(
+        f"{m['track']}" + (f"g{m['gain_db']:g}" if m["gain_db"] else "") for m in tracks)
     cache = _cache_path(clip_plan_id, f"{_pieces_key(pieces)}-{buckets}{track_key}")
     if cache.exists():
         try:

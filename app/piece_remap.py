@@ -140,11 +140,26 @@ def remap_render(render: dict, old_pieces: list[dict], new_pieces: list[dict]) -
         if got is not None:
             cuts.append({**cut, "start": got[0], "end": got[1]})
     fresh["cuts"] = cuts
+    fresh["mute"], fresh["gain"] = remap_spans(render.get("mute"), mapper), remap_spans(render.get("gain"), mapper)
     lost = len(render.get("layers") or []) - len(fresh["layers"])
-    note = "слои, камера, вставки и вырезы сдвинуты вслед за кусками"
+    note = "слои, камера, вставки, вырезы, тишина и громкость исходника сдвинуты вслед за кусками"
     if lost > 0:
         note += f"; {lost} слоёв были целиком в отрезанном — убраны"
     return fresh, note
+
+
+def remap_spans(spans: Any, mapper: Any, min_len: float = 0.05) -> list[dict]:
+    """Отрезки {start, end, …} (тишина, громкость исходника) — вслед за кусками/переходом;
+    целиком в отрезанном — пропадают."""
+    out = []
+    for span in spans if isinstance(spans, list) else []:
+        try:
+            got = mapper.range(float(span["start"]), float(span["end"]), min_len)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if got is not None:
+            out.append({**span, "start": round(got[0], 3), "end": round(got[1], 3)})
+    return out
 
 
 def retime_segment(store: Any, segment_id: int, start_sec: float, end_sec: float) -> dict:
@@ -214,4 +229,6 @@ def remap_for_transition(render: dict, segments: list[dict], old_transition: Any
         "layers": remap_layers(render.get("layers") or [], mapper),
         "camera": remap_camera(render.get("camera") or [], mapper),
         "inserts": remap_inserts(render.get("inserts") or [], mapper),
+        "mute": remap_spans(render.get("mute"), mapper),
+        "gain": remap_spans(render.get("gain"), mapper),
     }

@@ -364,7 +364,18 @@ BOOL_FEATURES = ("hook_title", "subtitles", "music", "chroma_key")
 def performance_report(store: Any, limit: int = 5) -> dict:
     """Топ и антитоп клипов по просмотрам с признаками + сравнение «с признаком / без»."""
     limit = max(1, min(int(limit or 5), 20))
-    rows = [row for row in clip_performance(store) if row["views"] is not None]
+    every = clip_performance(store)
+    rows = [row for row in every if row["views"] is not None]
+    if not rows:
+        # Агент стримов: «get_performance пуст» — непонятно, сломано или так и надо. Так и надо.
+        hint = ("Опубликованных клипов ещё нет — статистики нет, это нормально, а не ошибка. Монтируй по правилам "
+                "docs/AGENTS.md («Что обычно улучшает клип»); числа появятся после публикаций владельцем.")
+        if every:
+            hint = (f"Публикаций {len(every)}, но просмотры ещё не собраны (сбор раз в "
+                    f"{settings.stats_interval_hours:g} ч, вручную — «Обновить статистику» на странице «Публикации»). "
+                    "Выводов пока не делай — монтируй по правилам docs/AGENTS.md.")
+        return {"clips_with_stats": 0, "published": len(every), "top": [], "bottom": [], "compare": {},
+                "hint": hint, "note": hint, "status": status()}
     top = rows[:limit]
     bottom = [row for row in rows[::-1][:limit] if row not in top]
 

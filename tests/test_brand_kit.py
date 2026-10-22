@@ -144,7 +144,13 @@ def test_apply_brand_styles_clip_and_is_idempotent(tmp_path, monkeypatch):
     caps = layers["auto_caps"]["props"]
     assert caps["style"] == "box" and caps["font"] == "Montserrat" and caps["color"] == "#ffffff"
     assert caps["activeColor"] == "#ff6b2c" and caps["stroke"] == {"color": "#0b0d14", "width": 8}
-    assert caps["highlightWords"] == [{"i": 1, "color": "#ff6b2c"}] and "gradient" not in caps
+    # Выделенные слова — не акцентом (им звучит активное слово, подсветки бы не было видно):
+    # контрастный цвет, и проверка контраста на него не ругается.
+    assert caps["highlightWords"] == [{"i": 1, "color": "#22c55e"}] and "gradient" not in caps
+    from app.agent_tools import caption_highlight_warnings
+
+    assert caption_highlight_warnings(caps) == []
+    assert not any("highlightWords" in w for w in out.get("warnings") or [])
     hook = layers["auto_hook"]
     assert hook["props"]["text"] == "ЭТО МОДЕЛЬ" and hook["props"]["color"] == "#ff6b2c"
     assert hook["props"]["bg"]["color"] == "#0b0d14" and hook["props"]["stroke"] is None

@@ -161,36 +161,34 @@ def av_length_issue(lengths: dict) -> dict | None:
 
 SYNC_WARN_SEC = 0.25
 SYNC_RANGE_SEC = 2.5
+# Речь в словах должна быть заметно громче звука между словами, иначе сверка по громкости
+# врёт: в игре выстрелы между фразами громче голоса, и «субтитры спешат» выходило на ровном
+# месте (отзыв агента апекса). Тогда сверяем по дорожке речи или не сверяем вовсе.
+SYNC_MIN_CONTRAST_DB = 3.0
 
 
-def estimate_subtitle_offset(path: Path, words: list[dict]) -> float | None:
-    """На сколько секунд слова субтитров сдвинуты относительно речи в готовом клипе.
-
-    Плюс — слова надо сдвинуть ПОЗЖЕ (субтитры спешат), минус — раньше.
-    Считаем огибающую громкости (10 мс) и ищем сдвиг ±2.5 с, при котором
-    «слова звучат» лучше всего совпадает с «есть голос». None — мало данных.
-    """
+def _envelope(raw: bytes, rate: int) -> list[float]:
+    """Огибающая громкости по 10 мс (средний модуль 16-битных сэмплов)."""
     import array
 
-    if len(words) < 8:
-        return None
-    try:
-        proc = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
-            capture_output=True, timeout=300, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if proc.returncode != 0 or not proc.stdout:
-        return None
     pcm = array.array("h")
-    pcm.frombytes(proc.stdout[: len(proc.stdout) - len(proc.stdout) % 2])
-    step = 80  # 10 мс при 8 кГц
-    env = []
-    for i in range(0, len(pcm) - step, step):
-        chunk = pcm[i : i + step]
-        env.append(sum(abs(v) for v in chunk) / step)
-    if len(env) < 200:
+    pcm.frombytes(raw[: len(raw) - len(raw) % 2])
+    step = max(1, rate // 100)
+    return [sum(abs(v) for v in pcm[i : i + step]) / step for i in range(0, len(pcm) - step, step)]
+
+
+def _db(value: float) -> float:
+    import math
+
+    return 20 * math.log10(max(value, 1.0))
+
+
+def offset_from_envelope(env: list[float], words: list[dict]) -> float | None:
+    """Сдвиг слов относительно голоса по огибающей (плюс — слова надо сдвинуть ПОЗЖЕ).
+
+    None — мало данных или сверка ненадёжна: при лучшем сдвиге внутри слов не громче, чем
+    между ними (между фразами гремит игра — громкость не отличает голос от выстрела)."""
+    if len(words) < 8 or len(env) < 200:
         return None
     threshold = sorted(env)[int(len(env) * 0.6)]
     voice = [1 if v > threshold else 0 for v in env]
@@ -205,7 +203,8 @@ def estimate_subtitle_offset(path: Path, words: list[dict]) -> float | None:
     if not on:
         return None
     best_shift, best_score = 0, -1
-    for shift in range(-span, span + 1, 2):
+    # При равном совпадении — меньший сдвиг (ровная речь не «спешит» на краю диапазона).
+    for shift in sorted(range(-span, span + 1, 2), key=abs):
         score = 0
         for k in on:
             j = k + shift
@@ -213,14 +212,52 @@ def estimate_subtitle_offset(path: Path, words: list[dict]) -> float | None:
                 score += voice[j]
         if score > best_score:
             best_shift, best_score = shift, score
+    inside = sorted(_db(env[k + best_shift]) for k in on if 0 <= k + best_shift < len(env))
+    taken = {k + best_shift for k in on}
+    outside = sorted(_db(v) for j, v in enumerate(env) if j not in taken)
+    if inside and outside:
+        # Громкие места между словами (верхние 5%) против речи в словах: выстрел громче голоса —
+        # громкость не отличает их, сверке не верим.
+        contrast = inside[len(inside) // 2] - outside[min(len(outside) - 1, int(len(outside) * 0.95))]
+        if contrast < SYNC_MIN_CONTRAST_DB:
+            return None
     return round(best_shift / 100, 2)
 
 
-def subtitle_sync_issue(offset: float | None) -> dict | None:
+def estimate_subtitle_offset(path: Path, words: list[dict]) -> float | None:
+    """На сколько секунд слова субтитров сдвинуты относительно речи в готовом клипе.
+
+    Плюс — слова надо сдвинуть ПОЗЖЕ (субтитры спешат), минус — раньше.
+    Считаем огибающую громкости (10 мс) и ищем сдвиг ±2.5 с, при котором
+    «слова звучат» лучше всего совпадает с «есть голос». None — мало данных или
+    громкость не отличает голос от прочего звука (игра) — см. ``offset_from_envelope``.
+    """
+    if len(words) < 8:
+        return None
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+            capture_output=True, timeout=300, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return offset_from_envelope(_envelope(proc.stdout, 8000), words)
+
+
+def estimate_offset_on_voice(pcm: bytes, rate: int, words: list[dict]) -> float | None:
+    """То же по дорожке речи (микрофон без игры): голос там — это голос, а не выстрел.
+    ``words`` — во времени этого звука."""
+    return offset_from_envelope(_envelope(pcm, rate), words)
+
+
+def subtitle_sync_issue(offset: float | None, basis: str = "") -> dict | None:
     if offset is None or abs(offset) < SYNC_WARN_SEC:
         return None
+    by = f" (по {basis})" if basis else ""
     if offset > 0:
-        text = f"субтитры спешат на {offset:.2f} с — сдвиньте их позже (или проверьте обрезку кусков)"
+        text = f"субтитры спешат на {offset:.2f} с{by} — сдвиньте их позже (или проверьте обрезку кусков)"
     else:
-        text = f"субтитры опаздывают на {-offset:.2f} с — сдвиньте их раньше"
+        text = f"субтитры опаздывают на {-offset:.2f} с{by} — сдвиньте их раньше"
     return {"level": "warn", "code": "subs_sync", "text": text}

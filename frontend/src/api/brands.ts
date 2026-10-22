@@ -11,7 +11,8 @@ export interface Brand {
   name: string;
   /** Семейство из пака шрифтов; "" — шрифт по умолчанию. */
   font: string;
-  colors: { text: string; accent: string; plate: string };
+  /** highlight — второй цвет бренда: выделенные слова субтитров (нет — сервер берёт контрастный к звучащему слову). */
+  colors: { text: string; accent: string; plate: string; highlight?: string };
   logo_asset_id: number | null;
   logo_corner: "top-right" | "top-left";
   caption_style: {

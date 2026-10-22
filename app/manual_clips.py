@@ -31,7 +31,7 @@ def source_transcript(store: Any, source_id: int, *, refresh: bool = False,
 
     Синхронно: держит вызов до конца распознавания. Для HTTP/MCP — ``transcript_job``."""
     from app.ai import transcript
-    from app.source_audio import audio_streams, source_tracks
+    from app.source_audio import audio_streams, speech_mix
 
     source = store.get_source(source_id)
     cues = [] if refresh else store.get_source_transcript(source_id)
@@ -40,7 +40,7 @@ def source_transcript(store: Any, source_id: int, *, refresh: bool = False,
     if not cues and not no_speech:
         try:
             extra = {"progress": progress, "chunk_sec": JOB_CHUNK_SEC} if progress is not None else {}
-            cues = transcript.transcribe_source_cues(source.get("local_path"), tracks=source_tracks(source), strict=True,
+            cues = transcript.transcribe_source_cues(source.get("local_path"), tracks=speech_mix(source), strict=True,
                                                      **extra)
         except Exception as exc:  # noqa: BLE001 - сбой распознавания — понятная ошибка, а не «речи нет»
             raise ValueError(f"расшифровка не получилась: {str(exc)[:200]}") from exc
@@ -158,7 +158,9 @@ def create_manual_clip(store: Any, source_id: int, title: str, pieces: list[dict
     segments = []
     for index, piece in enumerate(pieces, start=1):
         try:
-            start, end = float(piece["start_sec"]), float(piece["end_sec"])
+            # source_start/source_end — имена из get_clip.pieces (алиасы start_sec/end_sec).
+            start = float(piece["start_sec"] if "start_sec" in piece else piece["source_start"])
+            end = float(piece["end_sec"] if "end_sec" in piece else piece["source_end"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"кусок {index}: нужны числа start_sec и end_sec") from exc
         segments.append({
@@ -168,7 +170,26 @@ def create_manual_clip(store: Any, source_id: int, title: str, pieces: list[dict
         })
     analysis = _manual_analysis(store, source_id)
     created = store.create_ai_segments(analysis["id"], segments)
-    return store.create_clip_plan(
+    plan = store.create_clip_plan(
         source_id, analysis["id"], title, description=str(description or "")[:2000],
         segment_ids=[seg["id"] for seg in created],
     )
+    return with_default_preset(store, plan)
+
+
+def with_default_preset(store: Any, plan: dict) -> dict:
+    """Новый клип агента — сразу с пресетом рендера по умолчанию (а не preset_id null).
+
+    Агент стримов: у новых клипов preset_id null — непонятно, чем отрендерится. Ставим тот же
+    пресет, что взял бы рендер (``effective_preset``), числом; остальные настройки — по
+    умолчанию (как у клипа, сохранённого из редактора)."""
+    from app.clip_settings import normalize_render_settings
+    from app.render import effective_preset
+
+    if plan.get("render_settings"):
+        return plan
+    preset = effective_preset(store, None)
+    if not preset:
+        return plan
+    store.set_clip_plan_render_settings(plan["id"], normalize_render_settings({"preset_id": preset["id"]}))
+    return store.get_clip_plan(plan["id"])

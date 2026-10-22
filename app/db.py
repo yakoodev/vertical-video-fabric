@@ -312,6 +312,8 @@ class Database:
             self._ensure_column(conn, "sources", "chroma_key", "TEXT NOT NULL DEFAULT ''")
             # Звуковые дорожки исходника для звука клипов (JSON [0] / [0,1]; '' — первая), app/source_audio.py.
             self._ensure_column(conn, "sources", "audio_tracks", "TEXT NOT NULL DEFAULT ''")
+            # Дорожки для распознавания речи (JSON [1]; '' — та же смесь, что для рендера), app/source_audio.py.
+            self._ensure_column(conn, "sources", "speech_tracks", "TEXT NOT NULL DEFAULT ''")
             # Live progress of a running analysis: {"stage", "done", "total"} — drives
             # the step list on the Source tab instead of a fake percentage.
             self._ensure_column(conn, "ai_analyses", "progress_json", "TEXT NOT NULL DEFAULT '{}'")

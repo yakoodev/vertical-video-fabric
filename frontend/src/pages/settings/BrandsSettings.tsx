@@ -121,6 +121,23 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
           <ColorField label="Текст" value={b.colors.text} onChange={(v) => set("colors", { ...b.colors, text: v })} />
           <ColorField label="Акцент" value={b.colors.accent} onChange={(v) => set("colors", { ...b.colors, accent: v })} />
           <ColorField label="Плашка" value={b.colors.plate} onChange={(v) => set("colors", { ...b.colors, plate: v })} />
+          <ColorField
+            label="Подсветка"
+            value={b.colors.highlight || "#22c55e"}
+            onChange={(v) => set("colors", { ...b.colors, highlight: v })}
+          />
+          {b.colors.highlight ? (
+            <button
+              type="button"
+              className="btn ghost sm"
+              title="Выделенные слова субтитров — контрастным к звучащему слову цветом, сервер подберёт сам"
+              onClick={() => set("colors", { ...b.colors, highlight: "" })}
+            >
+              авто
+            </button>
+          ) : (
+            <span className="muted" style={{ fontSize: 12, paddingBottom: 8 }}>подсветка: авто (не цвет звучащего слова)</span>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

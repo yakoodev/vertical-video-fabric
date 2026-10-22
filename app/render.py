@@ -686,9 +686,20 @@ class ClipRenderService:
             if not plan_id:
                 return qc
             plan = self.store.get_clip_plan(int(plan_id))
+            cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"))
+            voice = self._qc_sync_on_voice(plan, cut_plan)
+            if voice is not None:
+                # Своя дорожка речи (микрофон): сверяем по голосу на ней, а не по громкости
+                # готового звука, где выстрелы игры похожи на речь.
+                offset, basis = voice, "дорожке речи"
+                qc = {**qc, "subtitle_offset_sec": offset, "subtitle_sync_basis": "speech_track"}
+                issue = subtitle_sync_issue(offset, basis)
+                if issue:
+                    qc["issues"] = [*qc.get("issues", []), issue]
+                    qc["ok"] = False
+                return qc
             # Ровно те тайминги слов, что рендер прожёг/отдал слою «субтитры»:
             # вырезы, потом настоящие overlap склеек после вырезов.
-            cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"))
             if cut_plan is not None:
                 from app.cuts import cut_caption_words
 
@@ -709,6 +720,39 @@ class ClipRenderService:
         except Exception:  # noqa: BLE001 - QC никогда не ломает рендер
             return qc
         return qc
+
+    def _qc_sync_on_voice(self, plan: dict, cut_plan=None) -> float | None:
+        """Сдвиг субтитров по дорожке речи источника (``speech_tracks``), или None — дорожки
+        речи отдельно нет / сверить нельзя. Звук — части клипа подряд (после вырезов, без
+        наплывов), слова — в том же времени."""
+        from app.clip_subtitles import build_clip_audio_args
+        from app.cuts import remap_subtitles
+        from app.render_qc import estimate_offset_on_voice
+        from app.source_audio import separate_speech, speech_mix
+        from app.speech_onsets import wav_pcm
+
+        source = self.store.get_source(int(plan["source_id"]))
+        if not separate_speech(source):
+            return None
+        payload = self.store.get_clip_plan_subtitles(int(plan["id"])) or {}
+        if not payload.get("words"):
+            return None
+        if cut_plan is not None:
+            payload = remap_subtitles(payload, cut_plan.mapper)
+            parts = cut_plan.parts
+        else:
+            parts = plan.get("segments") or []
+        pieces = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+        source_path = Path(str(source.get("local_path") or ""))
+        if not pieces or not source_path.exists():
+            return None
+        wav = settings.tmp_dir / f"qc-voice-{uuid4().hex}.wav"
+        try:
+            _run_ffmpeg(build_clip_audio_args(source_path, pieces, wav, speech_mix(source)), timeout=60 * 5)
+            pcm = wav_pcm(wav)
+        finally:
+            wav.unlink(missing_ok=True)
+        return estimate_offset_on_voice(pcm, 16000, payload.get("words") or [])
 
     def render_clip_plan(self, clip_plan_id: int, *args: Any, **kwargs: Any) -> dict:
         """Рендер клипа — по одному на весь сервис.
@@ -899,10 +943,19 @@ class ClipRenderService:
         if not visual:
             return visual
         had_words = bool(visual.get("words"))
-        fresh = remap_motion(visual, self._finished_cut_mapper(plan, cut_plan))
+        mapper = self._finished_cut_mapper(plan, cut_plan)
+        fresh = remap_motion(visual, mapper)
         if had_words:
             # Слова пересчитываются из субтитров: вырез — до сдвига на переходы.
             fresh = {**fresh, "words": cut_caption_words(self.store, plan, cut_plan)}
+            # Подсветка слов — номера в словах ДО вырезов: после них слово с тем же номером
+            # уже другое (app/caption_marks.py) — переставляем на то же слово.
+            from app.caption_marks import rebind_layers
+
+            old = [{"w": w["w"], "t": float(w["t0"])} for w in visual.get("words") or []]
+            new = [{"w": w["w"], "t": float(w["t0"])} for w in fresh.get("words") or []]
+            layers, _lost = rebind_layers(fresh.get("layers") or [], old, new, time_map=mapper)
+            fresh = {**fresh, "layers": layers}
         # Слой целиком в вырезе пропал — может не остаться ничего видимого.
         return fresh if (fresh.get("layers") or fresh.get("camera")) else None
 
@@ -929,29 +982,34 @@ class ClipRenderService:
             return None
 
     def _apply_mute(self, clip: dict, plan: dict, cut_plan=None) -> dict:
-        """Тишина на месте звука исходника (``render_settings.mute``, app/audio_mute.py).
+        """Тишина и громкость звука исходника на отрезках (``render_settings.mute`` и ``gain``,
+        app/audio_mute.py) — одним проходом.
 
         До вставок и звуков слоёв: они ложатся поверх и играют. Сбой не теряет клип."""
-        from app.audio_mute import build_mute_args, normalize_mute
+        from app.audio_mute import build_source_volume_args, normalize_gain, normalize_mute
 
-        mutes = normalize_mute((plan.get("render_settings") or {}).get("mute"))
+        settings_ = plan.get("render_settings") or {}
+        mutes = normalize_mute(settings_.get("mute"))
+        gains = normalize_gain(settings_.get("gain"))
         path = Path(clip.get("output_path") or "")
-        if not mutes or not path.exists() or not _has_audio_stream(path):
+        if not (mutes or gains) or not path.exists() or not _has_audio_stream(path):
             return clip
         spans = [(m["start"], m["end"]) for m in mutes]
+        boosts = [(g["start"], g["end"], g["gain_db"]) for g in gains]
         if cut_plan is not None:
             mapper = self._finished_cut_mapper(plan, cut_plan)
             spans = [r for r in (mapper.range(a, b) for a, b in spans) if r]
+            boosts = [(*r, g) for r, g in ((mapper.range(a, b), g) for a, b, g in boosts) if r]
         try:
             tmp = path.with_name(path.stem + ".mute" + path.suffix)
-            args = build_mute_args(path, tmp, spans)
+            args = build_source_volume_args(path, tmp, spans, boosts)
             if args is None:
                 return clip
             _run_ffmpeg(args, timeout=60 * 20)
             tmp.replace(path)
             return self.store.update_clip(clip["id"], size_bytes=path.stat().st_size)
-        except Exception as exc:  # noqa: BLE001 - тишина — надстройка, клип важнее
-            return self._note_clip_error(clip["id"], f"тишина не наложена: {str(exc)[:200]}")
+        except Exception as exc:  # noqa: BLE001 - тишина и громкость — надстройка, клип важнее
+            return self._note_clip_error(clip["id"], f"тишина/громкость не наложены: {str(exc)[:200]}")
 
     def _apply_inserts(self, clip: dict, plan: dict, cut_plan=None) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.
@@ -1494,11 +1552,14 @@ def build_ffmpeg_extract_audio_args(
     output_path: Path,
     start_sec: float | None = None,
     duration_sec: float | None = None,
-    tracks: list[int] | None = None,
+    tracks: Any = None,
 ) -> list[str]:
-    """``tracks`` — звуковые дорожки исходника (app/source_audio.py); None — первая."""
+    """``tracks`` — звуковые дорожки исходника (app/source_audio.py, номера или
+    ``[{track, gain_db}]``); None — первая."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if tracks and list(tracks) != [0]:
+    from app.source_audio import is_default_mix
+
+    if tracks and not is_default_mix(tracks):
         from app.source_audio import extract_args
 
         return extract_args(input_path, output_path, list(tracks), start=start_sec, duration=duration_sec)
@@ -2111,9 +2172,11 @@ def _preset_with_source_audio(preset: dict, source: dict) -> dict:
     """Дорожки звука, выбранные у источника (app/source_audio.py), — поверх пресета.
 
     Не выбраны — пресет как был (первая дорожка или его собственное смешивание)."""
-    from app.source_audio import source_tracks
+    from app.source_audio import mix_storage, source_mix
 
-    tracks = source_tracks(source)
+    # Дорожки со своей громкостью [{track, gain_db}] (тихий микрофон поднят над игрой);
+    # без усилений — прежний список номеров.
+    tracks = mix_storage(source_mix(source))
     return {**preset, "source_audio_tracks": tracks} if tracks else preset
 
 

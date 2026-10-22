@@ -162,7 +162,7 @@ export type ResolvedCaptions = {
   maxWidth: number;
   lineHeight: number;
   letterSpacing: number;
-  highlightWords: { i: number; color: string }[];
+  highlightWords: { i: number; color: string; w?: string; t?: number }[];
   emoji: { i: number; char: string }[];
   speakerColors: { s: string; color: string }[];
   speakers: string[];

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.settings import settings
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 def transcribe_source_cues(local_path: str | None, model: str | None = None,
-                           tracks: list[int] | None = None, strict: bool = False,
+                           tracks: Any = None, strict: bool = False,
                            progress: Callable[[float, float], None] | None = None,
                            chunk_sec: float | None = None) -> list[dict]:
     """Transcribe a source file into ``[{start, end, text}]`` cues on the source
@@ -34,6 +34,15 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
     ``progress(готово_с, всего_с)`` — после каждого куска (фоновое распознавание
     показывает агенту «готово N из M мин»); ``chunk_sec`` — длина куска (меньше —
     чаще прогресс), по умолчанию ``CHUNK_SEC``.
+
+    Куски с нахлёстом (агент-монтажёр: в расшифровке дыры, которые listen на клипе
+    слышал). Раньше кусок резался ровно по границе: фраза на стыке рвалась пополам, а
+    Whisper на обрывке без начала часто молчал. Теперь звук куска длиннее на
+    ``CHUNK_OVERLAP_SEC``: фраза, начавшаяся до границы, распознаётся целиком в своём куске,
+    а следующий кусок начинается там, где она кончилась, — без дублей и без дыр.
+    Язык закрепляется по первому уверенно распознанному куску: кусок, начавшийся с
+    английского TTS-доната или игры, иначе распознавался «как английский» и русская
+    речь в нём выпадала как мусор.
     """
 
     if not local_path:
@@ -46,6 +55,7 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
     duration = _duration_sec(path)
     chunk = float(chunk_sec or CHUNK_SEC)
     cues: list[dict] = []
+    state: dict = {}
     try:
         # Кусками: whisper держит весь звук в памяти, а 4.7 часа стрима — это
         # гигабайты; целиком они выбивали сервис за лимит памяти контейнера.
@@ -53,13 +63,21 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
         if progress is not None:
             progress(0.0, duration)
         while True:
-            length = chunk if duration > chunk else None
-            cues.extend(_transcribe_piece(path, start, length, model, tracks))
-            start += chunk
+            chunked = duration > chunk
+            boundary = start + chunk
+            last = not chunked or boundary >= duration - 1e-6
+            length = chunk + CHUNK_OVERLAP_SEC if chunked else None
+            piece = _transcribe_piece(path, start, length, model, tracks, state=state)
+            # Свои реплики — начавшиеся до границы; остальное распознает следующий кусок.
+            own = piece if last else [c for c in piece if float(c["start"]) < boundary]
+            cues.extend(own)
             if progress is not None:
-                progress(min(start, duration) if length else duration, duration)
-            if not length or start >= duration:
+                progress(duration if last else min(boundary, duration), duration)
+            if last:
                 break
+            tail = max((float(c["end"]) for c in own), default=boundary)
+            # Следующий кусок — с конца последней фразы на стыке (не позже, чем звук был у этого).
+            start = min(max(boundary, tail), boundary + CHUNK_OVERLAP_SEC)
         return cues
     except Exception:  # noqa: BLE001 - transcript is an optional enhancement
         if strict:
@@ -69,14 +87,21 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
 
 
 CHUNK_SEC = 20 * 60
+# Нахлёст кусков: фраза на границе распознаётся целиком в своём куске.
+CHUNK_OVERLAP_SEC = 20.0
+# С какой уверенности в языке куска язык закрепляется для остальных.
+LANGUAGE_PIN_PROB = 0.8
 
 
 def _transcribe_piece(path: Path, start: float, length: float | None, model: str | None,
-                      tracks: list[int] | None = None) -> list[dict]:
-    """Кусок звука [start, start+length) → реплики во времени исходника."""
+                      tracks: Any = None, state: dict | None = None) -> list[dict]:
+    """Кусок звука [start, start+length) → реплики во времени исходника.
+
+    ``state`` — общий на все куски: ``language`` закрепляется по первому уверенному куску."""
     from app.render import _run_ffmpeg, build_ffmpeg_extract_audio_args
     from app.subtitles.whisper_local import WhisperSubtitleProvider
 
+    state = state if state is not None else {}
     audio_path = settings.tmp_dir / f"analysis-{uuid4().hex}.wav"
     try:
         _run_ffmpeg(
@@ -85,13 +110,18 @@ def _transcribe_piece(path: Path, start: float, length: float | None, model: str
             timeout=60 * 30,
         )
         try:
-            result = WhisperSubtitleProvider().transcribe(audio_path, {"language": ""}, (model or settings.whisper_model_size))
+            result = WhisperSubtitleProvider().transcribe(
+                audio_path, {"language": state.get("language") or ""}, (model or settings.whisper_model_size))
         except RuntimeError as exc:
             # Кусок без речи (игра, музыка) — это ответ «речи нет», а не сбой: иначе
             # расшифровка 4-часовой записи обрывалась на первых 20 минутах без слов.
             if "no word-level timestamps" in str(exc):
                 return []
             raise
+        usage = result.usage if isinstance(getattr(result, "usage", None), dict) else {}
+        prob = usage.get("whisperLanguageProbability")
+        if not state.get("language") and result.segments and isinstance(prob, (int, float)) and prob >= LANGUAGE_PIN_PROB:
+            state["language"] = str(result.language or "")
         out: list[dict] = []
         for seg in result.segments:
             text = str(getattr(seg, "text", "") or "").strip()
