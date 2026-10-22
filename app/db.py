@@ -445,6 +445,20 @@ class Database:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_clip_agent_messages ON clip_agent_messages(clip_plan_id, id)"
             )
+            # Брендовый шаблон: шрифт, цвета, логотип, концовка-призыв, музыка заказчика —
+            # повторяющиеся ролики одного бренда в одном стиле (app/brand_kit.py).
+            # Всё оформление — одним JSON: форму держит нормализация, а не схема таблицы.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS brands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    kit_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             # 💬 Чат Twitch-VOD источника (source_chat — статус импорта и карты
             # смайлов/значков, chat_messages — сами сообщения), см. app/twitch_chat.py.
             from app.twitch_chat import ensure_chat_schema

@@ -5,12 +5,14 @@ import { PromptsSettings } from "@/pages/settings/PromptsSettings";
 import { DefaultsSettings } from "@/pages/settings/DefaultsSettings";
 import { BackupSettings } from "@/pages/settings/BackupSettings";
 import { ProxySettings } from "@/pages/settings/ProxySettings";
+import { BrandsSettings } from "@/pages/settings/BrandsSettings";
 
 const TABS = [
   { seg: "render", label: "Пресеты рендера" },
   { seg: "banners", label: "Баннеры" },
   { seg: "audio", label: "Музыка" },
   { seg: "subtitles", label: "Субтитры" },
+  { seg: "brands", label: "Бренды" },
   { seg: "prompts", label: "Промпты" },
   { seg: "defaults", label: "По умолчанию" },
   { seg: "proxy", label: "Прокси" },
@@ -20,7 +22,7 @@ const TABS = [
 export function SettingsPage() {
   return (
     <>
-      <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, промпты" />
+      <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, бренды, промпты" />
       <div className="settings-layout">
         <nav className="settings-rail">
           {TABS.map((t) => (
@@ -40,6 +42,7 @@ export function SettingsPage() {
             <Route path="banners" element={<BannersSettings />} />
             <Route path="audio" element={<AudioSettings />} />
             <Route path="subtitles" element={<SubtitlesSettings />} />
+            <Route path="brands" element={<BrandsSettings />} />
             <Route path="prompts" element={<PromptsSettings />} />
             <Route path="defaults" element={<DefaultsSettings />} />
             <Route path="backup" element={<BackupSettings />} />

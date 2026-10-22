@@ -96,6 +96,40 @@ def seed_music(store) -> None:
             pass
 
 
+# Пример бренда: реклама магазина VTuber-моделей. Без логотипа и трека — их владелец
+# выберет из своей библиотеки; шрифт из пака (vendor/fonts).
+DEFAULT_BRAND = {
+    "name": "VTubika",
+    "font": "Montserrat",
+    "colors": {"text": "#ffffff", "accent": "#ff6b2c", "plate": "#0b0d14"},
+    "logo_asset_id": None,
+    "caption_style": {"style": "hormozi", "stroke": {"color": "#0b0d14", "width": 8}},
+    "hook_style": {"plate": True, "stroke": None, "uppercase": True},
+    "cta": {"text": "Каталог в профиле", "url_text": "vtubika.store", "duration_sec": 3.0},
+    "music_track_id": None,
+    "backdrop": {"color": "#0b0d14", "color2": "#1a1f33"},
+    "sfx_policy": "minimal",
+}
+BRAND_SEED_KEY = "brand_seed_v1"
+
+
+def seed_default_brand(store) -> None:
+    """Бренд-пример — только на чистой установке (брендов нет) и один раз: удалённый
+    владельцем пример при перезапуске не воскресает."""
+    try:
+        if store.get_app_setting_value(BRAND_SEED_KEY):
+            return
+        if not store.list_brands():
+            spec = {k: v for k, v in DEFAULT_BRAND.items() if k != "name"}
+            try:
+                store.create_brand(DEFAULT_BRAND["name"], **spec)
+            except ValueError:  # шрифта нет в паке — пример без своего шрифта
+                store.create_brand(DEFAULT_BRAND["name"], **{**spec, "font": ""})
+        store.set_app_setting(BRAND_SEED_KEY, True)
+    except Exception:  # noqa: BLE001 - never let seeding break startup
+        pass
+
+
 def seed_default_pack(store) -> None:
     """Create any missing default render presets and subtitle profiles."""
     have_presets = {p.get("label") for p in store.list_ffmpeg_presets()}

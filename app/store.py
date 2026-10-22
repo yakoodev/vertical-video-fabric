@@ -2135,6 +2135,45 @@ class AppStore:
         self.get_audio_track(track_id)
         self._delete_record("audio_tracks", track_id)
 
+    # ---- Бренды: шаблон оформления роликов одного заказчика (app/brand_kit.py) ----
+
+    def create_brand(self, name: str, **fields: Any) -> dict:
+        from app.brand_kit import brand_problems, normalize_brand
+
+        kit = normalize_brand({**fields, "name": name})
+        problems = brand_problems(self, kit)
+        if problems:
+            raise ValueError("; ".join(problems))
+        cur = self.db.execute(
+            "INSERT INTO brands (name, kit_json) VALUES (?, ?)",
+            (kit["name"], json.dumps(kit, ensure_ascii=False)),
+        )
+        return self.get_brand(cur.lastrowid)
+
+    def list_brands(self) -> list[dict]:
+        return [_decode_brand(dict(r)) for r in self.db.query_all("SELECT * FROM brands ORDER BY name COLLATE NOCASE, id")]
+
+    def get_brand(self, brand_id: int) -> dict:
+        row = self.db.query_one("SELECT * FROM brands WHERE id = ?", (brand_id,))
+        if not row:
+            raise KeyError(f"brand not found: {brand_id}")
+        return _decode_brand(dict(row))
+
+    def update_brand(self, brand_id: int, **fields: Any) -> dict:
+        from app.brand_kit import brand_problems, merge_brand
+
+        current = self.get_brand(brand_id)
+        kit = merge_brand({k: v for k, v in current.items() if k not in ("id", "created_at", "updated_at")}, fields)
+        problems = brand_problems(self, kit)
+        if problems:
+            raise ValueError("; ".join(problems))
+        self._update_record("brands", brand_id, {"name": kit["name"], "kit_json": json.dumps(kit, ensure_ascii=False)})
+        return self.get_brand(brand_id)
+
+    def delete_brand(self, brand_id: int) -> None:
+        self.get_brand(brand_id)
+        self._delete_record("brands", brand_id)
+
     def create_subtitle_profile(self, label: str, **fields: Any) -> dict:
         values = _prepare_subtitle_profile_fields({"label": label, **fields}, partial=False)
         cur = self.db.execute(
@@ -3108,6 +3147,18 @@ def _decode_asset(asset: dict) -> dict:
     asset["has_audio"] = bool(asset.get("has_audio"))
     asset["url"] = f"/media/montage-assets/{asset['id']}"
     return asset
+
+
+def _decode_brand(row: dict) -> dict:
+    """Бренд наружу — плоско: id + все поля шаблона (форма из normalize_brand) + даты."""
+    from app.brand_kit import normalize_brand
+
+    try:
+        kit = json.loads(row.get("kit_json") or "{}")
+    except (TypeError, ValueError):
+        kit = {}
+    kit = normalize_brand({**(kit if isinstance(kit, dict) else {}), "name": row.get("name") or ""})
+    return {"id": row["id"], **kit, "created_at": row.get("created_at"), "updated_at": row.get("updated_at")}
 
 
 def _decode_agent_message(row: dict) -> dict:
