@@ -63,6 +63,39 @@ DEFAULT_SUBTITLE_PROFILES = [
 ]
 
 
+def seed_music(store) -> None:
+    """Фоновая музыка из пака (tools/fetch_packs.fetch_music) → дорожки сервиса, если их нет."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from app.settings import settings
+
+    meta = Path(settings.motion_packs_dir) / "music" / "items.json"
+    if not meta.exists():
+        return
+    try:
+        items = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    have = {t.get("label") for t in store.list_audio_tracks()}
+    for item in items:
+        label = f"Фон: {item['name']}"
+        if label in have:
+            continue
+        src = meta.parent / item["file"]
+        dest = Path(settings.audio_dir) / f"pack-{item['file']}"
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            store.create_audio_track(
+                label, dest, original_filename=item["file"], mime_type="audio/mpeg",
+                duration_sec=float(item.get("duration") or 0), volume=0.5,
+            )
+        except Exception:  # noqa: BLE001 - never let seeding break startup
+            pass
+
+
 def seed_default_pack(store) -> None:
     """Create any missing default render presets and subtitle profiles."""
     have_presets = {p.get("label") for p in store.list_ffmpeg_presets()}

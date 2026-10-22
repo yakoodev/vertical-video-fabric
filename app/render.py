@@ -1054,8 +1054,12 @@ class ClipRenderService:
             layers, assets, notes = resolve_layer_assets(self.store, layers)
             meta = probe_media(path)
             tmp = path.with_name(path.stem + ".sfx" + path.suffix)
+            from app.motion_render import speech_level_db
+
+            has_audio = _has_audio_stream(path)
             args = build_audio_layers_args(
-                path, tmp, layers, assets, meta.duration_sec, clip_has_audio=_has_audio_stream(path)
+                path, tmp, layers, assets, meta.duration_sec, clip_has_audio=has_audio,
+                speech_db=speech_level_db(path) if has_audio else None,
             )
             if args is not None:
                 _run_ffmpeg(args, timeout=60 * 20)
@@ -1348,6 +1352,7 @@ class ClipRenderService:
             if name == "music":
                 music_settings = dict(music)
                 music_settings["duration_sec"] = probe_media(current).duration_sec
+                music_settings["volume"] = music_volume_for(current, music_settings)
                 _run_ffmpeg(build_ffmpeg_music_args(current, dest, music_settings), timeout=60 * 20)
             else:
                 self._render_subtitles(
@@ -1581,6 +1586,32 @@ def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) ->
         ]
     )
     return args
+
+
+# Фон — на столько тише голоса клипа (по громким местам), ещё до приглушения под
+# речь. Громкость дорожки (volume 0.5 — обычный фон) сдвигает это относительно.
+MUSIC_UNDER_SPEECH_DB = 16.0
+MUSIC_NOMINAL_VOLUME = 0.5
+
+
+def music_volume_for(clip_path: Path, music: dict) -> float:
+    """Множитель громкости музыки от голоса ЭТОГО клипа, а не абсолютный.
+
+    С абсолютным 0.5 готовый трек (−14 LUFS) под тихой записью голоса (−32 LUFS)
+    выходил громче речи — как эффекты (см. motion_render.EFFECT_UNDER_SPEECH_DB).
+    """
+    from app.motion_render import audio_levels, speech_level_db
+
+    raw = music.get("volume")
+    user = max(0.0, float(raw if raw is not None else MUSIC_NOMINAL_VOLUME))
+    if user <= 0:
+        return 0.0
+    speech = speech_level_db(clip_path)
+    track = audio_levels(music["track_path"], seconds=60)
+    if speech is None or not track:
+        return user
+    gain_db = speech - MUSIC_UNDER_SPEECH_DB - track[0] + 20 * math.log10(user / MUSIC_NOMINAL_VOLUME)
+    return 10 ** (max(-40.0, min(6.0, gain_db)) / 20)
 
 
 def _music_filter(music: dict) -> str:

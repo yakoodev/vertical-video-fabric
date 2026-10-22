@@ -50,6 +50,10 @@ RUN apt-get update \
 ARG PACKS_SKIP=""
 COPY tools/fetch_packs.py /app/tools/fetch_packs.py
 RUN python3 /app/tools/fetch_packs.py /app/vendor/packs --skip "${PACKS_SKIP}"
+# Background music (CC0, pinned sha256) — own layer: editing the track list
+# does not re-download every pack above.
+COPY tools/fetch_music.py /app/tools/fetch_music.py
+RUN python3 /app/tools/fetch_music.py /app/vendor/packs
 
 RUN python3 -m venv /opt/venv
 

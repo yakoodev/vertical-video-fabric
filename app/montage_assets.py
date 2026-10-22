@@ -47,11 +47,11 @@ INSERT_MAX_HEIGHT = 0.9
 
 
 
-def _insert_volume(ins: dict) -> float:
-    """Звук вставки — к общему уровню эффектов (на 6 дБ тише речи) × volume ≤ 1."""
+def _insert_volume(ins: dict, speech_db: float | None = None) -> float:
+    """Звук вставки — как звуки-слои: тише голоса клипа (motion_render.effect_volume) × volume ≤ 1."""
     from app.motion_render import effect_volume
 
-    return effect_volume(str(ins["asset"]["file_path"]), ins.get("volume", 1.0))
+    return effect_volume(str(ins["asset"]["file_path"]), ins.get("volume", 1.0), speech_db)
 
 def assets_dir() -> Path:
     path = settings.data_dir / "montage_assets"
@@ -161,6 +161,9 @@ def build_inserts_args(
     clip_has_audio: bool = True,
 ) -> list[str] | None:
     """ffmpeg command overlaying the inserts on the clip, or None if nothing applies."""
+    from app.motion_render import speech_level_db
+
+    speech_db = speech_level_db(clip_path) if clip_has_audio else None
     usable = []
     for ins in inserts:
         asset = assets.get(ins["asset_id"])
@@ -224,7 +227,7 @@ def build_inserts_args(
             graph.append(
                 f"[{n}:a]aresample=48000,atrim=0:{ins['len']:.3f},asetpts=PTS-STARTPTS,"
                 # Громкость выравнивается системно, как у звуков-слоёв (motion_render.effect_volume).
-                f"volume={_insert_volume(ins):.4f},adelay={delay}|{delay}[a{n}]"
+                f"volume={_insert_volume(ins, speech_db):.4f},adelay={delay}|{delay}[a{n}]"
             )
             audio_parts.append(f"[a{n}]")
 

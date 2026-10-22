@@ -29,7 +29,7 @@ from app.automation import AutomationService
 from app.auth import AuthRequired, auth_required_handler, require_auth, token_is_valid
 from app.crypto import CookieCipher
 from app.db import Database
-from app.default_pack import seed_default_pack
+from app.default_pack import seed_default_pack, seed_music
 from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
@@ -73,6 +73,7 @@ db.init()
 store = AppStore(db, CookieCipher(settings.secret_key_path))
 proxy_config.register(lambda: store)
 seed_default_pack(store)
+seed_music(store)
 worker = JobWorker(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)

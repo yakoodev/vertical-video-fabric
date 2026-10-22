@@ -39,50 +39,72 @@ DEFAULT_CRF = 18
 # поставил агент, эффект не перекроет голос.
 EFFECT_TARGET_DB = -20.0
 EFFECT_PEAK_DB = -3.0
+# Эффект — на столько тише голоса ЭТОГО клипа (по громким местам). Раньше цель
+# была абсолютной (−20 дБ): у тихой записи голоса (−32 LUFS) эффект выходил
+# громче речи, а финальная поправка громкости поднимала их вместе — «дешёвый
+# звон во всю громкость».
+EFFECT_UNDER_SPEECH_DB = 10.0
 MAX_EFFECT_VOLUME = 1.0
-_GAIN_CACHE: dict[tuple[str, float], float] = {}
+_LEVEL_CACHE: dict[tuple[str, float, float | None], tuple[float, float] | None] = {}
 
 
-def effect_gain_db(path: str) -> float:
-    """Поправка в дБ, чтобы громкая часть звука была на EFFECT_TARGET_DB (кэш по файлу)."""
+def audio_levels(path: str | Path, seconds: float | None = 30.0) -> tuple[float, float] | None:
+    """(RMS peak, peak) звука файла в дБ — громкие места и пик (кэш по файлу)."""
     import re
     import subprocess
 
     try:
-        key = (str(path), Path(path).stat().st_mtime)
+        key = (str(path), Path(path).stat().st_mtime, seconds)
     except OSError:
-        return 0.0
-    if key in _GAIN_CACHE:
-        return _GAIN_CACHE[key]
-    gain = 0.0
+        return None
+    if key in _LEVEL_CACHE:
+        return _LEVEL_CACHE[key]
+    levels = None
     try:
+        limit = ["-t", f"{seconds:g}"] if seconds else []
         proc = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-t", "30",
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", *limit,
              "-af", "astats=metadata=0:reset=0", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=120,
         )
         overall = proc.stderr[proc.stderr.rfind("Overall"):]
         rms = re.search(r"RMS peak dB:\s*(-?[\d.]+)", overall)
         peak = re.search(r"Peak level dB:\s*(-?[\d.]+)", overall)
         if rms:
-            gain = EFFECT_TARGET_DB - float(rms.group(1))
-            if peak:
-                gain = min(gain, EFFECT_PEAK_DB - float(peak.group(1)))
-            gain = max(-30.0, min(12.0, gain))
+            levels = (float(rms.group(1)), float(peak.group(1)) if peak else 0.0)
     except (OSError, subprocess.TimeoutExpired, ValueError):
-        gain = 0.0
-    _GAIN_CACHE[key] = gain
-    return gain
+        levels = None
+    _LEVEL_CACHE[key] = levels
+    return levels
 
 
-def effect_volume(path: str, volume: Any) -> float:
+def speech_level_db(clip_path: str | Path) -> float | None:
+    """Громкие места звука клипа (голос) в дБ — от них считается громкость эффектов."""
+    levels = audio_levels(clip_path, seconds=None)
+    return levels[0] if levels and levels[0] > -70 else None
+
+
+def effect_gain_db(path: str, speech_db: float | None = None) -> float:
+    """Поправка в дБ: громкая часть эффекта — на EFFECT_UNDER_SPEECH_DB тише голоса
+    клипа (без голоса — на EFFECT_TARGET_DB), пик не выше EFFECT_PEAK_DB."""
+    levels = audio_levels(path)
+    if not levels:
+        return 0.0
+    rms, peak = levels
+    target = EFFECT_TARGET_DB
+    if speech_db is not None:
+        target = min(target, speech_db - EFFECT_UNDER_SPEECH_DB)
+    return max(-40.0, min(12.0, target - rms, EFFECT_PEAK_DB - peak))
+
+
+def effect_volume(path: str, volume: Any, speech_db: float | None = None) -> float:
     """Итоговый множитель громкости слоя-звука: выравнивание файла × volume (≤ MAX)."""
     try:
         user = float(volume if volume is not None else 1)
     except (TypeError, ValueError):
         user = 1.0
     user = max(0.0, min(MAX_EFFECT_VOLUME, user))
-    return user * 10 ** (effect_gain_db(path) / 20)
+    return user * 10 ** (effect_gain_db(path, speech_db) / 20)
 
 
 class CompositorMissing(RuntimeError):
@@ -479,6 +501,7 @@ def build_audio_layers_args(
     assets: dict[str, str],
     duration: float,
     clip_has_audio: bool = True,
+    speech_db: float | None = None,
 ) -> list[str] | None:
     """Подмешать звуки ``audio``-слоёв в готовый клип (видео копией).
 
@@ -512,7 +535,7 @@ def build_audio_layers_args(
         props = item["layer"]["props"]
         length = item["len"]
         chain = [f"[{n}:a]aresample=48000", "asetpts=PTS-STARTPTS",
-                 f"volume={effect_volume(item['path'], props.get('volume', 1)):.4f}"]
+                 f"volume={effect_volume(item['path'], props.get('volume', 1), speech_db):.4f}"]
         fade_in = min(float(props.get("fadeIn") or 0), length)
         if fade_in > 0:
             chain.append(f"afade=t=in:st=0:d={fade_in:.3f}")

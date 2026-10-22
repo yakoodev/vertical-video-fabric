@@ -1245,6 +1245,32 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_list_music(ctx: ToolContext, _args: dict) -> dict:
+    """Фоновая музыка сервиса (пак CC0 + загруженная владельцем)."""
+    tracks = [
+        {"id": t["id"], "label": t.get("label") or "", "duration": round(float(t.get("duration_sec") or 0), 1)}
+        for t in ctx.store.list_audio_tracks()
+    ]
+    return {"tracks": tracks, "note": "громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь"}
+
+
+def h_set_music(ctx: ToolContext, args: dict) -> dict:
+    """Фоновая музыка клипа: on + track_id (list_music)."""
+    render = _current_render(ctx)
+    on = args.get("on") is not False
+    track_id = args.get("track_id")
+    if on:
+        track_id = track_id or render.get("track_id")
+        if not track_id:
+            raise ToolError("нужен track_id — см. list_music")
+        try:
+            ctx.store.get_audio_track(int(track_id))
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ToolError(f"нет трека {track_id} — см. list_music") from exc
+    fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id")})
+    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"]}
+
+
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
     """Фон за вырезанным персонажем: цвет или вертикальный градиент color → color2."""
     from app.chroma_key import normalize_backdrop
@@ -1995,6 +2021,19 @@ def _build_registry() -> list[Tool]:
                   "blend": {"type": "number"}}),
             h_set_chroma_key, mutating=True,
             label=lambda a: "Хромакей " + ("выкл" if a.get("on") is False else "вкл"),
+        ),
+        Tool(
+            "list_music", "Смотрю фоновую музыку",
+            "Треки фоновой музыки (id, название, длина). / Background music tracks.",
+            _obj({}), h_list_music, scope="global",
+        ),
+        Tool(
+            "set_music", "Подкладываю музыку",
+            "Фоновая музыка клипа: on, track_id (list_music). Громкость сама: заметно тише голоса и "
+            "приглушается под речь; эффекты при музыке — реже. / Background music for the clip.",
+            _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"}}),
+            h_set_music, mutating=True,
+            label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
         ),
         Tool(
             "set_backdrop", "Ставлю фон за персонажем",
