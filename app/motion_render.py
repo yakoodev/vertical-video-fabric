@@ -729,8 +729,10 @@ def render_frame_png(
             x = _focus_x_at(segment.get("focus") or [], local)
             if x is not None:
                 framed["focus"] = [{"t": 0.0, "x": x}]
-            reframe = _render._segment_reframe_x(framed, preset, source)
-            graph = _render._render_filter(width, height, fps, preset, None, _render._base_crop(source, keyed), reframe)
+            # Кусок «шире окна» (fit) — своя основа, как в рендере.
+            piece = _render._preset_for_segment(preset, segment)
+            reframe = _render._segment_reframe_x(framed, piece, source)
+            graph = _render._render_filter(width, height, fps, piece, None, _render._base_crop(source, keyed), reframe)
             _render._run_ffmpeg(
                 [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",

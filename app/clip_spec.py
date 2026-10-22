@@ -33,6 +33,9 @@ from app.clip_settings import normalize_render_settings
 from app.cuts import MAX_CUTS, MIN_CUT_SEC, normalize_cuts, validate_cuts
 from app.motion import normalize_camera, normalize_layers, validate_camera, validate_layers
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, AppStore
+from app.video_crop import FIT_MIN_W, fit_problem, normalize_fit
+
+_MISSING = object()  # ключа нет в файле — поле куска не трогаем
 
 SCHEMA_ID = "vvf.clip/1"
 MAX_PIECES = 12
@@ -87,6 +90,7 @@ def export_spec(store: AppStore, clip_plan_id: int) -> dict:
                 "start_sec": float(seg["start_sec"]),
                 "end_sec": float(seg["end_sec"]),
                 "focus": seg.get("focus") or [],
+                "fit": seg.get("fit"),
             }
             for seg in plan.get("segments") or []
         ],
@@ -206,6 +210,15 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
                 problems.append(f"{where}.manual_x: число 0..1 (фиксированный кадр) или не указывать")
                 continue
             focus = [{"t": 0.0, "x": manual_x}]
+        # «Шире окна 9:16» для куска: ключа нет — не трогаем, null — обычный кадр.
+        fit = _MISSING
+        if "fit" in raw:
+            fit = raw.get("fit")
+            problem = fit_problem(fit)
+            if problem:
+                problems.append(f"{where}.fit: {problem} (null — обычный кадр, {{w {FIT_MIN_W}..1, bg blur|black|#rrggbb}})")
+                continue
+            fit = normalize_fit(fit)
         piece_title = raw.get("title")
         pieces.append(
             {
@@ -214,6 +227,7 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
                 "start_sec": round(start, 3),
                 "end_sec": round(end, 3),
                 "focus": focus,
+                "fit": fit,
             }
         )
 
@@ -291,6 +305,9 @@ def apply_spec(
         if piece["focus"] is not None and piece["focus"] != (seg.get("focus") or []):
             store.update_ai_segment_focus(seg_id, piece["focus"])
             changes.append(f"кусок {index}: кадрирование")
+        if piece["fit"] is not _MISSING and piece["fit"] != seg.get("fit"):
+            store.update_ai_segment_fit(seg_id, piece["fit"])
+            changes.append(f"кусок {index}: " + ("кадр шире окна" if piece["fit"] else "обычный кадр"))
         ordered_ids.append(seg_id)
 
     if ordered_ids != [seg["id"] for seg in plan.get("segments") or []]:
@@ -361,6 +378,9 @@ def json_schema() -> dict:
                         "focus": {"type": "array", "items": focus_point, "description": "трек кадра; одна точка = фиксированный кадр"},
                         "manual_x": {"type": "number", "minimum": 0, "maximum": 1, "writeOnly": True,
                                      "description": "сокращение: фиксированный кадр = focus [{t:0, x}]"},
+                        "fit": {"type": ["object", "number", "null"],
+                                "description": "кадр шире окна 9:16 на весь кусок (двое по краям): {w 0.35..1 — доля "
+                                               "ширины исходника в кадре, bg blur|black|#rrggbb}; null — обычный кадр"},
                     },
                 },
                 "description": f"куски по порядку; каждый {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с",

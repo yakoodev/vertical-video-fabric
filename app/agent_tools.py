@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -164,6 +165,7 @@ def clip_timeline(store: Any, clip_plan_id: int) -> dict:
                 "clip_start": round(start, 3),
                 "clip_end": round(start + (src_end - src_start), 3),
                 "focus": seg.get("focus") or [],
+                "fit": seg.get("fit"),
             }
         )
     return {"plan": plan, "render": render, "pieces": pieces, "duration": round(total, 3),
@@ -240,6 +242,43 @@ def _ref_checker() -> Callable[[str], bool] | None:
     return lambda ref: resolve_pack_ref(ref) is not None
 
 
+def text_lines(props: dict) -> int:
+    """Сколько строк займёт текст слоя: явные переносы + перенос по ширине ``maxWidth``.
+
+    Агент-монтажёр: хук на y 0.13 в две строки вылез за верхнюю безопасную зону, а
+    проверка считала его однострочным (видела только переносы «\\n»). Ширину буквы
+    берём с запасом: жирные заглавные (хук) ≈ 0.68 кегля, обычный текст ≈ 0.58."""
+    text = str(props.get("text") or "")
+    size = _num(props.get("size"), 96.0) or 96.0
+    width = _num(props.get("maxWidth"), 920.0) or 920.0
+    heavy = bool(props.get("uppercase")) or text.upper() == text
+    factor = 0.68 if heavy and (_num(props.get("weight"), 800.0) or 800.0) >= 700 else 0.58
+    per_line = max(1, int(width / (size * factor)))
+    total = 0
+    for chunk in text.split("\n"):
+        line, count = 0, 1
+        for word in chunk.split():
+            need = len(word) if line == 0 else line + 1 + len(word)
+            if line and need > per_line:
+                count, line = count + 1, len(word)
+            else:
+                line = need
+        total += count
+    return max(1, total)
+
+
+def text_half_height(props: dict, scale: float = 1.0) -> float:
+    """Половина высоты текстового слоя в долях кадра 1920 (строки × кегль × межстрочный)."""
+    size = _num(props.get("size"), 96.0) or 96.0
+    line_height = _num(props.get("lineHeight"), 1.15) or 1.15
+    return size * line_height * text_lines(props) * scale / 1920 / 2
+
+
+def safe_text_y(props: dict, y: float, scale: float = 1.0) -> float:
+    """Центр ``y`` текста, опущенный так, чтобы верх строк был не выше SAFE_TOP."""
+    return round(max(y, math.ceil((SAFE_TOP + text_half_height(props, scale)) * 1000) / 1000), 3)
+
+
 def _layer_box(layer: dict) -> tuple[float, float]:
     """Примерная половина высоты слоя в долях кадра — для проверки безопасных зон."""
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
@@ -247,10 +286,8 @@ def _layer_box(layer: dict) -> tuple[float, float]:
     kind = layer.get("type")
     height = 0.0
     if kind in ("text", "counter"):
-        size = _num(props.get("size"), 80.0) or 80.0
-        lines = max(1, str(props.get("text") or "").count("\n") + 1)
-        height = size * 1.15 * lines
-    elif kind == "emoji":
+        return text_half_height(props, scale), 0.0
+    if kind == "emoji":
         height = _num(props.get("size"), 160.0) or 160.0
     elif kind in ("shape", "progress", "chart"):
         height = _num(props.get("h"), 120.0) or 120.0
@@ -318,7 +355,10 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         if textual and y + half > SAFE_BOTTOM and y - half < 1.0:
             warnings.append(f"{lid}: текст заходит в нижние 20% кадра (y={y:.2f}) — там подпись и кнопки площадки")
         if textual and y - half < SAFE_TOP and y + half > 0.0:
-            warnings.append(f"{lid}: текст в верхних 10% кадра (y={y:.2f}) — там шапка площадки")
+            lines = text_lines(layer.get("props") or {}) if layer.get("type") in ("text", "counter") else 1
+            warnings.append(
+                f"{lid}: верх текста на {y - half:.3f} — выше безопасной зоны {SAFE_TOP:.2f} (там шапка площадки; "
+                f"центр y={y:.2f}, ≈{lines} стр.) — опусти до y≥{math.ceil((SAFE_TOP + half) * 1000) / 1000:.3f} или сократи текст")
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
         if layer.get("type") == "text":
             size = (_num(props.get("size"), 80.0) or 80.0) * (_num(layer.get("scale"), 1.0) or 1.0)
@@ -337,6 +377,8 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
                             "выровнены ниже речи, обычно 0.3–0.6")
         if textual and end - start < 0.6:
             warnings.append(f"{lid}: титр виден {end - start:.2f} с — не успеют прочитать")
+        if layer.get("type") == "captions":
+            warnings.extend(f"{lid}: {w}" for w in caption_highlight_warnings(props))
     # Перегруз: сколько видимых слоёв одновременно в момент начала каждого слоя.
     for layer in visible:
         lid = str(layer.get("id") or "?")
@@ -351,6 +393,38 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
     return list(dict.fromkeys(warnings))
+
+
+# Цвет звучащего слова у стилей субтитров (frontend/src/motion/layers/captions.ts).
+CAPTION_ACTIVE_COLORS = {
+    "hormozi": "#ffe81f", "mrbeast": "#ffd400", "karaoke": "#ffd400", "box": "#ffffff", "neon": "#ff4fd8",
+    "minimal": "#ffffff", "typewriter": "#111111", "comic": "#ff3b5c", "gradient": "#ffffff", "outline": "#ffffff",
+}
+
+
+def _rgb(color: Any) -> tuple[int, int, int] | None:
+    text = str(color or "").strip().lstrip("#")
+    if len(text) not in (6, 8):
+        return None
+    try:
+        return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+    except ValueError:
+        return None
+
+
+def caption_highlight_warnings(props: dict) -> list[str]:
+    """Подсветка ключевых слов цветом звучащего слова не видна (hormozi красит его жёлтым)."""
+    active = _rgb(props.get("activeColor") or CAPTION_ACTIVE_COLORS.get(str(props.get("style") or ""), "#ffe81f"))
+    if not active:
+        return []
+    close = sorted({
+        str(h.get("color")) for h in props.get("highlightWords") or []
+        if isinstance(h, dict) and (rgb := _rgb(h.get("color"))) and sum((a - b) ** 2 for a, b in zip(rgb, active)) < 90 ** 2
+    })
+    if not close:
+        return []
+    return [f"highlightWords цветом {', '.join(close)} почти как звучащее слово этого стиля — подсветки не видно; "
+            "бери контрастный (#FF3B30 красный, #22C55E зелёный)"]
 
 
 def _layer_summary(layer: dict) -> str:
@@ -382,16 +456,20 @@ def _short(text: Any, limit: int = 32) -> str:
 
 def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
     """Субтитры во времени готового клипа: под слова подгоняют титры и наезды."""
+    from app.clip_subtitles import words_by_line
+
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
     shift = (lambda t: _to_clip_time(pieces, t)) if pieces else (lambda t: round(t, 3))
     words = payload.get("words") or []
     lines = []
-    for index, line in enumerate(payload.get("lines") or []):
+    raw_lines = payload.get("lines") or []
+    # Каждое слово — в одной строке (раньше слово на стыке попадало в обе).
+    for index, (line, own) in enumerate(zip(raw_lines, words_by_line(raw_lines, words))):
         start, end = float(line["start"]), float(line["end"])
         inside = [
             [w["word"], round(shift(float(w["start"])), 2), round(shift(float(w["end"])), 2)]
-            for w in words
-            if float(w["start"]) < end - 0.001 and float(w["end"]) > start + 0.001
+            + ([w["speaker"]] if w.get("speaker") else [])
+            for w in own
         ]
         lines.append({"i": index, "start": round(shift(start), 2), "end": round(shift(end), 2),
                       "text": line["text"], "words": inside})
@@ -438,6 +516,9 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         asset = library.get(ins["asset_id"]) or {}
         inserts.append({"index": index, **ins, "asset_label": asset.get("label") or "", "asset_kind": asset.get("kind") or ""})
     layers = _layers_of(render)
+    boxes = _subject_boxes(ctx)
+    pieces = [{**piece, "subject_box": box} for piece, box in zip(timeline["pieces"], boxes["pieces"])] \
+        if boxes["pieces"] and len(boxes["pieces"]) == len(timeline["pieces"]) else timeline["pieces"]
     return {
         "clip_id": plan["id"],
         "title": plan["title"],
@@ -448,7 +529,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "duration": timeline["duration"],
         **_cuts_view(render, timeline["duration"]),
         "frame": {"width": 1080, "height": 1920, "safe_zone": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM}},
-        "pieces": timeline["pieces"],
+        "framing": _framing_view(ctx, source, render),
+        "pieces": pieces,
         "render": {
             "preset_id": render.get("preset_id"),
             "effective_preset": _effective_preset_view(ctx.store, render.get("preset_id")),
@@ -466,7 +548,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
         # субтитры строго по центру под лицом (с учётом раскладки «вебка снизу»).
-        "positions": _recommended_positions(ctx, render),
+        "positions": _recommended_positions(ctx, render, boxes),
         "layers": layers,
         "camera": _camera_of(render),
         "inserts": inserts,
@@ -597,27 +679,69 @@ def h_find_noises(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"find_noises: {exc}") from exc
 
 
-def _recommended_positions(ctx: ToolContext, render: dict) -> dict:
+def _subject_boxes(ctx: ToolContext) -> dict:
+    """Рамки героя (Gemini-зрение, кэш): ``{union, pieces}``; без зрения — пусто."""
+    try:
+        from app.ai.subject_box import subject_boxes
+
+        return subject_boxes(ctx.store, ctx.plan_id)
+    except Exception:  # noqa: BLE001 - без зрения — привычные места
+        return {"union": None, "pieces": []}
+
+
+def _framing_view(ctx: ToolContext, source: dict, render: dict) -> dict:
+    """Как кадрируется 9:16: какую долю ширины исходника видно и как это менять."""
+    from app.render import effective_preset
+    from app.video_crop import window_share
+
+    preset = effective_preset(ctx.store, render.get("preset_id")) or {}
+    share = window_share(source, int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920))
+    out: dict = {
+        "window_w": share,
+        "note": (
+            "Окно 9:16 видит долю window_w ширины исходника; центр окна — focus куска (pieces[].focus, "
+            "t — секунды от начала куска, x 0..1 — доля ширины исходника; пусто — центр 0.5). Менять — "
+            "set_focus(piece, points) с cut:true на склейках планов (get_shots). Двое дальше друг от друга, "
+            "чем window_w, в окно не влезут: фокус на говорящего со сменой на склейке/реплике или "
+            "set_piece_fit (кусок шире окна, сверху и снизу фон). Камера (set_camera) только приближает, zoom ≥ 1."
+        ),
+    }
+    if preset and not preset.get("smart_reframe"):
+        out["warning"] = "у пресета выключен smart_reframe — фокус не действует, кадр по центру"
+    return out
+
+
+def _recommended_positions(ctx: ToolContext, render: dict, boxes: dict | None = None) -> dict:
     """Места для текста с учётом того, где на кадре герой (рамку даёт Gemini-зрение)."""
     from app.auto_edit import HOOK_Y, caption_y_for
 
     layout = (render.get("layout") or {}).get("mode") or "single"
     places = {"captions_y": caption_y_for(render), "punchline_y": 0.3, "subject": None}
+    boxes = boxes if boxes is not None else _subject_boxes(ctx)
     try:
-        from app.ai.subject_box import subject_box, text_positions
+        from app.ai.subject_box import text_positions
 
-        box = subject_box(ctx.store, ctx.plan_id)
-        if box:
-            places = text_positions(box, caption_y_for(render))
+        if boxes.get("union"):
+            places = text_positions(boxes["union"], caption_y_for(render))
     except Exception:  # noqa: BLE001 - без зрения — привычные места
         pass
-    return {
-        "hook": {"x": 0.5, "y": HOOK_Y, "note": "заголовок-хук: строго по центру сверху"},
+    hook_props = {"size": 96, "weight": 900, "uppercase": True}
+    by_lines = {str(n): safe_text_y({**hook_props, "text": "\n".join(["X"] * n)}, HOOK_Y) for n in (1, 2, 3)}
+    out = {
+        "hook": {"x": 0.5, "y": HOOK_Y, "y_by_lines": by_lines,
+                 "note": (f"заголовок-хук: строго по центру сверху; y={HOOK_Y} — для ОДНОЙ строки 96 px. Верх текста "
+                          f"не выше {SAFE_TOP}: две строки — y≈{by_lines['2']}, три — {by_lines['3']} (add_layers "
+                          "предупредит, если верх выше зоны)")},
         "captions": {"x": 0.5, "y": places["captions_y"], "note": "субтитры: строго x=0.5 и этот y — свободное от героя место"},
         "punchline_text": {"x": 0.5, "y": places["punchline_y"], "note": "крупное слово-панчлайн: по центру, не на герое"},
         "subject_box": places["subject"],
         "layout": layout,
     }
+    if places["subject"]:
+        out["subject_note"] = ("subject_box — объединение рамок героя по всем кускам (кадр 9:16); у каждого куска своя — "
+                               "pieces[].subject_box. Внутри куска со сменой планов (get_shots) рамка тоже объединение "
+                               "и ненадёжна — смотри source_contact_sheet с x по планам")
+    return out
 
 
 def _subtitle_zone(render: dict) -> dict | None:
@@ -1000,6 +1124,12 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     if not isinstance(keys, list):
         raise ToolError("нужен список keys (пустой — убрать все наезды)")
     duration = _clip_duration(ctx)
+    below = [k for k in keys if isinstance(k, dict) and (_num(k.get("zoom"), 1.0) or 1.0) < 1.0]
+    if below:
+        # Камера только приближает окно 9:16 — «отъехать» и показать больше исходника она не может.
+        raise ToolError("zoom < 1 нельзя: камера только приближает кадр 9:16 (1..4)", [
+            "двое по краям широкого плана не влезают в окно — set_piece_fit(piece, w 0.5–1): кусок шире окна, "
+            "сверху и снизу фон; или фокус на говорящего со сменой на склейке/реплике (set_focus с cut:true)"])
     problems = motion.validate_camera(keys, duration)
     if problems:
         raise ToolError("камера не принята", problems)
@@ -1485,7 +1615,7 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
     Агент-монтажёр правил распознанные слова («2D модели» → «дорого») и сдвигал опоздавшее
     «Художник» через REST — инструмента не было. Строки пересобираются из слов."""
     from app.ai.speakers import lines_from_words
-    from app.clip_subtitles import save_lines
+    from app.clip_subtitles import save_lines, tidy_words
 
     raw = args.get("words")
     if not isinstance(raw, list):
@@ -1506,14 +1636,24 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
         if not word or end <= start:
             problems.append(f"words[{i}]: пустое слово или end ≤ start")
             continue
-        words.append({"word": word[:80], "start": round(start, 3), "end": round(end, 3)})
+        item = {"word": word[:80], "start": round(start, 3), "end": round(end, 3)}
+        speaker = str(w.get("s") or w.get("speaker") or "").strip().upper()[:1]
+        if speaker:
+            if speaker not in "ABCD":
+                problems.append(f"words[{i}]: s — голос A, B, C или D")
+                continue
+            item["speaker"] = speaker
+        words.append(item)
     if problems:
         raise ToolError("слова не приняты", problems)
-    words.sort(key=lambda w: w["start"])
+    # Дефисные хвосты Whisper («какой» «-то») склеиваются, дубли на стыке строк убираются.
+    words = tidy_words(words)
     ctx.before_change()
     lines = lines_from_words(words)
     payload = save_lines(ctx.store, ctx.plan_id, lines, words)
-    return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or [])}
+    return {"ok": True, "lines": len(payload.get("lines") or []), "words": len(payload.get("words") or []),
+            "note": "строки собраны из слов: новая строка на конце предложения (. ! ?), паузе > 0.6 с, смене голоса s "
+                    "и после 7 слов"}
 
 
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
@@ -1630,6 +1770,133 @@ def h_trim_piece(ctx: ToolContext, args: dict) -> dict:
         warn = ending_warning(ctx.store, int(spec["source"]["id"]), float(end))
         if warn:
             out["warnings"] = [warn]
+    return out
+
+
+def _piece_index(args: dict, count: int) -> int:
+    try:
+        index = int(args.get("piece"))
+    except (TypeError, ValueError) as exc:
+        raise ToolError("нужен piece — номер куска с 0 (get_clip.pieces[].index)") from exc
+    if not 0 <= index < count:
+        raise ToolError(f"куска {index} нет (0..{count - 1})")
+    return index
+
+
+def _apply_piece(ctx: ToolContext, index: int, **fields: Any) -> tuple[dict, list[str]]:
+    """Поменять поля одного куска через файл клипа (та же проверка и запись, что PUT /spec)."""
+    from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
+
+    spec = export_spec(ctx.store, ctx.plan_id)
+    pieces = []
+    for i, piece in enumerate(spec["pieces"]):
+        piece = dict(piece)
+        # Чужие поля не переписываем: только таймкоды и то, что меняем у этого куска.
+        piece.pop("focus", None)
+        piece.pop("fit", None)
+        if i == index:
+            piece.update(fields)
+        pieces.append(piece)
+    try:
+        validate_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+    except SpecError as exc:
+        raise ToolError("кусок не принят", exc.problems) from exc
+    ctx.before_change()
+    _fresh, changes = apply_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+    return clip_timeline(ctx.store, ctx.plan_id)["pieces"][index], changes
+
+
+def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
+    count = ctx.store.segment_plan_count(int(piece["segment_id"]))
+    if count > 1:
+        return [f"кусок общий ещё с {count - 1} клип(ами) — кадрирование поменялось и там"]
+    return []
+
+
+def h_set_focus(ctx: ToolContext, args: dict) -> dict:
+    """Кадрирование 9:16 куска: центр окна x(t), cut — жёсткая смена на склейке плана."""
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    index = _piece_index(args, len(timeline["pieces"]))
+    piece = timeline["pieces"][index]
+    length = float(piece["source_end"]) - float(piece["source_start"])
+    raw = args.get("points")
+    if not isinstance(raw, list):
+        raise ToolError("points — список {t, x, cut?} (t — секунды от начала куска, x 0..1); [] — по центру")
+    points, problems = [], []
+    for i, p in enumerate(raw):
+        if not isinstance(p, dict):
+            problems.append(f"points[{i}]: объект {{t, x, cut?}}")
+            continue
+        t = _num(p.get("t"))
+        if t is None and _num(p.get("source_t")) is not None:
+            t = float(_num(p.get("source_t"))) - float(piece["source_start"])  # прямо из get_shots
+        x = _num(p.get("x"))
+        if t is None or x is None:
+            problems.append(f"points[{i}]: нужны числа t (или source_t) и x")
+            continue
+        if not -0.05 <= t <= length + 0.05:
+            problems.append(f"points[{i}]: t={t:.2f} вне куска (0..{length:.2f} с от его начала)")
+            continue
+        if not 0.0 <= x <= 1.0:
+            problems.append(f"points[{i}]: x={x} — доля ширины исходника 0..1")
+            continue
+        point = {"t": round(min(max(t, 0.0), length), 3), "x": round(x, 4)}
+        if p.get("cut"):
+            point["cut"] = True
+        points.append(point)
+    if problems:
+        raise ToolError("кадрирование не принято", problems)
+    points.sort(key=lambda p: p["t"])
+    if points and points[0]["t"] > 0.05:
+        # До первой точки окно стоит на её x — явная точка в 0 убирает догадки.
+        points.insert(0, {"t": 0.0, "x": points[0]["x"]})
+    fresh, changes = _apply_piece(ctx, index, focus=points)
+    warnings = _shared_warning(ctx, fresh)
+    render = _current_render(ctx)
+    mode = (render.get("layout") or {}).get("mode") or "single"
+    if mode == "meme" and not fresh.get("fit"):
+        warnings.append("раскладка meme показывает видео целиком — фокус в ней не виден")
+    from app.render import effective_preset
+
+    preset = effective_preset(ctx.store, render.get("preset_id")) or {}
+    if preset and not preset.get("smart_reframe"):
+        warnings.append("у пресета выключен smart_reframe — фокус не действует (кадр по центру)")
+    out = {"ok": True, "piece": index, "focus": fresh.get("focus") or [], "changes": changes,
+           "note": "проверь source_contact_sheet(x=…) или view_frame на точках и сразу после cut"}
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
+    """Кусок шире окна 9:16: в кадре доля w ширины исходника, сверху и снизу фон."""
+    from app.video_crop import FIT_MIN_W, normalize_fit, window_share
+
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    index = _piece_index(args, len(timeline["pieces"]))
+    w = args.get("w")
+    if w is None or w is False or _num(w) == 0:
+        fit = None
+    else:
+        value = _num(w)
+        if value is None or not FIT_MIN_W <= value <= 1.0:
+            raise ToolError(f"w — доля ширины исходника в кадре, {FIT_MIN_W}..1 (1 — весь кадр); null — обычный кадр")
+        fit = normalize_fit({"w": value, "bg": args.get("bg") or "blur"})
+    fresh, changes = _apply_piece(ctx, index, fit=fit)
+    out: dict = {"ok": True, "piece": index, "fit": fresh.get("fit"), "changes": changes}
+    warnings = _shared_warning(ctx, fresh)
+    source = ctx.store.get_source(int(timeline["plan"]["source_id"]))
+    share = window_share(source)
+    if fit and share and fit["w"] <= share + 0.02:
+        warnings.append(f"w={fit['w']} не шире обычного окна ({share}) — смысла нет, бери больше")
+    mode = (_current_render(ctx).get("layout") or {}).get("mode") or "single"
+    if fit and mode in ("split", "pip_cam", "meme"):
+        warnings.append(f"на этом куске раскладка {mode} не действует (вебки/окошка нет) — только он шире окна")
+    if fit:
+        out["note"] = ("кусок рендерится шире окна: центр — тот же focus куска; фон сверху и снизу — "
+                       f"{fit['bg']}. Проверь view_frame на куске: субтитры и титры лягут на фон — это хорошо")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
@@ -1797,15 +2064,18 @@ def _project_id(args: dict) -> int:
 
 
 def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
-    from app.manual_clips import source_transcript
+    from app.manual_clips import transcript_job
 
     try:
-        out = source_transcript(ctx.store, _project_id(args))
+        # Whisper фоном: вызов не держит соединение дольше ~45 с (раньше HTTP рвался на 2.5 мин).
+        out = transcript_job(ctx.store, _project_id(args))
     except (KeyError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
+    if out.get("status") == "running":
+        return {"project_id": out["source_id"], **{k: v for k, v in out.items() if k != "source_id"}}
     lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
     cues = [c for c in out["cues"] if float(c["end"]) > lo and (hi is None or float(c["start"]) < hi)]
-    result = {"project_id": out["source_id"], "duration_sec": out["duration_sec"],
+    result = {"project_id": out["source_id"], "status": "done", "duration_sec": out["duration_sec"],
               "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
     if out.get("no_speech"):
         result.update(no_speech=True, note=out["note"])
@@ -1976,6 +2246,8 @@ props по типу:
   audio: asset_id ИЛИ "sfx:<pack>/<file>", volume 0..2, fadeIn, fadeOut, offset, duck (не рисуется)
 Все допустимые поля props (остальное отбрасывается): {fields}
 Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте).
+  ease ключа — переход ОТ него к следующему ключу (по умолчанию inOutCubic); step — держать до следующего ключа и прыгнуть. zoom < 1 нет: шире окна — set_piece_fit.
+Субтитры captions: в hormozi/mrbeast/karaoke звучащее слово жёлтое — highlightWords жёлтым там не видны, бери #FF3B30 или #22C55E.
 Цвета: #rrggbb или #rrggbbaa."""
 
 
@@ -2073,10 +2345,12 @@ def _build_registry() -> list[Tool]:
     return [
         Tool(
             "get_clip", "Смотрю клип",
-            "Весь клип: куски (время исходника и клипа), настройки (и каким пресетом отрендерится — "
-            "render.effective_preset), слои, камера, вставки, субтитры с временем слов (в секундах клипа), "
-            "звуковые дорожки исходника (source.audio) и предупреждения. Зови первым. / Full clip state incl. "
-            "subtitle word timings in clip seconds.",
+            "Весь клип: куски (время исходника и клипа; у каждого куска его кадрирование focus, fit и рамка "
+            "героя subject_box), framing (доля ширины исходника в окне 9:16), настройки (и каким пресетом "
+            "отрендерится — render.effective_preset, default:true — пресет по умолчанию при preset_id null), "
+            "слои, камера, вставки, субтитры с временем слов (в секундах клипа), места для текста (positions: "
+            "хук с поправкой на число строк), звуковые дорожки исходника (source.audio) и предупреждения. "
+            "Зови первым. / Full clip state incl. subtitle word timings in clip seconds.",
             _obj({}), h_get_clip,
         ),
         Tool(
@@ -2107,7 +2381,9 @@ def _build_registry() -> list[Tool]:
             "Распознать, что РЕАЛЬНО звучит в готовом клипе между from_sec и to_sec (с вырезами, до 30 с): "
             "слова с временем и тишина после последнего слова, громкость отрезка (level, RMS дБ). Без "
             "параметров — последние 6 с: проверь, договорена ли развязка и есть ли хвост реакции. Речи нет "
-            "(игра, музыка) — words [] и пометка. / Transcribe the finished clip audio in a range.",
+            "(игра, музыка) — words [] и пометка. Для концовок, вырезов и «не торчит ли слово» — НЕ для "
+            "исправления распознавания: это тот же Whisper и он повторит те же ошибки (неверное слово правь "
+            "по смыслу/на слух владельца через set_subtitle_words). / Transcribe the finished clip audio in a range.",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"}}), h_listen,
             label=lambda a: "Слушаю финал клипа" if a.get("from_sec") is None else
             f"Слушаю {(_num(a.get('from_sec'), 0.0) or 0.0):.1f}–{(_num(a.get('to_sec'), 0.0) or 0.0):.1f} с",
@@ -2205,7 +2481,11 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_camera", "Наезды камеры",
             "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?}]. Пустой список — без наездов. "
-            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. В раскладках pip_cam/split "
+            "Между ключами значения плавно переходят; ease ключа A задаёт переход A → следующий ключ (по "
+            "умолчанию inOutCubic); ease \"step\" — держать A до времени следующего ключа и прыгнуть "
+            "(жёсткий кадр, без наезда). До первого ключа и после последнего — их значения. "
+            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. zoom < 1 нельзя (камера "
+            "только приближает) — шире окна: set_piece_fit. В раскладках pip_cam/split "
             "камера двигает только игру: окошко вебки/килфида и полоса вебки стоят на месте. / Replace camera keys.",
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
@@ -2391,12 +2671,16 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",
-            "Заменить слова субтитров целиком: words [{word, start, end}] — текст и время каждого слова "
-            "(секунды клипа до вырезов, как в get_clip). Для исправления ошибок распознавания и опоздавших "
-            "слов; строки соберутся из слов сами. Пустой список [] — убрать субтитры клипа (клип без речи). "
+            "Заменить слова субтитров целиком: words [{word, start, end, s?}] — текст и время каждого слова "
+            "(секунды клипа до вырезов, как в get_clip), s — голос (A главный, B/C/D другие). Для исправления "
+            "ошибок распознавания и опоздавших слов. Строки соберутся из слов сами: новая строка на конце "
+            "предложения (. ! ? …), паузе > 0.6 с, смене голоса и после 7 слов; «какой» «-то» склеится в "
+            "«какой-то». Пустой список [] — убрать субтитры клипа (клип без речи). "
             "/ Replace subtitle words with exact timings; [] clears them.",
             _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
-                                                              "end": {"type": "number"}}, ["word", "start", "end"])}},
+                                                              "end": {"type": "number"},
+                                                              "s": {"type": "string", "description": "голос: A, B, C, D"}},
+                                                             ["word", "start", "end"])}},
                  ["words"]),
             h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
         ),
@@ -2478,6 +2762,38 @@ def _build_registry() -> list[Tool]:
             h_trim_piece, mutating=True, label=lambda a: f"Подрезаю кусок {a.get('index')}",
         ),
         Tool(
+            "set_focus", "Кадрирую 9:16",
+            "Кадрирование куска piece в 9:16: points [{t, x, cut?}] — центр окна x(t) внутри куска (t — секунды "
+            "от начала куска, или source_t — секунды исходника прямо из get_shots; x 0..1 — доля ширины "
+            "исходника; cut:true — жёсткий переход в этой точке, ставь ровно на склейку плана). Между точками "
+            "без cut окно плавно ведётся; одна точка — неподвижный кадр; [] — по центру. Заменяет трек куска "
+            "целиком. Текущий трек — get_clip.pieces[].focus, доля ширины окна — get_clip.framing.window_w. "
+            "Говорящий в кадре: get_shots → source_contact_sheet(x=…) по планам → set_focus с cut на склейках. "
+            "/ 9:16 reframe track of a piece.",
+            _obj({"piece": {"type": "integer", "description": "номер куска с 0"},
+                  "points": {"type": "array", "items": _obj({
+                      "t": {"type": "number", "description": "секунды от начала куска"},
+                      "source_t": {"type": "number", "description": "вместо t: секунды исходника"},
+                      "x": {"type": "number", "description": "центр окна, доля ширины исходника 0..1"},
+                      "cut": {"type": "boolean", "description": "жёсткая смена кадра в этой точке (склейка)"}},
+                      ["x"])}}, ["piece", "points"]),
+            h_set_focus, mutating=True,
+            label=lambda a: f"Кадрирую кусок {a.get('piece')}: {len(a.get('points') or [])} точ.",
+        ),
+        Tool(
+            "set_piece_fit", "Кадр шире окна",
+            "Кусок piece шире окна 9:16 — когда двое по краям широкого плана не влезают в окно (камера только "
+            "приближает, zoom ≥ 1): w — доля ширины исходника в кадре (0.35..1; 1 — весь кадр, ≈0.6 — двое "
+            "крупнее), bg — фон сверху и снизу: blur (размытый тот же кадр, по умолчанию), black или #rrggbb. "
+            "Центр — тот же focus куска. w null — обычный кадр. Раскладка клипа (split/pip/meme) на этот кусок "
+            "не действует. Часто лучше фокус на говорящего с cut на склейках (set_focus) — fit для общего плана. "
+            "/ Show a piece wider than the 9:16 window.",
+            _obj({"piece": {"type": "integer"}, "w": {"type": ["number", "null"]},
+                  "bg": {"type": "string", "description": "blur | black | #rrggbb"}}, ["piece"]),
+            h_set_piece_fit, mutating=True,
+            label=lambda a: f"Кусок {a.get('piece')} шире окна" if a.get("w") else f"Кусок {a.get('piece')}: обычный кадр",
+        ),
+        Tool(
             "add_insert", "Вставляю мем",
             "Вставка из библиотеки поверх клипа (видео-мем/картинка/звук): asset_id, at (с клипа), duration, "
             "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. Вставки "
@@ -2520,7 +2836,10 @@ DISCOVERY_TOOLS = [
     Tool(
         "get_source_transcript", "Расшифровка проекта",
         "Реплики ВСЕГО исходника проекта [{start, end, text}] (время исходника) — выбрать моменты "
-        "для клипов без анализа Gemini. Первый вызов — локальный Whisper, несколько минут, потом кэш. "
+        "для клипов без анализа Gemini. Первый раз распознаёт локальный Whisper ФОНОМ (минуты): вызов "
+        "ждёт не дольше ~45 с и, если не готово, отвечает status \"running\" — «распознаю: готово N из M "
+        "мин, повтори через ~K с» (retry_after_sec); зови тот же вызов ещё раз, второе распознавание не "
+        "запустится. Готово — status \"done\" и реплики из кэша. "
         "Звук без речи (игра) — пустой список и no_speech: ищи моменты source_loudness. "
         "/ Whole-source transcript.",
         _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},

@@ -41,6 +41,11 @@ EMOJI_STEMS: list[tuple[str, str]] = [
 STRONG_STEMS = ("бляд", "пизд", "хуй", "хуё", "ебат", "ебал", "нахуй", "никогда", "всегда", "самый", "миллион", "реально", "серьёзн")
 
 HOOK_Y = 0.13
+# Стили субтитров (frontend/src/motion/layers/captions.ts), где звучащее слово жёлтое;
+# неизвестный стиль компоновщик рисует как hormozi.
+YELLOW_ACTIVE_STYLES = {"hormozi", "mrbeast", "karaoke"}
+KNOWN_STYLES = YELLOW_ACTIVE_STYLES | {"box", "neon", "minimal", "typewriter", "comic", "gradient", "outline"}
+STRONG_COLOR_ON_YELLOW = "#ff3b30"
 KEYWORD_GAP_SEC = 2.0
 PUNCH_EVERY_SEC = 6.5
 
@@ -132,26 +137,33 @@ def build_auto_edit(
     герой растёт в сторону от текста, а не под него."""
     from app.ai.subject_box import camera_center
 
+    from app.agent_tools import safe_text_y
+
     layers: list[dict] = []
     hook = (title or "").strip().upper()[:60]
     if hook:
+        # Длинный заголовок мельче: в 96 px он ложится в три строки и упирается в верх кадра.
+        hook_props = {"text": hook, "font": "Montserrat", "weight": 900, "size": hook_size(hook),
+                      "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980}
         layers.append({
             "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(3.0, duration), "track": 3,
-            "x": 0.5, "y": HOOK_Y, "in": {"type": "pop", "duration": 0.35}, "out": {"type": "fade", "duration": 0.2},
-            # Длинный заголовок мельче: в 96 px он ложится в три строки и упирается в верх кадра.
-            "props": {"text": hook, "font": "Montserrat", "weight": 900, "size": hook_size(hook),
-                      "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980},
+            # Две строки на 0.13 вылезают верхом за безопасную зону 0.10 — центр ниже на высоту текста.
+            "x": 0.5, "y": safe_text_y(hook_props, HOOK_Y), "in": {"type": "pop", "duration": 0.35},
+            "out": {"type": "fade", "duration": 0.2}, "props": hook_props,
         })
         layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
                        "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}})
 
     # Эмодзи в монтаже владелец не хочет («хуёво выглядят»): акцент — цвет слова.
     # Сильные слова — жёлтым, смысловые (деньги, страх, еда…) — зелёным, не чаще раза в 2 с.
+    # В hormozi/mrbeast/karaoke звучащее слово и так жёлтое — жёлтая подсветка на нём не видна
+    # (агент-монтажёр: «highlightWords другим цветом незаметны»), там сильные слова — красным.
+    strong = STRONG_COLOR_ON_YELLOW if style in YELLOW_ACTIVE_STYLES or style not in KNOWN_STYLES else "#ffd600"
     highlights, last_key = [], -99.0
     for i, w in enumerate(words):
         clean = _clean(w["word"])
         if any(clean.startswith(s) for s in STRONG_STEMS):
-            highlights.append({"i": i, "color": "#ffd600"})
+            highlights.append({"i": i, "color": strong})
         elif _emoji_for(w["word"]) and w["start"] - last_key >= KEYWORD_GAP_SEC:
             highlights.append({"i": i, "color": "#22c55e"})
             last_key = w["start"]

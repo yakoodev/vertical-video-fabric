@@ -1366,6 +1366,15 @@ class AppStore:
         self._update_record("ai_segments", segment_id, {"focus_json": _normalize_focus(focus, duration)})
         return self.get_ai_segment(segment_id)
 
+    def update_ai_segment_fit(self, segment_id: int, fit: Any) -> dict:
+        """«Вписать шире окна 9:16» для куска (``normalize_fit``); None — обычный кадр."""
+        from app.video_crop import normalize_fit
+
+        self.get_ai_segment(segment_id)
+        clean = normalize_fit(fit)
+        self._update_record("ai_segments", segment_id, {"fit_json": json.dumps(clean) if clean else ""})
+        return self.get_ai_segment(segment_id)
+
     def update_ai_segment_timecodes(self, segment_id: int, start_sec: float, end_sec: float) -> dict:
         segment = self.get_ai_segment(segment_id)
         source = self.get_source(segment["source_id"])
@@ -2853,8 +2862,11 @@ def _parse_focus(value: Any) -> list:
 
 
 def _segment_dict(row: Any) -> dict:
+    from app.video_crop import normalize_fit
+
     data = dict(row)
     data["focus"] = _parse_focus(data.get("focus_json"))
+    data["fit"] = normalize_fit(data.get("fit_json"))
     return data
 
 

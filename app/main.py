@@ -2024,23 +2024,33 @@ def api_create_manual_clip(source_id: int, payload: ManualClipRequest, _auth: Au
 @app.get(
     "/api/sources/{source_id}/transcript",
     tags=["Sources"],
-    summary="Source transcript (local Whisper, cached; the first call takes minutes)",
+    summary="Source transcript (local Whisper in the background, cached; 202 + progress while it runs)",
 )
 def api_source_transcript(
     source_id: int,
     _auth: AuthDep,
+    response: Response,
     refresh: bool = False,
     from_sec: float | None = None,
     to_sec: float | None = None,
+    wait: float | None = None,
 ) -> dict:
-    from app.manual_clips import source_transcript
+    """Распознавание идёт фоном (одно на источник); запрос ждёт его не дольше ``wait``
+    (по умолчанию 45 с, максимум 55) — иначе 202 и ``{status: running, done_min,
+    total_min, retry_after_sec}``: повтори тот же запрос. Готово — реплики из кэша."""
+    from app.manual_clips import transcript_job
 
+    limit = None if wait is None else min(55.0, max(0.0, wait))
     try:
-        out = source_transcript(store, source_id, refresh=refresh)
+        out = transcript_job(store, source_id, refresh=refresh, wait=limit)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if out.get("status") == "running":
+        response.status_code = 202
+        response.headers["Retry-After"] = str(out["retry_after_sec"])
+        return out
     if from_sec is not None or to_sec is not None:
         lo, hi = from_sec or 0.0, to_sec if to_sec is not None else float("inf")
         out["cues"] = [c for c in out["cues"] if float(c["end"]) > lo and float(c["start"]) < hi]
@@ -3302,7 +3312,12 @@ def api_move_clip_plan_segment(
 
 @app.get("/api/ffmpeg-presets", tags=["Render"], summary="List ffmpeg presets")
 def api_ffmpeg_presets(_auth: AuthDep) -> list[dict]:
-    return store.list_ffmpeg_presets()
+    """``default: true`` — пресет, которым рендерится клип с ``preset_id: null``
+    (render.effective_preset; агент-монтажёр не знал, что значит null)."""
+    from app.render import effective_preset
+
+    fallback = effective_preset(store, None) or {}
+    return [{**preset, "default": preset["id"] == fallback.get("id")} for preset in store.list_ffmpeg_presets()]
 
 
 @app.post("/api/ffmpeg-presets", tags=["Render"], summary="Create ffmpeg preset")
