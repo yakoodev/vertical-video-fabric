@@ -249,3 +249,21 @@ def test_reply_leaks_are_stripped_and_auto_focus_is_offered():
     assert editor_agent._clean_reply("Хук «ЕЁ» на 2 с") == "Хук «ЕЁ» на 2 с"
     # Встроенный монтажёр видит auto_focus (раньше он лежал среди инструментов поиска и был скрыт).
     assert "auto_focus" in {t.name for t in agent_tools.list_tools()}
+
+
+def test_thinking_aloud_mid_work_continues(tmp_path, monkeypatch):
+    """Проверочный прогон: «рассуждения» текстом на 9-м шаге из 40 переводили ход в отчёт без
+    инструментов, и Gemini писал «не успел из-за лимита шагов»."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("get_clip", {})],
+        [{"text": "Now I will trim the clip and add a hook."}],  # не отчёт, не по-русски
+        [_call("add_layers", {"layers": [HOOK]})],
+        [{"text": "Готово: хук на 0–2 с."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: хук на 0–2 с."
+    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
+    nudge = fake.requests[2][1]
+    assert "tools" in nudge and "Продолжай работу инструментами" in nudge["contents"][-1]["parts"][0]["text"]

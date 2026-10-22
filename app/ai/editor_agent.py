@@ -399,12 +399,14 @@ def run_agent(
     nudged = False
     nudged_continue = False
     nudged_report = False
+    nudged_work = False
+    report_only = False
     silent_nudges = 0
     while True:
         if should_cancel and should_cancel():
             raise AgentCancelled()
-        tools_on = rounds < limit
-        if not tools_on:
+        tools_on = rounds < limit and not report_only
+        if rounds >= limit and not report_only:
             contents.append({"role": "user", "parts": [{"text": (
                 "Лимит шагов исчерпан. Больше инструментов не будет — коротко отчитайся владельцу, "
                 "что успел сделать и что осталось."
@@ -467,15 +469,25 @@ def run_agent(
             final_text = _clean_reply(_parts_text(parts))
             if degenerate(final_text):
                 final_text = ""  # ниже — отчёт по сделанным шагам
+            elif final_text and not report_like(final_text) and tools_on and steps and not nudged_work:
+                # Рассуждения текстом посреди работы — это ещё не конец хода. Проверочный
+                # прогон: Gemini на 9-м шаге из 40 «подумал вслух», ход переключался в отчёт
+                # без инструментов, и он писал «не успел из-за лимита шагов».
+                nudged_work = True
+                contents.append({"role": "user", "parts": [{"text": (
+                    "Продолжай работу инструментами по задаче владельца. Если всё уже сделано — "
+                    "напиши короткий отчёт по-русски, 3–6 пунктов."
+                )}]})
+                continue
             elif final_text and not report_like(final_text) and not nudged_report:
                 # Вместо отчёта — рассуждения по-английски или эхо служебного вывода:
                 # один раз просим нормальный отчёт (без инструментов).
                 nudged_report = True
+                report_only = True
                 contents.append({"role": "user", "parts": [{"text": (
                     "Это не отчёт. Напиши владельцу по-русски 3–6 пунктов: что сделал и на какой секунде. "
                     "Без рассуждений, без английского, без служебных данных."
                 )}]})
-                limit = rounds  # следующий ответ — без инструментов
                 continue
             elif final_text and not report_like(final_text):
                 final_text = ""
