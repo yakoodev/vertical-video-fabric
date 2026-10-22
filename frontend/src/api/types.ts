@@ -20,6 +20,8 @@ export interface Source {
   status: string;
   source_type: string;
   content_crop?: CropRect | null;
+  /** Хромакей: источник на зелёнке, фон вырезается (app/chroma_key.py). */
+  chroma_key?: { color: string; similarity: number; blend: number } | null;
   /** Вебка стримера (доли кадра) — по умолчанию для раскладок split/pip_cam. */
   facecam?: CropRect | null;
   original_url: string;
@@ -182,6 +184,8 @@ export interface RenderSettings {
   layout?: StreamLayout;
   /** ✂ Джамп-каты: вырезанные паузы/слова-паразиты, секунды клипа ДО вырезов (app/cuts.py). */
   cuts?: { start: number; end: number }[];
+  /** Фон за вырезанным персонажем (источник с хромакеем). */
+  backdrop?: { color: string; color2: string };
 }
 
 export interface MontageInsert {

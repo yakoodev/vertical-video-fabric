@@ -49,6 +49,7 @@ import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import { DEFAULT_LAYOUT, drawLayoutFrame, gameplayAspect, normalizeLayout, type StreamLayout } from "@/pages/workspace/layout";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
+import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
@@ -585,6 +586,8 @@ function CropFrame({
   bannerGeomRef,
   motionRef,
   layout,
+  chromaKey,
+  backdrop,
 }: {
   srcW: number;
   srcH: number;
@@ -621,8 +624,17 @@ function CropFrame({
   motionRef?: React.MutableRefObject<MotionView>;
   /** Раскладка стрима (вебка сверху / картинка-в-картинке): меняет окно геймплея. */
   layout?: StreamLayout;
+  /** Хромакей источника: зелёнка вырезается, за персонажем — фон и слои behind. */
+  chromaKey?: ChromaKey | null;
+  backdrop?: Backdrop;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const keyRef = useRef(chromaKey);
+  keyRef.current = chromaKey;
+  const backdropRef = useRef(backdrop ?? DEFAULT_BACKDROP);
+  backdropRef.current = backdrop ?? DEFAULT_BACKDROP;
+  // Маленький холст под вырез: пиксели считаются в JS, полный кадр 1080×1920 — дорого.
+  const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const insertsRef = useRef(insertsPreview);
   insertsRef.current = insertsPreview;
   const draggingRef = useRef(false);
@@ -685,21 +697,37 @@ function CropFrame({
           const motion = motionRef?.current;
           // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
-          if (ctx && cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-          if (ctx) {
-            drawLayoutFrame(
-              ctx,
-              v,
-              layout,
-              {
-                x: (c.x + lc * c.w) * vw,
-                y: (c.y + tc * c.h) * vh,
-                w: fw * c.w * vw,
-                h: fh * c.h * vh,
-              },
-              cv.width,
-              cv.height,
-            );
+          const rect = {
+            x: (c.x + lc * c.w) * vw,
+            y: (c.y + tc * c.h) * vh,
+            w: fw * c.w * vw,
+            h: fh * c.h * vh,
+          };
+          const key = keyRef.current;
+          if (ctx && key) {
+            // Как компоновщик рендера: фон → слои «за персонажем» → вырезанное видео.
+            const kc = (keyCanvasRef.current ??= document.createElement("canvas"));
+            kc.width = Math.max(2, Math.round(cv.width / 3));
+            kc.height = Math.max(2, Math.round(cv.height / 3));
+            const kctx = kc.getContext("2d", { willReadFrequently: true });
+            if (kctx) {
+              // Поля и фон раскладки — цвета ключа, чтобы вырезались вместе с зелёнкой.
+              const keyed = layout?.mode === "meme" ? { ...layout, bg: key.color } : layout;
+              drawLayoutFrame(kctx, v, keyed, rect, kc.width, kc.height);
+              applyChromaKey(kctx, kc.width, kc.height, key);
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              paintBackdrop(ctx, cv.width, cv.height, backdropRef.current);
+              if (motion?.layers.length) {
+                const env = browserEnv(cv.width, cv.height);
+                const behind = motion.layers.filter((l) => !l.hidden);
+                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat }, clipT, env, "behind");
+              }
+              if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+              ctx.drawImage(kc, 0, 0, cv.width, cv.height);
+            }
+          } else if (ctx) {
+            if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+            drawLayoutFrame(ctx, v, layout, rect, cv.width, cv.height);
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
           const ov = overlayRef?.current;
@@ -709,7 +737,13 @@ function CropFrame({
             // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
             if (motion?.layers.length) {
               const env = browserEnv(ov.width, ov.height);
-              drawFrame(octx, { layers: motion.layers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat }, clipT, env);
+              drawFrame(
+                octx,
+                { layers: motion.layers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat },
+                clipT,
+                env,
+                keyRef.current ? "front" : undefined,
+              );
             }
             // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
             if (bannerRef?.current) {
@@ -1097,6 +1131,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [camera, setCamera] = useState<CameraKey[]>([]);
   const [layout, setLayout] = useState<StreamLayout>(DEFAULT_LAYOUT);
   const [cuts, setCuts] = useState<JumpCut[]>([]);
+  const [backdrop, setBackdrop] = useState<Backdrop>(DEFAULT_BACKDROP);
   const cutsRef = useRef<JumpCut[]>([]);
   cutsRef.current = cuts;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
@@ -1239,6 +1274,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     camera,
     layout,
     cuts,
+    backdrop,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1332,6 +1368,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setCamera(s.camera ?? []);
     setLayout(normalizeLayout(s.layout));
     setCuts(s.cuts ?? []);
+    setBackdrop(normalizeBackdrop(s.backdrop));
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);
@@ -2877,6 +2914,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   subPosPctRef={subPosPctRef}
                   motionRef={motionViewRef}
                   layout={layout}
+                  chromaKey={source.chroma_key}
+                  backdrop={backdrop}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -3193,7 +3232,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               title="Раскладка кадра"
               badge={{ single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"}
             >
-              <LayoutPanel sourceId={source.id} layout={layout} onChange={setLayout} frameAt={videoRef.current?.currentTime ?? 0} />
+              <LayoutPanel
+                sourceId={source.id}
+                layout={layout}
+                onChange={setLayout}
+                frameAt={videoRef.current?.currentTime ?? 0}
+                keyed={Boolean(source.chroma_key)}
+                backdrop={backdrop}
+                onBackdrop={setBackdrop}
+              />
             </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
               <CameraPanel

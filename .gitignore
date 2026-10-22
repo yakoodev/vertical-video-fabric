@@ -28,3 +28,6 @@ frontend/dist/
 
 # Собирается из node/motion-render.ts + frontend/src/motion (npm run build:motion; в Docker — свой шаг)
 /node/motion-render.mjs
+
+# Playwright MCP: скриншоты и логи агентов
+.playwright-mcp/

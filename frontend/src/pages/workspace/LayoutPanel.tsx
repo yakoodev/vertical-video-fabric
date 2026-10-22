@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import { facecamApi } from "@/api/sources";
+import type { Backdrop } from "./chromaKey";
 import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
 
 type Props = {
@@ -14,6 +15,10 @@ type Props = {
   onChange: (next: StreamLayout) => void;
   /** Секунда исходника для кадра в редакторе вебки (обычно — под курсором). */
   frameAt: number;
+  /** Источник на зелёнке: показываем фон за вырезанным персонажем. */
+  keyed?: boolean;
+  backdrop?: Backdrop;
+  onBackdrop?: (next: Backdrop) => void;
 };
 
 type Choice = { id: string; label: string; hint: string; mode: StreamLayout["mode"]; pos?: StreamLayout["cam_pos"] };
@@ -149,7 +154,7 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   );
 }
 
-export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt }: Props) {
+export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, keyed, backdrop, onBackdrop }: Props) {
   const layout = normalizeLayout(raw);
   const [savedCam, setSavedCam] = useState<LayoutRect | null>(null);
   const [busy, setBusy] = useState(false);
@@ -237,6 +242,20 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt }: Props)
         </button>
       ) : null}
       {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
+
+      {keyed && backdrop && onBackdrop ? (
+        <div className="lay-row">
+          <span className="lay-grow muted li-note">Зелёный фон вырезан. Фон за персонажем (верх → низ)</span>
+          <input type="color" className="lay-color" value={backdrop.color} title="Цвет фона сверху" onChange={(e) => onBackdrop({ ...backdrop, color: e.target.value })} />
+          <input
+            type="color"
+            className="lay-color"
+            value={backdrop.color2 || backdrop.color}
+            title="Цвет фона снизу (градиент)"
+            onChange={(e) => onBackdrop({ ...backdrop, color2: e.target.value })}
+          />
+        </div>
+      ) : null}
 
       {layout.mode === "meme" ? (
         <>
