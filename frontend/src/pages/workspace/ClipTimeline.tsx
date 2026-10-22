@@ -3,6 +3,7 @@ import type { MontageAsset } from "@/api/assets";
 import type { SubtitleLine } from "@/api/clipPlans";
 import type { AiSegment, MontageInsert } from "@/api/types";
 import { formatDuration } from "@/components/ui";
+import { addMute, normalizeMute, type MuteSpan } from "@/api/mute";
 import type { CameraKey, Layer } from "@/motion";
 import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
 
@@ -12,6 +13,8 @@ const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
 const MIN_PIECE = 5; // как в clip_spec.py
 const MIN_INSERT = 0.3;
 const MIN_LAYER = 0.1;
+/** Заглушённый отрезок короче — не отрезок, а случайный клик по дорожке. */
+const MIN_MUTE = 0.1;
 /** Слой, брошенный из библиотеки на дорожку графики (JSON в dataTransfer). */
 export const LAYER_DND = "application/x-vvf-layers";
 
@@ -21,10 +24,11 @@ export type Selection =
   | { kind: "sub"; index: number }
   | { kind: "layer"; id: string }
   | { kind: "cam"; index: number }
+  | { kind: "mute"; index: number }
   | null;
 
 type Drag = {
-  kind: "piece" | "insert" | "sub" | "layer" | "cam";
+  kind: "piece" | "insert" | "sub" | "layer" | "cam" | "mute";
   index: number;
   /** Слой: дорожка, на которую его сейчас тянут (вверх/вниз между дорожками графики). */
   track?: number;
@@ -124,6 +128,8 @@ export function ClipTimeline({
   onLayersChange,
   onCameraChange,
   onDropLayers,
+  mute = [],
+  onMuteChange,
 }: {
   pieces: AiSegment[];
   inserts: MontageInsert[];
@@ -153,6 +159,9 @@ export function ClipTimeline({
   onCameraChange?: (next: CameraKey[]) => void;
   /** Брошены слои из библиотеки: время клипа и дорожка графики (null — звуки). */
   onDropLayers?: (payload: string, atClipSec: number, track: number | null) => void;
+  /** Тишина вместо звука исходника (render.mute) — полосы на дорожке «Звук». */
+  mute?: MuteSpan[];
+  onMuteChange?: (next: MuteSpan[]) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -162,6 +171,10 @@ export function ClipTimeline({
   const [dropX, setDropX] = useState<number | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const liveRef = useRef<{ a: number; b: number; track?: number } | null>(null);
+  // Протяжка по дорожке «Звук» — новый заглушённый отрезок (рисуется черновиком).
+  const [muteDraft, setMuteDraft] = useState<{ from: number; to: number; startX: number } | null>(null);
+  // «Заглушить отсюда… до сюда»: первое нажатие запоминает курсор, второе ставит отрезок.
+  const [muteMark, setMuteMark] = useState<number | null>(null);
 
   const bounds = pieceBounds(pieces);
   const duration = bounds.length ? bounds[bounds.length - 1].end : 0;
@@ -216,6 +229,9 @@ export function ClipTimeline({
       layers.forEach((l, i) => {
         if (!(skip?.kind === "layer" && skip.index === i)) anchors.push(l.start, l.end);
       });
+      mute.forEach((m, i) => {
+        if (!(skip?.kind === "mute" && skip.index === i)) anchors.push(m.start, m.end);
+      });
       let best = t;
       let dist = SNAP_PX;
       for (const a of anchors) {
@@ -227,7 +243,7 @@ export function ClipTimeline({
       }
       return Number(best.toFixed(2));
     },
-    [bounds, subLines, inserts, layers, duration, playhead, pps],
+    [bounds, subLines, inserts, layers, mute, duration, playhead, pps],
   );
 
   // Перетаскивание блоков: живое состояние в ref, коммит на отпускании.
@@ -239,7 +255,8 @@ export function ClipTimeline({
       let a = d.a;
       let b = d.b;
       const len = d.b - d.a;
-      const min = d.kind === "piece" ? MIN_PIECE : d.kind === "layer" || d.kind === "cam" ? MIN_LAYER : MIN_INSERT;
+      const min =
+        d.kind === "piece" ? MIN_PIECE : d.kind === "layer" || d.kind === "cam" ? MIN_LAYER : d.kind === "mute" ? MIN_MUTE : MIN_INSERT;
       if (d.mode === "move") {
         a = clamp(snap(d.a + dt, d), 0, Math.max(0, duration - len));
         b = a + len;
@@ -282,6 +299,16 @@ export function ClipTimeline({
         onCameraChange(
           camera.map((k, i) => (i === d.index ? { ...k, t } : k)).sort((x, y) => x.t - y.t),
         );
+      } else if (d.kind === "mute") {
+        if (!onMuteChange || !mute[d.index]) return;
+        const a2 = Number(live.a.toFixed(3));
+        const b2 = Number(live.b.toFixed(3));
+        if (a2 === mute[d.index].start && b2 === mute[d.index].end) return;
+        // Наехал на соседний отрезок — сольются; выделение переводим на итоговый.
+        const next = normalizeMute(mute.map((m, i) => (i === d.index ? { start: a2, end: b2 } : m)));
+        onMuteChange(next);
+        const at = next.findIndex((m) => a2 >= m.start - 1e-6 && a2 < m.end);
+        onSelect(at >= 0 ? { kind: "mute", index: at } : null);
       } else if (d.kind === "insert") {
         onInsertsChange(
           inserts.map((ins, i) =>
@@ -309,7 +336,7 @@ export function ClipTimeline({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [pps, duration, snap, inserts, subLines, bounds, layers, camera, onInsertsChange, onSubLinesChange, onPieceCommit, onLayersChange, onCameraChange]);
+  }, [pps, duration, snap, inserts, subLines, bounds, layers, camera, mute, onInsertsChange, onSubLinesChange, onPieceCommit, onLayersChange, onCameraChange, onMuteChange, onSelect]);
 
   const startDrag = (e: React.PointerEvent, d: Omit<Drag, "startX">) => {
     const mode = ((e.target as HTMLElement).closest("[data-resize]")?.getAttribute("data-resize") as Drag["mode"]) || "move";
@@ -373,6 +400,36 @@ export function ClipTimeline({
     );
   };
 
+  // «🔇 Заглушить»: выделена строка субтитров или вставка — глушим её время
+  // (мат, вшитый эффект); иначе — два нажатия: отсюда… до курсора.
+  const blockRange =
+    selected?.kind === "sub" && subLines[selected.index]
+      ? { a: subLines[selected.index].start, b: subLines[selected.index].end, what: "строку" }
+      : selected?.kind === "insert" && inserts[selected.index]
+        ? { a: inserts[selected.index].at, b: inserts[selected.index].at + inserts[selected.index].duration, what: "вставку" }
+        : null;
+  const muteHere = () => {
+    if (!onMuteChange) return;
+    if (blockRange) {
+      onMuteChange(addMute(mute, blockRange.a, blockRange.b));
+      return;
+    }
+    // Время берём у плеера, а не у плейхеда: тот обновляется кадром анимации и
+    // сразу после перемотки может отставать.
+    const now = sourceToClip(pieces, videoRef.current?.currentTime ?? 0) ?? playhead;
+    if (muteMark == null) {
+      setMuteMark(now);
+      return;
+    }
+    if (Math.abs(now - muteMark) >= MIN_MUTE) onMuteChange(addMute(mute, muteMark, now));
+    setMuteMark(null);
+  };
+  const muteTitle = blockRange
+    ? `Заглушить звук исходника под выделенным (${blockRange.what}) — картинка останется`
+    : muteMark == null
+      ? "Заглушить звук исходника: нажмите здесь, подведите курсор к концу и нажмите ещё раз. Или протяните мышью по дорожке «Звук»"
+      : `Начало ${formatDuration(muteMark)} — подведите курсор к концу и нажмите ещё раз (то же место — отмена)`;
+
   return (
     <div className="ctl">
       <div className="ctl-bar">
@@ -396,6 +453,11 @@ export function ClipTimeline({
           >
             ✂ Разделить
           </button>
+          {onMuteChange ? (
+            <button className={`btn ghost sm${muteMark != null ? " ctl-mute-armed" : ""}`} onClick={muteHere} title={muteTitle}>
+              {blockRange ? "🔇 Заглушить выделенное" : muteMark == null ? "🔇 Заглушить" : "🔇 …до курсора"}
+            </button>
+          ) : null}
           <button
             className="btn ghost sm"
             disabled={!selected}
@@ -421,7 +483,9 @@ export function ClipTimeline({
           <div className="ctl-label">Вставки</div>
           <div className="ctl-label ctl-label--g">Звуки</div>
           <div className="ctl-label ctl-label--cam">Камера</div>
-          <div className="ctl-label">Звук</div>
+          <div className="ctl-label" title="Звук исходника. Протяните мышью по дорожке — заглушить отрезок (картинка останется)">
+            Звук
+          </div>
         </div>
 
         <div
@@ -602,12 +666,64 @@ export function ClipTimeline({
               {!camera.length ? <span className="ctl-empty muted">наездов нет — «＋ Наезд» в инспекторе</span> : null}
             </div>
 
-            {/* Звук клипа: речь видно глазами, паузы искать не надо. */}
+            {/* Звук клипа: речь видно глазами, паузы искать не надо. Поверх — заглушённые
+                отрезки (render.mute); протяжка по пустому месту ставит новый. */}
             <div
               className="ctl-track ctl-track--wave"
-              onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}
+              onPointerDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                const t = xToClip(e.clientX);
+                if (!onMuteChange) {
+                  onSeekClip(t);
+                  return;
+                }
+                (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                setMuteDraft({ from: t, to: t, startX: e.clientX });
+              }}
+              onPointerMove={(e) => {
+                if (!muteDraft || !(e.buttons & 1)) return;
+                setMuteDraft({ ...muteDraft, to: snap(xToClip(e.clientX)) });
+              }}
+              onPointerUp={(e) => {
+                const d = muteDraft;
+                if (!d) return;
+                setMuteDraft(null);
+                // Короткий щелчок — как раньше, перемотка; протяжка — новый отрезок.
+                if (Math.abs(e.clientX - d.startX) < 4 || Math.abs(d.to - d.from) < MIN_MUTE) {
+                  onSeekClip(d.from);
+                  return;
+                }
+                const next = addMute(mute, snap(d.from), d.to);
+                onMuteChange?.(next);
+                const at = next.findIndex((m) => Math.min(d.from, d.to) >= m.start - 0.02 && Math.min(d.from, d.to) < m.end);
+                if (at >= 0) onSelect({ kind: "mute", index: at });
+              }}
+              onPointerCancel={() => setMuteDraft(null)}
             >
               <Waveform peaks={peaks ?? []} width={innerW} />
+              {mute.map((m, i) => {
+                const lv = live("mute", i, m.start, m.end);
+                return (
+                  <div
+                    key={i}
+                    className={`ctl-block ctl-block--mute${selected?.kind === "mute" && selected.index === i ? " on" : ""}`}
+                    style={{ left: lv.a * pps, width: Math.max(8, (lv.b - lv.a) * pps) }}
+                    onPointerDown={(e) => startDrag(e, { kind: "mute", index: i, mode: "move", a: m.start, b: m.end })}
+                    title={`Тишина ${formatDuration(m.start)}–${formatDuration(m.end)}: звук исходника заглушён, картинка остаётся. Del — убрать`}
+                  >
+                    <span className="ctl-grip" data-resize="start" />
+                    <span className="ctl-block-label">🔇</span>
+                    <span className="ctl-grip" data-resize="end" />
+                  </div>
+                );
+              })}
+              {muteDraft && Math.abs(muteDraft.to - muteDraft.from) > 0 ? (
+                <div
+                  className="ctl-block ctl-block--mute is-draft"
+                  style={{ left: Math.min(muteDraft.from, muteDraft.to) * pps, width: Math.abs(muteDraft.to - muteDraft.from) * pps }}
+                />
+              ) : null}
+              {muteMark != null ? <span className="ctl-mute-mark" style={{ left: muteMark * pps }} title="Начало тишины" /> : null}
             </div>
 
             <div className="ctl-playhead" style={{ left: playhead * pps }} />

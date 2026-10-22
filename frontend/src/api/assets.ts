@@ -63,6 +63,8 @@ export const audioTracksApi = {
     fd.append("volume", String(volume));
     return api.form<AudioTrack>("/api/audio-tracks", fd);
   },
+  /** Звук по ссылке (YouTube и всё, что умеет yt-dlp) → новый трек. Долго: сервер качает. */
+  fromUrl: (url: string, label = "") => api.post<AudioTrack>("/api/audio-tracks/from-url", { url, label }),
 };
 
 export const subtitleProfilesApi = {

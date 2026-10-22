@@ -60,6 +60,8 @@ type Props = {
   onDelete: () => void;
   onDuplicate: () => void;
   onSeek: (clipSec: number) => void;
+  /** У источника хромакей: слой можно положить «за персонажа» (`behind`). */
+  keyed?: boolean;
 };
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -377,7 +379,7 @@ function CaptionWords({
   );
 }
 
-export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek }: Props) {
+export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
   const [t, setT] = useState(now());
@@ -799,6 +801,16 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
 
       {layer.type !== "audio" ? (
         <Section title="Положение и ключевые кадры">
+          {keyed || layer.behind ? (
+            <div title="Слой ляжет между фоном и вырезанным персонажем: скрин, картинка или мем во весь кадр не закроют его. Без галочки — поверх персонажа">
+              <Toggle
+                label="За персонажем"
+                checked={Boolean(layer.behind)}
+                onChange={(on) => onChange({ ...layer, behind: on || undefined } as Layer)}
+              />
+              {!keyed ? <div className="li-note muted">У источника выключен хромакей — «за персонажем» не сработает.</div> : null}
+            </div>
+          ) : null}
           {!inside ? <div className="li-note muted">Курсор вне слоя — значения показаны на ближайшем краю.</div> : null}
           {transformRow("x", "X", 100, 0.5, -1, 2, "%")}
           {transformRow("y", "Y", 100, 0.5, -1, 2, "%")}
