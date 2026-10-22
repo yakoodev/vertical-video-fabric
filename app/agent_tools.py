@@ -184,6 +184,12 @@ def _clip_duration(ctx: ToolContext) -> float:
     return float(clip_timeline(ctx.store, ctx.plan_id)["duration"])
 
 
+def _source_keyed(ctx: ToolContext) -> bool:
+    """У источника клипа есть хромакей (персонаж на зелёнке вырезается)?"""
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    return bool(ctx.store.get_source(int(plan["source_id"])).get("chroma_key"))
+
+
 def _current_render(ctx: ToolContext) -> dict:
     plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
     return normalize_render_settings(plan.get("render_settings") or {})
@@ -272,11 +278,19 @@ def cover_share(layer: dict) -> float:
     return min(1.0, (w * h) / (1080 * 1920))
 
 
-def covering_problems(layers: list[dict]) -> list[str]:
+def covering_problems(layers: list[dict], keyed: bool = False) -> list[str]:
     """Ошибки: слой закрывает собой видео. Владелец: «плашки перекрывают видео — говно».
-    Картинки и плашки ставим на пустое место, а не поверх героя/кадра."""
+    Картинки и плашки ставим на пустое место, а не поверх героя/кадра.
+
+    ``keyed`` — источник на зелёнке: слой ``behind`` лежит ЗА персонажем и закрывает
+    только фон (скрин сайта во весь кадр за втубером — это и есть монтаж)."""
     out = []
     for layer in layers:
+        if layer.get("behind"):
+            if not keyed:
+                out.append(f"{layer.get('id') or layer.get('type')}: behind работает только у источника с хромакеем "
+                           "(set_chroma_key) — без него убери behind")
+            continue
         share = cover_share(layer)
         if share > MAX_COVER_SHARE:
             out.append(f"{layer.get('id') or layer.get('type')}: закрывает {share:.0%} кадра — видео не перекрывать, "
@@ -443,6 +457,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "mirror": render.get("mirror"),
             "transition": render.get("transition"),
             "cover": (render.get("cover") or {}).get("mode"),
+            **_key_view(source, render),
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
         # субтитры строго по центру под лицом (с учётом раскладки «вебка снизу»).
@@ -452,6 +467,21 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "inserts": inserts,
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
+    }
+
+
+def _key_view(source: dict, render: dict) -> dict:
+    """Хромакей источника и фон за персонажем — агент должен знать, что фон свой."""
+    key = source.get("chroma_key")
+    if not key:
+        return {}
+    return {
+        "chroma_key": key,
+        "backdrop": render.get("backdrop"),
+        "key_note": ("Источник на зелёнке: персонаж вырезан, фон — backdrop (set_backdrop). Слои с behind:true "
+                     "лежат ЗА персонажем — скрины, картинки, фон-мемы во весь кадр можно (видео не закрывают). "
+                     "Без behind слой поверх персонажа: на нём ничего крупного. Крупность и место персонажа — "
+                     "set_layout mode meme + video_scale (2–3) + video_y."),
     }
 
 
@@ -854,7 +884,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     prepared, dropped_emoji = _no_emoji_layers(prepared)
     if not prepared:
         raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
-    problems = covering_problems(prepared) + _validate_new_layers(ctx, prepared, duration)
+    problems = covering_problems(prepared, _source_keyed(ctx)) + _validate_new_layers(ctx, prepared, duration)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
     added = motion.normalize_layers(prepared)
@@ -895,7 +925,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
     merged = _strip_emoji(_deep_merge(layers[index], patch))
-    problems = covering_problems([merged]) + _validate_new_layers(ctx, [merged], duration)
+    problems = covering_problems([merged], _source_keyed(ctx)) + _validate_new_layers(ctx, [merged], duration)
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
     normalized = motion.normalize_layers([merged])
@@ -1213,6 +1243,45 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
     return out
+
+
+def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
+    """Фон за вырезанным персонажем: цвет или вертикальный градиент color → color2."""
+    from app.chroma_key import normalize_backdrop
+
+    render = _current_render(ctx)
+    merged = {**(render.get("backdrop") or {}), **{k: v for k, v in args.items() if v is not None}}
+    fresh = _save_render(ctx, {**render, "backdrop": normalize_backdrop(merged)})
+    out: dict = {"ok": True, "backdrop": fresh["backdrop"]}
+    if not _source_keyed(ctx):
+        out["note"] = "у источника нет хромакея — фон не виден (set_chroma_key on)"
+    return out
+
+
+def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
+    """Хромакей источника клипа: on — найти зелёнку (или взять color), off — убрать."""
+    from app.chroma_key import detect_key, normalize_key
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    source = ctx.store.get_source(int(plan["source_id"]))
+    if args.get("on") is False:
+        ctx.store.update_source(source["id"], chroma_key=None)
+        return {"ok": True, "chroma_key": None}
+    current = source.get("chroma_key") or {}
+    tweaks = {k: v for k, v in args.items() if k in ("color", "similarity", "blend") and v is not None}
+    if args.get("color") or current:
+        key = normalize_key({**current, **tweaks})
+    else:
+        try:
+            key = detect_key(source)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        key = normalize_key({**key, **tweaks}) if key else None
+    if not key:
+        raise ToolError("зелёного/синего фона в источнике не нашлось — передай color (#rrggbb) сам, если он есть")
+    saved = ctx.store.update_source(source["id"], chroma_key=key)
+    return {"ok": True, "chroma_key": saved.get("chroma_key"),
+            "note": "проверь view_frame: края персонажа без зелени; ореол — similarity выше (0.3), рваные края — ниже"}
 
 
 def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
@@ -1618,7 +1687,7 @@ def motion_reference() -> str:
     fields = "; ".join(f"{kind}: {', '.join(props)}" for kind, props in motion.PROPS.items())
     return f"""\
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
-Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), x, y, scale, rotation, opacity,
+Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее), x, y, scale, rotation, opacity,
   keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress,
   in {{type, duration}}, out {{type, duration}}, loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
@@ -1698,6 +1767,7 @@ def _layer_schema() -> dict:
             "start": {"type": "number", "description": "секунды клипа"},
             "end": {"type": "number", "description": "секунды клипа, end - start ≥ 0.1"},
             "track": {"type": "integer", "description": "0..7, выше = поверх"},
+            "behind": {"type": "boolean", "description": "за вырезанным персонажем (только источник с хромакеем)"},
             "x": {"type": "number", "description": "центр по ширине, доля кадра"},
             "y": {"type": "number", "description": "центр по высоте, доля кадра (безопасно 0.15..0.72 для центра текста; края текста — не выше 10% и не ниже 80% кадра)"},
             "scale": {"type": "number"},
@@ -1908,11 +1978,30 @@ def _build_registry() -> list[Tool]:
             "Раскладка кадра 9:16: mode single (обычный кадр) | split (вебка сверху/снизу + игра; cam {x,y,w,h} "
             "в долях исходника, ratio, cam_pos) | pip_cam (окошко вебки pip {x,y,w}) | meme (горизонтальное видео "
             "целиком сверху во всю ширину, ниже фон bg #rrggbb под картинки и титры; video_y — верх видео в долях "
-            "высоты). Передавай только то, что меняешь. / Frame layout.",
+            "высоты; video_scale 1..4 — ширина видео в ширинах кадра, края срезаются: для персонажа на зелёнке "
+            "2–3, чтобы он был крупным). Передавай только то, что меняешь. / Frame layout.",
             _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
-                  "pip": {"type": "object"}, "bg": {"type": "string"}, "video_y": {"type": "number"}}),
+                  "pip": {"type": "object"}, "bg": {"type": "string"}, "video_y": {"type": "number"},
+                  "video_scale": {"type": "number"}}),
             h_set_layout, mutating=True, label=lambda a: f"Раскладка: {a.get('mode') or 'правка'}",
+        ),
+        Tool(
+            "set_chroma_key", "Вырезаю зелёный фон",
+            "Хромакей источника (персонаж на зелёнке): on true — найти фон сам (или color #rrggbb), similarity "
+            "0.01..0.6 (порог, по умолчанию 0.25), blend 0..0.5 (мягкость края); on false — выключить. Фон за "
+            "персонажем — set_backdrop, слои за ним — behind:true. / Chroma key of the clip's source.",
+            _obj({"on": {"type": "boolean"}, "color": {"type": "string"}, "similarity": {"type": "number"},
+                  "blend": {"type": "number"}}),
+            h_set_chroma_key, mutating=True,
+            label=lambda a: "Хромакей " + ("выкл" if a.get("on") is False else "вкл"),
+        ),
+        Tool(
+            "set_backdrop", "Ставлю фон за персонажем",
+            "Фон за вырезанным персонажем (нужен хромакей): color #rrggbb, color2 — низ вертикального градиента "
+            "(пусто — однотонный). Картинки во весь фон — слоем image с behind:true. / Backdrop behind a keyed subject.",
+            _obj({"color": {"type": "string"}, "color2": {"type": "string"}}),
+            h_set_backdrop, mutating=True, label=lambda a: "Фон за персонажем",
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",

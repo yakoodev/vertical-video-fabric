@@ -343,6 +343,8 @@ export type LayerBase = {
   loop?: Loop | null;
   shadow?: Shadow | null;
   blend?: BlendMode;
+  /** Под вырезанной основой — «за персонажем» (у источника есть хромакей). */
+  behind?: boolean;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */
@@ -393,6 +395,20 @@ export type Composition = {
   words?: CaptionWord[];
   /** Сообщения чата для слоёв `chat` (клиповое время, по возрастанию `t`). */
   chat?: ChatMessage[];
+  /** Хромакей основы: компоновщик вырезает фон, кладёт `background` и слои `behind`. */
+  key?: ChromaKey;
+  /** Фон за вырезанной основой: цвет или вертикальный градиент `color` → `color2`. */
+  background?: { color: string; color2?: string };
+};
+
+export type ChromaKey = {
+  /** Цвет фона основы, `0xrrggbb`. */
+  color: string;
+  similarity: number;
+  blend: number;
+  despill: "green" | "blue";
+  /** Лук пресета (фильтры ffmpeg) — после выреза, чтобы не сдвинуть цвет ключа. */
+  grade?: string;
 };
 
 /**

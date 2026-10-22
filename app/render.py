@@ -244,15 +244,16 @@ class ClipRenderService:
             temp_paths.append(base_output_path)
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
+            base_preset, motion = _keyed_render(preset, motion)
             args = build_ffmpeg_render_args(
                 source_path=Path(source["local_path"]),
                 output_path=base_output_path,
                 start_sec=float(segment["start_sec"]),
                 end_sec=float(segment["end_sec"]),
-                preset=preset,
+                preset=base_preset,
                 # С моушном баннер кладётся после камеры и слоёв, а не в основу.
                 banner=None if motion else banner,
-                source_crop=source.get("content_crop"),
+                source_crop=_base_crop(source, motion),
                 reframe_x=_segment_reframe_x(segment, preset, source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
@@ -379,6 +380,7 @@ class ClipRenderService:
             temp_paths.append(base_output_path)
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
+            base_preset, motion = _keyed_render(preset, motion)
             # Без вырезов части — это сами куски (рендер ровно прежний).
             parts = cut_parts or segments
             jumps = list(jump_joins or []) if cut_parts else None
@@ -391,9 +393,9 @@ class ClipRenderService:
                         output_path=part_path,
                         start_sec=float(segment["start_sec"]),
                         end_sec=float(segment["end_sec"]),
-                        preset=preset,
+                        preset=base_preset,
                         banner=None if motion else banner,
-                        source_crop=source.get("content_crop"),
+                        source_crop=_base_crop(source, motion),
                         reframe_x=_segment_reframe_x(segment, preset, source),
                     ),
                     timeout=60 * 30,
@@ -747,6 +749,7 @@ class ClipRenderService:
             from app.cuts import remap_motion
 
             motion = remap_motion(motion, self._finished_cut_mapper(plan, cut_plan))
+        visual = self._with_chroma_key(plan, visual)
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
@@ -832,6 +835,20 @@ class ClipRenderService:
             "rendered" if clip["status"] == "succeeded" else "failed",
         )
         return clip
+
+    def _with_chroma_key(self, plan: dict, visual: dict | None) -> dict | None:
+        """Источник на зелёнке — ключ и фон клипа едут в компоновщик (app/chroma_key.py)."""
+        from app.chroma_key import normalize_backdrop
+
+        segments = plan.get("segments") or []
+        try:
+            key = self.store.get_source(int(segments[0]["source_id"])).get("chroma_key") if segments else None
+        except (KeyError, ValueError, TypeError):
+            key = None
+        if not key:
+            return visual
+        backdrop = normalize_backdrop((plan.get("render_settings") or {}).get("backdrop"))
+        return {**(visual or {"layers": [], "camera": []}), "key": key, "background": backdrop}
 
     def _cut_plan(self, plan: dict, ffmpeg_preset_id: int | None = None, fps: float | None = None):
         """План джамп-катов клипа (app/cuts.py) или None, если вырезов нет.
@@ -966,7 +983,7 @@ class ClipRenderService:
             assets.update(motion.get("chat_assets") or {})
             camera = motion.get("camera") or []
             drawn = video
-            if layers or camera:
+            if layers or camera or motion.get("key"):
                 try:
                     meta = probe_media(video)
                     comp = write_comp(
@@ -979,6 +996,8 @@ class ClipRenderService:
                         camera=camera,
                         words=motion.get("words"),
                         chat=motion.get("chat"),
+                        key=motion.get("key"),
+                        background=motion.get("background"),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
@@ -1673,7 +1692,7 @@ def _render_filter(
         prefix, (vin,) = _crop_prefix(source_crop, 1)
         base = (
             f"{prefix}[{vin}]scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:{ff_color(preset['key_fill']) if preset.get('key_fill') else 'black'},"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
     else:
@@ -1774,10 +1793,12 @@ def _layout_filter(
     if layout["mode"] == "meme":
         # Видео целиком (после обрезки полей) во всю ширину, сверху; ниже — фон.
         prefix, (vin,) = _crop_prefix(source_crop, 1)
+        # video_scale > 1 — видео шире кадра по центру (персонаж на зелёнке крупнее).
         top = even_px(float(layout["video_y"]) * height) if layout["video_y"] > 0 else 0
-        video = f"{prefix}[{vin}]scale={width}:-2,setsar=1[lvid]"
+        video_w = even_px(width * float(layout.get("video_scale") or 1.0))
+        video = f"{prefix}[{vin}]scale={video_w}:-2,setsar=1[lvid]"
         background = f"color=c={ff_color(layout['bg'])}:s={width}x{height}:r={_fps(fps)}[lbg]"
-        return f"{video};{background};[lbg][lvid]overlay=x=0:y={top}:shortest=1,{tail}"
+        return f"{video};{background};[lbg][lvid]overlay=x={(width - video_w) // 2}:y={top}:shortest=1,{tail}"
     # pip_cam: обычный кадр + окошко вебки (центр и ширина — доли выхода).
     pip = layout["pip"]
     game = _fit_box(mode, anchor, width, height, source_crop, reframe_x, "lgame")
@@ -1814,6 +1835,36 @@ def _banner_overlay(banner: dict, preset: dict, height: int, banner_input: str, 
         f"{banner_chain};"
         f"[{source_label}][banner]overlay={x_expr}:{y_expr}:shortest=1,format=yuv420p[vout]"
     )
+
+
+def _base_crop(source: dict, motion: dict | None) -> dict | None:
+    """Обрезка полей источника; на зелёнке — ещё и тонкая рамка по краю.
+
+    Края кадра зелёнки после кодека темнее (первая строка — 0,72,0 вместо 0,254,0):
+    ключ их не берёт, и вокруг видео остаётся тёмная линия.
+    """
+    crop = source.get("content_crop")
+    if crop or not (motion or {}).get("key"):
+        return crop
+    return {"x": 0.005, "y": 0.005, "w": 0.99, "h": 0.99}
+
+
+def _keyed_render(preset: dict, motion: dict | None) -> tuple[dict, dict | None]:
+    """С хромакеем основа остаётся на зелёнке, а лук уходит в компоновщик.
+
+    Цвет, зерно и зеркало поверх зелёнки сдвинули бы её цвет — ключ бы
+    промахнулся; поля и фон раскладки красятся в цвет ключа, чтобы вырезаться
+    вместе с ним. Виньетки с ключом нет: ffmpeg кладёт её с непрозрачной альфой.
+    """
+    key = (motion or {}).get("key")
+    if not key:
+        return preset, motion
+    base = {**preset, "mirror": False, "color_style": "none", "vignette": 0, "grain": 0, "key_fill": key["color"]}
+    layout = preset.get("layout")
+    if isinstance(layout, dict) and layout.get("mode") == "meme":
+        base["layout"] = {**layout, "bg": key["color"]}
+    grade = _video_style_filter({**preset, "vignette": 0})
+    return base, {**motion, "key": {**key, "grade": grade}}
 
 
 def _video_style_filter(preset: dict) -> str:

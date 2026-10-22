@@ -633,6 +633,8 @@ LAYER_FIELDS: dict = {
     "opacity": Num(1, 0, 1, 4),
     "shadow": SHADOW,
     "blend": Choice("normal", BLENDS),
+    # За персонажем: рисуется под вырезанной основой (нужен хромакей источника).
+    "behind": Flag(False),
 }
 
 CAMERA_FIELDS: dict = {

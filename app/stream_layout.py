@@ -13,6 +13,7 @@
      "border": {"color": "#000000", "width": 0},
      "gap": 0,
      "video_y": 0.04,                 # meme: верх видео в долях высоты выхода
+     "video_scale": 1.0,              # meme: ширина видео в ширинах кадра (>1 — крупнее, края срезаны)
      "bg": "#0b0d14"}                 # meme: фон под видео (место для картинок и титров)
 
 «meme» — мем-формат: горизонтальное видео целиком во всю ширину сверху, ниже —
@@ -89,6 +90,7 @@ def normalize_layout(raw: object) -> dict:
         },
         "gap": int(round(_num(src.get("gap"), 0, 0, 200))),
         "video_y": round(_num(src.get("video_y"), 0.04, 0.0, 0.6), 4),
+        "video_scale": round(_num(src.get("video_scale"), 1.0, 1.0, 4.0), 4),
         "bg": src["bg"].lower() if isinstance(src.get("bg"), str) and _COLOR_RE.match(src["bg"]) else "#0b0d14",
     }
 

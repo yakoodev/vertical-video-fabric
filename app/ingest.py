@@ -221,6 +221,16 @@ class SourceIngestor:
             original_url=url.strip(),
         )
 
+    def _with_chroma_key(self, source: dict) -> dict:
+        """Записан на зелёнке — сразу ставим ключ (app/chroma_key.py); сбой не мешает загрузке."""
+        from app.chroma_key import detect_key
+
+        try:
+            key = detect_key(source)
+        except Exception:  # noqa: BLE001 - ключ — удобство, источник важнее
+            return source
+        return self.store.update_source(source["id"], chroma_key=key) if key else source
+
     def _create_source_from_file(
         self,
         source_type: str,
@@ -243,6 +253,7 @@ class SourceIngestor:
                 metadata=metadata.raw or {},
                 status="ready",
             )
+            source = self._with_chroma_key(source)
         except Exception as exc:  # noqa: BLE001 - ingestion must persist failed source state
             return self.store.create_source(
                 source_type,

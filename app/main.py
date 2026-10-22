@@ -1841,6 +1841,29 @@ def api_detect_crop(source_id: int, _auth: AuthDep) -> dict:
     return {"crop": crop}
 
 
+@app.post("/api/sources/{source_id}/detect-key", tags=["Sources"], summary="Auto-detect a green-screen chroma key")
+def api_detect_key(source_id: int, _auth: AuthDep) -> dict:
+    from app.chroma_key import detect_key
+
+    try:
+        source = store.get_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        return {"chroma_key": detect_key(source)}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/api/sources/{source_id}/chroma-key", tags=["Sources"], summary="Set or clear the chroma key")
+def api_set_chroma_key(source_id: int, payload: dict, _auth: AuthDep) -> dict:
+    """``{"chroma_key": {color, similarity, blend} | null}`` — null выключает ключ."""
+    try:
+        return store.update_source(source_id, chroma_key=payload.get("chroma_key"))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.patch("/api/sources/{source_id}/crop", tags=["Sources"], summary="Set the content crop rect")
 def api_set_crop(source_id: int, payload: SourceCropPayload, _auth: AuthDep) -> dict:
     crop = payload.crop.model_dump() if payload.crop else None

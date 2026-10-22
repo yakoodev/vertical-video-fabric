@@ -244,6 +244,10 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt }: Props)
             <span>Видео от верха · {Math.round(layout.video_y * 100)}% кадра</span>
             <input type="range" min={0} max={60} value={Math.round(layout.video_y * 100)} onChange={(e) => patch({ video_y: Number(e.target.value) / 100 })} />
           </label>
+          <label className="field range">
+            <span>Размер видео · {Math.round((layout.video_scale || 1) * 100)}% ширины</span>
+            <input type="range" min={100} max={400} step={5} value={Math.round((layout.video_scale || 1) * 100)} onChange={(e) => patch({ video_scale: Number(e.target.value) / 100 })} />
+          </label>
           <div className="lay-row">
             <span className="lay-grow muted li-note">Фон под видео — место для картинок и титров</span>
             <input type="color" className="lay-color" value={layout.bg} title="Цвет фона" onChange={(e) => patch({ bg: e.target.value })} />

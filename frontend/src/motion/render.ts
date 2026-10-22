@@ -75,10 +75,13 @@ export function drawFrame(
   comp: Pick<Composition, "layers"> & FrameData,
   t: number,
   env: RenderEnv,
+  pass?: "behind" | "front",
 ): void {
   const data: FrameData = { words: comp.words, chat: comp.chat };
   const visible = visibleLayers(comp.layers || [], t);
   for (const layer of visible) {
+    // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
+    if (pass && !!layer.behind !== (pass === "behind")) continue;
     // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
     // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
     if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;

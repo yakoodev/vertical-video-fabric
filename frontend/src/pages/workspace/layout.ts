@@ -40,6 +40,8 @@ export interface StreamLayout {
   gap: number;
   /** meme: верх видео в долях высоты кадра, 0..0.6. */
   video_y: number;
+  /** meme: ширина видео в ширинах кадра, 1..4 (>1 — крупнее, края срезаны). */
+  video_scale: number;
   /** meme: фон под видео (#rrggbb). */
   bg: string;
 }
@@ -63,6 +65,7 @@ export const DEFAULT_LAYOUT: StreamLayout = {
   border: { color: "#000000", width: 0 },
   gap: 0,
   video_y: 0.04,
+  video_scale: 1,
   bg: "#0b0d14",
 };
 
@@ -109,6 +112,7 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
     },
     gap: Math.round(num(s.gap, 0, 0, 200)),
     video_y: r4(num(s.video_y, DEFAULT_LAYOUT.video_y, 0, 0.6)),
+    video_scale: r4(num(s.video_scale, 1, 1, 4)),
     bg: typeof s.bg === "string" && /^#[0-9a-f]{6}$/i.test(s.bg) ? s.bg.toLowerCase() : DEFAULT_LAYOUT.bg,
   };
 }
@@ -207,8 +211,9 @@ export function drawLayoutFrame(
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
     const top = layout.video_y > 0 ? evenPx(layout.video_y * out.h) : 0;
-    const vidH = (out.w * vh) / vw;
-    ctx.drawImage(video, 0, 0, vw, vh, 0, top * k, W, vidH * k);
+    const vidW = evenPx(out.w * (layout.video_scale || 1));
+    const vidH = (vidW * vh) / vw;
+    ctx.drawImage(video, 0, 0, vw, vh, Math.floor((out.w - vidW) / 2) * kx, top * k, vidW * kx, vidH * k);
     return;
   }
 

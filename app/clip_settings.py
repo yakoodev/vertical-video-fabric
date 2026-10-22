@@ -15,6 +15,7 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
+from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
 from app.montage_assets import normalize_inserts
 from app.motion import normalize_camera, normalize_layers
@@ -122,6 +123,8 @@ def normalize_render_settings(raw: object) -> dict:
         # Джамп-каты: вырезанные паузы и слова-паразиты, {start, end} во времени
         # клипа до вырезов (app/cuts.py). Пусто — рендер ровно прежний.
         "cuts": normalize_cuts(src.get("cuts")),
+        # Фон за вырезанным персонажем, когда у источника есть хромакей (app/chroma_key.py).
+        "backdrop": normalize_backdrop(src.get("backdrop")),
     }
 
 

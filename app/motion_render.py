@@ -149,6 +149,8 @@ def write_comp(
     camera: list[dict],
     words: list[dict] | None = None,
     chat: list[dict] | None = None,
+    key: dict | None = None,
+    background: dict | None = None,
 ) -> Path:
     comp = {
         "width": int(width),
@@ -162,6 +164,19 @@ def write_comp(
         comp["words"] = words
     if chat:
         comp["chat"] = chat
+    if key:
+        # Хромакей основы (app/chroma_key.py): компоновщик вырезает зелёнку,
+        # кладёт фон и слои «за персонажем», сверху — основу.
+        from app.chroma_key import despill_type, ff_hex, normalize_backdrop
+
+        comp["key"] = {
+            "color": ff_hex(key["color"]),
+            "similarity": key["similarity"],
+            "blend": key["blend"],
+            "despill": despill_type(key["color"]),
+            "grade": key.get("grade") or "",
+        }
+        comp["background"] = normalize_backdrop(background)
     path.write_text(json.dumps(comp, ensure_ascii=False), encoding="utf-8")
     return path
 
@@ -614,13 +629,17 @@ def render_frame_png(
         base_png = work / "base.png"
         source = store.get_source(int(segment.get("source_id") or plan["source_id"]))
         source_path = Path(source.get("local_path") or "")
+        keyed: dict = {}
         if source_path.is_file():
+            # Зелёнка: основа как в рендере (без лука, поля цвета ключа), вырез — в компоновщике.
+            preset, keyed = _render._keyed_render(preset, {"key": source.get("chroma_key")})
+            keyed = keyed or {}
             framed = dict(segment)
             x = _focus_x_at(segment.get("focus") or [], local)
             if x is not None:
                 framed["focus"] = [{"t": 0.0, "x": x}]
             reframe = _render._segment_reframe_x(framed, preset, source)
-            graph = _render._render_filter(width, height, fps, preset, None, source.get("content_crop"), reframe)
+            graph = _render._render_filter(width, height, fps, preset, None, _render._base_crop(source, keyed), reframe)
             _render._run_ffmpeg(
                 [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -656,6 +675,7 @@ def render_frame_png(
         comp = write_comp(
             work / "comp.json", width=width, height=height, fps=fps,
             duration=max(total, t + 0.5), layers=layers, camera=camera, words=words, chat=host.get("chat"),
+            key=keyed.get("key"), background=rs["backdrop"],
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

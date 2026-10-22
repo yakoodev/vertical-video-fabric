@@ -308,6 +308,8 @@ class Database:
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.
             self._ensure_column(conn, "sources", "content_crop", "TEXT NOT NULL DEFAULT ''")
+            # Chroma key of a green-screen source (JSON {color, similarity, blend}), app/chroma_key.py.
+            self._ensure_column(conn, "sources", "chroma_key", "TEXT NOT NULL DEFAULT ''")
             # Live progress of a running analysis: {"stage", "done", "total"} — drives
             # the step list on the Source tab instead of a fake percentage.
             self._ensure_column(conn, "ai_analyses", "progress_json", "TEXT NOT NULL DEFAULT '{}'")

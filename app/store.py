@@ -777,6 +777,7 @@ class AppStore:
             raise KeyError(f"source not found: {source_id}")
         data = dict(row)
         data["content_crop"] = _parse_content_crop(data.get("content_crop"))
+        data["chroma_key"] = _parse_chroma_key(data.get("chroma_key"))
         data["facecam"] = _parse_facecam(data.pop("facecam_json", ""))
         # Don't ship the (potentially huge) cached transcript in every source
         # response — expose only a presence flag + size for the UI.
@@ -930,6 +931,12 @@ class AppStore:
                 updates["metadata_json"] = _json_text(value)
             elif key == "content_crop":
                 updates["content_crop"] = _normalize_content_crop(value)
+            elif key == "chroma_key":
+                # Зелёнка источника {color, similarity, blend} или None — без ключа.
+                from app.chroma_key import normalize_key
+
+                key_value = normalize_key(value)
+                updates["chroma_key"] = _json_text(key_value) if key_value else ""
             elif key == "facecam":
                 # Вебка стримера {x,y,w,h} (доли кадра) или None — сбросить.
                 from app.stream_layout import normalize_cam
@@ -2705,6 +2712,12 @@ def _parse_content_crop(value: Any) -> dict | None:
         return parsed if isinstance(parsed, dict) else None
     except (ValueError, TypeError):
         return None
+
+
+def _parse_chroma_key(value: Any) -> dict | None:
+    from app.chroma_key import normalize_key
+
+    return normalize_key(_parse_content_crop(value))
 
 
 def _parse_facecam(value: Any) -> dict | None:

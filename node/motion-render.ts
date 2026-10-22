@@ -110,6 +110,34 @@ function readComp(path: string): Composition {
     chat: Array.isArray(raw.chat)
       ? raw.chat.filter((m) => m && Number.isFinite(Number(m.t))).sort((a, b) => Number(a.t) - Number(b.t))
       : [],
+    ...readKey(raw),
+  };
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+/** Хромакей и фон за основой. Лук идёт прямо в граф ffmpeg — только безопасные символы. */
+function readKey(raw: Partial<Composition>): Pick<Composition, "key" | "background"> {
+  const k = raw.key;
+  if (!k || typeof k.color !== "string" || !/^0x[0-9a-f]{6}$/i.test(k.color)) return {};
+  const clamp = (v: unknown, def: number, lo: number, hi: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+  };
+  const grade = typeof k.grade === "string" && /^[a-z0-9=:.,_-]*$/i.test(k.grade) ? k.grade : "";
+  const bg = raw.background;
+  return {
+    key: {
+      color: k.color,
+      similarity: clamp(k.similarity, 0.25, 0.01, 0.6),
+      blend: clamp(k.blend, 0.08, 0, 0.5),
+      despill: k.despill === "blue" ? "blue" : "green",
+      grade,
+    },
+    background: {
+      color: bg && HEX_COLOR.test(String(bg.color)) ? String(bg.color) : "#0b0d14",
+      color2: bg && HEX_COLOR.test(String(bg.color2)) ? String(bg.color2) : "",
+    },
   };
 }
 
@@ -251,10 +279,14 @@ function fitFilter(comp: Composition, colorspace: string | null): string {
   const W = comp.width;
   const H = comp.height;
   const inMatrix = colorspace === "bt709" ? ":in_color_matrix=bt709" : "";
-  return (
+  const key = comp.key;
+  const fit =
     `fps=${comp.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic${inMatrix},` +
-    `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=rgba`
-  );
+    `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${key ? key.color : "black"},setsar=1,format=rgba`;
+  if (!key) return fit;
+  // Зелёнка → прозрачность, зелёный ореол с краёв персонажа, потом лук (альфу он не трогает).
+  const grade = key.grade ? `,${key.grade},format=rgba` : "";
+  return `${fit},chromakey=${key.color}:${key.similarity}:${key.blend},despill=type=${key.despill}${grade}`;
 }
 
 function spawnFfmpeg(bin: string, argv: string[], stdin: "pipe" | "ignore"): { proc: ChildProcess; errors: () => string } {
@@ -329,6 +361,23 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       if (base) last = new ImageData(new Uint8ClampedArray(base.buffer, base.byteOffset, W * H * 4), W, H);
       const m = cameraMatrix(comp.camera, t, W, H);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (comp.key) {
+        // Хромакей: фон → слои «за персонажем» → вырезанная основа → остальные слои.
+        paintBackdrop(ctx, comp, W, H);
+        drawFrame(ctx, comp, t, env, "behind");
+        if (last) {
+          frameCanvas ??= createCanvas(W, H);
+          frameCanvas.getContext("2d").putImageData(last, 0, 0);
+          ctx.save();
+          if (!isIdentityCamera(m)) ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H);
+          ctx.restore();
+        }
+        drawFrame(ctx, comp, t, env, "front");
+        return;
+      }
       if (!last) ctx.clearRect(0, 0, W, H);
       else if (isIdentityCamera(m)) ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
       else {
@@ -345,6 +394,17 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       drawFrame(ctx, comp, t, env);
     },
   };
+}
+
+function paintBackdrop(ctx: Ctx2D, comp: Composition, W: number, H: number): void {
+  const bg = comp.background ?? { color: "#0b0d14" };
+  if (bg.color2) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, bg.color);
+    g.addColorStop(1, bg.color2);
+    ctx.fillStyle = g;
+  } else ctx.fillStyle = bg.color;
+  ctx.fillRect(0, 0, W, H);
 }
 
 /* ---------- режимы ---------- */
