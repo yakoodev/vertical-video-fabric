@@ -170,6 +170,18 @@ def _segment_reframe_x(segment: dict, preset: dict, source: dict) -> str | None:
     )
 
 
+def _preset_for_segment(preset: dict, segment: dict) -> dict:
+    """Пресет основы для одного куска: у куска с ``fit`` (двое по краям широкого плана)
+    кадр «вписан шире окна» — доля ``fit.w`` ширины исходника, сверху и снизу фон.
+    Раскладка клипа (split/pip/meme) на этот кусок не действует."""
+    from app.video_crop import normalize_fit
+
+    fit = normalize_fit(segment.get("fit"))
+    if not fit:
+        return preset
+    return {**preset, "layout": None, "piece_fit": fit}
+
+
 class ClipRenderService:
     def __init__(self, store: AppStore) -> None:
         self.store = store
@@ -252,16 +264,17 @@ class ClipRenderService:
         try:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
             base_preset, motion = _keyed_render(preset, motion)
+            piece_preset = _preset_for_segment(base_preset, segment)
             args = build_ffmpeg_render_args(
                 source_path=Path(source["local_path"]),
                 output_path=base_output_path,
                 start_sec=float(segment["start_sec"]),
                 end_sec=float(segment["end_sec"]),
-                preset=base_preset,
+                preset=piece_preset,
                 # С моушном баннер кладётся после камеры и слоёв, а не в основу.
                 banner=None if motion else banner,
                 source_crop=_base_crop(source, motion),
-                reframe_x=_segment_reframe_x(segment, preset, source),
+                reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
             motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
@@ -401,10 +414,10 @@ class ClipRenderService:
                         output_path=part_path,
                         start_sec=float(segment["start_sec"]),
                         end_sec=float(segment["end_sec"]),
-                        preset=base_preset,
+                        preset=_preset_for_segment(base_preset, segment),
                         banner=None if motion else banner,
                         source_crop=_base_crop(source, motion),
-                        reframe_x=_segment_reframe_x(segment, preset, source),
+                        reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
                     ),
                     timeout=60 * 30,
                 )
@@ -1755,7 +1768,10 @@ def _render_filter(
     mode = preset.get("scale_mode") or "cover"
     anchor = preset.get("crop_anchor") or "center"
     layout = preset.get("layout")
-    if layout_active(layout):
+    if preset.get("piece_fit"):
+        # Кусок «шире окна 9:16» (_preset_for_segment): своя основа, раскладка не действует.
+        base = _piece_fit_filter(width, height, fps, preset["piece_fit"], source_crop, reframe_x)
+    elif layout_active(layout):
         # Раскладка стрима (вебка + геймплей): своя основа, дальше — как всегда.
         base = _layout_filter(width, height, fps, mode, anchor, normalize_layout(layout), source_crop, reframe_x)
     elif mode == "blur_background":
@@ -1796,6 +1812,42 @@ def _render_filter(
     if not banner:
         return f"{base};[{source_label}]copy[vout]"
     return f"{base};{_banner_overlay(banner, preset, height, '1:v', source_label)}"
+
+
+def _piece_fit_filter(
+    width: int,
+    height: int,
+    fps: float,
+    fit: dict,
+    source_crop: dict | None,
+    reframe_x: str | None,
+) -> str:
+    """Основа ``[vbase]`` куска с ``fit``: исходник в ширину ``width / fit.w`` (в кадр
+    входит доля ``w`` его ширины, центр — тот же трек x(t) рефрейма), по вертикали
+    посередине; сверху и снизу — размытый тот же кадр или цвет. w = 1 — весь кадр."""
+    w = min(1.0, max(0.05, float(fit.get("w") or 1.0)))
+    video_w = even_px(width / w)
+    crop_x = reframe_x if reframe_x else f"(iw-{width})/2"
+    bg = str(fit.get("bg") or "blur")
+    if bg == "blur":
+        prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
+        background = (
+            f"[{bg_in}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=24:2,setsar=1[pbg]"
+        )
+    else:
+        prefix, (fg_in,) = _crop_prefix(source_crop, 1)
+        color = "black" if bg == "black" else ff_color(bg)
+        background = f"color=c={color}:s={width}x{height}:r={_fps(fps)}[pbg]"
+    video = (
+        f"[{fg_in}]scale={video_w}:-2,"
+        f"crop={width}:min(ih\\,{height}):{crop_x}:(ih-oh)/2,setsar=1[pfg]"
+    )
+    return (
+        f"{prefix}{background};{video};"
+        f"[pbg][pfg]overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1,"
+        f"fps={_fps(fps)},format=yuv420p[vbase]"
+    )
 
 
 def _fit_box(

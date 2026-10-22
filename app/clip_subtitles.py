@@ -72,6 +72,69 @@ def _words_of_line(words: list[dict], start: float, end: float) -> list[dict]:
     return [w for w in words if float(w["start"]) < end - 0.001 and float(w["end"]) > start + 0.001]
 
 
+def words_by_line(lines: list[dict], words: list[dict]) -> list[list[dict]]:
+    """Слова по строкам: каждое слово — ровно в ОДНОЙ строке (где оно больше всего лежит).
+
+    Раньше слово брала каждая строка, которую оно задевает: слово на стыке строк
+    («Слушай,» в строках 12 и 13) показывалось дважды, а после правки строки
+    (rebuild_words) дублировалось в словах насовсем."""
+    out: list[list[dict]] = [[] for _ in lines]
+    spans = [(float(l["start"]), float(l["end"])) for l in lines]
+    for w in words:
+        a, b = float(w["start"]), float(w["end"])
+        best, best_overlap = None, 0.001
+        for index, (ls, le) in enumerate(spans):
+            overlap = min(b, le) - max(a, ls)
+            if overlap > best_overlap:
+                best, best_overlap = index, overlap
+        if best is not None:
+            out[best].append(w)
+    return out
+
+
+# Whisper отрывает дефисную часть слова в отдельное «слово»: «какой» «-то», «кунг» «-фу», «ну» «-ка».
+_HYPHEN_TAIL = re.compile(r"^[-‐‑]\w")
+_WORD_END = re.compile(r"\w$")
+
+
+def glue_hyphen_words(words: list[dict]) -> list[dict]:
+    """«какой» + «-то» → «какой-то» одним словом (время — от начала первого до конца второго).
+
+    Агент-монтажёр: «Whisper отрывает дефисную часть» — в субтитрах выходило «какой -то»
+    и «-то» могло уехать в следующую строку. Тире с пробелами («да - нет») не трогаем."""
+    out: list[dict] = []
+    for w in words:
+        token = str(w.get("word") or "").strip()
+        prev = out[-1] if out else None
+        if prev is not None and prev.get("speaker") == w.get("speaker"):
+            head = str(prev["word"]).strip()
+            if _HYPHEN_TAIL.match(token) and _WORD_END.search(head):
+                out[-1] = {**prev, "word": head + "-" + token[1:], "end": max(float(prev["end"]), float(w["end"]))}
+                continue
+            if head.endswith("-") and len(head) > 1 and token[:1].isalnum():
+                out[-1] = {**prev, "word": head + token, "end": max(float(prev["end"]), float(w["end"]))}
+                continue
+        out.append({**w, "word": token} if token != w.get("word") else dict(w))
+    return out
+
+
+def tidy_words(words: list[dict]) -> list[dict]:
+    """Слова по времени: дефисные хвосты склеены, точные дубли (то же слово на том же
+    месте — след прежнего бага стыка строк) убраны, конец слова не заходит на начало
+    следующего того же голоса (иначе слово задевает чужую строку)."""
+    ordered = sorted((dict(w) for w in words if str(w.get("word") or "").strip()), key=lambda w: float(w["start"]))
+    clean: list[dict] = []
+    for w in glue_hyphen_words(ordered):
+        last = clean[-1] if clean else None
+        if last is not None and last["word"] == w["word"] and abs(float(last["start"]) - float(w["start"])) < 0.05:
+            continue
+        clean.append(w)
+    for a, b in zip(clean, clean[1:]):
+        if a.get("speaker") == b.get("speaker") and float(b["start"]) > float(a["start"]) and float(a["end"]) > float(b["start"]):
+            a["end"] = round(float(b["start"]), 3)
+    return clean
+
+
 def _split_words(text: str, start: float, end: float) -> list[dict]:
     """Spread a line's words over its span (used for lines the owner retyped)."""
     tokens = [t for t in re.split(r"\s+", text.strip()) if t]
@@ -96,9 +159,8 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
     """Keep the original per-word timing where the text is untouched; re-spread it
     where the owner rewrote the line (so karaoke never breaks on an edit)."""
     words: list[dict] = []
-    for line in lines:
+    for line, inside in zip(lines, words_by_line(lines, tidy_words(old_words))):
         start, end = float(line["start"]), float(line["end"])
-        inside = _words_of_line(old_words, start, end)
         if inside and _same_text(" ".join(w["word"] for w in inside), line["text"]):
             words.extend(
                 {"word": w["word"], "start": max(start, float(w["start"])), "end": min(end, float(w["end"])),
@@ -132,9 +194,16 @@ def normalize_lines(raw: Any, duration: float | None = None) -> list[dict]:
 
 
 def payload_from_result(result: SubtitleResult, provider: str, model: str) -> dict:
-    lines = [{"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text.strip()} for s in result.segments]
-    lines = normalize_lines(lines, result.duration)
-    words = [{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)} for w in result.words]
+    """Строки — из слов (``lines_from_words``): рвутся на конце предложения, паузе и по
+    длине, каждое слово ровно в одной строке. Сегменты движка — только если слов нет."""
+    from app.ai.speakers import lines_from_words
+
+    words = tidy_words([{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)} for w in result.words])
+    if words:
+        lines = normalize_lines(lines_from_words(words), result.duration)
+    else:
+        lines = [{"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text.strip()} for s in result.segments]
+        lines = normalize_lines(lines, result.duration)
     if not lines and words:  # a provider that only returns words
         lines = normalize_lines(
             [{"start": words[0]["start"], "end": words[-1]["end"], "text": " ".join(w["word"] for w in words)}]
@@ -261,8 +330,8 @@ def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
     old_words = payload.get("words") or []
     words = [m for m in (move(w) for w in old_words) if m]
     lines = []
-    for line in payload.get("lines") or []:
-        inside = _words_of_line(old_words, float(line["start"]), float(line["end"]))
+    old_lines = payload.get("lines") or []
+    for line, inside in zip(old_lines, words_by_line(old_lines, old_words)):
         if not inside:
             moved = move(line)
             if moved:
@@ -346,9 +415,12 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
         clean_words = []
         for w in words:
             try:
-                clean_words.append({"word": str(w["word"])[:80], "start": round(float(w["start"]), 3), "end": round(float(w["end"]), 3)})
+                word = {"word": str(w["word"])[:80], "start": round(float(w["start"]), 3), "end": round(float(w["end"]), 3)}
             except (KeyError, TypeError, ValueError):
                 continue
+            if w.get("speaker"):
+                word["speaker"] = str(w["speaker"])[:1]  # голос (A/B/C/D) — не терять при правке
+            clean_words.append(word)
         current = {**current, "words": clean_words}
         if not current.get("duration"):
             plan = store.get_clip_plan(clip_plan_id)

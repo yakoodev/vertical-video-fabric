@@ -164,9 +164,13 @@ def _fill_timing(tokens: list[str], timing: list, u: dict) -> list[dict]:
     return words
 
 
+_SENTENCE_END = re.compile(r"[.!?…]+[»\"')\]]*$")
+
+
 def lines_from_words(words: list[dict]) -> list[dict]:
-    """Строки субтитров из слов: новая строка на смене голоса, паузе и по длине —
-    реплики разных людей не попадают в одну строку."""
+    """Строки субтитров из слов: новая строка на смене голоса, конце предложения
+    (. ! ? …), паузе больше LINE_PAUSE и по длине — реплики разных людей и разные
+    фразы не попадают в одну строку (агент-монтажёр: «ДТП. Бывает. Ну,» одной строкой)."""
     lines: list[dict] = []
     cur: list[dict] = []
 
@@ -179,6 +183,7 @@ def lines_from_words(words: list[dict]) -> list[dict]:
     for w in sorted(words, key=lambda w: w["start"]):
         if cur and (
             w.get("speaker") != cur[-1].get("speaker")
+            or _SENTENCE_END.search(str(cur[-1]["word"]).strip())
             or float(w["start"]) - float(cur[-1]["end"]) > LINE_PAUSE
             or len(cur) >= LINE_MAX_WORDS
         ):

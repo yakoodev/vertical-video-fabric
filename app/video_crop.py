@@ -14,6 +14,74 @@ from collections import Counter
 from pathlib import Path
 
 _CROP_RE = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# «Вписать шире окна» для куска: двое по краям широкого плана в окно 9:16 (≈0.32
+# ширины 16:9) не влезают, а камера только приближает (zoom ≥ 1). Кусок с ``fit``
+# показывает долю ``w`` ширины исходника (1 — весь кадр), сверху и снизу — фон.
+FIT_MIN_W = 0.35
+FIT_BGS = ("blur", "black")
+
+
+def normalize_fit(value: object) -> dict | None:
+    """``fit`` куска → ``{"w": 0.35..1, "bg": "blur" | "black" | "#rrggbb"}`` или None.
+
+    Число — сокращение для ``{"w": число, "bg": "blur"}``; пусто/0/False — обычный кадр."""
+    if value in (None, "", False, 0):
+        return None
+    if isinstance(value, str):
+        try:
+            import json
+
+            value = json.loads(value)
+        except ValueError:
+            return None
+        if not value:
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = {"w": value}
+    if not isinstance(value, dict):
+        return None
+    try:
+        w = float(value.get("w", 1.0))
+    except (TypeError, ValueError):
+        return None
+    if w != w:
+        return None
+    bg = str(value.get("bg") or "blur").strip()
+    if bg not in FIT_BGS and not _HEX_RE.match(bg):
+        bg = "blur"
+    return {"w": round(min(1.0, max(FIT_MIN_W, w)), 3), "bg": bg.lower()}
+
+
+def fit_problem(value: object) -> str | None:
+    """Почему ``fit`` из файла клипа не годится (None — годится или пусто): доля вне
+    FIT_MIN_W..1 — ошибка, а не молчаливая поправка."""
+    if value in (None, False, 0):
+        return None
+    raw = value.get("w", 1.0) if isinstance(value, dict) else value
+    try:
+        w = float(raw)
+    except (TypeError, ValueError):
+        return "нужна доля ширины числом"
+    if not FIT_MIN_W <= w <= 1.0:
+        return f"w={w:g} — доля ширины исходника {FIT_MIN_W}..1"
+    if isinstance(value, dict) and value.get("bg") not in (None, "", *FIT_BGS) and not _HEX_RE.match(str(value["bg"])):
+        return "bg — blur, black или #rrggbb"
+    return None if normalize_fit(value) else "нужно {w, bg} или доля ширины"
+
+
+def window_share(source: dict, out_w: int = 1080, out_h: int = 1920) -> float | None:
+    """Какую долю ширины исходника (после обрезки полей) видно в окне 9:16 без ``fit``."""
+    sw, sh = float(source.get("width") or 0), float(source.get("height") or 0)
+    if sw <= 0 or sh <= 0 or out_h <= 0:
+        return None
+    crop = source.get("content_crop") or None
+    eff_w = sw * (float(crop["w"]) if crop else 1.0)
+    eff_h = sh * (float(crop["h"]) if crop else 1.0)
+    if eff_w <= 0:
+        return None
+    return round(min(1.0, (out_w / out_h) * eff_h / eff_w), 3)
 
 
 def detect_content_crop(source: dict) -> dict | None:

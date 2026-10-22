@@ -661,6 +661,8 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
             }
             if seg.get("focus"):
                 part["focus"] = slice_focus(seg.get("focus"), a, b)
+            if seg.get("fit"):
+                part["fit"] = seg["fit"]  # «шире окна» — на все части куска
             parts.append(part)
         piece_durations.append(round(sum(b - a for a, b in kept), 3))
         offset += length

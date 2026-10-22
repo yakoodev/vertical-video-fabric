@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 from app.settings import settings
@@ -21,13 +22,18 @@ log = logging.getLogger(__name__)
 
 
 def transcribe_source_cues(local_path: str | None, model: str | None = None,
-                           tracks: list[int] | None = None, strict: bool = False) -> list[dict]:
+                           tracks: list[int] | None = None, strict: bool = False,
+                           progress: Callable[[float, float], None] | None = None,
+                           chunk_sec: float | None = None) -> list[dict]:
     """Transcribe a source file into ``[{start, end, text}]`` cues on the source
     timeline. Returns ``[]`` on any failure so analysis never breaks because of it.
 
     ``tracks`` — звуковые дорожки источника (app/source_audio.py); None — первая.
     ``strict`` — сбой распознавания поднимается, а не превращается в «пусто»: пустой
     список тогда честно значит «речи нет».
+    ``progress(готово_с, всего_с)`` — после каждого куска (фоновое распознавание
+    показывает агенту «готово N из M мин»); ``chunk_sec`` — длина куска (меньше —
+    чаще прогресс), по умолчанию ``CHUNK_SEC``.
     """
 
     if not local_path:
@@ -38,15 +44,20 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
 
     # Импорты внутри _transcribe_piece: render импортирует AI-хелперы (цикл).
     duration = _duration_sec(path)
+    chunk = float(chunk_sec or CHUNK_SEC)
     cues: list[dict] = []
     try:
         # Кусками: whisper держит весь звук в памяти, а 4.7 часа стрима — это
         # гигабайты; целиком они выбивали сервис за лимит памяти контейнера.
         start = 0.0
+        if progress is not None:
+            progress(0.0, duration)
         while True:
-            length = CHUNK_SEC if duration > CHUNK_SEC else None
+            length = chunk if duration > chunk else None
             cues.extend(_transcribe_piece(path, start, length, model, tracks))
-            start += CHUNK_SEC
+            start += chunk
+            if progress is not None:
+                progress(min(start, duration) if length else duration, duration)
             if not length or start >= duration:
                 break
         return cues
