@@ -64,6 +64,8 @@ from app.timeline_export import write_timeline
 from app.video_crop import detect_content_crop
 from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
+from app import platform_stats
+from app.platform_stats import StatsCollector
 from app.agent_api import router as agent_router
 
 settings.ensure_dirs()
@@ -75,6 +77,7 @@ proxy_config.register(lambda: store)
 seed_default_pack(store)
 seed_music(store)
 worker = JobWorker(store)
+stats_collector = StatsCollector(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
 clip_render_service = ClipRenderService(store)
@@ -91,9 +94,11 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - cleanup must never block startup
         pass
     worker.start()
+    stats_collector.start()
     try:
         yield
     finally:
+        stats_collector.stop()
         worker.stop()
 
 
@@ -3497,6 +3502,27 @@ def api_job(job_id: int, _auth: AuthDep) -> dict:
         return store.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/stats/clips", tags=["Jobs"], summary="What works: published clips with stats and montage features")
+def api_stats_clips(_auth: AuthDep) -> dict:
+    return {"clips": platform_stats.clip_performance(store), "status": platform_stats.status()}
+
+
+@app.get("/api/stats/publications", tags=["Jobs"], summary="Latest platform stats per publication target")
+def api_stats_publications(_auth: AuthDep) -> dict:
+    latest = store.latest_publication_stats()
+    return {"targets": {str(k): v for k, v in latest.items()}, "status": platform_stats.status()}
+
+
+@app.get("/api/stats/publications/{target_id}", tags=["Jobs"], summary="Stats snapshots of one publication target")
+def api_stats_publication_history(target_id: int, _auth: AuthDep) -> list[dict]:
+    return store.list_publication_stats(target_id)
+
+
+@app.post("/api/stats/refresh", tags=["Jobs"], summary="Collect platform stats now (background, one link at a time)")
+def api_stats_refresh(_auth: AuthDep) -> dict:
+    return platform_stats.start_collect(store, force=True)
 
 
 async def _create_post_from_upload(

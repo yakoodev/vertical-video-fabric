@@ -25,6 +25,8 @@ os.environ.setdefault("POSTING_PROVIDER_MODE", "mock")
 # Автоимпорт чата Twitch ходит в сеть — в тестах только явно (monkeypatch.setenv).
 os.environ.setdefault("TWITCH_CHAT_AUTO_IMPORT", "0")
 os.environ.setdefault("RENDER_LOUDNORM", "0")
+# Фоновый сбор статистики площадок ходит в сеть — в тестах выключен.
+os.environ.setdefault("STATS_INTERVAL_HOURS", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

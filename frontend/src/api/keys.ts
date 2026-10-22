@@ -12,6 +12,7 @@ export const qk = {
 
   jobs: ["jobs"] as const,
   job: (id: number | string) => ["jobs", String(id)] as const,
+  publicationStats: ["stats", "publications"] as const,
 
   autoRuns: ["auto-runs"] as const,
   activeTasks: ["tasks", "active"] as const,

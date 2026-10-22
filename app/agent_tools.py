@@ -1339,6 +1339,14 @@ def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
             "duration": round(float(track.get("duration_sec") or 0), 1)}
 
 
+def h_get_performance(ctx: ToolContext, args: dict) -> dict:
+    """Что заходит: топ и антитоп опубликованных клипов по просмотрам с признаками монтажа."""
+    from app.platform_stats import performance_report
+
+    limit = int(_num(args.get("limit"), 5) or 5)
+    return performance_report(ctx.store, limit)
+
+
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
     """Фоновая музыка клипа: on + track_id (list_music)."""
     render = _current_render(ctx)
@@ -2120,6 +2128,14 @@ def _build_registry() -> list[Tool]:
             "list_music", "Смотрю фоновую музыку",
             "Треки фоновой музыки (id, название, длина). / Background music tracks.",
             _obj({}), h_list_music, scope="global",
+        ),
+        Tool(
+            "get_performance", "Смотрю, что заходит",
+            "Статистика опубликованных клипов: топ и антитоп по просмотрам (limit, по умолчанию 5) с признаками "
+            "монтажа — длина, хук-титр, субтитры, музыка, слои, звуки, вырезы, раскладка, хромакей — и сравнение "
+            "«с признаком / без». Зови перед монтажом нового клипа, чтобы повторять то, что заходит. / Top and "
+            "bottom published clips by views with their montage features.",
+            _obj({"limit": {"type": "integer"}}), h_get_performance, scope="global",
         ),
         Tool(
             "mute_audio", "Глушу звук исходника",

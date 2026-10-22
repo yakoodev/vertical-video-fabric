@@ -450,6 +450,28 @@ class Database:
             from app.twitch_chat import ensure_chat_schema
 
             ensure_chat_schema(conn)
+            # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
+            # площадки по времени — обратная связь «что заходит» для монтажа.
+            # error — снимок не удался (причина для UI), числа тогда NULL.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS publication_stats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_id INTEGER NOT NULL REFERENCES job_targets(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL DEFAULT '',
+                    captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    views INTEGER,
+                    likes INTEGER,
+                    comments INTEGER,
+                    shares INTEGER,
+                    avg_retention REAL,
+                    error TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_publication_stats ON publication_stats(target_id, id)"
+            )
             # Free-form notes of the clip file (why it is cut this way) — for the
             # human and for outside agents working through the clip file API.
             self._ensure_column(conn, "clip_plans", "notes", "TEXT NOT NULL DEFAULT ''")
