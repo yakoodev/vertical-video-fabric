@@ -126,6 +126,42 @@ def gameplay_height(layout: object, width: int, height: int) -> int:
     return height
 
 
+def camera_regions(
+    layout: object, width: int, height: int, src_w: float | None = None, src_h: float | None = None,
+    mirror: bool = False,
+) -> dict | None:
+    """Где камера (наезды) двигает кадр при раскладке стрима — в пикселях выхода.
+
+    Зум камеры увеличивал весь собранный кадр: окошко вебки/килфида росло вместе с
+    игрой и уезжало за край. Компоновщик (node/motion-render.ts) рисует камеру только
+    внутри ``box`` (окно игры), а прямоугольники ``pinned`` (окошко pip) кладёт поверх
+    из незумленного кадра. ``{"box": {x,y,w,h}, "pinned": [{x,y,w,h}]}`` или None
+    (single/meme — камера двигает весь кадр, как раньше)."""
+    if not isinstance(layout, dict) or layout.get("mode") not in ("split", "pip_cam"):
+        return None
+    layout = normalize_layout(layout)
+    if layout["mode"] == "split":
+        cam_h, gap, game_h = split_geometry(layout, height)
+        top = layout["cam_pos"] != "bottom"
+        return {"box": {"x": 0, "y": cam_h + gap if top else 0, "w": int(width), "h": game_h}, "pinned": []}
+    cam, pip = layout["cam"], layout["pip"]
+    border = scaled_px(float(layout["border"]["width"]), height)
+    box_w = min(int(width), even_px(float(pip["w"]) * width))
+    inner = max(2, box_w - 2 * border)
+    aspect = (cam["w"] * float(src_w or 16)) / max(1e-6, cam["h"] * float(src_h or 9))
+    w = inner + 2 * border
+    h = min(int(height), even_px(inner / max(1e-6, aspect)) + 2 * border)
+    x = min(max(0.0, float(pip["x"]) * width - w / 2), width - w)
+    y = min(max(0.0, float(pip["y"]) * height - h / 2), height - h)
+    if mirror:  # зеркало переворачивает уже собранный кадр — окошко тоже
+        x = width - x - w
+    pad = 1  # пиксель запаса: по краю окошка не мелькает зумленная игра
+    rect = {"x": max(0, int(x) - pad), "y": max(0, int(y) - pad)}
+    rect["w"] = min(int(width) - rect["x"], int(w) + 2 * pad)
+    rect["h"] = min(int(height) - rect["y"], int(h) + 2 * pad)
+    return {"box": {"x": 0, "y": 0, "w": int(width), "h": int(height)}, "pinned": [rect]}
+
+
 def ff_color(color: str) -> str:
     """``#rrggbb`` → ``0xrrggbb`` (решётка в графе фильтров лишний риск)."""
     return "0x" + (color[1:] if _COLOR_RE.match(color or "") else "000000")

@@ -180,7 +180,13 @@ class VideoAnalysisService:
                 transcript_cues = self.store.get_source_transcript(source_id)
                 if not transcript_cues:
                     progress("transcript")
-                    transcript_cues = transcribe_source_cues(analyzer_source.get("local_path"))
+                    from app.source_audio import source_tracks
+
+                    # Выбраны дорожки (игра + микрофон) — слушаем оригинал: в сжатой
+                    # для анализа копии дорожки уже сведены по-своему.
+                    tracks = source_tracks(source)
+                    transcript_cues = transcribe_source_cues(
+                        (source if tracks else analyzer_source).get("local_path"), tracks=tracks)
                     if transcript_cues:
                         self.store.set_source_transcript(source_id, transcript_cues, settings.whisper_model_size)
             check_cancel()

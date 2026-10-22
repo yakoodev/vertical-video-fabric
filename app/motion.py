@@ -742,6 +742,10 @@ def _norm_keys(raw: Any, rep: _Report, where: str) -> dict:
 def _norm_anim(raw: Any, rep: _Report, where: str, layer: dict) -> dict:
     if isinstance(raw, str):  # «"in": "pop"» — прощаем краткую запись
         raw = {"type": raw}
+    if isinstance(raw, dict) and (raw.get("type") == "none" or (
+            _finite(raw.get("duration")) is not None and _finite(raw.get("duration")) <= 0)):
+        # «out: {duration: 0}» / type none — это «без анимации», а не ошибка длины.
+        raw = None
     anim = Obj(ANIM).norm(raw, rep, where) if raw is not None else Obj(ANIM).fill()
     kind = anim["type"]
     ltype = layer["type"]

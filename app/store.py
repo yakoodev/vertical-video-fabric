@@ -866,6 +866,9 @@ class AppStore:
         data = dict(row)
         data["content_crop"] = _parse_content_crop(data.get("content_crop"))
         data["chroma_key"] = _parse_chroma_key(data.get("chroma_key"))
+        from app.source_audio import normalize_tracks
+
+        data["audio_tracks"] = normalize_tracks(data.get("audio_tracks"))
         data["facecam"] = _parse_facecam(data.pop("facecam_json", ""))
         # Don't ship the (potentially huge) cached transcript in every source
         # response — expose only a presence flag + size for the UI.
@@ -942,6 +945,14 @@ class AppStore:
         if not row:
             raise KeyError(f"source not found: {source_id}")
         return _parse_transcript(row["transcript_json"])
+
+    def get_source_transcript_model(self, source_id: int) -> str:
+        """Чем расшифрован исходник ('' — ещё не расшифрован). Суффикс ``|no_speech`` —
+        расшифровка была, речи нет (звук есть): пустой список тоже ответ, Whisper заново не гоняем."""
+        row = self.db.query_one("SELECT transcript_model FROM sources WHERE id = ?", (source_id,))
+        if not row:
+            raise KeyError(f"source not found: {source_id}")
+        return str(row["transcript_model"] or "")
 
     def set_source_transcript(self, source_id: int, cues: list[dict], model: str = "") -> None:
         """Cache the Whisper transcript on the source so re-analysis reuses it."""
@@ -1025,6 +1036,15 @@ class AppStore:
 
                 key_value = normalize_key(value)
                 updates["chroma_key"] = _json_text(key_value) if key_value else ""
+            elif key == "audio_tracks":
+                # Какие звуковые дорожки брать ([0,1] — смешать игру и микрофон); None — первая.
+                # Расшифровка исходника была по прежнему звуку — сбрасываем кэш.
+                from app.source_audio import normalize_tracks
+
+                tracks = normalize_tracks(value)
+                updates["audio_tracks"] = _json_text(tracks) if tracks else ""
+                updates["transcript_json"] = "[]"
+                updates["transcript_model"] = ""
             elif key == "facecam":
                 # Вебка стримера {x,y,w,h} (доли кадра) или None — сбросить.
                 from app.stream_layout import normalize_cam

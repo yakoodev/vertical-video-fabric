@@ -44,6 +44,10 @@ EFFECT_PEAK_DB = -3.0
 # громче речи, а финальная поправка громкости поднимала их вместе — «дешёвый
 # звон во всю громкость».
 EFFECT_UNDER_SPEECH_DB = 10.0
+# Клип без речи (игра, музыка): «голос» по громким местам — это выстрелы и взрывы,
+# и эффект на 10 дБ ниже них тонул (агент: «панчлайн-звук −8 дБ от среднего»).
+# Там цель — чуть ниже громких мест клипа, но не громче их.
+EFFECT_UNDER_LOUD_DB = 4.0
 MAX_EFFECT_VOLUME = 1.0
 _LEVEL_CACHE: dict[tuple[str, float, float | None], tuple[float, float] | None] = {}
 
@@ -84,27 +88,56 @@ def speech_level_db(clip_path: str | Path) -> float | None:
     return levels[0] if levels and levels[0] > -70 else None
 
 
-def effect_gain_db(path: str, speech_db: float | None = None) -> float:
+def plan_is_speechless(store: Any, plan: dict) -> bool:
+    """В клипе нет речи? Слова субтитров есть — речь есть. Субтитров нет — по расшифровке
+    исходника: она известна (или «речи нет») и ни одна реплика не попадает в куски — без
+    речи. Не знаем — считаем, что речь есть: эффект тише безопаснее, чем громче голоса."""
+    from app.manual_clips import NO_SPEECH
+
+    payload = store.get_clip_plan_subtitles(int(plan["id"])) or {}
+    if payload.get("words") or payload.get("lines"):
+        return False
+    try:
+        source_id = int(plan["source_id"])
+        cues = store.get_source_transcript(source_id)
+        known = bool(cues) or store.get_source_transcript_model(source_id).endswith(NO_SPEECH)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not known:
+        return False
+    for seg in plan.get("segments") or []:
+        a, b = float(seg["start_sec"]), float(seg["end_sec"])
+        if any(float(c.get("start", 0)) < b and float(c.get("end", 0)) > a for c in cues):
+            return False
+    return True
+
+
+def effect_gain_db(path: str, speech_db: float | None = None, speechless: bool = False) -> float:
     """Поправка в дБ: громкая часть эффекта — на EFFECT_UNDER_SPEECH_DB тише голоса
-    клипа (без голоса — на EFFECT_TARGET_DB), пик не выше EFFECT_PEAK_DB."""
+    клипа (без звука у клипа — EFFECT_TARGET_DB), пик не выше EFFECT_PEAK_DB.
+
+    ``speechless`` — в клипе нет речи: ``speech_db`` тогда громкие места игры/музыки,
+    и эффект ставится на EFFECT_UNDER_LOUD_DB ниже них (не громче)."""
     levels = audio_levels(path)
     if not levels:
         return 0.0
     rms, peak = levels
     target = EFFECT_TARGET_DB
-    if speech_db is not None:
+    if speech_db is not None and speechless:
+        target = speech_db - EFFECT_UNDER_LOUD_DB
+    elif speech_db is not None:
         target = min(target, speech_db - EFFECT_UNDER_SPEECH_DB)
     return max(-40.0, min(12.0, target - rms, EFFECT_PEAK_DB - peak))
 
 
-def effect_volume(path: str, volume: Any, speech_db: float | None = None) -> float:
+def effect_volume(path: str, volume: Any, speech_db: float | None = None, speechless: bool = False) -> float:
     """Итоговый множитель громкости слоя-звука: выравнивание файла × volume (≤ MAX)."""
     try:
         user = float(volume if volume is not None else 1)
     except (TypeError, ValueError):
         user = 1.0
     user = max(0.0, min(MAX_EFFECT_VOLUME, user))
-    return user * 10 ** (effect_gain_db(path, speech_db) / 20)
+    return user * 10 ** (effect_gain_db(path, speech_db, speechless) / 20)
 
 
 class CompositorMissing(RuntimeError):
@@ -160,6 +193,30 @@ def build_compositor_args(
     return args
 
 
+FINAL_HOLD_EPS = 0.05
+
+
+def hold_final_layers(layers: list[dict], duration: float) -> list[dict]:
+    """Слой до конца клипа держится на финальном стоп-кадре — без анимации выхода.
+
+    Готовый ролик на RENDER_END_HOLD_SEC длиннее: последний кадр стоит, пока затухает
+    звук. Слой с ``out`` до самого конца успевал погаснуть до стоп-кадра, и плашка-итог
+    пропадала (агент: «финальный титр исчезает»). Такой слой ``out`` игнорирует."""
+    if not duration or duration <= 0:
+        return layers
+    out = []
+    for layer in layers:
+        anim = layer.get("out")
+        try:
+            ends = float(layer.get("end", 0)) >= duration - FINAL_HOLD_EPS
+        except (TypeError, ValueError):
+            ends = False
+        if ends and isinstance(anim, dict) and anim.get("type") not in (None, "none"):
+            layer = {**layer, "out": {**anim, "type": "none"}}
+        out.append(layer)
+    return out
+
+
 def write_comp(
     path: Path,
     *,
@@ -173,15 +230,23 @@ def write_comp(
     chat: list[dict] | None = None,
     key: dict | None = None,
     background: dict | None = None,
+    camera_box: dict | None = None,
+    pinned: list[dict] | None = None,
 ) -> Path:
+    """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
+    (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте."""
     comp = {
         "width": int(width),
         "height": int(height),
         "fps": float(fps),
         "duration": round(float(duration), 3),
-        "layers": layers,
+        "layers": hold_final_layers(layers, float(duration)),
         "camera": camera,
     }
+    if camera_box:
+        comp["cameraBox"] = camera_box
+    if pinned:
+        comp["pinned"] = pinned
     if words:
         comp["words"] = words
     if chat:
@@ -502,8 +567,11 @@ def build_audio_layers_args(
     duration: float,
     clip_has_audio: bool = True,
     speech_db: float | None = None,
+    speechless: bool = False,
 ) -> list[str] | None:
     """Подмешать звуки ``audio``-слоёв в готовый клип (видео копией).
+
+    ``speechless`` — в клипе нет речи (effect_gain_db: эффект чуть ниже громких мест).
 
     Каждый звук: с ``offset`` секунды файла, громкость, fadeIn/fadeOut, сдвиг на
     ``start`` клипа (adelay). ``duck`` приглушает исходник на время звука.
@@ -535,7 +603,7 @@ def build_audio_layers_args(
         props = item["layer"]["props"]
         length = item["len"]
         chain = [f"[{n}:a]aresample=48000", "asetpts=PTS-STARTPTS",
-                 f"volume={effect_volume(item['path'], props.get('volume', 1), speech_db):.4f}"]
+                 f"volume={effect_volume(item['path'], props.get('volume', 1), speech_db, speechless):.4f}"]
         fade_in = min(float(props.get("fadeIn") or 0), length)
         if fade_in > 0:
             chain.append(f"afade=t=in:st=0:d={fade_in:.3f}")
@@ -695,10 +763,12 @@ def render_frame_png(
         words = plan_caption_words(store, plan) if has_captions(layers) else None
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
+        regions = _render.layout_camera_regions(preset, source, width, height) if camera else None
         comp = write_comp(
             work / "comp.json", width=width, height=height, fps=fps,
-            duration=max(total, t + 0.5), layers=layers, camera=camera, words=words, chat=host.get("chat"),
-            key=keyed.get("key"), background=rs["backdrop"],
+            duration=max(total, t + 0.5), layers=hold_final_layers(layers, total), camera=camera, words=words,
+            chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
+            camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
@@ -775,10 +845,7 @@ def contact_sheet_jpeg(
     равномерных: проверить разом все панчлайны или финал. ``before_cuts`` — ``times``
     в секундах клипа ДО вырезов (как у слоёв, камеры и view_frame), подписи тоже в них.
     """
-    import subprocess
     import tempfile
-
-    from app.settings import settings as app_settings
 
     picked = sorted({round(float(t), 2) for t in times or [] if t is not None and float(t) >= 0})[:16]
     n = len(picked) if picked else max(2, min(16, int(n)))
@@ -807,22 +874,44 @@ def contact_sheet_jpeg(
         # Последний кадр компоновщик не отдаёт (агент: падение на 21.5 из 21.55 с) — с запасом в кадры.
         times = [min(t, max(0.0, final - 0.2)) for t in picked]
         shots = [round(mapper.source_time(t), 3) for t in times] if mapper else list(times)
-    font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
     with tempfile.TemporaryDirectory() as tmp:
-        inputs: list[str] = []
-        for k, t in enumerate(times):
+        paths: list[Path] = []
+        for k in range(n):
             path = Path(tmp) / f"f{k:02d}.png"
             path.write_bytes(render_frame_png(store, clip_plan_id, shots[k], inserts=True))
-            inputs += ["-i", str(path)]
-        cols = min(n, 4)
-        chains = [
-            f"[{k}:v]scale={width}:-2,drawtext=fontfile='{font}':text='{times[k]:.1f} s':x=8:y=8:fontsize={max(14, width // 12)}"
-            f":fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=4[v{k}]"
-            for k in range(n)
-        ]
+            paths.append(path)
+        return tile_frames_jpeg(paths, [f"{t:.1f} s" for t in times], width, cols=4)
+
+
+def tile_frames_jpeg(paths: list[Path], labels: list[str], width: int, cols: int = 4) -> bytes:
+    """Кадры сеткой по ``cols`` в ряд, каждый шириной ``width`` с подписью в углу → JPEG."""
+    import subprocess
+    import tempfile
+
+    from app.settings import settings as app_settings
+
+    n = len(paths)
+    if not n:
+        raise ValueError("нет кадров для листа")
+    cols = max(1, min(cols, n))
+    font = (Path(app_settings.motion_fonts_dir) / "Inter-SemiBold.ttf").as_posix().replace(":", "\\:")
+    inputs: list[str] = []
+    for path in paths:
+        inputs += ["-i", str(path)]
+    chains = [
+        f"[{k}:v]scale={width}:-2,drawtext=fontfile='{font}':text='{_drawtext_escape(labels[k])}':x=8:y=8"
+        f":fontsize={max(14, width // 12)}:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=4[v{k}]"
+        for k in range(n)
+    ]
+    if n == 1:
+        graph = chains[0].replace("[v0]", "[out]")
+    else:
         # xstack: координаты плиток суммой ширин/высот первой плитки.
-        layout = "|".join(f"{'+'.join(['w0'] * (k % cols)) or '0'}_{'+'.join(['h0'] * (k // cols)) or '0'}" for k in range(n))
-        graph = ";".join(chains) + ";" + "".join(f"[v{k}]" for k in range(n)) + f"xstack=inputs={n}:layout={layout}:fill=black[out]"
+        layout = "|".join(f"{'+'.join(['w0'] * (k % cols)) or '0'}_{'+'.join(['h0'] * (k // cols)) or '0'}"
+                          for k in range(n))
+        graph = (";".join(chains) + ";" + "".join(f"[v{k}]" for k in range(n))
+                 + f"xstack=inputs={n}:layout={layout}:fill=black[out]")
+    with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "sheet.jpg"
         proc = subprocess.run(
             ["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", graph, "-map", "[out]", "-q:v", "4", str(out)],
@@ -831,3 +920,75 @@ def contact_sheet_jpeg(
         if proc.returncode != 0 or not out.exists():
             raise RuntimeError(f"лист кадров не собран: {proc.stderr[-300:]}")
         return out.read_bytes()
+
+
+def _drawtext_escape(text: str) -> str:
+    """Подпись для drawtext: двоеточия экранируются (время исходника «1:02:03.5»)."""
+    return str(text).replace("'", "").replace("\\", "").replace(":", "\\:").replace("%", "\\%")
+
+
+MAX_SOURCE_SHEET = 24
+
+
+def source_sheet_times(from_sec: float, to_sec: float, step: float | None, duration: float | None) -> list[float]:
+    """Моменты листа кадров исходника: через ``step`` (не больше 24), иначе 12 равномерно."""
+    lo = max(0.0, float(from_sec))
+    hi = float(to_sec)
+    if duration:
+        hi = min(hi, max(0.0, float(duration) - 0.1))
+    if hi <= lo:
+        raise ValueError("to_sec должен быть больше from_sec (и внутри исходника)")
+    if step:
+        step = max(0.2, float(step))
+        count = min(MAX_SOURCE_SHEET, int((hi - lo) / step + 1e-6) + 1)
+        return [round(lo + k * step, 2) for k in range(count)]
+    count = 12 if hi - lo >= 6 else max(2, int(hi - lo) + 1)
+    return [round(lo + (hi - lo) * (k + 0.5) / count, 2) for k in range(count)]
+
+
+def source_time_label(t: float) -> str:
+    """Секунды исходника → «1:02:03.5» / «2:03.5»."""
+    t = max(0.0, float(t))
+    hours, rest = divmod(t, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return f"{int(hours)}:{int(minutes):02d}:{seconds:04.1f}" if hours >= 1 else f"{int(minutes)}:{seconds:04.1f}"
+
+
+def source_contact_sheet_jpeg(store: Any, source_id: int, from_sec: float, to_sec: float,
+                              step: float | None = None, x: float | None = None) -> tuple[bytes, list[float]]:
+    """Лист кадров ИСХОДНИКА между from_sec и to_sec с подписями времени исходника.
+
+    Выбрать момент без Gemini: громкость (source_loudness) подсказывает, где перестрелка,
+    а лист показывает, что там на экране. ``x`` (0..1) — показать окно 9:16 с центром x
+    (то, что останется в вертикальном кадре), без ``x`` — кадр целиком."""
+    import tempfile
+
+    from app import render as _render
+
+    source = store.get_source(int(source_id))
+    path = Path(str(source.get("local_path") or ""))
+    if not path.is_file():
+        raise ValueError("файла исходника нет")
+    times = source_sheet_times(from_sec, to_sec, step, source.get("duration_sec"))
+    crop = source.get("content_crop")
+    pre = (f"crop=iw*{crop['w']:.5f}:ih*{crop['h']:.5f}:iw*{crop['x']:.5f}:ih*{crop['y']:.5f},"
+           if crop else "")
+    if x is not None:
+        cx = min(1.0, max(0.0, float(x)))
+        # Окно 9:16 во всю высоту, центр x (у края — прижато), как обрезка рендера.
+        vf = f"{pre}crop=trunc(ih*9/16/2)*2:ih:clip(iw*{cx:.4f}-ih*9/32\\,0\\,iw-ih*9/16):0,scale=360:-2"
+        width, cols = 180, 6
+    else:
+        vf = f"{pre}scale=640:-2"
+        width, cols = 320 if len(times) <= 12 else 240, 4
+    with tempfile.TemporaryDirectory() as tmp:
+        paths: list[Path] = []
+        for k, t in enumerate(times):
+            out = Path(tmp) / f"s{k:02d}.png"
+            _render._run_ffmpeg(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(path),
+                 "-frames:v", "1", "-vf", vf, str(out)],
+                timeout=60,
+            )
+            paths.append(out)
+        return tile_frames_jpeg(paths, [source_time_label(t) for t in times], width, cols=cols), times

@@ -26,7 +26,7 @@ def test_source_transcript_cached_and_filtered(tmp_path, monkeypatch):
     client, _store, source, _plan, _a, _b = _setup(tmp_path, monkeypatch)
     calls = []
 
-    def fake(path, model=None):
+    def fake(path, model=None, **_kw):
         calls.append(path)
         return [{"start": 0.5, "end": 2.0, "text": "раз"}, {"start": 4.0, "end": 6.0, "text": "два"}]
 

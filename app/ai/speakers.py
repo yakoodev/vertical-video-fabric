@@ -322,6 +322,7 @@ def _clip_audio(store: Any, clip_plan_id: int) -> bytes:
     """Звук клипа (куски подряд, как у субтитров) — mp3 моно: Gemini хватает, а весит мало."""
     from app.clip_subtitles import build_clip_audio_args
     from app.render import _run_ffmpeg
+    from app.source_audio import source_tracks
 
     plan = store.get_clip_plan(clip_plan_id)
     source = store.get_source(int(plan["source_id"]))
@@ -331,7 +332,7 @@ def _clip_audio(store: Any, clip_plan_id: int) -> bytes:
     pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
     out = settings.tmp_dir / f"speakers-{uuid4().hex}.mp3"
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, out), timeout=300)
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, out, source_tracks(source)), timeout=300)
         return out.read_bytes()
     finally:
         out.unlink(missing_ok=True)

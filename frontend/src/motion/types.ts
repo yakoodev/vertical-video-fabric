@@ -399,7 +399,13 @@ export type Composition = {
   key?: ChromaKey;
   /** Фон за вырезанной основой: цвет или вертикальный градиент `color` → `color2`. */
   background?: { color: string; color2?: string };
+  /** Раскладка стрима: камера двигает только этот прямоугольник кадра (окно игры), px. */
+  cameraBox?: PixelRect;
+  /** Прямоугольники основы, которые камера не трогает (окошко вебки pip), px. */
+  pinned?: PixelRect[];
 };
+
+export type PixelRect = { x: number; y: number; w: number; h: number };
 
 export type ChromaKey = {
   /** Цвет фона основы, `0xrrggbb`. */

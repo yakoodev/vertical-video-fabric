@@ -21,6 +21,7 @@ import {
   isIdentityCamera,
   type Composition,
   type Ctx2D,
+  type PixelRect,
   type ImageLike,
   type RenderEnv,
 } from "../frontend/src/motion/index";
@@ -111,7 +112,29 @@ function readComp(path: string): Composition {
       ? raw.chat.filter((m) => m && Number.isFinite(Number(m.t))).sort((a, b) => Number(a.t) - Number(b.t))
       : [],
     ...readKey(raw),
+    ...readRegions(raw, width - (width % 2), height - (height % 2)),
   };
+}
+
+/** Прямоугольник в пикселях кадра, обрезанный по кадру; мусор — null. */
+function readRect(raw: unknown, W: number, H: number): PixelRect | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : NaN);
+  const x = Math.max(0, n(r.x));
+  const y = Math.max(0, n(r.y));
+  const w = Math.min(W - x, n(r.w));
+  const h = Math.min(H - y, n(r.h));
+  return [x, y, w, h].every(Number.isFinite) && w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+
+/** Раскладка стрима: где камера двигает кадр (окно игры) и что стоит на месте (окошко вебки). */
+function readRegions(raw: Partial<Composition>, W: number, H: number): Pick<Composition, "cameraBox" | "pinned"> {
+  const box = readRect(raw.cameraBox, W, H);
+  const pinned = Array.isArray(raw.pinned)
+    ? raw.pinned.map((p) => readRect(p, W, H)).filter((p): p is PixelRect => p !== null).slice(0, 8)
+    : [];
+  return { ...(box ? { cameraBox: box } : {}), ...(pinned.length ? { pinned } : {}) };
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -380,7 +403,28 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       }
       if (!last) ctx.clearRect(0, 0, W, H);
       else if (isIdentityCamera(m)) ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
-      else {
+      else if (comp.cameraBox || comp.pinned) {
+        // Раскладка стрима: камера двигает только окно игры, окошко вебки и полоса
+        // вебки стоят на месте (раньше зум увеличивал весь собранный кадр с окошком).
+        frameCanvas ??= createCanvas(W, H);
+        frameCanvas.getContext("2d").putImageData(last, 0, 0);
+        ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
+        const box = comp.cameraBox ?? { x: 0, y: 0, w: W, h: H };
+        const bm = cameraMatrix(comp.camera, t, box.w, box.h);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(box.x, box.y, box.w, box.h);
+        ctx.clip();
+        // Камера внутри окна: точка окна (u, v) → (box.x + s·u + tx, box.y + s·v + ty).
+        ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H);
+        ctx.restore();
+        for (const p of comp.pinned ?? []) {
+          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+        }
+      } else {
         frameCanvas ??= createCanvas(W, H);
         frameCanvas.getContext("2d").putImageData(last, 0, 0);
         // Зум ≥ 1 и центр зажат — кадр основы всегда закрывает холст целиком.
