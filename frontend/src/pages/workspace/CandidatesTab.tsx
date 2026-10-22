@@ -13,6 +13,7 @@ import {
   type FfmpegPreset,
 } from "@/api/assets";
 import { qk } from "@/api/keys";
+import { brandsApi } from "@/api/brands";
 import type { AiSegment, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
@@ -1496,6 +1497,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setSettingsNonce((n) => n + 1);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автомонтаж не удался"),
+  });
+  // Бренд заказчика (app/brand_kit.py): субтитры и хук в его цветах, логотип, призыв в конце.
+  const brands = useQuery({ queryKey: qk.brands, queryFn: brandsApi.list, staleTime: 60_000 });
+  const [brandPick, setBrandPick] = useState(0);
+  const applyBrand = useMutation({
+    mutationFn: async ({ clipPlanId, brandId }: { clipPlanId: number; brandId: number }) => {
+      await flushSettings();
+      return brandsApi.apply(clipPlanId, brandId);
+    },
+    onSuccess: async (r) => {
+      const note = r.warnings.length ? ` · ${r.warnings[0]}` : "";
+      toast.success(`Бренд «${r.brand.name}»: ${r.changes.join(", ") || "без изменений"}${note} — Ctrl+Z откатит`);
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Бренд не применился"),
   });
   const undoEdit = useMutation({
     mutationFn: async (clipPlanId: number) => {
@@ -3301,6 +3318,32 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   {autofocus.isPending ? "Считаю…" : "🎯 Автофокус"}
                 </button>
               </div>
+              {brands.data?.length ? (
+                <div className="ed-quick-row">
+                  <select
+                    className="input"
+                    style={{ flex: "1 1 120px", minWidth: 0 }}
+                    value={brandPick || brands.data[0].id}
+                    onChange={(e) => setBrandPick(Number(e.target.value))}
+                    title="Бренд заказчика (Настройки → Бренды)"
+                  >
+                    {brands.data.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn sm"
+                    disabled={!activePlan || applyBrand.isPending}
+                    onClick={() =>
+                      activePlan &&
+                      applyBrand.mutate({ clipPlanId: activePlan.id, brandId: brandPick || brands.data![0].id })
+                    }
+                    title="Субтитры и хук в цветах бренда, логотип в углу, призыв на последние секунды, музыка и фон бренда. Делай после монтажа; повтор не дублирует. Ctrl+Z откатит."
+                  >
+                    {applyBrand.isPending ? "Применяю…" : "Применить бренд"}
+                  </button>
+                </div>
+              ) : null}
             </div>
             <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
               <label className="field">

@@ -456,7 +456,66 @@ textarea.input {
   background: var(--accent-soft);
   color: #fff;
 }
+/* Бренды: форма слева, схематичный кадр 9:16 в цветах бренда справа. */
+.brand-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 18px;
+  align-items: start;
+  max-width: 860px;
+}
+.brand-preview {
+  position: relative;
+  width: 150px;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  font-weight: 800;
+  text-align: center;
+}
+.brand-preview-hook {
+  position: absolute;
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.brand-preview-logo {
+  position: absolute;
+  top: 24%;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+.brand-preview-logo.top-right { right: 6px; }
+.brand-preview-logo.top-left { left: 6px; }
+.brand-preview-cta {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 30%;
+  padding: 6px 4px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+.brand-preview-caps {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 17%;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  text-shadow: 0 0 3px #000;
+}
 @media (max-width: 860px) {
+  .brand-editor {
+    grid-template-columns: 1fr;
+  }
   .settings-layout {
     grid-template-columns: 1fr;
   }

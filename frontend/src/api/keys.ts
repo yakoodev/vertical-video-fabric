@@ -24,4 +24,5 @@ export const qk = {
   audioTracks: ["audio-tracks"] as const,
   subtitleProfiles: ["subtitle-profiles"] as const,
   promptPresets: ["prompt-presets"] as const,
+  brands: ["brands"] as const,
 };

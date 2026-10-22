@@ -1369,6 +1369,30 @@ def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_list_brands(ctx: ToolContext, _args: dict) -> dict:
+    """Бренды владельца целиком (шрифт, цвета, логотип, призыв, музыка) — их задаёт он сам."""
+    return {"brands": [{k: v for k, v in b.items() if k not in ("created_at", "updated_at")}
+                       for b in ctx.store.list_brands()],
+            "note": "бренд задаёт владелец (Настройки → Бренды); ты только применяешь: apply_brand"}
+
+
+def h_apply_brand(ctx: ToolContext, args: dict) -> dict:
+    """Оформить клип в стиле бренда (app/brand_kit.py): повтор не плодит дублей."""
+    from app.brand_kit import apply_brand
+
+    brand_id = args.get("brand_id")
+    if not brand_id:
+        raise ToolError("нужен brand_id — см. list_brands")
+    try:
+        ctx.store.get_brand(int(brand_id))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    try:
+        return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
     """Хромакей источника клипа: on — найти зелёнку (или взять color), off — убрать."""
     from app.chroma_key import detect_key, normalize_key
@@ -2151,6 +2175,22 @@ def _build_registry() -> list[Tool]:
             "(пусто — однотонный). Картинки во весь фон — слоем image с behind:true. / Backdrop behind a keyed subject.",
             _obj({"color": {"type": "string"}, "color2": {"type": "string"}}),
             h_set_backdrop, mutating=True, label=lambda a: "Фон за персонажем",
+        ),
+        Tool(
+            "list_brands", "Смотрю бренды",
+            "Бренды владельца (повторяющиеся заказчики, например магазин): шрифт, цвета, логотип, призыв в "
+            "конце (cta), музыка, фон, политика эффектов. Создаёт и правит их только владелец. / Brand kits.",
+            _obj({}), h_list_brands, scope="global",
+        ),
+        Tool(
+            "apply_brand", "Оформляю в стиле бренда",
+            "Ролик для бренда (реклама повторяющегося заказчика) — в его стиле одной командой: перекрашивает "
+            "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, музыку "
+            "и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа (auto_edit, хук, вырезы): повтор "
+            "ничего не дублирует (слои brand_*). Потом view_frame на концовке — призыв не на лице. "
+            "/ Apply a brand kit to the clip.",
+            _obj({"brand_id": {"type": "integer"}}, ["brand_id"]),
+            h_apply_brand, mutating=True, label=lambda a: f"Бренд #{a.get('brand_id')}",
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",

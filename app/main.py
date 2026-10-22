@@ -29,7 +29,7 @@ from app.automation import AutomationService
 from app.auth import AuthRequired, auth_required_handler, require_auth, token_is_valid
 from app.crypto import CookieCipher
 from app.db import Database
-from app.default_pack import seed_default_pack, seed_music
+from app.default_pack import seed_default_brand, seed_default_pack, seed_music
 from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
@@ -74,6 +74,7 @@ store = AppStore(db, CookieCipher(settings.secret_key_path))
 proxy_config.register(lambda: store)
 seed_default_pack(store)
 seed_music(store)
+seed_default_brand(store)
 worker = JobWorker(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
@@ -113,6 +114,7 @@ app = FastAPI(
         {"name": "Accounts", "description": "Add and list saved platform sessions."},
         {"name": "Sources", "description": "Ingest source videos for AI analysis and rendering."},
         {"name": "Render", "description": "Manage ffmpeg presets, banners, subtitle profiles, and clips."},
+        {"name": "Brands", "description": "Brand kits: one look (font, colors, logo, CTA, music) for a client's clips."},
         {"name": "Posts", "description": "Upload a source video and queue publication jobs."},
         {"name": "Jobs", "description": "Inspect queued, running, and completed jobs."},
     ],
@@ -3406,6 +3408,68 @@ def api_delete_audio_track(track_id: int, _auth: AuthDep) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"deleted": True}
+
+
+@app.get("/api/brands", tags=["Brands"], summary="List brand kits")
+def api_brands(_auth: AuthDep) -> list[dict]:
+    return store.list_brands()
+
+
+@app.post("/api/brands", tags=["Brands"], summary="Create a brand kit (font, colors, logo, CTA, music)")
+def api_create_brand(_auth: AuthDep, payload: dict = Body(...)) -> dict:
+    """Поля — как в ответе: name, font, colors{text,accent,plate}, logo_asset_id, caption_style,
+    hook_style, cta{text,url_text,duration_sec}, music_track_id, backdrop{color,color2}, sfx_policy."""
+    try:
+        return store.create_brand(str(payload.get("name") or ""), **{k: v for k, v in payload.items() if k != "name"})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/brands/{brand_id}", tags=["Brands"], summary="Get a brand kit")
+def api_brand(brand_id: int, _auth: AuthDep) -> dict:
+    try:
+        return store.get_brand(brand_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/brands/{brand_id}", tags=["Brands"], summary="Update a brand kit (nested objects merge)")
+def api_update_brand(brand_id: int, _auth: AuthDep, payload: dict = Body(...)) -> dict:
+    try:
+        return store.update_brand(brand_id, **payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/brands/{brand_id}", tags=["Brands"], summary="Delete a brand kit")
+def api_delete_brand(brand_id: int, _auth: AuthDep) -> dict:
+    try:
+        store.delete_brand(brand_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
+class ApplyBrandRequest(BaseModel):
+    brand_id: int = Field(gt=0)
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/apply-brand",
+    tags=["Brands"],
+    summary="Оформить клип в стиле бренда: субтитры, хук, логотип, призыв в конце, музыка, фон",
+)
+def api_apply_brand(clip_plan_id: int, payload: ApplyBrandRequest, _auth: AuthDep) -> dict:
+    from app.brand_kit import apply_brand
+
+    try:
+        return apply_brand(store, clip_plan_id, payload.brand_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/subtitle-profiles", tags=["Render"], summary="List subtitle profiles")
