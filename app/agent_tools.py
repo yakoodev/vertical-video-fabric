@@ -2246,6 +2246,9 @@ def h_set_focus(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+MAX_FIT_PIECE_SEC = 12.0
+
+
 def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
     """Кусок шире окна 9:16: в кадре доля w ширины исходника, сверху и снизу фон."""
     from app.video_crop import FIT_MIN_W, normalize_fit, window_share
@@ -2260,6 +2263,15 @@ def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
         if value is None or not FIT_MIN_W <= value <= 1.0:
             raise ToolError(f"w — доля ширины исходника в кадре, {FIT_MIN_W}..1 (1 — весь кадр); null — обычный кадр")
         fit = normalize_fit({"w": value, "bg": args.get("bg") or "blur"})
+        piece = timeline["pieces"][index]
+        length = float(piece["source_end"]) - float(piece["source_start"])
+        if length > MAX_FIT_PIECE_SEC:
+            # Проверочный прогон Gemini: fit на весь 40-секундный клип — ролик превратился в
+            # мелкую полоску на размытом фоне, как у дешёвых перезаливов.
+            raise ToolError(
+                f"кусок {length:.0f} с — «шире окна» на весь кусок делает ролик мелким видео на размытом фоне. "
+                f"Сначала auto_focus (говорящий в кадре по планам). fit — только короткий кусок ≤ {MAX_FIT_PIECE_SEC:.0f} с, "
+                "где двое по краям: разрежь кусок по склейке плана (trim_piece / create_clip)")
     fresh, changes = _apply_piece(ctx, index, fit=fit)
     out: dict = {"ok": True, "piece": index, "fit": fresh.get("fit"), "changes": changes}
     warnings = _shared_warning(ctx, fresh)

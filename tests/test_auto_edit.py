@@ -97,7 +97,7 @@ def test_other_voices_get_their_own_smaller_captions_layer():
     assert caps["auto_caps"]["props"]["speakers"] == ["A"]
     other = caps["auto_caps_voices"]
     assert other["props"]["speakers"] == ["B"] and other["props"]["size"] < 80
-    assert abs(other["y"] - 0.27) < 1e-6
+    assert abs(other["y"] - 0.22) < 1e-6  # над двумя строками главных, не на них
     # Голос один — один слой без фильтра.
     single = build_auto_edit("Клип", _words("раз два три четыре"), [], 3.0)
     assert [l["id"] for l in single["layers"] if l["type"] == "captions"] == ["auto_caps"]

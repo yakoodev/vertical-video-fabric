@@ -182,7 +182,9 @@ def build_auto_edit(
         if voices:
             # Другие голоса (гость, донат, ролик) — своим слоем, мельче и рядом с главными:
             # одновременная речь не мешается в одну строку и не перебивает стримера.
-            other_y = caption_y - 0.1 if caption_y < 0.6 else caption_y + 0.075
+            # Две строки главных субтитров — ~0.1 кадра: при 0.1 строки голосов ложились на
+            # них («МНЕ НУЖНО» поверх «ЧЁРТ ВОЗЬМИ» в проверочном прогоне Gemini).
+            other_y = caption_y - 0.15 if caption_y < 0.6 else caption_y + 0.11
             layers.append({
                 "id": "auto_caps_voices", "type": "captions", "name": "Субтитры: другие голоса", "start": 0.0,
                 "end": duration, "track": 0, "x": 0.5, "y": round(min(0.8, max(0.2, other_y)), 3),
