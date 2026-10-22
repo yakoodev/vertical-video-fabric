@@ -447,7 +447,27 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         ]
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
+    warnings.extend(caption_overlap_warnings(visible, only_ids))
     return list(dict.fromkeys(warnings))
+
+
+CAPTIONS_MIN_GAP = 0.12  # две строки главных субтитров — ~0.1 высоты кадра
+
+
+def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = None) -> list[str]:
+    """Два слоя субтитров (главный и «другие голоса») ближе ~0.12 по высоте — строки лягут
+    друг на друга («ВОЗЬМИ ДЕЛАЕШЬ» поверх «МНЕ НУЖНО ВЫТЯНУТЬ» в проверочном прогоне)."""
+    caps = [l for l in layers if l.get("type") == "captions"]
+    out = []
+    for i, a in enumerate(caps):
+        for b in caps[i + 1:]:
+            if only_ids is not None and str(a.get("id")) not in only_ids and str(b.get("id")) not in only_ids:
+                continue
+            ya, yb = _num(a.get("y"), 0.5) or 0.5, _num(b.get("y"), 0.5) or 0.5
+            if abs(ya - yb) < CAPTIONS_MIN_GAP:
+                out.append(f"субтитры {a.get('id')} (y {ya:.2f}) и {b.get('id')} (y {yb:.2f}) ближе "
+                           f"{CAPTIONS_MIN_GAP} по высоте — строки лягут друг на друга; разведи y")
+    return out
 
 
 # Цвет звучащего слова у стилей субтитров (frontend/src/motion/layers/captions.ts).
@@ -1269,7 +1289,16 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
     normalized = motion.normalize_layers([merged])
+    old_y = _num(layers[index].get("y"))
     layers[index] = normalized[0]
+    new_y = _num(normalized[0].get("y"))
+    if layer_id == "auto_caps" and old_y is not None and new_y is not None and abs(new_y - old_y) > 1e-6:
+        # Главные субтитры подвинули — слой «других голосов» едет следом, сохраняя зазор.
+        for i, other in enumerate(layers):
+            if str(other.get("id")) == "auto_caps_voices":
+                moved = dict(other)
+                moved["y"] = round(min(0.85, max(0.12, (_num(other.get("y"), new_y) or new_y) + new_y - old_y)), 3)
+                layers[i] = motion.normalize_layers([moved])[0]
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     return {"ok": True, "layer": saved,
@@ -2168,7 +2197,9 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
     pieces = timeline["pieces"]
     indexes = [_piece_index(args, len(pieces))] if args.get("piece") is not None else list(range(len(pieces)))
     resolver = None
-    if args.get("use_vlm") and settings.gemini_api_key:
+    # По умолчанию с Gemini по кадру на план: на мультфильмах лица не находятся, а монтажёр
+    # use_vlm сам не ставил (проверочный прогон: кадр на руке Рика, пока говорит другой).
+    if args.get("use_vlm", True) is not False and settings.gemini_api_key:
         from app.ai.vlm_focus import shots_focus_x
 
         resolver = shots_focus_x
@@ -3365,8 +3396,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "auto_focus", "Ищу говорящего в кадре",
             "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
-            "без него — все), с жёсткой сменой на склейках. Для мультфильмов и аниме use_vlm:true (Gemini "
-            "смотрит кадр каждого плана). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
+            "без него — все), с жёсткой сменой на склейках. По умолчанию Gemini смотрит кадр каждого плана "
+            "(use_vlm:false — только лица/движение, быстрее). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
             "поправь промахи set_focus. / Automatic 9:16 framing.",
             _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
             h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",

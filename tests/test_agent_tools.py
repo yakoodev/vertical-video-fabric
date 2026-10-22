@@ -460,3 +460,20 @@ def test_clip_context_fills_project_id_and_auto_focus(tmp_path, monkeypatch):
     assert ok and [p["points"] for p in out["pieces"]] == [2, 2]
     segment = store.get_clip_plan(plan["id"])["segments"][0]
     assert segment["focus"][1] == {"t": 2.0, "x": 0.7, "cut": True}
+
+
+def test_moving_main_captions_drags_voices_layer_and_overlap_is_warned(tmp_path, monkeypatch):
+    from app.agent_tools import caption_overlap_warnings, run_tool
+
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    caps = {"type": "captions", "start": 0, "end": 5, "x": 0.5, "props": {"style": "hormozi"}}
+    _out, ok = run_tool(ctx, "add_layers", {"layers": [{**caps, "id": "auto_caps", "y": 0.69},
+                                                       {**caps, "id": "auto_caps_voices", "y": 0.80}]})
+    assert ok
+    out, ok = run_tool(ctx, "update_layer", {"id": "auto_caps", "patch": {"y": 0.6}})
+    assert ok
+    layers = {l["id"]: l for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"]}
+    assert abs(layers["auto_caps_voices"]["y"] - 0.71) < 1e-6  # уехал вместе, зазор тот же
+    assert caption_overlap_warnings([{**caps, "id": "a", "y": 0.78}, {**caps, "id": "b", "y": 0.8}])
+    assert not caption_overlap_warnings([{**caps, "id": "a", "y": 0.6}, {**caps, "id": "b", "y": 0.75}])
