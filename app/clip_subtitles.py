@@ -309,6 +309,10 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
         result = normalize_subtitle_timeline(result, total)
         payload = payload_from_result(result, str(profile.get("provider") or ""), used_model)
         payload["duration"] = round(total, 3)
+        # Начала слов — по настоящему звуку, а не по опаздывающему распознаванию.
+        from app.speech_onsets import snap_payload, wav_pcm
+
+        payload["snapped_words"] = snap_payload(payload, wav_pcm(audio_path))
         if saved.get("lines"):
             payload["previous_lines"] = len(saved["lines"])
         store.set_clip_plan_subtitles(clip_plan_id, payload)
@@ -411,9 +415,13 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
     try:
         _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path), timeout=60 * 5)
         result = get_subtitle_provider("whisper").transcribe(audio_path, profile, QUALITY_WHISPER_MODEL)
+        # Те же начала слов по звуку, что у generate_subtitles — иначе времена расходятся.
+        from app.speech_onsets import snap_words, voiced_frames, wav_pcm
+
+        heard, _moved = snap_words([w.to_dict() for w in result.words], voiced_frames(wav_pcm(audio_path)))
     finally:
         audio_path.unlink(missing_ok=True)
-    words = [[w.word, round(lo + w.start, 2), round(lo + w.end, 2)] for w in result.words]
+    words = [[w["word"], round(lo + w["start"], 2), round(lo + w["end"], 2)] for w in heard]
     return {
         "from": round(lo, 2),
         "to": round(hi, 2),
@@ -449,7 +457,9 @@ def find_noises(store: Any, clip_plan_id: int, threshold_db: float = -32.0, min_
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
         _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path), timeout=60 * 5)
-        raw = audio_path.read_bytes()[44:]
+        from app.speech_onsets import wav_pcm
+
+        raw = wav_pcm(audio_path)
     finally:
         audio_path.unlink(missing_ok=True)
     count = len(raw) // 2
