@@ -68,6 +68,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
 | `list_subtitle_styles`, `set_subtitles`, `edit_subtitle_lines` | субтитры: вкл/стиль/высота, правка текста строк |
 | `set_transition`, `trim_piece`, `add_insert`, `remove_insert` | переход, подрезка куска, вставки-мемы |
+| `set_chroma_key(on, color?, similarity?, blend?)`, `set_backdrop(color, color2?)` | персонаж на зелёнке: вырез и фон за ним (слои за персонажем — `behind: true`) |
 
 Полный список с JSON Schema параметров: `GET /api/agent/tools`.
 
