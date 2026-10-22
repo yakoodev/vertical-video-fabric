@@ -33,8 +33,11 @@ _PROMPT = (
     "the character in the action. Ignore background, decorations and empty space.\n"
     "When a person or character is the subject, give the centre of their FACE/HEAD, not of "
     "the body (the crop must keep the face fully inside).\n"
-    "Some images come with the line spoken during that shot: pick the character who says it "
+    "Some images come with the line spoken at that moment: pick the character who says it "
     "(open mouth, facing the listener), not just the biggest one.\n"
+    "Several images may be the SAME shot at different lines of a dialogue (\"voice A\", \"voice B\" "
+    "mark different speakers): answer for each line separately — whoever says THAT line, even if "
+    "the pictures look alike.\n"
     "Answer with x for each image: 0.0 = left edge, 0.5 = centre, 1.0 = right edge — "
     "the horizontal centre of the subject.\n"
     "If the subject spans the whole width, or there is no single clear subject, answer 0.5.\n"
@@ -87,9 +90,10 @@ def shots_focus_x(
         parts: list[dict] = []
         for i, img in enumerate(images):
             # Реплика плана — чтобы выбрать того, кто говорит (проверочный прогон: в кадре
-            # оставалась рука Рика, пока говорил другой герой).
+            # оставалась рука Рика, пока говорил другой герой). Длинный план с диалогом
+            # приходит несколькими кадрами — по одному на реплику (app/focus_replies).
             hint = (hints[i] if hints and i < len(hints) else "") or ""
-            parts.append({"text": f"Image {i}" + (f" — spoken in this shot: «{hint[:200]}»" if hint else "")})
+            parts.append({"text": f"Image {i}" + (f" — spoken at this moment: «{hint[:200]}»" if hint else "")})
             parts.append({"inline_data": {"mime_type": "image/png", "data": base64.b64encode(img).decode("ascii")}})
         parts.append({"text": _PROMPT})
         payload = {

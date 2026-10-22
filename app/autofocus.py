@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from app.focus_presets import DEFAULT_FOCUS_STRATEGY, get_focus_preset
+from app.focus_replies import apply_answers, plan_units
 from app.object_detect import subject_center
 
 _SAMPLE_W = 320
@@ -248,12 +249,15 @@ def compute_segment_focus(
     strategy: str | None = None,
     vlm_resolver: Callable[..., list[float | None]] | None = None,
     speech_hint: Callable[[float, float], str] | None = None,
+    speech_words: list[dict] | None = None,
 ) -> list[dict]:
     """Focus track for a segment.
 
     ``strategy`` is the GLOBAL camera behaviour (center / shot / follow / auto);
     ``preset`` tunes detection for the content type. ``vlm_resolver`` (injected so
     this module stays pure CV) gets one frame per shot and returns the subject x.
+    ``speech_words`` — слова субтитров (секунды от начала куска): длинный план с
+    несколькими репликами Gemini смотрит по кадру на реплику (app/focus_replies).
     """
     cfg = get_focus_preset(preset if preset is not None else source.get("focus_preset"))
     strat = str(strategy if strategy is not None else source.get("focus_strategy") or "").strip().lower() or DEFAULT_FOCUS_STRATEGY
@@ -363,15 +367,24 @@ def compute_segment_focus(
             prev_gray = gray
             prev_hist = hist
 
-        # Grab one representative frame per shot while the temp dir still exists;
-        # the VLM pass itself runs after the CV post-processing below.
-        vlm_batch: list[tuple[int, int, bytes]] = []
+        # Grab the frames for the VLM while the temp dir still exists: one per shot, or
+        # one per reply on a long dialogue shot; the VLM pass itself runs after the CV
+        # post-processing below.
+        vlm_units: list[dict] = []
+        vlm_images: list[bytes] = []
+        shot_ranges = _shot_ranges(points)
         if vlm_resolver and points:
-            for lo, hi in _shot_ranges(points)[:_VLM_MAX_SHOTS]:
+            spans = [(float(points[lo]["t"]), float(points[hi]["t"]) if hi < len(points) else dur)
+                     for lo, hi in shot_ranges]
+            for unit in plan_units(spans, speech_words, _VLM_MAX_SHOTS):
+                lo, hi = shot_ranges[unit["shot"]]
+                mid = (float(unit["start"]) + float(unit["end"])) / 2
+                pick = min(range(lo, hi), key=lambda k: abs(float(points[k]["t"]) - mid))
                 try:
-                    vlm_batch.append((lo, hi, point_frames[(lo + hi) // 2].read_bytes()))
+                    vlm_images.append(point_frames[pick].read_bytes())
                 except OSError:
                     continue
+                vlm_units.append(unit)
 
     # Kill isolated spikes before the render-side smoothing sees them: one bad frame
     # otherwise becomes a visible camera lurch. Smooth each shot separately — a
@@ -404,24 +417,17 @@ def compute_segment_focus(
                     p[axis] = mid
     # "follow" keeps the continuous (median-filtered) track as-is.
 
-    # VLM has the final say on framing: it answers "where is the subject" per shot,
-    # which is exactly what the CV heuristics can only approximate. Anything it
-    # doesn't answer keeps the CV value.
-    if vlm_batch:
-        images = [img for (_lo, _hi, img) in vlm_batch]
-        if speech_hint is not None:
-            # Что звучит на каждом плане (секунды от начала куска) — подсказка, кто говорит.
-            hints = [speech_hint(float(points[lo]["t"]), float(points[min(hi, len(points)) - 1]["t"]))
-                     for (lo, hi, _img) in vlm_batch]
-            answers = vlm_resolver(images, hints=hints) or []
-        else:
-            answers = vlm_resolver(images) or []
-        for (lo, hi, _img), x in zip(vlm_batch, answers):
-            if x is None:
-                continue
-            fixed = round(min(1.0, max(0.0, float(x))), 4)
-            for p in points[lo:hi]:
-                p["x"] = fixed
+    # VLM has the final say on framing: it answers "where is the subject" per shot
+    # (or per reply inside a long dialogue shot), which is exactly what the CV
+    # heuristics can only approximate. Anything it doesn't answer keeps the CV value.
+    if vlm_units:
+        if speech_words is None and speech_hint is not None:
+            # Старый вход: что звучит на плане (секунды от начала куска) — подсказка, кто говорит.
+            for unit in vlm_units:
+                unit["hint"] = speech_hint(float(unit["start"]), float(unit["end"]))
+        hints = [str(u.get("hint") or "") for u in vlm_units]
+        answers = (vlm_resolver(vlm_images, hints=hints) if any(hints) else vlm_resolver(vlm_images)) or []
+        points = apply_answers(points, shot_ranges, vlm_units, answers)
 
     return points
 

@@ -462,6 +462,37 @@ def test_clip_context_fills_project_id_and_auto_focus(tmp_path, monkeypatch):
     assert segment["focus"][1] == {"t": 2.0, "x": 0.7, "cut": True}
 
 
+def test_auto_focus_hands_piece_words_for_replies(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from app.agent_tools import run_tool
+    from app.settings import settings
+
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    # Субтитры лежат «кусками подряд»: кусок 0 — 0..5 с, кусок 1 — 5..10 с.
+    store.set_clip_plan_subtitles(plan["id"], {"words": [
+        {"word": "Морти,", "start": 0.5, "end": 1.0, "speaker": "A"},
+        {"word": "Рик?", "start": 6.0, "end": 6.6, "speaker": "B"}]})
+    seen = {}
+
+    def fake_focus(src, a, b, vlm_resolver=None, speech_words=None):
+        seen[(a, b)] = speech_words
+        # Поворот внутри плана (без cut) — как от apply_answers.
+        return [{"t": 0.0, "x": 0.72}, {"t": 1.65, "x": 0.72}, {"t": 2.0, "x": 0.4}]
+
+    monkeypatch.setitem(sys.modules, "app.autofocus", types.SimpleNamespace(compute_segment_focus=fake_focus))
+    monkeypatch.setitem(sys.modules, "app.ai.vlm_focus", types.SimpleNamespace(shots_focus_x=lambda *a, **k: []))
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    out, ok = run_tool(ctx, "auto_focus", {})
+    assert ok, out
+    # Время слов — от начала своего куска, голос сохраняется (по нему делятся реплики).
+    assert seen[(0.0, 5.0)] == [{"word": "Морти,", "start": 0.5, "end": 1.0, "speaker": "A"}]
+    assert seen[(1.0, 6.0)] == [{"word": "Рик?", "start": 1.0, "end": 1.6, "speaker": "B"}]
+    assert out["pieces"][0]["turns"] == 1
+
+
 def test_moving_main_captions_drags_voices_layer_and_overlap_is_warned(tmp_path, monkeypatch):
     from app.agent_tools import caption_overlap_warnings, run_tool
 
