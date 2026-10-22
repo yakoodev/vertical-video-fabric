@@ -676,6 +676,12 @@ def h_apply_cuts(ctx: ToolContext, args: dict) -> dict:
 
     words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
     warnings = cut_edge_warnings(cuts, words, _clip_duration(ctx))
+    if cuts and _source_keyed(ctx):
+        # Владелец: «на 4-5 секунде персонаж моргает на склейке» — втубер стоит
+        # неподвижно, и вырезанная пауза видна как рывок головы.
+        warnings.append("Говорящая голова на зелёнке: вырез посреди фразы виден как рывок персонажа. "
+                        "Режь только длинные паузы между фразами и прячь стык (смена плана за персонажем, "
+                        "наезд камеры); короткие паузы лучше оставить.")
     if warnings:
         out["warnings"] = warnings
     return out
