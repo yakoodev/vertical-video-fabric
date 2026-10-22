@@ -79,3 +79,42 @@ def _classify_instagram_error(message: str) -> str:
 
 def _safe_error(message: str) -> str:
     return safe_provider_error(message, "instagram upload failed")
+
+
+# --- статистика опубликованного рилса (app/platform_stats.py) --------------- #
+
+
+class InstagramUnavailable(Exception):
+    """Числа Instagram взять нечем (нет сессии / instagrapi) — пропуск, не ошибка площадки."""
+
+
+def session_client(cookies: list[CookieRecord], proxy_url: str = ""):
+    """Клиент instagrapi по cookie ``sessionid`` аккаунта — тем же входом, что и загрузка.
+    Без логина Instagram чисел не отдаёт, поэтому без сессии — пропуск."""
+    sessionid = _cookie_value(cookies, "sessionid")
+    if not sessionid:
+        raise InstagramUnavailable("у аккаунта Instagram нет cookie sessionid — статистику взять нечем")
+    try:
+        from instagrapi import Client  # noqa: PLC0415 - heavy optional dependency
+    except ImportError as exc:
+        raise InstagramUnavailable("instagrapi не установлен — статистика Instagram недоступна") from exc
+    client = Client()
+    if proxy_url:
+        client.set_proxy(proxy_url)
+    client.login_by_sessionid(sessionid)
+    return client
+
+
+def media_stats(client, remote_id: str, remote_url: str = "") -> dict:
+    """Просмотры/лайки/комментарии рилса через media_info."""
+    pk = str(remote_id or "").strip()
+    if not pk.isdigit():
+        code = pk or remote_url.rstrip("/").rsplit("/", 1)[-1]
+        pk = str(client.media_pk_from_code(code))
+    media = client.media_info(pk)
+    views = getattr(media, "play_count", None) or getattr(media, "view_count", None)
+    return {
+        "views": views,
+        "likes": getattr(media, "like_count", None),
+        "comments": getattr(media, "comment_count", None),
+    }

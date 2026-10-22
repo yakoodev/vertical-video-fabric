@@ -336,15 +336,43 @@ def _parse_ref(ref: str) -> tuple[str, str, str] | None:
 # ссылки старых клипов ведут на настоящие записи пака freesound.
 LEGACY_SFX: dict[str, dict[str, str]] = {
     "generated": {
-        "whoosh.ogg": "whoosh-1.ogg", "swoosh.ogg": "whoosh-4.ogg", "whoosh-deep.ogg": "whoosh-3.ogg",
+        "whoosh.ogg": "whoosh-1.ogg", "swoosh.ogg": "whoosh-4.ogg", "whoosh-deep.ogg": "whoosh-cinematic.ogg",
         "riser.ogg": "riser.ogg", "boom.ogg": "drama-boom.ogg", "bass-drop.ogg": "bass-drop.ogg",
-        "pop.ogg": "pop.ogg", "click.ogg": "click.ogg", "ding.ogg": "ding.ogg",
+        "pop.ogg": "pop.ogg", "click.ogg": "camera-2.ogg", "ding.ogg": "pop-soft.ogg",
         "record-scratch.ogg": "record-scratch.ogg", "camera-shutter.ogg": "camera.ogg",
-        "typing.ogg": "typing.ogg", "glitch.ogg": "glitch.ogg", "buzzer.ogg": "fail-horn.ogg",
+        "typing.ogg": "camera-2.ogg", "glitch.ogg": "record-scratch.ogg", "buzzer.ogg": "sad-trombone.ogg",
         "*": "pop.ogg",
     },
-    "kenney-digital": {"*": "glitch.ogg"},
+    "kenney-digital": {"*": "record-scratch.ogg"},
 }
+
+# Пак freesound почищен (tools/fetch_sfx.py): интерфейсные «дзынь/клик/треугольник» и
+# мультяшные боинги владелец назвал дешёвыми. Слои старых клипов со ссылками на них
+# играют ближайшую настоящую запись — но только если файла в паке уже нет.
+FREESOUND_ALIASES: dict[str, str] = {
+    "ding.ogg": "pop-soft.ogg", "triangle.ogg": "pop-soft.ogg", "click.ogg": "camera-2.ogg",
+    "pop-cartoon.ogg": "pop.ogg", "boing.ogg": "pop.ogg", "boing-2.ogg": "pop.ogg",
+    "typing.ogg": "camera-2.ogg", "typing-digital.ogg": "camera-2.ogg",
+    "glitch.ogg": "record-scratch.ogg", "glitch-2.ogg": "record-scratch.ogg",
+    "chop.ogg": "punch.ogg", "fail-horn.ogg": "sad-trombone.ogg",
+    "whoosh-2.ogg": "whoosh-soft.ogg", "whoosh-3.ogg": "whoosh-cinematic.ogg", "riser-2.ogg": "riser.ogg",
+    "bass-drop-2.ogg": "sub-drop.ogg", "impact-big.ogg": "impact-cinematic.ogg",
+    "record-scratch-2.ogg": "record-scratch.ogg", "laugh-crowd.ogg": "laugh-sitcom.ogg",
+}
+
+
+def _legacy_target(kind: str, pack_id: str, file: str) -> tuple[str, str]:
+    """(пак, файл), которые реально играют по ссылке старого клипа."""
+    if kind != "sfx":
+        return pack_id, file
+    if pack_id in LEGACY_SFX:
+        # Старые клипы ссылаются на убранные синтетические паки — играем замену.
+        pack_id, file = "freesound", LEGACY_SFX[pack_id].get(file, LEGACY_SFX[pack_id]["*"])
+    if pack_id == "freesound" and file in FREESOUND_ALIASES:
+        pack = load_packs().get(pack_id)
+        if pack and file not in pack["_items"]:
+            file = FREESOUND_ALIASES[file]
+    return pack_id, file
 
 
 def resolve_pack_ref(ref: str) -> Path | None:
@@ -358,9 +386,7 @@ def resolve_pack_ref(ref: str) -> Path | None:
     kind, pack_id, file = parsed
     if kind == "emoji":
         return emoji_path(file[:-4])
-    if kind == "sfx" and pack_id in LEGACY_SFX:
-        # Старые клипы ссылаются на убранные синтетические паки — играем замену.
-        pack_id, file = "freesound", LEGACY_SFX[pack_id].get(file, LEGACY_SFX[pack_id]["*"])
+    pack_id, file = _legacy_target(kind, pack_id, file)
     pack = load_packs().get(pack_id)
     if not pack or pack.get("kind") not in REF_PACK_KINDS[kind]:
         return None
@@ -385,6 +411,7 @@ def pack_item_info(ref: str) -> dict | None:
             "license": pack.get("license", "CC-BY-4.0"), "attribution": pack.get("attribution", ""),
             "url": f"/api/motion/emoji/{code}.svg",
         }
+    pack_id, file = _legacy_target(kind, pack_id, file)
     pack = load_packs()[pack_id]
     item = pack["_items"][file]
     return {
@@ -514,7 +541,9 @@ def build_router(auth_dep: Any = None, store: Any = None) -> APIRouter:
 
     @router.get("/packs/{pack}/{file}", include_in_schema=False)
     def api_pack_file(pack: str, file: str) -> FileResponse:
-        path = pack_file_path(pack, file)
+        # Превью в редакторе у старого клипа — та же замена убранного звука, что и в рендере.
+        path = pack_file_path(*_legacy_target("sfx", pack, file)) if pack in ("freesound", *LEGACY_SFX) else None
+        path = path or pack_file_path(pack, file)
         if not path:
             raise HTTPException(status_code=404, detail="файл не найден")
         return _file_response(path)

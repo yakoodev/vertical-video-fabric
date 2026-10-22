@@ -1105,7 +1105,11 @@ def h_search_pack(_ctx: ToolContext, args: dict) -> dict:
     if pack:
         packs = [pack]
     else:
-        packs = [p["id"] for p in assets.list_packs() if p.get("kind") != "emoji" and (not kind or p.get("kind") == kind)]
+        # Звуки без явного пака — только freesound: интерфейсные клики/тоны Kenney владелец
+        # назвал дешёвыми (их можно взять, лишь назвав пак).
+        packs = [p["id"] for p in assets.list_packs()
+                 if p.get("kind") != "emoji" and (not kind or p.get("kind") == kind)
+                 and (p.get("kind") != "sfx" or p["id"] == "freesound")]
     results = []
     for pack_id in packs:
         found = assets.pack_items(pack_id, query, limit=limit)
@@ -1337,6 +1341,31 @@ def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
     return {"ok": True, "track_id": track["id"], "label": track["label"],
             "duration": round(float(track.get("duration_sec") or 0), 1)}
+
+
+def h_add_sound_from_url(ctx: ToolContext, args: dict) -> dict:
+    """Звуковой эффект по ссылке владельца (страница freesound или видео) → asset_id для слоя audio."""
+    from app.sound_import import MAX_SOUND_SEC, import_sound_from_url
+
+    try:
+        asset = import_sound_from_url(ctx.store, str(args.get("url") or ""), str(args.get("label") or ""),
+                                      start=_num(args.get("start"), 0.0) or 0.0)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
+        raise ToolError(f"не удалось скачать звук: {str(exc)[:200]}") from exc
+    return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
+            "duration": round(float(asset.get("duration_sec") or 0), 2),
+            "note": (f"обрезан до {MAX_SOUND_SEC:g} с; ставь слоем audio (props.asset_id) на слово (at_word), "
+                     "громкость 0.3–0.6 — сервис сам держит эффект под голосом")}
+
+
+def h_get_performance(ctx: ToolContext, args: dict) -> dict:
+    """Что заходит: топ и антитоп опубликованных клипов по просмотрам с признаками монтажа."""
+    from app.platform_stats import performance_report
+
+    limit = int(_num(args.get("limit"), 5) or 5)
+    return performance_report(ctx.store, limit)
 
 
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
@@ -2144,6 +2173,24 @@ def _build_registry() -> list[Tool]:
             "list_music", "Смотрю фоновую музыку",
             "Треки фоновой музыки (id, название, длина). / Background music tracks.",
             _obj({}), h_list_music, scope="global",
+        ),
+        Tool(
+            "add_sound_from_url", "Скачиваю звук",
+            "Звуковой эффект по ссылке ВЛАДЕЛЬЦА: страница звука freesound.org или любое видео yt-dlp (только "
+            "звук; start — с какой секунды взять). Режет тишину в начале, обрезает до 6 с → asset_id для слоя "
+            "audio. Сам звуки в интернете не ищи — только ссылка владельца; иначе пак freesound (search_pack). / "
+            "Sound effect from the owner's link.",
+            _obj({"url": {"type": "string"}, "label": {"type": "string"}, "start": {"type": "number"}}, ["url"]),
+            h_add_sound_from_url, scope="global",
+            label=lambda a: f"Скачиваю звук {(a.get('label') or '')[:40]}".strip(),
+        ),
+        Tool(
+            "get_performance", "Смотрю, что заходит",
+            "Статистика опубликованных клипов: топ и антитоп по просмотрам (limit, по умолчанию 5) с признаками "
+            "монтажа — длина, хук-титр, субтитры, музыка, слои, звуки, вырезы, раскладка, хромакей — и сравнение "
+            "«с признаком / без». Зови перед монтажом нового клипа, чтобы повторять то, что заходит. / Top and "
+            "bottom published clips by views with their montage features.",
+            _obj({"limit": {"type": "integer"}}), h_get_performance, scope="global",
         ),
         Tool(
             "mute_audio", "Глушу звук исходника",

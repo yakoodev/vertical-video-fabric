@@ -642,6 +642,94 @@ class AppStore:
         )
         return [dict(row) for row in rows]
 
+    # --- статистика площадок (app/platform_stats.py) ---------------------- #
+
+    def list_published_targets(self) -> list[dict]:
+        """Успешные публикации со ссылкой + когда по ним последний раз ходили за числами."""
+        rows = self.db.query_all(
+            """
+            SELECT jt.id, jt.job_id, jt.account_id, jt.platform, jt.remote_id, jt.remote_url, jt.finished_at,
+                   j.clip_id, j.title,
+                   (SELECT MAX(captured_at) FROM publication_stats ps WHERE ps.target_id = jt.id) AS last_attempt_at
+            FROM job_targets jt
+            JOIN jobs j ON j.id = jt.job_id
+            WHERE jt.status = 'succeeded' AND jt.remote_url != ''
+            ORDER BY jt.id
+            """
+        )
+        return [dict(row) for row in rows]
+
+    def add_publication_stats(self, target_id: int, platform: str, stats: dict | None, error: str = "") -> dict:
+        def _int(key: str) -> int | None:
+            value = (stats or {}).get(key)
+            try:
+                return None if value is None else max(0, int(value))
+            except (TypeError, ValueError):
+                return None
+
+        error = (error or "")[:300]
+        if error:
+            # Та же причина, что в прошлый раз (Instagram без сессии и т.п.) — не плодим
+            # строки каждые N часов, а сдвигаем время попытки.
+            last = self.db.query_one(
+                "SELECT id, error FROM publication_stats WHERE target_id = ? ORDER BY id DESC LIMIT 1",
+                (int(target_id),),
+            )
+            if last and last["error"] == error:
+                self.db.execute("UPDATE publication_stats SET captured_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (last["id"],))
+                return dict(self.db.query_one("SELECT * FROM publication_stats WHERE id = ?", (last["id"],)))
+        retention = (stats or {}).get("avg_retention")
+        try:
+            retention = None if retention is None else float(retention)
+        except (TypeError, ValueError):
+            retention = None
+        cur = self.db.execute(
+            """
+            INSERT INTO publication_stats (target_id, platform, views, likes, comments, shares, avg_retention, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(target_id), platform, _int("views"), _int("likes"), _int("comments"), _int("shares"),
+             retention, error),
+        )
+        return dict(self.db.query_one("SELECT * FROM publication_stats WHERE id = ?", (cur.lastrowid,)))
+
+    def list_publication_stats(self, target_id: int, limit: int = 100) -> list[dict]:
+        rows = self.db.query_all(
+            "SELECT * FROM publication_stats WHERE target_id = ? ORDER BY id DESC LIMIT ?",
+            (int(target_id), int(limit)),
+        )
+        return [dict(row) for row in rows]
+
+    def latest_publication_stats(self) -> dict[int, dict]:
+        """target_id → последние удачные числа + последняя попытка (ошибка, если не удалась)."""
+        ok_rows = self.db.query_all(
+            """
+            SELECT ps.* FROM publication_stats ps
+            JOIN (SELECT target_id, MAX(id) AS mid FROM publication_stats WHERE error = '' GROUP BY target_id) m
+              ON ps.id = m.mid
+            """
+        )
+        last_rows = self.db.query_all(
+            """
+            SELECT ps.target_id, ps.captured_at, ps.error FROM publication_stats ps
+            JOIN (SELECT target_id, MAX(id) AS mid FROM publication_stats GROUP BY target_id) m ON ps.id = m.mid
+            """
+        )
+        out: dict[int, dict] = {}
+        for row in ok_rows:
+            data = dict(row)
+            out[int(data["target_id"])] = {
+                key: data[key] for key in ("views", "likes", "comments", "shares", "avg_retention", "captured_at")
+            }
+        for row in last_rows:
+            entry = out.setdefault(int(row["target_id"]), {"views": None, "likes": None, "comments": None,
+                                                           "shares": None, "avg_retention": None,
+                                                           "captured_at": None})
+            entry["last_attempt_at"] = row["captured_at"]
+            entry["error"] = row["error"] or ""
+        return out
+
     def mark_job_running(self, job_id: int) -> None:
         self.db.execute(
             """

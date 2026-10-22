@@ -54,6 +54,11 @@ RUN python3 /app/tools/fetch_packs.py /app/vendor/packs --skip "${PACKS_SKIP}"
 # does not re-download every pack above.
 COPY tools/fetch_music.py /app/tools/fetch_music.py
 RUN python3 /app/tools/fetch_music.py /app/vendor/packs
+# Montage SFX (CC0, pinned sha256): rebuilds the "freesound" pack from the curated
+# list in fetch_sfx.py on top of the one above and swaps its packs.json entry —
+# editing the sound list does not re-download every pack.
+COPY tools/fetch_sfx.py /app/tools/fetch_sfx.py
+RUN python3 /app/tools/fetch_sfx.py /app/vendor/packs
 
 RUN python3 -m venv /opt/venv
 

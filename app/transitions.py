@@ -211,14 +211,15 @@ def join_times(durations: list[float], overlaps: float | list[float]) -> list[fl
     return times
 
 
-# Звук стыка — настоящая запись из пака freesound (tools/fetch_packs.py).
-# Владелец: синтетика (шум + свип) звучала металлически — «убрать нахуй».
+# Звук стыка — настоящая запись из пака freesound (tools/fetch_sfx.py).
+# Владелец: синтетика (шум + свип) звучала металлически — «убрать нахуй»;
+# интерфейсный клик — дёшево, поэтому «щелчок» — механический затвор камеры.
 # kind → (файл, громкость, сколько секунд до склейки начинается звук).
 JOIN_SFX_FILES: dict[str, tuple[str, float, float]] = {
     "whoosh": ("whoosh-1.ogg", 0.7, 0.22),
     "boom": ("impact-low.ogg", 0.8, 0.03),
     "pop": ("pop.ogg", 0.7, 0.02),
-    "click": ("click.ogg", 0.7, 0.0),
+    "click": ("camera-2.ogg", 0.7, 0.0),
 }
 
 

@@ -43,6 +43,10 @@ class Settings:
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+        # Статистика опубликованных клипов (app/platform_stats.py): раз в N часов
+        # по одной ссылке с паузой — площадки не любят частых запросов. 0 — без фона.
+        self.stats_interval_hours = float(os.getenv("STATS_INTERVAL_HOURS", "6") or 0)
+        self.stats_pause_seconds = float(os.getenv("STATS_PAUSE_SECONDS", "8") or 0)
         self.external_http_retries = int(os.getenv("EXTERNAL_HTTP_RETRIES", "3"))
         self.external_http_retry_seconds = float(os.getenv("EXTERNAL_HTTP_RETRY_SECONDS", "2"))
         self.external_download_timeout_seconds = int(os.getenv("EXTERNAL_DOWNLOAD_TIMEOUT_SECONDS", str(15 * 60)))
