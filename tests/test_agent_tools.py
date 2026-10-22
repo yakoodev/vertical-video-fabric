@@ -432,3 +432,31 @@ def test_upload_image_tool_takes_base64(tmp_path, monkeypatch):
         except ToolError:
             continue
         raise AssertionError("ожидалась ошибка")
+
+
+def test_clip_context_fills_project_id_and_auto_focus(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from app.agent_tools import run_tool
+
+    _client, store, source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    seen = {}
+
+    def fake_shots(_ctx, args):
+        seen["project"] = args.get("project_id")
+        return {"ok": True}
+
+    monkeypatch.setattr(agent_tools.get_tool("get_shots"), "handler", fake_shots)
+    _out, ok = run_tool(ctx, "get_shots", {})
+    assert ok and seen["project"] == source["id"]  # проект — источник клипа, без «нужен project_id»
+
+    # Настоящий app.autofocus тянет OpenCV (есть в контейнере, не в venv хоста) — подменяем модуль.
+    fake = types.SimpleNamespace(compute_segment_focus=lambda src, a, b, vlm_resolver=None: [
+        {"t": 0.0, "x": 0.3}, {"t": 2.0, "x": 0.7, "cut": True}])
+    monkeypatch.setitem(sys.modules, "app.autofocus", fake)
+    out, ok = run_tool(ctx, "auto_focus", {})
+    assert ok and [p["points"] for p in out["pieces"]] == [2, 2]
+    segment = store.get_clip_plan(plan["id"])["segments"][0]
+    assert segment["focus"][1] == {"t": 2.0, "x": 0.7, "cut": True}

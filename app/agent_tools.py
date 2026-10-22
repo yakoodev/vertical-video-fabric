@@ -2157,6 +2157,40 @@ def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
     return []
 
 
+def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
+    """Кадрирование 9:16 сам: лица/движение по планам (app/autofocus), для мультфильмов —
+    ещё и Gemini по кадру на план. Проверочный прогон: встроенный монтажёр 8 шагов
+    подбирал x «на глаз» по листам кадров и всё равно промахнулся на стене."""
+    from app.autofocus import compute_segment_focus
+    from app.settings import settings
+
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    pieces = timeline["pieces"]
+    indexes = [_piece_index(args, len(pieces))] if args.get("piece") is not None else list(range(len(pieces)))
+    resolver = None
+    if args.get("use_vlm") and settings.gemini_api_key:
+        from app.ai.vlm_focus import shots_focus_x
+
+        resolver = shots_focus_x
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    source = ctx.store.get_source(int(plan["source_id"]))
+    done = []
+    for index in indexes:
+        piece = pieces[index]
+        points = compute_segment_focus(source, float(piece["source_start"]), float(piece["source_end"]),
+                                       vlm_resolver=resolver)
+        local = []
+        for point in points:  # время точек — уже от начала куска
+            item = {"t": round(float(point["t"]), 3), "x": round(float(point["x"]), 4)}
+            if point.get("cut"):
+                item["cut"] = True
+            local.append(item)
+        _apply_piece(ctx, index, focus=local)
+        done.append({"piece": index, "points": len(local), "cuts": sum(1 for q in local if q.get("cut"))})
+    return {"ok": True, "pieces": done,
+            "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
+
+
 def h_set_focus(ctx: ToolContext, args: dict) -> dict:
     """Кадрирование 9:16 куска: центр окна x(t), cut — жёсткая смена на склейке плана."""
     timeline = clip_timeline(ctx.store, ctx.plan_id)
@@ -3402,6 +3436,15 @@ DISCOVERY_TOOLS = [
         h_source_transcript, scope="global",
     ),
     Tool(
+        "auto_focus", "Ищу говорящего в кадре",
+        "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
+        "без него — все), с жёсткой сменой на склейках. Для мультфильмов и аниме use_vlm:true (Gemini "
+        "смотрит кадр каждого плана). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
+        "поправь промахи set_focus. / Automatic 9:16 framing.",
+        _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
+        h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
+    ),
+    Tool(
         "get_shots", "Склейки планов",
         "Моменты смены плана в исходнике (секунды исходника) между from_sec и to_sec — чтобы ставить "
         "жёсткую смену кадрирования ровно на склейку. Первый вызов — ffmpeg по всему видео (минута-две), "
@@ -3450,8 +3493,16 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
         tool = get_tool(name)
     except KeyError:
         return {"ok": False, "error": f"нет инструмента {name}"}, False
+    args = dict(args or {})
+    if "project_id" not in args and getattr(ctx, "clip_plan_id", None) and _takes_project(tool):
+        # Монтажёр работает внутри клипа: проект — источник этого клипа (Gemini спотыкался
+        # о «нужен project_id» на get_shots).
+        try:
+            args["project_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
+        except (KeyError, TypeError, ValueError):
+            pass
     try:
-        result = tool.handler(ctx, dict(args or {}))
+        result = tool.handler(ctx, args)
     except ToolError as exc:
         return {"ok": False, "error": str(exc), "problems": exc.problems}, False
     except KeyError as exc:
@@ -3463,6 +3514,10 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
     if isinstance(result, dict) and result.get("ok") is False:
         return result, False
     return result, True
+
+
+def _takes_project(tool: Tool) -> bool:
+    return "project_id" in ((tool.parameters or {}).get("properties") or {})
 
 
 def result_for_json(result: Any) -> Any:
