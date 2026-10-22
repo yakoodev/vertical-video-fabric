@@ -3072,6 +3072,16 @@ def api_clip(clip_id: int, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.delete("/api/clip-plans/{clip_plan_id}", tags=["Clip plans"], summary="Delete a clip plan (moment)")
+def api_delete_clip_plan(clip_plan_id: int, _auth: AuthDep) -> dict:
+    """Момент целиком; готовые рендеры остаются в «Клипах»."""
+    try:
+        store.delete_clip_plan(clip_plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
 @app.delete("/api/clips/{clip_id}", tags=["Render"], summary="Delete a rendered clip")
 def api_delete_clip(clip_id: int, _auth: AuthDep) -> dict:
     try:

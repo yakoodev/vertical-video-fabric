@@ -2452,6 +2452,15 @@ class AppStore:
         )
         return self.get_clip(clip_id)
 
+    def delete_clip_plan(self, clip_plan_id: int) -> None:
+        """Удалить клип-план (момент): куски уходят каскадом, готовые рендеры остаются
+        (их могли опубликовать) — только отвязываются. История правок и переписка
+        с агентом без внешних ключей — чистим сами."""
+        self.get_clip_plan(clip_plan_id, include_segments=False)
+        self.db.execute("DELETE FROM clip_plan_history WHERE clip_plan_id = ?", (clip_plan_id,))
+        self.db.execute("DELETE FROM clip_agent_messages WHERE clip_plan_id = ?", (clip_plan_id,))
+        self._delete_record("clip_plans", clip_plan_id)
+
     def delete_clip(self, clip_id: int) -> None:
         self.get_clip(clip_id)
         self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))

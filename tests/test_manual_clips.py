@@ -50,3 +50,12 @@ def test_get_shots_cached_and_filtered(tmp_path, monkeypatch):
     assert out["shot_changes"] == [3.25, 6.0]
     out, ok = run_tool(ctx, "get_shots", {"project_id": source["id"]})
     assert out["shot_changes"] == [1.5, 3.25, 6.0] and len(calls) == 1
+
+
+def test_delete_clip_plan_keeps_rendered_clips(tmp_path, monkeypatch):
+    client, store, source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    clip = store.create_clip(source["id"], clip_plan_id=plan["id"])
+    store.set_clip_plan_render_settings(plan["id"], {"mirror": True})
+    assert client.delete(f"/api/clip-plans/{plan['id']}").json() == {"deleted": True}
+    assert client.delete(f"/api/clip-plans/{plan['id']}").status_code == 404
+    assert store.get_clip(clip["id"])["clip_plan_id"] is None
