@@ -53,6 +53,7 @@ import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
+import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import {
   GeneratePanel,
@@ -1119,6 +1120,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [bannerId, setBannerId] = useState(0);
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
+  // Музыка по ссылке (POST /api/audio-tracks/from-url): сервер качает звук через yt-dlp.
+  const [musicUrl, setMusicUrl] = useState("");
+  const musicFromUrl = useMutation({
+    mutationFn: () => audioTracksApi.fromUrl(musicUrl.trim()),
+    onSuccess: async (track) => {
+      await qc.invalidateQueries({ queryKey: qk.audioTracks });
+      setMusicOn(true);
+      setTrackId(track.id);
+      setMusicUrl("");
+      toast.success(`Трек «${track.label}» добавлен и выбран`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось скачать трек"),
+  });
   const [mirror, setMirror] = useState(false);
   // How the pieces of a multi-piece clip are joined, and the sound on the join.
   const [transition, setTransition] = useState<TransitionSettings>(DEFAULT_TRANSITION);
@@ -1133,10 +1147,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [layout, setLayout] = useState<StreamLayout>(DEFAULT_LAYOUT);
   const [cuts, setCuts] = useState<JumpCut[]>([]);
   const [backdrop, setBackdrop] = useState<Backdrop>(DEFAULT_BACKDROP);
-  // Редактор их пока не правит (ставит агент: mute_audio), но обязан сохранять как есть.
-  const [mute, setMute] = useState<{ start: number; end: number }[]>([]);
+  // 🔇 Тишина вместо звука исходника (app/audio_mute.py): полосы на дорожке «Звук»
+  // таймлайна; агент ставит их же инструментом mute_audio.
+  const [mute, setMute] = useState<MuteSpan[]>([]);
   const cutsRef = useRef<JumpCut[]>([]);
   cutsRef.current = cuts;
+  const muteRef = useRef<MuteSpan[]>([]);
+  muteRef.current = mute;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
@@ -1322,6 +1339,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setCamera([]);
       setInserts([]);
       setCuts([]);
+      setMute([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
       setTlSelected(null);
@@ -1350,6 +1368,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       camera: s.camera ?? [],
       layout: normalizeLayout(s.layout),
       cuts: s.cuts ?? [],
+      backdrop: normalizeBackdrop(s.backdrop),
+      mute: s.mute ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1408,6 +1428,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           camera: p.render_settings?.camera ?? [],
           // Вырезы — диапазоны времени ЭТОГО клипа, обложка-картинка — его кадр: не копируем.
           cuts: p.render_settings?.cuts ?? [],
+          mute: p.render_settings?.mute ?? [],
           cover: settings.cover.mode === "image" ? (p.render_settings?.cover ?? DEFAULT_COVER) : settings.cover,
         }),
       ),
@@ -1765,6 +1786,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+  }, []);
+  // Заглушённые отрезки превью проигрывает без звука видео — как выйдет в рендере
+  // (звуки слоёв и музыка играют). Глушим только то, что заглушили сами: свой
+  // «без звука» в плеере владельца не трогаем.
+  useEffect(() => {
+    let raf = 0;
+    let ours = false;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) {
+        const t = inEditorRef.current && muteRef.current.length ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
+        const want = t != null && isMutedAt(muteRef.current, t);
+        if (want && !ours && !v.muted) {
+          v.muted = true;
+          ours = true;
+        } else if (!want && ours) {
+          v.muted = false;
+          ours = false;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (ours && videoRef.current) videoRef.current.muted = false;
+    };
   }, []);
   useEffect(() => {
     let raf = 0;
@@ -2242,6 +2290,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setLayers((prev) => prev.filter((l) => l.id !== tlSelected.id));
     } else if (tlSelected.kind === "cam") {
       setCamera((prev) => prev.filter((_, i) => i !== tlSelected.index));
+    } else if (tlSelected.kind === "mute") {
+      setMute((prev) => prev.filter((_, i) => i !== tlSelected.index));
     } else {
       const next = subLines.filter((_, i) => i !== tlSelected.index);
       setSubLines(next);
@@ -3194,6 +3244,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   if (r.id) setTlSelected({ kind: "layer", id: r.id });
                 }}
                 onSeek={(t) => seekClipTime(t, false)}
+                keyed={Boolean(source.chroma_key)}
               />
             ) : null}
             <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>
@@ -3250,6 +3301,49 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
             <Group
+              title="Тишина вместо звука"
+              badge={mute.length ? `${mute.length} · ${muteTotal(mute).toFixed(1)} с` : "нет"}
+              defaultOpen={tlSelected?.kind === "mute"}
+            >
+              <div className="muted li-note">
+                Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
+                Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
+              </div>
+              {mute.length ? (
+                <div className="ed-layer-list">
+                  {mute.map((m, i) => (
+                    <div
+                      key={`${m.start}-${m.end}`}
+                      className={`ed-layer-row${tlSelected?.kind === "mute" && tlSelected.index === i ? " on" : ""}`}
+                      onClick={() => {
+                        setTlSelected({ kind: "mute", index: i });
+                        seekClipTime(Math.max(0, m.start - 1), false);
+                      }}
+                      title="Перейти на секунду раньше отрезка — послушать стык"
+                    >
+                      <span className="ed-layer-ico">🔇</span>
+                      <span className="ed-layer-name mono">
+                        {formatTimecode(m.start)} – {formatTimecode(m.end)}
+                      </span>
+                      <span className="mono muted ed-layer-time">{(m.end - m.start).toFixed(1)} с</span>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        title="Вернуть звук"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMute((prev) => prev.filter((_, j) => j !== i));
+                          setTlSelected(null);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </Group>
+            <Group
               title="Раскладка кадра"
               badge={{ single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"}
             >
@@ -3258,7 +3352,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 layout={layout}
                 onChange={setLayout}
                 frameAt={videoRef.current?.currentTime ?? 0}
-                keyed={Boolean(source.chroma_key)}
+                chromaKey={source.chroma_key}
                 backdrop={backdrop}
                 onBackdrop={setBackdrop}
               />
@@ -3831,15 +3925,62 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <span>Фоновый трек</span>
               </label>
               {musicOn ? (
-                <label className="field">
-                  <span>Трек</span>
-                  <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
-                    <option value={0}>по умолчанию</option>
-                    {tracks.data?.map((t) => (
-                      <option key={t.id} value={t.id}>{t.label}</option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <div className="lay-row">
+                    <label className="field lay-grow">
+                      <span>Трек</span>
+                      <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
+                        <option value={0}>по умолчанию</option>
+                        {tracks.data?.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.label}
+                            {t.duration_sec ? ` · ${formatDuration(t.duration_sec)}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="btn ghost sm music-refresh"
+                      title="Обновить список треков"
+                      disabled={tracks.isFetching}
+                      onClick={() => void tracks.refetch()}
+                    >
+                      {tracks.isFetching ? "…" : "↻"}
+                    </button>
+                  </div>
+                  {trackId ? <audio className="music-preview" src={`/media/audio-tracks/${trackId}`} controls preload="none" /> : null}
+                  <div className="lay-row">
+                    <input
+                      className="input lay-grow"
+                      type="url"
+                      placeholder="Ссылка на трек: YouTube, SoundCloud…"
+                      value={musicUrl}
+                      disabled={musicFromUrl.isPending}
+                      onChange={(e) => {
+                        setMusicUrl(e.target.value);
+                        musicFromUrl.reset();
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && musicUrl.trim() && musicFromUrl.mutate()}
+                    />
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={musicFromUrl.isPending || !/^https?:\/\//i.test(musicUrl.trim())}
+                      onClick={() => musicFromUrl.mutate()}
+                      title="Сервер скачает только звук (до 15 минут) и добавит трек в список"
+                    >
+                      {musicFromUrl.isPending ? "Скачиваю…" : "Добавить по ссылке"}
+                    </button>
+                  </div>
+                  {musicFromUrl.isPending ? (
+                    <div className="lay-note ok">Скачиваю звук — это может занять минуту-другую, окно можно не трогать.</div>
+                  ) : musicFromUrl.isError ? (
+                    <div className="lay-note warn">
+                      {musicFromUrl.error instanceof ApiError ? musicFromUrl.error.message : "Не удалось скачать трек"}
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </Group>
 
@@ -4065,6 +4206,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               onLayersChange={setLayers}
               onCameraChange={setCamera}
               onDropLayers={(payload, at, track) => dropLayersAt(payload, at, track)}
+              mute={mute}
+              onMuteChange={setMute}
               onSubLinesChange={(next) => {
                 setSubLines(next);
                 subLinesRef.current = next;

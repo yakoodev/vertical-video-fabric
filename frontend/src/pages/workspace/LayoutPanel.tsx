@@ -2,11 +2,15 @@
  * Инспектор «Раскладка»: обычный кадр, вебка сверху/снизу над игрой или вебка
  * окошком. Вебку находит сервер (🎯) или её обводят рамкой на кадре исходника.
  * Значение — `render.layout` клипа (см. ./layout.ts и app/stream_layout.py).
+ * Здесь же хромакей источника (персонаж на зелёнке) и фон за персонажем.
  */
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { facecamApi } from "@/api/sources";
-import type { Backdrop } from "./chromaKey";
+import { qk } from "@/api/keys";
+import { facecamApi, sourcesApi } from "@/api/sources";
+import type { SourceDetail } from "@/api/types";
+import type { Backdrop, ChromaKey } from "./chromaKey";
 import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
 
 type Props = {
@@ -15,8 +19,8 @@ type Props = {
   onChange: (next: StreamLayout) => void;
   /** Секунда исходника для кадра в редакторе вебки (обычно — под курсором). */
   frameAt: number;
-  /** Источник на зелёнке: показываем фон за вырезанным персонажем. */
-  keyed?: boolean;
+  /** Хромакей источника (общий для всех его клипов); null — фон не вырезается. */
+  chromaKey?: ChromaKey | null;
   backdrop?: Backdrop;
   onBackdrop?: (next: Backdrop) => void;
 };
@@ -30,6 +34,141 @@ const CHOICES: Choice[] = [
   { id: "pip", label: "Окошко", hint: "Обычный кадр 9:16 и вебка окошком поверх", mode: "pip_cam" },
   { id: "meme", label: "Мем", hint: "Горизонтальное видео целиком сверху, ниже фон под картинки и титры", mode: "meme" },
 ];
+
+/** Ключ, если зелёнку не нашли, а включили руками: типичный хромакейный зелёный. */
+const FALLBACK_KEY: ChromaKey = { color: "#00b140", similarity: 0.25, blend: 0.08 };
+
+/**
+ * Хромакей источника: вкл/выкл, поиск зелёнки по кадрам, ползунки допуска и
+ * мягкости края. Превью вырезает фон само (./chromaKey.ts) из кэша источника,
+ * поэтому ползунок сразу кладёт ключ в кэш, а на сервер уходит с паузой.
+ */
+function ChromaKeyControls({ sourceId, chromaKey }: { sourceId: number; chromaKey: ChromaKey | null }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ kind: "ok" | "warn"; text: string } | null>(null);
+  // Выключили и включили снова — возвращаем подобранный ключ, а не ищем заново.
+  const lastKeyRef = useRef<ChromaKey | null>(chromaKey);
+  if (chromaKey) lastKeyRef.current = chromaKey;
+  const pendingRef = useRef<{ key: ChromaKey; timer: number } | null>(null);
+
+  const putInCache = (key: ChromaKey | null) =>
+    qc.setQueryData<SourceDetail>(qk.source(sourceId), (prev) => (prev ? { ...prev, chroma_key: key } : prev));
+
+  const save = async (key: ChromaKey | null) => {
+    try {
+      const updated = await sourcesApi.setChromaKey(sourceId, key);
+      putInCache(updated.chroma_key ?? null);
+    } catch (e) {
+      setNote({ kind: "warn", text: e instanceof ApiError ? e.message : "Не удалось сохранить хромакей" });
+      void qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+    }
+  };
+
+  const flush = () => {
+    const p = pendingRef.current;
+    if (!p) return;
+    pendingRef.current = null;
+    window.clearTimeout(p.timer);
+    void save(p.key);
+  };
+  // Ушли с панели посреди подстройки — последнее значение всё равно сохраняем.
+  useEffect(() => flush, [sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tune = (patch: Partial<ChromaKey>) => {
+    if (!chromaKey) return;
+    const key = { ...chromaKey, ...patch };
+    putInCache(key);
+    if (pendingRef.current) window.clearTimeout(pendingRef.current.timer);
+    pendingRef.current = { key, timer: window.setTimeout(flush, 450) };
+  };
+
+  const detect = async (thenEnable: boolean) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await sourcesApi.detectKey(sourceId);
+      if (r.chroma_key) {
+        putInCache(r.chroma_key);
+        await save(r.chroma_key);
+        setNote({ kind: "ok", text: `Нашёл зелёный фон ${r.chroma_key.color} — края подстройте ползунками` });
+      } else if (thenEnable) {
+        const key = lastKeyRef.current ?? FALLBACK_KEY;
+        putInCache(key);
+        await save(key);
+        setNote({ kind: "warn", text: "Однотонного фона по краям кадра не нашёл — включил стандартный зелёный, подберите цвет" });
+      } else {
+        setNote({ kind: "warn", text: "Однотонного зелёного/синего фона по краям кадра не нашёл" });
+      }
+    } catch (e) {
+      setNote({ kind: "warn", text: e instanceof ApiError ? e.message : "Не удалось проверить кадры" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = (on: boolean) => {
+    setNote(null);
+    if (pendingRef.current) {
+      window.clearTimeout(pendingRef.current.timer);
+      pendingRef.current = null;
+    }
+    if (!on) {
+      putInCache(null);
+      void save(null);
+    } else if (lastKeyRef.current) {
+      putInCache(lastKeyRef.current);
+      void save(lastKeyRef.current);
+    } else {
+      void detect(true);
+    }
+  };
+
+  return (
+    <div className="lay-key">
+      <label className="switch" title="Источник записан на зелёном (синем) фоне — вырезать его; ключ общий для всех клипов источника">
+        <input type="checkbox" checked={Boolean(chromaKey)} disabled={busy} onChange={(e) => toggle(e.target.checked)} />
+        <span className="switch-track" />
+        <span>Вырезать зелёный фон (хромакей)</span>
+      </label>
+      <button type="button" className="btn sm lay-detect" disabled={busy} onClick={() => void detect(false)} title="Посмотреть кадры источника и найти цвет фона">
+        {busy ? "Смотрю кадры…" : "🔍 Найти зелёный фон"}
+      </button>
+      {chromaKey ? (
+        <>
+          <div className="lay-row">
+            <span className="lay-grow muted li-note">Цвет фона, который вырезаем</span>
+            <input
+              type="color"
+              className="lay-color"
+              value={chromaKey.color}
+              title="Цвет ключа"
+              onChange={(e) => tune({ color: e.target.value.toLowerCase() })}
+            />
+          </div>
+          <label className="field range">
+            <span title="Насколько далёкие от ключа оттенки тоже вырезаются: мало — остаётся зелёная кайма, много — съедает персонажа">
+              Допуск · {chromaKey.similarity.toFixed(2)}
+            </span>
+            <input
+              type="range"
+              min={0.01}
+              max={0.6}
+              step={0.01}
+              value={chromaKey.similarity}
+              onChange={(e) => tune({ similarity: Number(e.target.value) })}
+            />
+          </label>
+          <label className="field range">
+            <span title="Ширина полупрозрачного края: волосы и контур мягче">Мягкость края · {chromaKey.blend.toFixed(2)}</span>
+            <input type="range" min={0} max={0.5} step={0.01} value={chromaKey.blend} onChange={(e) => tune({ blend: Number(e.target.value) })} />
+          </label>
+        </>
+      ) : null}
+      {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
+    </div>
+  );
+}
 
 const sameCam = (a: LayoutRect, b: LayoutRect) =>
   Math.abs(a.x - b.x) < 1e-3 && Math.abs(a.y - b.y) < 1e-3 && Math.abs(a.w - b.w) < 1e-3 && Math.abs(a.h - b.h) < 1e-3;
@@ -154,7 +293,8 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   );
 }
 
-export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, keyed, backdrop, onBackdrop }: Props) {
+export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop }: Props) {
+  const keyed = Boolean(chromaKey);
   const layout = normalizeLayout(raw);
   const [savedCam, setSavedCam] = useState<LayoutRect | null>(null);
   const [busy, setBusy] = useState(false);
@@ -243,6 +383,7 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, keyed, b
       ) : null}
       {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
 
+      <ChromaKeyControls sourceId={sourceId} chromaKey={chromaKey ?? null} />
       {keyed && backdrop && onBackdrop ? (
         <div className="lay-row">
           <span className="lay-grow muted li-note">Зелёный фон вырезан. Фон за персонажем (верх → низ)</span>

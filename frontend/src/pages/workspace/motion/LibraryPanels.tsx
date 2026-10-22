@@ -578,7 +578,31 @@ export function SoundsPanel({ onAdd, clipDuration }: { onAdd: AddLayers; clipDur
 /* ---------- мемы ---------- */
 
 export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: MontageAsset[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
   const [q, setQ] = useState("");
+  // Своя картинка (скриншот, мем с диска) — сразу в библиотеку и слоем на кадр.
+  const [uploading, setUploading] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const uploadImages = async (files: FileList | File[]) => {
+    const list = [...files].filter((f) => f.type.startsWith("image/"));
+    if (!list.length) {
+      toast.error("Нужна картинка: PNG, JPG, WEBP или GIF");
+      return;
+    }
+    setUploading(list.length);
+    for (const f of list) {
+      try {
+        const asset = await montageAssetsApi.upload(f, f.name.replace(/\.[^.]+$/, ""));
+        onAdd([imageLayer({ asset_id: String(asset.id) }, 760, 3)]);
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.message : `Не удалось загрузить ${f.name}`);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+    void qc.invalidateQueries({ queryKey: qk.montageAssets });
+  };
   const packs = useQuery({ queryKey: ["motion-packs"], queryFn: motionApi.packs, staleTime: 300_000 });
   const memePacks = (packs.data ?? []).filter((p) => p.kind === "meme");
   const activePack = memePacks[0]?.id ?? "";
@@ -587,8 +611,36 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
     (a) => (a.kind === "image" || a.kind === "gif") && (!q.trim() || `${a.label} ${a.description} ${a.tags}`.toLowerCase().includes(q.trim().toLowerCase())),
   );
   return (
-    <div className="lib-panel">
+    <div
+      className={`lib-panel${dragOver ? " is-drop" : ""}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setDragOver(false);
+        void uploadImages(e.dataTransfer.files);
+      }}
+    >
       <input className="input lib-search" placeholder="Поиск мема: drake, кот, стоп…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <label className={`btn sm lib-upload${uploading ? " is-busy" : ""}`} title="Картинка с диска или скриншот: попадёт в библиотеку и сразу на кадр. Можно бросить файл на панель">
+        {uploading ? `Загружаю… (${uploading})` : "📤 Своя картинка"}
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          disabled={uploading > 0}
+          onChange={(e) => {
+            if (e.target.files?.length) void uploadImages(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </label>
       {own.length ? (
         <>
           <div className="lib-sub">Мои файлы</div>

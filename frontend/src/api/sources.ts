@@ -49,6 +49,12 @@ export const sourcesApi = {
   detectCrop: (id: number | string) => api.post<{ crop: CropRect | null }>(`/api/sources/${id}/detect-crop`),
   setCrop: (id: number | string, crop: CropRect | null) =>
     api.patch<SourceDetail>(`/api/sources/${id}/crop`, { crop }),
+  /** Хромакей: найти зелёнку по кадрам (ничего не сохраняет), null — фон обычный. */
+  detectKey: (id: number | string) =>
+    api.post<{ chroma_key: NonNullable<Source["chroma_key"]> | null }>(`/api/sources/${id}/detect-key`),
+  /** Сохранить ключ источника; null — выключить. Ответ — источник без клипов. */
+  setChromaKey: (id: number | string, chroma_key: Source["chroma_key"]) =>
+    api.patch<Source>(`/api/sources/${id}/chroma-key`, { chroma_key }),
   uploadFile: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
