@@ -45,11 +45,15 @@ def test_keyed_base_keeps_green_and_moves_look_to_compositor():
     assert _keyed_render(preset, {"layers": []})[0] is preset
 
 
-def test_keyed_source_trims_dark_edges_unless_cropped():
-    assert _base_crop({"content_crop": None}, {"key": {"color": "#00fe00"}}) == {"x": 0.005, "y": 0.005, "w": 0.99, "h": 0.99}
+def test_keyed_source_always_trims_edges_inside_crop():
+    key = {"key": {"color": "#00fe00"}}
+    full = _base_crop({"content_crop": None}, key)
+    assert full["x"] == full["y"] == 0.006 and abs(full["w"] - 0.988) < 1e-9
     assert _base_crop({"content_crop": None}, {"layers": []}) is None
-    crop = {"x": 0.1, "y": 0, "w": 0.8, "h": 1}
-    assert _base_crop({"content_crop": crop}, {"key": {"color": "#00fe00"}}) is crop
+    crop = {"x": 0.1, "y": 0.0, "w": 0.8, "h": 1.0}
+    assert _base_crop({"content_crop": crop}, {"layers": []}) is crop
+    inner = _base_crop({"content_crop": crop}, key)
+    assert abs(inner["x"] - 0.1048) < 1e-9 and abs(inner["w"] - 0.7904) < 1e-9 and inner["y"] == 0.006
 
 
 def test_meme_video_scale_centers_wider_video():

@@ -902,9 +902,11 @@ def test_normalize_loudness_leaves_silent_clip_without_error(tmp_path, monkeypat
 
 
 def test_loudness_is_one_linear_gain_not_dynamic():
-    """Тихие места не вытягиваются: одна поправка на клип, не больше +8 дБ."""
+    """Тихие места не вытягиваются: одна поправка на клип, не больше +20 дБ."""
     from app.render import linear_gain_db
 
     assert linear_gain_db(_loud("-20.0"), -14.0) == 6.0
-    assert linear_gain_db(_loud("-30.0"), -14.0) == 12.0
+    assert linear_gain_db(_loud("-30.0"), -14.0) == 16.0
+    assert linear_gain_db(_loud("-40.0"), -14.0) == 20.0  # тихий голос — до потолка
+    assert linear_gain_db(_loud("-60.0"), -14.0) == 0.0  # почти тишину не поднимаем
     assert linear_gain_db(_loud("-9.0"), -14.0) == -5.0

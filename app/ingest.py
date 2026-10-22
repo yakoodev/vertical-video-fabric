@@ -225,11 +225,18 @@ class SourceIngestor:
         """Записан на зелёнке — сразу ставим ключ (app/chroma_key.py); сбой не мешает загрузке."""
         from app.chroma_key import detect_key
 
+        from app.video_crop import detect_content_crop
+
         try:
             key = detect_key(source)
+            if not key:
+                return source
+            # Чёрные полосы записи ключ не вырезает — сразу обрезаем и их.
+            crop = detect_content_crop(source)
         except Exception:  # noqa: BLE001 - ключ — удобство, источник важнее
             return source
-        return self.store.update_source(source["id"], chroma_key=key) if key else source
+        fields = {"chroma_key": key, **({"content_crop": crop} if crop else {})}
+        return self.store.update_source(source["id"], **fields)
 
     def _create_source_from_file(
         self,

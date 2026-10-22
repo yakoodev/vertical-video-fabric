@@ -41,13 +41,19 @@ LOUDNORM_SILENCE_LUFS = -70.0
 _RENDER_LOCK = threading.RLock()
 
 
-MAX_LOUDNESS_BOOST_DB = 12.0  # клип с резкими пиками (−25 LUFS при пике −1) иначе оставался тихим (−19)
+# Тихая запись голоса (втубер на зелёнке, −32 LUFS) с потолком +12 выходила на −21.
+MAX_LOUDNESS_BOOST_DB = 20.0
+# Тише этого — почти тишина или шум: поднимать нечего, не превращаем её в шипение.
+SILENT_LUFS = -45.0
 
 
 def linear_gain_db(measured: dict, target: float) -> float:
     """Одна поправка громкости на весь клип: к цели по LUFS, но не больше потолка
-    (тихий клип не превращаем в шум; потолок +12 дБ) — пики дальше держит лимитер."""
-    gain = target - float(measured["input_i"])
+    (+20 дБ; почти тишину не поднимаем вовсе) — пики дальше держит лимитер."""
+    measured_i = float(measured["input_i"])
+    gain = target - measured_i
+    if measured_i < SILENT_LUFS:
+        gain = min(gain, 0.0)
     return max(-20.0, min(MAX_LOUDNESS_BOOST_DB, gain))
 
 
@@ -1837,16 +1843,23 @@ def _banner_overlay(banner: dict, preset: dict, height: int, banner_input: str, 
     )
 
 
-def _base_crop(source: dict, motion: dict | None) -> dict | None:
-    """Обрезка полей источника; на зелёнке — ещё и тонкая рамка по краю.
+KEY_EDGE_INSET = 0.006  # доля кадра с каждого края
 
-    Края кадра зелёнки после кодека темнее (первая строка — 0,72,0 вместо 0,254,0):
-    ключ их не берёт, и вокруг видео остаётся тёмная линия.
+
+def _base_crop(source: dict, motion: dict | None) -> dict | None:
+    """Обрезка полей источника; на зелёнке — ещё и тонкая рамка внутрь от неё.
+
+    Края зелёнки после кодека темнее (первая строка — 0,72,0 вместо 0,254,0), у
+    записи бывают и чёрные полосы: ключ их не берёт, и над персонажем остаётся
+    тёмная линия. Поэтому с ключом рамка срезается всегда, и поверх полос тоже.
     """
     crop = source.get("content_crop")
-    if crop or not (motion or {}).get("key"):
+    if not (motion or {}).get("key"):
         return crop
-    return {"x": 0.005, "y": 0.005, "w": 0.99, "h": 0.99}
+    c = crop or {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+    dx = c["w"] * KEY_EDGE_INSET
+    dy = c["h"] * KEY_EDGE_INSET
+    return {"x": c["x"] + dx, "y": c["y"] + dy, "w": c["w"] - 2 * dx, "h": c["h"] - 2 * dy}
 
 
 def _keyed_render(preset: dict, motion: dict | None) -> tuple[dict, dict | None]:
