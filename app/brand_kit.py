@@ -158,7 +158,6 @@ def normalize_brand(raw: Any) -> dict:
     # Второй цвет бренда — подсветка ключевых слов субтитров (необязательный).
     if _color(colors_src.get("highlight")):
         colors["highlight"] = _color(colors_src.get("highlight"))
-    backdrop_src = src.get("backdrop") if isinstance(src.get("backdrop"), dict) else {}
     corner = src.get("logo_corner")
     policy = src.get("sfx_policy")
     return {
@@ -171,13 +170,37 @@ def normalize_brand(raw: Any) -> dict:
         "hook_style": _normalize_hook_style(src.get("hook_style")),
         "cta": _normalize_cta(src.get("cta")),
         "music_track_id": _opt_id(src.get("music_track_id")),
-        # Фон за вырезанным персонажем; не задан — цвет плашки бренда.
-        "backdrop": {
-            "color": _color(backdrop_src.get("color")) or colors["plate"],
-            "color2": _color(backdrop_src.get("color2")) or "",
-        },
+        # Фон за персонажем и под видео meme — анимированный в цветах бренда (app/backgrounds.py).
+        "backdrop": brand_backdrop(src.get("backdrop"), colors),
         "sfx_policy": policy if policy in SFX_POLICIES else "minimal",
     }
+
+
+def _brand_palette(colors: dict) -> list[str]:
+    return [colors["plate"], colors["accent"]] + ([colors["highlight"]] if colors.get("highlight") else [])
+
+
+def brand_backdrop(raw: Any, colors: dict) -> dict:
+    """Фон бренда, как он хранится: по умолчанию анимированный (аврора), цвета ``[]`` —
+    «цвета бренда» (плашка, акцент, подсветка; правка цветов бренда меняет и фон).
+    Свой ``{kind, colors, …}`` — как есть; заливка/градиент — только если выбраны явно.
+    Старый ``{color, color2}`` без ``kind`` — тоже анимированный: его цвет — основа."""
+    from app.backgrounds import normalize_background
+
+    src = raw if isinstance(raw, dict) else {}
+    if src.get("kind"):
+        return normalize_background(src)
+    base = _color(src.get("color"))
+    custom = [base, *_brand_palette(colors)[1:]] if base and base != colors["plate"] else []
+    return normalize_background({"kind": "aurora", "colors": custom})
+
+
+def resolved_backdrop(brand: dict) -> dict:
+    """Фон бренда для клипа: цвета «бренда» подставлены явно."""
+    bg = dict(brand["backdrop"])
+    if not bg.get("colors") and bg.get("kind") not in ("solid", "gradient"):
+        bg["colors"] = _brand_palette(brand["colors"])
+    return bg
 
 
 def merge_brand(current: dict, patch: dict) -> dict:
@@ -574,9 +597,14 @@ def apply_brand(
             changes.append("музыка бренда")
         except KeyError:
             warnings.append(f"трека #{brand['music_track_id']} больше нет — музыка не тронута")
-    render["backdrop"] = normalize_backdrop(brand["backdrop"])
+    render["backdrop"] = normalize_backdrop(resolved_backdrop(brand))
     if keyed:
         changes.append("фон за персонажем")
+    layout = render.get("layout")
+    if isinstance(layout, dict) and layout.get("mode") == "meme":
+        # Фон под видео meme — тот же фон бренда (анимированный), а не заливка.
+        render["layout"] = {**layout, "bg": render["backdrop"]}
+        changes.append("фон под видео")
 
     render["layers"] = layers + added
     render["transition"] = transition

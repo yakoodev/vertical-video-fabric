@@ -5,7 +5,7 @@
  * - split   — вебка полосой сверху/снизу (`ratio` — её доля высоты), под ней игра;
  * - pip_cam — обычный кадр 9:16 и вебка окошком поверх (`pip` — центр/ширина в долях выхода);
  * - meme    — горизонтальное видео целиком сверху во всю ширину (`video_y` — его верх в долях
- *             высоты), ниже однотонный фон `bg` под картинки и титры.
+ *             высоты), ниже фон `bg` под картинки и титры — анимированный (motion/backgrounds.ts).
  *
  * `cam` — прямоугольник вебки в долях ВСЕГО кадра исходника (до content-crop).
  * `gap` и `border.width` — пиксели кадра 1080×1920 (на других размерах — пропорционально).
@@ -14,6 +14,16 @@
  * только с пропорцией `gameplayAspect(layout, W, H)` вместо 9/16, и вместо
  * одного drawImage вызывается `drawLayoutFrame(ctx, video, layout, rect, W, H)`.
  */
+
+import {
+  ANIMATED_BACKGROUNDS,
+  BACKGROUND_KINDS,
+  DEFAULT_BACKGROUND,
+  normalizeBackground,
+  paintBackground,
+  type Background,
+  type BackgroundOptions,
+} from "@/motion";
 
 export type LayoutMode = "single" | "split" | "pip_cam" | "meme";
 
@@ -42,8 +52,8 @@ export interface StreamLayout {
   video_y: number;
   /** meme: ширина видео в ширинах кадра, 1..4 (>1 — крупнее, края срезаны). */
   video_scale: number;
-  /** meme: фон под видео (#rrggbb). */
-  bg: string;
+  /** meme: фон под видео — анимированный по умолчанию (старый "#rrggbb" — заливка). */
+  bg: Background;
 }
 
 /** Прямоугольник в пикселях исходника (videoWidth × videoHeight). */
@@ -66,7 +76,7 @@ export const DEFAULT_LAYOUT: StreamLayout = {
   gap: 0,
   video_y: 0.04,
   video_scale: 1,
-  bg: "#0b0d14",
+  bg: DEFAULT_BACKGROUND,
 };
 
 const MODES: LayoutMode[] = ["single", "split", "pip_cam", "meme"];
@@ -113,7 +123,7 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
     gap: Math.round(num(s.gap, 0, 0, 200)),
     video_y: r4(num(s.video_y, DEFAULT_LAYOUT.video_y, 0, 0.6)),
     video_scale: r4(num(s.video_scale, 1, 1, 4)),
-    bg: typeof s.bg === "string" && /^#[0-9a-f]{6}$/i.test(s.bg) ? s.bg.toLowerCase() : DEFAULT_LAYOUT.bg,
+    bg: normalizeBackground(s.bg),
   };
 }
 
@@ -182,6 +192,7 @@ function camCover(cam: LayoutRect, vw: number, vh: number, aspect: number): Sour
  * `gameplayAspect`), вебка берётся из `layout.cam`. Камера (setTransform),
  * зеркало и лук накладываются снаружи — в рендере они тоже идут после сборки.
  * `out` — размер рендера (по умолчанию 1080×1920): из него берутся рамка/зазор.
+ * `t` — время клипа для анимированного фона meme (как кадр компоновщика рендера).
  */
 export function drawLayoutFrame(
   ctx: CanvasRenderingContext2D,
@@ -190,6 +201,8 @@ export function drawLayoutFrame(
   gameplayRect: SourceRect,
   W: number,
   H: number,
+  t = 0,
+  bgOpts: BackgroundOptions = {},
   out: { w: number; h: number } = { w: 1080, h: 1920 },
 ): void {
   const g = gameplayRect;
@@ -205,11 +218,8 @@ export function drawLayoutFrame(
   const color = layout.border.color;
 
   if (layout.mode === "meme") {
-    // Как render._layout_filter: фон, видео целиком во всю ширину с y = video_y.
-    ctx.save();
-    ctx.fillStyle = layout.bg;
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
+    // Как render._layout_filter + компоновщик: фон (анимированный), видео во всю ширину с y = video_y.
+    paintBackground(ctx, layout.bg, t, W, H, bgOpts);
     const top = layout.video_y > 0 ? evenPx(layout.video_y * out.h) : 0;
     const vidW = evenPx(out.w * (layout.video_scale || 1));
     const vidH = (vidW * vh) / vw;
@@ -315,12 +325,12 @@ export function cameraRegions(
 /**
  * «Кусок шире окна 9:16» — `fit` куска (set_piece_fit, app/video_crop.normalize_fit):
  * в кадре доля `w` ширины исходника (после обрезки полей), по вертикали посередине,
- * сверху и снизу — размытый тот же кадр (`blur`), чёрный или цвет `#rrggbb`.
+ * сверху и снизу — размытый тот же кадр (`blur`), анимированный фон (объект), чёрный или `#rrggbb`.
  * Раскладка клипа на таком куске не действует — так же, как в рендере.
  */
 export interface PieceFit {
   w: number;
-  bg: string;
+  bg: string | Background;
 }
 
 export const FIT_MIN_W = 0.35;
@@ -342,9 +352,20 @@ export function normalizeFit(raw: unknown): PieceFit | null {
   const obj = value as { w?: unknown; bg?: unknown };
   const w = Number(obj.w ?? 1);
   if (!Number.isFinite(w)) return null;
-  let bg = String(obj.bg || "blur").trim().toLowerCase();
-  if (bg !== "blur" && bg !== "black" && !/^#[0-9a-f]{6}$/.test(bg)) bg = "blur";
-  return { w: Math.round(Math.min(1, Math.max(FIT_MIN_W, w)) * 1000) / 1000, bg };
+  return { w: Math.round(Math.min(1, Math.max(FIT_MIN_W, w)) * 1000) / 1000, bg: fitBg(obj.bg) };
+}
+
+/** Как app/video_crop._fit_bg: blur/black/#rrggbb строкой, анимированный фон — объектом. */
+function fitBg(raw: unknown): string | Background {
+  const kinds = BACKGROUND_KINDS as readonly string[];
+  if (raw && typeof raw === "object" && kinds.includes(String((raw as { kind?: unknown }).kind))) {
+    const bg = normalizeBackground(raw);
+    return bg.kind === "solid" ? bg.colors[0] : bg;
+  }
+  const text = String(raw || "blur").trim().toLowerCase();
+  if ((ANIMATED_BACKGROUNDS as readonly string[]).includes(text)) return normalizeBackground(text);
+  if (text === "blur" || text === "black" || /^#[0-9a-f]{6}$/.test(text)) return text;
+  return "blur";
 }
 
 /**
@@ -371,9 +392,13 @@ export function drawFitFrame(
   content: SourceRect,
   W: number,
   H: number,
+  t = 0,
+  bgOpts: BackgroundOptions = {},
   out: { w: number; h: number } = { w: 1080, h: 1920 },
 ): void {
-  if (fit.bg === "blur") {
+  if (typeof fit.bg === "object") {
+    paintBackground(ctx, fit.bg, t, W, H, bgOpts);
+  } else if (fit.bg === "blur") {
     // boxblur=24:2 на кадре 1080 ≈ размытие ~20 px; считаем на холсте в 4 раза меньше —
     // размывать полный кадр на каждом кадре превью дорого. Поля с запасом — края не темнеют.
     const bc = (fitBgCanvas ??= document.createElement("canvas"));

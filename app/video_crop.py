@@ -24,9 +24,11 @@ FIT_BGS = ("blur", "black")
 
 
 def normalize_fit(value: object) -> dict | None:
-    """``fit`` куска → ``{"w": 0.35..1, "bg": "blur" | "black" | "#rrggbb"}`` или None.
+    """``fit`` куска → ``{"w": 0.35..1, "bg": "blur" | "black" | "#rrggbb" | фон}`` или None.
 
-    Число — сокращение для ``{"w": число, "bg": "blur"}``; пусто/0/False — обычный кадр."""
+    Число — сокращение для ``{"w": число, "bg": "blur"}``; пусто/0/False — обычный кадр.
+    Фон — анимированный ``{kind, colors, speed, intensity}`` (app/backgrounds.py) или имя
+    стиля строкой (``"grid"``)."""
     if value in (None, "", False, 0):
         return None
     if isinstance(value, str):
@@ -48,10 +50,35 @@ def normalize_fit(value: object) -> dict | None:
         return None
     if w != w:
         return None
-    bg = str(value.get("bg") or "blur").strip()
-    if bg not in FIT_BGS and not _HEX_RE.match(bg):
-        bg = "blur"
-    return {"w": round(min(1.0, max(FIT_MIN_W, w)), 3), "bg": bg.lower()}
+    return {"w": round(min(1.0, max(FIT_MIN_W, w)), 3), "bg": _fit_bg(value.get("bg"))}
+
+
+def _fit_bg_ok(raw: object) -> bool:
+    from app.backgrounds import BACKGROUND_KINDS
+
+    if raw in (None, ""):
+        return True
+    if isinstance(raw, dict):
+        return raw.get("kind") in BACKGROUND_KINDS
+    text = str(raw).strip().lower()
+    return text in FIT_BGS or text in BACKGROUND_KINDS or bool(_HEX_RE.match(text))
+
+
+def _fit_bg(raw: object) -> object:
+    """Фон куска «шире окна»: blur/black/#rrggbb строкой, анимированный — объектом."""
+    from app.backgrounds import ANIMATED_KINDS, BACKGROUND_KINDS, normalize_background
+
+    if isinstance(raw, dict) and raw.get("kind") in BACKGROUND_KINDS:
+        bg = normalize_background(raw)
+        if bg["kind"] == "solid":
+            return bg["colors"][0]
+        return bg
+    text = str(raw or "blur").strip().lower()
+    if text in ANIMATED_KINDS:
+        return normalize_background(text)
+    if text in FIT_BGS or _HEX_RE.match(text):
+        return text
+    return "blur"
 
 
 def fit_problem(value: object) -> str | None:
@@ -66,8 +93,8 @@ def fit_problem(value: object) -> str | None:
         return "нужна доля ширины числом"
     if not FIT_MIN_W <= w <= 1.0:
         return f"w={w:g} — доля ширины исходника {FIT_MIN_W}..1"
-    if isinstance(value, dict) and value.get("bg") not in (None, "", *FIT_BGS) and not _HEX_RE.match(str(value["bg"])):
-        return "bg — blur, black или #rrggbb"
+    if isinstance(value, dict) and not _fit_bg_ok(value.get("bg")):
+        return "bg — blur, фон (aurora|grid|bokeh|waves или {kind, colors, speed, intensity}), black или #rrggbb"
     return None if normalize_fit(value) else "нужно {w, bg} или доля ширины"
 
 

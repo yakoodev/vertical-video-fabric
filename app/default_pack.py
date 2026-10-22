@@ -107,7 +107,8 @@ DEFAULT_BRAND = {
     "hook_style": {"plate": True, "stroke": None, "uppercase": True},
     "cta": {"text": "Каталог в профиле", "url_text": "vtubika.store", "duration_sec": 3.0},
     "music_track_id": None,
-    "backdrop": {"color": "#0b0d14", "color2": "#1a1f33"},
+    # Анимированный фон в цветах бренда (app/backgrounds.py); цвета пусто — плашка + акцент.
+    "backdrop": {"kind": "aurora", "colors": []},
     "sfx_policy": "minimal",
 }
 BRAND_SEED_KEY = "brand_seed_v1"

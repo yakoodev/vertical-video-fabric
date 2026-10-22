@@ -25,6 +25,7 @@ import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/work
 import {
   cameraMatrix,
   captionWordsFrom,
+  clipAccent,
   drawFrame,
   holdFinalLayers,
   interpolateKeys,
@@ -736,8 +737,12 @@ function CropFrame({
           };
           // Основа кадра: кусок с fit — как render._piece_fit_filter, иначе — раскладка клипа.
           const content = { x: c.x * vw, y: c.y * vh, w: c.w * vw, h: c.h * vh };
+          // Анимированный фон (meme, «шире окна», за персонажем) — в момент клипа, в цветах клипа.
+          const bgOpts = { accent: clipAccent(motion?.layers), createCanvas: browserEnv(cv.width, cv.height).createCanvas };
           const drawBase = (target: CanvasRenderingContext2D, lay: StreamLayout | undefined, tw: number, th: number) =>
-            fit ? drawFitFrame(target, v, fit, rect, content, tw, th) : drawLayoutFrame(target, v, lay, rect, tw, th);
+            fit
+              ? drawFitFrame(target, v, fit, rect, content, tw, th, clipT, bgOpts)
+              : drawLayoutFrame(target, v, lay, rect, tw, th, clipT, bgOpts);
           const key = keyRef.current;
           if (ctx && key) {
             // Как компоновщик рендера: фон → слои «за персонажем» → вырезанное видео.
@@ -747,11 +752,12 @@ function CropFrame({
             const kctx = kc.getContext("2d", { willReadFrequently: true });
             if (kctx) {
               // Поля и фон раскладки — цвета ключа, чтобы вырезались вместе с зелёнкой.
-              const keyed = layout?.mode === "meme" ? { ...layout, bg: key.color } : layout;
+              const keyed: StreamLayout | undefined =
+                layout?.mode === "meme" ? { ...layout, bg: { kind: "solid", colors: [key.color], speed: 1, intensity: 0 } } : layout;
               drawBase(kctx, keyed, kc.width, kc.height);
               applyChromaKey(kctx, kc.width, kc.height, key);
               ctx.setTransform(1, 0, 0, 1, 0, 0);
-              paintBackdrop(ctx, cv.width, cv.height, backdropRef.current);
+              paintBackdrop(ctx, cv.width, cv.height, backdropRef.current, clipT, bgOpts);
               if (motion?.layers.length) {
                 const env = browserEnv(cv.width, cv.height);
                 const behind = shownLayers.filter((l) => !l.hidden);
@@ -771,7 +777,7 @@ function CropFrame({
               }
               const lctx = lc.getContext("2d");
               if (lctx) {
-                drawLayoutFrame(lctx, v, layout, rect, cv.width, cv.height);
+                drawLayoutFrame(lctx, v, layout, rect, cv.width, cv.height, clipT, bgOpts);
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.drawImage(lc, 0, 0);
                 const box = regions.box;
@@ -3538,6 +3544,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 chromaKey={source.chroma_key}
                 backdrop={backdrop}
                 onBackdrop={setBackdrop}
+                accent={clipAccent(layers)}
               />
             </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>

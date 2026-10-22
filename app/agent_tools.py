@@ -33,6 +33,11 @@ from typing import Any, Callable
 
 from app import motion
 from app.clip_settings import normalize_render_settings
+from app.backgrounds import BACKGROUND_KINDS as BG_KINDS
+
+# Стили фона для подсказок инструментов (app/backgrounds.py).
+BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (неоновая перспективная сетка) | bokeh (блики) | "
+                 "waves (светящиеся волны) | gradient | solid (статичные)")
 
 # Безопасные зоны вертикального ролика: сверху — шапка площадки, снизу — подпись,
 # кнопки и прогресс-бар TikTok/Shorts/Reels. Текст там читается плохо или закрыт.
@@ -1847,11 +1852,24 @@ def h_set_music(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
-    """Фон за вырезанным персонажем: цвет или вертикальный градиент color → color2."""
+    """Фон за вырезанным персонажем (app/backgrounds.py): анимированный kind в цветах
+    colors; статичная заливка — только kind solid/gradient (или старые color/color2)."""
+    from app.backgrounds import normalize_background
     from app.chroma_key import normalize_backdrop
 
     render = _current_render(ctx)
-    merged = {**(render.get("backdrop") or {}), **{k: v for k, v in args.items() if v is not None}}
+    current = normalize_background(render.get("backdrop"))
+    fresh_args = {k: v for k, v in args.items() if v is not None}
+    if any(k in fresh_args for k in ("kind", "colors", "speed", "intensity")):
+        # Передано только то, что меняется: остальное — от текущего фона.
+        merged = {**current, **{k: fresh_args[k] for k in ("kind", "colors", "speed", "intensity") if k in fresh_args}}
+    elif fresh_args.get("color"):
+        # Старый вызов color/color2 — явная заливка (градиент), её просили.
+        merged = {"color": fresh_args["color"], "color2": fresh_args.get("color2") or ""}
+        if str(merged["color"]).lower() == "#0b0d14" and not merged["color2"]:
+            merged = {"kind": "solid", "colors": [merged["color"]]}
+    else:
+        merged = current
     fresh = _save_render(ctx, {**render, "backdrop": normalize_backdrop(merged)})
     out: dict = {"ok": True, "backdrop": fresh["backdrop"]}
     if not _source_keyed(ctx):
@@ -2342,8 +2360,10 @@ def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
     if fit and mode in ("split", "pip_cam", "meme"):
         warnings.append(f"на этом куске раскладка {mode} не действует (вебки/окошка нет) — только он шире окна")
     if fit:
+        bg = fit["bg"]
+        bg_name = bg.get("kind") if isinstance(bg, dict) else bg
         out["note"] = ("кусок рендерится шире окна: центр — тот же focus куска; фон сверху и снизу — "
-                       f"{fit['bg']}. Проверь view_frame на куске: субтитры и титры лягут на фон — это хорошо")
+                       f"{bg_name}. Проверь view_frame на куске: субтитры и титры лягут на фон — это хорошо")
     if warnings:
         out["warnings"] = warnings
     return out
@@ -3204,7 +3224,9 @@ def _build_registry() -> list[Tool]:
             "set_layout", "Меняю раскладку кадра",
             "Раскладка кадра 9:16: mode single (обычный кадр) | split (вебка сверху/снизу + игра; cam {x,y,w,h} "
             "в долях исходника, ratio, cam_pos) | pip_cam (окошко вебки pip {x,y,w}) | meme (горизонтальное видео "
-            "целиком сверху во всю ширину, ниже фон bg #rrggbb под картинки и титры; video_y — верх видео в долях "
+            "целиком сверху во всю ширину, ниже фон bg под картинки и титры — анимированный объект {kind, colors, "
+            "speed, intensity} как у set_backdrop или имя стиля строкой (\"grid\"); не задан — аврора в цветах "
+            "ролика; #rrggbb (заливка) — только если владелец просил; video_y — верх видео в долях "
             "высоты; video_scale 1..4 — ширина видео в ширинах кадра, края срезаются: для персонажа на зелёнке "
             "2–3, чтобы он был крупным). Передавай только то, что меняешь. В split/pip_cam камера (set_camera) "
             "двигает только игру; что из игры в окне — game_x (центр окна игры 0..1 на всех кусках, или на куске "
@@ -3213,7 +3235,9 @@ def _build_registry() -> list[Tool]:
             "/ Frame layout.",
             _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
-                  "pip": {"type": "object"}, "bg": {"type": "string"}, "video_y": {"type": "number"},
+                  "pip": {"type": "object"},
+                  "bg": {"type": ["object", "string"], "description": "meme: фон {kind, colors, speed, intensity} или имя стиля"},
+                  "video_y": {"type": "number"},
                   "video_scale": {"type": "number"},
                   "game_x": {"type": "number", "description": "центр окна игры, доля ширины исходника 0..1"},
                   "piece": {"type": "integer", "description": "game_x только для этого куска"}}),
@@ -3292,9 +3316,16 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_backdrop", "Ставлю фон за персонажем",
-            "Фон за вырезанным персонажем (нужен хромакей): color #rrggbb, color2 — низ вертикального градиента "
-            "(пусто — однотонный). Картинки во весь фон — слоем image с behind:true. / Backdrop behind a keyed subject.",
-            _obj({"color": {"type": "string"}, "color2": {"type": "string"}}),
+            "Фон за вырезанным персонажем (нужен хромакей) — анимированный зацикленный, рисуется кодом: kind "
+            f"{BG_KINDS_HINT}; colors — до 3 #rrggbb [тёмная основа, акцент, второй акцент], [] — в цветах ролика "
+            "(тёмный + акцент субтитров); speed 0.1..4 (1 — цикл 10 с); intensity 0..1 (яркость свечения, 0.7). "
+            "Передавай только то, что меняешь. Статичная заливка (kind solid/gradient или color/color2) — только "
+            "если владелец попросил. Картинки во весь фон — слоем image с behind:true. / Animated backdrop behind "
+            "a keyed subject.",
+            _obj({"kind": {"type": "string", "enum": list(BG_KINDS)}, "colors": {"type": "array", "items": {"type": "string"}},
+                  "speed": {"type": "number"}, "intensity": {"type": "number"},
+                  "color": {"type": "string", "description": "устар.: заливка #rrggbb"},
+                  "color2": {"type": "string", "description": "устар.: низ градиента"}}),
             h_set_backdrop, mutating=True, label=lambda a: "Фон за персонажем",
         ),
         Tool(
@@ -3455,12 +3486,16 @@ def _build_registry() -> list[Tool]:
             "set_piece_fit", "Кадр шире окна",
             "Кусок piece шире окна 9:16 — когда двое по краям широкого плана не влезают в окно (камера только "
             "приближает, zoom ≥ 1): w — доля ширины исходника в кадре (0.35..1; 1 — весь кадр, ≈0.6 — двое "
-            "крупнее), bg — фон сверху и снизу: blur (размытый тот же кадр, по умолчанию), black или #rrggbb. "
+            "крупнее), bg — фон сверху и снизу: blur (размытый тот же кадр, по умолчанию) или анимированный фон "
+            "(имя стиля aurora|grid|bokeh|waves или объект {kind, colors, speed, intensity} как у set_backdrop); "
+            "black/#rrggbb (заливка) — только если владелец просил. "
             "Центр — тот же focus куска. w null — обычный кадр. Раскладка клипа (split/pip/meme) на этот кусок "
             "не действует. Часто лучше фокус на говорящего с cut на склейках (set_focus) — fit для общего плана. "
             "/ Show a piece wider than the 9:16 window.",
             _obj({"piece": {"type": "integer"}, "w": {"type": ["number", "null"]},
-                  "bg": {"type": "string", "description": "blur | black | #rrggbb"}}, ["piece"]),
+                  "bg": {"type": ["string", "object"],
+                         "description": "blur | aurora | grid | bokeh | waves | {kind, colors, speed, intensity} | black | #rrggbb"}},
+                 ["piece"]),
             h_set_piece_fit, mutating=True,
             label=lambda a: f"Кусок {a.get('piece')} шире окна" if a.get("w") else f"Кусок {a.get('piece')}: обычный кадр",
         ),

@@ -11,6 +11,7 @@ import { qk } from "@/api/keys";
 import { facecamApi, sourcesApi } from "@/api/sources";
 import type { SourceDetail } from "@/api/types";
 import type { Backdrop, ChromaKey } from "./chromaKey";
+import { BackgroundPicker } from "./BackgroundPicker";
 import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
 
 type Props = {
@@ -23,6 +24,8 @@ type Props = {
   chromaKey?: ChromaKey | null;
   backdrop?: Backdrop;
   onBackdrop?: (next: Backdrop) => void;
+  /** Акцент клипа (цвет звучащего слова субтитров) — им красится фон «в цветах ролика». */
+  accent?: string | null;
 };
 
 type Choice = { id: string; label: string; hint: string; mode: StreamLayout["mode"]; pos?: StreamLayout["cam_pos"] };
@@ -293,7 +296,7 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   );
 }
 
-export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop }: Props) {
+export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop, accent }: Props) {
   const keyed = Boolean(chromaKey);
   const layout = normalizeLayout(raw);
   const [savedCam, setSavedCam] = useState<LayoutRect | null>(null);
@@ -385,17 +388,10 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
 
       <ChromaKeyControls sourceId={sourceId} chromaKey={chromaKey ?? null} />
       {keyed && backdrop && onBackdrop ? (
-        <div className="lay-row">
-          <span className="lay-grow muted li-note">Зелёный фон вырезан. Фон за персонажем (верх → низ)</span>
-          <input type="color" className="lay-color" value={backdrop.color} title="Цвет фона сверху" onChange={(e) => onBackdrop({ ...backdrop, color: e.target.value })} />
-          <input
-            type="color"
-            className="lay-color"
-            value={backdrop.color2 || backdrop.color}
-            title="Цвет фона снизу (градиент)"
-            onChange={(e) => onBackdrop({ ...backdrop, color2: e.target.value })}
-          />
-        </div>
+        <>
+          <div className="li-cap">Зелёный фон вырезан. Фон за персонажем</div>
+          <BackgroundPicker value={backdrop} onChange={onBackdrop} accent={accent} />
+        </>
       ) : null}
 
       {layout.mode === "meme" ? (
@@ -408,10 +404,14 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
             <span>Размер видео · {Math.round((layout.video_scale || 1) * 100)}% ширины</span>
             <input type="range" min={100} max={400} step={5} value={Math.round((layout.video_scale || 1) * 100)} onChange={(e) => patch({ video_scale: Number(e.target.value) / 100 })} />
           </label>
-          <div className="lay-row">
-            <span className="lay-grow muted li-note">Фон под видео — место для картинок и титров</span>
-            <input type="color" className="lay-color" value={layout.bg} title="Цвет фона" onChange={(e) => patch({ bg: e.target.value })} />
-          </div>
+          {keyed ? (
+            <div className="muted li-note">Под видео — фон за персонажем (выше).</div>
+          ) : (
+            <>
+              <div className="li-cap">Фон под видео — место для картинок и титров</div>
+              <BackgroundPicker value={layout.bg} onChange={(bg) => patch({ bg })} accent={accent} />
+            </>
+          )}
         </>
       ) : layout.mode !== "single" ? (
         <>

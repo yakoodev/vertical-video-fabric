@@ -4,7 +4,7 @@
 источника (``sources.chroma_key``): цвет фона, порог и мягкость края. Рендер
 оставляет зелёнку в основе нетронутой (поля и фон раскладки тоже красятся в цвет
 ключа), а вырезает её компоновщик моушна (node/motion-render.ts): заливает фон
-клипа (``render_settings.backdrop``), рисует слои «за персонажем»
+клипа (``render_settings.backdrop``, анимированный — app/backgrounds.py), рисует слои «за персонажем»
 (``layer.behind``), сверху — вырезанную основу, потом обычные слои.
 
 Лук пресета (цвет, зерно, зеркало) с ключом идёт в компоновщике после выреза:
@@ -59,9 +59,11 @@ def normalize_key(raw: Any) -> dict | None:
 
 
 def normalize_backdrop(raw: Any) -> dict:
-    """Фон за вырезанным персонажем: цвет или вертикальный градиент ``color`` → ``color2``."""
-    src = raw if isinstance(raw, dict) else {}
-    return {"color": _color(src.get("color")) or DEFAULT_BACKDROP, "color2": _color(src.get("color2")) or ""}
+    """Фон за вырезанным персонажем (app/backgrounds.py): по умолчанию анимированный
+    в цветах клипа; старый ``{color, color2}`` — заливка/градиент как раньше."""
+    from app.backgrounds import normalize_background
+
+    return normalize_background(raw)
 
 
 def despill_type(color: str) -> str:

@@ -3969,6 +3969,22 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .src-audio-gain { width: 78px; }
 .lay-grow { flex: 1; min-width: 0; }
 .lay-color { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: none; cursor: pointer; }
+.lay-color:disabled { opacity: 0.55; cursor: default; }
+/* Выбор фона (BackgroundPicker): плитки стилей с живым превью */
+.bg-picker { display: grid; gap: 8px; }
+.bg-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 5px; }
+.bg-kind {
+  display: grid; justify-items: center; gap: 4px; padding: 5px 3px 4px; cursor: pointer; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2);
+  color: var(--text-dim); font: inherit; font-size: 10.5px; line-height: 1.15; text-align: center;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.bg-kind canvas { width: 100%; max-width: 54px; aspect-ratio: 9 / 16; height: auto; border-radius: 4px; display: block; }
+.bg-kind:hover { border-color: var(--border-strong); color: var(--text); }
+.bg-kind.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.bg-kind.static:not(.on) canvas { opacity: 0.6; }
+.bg-kind:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bg-colors { flex-wrap: wrap; }
 .agent-steps li.say { background: transparent; font-style: italic; color: var(--text-dim); }
 .li-cap-styles, .lib-cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .li-cap-style, .lib-cap { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 7px 6px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; text-align: center; }
@@ -4067,3 +4083,4 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .lib-upload { justify-self: start; cursor: pointer; }
 .lib-upload.is-busy { cursor: wait; opacity: 0.75; }
 .lib-panel.is-drop { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 10px; }
+.brand-preview-bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }

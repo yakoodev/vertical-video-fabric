@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import type { Background } from "@/motion";
 
 /** Брендовый шаблон (app/brand_kit.py): ролики одного заказчика — в одном стиле. */
 export interface BrandStroke {
@@ -33,7 +34,8 @@ export interface Brand {
   };
   cta: { text: string; url_text: string; duration_sec: number };
   music_track_id: number | null;
-  backdrop: { color: string; color2: string };
+  /** Фон за персонажем и под видео meme: анимированный, цвета [] — цвета бренда (app/brand_kit.py). */
+  backdrop: Background;
   sfx_policy: "none" | "minimal";
   created_at?: string;
   updated_at?: string;

@@ -28,8 +28,10 @@ def test_screen_color_needs_mostly_green_border():
 
 
 def test_backdrop_is_part_of_render_settings():
-    assert normalize_backdrop({"color": "#FF0000", "color2": "bad"}) == {"color": "#ff0000", "color2": ""}
-    assert normalize_render_settings({})["backdrop"] == {"color": "#0b0d14", "color2": ""}
+    # Старый {color, color2} — заливка как раньше; не выбран — анимированный (app/backgrounds.py).
+    assert normalize_backdrop({"color": "#FF0000", "color2": "bad"}) == {
+        "kind": "solid", "colors": ["#ff0000"], "speed": 1.0, "intensity": 0.7}
+    assert normalize_render_settings({})["backdrop"] == {"kind": "aurora", "colors": [], "speed": 1.0, "intensity": 0.7}
 
 
 def test_keyed_base_keeps_green_and_moves_look_to_compositor():
@@ -78,7 +80,7 @@ def test_comp_carries_key_and_backdrop(tmp_path):
     comp = json.loads(path.read_text(encoding="utf-8"))
     assert comp["key"] == {"color": "0x00fe00", "similarity": 0.3, "blend": 0.1, "despill": "green",
                            "grade": "eq=saturation=1.2"}
-    assert comp["background"] == {"color": "#112233", "color2": "#445566"}
+    assert comp["background"] == {"kind": "gradient", "colors": ["#112233", "#445566"], "speed": 1.0, "intensity": 0.7}
 
 
 def test_behind_layers_only_cover_the_backdrop():
