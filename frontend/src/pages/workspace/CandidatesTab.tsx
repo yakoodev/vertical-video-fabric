@@ -26,6 +26,7 @@ import {
   cameraMatrix,
   captionWordsFrom,
   drawFrame,
+  holdFinalLayers,
   interpolateKeys,
   layerBox,
   type CameraKey,
@@ -51,12 +52,17 @@ import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import {
   DEFAULT_LAYOUT,
   cameraRegions,
+  drawFitFrame,
   drawLayoutFrame,
+  fitWindow,
   gameplayAspect,
+  normalizeFit,
   normalizeLayout,
+  type PieceFit,
   type StreamLayout,
 } from "@/pages/workspace/layout";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
+import { SourceAudioPanel } from "@/pages/workspace/SourceAudioPanel";
 import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
@@ -557,6 +563,8 @@ type MotionView = {
   chat?: ChatMessage[];
   /** Направляющие прилипания во время перетаскивания слоя (центр кадра). */
   guides?: { v: boolean; h: boolean };
+  /** Длина клипа: слой до конца держится на стоп-кадре без анимации выхода, как в рендере. */
+  duration?: number;
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -673,8 +681,10 @@ function CropFrame({
     const targetAR = gameplayAspect(layout, 9, 16);
     const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
     const effAR = (srcW * c.w) / (srcH * c.h);
-    const fw = effAR >= targetAR ? targetAR / effAR : 1;
-    const fh = effAR >= targetAR ? 1 : effAR / targetAR;
+    const baseFw = effAR >= targetAR ? targetAR / effAR : 1;
+    const baseFh = effAR >= targetAR ? 1 : effAR / targetAR;
+    // Кусок «шире окна» (set_piece_fit): своё окно и своя основа, раскладка на нём не действует.
+    const fits = new Map<number, PieceFit | null>(segments.map((s) => [s.id, normalizeFit(s.fit)]));
     const paths = new Map<number, number[]>(
       segments.map((s) => [s.id, smoothFocus(s.focus ?? [], s.end_sec - s.start_sec, focusFeel(focusPreset))]),
     );
@@ -687,6 +697,8 @@ function CropFrame({
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
+        const fit = seg ? fits.get(seg.id) ?? null : null;
+        const { fw, fh } = fit ? fitWindow(fit, effAR) : { fw: baseFw, fh: baseFh };
         // While dragging, the box tracks the pointer; otherwise it follows the
         // focus track (which carries autofocus, keyframes, or a fixed frame).
         const fx = draggingRef.current
@@ -707,6 +719,8 @@ function CropFrame({
           const vh = v.videoHeight;
           const clipT = clipTimeOf(segments, cur) ?? 0;
           const motion = motionRef?.current;
+          // Слои до конца клипа — без анимации выхода (рендер держит их на стоп-кадре).
+          const shownLayers = motion ? holdFinalLayers(motion.layers, motion.duration) : [];
           // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
           const rect = {
@@ -715,6 +729,10 @@ function CropFrame({
             w: fw * c.w * vw,
             h: fh * c.h * vh,
           };
+          // Основа кадра: кусок с fit — как render._piece_fit_filter, иначе — раскладка клипа.
+          const content = { x: c.x * vw, y: c.y * vh, w: c.w * vw, h: c.h * vh };
+          const drawBase = (target: CanvasRenderingContext2D, lay: StreamLayout | undefined, tw: number, th: number) =>
+            fit ? drawFitFrame(target, v, fit, rect, content, tw, th) : drawLayoutFrame(target, v, lay, rect, tw, th);
           const key = keyRef.current;
           if (ctx && key) {
             // Как компоновщик рендера: фон → слои «за персонажем» → вырезанное видео.
@@ -725,20 +743,20 @@ function CropFrame({
             if (kctx) {
               // Поля и фон раскладки — цвета ключа, чтобы вырезались вместе с зелёнкой.
               const keyed = layout?.mode === "meme" ? { ...layout, bg: key.color } : layout;
-              drawLayoutFrame(kctx, v, keyed, rect, kc.width, kc.height);
+              drawBase(kctx, keyed, kc.width, kc.height);
               applyChromaKey(kctx, kc.width, kc.height, key);
               ctx.setTransform(1, 0, 0, 1, 0, 0);
               paintBackdrop(ctx, cv.width, cv.height, backdropRef.current);
               if (motion?.layers.length) {
                 const env = browserEnv(cv.width, cv.height);
-                const behind = motion.layers.filter((l) => !l.hidden);
+                const behind = shownLayers.filter((l) => !l.hidden);
                 drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat }, clipT, env, "behind");
               }
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
               ctx.drawImage(kc, 0, 0, cv.width, cv.height);
             }
           } else if (ctx) {
-            const regions = cam && motion ? cameraRegions(layout, vw, vh, cv.width, cv.height) : null;
+            const regions = cam && motion && !fit ? cameraRegions(layout, vw, vh, cv.width, cv.height) : null;
             if (regions && motion) {
               // Как компоновщик рендера: камера двигает окно игры, окошко/полоса вебки стоят.
               const lc = (layoutCanvasRef.current ??= document.createElement("canvas"));
@@ -764,7 +782,7 @@ function CropFrame({
               }
             } else {
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-              drawLayoutFrame(ctx, v, layout, rect, cv.width, cv.height);
+              drawBase(ctx, layout, cv.width, cv.height);
             }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -777,7 +795,7 @@ function CropFrame({
               const env = browserEnv(ov.width, ov.height);
               drawFrame(
                 octx,
-                { layers: motion.layers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat },
+                { layers: shownLayers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat },
                 clipT,
                 env,
                 keyRef.current ? "front" : undefined,
@@ -805,7 +823,7 @@ function CropFrame({
               (style && words?.length ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current) : false);
             if (!drawn) drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
             // Рамка выделенного слоя — поверх всего, только в редакторе.
-            const sel = motion?.selected ? motion.layers.find((l) => l.id === motion.selected) : null;
+            const sel = motion?.selected ? shownLayers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
               const env = browserEnv(ov.width, ov.height);
               const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat });
@@ -2097,9 +2115,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
   const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
   const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
+  // Длина клипа «кусками подряд» — та же шкала, что у слоёв в превью (clipTimeOf).
+  const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
   if (!layerDragRef.current)
-    motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages };
-  else motionViewRef.current = { ...motionViewRef.current, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages };
+    motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages, duration: viewDuration };
+  else
+    motionViewRef.current = {
+      ...motionViewRef.current,
+      camera,
+      selected: selectedLayerId,
+      words: captionWords,
+      chat: chatMessages,
+      duration: viewDuration,
+    };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
   // за рамку), потом сами слои сверху вниз.
@@ -3480,6 +3508,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               >
                 🔊 Громче у курсора
               </button>
+            </Group>
+            <Group
+              title="Звуковые дорожки"
+              badge={
+                (source.audio_tracks?.length ?? 0) > 1
+                  ? `смесь ${source.audio_tracks!.map((t) => t + 1).join("+")}`
+                  : source.audio_tracks?.length
+                    ? `дорожка ${source.audio_tracks[0] + 1}`
+                    : "по умолчанию"
+              }
+            >
+              <SourceAudioPanel sourceId={source.id} />
             </Group>
             <Group
               title="Раскладка кадра"

@@ -57,6 +57,32 @@ const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
   add: "lighter",
 };
 
+/** Слой «до конца клипа» — как app/motion_render.FINAL_HOLD_EPS. */
+export const FINAL_HOLD_EPS = 0.05;
+const heldCache = new WeakMap<Layer, { duration: number; layer: Layer }>();
+
+/**
+ * Слой до конца клипа держится на финальном стоп-кадре без анимации выхода — как
+ * рендер (app/motion_render.hold_final_layers): ролик на стоп-кадр длиннее, и плашка-итог
+ * с `out` гасла до него. Превью гасило её — теперь показывает то же, что рендер.
+ * Копия слоя кэшируется, чтобы каждый кадр превью не плодил новые объекты.
+ */
+export function holdFinalLayers(layers: Layer[], duration: number | undefined): Layer[] {
+  if (!duration || duration <= 0) return layers;
+  let changed = false;
+  const out = layers.map((layer) => {
+    const anim = layer.out;
+    if (!(Number(layer.end) >= duration - FINAL_HOLD_EPS) || !anim || anim.type === "none") return layer;
+    changed = true;
+    const hit = heldCache.get(layer);
+    if (hit && hit.duration === duration) return hit.layer;
+    const held: Layer = { ...layer, out: { ...anim, type: "none" } };
+    heldCache.set(layer, { duration, layer: held });
+    return held;
+  });
+  return changed ? out : layers;
+}
+
 /** Слои, видимые в момент `t`, в порядке рисования: дорожка снизу вверх, внутри — по списку. */
 export function visibleLayers(layers: Layer[], t: number): Layer[] {
   return layers

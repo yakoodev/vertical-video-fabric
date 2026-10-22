@@ -25,7 +25,7 @@ export {
   type CameraState,
   type CameraMatrix,
 } from "./camera";
-export { drawFrame, drawLayer, visibleLayers, layerBox, hitLayer, type LayerBox } from "./render";
+export { drawFrame, drawLayer, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs } from "./assets";
 export { invalidateTextCache, layoutText, type TextLayout } from "./layers/text";

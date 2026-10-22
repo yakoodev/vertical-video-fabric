@@ -2186,13 +2186,22 @@ def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
     return []
 
 
-def _piece_speech(words: list[dict], clip_start: float):
-    """Слова субтитров клипа, звучащие в отрезке куска (секунды от его начала) — одной строкой."""
-    def speech(a: float, b: float) -> str:
-        lo, hi = clip_start + a, clip_start + b
-        return " ".join(str(w.get("word") or "") for w in words
-                        if lo - 0.2 <= float(w.get("start", 0)) <= hi + 0.2).strip()
-    return speech
+def _piece_words(words: list[dict], plain_start: float, length: float) -> list[dict]:
+    """Слова субтитров куска во времени куска (``piece``). Субтитры лежат «кусками подряд»
+    (plain, без наплывов) — от начала куска на этой шкале и считаем."""
+    out = []
+    for w in words or []:
+        try:
+            start = float(w.get("start", 0)) - plain_start
+            end = float(w.get("end", w.get("start", 0))) - plain_start
+        except (TypeError, ValueError):
+            continue
+        if -0.2 <= start <= length + 0.2 and str(w.get("word") or "").strip():
+            item = {"word": str(w["word"]), "start": round(start, 3), "end": round(max(start, end), 3)}
+            if w.get("speaker"):
+                item["speaker"] = str(w["speaker"])
+            out.append(item)
+    return out
 
 
 def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
@@ -2218,8 +2227,11 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
     done = []
     for index in indexes:
         piece = pieces[index]
-        hint = _piece_speech(words, float(piece.get("clip_start") or 0.0)) if resolver and words else None
-        kwargs = {"speech_hint": hint} if hint else {}
+        length = float(piece["source_end"]) - float(piece["source_start"])
+        plain_start = sum(float(p["source_end"]) - float(p["source_start"]) for p in pieces[:index])
+        # Слова куска: Gemini видит реплику плана, а длинный план с диалогом — по кадру на реплику.
+        piece_words = _piece_words(words, plain_start, length) if resolver and words else []
+        kwargs = {"speech_words": piece_words} if piece_words else {}
         points = compute_segment_focus(source, float(piece["source_start"]), float(piece["source_end"]),
                                        vlm_resolver=resolver, **kwargs)
         local = []
@@ -2229,7 +2241,11 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
                 item["cut"] = True
             local.append(item)
         _apply_piece(ctx, index, focus=local)
-        done.append({"piece": index, "points": len(local), "cuts": sum(1 for q in local if q.get("cut"))})
+        turns = sum(1 for a, b in zip(local, local[1:]) if not b.get("cut") and abs(b["x"] - a["x"]) >= 0.06)
+        item = {"piece": index, "points": len(local), "cuts": sum(1 for q in local if q.get("cut"))}
+        if turns and resolver:
+            item["turns"] = turns  # повороты к ответившему внутри плана (по репликам)
+        done.append(item)
     return {"ok": True, "pieces": done,
             "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
 
@@ -3409,8 +3425,10 @@ def _build_registry() -> list[Tool]:
             "auto_focus", "Ищу говорящего в кадре",
             "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
             "без него — все), с жёсткой сменой на склейках. По умолчанию Gemini смотрит кадр каждого плана "
-            "(use_vlm:false — только лица/движение, быстрее). Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
-            "поправь промахи set_focus. / Automatic 9:16 framing.",
+            "(use_vlm:false — только лица/движение, быстрее). Длинный план с диалогом делит по репликам субтитров "
+            "(пауза или смена голоса): кадр на реплику, плавный поворот окна к ответившему (turns в ответе) — "
+            "поэтому сначала субтитры. Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
+            "поправь промахи set_focus. / Automatic 9:16 framing, per reply inside long dialogue shots.",
             _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
             h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
         ),

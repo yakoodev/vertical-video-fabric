@@ -43,6 +43,10 @@ export interface Source {
   focus_preset?: string;
   focus_strategy?: string;
   cut_strategy?: string;
+  /** Звуковые дорожки (app/source_audio.py): номера в звуке ролика, они же с громкостью, для речи. */
+  audio_tracks?: number[] | null;
+  audio_mix?: { track: number; gain_db: number }[] | null;
+  speech_tracks?: number[] | null;
 }
 
 /** Quality report of a finished render (app/render_qc.py). */
@@ -106,6 +110,8 @@ export interface AiSegment {
   status: string;
   focus?: FocusPoint[];
   manual_focus_x?: number | null;
+  /** «Кусок шире окна 9:16» (set_piece_fit): доля ширины исходника и фон; null — обычный кадр. */
+  fit?: { w: number; bg: string } | null;
 }
 
 export interface ClipPlan {

@@ -34,6 +34,46 @@ export interface PlayerOption {
   filename_label: string;
 }
 
+/** Звуковая дорожка записи (app/source_audio.audio_streams): index — номер среди звуковых (0:a:N). */
+export interface SourceAudioStream {
+  index: number;
+  title: string;
+  channels?: number | null;
+  language?: string;
+}
+/** Дорожка в звуке ролика и её громкость, дБ. */
+export interface SourceAudioMix {
+  track: number;
+  gain_db: number;
+}
+/** GET /api/sources/{id}/audio — дорожки записи и что выбрано (app/source_audio.audio_view). */
+export interface SourceAudio {
+  tracks_total: number;
+  selected: number[];
+  mix: SourceAudioMix[];
+  /** Дорожки для распознавания речи (без своей — те же, что selected). */
+  speech_tracks: number[];
+  /** Речь распознаётся по своей дорожке, а не по смеси ролика. */
+  speech_separate: boolean;
+  streams: SourceAudioStream[];
+  note?: string;
+}
+export interface SourceAudioSaved {
+  ok: boolean;
+  project_id: number;
+  audio: SourceAudio;
+  /** Замер «Авто»: громкость дорожек, дБ. */
+  levels?: Record<string, { median_db: number; p90_db: number }>;
+  auto_gain?: Record<string, number>;
+  note?: string;
+}
+export interface SourceAudioPatch {
+  /** Дорожки в звук ролика; gain_db "auto" — замерить и поставить голос над игрой; [] — по умолчанию (первая). */
+  audio_tracks?: { track: number; gain_db: number | "auto" }[];
+  /** Дорожки для распознавания; [] — как audio_tracks. */
+  speech_tracks?: number[];
+}
+
 export const sourcesApi = {
   list: () => api.get<Source[]>("/api/sources"),
   focusOptions: () => api.get<FocusOptions>("/api/focus-presets"),
@@ -55,6 +95,9 @@ export const sourcesApi = {
   /** Сохранить ключ источника; null — выключить. Ответ — источник без клипов. */
   setChromaKey: (id: number | string, chroma_key: Source["chroma_key"]) =>
     api.patch<Source>(`/api/sources/${id}/chroma-key`, { chroma_key }),
+  /** Звуковые дорожки записи: какие в звуке ролика, громкость каждой, по какой распознавать речь. */
+  audio: (id: number | string) => api.get<SourceAudio>(`/api/sources/${id}/audio`),
+  setAudio: (id: number | string, body: SourceAudioPatch) => api.patch<SourceAudioSaved>(`/api/sources/${id}/audio`, body),
   uploadFile: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
