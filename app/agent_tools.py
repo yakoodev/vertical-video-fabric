@@ -458,6 +458,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "mirror": render.get("mirror"),
             "transition": render.get("transition"),
             "cover": (render.get("cover") or {}).get("mode"),
+            "mute": render.get("mute") or [],
             **_key_view(source, render),
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
@@ -1305,6 +1306,21 @@ def h_list_music(ctx: ToolContext, _args: dict) -> dict:
     return {"tracks": tracks, "note": "громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь"}
 
 
+def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
+    """Тишина вместо звука исходника на отрезках (секунды клипа до вырезов), картинка остаётся."""
+    from app.audio_mute import normalize_mute
+
+    ranges = args.get("ranges")
+    if not isinstance(ranges, list):
+        raise ToolError("ranges — список {start, end} (секунды клипа до вырезов; [] — снять всё)")
+    duration = _clip_duration(ctx)
+    clean = [m for m in normalize_mute(ranges) if m["start"] < duration]
+    render = _current_render(ctx)
+    fresh = _save_render(ctx, {**render, "mute": clean})
+    return {"ok": True, "mute": fresh["mute"],
+            "note": "звук исходника там заглушён; звуки слоёв и музыка играют. Проверь listen."}
+
+
 def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
     """Музыка по ссылке (YouTube и т.п.) → новый трек фона."""
     from app.music_import import import_music_from_url
@@ -2098,6 +2114,15 @@ def _build_registry() -> list[Tool]:
             "list_music", "Смотрю фоновую музыку",
             "Треки фоновой музыки (id, название, длина). / Background music tracks.",
             _obj({}), h_list_music, scope="global",
+        ),
+        Tool(
+            "mute_audio", "Глушу звук исходника",
+            "Тишина вместо звука исходника на отрезках ranges [{start, end}] (секунды клипа до вырезов), "
+            "картинка остаётся — для вшитых эффектов старого монтажа, шума, мата (find_noises покажет где). "
+            "Заменяет прежний список; [] — снять. / Mute source audio in ranges.",
+            _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"}},
+                                                            ["start", "end"])}}, ["ranges"]),
+            h_mute_audio, mutating=True, label=lambda a: f"Глушу звук ({len(a.get('ranges') or [])} отр.)",
         ),
         Tool(
             "add_music_from_url", "Скачиваю музыку",

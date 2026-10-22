@@ -186,6 +186,8 @@ export interface RenderSettings {
   cuts?: { start: number; end: number }[];
   /** Фон за вырезанным персонажем (источник с хромакеем). */
   backdrop?: { color: string; color2: string };
+  /** Тишина вместо звука исходника на отрезках (секунды клипа до вырезов). */
+  mute?: { start: number; end: number }[];
 }
 
 export interface MontageInsert {

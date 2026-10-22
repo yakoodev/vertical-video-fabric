@@ -1132,6 +1132,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [layout, setLayout] = useState<StreamLayout>(DEFAULT_LAYOUT);
   const [cuts, setCuts] = useState<JumpCut[]>([]);
   const [backdrop, setBackdrop] = useState<Backdrop>(DEFAULT_BACKDROP);
+  // Редактор их пока не правит (ставит агент: mute_audio), но обязан сохранять как есть.
+  const [mute, setMute] = useState<{ start: number; end: number }[]>([]);
   const cutsRef = useRef<JumpCut[]>([]);
   cutsRef.current = cuts;
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
@@ -1275,6 +1277,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     layout,
     cuts,
     backdrop,
+    mute,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1369,6 +1372,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setLayout(normalizeLayout(s.layout));
     setCuts(s.cuts ?? []);
     setBackdrop(normalizeBackdrop(s.backdrop));
+    setMute(s.mute ?? []);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);

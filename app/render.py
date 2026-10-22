@@ -826,6 +826,7 @@ class ClipRenderService:
                 layout=layout,
             )
         if clip["status"] == "succeeded":
+            clip = self._apply_mute(clip, plan, cut_plan)
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion)
@@ -911,6 +912,31 @@ class ClipRenderService:
             return result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
         except (KeyError, ValueError, TypeError):
             return None
+
+    def _apply_mute(self, clip: dict, plan: dict, cut_plan=None) -> dict:
+        """Тишина на месте звука исходника (``render_settings.mute``, app/audio_mute.py).
+
+        До вставок и звуков слоёв: они ложатся поверх и играют. Сбой не теряет клип."""
+        from app.audio_mute import build_mute_args, normalize_mute
+
+        mutes = normalize_mute((plan.get("render_settings") or {}).get("mute"))
+        path = Path(clip.get("output_path") or "")
+        if not mutes or not path.exists() or not _has_audio_stream(path):
+            return clip
+        spans = [(m["start"], m["end"]) for m in mutes]
+        if cut_plan is not None:
+            mapper = self._finished_cut_mapper(plan, cut_plan)
+            spans = [r for r in (mapper.range(a, b) for a, b in spans) if r]
+        try:
+            tmp = path.with_name(path.stem + ".mute" + path.suffix)
+            args = build_mute_args(path, tmp, spans)
+            if args is None:
+                return clip
+            _run_ffmpeg(args, timeout=60 * 20)
+            tmp.replace(path)
+            return self.store.update_clip(clip["id"], size_bytes=path.stat().st_size)
+        except Exception as exc:  # noqa: BLE001 - тишина — надстройка, клип важнее
+            return self._note_clip_error(clip["id"], f"тишина не наложена: {str(exc)[:200]}")
 
     def _apply_inserts(self, clip: dict, plan: dict, cut_plan=None) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.

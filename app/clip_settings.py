@@ -15,6 +15,7 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
+from app.audio_mute import normalize_mute
 from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
 from app.montage_assets import normalize_inserts
@@ -125,6 +126,8 @@ def normalize_render_settings(raw: object) -> dict:
         "cuts": normalize_cuts(src.get("cuts")),
         # Фон за вырезанным персонажем, когда у источника есть хромакей (app/chroma_key.py).
         "backdrop": normalize_backdrop(src.get("backdrop")),
+        # Тишина вместо звука исходника на отрезках, картинка остаётся (app/audio_mute.py).
+        "mute": normalize_mute(src.get("mute")),
     }
 
 
