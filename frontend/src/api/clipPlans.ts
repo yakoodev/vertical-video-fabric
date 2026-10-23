@@ -1,5 +1,6 @@
 import { api, request } from "@/api/client";
 import type { Clip, ClipPlan, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
+import type { Background } from "@/motion";
 
 export interface RenderClipPlanRequest {
   ffmpeg_preset_id?: number;
@@ -162,6 +163,9 @@ export const clipPlansApi = {
   setRenderSettings: (clipPlanId: number, settings: RenderSettings) =>
     api.patch<ClipPlan>(`/api/clip-plans/${clipPlanId}/render-settings`, { settings }),
   transitionOptions: () => api.get<TransitionOptions>(`/api/render/transition-options`),
+  /** Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины. */
+  createCanvas: (body: { duration: number; background?: Background | string | null; title?: string }) =>
+    api.post<ClipPlan & { editor_url: string }>(`/api/canvas-clips`, body),
   // Cover picture → fitted 1080×1920 JPEG on the server; returns its stored name.
   uploadCover: (file: File) => {
     const fd = new FormData();

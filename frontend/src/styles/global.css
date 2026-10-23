@@ -666,6 +666,14 @@ textarea.input {
   object-fit: contain;
   display: block;
 }
+/* Пустой холст: фон клипа поверх невидимой основы (она только ведёт время). */
+.stage-canvas-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .crop-9x16 {
   position: absolute;
   border: 2px solid var(--accent);
@@ -2089,6 +2097,8 @@ button.task-link:disabled {
   cursor: pointer;
 }
 .mo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Пустой холст: миниатюра клипа — его фон, а не зелёный кадр основы. */
+.plan-canvas-thumb { width: 100%; height: 100%; display: block; }
 .mo-thumb::after {
   content: "";
   position: absolute;
@@ -2520,6 +2530,22 @@ button.task-link:disabled {
 .proj-add-row { display: flex; gap: 10px; flex: 1; min-width: 280px; flex-wrap: wrap; }
 .proj-add-row .input, .proj-add-row .btn { height: 44px; }
 .proj-add-row .btn.primary { padding: 0 22px; font-weight: 600; }
+/* «Новый холст»: длительность и фон раскрываются под строкой добавления. */
+.proj-add > .btn.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.canvas-new {
+  flex-basis: 100%;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.canvas-new-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.canvas-new-row > .field:first-child { flex: 1 1 200px; }
+.canvas-new-dur { flex: 1 1 220px; }
+.canvas-new-sec { width: 84px; flex: none; }
+.canvas-new .bg-kinds { grid-template-columns: repeat(6, minmax(48px, 72px)); }
 
 .proj-toolbar {
   display: flex;
@@ -3585,6 +3611,18 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
   font-weight: 600;
   pointer-events: none;
 }
+/* Пустой холст: кусок — полоса фона клипа под подписью, не зелёные кадры основы. */
+.ctl-canvas-strip {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.9;
+}
+.ctl-block--piece:has(.ctl-canvas-strip) > .ctl-grip,
+.ctl-block--piece:has(.ctl-canvas-strip) > .ctl-block-label { position: relative; z-index: 1; }
+.ctl-block--piece:has(.ctl-canvas-strip) > .ctl-block-label { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85); }
 .ctl-ins-thumb { width: 26px; height: 26px; object-fit: cover; border-radius: 4px; pointer-events: none; }
 .ctl-ins-ico { font-size: 13px; pointer-events: none; }
 .ctl-grip {

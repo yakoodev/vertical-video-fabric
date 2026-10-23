@@ -67,6 +67,19 @@ def test_canvas_clip_api_hidden_source_and_backdrop(canvas_api):
     assert client.post("/api/canvas-clips", json={"duration": 999}).status_code == 400
 
 
+def test_editor_sees_canvas_by_source_type(canvas_api):
+    """Редактор узнаёт холст по ``source_type`` проекта (GET /api/sources/{id}) и рисует
+    фон клипа из ``render_settings.backdrop`` вместо зелёных кадров основы."""
+    client, _store = canvas_api
+    plan = client.post("/api/canvas-clips", json={"duration": 9, "background": "waves"}).json()
+    source = client.get(f"/api/sources/{plan['source_id']}")
+    assert source.status_code == 200, source.text
+    body = source.json()
+    assert body["source_type"] == "canvas"
+    got = next(p for p in body["clip_plans"] if p["id"] == plan["id"])
+    assert got["render_settings"]["backdrop"]["kind"] == "waves"
+
+
 def test_canvas_base_recreated_when_file_is_gone(canvas_api):
     from app.canvas import ensure_canvas_source
 

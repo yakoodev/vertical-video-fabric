@@ -67,6 +67,7 @@ import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { SourceAudioPanel } from "@/pages/workspace/SourceAudioPanel";
 import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
+import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/pages/workspace/canvasClip";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
@@ -2035,6 +2036,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return <EmptyState icon="🎯" title="Кандидатов нет" hint="Кандидаты появляются после анализа" />;
   }
   const source = query.data!;
+  // Пустой холст (app/canvas.py): основа — зелёная заглушка, видно только фон клипа.
+  const isCanvas = isCanvasSource(source);
   const selectedSegment = activePlan?.segments.find((s) => s.id === selectedSeg) ?? null;
   const toggleChosen = (id: number) =>
     setChosen((prev) => {
@@ -2517,6 +2520,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const fx = s?.focus?.[0]?.x ?? 0.5;
     return `/media/clip-plans/${p.id}/thumb?v=${s ? `${s.start_sec.toFixed(1)}_${s.end_sec.toFixed(1)}` : 0}_${fx.toFixed(2)}`;
   };
+  // Холст: вместо зелёного кадра основы — фон этого клипа.
+  const planThumb = (p: (typeof plans)[number]) =>
+    isCanvas ? (
+      <BackdropStrip className="plan-canvas-thumb" bg={normalizeBackdrop(p.render_settings?.backdrop)} width={90} height={160} />
+    ) : (
+      <img src={planThumbUrl(p)} alt="" loading="lazy" />
+    );
   const playPlan = (planId: number) => {
     const p = plans.find((x) => x.id === planId);
     if (!p) return;
@@ -2695,6 +2705,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <SubtitleEditor
               key={`wide-${activePlan.id}`}
               clipPlanId={activePlan.id}
+              silent={isCanvas}
               clipTime={clipTimeNow}
               onSeek={seekClipTime}
               onLines={(lines) => {
@@ -2965,7 +2976,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 }`}
               >
                 <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть момент в плеере">
-                  <img src={planThumbUrl(p)} alt="" loading="lazy" />
+                  {planThumb(p)}
                   {typeof p.quality === "number" ? (
                     <span
                       className="mo-q"
@@ -3056,7 +3067,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               onClick={() => openEditor(p.id)}
               title={p.title || `План #${p.id}`}
             >
-              <img src={planThumbUrl(p)} alt="" loading="lazy" />
+              {planThumb(p)}
               {p.favorite ? <span className="ed-rail-star">★</span> : null}
               <span className="ed-rail-dur mono">{formatDuration(planDur(p))}</span>
             </button>
@@ -3068,8 +3079,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               На других вкладках он «припаркован» — невидим, но играет. */}
           <div className={`ed-lib-frame${libTab === "frame" ? "" : " parked"}`}>
             <div className="ed-lib-head">
-              <strong>Кадр исходника</strong>
-              <span className="muted">тащи рамку — так встанет кадр 9:16</span>
+              <strong>{isCanvas ? "Холст" : "Кадр исходника"}</strong>
+              <span className="muted">
+                {isCanvas ? "видео нет — весь кадр фон; сменить — «Фон холста» справа" : "тащи рамку — так встанет кадр 9:16"}
+              </span>
             </div>
             <div className="ed-stage">
               <div
@@ -3092,10 +3105,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <video
                   ref={videoRef}
                   src={`/media/sources/${source.id}`}
-                  controls
+                  controls={!isCanvas}
                   preload="metadata"
-                  style={lookCss ? { filter: lookCss } : undefined}
+                  style={isCanvas ? { opacity: 0 } : lookCss ? { filter: lookCss } : undefined}
                 />
+                {isCanvas ? (
+                  // Основа холста играет невидимой (по ней идёт время), видно — фон клипа.
+                  <BackdropLive
+                    className="stage-canvas-bg"
+                    bg={backdrop}
+                    accent={clipAccent(layers)}
+                    clipTime={() => clipTimeOf(activePlan?.segments ?? [], videoRef.current?.currentTime ?? 0) ?? 0}
+                  />
+                ) : null}
                 {selectedPreset?.vignette ? (
                   <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
                 ) : null}
@@ -3111,7 +3133,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   showSubs={showZones && subsOn}
                   subPosPct={subPosPct}
                   focusPreset={source.focus_preset}
-                  onManualX={activePlan ? (x) => setFixedFrame(activePlan.id, x) : undefined}
+                  onManualX={activePlan && !isCanvas ? (x) => setFixedFrame(activePlan.id, x) : undefined}
                   mirror={mirror}
                   phoneRef={phoneRef}
                   insertsPreview={insertsPreview}
@@ -3129,7 +3151,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 />
               </div>
               <div className="editor-stage-meta mono">
-                {formatDuration(source.duration_sec)} · {source.width}×{source.height} · 16:9 → 9:16
+                {isCanvas
+                  ? `${canvasLabel(backdrop)} · 9:16 · ${Math.round(clipDuration)} с`
+                  : `${formatDuration(source.duration_sec)} · ${source.width}×${source.height} · 16:9 → 9:16`}
               </div>
             </div>
           </div>
@@ -3329,7 +3353,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </button>
               ))}
             </div>
-            {activePlan
+            {/* Холст — кадр 9:16 целиком: рамку двигать некуда. */}
+            {activePlan && !isCanvas
               ? (() => {
                   const fx = activePlan.segments[0]?.focus ?? [];
                   const constant = fx.length > 0 && fx.every((p) => Math.abs(p.x - fx[0].x) < 0.001);
@@ -3440,6 +3465,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 />
               ) : null}
             </Group>
+            {/* Холст: звука исходника нет — глушить, громкость и дорожки не нужны. */}
+            {isCanvas ? null : (
+            <>
             <Group
               title="Тишина вместо звука"
               badge={mute.length ? `${mute.length} · ${muteTotal(mute).toFixed(1)} с` : "нет"}
@@ -3556,9 +3584,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             >
               <SourceAudioPanel sourceId={source.id} />
             </Group>
+            </>
+            )}
             <Group
-              title="Раскладка кадра"
-              badge={{ single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"}
+              title={isCanvas ? "Фон холста" : "Раскладка кадра"}
+              badge={
+                isCanvas
+                  ? canvasLabel(backdrop).replace("Холст · ", "")
+                  : { single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"
+              }
+              defaultOpen={isCanvas}
             >
               <LayoutPanel
                 sourceId={source.id}
@@ -3569,6 +3604,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 backdrop={backdrop}
                 onBackdrop={setBackdrop}
                 accent={clipAccent(layers)}
+                canvas={isCanvas}
               />
             </Group>
             <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
@@ -3617,14 +3653,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   🔎 Найти мемы
                 </a>
-                <button
-                  className="btn sm"
-                  disabled={!activePlan?.segments.length || autofocus.isPending}
-                  onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                  title="Пересчитать автофокус для всех кусков клипа"
-                >
-                  {autofocus.isPending ? "Считаю…" : "🎯 Автофокус"}
-                </button>
+                {isCanvas ? null : (
+                  <button
+                    className="btn sm"
+                    disabled={!activePlan?.segments.length || autofocus.isPending}
+                    onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                    title="Пересчитать автофокус для всех кусков клипа"
+                  >
+                    {autofocus.isPending ? "Считаю…" : "🎯 Автофокус"}
+                  </button>
+                )}
               </div>
               {brands.data?.length ? (
                 <div className="ed-quick-row">
@@ -3663,7 +3701,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   ))}
                 </select>
               </label>
-              <LookPicker frames={lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
+              {/* Кадры основы холста — зелёные: смотреть лук не на чем. */}
+              <LookPicker frames={isCanvas ? [] : lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
               <label className="switch" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
                 <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
                 <span className="switch-track" />
@@ -3722,6 +3761,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <SubtitleEditor
                   key={activePlan.id}
                   clipPlanId={activePlan.id}
+                  silent={isCanvas}
                   clipTime={clipTimeNow}
                   onSeek={seekClipTime}
                   onLines={(lines) => {
@@ -3845,6 +3885,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
 
+            {/* Холст: фокус кадра не нужен — кадр 9:16 целиком. */}
+            {isCanvas ? null : (
             <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
               {selectedSegment ? (
                 <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
@@ -3854,6 +3896,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </p>
               )}
             </Group>
+            )}
 
             <Group
               title="Переходы"
@@ -4248,6 +4291,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </Group>
 
+            {/* Холст: умный кадр не нужен — кадр 9:16 целиком. */}
+            {isCanvas ? null : (
             <Group
               title="Умный кадр"
               badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
@@ -4307,7 +4352,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </button>
               </div>
             </Group>
+            )}
 
+            {/* Холст: границ клипов по речи нет — основа немая. */}
+            {isCanvas ? null : (
             <Group title="Границы клипов" badge={cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.label ?? ""}>
               <select
                 className="input"
@@ -4331,6 +4379,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
               </button>
             </Group>
+            )}
 
             <Group title="Отдать в монтажку" badge="OTIO">
               <span className="muted" style={{ fontSize: 11.5 }}>
@@ -4446,6 +4495,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
             <ClipTimeline
               sourceId={source.id}
+              canvas={isCanvas ? { bg: backdrop, accent: clipAccent(layers) } : null}
               peaks={planWave.data?.peaks}
               pieces={activePlan?.segments ?? []}
               inserts={inserts}
