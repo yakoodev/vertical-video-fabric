@@ -181,7 +181,9 @@ sparkle мерцание, confetti, rise), а не десятки звёздоч
    акцентного цвета) и ссылка ≥ 44 px (лучше 56) белым/контрастным — не цветом пятен фона;
 5) музыка — list_music: energy_start_sec трека → set_music(start_sec=energy_start_sec), а не тихое вступление;
 6) перед отчётом — view_frame на 3–4 ключевых секундах (хук, шаг, пик наезда, финал) и исправь
-   предупреждения get_clip (титр на экране телефона, за краем кадра, переход сцен, финал, хук, музыка).
+   предупреждения get_clip (титр на экране телефона, за краем кадра, переход сцен, финал, хук, музыка);
+7) перенос строки в титрах — настоящий \\n в JSON, не "\\\\n"; после ✗ (и skipped у add_layers) всегда исправь
+   и повтори вызов; перед отчётом get_clip — предупреждений «пустой кадр»/«нет финала» быть не должно.
 
 ЕСЛИ ПРОСЯТ ОДНУ ПРАВКУ — делай только её, auto_edit не запускай.
 Паузы и «ээ» — suggest_cuts/apply_cuts. Мелкие паузы и «ээ» режь, только если попросили. Но пауза
@@ -315,6 +317,11 @@ def _step_from_result(step: dict, result: Any, ok: bool) -> dict:
                 step["problems"] = [str(p)[:300] for p in result["problems"][:12]]
         if result.get("warnings"):
             step["warnings"] = [str(w)[:200] for w in result["warnings"][:8]]
+        if ok and result.get("skipped"):
+            # add_layers применил пачку частично: пропущенные слои видны в журнале, как ошибки.
+            step["partial"] = True
+            step["applied"] = str(result.get("applied") or "")
+            step["problems"] = [str(p)[:300] for p in result["skipped"][:12]]
     if isinstance(result, ImageResult):
         step["frame_t"] = result.info.get("t")
     return step
@@ -427,8 +434,11 @@ def run_agent(
     nudged_continue = False
     nudged_report = False
     nudged_work = False
+    nudged_fix = False
+    asked_report = False
     report_only = False
     silent_nudges = 0
+    gap_warnings: list[str] = []  # «пустой кадр»/«нет финала» из последнего ответа линта
     while True:
         if should_cancel and should_cancel():
             raise AgentCancelled()
@@ -468,6 +478,14 @@ def run_agent(
                 "(начни с auto_edit, если просили смонтировать), а не текстом."
             )}]})
             continue
+        if not calls and tools_on and steps and not nudged_fix:
+            # Хочет закончить, а последний вызов не прошёл или ролик с дырой (прогон 578: пачка
+            # финала отклонена, агент не повторил — последние 4 с пустой фон). Один раз дожимаем.
+            nudge = fix_nudge(steps, _current_gaps(ctx, gap_warnings))
+            if nudge:
+                nudged_fix = True
+                contents.append({"role": "user", "parts": [{"text": nudge}]})
+                continue
         if not calls and tools_on and steps and not idle and silent_nudges < MAX_SILENT_NUDGES:
             # Пустой ответ посреди работы (проверочный прогон: после листа кадров исходника
             # Gemini замолчал на 6-м шаге из ~30, и ход «закончился» без отчёта).
@@ -518,6 +536,16 @@ def run_agent(
                 continue
             elif final_text and not report_like(final_text):
                 final_text = ""
+            if not final_text and steps and not asked_report and not nudged_report:
+                # Только шаги, без отчёта (прогон 578: ход кончился списком шагов) — один раз
+                # просим отчёт без инструментов; не напишет — отчёт соберётся из шагов.
+                asked_report = True
+                report_only = True
+                contents.append({"role": "user", "parts": [{"text": (
+                    "Ты не написал отчёт. Напиши владельцу по-русски 3–6 пунктов: что сделал и на какой "
+                    "секунде; что не получилось — так и скажи."
+                )}]})
+                continue
             break
         said = _strip_leaks(_parts_text(parts))
         if said and (degenerate(said) or not report_like(said)):
@@ -543,6 +571,8 @@ def run_agent(
             emit()
             result, ok = agent_tools.run_tool(ctx, name, args)
             _step_from_result(step, result, ok)
+            if ok and name in LINT_TOOLS and isinstance(result, dict):
+                gap_warnings = [str(w) for w in result.get("warnings") or [] if str(w).startswith(GAP_MARKERS)]
             emit()
             body = _response_object(result)
             if isinstance(result, ImageResult):
@@ -567,6 +597,55 @@ MAX_OUTPUT_TOKENS = 8192
 MAX_SILENT_NUDGES = 2
 # Инструменты, которыми агент доводит основу auto_edit до монтажа.
 CRAFT_TOOLS = {"update_layer", "add_layers", "set_camera", "add_insert", "remove_layers"}
+# Чьи предупреждения говорят о дыре во всём ролике (их ответы содержат линт всего клипа).
+LINT_TOOLS = {"get_clip", "add_layers", "update_layer", "remove_layers"}
+GAP_MARKERS = ("пустой кадр", "нет финала")
+
+
+def unresolved_failure(steps: list[dict]) -> dict | None:
+    """Вызов, который не прошёл и так и не был исправлен: последний вызов хода с ✗ (или
+    частичный add_layers), либо правка клипа с ✗, после которой тот же инструмент ни разу не прошёл."""
+    calls = [s for s in steps if s.get("tool") != SAY and s.get("ok") is not None]
+    for index in range(len(calls) - 1, -1, -1):
+        step = calls[index]
+        if step.get("ok") and not step.get("partial"):
+            continue
+        if index == len(calls) - 1:
+            return step
+        try:
+            mutating = agent_tools.get_tool(str(step.get("tool"))).mutating
+        except KeyError:
+            continue
+        fixed = any(s.get("tool") == step.get("tool") and s.get("ok") and not s.get("partial")
+                    for s in calls[index + 1:])
+        if mutating and not fixed:
+            return step
+    return None
+
+
+def fix_nudge(steps: list[dict], gaps: list[str]) -> str:
+    """Текст «дожима» перед концом хода: что не прошло и какие дыры в ролике. Пусто — дожимать нечего."""
+    lines = []
+    failed = unresolved_failure(steps)
+    if failed:
+        what = str(failed.get("error") or failed.get("applied") or "ошибка")
+        problems = "; ".join(str(p) for p in (failed.get("problems") or [])[:3])
+        lines.append(f"Последний вызов не прошёл: {failed.get('label')} — {what}"
+                     + (f" ({problems})" if problems else "") + ". Исправь и повтори вызов, потом отчёт.")
+    if gaps:
+        lines.append("get_clip предупреждает: " + "; ".join(gaps[:3]) + ". Исправь (дошли пропущенные слои, "
+                     "поставь финал) и проверь get_clip, потом отчёт.")
+    return "\n".join(lines)
+
+
+def _current_gaps(ctx: ToolContext, seen: list[str]) -> list[str]:
+    """Дыры, о которых линт уже говорил в этом ходе, — если они всё ещё есть в клипе."""
+    if not seen:
+        return []
+    try:
+        return [w for w in agent_tools.scene_check(ctx) if w.startswith(GAP_MARKERS)]
+    except Exception:  # noqa: BLE001 - проверка не должна ронять ход
+        return seen
 
 
 def report_like(text: str) -> bool:

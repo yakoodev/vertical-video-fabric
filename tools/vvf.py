@@ -371,8 +371,9 @@ def cmd_agent(args) -> None:
         for step in steps[shown:]:
             if step.get("ok") is None:
                 break
-            mark = "✓" if step["ok"] else "✗"
-            print(f"  {mark} {step.get('label')}")
+            mark = ("◐" if step.get("partial") else "✓") if step["ok"] else "✗"
+            applied = f" ({step['applied']})" if step.get("applied") else ""
+            print(f"  {mark} {step.get('label')}{applied}")
             for problem in (step.get("problems") or [])[:5]:
                 print(f"      - {problem}")
             shown += 1

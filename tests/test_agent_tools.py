@@ -515,3 +515,75 @@ def test_too_short_finished_clip_is_warned():
 
     assert "слишком коротко" in short_clip_warning(6.0)
     assert short_clip_warning(20.0) is None
+
+
+def _sfx_pack(tmp_path, monkeypatch, files=("cash.ogg", "cheer.ogg", "applause.ogg", "whoosh-1.ogg",
+                                             "success-chime.ogg", "pop.ogg", "sting.ogg")):
+    import json
+
+    from app.settings import settings
+
+    packs = tmp_path / "packs"
+    (packs / "freesound").mkdir(parents=True)
+    for name in files:
+        (packs / "freesound" / name).write_bytes(b"OggS")
+    (packs / "packs.json").write_text(json.dumps({"version": 1, "packs": [
+        {"id": "freesound", "kind": "sfx", "items": [{"file": f, "name": f, "tags": []} for f in files]}]}),
+        encoding="utf-8")
+    monkeypatch.setattr(settings, "motion_packs_dir", packs, raising=False)
+
+
+def test_add_layers_applies_valid_part_of_batch(tmp_path, monkeypatch):
+    """Прогон 578: пачку финала из 9 слоёв отклонили целиком из-за одного sfx:freesound/success.ogg,
+    агент не повторил. Теперь битые слои пропускаются с причиной и подсказкой, остальные встают."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    _sfx_pack(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        TITLE,
+        {"type": "audio", "start": 1, "end": 2, "props": {"asset_id": "sfx:freesound/success.ogg", "volume": 0.5}},
+        {"type": "image", "start": 1, "end": 2, "props": {"asset_id": 99999}},
+        {"type": "hologram", "start": 1, "end": 2},
+        {"type": "audio", "start": 3, "end": 4, "props": {"asset_id": "sfx:freesound/cash.ogg", "volume": 0.4}},
+    ]})
+    assert ok, out
+    assert out["partial"] is True and out["applied"] == "применено 2 из 5"
+    skipped = out["skipped"]
+    assert len(skipped) == 3, skipped
+    sfx = next(p for p in skipped if p.startswith("layers[1]"))
+    assert "success.ogg не найден" in sfx and "есть похожие: sfx:freesound/success-chime.ogg" in sfx
+    assert sfx.count("sfx:freesound/") == 6  # сама ссылка + 5 похожих
+    assert any(p.startswith("layers[2]") and "99999" in p and "list_assets" in p for p in skipped)
+    assert any(p.startswith("layers[3]") and "hologram" in p for p in skipped)
+    layers = store.get_clip_plan(plan["id"])["render_settings"]["layers"]
+    assert [l["type"] for l in layers] == ["text", "audio"]
+    assert layers[1]["props"]["asset_id"] == "sfx:freesound/cash.ogg"
+
+
+def test_add_layers_all_invalid_or_over_limit_stays_atomic(tmp_path, monkeypatch):
+    from app import motion
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    _sfx_pack(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        {"type": "audio", "start": 1, "end": 2, "props": {"asset_id": "sfx:freesound/success.ogg"}}]})
+    assert not ok and out["problems"] and "похожие" in out["problems"][0]
+    assert store.count_clip_plan_history(plan["id"]) == 0
+    base = [{"id": f"s{i}", "type": "shape", "start": 0, "end": 1, "props": {"kind": "rect", "w": 10, "h": 10}}
+            for i in range(motion.MAX_LAYERS - 1)]
+    store.set_clip_plan_render_settings(plan["id"], {"layers": base})
+    out, ok = run_tool(ctx, "add_layers", {"layers": [TITLE, TITLE, {"type": "hologram"}]})
+    assert not ok and "предел" in out["error"]  # лимит слоёв — вся пачка, как раньше
+    assert len(store.get_clip_plan(plan["id"])["render_settings"]["layers"]) == motion.MAX_LAYERS - 1
+
+
+def test_similar_pack_refs_stay_in_kind_and_prefer_named_pack(tmp_path, monkeypatch):
+    _sfx_pack(tmp_path, monkeypatch)
+    close = agent_tools.similar_pack_refs("sfx:freesound/succes.ogg")
+    assert close[0] == "sfx:freesound/success-chime.ogg" and len(close) == 5
+    # нет такого пака — ищем во freesound
+    assert agent_tools.similar_pack_refs("sfx:nope/cash.ogg")[0] == "sfx:freesound/cash.ogg"
+    assert agent_tools.similar_pack_refs("sticker:nope/cash.png") == []  # стикеров нет — и подсказки нет

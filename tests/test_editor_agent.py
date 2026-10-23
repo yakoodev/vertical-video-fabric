@@ -267,3 +267,105 @@ def test_thinking_aloud_mid_work_continues(tmp_path, monkeypatch):
     assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
     nudge = fake.requests[2][1]
     assert "tools" in nudge and "Продолжай работу инструментами" in nudge["contents"][-1]["parts"][0]["text"]
+
+
+# ------------------------------------------------- прогон 578: ✗ без повтора, ход без отчёта
+
+BROKEN = {**HOOK, "start": 3, "end": 1}
+
+
+def _last_text(request):
+    return request[1]["contents"][-1]["parts"][0]["text"]
+
+
+def test_failed_call_before_report_is_pushed_once_to_retry(tmp_path, monkeypatch):
+    """Прогон 578: пачка финала ✗, агент сделал ещё два шага и закончил — финал потерян."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [BROKEN]})],
+        [_call("view_frame", {"t": 1.0})],
+        [{"text": "Готово: финал на 20 с."}],  # хочет закончить, а ✗ так и не исправлен
+        [_call("add_layers", {"layers": [HOOK]})],
+        [{"text": "Готово: хук на 0–2 с."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: хук на 0–2 с."
+    assert [s["ok"] for s in out["steps"]] == [False, True, True]
+    nudge = fake.requests[3]
+    assert "tools" in nudge[1]
+    assert _last_text(nudge).startswith("Последний вызов не прошёл: ") and "Исправь и повтори" in _last_text(nudge)
+    assert "слои не приняты" in _last_text(nudge)
+
+
+def test_retry_nudge_is_one_time(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [BROKEN]})],
+        [{"text": "Готово: не смог поставить титр."}],
+        [{"text": "Готово: титр не встал — время конца раньше начала."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: титр не встал — время конца раньше начала."
+    assert len(fake.requests) == 3 and not fake.turns
+
+
+def test_gap_warnings_push_to_fix_before_report(tmp_path, monkeypatch):
+    """«пустой кадр»/«нет финала» в ответе линта, а модель заканчивает — один раз дожимаем;
+    проверка — по текущему клипу (исправил — не дожимаем)."""
+    from app import agent_tools
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    gap = "пустой кадр 2.0–10.0 с: нет слоёв — проверь, применились ли последние пачки"
+    monkeypatch.setattr(agent_tools, "_scene_warnings",
+                        lambda ctx, render, duration: [gap] if len(render.get("layers") or []) < 2 else [])
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [HOOK]})],
+        [{"text": "Готово: хук на 0–2 с."}],
+        [_call("add_layers", {"layers": [{**HOOK, "start": 2, "end": 10}]})],
+        [{"text": "Готово: хук и титр до конца."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: хук и титр до конца."
+    assert out["steps"][0]["warnings"] == [gap]
+    nudge = _last_text(fake.requests[2])
+    assert "get_clip предупреждает: " + gap in nudge and "Последний вызов" not in nudge
+    assert len(fake.requests) == 4
+
+
+def test_steps_without_report_get_one_report_request(tmp_path, monkeypatch):
+    """Ход кончился одними шагами (модель молчит) — один раз просим отчёт без инструментов."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [HOOK]})],
+        [], [], [],  # два подталкивания «Ответ пустой» и снова тишина
+        [{"text": "Готово: хук на 0–2 с."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"] == "Готово: хук на 0–2 с."
+    last = fake.requests[-1]
+    assert "tools" not in last[1] and "Ты не написал отчёт" in _last_text(last)
+    # и снова молчит — отчёт из шагов, без новых запросов
+    fake = ScriptedGemini([[_call("add_layers", {"layers": [HOOK]})], [], [], [], []])
+    out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
+    assert out["text"].startswith("Сделал:") and not fake.turns
+
+
+def test_unresolved_failure_and_partial_batches():
+    ok = {"tool": "add_layers", "label": "Слои", "ok": True}
+    bad = {"tool": "add_layers", "label": "Финал", "ok": False, "error": "слои не приняты",
+           "problems": ["layers[8]: sfx:freesound/success.ogg не найден в пакетах"]}
+    frame = {"tool": "view_frame", "label": "Кадр", "ok": True}
+    say = {"tool": "_say", "label": "Ставлю финал", "ok": True}
+    assert editor_agent.unresolved_failure([bad, frame, say]) is bad  # ✗ правки, дальше не исправлен
+    assert editor_agent.unresolved_failure([bad, ok, frame]) is None  # повторил — прошло
+    failed_frame = {**frame, "ok": False, "error": "нет кадра"}
+    assert editor_agent.unresolved_failure([ok, failed_frame]) is failed_frame  # последний вызов ✗
+    assert editor_agent.unresolved_failure([failed_frame, ok]) is None  # чтение не правка — не держим
+    partial = {**ok, "partial": True, "applied": "применено 8 из 9", "problems": bad["problems"]}
+    nudge = editor_agent.fix_nudge([partial, frame], [])
+    assert "применено 8 из 9" in nudge and "success.ogg" in nudge
+    assert editor_agent.fix_nudge([ok, frame], []) == ""

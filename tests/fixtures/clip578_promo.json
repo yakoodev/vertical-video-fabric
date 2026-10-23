@@ -1,0 +1,899 @@
+{
+ "_about": "Клип 578 — промо Collabika, собранное Gemini во втором проверочном прогоне (рендер 306, 24.5 с). Урезанная копия spec: слои, камера, фон холста, музыка. В титрах литеральный обратный слэш + n (двойное экранирование Gemini). failed_batch — пачка финала add_layers, отклонённая целиком из-за sfx:freesound/success.ogg (восстановлена по журналу хода: частицы на 11.5 с, картинка #152 на 19.6 с, титр «РЕГИСТРАЦИЯ ОТКРЫТА» на 19.8 с и ещё 6 слоёв); её нет в клипе — с 20 с пустой фон.",
+ "clip_id": 578,
+ "duration": 24.0,
+ "render": {
+  "music_on": true,
+  "track_id": 26,
+  "music_start_sec": 1.0,
+  "backdrop": {
+   "kind": "aurora",
+   "colors": [
+    "#0b1018",
+    "#ff6a1f",
+    "#bda7f7"
+   ],
+   "speed": 1.5,
+   "intensity": 0.7
+  },
+  "camera": [
+   {
+    "t": 0.0,
+    "zoom": 1.0,
+    "x": 0.5,
+    "y": 0.5
+   },
+   {
+    "t": 6.5,
+    "zoom": 1.0,
+    "x": 0.5,
+    "y": 0.5
+   },
+   {
+    "t": 6.9,
+    "zoom": 1.15,
+    "x": 0.5,
+    "y": 0.75,
+    "ease": "inOutCubic"
+   },
+   {
+    "t": 9.4,
+    "zoom": 1.15,
+    "x": 0.5,
+    "y": 0.5
+   },
+   {
+    "t": 9.8,
+    "zoom": 1.0,
+    "x": 0.5,
+    "y": 0.5,
+    "ease": "inOutCubic"
+   }
+  ],
+  "aspect": "9:16",
+  "layers": [
+   {
+    "id": "v1",
+    "type": "video",
+    "start": 0.0,
+    "end": 3.2,
+    "name": "",
+    "track": 1,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.62,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "asset_id": "147",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 0.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 0.5
+      },
+      {
+       "t": 2.85,
+       "v": 0.5
+      },
+      {
+       "t": 3.2,
+       "v": -0.5,
+       "ease": "inOutCubic"
+      }
+     ]
+    },
+    "in": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "v2",
+    "type": "video",
+    "start": 2.85,
+    "end": 6.2,
+    "name": "",
+    "track": 1,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.62,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "asset_id": "148",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 0.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.35,
+       "v": 0.5,
+       "ease": "inOutCubic"
+      },
+      {
+       "t": 3.0,
+       "v": 0.5
+      },
+      {
+       "t": 3.35,
+       "v": -0.5,
+       "ease": "inOutCubic"
+      }
+     ]
+    },
+    "in": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "v3",
+    "type": "video",
+    "start": 5.85,
+    "end": 10.2,
+    "name": "",
+    "track": 1,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.62,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "asset_id": "149",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 2.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.35,
+       "v": 0.5,
+       "ease": "inOutCubic"
+      },
+      {
+       "t": 4.0,
+       "v": 0.5
+      },
+      {
+       "t": 4.35,
+       "v": -0.5,
+       "ease": "inOutCubic"
+      }
+     ]
+    },
+    "in": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "v4",
+    "type": "video",
+    "start": 9.85,
+    "end": 14.5,
+    "name": "",
+    "track": 1,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.62,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "asset_id": "150",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 3.5,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.35,
+       "v": 0.5,
+       "ease": "inOutCubic"
+      },
+      {
+       "t": 4.3,
+       "v": 0.5
+      },
+      {
+       "t": 4.65,
+       "v": -0.5,
+       "ease": "inOutCubic"
+      }
+     ]
+    },
+    "in": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "v5",
+    "type": "video",
+    "start": 14.15,
+    "end": 20.0,
+    "name": "",
+    "track": 1,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "asset_id": "151",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 1.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "y": [
+      {
+       "t": 0.0,
+       "v": 0.62
+      },
+      {
+       "t": 5.5,
+       "v": 0.62
+      },
+      {
+       "t": 5.85,
+       "v": 1.5,
+       "ease": "inOutCubic"
+      }
+     ],
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.35,
+       "v": 0.5,
+       "ease": "inOutCubic"
+      },
+      {
+       "t": 5.5,
+       "v": 0.5
+      }
+     ]
+    },
+    "in": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "none",
+     "duration": 0.3
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t1",
+    "type": "text",
+    "start": 0.0,
+    "end": 3.2,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "НАЙДИ НАПАРНИКА\\nДЛЯ КОЛЛАБА",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": null,
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t2",
+    "type": "text",
+    "start": 3.03,
+    "end": 6.2,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "СМОТРИ КЛИПЫ\\nСТРИМЕРОВ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": null,
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t3",
+    "type": "text",
+    "start": 6.03,
+    "end": 10.2,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "ЗОВИ НА КОЛЛАБ\\nВ ОДИН КЛИК",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": null,
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t4",
+    "type": "text",
+    "start": 10.03,
+    "end": 14.5,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "СОВПАЛИ?\\nКОНТАКТЫ ОТКРЫТЫ!",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": {
+      "words": [
+       0
+      ],
+      "color": "#ffffff",
+      "bg": "#ff6a1f"
+     },
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t5",
+    "type": "text",
+    "start": 14.33,
+    "end": 17.2,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "БЕСПЛАТНО\\nВ TELEGRAM",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": null,
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   },
+   {
+    "id": "t6",
+    "type": "text",
+    "start": 17.0,
+    "end": 20.0,
+    "name": "",
+    "track": 2,
+    "hidden": false,
+    "locked": false,
+    "x": 0.5,
+    "y": 0.18,
+    "scale": 1.0,
+    "rotation": 0.0,
+    "opacity": 1.0,
+    "shadow": null,
+    "blend": "normal",
+    "behind": false,
+    "followCamera": false,
+    "props": {
+     "text": "СТАРТ ПОИСКА\\n1 НОЯБРЯ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 85.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": true,
+     "italic": false,
+     "highlight": {
+      "words": [
+       2,
+       3
+      ],
+      "color": "#ffffff",
+      "bg": "#ff6a1f"
+     },
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55,
+      "spread": 40.0
+     }
+    },
+    "keys": {},
+    "in": {
+     "type": "rise",
+     "duration": 0.3
+    },
+    "out": {
+     "type": "fade",
+     "duration": 0.2
+    },
+    "loop": {
+     "type": "none",
+     "speed": 1.0,
+     "amount": 1.0
+    }
+   }
+  ]
+ },
+ "failed_batch": [
+  {
+   "type": "particles",
+   "name": "Искры",
+   "start": 11.5,
+   "end": 12.7,
+   "x": 0.5,
+   "y": 0.5,
+   "props": {
+    "kind": "burst",
+    "count": 100,
+    "colors": [
+     "#ff6a1f",
+     "#ffffff",
+     "#bda7f7"
+    ],
+    "size": 26,
+    "spread": 900
+   }
+  },
+  {
+   "type": "audio",
+   "start": 11.5,
+   "end": 12.3,
+   "props": {
+    "asset_id": "sfx:freesound/whoosh-1.ogg",
+    "volume": 0.4
+   }
+  },
+  {
+   "type": "image",
+   "name": "Логотип",
+   "start": 19.6,
+   "end": 24.0,
+   "x": 0.5,
+   "y": 0.36,
+   "props": {
+    "asset_id": 152,
+    "w": 520
+   },
+   "in": {
+    "type": "pop",
+    "duration": 0.35
+   }
+  },
+  {
+   "type": "text",
+   "name": "Регистрация",
+   "start": 19.8,
+   "end": 24.0,
+   "x": 0.5,
+   "y": 0.13,
+   "props": {
+    "text": "РЕГИСТРАЦИЯ\\nОТКРЫТА",
+    "font": "Nunito",
+    "weight": 900,
+    "size": 96,
+    "color": "#ffffff"
+   },
+   "in": {
+    "type": "rise",
+    "duration": 0.3
+   }
+  },
+  {
+   "type": "text",
+   "name": "Дата",
+   "start": 20.2,
+   "end": 24.0,
+   "x": 0.5,
+   "y": 0.56,
+   "props": {
+    "text": "1 НОЯБРЯ, 19:00 МСК",
+    "font": "Nunito",
+    "weight": 800,
+    "size": 64,
+    "color": "#ffffff"
+   },
+   "in": {
+    "type": "rise",
+    "duration": 0.3
+   }
+  },
+  {
+   "type": "shape",
+   "name": "Плашка CTA",
+   "start": 20.6,
+   "end": 24.0,
+   "x": 0.5,
+   "y": 0.66,
+   "props": {
+    "kind": "rect",
+    "w": 760,
+    "h": 130,
+    "fill": "#ff6a1f",
+    "radius": 65
+   },
+   "in": {
+    "type": "pop",
+    "duration": 0.3
+   }
+  },
+  {
+   "type": "text",
+   "name": "Ссылка",
+   "start": 20.6,
+   "end": 24.0,
+   "x": 0.5,
+   "y": 0.66,
+   "props": {
+    "text": "t.me/Collabikabot",
+    "font": "Nunito",
+    "weight": 900,
+    "size": 60,
+    "color": "#ffffff"
+   },
+   "in": {
+    "type": "pop",
+    "duration": 0.3
+   }
+  },
+  {
+   "type": "audio",
+   "name": "Успех",
+   "start": 19.8,
+   "end": 21.0,
+   "props": {
+    "asset_id": "sfx:freesound/success.ogg",
+    "volume": 0.5
+   }
+  },
+  {
+   "type": "particles",
+   "name": "Конфетти",
+   "start": 20.6,
+   "end": 22.6,
+   "x": 0.5,
+   "y": 0.4,
+   "props": {
+    "kind": "confetti",
+    "count": 80,
+    "colors": [
+     "#ff6a1f",
+     "#ffffff",
+     "#bda7f7"
+    ]
+   }
+  }
+ ]
+}
