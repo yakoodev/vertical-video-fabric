@@ -17,6 +17,7 @@ the service's code or database. Standard library only.
     vvf.py check clip-812.json                 # validate without applying
     vvf.py push clip-812.json                  # apply (all-or-nothing)
     vvf.py render 812                          # render with the file's settings, prints QC
+    vvf.py render 812 --aspect 1:1             # square from the same edit (canvas clips only)
     vvf.py qc 431                              # QC report of a finished render
     vvf.py download 431 -o out.mp4             # the rendered video
     vvf.py frame 50 --at 812.4 -o f.jpg        # a still of the source (to look at)
@@ -257,8 +258,9 @@ def cmd_push(args) -> None:
 
 
 def cmd_render(args) -> None:
-    print(f"рендер клипа {args.clip}… (ждём, это может занять минуты)")
-    clip = call("POST", f"/api/clip-plans/{args.clip}/render", {})
+    aspect = getattr(args, "aspect", None)
+    print(f"рендер клипа {args.clip}" + (f" в {aspect}" if aspect else "") + "… (ждём, это может занять минуты)")
+    clip = call("POST", f"/api/clip-plans/{args.clip}/render", {"aspect": aspect} if aspect else {})
     print(f"рендер {clip['id']}: {clip['status']}"
           + (f" · {clip.get('duration_sec'):.1f} с" if clip.get("duration_sec") else "")
           + (f" · ошибка: {clip.get('error')}" if clip.get("error") else ""))
@@ -427,6 +429,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.set_defaults(fn=cmd_push)
     p = sub.add_parser("render", help="отрендерить клип по его файлу")
     p.add_argument("clip", type=int)
+    p.add_argument("--aspect", choices=["9:16", "1:1", "4:5"],
+                   help="формат этого рендера (не 9:16 — только холст); не задан — из настроек клипа")
     p.set_defaults(fn=cmd_render)
     p = sub.add_parser("qc", help="отчёт о качестве рендера")
     p.add_argument("render", type=int)

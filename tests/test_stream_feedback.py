@@ -382,7 +382,9 @@ console.log(JSON.stringify({{
     assert out["preview"][1] == pytest.approx(1.0, abs=1e-3) and out["preview"][0] == pytest.approx(10 ** (-6 / 20), abs=1e-3)
     # Редактор сохраняет настройки клипа целиком: gain обязан проходить загрузку и автосохранение.
     tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "CandidatesTab.tsx").read_text(encoding="utf-8")
-    assert "    mute,\n    gain,\n  });" in tab and "gain: s.gain ?? []," in tab and "setGain(s.gain ?? []);" in tab
+    assert "    mute,\n    gain,\n" in tab and "gain: s.gain ?? []," in tab and "setGain(s.gain ?? []);" in tab
+    # Формат кадра холста (app/aspect.py) — так же: в панели, при загрузке и в автосохранении.
+    assert "    gain,\n    aspect,\n  });" in tab and 'aspect: s.aspect ?? "9:16",' in tab and "setAspect(s.aspect" in tab
 
 
 # ------------------------------------------------------------------ чат Twitch (п. 1)

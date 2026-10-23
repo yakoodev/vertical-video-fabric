@@ -58,8 +58,49 @@ def linear_gain_db(measured: dict, target: float) -> float:
     return max(-20.0, min(MAX_LOUDNESS_BOOST_DB, gain))
 
 
-LOUDNESS_PEAK_DB = -1.5  # потолок пика: лимитер limit=0.84
-LOUDNESS_LIMITER = "alimiter=limit=0.84:attack=5:release=80:level=disabled"
+LOUDNESS_PEAK_DB = -1.5  # потолок true peak готового файла (dBTP)
+# alimiter смотрит только на сэмплы: межвыборочные пики (true peak) он пропускает, а
+# пересэмплирование и AAC добавляют сверху — QC видел +1.3 dBTP при потолке −1.5 (удар
+# эффекта на дропе музыки). Поэтому лимитер работает на ×4 частоте (как измеритель
+# true peak по BS.1770) и с запасом на кодек: −2 dBTP.
+TRUE_PEAK_LIMIT_DB = -2.0
+TRUE_PEAK_OVERSAMPLE = 4
+OUTPUT_SAMPLE_RATE = 48000
+# Проверка готового файла: пик всё равно выше потолка — второй проход с потолком
+# ниже на перебор и ещё на столько (дБ), но не ниже TRUE_PEAK_FLOOR_DB.
+TRUE_PEAK_RETRY_MARGIN_DB = 0.3
+TRUE_PEAK_FLOOR_DB = -6.0
+TRUE_PEAK_TOLERANCE_DB = 0.05
+
+
+def true_peak_limiter(ceiling_db: float = TRUE_PEAK_LIMIT_DB) -> str:
+    """Лимитер по true peak: ×4 апсемплинг → alimiter с потолком ``ceiling_db`` → 48 кГц.
+
+    На ×4 частоте сэмплы ложатся между исходными — лимитер видит те пики, что
+    измеритель true peak (и ЦАП плеера) восстановит между сэмплами."""
+    limit = 10 ** (max(TRUE_PEAK_FLOOR_DB, min(0.0, float(ceiling_db))) / 20)
+    return (
+        f"aresample={OUTPUT_SAMPLE_RATE * TRUE_PEAK_OVERSAMPLE},"
+        f"alimiter=limit={limit:.4f}:attack=5:release=80:level=disabled,"
+        f"aresample={OUTPUT_SAMPLE_RATE}"
+    )
+
+
+LOUDNESS_LIMITER = true_peak_limiter()
+
+
+def true_peak_retry_ceiling(measured_tp: Any, ceiling_db: float = TRUE_PEAK_LIMIT_DB) -> float | None:
+    """Потолок лимитера для повторного прохода, если готовый файл всё-таки пробил
+    ``LOUDNESS_PEAK_DB`` (замер true peak после кодека); None — пик в норме."""
+    try:
+        peak = float(measured_tp)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(peak) or peak <= LOUDNESS_PEAK_DB + TRUE_PEAK_TOLERANCE_DB:
+        return None
+    lowered = float(ceiling_db) - (peak - LOUDNESS_PEAK_DB) - TRUE_PEAK_RETRY_MARGIN_DB
+    lowered = round(max(TRUE_PEAK_FLOOR_DB, lowered), 2)
+    return lowered if lowered < float(ceiling_db) else None
 # Сколько дБ пиков лимитер срезает без заметной потери громкости (≤ ~1 LU). Речь
 # почти всегда укладывается — её цепочка прежняя: volume + лимитер.
 LIMITER_ROOM_DB = 3.0
@@ -164,7 +205,8 @@ def loudness_filters(plan: dict) -> list[str]:
     makeup = float(plan.get("makeup_db") or 0.0)
     if makeup > 0:
         filters.append(f"volume={makeup:.2f}dB")
-    filters.append(LOUDNESS_LIMITER)
+    ceiling = plan.get("ceiling_db")
+    filters.append(LOUDNESS_LIMITER if ceiling is None else true_peak_limiter(float(ceiling)))
     return filters
 
 
@@ -213,12 +255,15 @@ def loudnorm_needed(measured: dict, target: float) -> bool:
         return False
     if current < LOUDNORM_SILENCE_LUFS:
         return False
-    return not (abs(current - target) < 1.0 and peak <= -1.0)
+    return not (abs(current - target) < 1.0 and peak <= LOUDNESS_PEAK_DB)
 
 
 # Короткое затухание звука в самом конце ролика: финал не «щёлкает» обрывом
 # слова, даже если последний кусок резали вплотную к речи.
-END_AUDIO_FADE_SEC = 0.35  # затухание кончается ровно на последнем звуке клипа; стоп-кадр после — тишина
+END_AUDIO_FADE_SEC = 0.35  # затухание кончается ровно на последнем звуке клипа; без музыки стоп-кадр — тишина
+# Звук длиннее картинки на столько (с) и больше — это хвост музыки на стоп-кадр
+# (_music_filter с hold_sec), а не погрешность контейнера (у AAC — до ~0.03 с).
+MUSIC_TAIL_MIN_SEC = 0.1
 
 
 def audible(measured: dict) -> bool:
@@ -235,6 +280,31 @@ def end_fade_filter(duration: float, fade: float = END_AUDIO_FADE_SEC) -> str:
     if duration <= fade * 4 or fade <= 0:
         return ""
     return f"afade=t=out:st={duration - fade:.3f}:d={fade:.3f}"
+
+
+def stream_durations(meta: Any) -> tuple[float | None, float | None]:
+    """Длины видео- и аудиопотока файла (ffprobe ``streams[].duration``); нет — None."""
+    raw = getattr(meta, "raw", None) or {}
+    found: dict[str, float] = {}
+    for stream in raw.get("streams") or []:
+        kind = stream.get("codec_type")
+        if kind in ("video", "audio") and kind not in found:
+            try:
+                value = float(stream.get("duration"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value > 0:
+                found[kind] = value
+    return found.get("video"), found.get("audio")
+
+
+def music_tail_sec(meta: Any) -> float:
+    """Насколько звук длиннее картинки: хвост музыки на стоп-кадр (0 — хвоста нет)."""
+    video, audio = stream_durations(meta)
+    if video is None or audio is None:
+        return 0.0
+    tail = audio - video
+    return round(tail, 3) if tail >= MUSIC_TAIL_MIN_SEC else 0.0
 
 
 def _source_gaps(segments: list[dict]) -> list[float | None]:
@@ -383,8 +453,12 @@ class ClipRenderService:
         motion: dict | None = None,
         layout: dict | None = None,
         music_start_sec: float | None = None,
+        aspect: str | None = None,
+        end_hold_sec: float = 0.0,
     ) -> dict:
-        """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше."""
+        """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше.
+        ``aspect`` — формат кадра (app/aspect.py), ``end_hold_sec`` — стоп-кадр в конце,
+        который потом добавит ``_normalize_loudness``: музыка доигрывает на нём."""
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
@@ -401,6 +475,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
+        preset = _preset_with_output(preset, source, aspect, end_hold_sec)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -515,6 +590,8 @@ class ClipRenderService:
         cut_parts: list[dict] | None = None,
         jump_joins: list[bool] | None = None,
         music_start_sec: float | None = None,
+        aspect: str | None = None,
+        end_hold_sec: float = 0.0,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
         рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
@@ -540,6 +617,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
+        preset = _preset_with_output(preset, source, aspect, end_hold_sec)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -946,11 +1024,20 @@ class ClipRenderService:
         cover: dict | None = None,
         layout: dict | None = None,
         music_start_sec: float | None = None,
+        aspect: str | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
         if not segments:
             raise ValueError("clip plan has no segments")
+        # Формат кадра (9:16 / 1:1 / 4:5): из запроса или из настроек клипа. Не 9:16 —
+        # пока только у холста; проверка до статуса «rendering», как и у вырезов.
+        from app.aspect import check_aspect_source
+
+        if aspect is None:
+            aspect = (plan.get("render_settings") or {}).get("aspect")
+        aspect = check_aspect_source(aspect, self.store.get_source(int(plan["source_id"])))
+        end_hold = self._end_hold_sec()
         # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
         # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
         cut_plan = self._cut_plan(plan, ffmpeg_preset_id)
@@ -1016,6 +1103,8 @@ class ClipRenderService:
                 layout=layout,
                 cut_parts=cut_plan.parts,
                 jump_joins=cut_plan.jump_joins,
+                aspect=aspect,
+                end_hold_sec=end_hold,
             )
         elif len(segment_ids) == 1:
             clip = self.render_segment(
@@ -1036,6 +1125,8 @@ class ClipRenderService:
                 cover=cover,
                 motion=visual,
                 layout=layout,
+                aspect=aspect,
+                end_hold_sec=end_hold,
             )
         else:
             clip = self.render_montage(
@@ -1059,6 +1150,8 @@ class ClipRenderService:
                 cover=cover,
                 motion=visual,
                 layout=layout,
+                aspect=aspect,
+                end_hold_sec=end_hold,
             )
         if clip["status"] == "succeeded":
             clip = self._apply_mute(clip, plan, cut_plan)
@@ -1272,6 +1365,12 @@ class ClipRenderService:
                     comp_w = meta.width or int(preset.get("output_width") or 1080)
                     comp_h = meta.height or int(preset.get("output_height") or 1920)
                     regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
+                    if preset.get("aspect"):
+                        # Квадрат / 4:5: слои размечены в опорном 1080×1920 — переносим в
+                        # новый кадр одним масштабом по содержимому (app/aspect.py).
+                        from app.aspect import asset_sizes, reframe_layers
+
+                        layers = reframe_layers(layers, comp_w, comp_h, asset_sizes(layers, assets))
                     comp = write_comp(
                         work / "comp.json",
                         width=comp_w,
@@ -1326,6 +1425,14 @@ class ClipRenderService:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
+    @staticmethod
+    def _end_hold_sec() -> float:
+        """Стоп-кадр в конце ролика (RENDER_END_HOLD_SEC); его кладёт финальный проход
+        звука — без него (RENDER_LOUDNORM=0) стоп-кадра нет."""
+        if not settings.render_loudnorm:
+            return 0.0
+        return max(0.0, float(settings.render_end_hold_sec or 0))
+
     def _apply_audio_layers(self, clip: dict, motion: dict, plan: dict | None = None) -> dict:
         """Звуки ``audio``-слоёв в готовый клип — последним проходом, видео копией.
 
@@ -1372,6 +1479,8 @@ class ClipRenderService:
         тогда звучит хуже соседей, а громкий хрипит. Два прохода loudnorm:
         замер, потом линейная поправка по замеру — без «качелей» громкости.
         Заодно — финал: стоп-кадр RENDER_END_HOLD_SEC и затухание звука на нём.
+        Пики — по true peak (лимитер на ×4 частоте), готовый файл проверяется замером
+        и при перебое пересобирается с потолком ниже.
         Сбой не теряет клип.
         """
         if not settings.render_loudnorm:  # RENDER_LOUDNORM=0 выключает весь финальный проход звука
@@ -1384,8 +1493,12 @@ class ClipRenderService:
             measured = _measure_loudness(path, target)
             if not audible(measured):
                 return clip  # немой клип: ни громкость, ни затухание не нужны
-            hold = max(0.0, float(settings.render_end_hold_sec or 0))
-            filters = [f"apad=pad_dur={hold:.3f}"] if hold > 0 else []
+            meta = probe_media(path)
+            # Музыка уже доиграна на стоп-кадр (проход музыки, _music_filter с hold_sec):
+            # звук длиннее картинки — стоп-кадр ровно на этот хвост, тишину не добавляем.
+            tail = music_tail_sec(meta)
+            hold = tail if tail > 0 else self._end_hold_sec()
+            pad = [f"apad=pad_dur={hold:.3f}"] if hold > 0 and tail <= 0 else []
             import logging
 
             needed = loudnorm_needed(measured, target)
@@ -1393,36 +1506,52 @@ class ClipRenderService:
             # лимитер съел громкость, компрессор с подъёмом (fit_loudness).
             plan = fit_loudness(measured, target, lambda f: _measure_loudness(path, target, f)) if needed else None
             logging.getLogger("uvicorn.error").info(
-                "loudness clip=%s input_i=%s input_tp=%s needed=%s plan=%s",
-                clip.get("id"), measured.get("input_i"), measured.get("input_tp"), needed, plan,
+                "loudness clip=%s input_i=%s input_tp=%s needed=%s plan=%s tail=%s",
+                clip.get("id"), measured.get("input_i"), measured.get("input_tp"), needed, plan, tail,
             )
-            if plan:
-                # Только линейная поправка (одно число на весь клип) + лимитер на пики.
-                # loudnorm второго прохода, когда линейно не влезает в пик, молча
-                # переходит в динамический режим и вытягивает тихие места на 10–14 дБ:
-                # фоновые звуки и эффекты становились громче речи («звуки пердежа
-                # во всю громкость»). Компрессор — только когда пики упираются в
-                # потолок сильнее, чем лимитер срежет без потерь (loudness_plan).
-                filters.extend(loudness_filters(plan))
-            # Затухание — на конце самого звука, а не на добавленной тишине стоп-кадра:
-            # иначе на речь приходилась 0.1 с и звук обрывался.
-            fade = end_fade_filter(float(probe_media(path).duration_sec or 0))
-            if fade:
-                filters.append(fade)
-            if not filters:
-                return clip
-            tmp = path.with_name(path.stem + ".loud" + path.suffix)
-            af = ",".join(filters + ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"])
+            # Затухание — на конце самого звука: без музыки это конец речи (стоп-кадр
+            # после — тишина, иначе на речь приходилась 0.1 с и звук обрывался), с
+            # музыкой — конец её хвоста на стоп-кадре, то есть конец файла.
+            fade = end_fade_filter(float(meta.duration_sec or 0))
             # Стоп-кадр в конце: последний кадр держится, пока затухает звук —
             # владелец: «сейчас она просто обрывается жёстко». Тогда картинку надо
             # перекодировать (tpad), иначе — копия без потерь.
             video = (["-vf", f"tpad=stop_mode=clone:stop_duration={hold:.3f}", "-c:v", "libx264", "-crf", "18",
                       "-preset", "veryfast", "-pix_fmt", "yuv420p"] if hold > 0 else ["-c:v", "copy"])
-            _run_ffmpeg(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
-                 *video, "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)],
-                timeout=60 * 10,
-            )
+            tmp = path.with_name(path.stem + ".loud" + path.suffix)
+            ceiling = TRUE_PEAK_LIMIT_DB
+            for _attempt in range(2):
+                filters = list(pad)
+                if plan:
+                    # Только линейная поправка (одно число на весь клип) + лимитер на пики.
+                    # loudnorm второго прохода, когда линейно не влезает в пик, молча
+                    # переходит в динамический режим и вытягивает тихие места на 10–14 дБ:
+                    # фоновые звуки и эффекты становились громче речи («звуки пердежа
+                    # во всю громкость»). Компрессор — только когда пики упираются в
+                    # потолок сильнее, чем лимитер срежет без потерь (loudness_plan).
+                    filters.extend(loudness_filters({**plan, "ceiling_db": ceiling}))
+                if fade:
+                    filters.append(fade)
+                if not filters:
+                    return clip
+                af = ",".join(filters + [f"aresample={OUTPUT_SAMPLE_RATE}", "aformat=sample_fmts=fltp:channel_layouts=stereo"])
+                _run_ffmpeg(
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0",
+                     "-map", "0:a:0", *video, "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                     str(tmp)],
+                    timeout=60 * 10,
+                )
+                # Проверка готового файла — true peak после AAC: пробил потолок —
+                # ещё один проход с лимитером ниже на перебор.
+                retry = true_peak_retry_ceiling(_measure_loudness(tmp, target).get("input_tp"), ceiling)
+                if retry is None:
+                    break
+                logging.getLogger("uvicorn.error").info(
+                    "loudness clip=%s true peak over %.1f dBTP: limiter %.2f -> %.2f", clip.get("id"),
+                    LOUDNESS_PEAK_DB, ceiling, retry,
+                )
+                plan = plan or {"gain_db": 0.0, "compressor": None, "makeup_db": 0.0}
+                ceiling = retry
             tmp.replace(path)
             meta = probe_media(path)
             clip = self.store.update_clip(clip["id"], size_bytes=path.stat().st_size, duration_sec=meta.duration_sec)
@@ -1644,6 +1773,8 @@ class ClipRenderService:
             if name == "music":
                 music_settings = dict(music)
                 music_settings["duration_sec"] = probe_media(current).duration_sec
+                # Стоп-кадр в конце: музыка доигрывает и затухает на нём, а не до него.
+                music_settings["hold_sec"] = float(preset.get("end_hold_sec") or 0.0)
                 music_settings["volume"] = music_volume_for(current, music_settings)
                 _run_ffmpeg(build_ffmpeg_music_args(current, dest, music_settings), timeout=60 * 20)
             else:
@@ -1854,6 +1985,7 @@ def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) ->
     output_path.parent.mkdir(parents=True, exist_ok=True)
     track_path = Path(music["track_path"])
     loop = bool(music.get("loop"))
+    held = _music_hold(music) > 0
     args = [
         "ffmpeg",
         "-y",
@@ -1880,7 +2012,9 @@ def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) ->
             "aac",
             "-ar",
             "48000",
-            "-shortest",
+            # Со стоп-кадром звук длиннее картинки на hold_sec (хвост музыки): -shortest
+            # его бы срезал. Картинку до той же длины дотянет финальный проход (tpad).
+            *([] if held else ["-shortest"]),
             "-movflags",
             "+faststart",
             str(output_path),
@@ -1919,11 +2053,35 @@ def music_volume_for(clip_path: Path, music: dict) -> float:
     return 10 ** (max(-40.0, min(6.0, gain_db)) / 20)
 
 
+def _music_hold(music: dict) -> float:
+    """Стоп-кадр, на котором доигрывает музыка (0 — без него или длина клипа неизвестна)."""
+    try:
+        hold = float(music.get("hold_sec") or 0)
+        duration = float(music.get("duration_sec") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return hold if hold > 0 and duration > 0 and math.isfinite(hold) else 0.0
+
+
 def _music_filter(music: dict) -> str:
+    """Граф музыки поверх клипа. ``hold_sec`` — стоп-кадр в конце: голос клипа
+    затухает на своём конце (как end_fade_filter) и дотягивается тишиной, а музыка
+    играет дальше и затухает к концу стоп-кадра — фейд кончается в самом конце файла."""
     volume = max(0.0, float(music.get("volume") if music.get("volume") is not None else 0.25))
     fade_in = max(0.0, float(music.get("fade_in_sec") or 0))
     fade_out = max(0.0, float(music.get("fade_out_sec") or 0))
     duration = max(0.0, float(music.get("duration_sec") or 0))
+    hold = _music_hold(music)
+    voice = "[0:a]"
+    voice_chain = ""
+    if hold > 0:
+        total = duration + hold
+        speech_fade = end_fade_filter(duration)
+        voice_chain = "[0:a]" + (speech_fade + "," if speech_fade else "") + f"apad=whole_dur={_ff_number(total)}[voice];"
+        voice = "[voice]"
+        # Затухание музыки — на весь стоп-кадр (или дольше, если так задано в пресете).
+        fade_out = max(fade_out, hold)
+        duration = total
     duck = bool(music.get("duck"))
     duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
 
@@ -1938,7 +2096,7 @@ def _music_filter(music: dict) -> str:
     if fade_out > 0 and duration > 0:
         start = max(0.0, duration - fade_out)
         music_chain.append(f"afade=t=out:st={_ff_number(start)}:d={_ff_number(fade_out)}")
-    music_str = ",".join(music_chain) + "[music]"
+    music_str = voice_chain + ",".join(music_chain) + "[music]"
 
     if duck:
         # Gentle, musical ducking: only noticeable speech pulls the music down and
@@ -1946,13 +2104,13 @@ def _music_filter(music: dict) -> str:
         ratio = _ff_number(1.5 + duck_amount * 3.5)
         return (
             f"{music_str};"
-            "[0:a]asplit=2[spk][key];"
+            f"{voice}asplit=2[spk][key];"
             f"[music][key]sidechaincompress=threshold=0.1:ratio={ratio}:attack=20:release=400:makeup=1[ducked];"
             "[spk][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
         )
     return (
         f"{music_str};"
-        "[0:a][music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
+        f"{voice}[music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
     )
 
 
@@ -2369,6 +2527,27 @@ def _is_canvas(source: dict | None) -> bool:
     from app.canvas import is_canvas
 
     return is_canvas(source)
+
+
+def _preset_with_output(preset: dict, source: dict | None, aspect: str | None, end_hold_sec: float = 0.0) -> dict:
+    """Формат кадра (app/aspect.py: размер вывода, перекомпоновка слоёв в _apply_motion)
+    и стоп-кадр в конце (музыка доигрывает на нём — проход музыки). 9:16 без стоп-кадра —
+    пресет как есть."""
+    from app.aspect import DEFAULT_ASPECT, aspect_size, check_aspect_source
+
+    aspect = check_aspect_source(aspect, source)
+    hold = max(0.0, float(end_hold_sec or 0.0))
+    if aspect == DEFAULT_ASPECT and hold <= 0:
+        return preset
+    preset = dict(preset)
+    if hold > 0:
+        preset["end_hold_sec"] = hold
+    if aspect != DEFAULT_ASPECT:
+        width, height = aspect_size(aspect)
+        preset["aspect"] = aspect
+        preset["output_width"] = width
+        preset["output_height"] = height
+    return preset
 
 
 def _preset_with_source_audio(preset: dict, source: dict) -> dict:

@@ -546,6 +546,9 @@ class RenderClipPlanRequest(BaseModel):
     banner_id: int | None = None
     music_track_id: int | None = None
     music_volume: float | None = None
+    # Формат этого рендера поверх настроек клипа: "9:16" | "1:1" | "4:5" (не 9:16 — только
+    # холст, app/aspect.py). Не задан — из настроек клипа (render_settings.aspect).
+    aspect: str | None = None
 
 
 class RenderClipPlansRequest(BaseModel):
@@ -2292,6 +2295,8 @@ def api_render_clip_plan(
                 "music_track_id": payload.music_track_id if payload else None,
                 "music_volume": payload.music_volume if payload else None,
             }
+        if payload and payload.aspect:
+            kwargs["aspect"] = payload.aspect
         return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

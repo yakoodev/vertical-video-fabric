@@ -14,7 +14,7 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
+import type { AiSegment, Aspect, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
@@ -1240,6 +1240,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [gain, setGain] = useState<GainSpan[]>([]);
   const gainRef = useRef<GainSpan[]>([]);
   gainRef.current = gain;
+  // Формат кадра холста (app/aspect.py): 9:16, квадрат 1:1 или 4:5 из того же монтажа.
+  const [aspect, setAspect] = useState<Aspect>("9:16");
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
@@ -1386,6 +1388,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     backdrop,
     mute,
     gain,
+    aspect,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1463,6 +1466,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       backdrop: normalizeBackdrop(s.backdrop),
       mute: s.mute ?? [],
       gain: s.gain ?? [],
+      aspect: s.aspect ?? "9:16",
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1489,6 +1493,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setBackdrop(normalizeBackdrop(s.backdrop));
     setMute(s.mute ?? []);
     setGain(s.gain ?? []);
+    setAspect(s.aspect ?? "9:16");
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);
@@ -4456,6 +4461,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Ко всем ★
               </button>
             </div>
+            {isCanvas && (
+              <label className="ed-aspect" title="Формат готового ролика: слои сами переносятся в кадр одним масштабом, фон — на весь кадр">
+                <span>Формат</span>
+                <select value={aspect} onChange={(e) => setAspect(e.target.value as Aspect)}>
+                  <option value="9:16">9:16 — вертикаль</option>
+                  <option value="1:1">1:1 — квадрат</option>
+                  <option value="4:5">4:5 — лента</option>
+                </select>
+              </label>
+            )}
             <div className="ed-render-btns">
               <button
                 className="btn primary"

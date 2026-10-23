@@ -198,7 +198,12 @@ export interface RenderSettings {
   mute?: { start: number; end: number }[];
   /** Громкость звука исходника на отрезках, дБ (секунды клипа до вырезов, app/audio_mute.py). */
   gain?: { start: number; end: number; gain_db: number }[];
+  /** Формат кадра: 9:16 (как всегда), 1:1 или 4:5 — пока только у холста (app/aspect.py). */
+  aspect?: Aspect;
 }
+
+/** Формат готового ролика (app/aspect.py). */
+export type Aspect = "9:16" | "1:1" | "4:5";
 
 export interface MontageInsert {
   asset_id: number;

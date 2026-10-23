@@ -912,6 +912,17 @@ def render_frame_png(
     service = _render.ClipRenderService(store)
     preset = service._preset(rs["preset_id"])
     preset = service._preset_with_render_overrides(preset, mirror=rs["mirror"], layout=rs["layout"])
+    # Квадрат / 4:5 холста (app/aspect.py) — кадр того же размера и слои, перенесённые
+    # так же, как в рендере. У клипа с исходником формат всегда 9:16.
+    from app.aspect import DEFAULT_ASPECT
+    from app.canvas import is_canvas
+
+    aspect = rs.get("aspect") or DEFAULT_ASPECT
+    plan_source = store.get_source(int(plan["source_id"]))
+    if aspect != DEFAULT_ASPECT and is_canvas(plan_source):
+        preset = _render._preset_with_output(preset, plan_source, aspect)
+    else:
+        aspect = DEFAULT_ASPECT
     width = int(preset.get("output_width") or 1080)
     height = int(preset.get("output_height") or 1920)
     fps = float(preset.get("fps") or 30)
@@ -970,6 +981,10 @@ def render_frame_png(
             timeout=120,
         )
         layers, assets, _notes = resolve_layer_assets(store, layers)
+        if aspect != DEFAULT_ASPECT:
+            from app.aspect import asset_sizes, reframe_layers
+
+            layers = reframe_layers(layers, width, height, asset_sizes(layers, assets))
         words = plan_caption_words(store, plan) if has_captions(layers) else None
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
