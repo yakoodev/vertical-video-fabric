@@ -32,7 +32,7 @@ export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type 
 export { collectImageRefs, collectAudioRefs, collectVideoLayers } from "./assets";
 export { invalidateTextCache, layoutText, textBoxSize, backdropGeometry, type TextLayout } from "./layers/text";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
-export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, phoneMetrics, statusBarHeight, type PhoneMetrics } from "./layers/device";
+export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";
 export {
   PARTICLE_KINDS,
   PARTICLE_SHAPES,

@@ -168,36 +168,111 @@ export function drawPhone(
   ctx.imageSmoothingQuality = "high";
   const sb = Math.max(0, Math.min(h * 0.5, opts.statusBar ?? 0));
   screen(-w / 2, -h / 2 + sb, w, h - sb);
-  if (sb > 0) drawStatusBar(ctx, w, h, sb, opts.statusBarColor, font, opts.island !== false);
+  if (sb > 0) drawStatusBar(ctx, w, h, sb, opts.statusBarColor, font, opts.island !== false, m.screenR);
   if (opts.glare) drawGlare(ctx, w, h);
   ctx.restore();
 
   if (opts.island !== false) drawIsland(ctx, w, h);
 }
 
+/** Островок: ширина и отступ сверху — доли ширины экрана (drawIsland). */
+const ISLAND_W = 0.3;
+const ISLAND_TOP = 0.032;
+/** Зазор между значками строки статуса и островком, доля ширины экрана. */
+export const STATUS_ISLAND_GAP = 0.03;
+/** Ширина группы «связь + Wi-Fi + батарея» в кеглях u (столбики 0.99u, веер, батарея с носиком). */
+const ICONS_W = 3.42;
+
+export type StatusBarLayout = {
+  /** Середина значков по высоте. */
+  cy: number;
+  /** Кегль времени и единица значков справа (у тесного «уха» значки мельче времени). */
+  u: number;
+  iconU: number;
+  /** Отрезки по x (от центра экрана): время, группа значков, островок с зазором. */
+  time: [number, number];
+  icons: [number, number];
+  island: [number, number];
+};
+
+/**
+ * Раскладка строки статуса экрана w×h: время — по центру левого «уха», значки — правого;
+ * оба отрезка не заходят под островок (с зазором) и в скругление угла экрана. Если в «ухо»
+ * не влезает (узкий телефон, широкий шрифт, крупное скругление) — кегль уменьшается, а не
+ * значки наезжают на островок. `timeWidth(u)` — ширина «9:41» кеглем u.
+ */
+export function statusBarLayout(
+  w: number,
+  h: number,
+  sb: number,
+  island: boolean,
+  screenR: number,
+  timeWidth: (u: number) => number,
+): StatusBarLayout {
+  const top = -h / 2;
+  const ih = Math.min(w * 0.088, h * 0.06);
+  const islandMid = top + w * ISLAND_TOP + ih / 2;
+  const cy = island && islandMid + ih / 2 <= top + sb ? islandMid : top + sb / 2;
+  // «Уши»: от края экрана (с учётом скругления угла на высоте значков) до островка с зазором.
+  // Без островка уши те же — строка статуса выглядит как у iPhone.
+  const inner = w * (ISLAND_W / 2 + STATUS_ISLAND_GAP);
+  const dy = cy - top;
+  const corner = dy < screenR ? screenR - Math.sqrt(Math.max(0, screenR * screenR - (screenR - dy) ** 2)) : 0;
+  const outer = w / 2 - Math.max(w * 0.05, corner + w * 0.02);
+  const ear = Math.max(0, outer - inner);
+  let u = Math.min(w * 0.045, sb * 0.42);
+  const tw = timeWidth(u);
+  if (tw > ear && tw > 0) u *= ear / tw;
+  const timeW = timeWidth(u);
+  const iconU = Math.min(u, ear / ICONS_W);
+  const mid = (inner + outer) / 2;
+  return {
+    cy,
+    u,
+    iconU,
+    time: [-mid - timeW / 2, -mid + timeW / 2],
+    icons: [mid - (iconU * ICONS_W) / 2, mid + (iconU * ICONS_W) / 2],
+    island: [-w * ISLAND_W / 2, w * ISLAND_W / 2],
+  };
+}
+
 /**
  * Строка статуса как у iOS: полоса цвета `color`, слева время «9:41», справа связь, Wi-Fi и
- * батарея. Значки по середине полосы (или островка, если он в полосе помещается).
+ * батарея. Значки по середине полосы (или островка, если он в полосе помещается), в «ушах»
+ * по бокам островка — под него не заезжают (statusBarLayout).
  */
-function drawStatusBar(ctx: Ctx2D, w: number, h: number, sb: number, color: string | undefined, family: string, island: boolean): void {
+function drawStatusBar(
+  ctx: Ctx2D,
+  w: number,
+  h: number,
+  sb: number,
+  color: string | undefined,
+  family: string,
+  island: boolean,
+  screenR: number,
+): void {
   const bg = color && parseHex(color) ? color : "#000000";
   const top = -h / 2;
   ctx.fillStyle = bg;
   ctx.fillRect(-w / 2, top, w, sb);
   const ink = isLight(bg) ? "#000000" : "#ffffff";
-  const ih = Math.min(w * 0.088, h * 0.06);
-  const islandMid = top + w * 0.032 + ih / 2;
-  const cy = island && islandMid + ih / 2 <= top + sb ? islandMid : top + sb / 2;
-  const u = Math.min(w * 0.045, sb * 0.42); // кегль времени
+  const fontAt = (size: number) => fontString({ family, weight: 700, size }, DEFAULT_FONT);
+  const L = statusBarLayout(w, h, sb, island, screenR, (size) => {
+    ctx.font = fontAt(size);
+    return ctx.measureText("9:41").width;
+  });
+  const { cy } = L;
+  let u = L.u;
   if (u < 2) return;
   // Время — в середине левого «уха» (между краем экрана и островком).
   ctx.fillStyle = ink;
-  ctx.font = fontString({ family, weight: 700, size: u }, DEFAULT_FONT);
+  ctx.font = fontAt(u);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("9:41", -w * 0.31, cy + u * 0.04);
+  ctx.fillText("9:41", (L.time[0] + L.time[1]) / 2, cy + u * 0.04);
   // Справа: четыре столбика связи, веер Wi-Fi и батарея — в середине правого «уха».
-  const x0 = w * 0.31 - u * 2.05;
+  u = L.iconU;
+  const x0 = L.icons[0];
   const bw = u * 0.17;
   for (let i = 0; i < 4; i++) {
     const bh = u * (0.3 + i * 0.16);
@@ -249,10 +324,10 @@ function drawGlare(ctx: Ctx2D, w: number, h: number): void {
 
 /** «Островок» камеры: чёрная таблетка у верха экрана с линзой справа. */
 function drawIsland(ctx: Ctx2D, w: number, h: number): void {
-  const iw = w * 0.3;
+  const iw = w * ISLAND_W;
   const ih = Math.min(w * 0.088, h * 0.06);
   const x = -iw / 2;
-  const y = -h / 2 + w * 0.032;
+  const y = -h / 2 + w * ISLAND_TOP;
   fillRoundRect(ctx, x, y, iw, ih, ih / 2, "#000000");
   const lx = x + iw - ih / 2;
   const ly = y + ih / 2;
