@@ -940,6 +940,7 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         rep(f"{where}.props", "нужен объект")
         props_raw = None
     layer["props"] = _norm_fields(props_raw or {}, PROPS[ltype], rep, f"{where}.props")
+    _unescape_props(layer["props"], ltype)
     layer["keys"] = _norm_keys(raw.get("keys"), rep, f"{where}.keys", ltype)
     layer["in"] = _norm_anim(raw.get("in"), rep, f"{where}.in", layer)
     layer["out"] = _norm_anim(raw.get("out"), rep, f"{where}.out", layer)
@@ -949,6 +950,36 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
     layer["loop"] = Obj(LOOP).norm(loop, rep, f"{where}.loop") if loop is not None else Obj(LOOP).fill()
     _check_required(layer, rep, where)
     return layer
+
+
+# Где в слоях живёт видимый текст: титр, подписи счётчика, плашки, графика.
+TEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "text": ("text",),
+    "counter": ("prefix", "suffix"),
+    "callout": ("title", "subtitle"),
+    "chart": ("title", "centerLabel"),
+}
+# Gemini пишет перенос в JSON двойным экранированием ("СТРОКА\\nСТРОКА") — в строке
+# остаются обратный слэш и n, а капс в движке делал из них «\N» прямо в кадре (прогон 578).
+_ESCAPED_BREAK_RE = re.compile(r"(?:\\+r)?\\+[nN]")
+_ESCAPED_TAB_RE = re.compile(r"\\+t")
+
+
+def unescape_text(value: str) -> str:
+    """Литеральные «\\n» (и «\\\\n», «\\N») → настоящий перенос, «\\t» → пробел."""
+    if "\\" not in value:
+        return value
+    return _ESCAPED_TAB_RE.sub(" ", _ESCAPED_BREAK_RE.sub("\n", value))
+
+
+def _unescape_props(props: dict, ltype: str) -> None:
+    for key in TEXT_FIELDS.get(ltype, ()):
+        if isinstance(props.get(key), str):
+            props[key] = unescape_text(props[key])
+    if ltype == "chart":
+        for item in props.get("data") or []:
+            if isinstance(item, dict) and isinstance(item.get("label"), str):
+                item["label"] = unescape_text(item["label"])
 
 
 def _check_required(layer: dict, rep: _Report, where: str) -> None:

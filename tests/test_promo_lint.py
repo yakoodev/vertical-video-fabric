@@ -174,3 +174,94 @@ def test_add_layers_on_canvas_warns_about_title_over_phone(tmp_path, monkeypatch
     res, ok = run_tool(ctx, "add_layers", {"layers": [title]})
     assert ok, res
     assert any("на экране телефона ph" in w for w in res["warnings"]), res["warnings"]
+    # с 6 с на холсте один фон и финала нет — про весь клип, хоть новый слой и не про это
+    assert "пустой кадр 6.0–10.0 с: нет слоёв — проверь, применились ли последние пачки" in res["warnings"]
+    assert any(w.startswith("нет финала") for w in res["warnings"]), res["warnings"]
+    clip, ok = run_tool(ctx, "get_clip", {})
+    assert ok and any(w.startswith("пустой кадр 6.0–10.0 с") for w in clip["warnings"]), clip["warnings"]
+    cta = {"type": "text", "start": 5.8, "end": 10, "y": 0.5, "props": {"text": "t.me/Collabikabot", "size": 60}}
+    res, ok = run_tool(ctx, "add_layers", {"layers": [cta]})
+    assert ok and not any(w.startswith(("пустой кадр", "нет финала")) for w in res["warnings"]), res["warnings"]
+
+
+# ---------------------------------------------------------------- прогон 578: пустой финал, «\N» в титрах
+
+FIXTURE_578 = json.loads((Path(__file__).parent / "fixtures" / "clip578_promo.json").read_text(encoding="utf-8"))
+
+
+def _lint_578(layers):
+    render = FIXTURE_578["render"]
+    return lint_layers(layers, FIXTURE_578["duration"], canvas=True, backdrop=render["backdrop"],
+                       camera=render["camera"])
+
+
+def test_clip_578_titles_get_real_line_breaks():
+    """Gemini писал перенос как "\\\\n" — в строке обратный слэш + n, капс в кадре давал «\\N»."""
+    raw = FIXTURE_578["render"]["layers"]
+    assert "\\n" in next(l for l in raw if l["id"] == "t1")["props"]["text"]
+    texts = {l["id"]: l["props"]["text"] for l in motion.normalize_layers(copy.deepcopy(raw)) if l["type"] == "text"}
+    assert texts["t1"] == "НАЙДИ НАПАРНИКА\nДЛЯ КОЛЛАБА"
+    assert all("\\" not in t for t in texts.values()), texts
+
+
+def test_unescape_text_fields_of_all_text_layers():
+    assert motion.unescape_text("А\\\\nБ\\NВ\\r\\nГ\\tД") == "А\nБ\nВ\nГ Д"
+    assert motion.unescape_text("без слэшей\nи так") == "без слэшей\nи так"
+    layers = motion.normalize_layers([
+        {"type": "counter", "props": {"prefix": "от\\n", "suffix": "\\t₽"}},
+        {"type": "callout", "props": {"title": "ШАГ 1\\nВХОД", "subtitle": "a\\\\nb"}},
+        {"type": "chart", "props": {"title": "Рост\\nза год", "data": [{"label": "Q1\\n2025", "value": 1}]}},
+    ])
+    assert layers[0]["props"]["prefix"] == "от\n" and layers[0]["props"]["suffix"] == " ₽"
+    assert (layers[1]["props"]["title"], layers[1]["props"]["subtitle"]) == ("ШАГ 1\nВХОД", "a\nb")
+    assert layers[2]["props"]["title"] == "Рост\nза год" and layers[2]["props"]["data"][0]["label"] == "Q1\n2025"
+
+
+def test_clip_578_empty_tail_and_no_final_are_warned():
+    warnings = _lint_578(motion.normalize_layers(copy.deepcopy(FIXTURE_578["render"]["layers"])))
+    text = "\n".join(warnings)
+    # титр t6 гаснет (out fade 0.2) к 19.9 с, телефон v5 уехал вниз — дальше один фон до 24 с
+    assert "пустой кадр 19.9–24.0 с: нет слоёв — проверь, применились ли последние пачки" in warnings, text
+    assert any(w.startswith("нет финала: в последних 4 с (20.0–24.0 с)") for w in warnings), text
+
+
+def test_clip_578_with_the_lost_batch_has_no_gap():
+    """Пачка финала без битого звука закрывает и дыру, и финал."""
+    batch = [l for l in FIXTURE_578["failed_batch"] if "success" not in str(l["props"].get("asset_id"))]
+    layers = motion.normalize_layers(copy.deepcopy(FIXTURE_578["render"]["layers"] + batch))
+    warnings = _lint_578(layers)
+    assert not any(w.startswith(("пустой кадр", "нет финала")) for w in warnings), warnings
+
+
+def test_empty_frame_respects_opacity_keys_animations_and_backdrop_layers():
+    def lint(raw, duration=6.0, canvas=True):
+        return promo_lint.scene_warnings(motion.normalize_layers(raw), duration, canvas=canvas)
+
+    title = {"id": "t", "type": "text", "start": 0, "end": 6, "props": {"text": "ПРИВЕТ"}}
+    assert lint([title]) == []
+    assert lint([title], canvas=False) == []  # не холст — пустых кадров не ищем
+    # растворился ключом opacity на 2 с — дальше пусто
+    faded = {**title, "keys": {"opacity": [{"t": 1.5, "v": 1, "ease": "linear"}, {"t": 2, "v": 0}]}}
+    assert [w for w in lint([faded]) if w.startswith("пустой кадр")][0].startswith("пустой кадр 1.9–6.0 с")
+    # картинка во всю ширину — фон, частицы и звук кадр не наполняют
+    bg = {"id": "bg", "type": "shape", "start": 0, "end": 6, "props": {"kind": "rect", "w": 1080, "h": 1920}}
+    sparks = {"id": "p", "type": "particles", "start": 0, "end": 6, "props": {"kind": "sparkle"}}
+    assert lint([bg, sparks, {**title, "end": 2}])[0].startswith("пустой кадр 2.0–6.0 с")
+    # дыра ровно 1 с и меньше — не шумим
+    assert lint([{**title, "end": 2.5}, {**title, "id": "t2", "start": 3.5}]) == []
+
+
+def test_no_final_only_for_phone_promo_and_logo_or_cta_counts():
+    phone = {"id": "ph", "type": "video", "start": 0, "end": 4, "y": 0.6,
+             "props": {"asset_id": 1, "w": 580, "device": "phone"}}
+    date = {"id": "d", "type": "text", "start": 4, "end": 8, "props": {"text": "1 НОЯБРЯ, 19:00"}}
+
+    def finals(*raw):
+        return [w for w in promo_lint.scene_warnings(motion.normalize_layers(list(raw)), 8.0) if w.startswith("нет финала")]
+
+    assert finals(phone, date)  # дата без ссылки и логотипа — не финал
+    assert finals(phone, date, {"id": "l", "type": "image", "start": 5, "end": 8, "props": {"asset_id": 7, "w": 400}}) == []
+    assert finals(phone, date, {**date, "id": "c", "props": {"text": "ЖМИ НА ССЫЛКУ"}}) == []
+    assert finals(phone, {"id": "c", "type": "callout", "start": 5, "end": 8,
+                          "props": {"title": "Регистрация открыта"}}) == []
+    assert finals(date) == []  # без телефона это не промо приложения

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 W, H = 1080.0, 1920.0
@@ -493,6 +494,111 @@ def long_hook(texts: list[dict], scenes: list[dict]) -> list[tuple[tuple, str]]:
     return out
 
 
+# 6) пустой кадр и 7) нет финала — прогон 578: пачка финала (логотип, «РЕГИСТРАЦИЯ ОТКРЫТА»,
+# частицы) отклонена из-за одного звука, агент не повторил — последние 4 с ролика были пустым фоном.
+EMPTY_MIN_SEC = 1.0
+EMPTY_NOTE = "нет слоёв — проверь, применились ли последние пачки"
+# Ссылка или призыв в финальном тексте: адрес, бот, «жми», «регистрация», «скачай»…
+CTA_RE = re.compile(
+    r"https?://|www\.|t\.me|@\w|\.(?:ru|com|io|app|me|gg|tv|net|org|рф)\b|"
+    r"регистр|скача|установ|жми|нажми|переход|подпис|присоедин|заход|попробуй|участв|ссылк|бот\b|"
+    r"начни|открой|забирай|получи|ждём|ждем|link|join|download|sign\s*up",
+    re.IGNORECASE,
+)
+
+
+def _anim_half(layer: dict, key: str) -> float:
+    anim = layer.get(key) if isinstance(layer.get(key), dict) else {}
+    if not anim or anim.get("type") in (None, "none"):
+        return 0.0
+    return _num(anim.get("duration"), 0.0) / 2
+
+
+def is_backdrop_layer(layer: dict) -> bool:
+    """Фон, а не содержимое кадра: картинка/видео/фигура во всю ширину (не телефон)."""
+    kind = layer.get("type")
+    if kind not in ("image", "video", "shape") or is_phone(layer):
+        return False
+    props = _props(layer)
+    scale = _num(layer.get("scale"), 1.0)
+    width = _num(props.get("w"), 600.0) * scale
+    if kind == "shape":
+        return width >= BACKGROUND_SHARE * W and _num(props.get("h"), 400.0) * scale >= BACKGROUND_SHARE * H
+    return width >= BACKGROUND_SHARE * W
+
+
+def is_content_layer(layer: dict) -> bool:
+    """Что делает кадр непустым: всё видимое, кроме фона, частиц и субтитров (их видно только на речи)."""
+    return (layer.get("type") not in ("audio", "particles", "captions") and not layer.get("hidden")
+            and not is_backdrop_layer(layer))
+
+
+def shown(layer: dict, t: float, camera: Any = None) -> bool:
+    """Слой виден в момент ``t``: внутри start..end без половин входа/выхода, не прозрачный,
+    не сжат в точку и хоть краем в кадре (телефон, уехавший ключами за край, не считается)."""
+    start, end = _num(layer.get("start"), 0.0), _num(layer.get("end"), 0.0)
+    if not (start + _anim_half(layer, "in") <= t < end - _anim_half(layer, "out")):
+        return False
+    state = layer_state(layer, t)
+    if state["opacity"] < MIN_VISIBLE_OPACITY or state["scale"] < 0.05:
+        return False
+    rect = layer_rect(layer, t, camera)
+    return rect is None or _intersection(rect, (0.0, 0.0, W, H)) > 0
+
+
+def empty_frames(layers: list[dict], duration: float, camera: Any = None) -> list[tuple[tuple, str]]:
+    """6) На холсте отрезки > 1 с, где кроме фона ничего не видно."""
+    content = [l for l in layers if is_content_layer(l)]
+    out, run = [], None
+    for t in _samples(0.0, duration) + [None]:
+        empty = t is not None and not any(shown(l, t, camera) for l in content)
+        if empty:
+            run = run if run is not None else t
+            continue
+        if run is not None:
+            stop = min(duration, (t if t is not None else duration))
+            if stop - run > EMPTY_MIN_SEC + 1e-6:
+                out.append(((), f"пустой кадр {run:.1f}–{stop:.1f} с: {EMPTY_NOTE}"))
+            run = None
+    return out
+
+
+def _cta_like(layer: dict) -> bool:
+    props = _props(layer)
+    if layer.get("type") == "text":
+        return bool(CTA_RE.search(str(props.get("text") or "")))
+    if layer.get("type") == "callout":
+        return bool(CTA_RE.search(f"{props.get('title') or ''} {props.get('subtitle') or ''}"))
+    return False
+
+
+def missing_final(layers: list[dict], duration: float, camera: Any = None) -> list[tuple[tuple, str]]:
+    """7) Промо с телефоном без финала: в последних 4 с ни логотипа, ни ссылки/призыва."""
+    lo = max(0.0, duration - FINAL_SEC)
+    times = _samples(lo, duration)
+    for layer in layers:
+        if layer.get("hidden"):
+            continue
+        logo = layer.get("type") == "image" and not is_phone(layer) and not is_backdrop_layer(layer)
+        if (logo or _cta_like(layer)) and any(shown(layer, t, camera) for t in times):
+            return []
+    return [((), f"нет финала: в последних {FINAL_SEC:g} с ({lo:.1f}–{duration:.1f} с) ни логотипа (image), ни "
+                 "текста со ссылкой/призывом — промо обрывается; финал ≥ 3 с: логотип, дата, плашка CTA и "
+                 "ссылка ≥ 44 px")]
+
+
+def scene_warnings(layers: list[dict], duration: float | None, canvas: bool = False, camera: Any = None) -> list[str]:
+    """Пустой кадр (холст) и нет финала (промо с телефоном) — про весь клип, не про отдельный слой:
+    add_layers/update_layer показывают их всегда, а не только про новые слои."""
+    visible = [l for l in layers if l.get("type") != "audio" and not l.get("hidden")]
+    if not duration or not visible:
+        return []
+    found = empty_frames(visible, float(duration), camera) if canvas else []
+    if any(is_phone(l) for l in visible):
+        found += missing_final(visible, float(duration), camera)
+    return [text for _ids, text in found]
+
+
 def promo_warnings(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None,
                    canvas: bool = False, backdrop: Any = None, camera: Any = None,
                    sizes: dict | None = None) -> list[str]:
@@ -513,4 +619,7 @@ def promo_warnings(layers: list[dict], duration: float | None = None, only_ids: 
     found = (text_over_phone(texts, phones, camera) + off_frame(visible, camera, promo)
              + scenes_without_gap(visible, camera) + final_text(texts, float(duration), backdrop)
              + long_hook(texts, [l for l in visible if is_big_picture(l)]))
-    return [text for ids, text in found if only_ids is None or any(str(i) in only_ids for i in ids)]
+    out = [text for ids, text in found if only_ids is None or any(str(i) in only_ids for i in ids)]
+    if only_ids is None:
+        out += scene_warnings(visible, duration, canvas=canvas, camera=camera)
+    return out

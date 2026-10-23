@@ -1297,11 +1297,6 @@ def _strip_emoji(layer: dict) -> dict:
     return {**layer, "props": props}
 
 
-def _no_emoji_layers(items: list[dict]) -> tuple[list[dict], int]:
-    kept = [_strip_emoji(l) for l in items if l.get("type") != "emoji"]
-    return kept, len(items) - len(kept)
-
-
 def _norm_word(text: str) -> str:
     return re.sub(r"[^\wё]+", "", str(text or "").lower().replace("ё", "е"))
 
@@ -1394,41 +1389,132 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     render = _current_render(ctx)
     current = _layers_of(render)
     taken = {str(l.get("id")) for l in current}
-    prepared = []
-    for item in raw:
+    # Частичное применение (прогон 578): пачку финала из 9 слоёв отклонили целиком из-за
+    # одного звука с неверным путём, агент не повторил — ролик кончился пустым фоном.
+    # Теперь битый слой пропускается с причиной, остальные встают.
+    skipped: list[str] = []
+    prepared: list[tuple[int, dict]] = []
+    for index, item in enumerate(raw):
         if not isinstance(item, dict):
-            raise ToolError("каждый слой — объект", ["layers[]: ожидается объект"])
-        item = _resolve_caption_marks(ctx, _place_on_word(ctx, item))
+            skipped.append(f"layers[{index}]: ожидается объект слоя")
+            continue
+        try:
+            item = _resolve_caption_marks(ctx, _place_on_word(ctx, item))
+        except ToolError as exc:
+            skipped.append(f"layers[{index}]: {exc}" + (f" ({'; '.join(exc.problems)})" if exc.problems else ""))
+            continue
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
-        prepared.append(item)
-    prepared, dropped_emoji = _no_emoji_layers(prepared)
-    if not prepared:
+        prepared.append((index, item))
+    kept = [(index, _strip_emoji(l)) for index, l in prepared if l.get("type") != "emoji"]
+    dropped_emoji = len(prepared) - len(kept)
+    if not kept and not skipped:
         raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
-    problems = _cover_problems(ctx, prepared) + _validate_new_layers(ctx, prepared, duration)
-    if problems:
-        raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
-    if len(current) + len(prepared) > motion.MAX_LAYERS:
+    good = []
+    for index, layer in kept:
+        problems = _layer_problems(ctx, layer, index, duration)
+        if problems:
+            skipped.extend(problems)
+        else:
+            good.append(layer)
+    if not good:
+        raise ToolError("слои не приняты — исправь и пришли все эти слои снова", skipped)
+    if len(current) + len(good) > motion.MAX_LAYERS:
         # Раньше лишние молча отбрасывались при сохранении — промо теряло хвост монтажа.
         room = max(0, motion.MAX_LAYERS - len(current))
         raise ToolError(f"слои не приняты: в клипе уже {len(current)} слоёв, предел {motion.MAX_LAYERS} — "
                         f"добавить можно ещё {room}", [
                             "россыпь звёздочек/искр/конфетти — один слой particles вместо десятков shape",
                             "убери ненужные слои (remove_layers) или объедини титры одного момента"])
-    added = motion.normalize_layers(prepared)
+    added = motion.normalize_layers(good)
     new_ids = {str(l.get("id")) for l in added}
     fresh = _save_render(ctx, {**render, "layers": current + added})
     layers = _layers_of(fresh)
-    return {
+    out = {
         "ok": True,
         "added": [{"id": l.get("id"), "summary": _layer_summary(l)} for l in added],
         "layers_total": len(layers),
         "layers_limit": motion.MAX_LAYERS,
         "warnings": lint_layers(layers, duration, only_ids=new_ids, **_lint_scene(ctx, fresh))
+        + _scene_warnings(ctx, fresh, duration)
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
         + _layers_room_warning(len(layers)),
     }
+    if skipped:
+        out.update(partial=True, applied=f"применено {len(added)} из {len(raw)}", skipped=skipped,
+                   note="пропущенные слои НЕ в клипе — исправь их по подсказкам и пришли снова только их "
+                        "(принятые уже стоят, повторно не присылай)")
+    return out
+
+
+def _layer_problems(ctx: ToolContext, layer: dict, index: int, duration: float) -> list[str]:
+    """Проблемы одного слоя пачки под его номером во входе (layers[i]) — с подсказкой, как исправить."""
+    problems = _cover_problems(ctx, [layer]) + _validate_new_layers(ctx, [layer], duration)
+    out = []
+    for problem in problems:
+        problem = re.sub(r"^layers\[0\]", f"layers[{index}]", problem)
+        if not problem.startswith("layers["):
+            problem = f"layers[{index}] ({layer.get('id')}): {problem}"
+        out.append(problem + _problem_hint(problem))
+    return out
+
+
+_PACK_REF_MISS_RE = re.compile(r"((?:sfx|sticker|emoji):\S+) не найден в пакетах")
+
+
+def _problem_hint(problem: str) -> str:
+    miss = _PACK_REF_MISS_RE.search(problem)
+    if miss:
+        close = similar_pack_refs(miss.group(1))
+        return (f" — есть похожие: {', '.join(close)}" if close else "") + " (весь список — search_pack)"
+    if "файла для монтажа" in problem:
+        return " — id из list_assets или загрузи файл (upload_image / upload_video / add_image_from_url)"
+    return ""
+
+
+def similar_pack_refs(ref: str, limit: int = 5) -> list[str]:
+    """Ближайшие по написанию существующие ссылки того же вида (difflib): «success» → cash, cheer…
+
+    Звук ищем в его паке (нет такого пака — во freesound, настоящих записях), стикер — в стикерах."""
+    import difflib
+
+    try:
+        assets = _motion_assets()
+        packs = assets.load_packs()
+    except Exception:  # noqa: BLE001 - без паков подсказки нет, ошибка остаётся понятной
+        return []
+    kind, _, rest = ref.partition(":")
+    pack_id, _, file = rest.rpartition("/")
+    kinds = {"sfx": ("sfx",), "sticker": ("sticker", "meme"), "meme": ("meme", "sticker")}.get(kind, ())
+    pool = [p for p in packs.values() if p.get("kind") in kinds]
+    if kind == "sfx":
+        named = [p for p in pool if p.get("id") == pack_id] or [p for p in pool if p.get("id") == "freesound"]
+        pool = named or pool
+    want = Path(file or rest).stem.lower()
+    scored = []
+    for pack in pool:
+        for name, item in (pack.get("_items") or {}).items():
+            words = [Path(name).stem.lower(), *(str(t).lower() for t in item.get("tags") or [])]
+            score = max(difflib.SequenceMatcher(None, want, w).ratio() for w in words)
+            scored.append((score, f"{pack.get('kind')}:{pack['id']}/{name}"))
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    return [_layer_ref(ref) for _score, ref in scored[:limit]]
+
+
+def scene_check(ctx: ToolContext) -> list[str]:
+    """Пустой кадр / нет финала по текущему состоянию клипа (цикл агента перед отчётом)."""
+    return _scene_warnings(ctx, _current_render(ctx), _clip_duration(ctx))
+
+
+def _scene_warnings(ctx: ToolContext, render: dict, duration: float) -> list[str]:
+    """Пустой кадр на холсте и нет финала у промо — про весь клип, после любой правки слоёв."""
+    from app.promo_lint import scene_warnings
+
+    try:
+        return scene_warnings(_layers_of(render), duration, canvas=_source_canvas(ctx), camera=_camera_of(render))
+    except Exception:  # noqa: BLE001 - линт не должен ронять правку
+        return []
 
 
 def _layers_room_warning(total: int) -> list[str]:
@@ -1481,7 +1567,8 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     return {"ok": True, "layer": saved,
-            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))}
+            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
+            + _scene_warnings(ctx, fresh, duration)}
 
 
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
@@ -1493,8 +1580,12 @@ def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
     keep = [l for l in layers if str(l.get("id")) not in ids]
     missing = ids - {str(l.get("id")) for l in layers}
     if len(keep) != len(layers):
-        _save_render(ctx, {**render, "layers": keep})
-    return {"ok": True, "removed": len(layers) - len(keep), "missing": sorted(missing), "layers_total": len(keep)}
+        render = _save_render(ctx, {**render, "layers": keep})
+    out = {"ok": True, "removed": len(layers) - len(keep), "missing": sorted(missing), "layers_total": len(keep)}
+    warnings = _scene_warnings(ctx, render, _clip_duration(ctx)) if keep else []
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 def h_clear_layers(ctx: ToolContext, args: dict) -> dict:
@@ -3499,8 +3590,11 @@ def _build_registry() -> list[Tool]:
             "на 4 дБ ниже его громких мест, не громче; volume 0.3–0.6, выше 1 срезается. "
             "Слой до самого конца клипа держится на финальном стоп-кадре — out у него не играет; "
             "out null или {duration: 0} — без анимации. "
-            "Проверяется как правка человека; при ошибке вернёт problems — исправь и повтори. "
-            "Возвращает id и предупреждения (безопасные зоны, перегруз). / Add motion layers.",
+            "Проверяется как правка человека. Битые слои пачки (неизвестный sfx, нет файла, неверный тип) "
+            "пропускаются, остальные встают: ответ partial, applied «применено N из M», skipped — причины "
+            "с подсказкой (похожие sfx); пришли снова только пропущенные, исправив их. Ни один не прошёл — "
+            "ошибка с problems: исправь и повтори. Перенос строки в тексте — настоящий \\n в JSON, не \"\\\\n\". "
+            "Возвращает id и предупреждения (безопасные зоны, перегруз, пустой кадр, нет финала). / Add motion layers.",
             _obj({"layers": {"type": "array", "items": layer}}, ["layers"]), h_add_layers,
             mutating=True, label=_label_add_layers,
         ),
