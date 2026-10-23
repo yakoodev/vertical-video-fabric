@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from app import motion
-from app.agent_tools import lint_layers
-from app.promo_scaffold import NAME_PREFIX, SFX, ScaffoldError, build_app_promo, normalize_spec
+from app import motion, promo_lint
+from app.agent_tools import lint_layers, text_half_height
+from app.promo_scaffold import NAME_PREFIX, OVERLAP_SEC, SFX, ScaffoldError, build_app_promo, normalize_spec
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "collabika_scaffold_spec.json").read_text(encoding="utf-8"))
+# Прогон Gemini №4 (клип 581, рендер 309): spec заготовки (восстановлен по слоям) и слои клипа.
+FIXTURE_581 = json.loads((Path(__file__).parent / "fixtures" / "clip581_scaffold.json").read_text(encoding="utf-8"))
 ASSETS = FIXTURE["assets"]
 SIZES = {k: (v["width"], v["height"]) for k, v in ASSETS.items()}
 
@@ -55,13 +57,14 @@ def test_same_spec_same_layers():
 def test_phone_alternates_position_and_tilt(variant):
     out = _build(variant=variant)
     phones = _phones(out)
-    assert len(phones) == 5  # по телефону на сцену (у сцены с окном — до окна)
+    assert len(phones) == 5  # по телефону на сцену (у сцены с окном — и под окном до конца сцены)
     poses = [s["pose"] for s in out["plan"]["scenes"]]
     assert all(a != b for a, b in zip(poses, poses[1:]))
     assert len(set(poses)) == 3
     for a, b in zip(phones, phones[1:]):
         assert (a["x"], a["rotation"]) != (b["x"], b["rotation"])
-        assert b["start"] >= a["end"] - 1e-6  # сцены разведены: следующий телефон — после ухода прежнего
+        # стык — свайп: следующий въезжает на 0.1 с раньше, чем прежний скрылся (не дольше — без нахлёста сцен)
+        assert abs((a["end"] - b["start"]) - OVERLAP_SEC) < 1e-3
     # все наезды — камерой на телефон с followCamera
     assert all(p["followCamera"] for p in phones)
     zooms = [s["zoom"]["zoom"] for s in out["plan"]["scenes"] if s["zoom"]]
@@ -105,8 +108,8 @@ def test_hook_and_final():
     assert cta["props"]["size"] >= 56 and cta["props"]["bg"]["color"] == "#ff6a1f"
     lines = next(l for l in final if l["type"] == "text" and "1 ноября" in l["props"]["text"])
     assert "Регистрация открыта" in lines["props"]["text"] and lines["props"]["size"] >= 56
-    # ни один телефон не заходит в финал
-    assert all(p["end"] <= f0 + 1e-6 for p in _phones(out))
+    # ни один телефон не заходит в финал (последний уходит вниз, пока входит логотип, — 0.1 с)
+    assert all(p["end"] <= f0 + OVERLAP_SEC + 1e-6 for p in _phones(out))
 
 
 @pytest.mark.parametrize("changes", [
@@ -191,6 +194,153 @@ def test_spec_errors_are_explained():
     with pytest.raises(ScaffoldError) as err:
         build_app_promo(bad, ASSETS)
     assert any("x+w ≤ 1" in p for p in err.value.problems) and any("только у одной" in p for p in err.value.problems)
+
+
+# ---------------------------------------------------------------- прогон Gemini №4: стыки и наезды
+
+H = promo_lint.H
+VISIBLE_SHARE = 0.1  # «виден»: хотя бы 10 % корпуса в кадре
+TITLE_GAP_PX = 24.0
+
+
+def _spec_581(**changes):
+    spec = copy.deepcopy(FIXTURE_581["spec"])
+    spec.update(changes)
+    return spec
+
+
+def _variant_cases():
+    """spec фикстуры Collabika и spec клипа 581 — на 4 вариантах variant."""
+    return [(name, variant) for name in ("collabika", "clip581") for variant in range(4)]
+
+
+def _build_case(name, variant):
+    if name == "collabika":
+        return _build(variant=variant), ASSETS
+    return build_app_promo(_spec_581(variant=variant), FIXTURE_581["assets"]), FIXTURE_581["assets"]
+
+
+def _natural(layers, assets):
+    sizes = {k: (v["width"], v["height"]) for k, v in assets.items()}
+    return [{**l, "_natural": sizes.get(str(l["props"].get("asset_id")))} if l["type"] in ("image", "video") else l
+            for l in layers]
+
+
+def _in_frame(layer, t, camera):
+    rect = promo_lint.layer_rect(layer, t, camera)
+    area = (rect[2] - rect[0]) * (rect[3] - rect[1])
+    inside = max(0.0, min(rect[2], promo_lint.W) - max(rect[0], 0.0)) * max(0.0, min(rect[3], H) - max(rect[1], 0.0))
+    return inside / area if area > 0 else 0.0
+
+
+def _no_phone_times(layers, camera, t0, t1, step=0.02):
+    """Моменты [t0, t1), когда в кадре нет ни одного телефона (ключи x/y/opacity, камера)."""
+    phones = [l for l in layers if promo_lint.is_phone(l) and not l.get("hidden")]
+    out = []
+    for i in range(int(round((t1 - t0) / step))):
+        t = round(t0 + i * step, 3)
+        if not any(p["start"] <= t < p["end"] and promo_lint.layer_state(p, t)["opacity"] >= promo_lint.MIN_VISIBLE_OPACITY
+                   and _in_frame(p, t, camera) >= VISIBLE_SHARE for p in phones):
+            out.append(t)
+    return out
+
+
+def _zoom_title_gaps(layers, camera, step=0.02):
+    """(t, зазор px) от низа титра сцены до верха корпуса (с наклоном, после камеры) на наездах."""
+    phones = [l for l in layers if promo_lint.is_phone(l) and l.get("followCamera")]
+    titles = [l for l in layers if l["type"] == "text" and "титр сцены" in l["name"]]
+    end = max(l["end"] for l in layers)
+    out = []
+    for i in range(int(end / step)):
+        t = round(i * step, 3)
+        if promo_lint.camera_view(camera, t)[0] <= 1.001:
+            continue
+        for title in titles:
+            if not title["start"] <= t < title["end"]:
+                continue
+            bottom = (title["y"] + text_half_height(title["props"])) * H
+            for phone in phones:
+                if phone["start"] <= t < phone["end"] and _in_frame(phone, t, camera) > 0.5:
+                    out.append((t, promo_lint.body_top(phone, t, camera) - bottom))
+    return out
+
+
+@pytest.mark.parametrize("name,variant", _variant_cases())
+def test_phone_always_on_screen_between_scenes(name, variant):
+    """(а) Хук кончился (3.9 с) … конец сцен: в каждый момент в кадре хотя бы один телефон — стык
+    сцен свайпом внахлёст, в том числе у сцены с окном записи и у кульминации."""
+    out, assets = _build_case(name, variant)
+    layers = _natural(out["layers"], assets)
+    final = out["plan"]["final"][0]
+    assert _no_phone_times(layers, out["camera"], 3.9, final) == []
+    sizes = {k: (v["width"], v["height"]) for k, v in assets.items()}
+    assert lint_layers(out["layers"], out["duration"], canvas=True, backdrop=out["backdrop"], camera=out["camera"],
+                       sizes=sizes) == []
+
+
+def test_gemini_581_had_empty_seam_and_window_removal_keeps_phone():
+    # клип 581 как его оставил Gemini: на каждом стыке сцен (и на 3→4, ~15.7 с) телефона в кадре нет —
+    # прежний уезжал (inCubic) до конца сцены, следующий въезжал из-за кадра только после него
+    clip = FIXTURE_581["clip"]
+    old = _natural(motion.normalize_layers(copy.deepcopy(clip["layers"])), FIXTURE_581["assets"])
+    gaps = _no_phone_times(old, motion.normalize_camera(clip["camera"]), 3.9, 19.6)
+    seams = [p["start"] for p in old if promo_lint.is_phone(p) and p["start"] > 1]
+    assert any(15.6 < t < 15.9 for t in gaps), gaps
+    assert all(any(abs(t - s) < 0.15 for s in seams) for t in gaps), (gaps, seams)
+    # окно записи убрали (Gemini удалил слой) — под ним телефон своей сцены, пустоты нет
+    out = _build()
+    window = next(l for l in out["layers"] if l["name"].startswith(f"{NAME_PREFIX} окно записи"))
+    layers = _natural([l for l in out["layers"] if l is not window], ASSETS)
+    assert _no_phone_times(layers, out["camera"], 3.9, out["plan"]["final"][0]) == []
+    phone = next(p for p in _phones(out) if p["props"]["asset_id"] == window["props"]["asset_id"])
+    assert phone["start"] < window["start"] and abs(phone["end"] - window["end"]) < 1e-3
+
+
+@pytest.mark.parametrize("name,variant", _variant_cases())
+def test_zoom_keeps_phone_below_title(name, variant):
+    """(б) На наезде (и на его пике) верх корпуса с наклоном ниже низа титра сцены на ≥ 24 px в кадре
+    после камеры; кольцо касания — на экране телефона; линт про титр на экране молчит."""
+    out, assets = _build_case(name, variant)
+    layers = _natural(out["layers"], assets)
+    gaps = _zoom_title_gaps(layers, out["camera"])
+    zooms = [s for s in out["plan"]["scenes"] if s["zoom"]]
+    assert zooms and gaps
+    worst = min(gaps, key=lambda g: g[1])
+    assert worst[1] >= TITLE_GAP_PX, worst
+    for scene in zooms:  # пик наезда — ключ удержания
+        z = scene["zoom"]
+        assert z["zoom"] > 1.1 and z["peak"] >= z["zoom"]
+        assert any(abs(t - scene["zoom"]["t"]) < 0.03 for t, _g in gaps)
+    phones = [l for l in layers if promo_lint.is_phone(l)]
+    for tap in (l for l in layers if l["name"] == f"{NAME_PREFIX} касание"):
+        t = tap["start"]
+        cam = promo_lint.camera_view(out["camera"], t)
+        x = promo_lint.W / 2 + (tap["x"] - cam[1]) * promo_lint.W * cam[0]
+        y = H / 2 + (tap["y"] - cam[2]) * H * cam[0]
+        screens = [promo_lint.layer_rect(p, t, out["camera"], screen=True) for p in phones if p["start"] <= t < p["end"]]
+        assert any(r[0] <= x <= r[2] and r[1] <= y <= r[3] for r in screens), (t, x, y)
+        assert y <= 0.92 * H + 1
+    lint = lint_layers(out["layers"], out["duration"], canvas=True, backdrop=out["backdrop"], camera=out["camera"],
+                       sizes={k: (v["width"], v["height"]) for k, v in assets.items()})
+    assert lint == [], lint
+
+
+def test_gemini_581_zoom_put_title_on_phone_screen():
+    """Клип 581: наезд 1.3 с центром на кнопке поднимал телефон под титр (6–12 с) — линт теперь видит
+    это и с затемнением титра (наезд камерой можно поправить центром), а новая заготовка — нет."""
+    clip = FIXTURE_581["clip"]
+    layers = motion.normalize_layers(copy.deepcopy(clip["layers"]))
+    camera = motion.normalize_camera(clip["camera"])
+    gaps = _zoom_title_gaps(_natural(layers, FIXTURE_581["assets"]), camera)
+    assert min(g for _t, g in gaps) < 0  # верх корпуса выше низа титра
+    sizes = {k: (v["width"], v["height"]) for k, v in FIXTURE_581["assets"].items()}
+    warnings = lint_layers(layers, clip["duration"], canvas=True, backdrop=clip["backdrop"], camera=camera, sizes=sizes)
+    over = [w for w in warnings if "на экране телефона" in w]
+    assert over and all("наезде камеры" in w for w in over), warnings
+    assert {w.split(":")[0] for w in over} >= {"pr9", "pr14"}, over
+    out = build_app_promo(_spec_581(), FIXTURE_581["assets"])
+    assert lint_layers(out["layers"], out["duration"], canvas=True, backdrop=out["backdrop"], camera=out["camera"],
+                       sizes=sizes) == []
 
 
 # ---------------------------------------------------------------- инструмент

@@ -14,10 +14,13 @@
 * хук 2–4 с: 1–3 строки-удара крупно (110–150 px), каждая на свою долю, последняя — акцентом с
   вспышкой и кольцом; под ним — затемнённая запись кульминации во весь кадр;
 * сцены по долям, телефон чередует позы (крупно по центру снизу / слева с наклоном / справа с
-  наклоном), въезд-свайп со своей стороны, выезд перед следующей сценой — без нахлёста;
+  наклоном); стык — свайп: прежний уезжает в сторону, следующий въезжает со своей стороны на
+  0.1 с раньше, чем прежний скрылся (пустого кадра нет, с окном записи и без);
 * наезд камеры (followCamera у телефона) на focus — точку интереса — на сильной доле, касание
-  кольцом там же; глубина наезда подобрана так, чтобы корпус не уходил за кадр;
-* окно записи (video с crop) на ключевой момент сцены с window; кульминация — на сильной доле
+  кольцом там же; глубина и центр наезда подобраны так, чтобы корпус не уходил за кадр, а верх
+  корпуса оставался ниже титра сцены (зазор ≥ 24 px и на пике наезда);
+* окно записи (video с crop) на ключевой момент сцены с window — поверх своего телефона, который
+  остаётся под ним до конца сцены (убрали окно — телефон на месте); кульминация — на сильной доле
   (дроп трека или первая доля такта): окно + вспышка + кольцо + частицы + бас-дроп;
 * титры сцен над телефоном с затемнением (props.backdrop), крупно, хвост после «—» — акцентом;
 * финал ≥ 3 с: логотип с частицами, строки даты/оффера, плашка CTA ≥ 56 px со ссылкой;
@@ -63,9 +66,17 @@ ZOOM_MAX = 1.3
 ZOOM_MIN = 1.12
 FOCUS_AT = (0.5, 0.56)  # куда камера ставит точку интереса (доли кадра)
 MAX_OFF_FRAME = 0.08  # доля корпуса за кадром на пике наезда (линт ругается с 0.12)
+# Наезд не загоняет телефон под титр: верх корпуса (с наклоном) в кадре после камеры — ниже низа
+# титра сцены на столько px (линт и тесты требуют ≥ 24; запас — на тряску камеры кульминации).
+ZOOM_TITLE_GAP_PX = 36.0
+ZOOM_FOCUS_MAX_Y = 0.92  # кнопка касания на пике наезда — не ниже этой доли кадра
 WINDOW_MAX_W = 960.0  # окно записи: уже 0.9 кадра — линт считает его сценой, а не фоном
+WINDOW_PUSH = 0.92  # телефон под окном записи чуть отходит назад (масштаб)
+# Стык сцен — свайп: прежний телефон уезжает за EXIT_SEC до конца сцены, следующий въезжает
+# за ENTER_SEC и стартует на OVERLAP_SEC раньше конца прежнего — пустого кадра на стыке нет.
 ENTER_SEC = 0.36
-EXIT_SEC = 0.3
+EXIT_SEC = 0.34
+OVERLAP_SEC = 0.1
 NONE = {"type": "none", "duration": 0.05}
 INK = "#0b1018"
 
@@ -337,22 +348,44 @@ def _cam_center(p: tuple[float, float], z: float) -> tuple[float, float]:
     return round(cx, 4), round(cy, 4)
 
 
-def _fit_zoom(phone: dict, natural: tuple | None, point: tuple[float, float], z_max: float) -> tuple[float, tuple]:
-    """Самый глубокий наезд ≤ z_max, при котором корпус почти весь в кадре (линт off_frame)."""
-    from app.promo_lint import layer_rect
+def _fit_zoom(phone: dict, natural: tuple | None, point: tuple[float, float], z_max: float,
+              title_bottom: float) -> tuple[float, float, tuple]:
+    """Самый глубокий наезд ≤ z_max → (zoom, пик zoom на удержании, центр камеры).
+
+    Условия и на zoom, и на пике удержания (zoom + 0.04): корпус почти весь в кадре (линт
+    off_frame), верх корпуса с наклоном — ниже низа титра сцены на ZOOM_TITLE_GAP_PX (центр
+    камеры поднимается по холсту — меньше y, телефон в кадре опускается), кнопка касания остаётся в кадре.
+    Не вышло ни при каком zoom ≥ ZOOM_MIN — (1.0, 1.0, центр): вызывающий уменьшит телефон.
+    Прогон Gemini №4 (клип 581): центр ставил кнопку на 0.56 кадра — верх телефона уходил под титр."""
+    from app.promo_lint import body_top, camera_view, layer_rect
 
     probe = {**phone, "keys": {}, "start": 0.0, "end": 1.0, "_natural": natural}
     frame = (0.0, 0.0, W, H)
+    limit = title_bottom + ZOOM_TITLE_GAP_PX
+    top = body_top(probe, 0.5)
     z = z_max
     while z >= ZOOM_MIN - 1e-9:
-        center = _cam_center(point, z)
-        rect = layer_rect(probe, 0.5, [{"t": 0.0, "zoom": z, "x": center[0], "y": center[1]}])
-        area = (rect[2] - rect[0]) * (rect[3] - rect[1])
-        inside = max(0.0, min(rect[2], W) - max(rect[0], 0.0)) * max(0.0, min(rect[3], H) - max(rect[1], 0.0))
-        if area > 0 and 1 - inside / area <= MAX_OFF_FRAME:
-            return round(z, 3), center
+        peak = round(min(z + 0.04, z_max), 3)
+        cx, cy = _cam_center(point, z)
+        for zz in (z, peak):  # верх корпуса после камеры: H/2 + (top − cy·H)·zoom ≥ limit
+            cy = min(cy, (top - (limit - H / 2) / zz) / H)
+        cy = math.floor(max(cy, 0.5 / z) * 1e4) / 1e4
+        ok = True
+        for zz in (z, peak):
+            cam = [{"t": 0.0, "zoom": zz, "x": cx, "y": cy}]
+            rect = layer_rect(probe, 0.5, cam)
+            area = (rect[2] - rect[0]) * (rect[3] - rect[1])
+            inside = max(0.0, min(rect[2], W) - max(rect[0], 0.0)) * max(0.0, min(rect[3], H) - max(rect[1], 0.0))
+            zv, vx, vy = camera_view(cam, 0.0)
+            fx, fy = W / 2 + (point[0] - vx) * W * zv, H / 2 + (point[1] - vy) * H * zv
+            if (area <= 0 or 1 - inside / area > MAX_OFF_FRAME or body_top(probe, 0.5, cam) < limit - 0.5
+                    or not 0.06 * W <= fx <= 0.94 * W or fy > ZOOM_FOCUS_MAX_Y * H):
+                ok = False
+                break
+        if ok:
+            return round(z, 3), peak, (cx, cy)
         z -= 0.02
-    return 1.0, (0.5, 0.5)
+    return 1.0, 1.0, (0.5, 0.5)
 
 
 # ---------------------------------------------------------------- сетка долей
@@ -682,7 +715,8 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
         title_y = round(TITLE_TOP + half + 0.002, 4)
         title_bottom = (title_y + half) * H
         # Телефон первой сцены стоит с 0 с под хуком: место — под более высоким из двух текстов.
-        p_start = 0.0 if i == 0 else s_t
+        # Следующие въезжают на OVERLAP_SEC раньше конца сцены прежнего — свайп без пустого кадра.
+        p_start = 0.0 if i == 0 else s_t - OVERLAP_SEC
         room_bottom = max(title_bottom, hook_bottom) if i == 0 else title_bottom
         tilt = abs(math.sin(math.radians(rot0))) * body_w / 2
         top_min = room_bottom + TITLE_GAP_PX + tilt
@@ -691,13 +725,17 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
         pose = (x0, round(y, 4), round(scale, 4), rot0)
         b.text(f"титр сцены {i + 1}", s_t, e_t - 0.02, title_y, props)
 
+        # С окном телефон «главный» до доли окна, потом остаётся под окном до конца сцены: убери
+        # Gemini окно — на его месте телефон, а не пустой фон (прогон №4, клип 581).
         phone_end_beat = ps["k"] if ps["window"] else ps["end"]
-        p_end = grid.t(phone_end_beat)
-        # Запись: телефон показывает [from, to] (с окном — первые 70 %), кнопка focus.t — на доле наезда.
+        show_end = grid.t(phone_end_beat)
+        last = i + 1 == len(plan_scenes)
+        p_end = e_t + (OVERLAP_SEC if last else 0.0)  # последний уходит, когда финал уже входит
+        # Запись: телефон показывает [from, to] (с окном — первые 70 % до окна), кнопка focus.t — на доле наезда.
         rec_from, rec_to = scene["from"], _clamp_rec(info, scene["asset_id"], scene["to"])
         rec_to = max(rec_to, rec_from + 0.3)
         phone_rec_to = rec_from + (rec_to - rec_from) * (0.7 if ps["window"] else 1.0)
-        span = max(0.4, p_end - p_start)
+        span = max(0.4, show_end - p_start)
         speed = min(2.5, max(0.5, (phone_rec_to - rec_from) / span))
         # Доля наезда/касания: середина телефонной части на сильной доле.
         lo_b = ps["start"] + 2
@@ -712,11 +750,29 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
         if scene["focus"] and scene["focus"].get("t") is not None and zoom_beat is not None:
             frm = max(0.0, scene["focus"]["t"] - (grid.t(zoom_beat) - p_start) * speed)
         frm = _clamp_rec(info, scene["asset_id"], frm)
+        # Наезд на focus: глубина и центр — под титром и в кадре (_fit_zoom). Крупный телефон с кнопкой
+        # внизу (focus.y высокий) так не наехать: верх уходит под титр или кнопка — за низ кадра, —
+        # тогда телефон сцены мельче (до −24 %), пока наезд не встанет.
+        fit = None
+        if zoom_beat is not None:
+            z_cap = ZOOM_MAX + (0.05 if ps["climax"] else 0.0)
+            for step in range(7):
+                s_try = round(scale * (1 - 0.04 * step), 4)
+                trial = (x0, round(max(y0, (top_min + s_try * body_h / 2) / H), 4), s_try, rot0)
+                probe = {"type": "video", "x": trial[0], "y": trial[1], "scale": s_try, "rotation": rot0,
+                         "followCamera": True,
+                         "props": {"asset_id": scene["asset_id"], "w": SCREEN_W, "device": "phone", "statusBar": True}}
+                point = _on_phone(trial, scene["focus"]["x"], scene["focus"]["y"], aspect)
+                zoom, peak, center = _fit_zoom(probe, natural, point, z_cap, title_bottom)
+                if zoom > 1.0:
+                    pose, fit = trial, (zoom, peak, center, point)
+                    break
         # Въезд со стороны позы (центр — снизу), выезд — в сторону, откуда не въедет следующий.
+        # Выезд и въезд следующего идут внахлёст на OVERLAP_SEC: на стыке всегда виден телефон.
         enter = {"center": (0.0, 0.7, 8.0), "left": (-0.85, 0.04, -18.0), "right": (0.85, -0.04, 18.0)}[ps["pose"]]
-        nxt = plan_scenes[i + 1]["pose"] if i + 1 < len(plan_scenes) else None
+        nxt = plan_scenes[i + 1]["pose"] if not last else None
         exit_dx = {"left": 0.95, "right": -0.95, "center": -0.95}.get(nxt or "", 0.0)
-        exit_dy = 0.75 if nxt is None or ps["window"] else 0.0
+        exit_dy = 0.75 if last else 0.0
         local_end = round(p_end - p_start, 3)
         x, yy, sc, rot = pose
         keys = {
@@ -725,10 +781,12 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
             "rotation": [{"t": 0, "v": round(rot + enter[2], 2), "ease": "outCubic"}, {"t": ENTER_SEC, "v": rot, "ease": "linear"},
                          {"t": local_end, "v": round(rot * 0.8, 2)}],
         }
-        if not ps["window"] and local_end - EXIT_SEC > ENTER_SEC + 0.3:
-            ex = local_end - EXIT_SEC
-            keys["x"] += [{"t": round(ex, 3), "v": x, "ease": "inCubic"}, {"t": local_end, "v": round(x + exit_dx, 4)}]
-            keys["y"] += [{"t": round(ex, 3), "v": yy, "ease": "inCubic"}, {"t": local_end, "v": round(yy + exit_dy, 4)}]
+        ex = round(local_end - EXIT_SEC, 3)
+        keys["x"] += [{"t": ex, "v": x, "ease": "inCubic"}, {"t": local_end, "v": round(x + exit_dx, 4)}]
+        keys["y"] += [{"t": ex, "v": yy, "ease": "inCubic"}, {"t": local_end, "v": round(yy + exit_dy, 4)}]
+        if ps["window"]:  # под окном записи телефон чуть отходит назад и ждёт выезда
+            wk = round(show_end - p_start, 3)
+            keys["scale"] = [{"t": wk, "v": sc, "ease": "outCubic"}, {"t": round(wk + 0.25, 3), "v": round(sc * WINDOW_PUSH, 4)}]
         phone = {"type": "video", "start": p_start, "end": p_end, "track": 3, "x": x, "y": yy, "scale": sc, "rotation": rot,
                  "followCamera": True,
                  "props": {"asset_id": scene["asset_id"], "from": frm, "speed": round(speed, 3), "freeze": True,
@@ -748,20 +806,18 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
         if zoom_beat is not None:
             zt = grid.t(zoom_beat)
             point = _on_phone(pose, scene["focus"]["x"], scene["focus"]["y"], aspect)
-            z_cap = ZOOM_MAX + (0.05 if ps["climax"] else 0.0)
-            zoom, center = _fit_zoom(phone, natural, point, z_cap)
-            if zoom > 1.0:
+            if fit:
+                zoom, peak, center, point = fit
                 b.cam(max(s_t + ENTER_SEC, zt - 0.45), 1.0)
                 b.cam(zt, zoom, center, "linear", shake=0.3 if ps["climax"] and not ps["window"] else None)
                 if ps["window"]:
-                    b.cam(p_end - 0.02, round(zoom + 0.03, 3), center, "step", shake=0.0 if ps["climax"] else None)
-                    b.cam(p_end, 1.0)
+                    b.cam(show_end - 0.02, peak, center, "step", shake=0.0 if ps["climax"] else None)
+                    b.cam(show_end, 1.0)
                 else:
                     hold_end = max(zt + 0.3, e_t - EXIT_SEC - 0.45)
-                    b.cam(hold_end, round(min(zoom + 0.04, z_cap), 3), center, "inOutCubic",
-                          shake=0.0 if ps["climax"] else None)
+                    b.cam(hold_end, peak, center, "inOutCubic", shake=0.0 if ps["climax"] else None)
                     b.cam(e_t - EXIT_SEC, 1.0)
-                zoom_info = {"t": zt, "zoom": zoom}
+                zoom_info = {"t": zt, "zoom": zoom, "peak": peak, "center": list(center)}
             b.tap(zt, *point)
 
         # Окно записи на ключевой момент; кульминация — вспышка, кольцо, частицы, бас-дроп.
@@ -785,7 +841,8 @@ def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
                    "shadow": {"color": accent, "blur": 80, "x": 0, "y": 0, "opacity": 0.55},
                    "keys": {"scale": [{"t": 0, "v": punch, "ease": "outCubic"}, {"t": 0.22, "v": 1.0, "ease": "linear"},
                                       {"t": round(dur, 3), "v": 1.05}]},
-                   "in": {"type": "fade", "duration": 0.06}, "out": NONE}, f"окно записи {i + 1}")
+                   "in": {"type": "fade", "duration": 0.06}, "out": {"type": "fade", "duration": EXIT_SEC}},
+                  f"окно записи {i + 1}")
             window_info = {"t": kt}
             if ps["climax"]:
                 b.flash(kt, peak=0.3, dur=0.35)

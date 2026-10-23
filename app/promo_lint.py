@@ -232,6 +232,19 @@ def layer_rect(layer: dict, t: float, camera: Any = None, screen: bool = False) 
     return rect
 
 
+def body_top(layer: dict, t: float, camera: Any = None) -> float | None:
+    """Верх слоя в кадре (px) с учётом наклона (ключ rotation) и камеры: у телефона — верх корпуса.
+    Повёрнутый прямоугольник поднимается на h/2·cos + w/2·sin от центра."""
+    rect = layer_rect(layer, t, camera)
+    if not rect:
+        return None
+    keys = layer.get("keys") if isinstance(layer.get("keys"), dict) else {}
+    rot = key_value(keys.get("rotation"), t - _num(layer.get("start"), 0.0), _num(layer.get("rotation"), 0.0))
+    a = math.radians(abs(rot) % 180)
+    w, h = rect[2] - rect[0], rect[3] - rect[1]
+    return (rect[1] + rect[3]) / 2 - (h / 2 * abs(math.cos(a)) + w / 2 * abs(math.sin(a)))
+
+
 def _area(rect: tuple) -> float:
     return max(0.0, rect[2] - rect[0]) * max(0.0, rect[3] - rect[1])
 
@@ -316,10 +329,13 @@ def _backdrop_colors(backdrop: Any) -> list[str]:
     return [str(c) for c in colors or [] if _rgb(c)]
 
 
-def _zoomed(layer: dict, t: float, camera: Any) -> bool:
-    """Слой сейчас на наезде: ключ scale больше обычного или камера приближает (followCamera)."""
-    if layer_state(layer, t)["scale"] > _num(layer.get("scale"), 1.0) * 1.02:
-        return True
+def _pushed(layer: dict, t: float) -> bool:
+    """Слой сейчас на наезде ключом scale (больше обычного)."""
+    return layer_state(layer, t)["scale"] > _num(layer.get("scale"), 1.0) * 1.02
+
+
+def _camera_zoomed(layer: dict, t: float, camera: Any) -> bool:
+    """Слой сейчас на наезде камеры (followCamera)."""
     return bool(layer.get("followCamera") and camera) and camera_view(camera, t)[0] > 1.02
 
 
@@ -331,7 +347,9 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
     out = []
     for text in texts:
         worst = None  # (доля, телефон, t0, t1, верх телефона)
-        # Заголовок с затемнением (props.backdrop) телефон может накрыть на наезде — так и задумано.
+        # Заголовок с затемнением (props.backdrop) телефон может накрыть на наезде ключом scale — так
+        # задумано. Наезд камерой (followCamera) — нет: центр камеры можно опустить так, чтобы верх
+        # корпуса остался под титром (прогон Gemini №4, клип 581: титр лежал на экране 6–12 с).
         shaded = bool(_props(text).get("backdrop"))
         for phone in phones:
             lo = max(_num(text.get("start"), 0.0), _num(phone.get("start"), 0.0))
@@ -340,7 +358,7 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
             for t in _samples(lo, hi):
                 if not (_visible(text, t) and _visible(phone, t)):
                     continue
-                if shaded and _zoomed(phone, t, camera):
+                if shaded and _pushed(phone, t) and not _camera_zoomed(phone, t, camera):
                     continue
                 tr = layer_rect(text, t, camera)
                 sr = layer_rect(phone, t, camera, screen=True)
@@ -366,6 +384,10 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
                      f"над телефоном места нет (верх корпуса на {top / H:.3f}) — уменьши телефон (w/scale) или "
                      "опусти его (y), потом титр над ним с зазором ≥ 24 px; заезжает под титр только на наезде — "
                      "props.backdrop у титра")
+            if _camera_zoomed(phone, t0, camera):
+                where = ("на наезде камеры верх телефона поднялся под титр — уменьши y камеры (кадр "
+                         "сместится вверх, телефон опустится) или zoom, чтобы верх корпуса был ниже титра "
+                         f"на ≥ {PHONE_GAP_PX} px")
             label = _short(_props(text).get("text"))
             out.append(((text.get("id"), phone.get("id")),
                         f"{text.get('id')}: титр «{label}» на экране телефона {phone.get('id')} ({share:.0%} "
@@ -405,6 +427,16 @@ def off_frame(layers: list[dict], camera: Any, promo: bool) -> list[tuple[tuple,
     return out
 
 
+def is_record_window(window: dict, phone: dict) -> bool:
+    """«Окно записи»: кадрированное (crop) видео той же записи, что на экране телефона, поверх него,
+    — крупный план той же сцены, а не новая сцена."""
+    crop = _props(window).get("crop")
+    return (window.get("type") == "video" and not is_phone(window) and is_phone(phone)
+            and isinstance(crop, dict) and bool(crop)
+            and str(_props(window).get("asset_id")) == str(_props(phone).get("asset_id"))
+            and _num(window.get("start"), 0.0) >= _num(phone.get("start"), 0.0))
+
+
 def scenes_without_gap(layers: list[dict], camera: Any) -> list[tuple[tuple, str]]:
     """3) Две крупные сцены одновременно и внахлёст: логотип влетел поверх не ушедшего телефона."""
     big = [l for l in layers if is_big_picture(l)]
@@ -413,6 +445,8 @@ def scenes_without_gap(layers: list[dict], camera: Any) -> list[tuple[tuple, str
         for b in big[i + 1:]:
             if not (is_phone(a) or is_phone(b)):
                 continue
+            if is_record_window(a, b) or is_record_window(b, a):
+                continue  # окно записи поверх своего телефона — крупный план той же сцены
             lo = max(_num(a.get("start"), 0.0), _num(b.get("start"), 0.0))
             hi = min(_num(a.get("end"), 0.0), _num(b.get("end"), 0.0))
             hits, share_max = [], 0.0
