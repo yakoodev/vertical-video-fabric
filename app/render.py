@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.focus_presets import get_focus_preset
@@ -56,6 +56,143 @@ def linear_gain_db(measured: dict, target: float) -> float:
     if measured_i < SILENT_LUFS:
         gain = min(gain, 0.0)
     return max(-20.0, min(MAX_LOUDNESS_BOOST_DB, gain))
+
+
+LOUDNESS_PEAK_DB = -1.5  # потолок пика: лимитер limit=0.84
+LOUDNESS_LIMITER = "alimiter=limit=0.84:attack=5:release=80:level=disabled"
+# Сколько дБ пиков лимитер срезает без заметной потери громкости (≤ ~1 LU). Речь
+# почти всегда укладывается — её цепочка прежняя: volume + лимитер.
+LIMITER_ROOM_DB = 3.0
+# Музыка с резкими ударами без голоса: пики на 9 дБ выше потолка — лимитер срезал удары
+# и терял ~3 LU (−17.2 вместо −14). Тогда перед лимитером — компрессор с порогом чуть
+# выше цели (тело трека не трогает), а потерю громкости возвращает подъём после него
+# по контрольному замеру.
+COMPRESSOR_ABOVE_TARGET_DB = 4.0
+# Подъём после компрессора доходит до громкости не целиком (часть снова срежет лимитер):
+# на ударных +5 дБ подъёма дали +4.5 LU.
+MAKEUP_EFFICIENCY = 0.85
+MAX_MAKEUP_DB = 12.0
+# Сверх потолка +20 дБ — ещё не больше стольких, и только в запас пиков.
+MAX_EXTRA_BOOST_DB = 10.0
+# Недобор громкости после контрольного замера, который ещё терпим (LU).
+LOUDNESS_TOLERANCE_LU = 0.5
+# Перебор пиков, на котором лимитер почти не работает, — контрольный замер не нужен (дБ).
+LIMITER_IDLE_DB = 1.0
+# Сколько громкости лимитер без компрессора может потерять, пока это терпимо (LU).
+LIMITER_LOSS_LU = 1.0
+
+
+def loudness_plan(measured: dict, target: float) -> dict:
+    """Как довести клип до цели: ``{gain_db, compressor, makeup_db, overshoot_db, aim_lufs}``.
+
+    Усиление линейное (``linear_gain_db``, потолок +20 дБ). Очень тихий клип (музыка
+    без голоса, приглушённая под речь, которой нет) упирался в потолок: +20 дБ — и
+    −16.8 LUFS при пике −4 dBTP, хотя запас по пикам был. Сверх потолка поднимаем
+    ещё до ``MAX_EXTRA_BOOST_DB``, но только в пределах запаса пиков (лимитер срежет
+    не больше ``LIMITER_ROOM_DB``). Если пики выходят за потолок больше чем на
+    ``LIMITER_ROOM_DB`` — одному лимитеру не справиться без потери громкости, и перед
+    ним встаёт мягкий компрессор (порог — цель + 4 дБ, чем больше перебор, тем круче).
+    Иначе компрессора нет — у обычного клипа с речью цепочка ровно прежняя."""
+    gain = linear_gain_db(measured, target)
+    plan: dict = {"gain_db": round(gain, 2), "compressor": None, "makeup_db": 0.0, "overshoot_db": 0.0}
+    try:
+        peak = float(measured["input_tp"])
+        current = float(measured["input_i"])
+    except (KeyError, TypeError, ValueError):
+        return plan
+    if not (math.isfinite(peak) and math.isfinite(current)):
+        return plan
+    if current >= SILENT_LUFS and gain >= MAX_LOUDNESS_BOOST_DB:
+        room = LOUDNESS_PEAK_DB + LIMITER_ROOM_DB - (peak + gain)
+        gain += max(0.0, min(target - current - gain, room, MAX_EXTRA_BOOST_DB))
+        plan["gain_db"] = round(gain, 2)
+    overshoot = peak + gain - LOUDNESS_PEAK_DB
+    plan["overshoot_db"] = round(overshoot, 2)
+    # Куда целится линейная поправка: подъём после компрессора её не превышает
+    # (тихую шумную запись сверх потолка усиления не тянем).
+    plan["aim_lufs"] = round(min(target, current + gain), 2)
+    if overshoot > LIMITER_ROOM_DB:
+        plan["compressor"] = _compressor(target, overshoot)
+    return plan
+
+
+def _compressor(target: float, overshoot: float) -> dict:
+    """Мягкий компрессор перед лимитером: порог чуть выше цели, круче при большом переборе."""
+    return {
+        "threshold_db": round(target + COMPRESSOR_ABOVE_TARGET_DB, 2),
+        "ratio": round(min(6.0, max(2.0, overshoot / 2)), 2),
+        "attack_ms": 1.0,
+        "release_ms": 200.0,
+        "knee_db": 4.0,
+    }
+
+
+def fit_loudness(measured: dict, target: float, measure: Callable[[list[str]], dict]) -> dict:
+    """План громкости с контрольным замером (``measure(filters)`` — loudnorm-замер звука
+    после цепочки).
+
+    Пики не выходят за потолок больше чем на ``LIMITER_IDLE_DB`` — лимитеру делать почти
+    нечего, замер не нужен: цепочка прежняя. Иначе меряем, что вышло: без компрессора
+    недобор меньше ``LIMITER_LOSS_LU`` — оставляем как есть (обычная речь), больше —
+    добавляем компрессор и меряем снова; с компрессором недобор возвращает подъём."""
+    plan = loudness_plan(measured, target)
+    if float(plan.get("overshoot_db") or 0.0) <= LIMITER_IDLE_DB:
+        return plan
+    after = measure(loudness_filters(plan))
+    if not plan.get("compressor"):
+        try:
+            shortfall = float(plan.get("aim_lufs", target)) - float(after["input_i"])
+        except (KeyError, TypeError, ValueError):
+            return plan
+        if not math.isfinite(shortfall) or shortfall < LIMITER_LOSS_LU:
+            return plan
+        plan = {**plan, "compressor": _compressor(target, float(plan["overshoot_db"]))}
+        after = measure(loudness_filters(plan))
+    return correct_loudness_plan(plan, after, target)
+
+
+def loudness_filters(plan: dict) -> list[str]:
+    """Фильтры ffmpeg плана громкости: volume → [компрессор → подъём] → лимитер."""
+    filters = [f"volume={float(plan['gain_db']):.2f}dB"]
+    comp = plan.get("compressor")
+    if comp:
+        threshold = 10 ** (float(comp["threshold_db"]) / 20)  # acompressor ждёт линейный порог
+        filters.append(
+            f"acompressor=threshold={threshold:.5f}:ratio={float(comp['ratio']):g}:attack={float(comp['attack_ms']):g}"
+            f":release={float(comp['release_ms']):g}:knee={float(comp['knee_db']):g}:detection=peak"
+        )
+    makeup = float(plan.get("makeup_db") or 0.0)
+    if makeup > 0:
+        filters.append(f"volume={makeup:.2f}dB")
+    filters.append(LOUDNESS_LIMITER)
+    return filters
+
+
+def correct_loudness_plan(plan: dict, after: dict, target: float) -> dict:
+    """Поправка по контрольному замеру цепочки ``plan``: недобор громкости — подъём
+    после компрессора (с запасом на лимитер, не больше ``MAX_MAKEUP_DB``)."""
+    if not plan.get("compressor"):
+        return plan
+    try:
+        got = float(after["input_i"])
+    except (KeyError, TypeError, ValueError):
+        return plan
+    shortfall = min(target, float(plan.get("aim_lufs", target))) - got
+    if not math.isfinite(shortfall) or shortfall < LOUDNESS_TOLERANCE_LU:
+        return plan
+    makeup = min(MAX_MAKEUP_DB, float(plan.get("makeup_db") or 0.0) + shortfall / MAKEUP_EFFICIENCY)
+    return {**plan, "makeup_db": round(makeup, 2)}
+
+
+def _measure_loudness(path: Path, target: float, filters: list[str] | None = None) -> dict:
+    """Замер loudnorm (первый проход) звука файла — как есть или после ``filters``."""
+    chain = ",".join([*(filters or []), f"loudnorm=I={target}:TP={LOUDNESS_PEAK_DB}:LRA=11:print_format=json"])
+    probe = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", chain, "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60 * 10,
+    )
+    tail = probe.stderr[probe.stderr.rfind("{"):]
+    return json.loads(tail[: tail.find("}") + 1])
 
 
 def loudnorm_needed(measured: dict, target: float) -> bool:
@@ -1224,32 +1361,29 @@ class ClipRenderService:
             return clip
         target = settings.render_loudnorm_target
         try:
-            probe = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn",
-                 "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-                capture_output=True, text=True, timeout=60 * 10,
-            )
-            tail = probe.stderr[probe.stderr.rfind("{"):]
-            measured = json.loads(tail[: tail.find("}") + 1])
+            measured = _measure_loudness(path, target)
             if not audible(measured):
                 return clip  # немой клип: ни громкость, ни затухание не нужны
             hold = max(0.0, float(settings.render_end_hold_sec or 0))
             filters = [f"apad=pad_dur={hold:.3f}"] if hold > 0 else []
             import logging
 
+            needed = loudnorm_needed(measured, target)
+            # Пики за потолком (ударные без голоса): контрольный замер цепочки и, если
+            # лимитер съел громкость, компрессор с подъёмом (fit_loudness).
+            plan = fit_loudness(measured, target, lambda f: _measure_loudness(path, target, f)) if needed else None
             logging.getLogger("uvicorn.error").info(
-                "loudness clip=%s input_i=%s input_tp=%s needed=%s gain=%.2f",
-                clip.get("id"), measured.get("input_i"), measured.get("input_tp"),
-                loudnorm_needed(measured, target), linear_gain_db(measured, target),
+                "loudness clip=%s input_i=%s input_tp=%s needed=%s plan=%s",
+                clip.get("id"), measured.get("input_i"), measured.get("input_tp"), needed, plan,
             )
-            if loudnorm_needed(measured, target):
+            if plan:
                 # Только линейная поправка (одно число на весь клип) + лимитер на пики.
                 # loudnorm второго прохода, когда линейно не влезает в пик, молча
                 # переходит в динамический режим и вытягивает тихие места на 10–14 дБ:
                 # фоновые звуки и эффекты становились громче речи («звуки пердежа
-                # во всю громкость»).
-                filters.append(f"volume={linear_gain_db(measured, target):.2f}dB")
-                filters.append("alimiter=limit=0.84:attack=5:release=80:level=disabled")
+                # во всю громкость»). Компрессор — только когда пики упираются в
+                # потолок сильнее, чем лимитер срежет без потерь (loudness_plan).
+                filters.extend(loudness_filters(plan))
             # Затухание — на конце самого звука, а не на добавленной тишине стоп-кадра:
             # иначе на речь приходилась 0.1 с и звук обрывался.
             fade = end_fade_filter(float(probe_media(path).duration_sec or 0))

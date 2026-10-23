@@ -910,3 +910,68 @@ def test_loudness_is_one_linear_gain_not_dynamic():
     assert linear_gain_db(_loud("-40.0"), -14.0) == 20.0  # тихий голос — до потолка
     assert linear_gain_db(_loud("-60.0"), -14.0) == 0.0  # почти тишину не поднимаем
     assert linear_gain_db(_loud("-9.0"), -14.0) == -5.0
+
+
+# ---------------------------------------------------------------- громкость с учётом пиков
+
+
+def test_loudness_plan_keeps_speech_chain_when_peaks_fit():
+    """Речь: пики после усиления в пределах лимитера — цепочка прежняя (volume + лимитер)."""
+    from app.render import LOUDNESS_LIMITER, fit_loudness, loudness_filters, loudness_plan
+
+    plan = loudness_plan(_loud("-18.0", "-8.0"), -14.0)
+    assert plan["gain_db"] == 4.0 and plan["compressor"] is None
+    assert loudness_filters(plan) == ["volume=4.00dB", LOUDNESS_LIMITER]
+
+    def no_measure(_filters):
+        raise AssertionError("лишний замер: лимитеру нечего делать")
+
+    assert fit_loudness(_loud("-18.0", "-8.0"), -14.0, no_measure) == plan
+
+
+def test_loudness_plan_compressor_when_peaks_hit_ceiling():
+    """Резкие удары без голоса: пики на 9 дБ выше потолка — компрессор перед лимитером,
+    недобор громкости по контрольному замеру — подъём после компрессора."""
+    from app.render import correct_loudness_plan, fit_loudness, loudness_filters, loudness_plan
+
+    plan = loudness_plan(_loud("-24.74", "-3.06"), -14.0)
+    assert plan["gain_db"] == 10.74 and plan["overshoot_db"] == 9.18
+    comp = plan["compressor"]
+    assert comp["threshold_db"] == -10.0 and 2.0 <= comp["ratio"] <= 6.0
+    chain = loudness_filters(plan)
+    assert chain[0] == "volume=10.74dB" and chain[1].startswith("acompressor=threshold=0.31623:")
+    assert "detection=peak" in chain[1] and chain[-1].startswith("alimiter")
+
+    fixed = correct_loudness_plan(plan, {"input_i": "-19.0"}, -14.0)
+    assert fixed["makeup_db"] == round(5.0 / 0.85, 2)
+    assert loudness_filters(fixed)[2] == f"volume={fixed['makeup_db']:.2f}dB"
+    assert correct_loudness_plan(plan, {"input_i": "-14.2"}, -14.0) is plan  # в допуске
+    assert correct_loudness_plan(plan, {"input_i": "-60"}, -14.0)["makeup_db"] == 12.0  # потолок подъёма
+
+    seen = []
+    out = fit_loudness(_loud("-24.74", "-3.06"), -14.0, lambda f: seen.append(f) or {"input_i": "-19.0"})
+    assert len(seen) == 1 and out["makeup_db"] == fixed["makeup_db"]
+
+
+def test_loudness_quiet_music_goes_past_boost_cap_within_peak_room():
+    """Тихая музыка без голоса упиралась в потолок +20 дБ (−36.8 → −16.8 LUFS при пиках с
+    запасом): сверх потолка — в пределах запаса пиков; лимитер съел громкость —
+    компрессор и подъём."""
+    from app.render import fit_loudness, loudness_plan
+
+    plan = loudness_plan(_loud("-36.8", "-21.6"), -14.0)
+    assert plan["gain_db"] == 22.8 and plan["compressor"] is None and plan["aim_lufs"] == -14.0
+    # Пики без запаса — сверх +20 не поднимаем.
+    assert loudness_plan(_loud("-36.8", "-18.0"), -14.0)["gain_db"] == 20.0
+    # Почти тишину — по-прежнему нет.
+    assert loudness_plan(_loud("-60.0", "-40.0"), -14.0)["gain_db"] == 0.0
+
+    answers = iter([{"input_i": "-15.2"}, {"input_i": "-17.0"}])
+    seen = []
+    out = fit_loudness(_loud("-36.8", "-21.6"), -14.0, lambda f: seen.append(f) or next(answers))
+    assert len(seen) == 2 and seen[0][1].startswith("alimiter") and seen[1][1].startswith("acompressor")
+    assert out["compressor"]["ratio"] == 2.0 and out["makeup_db"] == round(3.0 / 0.85, 2)
+
+    # Лимитер потерял меньше 1 LU — компрессор не нужен.
+    out = fit_loudness(_loud("-36.8", "-21.6"), -14.0, lambda f: {"input_i": "-14.6"})
+    assert out["compressor"] is None and out["makeup_db"] == 0.0
