@@ -2024,6 +2024,34 @@ def api_create_manual_clip(source_id: int, payload: ManualClipRequest, _auth: Au
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class CanvasClipRequest(BaseModel):
+    duration: float = 15.0
+    # Имя стиля (aurora/grid/bokeh/waves/gradient/solid) или {kind, colors, speed, intensity}.
+    background: str | dict | None = None
+    title: str = ""
+    name: str = ""
+    description: str = ""
+
+
+@app.post(
+    "/api/canvas-clips",
+    tags=["Render"],
+    summary="Create an empty-canvas clip (animated background, no source video)",
+)
+def api_create_canvas_clip(payload: CanvasClipRequest, _auth: AuthDep) -> dict:
+    """Клип без исходника (app/canvas.py): анимированный фон нужной длины, дальше —
+    слои, музыка, звуки и рендер как у обычного клипа. Скрытый источник холстов в
+    «Проектах» не виден; ответ — клип-план и ``editor_url``."""
+    from app.canvas import create_canvas_clip
+
+    try:
+        plan = create_canvas_clip(store, payload.duration, payload.background,
+                                  payload.title or payload.name, payload.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**plan, "editor_url": f"/projects/{plan['source_id']}/candidates?clip={plan['id']}"}
+
+
 @app.get(
     "/api/sources/{source_id}/transcript",
     tags=["Sources"],

@@ -34,6 +34,7 @@ from typing import Any, Callable
 from app import motion
 from app.clip_settings import normalize_render_settings
 from app.backgrounds import BACKGROUND_KINDS as BG_KINDS
+from app.canvas import is_canvas
 
 # Стили фона для подсказок инструментов (app/backgrounds.py).
 BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (неоновая перспективная сетка) | bokeh (блики) | "
@@ -217,6 +218,19 @@ def _source_keyed(ctx: ToolContext) -> bool:
     """У источника клипа есть хромакей (персонаж на зелёнке вырезается)?"""
     plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
     return bool(ctx.store.get_source(int(plan["source_id"])).get("chroma_key"))
+
+
+def _source_canvas(ctx: ToolContext) -> bool:
+    """Клип — пустой холст (app/canvas.py): видео нет, весь кадр — фон."""
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    return is_canvas(ctx.store.get_source(int(plan["source_id"])))
+
+
+def _cover_problems(ctx: ToolContext, layers: list[dict]) -> list[str]:
+    """Правило «не закрывать видео» — на холсте видео нет: картинка во весь кадр и есть монтаж."""
+    if _source_canvas(ctx):
+        return []
+    return covering_problems(layers, _source_keyed(ctx))
 
 
 def _current_render(ctx: ToolContext) -> dict:
@@ -674,6 +688,10 @@ def _key_view(source: dict, render: dict) -> dict:
     key = source.get("chroma_key")
     if not key:
         return {}
+    if is_canvas(source):
+        return {"canvas": True, "backdrop": render.get("backdrop"),
+                "key_note": ("Пустой холст: видео исходника нет, весь кадр — фон backdrop (set_backdrop). Картинки "
+                             "и плашки во весь кадр можно — закрывать нечего; behind не нужен.")}
     return {
         "chroma_key": key,
         "backdrop": render.get("backdrop"),
@@ -1267,7 +1285,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     prepared, dropped_emoji = _no_emoji_layers(prepared)
     if not prepared:
         raise ToolError("эмодзи в монтаже запрещены владельцем — сделай акцент цветом, наездом, звуком или крупным словом")
-    problems = covering_problems(prepared, _source_keyed(ctx)) + _validate_new_layers(ctx, prepared, duration)
+    problems = _cover_problems(ctx, prepared) + _validate_new_layers(ctx, prepared, duration)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
     added = motion.normalize_layers(prepared)
@@ -1308,7 +1326,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
     merged = _resolve_caption_marks(ctx, _strip_emoji(_deep_merge(layers[index], patch)))
-    problems = covering_problems([merged], _source_keyed(ctx)) + _validate_new_layers(ctx, [merged], duration)
+    problems = _cover_problems(ctx, [merged]) + _validate_new_layers(ctx, [merged], duration)
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
     normalized = motion.normalize_layers([merged])
@@ -2787,6 +2805,24 @@ def h_create_clip(ctx: ToolContext, args: dict) -> dict:
             "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2)}
 
 
+def h_create_canvas_clip(ctx: ToolContext, args: dict) -> dict:
+    """Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины."""
+    from app.canvas import create_canvas_clip
+
+    try:
+        plan = create_canvas_clip(ctx.store, args.get("duration"), args.get("background"),
+                                  str(args.get("title") or ""), str(args.get("description") or ""))
+    except (KeyError, ValueError) as exc:
+        raise ToolError(f"холст не создан: {exc}") from exc
+    segs = plan.get("segments") or []
+    return {"ok": True, "clip_id": plan["id"], "title": plan["title"], "project_id": plan["source_id"],
+            "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
+            "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
+            "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
+                     "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera. "
+                     "Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
+
+
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
     try:
         project = int(args.get("project_id"))
@@ -3589,6 +3625,18 @@ DISCOVERY_TOOLS = [
                                                           "title": {"type": "string"}}, ["start_sec", "end_sec"])}},
              ["project_id", "title", "pieces"]),
         h_create_clip, scope="global",
+    ),
+    Tool(
+        "create_canvas_clip", "Создаю холст",
+        "Пустой холст: клип БЕЗ исходного видео длиной duration (5–180 с, по умолчанию 15) — весь кадр "
+        "анимированный фон background (имя стиля aurora/grid/bokeh/waves/gradient/solid или объект "
+        "{kind, colors, speed, intensity} как у set_backdrop; не задан — аврора). Для промо из картинок: "
+        "дальше add_layers, set_music, звуки (слой audio), рендер — как у обычного клипа. Холсты лежат в "
+        "скрытом проекте (в list_projects его нет; project_id — в ответе). / Empty canvas clip, no source video.",
+        _obj({"duration": {"type": "number"}, "title": {"type": "string"}, "description": {"type": "string"},
+              "background": {"type": ["string", "object"]}}, ["duration"]),
+        h_create_canvas_clip, scope="global",
+        label=lambda a: f"Создаю холст на {(_num(a.get('duration'), 15.0) or 15.0):g} с",
     ),
 ]
 
