@@ -238,9 +238,11 @@ export function layerTitle(layer: Layer): string {
     case "progress":
       return "Прогресс";
     case "shape":
-      return { rect: "Прямоугольник", ellipse: "Круг", line: "Линия", arrow: "Стрелка", triangle: "Треугольник", star: "Звезда", burst: "Взрыв" }[layer.props.kind] ?? "Фигура";
+      return { rect: "Прямоугольник", ellipse: "Круг", line: "Линия", arrow: "Стрелка", triangle: "Треугольник", star: "Звезда", burst: "Взрыв", star4: "Искра" }[layer.props.kind] ?? "Фигура";
     case "image":
       return "Картинка";
+    case "particles":
+      return { burst: "Разлёт искр", sparkle: "Мерцание", confetti: "Конфетти", rise: "Искорки вверх" }[layer.props.kind ?? "burst"] ?? "Частицы";
     case "video":
       return layer.props.device === "phone" ? "Видео в телефоне" : "Видео";
     case "audio":
@@ -260,6 +262,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   image: "🖼",
   video: "🎞",
   emoji: "😀",
+  particles: "✦",
   counter: "#",
   progress: "▭",
   chart: "📊",

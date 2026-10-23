@@ -30,9 +30,11 @@ from typing import Any, Callable
 
 # ---------------------------------------------------------------- пределы
 
-MAX_LAYERS = 60
-MAX_CAMERA_KEYS = 40
-MAX_KEYS_PER_PROP = 64
+# Промо приложения целиком в сервисе (клип 574) требовало 113 слоёв — 60 молча резали хвост.
+# 200 простых слоёв компоновщик рисует быстро (замер — node/motion.test.mjs, «200 слоёв»).
+MAX_LAYERS = 200
+MAX_CAMERA_KEYS = 120
+MAX_KEYS_PER_PROP = 200
 MAX_TRACK = 7  # дорожки графики 0..7
 MIN_LAYER_SEC = 0.1
 DEFAULT_LAYER_SEC = 3.0
@@ -52,7 +54,8 @@ BEZIER_RE = re.compile(r"^bezier\(\s*([-+0-9.eE\s,]+)\)$")
 PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
-    "text", "shape", "image", "video", "emoji", "counter", "progress", "chart", "callout", "captions", "chat", "audio",
+    "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
+    "chat", "audio",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -70,7 +73,13 @@ TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise")
 DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse")
 LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink")
 BLENDS = ("normal", "multiply", "screen", "overlay", "add")
-SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst")
+SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst", "star4")
+# Частицы одним слоем (frontend/src/motion/layers/particles.ts): вид, форма, предел числа.
+PARTICLE_KINDS = ("burst", "sparkle", "confetti", "rise")
+PARTICLE_SHAPES = ("star4", "star", "dot", "circle", "square", "heart")
+MAX_PARTICLES = 200
+# Символы-декор, которых нет в шрифтах: движок рисует их путями внутри текста (frontend/src/motion/glyphs.ts).
+DECOR_GLYPHS = "✦✧★☆✶✷•●○◆◇♥♡→←↑↓✓✔✕✖▶►"
 CHART_KINDS = ("bar", "hbar", "line", "pie", "donut")
 CALLOUT_STYLES = ("bar", "box", "pill", "neon")
 ALIGNS = ("left", "center", "right")
@@ -112,6 +121,9 @@ DEFAULT_DEVICE_COLOR = "#2c2c2e"
 VIDEO_MIN_SPEED = 0.25
 VIDEO_MAX_SPEED = 4.0
 VIDEO_TAIL = 0.04
+# Строка статуса телефона: true/"auto" — как у iPhone (доля ширины экрана), предел — STATUS_BAR_MAX.
+STATUS_BAR_AUTO = 0.14
+STATUS_BAR_MAX = 0.4
 
 
 # ---------------------------------------------------------------- описания полей
@@ -431,6 +443,45 @@ class Opt:
         return {**self.spec.describe(), "optional": True}
 
 
+@dataclass(frozen=True)
+class StatusBar:
+    """Строка статуса телефона: true/"auto" — 0.14, число — доля ширины экрана 0..0.4, false — 0 (нет)."""
+
+    def norm(self, value: Any, rep: _Report, where: str) -> float:
+        if value is True or value == "auto":
+            return STATUS_BAR_AUTO
+        if value is None or value is False:
+            return 0
+        return Num(STATUS_BAR_AUTO, 0, STATUS_BAR_MAX, 3).norm(value, rep, where)
+
+    def fill(self) -> float:
+        return 0
+
+    def describe(self) -> dict:
+        return {"type": "number", "default": 0, "min": 0, "max": STATUS_BAR_MAX,
+                "description": f"доля ширины экрана; true или \"auto\" — {STATUS_BAR_AUTO}"}
+
+
+@dataclass(frozen=True)
+class OnOff:
+    """Объект-настройка с краткой записью: true — с умолчаниями, false/null — выключено."""
+
+    spec: Any
+
+    def norm(self, value: Any, rep: _Report, where: str) -> dict | None:
+        if value is True:
+            return self.spec.norm({}, rep, where)
+        if value is False:
+            return None
+        return self.spec.norm(value, rep, where)
+
+    def fill(self) -> None:
+        return None
+
+    def describe(self) -> dict:
+        return {**self.spec.describe(), "shorthand": "true — с умолчаниями"}
+
+
 def _norm_fields(src: dict, fields: dict, rep: _Report, where: str) -> dict:
     """Нормализовать известные поля; отсутствующие — умолчанием, лишние — выбросить."""
     out: dict = {}
@@ -478,6 +529,11 @@ SHADOW = Obj(
 )
 # Пустое семейство — «шрифт по умолчанию» компоновщика (список — /api/motion/fonts).
 FONT = Text("", 60)
+# Мягкое затемнение-градиент за текстом (scrim): читается поверх наезда и пёстрого фона.
+TEXT_BACKDROP = OnOff(Obj(
+    {"color": Color("#000000"), "opacity": Num(0.55, 0, 1, 3), "spread": Opt(Num(80, 0, 800, 1))},
+    nullable=True,
+))
 
 TEXT_STYLE: dict = {
     "font": FONT,
@@ -496,6 +552,7 @@ TEXT_STYLE: dict = {
     "uppercase": Flag(False),
     "italic": Flag(False),
     "highlight": HIGHLIGHT,
+    "backdrop": Opt(TEXT_BACKDROP),
 }
 
 CROP = Obj(
@@ -512,7 +569,11 @@ PICTURE: dict = {
     "flipX": Flag(False),
     "device": Opt(Choice("phone", DEVICE_KINDS, nullable=True)),
     "deviceColor": Opt(Color(DEFAULT_DEVICE_COLOR)),
+    # Нет island — движок решает сам: у картинки да, у видео только со statusBar.
     "island": Opt(Flag(True)),
+    "statusBar": Opt(StatusBar()),
+    "statusBarColor": Opt(Color("#000000")),
+    "screenGlare": Opt(Flag(False)),
 }
 
 PROPS: dict[str, dict] = {
@@ -542,8 +603,26 @@ PROPS: dict[str, dict] = {
         "speed": Num(1, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, 3),
         "loop": Flag(False),
         "freeze": Flag(True),
+        # Стоп-кадр: весь слой держится кадр секунды from (speed/loop не действуют).
+        "hold": Opt(Flag(False)),
     },
     "emoji": {"char": Text("", 32), "size": Num(160, 12, 1000, 1)},
+    # Частицы одним слоем; необязательные поля движок берёт по виду (burst — разлёт 1.2 с с тяжестью…).
+    "particles": {
+        "kind": Choice("burst", PARTICLE_KINDS),
+        "count": Num(40, 1, MAX_PARTICLES, integer=True),
+        "colors": Colors(("#ffd400", "#ffffff"), 1, 6),
+        "shape": Opt(Choice("star4", PARTICLE_SHAPES)),
+        "asset_id": Opt(AssetRef()),
+        "src": Opt(AssetRef(prefixes=("emoji", "sticker"), allow_id=False)),
+        "size": Num(28, 2, 400, 1),
+        "spread": Num(360, 0, 3000, 1),
+        "duration": Opt(Num(1.2, 0.1, 20, 3)),
+        "seed": Opt(Num(0, 0, 999999, integer=True)),
+        "gravity": Opt(Num(0, -5000, 5000, 1)),
+        "repeat": Flag(False),
+        "glow": Opt(Flag(False)),
+    },
     "counter": {
         "from": Num(0, -1e12, 1e12, 4),
         "to": Num(100, -1e12, 1e12, 4),
@@ -766,7 +845,8 @@ def _norm_keys(raw: Any, rep: _Report, where: str, ltype: str = "") -> dict:
         lo, hi = ANIMATABLE[prop]
         value_spec = Num(max(lo, min(hi, 0.0)), lo, hi, 4)
         if len(points) > MAX_KEYS_PER_PROP:
-            rep(f"{where}.{prop}", f"не больше {MAX_KEYS_PER_PROP} точек — лишние отброшены")
+            rep(f"{where}.{prop}", f"точек {len(points)}, предел {MAX_KEYS_PER_PROP} — "
+                                   f"{len(points) - MAX_KEYS_PER_PROP} последних НЕ попадут в клип")
         clean: list[dict] = []
         for index, point in enumerate(points[:MAX_KEYS_PER_PROP]):
             at = f"{where}.{prop}[{index}]"
@@ -900,7 +980,9 @@ def _normalize_layers(raw: Any, rep: _Report) -> list[tuple[int, dict]]:
         rep("layers", "нужен список слоёв")
         return []
     if len(raw) > MAX_LAYERS:
-        rep("layers", f"не больше {MAX_LAYERS} слоёв — лишние ({len(raw) - MAX_LAYERS}) отброшены")
+        rep("layers", f"слоёв {len(raw)}, предел {MAX_LAYERS} — слои с layers[{MAX_LAYERS}] по "
+                      f"layers[{len(raw) - 1}] ({len(raw) - MAX_LAYERS} шт.) НЕ попадут в клип; "
+                      "собери россыпь звёздочек/искр в один слой particles или убери лишнее")
     taken: set[str] = set()
     out: list[tuple[int, dict]] = []
     for index, item in enumerate(raw[:MAX_LAYERS]):
@@ -917,7 +999,8 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
         rep("camera", "нужен список ключей камеры")
         return []
     if len(raw) > MAX_CAMERA_KEYS:
-        rep("camera", f"не больше {MAX_CAMERA_KEYS} ключей — лишние отброшены")
+        rep("camera", f"ключей {len(raw)}, предел {MAX_CAMERA_KEYS} — ключи с camera[{MAX_CAMERA_KEYS}] "
+                      f"({len(raw) - MAX_CAMERA_KEYS} шт.) НЕ попадут в клип")
     by_t: dict[float, dict] = {}
     for index, item in enumerate(raw[:MAX_CAMERA_KEYS]):
         where = f"camera[{index}]"
@@ -1040,6 +1123,11 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         ref = emoji_ref(props.get("char") or "")
         if ref:
             refs.append(ref)
+    elif ltype == "particles":
+        # Картинка вместо фигуры (файл для монтажа или emoji:/sticker:); нет — частицы-фигуры.
+        ref = _as_ref(props.get("asset_id")) or _as_ref(props.get("src"))
+        if ref is not None:
+            refs.append(ref)
     elif ltype == "callout" and props.get("icon"):
         # Значок плашки рисуется Twemoji — ему нужен тот же файл, что и эмодзи.
         ref = emoji_ref(props["icon"])
@@ -1059,8 +1147,11 @@ def video_file_time(props: dict, local: float, duration: float | None) -> float 
 
     ``from + local·speed``; за концом файла (``duration``; None/0 — неизвестна): ``loop`` —
     снова с ``from``, ``freeze`` (по умолчанию) — последний кадр, иначе None (кадра нет).
+    ``hold`` — стоп-кадр: всегда ``from`` (не дальше последнего кадра файла).
     """
     start = max(0.0, _finite(props.get("from")) or 0.0)
+    if props.get("hold"):
+        return min(start, max(0.0, duration - VIDEO_TAIL)) if duration and duration > 0 else start
     speed = min(VIDEO_MAX_SPEED, max(VIDEO_MIN_SPEED, _finite(props.get("speed")) or 1.0))
     t = start + max(0.0, float(local)) * speed
     if not duration or duration <= 0 or t < duration - VIDEO_TAIL:
@@ -1200,11 +1291,24 @@ def schema_summary() -> dict:
         },
         "video": {
             "time": "секунда файла = from + (t − start)·speed; за концом файла loop — снова с from, "
-                    "freeze (по умолчанию) — последний кадр, freeze false — кадра нет",
+                    "freeze (по умолчанию) — последний кадр, freeze false — кадра нет; hold true — "
+                    "стоп-кадр секунды from на весь слой",
             "speed": [VIDEO_MIN_SPEED, VIDEO_MAX_SPEED],
             "audio": "немое: звук видео-слоя не играет (нужен звук — отдельный слой audio)",
         },
         "devices": list(DEVICE_KINDS),
+        "phone": {
+            "statusBar": f"строка статуса над экраном: доля ширины экрана 0..{STATUS_BAR_MAX}, true — "
+                         f"{STATUS_BAR_AUTO}; островок по умолчанию у видео только с ней",
+            "screenGlare": "блик стекла поверх экрана",
+        },
+        "particles": {
+            "kinds": list(PARTICLE_KINDS),
+            "shapes": list(PARTICLE_SHAPES),
+            "max_count": MAX_PARTICLES,
+            "deterministic": "раскладка — от seed (нет — от id слоя): превью и рендер совпадают",
+        },
+        "decor_glyphs": DECOR_GLYPHS,
         "chat": {
             "styles": list(CHAT_STYLES),
             "messages": "comp.chat = [{t, user, color, text, fragments, badges}] — чат клипа "

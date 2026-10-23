@@ -86,6 +86,12 @@ export type TextBg = {
 
 export type Highlight = { words: number[]; color?: string; bg?: string | null };
 
+/**
+ * Мягкое затемнение за текстом (scrim): эллипс-градиент цвета `color` (#000000), плотность
+ * `opacity` 0..1 (0.55), поля вокруг текста `spread` (опорн. px; по умолчанию 0.9 кегля).
+ */
+export type TextBackdrop = { color?: string; opacity?: number; spread?: number };
+
 /** Текстовые стили — общие у `text` и `counter`. */
 export type TextStyle = {
   font?: string;
@@ -103,6 +109,8 @@ export type TextStyle = {
   letterSpacing?: number;
   uppercase?: boolean;
   italic?: boolean;
+  /** Затемнение-градиент за текстом — титр читается поверх наезда/пёстрого фона. */
+  backdrop?: TextBackdrop | null;
 };
 
 export type TextProps = TextStyle & {
@@ -110,7 +118,7 @@ export type TextProps = TextStyle & {
   highlight?: Highlight | null;
 };
 
-export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "triangle" | "star" | "burst";
+export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "triangle" | "star" | "burst" | "star4";
 
 export type ShapeProps = {
   kind: ShapeKind;
@@ -142,8 +150,20 @@ export type PictureProps = {
   device?: DeviceKind | null;
   /** Цвет металла корпуса (#rrggbb). */
   deviceColor?: string;
-  /** «Островок» камеры сверху экрана (по умолчанию да). */
+  /**
+   * «Островок» камеры сверху экрана. По умолчанию: у картинки — да; у видео — только при
+   * `statusBar` (запись экрана без строки статуса — островок лёг бы на шапку приложения).
+   */
   island?: boolean;
+  /**
+   * Строка статуса над содержимым экрана: высота в долях ширины экрана `w` (0..0.4) или true —
+   * как у iPhone (0.14). Экран становится выше на эту полосу: время, связь, батарея; островок — в ней.
+   */
+  statusBar?: number | boolean;
+  /** Цвет строки статуса (#000000); значки — белые на тёмном, чёрные на светлом. */
+  statusBarColor?: string;
+  /** Диагональный блик стекла поверх экрана. */
+  screenGlare?: boolean;
 };
 
 export type ImageProps = PictureProps & {
@@ -164,9 +184,51 @@ export type VideoProps = PictureProps & {
   speed?: number;
   loop?: boolean;
   freeze?: boolean;
+  /** Стоп-кадр: весь слой держится кадр секунды `from` (speed/loop не действуют). */
+  hold?: boolean;
 };
 
 export type EmojiProps = { char: string; size?: number };
+
+/* ---------- частицы ---------- */
+
+/**
+ * burst — разлёт из центра; sparkle — мерцание искр по области; confetti — конфетти падает
+ * сверху; rise — искорки поднимаются снизу.
+ */
+export type ParticleKind = "burst" | "sparkle" | "confetti" | "rise";
+
+export type ParticleShape = "star4" | "star" | "dot" | "circle" | "square" | "heart";
+
+/**
+ * Частицы одним слоем (layers/particles.ts). Раскладка детерминирована зерном `seed` (нет — от id
+ * слоя): превью и рендер совпадают кадр в кадр. Размеры — опорные px, время — секунды.
+ */
+export type ParticlesProps = {
+  kind?: ParticleKind;
+  /** Число частиц 1..200. */
+  count?: number;
+  /** Краски частиц (берутся по очереди псевдослучайно). */
+  colors?: string[];
+  shape?: ParticleShape;
+  /** Картинка вместо фигуры: файл для монтажа… */
+  asset_id?: string;
+  /** …или ссылка пакета (`emoji:…`, `sticker:…`). */
+  src?: string;
+  /** Средний размер частицы (разброс ±45%). */
+  size?: number;
+  /** Радиус области / дальность разлёта. */
+  spread?: number;
+  /** Жизнь одной частицы (burst, confetti) или цикл мерцания/подъёма (sparkle, rise), с. */
+  duration?: number;
+  seed?: number;
+  /** Ускорение вниз, опорн. px/с² (burst, confetti); минус — вверх. */
+  gravity?: number;
+  /** burst/confetti повторяются каждые `duration` (иначе один раз от начала слоя). */
+  repeat?: boolean;
+  /** Мягкое свечение вокруг каждой частицы её цветом. */
+  glow?: boolean;
+};
 
 export type CounterProps = TextStyle & {
   from?: number;
@@ -351,6 +413,7 @@ export type LayerPropsMap = {
   image: ImageProps;
   video: VideoProps;
   emoji: EmojiProps;
+  particles: ParticlesProps;
   counter: CounterProps;
   progress: ProgressProps;
   chart: ChartProps;
@@ -395,6 +458,7 @@ export type ShapeLayer = LayerOf<"shape">;
 export type ImageLayer = LayerOf<"image">;
 export type VideoLayer = LayerOf<"video">;
 export type EmojiLayer = LayerOf<"emoji">;
+export type ParticlesLayer = LayerOf<"particles">;
 export type CounterLayer = LayerOf<"counter">;
 export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
@@ -409,6 +473,7 @@ export type Layer =
   | ImageLayer
   | VideoLayer
   | EmojiLayer
+  | ParticlesLayer
   | CounterLayer
   | ProgressLayer
   | ChartLayer

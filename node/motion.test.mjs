@@ -1022,3 +1022,197 @@ test("CLI: видео-слой из нарезанных кадров (videos.js
   assert.equal(r.status, 0, r.stderr);
   assert.equal(Number(ffprobe(out).nb_read_frames), 8);
 });
+
+/* ---------- промо приложения: символы-декор, частицы, стоп-кадр, строка статуса, затемнение ---------- */
+
+const pxOf = (ctx, x, y) => [...ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data];
+
+test("символы-декор ✦ ★ ♥ → в тексте: ширина — доля кегля (не шрифта), рисуются путём цветом текста", () => {
+  const ctx = createCanvas(1080, 1920).getContext("2d");
+  const L = (text, font) => E.layoutText(ctx, { text, size: 100, font, letterSpacing: 0 }, "Montserrat");
+  near(L("✦").w, 100 * E.DECOR_GLYPHS["✦"].adv, 1e-6);
+  near(L("★", "Rubik").w, L("★", "Inter").w, 1e-9); // от шрифта не зависит — перенос в превью = рендер
+  // Перенос считает ширину символов: 10 звёзд по 92 px не влезают в 600 px одной строкой.
+  const many = E.layoutText(ctx, { text: "★ ★ ★ ★ ★ ★ ★ ★ ★ ★", size: 100, maxWidth: 600 }, "Montserrat");
+  assert.ok(many.lines.length >= 2, `строк ${many.lines.length}`);
+  for (const g of ["✦", "✧", "★", "☆", "✶", "•", "→", "♥", "✓"]) assert.ok(E.decorGlyph(g), g);
+  assert.equal(E.decorGlyph("♥️"), null); // с FE0F — эмодзи (Twemoji), а не символ
+  // Рисуется: центр ✦ залит цветом текста, между лучами пусто (не «тофу»-квадрат).
+  const cv = createCanvas(1080, 1920);
+  const c = cv.getContext("2d");
+  E.drawLayer(c, textLayer({ props: { text: "✦", size: 300, color: "#ff0000" } }), 11, { width: 1080, height: 1920, getImage: () => null });
+  assert.deepEqual(pxOf(c, 540, 960).slice(0, 3), [255, 0, 0]);
+  assert.equal(pxOf(c, 540 - 75, 960 - 75)[3], 0, "между лучами искры — пусто");
+  // Обводка текста обводит и символ.
+  const cv2 = createCanvas(1080, 1920);
+  const c2 = cv2.getContext("2d");
+  E.drawLayer(c2, textLayer({ props: { text: "★", size: 300, color: "#ffffff", stroke: { color: "#00ff00", width: 12 } } }), 11, { width: 1080, height: 1920, getImage: () => null });
+  const top = 960 - 300 * 0.44 + 300 * 0.03; // кончик верхнего луча
+  assert.deepEqual(pxOf(c2, 540, top - 5).slice(0, 3), [0, 255, 0]);
+  assert.deepEqual(pxOf(c2, 540, 960).slice(0, 3), [255, 255, 255]);
+});
+
+test("shape star4 — четырёхлучевая искра: лучи до края w×h, вогнутые бока", () => {
+  const pts = E.sparklePoints(150, 200);
+  assert.equal(pts.length, 48);
+  assert.ok(pts.some(([x, y]) => Math.abs(y + 200) < 1e-9 && Math.abs(x) < 1e-9), "верхний луч");
+  const cv = createCanvas(1080, 1920);
+  const c = cv.getContext("2d");
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const l = { ...textLayer(), type: "shape", props: { kind: "star4", w: 300, h: 400, fill: "#ffd400" } };
+  E.drawLayer(c, l, 11, env);
+  assert.equal(pxOf(c, 540, 960)[3], 255);
+  assert.equal(pxOf(c, 540, 960 - 185)[3], 255); // у кончика луча
+  assert.equal(pxOf(c, 540 + 90, 960 - 120)[3], 0); // между лучами (вогнуто)
+  near(E.layerBox(c, l, 11, env).w, 300, 1e-6);
+});
+
+test("частицы: детерминированы зерном, ≤ 200, burst разлетается и гаснет, confetti падает, rise поднимается", () => {
+  const at = (props, local, seed = 7) => E.particlesAt(props, seed, local);
+  const a = at({ kind: "burst", count: 60 }, 0.4);
+  assert.deepEqual(a, at({ kind: "burst", count: 60 }, 0.4)); // та же раскладка кадр в кадр
+  assert.notDeepEqual(a, at({ kind: "burst", count: 60 }, 0.4, 8));
+  assert.ok(at({ kind: "sparkle", count: 999 }, 0.3).length <= E.MAX_PARTICLES);
+  // burst: в начале у центра, к середине — дальше, после жизни (1.2 с) — пусто; repeat — снова.
+  const dist = (ps) => ps.reduce((s, p) => s + Math.hypot(p.x, p.y), 0) / Math.max(1, ps.length);
+  assert.ok(dist(at({ kind: "burst", count: 80, gravity: 0 }, 0.05)) < dist(at({ kind: "burst", count: 80, gravity: 0 }, 0.5)));
+  assert.equal(at({ kind: "burst", count: 80 }, 1.3).length, 0);
+  assert.ok(at({ kind: "burst", count: 80, repeat: true }, 1.2 + 0.3).length > 0);
+  // Разлёт не дальше spread (без тяжести).
+  assert.ok(at({ kind: "burst", count: 80, spread: 200, gravity: 0 }, 0.6).every((p) => Math.hypot(p.x, p.y) <= 200 + 1e-6));
+  // confetti: средняя высота растёт (падают).
+  const meanY = (ps) => ps.reduce((s, p) => s + p.y, 0) / ps.length;
+  const fall = { kind: "confetti", count: 100, duration: 4 };
+  assert.ok(meanY(at(fall, 2.5)) > meanY(at(fall, 2.0)) + 20, `${meanY(at(fall, 2.0))} → ${meanY(at(fall, 2.5))}`);
+  // rise: та же частица чуть позже — выше (пока не началась новая петля).
+  const one = (t) => at({ kind: "rise", count: 1, duration: 4 }, t, 3)[0];
+  const y0 = one(1).y;
+  const y1 = one(1.1).y;
+  assert.ok(y1 < y0 || y1 > 300, `rise: ${y0} → ${y1}`);
+  // sparkle: все внутри круга spread.
+  assert.ok(at({ kind: "sparkle", count: 120, spread: 300 }, 0.7).every((p) => Math.hypot(p.x, p.y) <= 300 + 1e-6));
+  // Без seed — зерно от id: у копии слоя своя раскладка.
+  assert.notEqual(E.particleSeed({ id: "a", props: {} }), E.particleSeed({ id: "b", props: {} }));
+  assert.equal(E.particleSeed({ id: "a", props: { seed: 5 } }), 5);
+});
+
+test("слой particles рисуется одним слоем; картинка частиц — в списке ресурсов; шаблон", () => {
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const l = { ...textLayer(), id: "fx", type: "particles", props: { kind: "sparkle", count: 150, size: 40, spread: 400, colors: ["#ffd400"], glow: true } };
+  const paint = () => {
+    const cv = createCanvas(1080, 1920);
+    const c = cv.getContext("2d");
+    E.drawLayer(c, l, 10.8, env);
+    return c;
+  };
+  const c = paint();
+  const data = c.getImageData(0, 0, 1080, 1920).data;
+  let lit = 0;
+  for (let i = 3; i < data.length; i += 4 * 16) if (data[i] > 0) lit++;
+  assert.ok(lit > 200, `закрашено ${lit}`);
+  // Детерминированно: второй рендер того же момента — те же пиксели.
+  const again = paint().getImageData(0, 0, 1080, 1920).data;
+  assert.ok(Buffer.from(again.buffer).equals(Buffer.from(data.buffer)));
+  near(E.layerBox(c, l, 10.8, env).w, (400 + 40) * 2, 1e-6);
+  assert.deepEqual(
+    E.collectImageRefs([{ ...l, props: { asset_id: "12" } }, { ...l, props: { src: "sticker:p/x.png" } }]).sort(),
+    ["12", "sticker:p/x.png"],
+  );
+  const tpl = E.buildTemplate("particles", { kind: "confetti", count: 90 }, 2);
+  assert.equal(tpl.layers.length, 1);
+  assert.equal(tpl.layers[0].type, "particles");
+  assert.equal(tpl.layers[0].props.count, 90);
+});
+
+test("видео hold — стоп-кадр секунды from на весь слой", () => {
+  const T = (p, local, dur = 10) => E.videoFileTime(p, local, dur);
+  near(T({ from: 3.2, hold: true }, 0), 3.2);
+  near(T({ from: 3.2, hold: true, speed: 4, loop: true }, 9), 3.2);
+  near(T({ from: 30, hold: true }, 1), 10 - E.VIDEO_TAIL);
+  const src = fakeVideo(2.0);
+  const env = { width: 1080, height: 1920, getImage: () => null, getVideo: () => src };
+  const center = (t) => drawAt(videoLayer({ props: { from: 1.1, hold: true } }), t, env).px(540, 960).slice(0, 3);
+  assert.deepEqual(center(10.1), [0, 0, 255]); // секунда 1.1 — синий
+  assert.deepEqual(center(13.5), [0, 0, 255]); // и через 3.5 с — тот же кадр
+});
+
+test("телефон: statusBar — полоса над записью (экран выше), островок у видео только с ней, блик", () => {
+  const src = fakeVideo(2.0, 90, 195);
+  const env = { width: 1080, height: 1920, getImage: () => null, getVideo: () => src };
+  const plain = drawAt(videoLayer({ props: { device: "phone", w: 540 } }), 10.2, env);
+  const bar = drawAt(videoLayer({ props: { device: "phone", w: 540, statusBar: true } }), 10.2, env);
+  near(bar.box.h - plain.box.h, 540 * E.STATUS_BAR_AUTO, 1e-6);
+  near(E.statusBarHeight({ device: "phone", statusBar: 0.9 }, 100), 40, 1e-9); // предел 0.4
+  near(E.statusBarHeight({ statusBar: true }, 100), 0, 1e-9); // без корпуса — нет
+  const m = E.phoneMetrics(540, 1000);
+  const screenTop = (box) => 960 - box.h / 2 + m.rim + m.bezel;
+  const iy = (box) => screenTop(box) + 540 * 0.032 + (540 * 0.088) / 2;
+  // Островок: у видео без строки статуса его нет (там запись — красный кадр), со строкой — есть.
+  assert.deepEqual(plain.px(540, iy(plain.box)).slice(0, 3), [255, 0, 0]);
+  const withBar = bar.px(540, iy(bar.box));
+  assert.ok(withBar[0] < 20 && withBar[1] < 20, `островок ${withBar}`);
+  // Рядом с островком — чёрная строка статуса, ниже полосы — запись (красная).
+  assert.ok(bar.px(540 - 130, screenTop(bar.box) + 6)[0] < 30);
+  assert.deepEqual(bar.px(540, screenTop(bar.box) + 540 * 0.14 + 20).slice(0, 3), [255, 0, 0]);
+  // island: true вручную — островок и без строки статуса.
+  const forced = drawAt(videoLayer({ props: { device: "phone", w: 540, island: true } }), 10.2, env);
+  assert.ok(forced.px(540, iy(forced.box))[0] < 20);
+  // Блик стекла светлит верх-лево экрана, низ-право не трогает.
+  const glare = drawAt(videoLayer({ props: { device: "phone", w: 540, screenGlare: true } }), 10.2, env);
+  const tl = glare.px(540 - 200, 960 - 400);
+  assert.ok(tl[1] > 0 && tl[2] > 0, `блик ${tl}`);
+  assert.deepEqual(glare.px(540 + 200, 960 + 400).slice(0, 3), plain.px(540 + 200, 960 + 400).slice(0, 3));
+});
+
+test("text backdrop — мягкое затемнение за текстом: темнит вокруг, тает к краю, рамка его вмещает", () => {
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const white = () => {
+    const c = createCanvas(1080, 1920).getContext("2d");
+    c.fillStyle = "#ffffff";
+    c.fillRect(0, 0, 1080, 1920);
+    return c;
+  };
+  const props = { text: "ТИТР", size: 100, color: "#ffffff", backdrop: { opacity: 0.8, spread: 120 } };
+  const c = white();
+  E.drawLayer(c, textLayer({ props }), 11, env);
+  const L = E.layoutText(c, props, "Montserrat");
+  const g = E.backdropGeometry(L, props.backdrop);
+  const below = pxOf(c, 540, 960 + L.h / 2 + 30); // под текстом, внутри эллипса
+  assert.ok(below[0] < 140, `затемнение ${below}`);
+  const edge = pxOf(c, 540 + g.rx - 4, 960);
+  assert.ok(edge[0] > 230, `край ${edge}`);
+  assert.deepEqual(pxOf(c, 540, 960 - g.ry - 10).slice(0, 3), [255, 255, 255]);
+  const box = E.layerBox(c, textLayer({ props }), 11, env);
+  near(box.w, g.rx * 2, 1e-6);
+  assert.ok(E.layerBox(c, textLayer({ props: { ...props, backdrop: null } }), 11, env).w < box.w);
+});
+
+test("200 слоёв: время кадра 1080×1920 (предел MAX_LAYERS) и 200 частиц", () => {
+  const env = { width: 1080, height: 1920, getImage: () => null, defaultFont: "Montserrat", createCanvas: (w, h) => createCanvas(w, h) };
+  const layers = [];
+  for (let i = 0; i < 200; i++) {
+    const x = 0.08 + (i % 10) * 0.093;
+    const y = 0.06 + Math.floor(i / 10) * 0.045;
+    const base = { id: `l${i}`, start: 0, end: 10, x, y, scale: 1, rotation: 0, opacity: 1, track: i % 8, in: { type: "pop", duration: 0.3 } };
+    if (i % 3 === 0) layers.push({ ...base, type: "text", props: { text: `Т${i}`, size: 40, color: "#ffffff", stroke: { color: "#000000", width: 4 } } });
+    else if (i % 3 === 1) layers.push({ ...base, type: "shape", props: { kind: "rect", w: 80, h: 50, radius: 10, fill: "#8b5cf6" } });
+    else layers.push({ ...base, type: "shape", loop: { type: "pulse" }, props: { kind: "star4", w: 60, h: 60, fill: "#ffd400" } });
+  }
+  const c = createCanvas(1080, 1920).getContext("2d");
+  const frames = 30;
+  const time = (ls) => {
+    E.drawFrame(c, { layers: ls }, 0.1, env); // прогрев (раскладки текста)
+    const t0 = performance.now();
+    for (let f = 0; f < frames; f++) {
+      c.clearRect(0, 0, 1080, 1920);
+      E.drawFrame(c, { layers: ls }, 0.1 + f / 30, env);
+    }
+    return (performance.now() - t0) / frames;
+  };
+  const perLayers = time(layers);
+  const fx = [{ id: "fx", type: "particles", start: 0, end: 10, x: 0.5, y: 0.5, props: { kind: "burst", count: 200, glow: true, repeat: true } }];
+  const perFx = time(fx);
+  console.log(`# 200 слоёв (текст/фигуры, pop/pulse): ${perLayers.toFixed(1)} мс/кадр; 200 частиц с glow: ${perFx.toFixed(1)} мс/кадр (1080×1920, без кодирования)`);
+  assert.ok(perLayers < 250, `200 слоёв: ${perLayers.toFixed(1)} мс/кадр`);
+  assert.ok(perFx < 120, `200 частиц: ${perFx.toFixed(1)} мс/кадр`);
+});

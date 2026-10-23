@@ -17,6 +17,7 @@ import { calloutRenderer } from "./layers/callout";
 import { chartRenderer } from "./layers/chart";
 import { counterRenderer, progressRenderer } from "./layers/counter";
 import { emojiRenderer, imageRenderer } from "./layers/image";
+import { particlesRenderer } from "./layers/particles";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
@@ -29,6 +30,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   image: imageRenderer as LayerRenderer,
   video: videoRenderer as LayerRenderer,
   emoji: emojiRenderer as LayerRenderer,
+  particles: particlesRenderer as LayerRenderer,
   counter: counterRenderer as LayerRenderer,
   progress: progressRenderer as LayerRenderer,
   chart: chartRenderer as LayerRenderer,

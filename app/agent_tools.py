@@ -380,6 +380,8 @@ def _layer_box(layer: dict) -> tuple[float, float]:
         height = _num(props.get("w"), 400.0) or 400.0
     elif kind == "video":
         height = video_height(props)
+    elif kind == "particles":
+        height = 2 * ((_num(props.get("spread"), 360.0) or 0.0) + (_num(props.get("size"), 28.0) or 0.0))
     return height * scale / 1920 / 2, 0.0
 
 
@@ -390,7 +392,9 @@ def video_height(props: dict) -> float:
     crop = props.get("crop") if isinstance(props.get("crop"), dict) else {}
     ratio = (_num(crop.get("h"), 1.0) or 1.0) / max(0.01, _num(crop.get("w"), 1.0) or 1.0)
     if props.get("device") == "phone":
-        return w * 19.5 / 9 * ratio + w * 0.094  # корпус: пояс + рамка сверху и снизу
+        bar = props.get("statusBar")
+        bar = motion.STATUS_BAR_AUTO if bar is True else (_num(bar, 0.0) or 0.0)
+        return w * 19.5 / 9 * ratio + w * 0.094 + w * bar  # корпус: пояс + рамка сверху и снизу (+ строка статуса)
     return w * 16 / 9 * ratio
 
 
@@ -437,13 +441,30 @@ def covering_problems(layers: list[dict], keyed: bool = False) -> list[str]:
     return out
 
 
+def is_decor_layer(layer: dict, canvas: bool = False) -> bool:
+    """Фон и декор, а не «графика поверх» — в перегруз не считается.
+
+    Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
+    во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
+    kind = layer.get("type")
+    if kind in ("shape", "captions", "particles") or layer.get("behind"):
+        return True
+    if kind in ("image", "video"):
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        width = (_num(props.get("w"), 600.0) or 0.0) * (_num(layer.get("scale"), 1.0) or 0.0)
+        if width >= 0.9 * 1080 and (canvas or (_num(layer.get("opacity"), 1.0) or 0.0) <= 0.6):
+            return True
+    return False
+
+
 def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None,
-                layout: dict | None = None) -> list[str]:
+                layout: dict | None = None, canvas: bool = False) -> list[str]:
     """Предупреждения ремесла (не ошибки): безопасные зоны, перегруз, мелкий текст.
 
     Не блокируют правку — модель (или человек) решает сама, но видит, где
     интерфейс площадки закроет титр или экран превратился в кашу. ``layout`` — раскладка
-    клипа: в split текст на полосе вебки ложится на лицо стримера.
+    клипа: в split текст на полосе вебки ложится на лицо стримера. ``canvas`` — клип-холст
+    (промо): картинки во всю ширину там фон и в перегруз не идут.
     """
     warnings: list[str] = []
     strip = cam_strip(layout)
@@ -489,15 +510,15 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         if layer.get("type") == "captions":
             warnings.extend(f"{lid}: {w}" for w in caption_highlight_warnings(props))
     # Перегруз: сколько видимых слоёв одновременно в момент начала каждого слоя.
-    for layer in visible:
+    graphics = [o for o in visible if not is_decor_layer(o, canvas)]  # фон, декор и субтитры — не «графика» поверх
+    for layer in graphics:
         lid = str(layer.get("id") or "?")
         if only_ids is not None and lid not in only_ids:
             continue
         t = (_num(layer.get("start"), 0.0) or 0.0) + 0.05
         together = [
-            o for o in visible
+            o for o in graphics
             if (_num(o.get("start"), 0.0) or 0.0) <= t < (_num(o.get("end"), 0.0) or 0.0)
-            and o.get("type") not in ("shape", "captions")  # фон и субтитры — не «графика» поверх
         ]
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
@@ -581,6 +602,7 @@ def _layer_summary(layer: dict) -> str:
         "chart": lambda: f"график {props.get('kind') or ''}",
         "callout": lambda: f"плашка «{_short(props.get('title'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
+        "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
     }.get(kind, lambda: str(kind or "слой"))()
     return f"{what} на {(_num(layer.get('start'), 0.0) or 0.0):.1f} с"
 
@@ -796,7 +818,7 @@ def short_clip_warning(finished_sec: float) -> str | None:
 
 def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -> list[str]:
     layout = (timeline.get("render") or {}).get("layout")
-    warnings = lint_layers(layers, timeline["duration"], layout=layout) if layers else []
+    warnings = lint_layers(layers, timeline["duration"], layout=layout, canvas=_source_canvas(ctx)) if layers else []
     from app.cuts import CutMap, normalize_cuts
 
     cut_list = normalize_cuts((timeline.get("render") or {}).get("cuts"))
@@ -1196,15 +1218,22 @@ _EMOJI_RE = re.compile(
 )
 
 
+def _drop_emoji(text: str) -> str:
+    """Вычистить эмодзи, но оставить символы-декор (✦ ★ ♥ ✓…): движок рисует их векторно цветом текста."""
+    return _EMOJI_RE.sub(lambda m: "".join(ch for ch in m.group(0) if ch in motion.DECOR_GLYPHS), text)
+
+
 def _strip_emoji(layer: dict) -> dict:
     props = layer.get("props")
     if not isinstance(props, dict):
         return layer
     props = dict(props)
+    if layer.get("type") == "particles" and str(props.get("src") or "").startswith("emoji:"):
+        props.pop("src")  # частицы-эмодзи — тоже эмодзи; остаются фигурами (star4 и т.п.)
     for key in ("text", "title", "subtitle", "prefix", "suffix", "icon"):
         value = props.get(key)
         if isinstance(value, str) and _EMOJI_RE.search(value):
-            cleaned = _EMOJI_RE.sub("", value)
+            cleaned = _drop_emoji(value)
             # Пробелы префикса/суффикса счётчика — часть оформления («от 50 000 ₽»):
             # раньше strip() съедал их у всех строк, и выходило «от50 000₽».
             props[key] = cleaned if key in ("prefix", "suffix") else cleaned.strip()
@@ -1325,6 +1354,13 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     problems = _cover_problems(ctx, prepared) + _validate_new_layers(ctx, prepared, duration)
     if problems:
         raise ToolError("слои не приняты — исправь и пришли все эти слои снова", problems)
+    if len(current) + len(prepared) > motion.MAX_LAYERS:
+        # Раньше лишние молча отбрасывались при сохранении — промо теряло хвост монтажа.
+        room = max(0, motion.MAX_LAYERS - len(current))
+        raise ToolError(f"слои не приняты: в клипе уже {len(current)} слоёв, предел {motion.MAX_LAYERS} — "
+                        f"добавить можно ещё {room}", [
+                            "россыпь звёздочек/искр/конфетти — один слой particles вместо десятков shape",
+                            "убери ненужные слои (remove_layers) или объедини титры одного момента"])
     added = motion.normalize_layers(prepared)
     new_ids = {str(l.get("id")) for l in added}
     fresh = _save_render(ctx, {**render, "layers": current + added})
@@ -1333,9 +1369,20 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "ok": True,
         "added": [{"id": l.get("id"), "summary": _layer_summary(l)} for l in added],
         "layers_total": len(layers),
-        "warnings": lint_layers(layers, duration, only_ids=new_ids, layout=fresh.get("layout"))
-        + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else []),
+        "layers_limit": motion.MAX_LAYERS,
+        "warnings": lint_layers(layers, duration, only_ids=new_ids, layout=fresh.get("layout"),
+                                canvas=_source_canvas(ctx))
+        + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
+        + _layers_room_warning(len(layers)),
     }
+
+
+def _layers_room_warning(total: int) -> list[str]:
+    """Слоёв почти предел — сказать заранее, а не когда следующий add_layers откажет."""
+    if total < motion.MAX_LAYERS * 0.9:
+        return []
+    return [f"слоёв {total} из {motion.MAX_LAYERS} — осталось {motion.MAX_LAYERS - total}; россыпи декора "
+            "собирай в один слой particles"]
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:
@@ -1380,7 +1427,8 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     return {"ok": True, "layer": saved,
-            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, layout=fresh.get("layout"))}
+            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, layout=fresh.get("layout"),
+                                    canvas=_source_canvas(ctx))}
 
 
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
@@ -3039,6 +3087,8 @@ def motion_reference() -> str:
     fields = "; ".join(f"{kind}: {', '.join(props)}" for kind, props in motion.PROPS.items())
     return f"""\
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
+ПРЕДЕЛЫ: слоёв в клипе ≤ {motion.MAX_LAYERS} (add_layers сверх предела откажет и скажет, сколько осталось), ключей камеры ≤ {motion.MAX_CAMERA_KEYS},
+  точек ключей на свойство ≤ {motion.MAX_KEYS_PER_PROP}. Россыпь звёздочек/искр — ОДИН слой particles, не десятки shape.
 Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее),
   followCamera (едет и зумится вместе с видео по ключам камеры — фон/скрин за персонажем, рамка у объекта; по умолчанию слой стоит), x, y, scale, rotation, opacity,
   keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress, cropX,cropY,cropW,cropH (image/video: окно crop в долях — скролл экрана в неподвижном телефоне),
@@ -3052,16 +3102,28 @@ ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
   text: text (≤400, \\n), font, weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
-        highlight {{words:[индексы слов], color, bg}}
-  shape: kind {'|'.join(enums['shapes'])}, w, h, fill|null, stroke {{color,width}}, radius, points, dash
+        highlight {{words:[индексы слов], color, bg}},
+        backdrop {{color #000000, opacity 0.55, spread px}}|true|null — мягкое затемнение-градиент ЗА текстом (scrim):
+        титр читается, когда под него наездом заезжает телефон/пёстрый фон. Символы-декор {motion.DECOR_GLYPHS}
+        внутри текста рисуются векторно цветом текста (в шрифтах их нет — без этого был бы квадрат)
+  shape: kind {'|'.join(enums['shapes'])} (star4 — четырёхлучевая искра ✦), w, h, fill|null, stroke {{color,width}}, radius, points, dash
   image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX,
-         device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island
+         device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island,
+         statusBar (true или доля ширины экрана 0..0.4: полоса «9:41 · связь · батарея» НАД записью, экран выше на неё;
+         нужна, когда в записи нет строки статуса — иначе островок ляжет на шапку приложения), statusBarColor, screenGlare (блик стекла).
+         island по умолчанию: у image — да, у video — только со statusBar
   video: asset_id (видео из библиотеки: upload_video / add_video_from_source), from (секунда файла на start слоя),
-         speed 0.25..4, loop, freeze (по умолч. true — стоп-кадр в конце), + всё от image (w, radius, crop, device…).
+         speed 0.25..4, loop, freeze (по умолч. true — стоп-кадр в конце), hold (true — стоп-кадр секунды from на ВЕСЬ слой:
+         «замереть на экране оплаты» = слой video с hold и нужным from), + всё от image (w, radius, crop, device, statusBar…).
          НЕМОЕ. Промо приложения: запись экрана в device "phone"; нарезка 1–3 с = несколько video-слоёв подряд
          с разными from; свайп между экранами = ключи x (0.5→−0.5 / 1.5→0.5); скролл = ключи cropY;
          наезд = ключи scale+y слоя (камера на холсте телефон не зумит)
   emoji: char ("🔥"), size
+  particles: kind {'|'.join(motion.PARTICLE_KINDS)} (burst — разлёт из центра; sparkle — мерцание искр по кругу spread;
+         confetti — конфетти сверху вниз; rise — искорки вверх), count 1..{motion.MAX_PARTICLES}, colors [до 6], shape {'|'.join(motion.PARTICLE_SHAPES)}
+         (или asset_id картинки), size (px, ±45%), spread (радиус/полуширина области, px), duration (жизнь/цикл, с; burst 1.2,
+         confetti 3, sparkle 1.6, rise 3), gravity (px/с², burst 500, confetti 900), repeat (burst/confetti каждые duration),
+         glow (свечение), seed (раскладка; нет — от id). ОДИН слой рисует все частицы — кульминация, «вау», итог промо
   counter: from, to, decimals, prefix, suffix, thousands + стили text; рост по progress (по умолч. первая половина)
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title

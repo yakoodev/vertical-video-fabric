@@ -608,6 +608,12 @@ def video_frame_plan(layer: dict, fps: float, file_duration: float | None,
             return None
         t = video_file_time(props, at - start_t, file_duration)
         return None if t is None else {"start": round(t, 3), "rate": None, "span": None, "count": 1}
+    if props.get("hold"):
+        # Стоп-кадр: весь слой — один кадр секунды from, нарезка не нужна.
+        t = video_file_time(props, 0.0, file_duration)
+        if file_duration and file_duration > 0 and t is not None and t >= file_duration - VIDEO_TAIL:
+            t = max(0.0, file_duration - 0.25)  # у самого конца файла кадр бывает пустым
+        return {"start": round(t or 0.0, 3), "rate": None, "span": None, "count": 1}
     speed = min(VIDEO_MAX_SPEED, max(VIDEO_MIN_SPEED, float(props.get("speed") or 1.0)))
     rate = max(0.1, float(fps or 30)) / speed
     begin = max(0.0, float(props.get("from") or 0.0))

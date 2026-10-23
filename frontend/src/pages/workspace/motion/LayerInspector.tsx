@@ -466,6 +466,75 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             placeholder="Текст титра"
           />
           <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} />
+          <Toggle
+            label="Затемнение за текстом"
+            checked={Boolean(layer.props.backdrop)}
+            onChange={(on) => patchProps({ backdrop: on ? { color: "#000000", opacity: 0.55 } : null })}
+          />
+          {layer.props.backdrop ? (
+            <div className="li-row">
+              <Num label="Плотность" value={layer.props.backdrop.opacity ?? 0.55} min={0} max={1} step={0.05} onChange={(opacity) => patchProps({ backdrop: { ...layer.props.backdrop, opacity } })} />
+              <Num label="Поля" value={layer.props.backdrop.spread ?? Math.round((layer.props.size ?? 96) * 0.9)} min={0} max={800} step={10} onChange={(spread) => patchProps({ backdrop: { ...layer.props.backdrop, spread } })} />
+            </div>
+          ) : null}
+        </Section>
+      ) : null}
+
+      {layer.type === "particles" ? (
+        <Section title="Частицы">
+          <div className="li-row">
+            <label className="li-grow">
+              <span className="li-cap">Вид</span>
+              <select className="input" value={layer.props.kind ?? "burst"} onChange={(e) => patchProps({ kind: e.target.value })}>
+                {[
+                  ["burst", "Разлёт искр"],
+                  ["sparkle", "Мерцание"],
+                  ["confetti", "Конфетти"],
+                  ["rise", "Искорки вверх"],
+                ].map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="li-grow">
+              <span className="li-cap">Форма</span>
+              <select className="input" value={layer.props.shape ?? ""} onChange={(e) => patchProps({ shape: e.target.value || undefined })}>
+                {[
+                  ["", "По виду"],
+                  ["star4", "Искра ✦"],
+                  ["star", "Звезда ★"],
+                  ["dot", "Точка"],
+                  ["circle", "Кольцо"],
+                  ["square", "Листок"],
+                  ["heart", "Сердце"],
+                ].map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="li-row">
+            <Num label="Сколько" value={layer.props.count ?? 40} min={1} max={200} onChange={(count) => patchProps({ count })} />
+            <Num label="Размер" value={layer.props.size ?? 28} min={2} max={400} onChange={(size) => patchProps({ size })} />
+            <Num label="Разлёт" value={layer.props.spread ?? 360} min={0} max={3000} step={10} onChange={(spread) => patchProps({ spread })} />
+          </div>
+          <div className="li-row">
+            <Num label="Жизнь, с" value={layer.props.duration ?? 1.2} min={0.1} max={20} step={0.1} onChange={(duration) => patchProps({ duration })} />
+            <Num label="Тяжесть" value={layer.props.gravity ?? 0} min={-5000} max={5000} step={50} onChange={(gravity) => patchProps({ gravity })} />
+            <Num label="Зерно" value={layer.props.seed ?? 0} min={0} max={999999} onChange={(seed) => patchProps({ seed })} />
+          </div>
+          <div className="li-row">
+            <Color label="Цвет 1" value={layer.props.colors?.[0] ?? "#ffd400"} onChange={(c) => patchProps({ colors: [c, ...(layer.props.colors ?? ["#ffd400", "#ffffff"]).slice(1)] })} />
+            <Color label="Цвет 2" value={layer.props.colors?.[1] ?? "#ffffff"} onChange={(c) => patchProps({ colors: [layer.props.colors?.[0] ?? "#ffd400", c, ...(layer.props.colors ?? []).slice(2)] })} />
+          </div>
+          <div className="li-row">
+            <Toggle label="Свечение" checked={Boolean(layer.props.glow)} onChange={(glow) => patchProps({ glow })} />
+            <Toggle label="Повторять" checked={Boolean(layer.props.repeat)} onChange={(repeat) => patchProps({ repeat })} />
+          </div>
         </Section>
       ) : null}
 
@@ -598,6 +667,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               <div className="li-row">
                 <Toggle label="По кругу" checked={Boolean(layer.props.loop)} onChange={(loop) => patchProps({ loop })} />
                 <Toggle label="Стоп-кадр в конце" checked={layer.props.freeze !== false} onChange={(freeze) => patchProps({ freeze })} />
+                <Toggle label="Замереть на «С секунды»" checked={Boolean(layer.props.hold)} onChange={(hold) => patchProps({ hold })} />
               </div>
             </>
           ) : null}
@@ -614,7 +684,13 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           {layer.props.device === "phone" ? (
             <div className="li-row">
               <Color label="Корпус" value={layer.props.deviceColor ?? "#2c2c2e"} onChange={(deviceColor) => patchProps({ deviceColor })} />
-              <Toggle label="Островок камеры" checked={layer.props.island !== false} onChange={(island) => patchProps({ island })} />
+              <Toggle
+                label="Островок камеры"
+                checked={layer.props.island ?? (Boolean(layer.props.statusBar) || layer.type !== "video")}
+                onChange={(island) => patchProps({ island })}
+              />
+              <Toggle label="Строка статуса" checked={Boolean(layer.props.statusBar)} onChange={(on) => patchProps({ statusBar: on ? 0.14 : 0 })} />
+              <Toggle label="Блик стекла" checked={Boolean(layer.props.screenGlare)} onChange={(screenGlare) => patchProps({ screenGlare })} />
             </div>
           ) : (
             <>
@@ -647,6 +723,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 ["triangle", "Треугольник"],
                 ["star", "Звезда"],
                 ["burst", "Взрыв"],
+                ["star4", "Искра ✦"],
               ].map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
