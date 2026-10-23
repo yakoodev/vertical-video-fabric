@@ -62,9 +62,10 @@ EASINGS = (
 DEFAULT_EASING = "inOutCubic"
 ANIMATIONS = (
     "none", "fade", "pop", "zoom", "slideUp", "slideDown", "slideLeft", "slideRight",
-    "drop", "spin", "blur", "wipe", "typewriter", "words", "draw",
+    "drop", "spin", "blur", "wipe", "typewriter", "words", "draw", "rise",
 )
-TEXT_ONLY_ANIMATIONS = ("typewriter", "words")
+# rise — слова выезжают снизу из-под маски своей строки (frontend/src/motion/layers/text.ts).
+TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise")
 # «draw» — обводка рисуется; у формы это линия, стрелка и круг (эллипс).
 DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse")
 LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink")

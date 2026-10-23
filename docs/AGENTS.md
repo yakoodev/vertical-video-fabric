@@ -122,7 +122,9 @@ bearer_token_env_var = "VVF_TOKEN"
   стоп-кадре, а не гаснет перед ним. `out: null` или `{duration: 0}` — без анимации.
 - Типы: `text`, `emoji`, `image` (`asset_id` или `src: "emoji:1f525" | "sticker:<pack>/<file>"`),
   `shape` (arrow/ellipse/…), `counter`, `progress`, `chart`, `callout`, `audio` (`sfx:<pack>/<file>`).
-- Вход/выход: `pop`, `words`, `typewriter`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
+- Вход/выход: `pop`, `words`, `typewriter`, `rise`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
+  `rise` (только текст) — каждое слово по очереди выезжает снизу из-под невидимой маски своей строки
+  (с плашкой — из-под её края) с проявлением: «дорогие» титры промо; на выходе — уходит под маску.
 - **Скролл экрана внутри неподвижного телефона** (промо приложения): длинный скриншот — слой `image`
   с `radius` (обрезает картинку по скруглению) и окном `crop`; двигается не слой, а окно — ключи `cropY`
   (сверху вниз 0 → 1 − `crop.h`) при неизменных `w` слоя и `crop.h`. Высота окна под экран W×H:

@@ -37,6 +37,7 @@ const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "wipe", label: "Шторка" },
   { v: "typewriter", label: "Печатная машинка" },
   { v: "words", label: "По словам" },
+  { v: "rise", label: "Из-под маски" },
   { v: "draw", label: "Прорисовка" },
 ];
 const LOOP_TYPES: { v: LoopType; label: string }[] = [

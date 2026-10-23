@@ -2892,7 +2892,8 @@ def motion_reference() -> str:
   in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
 type: {', '.join(enums['types'])}
-in/out: {', '.join(enums['anims'])} (typewriter/words — только text; draw — shape line/arrow/ellipse)
+in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text; draw — shape line/arrow/ellipse)
+  rise — каждое слово выезжает снизу из-под невидимой маски своей строки с проявлением, по очереди (титры промо, «дорогой» текст)
 loop: {', '.join(enums['loops'])}
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:

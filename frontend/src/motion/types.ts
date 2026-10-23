@@ -57,7 +57,8 @@ export type InOutType =
   | "wipe"
   | "typewriter"
   | "words"
-  | "draw";
+  | "draw"
+  | "rise";
 
 export type InOut = { type: InOutType; duration?: number };
 

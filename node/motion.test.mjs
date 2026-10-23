@@ -137,6 +137,53 @@ test("длительность входа не больше половины с�
   near(wipe.wipe, 0.5);
 });
 
+test("rise: слово выезжает снизу из-под маски строки — в середине обрезано, к концу на месте", () => {
+  // n слов: слово i идёт за два слота из n + 1, как words; у не-текста rise — въезд снизу.
+  const st = E.resolveLayer(textLayer({ in: { type: "rise", duration: 1 } }), 10.25);
+  assert.deepEqual(st.reveal, { mode: "rise", fraction: 0.25 });
+  const shape = E.resolveLayer({ ...textLayer(), type: "shape", props: { kind: "rect" }, in: { type: "rise", duration: 1 } }, 10);
+  near(shape.y, 0.5 + 0.15);
+
+  const props = { text: "НЕТ", size: 200, color: "#ffffff" };
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const bounds = (layer, t) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, layer, t, env);
+    const d = ctx.getImageData(0, 0, 1080, 1920).data;
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (let y = 600; y < 1320; y++) {
+      for (let x = 200; x < 880; x++) {
+        if (d[(y * 1080 + x) * 4 + 3] > 0) {
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+    }
+    return { top, bottom, data: d };
+  };
+  const still = bounds(textLayer({ props }), 12);
+  const rise = textLayer({ props, in: { type: "rise", duration: 1 } });
+  // Полоса строки (маска) — та же формула, что в text.ts: центр ± (capH/2 + 0.32·size).
+  const L = E.layoutText(createCanvas(10, 10).getContext("2d"), props, "Montserrat");
+  const half = L.capH / 2 + L.size * 0.32;
+  const bandBottom = 960 + L.lines[0].cy + half;
+  // Одно слово: ход = доля входа; на 0.2 слово сдвинуто на (1 − outCubic(0.2))·высота полосы.
+  const dy = 2 * half * (1 - E.ease("outCubic", 0.2));
+  assert.ok(still.bottom + dy > bandBottom + 10, "без маски низ слова вылез бы за полосу");
+  const mid = bounds(rise, 10.2);
+  assert.ok(Number.isFinite(mid.top), "слово уже видно");
+  assert.ok(mid.top >= still.top + dy - 2, `сдвинуто вниз: ${mid.top} vs ${still.top} + ${dy}`);
+  assert.ok(mid.bottom <= bandBottom + 1, `маска режет низ: ${mid.bottom} > ${bandBottom}`);
+  assert.ok(mid.bottom - mid.top < still.bottom - still.top, "видна только часть слова");
+  // Конец входа — ровно как без анимации.
+  const end = bounds(rise, 11);
+  assert.equal(end.top, still.top);
+  assert.equal(end.bottom, still.bottom);
+  assert.ok(Buffer.from(end.data).equals(Buffer.from(still.data)));
+});
+
 /* ---------- окно картинки (crop) ключами: скролл экрана внутри телефона ---------- */
 
 const imageLayer = (over = {}) => ({ ...textLayer(), type: "image", props: { asset_id: "scr", w: 540 }, ...over });
