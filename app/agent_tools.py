@@ -1871,20 +1871,31 @@ def h_get_performance(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
-    """Фоновая музыка клипа: on + track_id (list_music)."""
+    """Фоновая музыка клипа: on + track_id (list_music), start_sec — с какой секунды трека."""
     render = _current_render(ctx)
     on = args.get("on") is not False
     track_id = args.get("track_id")
+    start = render.get("music_start_sec") or 0.0
     if on:
+        changed_track = bool(track_id) and int(track_id) != render.get("track_id")
         track_id = track_id or render.get("track_id")
         if not track_id:
             raise ToolError("нужен track_id — см. list_music")
         try:
-            ctx.store.get_audio_track(int(track_id))
+            track = ctx.store.get_audio_track(int(track_id))
         except (KeyError, ValueError, TypeError) as exc:
             raise ToolError(f"нет трека {track_id} — см. list_music") from exc
-    fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id")})
-    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"]}
+        if args.get("start_sec") is not None:
+            start = _num(args.get("start_sec"), 0.0) or 0.0
+        elif changed_track:
+            start = 0.0  # новый трек — с начала, если не сказано иное
+        length = float(track.get("duration_sec") or 0)
+        if length and start >= length:
+            raise ToolError(f"start_sec {start:g} — за концом трека ({length:g} с)")
+    fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id"),
+                               "music_start_sec": start})
+    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"],
+            "music_start_sec": fresh["music_start_sec"]}
 
 
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
@@ -3372,9 +3383,12 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_music", "Подкладываю музыку",
-            "Фоновая музыка клипа: on, track_id (list_music). Громкость сама: заметно тише голоса и "
-            "приглушается под речь; эффекты при музыке — реже. / Background music for the clip.",
-            _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"}}),
+            "Фоновая музыка клипа: on, track_id (list_music), start_sec — с какой секунды трека играть на 0 с "
+            "клипа (пропустить тихое вступление и начать сразу с барабанов/дропа; 0 — с начала, новый трек без "
+            "start_sec — с начала). Громкость сама: заметно тише голоса и приглушается под речь; эффекты при "
+            "музыке — реже. / Background music for the clip.",
+            _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"},
+                  "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа"}}),
             h_set_music, mutating=True,
             label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
         ),

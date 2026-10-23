@@ -177,6 +177,8 @@ export interface RenderSettings {
   banner_pos_pct: number;
   music_on: boolean;
   track_id: number | null;
+  /** С какой секунды трека играет музыка на 0 с клипа (0 — с начала). */
+  music_start_sec?: number;
   mirror: boolean;
   transition: TransitionSettings;
   cover: CoverSettings;

@@ -110,6 +110,8 @@ def normalize_render_settings(raw: object) -> dict:
         "banner_pos_pct": _pct(src.get("banner_pos_pct"), 4.0, 0.0, 80.0),
         "music_on": _bool(src.get("music_on")),
         "track_id": _opt_int(src.get("track_id")),
+        # С какой секунды трека играет музыка на 0 с клипа (рендер читает из настроек плана).
+        "music_start_sec": round(_pct(src.get("music_start_sec"), 0.0, 0.0, 3600.0), 2),
         "mirror": _bool(src.get("mirror")),
         "transition": normalize_transition(src.get("transition")),
         "cover": normalize_cover(src.get("cover")),

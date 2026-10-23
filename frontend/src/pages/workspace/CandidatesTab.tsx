@@ -1196,6 +1196,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [bannerId, setBannerId] = useState(0);
   const [musicOn, setMusicOn] = useState(false);
   const [trackId, setTrackId] = useState(0);
+  // С какой секунды трека музыка играет на 0 с клипа (сразу с барабанов, без вступления).
+  const [musicStartSec, setMusicStartSec] = useState(0);
+  const musicPreviewRef = useRef<HTMLAudioElement>(null);
   // Музыка по ссылке (POST /api/audio-tracks/from-url): сервер качает звук через yt-dlp.
   const [musicUrl, setMusicUrl] = useState("");
   const musicFromUrl = useMutation({
@@ -1204,6 +1207,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       await qc.invalidateQueries({ queryKey: qk.audioTracks });
       setMusicOn(true);
       setTrackId(track.id);
+      setMusicStartSec(0);
       setMusicUrl("");
       toast.success(`Трек «${track.label}» добавлен и выбран`);
     },
@@ -1369,6 +1373,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     banner_pos_pct: bannerPosPct,
     music_on: musicOn,
     track_id: trackId || null,
+    music_start_sec: musicStartSec,
     mirror,
     transition,
     cover,
@@ -1445,6 +1450,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       banner_pos_pct: s.banner_pos_pct,
       music_on: s.music_on,
       track_id: s.track_id ?? null,
+      music_start_sec: s.music_start_sec ?? 0,
       mirror: s.mirror,
       transition: { ...DEFAULT_TRANSITION, ...(s.transition ?? {}) },
       cover: { ...DEFAULT_COVER, ...(s.cover ?? {}) },
@@ -1470,6 +1476,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setBannerPosPct(s.banner_pos_pct);
     setMusicOn(s.music_on);
     setTrackId(s.track_id ?? 0);
+    setMusicStartSec(s.music_start_sec ?? 0);
     setMirror(s.mirror);
     setTransition({ ...DEFAULT_TRANSITION, ...(s.transition ?? {}) });
     setCover({ ...DEFAULT_COVER, ...(s.cover ?? {}) });
@@ -4136,7 +4143,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   <div className="lay-row">
                     <label className="field lay-grow">
                       <span>Трек</span>
-                      <select className="input" value={trackId} onChange={(e) => setTrackId(Number(e.target.value))}>
+                      <select
+                        className="input"
+                        value={trackId}
+                        onChange={(e) => {
+                          setTrackId(Number(e.target.value));
+                          setMusicStartSec(0);
+                        }}
+                      >
                         <option value={0}>по умолчанию</option>
                         {tracks.data?.map((t) => (
                           <option key={t.id} value={t.id}>
@@ -4156,7 +4170,50 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       {tracks.isFetching ? "…" : "↻"}
                     </button>
                   </div>
-                  {trackId ? <audio className="music-preview" src={`/media/audio-tracks/${trackId}`} controls preload="none" /> : null}
+                  {trackId ? (
+                    <>
+                      <audio
+                        ref={musicPreviewRef}
+                        className="music-preview"
+                        src={`/media/audio-tracks/${trackId}`}
+                        controls
+                        preload="none"
+                        // Прослушка с выбранного старта: так и зазвучит на 0 с клипа.
+                        onPlay={(e) => {
+                          const a = e.currentTarget;
+                          if (musicStartSec > 0 && a.currentTime < musicStartSec - 0.25) a.currentTime = musicStartSec;
+                        }}
+                      />
+                      <label className="field range">
+                        <span title="Музыка на 0 с клипа играет с этой секунды трека — пропустить тихое вступление и начать сразу с барабанов">
+                          Старт трека · {musicStartSec.toFixed(1)} с
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(1, Math.floor(tracks.data?.find((t) => t.id === trackId)?.duration_sec || 300))}
+                          step={0.1}
+                          value={musicStartSec}
+                          onChange={(e) => setMusicStartSec(Number(e.target.value))}
+                        />
+                      </label>
+                      <div className="lay-row">
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          title="Нашли на слух, где вступают барабаны, — поставьте плеер на паузу там и нажмите"
+                          onClick={() => setMusicStartSec(Math.round((musicPreviewRef.current?.currentTime ?? 0) * 10) / 10)}
+                        >
+                          ⏱ Старт отсюда (из плеера)
+                        </button>
+                        {musicStartSec > 0 ? (
+                          <button type="button" className="btn ghost sm" onClick={() => setMusicStartSec(0)}>
+                            С начала
+                          </button>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : null}
                   <div className="lay-row">
                     <input
                       className="input lay-grow"

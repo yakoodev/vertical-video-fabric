@@ -52,13 +52,14 @@ MAX_EFFECT_VOLUME = 1.0
 _LEVEL_CACHE: dict[tuple[str, float, float | None], tuple[float, float] | None] = {}
 
 
-def audio_levels(path: str | Path, seconds: float | None = 30.0) -> tuple[float, float] | None:
-    """(RMS peak, peak) звука файла в дБ — громкие места и пик (кэш по файлу)."""
+def audio_levels(path: str | Path, seconds: float | None = 30.0, start: float = 0.0) -> tuple[float, float] | None:
+    """(RMS peak, peak) звука файла в дБ — громкие места и пик (кэш по файлу).
+    ``start`` — с какой секунды файла слушать (музыка со смещением старта)."""
     import re
     import subprocess
 
     try:
-        key = (str(path), Path(path).stat().st_mtime, seconds)
+        key = (str(path), Path(path).stat().st_mtime, seconds, start)
     except OSError:
         return None
     if key in _LEVEL_CACHE:
@@ -66,8 +67,9 @@ def audio_levels(path: str | Path, seconds: float | None = 30.0) -> tuple[float,
     levels = None
     try:
         limit = ["-t", f"{seconds:g}"] if seconds else []
+        seek = ["-ss", f"{start:g}"] if start > 0 else []
         proc = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", *limit,
+            ["ffmpeg", "-hide_banner", "-nostats", *seek, "-i", str(path), "-vn", *limit,
              "-af", "astats=metadata=0:reset=0", "-f", "null", "-"],
             capture_output=True, text=True, timeout=120,
         )
