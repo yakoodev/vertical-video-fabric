@@ -8,6 +8,7 @@
  * холст размером со свою рамку и уже оттуда кладётся в кадр.
  */
 import { isLayerActive, resolveLayer, type LayerState } from "./animate";
+import { frameCameraMatrix, isIdentityCamera, type CameraMatrix } from "./camera";
 import type { FrameInfo, LayerRenderer } from "./layers/common";
 import { captionsRenderer } from "./layers/captions";
 import { chatRenderer } from "./layers/chat";
@@ -98,19 +99,32 @@ export function visibleLayers(layers: Layer[], t: number): Layer[] {
  */
 export function drawFrame(
   ctx: Ctx2D,
-  comp: Pick<Composition, "layers"> & FrameData,
+  comp: Pick<Composition, "layers"> & Partial<Pick<Composition, "camera" | "cameraBox" | "key">> & FrameData,
   t: number,
   env: RenderEnv,
   pass?: "behind" | "front",
 ): void {
   const data: FrameData = { words: comp.words, chat: comp.chat };
   const visible = visibleLayers(comp.layers || [], t);
+  let cam: CameraMatrix | null | undefined;
   for (const layer of visible) {
     // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
     if (pass && !!layer.behind !== (pass === "behind")) continue;
     // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
     // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
     if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;
+    if (layer.followCamera && comp.camera?.length) {
+      // Слой едет и зумится вместе с видео: та же матрица, что у кадра основы
+      // (с хромакеем — во весь кадр, в раскладке стрима — внутри окна игры).
+      cam ??= frameCameraMatrix(comp.camera, t, env.width, env.height, comp.key ? null : comp.cameraBox);
+      if (!isIdentityCamera(cam)) {
+        ctx.save();
+        ctx.transform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+        drawLayer(ctx, layer, t, env, data);
+        ctx.restore();
+        continue;
+      }
+    }
     drawLayer(ctx, layer, t, env, data);
   }
 }
@@ -139,17 +153,32 @@ export type LayerBox = {
 
 /**
  * Рамка слоя на холсте в момент `t` — для рамки выделения и попадания мышью в
- * редакторе. null — слой сейчас не виден.
+ * редакторе. null — слой сейчас не виден. `cam` — матрица камеры кадра: слою
+ * `followCamera` рамка ставится туда, где он нарисован после наезда.
  */
-export function layerBox(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, data?: CaptionWord[] | FrameData): LayerBox | null {
+export function layerBox(
+  ctx: Ctx2D,
+  layer: Layer,
+  t: number,
+  env: RenderEnv,
+  data?: CaptionWord[] | FrameData,
+  cam?: CameraMatrix | null,
+): LayerBox | null {
   const r = RENDERERS[layer.type];
   const st = resolveLayer(layer, t);
   if (!r || !st) return null;
   ctx.save();
   const size = r.measure(ctx, layer, st, env, frameOf(t, data));
   ctx.restore();
-  const k = (env.width / REF_W) * st.scale;
-  return { cx: st.x * env.width, cy: st.y * env.height, w: size.w * k, h: size.h * k, rotation: st.rotation };
+  const z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
+  const k = (env.width / REF_W) * st.scale * z.scale;
+  return {
+    cx: st.x * env.width * z.scale + z.tx,
+    cy: st.y * env.height * z.scale + z.ty,
+    w: size.w * k,
+    h: size.h * k,
+    rotation: st.rotation,
+  };
 }
 
 /** Попала ли точка холста (px, py) в слой (с учётом поворота). */

@@ -24,6 +24,7 @@ import {
   paintBackground,
   paintBackgroundAround,
   type BackgroundZone,
+  type ChromaKey,
   type Composition,
   type Ctx2D,
   type PixelRect,
@@ -173,7 +174,11 @@ function readKey(raw: Partial<Composition>): Pick<Composition, "key" | "backgrou
       color: k.color,
       similarity: clamp(k.similarity, 0.25, 0.01, 0.6),
       blend: clamp(k.blend, 0.08, 0, 0.5),
-      despill: k.despill === "blue" ? "blue" : "green",
+      despill: k.despill === "blue" || k.despill === "none" ? k.despill : "green",
+      // Мягкое подавление ореола: доля от полного (нет — despill ffmpeg как есть).
+      ...(k.spill !== undefined && k.spill !== null && Number.isFinite(Number(k.spill))
+        ? { spill: clamp(k.spill, 1, 0, 1) }
+        : {}),
       grade,
     },
     // Новый {kind, colors, speed} и старый {color, color2} — app/backgrounds.py.
@@ -326,7 +331,21 @@ function fitFilter(comp: Composition, colorspace: string | null): string {
   if (!key) return fit;
   // Зелёнка → прозрачность, зелёный ореол с краёв персонажа, потом лук (альфу он не трогает).
   const grade = key.grade ? `,${key.grade},format=rgba` : "";
-  return `${fit},chromakey=${key.color}:${key.similarity}:${key.blend},despill=type=${key.despill}${grade}`;
+  return `${fit},chromakey=${key.color}:${key.similarity}:${key.blend}${despillFilter(key)}${grade}`;
+}
+
+/**
+ * Подавление ореола после выреза. Без `spill` — despill ffmpeg по умолчанию (как было),
+ * "none" — ничего (жёлтое и зелёное в кадре не трогаются), `spill` s — свой канал
+ * опускается к среднему двух других лишь на долю s.
+ */
+function despillFilter(key: Pick<ChromaKey, "despill" | "spill">): string {
+  if (key.despill === "none") return "";
+  if (key.spill === undefined) return `,despill=type=${key.despill}`;
+  const s = Math.round(Math.min(1, Math.max(0, key.spill)) * 1000) / 1000;
+  if (s <= 0) return "";
+  // По умолчанию despill опускает зелёный при любом типе — у синего явно свой канал.
+  return key.despill === "blue" ? `,despill=type=blue:green=0:blue=-${s}` : `,despill=type=green:green=-${s}`;
 }
 
 function spawnFfmpeg(bin: string, argv: string[], stdin: "pipe" | "ignore"): { proc: ChildProcess; errors: () => string } {

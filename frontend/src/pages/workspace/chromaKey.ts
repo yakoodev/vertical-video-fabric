@@ -3,7 +3,8 @@
  *
  * Рендер вырезает зелёнку в компоновщике; превью делает то же на маленьком
  * холсте: расстояние по цветности (U, V) до цвета ключа, ниже `similarity` —
- * прозрачно, дальше мягкий край шириной `blend`, плюс подавление зелёного ореола.
+ * прозрачно, дальше мягкий край шириной `blend`, плюс подавление зелёного ореола —
+ * той же формулой, что фильтр ffmpeg despill (`despill`: auto / none / сила 0..1).
  */
 
 import {
@@ -14,10 +15,28 @@ import {
   type BackgroundOptions,
 } from "@/motion";
 
+/** Подавление ореола: "auto" — despill ffmpeg как есть, "none" — выкл, число — мягкая сила 0..1. */
+export type Despill = "auto" | "none" | number;
+
 export interface ChromaKey {
   color: string;
   similarity: number;
   blend: number;
+  /** Нет — "auto" (старые ключи). */
+  despill?: Despill;
+}
+
+/** Множители каналов на карту ореола — как параметры red/green/blue фильтра despill. */
+export function despillScales(key: Pick<ChromaKey, "color" | "despill">): [number, number, number] | null {
+  const mode = key.despill ?? "auto";
+  if (mode === "none") return null;
+  const [, kg, kb] = rgb(key.color);
+  const blue = kb > kg;
+  // auto — умолчания ffmpeg: опускается зелёный при любом типе (так считает рендер).
+  if (mode === "auto") return [0, -1, 0];
+  const s = Math.min(1, Math.max(0, Number(mode) || 0));
+  if (s <= 0) return null;
+  return blue ? [0, 0, -s] : [0, -s, 0];
 }
 
 /** Фон за персонажем — процедурный фон движка (анимированный по умолчанию, motion/backgrounds.ts). */
@@ -45,7 +64,9 @@ export function applyChromaKey(ctx: CanvasRenderingContext2D, w: number, h: numb
   const d = img.data;
   const [kr, kg, kb] = rgb(key.color);
   const [ku, kv] = uv(kr, kg, kb);
-  const greenKey = kg >= kb;
+  // Тип ореола — как app/chroma_key.despill_type: синий, только если синий ярче зелёного.
+  const greenKey = kb <= kg;
+  const scales = despillScales(key);
   const sim = key.similarity;
   const blend = key.blend;
   for (let i = 0; i < d.length; i += 4) {
@@ -60,9 +81,14 @@ export function applyChromaKey(ctx: CanvasRenderingContext2D, w: number, h: numb
     if (diff < sim) a = 0;
     else if (blend > 0) a = Math.min(1, (diff - sim) / blend);
     d[i + 3] = Math.round(d[i + 3] * a);
-    // Ореол: зелёный (синий) канал не ярче двух других.
-    if (greenKey) d[i + 1] = Math.min(g, Math.max(r, b));
-    else d[i + 2] = Math.min(b, Math.max(r, g));
+    if (!scales) continue;
+    // Ореол как ffmpeg despill (mix 0.5, expand 0): превышение канала ключа над
+    // средним двух других, умноженное на силу, вычитается.
+    const spill = Math.max(0, greenKey ? g - (r + b) / 2 : b - (r + g) / 2);
+    if (spill <= 0) continue;
+    d[i] = r + spill * scales[0];
+    d[i + 1] = g + spill * scales[1];
+    d[i + 2] = b + spill * scales[2];
   }
   ctx.putImageData(img, 0, 0);
 }

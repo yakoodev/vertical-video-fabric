@@ -52,13 +52,14 @@ MAX_EFFECT_VOLUME = 1.0
 _LEVEL_CACHE: dict[tuple[str, float, float | None], tuple[float, float] | None] = {}
 
 
-def audio_levels(path: str | Path, seconds: float | None = 30.0) -> tuple[float, float] | None:
-    """(RMS peak, peak) звука файла в дБ — громкие места и пик (кэш по файлу)."""
+def audio_levels(path: str | Path, seconds: float | None = 30.0, start: float = 0.0) -> tuple[float, float] | None:
+    """(RMS peak, peak) звука файла в дБ — громкие места и пик (кэш по файлу).
+    ``start`` — с какой секунды файла слушать (музыка со смещением старта)."""
     import re
     import subprocess
 
     try:
-        key = (str(path), Path(path).stat().st_mtime, seconds)
+        key = (str(path), Path(path).stat().st_mtime, seconds, start)
     except OSError:
         return None
     if key in _LEVEL_CACHE:
@@ -66,8 +67,9 @@ def audio_levels(path: str | Path, seconds: float | None = 30.0) -> tuple[float,
     levels = None
     try:
         limit = ["-t", f"{seconds:g}"] if seconds else []
+        seek = ["-ss", f"{start:g}"] if start > 0 else []
         proc = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", *limit,
+            ["ffmpeg", "-hide_banner", "-nostats", *seek, "-i", str(path), "-vn", *limit,
              "-af", "astats=metadata=0:reset=0", "-f", "null", "-"],
             capture_output=True, text=True, timeout=120,
         )
@@ -258,13 +260,13 @@ def write_comp(
     if key:
         # Хромакей основы (app/chroma_key.py): компоновщик вырезает зелёнку,
         # кладёт фон и слои «за персонажем», сверху — основу.
-        from app.chroma_key import despill_type, ff_hex, normalize_backdrop
+        from app.chroma_key import comp_despill, ff_hex, normalize_backdrop
 
         comp["key"] = {
             "color": ff_hex(key["color"]),
             "similarity": key["similarity"],
             "blend": key["blend"],
-            "despill": despill_type(key["color"]),
+            **comp_despill(key),
             "grade": key.get("grade") or "",
         }
         comp["background"] = normalize_backdrop(background)

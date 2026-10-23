@@ -137,6 +137,53 @@ test("длительность входа не больше половины с�
   near(wipe.wipe, 0.5);
 });
 
+test("rise: слово выезжает снизу из-под маски строки — в середине обрезано, к концу на месте", () => {
+  // n слов: слово i идёт за два слота из n + 1, как words; у не-текста rise — въезд снизу.
+  const st = E.resolveLayer(textLayer({ in: { type: "rise", duration: 1 } }), 10.25);
+  assert.deepEqual(st.reveal, { mode: "rise", fraction: 0.25 });
+  const shape = E.resolveLayer({ ...textLayer(), type: "shape", props: { kind: "rect" }, in: { type: "rise", duration: 1 } }, 10);
+  near(shape.y, 0.5 + 0.15);
+
+  const props = { text: "НЕТ", size: 200, color: "#ffffff" };
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const bounds = (layer, t) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, layer, t, env);
+    const d = ctx.getImageData(0, 0, 1080, 1920).data;
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (let y = 600; y < 1320; y++) {
+      for (let x = 200; x < 880; x++) {
+        if (d[(y * 1080 + x) * 4 + 3] > 0) {
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+    }
+    return { top, bottom, data: d };
+  };
+  const still = bounds(textLayer({ props }), 12);
+  const rise = textLayer({ props, in: { type: "rise", duration: 1 } });
+  // Полоса строки (маска) — та же формула, что в text.ts: центр ± (capH/2 + 0.32·size).
+  const L = E.layoutText(createCanvas(10, 10).getContext("2d"), props, "Montserrat");
+  const half = L.capH / 2 + L.size * 0.32;
+  const bandBottom = 960 + L.lines[0].cy + half;
+  // Одно слово: ход = доля входа; на 0.2 слово сдвинуто на (1 − outCubic(0.2))·высота полосы.
+  const dy = 2 * half * (1 - E.ease("outCubic", 0.2));
+  assert.ok(still.bottom + dy > bandBottom + 10, "без маски низ слова вылез бы за полосу");
+  const mid = bounds(rise, 10.2);
+  assert.ok(Number.isFinite(mid.top), "слово уже видно");
+  assert.ok(mid.top >= still.top + dy - 2, `сдвинуто вниз: ${mid.top} vs ${still.top} + ${dy}`);
+  assert.ok(mid.bottom <= bandBottom + 1, `маска режет низ: ${mid.bottom} > ${bandBottom}`);
+  assert.ok(mid.bottom - mid.top < still.bottom - still.top, "видна только часть слова");
+  // Конец входа — ровно как без анимации.
+  const end = bounds(rise, 11);
+  assert.equal(end.top, still.top);
+  assert.equal(end.bottom, still.bottom);
+  assert.ok(Buffer.from(end.data).equals(Buffer.from(still.data)));
+});
+
 /* ---------- окно картинки (crop) ключами: скролл экрана внутри телефона ---------- */
 
 const imageLayer = (over = {}) => ({ ...textLayer(), type: "image", props: { asset_id: "scr", w: 540 }, ...over });
@@ -300,6 +347,54 @@ test("тряска камеры никогда не показывает кра�
   }
   const a = E.cameraMatrix(keys, 1.234, 1080, 1920);
   assert.deepEqual(a, E.cameraMatrix(keys, 1.234, 1080, 1920));
+});
+
+test("followCamera: слой едет и зумится с видео, без флага — стоит; в раскладке — по окну игры", () => {
+  // Красный квадрат 40×40 опорных px в точке (0.6, 0.5); камера — зум 2 в центр.
+  const square = (over = {}) => ({
+    id: "sq", type: "shape", start: 0, end: 5, x: 0.6, y: 0.5,
+    props: { kind: "rect", w: 40, h: 40, fill: "#ff0000" }, ...over,
+  });
+  const camera = [{ t: 0, zoom: 2, x: 0.5, y: 0.5 }];
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const redAt = (comp, x, y) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawFrame(ctx, comp, 1, env);
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    return d[0] > 200 && d[3] > 200;
+  };
+  // Без флага — на месте (старые клипы не меняются).
+  assert.ok(redAt({ layers: [square()], camera }, 648, 960));
+  // С флагом — там, куда камера увела точку видео: 540 + (648 − 540)·2 = 756, и вдвое крупнее.
+  const follow = { layers: [square({ followCamera: true })], camera };
+  assert.ok(!redAt(follow, 648, 960));
+  assert.ok(redAt(follow, 756, 960));
+  assert.ok(redAt(follow, 756 + 35, 960)); // половина стороны ×2 = 40 px
+  assert.ok(!redAt(follow, 756 + 45, 960));
+  // Без ключей камеры флаг ничего не меняет.
+  assert.ok(redAt({ layers: [square({ followCamera: true })] }, 648, 960));
+  // Раскладка стрима: камера двигает окно игры (нижняя половина) — слой вместе с ним.
+  const box = { x: 0, y: 960, w: 1080, h: 960 };
+  const m = E.frameCameraMatrix(camera, 1, 1080, 1920, box);
+  near(m.scale, 2);
+  near(m.tx, -540);
+  near(m.ty, -1440);
+  const inGame = { layers: [square({ followCamera: true, y: 0.75 })], camera, cameraBox: box };
+  assert.ok(redAt(inGame, 756, 1440));
+  // С хромакеем кадр зумится целиком — окно игры не учитывается.
+  // y 0.6 → 1152 px: по окну игры 2·1152 − 1440 = 864, во весь кадр 2·1152 − 960 = 1344.
+  const keyed = { layers: [square({ followCamera: true, y: 0.6 })], camera, cameraBox: box };
+  assert.ok(redAt(keyed, 756, 864));
+  const key = { color: "0x00ff00", similarity: 0.25, blend: 0.08, despill: "green" };
+  assert.ok(redAt({ ...keyed, key }, 756, 1344));
+  assert.ok(!redAt({ ...keyed, key }, 756, 864));
+  // Рамка выделения в редакторе — там же, где слой нарисован.
+  const ctx = createCanvas(10, 10).getContext("2d");
+  const lb = E.layerBox(ctx, square({ followCamera: true }), 1, env, undefined, E.cameraMatrix(camera, 1, 1080, 1920));
+  near(lb.cx, 756);
+  near(lb.w, 80);
+  near(E.layerBox(ctx, square(), 1, env, undefined, E.cameraMatrix(camera, 1, 1080, 1920)).cx, 648);
 });
 
 /* ---------- шаблоны и ссылки ---------- */
@@ -723,4 +818,28 @@ test("CLI: хромакей кладёт анимированный фон, ст
   const a = await colorAt({ kind: "aurora", colors: ["#101020", "#ff00aa"] }, 135, 120);
   const b = await colorAt({ kind: "aurora", colors: ["#101020", "#ff00aa"] }, 135, 400);
   assert.notDeepEqual(a, b, "аврора — не одна заливка");
+});
+
+test("CLI: хромакей — despill auto рыжит жёлтое, none оставляет, spill — мягко", async () => {
+  // Жёлтая карточка на зелёнке: ключ её не вырезает, а подавление ореола задевает.
+  const base = join(tmp, "green-yellow.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1",
+    "-vf", "drawbox=x=85:y=190:w=100:h=100:color=0xffff00:t=fill", "-pix_fmt", "yuv444p", "-c:v", "libx264", "-qp", "0", base], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const yellowAt = async (despill) => {
+    const key = { color: "0x00fe00", similarity: 0.3, blend: 0.05, ...despill };
+    const p = writeInputs("despill", { width: 270, height: 480, fps: 30, duration: 1, layers: [], key, background: { color: "#000000" } });
+    const png = join(tmp, "despill.png");
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const cv = createCanvas(270, 480);
+    cv.getContext("2d").drawImage(await loadImage(readFileSync(png)), 0, 0);
+    return [...cv.getContext("2d").getImageData(135, 240, 1, 1).data.slice(0, 3)];
+  };
+  const auto = await yellowAt({ despill: "green" });
+  const none = await yellowAt({ despill: "none" });
+  const soft = await yellowAt({ despill: "green", spill: 0.3 });
+  assert.ok(auto[0] > 230 && auto[1] < 150, `auto: ${auto}`); // жёлтое → оранжевое (как было)
+  assert.ok(none[0] > 230 && none[1] > 235 && none[2] < 30, `none: ${none}`); // жёлтое осталось
+  assert.ok(soft[1] > auto[1] + 40 && soft[1] < none[1] - 20, `soft: ${soft}`); // между
 });

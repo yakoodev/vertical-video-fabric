@@ -19,7 +19,9 @@ def test_music_sits_under_the_clip_voice(monkeypatch, tmp_path):
     from app.render import music_volume_for
 
     levels = {"voice.mp4": (-24.0, -14.0), "track.mp3": (-8.0, -1.0)}
-    monkeypatch.setattr(motion_render, "audio_levels", lambda path, seconds=30.0: levels.get(str(path)))
+    starts = []
+    monkeypatch.setattr(motion_render, "audio_levels",
+                        lambda path, seconds=30.0, start=0.0: starts.append(start) or levels.get(str(path)))
     music = {"track_path": "track.mp3", "volume": 0.5}
     # Голос −24, фон на 16 дБ тише: −40; трек −8 → поправка −32 дБ.
     assert abs(music_volume_for("voice.mp4", music) - 10 ** (-32 / 20)) < 1e-9
@@ -28,6 +30,9 @@ def test_music_sits_under_the_clip_voice(monkeypatch, tmp_path):
     assert music_volume_for("voice.mp4", {**music, "volume": 0}) == 0.0
     # Голоса не измерить — прежняя громкость дорожки.
     assert music_volume_for("silent.mp4", music) == 0.5
+    # Смещение старта: громкость меряется по тому куску трека, что зазвучит.
+    music_volume_for("voice.mp4", {**music, "start_sec": 12.5})
+    assert starts[-1] == 12.5
 
 
 def test_music_pack_becomes_tracks_once(tmp_path, monkeypatch):

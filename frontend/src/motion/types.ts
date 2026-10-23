@@ -57,7 +57,8 @@ export type InOutType =
   | "wipe"
   | "typewriter"
   | "words"
-  | "draw";
+  | "draw"
+  | "rise";
 
 export type InOut = { type: InOutType; duration?: number };
 
@@ -353,6 +354,8 @@ export type LayerBase = {
   blend?: BlendMode;
   /** Под вырезанной основой — «за персонажем» (у источника есть хромакей). */
   behind?: boolean;
+  /** Едет и зумится вместе с видео (камера `render.camera`); нет — стоит, как раньше. */
+  followCamera?: boolean;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */
@@ -441,7 +444,10 @@ export type ChromaKey = {
   color: string;
   similarity: number;
   blend: number;
-  despill: "green" | "blue";
+  /** Чей ореол давить после выреза; "none" — не давить (жёлтое/зелёное в кадре целы). */
+  despill: "green" | "blue" | "none";
+  /** Мягкая сила подавления 0..1; нет — фильтр despill ffmpeg как есть. */
+  spill?: number;
   /** Лук пресета (фильтры ffmpeg) — после выреза, чтобы не сдвинуть цвет ключа. */
   grade?: string;
 };

@@ -11,7 +11,8 @@ import { hashString, interpolateKeys, noise1 } from "./keys";
 import type { Crop, InOut, InOutType, Layer, LayerKeys, LayerType } from "./types";
 import { REF_H, REF_W } from "./types";
 
-export type Reveal = { mode: "chars" | "words"; fraction: number };
+/** chars — typewriter, words — слова с pop, rise — слова выезжают снизу из-под маски строки. */
+export type Reveal = { mode: "chars" | "words" | "rise"; fraction: number };
 
 export type LayerState = {
   /** Локальное время слоя (0 = start) и его длина. */
@@ -32,7 +33,7 @@ export type LayerState = {
   wipe: number;
   /** Доля нарисованной обводки (draw), 1 — целиком. */
   draw: number;
-  /** Посимвольное / пословное появление текста (typewriter / words). */
+  /** Посимвольное / пословное появление текста (typewriter / words / rise). */
   reveal: Reveal | null;
   /** Окно картинки (image) в долях — база `props.crop` + ключи cropX/Y/W/H; null — вся картинка. */
   crop: Crop | null;
@@ -102,6 +103,8 @@ function resolveCrop(layer: Layer, keys: LayerKeys, local: number): Crop | null 
 /** Анимации, которые имеют смысл только для своих типов, у чужих заменяются похожими. */
 function effectiveType(type: InOutType, layerType: LayerType): InOutType {
   if ((type === "typewriter" || type === "words") && layerType !== "text") return type === "words" ? "pop" : "fade";
+  // Маска по строкам есть только у текста — остальным просто въезд снизу.
+  if (type === "rise" && layerType !== "text") return "slideUp";
   if (type === "draw" && layerType !== "shape") return "wipe";
   return type;
 }
@@ -167,6 +170,9 @@ function applyInOut(st: LayerState, type: InOutType, a: number): void {
       return;
     case "words":
       st.reveal = mergeReveal(st.reveal, { mode: "words", fraction: p });
+      return;
+    case "rise":
+      st.reveal = mergeReveal(st.reveal, { mode: "rise", fraction: p });
       return;
   }
 }

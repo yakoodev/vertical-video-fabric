@@ -1,7 +1,8 @@
 """Хромакей: персонаж на зелёном (синем) фоне → вырезан, сзади — свой фон и слои.
 
 Втубер, записанный на зелёнке, — это основа без фона. Ключ хранится у
-источника (``sources.chroma_key``): цвет фона, порог и мягкость края. Рендер
+источника (``sources.chroma_key``): цвет фона, порог, мягкость края и подавление
+ореола (``despill``). Рендер
 оставляет зелёнку в основе нетронутой (поля и фон раскладки тоже красятся в цвет
 ключа), а вырезает её компоновщик моушна (node/motion-render.ts): заливает фон
 клипа (``render_settings.backdrop``, анимированный — app/backgrounds.py), рисует слои «за персонажем»
@@ -24,6 +25,10 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_SIMILARITY = 0.25
 DEFAULT_BLEND = 0.08
 DEFAULT_BACKDROP = "#0b0d14"
+# Подавление зелёного ореола после выреза: "auto" — фильтр ffmpeg despill как есть
+# (зелёный канал опускается до среднего красного и синего — жёлтое рыжеет, зелёное
+# сереет), "none" — без него, число 0..1 — мягкая сила (доля полного подавления).
+DESPILL_MODES = ("auto", "none")
 
 # Доля пикселей рамки кадра, похожих на чистый зелёный/синий, начиная с которой
 # источник считаем записанным на зелёнке.
@@ -44,8 +49,31 @@ def _color(value: Any) -> str | None:
     return value.lower() if isinstance(value, str) and _COLOR_RE.match(value) else None
 
 
+def normalize_despill(value: Any) -> str | float:
+    """``"auto"`` | ``"none"`` | сила 0..1. 0 и false — "none", true и мусор — "auto"."""
+    if value is False:
+        return "none"
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("none", "off", "no", "нет", "выкл"):
+            return "none"
+        if text in DESPILL_MODES or not text:
+            return "auto"
+        value = text
+    if isinstance(value, bool) or value is None:
+        return "auto"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "auto"
+    if number != number:  # NaN
+        return "auto"
+    number = round(min(1.0, max(0.0, number)), 2)
+    return "none" if number <= 0 else number
+
+
 def normalize_key(raw: Any) -> dict | None:
-    """``{color, similarity, blend}`` или None — ключа нет (выключен)."""
+    """``{color, similarity, blend, despill}`` или None — ключа нет (выключен)."""
     if not isinstance(raw, dict) or raw.get("off"):
         return None
     color = _color(raw.get("color"))
@@ -55,6 +83,7 @@ def normalize_key(raw: Any) -> dict | None:
         "color": color,
         "similarity": round(_num(raw.get("similarity"), DEFAULT_SIMILARITY, 0.01, 0.6), 3),
         "blend": round(_num(raw.get("blend"), DEFAULT_BLEND, 0.0, 0.5), 3),
+        "despill": normalize_despill(raw.get("despill")),
     }
 
 
@@ -71,6 +100,19 @@ def despill_type(color: str) -> str:
     g = int(color[3:5], 16)
     b = int(color[5:7], 16)
     return "blue" if b > g else "green"
+
+
+def comp_despill(key: dict) -> dict:
+    """Поля ключа композиции про ореол (node/motion-render.ts строит из них фильтр):
+    auto — ``{despill: green|blue}`` как раньше, none — ``{despill: "none"}``,
+    сила — ``{despill: green|blue, spill: s}``."""
+    mode = normalize_despill(key.get("despill"))
+    if mode == "none":
+        return {"despill": "none"}
+    out: dict = {"despill": despill_type(key["color"])}
+    if mode != "auto":
+        out["spill"] = mode
+    return out
 
 
 def ff_hex(color: str) -> str:

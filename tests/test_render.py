@@ -299,6 +299,68 @@ def test_music_args_without_duck_just_mixes(tmp_path):
     assert "[0:a][music]amix=inputs=2:duration=first" in filter_complex
 
 
+def test_music_start_sec_trims_track_before_fades(tmp_path):
+    music = {"track_path": str(tmp_path / "track.mp3"), "volume": 0.3, "loop": True, "fade_in_sec": 1,
+             "duck": False, "duration_sec": 20}
+    # Без смещения — ровно прежняя цепочка.
+    plain = build_ffmpeg_music_args(tmp_path / "b.mp4", tmp_path / "o.mp4", music)
+    assert plain[plain.index("-filter_complex") + 1].startswith("[1:a]volume=0.3,afade=t=in:st=0:d=1[music]")
+    args = build_ffmpeg_music_args(tmp_path / "b.mp4", tmp_path / "o.mp4", {**music, "start_sec": 12.5})
+    graph = args[args.index("-filter_complex") + 1]
+    # Трек с 12.5 с, время сброшено — фейд-ин на 0 с клипа, а не на 12.5 с трека.
+    assert graph.startswith("[1:a]atrim=start=12.5,asetpts=PTS-STARTPTS,volume=0.3,afade=t=in:st=0:d=1[music]")
+    # Петля остаётся на входе: дальше трек повторяется с начала.
+    track_index = args.index(str(tmp_path / "track.mp3"))
+    assert args[track_index - 3 : track_index] == ["-stream_loop", "-1", "-i"]
+
+
+def test_music_start_sec_flows_from_settings_to_music_pass(tmp_path, monkeypatch):
+    from app.clip_settings import normalize_render_settings
+
+    assert normalize_render_settings({})["music_start_sec"] == 0.0
+    assert normalize_render_settings({"music_start_sec": "7.256"})["music_start_sec"] == 7.26
+    assert normalize_render_settings({"music_start_sec": -3})["music_start_sec"] == 0.0
+    store = _store(tmp_path, monkeypatch)
+    track_path = settings.audio_dir / "drums.mp3"
+    track_path.write_bytes(b"audio")
+    track = store.create_audio_track("Drums", track_path, volume=0.3)
+    service = ClipRenderService(store)
+    preset = service._preset_with_music({}, track["id"], None, 8.0)
+    assert _resolve_music_settings(store, preset)["start_sec"] == 8.0
+    assert _resolve_music_settings(store, service._preset_with_music({}, track["id"]))["start_sec"] == 0.0
+
+
+def test_set_music_start_sec_reaches_render_of_plan(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, run_tool
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    track_path = settings.audio_dir / "drums.mp3"
+    track_path.write_bytes(b"audio")
+    track = store.create_audio_track("Drums", track_path, volume=0.3)
+    store.update_audio_track(track["id"], duration_sec=60)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], on_first_change=lambda: None)
+    out, ok = run_tool(ctx, "set_music", {"track_id": track["id"], "start_sec": 75})
+    assert not ok and "за концом трека" in out["error"]
+    out, ok = run_tool(ctx, "set_music", {"track_id": track["id"], "start_sec": 12.5})
+    assert ok and out["music_start_sec"] == 12.5, out
+    # Тот же трек без start_sec — смещение остаётся.
+    out, ok = run_tool(ctx, "set_music", {"track_id": track["id"]})
+    assert ok and out["music_start_sec"] == 12.5
+    # Рендер плана берёт смещение из настроек клипа и отдаёт его проходу музыки.
+    seen: dict = {}
+
+    def fake_montage(self, segment_ids, **kwargs):
+        seen.update(kwargs)
+        return {"id": 0, "status": "failed", "title": kwargs.get("title"), "description": kwargs.get("description")}
+
+    monkeypatch.setattr(ClipRenderService, "render_montage", fake_montage)
+    ClipRenderService(store).render_clip_plan(plan["id"])
+    assert seen["music_start_sec"] == 12.5
+
+
 def test_resolve_music_settings_reads_track_and_preset(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
     track_path = settings.audio_dir / "loop.mp3"

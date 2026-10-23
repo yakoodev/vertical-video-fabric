@@ -21,7 +21,7 @@ export interface Source {
   source_type: string;
   content_crop?: CropRect | null;
   /** Хромакей: источник на зелёнке, фон вырезается (app/chroma_key.py). */
-  chroma_key?: { color: string; similarity: number; blend: number } | null;
+  chroma_key?: { color: string; similarity: number; blend: number; despill?: "auto" | "none" | number } | null;
   /** Вебка стримера (доли кадра) — по умолчанию для раскладок split/pip_cam. */
   facecam?: CropRect | null;
   original_url: string;
@@ -177,6 +177,8 @@ export interface RenderSettings {
   banner_pos_pct: number;
   music_on: boolean;
   track_id: number | null;
+  /** С какой секунды трека играет музыка на 0 с клипа (0 — с начала). */
+  music_start_sec?: number;
   mirror: boolean;
   transition: TransitionSettings;
   cover: CoverSettings;

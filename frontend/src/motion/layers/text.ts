@@ -2,7 +2,7 @@
  * Текстовый слой и общая раскладка текста (её же используют счётчик, плашки,
  * подписи графиков).
  *
- * Раскладка считается целиком для полного текста, а анимации typewriter/words
+ * Раскладка считается целиком для полного текста, а анимации typewriter/words/rise
  * только прячут ещё не появившиеся буквы и слова. Поэтому при печати строка не
  * «прыгает» и не переносится заново, а плашка сразу нужного размера.
  */
@@ -288,10 +288,27 @@ function drawBg(ctx: Ctx2D, L: TextLayout, bg: NonNullable<TextStyle["bg"]>, lef
 
 /* ---------- текст ---------- */
 
-/** Как показывать слово сейчас: сколько графем видно, масштаб и прозрачность «pop». */
-type WordView = { graphemes: number; scale: number; alpha: number };
+/**
+ * Как показывать слово сейчас: сколько графем видно, масштаб и прозрачность «pop»;
+ * у rise — сдвиг вниз `dy` и маска `clip` (полоса своей строки, слово выезжает из-под неё).
+ */
+type WordView = { graphemes: number; scale: number; alpha: number; dy?: number; clip?: Band };
 
-function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefined): WordView | null {
+/** Полоса строки по вертикали (система слоя): маска rise. */
+type Band = { top: number; bottom: number };
+
+/**
+ * Полоса строки для маски rise: заглавные с надстрочными (Й, Ё) и выносные вниз,
+ * плюс обводка — пока слово на месте, маска его не задевает. С плашкой — ровно её
+ * строка: слово выезжает из-под края плашки, а не под ней.
+ */
+export function lineBand(L: TextLayout, line: LaidLine, stroke = 0, bg?: TextStyle["bg"]): Band {
+  const g = bgGeometry(L, bg);
+  const half = g ? g.half : L.capH / 2 + L.size * 0.32 + stroke;
+  return { top: line.cy - half, bottom: line.cy + half };
+}
+
+function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefined, band?: Band): WordView | null {
   if (!reveal) return { graphemes: word.g, scale: 1, alpha: 1 };
   if (reveal.mode === "chars") {
     const shown = Math.floor(clamp01(reveal.fraction) * L.totalG + 1e-6);
@@ -303,6 +320,12 @@ function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefin
   const n = Math.max(1, L.totalWords);
   const wp = clamp01((reveal.fraction * (n + 1) - word.index) / 2);
   if (wp <= 0) return null;
+  if (reveal.mode === "rise" && band) {
+    // Из-под маски: в начале слово целиком ниже полосы строки, к концу — на месте.
+    if (wp >= 1) return { graphemes: word.g, scale: 1, alpha: 1 };
+    const dy = (band.bottom - band.top) * (1 - ease("outCubic", wp));
+    return { graphemes: word.g, scale: 1, alpha: clamp01(wp * 1.6), dy, clip: band };
+  }
   return { graphemes: word.g, scale: Math.max(0, ease("outBack", wp)), alpha: clamp01(wp * 3) };
 }
 
@@ -372,7 +395,13 @@ export function drawTextLayout(
   const left = -L.w / 2;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  const views = L.lines.map((line) => line.words.map((w) => wordView(w, L, reveal)));
+  const strokeW = opts.stroke && opts.stroke.width > 0 ? opts.stroke.width : 0;
+  const views = L.lines.map((line) =>
+    line.words.map((w) => wordView(w, L, reveal, reveal?.mode === "rise" ? lineBand(L, line, strokeW, opts.bg) : undefined)),
+  );
+  // Маска rise по ширине — весь блок с запасом под обводку и эмодзи.
+  const maskX = left - L.size - strokeW;
+  const maskW = L.w + (L.size + strokeW) * 2;
   // При пословном/побуквенном появлении плашка строки показывается вместе с её первым словом.
   if (opts.bg) {
     drawBg(ctx, L, opts.bg, left, reveal ? views.map((v) => v.some(Boolean)) : undefined);
@@ -391,7 +420,7 @@ export function drawTextLayout(
       line.words.forEach((w, wi) => {
         const v = views[li][wi];
         if (!v || !hlSet.has(w.index)) return;
-        withWordTransform(ctx, left + line.x0 + w.x + w.w / 2, line.cy, v, () => {
+        withWordTransform(ctx, left + line.x0 + w.x + w.w / 2, line.cy, v, maskX, maskW, () => {
           const px = L.size * 0.14;
           const top = line.cy - L.capH / 2 - L.size * 0.14;
           const h = L.capH + L.size * 0.32;
@@ -435,7 +464,7 @@ export function drawTextLayout(
         if (!v) return;
         const segs = v.graphemes < w.g ? cutSegs(w.segs, v.graphemes) : w.segs;
         const x = left + line.x0 + w.x;
-        withWordTransform(ctx, x + w.w / 2, line.cy, v, () => {
+        withWordTransform(ctx, x + w.w / 2, line.cy, v, maskX, maskW, () => {
           if (pass === "fill") ctx.fillStyle = hlColor && hlSet.has(w.index) ? rgba(hlColor) : fill;
           drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env);
         });
@@ -446,17 +475,34 @@ export function drawTextLayout(
   }
 }
 
-function withWordTransform(ctx: Ctx2D, cx: number, cy: number, v: WordView, fn: () => void): void {
-  if (v.scale === 1 && v.alpha === 1) {
+function withWordTransform(
+  ctx: Ctx2D,
+  cx: number,
+  cy: number,
+  v: WordView,
+  maskX: number,
+  maskW: number,
+  fn: () => void,
+): void {
+  if (v.scale === 1 && v.alpha === 1 && !v.dy && !v.clip) {
     fn();
     return;
   }
   if (v.scale <= 0.001 || v.alpha <= 0.001) return;
   ctx.save();
+  if (v.clip) {
+    // Маска строки неподвижна, слово едет под ней (rise).
+    ctx.beginPath();
+    ctx.rect(maskX, v.clip.top, maskW, v.clip.bottom - v.clip.top);
+    ctx.clip();
+  }
   ctx.globalAlpha *= v.alpha;
-  ctx.translate(cx, cy);
-  ctx.scale(v.scale, v.scale);
-  ctx.translate(-cx, -cy);
+  if (v.dy) ctx.translate(0, v.dy);
+  if (v.scale !== 1) {
+    ctx.translate(cx, cy);
+    ctx.scale(v.scale, v.scale);
+    ctx.translate(-cx, -cy);
+  }
   fn();
   ctx.restore();
 }

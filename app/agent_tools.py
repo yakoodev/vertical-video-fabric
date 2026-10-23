@@ -1871,20 +1871,31 @@ def h_get_performance(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
-    """Фоновая музыка клипа: on + track_id (list_music)."""
+    """Фоновая музыка клипа: on + track_id (list_music), start_sec — с какой секунды трека."""
     render = _current_render(ctx)
     on = args.get("on") is not False
     track_id = args.get("track_id")
+    start = render.get("music_start_sec") or 0.0
     if on:
+        changed_track = bool(track_id) and int(track_id) != render.get("track_id")
         track_id = track_id or render.get("track_id")
         if not track_id:
             raise ToolError("нужен track_id — см. list_music")
         try:
-            ctx.store.get_audio_track(int(track_id))
+            track = ctx.store.get_audio_track(int(track_id))
         except (KeyError, ValueError, TypeError) as exc:
             raise ToolError(f"нет трека {track_id} — см. list_music") from exc
-    fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id")})
-    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"]}
+        if args.get("start_sec") is not None:
+            start = _num(args.get("start_sec"), 0.0) or 0.0
+        elif changed_track:
+            start = 0.0  # новый трек — с начала, если не сказано иное
+        length = float(track.get("duration_sec") or 0)
+        if length and start >= length:
+            raise ToolError(f"start_sec {start:g} — за концом трека ({length:g} с)")
+    fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id"),
+                               "music_start_sec": start})
+    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"],
+            "music_start_sec": fresh["music_start_sec"]}
 
 
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
@@ -1947,7 +1958,7 @@ def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
         ctx.store.update_source(source["id"], chroma_key=None)
         return {"ok": True, "chroma_key": None}
     current = source.get("chroma_key") or {}
-    tweaks = {k: v for k, v in args.items() if k in ("color", "similarity", "blend") and v is not None}
+    tweaks = {k: v for k, v in args.items() if k in ("color", "similarity", "blend", "despill") and v is not None}
     if args.get("color") or current:
         key = normalize_key({**current, **tweaks})
     else:
@@ -1960,7 +1971,8 @@ def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
         raise ToolError("зелёного/синего фона в источнике не нашлось — передай color (#rrggbb) сам, если он есть")
     saved = ctx.store.update_source(source["id"], chroma_key=key)
     return {"ok": True, "chroma_key": saved.get("chroma_key"),
-            "note": "проверь view_frame: края персонажа без зелени; ореол — similarity выше (0.3), рваные края — ниже"}
+            "note": "проверь view_frame: края персонажа без зелени; ореол — similarity выше (0.3), рваные края — ниже; "
+                    "жёлтое стало рыжим / зелёное серым — despill \"none\" или мягко 0.3"}
 
 
 def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
@@ -2874,12 +2886,14 @@ def motion_reference() -> str:
     fields = "; ".join(f"{kind}: {', '.join(props)}" for kind, props in motion.PROPS.items())
     return f"""\
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
-Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее), x, y, scale, rotation, opacity,
+Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее),
+  followCamera (едет и зумится вместе с видео по ключам камеры — фон/скрин за персонажем, рамка у объекта; по умолчанию слой стоит), x, y, scale, rotation, opacity,
   keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress, cropX,cropY,cropW,cropH (image: окно crop в долях — скролл экрана в неподвижном телефоне),
   in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
 type: {', '.join(enums['types'])}
-in/out: {', '.join(enums['anims'])} (typewriter/words — только text; draw — shape line/arrow/ellipse)
+in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text; draw — shape line/arrow/ellipse)
+  rise — каждое слово выезжает снизу из-под невидимой маски своей строки с проявлением, по очереди (титры промо, «дорогой» текст)
 loop: {', '.join(enums['loops'])}
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
@@ -2895,7 +2909,8 @@ props по типу:
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
   audio: asset_id ИЛИ "sfx:<pack>/<file>", volume 0..2, fadeIn, fadeOut, offset, duck (не рисуется)
 Все допустимые поля props (остальное отбрасывается): {fields}
-Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте).
+Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте)
+  и слои с followCamera: true (путь камеры в их ключи не копируй).
   ease ключа — переход ОТ него к следующему ключу (по умолчанию inOutCubic); step — держать до следующего ключа и прыгнуть. zoom < 1 нет: шире окна — set_piece_fit.
 Субтитры captions: в hormozi/mrbeast/karaoke звучащее слово жёлтое — highlightWords жёлтым там не видны, бери #FF3B30 или #22C55E.
 Цвета: #rrggbb или #rrggbbaa."""
@@ -2958,6 +2973,8 @@ def _layer_schema() -> dict:
             "end": {"type": "number", "description": "секунды клипа, end - start ≥ 0.1"},
             "track": {"type": "integer", "description": "0..7, выше = поверх"},
             "behind": {"type": "boolean", "description": "за вырезанным персонажем (только источник с хромакеем)"},
+            "followCamera": {"type": "boolean",
+                             "description": "едет и зумится вместе с видео по ключам камеры (set_camera); нет — стоит"},
             "x": {"type": "number", "description": "центр по ширине, доля кадра"},
             "y": {"type": "number", "description": "центр по высоте, доля кадра (безопасно 0.15..0.72 для центра текста; края текста — не выше 10% и не ниже 80% кадра)"},
             "scale": {"type": "number"},
@@ -3300,10 +3317,15 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_chroma_key", "Вырезаю зелёный фон",
             "Хромакей источника (персонаж на зелёнке): on true — найти фон сам (или color #rrggbb), similarity "
-            "0.01..0.6 (порог, по умолчанию 0.25), blend 0..0.5 (мягкость края); on false — выключить. Фон за "
-            "персонажем — set_backdrop, слои за ним — behind:true. / Chroma key of the clip's source.",
+            "0.01..0.6 (порог, по умолчанию 0.25), blend 0..0.5 (мягкость края), despill — подавление зелёного "
+            "ореола: \"auto\" (полное, по умолчанию; жёлтое в кадре рыжеет, зелёное сереет), \"none\" (выкл — "
+            "промо с жёлтыми/зелёными плашками, экраны), число 0..1 (мягкая сила, 0.3 — ореол слабее, цвета почти "
+            "целы); on false — выключить. Фон за персонажем — set_backdrop, слои за ним — behind:true. / Chroma "
+            "key of the clip's source.",
             _obj({"on": {"type": "boolean"}, "color": {"type": "string"}, "similarity": {"type": "number"},
-                  "blend": {"type": "number"}}),
+                  "blend": {"type": "number"},
+                  "despill": {"type": ["string", "number"],
+                              "description": "\"auto\" | \"none\" | сила 0..1"}}),
             h_set_chroma_key, mutating=True,
             label=lambda a: "Хромакей " + ("выкл" if a.get("on") is False else "вкл"),
         ),
@@ -3362,9 +3384,12 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_music", "Подкладываю музыку",
-            "Фоновая музыка клипа: on, track_id (list_music). Громкость сама: заметно тише голоса и "
-            "приглушается под речь; эффекты при музыке — реже. / Background music for the clip.",
-            _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"}}),
+            "Фоновая музыка клипа: on, track_id (list_music), start_sec — с какой секунды трека играть на 0 с "
+            "клипа (пропустить тихое вступление и начать сразу с барабанов/дропа; 0 — с начала, новый трек без "
+            "start_sec — с начала). Громкость сама: заметно тише голоса и приглушается под речь; эффекты при "
+            "музыке — реже. / Background music for the clip.",
+            _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"},
+                  "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа"}}),
             h_set_music, mutating=True,
             label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
         ),

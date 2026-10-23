@@ -1,7 +1,7 @@
 import json
 
 from app.agent_tools import covering_problems
-from app.chroma_key import _screen_color, despill_type, normalize_backdrop, normalize_key
+from app.chroma_key import _screen_color, comp_despill, despill_type, normalize_backdrop, normalize_despill, normalize_key
 from app.clip_settings import normalize_render_settings
 from app.motion import normalize_layers
 from app.motion_render import write_comp
@@ -11,7 +11,7 @@ from app.stream_layout import normalize_layout
 
 def test_normalize_key_clamps_and_rejects_junk():
     assert normalize_key({"color": "#00FE00", "similarity": 5, "blend": -1}) == {
-        "color": "#00fe00", "similarity": 0.6, "blend": 0.0,
+        "color": "#00fe00", "similarity": 0.6, "blend": 0.0, "despill": "auto",
     }
     assert normalize_key({"color": "green"}) is None
     assert normalize_key({"color": "#00ff00", "off": True}) is None
@@ -89,3 +89,43 @@ def test_behind_layers_only_cover_the_backdrop():
     assert covering_problems([{**big, "behind": True}], keyed=True) == []
     assert "хромакеем" in covering_problems([{**big, "behind": True}], keyed=False)[0]
     assert normalize_layers([{**big, "behind": True}])[0]["behind"] is True
+
+
+def test_despill_modes_normalize():
+    # Старый ключ без поля — полное подавление, как было.
+    assert normalize_key({"color": "#00ff00"})["despill"] == "auto"
+    assert normalize_despill("none") == normalize_despill(False) == normalize_despill(0) == "none"
+    assert normalize_despill("выкл") == "none"
+    assert normalize_despill(0.333) == 0.33 and normalize_despill("0.5") == 0.5
+    assert normalize_despill(7) == 1.0 and normalize_despill(-1) == "none"
+    assert normalize_despill("мусор") == normalize_despill(None) == normalize_despill(True) == "auto"
+
+
+def test_comp_key_despill_fields(tmp_path):
+    # auto — ровно прежнее поле despill; none — без подавления; число — мягкая сила spill.
+    assert comp_despill({"color": "#00fe00", "despill": "auto"}) == {"despill": "green"}
+    assert comp_despill({"color": "#0a28e6"}) == {"despill": "blue"}
+    assert comp_despill({"color": "#00fe00", "despill": "none"}) == {"despill": "none"}
+    assert comp_despill({"color": "#00fe00", "despill": 0.3}) == {"despill": "green", "spill": 0.3}
+    path = write_comp(
+        tmp_path / "comp.json", width=1080, height=1920, fps=30, duration=2, layers=[], camera=[],
+        key={"color": "#00fe00", "similarity": 0.3, "blend": 0.1, "despill": "none"}, background=None,
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["key"]["despill"] == "none"
+
+
+def test_set_chroma_key_tool_takes_despill(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, run_tool
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+
+    _require_ffmpeg()
+    _client, store, source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], on_first_change=lambda: None)
+    out, ok = run_tool(ctx, "set_chroma_key", {"on": True, "color": "#00fe00", "despill": "none"})
+    assert ok, out
+    assert out["chroma_key"]["despill"] == "none"
+    # Остальное ключа не трогается — меняется только сила.
+    out, ok = run_tool(ctx, "set_chroma_key", {"despill": 0.3})
+    assert ok and out["chroma_key"] == {"color": "#00fe00", "similarity": 0.25, "blend": 0.08, "despill": 0.3}
+    assert store.get_source(source["id"])["chroma_key"]["despill"] == 0.3

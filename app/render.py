@@ -382,13 +382,14 @@ class ClipRenderService:
         cover: dict | None = None,
         motion: dict | None = None,
         layout: dict | None = None,
+        music_start_sec: float | None = None,
     ) -> dict:
         """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше."""
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
         preset = self._preset_with_banner(preset, banner_id)
-        preset = self._preset_with_music(preset, music_track_id, music_volume)
+        preset = self._preset_with_music(preset, music_track_id, music_volume, music_start_sec)
         preset = self._preset_with_subtitle_offset(preset, subtitle_offset_sec)
         preset = self._preset_with_render_overrides(
             preset,
@@ -513,6 +514,7 @@ class ClipRenderService:
         layout: dict | None = None,
         cut_parts: list[dict] | None = None,
         jump_joins: list[bool] | None = None,
+        music_start_sec: float | None = None,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
         рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
@@ -526,7 +528,7 @@ class ClipRenderService:
         source = self.store.get_source(segments[0]["source_id"])
         preset = self._preset(ffmpeg_preset_id)
         preset = self._preset_with_banner(preset, banner_id)
-        preset = self._preset_with_music(preset, music_track_id, music_volume)
+        preset = self._preset_with_music(preset, music_track_id, music_volume, music_start_sec)
         preset = self._preset_with_subtitle_offset(preset, subtitle_offset_sec)
         preset = self._preset_with_render_overrides(
             preset,
@@ -943,6 +945,7 @@ class ClipRenderService:
         transition: dict | None = None,
         cover: dict | None = None,
         layout: dict | None = None,
+        music_start_sec: float | None = None,
     ) -> dict:
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
@@ -981,6 +984,9 @@ class ClipRenderService:
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
+        if music_start_sec is None:
+            # Смещение старта музыки — из настроек клипа, как раскладка.
+            music_start_sec = (plan.get("render_settings") or {}).get("music_start_sec")
         if not (visual or {}).get("key") and needs_zones(layout, segments):
             # Анимированный фон meme / куска «шире окна» рисует компоновщик — он нужен
             # и клипу без слоёв (зоны фона считает рендер, app/backgrounds.py).
@@ -997,6 +1003,7 @@ class ClipRenderService:
                 description=plan["description"],
                 music_track_id=music_track_id,
                 music_volume=music_volume,
+                music_start_sec=music_start_sec,
                 subtitle_offset_sec=subtitle_offset_sec,
                 subtitle_provider=subtitle_provider,
                 banner_height_frac=banner_height_frac,
@@ -1019,6 +1026,7 @@ class ClipRenderService:
                 clip_plan_id=clip_plan_id,
                 music_track_id=music_track_id,
                 music_volume=music_volume,
+                music_start_sec=music_start_sec,
                 subtitle_offset_sec=subtitle_offset_sec,
                 subtitle_provider=subtitle_provider,
                 banner_height_frac=banner_height_frac,
@@ -1040,6 +1048,7 @@ class ClipRenderService:
                 description=plan["description"],
                 music_track_id=music_track_id,
                 music_volume=music_volume,
+                music_start_sec=music_start_sec,
                 subtitle_offset_sec=subtitle_offset_sec,
                 subtitle_provider=subtitle_provider,
                 banner_height_frac=banner_height_frac,
@@ -1517,10 +1526,14 @@ class ClipRenderService:
         preset: dict,
         music_track_id: int | None,
         music_volume: float | None = None,
+        music_start_sec: float | None = None,
     ) -> dict:
-        if music_track_id is None and music_volume is None:
+        if music_track_id is None and music_volume is None and not music_start_sec:
             return preset
         preset = dict(preset)
+        if music_start_sec:
+            # С какой секунды трека играет музыка на 0 с клипа (сразу с барабанов).
+            preset["music_start_sec"] = max(0.0, min(MAX_MUSIC_START_SEC, float(music_start_sec)))
         if music_track_id is not None:
             if music_track_id <= 0:
                 preset["music_track_id"] = None
@@ -1869,6 +1882,9 @@ def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) ->
     return args
 
 
+# Смещение старта музыки — не дальше часа трека.
+MAX_MUSIC_START_SEC = 3600.0
+
 # Фон — на столько тише голоса клипа (по громким местам), ещё до приглушения под
 # речь. Громкость дорожки (volume 0.5 — обычный фон) сдвигает это относительно.
 MUSIC_UNDER_SPEECH_DB = 16.0
@@ -1888,7 +1904,8 @@ def music_volume_for(clip_path: Path, music: dict) -> float:
     if user <= 0:
         return 0.0
     speech = speech_level_db(clip_path)
-    track = audio_levels(music["track_path"], seconds=60)
+    # Громкость — того куска трека, что зазвучит (со смещением старта).
+    track = audio_levels(music["track_path"], seconds=60, start=float(music.get("start_sec") or 0))
     if speech is None or not track:
         return user
     gain_db = speech - MUSIC_UNDER_SPEECH_DB - track[0] + 20 * math.log10(user / MUSIC_NOMINAL_VOLUME)
@@ -1903,7 +1920,12 @@ def _music_filter(music: dict) -> str:
     duck = bool(music.get("duck"))
     duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
 
-    music_chain = [f"[1:a]volume={_ff_number(volume)}"]
+    start_sec = max(0.0, float(music.get("start_sec") or 0))
+    music_chain = [f"volume={_ff_number(volume)}"]
+    if start_sec > 0:
+        # Музыка с секунды трека start_sec: начало отрезается (с петлёй — только у первого круга).
+        music_chain[:0] = [f"atrim=start={_ff_number(start_sec)}", "asetpts=PTS-STARTPTS"]
+    music_chain[0] = "[1:a]" + music_chain[0]
     if fade_in > 0:
         music_chain.append(f"afade=t=in:st=0:d={_ff_number(fade_in)}")
     if fade_out > 0 and duration > 0:
@@ -1941,6 +1963,7 @@ def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
     return {
         "track_path": track["file_path"],
         "volume": volume,
+        "start_sec": preset.get("music_start_sec") or 0.0,
         "loop": bool(preset.get("music_loop", True)),
         "fade_in_sec": preset.get("music_fade_in_sec"),
         "fade_out_sec": preset.get("music_fade_out_sec"),
