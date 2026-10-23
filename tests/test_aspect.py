@@ -13,11 +13,12 @@ from app.aspect import (
     layer_size,
     normalize_aspect,
     reframe_layers,
+    reframe_motion,
     reframe_plan,
     scenes,
     settings_aspect,
 )
-from app.motion import normalize_layers
+from app.motion import normalize_camera, normalize_layers
 from app.settings import settings
 
 CANVAS = {"source_type": "canvas"}
@@ -150,6 +151,137 @@ def test_end_card_scene_is_centered_and_phone_does_not_jump():
     top, _ = _extent_px(out["logo"], 1080, sizes)
     _, bottom = _extent_px(out["button"], 1080, sizes)
     assert abs((1080 - bottom) - top) < 4  # концовка по центру кадра
+
+
+# ---------------------------------------------------------------- камера
+
+
+def _zoom_scene():
+    """Промо с наездом: титр сверху (стоит), телефон followCamera, камера 1 → 1.3 с центром в
+    нижней части телефона, держит, отъезжает."""
+    layers = normalize_layers([
+        {"id": "title", "type": "text", "start": 0, "end": 5, "x": 0.5, "y": 0.15,
+         "props": {"text": "Наезд на кнопку\nвнизу экрана", "size": 76, "maxWidth": 960}},
+        {"id": "phone", "type": "video", "start": 0, "end": 5, "x": 0.5, "y": 0.62, "followCamera": True,
+         "props": {"asset_id": 2, "w": 600, "device": "phone"}},
+        {"id": "ring", "type": "shape", "start": 1.2, "end": 1.8, "x": 0.5, "y": 0.8, "followCamera": True,
+         "props": {"kind": "ellipse", "w": 96, "h": 96},
+         "keys": {"scale": [{"t": 0, "v": 0.4}, {"t": 0.6, "v": 2.2}], "opacity": [{"t": 0, "v": 1}, {"t": 0.6, "v": 0}]}},
+    ])
+    camera = normalize_camera([
+        {"t": 0, "zoom": 1, "x": 0.5, "y": 0.5},
+        {"t": 1, "zoom": 1.3, "x": 0.5, "y": 0.55, "ease": "inOutCubic"},
+        {"t": 3, "zoom": 1.3, "x": 0.5, "y": 0.55},
+        {"t": 4, "zoom": 1, "x": 0.5, "y": 0.5},
+    ])
+    return layers, camera
+
+
+def _camera_at(camera, t):
+    """Вид камеры как в движке (camera.ts, без тряски): одна доля p на все поля — ease меняет
+    только скорость, а не набор видов, поэтому для проверки рамки хватает линейной доли."""
+    if t <= camera[0]["t"]:
+        a = b = camera[0]
+        p = 0.0
+    elif t >= camera[-1]["t"]:
+        a = b = camera[-1]
+        p = 0.0
+    else:
+        a, b = next((a, b) for a, b in zip(camera, camera[1:]) if a["t"] <= t < b["t"])
+        p = (t - a["t"]) / (b["t"] - a["t"])
+    zoom = max(1.0, a["zoom"] + (b["zoom"] - a["zoom"]) * p)
+    half = 0.5 / zoom
+    x = min(1 - half, max(half, a["x"] + (b["x"] - a["x"]) * p))
+    y = min(1 - half, max(half, a["y"] + (b["y"] - a["y"]) * p))
+    return zoom, x, y
+
+
+def _phone_on_screen(layer, camera, t, height):
+    """Верх и низ телефона followCamera на кадре после камеры (px)."""
+    zoom, _x, y = _camera_at(camera, t)
+    top, bottom = _extent_px(layer, height)
+    return height / 2 + zoom * (top - y * height), height / 2 + zoom * (bottom - y * height)
+
+
+@pytest.mark.parametrize("height", [1080, 1350])
+def test_camera_zoom_keeps_follow_camera_phone_inside_square(height):
+    """Баг 574-го клипа: наезд на низ телефона followCamera в квадрате уводил низ телефона
+    за кадр. Теперь камера переносится тем же преобразованием, что и слои: телефон целиком
+    в кадре на всём интервале, на удержании — с полями 4 %, а наезд остался 1.3."""
+    layers, camera = _zoom_scene()
+    framed, cam = reframe_motion(layers, camera, 1080, height, SIZES)
+    phone = _by_id(framed)["phone"]
+    # Старое поведение (слои без учёта камеры, камера как в 9:16) выталкивало низ телефона за кадр.
+    old = _by_id(reframe_layers(layers, 1080, height, SIZES))["phone"]
+    assert max(_phone_on_screen(old, camera, t / 50, height)[1] for t in range(0, 251)) > height
+    for step in range(0, 251):
+        t = step / 50
+        top, bottom = _phone_on_screen(phone, cam, t, height)
+        assert top >= -0.5 and bottom <= height + 0.5, (t, top, bottom)
+        if 1 <= t <= 3:
+            assert top >= 0.04 * height - 1 and bottom <= 0.96 * height + 1, (t, top, bottom)
+    # Наезд заметен: zoom не урезан, масштаб из-за камеры уменьшился не больше чем в 1.25 раза.
+    assert [k["zoom"] for k in cam] == pytest.approx([1, 1.3, 1.3, 1], abs=1e-3)
+    plain = reframe_plan(layers, 1080, height, SIZES)["scale"]
+    zoomed = reframe_plan(layers, 1080, height, SIZES, camera)["scale"]
+    assert plain / 1.25 - 1e-3 <= zoomed < plain
+    # Ключи остались ключами: время и изгиб те же, 9:16 — камера как есть.
+    assert [k["t"] for k in cam] == [0, 1, 3, 4] and cam[1]["ease"] == "inOutCubic"
+    assert reframe_motion(layers, camera, 1080, 1920, SIZES) == (layers, camera)
+
+
+def test_camera_center_stays_on_the_same_content_point():
+    """Наезд на точку, вокруг которой хватает места, — в квадрате та же точка содержимого
+    в центре кадра (как в 9:16), а не та же доля квадрата."""
+    layers = normalize_layers([
+        {"id": "title", "type": "text", "start": 0, "end": 4, "x": 0.5, "y": 0.15,
+         "props": {"text": "Титр", "size": 76}},
+        {"id": "phone", "type": "video", "start": 0, "end": 4, "x": 0.5, "y": 0.55,
+         "props": {"asset_id": 2, "w": 600, "device": "phone"}},
+        {"id": "badge", "type": "shape", "start": 0, "end": 4, "x": 0.42, "y": 0.47, "followCamera": True,
+         "props": {"kind": "rect", "w": 120, "h": 60}},
+    ])
+    camera = normalize_camera([{"t": 0, "zoom": 1}, {"t": 1, "zoom": 1.5, "x": 0.42, "y": 0.47}])
+    framed, cam = reframe_motion(layers, camera, 1080, 1080, SIZES)
+    badge = _by_id(framed)["badge"]
+    zoom, x, y = _camera_at(cam, 2)
+    assert zoom == pytest.approx(1.5)
+    # Значок под центром камеры — в центре квадрата (в 9:16 он тоже в центре кадра).
+    assert 540 + zoom * (badge["x"] * 1080 - x * 1080) == pytest.approx(540, abs=1.5)
+    assert 540 + zoom * (badge["y"] * 1080 - y * 1080) == pytest.approx(540, abs=1.5)
+
+
+def test_compositor_square_zoom_keeps_phone_bottom_in_frame(tmp_path):
+    """Пиксели кадра компоновщика 1080×1080 на удержании наезда и на его середине: экран
+    телефона (красная запись) не доходит до низа кадра, под ним — корпус и фон."""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("нет ffmpeg")
+    from app.motion_render import CompositorMissing, compositor_command
+
+    try:
+        compositor_command()
+    except CompositorMissing:
+        pytest.skip("компоновщик не собран (npm run build:motion)")
+    from tools.aspect_frames import render_frames
+
+    phone = tmp_path / "phone.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xff0000:s=390x844:r=10:d=6", "-c:v",
+                    "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(phone)], check=True)
+    layers, camera = _zoom_scene()
+    layers = [layer for layer in layers if layer["id"] == "phone"]
+    made = render_frames(layers, {"2": str(phone)}, {"color": "#101010"}, [0.6, 2.0], tmp_path / "out", ["1:1"],
+                         "zoom", camera)
+    for png in made:
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             capture_output=True, check=True).stdout
+        assert len(raw) == 1080 * 1080 * 3
+        red_rows = [
+            row for row in range(0, 1080, 4)
+            if any(raw[(row * 1080 + x) * 3] > 180 and raw[(row * 1080 + x) * 3 + 1] < 80 for x in range(300, 780, 20))
+        ]
+        assert red_rows, png.name
+        # Низ экрана выше нижнего края на корпус и поле: последние 30 px — без записи.
+        assert max(red_rows) < 1080 - 30, (png.name, max(red_rows))
 
 
 def test_set_aspect_tool_saves_for_canvas_and_refuses_regular_clip(tmp_path, monkeypatch):

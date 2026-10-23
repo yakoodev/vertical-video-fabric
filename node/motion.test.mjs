@@ -1164,6 +1164,56 @@ test("телефон: statusBar — полоса над записью (экра
   assert.deepEqual(glare.px(540 + 200, 960 + 400).slice(0, 3), plain.px(540 + 200, 960 + 400).slice(0, 3));
 });
 
+test("строка статуса: время и значки не заезжают под островок и в скругление — на любом телефоне и шрифте", () => {
+  // Раскладка: узкие и широкие экраны, тонкая и толстая полоса, крупное скругление, широкий шрифт.
+  for (const w of [90, 160, 240, 360, 540, 900]) {
+    for (const frac of [0.06, E.STATUS_BAR_AUTO, 0.4]) {
+      for (const radius of [0, w * 0.3]) {
+        for (const glyph of [0.6, 1.4]) {
+          const h = w * 2.1;
+          const m = E.phoneMetrics(w, h, radius);
+          const L = E.statusBarLayout(w, h, frac * w, true, m.screenR, (u) => 4 * glyph * u);
+          const gap = w * E.STATUS_ISLAND_GAP - 1e-6;
+          const at = `w=${w} sb=${frac} r=${radius} glyph=${glyph}`;
+          assert.ok(L.time[1] <= L.island[0] - gap, `время под островком: ${at} ${L.time} ${L.island}`);
+          assert.ok(L.icons[0] >= L.island[1] + gap, `значки под островком: ${at} ${L.icons} ${L.island}`);
+          assert.ok(L.time[0] >= -w / 2 && L.icons[1] <= w / 2, `за краем экрана: ${at}`);
+          assert.ok(L.u > 0 && L.iconU > 0 && L.iconU <= L.u + 1e-9, at);
+        }
+      }
+    }
+  }
+  // Пиксели: белая полоса, чёрные значки — рядом с островком (зазор) чисто белое по всей высоте полосы.
+  for (const w of [180, 540]) {
+    const scr = createCanvas(90, 195);
+    const env = { width: 1080, height: 1920, getImage: () => scr };
+    const layer = imageLayer({ props: { asset_id: "scr", w, device: "phone", statusBar: true, statusBarColor: "#ffffff" } });
+    const { box, px } = drawAt(layer, 11, env);
+    const m = E.phoneMetrics(w, box.h - 2 * (w * 0.017 + w * 0.03));
+    const screenTop = 960 - box.h / 2 + m.rim + m.bezel;
+    const sb = w * E.STATUS_BAR_AUTO;
+    const dark = [];
+    for (let y = Math.ceil(screenTop + 1); y < screenTop + sb - 1; y++) {
+      for (const side of [-1, 1]) {
+        // Зазор между островком и значками: от края островка наружу на 0.8 зазора.
+        for (let k = 0.15 * w + 2; k < 0.15 * w + 0.8 * E.STATUS_ISLAND_GAP * w; k++) {
+          const p = px(Math.round(540 + side * k), y);
+          if (p[0] < 200) dark.push([side, k, y, p[0]]);
+        }
+      }
+    }
+    assert.deepEqual(dark, [], `w=${w}: в зазоре у островка значки`);
+    // Значки есть: и слева (время), и справа — тёмные пиксели в «ушах».
+    const ink = (side) => {
+      for (let y = Math.ceil(screenTop + 1); y < screenTop + sb - 1; y++) {
+        for (let k = 0.19 * w; k < 0.44 * w; k++) if (px(Math.round(540 + side * k), y)[0] < 100) return true;
+      }
+      return false;
+    };
+    assert.ok(ink(-1) && ink(1), `w=${w}: нет времени или значков`);
+  }
+});
+
 test("text backdrop — мягкое затемнение за текстом: темнит вокруг, тает к краю, рамка его вмещает", () => {
   const env = { width: 1080, height: 1920, getImage: () => null };
   const white = () => {

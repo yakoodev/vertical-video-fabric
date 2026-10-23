@@ -2113,7 +2113,8 @@ def h_set_aspect(ctx: ToolContext, args: dict) -> dict:
     width, height = aspect_size(aspect)
     out: dict = {"ok": True, "aspect": fresh["aspect"], "size": f"{width}×{height}", "formats": list(ASPECTS)}
     if aspect != "9:16":
-        layout = reframe_plan([layer for layer in _layers_of(fresh) if not layer.get("hidden")], width, height)
+        layout = reframe_plan([layer for layer in _layers_of(fresh) if not layer.get("hidden")], width, height,
+                              camera=_camera_of(fresh))
         out["reframe"] = {"scale": layout["scale"], "scenes": [
             {"start": p["start"], "end": p["end"], "box": p["box"]} for p in layout["scenes"]]}
         out["note"] = ("слои остаются в опорных 1080×1920 — при рендере и в view_frame они переносятся в "
