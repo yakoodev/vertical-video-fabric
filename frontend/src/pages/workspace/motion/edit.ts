@@ -120,7 +120,7 @@ const isCropProp = (prop: AnimatableProp): prop is CropProp => prop in CROP_FIEL
 /** Значение свойства в базе слоя (без ключей и анимаций). */
 export function baseValue(layer: Layer, prop: AnimatableProp): number {
   if (isCropProp(prop)) {
-    const crop = layer.type === "image" ? layer.props.crop : null;
+    const crop = layer.type === "image" || layer.type === "video" ? layer.props.crop : null;
     return clampCrop(crop ?? {})[CROP_FIELD[prop]];
   }
   const defaults = { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, progress: 1 };
@@ -143,7 +143,7 @@ export function setAnimated(layer: Layer, prop: AnimatableProp, value: number, l
   }
   if (prop === "progress") return layer;
   if (isCropProp(prop)) {
-    if (layer.type !== "image") return layer;
+    if (layer.type !== "image" && layer.type !== "video") return layer;
     const crop = { ...clampCrop(layer.props.crop ?? {}), [CROP_FIELD[prop]]: round(value) };
     return { ...layer, props: { ...layer.props, crop } };
   }
@@ -241,6 +241,8 @@ export function layerTitle(layer: Layer): string {
       return { rect: "Прямоугольник", ellipse: "Круг", line: "Линия", arrow: "Стрелка", triangle: "Треугольник", star: "Звезда", burst: "Взрыв" }[layer.props.kind] ?? "Фигура";
     case "image":
       return "Картинка";
+    case "video":
+      return layer.props.device === "phone" ? "Видео в телефоне" : "Видео";
     case "audio":
       return "Звук";
     case "captions":
@@ -256,6 +258,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   text: "T",
   shape: "◆",
   image: "🖼",
+  video: "🎞",
   emoji: "😀",
   counter: "#",
   progress: "▭",

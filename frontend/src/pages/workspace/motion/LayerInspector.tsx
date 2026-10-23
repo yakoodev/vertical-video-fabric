@@ -583,24 +583,54 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
         </Section>
       ) : null}
 
-      {layer.type === "image" ? (
-        <Section title="Картинка">
+      {layer.type === "image" || layer.type === "video" ? (
+        <Section title={layer.type === "video" ? "Видео" : "Картинка"}>
+          {layer.type === "video" ? (
+            <>
+              <div className="li-row">
+                <label className="li-grow" title="id видео из «Файлов для монтажа»">
+                  <span className="li-cap">Файл (id)</span>
+                  <input className="input" value={layer.props.asset_id ?? ""} onChange={(e) => patchProps({ asset_id: e.target.value.trim() || undefined })} />
+                </label>
+                <Num label="С секунды" value={layer.props.from ?? 0} min={0} max={36000} step={0.1} onChange={(from) => patchProps({ from })} />
+                <Num label="Скорость" value={layer.props.speed ?? 1} min={0.25} max={4} step={0.25} onChange={(speed) => patchProps({ speed })} />
+              </div>
+              <div className="li-row">
+                <Toggle label="По кругу" checked={Boolean(layer.props.loop)} onChange={(loop) => patchProps({ loop })} />
+                <Toggle label="Стоп-кадр в конце" checked={layer.props.freeze !== false} onChange={(freeze) => patchProps({ freeze })} />
+              </div>
+            </>
+          ) : null}
           <div className="li-row">
             <Num label="Ширина" value={layer.props.w ?? 600} min={20} max={2400} step={10} onChange={(w) => patchProps({ w })} />
             <Num label="Скругл." value={layer.props.radius ?? 0} min={0} max={600} onChange={(radius) => patchProps({ radius })} />
           </div>
           <Toggle label="Отразить" checked={Boolean(layer.props.flipX)} onChange={(flipX) => patchProps({ flipX })} />
           <Toggle
-            label="Рамка"
-            checked={Boolean(layer.props.border)}
-            onChange={(on) => patchProps({ border: on ? { color: "#ffffff", width: 8 } : null })}
+            label="В телефоне"
+            checked={layer.props.device === "phone"}
+            onChange={(on) => patchProps({ device: on ? "phone" : null })}
           />
-          {layer.props.border ? (
+          {layer.props.device === "phone" ? (
             <div className="li-row">
-              <Color label="Цвет" value={layer.props.border.color} onChange={(color) => patchProps({ border: { ...layer.props.border!, color } })} />
-              <Num label="Толщина" value={layer.props.border.width} min={0} max={60} onChange={(width) => patchProps({ border: { ...layer.props.border!, width } })} />
+              <Color label="Корпус" value={layer.props.deviceColor ?? "#2c2c2e"} onChange={(deviceColor) => patchProps({ deviceColor })} />
+              <Toggle label="Островок камеры" checked={layer.props.island !== false} onChange={(island) => patchProps({ island })} />
             </div>
-          ) : null}
+          ) : (
+            <>
+              <Toggle
+                label="Рамка"
+                checked={Boolean(layer.props.border)}
+                onChange={(on) => patchProps({ border: on ? { color: "#ffffff", width: 8 } : null })}
+              />
+              {layer.props.border ? (
+                <div className="li-row">
+                  <Color label="Цвет" value={layer.props.border.color} onChange={(color) => patchProps({ border: { ...layer.props.border!, color } })} />
+                  <Num label="Толщина" value={layer.props.border.width} min={0} max={60} onChange={(width) => patchProps({ border: { ...layer.props.border!, width } })} />
+                </div>
+              ) : null}
+            </>
+          )}
         </Section>
       ) : null}
 

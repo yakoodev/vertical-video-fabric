@@ -1251,6 +1251,7 @@ class ClipRenderService:
         from app.motion_render import (
             build_compositor_args,
             build_motion_mux_args,
+            prepare_video_frames,
             resolve_layer_assets,
             write_comp,
         )
@@ -1289,11 +1290,17 @@ class ClipRenderService:
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
+                    # Видео-слои: кадры их отрезков заранее (удаляются вместе с work).
+                    videos_path, video_notes = prepare_video_frames(
+                        layers, assets, work, fps=float(preset.get("fps") or 30), out_width=comp_w,
+                        clip_duration=meta.duration_sec,
+                    )
+                    notes.extend(video_notes)
                     out = work / "motion.mp4"
                     _run_compositor(
                         build_compositor_args(
                             comp, assets_path, input_path=video, output_path=out,
-                            crf=_json_dict(preset.get("extra_json")).get("crf"),
+                            crf=_json_dict(preset.get("extra_json")).get("crf"), videos_path=videos_path,
                         ),
                         timeout=settings.motion_timeout_seconds,
                     )

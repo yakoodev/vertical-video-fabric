@@ -43,7 +43,7 @@ export type MotionTemplate = {
   build(params: TemplateParams, at: number): TemplateResult;
 };
 
-export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы"] as const;
+export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо"] as const;
 
 /* ---------- кирпичики ---------- */
 
@@ -997,6 +997,70 @@ const memeCaption: MotionTemplate = {
   },
 };
 
+/** Цвета корпуса как у мокапов Apple: чёрный, натуральный и белый титан, синий. */
+const DEVICE_COLORS: Record<string, string> = {
+  "Чёрный титан": "#2c2c2e",
+  "Натуральный титан": "#8a857c",
+  "Белый титан": "#d9d6cf",
+  "Синий титан": "#2f3b4c",
+};
+
+const phoneScreen: MotionTemplate = {
+  id: "phone-screen",
+  name: "Запись экрана в телефоне",
+  category: "Промо",
+  description: "Видео (запись экрана приложения) в корпусе телефона: въезжает снизу, мягкая тень, подпись сверху",
+  duration: 4,
+  params: [
+    { name: "asset", label: "Видео (id файла)", type: "text", default: "" },
+    { name: "from", label: "С секунды файла", type: "number", default: 0, min: 0, max: 3600 },
+    { name: "title", label: "Подпись", type: "text", default: "Смотри, как просто" },
+    { name: "color", label: "Корпус", type: "select", default: "Чёрный титан", options: Object.keys(DEVICE_COLORS) },
+    durationParam(4),
+  ],
+  build(p, at) {
+    const end = at + dur(p, 4);
+    const asset = str(p, "asset", "");
+    const out: Layer[] = [
+      layer(
+        "video",
+        {
+          start: at,
+          end,
+          x: 0.5,
+          y: 0.57,
+          name: "Телефон",
+          in: { type: "slideUp", duration: 0.5 },
+          out: { type: "fade", duration: 0.25 },
+          shadow: { color: "#000000", blur: 70, x: 0, y: 34, opacity: 0.55 },
+        },
+        {
+          ...(asset ? { asset_id: asset } : {}),
+          w: 600,
+          from: Math.max(0, num(p, "from", 0)),
+          speed: 1,
+          loop: false,
+          freeze: true,
+          device: "phone",
+          deviceColor: DEVICE_COLORS[str(p, "color", "Чёрный титан")] ?? DEVICE_COLORS["Чёрный титан"],
+          island: true,
+        },
+      ),
+    ];
+    const title = str(p, "title", "");
+    if (title) {
+      out.push(
+        layer(
+          "text",
+          { start: at + 0.25, end, track: 1, y: 0.13, name: "Подпись", in: { type: "words", duration: 0.5 }, out: { type: "fade", duration: 0.2 }, shadow: SOFT },
+          { text: title, font: FONT, weight: 900, size: 76, color: "#ffffff", maxWidth: 900, lineHeight: 1.05 },
+        ),
+      );
+    }
+    return { layers: out };
+  },
+};
+
 const newsTicker: MotionTemplate = {
   id: "news-ticker",
   name: "Бегущая строка",
@@ -1103,6 +1167,7 @@ export const TEMPLATES: MotionTemplate[] = [
   alertBanner,
   boom,
   top3,
+  phoneScreen,
 ];
 
 export function getTemplate(id: string): MotionTemplate | undefined {

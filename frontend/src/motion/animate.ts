@@ -35,7 +35,7 @@ export type LayerState = {
   draw: number;
   /** Посимвольное / пословное появление текста (typewriter / words / rise). */
   reveal: Reveal | null;
-  /** Окно картинки (image) в долях — база `props.crop` + ключи cropX/Y/W/H; null — вся картинка. */
+  /** Окно картинки/видео (image, video) в долях — база `props.crop` + ключи cropX/Y/W/H; null — вся картинка. */
   crop: Crop | null;
 };
 
@@ -87,7 +87,7 @@ export function clampCrop(c: Partial<Crop>): Crop {
 
 /** Окно картинки в момент `local`: ключи cropX/Y/W/H поверх статичного `props.crop`. */
 function resolveCrop(layer: Layer, keys: LayerKeys, local: number): Crop | null {
-  if (layer.type !== "image") return null;
+  if (layer.type !== "image" && layer.type !== "video") return null;
   const base = layer.props?.crop;
   const animated = keys.cropX?.length || keys.cropY?.length || keys.cropW?.length || keys.cropH?.length;
   if (!base && !animated) return null;

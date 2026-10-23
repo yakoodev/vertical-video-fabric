@@ -4,7 +4,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -842,4 +842,183 @@ test("CLI: хромакей — despill auto рыжит жёлтое, none ос�
   assert.ok(auto[0] > 230 && auto[1] < 150, `auto: ${auto}`); // жёлтое → оранжевое (как было)
   assert.ok(none[0] > 230 && none[1] > 235 && none[2] < 30, `none: ${none}`); // жёлтое осталось
   assert.ok(soft[1] > auto[1] + 40 && soft[1] < none[1] - 20, `soft: ${soft}`); // между
+});
+
+/* ---------- видео-слой и корпус телефона ---------- */
+
+test("видео: секунда файла — from + local·speed; loop, freeze, скорость зажата", () => {
+  const T = (p, local, dur = 10) => E.videoFileTime(p, local, dur);
+  near(T({}, 0), 0);
+  near(T({ from: 2 }, 1.5), 3.5);
+  near(T({ from: 1, speed: 2 }, 1.5), 4);
+  near(T({ speed: 100 }, 1), E.VIDEO_MAX_SPEED); // зажата 0.25..4
+  near(T({ speed: 0.01 }, 1), E.VIDEO_MIN_SPEED);
+  // За концом файла: по умолчанию стоп-кадр (последний кадр), freeze: false — кадра нет.
+  near(T({ from: 8 }, 5), 10 - E.VIDEO_TAIL);
+  assert.equal(T({ from: 8, freeze: false }, 5), null);
+  // loop — снова с from: файл 10 с, from 4 → кусок 4..~10, дальше снова с 4.
+  const span = 10 - E.VIDEO_TAIL - 4;
+  near(T({ from: 4, loop: true }, span + 1), 5, 1e-9);
+  near(T({ from: 4, loop: true }, 2 * span + 0.5), 4.5, 1e-9);
+  // Длина файла неизвестна (превью ещё не загрузило) — просто from + local·speed.
+  near(T({ from: 3, freeze: false }, 100, 0), 103);
+});
+
+/** Источник видео-слоя: кадр «файла» — сплошной цвет, по полсекунды на цвет. */
+function fakeVideo(duration = 2, w = 90, h = 195) {
+  const colors = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff"];
+  const canvases = colors.map((c) => {
+    const cv = createCanvas(w, h);
+    const x = cv.getContext("2d");
+    x.fillStyle = c;
+    x.fillRect(0, 0, w, h);
+    return cv;
+  });
+  return {
+    duration,
+    width: w,
+    height: h,
+    frame(time) {
+      const i = Math.min(colors.length - 1, Math.floor(time * 2 + 1e-9));
+      return { image: canvases[i], width: w, height: h };
+    },
+  };
+}
+
+const videoLayer = (over = {}) => ({ ...textLayer(), id: "v1", type: "video", ...over, props: { asset_id: "rec", w: 540, ...(over.props || {}) } });
+
+function drawAt(layer, t, env) {
+  const cv = createCanvas(1080, 1920);
+  const ctx = cv.getContext("2d");
+  E.drawLayer(ctx, layer, t, env);
+  const box = E.layerBox(ctx, layer, t, env);
+  return { box, px: (x, y) => [...ctx.getImageData(x, y, 1, 1).data] };
+}
+
+test("видео-слой рисует кадр файла по времени слоя: from, speed, loop, freeze", () => {
+  const src = fakeVideo(2.0);
+  const env = { width: 1080, height: 1920, getImage: () => null, getVideo: (l) => (l.props.asset_id === "rec" ? src : null) };
+  const center = (layer, t) => drawAt(layer, t, env).px(540, 960).slice(0, 3);
+  // start 10: в 10.2 — секунда 0.2 (красный), в 10.7 — 0.7 (зелёный).
+  assert.deepEqual(center(videoLayer(), 10.2), [255, 0, 0]);
+  assert.deepEqual(center(videoLayer(), 10.7), [0, 255, 0]);
+  // from 1 → в 10.2 секунда 1.2 (синий); speed 2 → в 10.3 секунда 0.6 (зелёный).
+  assert.deepEqual(center(videoLayer({ props: { from: 1 } }), 10.2), [0, 0, 255]);
+  assert.deepEqual(center(videoLayer({ props: { speed: 2 } }), 10.3), [0, 255, 0]);
+  // Файл 2 с кончился: стоп-кадр — последний (жёлтый, 1.5..2), без freeze — пусто.
+  assert.deepEqual(center(videoLayer(), 13), [255, 255, 0]);
+  assert.equal(drawAt(videoLayer({ props: { freeze: false } }), 13, env).px(540, 960)[3], 0);
+  // loop: в 10 + 2.5 с — снова ~0.54 с от начала (зелёный).
+  assert.deepEqual(center(videoLayer({ props: { loop: true } }), 12.5), [0, 255, 0]);
+  // Размер слоя — по пропорции кадра: 540 × (540·195/90).
+  const box = drawAt(videoLayer(), 10.2, env).box;
+  near(box.w, 540, 1e-6);
+  near(box.h, 1170, 1e-6);
+  // Без источника (превью ещё грузит) — пусто и без ошибок.
+  const none = { width: 1080, height: 1920, getImage: () => null };
+  assert.equal(drawAt(videoLayer(), 10.2, none).px(540, 960)[3], 0);
+});
+
+test("видео-слой: crop-ключи у video, рамка неподвижна, radius обрезает", () => {
+  const src = fakeVideo(2.0, 100, 400);
+  const env = { width: 1080, height: 1920, getImage: () => null, getVideo: () => src };
+  const l = videoLayer({ props: { w: 540, radius: 120, crop: { x: 0, y: 0, w: 1, h: 0.5 } }, keys: { cropY: [{ t: 0, v: 0, ease: "linear" }, { t: 1, v: 0.5 }] } });
+  near(E.resolveLayer(l, 10.5).crop.y, 0.25);
+  const a = drawAt(l, 10.1, env);
+  const b = drawAt(l, 11.2, env);
+  near(a.box.h, 1080, 1e-6);
+  near(b.box.h, 1080, 1e-6);
+  assert.equal(a.px(540 - 268, 960 - 538)[3], 0); // угол за скруглением пуст
+  assert.equal(a.px(540, 960)[3], 255);
+});
+
+test("корпус телефона: размер от w, металл по краю, тёмная рамка, островок; экран — содержимое", () => {
+  const scr = createCanvas(90, 195);
+  const sx = scr.getContext("2d");
+  sx.fillStyle = "#ffffff";
+  sx.fillRect(0, 0, 90, 195);
+  const env = { width: 1080, height: 1920, getImage: (ref) => (ref === "scr" ? scr : null) };
+  const l = imageLayer({ props: { asset_id: "scr", w: 540, device: "phone", deviceColor: "#2c2c2e" } });
+  const m = E.phoneMetrics(540, 1170);
+  const { box, px } = drawAt(l, 11, env);
+  near(box.w, m.outerW, 1e-6);
+  near(box.h, m.outerH, 1e-6);
+  assert.ok(m.bodyW > 540 && m.bodyW < 600, `корпус ${m.bodyW}`);
+  // Экран — белое содержимое.
+  assert.deepEqual(px(540, 1100).slice(0, 3), [255, 255, 255]);
+  // Чёрная рамка между металлом и экраном (слева от экрана, на середине высоты).
+  const bezel = px(Math.round(540 - 270 - m.bezel / 2), 960);
+  assert.ok(bezel[0] < 20 && bezel[3] === 255, `рамка ${bezel}`);
+  // Металл пояса — не чёрный и не белый.
+  const rim = px(Math.round(540 - m.bodyW / 2 + m.rim / 2), 960);
+  assert.ok(rim[3] === 255 && rim[0] > 25 && rim[0] < 200, `пояс ${rim}`);
+  // Островок — чёрная таблетка у верха экрана, по центру.
+  const iy = Math.round(960 - 1170 / 2 + 540 * 0.032 + (540 * 0.088) / 2);
+  const island = px(540, iy);
+  assert.ok(island[0] < 20 && island[3] === 255, `островок ${island}`);
+  // Без островка там уже экран.
+  const off = drawAt(imageLayer({ props: { asset_id: "scr", w: 540, device: "phone", island: false } }), 11, env);
+  assert.deepEqual(off.px(540, iy).slice(0, 3), [255, 255, 255]);
+  // За углом корпуса — прозрачно.
+  assert.equal(px(Math.round(540 - m.bodyW / 2 + 2), Math.round(960 - m.bodyH / 2 + 2))[3], 0);
+  // Видео в телефоне без кадров — корпус с тёмным экраном (превью ещё грузит файл).
+  const empty = drawAt(videoLayer({ props: { device: "phone" } }), 11, { width: 1080, height: 1920, getImage: () => null });
+  assert.equal(empty.px(540, 960)[3], 255);
+  assert.ok(empty.px(540, 960)[0] < 10);
+});
+
+test("старые слои image без device — прежний вид (обратная совместимость)", () => {
+  const scr = createCanvas(100, 100);
+  const sx = scr.getContext("2d");
+  sx.fillStyle = "#ff0000";
+  sx.fillRect(0, 0, 100, 100);
+  const env = { width: 1080, height: 1920, getImage: (ref) => (ref === "scr" ? scr : null) };
+  const { box, px } = drawAt(imageLayer({ props: { asset_id: "scr", w: 400, border: { color: "#00ff00", width: 10 } } }), 11, env);
+  near(box.w, 420, 1e-6);
+  near(box.h, 420, 1e-6);
+  assert.deepEqual(px(540, 960).slice(0, 3), [255, 0, 0]);
+  assert.deepEqual(px(540 - 205, 960).slice(0, 3), [0, 255, 0]); // рамка снаружи
+  assert.equal(px(540 - 215, 960)[3], 0);
+});
+
+test("CLI: видео-слой из нарезанных кадров (videos.json) — кадр по индексу, стоп-кадр в конце", async () => {
+  // «Нарезка» бэкенда: 6 кадров JPEG по 0.5 с файла (rate 2), from 1 → кадр i = секунда 1 + i/2.
+  const dir = join(tmp, "vframes");
+  mkdirSync(dir, { recursive: true });
+  const colors = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff"];
+  for (let i = 0; i < colors.length; i++) {
+    const cv = createCanvas(200, 400);
+    const x = cv.getContext("2d");
+    x.fillStyle = colors[i];
+    x.fillRect(0, 0, 200, 400);
+    writeFileSync(join(dir, `${String(i).padStart(5, "0")}.jpg`), await cv.encode("jpeg", 95));
+  }
+  const comp = {
+    width: 540,
+    height: 960,
+    fps: 2,
+    duration: 4,
+    layers: [{ id: "rec", type: "video", start: 0, end: 4, x: 0.5, y: 0.5, props: { asset_id: "7", w: 400, from: 1, speed: 1, device: "phone" } }],
+  };
+  writeFileSync(join(tmp, "vcomp.json"), JSON.stringify(comp));
+  writeFileSync(join(tmp, "vvideos.json"), JSON.stringify({ rec: { dir, pattern: "%05d.jpg", start: 1, rate: 2, count: 6, duration: 4 } }));
+  const frameAt = async (t) => {
+    const png = join(tmp, `v-${t}.png`);
+    const r = run(["--comp", join(tmp, "vcomp.json"), "--videos", join(tmp, "vvideos.json"), "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    const x = cv.getContext("2d");
+    x.drawImage(img, 0, 0);
+    return [...x.getImageData(270, 480, 1, 1).data].slice(0, 3);
+  };
+  const close = (got, want) => assert.ok(got.every((v, k) => Math.abs(v - want[k]) < 40), `${got} ≉ ${want}`);
+  close(await frameAt(0), [255, 0, 0]); // секунда 1 → кадр 0
+  close(await frameAt(1), [0, 0, 255]); // секунда 2 → кадр 2
+  close(await frameAt(3.9), [0, 255, 255]); // за концом нарезки — последний кадр
+  // Видео целиком: кадры подгружаются по ходу, рендер не падает.
+  const out = join(tmp, "vmotion.mp4");
+  const r = run(["--comp", join(tmp, "vcomp.json"), "--videos", join(tmp, "vvideos.json"), "--output", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(Number(ffprobe(out).nb_read_frames), 8);
 });
