@@ -3176,6 +3176,11 @@ def _prepare_audio_track_fields(fields: dict[str, Any], partial: bool) -> dict[s
             if volume < 0 or volume > 4:
                 raise ValueError("volume must be between 0 and 4")
             values[key] = round(volume, 4)
+        elif key in {"energy_start_sec", "drop_sec", "bpm"}:
+            # Отметки энергии трека (app/music_energy.py); None — не нашлось.
+            values[key] = None if value is None else round(max(0.0, float(value)), 2)
+        elif key == "energy_version":
+            values[key] = max(0, int(value))
         else:
             raise ValueError(f"unsupported audio track field: {key}")
     return values

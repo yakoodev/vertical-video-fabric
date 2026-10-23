@@ -48,8 +48,12 @@ def import_music_from_url(store, url: str, label: str = "") -> dict:
     path = files[0]
     title = next((line.strip() for line in (proc.stdout or "").splitlines() if line.strip()), "")
     duration = probe_media(path).duration_sec
-    return store.create_audio_track(
+    track = store.create_audio_track(
         (label or title or "Музыка по ссылке").strip()[:120], path,
         original_filename=f"{(title or token)[:80]}.mp3", mime_type="audio/mpeg",
         duration_sec=duration, volume=0.5,
     )
+    # Где у трека энергия: агент сразу видит, с какой секунды ставить (set_music start_sec).
+    from app.music_energy import mark_track
+
+    return mark_track(store, track)

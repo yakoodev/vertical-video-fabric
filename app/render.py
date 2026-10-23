@@ -207,7 +207,43 @@ def loudness_filters(plan: dict) -> list[str]:
         filters.append(f"volume={makeup:.2f}dB")
     ceiling = plan.get("ceiling_db")
     filters.append(LOUDNESS_LIMITER if ceiling is None else true_peak_limiter(float(ceiling)))
+    lift = float(plan.get("post_gain_db") or 0.0)
+    if lift > 0:
+        # Подъём после лимитера по замеру готового файла (finished_loudness_lift): пики уже
+        # известны и поднимаются ровно на столько же — лимитер его не съест.
+        filters.append(f"volume={lift:.2f}dB")
     return filters
+
+
+# Подъём готового файла — до потолка пика минус этот запас (дБ).
+LOUDNESS_LIFT_MARGIN_DB = 0.3
+# Битрейт звука финального прохода. На плотной яркой музыке AAC 192k добавлял к пику
+# +2.3 дБ сверх лимитера (−2.0 → +0.3 dBTP), повтор опускал потолок до −5 и терял ~1.3 LU
+# (синтетика клипа 575: −15.2 LUFS); на 256k перебор ~0.2 дБ — повтор не нужен.
+FINAL_AUDIO_BITRATE = "256k"
+
+
+def finished_loudness_lift(after: dict, plan: dict | None, target: float) -> float:
+    """На сколько дБ поднять готовый файл линейно (после лимитера), если он тише цели, а пики с запасом.
+
+    Клип 575 (промо на холсте под музыку): −16.2 LUFS при пике −7.2 dBTP — недобор 2.2 LU при
+    запасе 5.7 дБ. Кодек добавил к пику сверх лимитера, повтор опустил потолок лимитера (пики
+    файла скопились на −7.4 dBFS), громкость ушла, а готовый файл проверялся только на перебор
+    пика. Теперь и на недобор: подъём — на недобор, но не выше потолка пика. Без плана (громкость
+    была в норме) и для тихой записи сверх её потолка усиления (aim_lufs) — не поднимаем."""
+    if not plan:
+        return 0.0
+    try:
+        got = float(after["input_i"])
+        peak = float(after["input_tp"])
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    if not (math.isfinite(got) and math.isfinite(peak)) or got < LOUDNORM_SILENCE_LUFS:
+        return 0.0
+    shortfall = min(target, float(plan.get("aim_lufs", target))) - got
+    room = LOUDNESS_PEAK_DB - LOUDNESS_LIFT_MARGIN_DB - peak
+    lift = min(shortfall, room)
+    return round(lift, 2) if shortfall >= LOUDNESS_TOLERANCE_LU and lift >= 0.1 else 0.0
 
 
 def correct_loudness_plan(plan: dict, after: dict, target: float) -> dict:
@@ -1520,7 +1556,8 @@ class ClipRenderService:
                       "-preset", "veryfast", "-pix_fmt", "yuv420p"] if hold > 0 else ["-c:v", "copy"])
             tmp = path.with_name(path.stem + ".loud" + path.suffix)
             ceiling = TRUE_PEAK_LIMIT_DB
-            for _attempt in range(2):
+            attempts = 3
+            for attempt in range(attempts):
                 filters = list(pad)
                 if plan:
                     # Только линейная поправка (одно число на весь клип) + лимитер на пики.
@@ -1537,14 +1574,27 @@ class ClipRenderService:
                 af = ",".join(filters + [f"aresample={OUTPUT_SAMPLE_RATE}", "aformat=sample_fmts=fltp:channel_layouts=stereo"])
                 _run_ffmpeg(
                     ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:v:0",
-                     "-map", "0:a:0", *video, "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                     "-map", "0:a:0", *video, "-af", af, "-c:a", "aac", "-b:a", FINAL_AUDIO_BITRATE,
+                     "-movflags", "+faststart",
                      str(tmp)],
                     timeout=60 * 10,
                 )
                 # Проверка готового файла — true peak после AAC: пробил потолок —
-                # ещё один проход с лимитером ниже на перебор.
-                retry = true_peak_retry_ceiling(_measure_loudness(tmp, target).get("input_tp"), ceiling)
+                # ещё один проход с лимитером ниже на перебор. Тише цели при запасе по
+                # пикам — ещё один проход с подъёмом после лимитера (finished_loudness_lift).
+                after = _measure_loudness(tmp, target)
+                retry = true_peak_retry_ceiling(after.get("input_tp"), ceiling)
                 if retry is None:
+                    lift = finished_loudness_lift(after, plan, target)
+                    if not lift or attempt == attempts - 1:
+                        break
+                    logging.getLogger("uvicorn.error").info(
+                        "loudness clip=%s finished %s LUFS at %s dBTP: lift %.2f dB", clip.get("id"),
+                        after.get("input_i"), after.get("input_tp"), lift,
+                    )
+                    plan = {**plan, "post_gain_db": round(float(plan.get("post_gain_db") or 0.0) + lift, 2)}
+                    continue
+                if attempt == attempts - 1:
                     break
                 logging.getLogger("uvicorn.error").info(
                     "loudness clip=%s true peak over %.1f dBTP: limiter %.2f -> %.2f", clip.get("id"),
