@@ -1,12 +1,12 @@
 """Кадры проверки перекомпоновки 9:16 → 1:1 / 4:5 (app/aspect.py) через компоновщик.
 
 Рисует набор слоёв в нужных форматах тем же движком, что и рендер (``--frame --png``):
-фон холста (аврора), слои после ``reframe_layers``. Без сервиса и базы — только файлы.
+фон холста (аврора), слои и камера после ``reframe_motion``. Без сервиса и базы — только файлы.
 
     python tools/aspect_frames.py OUT_DIR                       # синтетика: телефон, титр, кнопка
     python tools/aspect_frames.py OUT_DIR --layers clip.json --assets DIR --at 3 20 37
 
-``--layers`` — файл клипа (vvf.py pull / GET /api/clip-plans/{id}/spec) или список слоёв;
+``--layers`` — файл клипа (vvf.py pull / GET /api/clip-plans/{id}/spec; берутся и ключи камеры) или список слоёв;
 ``--assets`` — папка с файлами слоёв по id (``139.mp4``, ``128.png``…). Нужен собранный
 компоновщик (npm run build:motion) и ffmpeg. Рядом кладёт лист ``sheet.png`` (форматы в ряд).
 """
@@ -56,9 +56,9 @@ def _green_base(path: Path, width: int, height: int, seconds: float) -> None:
 
 
 def render_frames(layers: list[dict], assets: dict[str, str], backdrop: dict, times: list[float],
-                  out_dir: Path, formats: list[str], tag: str) -> list[Path]:
+                  out_dir: Path, formats: list[str], tag: str, camera: list[dict] | None = None) -> list[Path]:
     from app import render as _render
-    from app.aspect import ASPECTS, asset_sizes, reframe_layers, reframe_plan
+    from app.aspect import ASPECTS, asset_sizes, reframe_motion, reframe_plan
     from app.motion_render import build_compositor_args, prepare_video_frames, write_comp
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -67,9 +67,9 @@ def render_frames(layers: list[dict], assets: dict[str, str], backdrop: dict, ti
     duration = max([float(layer.get("end") or 0) for layer in layers] + [max(times) + 0.5])
     for aspect in formats:
         width, height = ASPECTS[aspect]
-        framed = reframe_layers(layers, width, height, sizes)
+        framed, cam = reframe_motion(layers, camera or [], width, height, sizes)
         if aspect != "9:16":
-            plan = reframe_plan(layers, width, height, sizes)
+            plan = reframe_plan(layers, width, height, sizes, camera=camera)
             parts = ", ".join(f"{p['start']:g}–{p['end']:g} с: рамка {p['box']}" for p in plan["scenes"])
             print(f"{tag} {aspect}: масштаб {plan['scale']}; сцены: {parts}")
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,7 +78,7 @@ def render_frames(layers: list[dict], assets: dict[str, str], backdrop: dict, ti
             _green_base(base, width, height, duration + 1)
             (work / "assets.json").write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
             comp = write_comp(
-                work / "comp.json", width=width, height=height, fps=30, duration=duration, layers=framed, camera=[],
+                work / "comp.json", width=width, height=height, fps=30, duration=duration, layers=framed, camera=cam,
                 key={"color": "#00ff00", "similarity": 0.25, "blend": 0.08, "despill": "green"}, background=backdrop,
             )
             for t in times:
@@ -112,14 +112,16 @@ def main() -> None:
     parser.add_argument("--formats", nargs="+", default=["9:16", "4:5", "1:1"])
     args = parser.parse_args()
 
-    from app.motion import normalize_layers
+    from app.motion import normalize_camera, normalize_layers
 
+    camera: list[dict] = []
     if args.layers:
         data = json.loads(args.layers.read_text(encoding="utf-8"))
         render = data.get("render") if isinstance(data, dict) else None
         raw = (render or {}).get("layers") if render else data
         layers = [layer for layer in normalize_layers(raw) if not layer["hidden"] and layer["type"] != "audio"]
         backdrop = (render or {}).get("backdrop") or SYNTHETIC_BACKDROP
+        camera = normalize_camera((render or {}).get("camera") or [])
         assets = {}
         for path in sorted((args.assets or Path(".")).glob("*")):
             assets[path.stem] = str(path.resolve())
@@ -138,7 +140,7 @@ def main() -> None:
         assets = {"901": str(phone.resolve()), "902": str(band.resolve())}
         backdrop = SYNTHETIC_BACKDROP
         tag = "synthetic"
-    made = render_frames(layers, assets, backdrop, args.at, args.out, args.formats, tag)
+    made = render_frames(layers, assets, backdrop, args.at, args.out, args.formats, tag, camera)
     for t in args.at:
         row = [p for p in made if p.name.endswith(f"-t{t:g}.png")]
         sheet = args.out / f"{tag}-sheet-t{t:g}.png"

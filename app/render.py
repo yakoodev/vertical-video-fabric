@@ -1367,10 +1367,11 @@ class ClipRenderService:
                     regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
                     if preset.get("aspect"):
                         # Квадрат / 4:5: слои размечены в опорном 1080×1920 — переносим в
-                        # новый кадр одним масштабом по содержимому (app/aspect.py).
-                        from app.aspect import asset_sizes, reframe_layers
+                        # новый кадр одним масштабом по содержимому (app/aspect.py), камеру —
+                        # тем же переносом (наезд не выталкивает телефон followCamera за кадр).
+                        from app.aspect import asset_sizes, reframe_motion
 
-                        layers = reframe_layers(layers, comp_w, comp_h, asset_sizes(layers, assets))
+                        layers, camera = reframe_motion(layers, camera, comp_w, comp_h, asset_sizes(layers, assets))
                     comp = write_comp(
                         work / "comp.json",
                         width=comp_w,

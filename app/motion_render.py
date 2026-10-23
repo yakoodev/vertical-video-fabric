@@ -982,9 +982,9 @@ def render_frame_png(
         )
         layers, assets, _notes = resolve_layer_assets(store, layers)
         if aspect != DEFAULT_ASPECT:
-            from app.aspect import asset_sizes, reframe_layers
+            from app.aspect import asset_sizes, reframe_motion
 
-            layers = reframe_layers(layers, width, height, asset_sizes(layers, assets))
+            layers, camera = reframe_motion(layers, camera, width, height, asset_sizes(layers, assets))
         words = plan_caption_words(store, plan) if has_captions(layers) else None
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
