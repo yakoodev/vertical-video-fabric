@@ -1,0 +1,27 @@
+{
+  "assets": {
+    "147": {"kind": "video", "width": 1170, "height": 2532, "duration": 9.4},
+    "148": {"kind": "video", "width": 1170, "height": 2532, "duration": 4.6},
+    "149": {"kind": "video", "width": 1170, "height": 2532, "duration": 7.8},
+    "150": {"kind": "video", "width": 1170, "height": 2532, "duration": 8.6},
+    "151": {"kind": "video", "width": 1170, "height": 2532, "duration": 8.0},
+    "152": {"kind": "image", "width": 2048, "height": 1356, "duration": 0}
+  },
+  "track": {"id": 26, "bpm": 122.1, "energy_start_sec": 1.0, "drop_sec": null, "duration": 102.1},
+  "spec": {
+    "brand": {"accent": "#ff6a1f", "dark": "#0b1018", "font": "Nunito", "weight": 900},
+    "hook": ["Ищешь коллаб?", "Хватит ждать.", "Свайпай."],
+    "scenes": [
+      {"asset_id": 147, "from": 0.0, "to": 5.0, "title": "Листай VTuber'ов — свайпом", "focus": {"x": 0.5, "y": 0.55}},
+      {"asset_id": 148, "from": 0.3, "to": 4.4, "title": "Открой анкету", "focus": {"x": 0.5, "y": 0.948}},
+      {"asset_id": 149, "from": 1.0, "to": 7.6, "title": "Зови на коллаб — в пару тапов",
+       "focus": {"x": 0.5, "y": 0.86}, "window": {"x": 0.04, "y": 0.32, "w": 0.92, "h": 0.3}, "climax": true},
+      {"asset_id": 150, "from": 0.5, "to": 8.0, "title": "Тебя позвали? — Прими", "focus": {"x": 0.5, "y": 0.8}},
+      {"asset_id": 151, "from": 0.0, "to": 6.0, "title": "Бесплатно — в Telegram", "focus": {"x": 0.5, "y": 0.9}}
+    ],
+    "end": {"logo_asset_id": 152, "lines": ["Старт 1 ноября, 19:00 МСК"], "cta": "t.me/Collabikabot",
+            "sub": "Регистрация открыта"},
+    "music": {"track_id": 26},
+    "variant": 0
+  }
+}
