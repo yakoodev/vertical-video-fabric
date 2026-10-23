@@ -646,6 +646,8 @@ LAYER_FIELDS: dict = {
     "blend": Choice("normal", BLENDS),
     # За персонажем: рисуется под вырезанной основой (нужен хромакей источника).
     "behind": Flag(False),
+    # Едет и зумится вместе с видео по ключам камеры; по умолчанию слой стоит, как раньше.
+    "followCamera": Flag(False),
 }
 
 CAMERA_FIELDS: dict = {
@@ -813,6 +815,8 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
 
     layer: dict = {"id": layer_id, "type": ltype, "start": start, "end": end}
     layer.update(_norm_fields(raw, LAYER_FIELDS, rep, where))
+    if raw.get("camera") == "follow" and "followCamera" not in raw:
+        layer["followCamera"] = True  # краткая запись «camera: "follow"»
     if ltype == "captions" and "y" not in raw:
         layer["y"] = DEFAULT_CAPTIONS_Y
     props_raw = raw.get("props")

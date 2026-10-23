@@ -353,6 +353,8 @@ export type LayerBase = {
   blend?: BlendMode;
   /** Под вырезанной основой — «за персонажем» (у источника есть хромакей). */
   behind?: boolean;
+  /** Едет и зумится вместе с видео (камера `render.camera`); нет — стоит, как раньше. */
+  followCamera?: boolean;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */

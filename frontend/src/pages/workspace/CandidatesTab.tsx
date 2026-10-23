@@ -27,6 +27,7 @@ import {
   captionWordsFrom,
   clipAccent,
   drawFrame,
+  frameCameraMatrix,
   holdFinalLayers,
   interpolateKeys,
   layerBox,
@@ -761,7 +762,7 @@ function CropFrame({
               if (motion?.layers.length) {
                 const env = browserEnv(cv.width, cv.height);
                 const behind = shownLayers.filter((l) => !l.hidden);
-                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat }, clipT, env, "behind");
+                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, camera: motion.camera }, clipT, env, "behind");
               }
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
               ctx.drawImage(kc, 0, 0, cv.width, cv.height);
@@ -801,12 +802,22 @@ function CropFrame({
           const octx = ov?.getContext("2d");
           if (ov && octx) {
             octx.clearRect(0, 0, ov.width, ov.height);
+            // Слои followCamera едут с видео: в раскладке стрима — с окном игры, как в рендере.
+            const followBox =
+              cam && motion && !fit && !key ? cameraRegions(layout, vw, vh, ov.width, ov.height)?.box ?? null : null;
+            const followCam = cam && motion ? frameCameraMatrix(motion.camera, clipT, ov.width, ov.height, followBox) : null;
             // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
             if (motion?.layers.length) {
               const env = browserEnv(ov.width, ov.height);
               drawFrame(
                 octx,
-                { layers: shownLayers.filter((l) => !l.hidden), words: motion.words, chat: motion.chat },
+                {
+                  layers: shownLayers.filter((l) => !l.hidden),
+                  words: motion.words,
+                  chat: motion.chat,
+                  camera: motion.camera,
+                  cameraBox: followBox ?? undefined,
+                },
                 clipT,
                 env,
                 keyRef.current ? "front" : undefined,
@@ -837,7 +848,7 @@ function CropFrame({
             const sel = motion?.selected ? shownLayers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
               const env = browserEnv(ov.width, ov.height);
-              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat });
+              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat }, followCam);
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
             }
@@ -1253,6 +1264,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     startY: number;
     cx: number;
     cy: number;
+    /** Зум камеры под слоем followCamera: мышь на экране сдвигает его в zoom раз меньше. */
+    zoom: number;
     from: Layer;
     localT: number;
     x: number;
@@ -2149,15 +2162,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const env = browserEnv(cv.width, cv.height);
     const cssScale = cv.width / (cv.getBoundingClientRect().width || cv.width);
     const view = motionViewRef.current;
+    // Слои followCamera нарисованы через камеру — рамка и попадание тоже.
+    const cam = view.camera?.length ? frameCameraMatrix(view.camera, t, cv.width, cv.height) : null;
     const sel = view.selected ? view.layers.find((l) => l.id === view.selected) : null;
     if (sel && !sel.locked && sel.type !== "audio") {
-      const box = layerBox(ctx, sel, t, env, { words: view.words, chat: view.chat });
+      const box = layerBox(ctx, sel, t, env, { words: view.words, chat: view.chat }, cam);
       const handle = box ? handleAt(box, px, py, cssScale) : null;
       if (box && handle) return { layer: sel, handle, box, t };
     }
-    const hit = layerAt(ctx, view.layers, t, env, px, py, view.words);
+    const hit = layerAt(ctx, view.layers, t, env, px, py, view.words, cam);
     if (!hit) return null;
-    const box = layerBox(ctx, hit, t, env, { words: view.words, chat: view.chat });
+    const box = layerBox(ctx, hit, t, env, { words: view.words, chat: view.chat }, cam);
     return box ? { layer: hit, handle: "move" as TransformHandle, box, t } : null;
   };
 
@@ -2177,6 +2192,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         startY: py,
         cx: box.cx,
         cy: box.cy,
+        zoom: layer.followCamera && camera.length ? frameCameraMatrix(camera, t, cv.width, cv.height).scale : 1,
         from: layer,
         localT,
         x: interpolateKeys(layer.keys?.x, localT, layer.x ?? 0.5),
@@ -2213,8 +2229,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (ld) {
       let next = ld.from;
       if (ld.handle === "move") {
-        let nx = ld.x + (px - ld.startX) / cv.width;
-        let ny = ld.y + (py - ld.startY) / cv.height;
+        let nx = ld.x + (px - ld.startX) / cv.width / ld.zoom;
+        let ny = ld.y + (py - ld.startY) / cv.height / ld.zoom;
         // Прилипание к центру кадра — самое частое место для титра.
         if (Math.abs(nx - 0.5) < 0.012) nx = 0.5;
         if (Math.abs(ny - 0.5) < 0.008) ny = 0.5;
@@ -3361,6 +3377,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 }}
                 onSeek={(t) => seekClipTime(t, false)}
                 keyed={Boolean(source.chroma_key)}
+                hasCamera={camera.length > 0}
               />
             ) : null}
             <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>

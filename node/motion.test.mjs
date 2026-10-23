@@ -302,6 +302,54 @@ test("тряска камеры никогда не показывает кра�
   assert.deepEqual(a, E.cameraMatrix(keys, 1.234, 1080, 1920));
 });
 
+test("followCamera: слой едет и зумится с видео, без флага — стоит; в раскладке — по окну игры", () => {
+  // Красный квадрат 40×40 опорных px в точке (0.6, 0.5); камера — зум 2 в центр.
+  const square = (over = {}) => ({
+    id: "sq", type: "shape", start: 0, end: 5, x: 0.6, y: 0.5,
+    props: { kind: "rect", w: 40, h: 40, fill: "#ff0000" }, ...over,
+  });
+  const camera = [{ t: 0, zoom: 2, x: 0.5, y: 0.5 }];
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const redAt = (comp, x, y) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawFrame(ctx, comp, 1, env);
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    return d[0] > 200 && d[3] > 200;
+  };
+  // Без флага — на месте (старые клипы не меняются).
+  assert.ok(redAt({ layers: [square()], camera }, 648, 960));
+  // С флагом — там, куда камера увела точку видео: 540 + (648 − 540)·2 = 756, и вдвое крупнее.
+  const follow = { layers: [square({ followCamera: true })], camera };
+  assert.ok(!redAt(follow, 648, 960));
+  assert.ok(redAt(follow, 756, 960));
+  assert.ok(redAt(follow, 756 + 35, 960)); // половина стороны ×2 = 40 px
+  assert.ok(!redAt(follow, 756 + 45, 960));
+  // Без ключей камеры флаг ничего не меняет.
+  assert.ok(redAt({ layers: [square({ followCamera: true })] }, 648, 960));
+  // Раскладка стрима: камера двигает окно игры (нижняя половина) — слой вместе с ним.
+  const box = { x: 0, y: 960, w: 1080, h: 960 };
+  const m = E.frameCameraMatrix(camera, 1, 1080, 1920, box);
+  near(m.scale, 2);
+  near(m.tx, -540);
+  near(m.ty, -1440);
+  const inGame = { layers: [square({ followCamera: true, y: 0.75 })], camera, cameraBox: box };
+  assert.ok(redAt(inGame, 756, 1440));
+  // С хромакеем кадр зумится целиком — окно игры не учитывается.
+  // y 0.6 → 1152 px: по окну игры 2·1152 − 1440 = 864, во весь кадр 2·1152 − 960 = 1344.
+  const keyed = { layers: [square({ followCamera: true, y: 0.6 })], camera, cameraBox: box };
+  assert.ok(redAt(keyed, 756, 864));
+  const key = { color: "0x00ff00", similarity: 0.25, blend: 0.08, despill: "green" };
+  assert.ok(redAt({ ...keyed, key }, 756, 1344));
+  assert.ok(!redAt({ ...keyed, key }, 756, 864));
+  // Рамка выделения в редакторе — там же, где слой нарисован.
+  const ctx = createCanvas(10, 10).getContext("2d");
+  const lb = E.layerBox(ctx, square({ followCamera: true }), 1, env, undefined, E.cameraMatrix(camera, 1, 1080, 1920));
+  near(lb.cx, 756);
+  near(lb.w, 80);
+  near(E.layerBox(ctx, square(), 1, env, undefined, E.cameraMatrix(camera, 1, 1080, 1920)).cx, 648);
+});
+
 /* ---------- шаблоны и ссылки ---------- */
 
 test("шаблоны собираются в валидные слои с уникальными id", () => {

@@ -2875,7 +2875,8 @@ def motion_reference() -> str:
     fields = "; ".join(f"{kind}: {', '.join(props)}" for kind, props in motion.PROPS.items())
     return f"""\
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
-Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее), x, y, scale, rotation, opacity,
+Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее),
+  followCamera (едет и зумится вместе с видео по ключам камеры — фон/скрин за персонажем, рамка у объекта; по умолчанию слой стоит), x, y, scale, rotation, opacity,
   keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress, cropX,cropY,cropW,cropH (image: окно crop в долях — скролл экрана в неподвижном телефоне),
   in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
@@ -2896,7 +2897,8 @@ props по типу:
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
   audio: asset_id ИЛИ "sfx:<pack>/<file>", volume 0..2, fadeIn, fadeOut, offset, duck (не рисуется)
 Все допустимые поля props (остальное отбрасывается): {fields}
-Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте).
+Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте)
+  и слои с followCamera: true (путь камеры в их ключи не копируй).
   ease ключа — переход ОТ него к следующему ключу (по умолчанию inOutCubic); step — держать до следующего ключа и прыгнуть. zoom < 1 нет: шире окна — set_piece_fit.
 Субтитры captions: в hormozi/mrbeast/karaoke звучащее слово жёлтое — highlightWords жёлтым там не видны, бери #FF3B30 или #22C55E.
 Цвета: #rrggbb или #rrggbbaa."""
@@ -2959,6 +2961,8 @@ def _layer_schema() -> dict:
             "end": {"type": "number", "description": "секунды клипа, end - start ≥ 0.1"},
             "track": {"type": "integer", "description": "0..7, выше = поверх"},
             "behind": {"type": "boolean", "description": "за вырезанным персонажем (только источник с хромакеем)"},
+            "followCamera": {"type": "boolean",
+                             "description": "едет и зумится вместе с видео по ключам камеры (set_camera); нет — стоит"},
             "x": {"type": "number", "description": "центр по ширине, доля кадра"},
             "y": {"type": "number", "description": "центр по высоте, доля кадра (безопасно 0.15..0.72 для центра текста; края текста — не выше 10% и не ниже 80% кадра)"},
             "scale": {"type": "number"},

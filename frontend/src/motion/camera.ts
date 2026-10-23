@@ -1,7 +1,8 @@
 /**
  * Наезды камеры: зум и точка интереса по ключам `render.camera`.
  *
- * Камера двигает только видео основы (слои, субтитры и баннер не зумятся).
+ * Камера двигает только видео основы (слои, субтитры и баннер не зумятся) —
+ * кроме слоёв с `followCamera`: они рисуются в той же трансформации, что и видео.
  * Центр зажимается так, чтобы окно камеры не вылезало за кадр: при zoom = 2
  * видна половина кадра, значит центр может гулять только в [0.25, 0.75].
  */
@@ -95,6 +96,22 @@ export function cameraView(keys: CameraKey[] | undefined | null, t: number): { z
 export function cameraMatrix(keys: CameraKey[] | undefined | null, t: number, W: number, H: number): CameraMatrix {
   const v = cameraView(keys, t);
   return { scale: v.zoom, tx: W / 2 - v.x * W * v.zoom, ty: H / 2 - v.y * H * v.zoom };
+}
+
+/**
+ * Матрица камеры для слоя `followCamera` на холсте W×H — та же, что у видео: во весь
+ * кадр или, в раскладке стрима, внутри `box` (окно игры, px), как в компоновщике.
+ */
+export function frameCameraMatrix(
+  keys: CameraKey[] | undefined | null,
+  t: number,
+  W: number,
+  H: number,
+  box?: { x: number; y: number; w: number; h: number } | null,
+): CameraMatrix {
+  if (!box) return cameraMatrix(keys, t, W, H);
+  const m = cameraMatrix(keys, t, box.w, box.h);
+  return { scale: m.scale, tx: box.x + m.tx - m.scale * box.x, ty: box.y + m.ty - m.scale * box.y };
 }
 
 export function isIdentityCamera(m: CameraMatrix): boolean {

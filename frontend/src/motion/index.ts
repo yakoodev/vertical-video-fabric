@@ -23,6 +23,7 @@ export {
   cameraCss,
   isIdentityCamera,
   drawCameraFrame,
+  frameCameraMatrix,
   type CameraState,
   type CameraMatrix,
 } from "./camera";

@@ -62,6 +62,8 @@ type Props = {
   onSeek: (clipSec: number) => void;
   /** У источника хромакей: слой можно положить «за персонажа» (`behind`). */
   keyed?: boolean;
+  /** У клипа есть наезды камеры: слою есть смысл «ехать с камерой» (`followCamera`). */
+  hasCamera?: boolean;
 };
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -380,7 +382,7 @@ function CaptionWords({
   );
 }
 
-export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false }: Props) {
+export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
   const [t, setT] = useState(now());
@@ -810,6 +812,16 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 onChange={(on) => onChange({ ...layer, behind: on || undefined } as Layer)}
               />
               {!keyed ? <div className="li-note muted">У источника выключен хромакей — «за персонажем» не сработает.</div> : null}
+            </div>
+          ) : null}
+          {hasCamera || layer.followCamera ? (
+            <div title="Слой зумится и едет вместе с видео при наездах камеры — как часть кадра (фон за персонажем, рамка, подпись к объекту). Без галочки слой стоит на месте">
+              <Toggle
+                label="Ехать с камерой"
+                checked={Boolean(layer.followCamera)}
+                onChange={(on) => onChange({ ...layer, followCamera: on || undefined } as Layer)}
+              />
+              {!hasCamera ? <div className="li-note muted">У клипа нет наездов камеры — слой стоит на месте.</div> : null}
             </div>
           ) : null}
           {!inside ? <div className="li-note muted">Курсор вне слоя — значения показаны на ближайшем краю.</div> : null}

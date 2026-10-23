@@ -12,6 +12,7 @@ import {
   visibleLayers,
   newLayerId,
   type AnimatableProp,
+  type CameraMatrix,
   type CaptionWord,
   type CropProp,
   type Ctx2D,
@@ -37,10 +38,11 @@ export function layerAt(
   px: number,
   py: number,
   words?: CaptionWord[],
+  cam?: CameraMatrix | null,
 ): Layer | null {
   const drawn = visibleLayers(layers, t).filter((l) => l.type !== "audio" && !l.hidden);
   for (let i = drawn.length - 1; i >= 0; i--) {
-    const box = layerBox(ctx, drawn[i], t, env, words);
+    const box = layerBox(ctx, drawn[i], t, env, words, cam);
     if (box && hitLayer(box, px, py)) return drawn[i];
   }
   return null;
