@@ -686,6 +686,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "cover": (render.get("cover") or {}).get("mode"),
             "mute": render.get("mute") or [],
             "gain": render.get("gain") or [],
+            "aspect": render.get("aspect") or "9:16",
             **_key_view(source, render),
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
@@ -2051,6 +2052,28 @@ def h_set_music(ctx: ToolContext, args: dict) -> dict:
             "music_start_sec": fresh["music_start_sec"]}
 
 
+def h_set_aspect(ctx: ToolContext, args: dict) -> dict:
+    """Формат кадра клипа (app/aspect.py): 9:16 / 1:1 / 4:5; не 9:16 — только у холста."""
+    from app.aspect import ASPECTS, aspect_size, check_aspect_source, reframe_plan
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    try:
+        aspect = check_aspect_source(args.get("aspect"), ctx.store.get_source(int(plan["source_id"])))
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    fresh = _save_render(ctx, {**_current_render(ctx), "aspect": aspect})
+    width, height = aspect_size(aspect)
+    out: dict = {"ok": True, "aspect": fresh["aspect"], "size": f"{width}×{height}", "formats": list(ASPECTS)}
+    if aspect != "9:16":
+        layout = reframe_plan([layer for layer in _layers_of(fresh) if not layer.get("hidden")], width, height)
+        out["reframe"] = {"scale": layout["scale"], "scenes": [
+            {"start": p["start"], "end": p["end"], "box": p["box"]} for p in layout["scenes"]]}
+        out["note"] = ("слои остаются в опорных 1080×1920 — при рендере и в view_frame они переносятся в "
+                       f"{width}×{height} одним масштабом ×{layout['scale']} по рамке содержимого; проверь "
+                       "view_frame на титрах и концовке. Вернуть вертикаль — set_aspect(\"9:16\")")
+    return out
+
+
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
     """Фон за вырезанным персонажем (app/backgrounds.py): анимированный kind в цветах
     colors; статичная заливка — только kind solid/gradient (или старые color/color2)."""
@@ -2984,8 +3007,8 @@ def h_create_canvas_clip(ctx: ToolContext, args: dict) -> dict:
             "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
             "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
             "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
-                     "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera. "
-                     "Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
+                     "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera; "
+                     "квадрат или 4:5 из того же монтажа — set_aspect. Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
 
 
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
@@ -3571,6 +3594,17 @@ def _build_registry() -> list[Tool]:
                   "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа"}}),
             h_set_music, mutating=True,
             label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
+        ),
+        Tool(
+            "set_aspect", "Меняю формат кадра",
+            "Формат кадра клипа: \"9:16\" (вертикаль, как всегда), \"1:1\" (квадрат 1080×1080), \"4:5\" "
+            "(1080×1350) — из того же монтажа. Не 9:16 — только у пустого холста (create_canvas_clip). Слои "
+            "НЕ переделывай: они остаются в опорных 1080×1920 и при рендере переносятся сами (один масштаб по "
+            "рамке содержимого, фон — на весь кадр). Квадрат и вертикаль — два рендера: set_aspect(\"1:1\"), "
+            "рендер, set_aspect(\"9:16\") (или REST render с {\"aspect\": \"1:1\"} без смены настроек). "
+            "/ Output aspect: 9:16, 1:1 or 4:5 (canvas clips).",
+            _obj({"aspect": {"type": "string", "enum": ["9:16", "1:1", "4:5"]}}, ["aspect"]),
+            h_set_aspect, mutating=True, label=lambda a: f"Формат {a.get('aspect') or ''}".strip(),
         ),
         Tool(
             "set_backdrop", "Ставлю фон за персонажем",

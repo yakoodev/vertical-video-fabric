@@ -15,6 +15,7 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
+from app.aspect import settings_aspect
 from app.audio_mute import normalize_gain, normalize_mute
 from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
@@ -132,6 +133,9 @@ def normalize_render_settings(raw: object) -> dict:
         "mute": normalize_mute(src.get("mute")),
         # Громкость звука исходника на отрезках {start, end, gain_db} — поднять тихое (app/audio_mute.py).
         "gain": normalize_gain(src.get("gain")),
+        # Формат кадра: 9:16 (как всегда) / 1:1 / 4:5 — пока только у холста (app/aspect.py).
+        # Рендер читает его прямо из настроек плана, как раскладку.
+        "aspect": settings_aspect(src.get("aspect")),
     }
 
 

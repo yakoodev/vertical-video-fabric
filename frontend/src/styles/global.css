@@ -2479,6 +2479,8 @@ button.task-link:disabled {
   gap: 10px;
   background: var(--bg-elev);
 }
+.ed-aspect { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--muted, #9aa3b2); }
+.ed-aspect select { flex: 1; max-width: 200px; }
 .ed-render-btns { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .ed-render-btns .btn.primary { height: 42px; font-size: 14px; font-weight: 600; justify-content: center; }
 .ed-render-btns .btn:not(.primary) { height: 42px; }
