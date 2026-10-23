@@ -9,6 +9,8 @@ the service's code or database. Standard library only.
     export VVF_TOKEN=...                       # or VVF_TOKEN_FILE=/path/to/api_token.txt
 
     vvf.py sources                             # projects
+    vvf.py upload video.mp4                    # own video as a new project (prints its id)
+    vvf.py canvas 20 -b grid -t "Промо"        # empty canvas clip: animated background, no video
     vvf.py clips 50 --favorites                # clips of a project
     vvf.py pull 812 -o clip-812.json           # the clip file
     vvf.py check clip-812.json                 # validate without applying
@@ -114,6 +116,58 @@ def _print_qc(qc: Optional[dict]) -> None:
 def cmd_sources(_args) -> None:
     for s in call("GET", "/api/sources"):
         print(f"{s['id']:>5}  {s.get('status', ''):10} {s.get('duration_sec') or 0:>8.0f} с  {s.get('original_filename', '')}")
+
+
+def _multipart_file(path: str, field: str = "file"):
+    """Тело multipart/form-data с одним файлом — потоком, без чтения файла в память."""
+    import uuid
+
+    boundary = "vvf" + uuid.uuid4().hex
+    name = os.path.basename(path).replace('"', "")
+    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{name}\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n").encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("ascii")
+    size = len(head) + os.path.getsize(path) + len(tail)
+
+    def chunks():
+        yield head
+        with open(path, "rb") as f:
+            while True:
+                block = f.read(1024 * 1024)
+                if not block:
+                    break
+                yield block
+        yield tail
+
+    return chunks(), size, f"multipart/form-data; boundary={boundary}"
+
+
+def cmd_upload(args) -> None:
+    body, size, ctype = _multipart_file(args.file)
+    req = urllib.request.Request(BASE + "/api/sources", data=body, method="POST")
+    req.add_header("Content-Type", ctype)
+    req.add_header("Content-Length", str(size))
+    token = _token()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=3600) as resp:
+            source = json.loads(resp.read() or b"null")
+    except urllib.error.HTTPError as err:
+        print(f"HTTP {err.code}: {err.read().decode('utf-8', 'replace')}", file=sys.stderr)
+        sys.exit(2)
+    except urllib.error.URLError as err:
+        print(f"Нет связи с {BASE}: {err.reason}", file=sys.stderr)
+        sys.exit(2)
+    print(f"проект {source['id']}: {source.get('original_filename', '')} · {source.get('duration_sec') or 0:.0f} с"
+          f" · {source.get('width')}×{source.get('height')}")
+
+
+def cmd_canvas(args) -> None:
+    plan = call("POST", "/api/canvas-clips", {"duration": args.duration, "background": args.background,
+                                              "title": args.title or ""})
+    print(f"холст: клип {plan['id']} · {args.duration:g} с · фон {plan['render_settings']['backdrop']['kind']}"
+          f" · проект {plan['source_id']} · {BASE}{plan.get('editor_url', '')}")
 
 
 def cmd_clips(args) -> None:
@@ -324,6 +378,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     sub = parser.add_subparsers(dest="cmd")
     sub.required = True  # keyword form needs Python 3.7+; this works on 3.6 too
     sub.add_parser("sources", help="проекты").set_defaults(fn=cmd_sources)
+    p = sub.add_parser("upload", help="загрузить своё видео исходником (новый проект)")
+    p.add_argument("file")
+    p.set_defaults(fn=cmd_upload)
+    p = sub.add_parser("canvas", help="пустой холст: клип без видео, анимированный фон")
+    p.add_argument("duration", type=float)
+    p.add_argument("--background", "-b", default="aurora", help="aurora | grid | bokeh | waves | gradient | solid")
+    p.add_argument("--title", "-t", default="")
+    p.set_defaults(fn=cmd_canvas)
     p = sub.add_parser("clips", help="клипы проекта")
     p.add_argument("source", type=int)
     p.add_argument("--favorites", action="store_true", help="только избранные")

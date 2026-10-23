@@ -33,7 +33,8 @@ VALID_FOCUS_STRATEGIES = {s["key"] for s in FOCUS_STRATEGIES}
 VALID_CUT_STRATEGIES = set(CUT_STRATEGIES)
 VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
-VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload"}
+# clip_upload и canvas — скрытые якоря (готовый клип, пустой холст app/canvas.py): в «Проектах» их нет.
+VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload", "canvas"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
 # manual — клипы, которые агент создал по таймкодам сам (app/manual_clips.py).
 VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action", "manual"}
@@ -852,7 +853,7 @@ class AppStore:
                        WHERE c.source_id = s.id AND jt.status = 'succeeded'
                    ) AS published_targets_count
             FROM sources s
-            WHERE s.source_type != 'clip_upload'
+            WHERE s.source_type NOT IN ('clip_upload', 'canvas')
             ORDER BY s.id DESC
             LIMIT 200
             """
