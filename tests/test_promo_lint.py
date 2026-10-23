@@ -108,17 +108,34 @@ def test_follow_camera_zoom_counts_for_off_frame():
     assert any("за краем" in w for w in _lint(layers, camera=motion.normalize_camera(camera), sizes={}))
 
 
-def test_title_over_zoomed_phone_allowed_only_with_backdrop():
+def test_title_over_zoomed_phone_allowed_only_with_backdrop_on_scale_push():
     phone = {"id": "ph", "type": "video", "start": 0, "end": 6, "y": 0.6, "followCamera": True,
              "props": {"asset_id": 1, "w": 580, "device": "phone"}}
     title = {"id": "t", "type": "text", "start": 0, "end": 6, "y": 0.13, "props": {"text": "ЖМИ И ЗОВИ", "size": 60}}
     camera = motion.normalize_camera([{"t": 2, "zoom": 1}, {"t": 3, "zoom": 1.3, "x": 0.5, "y": 0.55}])
     plain = _lint(_layers([phone, title]), camera=camera, sizes={})
     assert any(w.startswith("t: титр") and "на экране телефона ph" in w for w in plain), plain
+    # наезд камерой (followCamera) — и с затемнением титра: центр камеры можно опустить (прогон 581)
     shaded = {**title, "props": {**title["props"], "backdrop": True}}
-    assert not any(w.startswith("t: титр") for w in _lint(_layers([phone, shaded]), camera=camera, sizes={}))
+    warned = [w for w in _lint(_layers([phone, shaded]), camera=camera, sizes={}) if w.startswith("t: титр")]
+    assert warned and "наезде камеры" in warned[0] and "уменьши y камеры" in warned[0], warned
+    # наезд ключом scale самого телефона — титр с затемнением может лечь поверх, так задумано
+    pushed = {**phone, "followCamera": False, "keys": {"scale": [{"t": 2, "v": 1.0}, {"t": 3, "v": 1.5}]}}
+    assert any(w.startswith("t: титр") for w in _lint(_layers([pushed, title]), camera=[], sizes={}))
+    assert not any(w.startswith("t: титр") for w in _lint(_layers([pushed, shaded]), camera=[], sizes={}))
     # без наезда титр над телефоном и так не на экране
     assert not any(w.startswith("t: титр") for w in _lint(_layers([phone, title]), camera=[], sizes={}))
+
+
+def test_record_window_over_own_phone_is_not_a_scene_overlap():
+    phone = {"id": "ph", "type": "video", "start": 0, "end": 6, "y": 0.6,
+             "props": {"asset_id": 5, "w": 520, "device": "phone"}}
+    window = {"id": "win", "type": "video", "start": 3, "end": 6, "y": 0.55,
+              "props": {"asset_id": 5, "w": 900, "crop": {"x": 0.04, "y": 0.3, "w": 0.92, "h": 0.3}}}
+    assert not any("без разведения" in w for w in _lint(_layers([phone, window]), camera=[], sizes={}))
+    # другая запись или картинка без crop поверх телефона — новая сцена внахлёст
+    other = {**window, "props": {**window["props"], "asset_id": 6}}
+    assert any("без разведения" in w for w in _lint(_layers([phone, other]), camera=[], sizes={}))
 
 
 def test_promo_rules_quiet_on_stream_clips_and_only_ids():
