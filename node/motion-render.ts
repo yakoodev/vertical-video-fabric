@@ -11,6 +11,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { createCanvas, GlobalFonts, ImageData, loadImage, type Image } from "@napi-rs/canvas";
 import {
@@ -18,7 +19,9 @@ import {
   clipAccent,
   collectChatImageRefs,
   collectImageRefs,
+  collectVideoLayers,
   drawFrame,
+  isLayerActive,
   isIdentityCamera,
   normalizeBackground,
   paintBackground,
@@ -29,6 +32,10 @@ import {
   type PixelRect,
   type ImageLike,
   type RenderEnv,
+  type VideoFrame,
+  type VideoLayer,
+  type VideoSource,
+  videoFileTime,
 } from "../frontend/src/motion/index";
 
 type Args = {
@@ -36,6 +43,7 @@ type Args = {
   input?: string;
   output?: string;
   assets?: string;
+  videos?: string;
   fontsDir?: string;
   emojiDir?: string;
   ffmpeg: string;
@@ -73,6 +81,7 @@ function parseArgs(argv: string[]): Args {
     input: out.input,
     output: out.output,
     assets: out.assets,
+    videos: out.videos,
     fontsDir: out["fonts-dir"],
     emojiDir: out["emoji-dir"],
     ffmpeg: out.ffmpeg || "ffmpeg",
@@ -286,6 +295,121 @@ function chatRefs(comp: Composition): string[] {
   return [...out];
 }
 
+/* ---------- видео-слои ---------- */
+
+/**
+ * Кадры видео-слоя, заранее нарезанные бэкендом (app/motion_render.prepare_video_frames):
+ * `dir/<pattern>` с номерами 0..count−1, кадр i — секунда файла `start + i / rate`.
+ * `rate` = fps рендера / speed слоя, поэтому на кадр выхода приходится один файл.
+ */
+type VideoSeq = { dir: string; pattern: string; start: number; rate: number; count: number; duration: number };
+
+/** Сколько декодированных кадров держать на слой: окно вокруг текущего — RAM тесная. */
+const VIDEO_CACHE = 6;
+/** Сколько следующих кадров декодировать заранее, пока рисуется текущий. */
+const VIDEO_AHEAD = 2;
+
+class FrameSeq implements VideoSource {
+  readonly duration: number;
+  width = 0;
+  height = 0;
+  private cache = new Map<number, Image>();
+  private pending = new Map<number, Promise<void>>();
+
+  constructor(private seq: VideoSeq) {
+    this.duration = seq.duration;
+  }
+
+  index(time: number): number {
+    const i = Math.round((time - this.seq.start) * this.seq.rate);
+    return Math.max(0, Math.min(this.seq.count - 1, i));
+  }
+
+  private path(i: number): string {
+    const name = this.seq.pattern.replace(/%0(\d)d/, (_m, n: string) => String(i).padStart(Number(n), "0"));
+    return join(this.seq.dir, name);
+  }
+
+  private load(i: number): Promise<void> {
+    if (this.cache.has(i)) return Promise.resolve();
+    let p = this.pending.get(i);
+    if (!p) {
+      p = readFile(this.path(i))
+        .then((buf) => loadImage(buf))
+        .then((img) => {
+          this.cache.set(i, img);
+          if (!this.width) {
+            this.width = img.width;
+            this.height = img.height;
+          }
+        })
+        .catch((err: Error) => log(`видео-кадр ${this.path(i)}: ${err.message}`))
+        .finally(() => this.pending.delete(i));
+      this.pending.set(i, p);
+    }
+    return p;
+  }
+
+  /** Подгрузить кадр на секунду файла (и заранее — следующие), выкинуть далёкие. */
+  async prepare(time: number): Promise<void> {
+    const i = this.index(time);
+    for (let k = 1; k <= VIDEO_AHEAD; k++) if (i + k < this.seq.count) void this.load(i + k);
+    await this.load(i);
+    if (this.cache.size > VIDEO_CACHE) {
+      for (const key of this.cache.keys()) if (key < i || key > i + VIDEO_AHEAD + 1) this.cache.delete(key);
+    }
+  }
+
+  frame(time: number): VideoFrame | null {
+    const img = this.cache.get(this.index(time));
+    return img ? { image: img as unknown as ImageLike, width: img.width, height: img.height } : null;
+  }
+}
+
+/** videos.json: {"<id слоя>": VideoSeq}; размер кадра — по первому кадру (поворот учтён ffmpeg). */
+async function loadVideos(path: string | undefined, comp: Composition): Promise<Map<string, FrameSeq>> {
+  const out = new Map<string, FrameSeq>();
+  if (!path) return out;
+  let raw: Record<string, Partial<VideoSeq>> = {};
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    log(`videos: не читается ${path} (${(err as Error).message})`);
+    return out;
+  }
+  const base = dirname(resolve(path));
+  for (const layer of collectVideoLayers(comp.layers)) {
+    const v = raw[layer.id];
+    if (!v || !v.dir || !(Number(v.count) > 0)) continue;
+    const seq = new FrameSeq({
+      dir: isAbsolute(v.dir) ? v.dir : resolve(base, v.dir),
+      pattern: typeof v.pattern === "string" && v.pattern ? v.pattern : "%05d.jpg",
+      start: Number(v.start) || 0,
+      rate: Number(v.rate) > 0 ? Number(v.rate) : comp.fps,
+      count: Math.floor(Number(v.count)),
+      duration: Number(v.duration) > 0 ? Number(v.duration) : 0,
+    });
+    // Первый кадр — сразу: по нему известна пропорция слоя (measure до первой отрисовки).
+    await seq.prepare(Number(v.start) || 0);
+    out.set(layer.id, seq);
+  }
+  return out;
+}
+
+/** Перед кадром t — подгрузить кадры всех видимых видео-слоёв (отрисовка синхронная). */
+async function prepareVideos(comp: Composition, videos: Map<string, FrameSeq>, t: number): Promise<void> {
+  if (!videos.size) return;
+  const jobs: Promise<void>[] = [];
+  for (const layer of comp.layers) {
+    if (layer.type !== "video" || !isLayerActive(layer, t)) continue;
+    const seq = videos.get(layer.id);
+    if (!seq) continue;
+    const time = videoFileTime(layer.props, t - layer.start, seq.duration);
+    if (time !== null) jobs.push(seq.prepare(time));
+  }
+  await Promise.all(jobs);
+}
+
 /* ---------- ffmpeg ---------- */
 
 function ffprobePath(args: Args): string {
@@ -367,11 +491,12 @@ async function* rawFrames(stream: NodeJS.ReadableStream, frameSize: number): Asy
 
 /* ---------- отрисовка ---------- */
 
-function makeEnv(comp: Composition, images: Map<string, Image>): RenderEnv {
+function makeEnv(comp: Composition, images: Map<string, Image>, videos: Map<string, FrameSeq>): RenderEnv {
   return {
     width: comp.width,
     height: comp.height,
     getImage: (ref: string) => (images.get(String(ref)) as unknown as ImageLike) ?? null,
+    getVideo: (layer: VideoLayer) => videos.get(layer.id) ?? null,
     createCanvas: (w: number, h: number) => createCanvas(w, h) as unknown as ReturnType<NonNullable<RenderEnv["createCanvas"]>>,
   };
 }
@@ -495,7 +620,7 @@ async function grabFrame(args: Args, comp: Composition, cs: string | null, seek:
   return out;
 }
 
-async function renderPng(args: Args, comp: Composition, env: RenderEnv): Promise<void> {
+async function renderPng(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>): Promise<void> {
   const t = Math.max(0, args.frame ?? 0);
   const painter = makePainter(comp, env);
   let base: Buffer | null = null;
@@ -506,6 +631,7 @@ async function renderPng(args: Args, comp: Composition, env: RenderEnv): Promise
     base ??= await grabFrame(args, comp, cs, ["-sseof", "-0.5"], true);
     if (!base) throw new Error(`не удалось взять кадр ${t} с из ${args.input}`);
   }
+  await prepareVideos(comp, videos, t);
   painter.paint(base, t);
   writeFileSync(args.png as string, await painter.canvas.encode("png"));
   log(`progress 1/1`);
@@ -540,7 +666,7 @@ function encoderArgs(args: Args, comp: Composition, colorspace: string | null): 
   ];
 }
 
-async function renderVideo(args: Args, comp: Composition, env: RenderEnv): Promise<void> {
+async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>): Promise<void> {
   const W = comp.width;
   const H = comp.height;
   const total = Math.max(1, Math.round(comp.duration * comp.fps));
@@ -584,6 +710,7 @@ async function renderVideo(args: Args, comp: Composition, env: RenderEnv): Promi
   const started = Date.now();
   let i = 0;
   const step = async (base: Buffer | null) => {
+    await prepareVideos(comp, videos, i / comp.fps);
     painter.paint(base, i / comp.fps);
     await write(frameOut());
     i++;
@@ -626,9 +753,10 @@ async function main(): Promise<void> {
   if (args.input && !existsSync(args.input)) throw new Error(`нет файла основы: ${args.input}`);
   registerFonts(args.fontsDir);
   const images = await loadImages(comp, args.assets, args.emojiDir);
-  const env = makeEnv(comp, images);
-  if (args.frame !== undefined) await renderPng(args, comp, env);
-  else await renderVideo(args, comp, env);
+  const videos = await loadVideos(args.videos, comp);
+  const env = makeEnv(comp, images, videos);
+  if (args.frame !== undefined) await renderPng(args, comp, env, videos);
+  else await renderVideo(args, comp, env, videos);
 }
 
 main().catch((err: unknown) => {

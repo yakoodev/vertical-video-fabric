@@ -18,6 +18,7 @@ import { counterRenderer, progressRenderer } from "./layers/counter";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
+import { videoRenderer } from "./layers/video";
 import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas } from "./types";
 import { REF_W } from "./types";
 
@@ -25,6 +26,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   text: textRenderer as LayerRenderer,
   shape: shapeRenderer as LayerRenderer,
   image: imageRenderer as LayerRenderer,
+  video: videoRenderer as LayerRenderer,
   emoji: emojiRenderer as LayerRenderer,
   counter: counterRenderer as LayerRenderer,
   progress: progressRenderer as LayerRenderer,

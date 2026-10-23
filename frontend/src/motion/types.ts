@@ -33,8 +33,8 @@ export type Easing = NamedEasing | `bezier(${string})`;
 export type KeyPoint = { t: number; v: number; ease?: Easing };
 
 /**
- * cropX/cropY/cropW/cropH — окно `crop` картинки (image) в долях: скролл экрана внутри
- * неподвижного телефона = ключи cropY при неизменном размере окна.
+ * cropX/cropY/cropW/cropH — окно `crop` картинки (image) и видео (video) в долях: скролл
+ * экрана внутри неподвижного телефона = ключи cropY при неизменном размере окна.
  */
 export type AnimatableProp = "x" | "y" | "scale" | "rotation" | "opacity" | "progress" | CropProp;
 
@@ -127,14 +127,42 @@ export type ShapeProps = {
 /** Видимая часть картинки в долях; ключи cropX/Y/W/H анимируют её поверх этой базы. */
 export type Crop = { x: number; y: number; w: number; h: number };
 
-export type ImageProps = {
-  asset_id?: string;
-  src?: string;
+/** Рамка устройства вокруг картинки/видео (layers/device.ts). */
+export type DeviceKind = "phone";
+
+/** Общее у image и video: экран шириной `w`, окно `crop`, скругление, рамка или корпус телефона. */
+export type PictureProps = {
   w?: number;
   radius?: number;
   border?: Stroke | null;
   crop?: Crop | null;
   flipX?: boolean;
+  /** "phone" — содержимое в корпусе телефона (размеры корпуса — от `w`); null/нет — без корпуса. */
+  device?: DeviceKind | null;
+  /** Цвет металла корпуса (#rrggbb). */
+  deviceColor?: string;
+  /** «Островок» камеры сверху экрана (по умолчанию да). */
+  island?: boolean;
+};
+
+export type ImageProps = PictureProps & {
+  asset_id?: string;
+  src?: string;
+};
+
+/**
+ * Видео внутри слоя (немое): кадр файла `asset_id` в момент `from + local·speed`.
+ * За концом файла: `loop` — снова с `from`, иначе `freeze` (по умолчанию) держит последний кадр,
+ * `freeze: false` — кадра нет (в телефоне — чёрный экран).
+ */
+export type VideoProps = PictureProps & {
+  asset_id?: string;
+  /** Секунда файла, которая видна в момент `start` слоя. */
+  from?: number;
+  /** Скорость 0.25..4. */
+  speed?: number;
+  loop?: boolean;
+  freeze?: boolean;
 };
 
 export type EmojiProps = { char: string; size?: number };
@@ -320,6 +348,7 @@ export type LayerPropsMap = {
   text: TextProps;
   shape: ShapeProps;
   image: ImageProps;
+  video: VideoProps;
   emoji: EmojiProps;
   counter: CounterProps;
   progress: ProgressProps;
@@ -361,6 +390,7 @@ export type LayerOf<T extends LayerType> = LayerBase & { type: T; props: LayerPr
 export type TextLayer = LayerOf<"text">;
 export type ShapeLayer = LayerOf<"shape">;
 export type ImageLayer = LayerOf<"image">;
+export type VideoLayer = LayerOf<"video">;
 export type EmojiLayer = LayerOf<"emoji">;
 export type CounterLayer = LayerOf<"counter">;
 export type ProgressLayer = LayerOf<"progress">;
@@ -374,6 +404,7 @@ export type Layer =
   | TextLayer
   | ShapeLayer
   | ImageLayer
+  | VideoLayer
   | EmojiLayer
   | CounterLayer
   | ProgressLayer
@@ -453,6 +484,23 @@ export type ChromaKey = {
  */
 export type ImageLike = { width: number; height: number };
 
+/** Кадр видео: сама картинка и её размер в пикселях (в рендере кадры уменьшены заранее). */
+export type VideoFrame = { image: ImageLike; width: number; height: number };
+
+/**
+ * Видео слоя `video`: в браузере — HTMLVideoElement, в рендере — кадры, заранее нарезанные
+ * ffmpeg'ом (app/motion_render.prepare_video_frames). `frame` синхронный.
+ */
+export type VideoSource = {
+  /** Длина файла, с; 0 — ещё неизвестна. */
+  duration: number;
+  /** Размер кадра для пропорций слоя; 0 — ещё неизвестен. */
+  width: number;
+  height: number;
+  /** Кадр на секунде файла `time`; null — ещё не готов. */
+  frame(time: number): VideoFrame | null;
+};
+
 /**
  * 2D-контекст. Берём браузерный тип как контракт: контекст @napi-rs/canvas
  * реализует то же API, в Node он приводится к этому типу один раз на входе.
@@ -471,6 +519,8 @@ export type RenderEnv = {
    * null — ещё не загружена или нет такой: слой рисует запасной вариант или ничего.
    */
   getImage(ref: string): ImageLike | null;
+  /** Видео слоя `video` (по слою: у каждого свой отрезок файла). Нет — слой рисует пустой экран. */
+  getVideo?(layer: VideoLayer): VideoSource | null;
   /**
    * Фабрика промежуточного холста. Нужна, чтобы полупрозрачный составной слой
    * (обводка + заливка, плашка + текст) гас целиком, без просвечивающих швов,

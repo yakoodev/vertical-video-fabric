@@ -451,6 +451,21 @@ const imageLayer = (ref: { asset_id?: string; src?: string }, w = 640, end = 2.5
     props: { ...ref, w, radius: 18 },
   }) as Layer;
 
+/** Видео из библиотеки (запись экрана) — сразу в корпусе телефона: так его почти всегда и ставят. */
+const videoLayer = (assetId: string, end = 4): Layer =>
+  ({
+    id: newLayerId(),
+    type: "video",
+    start: 0,
+    end,
+    x: 0.5,
+    y: 0.57,
+    in: { type: "slideUp", duration: 0.45 },
+    out: { type: "fade", duration: 0.2 },
+    shadow: { color: "#000000", blur: 70, x: 0, y: 34, opacity: 0.55 },
+    props: { asset_id: assetId, w: 600, from: 0, speed: 1, loop: false, freeze: true, device: "phone" },
+  }) as Layer;
+
 function packRef(prefix: string, pack: string, item: PackItem) {
   return item.ref || `${prefix}:${pack}/${item.file}`;
 }
@@ -585,16 +600,17 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
   const [uploading, setUploading] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const uploadImages = async (files: FileList | File[]) => {
-    const list = [...files].filter((f) => f.type.startsWith("image/"));
+    const list = [...files].filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
     if (!list.length) {
-      toast.error("Нужна картинка: PNG, JPG, WEBP или GIF");
+      toast.error("Нужна картинка (PNG, JPG, WEBP, GIF) или видео (MP4, WEBM, MOV)");
       return;
     }
     setUploading(list.length);
     for (const f of list) {
       try {
         const asset = await montageAssetsApi.upload(f, f.name.replace(/\.[^.]+$/, ""));
-        onAdd([imageLayer({ asset_id: String(asset.id) }, 760, 3)]);
+        // Видео (запись экрана) — слоем video в телефоне, картинка — как раньше.
+        onAdd([asset.kind === "video" ? videoLayer(String(asset.id)) : imageLayer({ asset_id: String(asset.id) }, 760, 3)]);
       } catch (e) {
         toast.error(e instanceof ApiError ? e.message : `Не удалось загрузить ${f.name}`);
       } finally {
@@ -608,7 +624,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
   const activePack = memePacks[0]?.id ?? "";
   const items = useQuery({ queryKey: ["motion-pack", activePack, q.trim()], queryFn: () => motionApi.pack(activePack, q.trim()), enabled: Boolean(activePack) });
   const own = assets.filter(
-    (a) => (a.kind === "image" || a.kind === "gif") && (!q.trim() || `${a.label} ${a.description} ${a.tags}`.toLowerCase().includes(q.trim().toLowerCase())),
+    (a) => (a.kind === "image" || a.kind === "gif" || a.kind === "video") && (!q.trim() || `${a.label} ${a.description} ${a.tags}`.toLowerCase().includes(q.trim().toLowerCase())),
   );
   return (
     <div
@@ -627,11 +643,14 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
       }}
     >
       <input className="input lib-search" placeholder="Поиск мема: drake, кот, стоп…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <label className={`btn sm lib-upload${uploading ? " is-busy" : ""}`} title="Картинка с диска или скриншот: попадёт в библиотеку и сразу на кадр. Можно бросить файл на панель">
-        {uploading ? `Загружаю… (${uploading})` : "📤 Своя картинка"}
+      <label
+        className={`btn sm lib-upload${uploading ? " is-busy" : ""}`}
+        title="Картинка, скриншот или запись экрана: попадёт в библиотеку и сразу на кадр (видео — в телефоне). Можно бросить файл на панель"
+      >
+        {uploading ? `Загружаю… (${uploading})` : "📤 Своя картинка / видео"}
         <input
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           multiple
           hidden
           disabled={uploading > 0}
@@ -646,7 +665,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
           <div className="lib-sub">Мои файлы</div>
           <div className="lib-sticker-grid lib-meme-grid">
             {own.map((a) => {
-              const make = () => imageLayer({ asset_id: String(a.id) }, 760, 3);
+              const make = () => (a.kind === "video" ? videoLayer(String(a.id)) : imageLayer({ asset_id: String(a.id) }, 760, 3));
               return (
                 <button
                   key={a.id}
@@ -657,7 +676,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
                   onDragStart={(ev) => dragPayload(ev, [make()])}
                   onClick={() => onAdd([make()])}
                 >
-                  <img src={a.url} alt="" loading="lazy" />
+                  {a.kind === "video" ? <video src={a.url} muted preload="metadata" /> : <img src={a.url} alt="" loading="lazy" />}
                 </button>
               );
             })}

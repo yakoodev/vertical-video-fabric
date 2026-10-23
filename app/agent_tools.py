@@ -269,7 +269,25 @@ def _validate_new_layers(ctx: ToolContext, raw: list, duration: float) -> list[s
         except (KeyError, TypeError, ValueError):
             return False
 
-    return motion.validate_layers(raw, duration, asset_exists=asset_exists, ref_exists=_ref_checker())
+    problems = motion.validate_layers(raw, duration, asset_exists=asset_exists, ref_exists=_ref_checker())
+    return problems + _video_kind_problems(ctx, raw)
+
+
+def _video_kind_problems(ctx: ToolContext, raw: Any) -> list[str]:
+    """У слоя video asset_id — видео (или гифка) из библиотеки, а не картинка/звук."""
+    out = []
+    for index, layer in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(layer, dict) or layer.get("type") != "video":
+            continue
+        ref = ((layer.get("props") or {}) if isinstance(layer.get("props"), dict) else {}).get("asset_id")
+        try:
+            asset = ctx.store.get_montage_asset(int(ref))
+        except (KeyError, TypeError, ValueError):
+            continue  # нет файла — об этом уже сказала validate_layers
+        if asset.get("kind") not in ("video", "gif"):
+            out.append(f"layers[{index}]: asset_id {ref} — {asset.get('kind')}, а слою video нужно видео "
+                       "(upload_video / add_video_from_source); картинку ставь слоем image")
+    return out
 
 
 def _ref_checker() -> Callable[[str], bool] | None:
@@ -360,7 +378,20 @@ def _layer_box(layer: dict) -> tuple[float, float]:
         height = 180.0
     elif kind == "image":
         height = _num(props.get("w"), 400.0) or 400.0
+    elif kind == "video":
+        height = video_height(props)
     return height * scale / 1920 / 2, 0.0
+
+
+def video_height(props: dict) -> float:
+    """Примерная высота видео-слоя в опорных px: пропорция файла неизвестна — запись экрана
+    телефона (9:19.5) в корпусе, иначе вертикальное 9:16; окно crop по высоте её режет."""
+    w = _num(props.get("w"), 600.0) or 600.0
+    crop = props.get("crop") if isinstance(props.get("crop"), dict) else {}
+    ratio = (_num(crop.get("h"), 1.0) or 1.0) / max(0.01, _num(crop.get("w"), 1.0) or 1.0)
+    if props.get("device") == "phone":
+        return w * 19.5 / 9 * ratio + w * 0.094  # корпус: пояс + рамка сверху и снизу
+    return w * 16 / 9 * ratio
 
 
 MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура больше 40 % кадра — «закрыли видео»
@@ -368,9 +399,13 @@ MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура 
 
 def cover_share(layer: dict) -> float:
     """Какую долю кадра 1080×1920 непрозрачно закрывает слой-картинка/фигура (0, если прозрачный)."""
-    if layer.get("type") not in ("shape", "image"):
+    if layer.get("type") not in ("shape", "image", "video"):
         return 0.0
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    if layer.get("type") == "video" and (_num(layer.get("opacity"), 1.0) or 0.0) >= 0.6:
+        scale = _num(layer.get("scale"), 1.0) or 1.0
+        w = (_num(props.get("w"), 600.0) or 600.0) * scale
+        return min(1.0, (w * video_height(props) * scale) / (1080 * 1920))
     if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
         return 0.0
     if layer.get("type") == "shape" and props.get("fill") in (None, "", "none"):
@@ -538,6 +573,8 @@ def _layer_summary(layer: dict) -> str:
         "text": lambda: f"титр «{_short(props.get('text'))}»",
         "emoji": lambda: f"эмодзи {props.get('char') or ''}",
         "image": lambda: "картинка" + (f" #{props.get('asset_id')}" if props.get("asset_id") else f" {props.get('src') or ''}"),
+        "video": lambda: ("видео в телефоне" if props.get("device") == "phone" else "видео")
+        + f" #{props.get('asset_id') or ''} с {(_num(props.get('from'), 0.0) or 0.0):g} с",
         "audio": lambda: f"звук {props.get('asset_id') or ''}",
         "counter": lambda: f"счётчик {props.get('from', 0)}→{props.get('to', '')}",
         "progress": lambda: "шкала",
@@ -1658,6 +1695,122 @@ def h_upload_image(ctx: ToolContext, args: dict) -> dict:
     )
     return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
             "width": asset.get("width"), "height": asset.get("height")}
+
+
+MAX_UPLOAD_VIDEO_BYTES = 40 * 1024 * 1024
+_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".mkv"}
+MAX_SOURCE_CLIP_SEC = 180.0
+
+
+def _video_asset_result(asset: dict) -> dict:
+    return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
+            "width": asset.get("width"), "height": asset.get("height"), "duration_sec": asset.get("duration_sec"),
+            "hint": "слой {type: video, props: {asset_id, from, w, device: phone}} — запись в телефоне; "
+                    "звук видео-слой не играет"}
+
+
+def h_upload_video(ctx: ToolContext, args: dict) -> dict:
+    """Своё видео (запись экрана приложения) в библиотеку — base64 в аргументах, как upload_image.
+    Большие записи — лучше add_video_from_source (исходник сервиса) или POST /api/montage-assets."""
+    import base64
+    import binascii
+    from uuid import uuid4
+
+    from app.montage_assets import assets_dir, probe_asset
+
+    name = Path(str(args.get("filename") or "video.mp4")).name
+    if Path(name).suffix.lower() not in _VIDEO_EXTS:
+        raise ToolError("filename — видео: .mp4, .webm, .mov, .m4v или .mkv")
+    raw = str(args.get("data_base64") or "")
+    if "," in raw[:100] and raw.startswith("data:"):
+        raw = raw.split(",", 1)[1]  # data:video/mp4;base64,...
+    if len(raw) > MAX_UPLOAD_VIDEO_BYTES * 4 // 3 + 16:
+        raise ToolError("видео больше 40 МБ — сожми, обрежь или загрузи исходником и возьми add_video_from_source")
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ToolError("data_base64 — не base64") from exc
+    if not data:
+        raise ToolError("пустой файл")
+    if len(data) > MAX_UPLOAD_VIDEO_BYTES:
+        raise ToolError("видео больше 40 МБ — сожми, обрежь или загрузи исходником и возьми add_video_from_source")
+    dest = assets_dir() / f"{uuid4().hex}-{name}"
+    dest.write_bytes(data)
+    meta = probe_asset(dest)
+    if not meta.get("width") or not meta.get("duration_sec"):
+        dest.unlink(missing_ok=True)
+        raise ToolError("это не видео — файл не читается")
+    asset = ctx.store.create_montage_asset(
+        kind="video",
+        label=str(args.get("label") or Path(name).stem)[:120],
+        description=str(args.get("description") or "")[:500],
+        tags="",
+        file_path=str(dest),
+        original_filename=name,
+        mime_type="",
+        size_bytes=len(data),
+        **meta,
+    )
+    return _video_asset_result(asset)
+
+
+def source_clip_args(src: Path, start: float, end: float, dest: Path) -> list[str]:
+    """ffmpeg: кусок исходника → немое видео для слоя video (h264, без звука, ≤ 1920 по стороне)."""
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.3f}", "-i", str(src),
+            "-t", f"{end - start:.3f}", "-an", "-sn", "-dn",
+            "-vf", "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(dest)]
+
+
+def h_add_video_from_source(ctx: ToolContext, args: dict) -> dict:
+    """Кусок исходника сервиса (запись экрана, загруженная как проект) → видео в библиотеку."""
+    from uuid import uuid4
+
+    from app.montage_assets import assets_dir, probe_asset
+    from app.render import _run_ffmpeg
+
+    try:
+        source = ctx.store.get_source(int(args.get("source_id")))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolError("нет такого источника source_id (list_projects)") from exc
+    src = Path(source.get("local_path") or "")
+    if not src.is_file():
+        raise ToolError("у источника нет файла видео")
+    duration = _num(source.get("duration_sec"), 0.0) or 0.0
+    start = max(0.0, _num(args.get("start"), 0.0) or 0.0)
+    end = _num(args.get("end"), None)
+    if end is None:
+        end = duration if duration > 0 else start + MAX_SOURCE_CLIP_SEC
+    if duration > 0:
+        end = min(end, duration)
+    if end - start < 0.2:
+        raise ToolError("кусок короче 0.2 с — проверь start/end")
+    if end - start > MAX_SOURCE_CLIP_SEC:
+        raise ToolError(f"кусок длиннее {MAX_SOURCE_CLIP_SEC:.0f} с — возьми нужные места (from у слоя — "
+                        "секунда внутри куска)")
+    dest = assets_dir() / f"{uuid4().hex}-source{source['id']}-{start:.0f}-{end:.0f}.mp4"
+    try:
+        _run_ffmpeg(source_clip_args(src, start, end, dest), timeout=900)
+    except Exception as exc:  # noqa: BLE001
+        dest.unlink(missing_ok=True)
+        raise ToolError(f"не нарезалось: {str(exc)[:200]}") from exc
+    meta = probe_asset(dest)
+    if not meta.get("duration_sec"):
+        dest.unlink(missing_ok=True)
+        raise ToolError("в этом куске нет кадров")
+    asset = ctx.store.create_montage_asset(
+        kind="video",
+        label=str(args.get("label") or f"{Path(source.get('original_filename') or '').stem or 'источник'} {start:.0f}–{end:.0f} с")[:120],
+        description=str(args.get("description") or "")[:500],
+        tags="",
+        file_path=str(dest),
+        original_filename=dest.name,
+        mime_type="video/mp4",
+        size_bytes=dest.stat().st_size,
+        **meta,
+    )
+    return _video_asset_result(asset)
 
 
 def h_generate_image(ctx: ToolContext, args: dict) -> dict:
@@ -2875,7 +3028,7 @@ def motion_reference() -> str:
     return f"""\
 КАДР 1080×1920 (опорные px). x,y — центр слоя в долях кадра (0..1). Время — секунды клипа.
 Слой: {{id?, type, name?, start, end, track 0..7 (выше = поверх), behind (за персонажем, только при хромакее), x, y, scale, rotation, opacity,
-  keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress, cropX,cropY,cropW,cropH (image: окно crop в долях — скролл экрана в неподвижном телефоне),
+  keys {{prop: [{{t (от start слоя), v, ease?}}]}} — prop: x,y,scale,rotation,opacity,progress, cropX,cropY,cropW,cropH (image/video: окно crop в долях — скролл экрана в неподвижном телефоне),
   in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
 type: {', '.join(enums['types'])}
@@ -2887,7 +3040,13 @@ props по типу:
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
         highlight {{words:[индексы слов], color, bg}}
   shape: kind {'|'.join(enums['shapes'])}, w, h, fill|null, stroke {{color,width}}, radius, points, dash
-  image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX
+  image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX,
+         device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island
+  video: asset_id (видео из библиотеки: upload_video / add_video_from_source), from (секунда файла на start слоя),
+         speed 0.25..4, loop, freeze (по умолч. true — стоп-кадр в конце), + всё от image (w, radius, crop, device…).
+         НЕМОЕ. Промо приложения: запись экрана в device "phone"; нарезка 1–3 с = несколько video-слоёв подряд
+         с разными from; свайп между экранами = ключи x (0.5→−0.5 / 1.5→0.5); скролл = ключи cropY;
+         наезд = ключи scale+y слоя (камера на холсте телефон не зумит)
   emoji: char ("🔥"), size
   counter: from, to, decimals, prefix, suffix, thousands + стили text; рост по progress (по умолч. первая половина)
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
@@ -3252,6 +3411,26 @@ def _build_registry() -> list[Tool]:
             _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "label": {"type": "string"},
                   "description": {"type": "string"}}, ["data_base64", "filename"]),
             h_upload_image, scope="global", label=lambda a: f"Загружаю {(a.get('label') or a.get('filename') or '')[:40]}",
+        ),
+        Tool(
+            "upload_video", "Загружаю видео",
+            "Своё видео (запись экрана приложения) в библиотеку: data_base64 — файл в base64 (можно data:-URL), "
+            "filename .mp4/.webm/.mov/.m4v, label. До 40 МБ (больше — загрузи исходником и add_video_from_source). "
+            "Вернёт asset_id для слоя video. / Upload a screen recording as base64.",
+            _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "label": {"type": "string"},
+                  "description": {"type": "string"}}, ["data_base64", "filename"]),
+            h_upload_video, scope="global", label=lambda a: f"Загружаю видео {(a.get('label') or a.get('filename') or '')[:40]}",
+        ),
+        Tool(
+            "add_video_from_source", "Беру кусок видео",
+            "Кусок исходника сервиса (проект из list_projects: запись экрана, загруженная как видео) → видео "
+            "в библиотеку для слоя video: source_id, start, end (секунды исходника, до 180 с; нет end — до "
+            "конца). Звук отбрасывается. / Cut a source range into the library for a video layer.",
+            _obj({"source_id": {"type": "integer"}, "start": {"type": "number"}, "end": {"type": "number"},
+                  "label": {"type": "string"}}, ["source_id"]),
+            h_add_video_from_source, scope="global",
+            label=lambda a: f"Беру кусок источника {a.get('source_id')} {_num(a.get('start'), 0.0) or 0:g}–"
+            f"{a.get('end') if a.get('end') is not None else 'конец'} с",
         ),
         Tool(
             "generate_image", "Рисую картинку",

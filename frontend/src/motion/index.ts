@@ -28,8 +28,10 @@ export {
 } from "./camera";
 export { drawFrame, drawLayer, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
-export { collectImageRefs, collectAudioRefs } from "./assets";
+export { collectImageRefs, collectAudioRefs, collectVideoLayers } from "./assets";
 export { invalidateTextCache, layoutText, type TextLayout } from "./layers/text";
+export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
+export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, phoneMetrics, type PhoneMetrics } from "./layers/device";
 export { formatCounter, counterValue } from "./layers/counter";
 export { DEFAULT_PALETTE } from "./layers/chart";
 export {

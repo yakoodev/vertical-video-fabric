@@ -7,7 +7,8 @@
  */
 import { emojiFont, emojiRef } from "../fonts";
 import type { LayerState } from "../animate";
-import type { EmojiLayer, ImageLayer, ImageLike, RenderEnv } from "../types";
+import type { Crop, EmojiLayer, ImageLayer, ImageLike, PictureProps, RenderEnv } from "../types";
+import { drawPhone, phoneMetrics } from "./device";
 import { clearShadow, drawImageLike, fillRoundRect, hasShadow, imageSize, rgba, roundRectPath, type LayerRenderer } from "./common";
 
 function imageRef(layer: ImageLayer): string {
@@ -15,61 +16,111 @@ function imageRef(layer: ImageLayer): string {
   return String(layer.props.asset_id || layer.props.src || "");
 }
 
+type Size = { w: number; h: number };
+const FULL: Crop = { x: 0, y: 0, w: 1, h: 1 };
+
 /**
- * Видимая часть картинки и размер слоя в опорных px. Окно crop (в долях, уже с ключами
- * и зажатое) — из состояния слоя: размер слоя зависит только от w/h окна, поэтому
- * анимация cropX/cropY двигает содержимое внутри неподвижной рамки.
+ * Экран слоя (видимая часть содержимого) в опорных px. Окно crop (в долях, уже с ключами
+ * и зажатое) — из состояния слоя: размер зависит только от w/h окна, поэтому анимация
+ * cropX/cropY двигает содержимое внутри неподвижной рамки. `natural` — размер содержимого
+ * (картинки или кадра видео): важна только пропорция.
  */
-function geometry(layer: ImageLayer, st: LayerState, img: ImageLike | null) {
-  const p = layer.props;
-  const { w: iw, h: ih } = img ? imageSize(img) : { w: 1, h: 1 };
-  const c = st.crop ?? { x: 0, y: 0, w: 1, h: 1 };
-  const sw = iw * c.w;
-  const sh = ih * c.h;
+export function screenSize(p: PictureProps, crop: Crop | null, natural: Size): Size {
+  const c = crop ?? FULL;
+  const sw = natural.w * c.w;
+  const sh = natural.h * c.h;
   const w = Math.max(1, p.w ?? 600);
-  const h = (w * sh) / Math.max(1, sw);
-  return { sx: iw * c.x, sy: ih * c.y, sw, sh, w, h };
+  return { w, h: (w * sh) / Math.max(1e-6, sw) };
+}
+
+/** Размер слоя-картинки/видео: экран + рамка, или корпус телефона с кнопками. */
+export function measurePicture(p: PictureProps, crop: Crop | null, natural: Size): Size {
+  const s = screenSize(p, crop, natural);
+  if (p.device === "phone") {
+    const m = phoneMetrics(s.w, s.h, p.radius);
+    return { w: m.outerW, h: m.outerH };
+  }
+  const b = p.border?.width ?? 0;
+  return { w: s.w + b * 2, h: s.h + b * 2 };
+}
+
+/** Что рисовать: картинка и её собственный размер в пикселях (окно crop берётся от него). */
+export type PictureSource = { image: ImageLike; width: number; height: number };
+
+/**
+ * Нарисовать картинку/кадр видео: экран с маской скругления и рамкой — или в корпусе
+ * телефона. `opaque` — содержимое непрозрачное (видео): тень даёт подложка формы экрана,
+ * а не силуэт по альфе. `src` null — содержимого (ещё) нет: телефон с тёмным экраном.
+ */
+export function drawPicture(
+  ctx: CanvasRenderingContext2D,
+  p: PictureProps,
+  crop: Crop | null,
+  natural: Size,
+  src: PictureSource | null,
+  env: RenderEnv,
+  opaque = false,
+): void {
+  const s = screenSize(p, crop, natural);
+  const c = crop ?? FULL;
+  const blit = (x: number, y: number, w: number, h: number) => {
+    if (!src) return;
+    ctx.save();
+    if (p.flipX) ctx.scale(-1, 1);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    drawImageLike(ctx, src.image, src.width * c.x, src.height * c.y, src.width * c.w, src.height * c.h, x, y, w, h, env);
+    ctx.restore();
+  };
+  if (p.device === "phone") {
+    drawPhone(ctx, s.w, s.h, { kind: "phone", radius: p.radius, color: p.deviceColor, island: p.island }, blit);
+    return;
+  }
+  if (!src) return;
+  const r = Math.max(0, Math.min(p.radius ?? 0, s.w / 2, s.h / 2));
+  ctx.save();
+  if (r > 0 || opaque) {
+    // Скруглённую (или непрозрачную) картинку обрезает маска — тень даёт подложка той же формы.
+    if (hasShadow(ctx)) fillRoundRect(ctx, -s.w / 2, -s.h / 2, s.w, s.h, r, "#000000");
+    clearShadow(ctx);
+    if (r > 0) {
+      ctx.beginPath();
+      roundRectPath(ctx, -s.w / 2, -s.h / 2, s.w, s.h, r);
+      ctx.clip();
+    }
+  }
+  blit(-s.w / 2, -s.h / 2, s.w, s.h);
+  ctx.restore();
+  clearShadow(ctx);
+  const border = p.border;
+  if (border && border.width > 0) {
+    // Рамка снаружи края картинки, чтобы не съедать её пиксели.
+    const bw = border.width;
+    ctx.beginPath();
+    roundRectPath(ctx, -s.w / 2 - bw / 2, -s.h / 2 - bw / 2, s.w + bw, s.h + bw, r > 0 ? r + bw / 2 : 0);
+    ctx.lineWidth = bw;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = rgba(border.color);
+    ctx.stroke();
+  }
+}
+
+/** Пропорция картинки, пока её нет: телефон — экран 9:19.5, иначе квадрат. */
+function naturalOf(img: ImageLike | null, p: PictureProps): Size {
+  if (img) return imageSize(img);
+  return p.device === "phone" ? { w: 9, h: 19.5 } : { w: 1, h: 1 };
 }
 
 export const imageRenderer: LayerRenderer<ImageLayer> = {
   multipart: true,
-  measure(_ctx, layer, st, env) {
-    const g = geometry(layer, st, env.getImage(imageRef(layer)));
-    const b = layer.props.border?.width ?? 0;
-    return { w: g.w + b * 2, h: g.h + b * 2 };
+  measure(_ctx, layer, st: LayerState, env) {
+    return measurePicture(layer.props, st.crop, naturalOf(env.getImage(imageRef(layer)), layer.props));
   },
   draw(ctx, layer, st, env) {
     const img = env.getImage(imageRef(layer));
-    if (!img) return;
-    const p = layer.props;
-    const g = geometry(layer, st, img);
-    const r = Math.max(0, Math.min(p.radius ?? 0, g.w / 2, g.h / 2));
-    ctx.save();
-    if (p.flipX) ctx.scale(-1, 1);
-    if (r > 0) {
-      // Скруглённую картинку обрезает маска — тень от неё даёт подложка той же формы.
-      if (hasShadow(ctx)) fillRoundRect(ctx, -g.w / 2, -g.h / 2, g.w, g.h, r, "#000000");
-      clearShadow(ctx);
-      ctx.beginPath();
-      roundRectPath(ctx, -g.w / 2, -g.h / 2, g.w, g.h, r);
-      ctx.clip();
-    }
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    drawImageLike(ctx, img, g.sx, g.sy, g.sw, g.sh, -g.w / 2, -g.h / 2, g.w, g.h, env);
-    ctx.restore();
-    clearShadow(ctx);
-    const border = p.border;
-    if (border && border.width > 0) {
-      // Рамка снаружи края картинки, чтобы не съедать её пиксели.
-      const bw = border.width;
-      ctx.beginPath();
-      roundRectPath(ctx, -g.w / 2 - bw / 2, -g.h / 2 - bw / 2, g.w + bw, g.h + bw, r > 0 ? r + bw / 2 : 0);
-      ctx.lineWidth = bw;
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = rgba(border.color);
-      ctx.stroke();
-    }
+    if (!img && layer.props.device !== "phone") return;
+    const natural = naturalOf(img, layer.props);
+    drawPicture(ctx, layer.props, st.crop, natural, img ? { image: img, width: natural.w, height: natural.h } : null, env);
   },
 };
 

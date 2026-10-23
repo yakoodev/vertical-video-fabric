@@ -4,7 +4,7 @@
  * загрузку и перерисовывает кадр, когда картинка пришла.
  */
 import { emojiRef, graphemes, isEmoji } from "./fonts";
-import type { Layer } from "./types";
+import type { Layer, VideoLayer } from "./types";
 
 function emojiIn(text: string | undefined, out: Set<string>): void {
   if (!text) return;
@@ -47,4 +47,9 @@ export function collectAudioRefs(layers: Layer[]): string[] {
   const out = new Set<string>();
   for (const layer of layers || []) if (layer.type === "audio" && layer.props.asset_id) out.add(String(layer.props.asset_id));
   return [...out];
+}
+
+/** Видимые видео-слои с файлом — для подготовки кадров в рендере и загрузки в превью. */
+export function collectVideoLayers(layers: Layer[]): VideoLayer[] {
+  return (layers || []).filter((l): l is VideoLayer => l.type === "video" && !l.hidden && Boolean(l.props?.asset_id));
 }

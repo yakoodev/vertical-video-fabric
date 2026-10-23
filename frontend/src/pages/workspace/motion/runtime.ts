@@ -6,7 +6,17 @@
  * вариант, а следующий кадр анимации подхватит её сам — превью перерисовывается
  * каждый кадр. Шрифты — те же файлы, что регистрирует рендер, через FontFace.
  */
-import { assetUrl, collectImageRefs, invalidateTextCache, type Layer, type RenderEnv } from "@/motion";
+import {
+  assetUrl,
+  collectImageRefs,
+  invalidateTextCache,
+  VIDEO_MAX_SPEED,
+  VIDEO_MIN_SPEED,
+  type Layer,
+  type RenderEnv,
+  type VideoLayer,
+  type VideoSource,
+} from "@/motion";
 import { motionApi, type MotionFont } from "@/api/motion";
 
 type Entry = { img: HTMLImageElement | null; failed: boolean };
@@ -34,6 +44,98 @@ export function imageFor(ref: string): HTMLImageElement | null {
 /** Заранее поставить в загрузку всё, что нужно слоям (без ожидания). */
 export function preloadLayerImages(layers: Layer[]): void {
   for (const ref of collectImageRefs(layers)) imageFor(ref);
+}
+
+/* ---------- видео-слои ---------- */
+
+/**
+ * Видео слоя — свой HTMLVideoElement на слой (у двух слоёв одного файла разные отрезки).
+ * Движок спрашивает кадр каждый кадр превью: если время файла идёт вперёд (превью
+ * играет) — элемент играет сам со скоростью слоя и подправляется только при заметном
+ * рассинхроне; если время стоит (пауза, скраб) — точный seek на нужную секунду.
+ */
+type VideoEntry = { el: HTMLVideoElement; src: VideoSource; lastT: number; lastWall: number; touched: number };
+
+const videos = new Map<string, VideoEntry>();
+/** Играющий элемент правим, только если ушёл дальше этого (с); на паузе — точнее кадра. */
+const PLAY_DRIFT = 0.25;
+const SEEK_EPS = 0.02;
+
+function videoEntry(layer: VideoLayer): VideoEntry | null {
+  const ref = String(layer.props.asset_id || "");
+  if (!ref) return null;
+  const key = `${layer.id}|${ref}`;
+  const hit = videos.get(key);
+  if (hit) return hit;
+  const el = document.createElement("video");
+  el.muted = true; // видео-слой немой
+  el.playsInline = true;
+  el.preload = "auto";
+  el.src = assetUrl(ref);
+  const entry: VideoEntry = {
+    el,
+    lastT: -1,
+    lastWall: 0,
+    touched: performance.now(),
+    src: {
+      get duration() {
+        return Number.isFinite(el.duration) ? el.duration : 0;
+      },
+      get width() {
+        return el.videoWidth;
+      },
+      get height() {
+        return el.videoHeight;
+      },
+      frame: (time) => syncVideo(entry, time, layer),
+    },
+  };
+  videos.set(key, entry);
+  ensureIdleTimer();
+  return entry;
+}
+
+function syncVideo(entry: VideoEntry, time: number, layer: VideoLayer) {
+  const el = entry.el;
+  const now = performance.now();
+  const moving = Math.abs(time - entry.lastT) > 1e-4 && now - entry.lastWall < 250;
+  entry.lastT = time;
+  entry.lastWall = now;
+  entry.touched = now;
+  if (moving) {
+    const rate = Math.min(VIDEO_MAX_SPEED, Math.max(VIDEO_MIN_SPEED, Number(layer.props.speed) || 1));
+    if (el.playbackRate !== rate) el.playbackRate = rate;
+    if (el.paused) void el.play().catch(() => undefined);
+    if (!el.seeking && Math.abs(el.currentTime - time) > PLAY_DRIFT) el.currentTime = time;
+  } else {
+    if (!el.paused) el.pause();
+    if (!el.seeking && Math.abs(el.currentTime - time) > SEEK_EPS) el.currentTime = time;
+  }
+  if (el.readyState < 2 || !el.videoWidth) return null;
+  return { image: el as unknown as { width: number; height: number }, width: el.videoWidth, height: el.videoHeight };
+}
+
+let idleTimer: number | null = null;
+
+/** Слой ушёл из кадра (или превью закрыто) — его видео встаёт на паузу. */
+function ensureIdleTimer(): void {
+  if (idleTimer !== null) return;
+  idleTimer = window.setInterval(() => {
+    const now = performance.now();
+    for (const [key, entry] of videos) {
+      if (now - entry.touched > 400 && !entry.el.paused) entry.el.pause();
+      // Давно не нужное видео отпускаем целиком (буфер декодера — память вкладки).
+      if (now - entry.touched > 60_000) {
+        entry.el.removeAttribute("src");
+        entry.el.load();
+        videos.delete(key);
+      }
+    }
+  }, 500);
+}
+
+function videoFor(layer: VideoLayer): VideoSource | null {
+  return videoEntry(layer)?.src ?? null;
 }
 
 let fontsPromise: Promise<MotionFont[]> | null = null;
@@ -97,6 +199,7 @@ export function browserEnv(w: number, h: number): RenderEnv {
       width: w,
       height: h,
       getImage: imageFor,
+      getVideo: videoFor,
       createCanvas: (cw, ch) => {
         const c = document.createElement("canvas");
         c.width = cw;

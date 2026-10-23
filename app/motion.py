@@ -52,7 +52,7 @@ BEZIER_RE = re.compile(r"^bezier\(\s*([-+0-9.eE\s,]+)\)$")
 PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
-    "text", "shape", "image", "emoji", "counter", "progress", "chart", "callout", "captions", "chat", "audio",
+    "text", "shape", "image", "video", "emoji", "counter", "progress", "chart", "callout", "captions", "chat", "audio",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -100,8 +100,17 @@ ANIMATABLE: dict[str, tuple[float, float]] = {
     "cropW": (0.01, 1.0),
     "cropH": (0.01, 1.0),
 }
-# Ключи, что бывают только у своего типа слоя.
-ANIMATABLE_ONLY = {"cropX": "image", "cropY": "image", "cropW": "image", "cropH": "image"}
+# Ключи, что бывают только у своих типов слоя (окно crop — у картинки и видео).
+_CROP_TYPES = ("image", "video")
+ANIMATABLE_ONLY: dict[str, tuple[str, ...]] = {"cropX": _CROP_TYPES, "cropY": _CROP_TYPES, "cropW": _CROP_TYPES,
+                                              "cropH": _CROP_TYPES}
+# Корпус устройства вокруг картинки/видео (layers/device.ts движка) и цвет по умолчанию — чёрный титан.
+DEVICE_KINDS = ("phone",)
+DEFAULT_DEVICE_COLOR = "#2c2c2e"
+# Видео-слой: скорость и «хвост» — последний кадр чуть раньше конца файла (как VIDEO_TAIL движка).
+VIDEO_MIN_SPEED = 0.25
+VIDEO_MAX_SPEED = 4.0
+VIDEO_TAIL = 0.04
 
 
 # ---------------------------------------------------------------- описания полей
@@ -209,8 +218,11 @@ class Flag:
 class Choice:
     default: str
     options: tuple[str, ...]
+    nullable: bool = False
 
-    def norm(self, value: Any, rep: _Report, where: str) -> str:
+    def norm(self, value: Any, rep: _Report, where: str) -> str | None:
+        if value is None and self.nullable:
+            return None
         if value in self.options:
             return str(value)
         rep(where, f"{value!r} не из списка: {', '.join(self.options)}")
@@ -220,7 +232,10 @@ class Choice:
         return self.default
 
     def describe(self) -> dict:
-        return {"type": "enum", "default": self.default, "options": list(self.options)}
+        out = {"type": "enum", "default": self.default, "options": list(self.options)}
+        if self.nullable:
+            out["nullable"] = True
+        return out
 
 
 def _color(value: Any) -> str | None:
@@ -482,6 +497,23 @@ TEXT_STYLE: dict = {
     "highlight": HIGHLIGHT,
 }
 
+CROP = Obj(
+    {"x": Num(0, 0, 1, 4), "y": Num(0, 0, 1, 4), "w": Num(1, 0.01, 1, 4), "h": Num(1, 0.01, 1, 4)},
+    nullable=True,
+)
+# Общее у image и video: экран шириной w, окно crop, скругление, рамка — или корпус телефона.
+# device/deviceColor/island необязательны: у старых слоёв их нет — и нормализация их не добавляет.
+PICTURE: dict = {
+    "w": Num(600, 10, 4000, 1),
+    "radius": Num(0, 0, 2000, 1),
+    "border": BORDER,
+    "crop": CROP,
+    "flipX": Flag(False),
+    "device": Opt(Choice("phone", DEVICE_KINDS, nullable=True)),
+    "deviceColor": Opt(Color(DEFAULT_DEVICE_COLOR)),
+    "island": Opt(Flag(True)),
+}
+
 PROPS: dict[str, dict] = {
     "text": {"text": Text("", MAX_TEXT), **TEXT_STYLE},
     "shape": {
@@ -498,14 +530,17 @@ PROPS: dict[str, dict] = {
     "image": {
         "asset_id": AssetRef(),
         "src": AssetRef(prefixes=("emoji", "sticker"), allow_id=False),
-        "w": Num(600, 10, 4000, 1),
-        "radius": Num(0, 0, 2000, 1),
-        "border": BORDER,
-        "crop": Obj(
-            {"x": Num(0, 0, 1, 4), "y": Num(0, 0, 1, 4), "w": Num(1, 0.01, 1, 4), "h": Num(1, 0.01, 1, 4)},
-            nullable=True,
-        ),
-        "flipX": Flag(False),
+        **PICTURE,
+    },
+    # Немое видео из библиотеки в слое: секунда файла = from + (t − start)·speed;
+    # за концом файла loop — снова с from, freeze — последний кадр, иначе пусто.
+    "video": {
+        "asset_id": AssetRef(),
+        **PICTURE,
+        "from": Num(0, 0, MAX_TIME_SEC, 3),
+        "speed": Num(1, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, 3),
+        "loop": Flag(False),
+        "freeze": Flag(True),
     },
     "emoji": {"char": Text("", 32), "size": Num(160, 12, 1000, 1)},
     "counter": {
@@ -719,8 +754,8 @@ def _norm_keys(raw: Any, rep: _Report, where: str, ltype: str = "") -> dict:
         if prop not in ANIMATABLE:
             rep(f"{where}.{prop}", f"не анимируется; можно: {', '.join(ANIMATABLE)}")
             continue
-        if ANIMATABLE_ONLY.get(prop, ltype) != ltype:
-            rep(f"{where}.{prop}", f"бывает только у {ANIMATABLE_ONLY[prop]} — отброшено")
+        if prop in ANIMATABLE_ONLY and ltype not in ANIMATABLE_ONLY[prop]:
+            rep(f"{where}.{prop}", f"бывает только у {'/'.join(ANIMATABLE_ONLY[prop])} — отброшено")
             continue
         if not isinstance(points, list):
             rep(f"{where}.{prop}", "нужен список точек [{t, v, ease?}]")
@@ -839,6 +874,9 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.text", "пустой текст — слой ничего не покажет")
     elif ltype == "image" and props["asset_id"] is None and props["src"] is None:
         rep(f"{where}.props", "у картинки нужен asset_id (файл для монтажа) или src (emoji:… / sticker:…)")
+    elif ltype == "video" and props["asset_id"] is None:
+        rep(f"{where}.props.asset_id", "у видео нужен asset_id — видео из «Файлов для монтажа» "
+                                       "(upload_video / add_video_from_source)")
     elif ltype == "emoji" and not props["char"].strip():
         rep(f"{where}.props.char", "не указан эмодзи")
     elif ltype == "audio" and props["asset_id"] is None:
@@ -989,7 +1027,7 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         ref = _as_ref(props.get("asset_id")) or _as_ref(props.get("src"))
         if ref is not None:
             refs.append(ref)
-    elif ltype == "audio":
+    elif ltype in ("audio", "video"):
         ref = _as_ref(props.get("asset_id"))
         if ref is not None:
             refs.append(ref)
@@ -1009,6 +1047,24 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
             if ref and ref not in refs:
                 refs.append(ref)
     return refs
+
+
+def video_file_time(props: dict, local: float, duration: float | None) -> float | None:
+    """Секунда файла видео-слоя в локальное время ``local`` — как ``videoFileTime`` движка.
+
+    ``from + local·speed``; за концом файла (``duration``; None/0 — неизвестна): ``loop`` —
+    снова с ``from``, ``freeze`` (по умолчанию) — последний кадр, иначе None (кадра нет).
+    """
+    start = max(0.0, _finite(props.get("from")) or 0.0)
+    speed = min(VIDEO_MAX_SPEED, max(VIDEO_MIN_SPEED, _finite(props.get("speed")) or 1.0))
+    t = start + max(0.0, float(local)) * speed
+    if not duration or duration <= 0 or t < duration - VIDEO_TAIL:
+        return t
+    last = max(0.0, duration - VIDEO_TAIL)
+    if props.get("loop"):
+        span = duration - VIDEO_TAIL - start
+        return start + math.fmod(t - start, span) if span > 0.05 else last
+    return None if props.get("freeze") is False else last
 
 
 def asset_key(ref: Any) -> str:
@@ -1137,6 +1193,13 @@ def schema_summary() -> dict:
             "words": "comp.words = [{t0, t1, w}] — слова субтитров клипа в клиповом времени; "
                      "их подставляет сервер (рендер) и редактор (превью)",
         },
+        "video": {
+            "time": "секунда файла = from + (t − start)·speed; за концом файла loop — снова с from, "
+                    "freeze (по умолчанию) — последний кадр, freeze false — кадра нет",
+            "speed": [VIDEO_MIN_SPEED, VIDEO_MAX_SPEED],
+            "audio": "немое: звук видео-слоя не играет (нужен звук — отдельный слой audio)",
+        },
+        "devices": list(DEVICE_KINDS),
         "chat": {
             "styles": list(CHAT_STYLES),
             "messages": "comp.chat = [{t, user, color, text, fragments, badges}] — чат клипа "
@@ -1158,7 +1221,7 @@ def schema_summary() -> dict:
             "end": {"type": "number", "description": f"> start, длина ≥ {MIN_LAYER_SEC}; нет — start + {DEFAULT_LAYER_SEC}"},
             **{name: spec.describe() for name, spec in LAYER_FIELDS.items()},
             "keys": {"type": "object", "description": "{свойство: [{t (время слоя), v, ease?}]}; "
-                     "cropX/cropY/cropW/cropH — окно props.crop картинки (только image)",
+                     "cropX/cropY/cropW/cropH — окно props.crop картинки/видео (только image, video)",
                      "props": list(ANIMATABLE)},
             "in": Obj(ANIM).describe(),
             "out": Obj(ANIM).describe(),
