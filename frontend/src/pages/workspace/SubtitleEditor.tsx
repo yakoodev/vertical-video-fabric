@@ -20,6 +20,9 @@ const ENGINES: [string, string][] = [
   ["gemini", "Gemini"],
 ];
 
+const SILENT_HINT =
+  "У холста нет звука — распознавать нечего. Текст на экране — слой «Текст» в библиотеке; слова субтитров со временем задаёт агент (set_subtitle_words).";
+
 /**
  * Субтитры клипа ДО рендера: распознать речь, поправить текст и тайминги, и
  * только потом жечь их в видео. Раньше текст появлялся лишь в готовом клипе —
@@ -35,6 +38,7 @@ export function SubtitleEditor({
   onSeek,
   onLines,
   onWords,
+  silent,
 }: {
   clipPlanId: number;
   /** Текущая позиция плеера в секундах клипа (для подсветки строки). */
@@ -42,6 +46,8 @@ export function SubtitleEditor({
   onSeek: (clipSec: number) => void;
   onLines: (lines: SubtitleLine[]) => void;
   onWords?: (words: { word: string; start: number; end: number }[]) => void;
+  /** Звука для распознавания нет (пустой холст — немая основа): распознавание и «Голоса» выключены. */
+  silent?: boolean;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -189,14 +195,19 @@ export function SubtitleEditor({
             </option>
           ))}
         </select>
-        <button className="btn sm" disabled={busy} onClick={() => generate.mutate()}>
+        <button
+          className="btn sm"
+          disabled={busy || silent}
+          title={silent ? SILENT_HINT : undefined}
+          onClick={() => generate.mutate()}
+        >
           {generate.isPending ? "Слушаю…" : lines.length ? "↻ Распознать заново" : "🎙 Распознать речь"}
         </button>
         <button
           className="btn sm"
-          disabled={busy}
+          disabled={busy || silent}
           onClick={() => voices.mutate()}
-          title="Gemini слушает клип и расшифровывает каждый голос отдельно: стример, гость, донат, ролик. Перебитые чужим голосом фразы возвращаются, субтитры разных людей — разным цветом и не в одной строке. Сначала речь распознаётся точной моделью — это 1–3 минуты."
+          title={silent ? SILENT_HINT : "Gemini слушает клип и расшифровывает каждый голос отдельно: стример, гость, донат, ролик. Перебитые чужим голосом фразы возвращаются, субтитры разных людей — разным цветом и не в одной строке. Сначала речь распознаётся точной моделью — это 1–3 минуты."}
         >
           {voices.isPending ? "Разбираю голоса…" : "Голоса"}
         </button>
@@ -215,7 +226,9 @@ export function SubtitleEditor({
         </div>
       ) : null}
 
-      {!lines.length ? (
+      {!lines.length && silent ? (
+        <p className="muted subed-empty">{SILENT_HINT}</p>
+      ) : !lines.length ? (
         <p className="muted subed-empty">
           Субтитров пока нет. Распознайте речь — строки можно будет поправить здесь, и рендер возьмёт именно их
           (без правки текст распознаётся прямо во время рендера).

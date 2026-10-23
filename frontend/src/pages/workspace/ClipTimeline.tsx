@@ -4,8 +4,9 @@ import type { SubtitleLine } from "@/api/clipPlans";
 import type { AiSegment, MontageInsert } from "@/api/types";
 import { formatDuration } from "@/components/ui";
 import { addMute, normalizeMute, type MuteSpan } from "@/api/mute";
-import type { CameraKey, Layer } from "@/motion";
+import type { Background, CameraKey, Layer } from "@/motion";
 import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
+import { BackdropStrip, canvasLabel } from "@/pages/workspace/canvasClip";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const SNAP_PX = 7;
@@ -130,6 +131,7 @@ export function ClipTimeline({
   onDropLayers,
   mute = [],
   onMuteChange,
+  canvas,
 }: {
   pieces: AiSegment[];
   inserts: MontageInsert[];
@@ -162,6 +164,8 @@ export function ClipTimeline({
   /** Тишина вместо звука исходника (render.mute) — полосы на дорожке «Звук». */
   mute?: MuteSpan[];
   onMuteChange?: (next: MuteSpan[]) => void;
+  /** Пустой холст: вместо зелёных кадров основы — фон клипа (и его акцент). */
+  canvas?: { bg: Background; accent?: string | null } | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -541,15 +545,32 @@ export function ClipTimeline({
                     className={`ctl-block ctl-block--piece${selected?.kind === "piece" && selected.index === i ? " on" : ""}`}
                     style={{ left: l.a * pps, width: Math.max(3, (l.b - l.a) * pps) }}
                     onPointerDown={(e) => startDrag(e, { kind: "piece", index: i, mode: "move", a: row.start, b: row.end })}
-                    title={`${row.piece.title || "кусок"} · исходник ${formatDuration(row.piece.start_sec)}`}
+                    title={
+                      canvas
+                        ? `${canvasLabel(canvas.bg)} · ${formatDuration(row.end - row.start)} — тяни край, чтобы изменить длину`
+                        : `${row.piece.title || "кусок"} · исходник ${formatDuration(row.piece.start_sec)}`
+                    }
                   >
-                    <span className="ctl-thumbs" aria-hidden>
-                      {pieceThumbs(sourceId, row.piece, (l.b - l.a) * pps).map((t) => (
-                        <img key={t.at} src={t.url} alt="" loading="lazy" draggable={false} />
-                      ))}
-                    </span>
+                    {canvas ? (
+                      <BackdropStrip
+                        className="ctl-canvas-strip"
+                        bg={canvas.bg}
+                        accent={canvas.accent}
+                        width={Math.max(3, (l.b - l.a) * pps)}
+                        from={l.a}
+                        to={l.b}
+                      />
+                    ) : (
+                      <span className="ctl-thumbs" aria-hidden>
+                        {pieceThumbs(sourceId, row.piece, (l.b - l.a) * pps).map((t) => (
+                          <img key={t.at} src={t.url} alt="" loading="lazy" draggable={false} />
+                        ))}
+                      </span>
+                    )}
                     <span className="ctl-grip" data-resize="start" />
-                    <span className="ctl-block-label">{row.piece.title || `Кусок ${i + 1}`}</span>
+                    <span className="ctl-block-label">
+                      {canvas ? canvasLabel(canvas.bg) : row.piece.title || `Кусок ${i + 1}`}
+                    </span>
                     <span className="ctl-grip" data-resize="end" />
                   </div>
                 );
@@ -574,7 +595,11 @@ export function ClipTimeline({
                   </div>
                 );
               })}
-              {!subLines.length ? <span className="ctl-empty muted">субтитров нет — «Распознать речь» в панели справа</span> : null}
+              {!subLines.length ? (
+                <span className="ctl-empty muted">
+                  {canvas ? "субтитров нет — у холста нет звука; текст на экран — слоем «Текст»" : "субтитров нет — «Распознать речь» в панели справа"}
+                </span>
+              ) : null}
             </div>
 
             {/* Вставки: сюда же можно бросить файл из библиотеки */}

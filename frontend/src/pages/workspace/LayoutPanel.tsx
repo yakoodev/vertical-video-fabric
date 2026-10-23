@@ -3,6 +3,7 @@
  * окошком. Вебку находит сервер (🎯) или её обводят рамкой на кадре исходника.
  * Значение — `render.layout` клипа (см. ./layout.ts и app/stream_layout.py).
  * Здесь же хромакей источника (персонаж на зелёнке) и фон за персонажем.
+ * У пустого холста (app/canvas.py) раскладки и ключа нет — только выбор фона.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -26,6 +27,8 @@ type Props = {
   onBackdrop?: (next: Backdrop) => void;
   /** Акцент клипа (цвет звучащего слова субтитров) — им красится фон «в цветах ролика». */
   accent?: string | null;
+  /** Пустой холст: видео нет, весь кадр — фон; вебка и хромакей не нужны (выключенный ключ — зелёный кадр). */
+  canvas?: boolean;
 };
 
 type Choice = { id: string; label: string; hint: string; mode: StreamLayout["mode"]; pos?: StreamLayout["cam_pos"] };
@@ -333,7 +336,7 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   );
 }
 
-export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop, accent }: Props) {
+export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop, accent, canvas }: Props) {
   const keyed = Boolean(chromaKey);
   const layout = normalizeLayout(raw);
   const [savedCam, setSavedCam] = useState<LayoutRect | null>(null);
@@ -344,6 +347,7 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
     let alive = true;
     setSavedCam(null);
     setNote(null);
+    if (canvas) return;
     facecamApi
       .get(sourceId)
       .then((r) => alive && setSavedCam(r.cam ? normalizeCam(r.cam) : null))
@@ -351,7 +355,7 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
     return () => {
       alive = false;
     };
-  }, [sourceId]);
+  }, [sourceId, canvas]);
 
   const patch = (p: Partial<StreamLayout>) => onChange(normalizeLayout({ ...layout, ...p }));
 
@@ -392,6 +396,23 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
       setNote({ kind: "warn", text: e instanceof ApiError ? e.message : "Не удалось сохранить" });
     }
   };
+
+  if (canvas) {
+    return (
+      <div className="lay-panel">
+        <div className="muted li-note">
+          Пустой холст: видео нет, весь кадр — фон. Раскладка и хромакей здесь не нужны — картинки, титры и записи
+          экрана добавляются слоями.
+        </div>
+        {backdrop && onBackdrop ? (
+          <>
+            <div className="li-cap">Фон холста</div>
+            <BackgroundPicker value={backdrop} onChange={onBackdrop} accent={accent} />
+          </>
+        ) : null}
+      </div>
+    );
+  }
 
   const active = CHOICES.find((c) => c.mode === layout.mode && (!c.pos || c.pos === layout.cam_pos))?.id ?? "single";
   // Кадр раз в секунду, а не каждый тик плеера.

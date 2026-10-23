@@ -10,6 +10,7 @@ import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
+import { NewCanvas } from "@/components/NewCanvas";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
@@ -195,6 +196,8 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
           {ingest.isPending ? "…" : "Добавить"}
         </button>
       </div>
+      {/* Ролик без видео: анимированный фон, картинки и титры (app/canvas.py). */}
+      <NewCanvas onCreated={onStarted} disabled={busy} />
       {picking ? (
         <PlayerOptionsDialog
           url={picking}
