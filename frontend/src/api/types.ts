@@ -21,7 +21,7 @@ export interface Source {
   source_type: string;
   content_crop?: CropRect | null;
   /** Хромакей: источник на зелёнке, фон вырезается (app/chroma_key.py). */
-  chroma_key?: { color: string; similarity: number; blend: number } | null;
+  chroma_key?: { color: string; similarity: number; blend: number; despill?: "auto" | "none" | number } | null;
   /** Вебка стримера (доли кадра) — по умолчанию для раскладок split/pip_cam. */
   facecam?: CropRect | null;
   original_url: string;

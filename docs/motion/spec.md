@@ -285,6 +285,13 @@ node node/motion-render.mjs \
   (`app/stream_layout.camera_regions`): камера двигает только кадр внутри `cameraBox`
   (окно игры), прямоугольники `pinned` (окошко вебки pip) кладутся поверх из незумленной
   основы. Без них камера, как раньше, двигает весь кадр.
+* `comp.key {color: "0xrrggbb", similarity, blend, despill, spill?, grade}` — хромакей основы
+  (`app/chroma_key.py`, ключ источника): компоновщик вырезает фон (ffmpeg `chromakey`), кладёт
+  `comp.background`, слои `behind`, сверху основу. `despill` `green`/`blue` без `spill` —
+  фильтр ffmpeg `despill` по умолчанию (ключ источника `despill: "auto"`, как было: свой канал
+  опускается до среднего двух других — жёлтое в кадре рыжеет, зелёное сереет); `"none"` — без
+  подавления ореола; `spill` 0..1 — мягкая сила (`despill=type=green:green=-s`, у синего
+  `blue=-s`). Превью (`frontend/src/pages/workspace/chromaKey.ts`) считает ту же формулу.
 * Слою, который идёт до конца композиции (`end ≥ duration − 0.05`), сервис
   (`app/motion_render.write_comp`) снимает `out`: готовый ролик держит последний кадр
   стоп-кадром, и плашка не гаснет перед ним.

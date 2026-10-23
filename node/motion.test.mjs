@@ -724,3 +724,27 @@ test("CLI: хромакей кладёт анимированный фон, ст
   const b = await colorAt({ kind: "aurora", colors: ["#101020", "#ff00aa"] }, 135, 400);
   assert.notDeepEqual(a, b, "аврора — не одна заливка");
 });
+
+test("CLI: хромакей — despill auto рыжит жёлтое, none оставляет, spill — мягко", async () => {
+  // Жёлтая карточка на зелёнке: ключ её не вырезает, а подавление ореола задевает.
+  const base = join(tmp, "green-yellow.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1",
+    "-vf", "drawbox=x=85:y=190:w=100:h=100:color=0xffff00:t=fill", "-pix_fmt", "yuv444p", "-c:v", "libx264", "-qp", "0", base], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const yellowAt = async (despill) => {
+    const key = { color: "0x00fe00", similarity: 0.3, blend: 0.05, ...despill };
+    const p = writeInputs("despill", { width: 270, height: 480, fps: 30, duration: 1, layers: [], key, background: { color: "#000000" } });
+    const png = join(tmp, "despill.png");
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const cv = createCanvas(270, 480);
+    cv.getContext("2d").drawImage(await loadImage(readFileSync(png)), 0, 0);
+    return [...cv.getContext("2d").getImageData(135, 240, 1, 1).data.slice(0, 3)];
+  };
+  const auto = await yellowAt({ despill: "green" });
+  const none = await yellowAt({ despill: "none" });
+  const soft = await yellowAt({ despill: "green", spill: 0.3 });
+  assert.ok(auto[0] > 230 && auto[1] < 150, `auto: ${auto}`); // жёлтое → оранжевое (как было)
+  assert.ok(none[0] > 230 && none[1] > 235 && none[2] < 30, `none: ${none}`); // жёлтое осталось
+  assert.ok(soft[1] > auto[1] + 40 && soft[1] < none[1] - 20, `soft: ${soft}`); // между
+});

@@ -1947,7 +1947,7 @@ def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
         ctx.store.update_source(source["id"], chroma_key=None)
         return {"ok": True, "chroma_key": None}
     current = source.get("chroma_key") or {}
-    tweaks = {k: v for k, v in args.items() if k in ("color", "similarity", "blend") and v is not None}
+    tweaks = {k: v for k, v in args.items() if k in ("color", "similarity", "blend", "despill") and v is not None}
     if args.get("color") or current:
         key = normalize_key({**current, **tweaks})
     else:
@@ -1960,7 +1960,8 @@ def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
         raise ToolError("зелёного/синего фона в источнике не нашлось — передай color (#rrggbb) сам, если он есть")
     saved = ctx.store.update_source(source["id"], chroma_key=key)
     return {"ok": True, "chroma_key": saved.get("chroma_key"),
-            "note": "проверь view_frame: края персонажа без зелени; ореол — similarity выше (0.3), рваные края — ниже"}
+            "note": "проверь view_frame: края персонажа без зелени; ореол — similarity выше (0.3), рваные края — ниже; "
+                    "жёлтое стало рыжим / зелёное серым — despill \"none\" или мягко 0.3"}
 
 
 def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
@@ -3300,10 +3301,15 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_chroma_key", "Вырезаю зелёный фон",
             "Хромакей источника (персонаж на зелёнке): on true — найти фон сам (или color #rrggbb), similarity "
-            "0.01..0.6 (порог, по умолчанию 0.25), blend 0..0.5 (мягкость края); on false — выключить. Фон за "
-            "персонажем — set_backdrop, слои за ним — behind:true. / Chroma key of the clip's source.",
+            "0.01..0.6 (порог, по умолчанию 0.25), blend 0..0.5 (мягкость края), despill — подавление зелёного "
+            "ореола: \"auto\" (полное, по умолчанию; жёлтое в кадре рыжеет, зелёное сереет), \"none\" (выкл — "
+            "промо с жёлтыми/зелёными плашками, экраны), число 0..1 (мягкая сила, 0.3 — ореол слабее, цвета почти "
+            "целы); on false — выключить. Фон за персонажем — set_backdrop, слои за ним — behind:true. / Chroma "
+            "key of the clip's source.",
             _obj({"on": {"type": "boolean"}, "color": {"type": "string"}, "similarity": {"type": "number"},
-                  "blend": {"type": "number"}}),
+                  "blend": {"type": "number"},
+                  "despill": {"type": ["string", "number"],
+                              "description": "\"auto\" | \"none\" | сила 0..1"}}),
             h_set_chroma_key, mutating=True,
             label=lambda a: "Хромакей " + ("выкл" if a.get("on") is False else "вкл"),
         ),

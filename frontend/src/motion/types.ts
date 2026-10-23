@@ -441,7 +441,10 @@ export type ChromaKey = {
   color: string;
   similarity: number;
   blend: number;
-  despill: "green" | "blue";
+  /** Чей ореол давить после выреза; "none" — не давить (жёлтое/зелёное в кадре целы). */
+  despill: "green" | "blue" | "none";
+  /** Мягкая сила подавления 0..1; нет — фильтр despill ffmpeg как есть. */
+  spill?: number;
   /** Лук пресета (фильтры ffmpeg) — после выреза, чтобы не сдвинуть цвет ключа. */
   grade?: string;
 };

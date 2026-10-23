@@ -10,7 +10,7 @@ import { ApiError } from "@/api/client";
 import { qk } from "@/api/keys";
 import { facecamApi, sourcesApi } from "@/api/sources";
 import type { SourceDetail } from "@/api/types";
-import type { Backdrop, ChromaKey } from "./chromaKey";
+import type { Backdrop, ChromaKey, Despill } from "./chromaKey";
 import { BackgroundPicker } from "./BackgroundPicker";
 import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
 
@@ -166,10 +166,47 @@ function ChromaKeyControls({ sourceId, chromaKey }: { sourceId: number; chromaKe
             <span title="Ширина полупрозрачного края: волосы и контур мягче">Мягкость края · {chromaKey.blend.toFixed(2)}</span>
             <input type="range" min={0} max={0.5} step={0.01} value={chromaKey.blend} onChange={(e) => tune({ blend: Number(e.target.value) })} />
           </label>
+          <DespillControl value={chromaKey.despill ?? "auto"} onChange={(despill) => tune({ despill })} />
         </>
       ) : null}
       {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
     </div>
+  );
+}
+
+/** Мягкая сила по умолчанию: ореол заметно слабее, жёлтое почти не рыжеет. */
+const SOFT_DESPILL = 0.4;
+
+/**
+ * Подавление зелёного ореола после выреза. Полное (как было) съедает жёлтые и
+ * зелёные цвета в кадре — у промо с жёлтыми карточками и зелёными плашками его выключают
+ * или ставят мягким.
+ */
+function DespillControl({ value, onChange }: { value: Despill; onChange: (v: Despill) => void }) {
+  const mode = typeof value === "number" ? "soft" : value;
+  return (
+    <>
+      <label className="field">
+        <span title="После выреза зелёный отсвет на краях гасится — но вместе с ним рыжеет жёлтое и сереет зелёное в кадре">
+          Подавление зелёного ореола
+        </span>
+        <select
+          className="input"
+          value={mode}
+          onChange={(e) => onChange(e.target.value === "soft" ? SOFT_DESPILL : (e.target.value as Despill))}
+        >
+          <option value="auto">полное (как раньше)</option>
+          <option value="soft">мягкое</option>
+          <option value="none">выкл — жёлтое и зелёное в кадре целы</option>
+        </select>
+      </label>
+      {typeof value === "number" ? (
+        <label className="field range">
+          <span>Сила подавления · {Math.round(value * 100)}%</span>
+          <input type="range" min={0.05} max={1} step={0.05} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        </label>
+      ) : null}
+    </>
   );
 }
 

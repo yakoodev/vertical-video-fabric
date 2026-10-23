@@ -258,13 +258,13 @@ def write_comp(
     if key:
         # Хромакей основы (app/chroma_key.py): компоновщик вырезает зелёнку,
         # кладёт фон и слои «за персонажем», сверху — основу.
-        from app.chroma_key import despill_type, ff_hex, normalize_backdrop
+        from app.chroma_key import comp_despill, ff_hex, normalize_backdrop
 
         comp["key"] = {
             "color": ff_hex(key["color"]),
             "similarity": key["similarity"],
             "blend": key["blend"],
-            "despill": despill_type(key["color"]),
+            **comp_despill(key),
             "grade": key.get("grade") or "",
         }
         comp["background"] = normalize_backdrop(background)
