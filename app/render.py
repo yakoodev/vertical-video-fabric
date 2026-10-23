@@ -400,7 +400,9 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        if subtitle_profile_id is None:
+        if subtitle_profile_id is None and not _is_canvas(source):
+            # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
+            # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
             source["id"],
@@ -536,7 +538,9 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        if subtitle_profile_id is None:
+        if subtitle_profile_id is None and not _is_canvas(source):
+            # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
+            # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
             source["id"],
@@ -2329,6 +2333,12 @@ def layout_camera_regions(preset: dict, source: dict | None, width: int, height:
     source = source or {}
     return camera_regions(layout, width, height, source.get("width"), source.get("height"),
                           mirror=bool(preset.get("mirror")))
+
+
+def _is_canvas(source: dict | None) -> bool:
+    from app.canvas import is_canvas
+
+    return is_canvas(source)
 
 
 def _preset_with_source_audio(preset: dict, source: dict) -> dict:
