@@ -137,6 +137,100 @@ test("длительность входа не больше половины с�
   near(wipe.wipe, 0.5);
 });
 
+/* ---------- окно картинки (crop) ключами: скролл экрана внутри телефона ---------- */
+
+const imageLayer = (over = {}) => ({ ...textLayer(), type: "image", props: { asset_id: "scr", w: 540 }, ...over });
+
+test("crop: ключи cropY/cropX интерполируются, середина — между кадрами", () => {
+  const l = imageLayer({
+    props: { asset_id: "scr", w: 540, crop: { x: 0, y: 0, w: 1, h: 0.25 } },
+    keys: { cropY: [{ t: 0, v: 0, ease: "linear" }, { t: 2, v: 0.75 }], cropX: [{ t: 1, v: 0.5, ease: "step" }, { t: 3, v: 0 }] },
+  });
+  const at = (t) => E.resolveLayer(l, 10 + t).crop;
+  near(at(0).y, 0);
+  near(at(1).y, 0.375); // середина линейного скролла
+  near(at(2).y, 0.75);
+  near(at(3.5).y, 0.75); // после последнего ключа — последнее значение
+  // Размер окна (= размер слоя) не меняется, пока едет экран.
+  for (const t of [0, 0.5, 1, 1.5, 2]) {
+    near(at(t).w, 1);
+    near(at(t).h, 0.25);
+  }
+  // cropX зажат так, чтобы окно шириной 1 не вышло за картинку.
+  near(at(1).x, 0);
+  // Без статичного crop база — вся картинка; ключ cropW сужает окно.
+  const half = E.resolveLayer(imageLayer({ keys: { cropW: [{ t: 0, v: 1, ease: "linear" }, { t: 2, v: 0.5 }] } }), 11).crop;
+  near(half.w, 0.75);
+  near(half.h, 1);
+  // У не-картинки окна нет, даже если ключи есть.
+  assert.equal(E.resolveLayer(textLayer({ keys: { cropY: [{ t: 0, v: 0.5 }] } }), 11).crop, null);
+});
+
+test("crop: значения зажаты 0..1, у края окно стоит, а не сжимается", () => {
+  near(E.clampCrop({ x: -1, y: 2, w: 0.3, h: 0.4 }).x, 0);
+  near(E.clampCrop({ x: -1, y: 2, w: 0.3, h: 0.4 }).y, 0.6); // упор: 1 − h
+  near(E.clampCrop({ x: 0, y: 0, w: 5, h: 0 }).w, 1);
+  near(E.clampCrop({ x: 0, y: 0, w: 5, h: 0 }).h, 0.01);
+  assert.deepEqual(E.clampCrop({}), { x: 0, y: 0, w: 1, h: 1 });
+  assert.deepEqual(E.clampCrop({ x: NaN, y: 0.2, w: undefined, h: 0.5 }), { x: 0, y: 0.2, w: 1, h: 0.5 });
+  // Перелёт кривой (outBack) и ключи за пределами не выводят окно за картинку.
+  const l = imageLayer({
+    props: { asset_id: "scr", w: 540, crop: { x: 0, y: 0, w: 1, h: 0.3 } },
+    keys: { cropY: [{ t: 0, v: 0, ease: "outBack" }, { t: 1, v: 0.7 }, { t: 2, v: 1.5 }] },
+  });
+  for (let t = 0; t <= 2.5; t += 0.05) {
+    const c = E.resolveLayer(l, 10 + t).crop;
+    assert.ok(c.y >= 0 && c.y + c.h <= 1 + 1e-9, `t=${t}: y=${c.y}`);
+    near(c.h, 0.3);
+  }
+});
+
+test("crop: статичный crop как раньше, без crop — null (вся картинка)", () => {
+  assert.equal(E.resolveLayer(imageLayer(), 11).crop, null);
+  assert.equal(E.resolveLayer(imageLayer({ props: { asset_id: "scr", crop: null } }), 11).crop, null);
+  const c = E.resolveLayer(imageLayer({ props: { asset_id: "scr", crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.3 } } }), 11).crop;
+  assert.deepEqual(c, { x: 0.1, y: 0.2, w: 0.5, h: 0.3 });
+});
+
+test("crop рисуется: экран едет внутри неподвижной рамки, radius обрезает картинку", () => {
+  // «Скриншот» 100×400: четыре полосы сверху вниз — красная, зелёная, синяя, жёлтая.
+  const src = createCanvas(100, 400);
+  const sx = src.getContext("2d");
+  ["#ff0000", "#00ff00", "#0000ff", "#ffff00"].forEach((c, i) => {
+    sx.fillStyle = c;
+    sx.fillRect(0, i * 100, 100, 100);
+  });
+  const env = { width: 1080, height: 1920, getImage: (ref) => (ref === "scr" ? src : null) };
+  const l = imageLayer({
+    props: { asset_id: "scr", w: 540, radius: 120, crop: { x: 0, y: 0, w: 1, h: 0.25 } },
+    keys: { cropY: [{ t: 0, v: 0, ease: "linear" }, { t: 2, v: 0.75 }] },
+  });
+  const frame = (t) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, l, 10 + t, env);
+    const box = E.layerBox(ctx, l, 10 + t, env);
+    const px = (x, y) => [...ctx.getImageData(x, y, 1, 1).data];
+    return { box, px };
+  };
+  const a = frame(0);
+  const b = frame(1);
+  const c = frame(2);
+  // Рамка слоя одна и та же: 540×540 в центре кадра.
+  for (const f of [a, b, c]) {
+    near(f.box.w, 540, 1e-6);
+    near(f.box.h, 540, 1e-6);
+  }
+  assert.deepEqual(a.px(540, 960).slice(0, 3), [255, 0, 0]); // в начале — первая полоса
+  assert.deepEqual(c.px(540, 960).slice(0, 3), [255, 255, 0]); // в конце — последняя
+  // Середина скролла: окно 0.375..0.625 — сверху зелёная, снизу синяя.
+  assert.deepEqual(b.px(540, 960 - 200).slice(0, 3), [0, 255, 0]);
+  assert.deepEqual(b.px(540, 960 + 200).slice(0, 3), [0, 0, 255]);
+  // Угол за скруглением пуст: radius обрезает саму картинку, не только рамку.
+  assert.equal(a.px(540 - 268, 960 - 268)[3], 0);
+  assert.equal(a.px(540 - 260, 960)[3], 255);
+});
+
 test("loop детерминирован: тот же id и время — тот же результат", () => {
   const l = textLayer({ loop: { type: "shake", speed: 1, amount: 2 } });
   const a = E.resolveLayer(l, 11.234);

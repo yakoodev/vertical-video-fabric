@@ -160,6 +160,35 @@ def test_helpers_motion_split_timeline_emoji_and_schema():
     assert schema["props"]["chart"]["panel"]["optional"] is True
 
 
+def test_image_crop_keys_scroll_inside_phone_and_lint_is_quiet():
+    from app.agent_tools import lint_layers
+
+    phone = {
+        "id": "screen", "type": "image", "start": 1, "end": 5, "x": 0.5, "y": 0.45,
+        "props": {"asset_id": 7, "w": 600, "radius": 48, "crop": {"x": 0, "y": 0, "w": 1, "h": 0.3}},
+        "keys": {
+            "cropY": [{"t": 0.5, "v": 0, "ease": "inOutCubic"}, {"t": 2.5, "v": 0.7}],
+            "cropX": [{"t": 0, "v": 1.4}],  # за край — зажимается
+            "cropH": [{"t": 0, "v": 0}],  # ноль — минимальное окно
+        },
+    }
+    layers = normalize_layers([phone])
+    keys = layers[0]["keys"]
+    assert keys["cropY"] == [{"t": 0.5, "v": 0, "ease": "inOutCubic"}, {"t": 2.5, "v": 0.7}]
+    assert keys["cropX"] == [{"t": 0, "v": 1}] and keys["cropH"] == [{"t": 0, "v": 0.01}]
+    problems = validate_layers([phone], asset_exists=lambda asset_id: True)
+    assert any("cropX[0].v" in p for p in problems) and any("cropH[0].v" in p for p in problems)
+    assert not any("не анимируется" in p for p in problems)
+    assert validate_layers(layers, asset_exists=lambda asset_id: True) == []
+    assert lint_layers(layers, 10) == []
+
+    # Окно crop бывает только у картинки: у текста ключ отбрасывается вслух.
+    text = {"type": "text", "props": {"text": "k"}, "keys": {"cropY": [{"t": 0, "v": 0.5}]}}
+    assert "cropY" not in normalize_layers([text])[0]["keys"]
+    assert any("cropY" in p and "только у image" in p for p in validate_layers([text]))
+    assert schema_summary()["animatable"]["cropW"] == [0.01, 1.0]
+
+
 # ---------------------------------------------------------------- команды ffmpeg
 
 

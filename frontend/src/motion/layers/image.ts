@@ -6,6 +6,7 @@
  * рисуется символом системного шрифта; в рендере все картинки загружены заранее.
  */
 import { emojiFont, emojiRef } from "../fonts";
+import type { LayerState } from "../animate";
 import type { EmojiLayer, ImageLayer, ImageLike, RenderEnv } from "../types";
 import { clearShadow, drawImageLike, fillRoundRect, hasShadow, imageSize, rgba, roundRectPath, type LayerRenderer } from "./common";
 
@@ -14,34 +15,34 @@ function imageRef(layer: ImageLayer): string {
   return String(layer.props.asset_id || layer.props.src || "");
 }
 
-/** Видимая часть картинки (crop в долях) и размер слоя в опорных px. */
-function geometry(layer: ImageLayer, img: ImageLike | null) {
+/**
+ * Видимая часть картинки и размер слоя в опорных px. Окно crop (в долях, уже с ключами
+ * и зажатое) — из состояния слоя: размер слоя зависит только от w/h окна, поэтому
+ * анимация cropX/cropY двигает содержимое внутри неподвижной рамки.
+ */
+function geometry(layer: ImageLayer, st: LayerState, img: ImageLike | null) {
   const p = layer.props;
   const { w: iw, h: ih } = img ? imageSize(img) : { w: 1, h: 1 };
-  const c = p.crop;
-  const cx = c ? Math.max(0, Math.min(1, c.x)) : 0;
-  const cy = c ? Math.max(0, Math.min(1, c.y)) : 0;
-  const cw = c ? Math.max(0.01, Math.min(1 - cx, c.w)) : 1;
-  const ch = c ? Math.max(0.01, Math.min(1 - cy, c.h)) : 1;
-  const sw = iw * cw;
-  const sh = ih * ch;
+  const c = st.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+  const sw = iw * c.w;
+  const sh = ih * c.h;
   const w = Math.max(1, p.w ?? 600);
   const h = (w * sh) / Math.max(1, sw);
-  return { sx: iw * cx, sy: ih * cy, sw, sh, w, h };
+  return { sx: iw * c.x, sy: ih * c.y, sw, sh, w, h };
 }
 
 export const imageRenderer: LayerRenderer<ImageLayer> = {
   multipart: true,
-  measure(_ctx, layer, _st, env) {
-    const g = geometry(layer, env.getImage(imageRef(layer)));
+  measure(_ctx, layer, st, env) {
+    const g = geometry(layer, st, env.getImage(imageRef(layer)));
     const b = layer.props.border?.width ?? 0;
     return { w: g.w + b * 2, h: g.h + b * 2 };
   },
-  draw(ctx, layer, _st, env) {
+  draw(ctx, layer, st, env) {
     const img = env.getImage(imageRef(layer));
     if (!img) return;
     const p = layer.props;
-    const g = geometry(layer, img);
+    const g = geometry(layer, st, img);
     const r = Math.max(0, Math.min(p.radius ?? 0, g.w / 2, g.h / 2));
     ctx.save();
     if (p.flipX) ctx.scale(-1, 1);

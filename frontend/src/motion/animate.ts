@@ -8,7 +8,7 @@
  */
 import { clamp, clamp01, ease } from "./easing";
 import { hashString, interpolateKeys, noise1 } from "./keys";
-import type { InOut, InOutType, Layer, LayerType } from "./types";
+import type { Crop, InOut, InOutType, Layer, LayerKeys, LayerType } from "./types";
 import { REF_H, REF_W } from "./types";
 
 export type Reveal = { mode: "chars" | "words"; fraction: number };
@@ -34,6 +34,8 @@ export type LayerState = {
   draw: number;
   /** Посимвольное / пословное появление текста (typewriter / words). */
   reveal: Reveal | null;
+  /** Окно картинки (image) в долях — база `props.crop` + ключи cropX/Y/W/H; null — вся картинка. */
+  crop: Crop | null;
 };
 
 export const DEFAULT_IN_DURATION = 0.35;
@@ -68,6 +70,33 @@ function defaultProgress(type: LayerType, local: number, dur: number): number {
     default:
       return 1;
   }
+}
+
+const finite = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+
+/**
+ * Окно crop внутри картинки: размер 0.01..1, затем сдвиг 0..1−размер. Упёршись в край,
+ * окно не сжимается, а стоит — иначе на конце скролла слой (экран телефона) менял бы высоту.
+ */
+export function clampCrop(c: Partial<Crop>): Crop {
+  const w = clamp(finite(c.w, 1), 0.01, 1);
+  const h = clamp(finite(c.h, 1), 0.01, 1);
+  return { x: clamp(finite(c.x, 0), 0, 1 - w), y: clamp(finite(c.y, 0), 0, 1 - h), w, h };
+}
+
+/** Окно картинки в момент `local`: ключи cropX/Y/W/H поверх статичного `props.crop`. */
+function resolveCrop(layer: Layer, keys: LayerKeys, local: number): Crop | null {
+  if (layer.type !== "image") return null;
+  const base = layer.props?.crop;
+  const animated = keys.cropX?.length || keys.cropY?.length || keys.cropW?.length || keys.cropH?.length;
+  if (!base && !animated) return null;
+  const b = clampCrop(base ?? {});
+  return clampCrop({
+    x: interpolateKeys(keys.cropX, local, b.x),
+    y: interpolateKeys(keys.cropY, local, b.y),
+    w: interpolateKeys(keys.cropW, local, b.w),
+    h: interpolateKeys(keys.cropH, local, b.h),
+  });
 }
 
 /** Анимации, которые имеют смысл только для своих типов, у чужих заменяются похожими. */
@@ -209,6 +238,7 @@ export function resolveLayer(layer: Layer, t: number): LayerState | null {
     wipe: 1,
     draw: 1,
     reveal: null,
+    crop: resolveCrop(layer, keys, local),
   };
 
   const dIn = animDuration(layer.in, dur, DEFAULT_IN_DURATION);

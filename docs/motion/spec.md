@@ -64,7 +64,8 @@
 
   // Ключевые кадры свойств. Ключ — имя свойства, значение — точки по времени слоя.
   // Анимируемые: x, y, scale, rotation, opacity, а также progress
-  // (общий «ход» для counter/progress/chart/shape draw-on, 0..1).
+  // (общий «ход» для counter/progress/chart/shape draw-on, 0..1)
+  // и у image — cropX, cropY, cropW, cropH (окно props.crop в долях картинки).
   "keys": {
     "scale": [ { "t": 0, "v": 0.6, "ease": "outBack" }, { "t": 0.4, "v": 1.0 } ]
   },
@@ -129,7 +130,7 @@ slideLeft, slideRight` (въезд с края на 0.15 кадра + fade), `dr
 |---|---|
 | `text` | `text` (≤ 400 симв., `\n` — перенос; эмодзи внутри рисуются картинками Twemoji), `font` (семейство из `/api/motion/fonts`), `weight` 100..900, `size` (опорн. px, 12..400), `color`, `gradient` `[c1,c2]` (сверху вниз) или null, `stroke` `{color,width}` (width — видимая толщина снаружи букв), `bg` `{color,opacity,radius,padX,padY,skew?,gradient?}` или null (плашка на каждую строку, строки сливаются в одну фигуру; `skew` −30..30° — скошенная плашка; `gradient` `[c1,c2]` слева направо), `align` left/center/right, `maxWidth` (опорн. px, перенос по словам; если не влезает одно слово — кегль уменьшается до 45%; тире не начинает строку), `boxWidth` (необяз., опорн. px — фиксированная ширина блока, строки выравниваются по `align` внутри неё; нужно для списков с выравниванием влево), `lineHeight` 0.8..2, `letterSpacing` (px), `uppercase`, `italic`, `highlight` `{words:[индексы слов с 0], color, bg}` (bg — плашка за словом) |
 | `shape` | `kind` rect/ellipse/line/arrow/triangle/star/burst, `w`, `h`, `fill` (цвет или null), `stroke` `{color,width}`, `radius` (rect), `points` (star/burst, 3..24), `dash` (bool), `bend` (необяз., line/arrow: изгиб дугой в опорн. px, + вверх) — line/arrow идут слева направо по ширине `w`, поворот задаёт направление; у line/arrow без `stroke` толщина 18 цветом `fill`. Ключи `progress` (0..1) у фигуры — доля нарисованной обводки |
-| `image` | `asset_id` (картинка из «Файлов для монтажа») **или** `src` (`emoji:1f525`, `sticker:<pack>/<file>`), `w` (опорн. px; высота по пропорции), `radius`, `border` `{color,width}`, `crop` `{x,y,w,h}` доли или null, `flipX` |
+| `image` | `asset_id` (картинка из «Файлов для монтажа») **или** `src` (`emoji:1f525`, `sticker:<pack>/<file>`), `w` (опорн. px; высота по пропорции), `radius`, `border` `{color,width}`, `crop` `{x,y,w,h}` доли или null, `flipX`. Окно `crop` анимируется ключами `cropX`/`cropY`/`cropW`/`cropH` (база — `crop`, без него вся картинка); размер слоя зависит только от `w`/`h` окна, поэтому ключи `cropY` при неизменном `h` — скролл экрана внутри неподвижной рамки, `cropX` по склеенной в ряд картинке — листание экранов. Окно зажато в картинку: у края оно стоит, а не сжимается. `radius` обрезает саму картинку (маска), а не только рамку |
 | `emoji` | `char` (сам эмодзи, напр. «🔥»), `size` (опорн. px). Рисуется картинкой Twemoji |
 | `counter` | `from`, `to`, `decimals` 0..3, `prefix`, `suffix`, `thousands` (разделитель, напр. " "), + все текстовые стили как у `text` (`font`,`size`,`color`,`stroke`,`bg`…). Значение = from + (to−from)·progress; если ключей `progress` нет — растёт за первую половину слоя с outCubic |
 | `progress` | `w`, `h`, `value` 0..1 (итог), `track` цвет, `fill` цвет или `[c1,c2]`, `radius`, `label` (bool, «73%» над головой заливки), `font`, `labelColor`, `glow` (необяз., bool, по умолчанию true — неоновое свечение заливки). Ход — свойство `progress` как у counter |
