@@ -32,7 +32,13 @@ export type Easing = NamedEasing | `bezier(${string})`;
 /** Точка ключа: `t` — локальное время слоя (0 = `start`), ease действует до следующей точки. */
 export type KeyPoint = { t: number; v: number; ease?: Easing };
 
-export type AnimatableProp = "x" | "y" | "scale" | "rotation" | "opacity" | "progress";
+/**
+ * cropX/cropY/cropW/cropH — окно `crop` картинки (image) в долях: скролл экрана внутри
+ * неподвижного телефона = ключи cropY при неизменном размере окна.
+ */
+export type AnimatableProp = "x" | "y" | "scale" | "rotation" | "opacity" | "progress" | CropProp;
+
+export type CropProp = "cropX" | "cropY" | "cropW" | "cropH";
 
 export type LayerKeys = Partial<Record<AnimatableProp, KeyPoint[]>>;
 
@@ -118,6 +124,7 @@ export type ShapeProps = {
   bend?: number;
 };
 
+/** Видимая часть картинки в долях; ключи cropX/Y/W/H анимируют её поверх этой базы. */
 export type Crop = { x: number; y: number; w: number; h: number };
 
 export type ImageProps = {

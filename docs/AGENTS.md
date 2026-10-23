@@ -122,6 +122,16 @@ bearer_token_env_var = "VVF_TOKEN"
 - Типы: `text`, `emoji`, `image` (`asset_id` или `src: "emoji:1f525" | "sticker:<pack>/<file>"`),
   `shape` (arrow/ellipse/…), `counter`, `progress`, `chart`, `callout`, `audio` (`sfx:<pack>/<file>`).
 - Вход/выход: `pop`, `words`, `typewriter`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
+- **Скролл экрана внутри неподвижного телефона** (промо приложения): длинный скриншот — слой `image`
+  с `radius` (обрезает картинку по скруглению) и окном `crop`; двигается не слой, а окно — ключи `cropY`
+  (сверху вниз 0 → 1 − `crop.h`) при неизменных `w` слоя и `crop.h`. Высота окна под экран W×H:
+  `crop.h` = (ширина картинки / высота картинки) · H / W. Листать экраны влево-вправо — склеить их в ряд
+  и анимировать `cropX` (шаг = `crop.w`, `ease: "step"` — прыжком). Корпус телефона — `shape` rect под слоем.
+  ```json
+  {"type":"image","start":2,"end":7,"x":0.5,"y":0.45,
+   "props":{"asset_id":12,"w":560,"radius":56,"crop":{"x":0,"y":0,"w":1,"h":0.42}},
+   "keys":{"cropY":[{"t":0.6,"v":0},{"t":2.4,"v":0.3,"ease":"outCubic"},{"t":3.4,"v":0.58}]}}
+  ```
 - Камера: `[{t, zoom 1..4, x, y, ease}]` — панч-ин на панчлайн 1.0 → 1.2–1.35 за 0.2 с.
   Между ключами значения (zoom, x, y, shake) переходят плавно; `ease` ключа A задаёт переход **от A к
   следующему** ключу (по умолчанию `inOutCubic`, есть `linear`, `outCubic`, `outBack`…). `ease: "step"` —

@@ -7,6 +7,7 @@ export { EASINGS, EASING_NAMES, DEFAULT_EASE, ease, easingFn, cubicBezier, clamp
 export { interpolateKeys, noise1, hashString } from "./keys";
 export {
   resolveLayer,
+  clampCrop,
   isLayerActive,
   layerDuration,
   animDuration,

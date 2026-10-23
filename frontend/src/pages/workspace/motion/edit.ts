@@ -6,12 +6,14 @@
  * (как вставки): иначе весь редактор перерисовывался бы на каждое движение мыши.
  */
 import {
+  clampCrop,
   layerBox,
   hitLayer,
   visibleLayers,
   newLayerId,
   type AnimatableProp,
   type CaptionWord,
+  type CropProp,
   type Ctx2D,
   type KeyPoint,
   type Layer,
@@ -108,9 +110,18 @@ export function drawSelection(ctx: Ctx2D, box: LayerBox, cssScale: number, locke
   ctx.restore();
 }
 
+/** Ключ окна картинки → поле `props.crop`. */
+const CROP_FIELD: Record<CropProp, "x" | "y" | "w" | "h"> = { cropX: "x", cropY: "y", cropW: "w", cropH: "h" };
+
+const isCropProp = (prop: AnimatableProp): prop is CropProp => prop in CROP_FIELD;
+
 /** Значение свойства в базе слоя (без ключей и анимаций). */
 export function baseValue(layer: Layer, prop: AnimatableProp): number {
-  const defaults: Record<AnimatableProp, number> = { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, progress: 1 };
+  if (isCropProp(prop)) {
+    const crop = layer.type === "image" ? layer.props.crop : null;
+    return clampCrop(crop ?? {})[CROP_FIELD[prop]];
+  }
+  const defaults = { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, progress: 1 };
   if (prop === "progress") return defaults.progress;
   const v = layer[prop];
   return typeof v === "number" ? v : defaults[prop];
@@ -129,6 +140,11 @@ export function setAnimated(layer: Layer, prop: AnimatableProp, value: number, l
     return { ...layer, keys: { ...layer.keys, [prop]: upsertKey(keys, localT, value) } };
   }
   if (prop === "progress") return layer;
+  if (isCropProp(prop)) {
+    if (layer.type !== "image") return layer;
+    const crop = { ...clampCrop(layer.props.crop ?? {}), [CROP_FIELD[prop]]: round(value) };
+    return { ...layer, props: { ...layer.props, crop } };
+  }
   return { ...layer, [prop]: round(value) } as Layer;
 }
 

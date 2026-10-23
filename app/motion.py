@@ -94,7 +94,14 @@ ANIMATABLE: dict[str, tuple[float, float]] = {
     "rotation": (-3600.0, 3600.0),
     "opacity": (0.0, 1.0),
     "progress": (0.0, 1.0),
+    # Окно props.crop картинки в долях: скролл экрана в неподвижном телефоне — ключи cropY.
+    "cropX": (0.0, 1.0),
+    "cropY": (0.0, 1.0),
+    "cropW": (0.01, 1.0),
+    "cropH": (0.01, 1.0),
 }
+# Ключи, что бывают только у своего типа слоя.
+ANIMATABLE_ONLY = {"cropX": "image", "cropY": "image", "cropW": "image", "cropH": "image"}
 
 
 # ---------------------------------------------------------------- описания полей
@@ -701,7 +708,7 @@ def _norm_ease(value: Any, rep: _Report, where: str) -> str | None:
     return None
 
 
-def _norm_keys(raw: Any, rep: _Report, where: str) -> dict:
+def _norm_keys(raw: Any, rep: _Report, where: str, ltype: str = "") -> dict:
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -711,6 +718,9 @@ def _norm_keys(raw: Any, rep: _Report, where: str) -> dict:
     for prop, points in raw.items():
         if prop not in ANIMATABLE:
             rep(f"{where}.{prop}", f"не анимируется; можно: {', '.join(ANIMATABLE)}")
+            continue
+        if ANIMATABLE_ONLY.get(prop, ltype) != ltype:
+            rep(f"{where}.{prop}", f"бывает только у {ANIMATABLE_ONLY[prop]} — отброшено")
             continue
         if not isinstance(points, list):
             rep(f"{where}.{prop}", "нужен список точек [{t, v, ease?}]")
@@ -810,7 +820,7 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         rep(f"{where}.props", "нужен объект")
         props_raw = None
     layer["props"] = _norm_fields(props_raw or {}, PROPS[ltype], rep, f"{where}.props")
-    layer["keys"] = _norm_keys(raw.get("keys"), rep, f"{where}.keys")
+    layer["keys"] = _norm_keys(raw.get("keys"), rep, f"{where}.keys", ltype)
     layer["in"] = _norm_anim(raw.get("in"), rep, f"{where}.in", layer)
     layer["out"] = _norm_anim(raw.get("out"), rep, f"{where}.out", layer)
     loop = raw.get("loop")
@@ -1147,7 +1157,8 @@ def schema_summary() -> dict:
             "start": {"type": "number", "min": 0, "description": "секунды готового клипа"},
             "end": {"type": "number", "description": f"> start, длина ≥ {MIN_LAYER_SEC}; нет — start + {DEFAULT_LAYER_SEC}"},
             **{name: spec.describe() for name, spec in LAYER_FIELDS.items()},
-            "keys": {"type": "object", "description": "{свойство: [{t (время слоя), v, ease?}]}",
+            "keys": {"type": "object", "description": "{свойство: [{t (время слоя), v, ease?}]}; "
+                     "cropX/cropY/cropW/cropH — окно props.crop картинки (только image)",
                      "props": list(ANIMATABLE)},
             "in": Obj(ANIM).describe(),
             "out": Obj(ANIM).describe(),
