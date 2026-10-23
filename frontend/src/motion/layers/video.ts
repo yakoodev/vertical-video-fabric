@@ -22,10 +22,11 @@ const finite = (v: unknown, d: number) => (typeof v === "number" && Number.isFin
 /**
  * Секунда файла в локальное время слоя `local` (0 = start): `from + local·speed`.
  * За концом файла (`duration`, 0 — неизвестна): `loop` — снова с `from`, `freeze` (по
- * умолчанию) — последний кадр, иначе null (кадра нет).
+ * умолчанию) — последний кадр, иначе null (кадра нет). `hold` — стоп-кадр: всегда `from`.
  */
 export function videoFileTime(p: VideoProps, local: number, duration: number): number | null {
   const from = Math.max(0, finite(p.from, 0));
+  if (p.hold) return duration > 0 ? Math.min(from, Math.max(0, duration - VIDEO_TAIL)) : from;
   const speed = Math.min(VIDEO_MAX_SPEED, Math.max(VIDEO_MIN_SPEED, finite(p.speed, 1)));
   const t = from + Math.max(0, local) * speed;
   if (!(duration > 0) || t < duration - VIDEO_TAIL) return t;

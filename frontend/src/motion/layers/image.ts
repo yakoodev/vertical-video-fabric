@@ -8,7 +8,7 @@
 import { emojiFont, emojiRef } from "../fonts";
 import type { LayerState } from "../animate";
 import type { Crop, EmojiLayer, ImageLayer, ImageLike, PictureProps, RenderEnv } from "../types";
-import { drawPhone, phoneMetrics } from "./device";
+import { drawPhone, phoneMetrics, statusBarHeight } from "./device";
 import { clearShadow, drawImageLike, fillRoundRect, hasShadow, imageSize, rgba, roundRectPath, type LayerRenderer } from "./common";
 
 function imageRef(layer: ImageLayer): string {
@@ -30,7 +30,8 @@ export function screenSize(p: PictureProps, crop: Crop | null, natural: Size): S
   const sw = natural.w * c.w;
   const sh = natural.h * c.h;
   const w = Math.max(1, p.w ?? 600);
-  return { w, h: (w * sh) / Math.max(1e-6, sw) };
+  // Строка статуса телефона — полоса над содержимым: экран выше на неё, содержимое не сжато.
+  return { w, h: (w * sh) / Math.max(1e-6, sw) + statusBarHeight(p, w) };
 }
 
 /** Размер слоя-картинки/видео: экран + рамка, или корпус телефона с кнопками. */
@@ -73,7 +74,12 @@ export function drawPicture(
     ctx.restore();
   };
   if (p.device === "phone") {
-    drawPhone(ctx, s.w, s.h, { kind: "phone", radius: p.radius, color: p.deviceColor, island: p.island }, blit);
+    // Островок по умолчанию: у картинки (скриншот со строкой статуса) — да; у видео (opaque) —
+    // только со statusBar: запись экрана без строки статуса, островок лёг бы на шапку приложения.
+    const sb = statusBarHeight(p, s.w);
+    const island = p.island ?? (sb > 0 || !opaque);
+    const opts = { kind: "phone" as const, radius: p.radius, color: p.deviceColor, island, statusBar: sb, statusBarColor: p.statusBarColor, glare: p.screenGlare };
+    drawPhone(ctx, s.w, s.h, opts, blit, env.defaultFont);
     return;
   }
   if (!src) return;

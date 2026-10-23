@@ -8,6 +8,7 @@
  */
 import { clamp01, ease } from "../easing";
 import { DEFAULT_FONT, emojiFont, emojiRef, fontString, graphemes, isEmoji } from "../fonts";
+import { decorGlyph, drawDecorGlyph, type DecorGlyph } from "../glyphs";
 import type { Reveal } from "../animate";
 import type { Ctx2D, Highlight, RenderEnv, TextLayer, TextStyle } from "../types";
 import { clearShadow, drawImageLike, fillRoundRect, rgba, roundRectPath, type LayerRenderer } from "./common";
@@ -19,6 +20,8 @@ type Seg = {
   w: number;
   /** Ширина ячейки моноширинной цифры (счётчик): текст центрируется в ней. */
   cell: boolean;
+  /** Символ-декор (✦ ★ ♥ →…): рисуется путём, его нет в шрифтах (glyphs.ts). */
+  glyph?: DecorGlyph;
 };
 
 export type LaidWord = {
@@ -144,7 +147,11 @@ function layoutAt(ctx: Ctx2D, opts: TextBlockOptions, size: number, defaultFont:
     };
     const gs = graphemes(word);
     for (const g of gs) {
-      if (isEmoji(g)) {
+      const decor = decorGlyph(g);
+      if (decor) {
+        flush();
+        segs.push({ text: g, ref: null, w: size * decor.adv + ls, cell: false, glyph: decor });
+      } else if (isEmoji(g)) {
         flush();
         segs.push({ text: g, ref: emojiRef(g), w: size * 1.08 + ls, cell: false });
       } else if (digitW && DIGIT.test(g)) {
@@ -244,10 +251,57 @@ export function bgGeometry(L: TextLayout, bg: TextStyle["bg"]): BgGeom | null {
 export function textBoxSize(L: TextLayout, opts: TextBlockOptions): { w: number; h: number } {
   const g = bgGeometry(L, opts.bg);
   const stroke = opts.stroke?.width ?? 0;
-  if (!g) return { w: L.w + stroke * 2, h: L.h + stroke * 2 };
-  const top = L.lines[0].cy - Math.max(g.half, 0);
-  const bottom = L.lines[L.lines.length - 1].cy + g.half;
-  return { w: L.w + g.padX * 2 + stroke * 2, h: Math.max(L.h, bottom - top) + stroke * 2 };
+  let w = L.w + stroke * 2;
+  let h = L.h + stroke * 2;
+  if (g) {
+    const top = L.lines[0].cy - Math.max(g.half, 0);
+    const bottom = L.lines[L.lines.length - 1].cy + g.half;
+    w = L.w + g.padX * 2 + stroke * 2;
+    h = Math.max(L.h, bottom - top) + stroke * 2;
+  }
+  const d = backdropGeometry(L, opts.backdrop);
+  // Затемнение шире текста: промежуточный холст и рамка выделения должны его вмещать.
+  return d ? { w: Math.max(w, d.rx * 2), h: Math.max(h, d.ry * 2) } : { w, h };
+}
+
+/* ---------- затемнение за текстом (scrim) ---------- */
+
+/** Полуоси мягкого эллипса затемнения: текст с полями `spread` (опорн. px). */
+export function backdropGeometry(L: TextLayout, bd: TextStyle["backdrop"]): { rx: number; ry: number } | null {
+  if (!bd || (bd.opacity ?? 0.55) <= 0) return null;
+  const spread = Math.max(0, bd.spread ?? L.size * 0.9);
+  // Углы блока текста внутри эллипса: полуоси с запасом √2 по ширине строки и высоте блока.
+  return { rx: (L.w / 2) * 1.2 + spread, ry: (L.h / 2) * 1.45 + spread };
+}
+
+/**
+ * Мягкое затемнение-градиент за текстом: эллипс цвета `color`, плотный в середине и тающий
+ * к краю. Титр читается на любом фоне — и когда под него заехал наездом телефон.
+ * Своей тени не даёт (тень слоя отбрасывает текст/плашка).
+ */
+function drawBackdrop(ctx: Ctx2D, L: TextLayout, bd: NonNullable<TextStyle["backdrop"]>): void {
+  const d = backdropGeometry(L, bd);
+  if (!d) return;
+  const op = Math.max(0, Math.min(1, bd.opacity ?? 0.55));
+  const color = bd.color || "#000000";
+  const shadow = [ctx.shadowColor, ctx.shadowBlur, ctx.shadowOffsetX, ctx.shadowOffsetY] as const;
+  clearShadow(ctx);
+  ctx.save();
+  ctx.scale(1, d.ry / d.rx);
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, d.rx);
+  grad.addColorStop(0, rgba(color, op));
+  grad.addColorStop(0.5, rgba(color, op * 0.82));
+  grad.addColorStop(0.78, rgba(color, op * 0.35));
+  grad.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, d.rx, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.shadowColor = shadow[0];
+  ctx.shadowBlur = shadow[1];
+  ctx.shadowOffsetX = shadow[2];
+  ctx.shadowOffsetY = shadow[3];
 }
 
 /**
@@ -336,7 +390,7 @@ function cutSegs(segs: Seg[], n: number): Seg[] {
   let left = n;
   for (const s of segs) {
     if (left <= 0) break;
-    if (s.ref || s.cell) {
+    if (s.ref || s.cell || s.glyph) {
       out.push(s);
       left -= 1;
       continue;
@@ -358,7 +412,9 @@ type Pass = "stroke" | "fill";
 function drawSegs(ctx: Ctx2D, segs: Seg[], x: number, baseline: number, cy: number, L: TextLayout, pass: Pass, env: RenderEnv): void {
   let cx = x;
   for (const s of segs) {
-    if (s.ref) {
+    if (s.glyph) {
+      drawDecorGlyph(ctx, s.glyph, cx, s.w - L.letterSpacing, cy, L.size, pass);
+    } else if (s.ref) {
       if (pass === "fill") {
         const img = env.getImage(s.ref);
         const sz = L.size * 1.02;
@@ -402,6 +458,7 @@ export function drawTextLayout(
   // Маска rise по ширине — весь блок с запасом под обводку и эмодзи.
   const maskX = left - L.size - strokeW;
   const maskW = L.w + (L.size + strokeW) * 2;
+  if (opts.backdrop) drawBackdrop(ctx, L, opts.backdrop);
   // При пословном/побуквенном появлении плашка строки показывается вместе с её первым словом.
   if (opts.bg) {
     drawBg(ctx, L, opts.bg, left, reveal ? views.map((v) => v.some(Boolean)) : undefined);

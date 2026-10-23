@@ -117,7 +117,10 @@ def test_validate_reports_every_problem_in_russian_with_raw_indices():
 def test_limits_and_camera_normalization():
     many = [{"type": "emoji", "props": {"char": "🔥"}} for _ in range(MAX_LAYERS + 5)]
     assert len(normalize_layers(many)) == MAX_LAYERS
-    assert any("не больше 60 слоёв" in p for p in validate_layers(many))
+    assert MAX_LAYERS == 200
+    # Не молча: сколько слоёв, какие не попадут и что делать.
+    assert any(f"слоёв {MAX_LAYERS + 5}, предел {MAX_LAYERS}" in p and "НЕ попадут" in p and "particles" in p
+               for p in validate_layers(many))
 
     camera = normalize_camera(
         [

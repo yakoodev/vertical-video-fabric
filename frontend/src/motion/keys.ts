@@ -70,3 +70,8 @@ export function noise1(seed: number, x: number): number {
   const s = f * f * (3 - 2 * f);
   return lerp(hash01(seed, i), hash01(seed, i + 1), s);
 }
+
+/** Псевдослучайное число в [0, 1) от зерна и номера — частицы раскладываются одинаково в превью и рендере. */
+export function rand01(seed: number, i: number): number {
+  return Math.min(0.9999999, (hash01(seed >>> 0, i) + 1) / 2);
+}

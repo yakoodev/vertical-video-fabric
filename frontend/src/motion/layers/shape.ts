@@ -1,11 +1,12 @@
 /**
- * Фигуры: прямоугольник, эллипс, линия, стрелка, треугольник, звезда, «взрыв».
+ * Фигуры: прямоугольник, эллипс, линия, стрелка, треугольник, звезда, искра (star4), «взрыв».
  *
  * Каждая фигура строится ломаной с мелким шагом — так «рисование обводки»
  * (in/out `draw` и ключи `progress`) работает одинаково для всех форм и не
  * зависит от поддержки setLineDash/lineDashOffset у конкретного канваса.
  */
 import { clamp01 } from "../easing";
+import { sparklePoints } from "../glyphs";
 import type { ShapeLayer, Stroke } from "../types";
 import { clearShadow, partialPolyline, rgba, type LayerRenderer, type Pt } from "./common";
 
@@ -87,6 +88,9 @@ export function shapeOutline(p: ShapeLayer["props"]): Outline {
       return { pts: starPts(w, h, p.points ?? 5, 0.45, false), closed: true };
     case "burst":
       return { pts: starPts(w, h, p.points ?? 14, 0.7, true), closed: true };
+    case "star4":
+      // Четырёхлучевая искра ✦ с вогнутыми сторонами (та же форма, что у символа и частиц).
+      return { pts: sparklePoints(w / 2, h / 2), closed: true };
     case "rect":
     default:
       return { pts: rectPts(w, h, p.radius ?? 0), closed: true };

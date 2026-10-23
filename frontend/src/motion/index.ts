@@ -4,7 +4,7 @@
  */
 export * from "./types";
 export { EASINGS, EASING_NAMES, DEFAULT_EASE, ease, easingFn, cubicBezier, clamp, clamp01, lerp } from "./easing";
-export { interpolateKeys, noise1, hashString } from "./keys";
+export { interpolateKeys, noise1, hashString, rand01 } from "./keys";
 export {
   resolveLayer,
   clampCrop,
@@ -30,9 +30,20 @@ export {
 export { drawFrame, drawLayer, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs, collectVideoLayers } from "./assets";
-export { invalidateTextCache, layoutText, type TextLayout } from "./layers/text";
+export { invalidateTextCache, layoutText, textBoxSize, backdropGeometry, type TextLayout } from "./layers/text";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
-export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, phoneMetrics, type PhoneMetrics } from "./layers/device";
+export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, phoneMetrics, statusBarHeight, type PhoneMetrics } from "./layers/device";
+export {
+  PARTICLE_KINDS,
+  PARTICLE_SHAPES,
+  PARTICLE_DEFAULTS,
+  MAX_PARTICLES,
+  DEFAULT_PARTICLE_COLORS,
+  particlesAt,
+  particleSeed,
+  type Particle,
+} from "./layers/particles";
+export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, type DecorGlyph } from "./glyphs";
 export { formatCounter, counterValue } from "./layers/counter";
 export { DEFAULT_PALETTE } from "./layers/chart";
 export {

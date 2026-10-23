@@ -4,11 +4,13 @@
  * загрузку и перерисовывает кадр, когда картинка пришла.
  */
 import { emojiRef, graphemes, isEmoji } from "./fonts";
+import { decorGlyph } from "./glyphs";
 import type { Layer, VideoLayer } from "./types";
 
 function emojiIn(text: string | undefined, out: Set<string>): void {
   if (!text) return;
-  for (const g of graphemes(text)) if (isEmoji(g)) out.add(emojiRef(g));
+  // Символы-декор (♥ ✔ ▶…) рисуются путями — картинка Twemoji им не нужна.
+  for (const g of graphemes(text)) if (isEmoji(g) && !decorGlyph(g)) out.add(emojiRef(g));
 }
 
 /** Все ссылки на картинки: asset_id, `sticker:…`, `emoji:…` (в том числе эмодзи внутри текста). */
@@ -24,6 +26,11 @@ export function collectImageRefs(layers: Layer[]): string[] {
       case "emoji":
         if (layer.props.char) out.add(emojiRef(layer.props.char));
         break;
+      case "particles": {
+        const ref = layer.props.asset_id || layer.props.src;
+        if (ref) out.add(String(ref));
+        break;
+      }
       case "text":
         emojiIn(layer.props.text, out);
         break;

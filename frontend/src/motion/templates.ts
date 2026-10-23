@@ -1061,6 +1061,45 @@ const phoneScreen: MotionTemplate = {
   },
 };
 
+/** Частицы одним слоем: на кульминации вместо десятков слоёв-звёздочек. */
+const particlesTpl: MotionTemplate = {
+  id: "particles",
+  name: "Искры и конфетти",
+  category: "Акценты",
+  description: "Один слой частиц: разлёт искр (burst), мерцание звёздочек (sparkle), конфетти или искорки вверх (rise)",
+  duration: 2,
+  params: [
+    { name: "kind", label: "Вид", type: "select", default: "burst", options: ["burst", "sparkle", "confetti", "rise"] },
+    { name: "color", label: "Цвет", type: "color", default: YELLOW },
+    { name: "count", label: "Сколько", type: "number", default: 60, min: 1, max: 200 },
+    { name: "y", label: "Высота", type: "number", default: 0.45, min: 0, max: 1 },
+    durationParam(2),
+  ],
+  build(p, at) {
+    const kind = (["burst", "sparkle", "confetti", "rise"] as const).find((k) => k === str(p, "kind", "burst")) ?? "burst";
+    const len = dur(p, 2);
+    const confetti = kind === "confetti";
+    return {
+      layers: [
+        layer(
+          "particles",
+          { start: at, end: at + len, track: 2, y: confetti ? 0.5 : num(p, "y", 0.45), name: "Частицы", out: { type: "fade", duration: 0.3 } },
+          {
+            kind,
+            count: Math.max(1, Math.min(200, Math.round(num(p, "count", 60)))),
+            colors: confetti ? [str(p, "color", YELLOW), "#FF2D55", "#22D3EE", "#ffffff"] : [str(p, "color", YELLOW), "#ffffff"],
+            shape: confetti ? "square" : kind === "rise" ? "dot" : "star4",
+            size: confetti ? 26 : kind === "rise" ? 16 : 34,
+            spread: confetti ? 560 : kind === "burst" ? 420 : 380,
+            duration: kind === "burst" ? Math.min(1.4, len) : confetti ? Math.max(1.5, len) : 1.6,
+            glow: !confetti,
+          },
+        ),
+      ],
+    };
+  },
+};
+
 const newsTicker: MotionTemplate = {
   id: "news-ticker",
   name: "Бегущая строка",
@@ -1168,6 +1207,7 @@ export const TEMPLATES: MotionTemplate[] = [
   boom,
   top3,
   phoneScreen,
+  particlesTpl,
 ];
 
 export function getTemplate(id: string): MotionTemplate | undefined {
