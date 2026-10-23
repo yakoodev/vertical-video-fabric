@@ -1,0 +1,756 @@
+{
+ "_about": "Клип 575 — промо Collabika, собранное Gemini в проверочном прогоне (рендер 301: -16.2 LUFS, -7.2 dBTP). Урезанная копия spec: слои, фон холста, музыка.",
+ "clip_id": 575,
+ "duration": 24.0,
+ "render": {
+  "music_on": true,
+  "track_id": 20,
+  "music_start_sec": 0.0,
+  "backdrop": {
+   "kind": "aurora",
+   "colors": [
+    "#0b1018",
+    "#ff6a1f",
+    "#bda7f7"
+   ],
+   "speed": 1.0,
+   "intensity": 0.8
+  },
+  "camera": [],
+  "aspect": "9:16",
+  "layers": [
+   {
+    "id": "l_b9e706",
+    "type": "text",
+    "start": 0.0,
+    "end": 18.5,
+    "track": 6,
+    "x": 0.5,
+    "y": 0.15,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "НАЙДИ НАПАРНИКА\nЗА ПАРУ СВАЙПОВ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 65.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.1,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": {
+      "words": [
+       0,
+       4
+      ],
+      "color": "#ff6a1f",
+      "bg": null
+     },
+     "backdrop": {
+      "color": "#000000",
+      "opacity": 0.55
+     }
+    },
+    "in": {
+     "type": "rise",
+     "duration": 1.0
+    }
+   },
+   {
+    "id": "l_a7ed49",
+    "type": "text",
+    "start": 0.5,
+    "end": 3.6,
+    "track": 7,
+    "x": 0.5,
+    "y": 0.28,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "ЛИСТАЙ ЛЕНТУ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 55.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": {
+      "color": "#0b1018",
+      "opacity": 0.9,
+      "radius": 16.0,
+      "padX": 20.0,
+      "padY": 10.0
+     },
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": null
+    },
+    "in": {
+     "type": "rise",
+     "duration": 0.5
+    }
+   },
+   {
+    "id": "l_115f49",
+    "type": "text",
+    "start": 3.6,
+    "end": 6.2,
+    "track": 7,
+    "x": 0.5,
+    "y": 0.28,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "СМОТРИ КЛИПЫ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 55.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": {
+      "color": "#0b1018",
+      "opacity": 0.9,
+      "radius": 16.0,
+      "padX": 20.0,
+      "padY": 10.0
+     },
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": null
+    },
+    "in": {
+     "type": "rise",
+     "duration": 0.5
+    }
+   },
+   {
+    "id": "l_2778ef",
+    "type": "text",
+    "start": 6.2,
+    "end": 9.2,
+    "track": 7,
+    "x": 0.5,
+    "y": 0.28,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "ЖМИ И ЗОВИ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 55.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": {
+      "color": "#0b1018",
+      "opacity": 0.9,
+      "radius": 16.0,
+      "padX": 20.0,
+      "padY": 10.0
+     },
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": null
+    },
+    "in": {
+     "type": "rise",
+     "duration": 0.5
+    }
+   },
+   {
+    "id": "l_630888",
+    "type": "text",
+    "start": 9.2,
+    "end": 14.3,
+    "track": 7,
+    "x": 0.5,
+    "y": 0.28,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "И СОЗДАВАЙ\nКОЛЛАБЫ!",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 55.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": {
+      "color": "#ff6a1f",
+      "opacity": 1.0,
+      "radius": 16.0,
+      "padX": 20.0,
+      "padY": 10.0
+     },
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": null
+    },
+    "in": {
+     "type": "pop",
+     "duration": 0.4
+    }
+   },
+   {
+    "id": "l_6d383e",
+    "type": "text",
+    "start": 18.7,
+    "end": 24.0,
+    "track": 6,
+    "x": 0.5,
+    "y": 0.65,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "СТАРТ ПОИСКА\n1 НОЯБРЯ",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 75.0,
+     "color": "#ffffff",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": {
+      "words": [
+       2,
+       3
+      ],
+      "color": "#ff6a1f",
+      "bg": null
+     }
+    },
+    "in": {
+     "type": "rise",
+     "duration": 0.6
+    }
+   },
+   {
+    "id": "l_1af6db",
+    "type": "text",
+    "start": 19.5,
+    "end": 24.0,
+    "track": 7,
+    "x": 0.5,
+    "y": 0.76,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "text": "Регистрация открыта:\nt.me/Collabikabot",
+     "font": "Nunito",
+     "weight": 900,
+     "size": 50.0,
+     "color": "#bda7f7",
+     "gradient": null,
+     "stroke": null,
+     "bg": null,
+     "align": "center",
+     "maxWidth": 920.0,
+     "lineHeight": 1.15,
+     "letterSpacing": 0.0,
+     "uppercase": false,
+     "italic": false,
+     "highlight": null
+    },
+    "in": {
+     "type": "fade",
+     "duration": 0.6
+    }
+   },
+   {
+    "id": "l_aef445",
+    "type": "video",
+    "start": 0.0,
+    "end": 3.8,
+    "track": 1,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "147",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 2.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 0.5
+      },
+      {
+       "t": 3.4,
+       "v": 0.5,
+       "ease": "inQuad"
+      },
+      {
+       "t": 3.8,
+       "v": -0.5
+      }
+     ]
+    },
+    "in": {
+     "type": "slideUp",
+     "duration": 0.5
+    }
+   },
+   {
+    "id": "l_6ca6c3",
+    "type": "video",
+    "start": 3.4,
+    "end": 6.4,
+    "track": 2,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "148",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 0.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.4,
+       "v": 0.5,
+       "ease": "outQuad"
+      },
+      {
+       "t": 2.6,
+       "v": 0.5,
+       "ease": "inQuad"
+      },
+      {
+       "t": 3.0,
+       "v": -0.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "l_2a2b06",
+    "type": "video",
+    "start": 6.0,
+    "end": 9.4,
+    "track": 1,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "149",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 0.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.4,
+       "v": 0.5,
+       "ease": "outQuad"
+      },
+      {
+       "t": 3.0,
+       "v": 0.5,
+       "ease": "inQuad"
+      },
+      {
+       "t": 3.4,
+       "v": -0.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "l_9d83e1",
+    "type": "video",
+    "start": 9.0,
+    "end": 14.5,
+    "track": 2,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "150",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 2.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "scale": [
+      {
+       "t": 0.0,
+       "v": 1.0
+      },
+      {
+       "t": 1.5,
+       "v": 1.0,
+       "ease": "outCubic"
+      },
+      {
+       "t": 2.0,
+       "v": 1.2
+      }
+     ],
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.4,
+       "v": 0.5,
+       "ease": "outQuad"
+      },
+      {
+       "t": 5.1,
+       "v": 0.5,
+       "ease": "inQuad"
+      },
+      {
+       "t": 5.5,
+       "v": -0.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "l_15ad17",
+    "type": "video",
+    "start": 14.1,
+    "end": 19.0,
+    "track": 1,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "151",
+     "w": 580.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false,
+     "device": "phone",
+     "statusBar": 0.14,
+     "screenGlare": true,
+     "from": 0.0,
+     "speed": 1.0,
+     "loop": false,
+     "freeze": true
+    },
+    "keys": {
+     "x": [
+      {
+       "t": 0.0,
+       "v": 1.5
+      },
+      {
+       "t": 0.4,
+       "v": 0.5,
+       "ease": "outQuad"
+      },
+      {
+       "t": 4.4,
+       "v": 0.5,
+       "ease": "inQuad"
+      },
+      {
+       "t": 4.9,
+       "v": -0.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "l_e36211",
+    "type": "image",
+    "start": 18.5,
+    "end": 24.0,
+    "track": 3,
+    "x": 0.5,
+    "y": 0.35,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "152",
+     "src": null,
+     "w": 500.0,
+     "radius": 0.0,
+     "border": null,
+     "crop": null,
+     "flipX": false
+    },
+    "in": {
+     "type": "pop",
+     "duration": 0.4
+    },
+    "loop": {
+     "type": "float",
+     "speed": 1.0,
+     "amount": 0.5
+    }
+   },
+   {
+    "id": "l_f89ed8",
+    "type": "particles",
+    "start": 11.0,
+    "end": 14.5,
+    "track": 5,
+    "x": 0.5,
+    "y": 0.57,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "kind": "burst",
+     "count": 60,
+     "colors": [
+      "#ff6a1f",
+      "#bda7f7",
+      "#ffffff"
+     ],
+     "shape": "star4",
+     "size": 40.0,
+     "spread": 400.0,
+     "repeat": false
+    }
+   },
+   {
+    "id": "l_85c05b",
+    "type": "audio",
+    "start": 3.4,
+    "end": 5.0,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/whoosh-soft.ogg",
+     "volume": 0.4,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_f7e461",
+    "type": "audio",
+    "start": 6.0,
+    "end": 7.6,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/whoosh-soft.ogg",
+     "volume": 0.4,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_9f4e4e",
+    "type": "audio",
+    "start": 9.0,
+    "end": 10.6,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/whoosh-soft.ogg",
+     "volume": 0.4,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_80e528",
+    "type": "audio",
+    "start": 14.1,
+    "end": 15.7,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/whoosh-soft.ogg",
+     "volume": 0.4,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_216e23",
+    "type": "audio",
+    "start": 18.5,
+    "end": 20.1,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/whoosh-soft.ogg",
+     "volume": 0.4,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_05b929",
+    "type": "audio",
+    "start": 11.0,
+    "end": 12.0,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/pop-soft.ogg",
+     "volume": 0.6,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   },
+   {
+    "id": "l_fd23f1",
+    "type": "audio",
+    "start": 18.7,
+    "end": 21.0,
+    "track": 0,
+    "x": 0.5,
+    "y": 0.5,
+    "scale": 1.0,
+    "opacity": 1.0,
+    "props": {
+     "asset_id": "sfx:freesound/impact-low.ogg",
+     "volume": 0.5,
+     "fadeIn": 0.0,
+     "fadeOut": 0.0,
+     "offset": 0.0,
+     "duck": false
+    }
+   }
+  ]
+ },
+ "asset_sizes": {
+  "147": [
+   1170,
+   2532
+  ],
+  "148": [
+   1170,
+   2532
+  ],
+  "149": [
+   1170,
+   2532
+  ],
+  "150": [
+   1170,
+   2532
+  ],
+  "151": [
+   1170,
+   2532
+  ],
+  "152": [
+   2048,
+   1356
+  ]
+ }
+}

@@ -3825,7 +3825,7 @@ async def _save_audio_upload(file: UploadFile, label: str, volume: float = 0.25)
         duration_sec = probe_media(dest).duration_sec
     except ValueError:
         pass
-    return store.create_audio_track(
+    track = store.create_audio_track(
         label,
         dest,
         original_filename=safe_name,
@@ -3833,6 +3833,12 @@ async def _save_audio_upload(file: UploadFile, label: str, volume: float = 0.25)
         duration_sec=duration_sec,
         volume=volume,
     )
+    # Где у трека энергия (старт громкой части, дроп, темп) — сразу, в потоке, не держа цикл.
+    import asyncio
+
+    from app.music_energy import mark_track
+
+    return await asyncio.to_thread(mark_track, store, track)
 
 
 def _payload_data(payload: BaseModel, exclude: set[str] | None = None, exclude_none: bool = False) -> dict:

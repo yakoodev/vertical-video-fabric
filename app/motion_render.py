@@ -804,7 +804,9 @@ def build_audio_layers_args(
     for n, item in enumerate(usable, start=1):
         props = item["layer"]["props"]
         length = item["len"]
-        chain = [f"[{n}:a]aresample=48000", "asetpts=PTS-STARTPTS",
+        # Звуки пака — моно: без стерео на входе amix сводил ВСЁ в моно (клип 575: музыка
+        # потеряла стерео, а громкость потом мерилась уже по моно-дорожке).
+        chain = [f"[{n}:a]aresample=48000", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS",
                  f"volume={effect_volume(item['path'], props.get('volume', 1), speech_db, speechless):.4f}"]
         fade_in = min(float(props.get("fadeIn") or 0), length)
         if fade_in > 0:

@@ -350,6 +350,12 @@ class Database:
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_stream", "INTEGER")
             self._ensure_column(conn, "ffmpeg_presets", "audio_secondary_volume", "REAL NOT NULL DEFAULT 1")
             self._ensure_column(conn, "audio_tracks", "volume", "REAL NOT NULL DEFAULT 0.25")
+            # Где у трека энергия (app/music_energy.py): старт громкой части, дроп, темп;
+            # energy_version 0 — ещё не размечен (разметится лениво при первом запросе).
+            self._ensure_column(conn, "audio_tracks", "energy_start_sec", "REAL")
+            self._ensure_column(conn, "audio_tracks", "drop_sec", "REAL")
+            self._ensure_column(conn, "audio_tracks", "bpm", "REAL")
+            self._ensure_column(conn, "audio_tracks", "energy_version", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "ffmpeg_presets", "music_track_id", "INTEGER REFERENCES audio_tracks(id)")
             self._ensure_column(conn, "ffmpeg_presets", "music_volume", "REAL NOT NULL DEFAULT 0.25")
             self._ensure_column(conn, "ffmpeg_presets", "music_loop", "INTEGER NOT NULL DEFAULT 1")

@@ -35,6 +35,7 @@ from app import motion
 from app.clip_settings import normalize_render_settings
 from app.backgrounds import BACKGROUND_KINDS as BG_KINDS
 from app.canvas import is_canvas
+from app.promo_lint import has_device_layers, promo_warnings
 
 # Стили фона для подсказок инструментов (app/backgrounds.py).
 BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (неоновая перспективная сетка) | bokeh (блики) | "
@@ -254,6 +255,24 @@ def _camera_of(render: dict) -> list[dict]:
     return [dict(key) for key in camera] if isinstance(camera, list) else []
 
 
+def _lint_scene(ctx: ToolContext, render: dict) -> dict:
+    """Что нужно линту кроме слоёв: раскладка, холст, его фон (контраст финала) и камера (followCamera)."""
+    canvas = _source_canvas(ctx)
+    scene = {"layout": render.get("layout"), "canvas": canvas, "camera": _camera_of(render),
+             "backdrop": render.get("backdrop") if canvas else None}
+    layers = _layers_of(render)
+    if canvas or has_device_layers(layers):
+        # Пропорции картинок и записей экрана из библиотеки — для геометрии правил промо.
+        wanted = {str((l.get("props") or {}).get("asset_id")) for l in layers if l.get("type") in ("image", "video")}
+        try:
+            scene["sizes"] = {str(a["id"]): (a.get("width"), a.get("height"))
+                              for a in ctx.store.list_montage_assets() if str(a["id"]) in wanted
+                              and a.get("width") and a.get("height")}
+        except Exception:  # noqa: BLE001 - без размеров линт берёт обычные пропорции
+            pass
+    return scene
+
+
 # --------------------------------------------------------------------------- #
 # Слои: нормализация, проверка и «ремесленные» предупреждения
 # --------------------------------------------------------------------------- #
@@ -451,6 +470,8 @@ def is_decor_layer(layer: dict, canvas: bool = False) -> bool:
         return True
     if kind in ("image", "video"):
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        if canvas and props.get("device") == "phone":
+            return True  # телефон на холсте — сама сцена промо (на смене сцен их два), а не графика поверх
         width = (_num(props.get("w"), 600.0) or 0.0) * (_num(layer.get("scale"), 1.0) or 0.0)
         if width >= 0.9 * 1080 and (canvas or (_num(layer.get("opacity"), 1.0) or 0.0) <= 0.6):
             return True
@@ -458,13 +479,16 @@ def is_decor_layer(layer: dict, canvas: bool = False) -> bool:
 
 
 def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None,
-                layout: dict | None = None, canvas: bool = False) -> list[str]:
+                layout: dict | None = None, canvas: bool = False, backdrop: dict | None = None,
+                camera: list | None = None, sizes: dict | None = None) -> list[str]:
     """Предупреждения ремесла (не ошибки): безопасные зоны, перегруз, мелкий текст.
 
     Не блокируют правку — модель (или человек) решает сама, но видит, где
     интерфейс площадки закроет титр или экран превратился в кашу. ``layout`` — раскладка
     клипа: в split текст на полосе вебки ложится на лицо стримера. ``canvas`` — клип-холст
-    (промо): картинки во всю ширину там фон и в перегруз не идут.
+    (промо): картинки во всю ширину там фон и в перегруз не идут. На холсте и с телефоном
+    (device) — ещё правила промо (app/promo_lint.py): ``backdrop`` — фон холста для
+    контраста финального текста, ``camera`` — наезд для слоёв followCamera.
     """
     warnings: list[str] = []
     strip = cam_strip(layout)
@@ -523,6 +547,12 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
     warnings.extend(caption_overlap_warnings(visible, only_ids))
+    promo = promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera, sizes=sizes)
+    if promo:
+        # Мелкий шрифт финала сказан правилом промо (про CTA) — общее «мелковат» не дублируем.
+        final_small = {w.split(":", 1)[0] for w in promo if "в финале шрифт" in w}
+        warnings = [w for w in warnings if not (w.split(":", 1)[0] in final_small and "мелковат" in w)]
+        warnings.extend(promo)
     return list(dict.fromkeys(warnings))
 
 
@@ -703,6 +733,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "subtitle_zone": _subtitle_zone(render),
             "banner_on": render.get("banner_on"),
             "music_on": render.get("music_on"),
+            "track_id": render.get("track_id") if render.get("music_on") else None,
+            "music_start_sec": render.get("music_start_sec") or 0.0,
             "mirror": render.get("mirror"),
             "transition": render.get("transition"),
             "cover": (render.get("cover") or {}).get("mode"),
@@ -818,8 +850,8 @@ def short_clip_warning(finished_sec: float) -> str | None:
 
 
 def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -> list[str]:
-    layout = (timeline.get("render") or {}).get("layout")
-    warnings = lint_layers(layers, timeline["duration"], layout=layout, canvas=_source_canvas(ctx)) if layers else []
+    scene = _lint_scene(ctx, timeline.get("render") or {})
+    warnings = lint_layers(layers, timeline["duration"], **scene) if layers else []
     from app.cuts import CutMap, normalize_cuts
 
     cut_list = normalize_cuts((timeline.get("render") or {}).get("cuts"))
@@ -854,7 +886,29 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
     if layout.get("mode") in ("split", "pip_cam"):
         source = ctx.store.get_source(int(plan["source_id"]))
         warnings.extend(f"Раскладка: {w}" for w in facecam_warnings(layout, source))
+    music = _music_warning(ctx, timeline.get("render") or {})
+    if music:
+        warnings.append(music)
     return warnings
+
+
+def _music_warning(ctx: ToolContext, render: dict) -> str | None:
+    """Промо под тихое вступление трека: «Бодрый фон» с 0 с — барабаны только с 10 с."""
+    if not render.get("music_on") or not render.get("track_id") or not _is_promo(ctx, render):
+        return None
+    from app.music_energy import ensure_energy, quiet_intro_sec
+
+    try:
+        [track] = ensure_energy(ctx.store, [ctx.store.get_audio_track(int(render["track_id"]))])
+    except (KeyError, ValueError, TypeError):
+        return None
+    start = float(render.get("music_start_sec") or 0.0)
+    quiet = quiet_intro_sec(track, start)
+    if not quiet:
+        return None
+    energy = float(track["energy_start_sec"])
+    return (f"Музыка: первые {quiet:g} с музыки тихие (вступление трека, энергичная часть с {energy:g} с) — "
+            f"set_music(start_sec={energy:g})")
 
 
 def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
@@ -1371,8 +1425,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "added": [{"id": l.get("id"), "summary": _layer_summary(l)} for l in added],
         "layers_total": len(layers),
         "layers_limit": motion.MAX_LAYERS,
-        "warnings": lint_layers(layers, duration, only_ids=new_ids, layout=fresh.get("layout"),
-                                canvas=_source_canvas(ctx))
+        "warnings": lint_layers(layers, duration, only_ids=new_ids, **_lint_scene(ctx, fresh))
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
         + _layers_room_warning(len(layers)),
     }
@@ -1428,8 +1481,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     return {"ok": True, "layer": saved,
-            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, layout=fresh.get("layout"),
-                                    canvas=_source_canvas(ctx))}
+            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))}
 
 
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
@@ -2012,12 +2064,34 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_list_music(ctx: ToolContext, _args: dict) -> dict:
-    """Фоновая музыка сервиса (пак CC0 + загруженная владельцем)."""
+    """Фоновая музыка сервиса (пак CC0 + загруженная владельцем) с отметками энергии."""
+    from app.music_energy import energy_view, ensure_energy
+
     tracks = [
-        {"id": t["id"], "label": t.get("label") or "", "duration": round(float(t.get("duration_sec") or 0), 1)}
-        for t in ctx.store.list_audio_tracks()
+        {"id": t["id"], "label": t.get("label") or "", "duration": round(float(t.get("duration_sec") or 0), 1),
+         **energy_view(t)}
+        for t in ensure_energy(ctx.store)  # старые треки размечаются лениво, по одному
     ]
-    return {"tracks": tracks, "note": "громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь"}
+    return {"tracks": tracks,
+            "note": ("громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь. "
+                     "energy_start_sec — с какой секунды трек звучит в полную силу (до неё тихое вступление), "
+                     "drop_sec — самый сильный подъём, bpm — темп. Промо/холст: set_music(start_sec=energy_start_sec)")}
+
+
+def _music_track_hint(track: dict, start: float, promo: bool) -> dict:
+    """Отметки трека и подсказка «пропусти тихое вступление» (start_sec не меняем сами)."""
+    from app.music_energy import energy_view, quiet_intro_sec
+
+    out: dict = {}
+    marks = energy_view(track)
+    if marks:
+        out["track_energy"] = marks
+    quiet = quiet_intro_sec(track, start)
+    if quiet and promo:
+        energy = marks.get("energy_start_sec")
+        out["hint"] = (f"первые {quiet:g} с трека тихие — энергичная часть с {energy:g} с: "
+                       f"set_music(start_sec={energy:g})")
+    return out
 
 
 def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
@@ -2096,8 +2170,19 @@ def h_set_music(ctx: ToolContext, args: dict) -> dict:
             raise ToolError(f"start_sec {start:g} — за концом трека ({length:g} с)")
     fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id"),
                                "music_start_sec": start})
-    return {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"],
-            "music_start_sec": fresh["music_start_sec"]}
+    out = {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"],
+           "music_start_sec": fresh["music_start_sec"]}
+    if on:
+        from app.music_energy import ensure_energy
+
+        [track] = ensure_energy(ctx.store, [track])
+        out.update(_music_track_hint(track, float(fresh["music_start_sec"] or 0.0), _is_promo(ctx, fresh)))
+    return out
+
+
+def _is_promo(ctx: ToolContext, render: dict) -> bool:
+    """Промо: клип-холст или в слоях есть телефон (device) — там музыка с тихим вступлением мешает."""
+    return _source_canvas(ctx) or has_device_layers(_layers_of(render))
 
 
 def h_set_aspect(ctx: ToolContext, args: dict) -> dict:
@@ -3596,7 +3681,8 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "list_music", "Смотрю фоновую музыку",
-            "Треки фоновой музыки (id, название, длина). / Background music tracks.",
+            "Треки фоновой музыки (id, название, длина; energy_start_sec — где кончается тихое вступление, "
+            "drop_sec — самый сильный подъём, bpm — темп). / Background music tracks with energy marks.",
             _obj({}), h_list_music, scope="global",
         ),
         Tool(
@@ -3650,9 +3736,9 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_music", "Подкладываю музыку",
             "Фоновая музыка клипа: on, track_id (list_music), start_sec — с какой секунды трека играть на 0 с "
-            "клипа (пропустить тихое вступление и начать сразу с барабанов/дропа; 0 — с начала, новый трек без "
-            "start_sec — с начала). Громкость сама: заметно тише голоса и приглушается под речь; эффекты при "
-            "музыке — реже. / Background music for the clip.",
+            "клипа (пропустить тихое вступление и начать сразу с барабанов/дропа — energy_start_sec трека из "
+            "list_music; 0 — с начала, новый трек без start_sec — с начала). Громкость сама: заметно тише "
+            "голоса и приглушается под речь; эффекты при музыке — реже. / Background music for the clip.",
             _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"},
                   "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа"}}),
             h_set_music, mutating=True,
