@@ -51,7 +51,13 @@ VALID_BANNER_POSITIONS = {"top", "center", "bottom", "custom"}
 VALID_COLOR_STYLES = {"none", "warm", "cold", "cinematic", "vibrant", "noir", "vintage"}
 VALID_CLIP_STATUSES = {"queued", "rendering", "succeeded", "failed"}
 CSS_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+# Кусок, который предлагает анализ (ИИ-хайлайт): короче 5 с — не момент, а обрывок.
 MIN_SEGMENT_DURATION_SEC = 5
+# Кусок ручного монтажа (create_clip, файл клипа, редактор): рендеру длина куска не важна —
+# переход между кусками и так не берёт больше 40% куска (app/transitions.plan_joins), а
+# вырезы и без того дают части короче 5 с. Клипы 583–585: широкий баннер «ЧЕМПИОН» отдельным
+# куском в 1.5–3 с запрещали 5 с анализа.
+MIN_PIECE_DURATION_SEC = 1.5
 MAX_SEGMENT_DURATION_SEC = 180
 
 
@@ -1300,14 +1306,18 @@ class AppStore:
             "ai_segments": int(segment_cur.rowcount or 0),
         }
 
-    def create_ai_segment(self, analysis_id: int, segment: dict[str, Any]) -> dict:
-        return self.create_ai_segments(analysis_id, [segment])[0]
+    def create_ai_segment(self, analysis_id: int, segment: dict[str, Any],
+                          min_duration: float = MIN_SEGMENT_DURATION_SEC) -> dict:
+        return self.create_ai_segments(analysis_id, [segment], min_duration=min_duration)[0]
 
-    def create_ai_segments(self, analysis_id: int, segments: list[dict[str, Any]]) -> list[dict]:
+    def create_ai_segments(self, analysis_id: int, segments: list[dict[str, Any]],
+                           min_duration: float = MIN_SEGMENT_DURATION_SEC) -> list[dict]:
+        """Куски анализа; ``min_duration`` — ручной монтаж передаёт MIN_PIECE_DURATION_SEC."""
         analysis = self.get_ai_analysis(analysis_id)
         source = self.get_source(analysis["source_id"])
         normalized = [
-            _normalize_segment(segment, source_duration=float(source["duration_sec"]), sort_order=idx)
+            _normalize_segment(segment, source_duration=float(source["duration_sec"]), sort_order=idx,
+                               min_duration=min_duration)
             for idx, segment in enumerate(segments)
         ]
         created: list[dict] = []
@@ -1390,6 +1400,8 @@ class AppStore:
         return self.get_ai_segment(segment_id)
 
     def update_ai_segment_timecodes(self, segment_id: int, start_sec: float, end_sec: float) -> dict:
+        """Новые таймкоды куска — правка руками (файл клипа, trim_piece, край в редакторе): минимум
+        MIN_PIECE_DURATION_SEC, а не 5 с анализа."""
         segment = self.get_ai_segment(segment_id)
         source = self.get_source(segment["source_id"])
         normalized = _normalize_segment(
@@ -1400,6 +1412,7 @@ class AppStore:
             },
             source_duration=float(source["duration_sec"]),
             sort_order=int(segment["sort_order"]),
+            min_duration=MIN_PIECE_DURATION_SEC,
         )
         self._update_record(
             "ai_segments",
@@ -1549,6 +1562,7 @@ class AppStore:
                 "color": plan["color"] or "#22D3EE",
                 "reason": "Created from the clip file.",
             },
+            min_duration=MIN_PIECE_DURATION_SEC,
         )
 
     def segment_plan_count(self, segment_id: int) -> int:
@@ -1799,6 +1813,7 @@ class AppStore:
                 "color": plan["color"] or "#22D3EE",
                 "reason": "Created in studio preview.",
             },
+            min_duration=MIN_PIECE_DURATION_SEC,
         )
         next_order = len(plan["segments"])
         self.db.execute(
@@ -2950,7 +2965,8 @@ def _remove_files_within(paths: Iterable[str], root: Path) -> int:
     return removed
 
 
-def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_order: int) -> dict:
+def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_order: int,
+                       min_duration: float = MIN_SEGMENT_DURATION_SEC) -> dict:
     start_sec = float(segment.get("start_sec", 0))
     end_sec = float(segment.get("end_sec", 0))
     if start_sec < 0:
@@ -2958,8 +2974,8 @@ def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_ord
     if end_sec <= start_sec:
         raise ValueError("segment end_sec must be greater than start_sec")
     duration = end_sec - start_sec
-    if duration < MIN_SEGMENT_DURATION_SEC:
-        raise ValueError(f"segment duration must be at least {MIN_SEGMENT_DURATION_SEC} seconds")
+    if duration < float(min_duration) - 1e-6:
+        raise ValueError(f"segment duration must be at least {min_duration:g} seconds")
     if duration > MAX_SEGMENT_DURATION_SEC:
         raise ValueError(f"segment duration must be at most {MAX_SEGMENT_DURATION_SEC} seconds")
     if source_duration > 0 and end_sec > source_duration:

@@ -11,7 +11,7 @@ import { BackdropStrip, canvasLabel } from "@/pages/workspace/canvasClip";
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const SNAP_PX = 7;
 const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
-const MIN_PIECE = 5; // как в clip_spec.py
+const MIN_PIECE = 1.5; // как в clip_spec.py (MIN_PIECE_DURATION_SEC)
 const MIN_INSERT = 0.3;
 const MIN_LAYER = 0.1;
 /** Заглушённый отрезок короче — не отрезок, а случайный клик по дорожке. */

@@ -5075,7 +5075,7 @@ DISCOVERY_TOOLS = [
     Tool(
         "create_clip", "Создаю клип",
         "Новый клип проекта из кусков исходника: title, pieces [{start_sec, end_sec, title?}] "
-        "(каждый 5–180 с, до 12; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
+        "(каждый 1.5–180 с, до 12; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
         _obj({"project_id": {"type": "integer"}, "title": {"type": "string"}, "description": {"type": "string"},
               "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},

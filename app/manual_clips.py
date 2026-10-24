@@ -168,8 +168,11 @@ def create_manual_clip(store: Any, source_id: int, title: str, pieces: list[dict
             "title": str(piece.get("title") or f"{title} — {index}")[:100],
             "reason": "выбрал агент по расшифровке",
         })
+    from app.store import MIN_PIECE_DURATION_SEC
+
     analysis = _manual_analysis(store, source_id)
-    created = store.create_ai_segments(analysis["id"], segments)
+    # Ручной монтаж: куски от 1.5 с (короткий кадр-баннер), а не 5 с хайлайтов анализа.
+    created = store.create_ai_segments(analysis["id"], segments, min_duration=MIN_PIECE_DURATION_SEC)
     plan = store.create_clip_plan(
         source_id, analysis["id"], title, description=str(description or "")[:2000],
         segment_ids=[seg["id"] for seg in created],

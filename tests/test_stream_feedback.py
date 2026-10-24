@@ -498,6 +498,38 @@ def test_piece_fields_are_start_sec_end_sec_everywhere(tmp_path, monkeypatch):
     assert render["preset_id"] is not None and render["effective_preset"]["id"] == render["preset_id"]
 
 
+def test_manual_pieces_from_1_5_sec_but_analysis_keeps_5(tmp_path, monkeypatch):
+    """Клипы 583–585: широкий баннер «ЧЕМПИОН» отдельным куском запрещали 5 с. Рендеру длина
+    куска не важна (переход ≤ 40% куска) — ручной монтаж от 1.5 с, хайлайты анализа — от 5 с."""
+    from app.store import MIN_PIECE_DURATION_SEC, MIN_SEGMENT_DURATION_SEC
+    from app.transitions import normalize_transition, plan_joins
+
+    assert (MIN_PIECE_DURATION_SEC, MIN_SEGMENT_DURATION_SEC) == (1.5, 5)
+    store, _service, plan, _preset = _two_pieces(tmp_path, monkeypatch)
+    created, ok = run_tool(_ctx(store), "create_clip", {"project_id": plan["source_id"], "title": "Чемпион",
+                                                       "pieces": [{"start_sec": 20, "end_sec": 28},
+                                                                  {"start_sec": 28, "end_sec": 29.5}]})
+    assert ok, created
+    assert [round(s["end_sec"] - s["start_sec"], 2) for s in store.get_clip_plan(created["clip_id"])["segments"]] \
+        == [8.0, 1.5]
+    bad, ok = run_tool(_ctx(store), "create_clip", {"project_id": plan["source_id"], "title": "Мало",
+                                                   "pieces": [{"start_sec": 20, "end_sec": 21.2}]})
+    assert not ok and "1.5" in bad["error"]
+    # Подрезка и файл клипа — тот же минимум.
+    ctx = _ctx(store, created["clip_id"])
+    out, ok = run_tool(ctx, "trim_piece", {"index": 0, "start_sec": 25.5, "end_sec": 27.5})
+    assert ok, out
+    out, ok = run_tool(ctx, "trim_piece", {"index": 0, "start_sec": 25.5, "end_sec": 26.5})
+    assert not ok and "1.5" in str(out)
+    # Анализ (ИИ-хайлайт) по-прежнему не меньше 5 с.
+    analysis = store.create_ai_analysis(plan["source_id"], "mock", status="succeeded")
+    with pytest.raises(ValueError, match="at least 5"):
+        store.create_ai_segment(analysis["id"], {"start_sec": 0, "end_sec": 3, "title": "Обрывок"})
+    # Переход на стыке с коротким куском не съедает больше 40% куска — рендеру безопасно.
+    joins = plan_joins(normalize_transition({"type": "fade", "duration": 1.5}), [8.0, 1.5], [None])
+    assert joins == [pytest.approx(0.6)]
+
+
 def test_highlight_words_survive_rewritten_subtitles(tmp_path, monkeypatch):
     store, _service, plan, _preset = _two_pieces(tmp_path, monkeypatch)
     words = [{"word": w, "start": 1.0 + i, "end": 1.5 + i} for i, w in enumerate(["это", "очень", "дорого", "брат"])]
