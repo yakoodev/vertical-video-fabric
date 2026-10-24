@@ -112,9 +112,45 @@ def test_auto_threshold_from_noise_floor():
     assert -55 < thr < -40  # над шумом микрофона и ниже голоса
     st = voice_states(noise + voiced, FPS, threshold_db=thr, hold=0)
     assert set(st[:60]) == {0} and set(st[60:]) == {1}
-    assert auto_threshold([]) == motion.VOICE_THRESHOLD_DB
-    # Шумный микрофон (−40) — порог поднимается вместе с шумом.
-    assert auto_threshold([-40.0] * 50 + [-15.0] * 50) > -40
+    assert auto_threshold([]) == motion.VOICE_THRESHOLD_DB == -45.0
+    # Шумный микрофон (−40) — порог поднимается вместе с шумом, но не выше −40.
+    assert auto_threshold([-40.0] * 50 + [-15.0] * 50) == -40.0
+
+
+def test_auto_threshold_catches_quiet_phrase_and_ignores_empty_mic():
+    """Клипы 583–585: при −38 тихие фразы (−42 дБ) рот не открывали; "auto" в −55..−40 — открывают."""
+    noise = [-63.0 + (i % 3) for i in range(80)]
+    quiet = [-42.0 + (i % 2) for i in range(20)]
+    thr = auto_threshold(noise + quiet)
+    assert -55.0 <= thr <= -42.0
+    st = voice_states(noise + quiet, FPS, threshold_db=thr, hold=0)
+    assert set(st[:80]) == {0} and set(st[80:]) == {1}
+    # Очень тихий микрофон (шум −80): порог не ниже −55 — шорохи рот не открывают.
+    assert auto_threshold([-80.0] * 50 + [-30.0] * 10) == -55.0
+    # Сплошная речь (окно без пауз) — порог всё равно не выше −40.
+    assert auto_threshold([-20.0] * 60) == -40.0
+
+
+def test_default_threshold_is_auto_and_window_uses_whole_layer():
+    """Порог по умолчанию — auto; кадр агента (окно) берёт порог со всего слоя, как рендер."""
+    from app.pngtuber import voice_config
+
+    layer = _layer()
+    assert "threshold_db" not in layer["props"]["voice"]  # не задан — auto, а не число
+    assert voice_config(layer["props"])["threshold_db"] == motion.VOICE_AUTO
+
+    def level(t):  # шум −50 дБ, тихая фраза 14.0–15.0 (−30 дБ)
+        return 0.045 if 14.0 <= t < 15.0 else 0.0045
+
+    clock = ClipClock(SEGS, None)
+    points = lambda times: frame_sources(clock, SEGS, times, "clip")  # noqa: E731
+    whole = layer_voice(layer, FPS, read=_reader(level), points_of=points)
+    assert whole["threshold_auto"] and whole["noise_db"] == pytest.approx(-50, abs=1.5)
+    assert -45 <= whole["threshold_db"] <= -40
+    # Окно целиком внутри фразы: по окну порог вышел бы −40 (потолок), со всего слоя — как у рендера.
+    win = layer_voice(layer, FPS, read=_reader(level), window=(4.2, 4.8), points_of=points)
+    assert win["threshold_db"] == whole["threshold_db"]
+    assert state_at(win, 4.5) == 1
 
 
 def test_levels_envelope_for_bounce():
@@ -176,7 +212,8 @@ def test_layer_voice_after_cuts_opens_mouth_on_the_voice():
 def test_layer_voice_window_and_asset_voice():
     plan_clock = ClipClock(SEGS, None)
     read = _reader()
-    win = layer_voice(_layer(), FPS, read=read, window=(3.5, 4.6),
+    # Порог задан числом — читается только окно (порог "auto" слушает весь слой, см. ниже).
+    win = layer_voice(_layer(threshold_db=-38), FPS, read=read, window=(3.5, 4.6),
                       points_of=lambda times: frame_sources(plan_clock, SEGS, times, "clip"))
     assert win["t0"] == pytest.approx(3.5) and len(win["states"]) == 33
     assert state_at(win, 4.5) == 1 and state_at(win, 3.6) == 0
@@ -426,6 +463,69 @@ def test_add_pngtuber_tool_defaults_mic_track_and_checks_voice(tmp_path, monkeyp
     assert not ok and "дорожек" in bad["error"]
     bad, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle})
     assert not ok and "talk_asset" in bad["error"]
+
+
+def test_add_pngtuber_replaces_instead_of_stacking(tmp_path, monkeypatch):
+    """Клипы 583–585: add_pngtuber с id (и без) молча добавлял второй аватар — теперь заменяет."""
+    from app.agent_tools import ToolContext, run_tool
+
+    store, _service, plan, (idle, talk), *_ = _plan_with_assets(tmp_path, monkeypatch)
+    monkeypatch.setattr("app.pngtuber.source_reader", lambda store, track, notes: _reader(
+        lambda t: 0.3 if 1.0 <= t < 2.0 else 0.0))
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+
+    def tubers():
+        return [l for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"] if l["type"] == "pngtuber"]
+
+    run_tool(ctx, "add_layers", {"layers": [{"id": "title", "type": "text", "start": 0, "end": 2, "x": 0.5, "y": 0.2,
+                                             "props": {"text": "ЧЕМПИОН"}}]})
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "id": "av"})
+    assert ok, out
+    assert [l["id"] for l in tubers()] == ["av"]
+    # Тот же id — замена (новые x и порог), а не второй слой с другим id.
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "id": "av", "x": 0.2,
+                                             "threshold_db": -50})
+    assert ok, out
+    assert out["replaced"]["id"] == "av" and "voice_check" in out
+    assert [(l["id"], l["x"]) for l in tubers()] == [("av", 0.2)]
+    assert tubers()[0]["props"]["voice"]["threshold_db"] == -50
+    # Без id — заменяется аватар клипа (один на клип по умолчанию); порядок слоёв тот же.
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": talk, "talk_asset": idle})
+    assert ok, out
+    assert [l["id"] for l in tubers()] == ["av"] and tubers()[0]["props"]["states"]["idle"] == str(talk)
+    assert [l["id"] for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"]] == ["title", "av"]
+    # allow_multiple — второй аватар.
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "allow_multiple": True})
+    assert ok, out
+    assert len(tubers()) == 2 and any("2 аватара" in w for w in out["warnings"])
+    # id чужого слоя (текст) — ошибка, а не подмена титра аватаром.
+    bad, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "id": "title"})
+    assert not ok and "не PNGtuber" in bad["error"]
+
+
+def test_update_layer_returns_voice_check(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, run_tool
+
+    store, _service, plan, (idle, talk), *_ = _plan_with_assets(tmp_path, monkeypatch)
+    # Шум −50 дБ, голос 1–2 с на −30 дБ.
+    monkeypatch.setattr("app.pngtuber.source_reader", lambda store, track, notes: _reader(
+        lambda t: 0.045 if 1.0 <= t < 2.0 else 0.0045))
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "id": "av"})
+    assert ok, out
+    check = out["voice_check"]
+    assert check["talking_share"] == pytest.approx(1.18 / 5, abs=0.05)
+    assert check["threshold"].startswith("auto") and -45 <= check["threshold_db"] <= -40
+    # Порог ниже шума — рот открыт всё время; ответ update_layer сразу это показывает.
+    out, ok = run_tool(ctx, "update_layer", {"id": "av", "patch": {"props": {"voice": {"track": 1,
+                                                                                       "threshold_db": -60}}}})
+    assert ok, out
+    assert out["voice_check"]["talking_share"] > 0.9 and out["voice_check"]["threshold"] == "задан: -60 дБ"
+    assert "выше" in out["voice_check"]["hint"]
+    # Не PNGtuber — без voice_check.
+    run_tool(ctx, "add_layers", {"layers": [{"id": "t", "type": "text", "start": 0, "end": 1, "props": {"text": "А"}}]})
+    out, ok = run_tool(ctx, "update_layer", {"id": "t", "patch": {"x": 0.4}})
+    assert ok and "voice_check" not in out
 
 
 def test_render_passes_voice_and_anims_to_compositor(tmp_path, monkeypatch):

@@ -38,6 +38,19 @@ def pcm_levels(raw: bytes, rate: int, step: float) -> list[float]:
     return [round(max(SILENCE_DB, 20 * math.log10(v)) if v > 0 else SILENCE_DB, 1) for v in rms.tolist()]
 
 
+def pcm_peaks(raw: bytes, rate: int, step: float) -> list[float]:
+    """Пик (max |сэмпл|) в дБ полной шкалы по окнам ``step`` секунд — те же окна, что ``pcm_levels``."""
+    import numpy as np
+
+    samples = np.frombuffer(raw[: len(raw) // 2 * 2], dtype="<i2").astype(np.float64) / 32768.0
+    win = max(1, int(round(rate * step)))
+    count = len(samples) // win
+    if count <= 0:
+        return []
+    peak = np.abs(samples[: count * win].reshape(count, win)).max(axis=1)
+    return [round(max(SILENCE_DB, 20 * math.log10(v)) if v > 0 else SILENCE_DB, 1) for v in peak.tolist()]
+
+
 def median(values: list[float]) -> float:
     ordered = sorted(values)
     if not ordered:

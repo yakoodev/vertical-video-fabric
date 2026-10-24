@@ -786,12 +786,19 @@ def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
     return {"has_subtitles": bool(lines), "edited": bool(payload.get("edited")), "lines": lines}
 
 
+# Фраза расшифровки, которая не считается речью для «речь есть, а субтитров нет»: короче
+# 0.6 с на куске или меньше 2 слов — смех, «а?», выдох (клипы 583–585: ложная тревога на смехе).
+GAP_MIN_PHRASE_SEC = 0.6
+GAP_MIN_PHRASE_WORDS = 2
+
+
 def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
     """Куски клипа, где в исходнике есть речь, а в субтитрах клипа — ни слова.
 
     Так бывает, когда куски поменяли после распознавания: субтитры остались от
     старого набора, и у части клипа текста нет (владелец: «у второго клипа
-    субтитров почему то нет»).
+    субтитров почему то нет»). Короткие фразы (< 0.6 с на куске или < 2 слов —
+    смех, междометие) речью не считаются.
     """
     payload = store.get_clip_plan_subtitles(plan["id"]) or {}
     words = payload.get("words") or []
@@ -806,11 +813,13 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         offset = hi
         if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
             continue
-        spoken = sum(
-            len(str(c.get("text") or "").split())
-            for c in cues
-            if float(c.get("start", 0)) < float(piece["source_end"]) and float(c.get("end", 0)) > float(piece["source_start"])
-        )
+        spoken = 0
+        for c in cues:
+            a = max(float(c.get("start", 0)), float(piece["source_start"]))
+            b = min(float(c.get("end", 0)), float(piece["source_end"]))
+            count = len(str(c.get("text") or "").split())
+            if b - a >= GAP_MIN_PHRASE_SEC and count >= GAP_MIN_PHRASE_WORDS:
+                spoken += count
         if spoken >= 3 or (not cues and words):
             gaps.append(index)
     return gaps
@@ -1246,7 +1255,9 @@ def _clip_time_arg(ctx: ToolContext, args: dict, key: str = "t") -> tuple[float,
 def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
     t, scale = _clip_time_arg(ctx, args)
     with_layers = args.get("with_layers", True) is not False
-    data, mime, info = render_clip_frame(ctx.store, ctx.plan_id, t, with_layers=with_layers)
+    # Субтитры клипа (если включены) — по умолчанию в кадре: наезд на HUD игры видно до рендера.
+    subtitles = with_layers and args.get("subtitles", True) is not False
+    data, mime, info = render_clip_frame(ctx.store, ctx.plan_id, t, with_layers=with_layers, subtitles=subtitles)
     return ImageResult(data=data, mime_type=mime, info={"t": round(t, 3), **scale, "with_layers": with_layers, **info})
 
 
@@ -1260,10 +1271,12 @@ def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     times = [float(_num(t)) for t in times] if times else None
     width = 220 if not times or len(times) > 4 else 300
     before = bool(args.get("before_cuts"))
-    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times, before_cuts=before)
+    subtitles = args.get("subtitles", True) is not False and bool(_current_render(ctx).get("subs_on"))
+    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times, before_cuts=before,
+                              subtitles=subtitles)
     scale = "clip" if before and times else "final"
     return ImageResult(data=data, mime_type="image/jpeg",
-                       info={"n": len(times) if times else n, "times": times, "time": scale,
+                       info={"n": len(times) if times else n, "times": times, "time": scale, "subtitles": subtitles,
                              "note": "подписи на листе — шкала " + scale + (" (до вырезов, как слои)" if scale == "clip"
                                                                             else " (готовый ролик)")})
 
@@ -1379,7 +1392,8 @@ def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
                              countdown=args.get("countdown", True) is not False)
 
 
-def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True) -> tuple[bytes, str, dict]:
+def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True,
+                      subtitles: bool = False) -> tuple[bytes, str, dict]:
     """Кадр готового вида на клиповом времени ``t``.
 
     Сначала — моушн-кадр (камера + слои тем же кодом, что и рендер,
@@ -1393,8 +1407,13 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
 
         layers = None if with_layers else []
         camera = None if with_layers else []
-        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers)
-        return data, "image/png", {"kind": "motion"}
+        notes: list[str] = []
+        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers,
+                                subtitles=subtitles, notes=notes)
+        info: dict = {"kind": "motion"}
+        if notes:
+            info["subtitles"] = "; ".join(notes)
+        return data, "image/png", info
     except ImportError:
         problem = "моушн-кадр недоступен"
     except KeyError:
@@ -1734,9 +1753,13 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
                 layers[i] = motion.normalize_layers([moved])[0]
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
-    return {"ok": True, "layer": saved,
-            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
-            + _scene_warnings(ctx, fresh, duration)}
+    out = {"ok": True, "layer": saved,
+           "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
+           + _scene_warnings(ctx, fresh, duration)}
+    if saved.get("type") == "pngtuber":
+        # Порог/дорожку поправили — сразу видно, какая доля клипа рот открыт (как у add_pngtuber).
+        out.update(_voice_check(ctx, layer_id))
+    return out
 
 
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
@@ -2128,9 +2151,13 @@ def _pngtuber_track(ctx: ToolContext, args: dict) -> tuple[Any, str]:
 
 
 def h_add_pngtuber(ctx: ToolContext, args: dict) -> dict:
-    """PNGtuber на весь клип (или start..end): состояния из библиотеки, голос — дорожка источника."""
+    """PNGtuber на весь клип (или start..end): состояния из библиотеки, голос — дорожка источника.
+
+    Один аватар на клип: id совпал с существующим слоем — замена этого слоя; id не задан, а в
+    клипе уже есть PNGtuber — замена его же (клипы 583–585: повторный вызов молча добавлял второй
+    аватар поверх первого). Второй аватар — только с ``allow_multiple: true``."""
     from app.formats import settings_layers_format
-    from app.pngtuber import default_placement, plan_voice
+    from app.pngtuber import default_placement
 
     render = _current_render(ctx)
     fmt = settings_layers_format(render)
@@ -2162,35 +2189,98 @@ def h_add_pngtuber(ctx: ToolContext, args: dict) -> dict:
     layer = {"type": "pngtuber", "name": str(args.get("name") or "PNGtuber"), "start": start, "end": end,
              "x": args.get("x", place["x"]), "y": args.get("y", place["y"]), "track": 5,
              "props": props}
-    if args.get("id"):
-        layer["id"] = str(args["id"])
     if args.get("follow_camera"):
         layer["followCamera"] = True
-    out = h_add_layers(ctx, {"layers": [layer]})
-    added = out.get("added") or []
+    layers = _layers_of(render)
+    target = _pngtuber_target(layers, args)
+    if target is None:
+        if args.get("id"):
+            layer["id"] = str(args["id"])
+        out = h_add_layers(ctx, {"layers": [layer]})
+        added = out.get("added") or []
+        layer_id = str(added[0]["id"]) if added else None
+        others = [str(l.get("id")) for l in layers if l.get("type") == "pngtuber"]
+        if others and layer_id:
+            out.setdefault("warnings", []).append(
+                f"в клипе теперь {len(others) + 1} аватара (allow_multiple): прежние {', '.join(others)}")
+    else:
+        layer["id"] = str(layers[target]["id"])
+        out = _replace_layer(ctx, target, layer)
+        layer_id = layer["id"]
     out["voice"] = voice_note
-    if added:
-        # Проверка голоса сразу: сколько клипа рот открыт — агент видит, слышит ли аватар голос.
-        fresh = next((l for l in _layers_of(_current_render(ctx)) if str(l.get("id")) == str(added[0]["id"])), None)
-        try:
-            plan = ctx.store.get_clip_plan(ctx.plan_id)
-            tracks, notes = plan_voice(ctx.store, plan, [fresh] if fresh else [], 30.0, "clip")
-            got = tracks.get(str(added[0]["id"])) if fresh else None
-            if got and got["states"]:
-                states_str = got["states"]
-                share = sum(1 for c in states_str if c != "0") / len(states_str)
-                out["voice_check"] = {
-                    "talking_share": round(share, 3), "shouting_share": round(states_str.count("2") / len(states_str), 3),
-                    "threshold_db": got.get("threshold_db"),
-                    "hint": ("рот почти не открывается — голос тише порога: threshold_db ниже (−45) или \"auto\", "
-                             "или не та дорожка (track)" if share < 0.03 else
-                             "рот открыт почти всё время — порог ниже шума/игры: threshold_db выше или \"auto\""
-                             if share > 0.9 else "ок"),
-                }
-            if notes:
-                out["voice_notes"] = notes
-        except Exception as exc:  # noqa: BLE001 - проверка — подсказка, слой уже стоит
-            out["voice_notes"] = [f"голос не проверен: {str(exc)[:160]}"]
+    if layer_id:
+        out.update(_voice_check(ctx, layer_id))
+    return out
+
+
+def _pngtuber_target(layers: list[dict], args: dict) -> int | None:
+    """Какой слой заменить: тот же id; без id — первый PNGtuber клипа (если не allow_multiple)."""
+    wanted = str(args.get("id") or "")
+    if wanted:
+        index = next((i for i, l in enumerate(layers) if str(l.get("id")) == wanted), None)
+        if index is not None and layers[index].get("type") != "pngtuber":
+            raise ToolError(f"слой {wanted} — {layers[index].get('type')}, не PNGtuber: другой id или update_layer")
+        return index
+    if args.get("allow_multiple"):
+        return None
+    return next((i for i, l in enumerate(layers) if l.get("type") == "pngtuber"), None)
+
+
+def _replace_layer(ctx: ToolContext, index: int, layer: dict) -> dict:
+    """Слой на месте ``index`` целиком заменяется новым (тот же id и порядок, проверка — как add_layers)."""
+    duration = _clip_duration(ctx)
+    render = _current_render(ctx)
+    layers = _layers_of(render)
+    old = layers[index]
+    problems = _layer_problems(ctx, layer, 0, duration)
+    if problems:
+        raise ToolError("слой не принят — прежний остался", problems)
+    layers[index] = motion.normalize_layers([layer])[0]
+    fresh = _save_render(ctx, {**render, "layers": layers})
+    layer_id = str(layer["id"])
+    saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), layers[index])
+    return {"ok": True, "replaced": {"id": layer_id, "summary": _layer_summary(saved), "was": _layer_summary(old)},
+            "note": f"заменён прежний PNGtuber {layer_id} (один аватар на клип; второй — allow_multiple: true)",
+            "layers_total": len(layers),
+            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
+            + _scene_warnings(ctx, fresh, duration)}
+
+
+def _voice_check(ctx: ToolContext, layer_id: str) -> dict:
+    """Доля клипа, где у PNGtuber ``layer_id`` открыт рот, и выбранный порог — сразу после правки,
+    чтобы агент видел, слышит ли аватар голос (add_pngtuber и update_layer)."""
+    from app.pngtuber import plan_voice
+
+    fresh = next((l for l in _layers_of(_current_render(ctx)) if str(l.get("id")) == str(layer_id)), None)
+    if not fresh or fresh.get("type") != "pngtuber":
+        return {}
+    out: dict = {}
+    try:
+        plan = ctx.store.get_clip_plan(ctx.plan_id)
+        tracks, notes = plan_voice(ctx.store, plan, [fresh], 30.0, "clip")
+        got = tracks.get(str(layer_id))
+        if got and got["states"]:
+            states_str = got["states"]
+            share = sum(1 for c in states_str if c != "0") / len(states_str)
+            threshold = got.get("threshold_db")
+            if got.get("threshold_auto"):
+                noise = got.get("noise_db")
+                how = (f"auto: шум дорожки {noise:g} дБ + запас, в рамках −55..−40 → {threshold:g} дБ"
+                       if noise is not None else f"auto: дорожка пустая — запасной {threshold:g} дБ")
+            else:
+                how = f"задан: {threshold:g} дБ"
+            out["voice_check"] = {
+                "talking_share": round(share, 3), "shouting_share": round(states_str.count("2") / len(states_str), 3),
+                "threshold_db": threshold, "threshold": how,
+                "hint": ("рот почти не открывается — голос тише порога: threshold_db ниже (−50) "
+                         "или не та дорожка (track)" if share < 0.03 else
+                         "рот открыт почти всё время — порог ниже шума/игры: threshold_db выше (−35) или другая "
+                         "дорожка (track)" if share > 0.9 else "ок"),
+            }
+        if notes:
+            out["voice_notes"] = notes
+    except Exception as exc:  # noqa: BLE001 - проверка — подсказка, слой уже стоит
+        out["voice_notes"] = [f"голос не проверен: {str(exc)[:160]}"]
     return out
 
 
@@ -3176,7 +3266,19 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
                 "note": f"формат {fmt}: исходник {source.get('width')}×{source.get('height')} ложится в кадр без "
                         "кропа — фокус не нужен, кадрировать нечего"}
     from app.autofocus import compute_segment_focus
+    from app.first_person import first_person_hint, source_texts
 
+    # Игра от первого лица — окно на прицеле (app/first_person): явно (first_person), по
+    # названию игры у записи/клипа, иначе — если прицел виден в центре кадров куска ("auto").
+    wanted = args.get("first_person")
+    if wanted is None or wanted == "auto":
+        game = first_person_hint(*source_texts(source, plan))
+        first_person: Any = True if game else "auto"
+        fp_reason = f"игра от первого лица по названию ({game})" if game else ""
+    else:
+        first_person = bool(wanted)
+        game = None
+        fp_reason = "first_person: true" if first_person else ""
     resolver = None
     # По умолчанию с Gemini по кадру на план: на мультфильмах лица не находятся, а монтажёр
     # use_vlm сам не ставил (проверочный прогон: кадр на руке Рика, пока говорит другой).
@@ -3196,8 +3298,11 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         # Слова куска: Gemini видит реплику плана, а длинный план с диалогом — по кадру на реплику.
         piece_words = _piece_words(words, plain_start, length) if resolver and words else []
         kwargs = {"speech_words": piece_words} if piece_words else {}
+        if first_person is not False:
+            kwargs["first_person"] = first_person
         points = compute_segment_focus(source, float(piece["source_start"]), float(piece["source_end"]),
                                        vlm_resolver=resolver, **kwargs)
+        aim = bool(points) and all(p.get("aim") for p in points)
         local = []
         for point in points:  # время точек — уже от начала куска
             item = {"t": round(float(point["t"]), 3), "x": round(float(point["x"]), 4)}
@@ -3209,9 +3314,16 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         item = {"piece": index, "points": len(local), "cuts": sum(1 for q in local if q.get("cut"))}
         if turns and resolver:
             item["turns"] = turns  # повороты к ответившему внутри плана (по репликам)
+        if aim:
+            item["first_person"] = {"x": local[0]["x"] if local else 0.5,
+                                    "why": fp_reason or "прицел виден в центре кадров куска"}
         done.append(item)
-    return {"ok": True, "pieces": done,
-            "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
+    out = {"ok": True, "pieces": done,
+           "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
+    if any(p.get("first_person") for p in done):
+        out["note"] = ("игра от первого лица: окно стоит на прицеле (x неподвижен, без погони за движением). "
+                       "Герой не от первого лица — auto_focus(first_person: false); проверь contact_sheet")
+    return out
 
 
 def h_set_focus(ctx: ToolContext, args: dict) -> dict:
@@ -4041,7 +4153,7 @@ props по типу:
   pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
          анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
          0 — игра, 1 — микрофон) | "speech" (speech_tracks; по умолчанию) | asset_id (голос из файла), threshold_db
-         {motion.VOICE_THRESHOLD_DB:g} | "auto" (по шуму), hold {motion.VOICE_HOLD_SEC:g} (рот не хлопает между слогами), attack {motion.VOICE_ATTACK_SEC:g},
+         "auto" (по умолчанию: шум дорожки + запас, −55..−40) | дБ, hold {motion.VOICE_HOLD_SEC:g} (рот не хлопает между слогами), attack {motion.VOICE_ATTACK_SEC:g},
          shout_db {motion.VOICE_SHOUT_DB:g}}}, w (опорные px; высота — по пропорции idle), pixelated (по умолч. — если исходник ≤ 256 px:
          пиксель-арт без мыла), bounce {{amount 0..40}} (подскок в такт голосу), flipX. Состояние по кадрам считает сервис
          (comp.voice) — проще add_pngtuber(idle_asset, talk_asset, track): правый нижний угол над безопасной зоной, w ≈ 300
@@ -4176,8 +4288,11 @@ def _build_registry() -> list[Tool]:
             "view_frame", "Смотрю кадр",
             "Картинка клипа в момент t — как будет в готовом видео, со слоями и камерой. t — шкала clip "
             "(до вырезов, как слои); final=true — t в секундах ГОТОВОГО ролика (как contact_sheet и listen). "
-            "Проверяй так размещение, читаемость, что титр не закрыл лицо. / Render the clip frame at t.",
+            "Проверяй так размещение, читаемость, что титр не закрыл лицо. Субтитры клипа (если включены) "
+            "прожжены как в рендере — видно, не легли ли они на HUD игры; subtitles=false — без них. "
+            "/ Render the clip frame at t.",
             _obj({"t": {"type": "number"}, "with_layers": {"type": "boolean"},
+                  "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
                   "final": {"type": "boolean", "description": "t — секунды готового ролика (после вырезов)"}},
                  ["t"]), h_view_frame,
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
@@ -4214,9 +4329,11 @@ def _build_registry() -> list[Tool]:
             "Сетка из n кадров равномерно по клипу (с временем) — весь монтаж одним взглядом: "
             "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты, до 16: по "
             "умолчанию секунды ГОТОВОГО ролика (после вырезов, как подписи на листе); before_cuts=true — "
-            "секунды ДО вырезов, как у слоёв и камеры. Кадры исходника вне клипа — source_contact_sheet. / "
+            "секунды ДО вырезов, как у слоёв и камеры. Субтитры клипа (если включены) прожжены как в рендере; "
+            "subtitles=false — без них. Кадры исходника вне клипа — source_contact_sheet. / "
             "Contact sheet of n frames or of chosen times.",
             _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
+                  "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
                   "times": {"type": "array", "items": {"type": "number"}},
                   "before_cuts": {"type": "boolean",
                                   "description": "times в секундах ДО вырезов — как у слоёв, камеры и view_frame"}}),
@@ -4277,7 +4394,7 @@ def _build_registry() -> list[Tool]:
             "set_source_audio", "Выбираю звуковую дорожку",
             "Звуковые дорожки исходника (запись NVIDIA/OBS: часто 0 — игра, 1 — микрофон). tracks — смесь для "
             "рендера: [0], [1], [0, 1] или со своей громкостью [{track, gain_db}] (gain_db — дБ −30..+30; "
-            "\"auto\" — замерить и поставить голос на 6 дБ над игрой): тихий микрофон в смеси поровну тонет. "
+            "\"auto\" — замерить и поставить голос на ~9 дБ над игрой в моменты речи, ответ auto: over_db, peak_limited): тихий микрофон в смеси поровну тонет. "
             "speech_tracks — дорожки для РАСПОЗНАВАНИЯ речи (расшифровка исходника, субтитры, listen, сверка "
             "субтитров в QC), например [1] — один микрофон: на смеси с игрой Whisper выдумывает; [] — как tracks. "
             "Сменился звук для распознавания — расшифровка исходника сбрасывается. Сколько дорожек — "
@@ -4332,24 +4449,29 @@ def _build_registry() -> list[Tool]:
             "библиотеки (upload_image), shout_asset — кричит (громче shout_db, по умолчанию −12 дБ). Голос — "
             "track: номер звуковой дорожки источника (запись NVIDIA/OBS: 0 — игра, 1 — микрофон) или \"speech\" "
             "(speech_tracks источника); не задан — speech_tracks, иначе у записи с несколькими дорожками — 1; "
-            "voice_asset — голос из файла библиотеки. threshold_db (−38; \"auto\" — по шуму дорожки), hold "
+            "voice_asset — голос из файла библиотеки. threshold_db — по умолчанию \"auto\" (шум дорожки + запас, "
+            "в рамках −55..−40 дБ) или число дБ, hold "
             "(0.18 с — рот не хлопает между слогами), attack (0.03 с). По умолчанию на весь клип (start/end — "
             "интервал), правый нижний угол над безопасной зоной, w ≈ 300 px, пиксель-арт (≤ 256 px) — без "
             "сглаживания (pixelated), bounce — подскок в такт голосу (px 0..40), flipX. Состояние по кадрам "
             "сервис считает сам (рендер и превью одинаково). Ответ: voice_check — какая доля клипа рот открыт "
-            "(почти 0 или почти 1 — поправь порог/дорожку). Правка потом — update_layer (props.voice, x, y, "
-            "props.w). / Talking avatar driven by a voice track.",
+            "(почти 0 или почти 1 — поправь порог/дорожку) и какой порог выбран. Один аватар на клип: повторный "
+            "вызов (тот же id или без id) ЗАМЕНЯЕТ прежний PNGtuber, второй — allow_multiple: true. Правка потом — "
+            "update_layer (props.voice, x, y, props.w; ответ тоже с voice_check). / Talking avatar driven by a voice track.",
             _obj({"idle_asset": {"type": "integer"}, "talk_asset": {"type": "integer"},
                   "shout_asset": {"type": "integer"},
                   "track": {"type": ["integer", "string"], "description": "номер дорожки источника или \"speech\""},
                   "voice_asset": {"type": "integer", "description": "голос из файла библиотеки вместо дорожки"},
                   "start": {"type": "number"}, "end": {"type": "number"},
                   "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"},
-                  "threshold_db": {"type": ["number", "string"], "description": "дБ (−38) или \"auto\""},
+                  "threshold_db": {"type": ["number", "string"],
+                                   "description": "\"auto\" (по умолчанию, по шуму дорожки) или дБ"},
                   "hold": {"type": "number"}, "attack": {"type": "number"}, "shout_db": {"type": "number"},
                   "bounce": {"type": ["number", "boolean"], "description": "подскок в такт голосу, px 0..40"},
                   "pixelated": {"type": "boolean"}, "flipX": {"type": "boolean"},
-                  "follow_camera": {"type": "boolean"}, "id": {"type": "string"}, "name": {"type": "string"}},
+                  "follow_camera": {"type": "boolean"}, "id": {"type": "string"}, "name": {"type": "string"},
+                  "allow_multiple": {"type": "boolean",
+                                     "description": "второй аватар в клипе (по умолчанию прежний заменяется)"}},
                  ["idle_asset", "talk_asset"]),
             h_add_pngtuber, mutating=True,
             label=lambda a: f"Ставлю PNGtuber #{a.get('idle_asset')}/#{a.get('talk_asset')}",
@@ -4357,7 +4479,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "update_layer", "Правлю слой",
             "Изменить слой по id: patch — только изменённые поля (props/in/out/loop сливаются, keys "
-            "заменяются целиком). / Patch one layer.",
+            "заменяются целиком). У PNGtuber ответ с voice_check (доля клипа с открытым ртом, выбранный порог). "
+            "/ Patch one layer.",
             _obj({"id": {"type": "string"}, "patch": {"type": "object"}}, ["id", "patch"]), h_update_layer,
             mutating=True, label=lambda a: f"Правлю слой {a.get('id')}",
         ),
@@ -4828,8 +4951,12 @@ def _build_registry() -> list[Tool]:
             "(use_vlm:false — только лица/движение, быстрее). Длинный план с диалогом делит по репликам субтитров "
             "(пауза или смена голоса): кадр на реплику, плавный поворот окна к ответившему (turns в ответе) — "
             "поэтому сначала субтитры. Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
-            "поправь промахи set_focus. / Automatic 9:16 framing, per reply inside long dialogue shots.",
-            _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
+            "поправь промахи set_focus. Игра от первого лица (шутер: название игры у записи/клипа или прицел "
+            "виден в центре кадров) — окно неподвижно на прицеле (x ≈ 0.5), без погони за движением; "
+            "first_person: true/false — сказать явно. / Automatic 9:16 framing, per reply inside long dialogue shots.",
+            _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"},
+                  "first_person": {"type": "boolean",
+                                   "description": "игра от первого лица: окно на прицеле (по умолчанию — само)"}}),
             h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
         ),
         Tool(
@@ -4948,7 +5075,7 @@ DISCOVERY_TOOLS = [
     Tool(
         "create_clip", "Создаю клип",
         "Новый клип проекта из кусков исходника: title, pieces [{start_sec, end_sec, title?}] "
-        "(каждый 5–180 с, до 12; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
+        "(каждый 1.5–180 с, до 12; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
         _obj({"project_id": {"type": "integer"}, "title": {"type": "string"}, "description": {"type": "string"},
               "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},

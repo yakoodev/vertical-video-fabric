@@ -11,6 +11,8 @@
 (``clip``) или готового ролика (``final``, после вырезов); в секунды источника его
 переводит ``app.timebase.ClipClock`` — вырез или наплыв не сбивает рот с голоса.
 
+Порог по умолчанию — ``"auto"``: шум дорожки + запас в рамках −55..−40 дБ (``auto_threshold``).
+
 Чистые функции (``voice_states``, ``auto_threshold``, ``voice_levels``,
 ``frame_sources``) проверяются на синтетике без ffmpeg; чтение звука — подменяемое.
 """
@@ -29,6 +31,7 @@ from app.motion import (
     VOICE_SHOUT_DB,
     VOICE_SPEECH,
     VOICE_THRESHOLD_DB,
+    VOICE_THRESHOLD_DEFAULT,
     has_pngtuber,
 )
 
@@ -40,11 +43,13 @@ LEVEL_RELEASE_SEC = 0.08
 LEVEL_SPAN_DB = 24.0
 # Длиннее — дальше молчит (минуты клипа; часы — явная ошибка слоя).
 MAX_VOICE_SEC = 30 * 60.0
-# Авто-порог: шум дорожки (15-й перцентиль) + запас, но не выше «громких мест» − 10 дБ.
+# Авто-порог (по умолчанию): шум дорожки (15-й перцентиль) + запас, но не выше «громких мест» − 10 дБ
+# и в рамках −55..−40. Клипы 583–585: при −38 тихие фразы (−42 дБ) рот не открывали — потолок −40
+# ловит тихую речь, пол −55 не даёт шуму пустого микрофона открывать рот.
 AUTO_OVER_FLOOR_DB = 12.0
 AUTO_UNDER_PEAK_DB = 10.0
-AUTO_MIN_DB = -65.0
-AUTO_MAX_DB = -15.0
+AUTO_MIN_DB = -55.0
+AUTO_MAX_DB = -40.0
 # Склейка соседних кадров в один кусок чтения звука: разрыв больше — отдельное чтение.
 _SPAN_GAP_SEC = 0.25
 _PCM_CACHE: dict[tuple, bytes] = {}
@@ -56,13 +61,21 @@ Reader = Callable[[Any, float, float], bytes]
 # ---------------------------------------------------------------- чистые функции
 
 
-def auto_threshold(levels: list[float | None]) -> float:
-    """Порог «звучит голос» по шуму дорожки: шум (15-й перцентиль) + 12 дБ, не выше
-    громких мест (95-й) − 10 дБ; пустая дорожка — порог по умолчанию."""
+def noise_floor(levels: list[float | None]) -> float | None:
+    """Шум дорожки — 15-й перцентиль громкости кадров (тишина цифрового нуля не в счёт)."""
     heard = sorted(v for v in levels if v is not None and v > SILENCE_DB + 1)
     if len(heard) < 4:
+        return None
+    return heard[int(len(heard) * 0.15)]
+
+
+def auto_threshold(levels: list[float | None]) -> float:
+    """Порог «звучит голос» по шуму дорожки: шум (15-й перцентиль) + 12 дБ, не выше
+    громких мест (95-й) − 10 дБ, в рамках −55..−40; пустая дорожка — запасной порог (−45)."""
+    heard = sorted(v for v in levels if v is not None and v > SILENCE_DB + 1)
+    floor = noise_floor(levels)
+    if floor is None:
         return VOICE_THRESHOLD_DB
-    floor = heard[int(len(heard) * 0.15)]
     peak = heard[min(len(heard) - 1, int(len(heard) * 0.95))]
     want = min(floor + AUTO_OVER_FLOOR_DB, peak - AUTO_UNDER_PEAK_DB)
     want = max(want, floor + 4.0)  # ровная дорожка (всё время речь) — всё равно над шумом
@@ -232,27 +245,40 @@ def voice_config(props: dict) -> dict:
     return {
         "track": track if track is not None else VOICE_SPEECH,
         "asset_id": voice.get("asset_id"),
-        "threshold_db": voice.get("threshold_db", VOICE_THRESHOLD_DB),
+        "threshold_db": voice.get("threshold_db", VOICE_THRESHOLD_DEFAULT),
         "hold": float(voice.get("hold", VOICE_HOLD_SEC)),
         "attack": float(voice.get("attack", VOICE_ATTACK_SEC)),
         "shout_db": float(voice.get("shout_db", VOICE_SHOUT_DB)) if (props.get("states") or {}).get("shout") else None,
     }
 
 
-def track_from_levels(levels: list[float | None], t0: float, fps: float, cfg: dict) -> dict:
-    """Громкость кадров слоя → ``comp.voice[id]``: {t0, fps, states "0012…", levels [0..100], threshold_db}."""
-    threshold = cfg.get("threshold_db", VOICE_THRESHOLD_DB)
-    threshold = auto_threshold(levels) if threshold == VOICE_AUTO else float(threshold)
+def track_from_levels(levels: list[float | None], t0: float, fps: float, cfg: dict,
+                      auto_from: list[float | None] | None = None) -> dict:
+    """Громкость кадров слоя → ``comp.voice[id]``: {t0, fps, states "0012…", levels [0..100], threshold_db}.
+
+    ``auto_from`` — по какой громкости выбирать порог "auto" (кадр агента слушает окно, а порог
+    берёт со всего слоя — как рендер); нет — по ``levels``."""
+    threshold = cfg.get("threshold_db", VOICE_THRESHOLD_DEFAULT)
+    auto = threshold == VOICE_AUTO
+    basis = auto_from if auto_from is not None else levels
+    threshold = auto_threshold(basis) if auto else float(threshold)
     shout = cfg.get("shout_db")
     states = voice_states(levels, fps, threshold, cfg.get("hold", VOICE_HOLD_SEC), cfg.get("attack", VOICE_ATTACK_SEC),
                           shout)
-    return {
+    out = {
         "t0": round(t0, 4),
         "fps": float(fps),
         "states": "".join(str(s) for s in states),
         "levels": voice_levels(levels, states, fps, threshold, shout),
         "threshold_db": threshold,
     }
+    if auto:
+        # Как выбран порог — агенту в voice_check (движок эти поля не читает).
+        floor = noise_floor(basis)
+        out["threshold_auto"] = True
+        if floor is not None:
+            out["noise_db"] = round(floor, 1)
+    return out
 
 
 def _wav_pcm(path: Path, args: list[str]) -> bytes:
@@ -361,12 +387,21 @@ def layer_voice(
     times = [t0 + k / fps for k in range(count)]
     if read is None or not times:
         return track_from_levels([None] * count, t0, fps, cfg)
-    if cfg["asset_id"]:
-        start = float(layer.get("start") or 0.0)
-        points: list[tuple[Any, float] | None] = [(None, t - start) for t in times]
-    else:
-        points = points_of(times)
-    return track_from_levels(levels_for_points(points, fps, read), t0, fps, cfg)
+
+    def points_for(moments: list[float]) -> list[tuple[Any, float] | None]:
+        if cfg["asset_id"]:
+            start = float(layer.get("start") or 0.0)
+            return [(None, t - start) for t in moments]
+        return points_of(moments)
+
+    auto_from = None
+    if window is not None and cfg["threshold_db"] == VOICE_AUTO:
+        # Порог "auto" — по всему слою, как в рендере: по окну в секунду (сплошная речь или
+        # сплошная пауза) он вышел бы другим, и кадр агента разошёлся бы с роликом.
+        full_t0, full_count = layer_frames(layer, fps)
+        whole = [full_t0 + k / fps for k in range(full_count)]
+        auto_from = levels_for_points(points_for(whole), fps, read)
+    return track_from_levels(levels_for_points(points_for(times), fps, read), t0, fps, cfg, auto_from)
 
 
 def plan_voice(
@@ -454,6 +489,7 @@ __all__ = [
     "default_placement",
     "frame_sources",
     "layer_voice",
+    "noise_floor",
     "plan_voice",
     "state_at",
     "voice_levels",

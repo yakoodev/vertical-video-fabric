@@ -32,7 +32,7 @@ from typing import Any
 from app.clip_settings import normalize_render_settings
 from app.cuts import MAX_CUTS, MIN_CUT_SEC, normalize_cuts, validate_cuts
 from app.motion import normalize_camera, normalize_layers, validate_camera, validate_layers
-from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, AppStore
+from app.store import MAX_SEGMENT_DURATION_SEC, MIN_PIECE_DURATION_SEC, AppStore
 from app.video_crop import FIT_MIN_W, fit_problem, normalize_fit
 
 _MISSING = object()  # ключа нет в файле — поле куска не трогаем
@@ -192,9 +192,9 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
             problems.append(f"{where}: нужно 0 ≤ start_sec < end_sec (пришло {start}–{end})")
             continue
         length = end - start
-        if length < MIN_SEGMENT_DURATION_SEC or length > MAX_SEGMENT_DURATION_SEC:
+        if length < MIN_PIECE_DURATION_SEC - 1e-6 or length > MAX_SEGMENT_DURATION_SEC:
             problems.append(
-                f"{where}: длина куска {length:.1f} с, допустимо {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с"
+                f"{where}: длина куска {length:.1f} с, допустимо {MIN_PIECE_DURATION_SEC:g}–{MAX_SEGMENT_DURATION_SEC} с"
             )
             continue
         if duration and end > duration + 0.05:
@@ -386,7 +386,7 @@ def json_schema() -> dict:
                                                "{kind, colors, speed, intensity}) | black|#rrggbb}; null — обычный кадр"},
                     },
                 },
-                "description": f"куски по порядку; каждый {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с",
+                "description": f"куски по порядку; каждый {MIN_PIECE_DURATION_SEC:g}–{MAX_SEGMENT_DURATION_SEC} с",
             },
             "render": {
                 "type": "object",
