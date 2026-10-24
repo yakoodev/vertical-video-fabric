@@ -2,7 +2,7 @@
  * Отрисовка кадра: все видимые слои в момент `t` поверх того, что уже на холсте.
  *
  * Слой рисуется в своей системе координат — опорные px с центром в якоре, — а
- * сюда вынесено общее: перенос/поворот/масштаб (× W/1080), прозрачность,
+ * сюда вынесено общее: перенос/поворот/масштаб (× W / ширина опорного кадра), прозрачность,
  * режим наложения, тень, размытие и маска wipe. Если слою нужна прозрачность
  * «целиком», режим наложения или blur, он сначала рисуется на промежуточный
  * холст размером со свою рамку и уже оттуда кладётся в кадр.
@@ -22,7 +22,7 @@ import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas } from "./types";
-import { REF_W } from "./types";
+import { layerUnit, refSize } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   text: textRenderer as LayerRenderer,
@@ -169,13 +169,13 @@ export function layerBox(
   cam?: CameraMatrix | null,
 ): LayerBox | null {
   const r = RENDERERS[layer.type];
-  const st = resolveLayer(layer, t);
+  const st = resolveLayer(layer, t, refSize(env));
   if (!r || !st) return null;
   ctx.save();
   const size = r.measure(ctx, layer, st, env, frameOf(t, data));
   ctx.restore();
   const z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
-  const k = (env.width / REF_W) * st.scale * z.scale;
+  const k = layerUnit(env) * st.scale * z.scale;
   return {
     cx: st.x * env.width * z.scale + z.tx,
     cy: st.y * env.height * z.scale + z.ty,
@@ -216,7 +216,7 @@ function scratchFor(env: RenderEnv, w: number, h: number): { canvas: ScratchCanv
 
 /** Описанный прямоугольник повёрнутого слоя на холсте, с полями под обводку и тень. */
 function deviceBounds(st: LayerState, size: { w: number; h: number }, env: RenderEnv, margin: number) {
-  const k = (env.width / REF_W) * st.scale;
+  const k = layerUnit(env) * st.scale;
   const hw = (size.w / 2) * k + margin;
   const hh = (size.h / 2) * k + margin;
   const a = (st.rotation * Math.PI) / 180;
@@ -236,7 +236,7 @@ function deviceBounds(st: LayerState, size: { w: number; h: number }, env: Rende
 /* ---------- один слой ---------- */
 
 function applyLayerTransform(ctx: Ctx2D, st: LayerState, env: RenderEnv, ox = 0, oy = 0): void {
-  const k = env.width / REF_W;
+  const k = layerUnit(env);
   ctx.translate(st.x * env.width - ox, st.y * env.height - oy);
   if (st.rotation) ctx.rotate((st.rotation * Math.PI) / 180);
   ctx.scale(st.scale * k, st.scale * k);
@@ -261,7 +261,7 @@ function shadowParams(layer: Layer, st: LayerState, env: RenderEnv) {
   const y = sh.y ?? 0;
   if (op <= 0 || (blur <= 0 && x === 0 && y === 0)) return null;
   // Тень задана в опорных px; в canvas shadow* не зависят от матрицы — масштабируем сами.
-  const k = (env.width / REF_W) * st.scale;
+  const k = layerUnit(env) * st.scale;
   return { color: rgba(sh.color || "#000000", op), blur: blur * k, x: x * k, y: y * k };
 }
 
@@ -270,12 +270,12 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, d
   const frame = frameOf(t, data);
   const r = RENDERERS[layer.type];
   if (!r) return;
-  const st = resolveLayer(layer, t);
+  const st = resolveLayer(layer, t, refSize(env));
   if (!st || st.opacity <= 0.002 || st.scale <= 0.002 || st.wipe <= 0 || st.draw <= 0) return;
 
   const blend = BLEND[layer.blend ?? "normal"] ?? "source-over";
   const shadow = shadowParams(layer, st, env);
-  const blurPx = st.blur > 0.05 ? st.blur * (env.width / REF_W) * st.scale : 0;
+  const blurPx = st.blur > 0.05 ? st.blur * layerUnit(env) * st.scale : 0;
   // Тень не требует промежуточного холста: её отбрасывает «силуэт» слоя (плашка,
   // обводка текста, заливка фигуры) — рендерер сам гасит тень после силуэта.
   // drawImage с тенью в Skia очень дорогой (десятки мс на кадр), поэтому тень
@@ -287,7 +287,7 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, d
   ctx.restore();
 
   if (needsScratch) {
-    const k = env.width / REF_W;
+    const k = layerUnit(env);
     const shadowRoom = shadow ? shadow.blur * 1.6 + Math.max(Math.abs(shadow.x), Math.abs(shadow.y)) : 0;
     const margin = 24 * k + shadowRoom + (blurPx ? blurPx * 2 : 0);
     const b = deviceBounds(st, size, env, margin);

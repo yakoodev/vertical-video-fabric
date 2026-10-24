@@ -740,7 +740,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "cover": (render.get("cover") or {}).get("mode"),
             "mute": render.get("mute") or [],
             "gain": render.get("gain") or [],
-            "aspect": render.get("aspect") or "9:16",
+            # Формат вывода (app/formats.py): format, кадр и опорный кадр слоёв; aspect — старое имя.
+            **_format_view(render),
             **_key_view(source, render),
         },
         # Готовые места на кадре — как монтирует владелец: заголовок сверху по центру,
@@ -2424,27 +2425,54 @@ def _is_promo(ctx: ToolContext, render: dict) -> bool:
     return _source_canvas(ctx) or has_device_layers(_layers_of(render))
 
 
-def h_set_aspect(ctx: ToolContext, args: dict) -> dict:
-    """Формат кадра клипа (app/aspect.py): 9:16 / 1:1 / 4:5; не 9:16 — только у холста."""
-    from app.aspect import ASPECTS, aspect_size, check_aspect_source, reframe_plan
+def _format_view(render: dict) -> dict:
+    """Формат клипа для get_clip: ``format``, кадр ``frame`` [w, h], опорный кадр слоёв
+    ``ref`` и формат их разметки ``layers_format``; ``aspect`` — старое имя ``format``."""
+    from app.formats import frame_size, ref_size, settings_layers_format, settings_render_format
 
-    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    fmt = settings_render_format(render)
+    layers_fmt = settings_layers_format(render)
+    return {"format": fmt, "aspect": fmt, "frame": list(frame_size(fmt)),
+            "layers_format": layers_fmt, "layers_ref": list(ref_size(layers_fmt))}
+
+
+def h_set_format(ctx: ToolContext, args: dict) -> dict:
+    """Формат вывода клипа (app/formats.py): 9:16 / 1:1 / 4:5 / 16:9 — у любого клипа.
+    ``layers_format`` — в каком формате размечены слои (по умолчанию не меняется)."""
+    from app.aspect import reframe_plan
+    from app.formats import FORMAT_IDS, frame_size, normalize_format, ref_size, settings_layers_format
+
     try:
-        aspect = check_aspect_source(args.get("aspect"), ctx.store.get_source(int(plan["source_id"])))
+        fmt = normalize_format(args.get("format") or args.get("aspect"))
+        current = _current_render(ctx)
+        layers_fmt = (normalize_format(args["layers_format"]) if args.get("layers_format")
+                      else settings_layers_format(current))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
-    fresh = _save_render(ctx, {**_current_render(ctx), "aspect": aspect})
-    width, height = aspect_size(aspect)
-    out: dict = {"ok": True, "aspect": fresh["aspect"], "size": f"{width}×{height}", "formats": list(ASPECTS)}
-    if aspect != "9:16":
-        layout = reframe_plan([layer for layer in _layers_of(fresh) if not layer.get("hidden")], width, height,
-                              camera=_camera_of(fresh))
+    fresh = _save_render(ctx, {**current, "format": fmt, "layers_format": layers_fmt})
+    width, height = frame_size(fmt)
+    out: dict = {"ok": True, "format": fresh["format"], "aspect": fresh["format"], "size": f"{width}×{height}",
+                 "frame": [width, height], "layers_format": fresh["layers_format"], "formats": list(FORMAT_IDS)}
+    if fmt != layers_fmt:
+        rw, rh = ref_size(fmt)
+        lw, lh = ref_size(layers_fmt)
+        layout = reframe_plan([layer for layer in _layers_of(fresh) if not layer.get("hidden")], rw, rh,
+                              camera=_camera_of(fresh), ref=(lw, lh))
         out["reframe"] = {"scale": layout["scale"], "scenes": [
             {"start": p["start"], "end": p["end"], "box": p["box"]} for p in layout["scenes"]]}
-        out["note"] = ("слои остаются в опорных 1080×1920 — при рендере и в view_frame они переносятся в "
-                       f"{width}×{height} одним масштабом ×{layout['scale']} по рамке содержимого; проверь "
-                       "view_frame на титрах и концовке. Вернуть вертикаль — set_aspect(\"9:16\")")
+        out["note"] = (f"слои остаются в опорных {lw}×{lh} ({layers_fmt}) — при рендере и в view_frame они "
+                       f"переносятся в {rw}×{rh} одним масштабом ×{layout['scale']} по рамке содержимого; проверь "
+                       f"view_frame на титрах и концовке. Вернуть — set_format(\"{layers_fmt}\")")
+    if fmt == "16:9":
+        out["note_16x9"] = ("16:9: горизонтальный исходник — без кропа, вертикальный — по высоте на размытой "
+                            "подложке; вебка сверху/снизу — окошком в углу, meme — обычный кадр. Субтитры, "
+                            "баннер и обложка пока размечены под вертикаль — проверь view_frame")
     return out
+
+
+def h_set_aspect(ctx: ToolContext, args: dict) -> dict:
+    """Старое имя set_format (формат кадра — app/formats.py)."""
+    return h_set_format(ctx, {"format": args.get("aspect") or args.get("format")})
 
 
 def h_set_backdrop(ctx: ToolContext, args: dict) -> dict:
@@ -3381,7 +3409,7 @@ def h_create_canvas_clip(ctx: ToolContext, args: dict) -> dict:
             "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
             "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
                      "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera; "
-                     "квадрат или 4:5 из того же монтажа — set_aspect. Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
+                     "квадрат, 4:5 или 16:9 из того же монтажа — set_format. Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
 
 
 def _scaffold_assets(ctx: ToolContext, spec: dict) -> tuple[dict, list[str]]:
@@ -4200,14 +4228,25 @@ def _build_registry() -> list[Tool]:
             label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
         ),
         Tool(
+            "set_format", "Меняю формат вывода",
+            "Формат вывода клипа: \"9:16\" (вертикаль, как всегда), \"1:1\" (1080×1080), \"4:5\" (1080×1350), "
+            "\"16:9\" (горизонталь 1920×1080) — у любого клипа, из того же монтажа. Видео кадрируется само: окно "
+            "нужной пропорции с тем же фокусом; горизонтальный исходник в 16:9 — без кропа, вертикальный — по "
+            "высоте на размытой подложке. Слои НЕ переделывай: они остаются в формате разметки (layers_format, "
+            "обычно 9:16) и при рендере переносятся сами (один масштаб по рамке содержимого, фон — на весь кадр). "
+            "layers_format — только если слои уже размечены в другом формате (опорный кадр 16:9 — 1920×1080). "
+            "Два формата — два рендера: set_format(\"16:9\"), рендер, set_format(\"9:16\") (или REST render с "
+            "{\"format\": \"16:9\"} без смены настроек). Субтитры/баннер/обложка пока под вертикаль. "
+            "/ Output format: 9:16, 1:1, 4:5 or 16:9.",
+            _obj({"format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]},
+                  "layers_format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]}}, ["format"]),
+            h_set_format, mutating=True, label=lambda a: f"Формат {a.get('format') or ''}".strip(),
+        ),
+        Tool(
             "set_aspect", "Меняю формат кадра",
-            "Формат кадра клипа: \"9:16\" (вертикаль, как всегда), \"1:1\" (квадрат 1080×1080), \"4:5\" "
-            "(1080×1350) — из того же монтажа. Не 9:16 — только у пустого холста (create_canvas_clip). Слои "
-            "НЕ переделывай: они остаются в опорных 1080×1920 и при рендере переносятся сами (один масштаб по "
-            "рамке содержимого, фон — на весь кадр). Квадрат и вертикаль — два рендера: set_aspect(\"1:1\"), "
-            "рендер, set_aspect(\"9:16\") (или REST render с {\"aspect\": \"1:1\"} без смены настроек). "
-            "/ Output aspect: 9:16, 1:1 or 4:5 (canvas clips).",
-            _obj({"aspect": {"type": "string", "enum": ["9:16", "1:1", "4:5"]}}, ["aspect"]),
+            "Старое имя set_format: формат кадра \"9:16\" / \"1:1\" / \"4:5\" / \"16:9\" у любого клипа. "
+            "/ Legacy alias of set_format.",
+            _obj({"aspect": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]}}, ["aspect"]),
             h_set_aspect, mutating=True, label=lambda a: f"Формат {a.get('aspect') or ''}".strip(),
         ),
         Tool(

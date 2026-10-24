@@ -183,7 +183,7 @@ function mergeReveal(prev: Reveal | null, next: Reveal): Reveal {
 }
 
 /** Постоянное движение. Тряска — детерминированный шум от id слоя, без Math.random. */
-function applyLoop(st: LayerState, layer: Layer, local: number): void {
+function applyLoop(st: LayerState, layer: Layer, local: number, ref: { w: number; h: number }): void {
   const loop = layer.loop;
   if (!loop || loop.type === "none") return;
   const speed = clamp(loop.speed ?? 1, 0.1, 5);
@@ -194,13 +194,13 @@ function applyLoop(st: LayerState, layer: Layer, local: number): void {
       st.scale *= 1 + 0.06 * amount * Math.sin(tau * 1.2 * speed * local);
       return;
     case "float":
-      st.y += (14 * amount * Math.sin(tau * 0.45 * speed * local)) / REF_H;
+      st.y += (14 * amount * Math.sin(tau * 0.45 * speed * local)) / ref.h;
       return;
     case "shake": {
       const seed = hashString(layer.id || "layer");
       const f = 14 * speed * local;
-      st.x += (9 * amount * noise1(seed, f)) / REF_W;
-      st.y += (9 * amount * noise1(seed + 101, f)) / REF_H;
+      st.x += (9 * amount * noise1(seed, f)) / ref.w;
+      st.y += (9 * amount * noise1(seed + 101, f)) / ref.h;
       st.rotation += 1.6 * amount * noise1(seed + 202, f);
       return;
     }
@@ -223,8 +223,9 @@ function applyLoop(st: LayerState, layer: Layer, local: number): void {
 /**
  * Полное состояние слоя в клиповое время `t`; null — слой сейчас не виден.
  * Чистая функция: одинаковые входы → одинаковый результат (превью == рендер).
+ * `ref` — опорный кадр формата (px покачивания и тряски); нет — 1080×1920.
  */
-export function resolveLayer(layer: Layer, t: number): LayerState | null {
+export function resolveLayer(layer: Layer, t: number, ref: { w: number; h: number } = { w: REF_W, h: REF_H }): LayerState | null {
   if (!isLayerActive(layer, t)) return null;
   const dur = layerDuration(layer);
   const local = t - layer.start;
@@ -251,7 +252,7 @@ export function resolveLayer(layer: Layer, t: number): LayerState | null {
   if (dIn > 0 && layer.in) applyInOut(st, effectiveType(layer.in.type, layer.type), local / dIn);
   const dOut = animDuration(layer.out, dur, DEFAULT_OUT_DURATION);
   if (dOut > 0 && layer.out) applyInOut(st, effectiveType(layer.out.type, layer.type), (dur - local) / dOut);
-  applyLoop(st, layer, local);
+  applyLoop(st, layer, local, ref);
 
   st.opacity = clamp01(st.opacity);
   st.scale = Math.max(0, st.scale);

@@ -426,7 +426,8 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     from app.video_crop import normalize_fit
 
     fit = normalize_fit(segment.get("fit"))
-    if not fit:
+    if not fit or preset.get("landscape"):
+        # В горизонтальном кадре (16:9) широкий план и так виден целиком — «шире окна» не нужно.
         return preset
     return {**preset, "layout": None, "piece_fit": fit}
 
@@ -491,9 +492,11 @@ class ClipRenderService:
         music_start_sec: float | None = None,
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
+        layers_format: str | None = None,
     ) -> dict:
         """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше.
-        ``aspect`` — формат кадра (app/aspect.py), ``end_hold_sec`` — стоп-кадр в конце,
+        ``aspect`` — формат вывода (app/formats.py), ``layers_format`` — в каком формате
+        размечены слои (другой — перекомпоновка), ``end_hold_sec`` — стоп-кадр в конце,
         который потом добавит ``_normalize_loudness``: музыка доигрывает на нём."""
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
@@ -511,7 +514,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        preset = _preset_with_output(preset, source, aspect, end_hold_sec)
+        preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -628,6 +631,7 @@ class ClipRenderService:
         music_start_sec: float | None = None,
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
+        layers_format: str | None = None,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
         рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
@@ -653,7 +657,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        preset = _preset_with_output(preset, source, aspect, end_hold_sec)
+        preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -1069,13 +1073,14 @@ class ClipRenderService:
         segments = plan.get("segments") or []
         if not segments:
             raise ValueError("clip plan has no segments")
-        # Формат кадра (9:16 / 1:1 / 4:5): из запроса или из настроек клипа. Не 9:16 —
-        # пока только у холста; проверка до статуса «rendering», как и у вырезов.
-        from app.aspect import check_aspect_source
+        # Формат вывода (app/formats.py: 9:16 / 1:1 / 4:5 / 16:9): из запроса или из настроек
+        # клипа (format, у старых — aspect); проверка до статуса «rendering», как и у вырезов.
+        from app.formats import normalize_format, settings_layers_format, settings_render_format
 
         if aspect is None:
-            aspect = (plan.get("render_settings") or {}).get("aspect")
-        aspect = check_aspect_source(aspect, self.store.get_source(int(plan["source_id"])))
+            aspect = settings_render_format(plan.get("render_settings"))
+        aspect = normalize_format(aspect)
+        layers_format = settings_layers_format(plan.get("render_settings"))
         end_hold = self._end_hold_sec(plan, end_hold_sec)
         # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
         # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
@@ -1144,6 +1149,7 @@ class ClipRenderService:
                 jump_joins=cut_plan.jump_joins,
                 aspect=aspect,
                 end_hold_sec=end_hold,
+                layers_format=layers_format,
             )
         elif len(segment_ids) == 1:
             clip = self.render_segment(
@@ -1166,6 +1172,7 @@ class ClipRenderService:
                 layout=layout,
                 aspect=aspect,
                 end_hold_sec=end_hold,
+                layers_format=layers_format,
             )
         else:
             clip = self.render_montage(
@@ -1191,6 +1198,7 @@ class ClipRenderService:
                 layout=layout,
                 aspect=aspect,
                 end_hold_sec=end_hold,
+                layers_format=layers_format,
             )
         if clip["status"] == "succeeded":
             clip = self._apply_mute(clip, plan, cut_plan)
@@ -1380,11 +1388,13 @@ class ClipRenderService:
         основа (с баннером), а причина — в пометках для ошибки клипа.
         Возвращает пометки.
         """
+        from app.formats import DEFAULT_FORMAT, comp_ref
         from app.motion_render import (
             build_compositor_args,
             build_motion_mux_args,
             prepare_video_frames,
             resolve_layer_assets,
+            unit_width,
             write_comp,
         )
 
@@ -1404,17 +1414,22 @@ class ClipRenderService:
                     comp_w = meta.width or int(preset.get("output_width") or 1080)
                     comp_h = meta.height or int(preset.get("output_height") or 1920)
                     regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
-                    if preset.get("aspect"):
-                        # Квадрат / 4:5: слои размечены в опорном 1080×1920 — переносим в
-                        # новый кадр одним масштабом по содержимому (app/aspect.py), камеру —
-                        # тем же переносом (наезд не выталкивает телефон followCamera за кадр).
-                        from app.aspect import asset_sizes, reframe_motion
+                    out_format = preset.get("format") or DEFAULT_FORMAT
+                    layers_format = preset.get("layers_format") or DEFAULT_FORMAT
+                    if out_format != layers_format:
+                        # Слои размечены в другом формате (9:16 → квадрат / 16:9 и т.п.) —
+                        # переносим в новый опорный кадр одним масштабом по содержимому
+                        # (app/aspect.py), камеру — тем же переносом (наезд не выталкивает
+                        # телефон followCamera за кадр).
+                        from app.aspect import asset_sizes, reframe_between
 
-                        layers, camera = reframe_motion(layers, camera, comp_w, comp_h, asset_sizes(layers, assets))
+                        layers, camera = reframe_between(layers, camera, layers_format, out_format,
+                                                         asset_sizes(layers, assets))
                     comp = write_comp(
                         work / "comp.json",
                         width=comp_w,
                         height=comp_h,
+                        ref=comp_ref(out_format),
                         fps=float(preset.get("fps") or 30),
                         duration=meta.duration_sec,
                         layers=layers,
@@ -1431,8 +1446,8 @@ class ClipRenderService:
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
                     # Видео-слои: кадры их отрезков заранее (удаляются вместе с work).
                     videos_path, video_notes = prepare_video_frames(
-                        layers, assets, work, fps=float(preset.get("fps") or 30), out_width=comp_w,
-                        clip_duration=meta.duration_sec,
+                        layers, assets, work, fps=float(preset.get("fps") or 30),
+                        out_width=unit_width(comp_w, out_format), clip_duration=meta.duration_sec,
                     )
                     notes.extend(video_notes)
                     out = work / "motion.mp4"
@@ -2251,6 +2266,10 @@ def _render_filter(
     mode = preset.get("scale_mode") or "cover"
     anchor = preset.get("crop_anchor") or "center"
     layout = preset.get("layout")
+    if preset.get("base_fit") == "fit" and mode == "cover":
+        # Исходник заметно уже кадра формата (вертикаль в 16:9, app/formats.source_strategy):
+        # целиком по высоте на размытой подложке; с хромакеем — поля цвета ключа.
+        mode = "contain" if preset.get("key_fill") else "blur_background"
     if preset.get("piece_fit"):
         # Кусок «шире окна 9:16» (_preset_for_segment): своя основа, раскладка не действует.
         base = _piece_fit_filter(width, height, fps, preset["piece_fit"], source_crop, reframe_x)
@@ -2598,24 +2617,49 @@ def _is_canvas(source: dict | None) -> bool:
     return is_canvas(source)
 
 
-def _preset_with_output(preset: dict, source: dict | None, aspect: str | None, end_hold_sec: float = 0.0) -> dict:
-    """Формат кадра (app/aspect.py: размер вывода, перекомпоновка слоёв в _apply_motion)
-    и стоп-кадр в конце (музыка доигрывает на нём — проход музыки). 9:16 без стоп-кадра —
-    пресет как есть."""
-    from app.aspect import DEFAULT_ASPECT, aspect_size, check_aspect_source
+def _preset_with_output(
+    preset: dict, source: dict | None, aspect: str | None, end_hold_sec: float = 0.0,
+    layers_format: str | None = None,
+) -> dict:
+    """Формат вывода (app/formats.py: размер кадра, как основа ложится в кадр, раскладка
+    для 16:9, перекомпоновка слоёв в _apply_motion) и стоп-кадр в конце (музыка доигрывает
+    на нём — проход музыки). 9:16 со слоями 9:16 без стоп-кадра — пресет как есть.
 
-    aspect = check_aspect_source(aspect, source)
+    Ключи пресета: ``format`` (и старое ``aspect``) — формат не 9:16; ``layers_format`` —
+    формат разметки слоёв, если не совпадает с форматом вывода; ``base_fit`` — «fit»,
+    когда исходник вписывается на подложку; ``landscape`` — горизонтальный кадр."""
+    from app.formats import (
+        DEFAULT_FORMAT,
+        frame_size,
+        is_landscape,
+        normalize_format,
+        settings_format,
+        source_strategy,
+    )
+
+    fmt = normalize_format(aspect)
+    layers_fmt = settings_format(layers_format)
     hold = max(0.0, float(end_hold_sec or 0.0))
-    if aspect == DEFAULT_ASPECT and hold <= 0:
+    if fmt == DEFAULT_FORMAT and layers_fmt == DEFAULT_FORMAT and hold <= 0:
         return preset
     preset = dict(preset)
     if hold > 0:
         preset["end_hold_sec"] = hold
-    if aspect != DEFAULT_ASPECT:
-        width, height = aspect_size(aspect)
-        preset["aspect"] = aspect
+    if layers_fmt != fmt:
+        preset["layers_format"] = layers_fmt
+    if fmt != DEFAULT_FORMAT:
+        width, height = frame_size(fmt)
+        preset["format"] = fmt
+        preset["aspect"] = fmt
         preset["output_width"] = width
         preset["output_height"] = height
+        if source_strategy(fmt, source) == "fit":
+            preset["base_fit"] = "fit"
+        if is_landscape(fmt):
+            from app.stream_layout import layout_for_format
+
+            preset["landscape"] = True
+            preset["layout"] = layout_for_format(preset.get("layout"), fmt, source)
     return preset
 
 

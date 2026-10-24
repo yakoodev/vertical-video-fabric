@@ -18,7 +18,7 @@ the service's code or database. Standard library only.
     vvf.py check clip-812.json                 # validate without applying
     vvf.py push clip-812.json                  # apply (all-or-nothing)
     vvf.py render 812                          # render with the file's settings, prints QC
-    vvf.py render 812 --aspect 1:1             # square from the same edit (canvas clips only)
+    vvf.py render 812 --format 16:9            # landscape from the same edit (9:16 / 1:1 / 4:5 / 16:9)
     vvf.py render 812 --end-hold 0             # no freeze-frame at the end (memes)
     vvf.py qc 431                              # QC report of a finished render
     vvf.py download 431 -o out.mp4             # the rendered video
@@ -272,9 +272,9 @@ def cmd_push(args) -> None:
 
 
 def cmd_render(args) -> None:
-    aspect = getattr(args, "aspect", None)
+    aspect = getattr(args, "format", None) or getattr(args, "aspect", None)
     hold = getattr(args, "end_hold", None)
-    body = {"aspect": aspect} if aspect else {}
+    body = {"format": aspect} if aspect else {}
     if hold is not None:
         body["end_hold_sec"] = hold
     print(f"рендер клипа {args.clip}" + (f" в {aspect}" if aspect else "")
@@ -455,8 +455,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.set_defaults(fn=cmd_push)
     p = sub.add_parser("render", help="отрендерить клип по его файлу")
     p.add_argument("clip", type=int)
-    p.add_argument("--aspect", choices=["9:16", "1:1", "4:5"],
-                   help="формат этого рендера (не 9:16 — только холст); не задан — из настроек клипа")
+    p.add_argument("--format", choices=["9:16", "1:1", "4:5", "16:9"],
+                   help="формат этого рендера (любой клип); не задан — из настроек клипа (render.format)")
+    p.add_argument("--aspect", choices=["9:16", "1:1", "4:5", "16:9"], help="старое имя --format")
     p.add_argument("--end-hold", type=float, metavar="S",
                    help="стоп-кадр в конце, с (0..1.5; мему — 0); не задан — из настроек клипа (render.end_hold_sec)")
     p.set_defaults(fn=cmd_render)

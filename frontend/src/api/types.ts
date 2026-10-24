@@ -1,4 +1,4 @@
-import type { Background, CameraKey, Layer } from "@/motion";
+import type { Background, CameraKey, FormatId, Layer } from "@/motion";
 import type { StreamLayout } from "@/pages/workspace/layout";
 export interface CropRect {
   x: number;
@@ -198,14 +198,18 @@ export interface RenderSettings {
   mute?: { start: number; end: number }[];
   /** Громкость звука исходника на отрезках, дБ (секунды клипа до вырезов, app/audio_mute.py). */
   gain?: { start: number; end: number; gain_db: number }[];
-  /** Формат кадра: 9:16 (как всегда), 1:1 или 4:5 — пока только у холста (app/aspect.py). */
+  /** Формат вывода (app/formats.py): 9:16 (как всегда), 1:1, 4:5 или 16:9 — у любого клипа. */
+  format?: Aspect;
+  /** В каком формате размечены слои (их опорный кадр, motion/formats.ts); нет — 9:16. */
+  layers_format?: Aspect;
+  /** Старое имя `format` (настройки до форматов вывода) — читается как format. */
   aspect?: Aspect;
   /** Стоп-кадр в конце готового ролика, с (0..1.5); null — как у сервиса (RENDER_END_HOLD_SEC). */
   end_hold_sec?: number | null;
 }
 
-/** Формат готового ролика (app/aspect.py). */
-export type Aspect = "9:16" | "1:1" | "4:5";
+/** Формат готового ролика (app/formats.py, motion/formats.ts). */
+export type Aspect = FormatId;
 
 export interface MontageInsert {
   asset_id: number;

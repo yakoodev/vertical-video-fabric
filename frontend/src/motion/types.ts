@@ -7,9 +7,26 @@
  * здесь необязательное, а значения по умолчанию подставляют рендереры.
  */
 
-/** Опорный кадр: все размеры слоёв заданы для вертикального 1080×1920. */
+/**
+ * Опорный кадр по умолчанию: размеры слоёв заданы для вертикального 1080×1920.
+ * У другого формата свой опорный кадр (formats.ts, `RenderEnv.refWidth/refHeight`):
+ * 16:9 — 1920×1080. Без него — всегда этот, старые кадры не меняются.
+ */
 export const REF_W = 1080;
 export const REF_H = 1920;
+
+/** Опорный кадр окружения (px слоёв): свой у формата или 1080×1920. */
+export function refSize(env: { refWidth?: number; refHeight?: number } | null | undefined): { w: number; h: number } {
+  const w = Number(env?.refWidth);
+  const h = Number(env?.refHeight);
+  return { w: w > 0 ? w : REF_W, h: h > 0 ? h : REF_H };
+}
+
+/** Опорный px слоя → px кадра: ширина кадра / ширина опорного кадра. */
+export function layerUnit(env: { width: number; refWidth?: number }): number {
+  const w = Number(env.refWidth);
+  return env.width / (w > 0 ? w : REF_W);
+}
 
 export type NamedEasing =
   | "linear"
@@ -510,6 +527,9 @@ export type CameraKey = {
 export type Composition = {
   width: number;
   height: number;
+  /** Опорный кадр формата (px слоёв); нет — 1080×1920. Пишет app/motion_render.write_comp. */
+  refWidth?: number;
+  refHeight?: number;
   fps: number;
   duration: number;
   layers: Layer[];
@@ -598,9 +618,15 @@ export type Ctx2D = CanvasRenderingContext2D;
 export type ScratchCanvas = { width: number; height: number; getContext(type: "2d"): unknown };
 
 export type RenderEnv = {
-  /** Размер выходного кадра в пикселях; масштаб слоёв = width / 1080. */
+  /** Размер выходного кадра в пикселях; масштаб слоёв = width / refWidth (layerUnit). */
   width: number;
   height: number;
+  /**
+   * Опорный кадр формата (formats.ts): в нём заданы px слоёв. Нет — 1080×1920
+   * (вертикаль, как всегда); 16:9 — 1920×1080. x/y слоёв — доли кадра в любом формате.
+   */
+  refWidth?: number;
+  refHeight?: number;
   /**
    * Картинка по ссылке: `asset_id`, `emoji:1f525`, `sticker:<pack>/<file>`.
    * null — ещё не загружена или нет такой: слой рисует запасной вариант или ничего.

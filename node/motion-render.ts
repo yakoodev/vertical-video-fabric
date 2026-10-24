@@ -126,10 +126,20 @@ function readComp(path: string): Composition {
     chat: Array.isArray(raw.chat)
       ? raw.chat.filter((m) => m && Number.isFinite(Number(m.t))).sort((a, b) => Number(a.t) - Number(b.t))
       : [],
+    // Опорный кадр формата (px слоёв): нет — движок берёт 1080×1920, как всегда.
+    ...readRef(raw),
     ...readKey(raw),
     ...readRegions(raw, width - (width % 2), height - (height % 2)),
     ...readZones(raw, width - (width % 2), height - (height % 2)),
   };
+}
+
+/** Опорный кадр формата (app/formats.py): оба числа в 16..8192 — иначе не задан. */
+function readRef(raw: Partial<Composition>): Pick<Composition, "refWidth" | "refHeight"> {
+  const w = Number(raw.refWidth);
+  const h = Number(raw.refHeight);
+  const ok = (v: number) => Number.isFinite(v) && v >= 16 && v <= 8192;
+  return ok(w) && ok(h) ? { refWidth: w, refHeight: h } : {};
 }
 
 /** Зоны анимированного фона основы (meme, кусок «шире окна»): целые, по времени. */
@@ -514,6 +524,7 @@ function makeEnv(comp: Composition, images: Map<string, Image>, videos: Map<stri
   return {
     width: comp.width,
     height: comp.height,
+    ...(comp.refWidth && comp.refHeight ? { refWidth: comp.refWidth, refHeight: comp.refHeight } : {}),
     getImage: (ref: string) => (images.get(String(ref)) as unknown as ImageLike) ?? null,
     getVideo: (layer: VideoLayer) => videos.get(layer.id) ?? null,
     createCanvas: (w: number, h: number) => createCanvas(w, h) as unknown as ReturnType<NonNullable<RenderEnv["createCanvas"]>>,
