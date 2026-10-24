@@ -68,7 +68,7 @@ def test_invalid_file_reports_every_problem_and_changes_nothing(tmp_path, monkey
         "title": "Не должно сохраниться",
         "pieces": [
             {"segment_id": 999999, "start_sec": 0, "end_sec": 5},
-            {"start_sec": 0, "end_sec": 2},
+            {"start_sec": 0, "end_sec": 1},  # короче 1.5 с (минимум куска ручного монтажа)
             {"start_sec": 3, "end_sec": 30},
         ],
     }

@@ -144,7 +144,7 @@ def test_view_frame_takes_finished_time(tmp_path, monkeypatch):
     store, _service, plan, _preset = _two_pieces(tmp_path, monkeypatch, {"cuts": [{"start": 2.0, "end": 3.0}]})
     seen = []
     monkeypatch.setattr("app.agent_tools.render_clip_frame",
-                        lambda store, pid, t, with_layers=True: seen.append(t) or (b"x", "image/png", {}))
+                        lambda store, pid, t, with_layers=True, **_k: seen.append(t) or (b"x", "image/png", {}))
     result, ok = run_tool(_ctx(store, plan["id"]), "view_frame", {"t": 10.0, "final": True})
     assert ok and seen == [11.0] and result.info["time"] == "clip" and result.info["final_t"] == 10.0
 
