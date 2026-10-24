@@ -165,7 +165,7 @@ export function ClipTimeline({
   mute?: MuteSpan[];
   onMuteChange?: (next: MuteSpan[]) => void;
   /** Пустой холст: вместо зелёных кадров основы — фон клипа (и его акцент). */
-  canvas?: { bg: Background; accent?: string | null } | null;
+  canvas?: { bg: Background; accent?: string | null; tileAspect?: number } | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(900);
@@ -556,6 +556,7 @@ export function ClipTimeline({
                         className="ctl-canvas-strip"
                         bg={canvas.bg}
                         accent={canvas.accent}
+                        tileAspect={canvas.tileAspect}
                         width={Math.max(3, (l.b - l.a) * pps)}
                         from={l.a}
                         to={l.b}

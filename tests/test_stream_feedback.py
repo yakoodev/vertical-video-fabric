@@ -387,7 +387,9 @@ console.log(JSON.stringify({{
     # (старое поле aspect читается через clipFormat).
     assert "    gain,\n    format: aspect,\n" in tab and "format: clipFormat(s)," in tab and "setAspect(clipFormat(s));" in tab
     # Стоп-кадр в конце (render.end_hold_sec) — тоже: иначе автосохранение редактора стирало бы set_end_hold.
-    assert "    format: aspect,\n    end_hold_sec: endHoldSec,\n  });" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
+    # Формат разметки слоёв (layers_format) — так же: «Разметить слои в этом формате» сохраняет его.
+    assert "    layers_format: layersFmt,\n" in tab and "layers_format: layersFormat(s)," in tab and "setLayersFmt(layersFormat(s));" in tab
+    assert "    format: aspect,\n    layers_format: layersFmt,\n    end_hold_sec: endHoldSec,\n  });" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
     assert "setEndHoldSec(s.end_hold_sec ?? null);" in tab
 
 

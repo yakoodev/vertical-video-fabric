@@ -31,12 +31,19 @@ import {
   holdFinalLayers,
   interpolateKeys,
   layerBox,
+  formatRefSize,
+  frameSize,
+  isLandscape,
+  layersFormat,
+  reframeBetween,
+  sourceStrategy,
+  type AssetSizes,
   type CameraKey,
   type CaptionWord,
   type ChatMessage,
   type Layer,
 } from "@/motion";
-import { browserEnv, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
+import { browserEnv, layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { clipFormat } from "@/motion";
 import {
   drawSelection,
@@ -55,10 +62,12 @@ import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import {
   DEFAULT_LAYOUT,
   cameraRegions,
+  drawContainFrame,
   drawFitFrame,
   drawLayoutFrame,
   fitWindow,
   gameplayAspect,
+  layoutForFormat,
   normalizeFit,
   normalizeLayout,
   type PieceFit,
@@ -367,7 +376,7 @@ function clipTimeOf(segments: AiSegment[], cur: number): number | null {
 type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "media";
 const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string }[] = [
   { key: "moments", icon: "🎬", label: "Моменты", hint: "Другие клипы этого проекта" },
-  { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник 16:9 и рамка 9:16: кадрирование и фокус" },
+  { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник и рамка формата клипа: кадрирование и фокус" },
   { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует" },
   { key: "templates", icon: "✦", label: "Шаблоны", hint: "Готовая анимированная графика: титры, плашки, инфографика, призывы" },
   { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
@@ -492,7 +501,23 @@ const INSERT_HANDLE = 16;
 /** Сетка, в которой исторически рисуются вставки на превью. */
 const LEGACY_W = 360;
 const LEGACY_H = 640;
-const LEGACY_CV = { width: LEGACY_W, height: LEGACY_H };
+/**
+ * Где окно кропа формата стоит в полном кадре при фокусе `fx` (доля ширины): позиция для
+ * CSS object-position — 0 у левого края, 1 у правого (окно не выходит за кадр, как в рендере).
+ */
+function focusWindowPos(fx: number, srcW: number, srcH: number, fmt: Aspect): number {
+  const f = frameSize(fmt);
+  const fw = srcW && srcH ? Math.min(1, (f.w / f.h) / (srcW / srcH)) : 1;
+  if (fw >= 1) return 0.5;
+  const left = Math.min(Math.max(fx - fw / 2, 0), 1 - fw);
+  return left / (1 - fw);
+}
+
+/** Сетка вставок под формат клипа: ширина 360, высота — по пропорции кадра (у 9:16 — 640). */
+function legacyCv(fmt: Aspect = "9:16"): { width: number; height: number } {
+  const f = frameSize(fmt);
+  return { width: LEGACY_W, height: f.w * 16 === f.h * 9 ? LEGACY_H : Math.round((LEGACY_W * f.h) / f.w) };
+}
 
 /** За что взялись на превью: двигаем вставку, тянем угол или ничего. */
 function insertHit(
@@ -538,7 +563,7 @@ function drawSubtitle(
   if (t == null) return;
   const line = lines.find((l) => t >= l.start && t < l.end);
   if (!line?.text) return;
-  const size = Math.round(cv.width * 0.075);
+  const size = Math.round(Math.min(cv.width, cv.height) * 0.075); // от короткой стороны: у 9:16 — ширина
   ctx.font = `800 ${size}px Inter, sans-serif`;
   ctx.textAlign = "center";
   const maxWidth = cv.width * 0.86;
@@ -575,6 +600,8 @@ type MotionView = {
   guides?: { v: boolean; h: boolean };
   /** Длина клипа: слой до конца держится на стоп-кадре без анимации выхода, как в рендере. */
   duration?: number;
+  /** Слои показаны перекомпонованными из формата разметки — мышью их не двигаем. */
+  reframed?: boolean;
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -616,6 +643,7 @@ function CropFrame({
   layout,
   chromaKey,
   backdrop,
+  format = "9:16",
 }: {
   srcW: number;
   srcH: number;
@@ -655,6 +683,8 @@ function CropFrame({
   /** Хромакей источника: зелёнка вырезается, за персонажем — фон и слои behind. */
   chromaKey?: ChromaKey | null;
   backdrop?: Backdrop;
+  /** Формат вывода клипа (motion/formats.ts): окно кропа, кадр превью и раскладка — его. */
+  format?: Aspect;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const keyRef = useRef(chromaKey);
@@ -687,14 +717,23 @@ function CropFrame({
 
   useEffect(() => {
     if (!srcW || !srcH) return;
-    // Окно геймплея: 9:16 или шире, если сверху стоит вебка (split).
-    const targetAR = gameplayAspect(layout, 9, 16);
+    // Кадр формата клипа (у 9:16 — 1080×1920, всё как раньше): раскладка, окно кропа и
+    // основа — как в рендере (render._preset_with_output).
+    const out = frameSize(format);
+    const landscape = isLandscape(format);
+    const lay = layoutForFormat(layout, out, srcW, srcH);
+    // Вертикальный исходник в 16:9 — целиком по высоте на размытой подложке («fit»).
+    const contain = sourceStrategy(format, srcW, srcH, crop) === "fit";
+    // Окно геймплея: пропорции кадра или шире, если сверху стоит вебка (split).
+    const targetAR = gameplayAspect(lay, out.w, out.h, out);
     const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
     const effAR = (srcW * c.w) / (srcH * c.h);
-    const baseFw = effAR >= targetAR ? targetAR / effAR : 1;
-    const baseFh = effAR >= targetAR ? 1 : effAR / targetAR;
+    const baseFw = contain ? 1 : effAR >= targetAR ? targetAR / effAR : 1;
+    const baseFh = contain ? 1 : effAR >= targetAR ? 1 : effAR / targetAR;
     // Кусок «шире окна» (set_piece_fit): своё окно и своя основа, раскладка на нём не действует.
-    const fits = new Map<number, PieceFit | null>(segments.map((s) => [s.id, normalizeFit(s.fit)]));
+    // В горизонтальном кадре широкий план и так виден целиком — «шире окна» не нужно (как в рендере).
+    const fits = new Map<number, PieceFit | null>(segments.map((s) => [s.id, landscape ? null : normalizeFit(s.fit)]));
+    const lcv = legacyCv(format);
     const paths = new Map<number, number[]>(
       segments.map((s) => [s.id, smoothFocus(s.focus ?? [], s.end_sec - s.start_sec, focusFeel(focusPreset))]),
     );
@@ -708,7 +747,7 @@ function CropFrame({
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
         const fit = seg ? fits.get(seg.id) ?? null : null;
-        const { fw, fh } = fit ? fitWindow(fit, effAR) : { fw: baseFw, fh: baseFh };
+        const { fw, fh } = fit ? fitWindow(fit, effAR, out.w / out.h) : { fw: baseFw, fh: baseFh };
         // While dragging, the box tracks the pointer; otherwise it follows the
         // focus track (which carries autofocus, keyframes, or a fixed frame).
         const fx = draggingRef.current
@@ -743,10 +782,12 @@ function CropFrame({
           const content = { x: c.x * vw, y: c.y * vh, w: c.w * vw, h: c.h * vh };
           // Анимированный фон (meme, «шире окна», за персонажем) — в момент клипа, в цветах клипа.
           const bgOpts = { accent: clipAccent(motion?.layers), createCanvas: browserEnv(cv.width, cv.height).createCanvas };
-          const drawBase = (target: CanvasRenderingContext2D, lay: StreamLayout | undefined, tw: number, th: number) =>
+          const drawBase = (target: CanvasRenderingContext2D, l: StreamLayout | undefined, tw: number, th: number, fill: string | null = null) =>
             fit
-              ? drawFitFrame(target, v, fit, rect, content, tw, th, clipT, bgOpts)
-              : drawLayoutFrame(target, v, lay, rect, tw, th, clipT, bgOpts);
+              ? drawFitFrame(target, v, fit, rect, content, tw, th, clipT, bgOpts, out)
+              : contain
+                ? drawContainFrame(target, v, content, tw, th, fill, out)
+                : drawLayoutFrame(target, v, l, rect, tw, th, clipT, bgOpts, out);
           const key = keyRef.current;
           if (ctx && key) {
             // Как компоновщик рендера: фон → слои «за персонажем» → вырезанное видео.
@@ -757,13 +798,13 @@ function CropFrame({
             if (kctx) {
               // Поля и фон раскладки — цвета ключа, чтобы вырезались вместе с зелёнкой.
               const keyed: StreamLayout | undefined =
-                layout?.mode === "meme" ? { ...layout, bg: { kind: "solid", colors: [key.color], speed: 1, intensity: 0 } } : layout;
-              drawBase(kctx, keyed, kc.width, kc.height);
+                lay?.mode === "meme" ? { ...lay, bg: { kind: "solid", colors: [key.color], speed: 1, intensity: 0 } } : lay;
+              drawBase(kctx, keyed, kc.width, kc.height, key.color);
               applyChromaKey(kctx, kc.width, kc.height, key);
               ctx.setTransform(1, 0, 0, 1, 0, 0);
               paintBackdrop(ctx, cv.width, cv.height, backdropRef.current, clipT, bgOpts);
               if (motion?.layers.length) {
-                const env = browserEnv(cv.width, cv.height);
+                const env = browserEnv(cv.width, cv.height, format);
                 const behind = shownLayers.filter((l) => !l.hidden);
                 drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, camera: motion.camera }, clipT, env, "behind");
               }
@@ -771,7 +812,7 @@ function CropFrame({
               ctx.drawImage(kc, 0, 0, cv.width, cv.height);
             }
           } else if (ctx) {
-            const regions = cam && motion && !fit ? cameraRegions(layout, vw, vh, cv.width, cv.height) : null;
+            const regions = cam && motion && !fit && !contain ? cameraRegions(lay, vw, vh, cv.width, cv.height, out) : null;
             if (regions && motion) {
               // Как компоновщик рендера: камера двигает окно игры, окошко/полоса вебки стоят.
               const lc = (layoutCanvasRef.current ??= document.createElement("canvas"));
@@ -781,7 +822,7 @@ function CropFrame({
               }
               const lctx = lc.getContext("2d");
               if (lctx) {
-                drawLayoutFrame(lctx, v, layout, rect, cv.width, cv.height, clipT, bgOpts);
+                drawLayoutFrame(lctx, v, lay, rect, cv.width, cv.height, clipT, bgOpts, out);
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.drawImage(lc, 0, 0);
                 const box = regions.box;
@@ -797,7 +838,7 @@ function CropFrame({
               }
             } else {
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-              drawBase(ctx, layout, cv.width, cv.height);
+              drawBase(ctx, lay, cv.width, cv.height);
             }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -807,11 +848,11 @@ function CropFrame({
             octx.clearRect(0, 0, ov.width, ov.height);
             // Слои followCamera едут с видео: в раскладке стрима — с окном игры, как в рендере.
             const followBox =
-              cam && motion && !fit && !key ? cameraRegions(layout, vw, vh, ov.width, ov.height)?.box ?? null : null;
+              cam && motion && !fit && !contain && !key ? cameraRegions(lay, vw, vh, ov.width, ov.height, out)?.box ?? null : null;
             const followCam = cam && motion ? frameCameraMatrix(motion.camera, clipT, ov.width, ov.height, followBox) : null;
             // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
             if (motion?.layers.length) {
-              const env = browserEnv(ov.width, ov.height);
+              const env = browserEnv(ov.width, ov.height, format);
               drawFrame(
                 octx,
                 {
@@ -833,8 +874,8 @@ function CropFrame({
             // Вставки рисуются в старой сетке 360×640 (их ручки и подписи заданы в
             // пикселях той сетки), холст же теперь в полном разрешении кадра.
             octx.save();
-            octx.scale(ov.width / LEGACY_W, ov.height / LEGACY_H);
-            drawInserts(octx, LEGACY_CV, insertsRef.current, segments, cur, !v.paused);
+            octx.scale(ov.width / lcv.width, ov.height / lcv.height);
+            drawInserts(octx, lcv, insertsRef.current, segments, cur, !v.paused);
             octx.restore();
             // Караоке по стилю клипа; без пословных таймингов (ещё не распознали)
             // остаётся старая строка — лучше грубое превью, чем пустой кадр.
@@ -850,7 +891,7 @@ function CropFrame({
             // Рамка выделенного слоя — поверх всего, только в редакторе.
             const sel = motion?.selected ? shownLayers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
-              const env = browserEnv(ov.width, ov.height);
+              const env = browserEnv(ov.width, ov.height, format);
               const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat }, followCam);
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
@@ -898,7 +939,7 @@ function CropFrame({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [srcW, srcH, crop, segments, videoRef, focusPreset, layout]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [srcW, srcH, crop, segments, videoRef, focusPreset, layout, format]); // eslint-disable-line react-hooks/exhaustive-deps
   const draggable = Boolean(onManualX);
   // Zones live inside the 9:16 crop window, so they track the real output frame.
   return (
@@ -1243,8 +1284,40 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const gainRef = useRef<GainSpan[]>([]);
   gainRef.current = gain;
   // Формат вывода клипа (app/formats.py): 9:16, 1:1, 4:5 или 16:9 из того же монтажа.
-  // Превью редактора пока вертикальное (этап 2) — формат влияет на рендер и кадр агента.
+  // Превью, холст слоёв и окно кропа — в пропорциях этого формата.
   const [aspect, setAspect] = useState<Aspect>("9:16");
+  // В каком формате размечены слои (render.layers_format, их опорный кадр). Не совпадает с
+  // форматом вывода — превью показывает перекомпоновку, как сделает рендер (motion/reframe.ts).
+  const [layersFmt, setLayersFmt] = useState<Aspect>("9:16");
+  const needsReframe = layersFmt !== aspect && (layers.length > 0 || camera.length > 0);
+  // Размеры картинок и видео слоёв — от них высота слоя в рамке сцены (как ffprobe на
+  // сервере): файлы библиотеки — из её списка, стикеры — когда догрузятся.
+  const libSizes = useMemo(() => {
+    const out: AssetSizes = {};
+    for (const a of assetsQuery.data ?? []) if (a.width > 0 && a.height > 0) out[String(a.id)] = [a.width, a.height];
+    return out;
+  }, [assetsQuery.data]);
+  const [sizesKey, setSizesKey] = useState("{}");
+  useEffect(() => {
+    if (!needsReframe) return;
+    let tries = 0;
+    const check = () => {
+      const { sizes, missing } = layerAssetSizes(layers, libSizes);
+      const key = JSON.stringify(sizes);
+      setSizesKey((prev) => (prev === key ? prev : key));
+      return missing === 0;
+    };
+    if (check()) return;
+    const id = window.setInterval(() => {
+      tries += 1;
+      if (check() || tries > 40) window.clearInterval(id);
+    }, 400);
+    return () => window.clearInterval(id);
+  }, [needsReframe, layers, libSizes]);
+  const reframedView = useMemo(
+    () => (needsReframe ? reframeBetween(layers, camera, layersFmt, aspect, JSON.parse(sizesKey) as AssetSizes) : null),
+    [needsReframe, layers, camera, layersFmt, aspect, sizesKey],
+  );
   // Стоп-кадр в конце готового ролика, с (render.end_hold_sec): null — как у сервиса, 0 — мем без «замирания».
   const [endHoldSec, setEndHoldSec] = useState<number | null>(null);
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
@@ -1269,6 +1342,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Стабильная «который сейчас час клипа» для панелей, которые опрашивают время сами.
   const clipNowRef = useRef<() => number>(() => 0);
   const clipNow = useCallback(() => clipNowRef.current(), []);
+  const reframeHintRef = useRef(false);
   const layerDragRef = useRef<{
     id: string;
     handle: TransformHandle;
@@ -1394,6 +1468,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     mute,
     gain,
     format: aspect,
+    layers_format: layersFmt,
     end_hold_sec: endHoldSec,
   });
   const settingsKey = JSON.stringify(panelSettings());
@@ -1473,6 +1548,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       mute: s.mute ?? [],
       gain: s.gain ?? [],
       format: clipFormat(s),
+      layers_format: layersFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
     };
     if (JSON.stringify(loaded) === settingsKey) return;
@@ -1501,6 +1577,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setMute(s.mute ?? []);
     setGain(s.gain ?? []);
     setAspect(clipFormat(s));
+    setLayersFmt(layersFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
@@ -1672,7 +1749,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         ffmpeg_preset_id: presetId || undefined,
         subtitle_profile_id: subsOn ? subId || undefined : undefined,
         subtitle_provider: subsOn ? subEngine || undefined : undefined,
-        subtitle_margin_v: subsOn ? Math.round((subPosPct / 100) * 1920) : undefined,
+        // Запасной отступ для клипов без своих настроек (они 9:16); настроенные берут свой — от кадра своего формата.
+        subtitle_margin_v: subsOn ? Math.round((subPosPct / 100) * frameSize("9:16").h) : undefined,
         banner_id: bannerOn ? bannerId || undefined : undefined,
         banner_height_frac: bannerOn ? bannerHeightPct / 100 : undefined,
         banner_y_frac: bannerOn ? bannerPosPct / 100 : undefined,
@@ -2175,12 +2253,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
   // Длина клипа «кусками подряд» — та же шкала, что у слоёв в превью (clipTimeOf).
   const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
+  // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
+  // мышью такие нельзя (сдвиг лёг бы не в те координаты) — сначала «Разметить слои в этом формате».
+  const shown = reframedView ?? { layers, camera };
   if (!layerDragRef.current)
-    motionViewRef.current = { layers, camera, selected: selectedLayerId, words: captionWords, chat: chatMessages, duration: viewDuration };
+    motionViewRef.current = {
+      layers: shown.layers,
+      camera: shown.camera,
+      selected: selectedLayerId,
+      words: captionWords,
+      chat: chatMessages,
+      duration: viewDuration,
+      reframed: Boolean(reframedView),
+    };
   else
     motionViewRef.current = {
       ...motionViewRef.current,
-      camera,
+      camera: shown.camera,
       selected: selectedLayerId,
       words: captionWords,
       chat: chatMessages,
@@ -2193,7 +2282,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const ctx = cv.getContext("2d");
     if (!ctx) return null;
     const t = clipTimeExact();
-    const env = browserEnv(cv.width, cv.height);
+    const env = browserEnv(cv.width, cv.height, aspect);
     const cssScale = cv.width / (cv.getBoundingClientRect().width || cv.width);
     const view = motionViewRef.current;
     // Слои followCamera нарисованы через камеру — рамка и попадание тоже.
@@ -2218,6 +2307,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setTlSelected({ kind: "layer", id: layer.id });
       motionViewRef.current = { ...motionViewRef.current, selected: layer.id };
       if (layer.locked) return;
+      if (motionViewRef.current.reframed) {
+        // Показана перекомпоновка: x/y на экране — не те, что в слое. Править — инспектором
+        // (числа формата разметки) или после «Разметить слои в этом формате».
+        if (!reframeHintRef.current) {
+          reframeHintRef.current = true;
+          toast.push(`Слои размечены в ${layersFmt} — тут показан их перенос в ${aspect}. Двигать мышью — после «Разметить слои в этом формате»`, "info");
+        }
+        return;
+      }
       const localT = t - layer.start;
       layerDragRef.current = {
         id: layer.id,
@@ -2239,7 +2337,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       return;
     }
     const k = LEGACY_W / cv.width;
-    const hit = insertHit(insertsPreviewRef.current, clipTimeNow(), LEGACY_CV, px * k, py * k);
+    const hit = insertHit(insertsPreviewRef.current, clipTimeNow(), legacyCv(aspect), px * k, py * k);
     if (!hit) {
       if (tlSelected?.kind === "layer") setTlSelected(null);
       return;
@@ -2303,7 +2401,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         return;
       }
       const k = LEGACY_W / cv.width;
-      const hover = insertHit(insertsPreviewRef.current, clipTimeNow(), LEGACY_CV, px * k, py * k);
+      const hover = insertHit(insertsPreviewRef.current, clipTimeNow(), legacyCv(aspect), px * k, py * k);
       cv.style.cursor = hover ? (hover.mode === "resize" ? "nwse-resize" : "grab") : "default";
       return;
     }
@@ -2472,6 +2570,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const clipDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
   const addLayers = (incoming: Layer[], at: number, cameraKeys?: CameraKey[], track?: number | null) => {
     if (!incoming.length && !cameraKeys?.length) return;
+    // Первые слои клипа размечаются прямо в его формате (шаблоны собраны под него же).
+    if (!layers.length && !camera.length && layersFmt !== aspect) setLayersFmt(aspect);
     const minStart = incoming.length ? Math.min(...incoming.map((l) => l.start)) : at;
     const shift = at - minStart;
     const moved = incoming.map((l) => ({ ...l, start: l.start + shift, end: l.end + shift }) as Layer);
@@ -3105,7 +3205,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <div className="ed-lib-head">
               <strong>{isCanvas ? "Холст" : "Кадр исходника"}</strong>
               <span className="muted">
-                {isCanvas ? "видео нет — весь кадр фон; сменить — «Фон холста» справа" : "тащи рамку — так встанет кадр 9:16"}
+                {isCanvas ? "видео нет — весь кадр фон; сменить — «Фон холста» справа" : `тащи рамку — так встанет кадр ${aspect}`}
               </span>
             </div>
             <div className="ed-stage">
@@ -3172,12 +3272,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   layout={layout}
                   chromaKey={source.chroma_key}
                   backdrop={backdrop}
+                  format={aspect}
                 />
               </div>
               <div className="editor-stage-meta mono">
                 {isCanvas
-                  ? `${canvasLabel(backdrop)} · 9:16 · ${Math.round(clipDuration)} с`
-                  : `${formatDuration(source.duration_sec)} · ${source.width}×${source.height} · 16:9 → 9:16`}
+                  ? `${canvasLabel(backdrop)} · ${aspect} · ${Math.round(clipDuration)} с`
+                  : `${formatDuration(source.duration_sec)} · ${source.width}×${source.height} → ${aspect}${
+                      sourceStrategy(aspect, source.width, source.height, source.content_crop) === "fit" ? " (целиком на подложке)" : ""
+                    }`}
               </div>
             </div>
           </div>
@@ -3194,7 +3297,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               }}
             />
           ) : null}
-          {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} /> : null}
+          {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} format={layers.length || camera.length ? layersFmt : aspect} /> : null}
           {libTab === "text" ? (
             <TextPanel
               onAdd={addAtCursor}
@@ -3259,12 +3362,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         </aside>
 
         <div className="ed-center">
-          <div className="ed-phone" title="Так будет выглядеть вертикальный клип">
-              <div className="ed-phone-screen">
+          <div className="ed-phone" title={`Так будет выглядеть клип ${aspect}`}>
+              <div
+                className="ed-phone-screen"
+                data-fmt={aspect}
+                style={{ "--fmt-ar": `${frameSize(aspect).w} / ${frameSize(aspect).h}`, "--fmt-k": frameSize(aspect).w / frameSize(aspect).h } as React.CSSProperties}
+              >
                 <canvas
                   ref={phoneRef}
-                  width={540}
-                  height={960}
+                  width={frameSize(aspect).w / 2}
+                  height={frameSize(aspect).h / 2}
                   style={{
                     filter: lookCss || undefined,
                     transform: mirror ? "scaleX(-1)" : undefined,
@@ -3273,8 +3380,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <canvas
                   ref={phoneOverlayRef}
                   className="ed-phone-overlay"
-                  width={1080}
-                  height={1920}
+                  width={frameSize(aspect).w}
+                  height={frameSize(aspect).h}
                   style={{ pointerEvents: "auto", touchAction: "none" }}
                   title="Слой или мем можно двигать мышкой, тянуть за уголок, крутить за кружок; двойной клик по тексту — править"
                   onPointerDown={onInsertPointerDown}
@@ -3318,9 +3425,30 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     <span>Субтитры</span>
                   </div>
                 ) : null}
-                <span className="ed-phone-tag mono">9:16</span>
+                <span className="ed-phone-tag mono">{aspect}</span>
               </div>
             </div>
+          {reframedView ? (
+            <div className="ed-reframe-note" role="status">
+              <span>
+                Слои размечены в <b>{layersFmt}</b> — превью показывает их перенос в <b>{aspect}</b>, как сделает рендер
+                (одним масштабом по сценам). Двигать мышью — после разметки.
+              </span>
+              <button
+                type="button"
+                className="btn sm"
+                title={`Сохранить перенесённые слои и камеру как разметку ${aspect}: дальше слои правятся прямо в этом кадре. Остальные форматы будут переноситься уже из ${aspect}`}
+                onClick={() => {
+                  setLayers(reframedView.layers);
+                  setCamera(reframedView.camera);
+                  setLayersFmt(aspect);
+                  toast.push(`Слои размечены в ${aspect}: теперь их можно двигать в этом кадре (Ctrl+Z в истории клипа — откат)`, "success");
+                }}
+              >
+                Разметить слои в этом формате
+              </button>
+            </div>
+          ) : null}
           <div className="ed-transport">
             <button
               className="btn primary sm"
@@ -3421,6 +3549,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 fonts={motionFonts.data ?? []}
                 now={clipNow}
                 clipDuration={clipDuration}
+                refWidth={formatRefSize(layersFmt).w}
                 onChange={(next) => setLayers((prev) => prev.map((l) => (l.id === next.id ? next : l)))}
                 onDelete={() => {
                   setLayers((prev) => prev.filter((l) => l.id !== selectedLayerId));
@@ -4093,11 +4222,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       />
                     </label>
                     {seg ? (
-                      <img
-                        className="cover-preview"
-                        alt="Кадр для обложки"
-                        src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&x=${focusXAt(seg, off).toFixed(3)}`}
-                      />
+                      aspect === "9:16" ? (
+                        <img
+                          className="cover-preview"
+                          alt="Кадр для обложки"
+                          src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&x=${focusXAt(seg, off).toFixed(3)}`}
+                        />
+                      ) : (
+                        // Другой формат: полный кадр, обрезанный окном формата у той же точки фокуса.
+                        <img
+                          className="cover-preview"
+                          alt="Кадр для обложки"
+                          src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&w=640`}
+                          style={{
+                            aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}`,
+                            maxWidth: frameSize(aspect).w > frameSize(aspect).h ? 320 : undefined,
+                            objectPosition: `${(focusWindowPos(focusXAt(seg, off), source.width, source.height, aspect) * 100).toFixed(1)}% 50%`,
+                          }}
+                        />
+                      )
                     ) : null}
                     <p className="muted field-hint">В рендере кадр будет уже с цветом, субтитрами и баннером.</p>
                   </>
@@ -4130,7 +4273,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     />
                   </label>
                   {cover.image ? (
-                    <img className="cover-preview" alt="Обложка" src={`/media/covers/${cover.image}`} />
+                    <img
+                      className="cover-preview"
+                      alt="Обложка"
+                      src={`/media/covers/${cover.image}`}
+                      style={aspect === "9:16" ? undefined : { aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}` }}
+                    />
                   ) : (
                     <p className="muted field-hint">Картинка подгонится под 1080×1920: заполнит кадр, лишнее обрежется.</p>
                   )}
@@ -4480,9 +4628,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Ко всем ★
               </button>
             </div>
-            <label className="ed-aspect" title="Формат готового ролика: видео кадрируется окном нужной пропорции, слои сами переносятся в кадр одним масштабом, фон — на весь кадр. Превью пока вертикальное">
+            <label
+              className="ed-aspect"
+              title="Формат готового ролика: видео кадрируется окном нужной пропорции, слои сами переносятся в кадр одним масштабом, фон — на весь кадр. Превью сразу показывает кадр этого формата"
+            >
               <span>Формат</span>
-              <select value={aspect} onChange={(e) => setAspect(e.target.value as Aspect)}>
+              <select
+                value={aspect}
+                onChange={(e) => {
+                  const next = e.target.value as Aspect;
+                  setAspect(next);
+                  // Слоёв ещё нет — новые сразу размечаются в кадре нового формата.
+                  if (!layers.length && !camera.length) setLayersFmt(next);
+                }}
+              >
                 <option value="9:16">9:16 — вертикаль</option>
                 <option value="1:1">1:1 — квадрат</option>
                 <option value="4:5">4:5 — лента</option>
@@ -4542,7 +4701,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
             <ClipTimeline
               sourceId={source.id}
-              canvas={isCanvas ? { bg: backdrop, accent: clipAccent(layers) } : null}
+              canvas={isCanvas ? { bg: backdrop, accent: clipAccent(layers), tileAspect: frameSize(aspect).w / frameSize(aspect).h } : null}
               peaks={planWave.data?.peaks}
               pieces={activePlan?.segments ?? []}
               inserts={inserts}

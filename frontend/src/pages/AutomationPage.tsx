@@ -9,6 +9,7 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading } from "@/components/ui";
+import { DEFAULT_FORMAT, frameSize } from "@/motion";
 
 const STATUS_RU: Record<string, string> = {
   queued: "в очереди",
@@ -284,7 +285,8 @@ function StartAuto() {
               use_subtitles: subsOn,
               subtitle_profile_id: subProfileId || undefined,
               subtitle_provider: subEngine || undefined,
-              subtitle_margin_v: subsOn ? Math.round((subPosPct / 100) * 1920) : undefined,
+              // Формат у автоматизации не выбирается — клипы выходят 9:16: отступ от высоты его кадра.
+              subtitle_margin_v: subsOn ? Math.round((subPosPct / 100) * frameSize(DEFAULT_FORMAT).h) : undefined,
               use_banner: bannerOn,
               banner_id: bannerId || undefined,
               banner_height_frac: bannerOn ? bannerHeightPct / 100 : undefined,

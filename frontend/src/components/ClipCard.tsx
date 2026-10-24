@@ -44,7 +44,8 @@ export function ClipCard({
 
   return (
     <div className={`panel clip-card${selected ? " clip-card--selected" : ""}`}>
-      <div className="clip-video">
+      {/* Готовый файл любого формата (9:16, 1:1, 4:5, 16:9) — рамка по его кадру; размер неизвестен — 9:16. */}
+      <div className="clip-video" style={clip.width > 0 && clip.height > 0 ? { aspectRatio: `${clip.width} / ${clip.height}` } : undefined}>
         {/* The cover (if the clip has one) instead of a black first frame. */}
         <video
           src={`/media/clips/${clip.id}`}

@@ -10,8 +10,11 @@ import {
   TEMPLATES,
   TEMPLATE_CATEGORIES,
   drawFrame,
+  fitTemplate,
+  frameSize,
   newLayerId,
   type CameraKey,
+  type FormatId,
   type Layer,
   type MotionTemplate,
 } from "@/motion";
@@ -37,6 +40,11 @@ function defaultsOf(t: MotionTemplate): TemplateParams {
   return Object.fromEntries(t.params.map((p) => [p.name, p.default]));
 }
 
+/** Слои шаблона в опорном кадре формата клипа (у 9:16 — как нарисованы). */
+function buildFor(t: MotionTemplate, params: TemplateParams, fmt: FormatId) {
+  return fitTemplate(t.build(params, 0), fmt, t.fit);
+}
+
 /* ---------- живое превью шаблона ---------- */
 
 // Слова-образец, чтобы карточка «Анимированные субтитры» не была пустой.
@@ -54,19 +62,30 @@ const DEMO_CHAT = [
 ].map(([user, color, text], i) => ({ t: 0.1 + i * 0.25, user, color, text, fragments: [{ text }], badges: [] }));
 
 const PREVIEW_W = 135;
-const PREVIEW_H = 240;
 
-/** Мини-кадр 9:16: на наведении шаблон проигрывается по кругу, иначе стоит «плакат». */
-function TemplatePreview({ template, params, autoplay = false }: { template: MotionTemplate; params?: TemplateParams; autoplay?: boolean }) {
+/** Мини-кадр формата клипа: на наведении шаблон проигрывается по кругу, иначе стоит «плакат». */
+function TemplatePreview({
+  template,
+  params,
+  autoplay = false,
+  format = "9:16",
+}: {
+  template: MotionTemplate;
+  params?: TemplateParams;
+  autoplay?: boolean;
+  format?: FormatId;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [hoverState, setHover] = useState(false);
   const hover = autoplay || hoverState;
-  const built = useMemo(() => template.build(params ?? defaultsOf(template), 0), [template, params]);
+  const built = useMemo(() => buildFor(template, params ?? defaultsOf(template), format), [template, params, format]);
+  const frame = frameSize(format);
+  const previewH = Math.round((PREVIEW_W * frame.h) / frame.w);
   useEffect(() => {
     const cv = ref.current;
     const ctx = cv?.getContext("2d");
     if (!cv || !ctx) return;
-    const env = browserEnv(cv.width, cv.height);
+    const env = browserEnv(cv.width, cv.height, format);
     const dur = Math.max(0.5, template.duration);
     const poster = Math.min(dur * 0.55, 1.4);
     let raf = 0;
@@ -96,13 +115,14 @@ function TemplatePreview({ template, params, autoplay = false }: { template: Mot
       timers.forEach((id) => window.clearTimeout(id));
       document.fonts?.removeEventListener?.("loadingdone", onFonts);
     };
-  }, [built, hover, template.duration]);
+  }, [built, hover, template.duration, format]);
   return (
     <canvas
       ref={ref}
       className="lib-tpl-canvas"
+      style={{ aspectRatio: `${frame.w} / ${frame.h}` }}
       width={PREVIEW_W * 2}
-      height={PREVIEW_H * 2}
+      height={previewH * 2}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     />
@@ -112,7 +132,17 @@ function TemplatePreview({ template, params, autoplay = false }: { template: Mot
 const NEWLINE = String.fromCharCode(10);
 
 /** Настройка шаблона перед вставкой: поля параметров и живое превью. */
-function TemplateDialog({ template, onClose, onInsert }: { template: MotionTemplate; onClose: () => void; onInsert: AddLayers }) {
+function TemplateDialog({
+  template,
+  onClose,
+  onInsert,
+  format,
+}: {
+  template: MotionTemplate;
+  onClose: () => void;
+  onInsert: AddLayers;
+  format: FormatId;
+}) {
   const [params, setParams] = useState<TemplateParams>(() => defaultsOf(template));
   const set = (name: string, value: string | number | boolean) => setParams((p) => ({ ...p, [name]: value }));
   return (
@@ -126,7 +156,7 @@ function TemplateDialog({ template, onClose, onInsert }: { template: MotionTempl
         </div>
         <div className="tpl-dialog-body">
           <div className="tpl-dialog-preview">
-            <TemplatePreview template={template} params={params} autoplay />
+            <TemplatePreview template={template} params={params} autoplay format={format} />
           </div>
           <div className="tpl-dialog-fields">
             <p className="muted">{template.description}</p>
@@ -178,7 +208,7 @@ function TemplateDialog({ template, onClose, onInsert }: { template: MotionTempl
             type="button"
             className="btn primary"
             onClick={() => {
-              const r = template.build(params, 0);
+              const r = buildFor(template, params, format);
               onInsert(r.layers, r.camera);
               onClose();
             }}
@@ -191,7 +221,8 @@ function TemplateDialog({ template, onClose, onInsert }: { template: MotionTempl
   );
 }
 
-export function TemplatesPanel({ onAdd }: { onAdd: AddLayers }) {
+/** `format` — формат, в котором размечены слои клипа: шаблоны встают в его кадр (fitTemplate). */
+export function TemplatesPanel({ onAdd, format = "9:16" }: { onAdd: AddLayers; format?: FormatId }) {
   const [tuning, setTuning] = useState<MotionTemplate | null>(null);
   const [cat, setCat] = useState<string>("Все");
   const [q, setQ] = useState("");
@@ -219,15 +250,15 @@ export function TemplatesPanel({ onAdd }: { onAdd: AddLayers }) {
             title={`${t.description}\nКлик — в момент курсора, или перетащите на дорожку`}
             draggable
             onDragStart={(e) => {
-              const r = t.build(defaultsOf(t), 0);
+              const r = buildFor(t, defaultsOf(t), format);
               dragPayload(e, r.layers, r.camera);
             }}
             onClick={() => {
-              const r = t.build(defaultsOf(t), 0);
+              const r = buildFor(t, defaultsOf(t), format);
               onAdd(r.layers, r.camera);
             }}
           >
-            <TemplatePreview template={t} />
+            <TemplatePreview template={t} format={format} />
             {t.params.length ? (
               <span
                 className="lib-tpl-tune"
@@ -247,7 +278,7 @@ export function TemplatesPanel({ onAdd }: { onAdd: AddLayers }) {
         ))}
         {!list.length ? <div className="muted">Ничего не нашлось</div> : null}
       </div>
-      {tuning ? <TemplateDialog template={tuning} onClose={() => setTuning(null)} onInsert={onAdd} /> : null}
+      {tuning ? <TemplateDialog template={tuning} onClose={() => setTuning(null)} onInsert={onAdd} format={format} /> : null}
     </div>
   );
 }

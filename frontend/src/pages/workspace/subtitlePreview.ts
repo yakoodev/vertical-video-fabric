@@ -109,7 +109,8 @@ export function drawKaraoke(
   });
   if (!page) return false;
 
-  const k = cv.width / FRAME_W;
+  // px стиля — от короткой стороны кадра (1080 у всех форматов): у 9:16 это ширина, как всегда.
+  const k = Math.min(cv.width, cv.height) / FRAME_W;
   const size = Math.max(8, style.font_size * k);
   const perLine = Math.max(1, style.max_words_per_line || 5);
   const texts = page.map((i) => (style.uppercase ? words[i].word.toUpperCase() : words[i].word));

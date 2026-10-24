@@ -320,6 +320,105 @@ export function cameraRegions(
   return { box: { x: 0, y: 0, w: W, h: H }, pinned: [{ x: p.x * W, y: p.y * H, w: p.w * W, h: p.h * H }] };
 }
 
+/* ---------- раскладка в горизонтальном кадре (16:9) ---------- */
+
+// Как app/stream_layout: ширина окошка вебки из split — доля ширины кадра; поле от краёв —
+// доля высоты (то же число px по обеим осям).
+export const LANDSCAPE_PIP_W = 0.26;
+export const LANDSCAPE_PIP_MARGIN = 0.035;
+
+/**
+ * Раскладка для кадра `out` (app/stream_layout.layout_for_format). Вертикаль, квадрат, 4:5 —
+ * как есть. В горизонтальном кадре: split → pip_cam (игра на весь кадр, вебка окошком в правом
+ * верхнем / нижнем углу), pip_cam → окошко в ближайшем углу той же ширины в px, meme → обычный
+ * кадр (undefined), single — как есть.
+ */
+export function layoutForFormat(
+  layout: StreamLayout | null | undefined,
+  out: { w: number; h: number },
+  srcW: number,
+  srcH: number,
+): StreamLayout | undefined {
+  if (!layout) return undefined;
+  if (!layoutActive(layout) || out.w <= out.h) return layout;
+  const lay = normalizeLayout(layout);
+  if (lay.mode === "meme") return undefined;
+  let w: number;
+  let right: boolean;
+  let top: boolean;
+  if (lay.mode === "split") {
+    w = LANDSCAPE_PIP_W;
+    right = true;
+    top = lay.cam_pos !== "bottom";
+  } else {
+    w = Math.min(0.45, Math.max(0.12, (lay.pip.w * out.h) / out.w));
+    right = lay.pip.x >= 0.5;
+    top = lay.pip.y < 0.5;
+  }
+  const aspect = (lay.cam.w * (srcW || 16)) / Math.max(1e-6, lay.cam.h * (srcH || 9));
+  const h = Math.min(1, (w * out.w) / Math.max(1e-6, aspect) / out.h);
+  const mx = (LANDSCAPE_PIP_MARGIN * out.h) / out.w;
+  const x = right ? 1 - mx - w / 2 : mx + w / 2;
+  const y = top ? LANDSCAPE_PIP_MARGIN + h / 2 : 1 - LANDSCAPE_PIP_MARGIN - h / 2;
+  return { ...lay, mode: "pip_cam", pip: { x: r4(x), y: r4(y), w: r4(w) } };
+}
+
+let containBgCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Исходник целиком по высоте (render: blur_background / contain у «fit»-основы 16:9):
+ * сзади — тот же кадр «cover» с размытием (или заливка `fill` — поля цвета ключа),
+ * по центру — окно `content` (px исходника после обрезки полей) вписанным.
+ */
+export function drawContainFrame(
+  ctx: CanvasRenderingContext2D,
+  video: CanvasImageSource,
+  content: SourceRect,
+  W: number,
+  H: number,
+  fill: string | null = null,
+  out: { w: number; h: number } = { w: W, h: H },
+): void {
+  if (fill) {
+    ctx.save();
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  } else {
+    const bc = (containBgCanvas ??= document.createElement("canvas"));
+    const sw = Math.max(8, Math.round(W / 4));
+    const sh = Math.max(8, Math.round(H / 4));
+    if (bc.width !== sw || bc.height !== sh) {
+      bc.width = sw;
+      bc.height = sh;
+    }
+    const bctx = bc.getContext("2d");
+    if (bctx) {
+      const cAR = content.w / Math.max(1, content.h);
+      const tAR = sw / sh;
+      let { x: cx, y: cy, w: cw, h: ch } = content;
+      if (cAR > tAR) {
+        cw = content.h * tAR;
+        cx += (content.w - cw) / 2;
+      } else {
+        ch = content.w / tAR;
+        cy += (content.h - ch) / 2;
+      }
+      const radius = (20 * sw) / out.w;
+      const pad = radius * 2;
+      bctx.save();
+      bctx.filter = `blur(${radius.toFixed(2)}px)`;
+      bctx.drawImage(video, cx, cy, cw, ch, -pad, -pad, sw + 2 * pad, sh + 2 * pad);
+      bctx.restore();
+      ctx.drawImage(bc, 0, 0, W, H);
+    }
+  }
+  const k = Math.min(W / Math.max(1, content.w), H / Math.max(1, content.h));
+  const dw = content.w * k;
+  const dh = content.h * k;
+  ctx.drawImage(video, content.x, content.y, content.w, content.h, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
 /* ---------- кусок «шире окна» (segment.fit) ---------- */
 
 /**

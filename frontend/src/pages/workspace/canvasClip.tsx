@@ -36,11 +36,14 @@ export function BackdropStrip({
   from = 0,
   to = 1,
   className,
+  tileAspect = 9 / 16,
 }: {
   bg: Background;
   accent?: string | null;
   width: number;
   height?: number;
+  /** Пропорция плитки (ширина/высота) — кадр формата клипа; по умолчанию 9:16. */
+  tileAspect?: number;
   /** Секунды клипа под полосой — плитки берут фон в своё время. */
   from?: number;
   to?: number;
@@ -56,7 +59,7 @@ export function BackdropStrip({
     const H = Math.max(1, Math.round(height));
     cv.width = W;
     cv.height = H;
-    const tileW = Math.max(8, Math.round((H * 9) / 16));
+    const tileW = Math.max(8, Math.round(H * tileAspect));
     const count = Math.max(1, Math.ceil(W / tileW));
     for (let i = 0; i < count; i += 1) {
       const t = from + ((to - from) * (i + 0.5)) / count;
@@ -68,7 +71,7 @@ export function BackdropStrip({
       paintBackground(ctx, bg, t, tileW, H, { accent, createCanvas });
       ctx.restore();
     }
-  }, [key, accent, width, height, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, accent, width, height, from, to, tileAspect]); // eslint-disable-line react-hooks/exhaustive-deps
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
 
