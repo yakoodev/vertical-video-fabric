@@ -1009,8 +1009,15 @@ def render_frame_png(
     camera: Any = None,
     inserts: bool = False,
     layers_format: str | None = None,
+    subtitles: bool = False,
+    notes: list[str] | None = None,
 ) -> bytes:
     """PNG кадра клипа в момент ``t`` с камерой и слоями — для ИИ-агента и превью.
+
+    ``subtitles`` — прожечь поверх те же субтитры, что прожжёт рендер (тот же ASS: стиль,
+    отступ, формат кадра), если они у клипа включены (``subs_on``) и не заменены слоем
+    ``captions``: агент видит наезд субтитров на HUD игры до рендера. ``notes`` — сюда
+    допишется, что с субтитрами вышло.
 
     ``layers_format`` — в каком формате размечены переданные ``layers`` (обложка рисует титр
     сразу в кадре формата клипа); не задан — как у слоёв клипа (``render.layers_format``).
@@ -1153,9 +1160,78 @@ def render_frame_png(
             raise RuntimeError("компоновщик не записал кадр")
         if inserts:
             _overlay_inserts(store, rs.get("inserts") or [], t, out, width, height)
+        if subtitles and not words:
+            # Слой captions со словами заменяет прожигаемые субтитры (как в рендере) — тогда они уже в кадре.
+            _overlay_subtitles(store, plan, rs, preset, t, out, width, height, notes)
         return out.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def frame_subtitles_ass(store: Any, plan: dict, rs: dict, preset: dict, width: int, height: int,
+                        path: Path) -> Path | None:
+    """ASS субтитров клипа в шкале clip (до вырезов, как кадр агента) — тем же расчётом, что
+    рендер (``ClipRenderService._render_subtitles``): стиль клипа или по умолчанию, отступ
+    ``sub_pos_pct``, поправка времени стиля, раскладка под формат кадра. None — субтитры
+    выключены или их нет."""
+    from app import render as _render
+    from app.clip_settings import settings_to_render_kwargs
+    from app.clip_subtitles import _default_profile, result_from_payload
+    from app.cuts import subtitles_to_final
+    from app.subtitles.ass import write_ass_subtitles
+
+    if not rs.get("subs_on"):
+        return None
+    payload = store.get_clip_plan_subtitles(int(plan["id"])) or {}
+    if not (payload.get("lines") or payload.get("words")):
+        return None
+    try:
+        default_id = int(store.get_app_setting_value("default_subtitle_profile_id") or 0) or None
+    except (TypeError, ValueError):
+        default_id = None
+    kwargs = settings_to_render_kwargs(rs, default_id)
+    try:
+        profile = (store.get_subtitle_profile(int(kwargs["subtitle_profile_id"])) if kwargs.get("subtitle_profile_id")
+                   else _default_profile(store))
+    except (KeyError, TypeError, ValueError):
+        return None
+    margin = kwargs.get("subtitle_margin_v")
+    if margin is not None:
+        profile = {**profile, "margin_v": max(0, int(margin))}
+    elif preset.get("format"):
+        profile = {**profile, "margin_v": round(int(profile.get("margin_v") or 160) * height / 1920)}
+    result = result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], rs.get("transition")))
+    end = max((float(w.end) for w in result.words), default=0.0) + 5.0
+    result = _render._apply_subtitle_timing_offset(result, profile, end)
+    return write_ass_subtitles(result, profile, path, width=width, height=height, fmt=preset.get("format"))
+
+
+def build_frame_subtitle_args(png: Path, out: Path, ass_name: str, t: float) -> list[str]:
+    """ffmpeg: прожечь ASS (файл ``ass_name`` в рабочей папке) в кадр ``png`` как момент ``t``."""
+    from app.render import _filter_filename
+
+    return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(png),
+            "-vf", f"setpts=PTS-STARTPTS+{max(0.0, float(t)):.3f}/TB,ass={_filter_filename(ass_name)}",
+            "-frames:v", "1", str(out)]
+
+
+def _overlay_subtitles(store: Any, plan: dict, rs: dict, preset: dict, t: float, png: Path, width: int,
+                       height: int, notes: list[str] | None) -> None:
+    """Прожечь субтитры клипа в кадр ``png`` (момент ``t`` шкалы clip). Сбой — кадр как был, пометка."""
+    from app import render as _render
+
+    try:
+        ass = frame_subtitles_ass(store, plan, rs, preset, width, height, png.with_name("frame-subs.ass"))
+        if ass is None:
+            return
+        tmp = png.with_name("frame-subs.png")
+        _render._run_ffmpeg(build_frame_subtitle_args(png, tmp, ass.name, t), timeout=60, cwd=ass.parent)
+        tmp.replace(png)
+        if notes is not None:
+            notes.append("субтитры прожжены как в рендере (subtitles: false — без них)")
+    except Exception as exc:  # noqa: BLE001 - без субтитров кадр всё равно полезен
+        if notes is not None:
+            notes.append(f"субтитры в кадр не легли: {str(exc)[:160]}")
 
 
 def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width: int, height: int) -> None:
@@ -1207,9 +1283,11 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
 
 def contact_sheet_jpeg(
     store: Any, clip_plan_id: int, n: int = 8, width: int = 240, times: list[float] | None = None,
-    before_cuts: bool = False,
+    before_cuts: bool = False, subtitles: bool = False,
 ) -> bytes:
     """Лист кадров клипа: ``n`` моментов равномерно по клипу, с подписью времени.
+
+    ``subtitles`` — с прожжёнными субтитрами клипа (как в рендере, если они включены).
 
     Весь монтаж одним взглядом — агенту (одна картинка вместо восьми запросов
     кадра) и человеку на проверке. Кадры — тем же компоновщиком, что и рендер.
@@ -1249,7 +1327,7 @@ def contact_sheet_jpeg(
         paths: list[Path] = []
         for k in range(n):
             path = Path(tmp) / f"f{k:02d}.png"
-            path.write_bytes(render_frame_png(store, clip_plan_id, shots[k], inserts=True))
+            path.write_bytes(render_frame_png(store, clip_plan_id, shots[k], inserts=True, subtitles=subtitles))
             paths.append(path)
         return tile_frames_jpeg(paths, [f"{t:.1f} s" for t in times], width, cols=4)
 

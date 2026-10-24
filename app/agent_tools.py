@@ -1246,7 +1246,9 @@ def _clip_time_arg(ctx: ToolContext, args: dict, key: str = "t") -> tuple[float,
 def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
     t, scale = _clip_time_arg(ctx, args)
     with_layers = args.get("with_layers", True) is not False
-    data, mime, info = render_clip_frame(ctx.store, ctx.plan_id, t, with_layers=with_layers)
+    # Субтитры клипа (если включены) — по умолчанию в кадре: наезд на HUD игры видно до рендера.
+    subtitles = with_layers and args.get("subtitles", True) is not False
+    data, mime, info = render_clip_frame(ctx.store, ctx.plan_id, t, with_layers=with_layers, subtitles=subtitles)
     return ImageResult(data=data, mime_type=mime, info={"t": round(t, 3), **scale, "with_layers": with_layers, **info})
 
 
@@ -1260,10 +1262,12 @@ def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     times = [float(_num(t)) for t in times] if times else None
     width = 220 if not times or len(times) > 4 else 300
     before = bool(args.get("before_cuts"))
-    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times, before_cuts=before)
+    subtitles = args.get("subtitles", True) is not False and bool(_current_render(ctx).get("subs_on"))
+    data = contact_sheet_jpeg(ctx.store, ctx.plan_id, n=n, width=width, times=times, before_cuts=before,
+                              subtitles=subtitles)
     scale = "clip" if before and times else "final"
     return ImageResult(data=data, mime_type="image/jpeg",
-                       info={"n": len(times) if times else n, "times": times, "time": scale,
+                       info={"n": len(times) if times else n, "times": times, "time": scale, "subtitles": subtitles,
                              "note": "подписи на листе — шкала " + scale + (" (до вырезов, как слои)" if scale == "clip"
                                                                             else " (готовый ролик)")})
 
@@ -1379,7 +1383,8 @@ def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
                              countdown=args.get("countdown", True) is not False)
 
 
-def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True) -> tuple[bytes, str, dict]:
+def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True,
+                      subtitles: bool = False) -> tuple[bytes, str, dict]:
     """Кадр готового вида на клиповом времени ``t``.
 
     Сначала — моушн-кадр (камера + слои тем же кодом, что и рендер,
@@ -1393,8 +1398,13 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
 
         layers = None if with_layers else []
         camera = None if with_layers else []
-        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers)
-        return data, "image/png", {"kind": "motion"}
+        notes: list[str] = []
+        data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers,
+                                subtitles=subtitles, notes=notes)
+        info: dict = {"kind": "motion"}
+        if notes:
+            info["subtitles"] = "; ".join(notes)
+        return data, "image/png", info
     except ImportError:
         problem = "моушн-кадр недоступен"
     except KeyError:
@@ -4269,8 +4279,11 @@ def _build_registry() -> list[Tool]:
             "view_frame", "Смотрю кадр",
             "Картинка клипа в момент t — как будет в готовом видео, со слоями и камерой. t — шкала clip "
             "(до вырезов, как слои); final=true — t в секундах ГОТОВОГО ролика (как contact_sheet и listen). "
-            "Проверяй так размещение, читаемость, что титр не закрыл лицо. / Render the clip frame at t.",
+            "Проверяй так размещение, читаемость, что титр не закрыл лицо. Субтитры клипа (если включены) "
+            "прожжены как в рендере — видно, не легли ли они на HUD игры; subtitles=false — без них. "
+            "/ Render the clip frame at t.",
             _obj({"t": {"type": "number"}, "with_layers": {"type": "boolean"},
+                  "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
                   "final": {"type": "boolean", "description": "t — секунды готового ролика (после вырезов)"}},
                  ["t"]), h_view_frame,
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
@@ -4307,9 +4320,11 @@ def _build_registry() -> list[Tool]:
             "Сетка из n кадров равномерно по клипу (с временем) — весь монтаж одним взглядом: "
             "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты, до 16: по "
             "умолчанию секунды ГОТОВОГО ролика (после вырезов, как подписи на листе); before_cuts=true — "
-            "секунды ДО вырезов, как у слоёв и камеры. Кадры исходника вне клипа — source_contact_sheet. / "
+            "секунды ДО вырезов, как у слоёв и камеры. Субтитры клипа (если включены) прожжены как в рендере; "
+            "subtitles=false — без них. Кадры исходника вне клипа — source_contact_sheet. / "
             "Contact sheet of n frames or of chosen times.",
             _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
+                  "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
                   "times": {"type": "array", "items": {"type": "number"}},
                   "before_cuts": {"type": "boolean",
                                   "description": "times в секундах ДО вырезов — как у слоёв, камеры и view_frame"}}),
