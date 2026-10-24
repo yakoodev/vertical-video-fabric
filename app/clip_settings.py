@@ -26,6 +26,13 @@ from app.transitions import normalize_transition
 
 SUBTITLE_FRAME_HEIGHT = 1920
 
+
+def subtitle_frame_height(fmt: object) -> int:
+    """Высота кадра формата для отступа субтитров (sub_pos_pct — доля высоты кадра)."""
+    from app.formats import frame_size, settings_format
+
+    return frame_size(settings_format(fmt))[1]
+
 COVER_MODES = ("none", "frame", "image")
 # Uploaded covers are stored under a generated name — only such names are accepted,
 # so a settings value can never point the renderer at an arbitrary file.
@@ -179,7 +186,8 @@ def settings_to_render_kwargs(settings: dict, default_subtitle_profile_id: int |
         "ffmpeg_preset_id": s["preset_id"],
         "subtitle_profile_id": sub_id if subs else None,
         "subtitle_provider": (s["sub_engine"] or None) if subs else None,
-        "subtitle_margin_v": round(s["sub_pos_pct"] / 100 * SUBTITLE_FRAME_HEIGHT) if subs else None,
+        # Доля высоты кадра формата (ASS PlayResY = высота кадра); у 9:16 — от 1920, как всегда.
+        "subtitle_margin_v": round(s["sub_pos_pct"] / 100 * subtitle_frame_height(s["format"])) if subs else None,
         "banner_id": s["banner_id"] if banner else None,
         "banner_height_frac": s["banner_height_pct"] / 100 if banner else None,
         "banner_y_frac": s["banner_pos_pct"] / 100 if banner else None,

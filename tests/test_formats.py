@@ -67,6 +67,11 @@ def test_preset_with_output_per_format():
     assert (wide["output_width"], wide["output_height"], wide["format"]) == (1920, 1080, "16:9")
     assert "base_fit" not in wide and wide["landscape"]
     assert _preset_with_output(base, V_SRC, "16:9")["base_fit"] == "fit"
+    # Отступ субтитров — доля высоты кадра формата (у 9:16 — от 1920, как всегда).
+    from app.clip_settings import settings_to_render_kwargs
+
+    assert settings_to_render_kwargs({"subs_on": True, "sub_pos_pct": 10})["subtitle_margin_v"] == 192
+    assert settings_to_render_kwargs({"subs_on": True, "sub_pos_pct": 10, "format": "16:9"})["subtitle_margin_v"] == 108
     # Слои размечены в 16:9, а рендер 9:16 — пресет помнит формат разметки.
     assert _preset_with_output(base, H_SRC, "9:16", 0.0, "16:9")["layers_format"] == "16:9"
 

@@ -1,10 +1,12 @@
-"""Кадры проверки перекомпоновки 9:16 → 1:1 / 4:5 (app/aspect.py) через компоновщик.
+"""Кадры проверки перекомпоновки между форматами (9:16 → 1:1 / 4:5 / 16:9, app/aspect.py) через компоновщик.
 
 Рисует набор слоёв в нужных форматах тем же движком, что и рендер (``--frame --png``):
-фон холста (аврора), слои и камера после ``reframe_motion``. Без сервиса и базы — только файлы.
+фон холста (аврора), слои и камера после ``reframe_between`` (из формата разметки слоёв в
+формат кадра, app/formats.py). Без сервиса и базы — только файлы.
 
     python tools/aspect_frames.py OUT_DIR                       # синтетика: телефон, титр, кнопка
     python tools/aspect_frames.py OUT_DIR --layers clip.json --assets DIR --at 3 20 37
+    python tools/aspect_frames.py OUT_DIR --formats 9:16 16:9 --layers-format 9:16
 
 ``--layers`` — файл клипа (vvf.py pull / GET /api/clip-plans/{id}/spec; берутся и ключи камеры) или список слоёв;
 ``--assets`` — папка с файлами слоёв по id (``139.mp4``, ``128.png``…). Нужен собранный
@@ -56,20 +58,24 @@ def _green_base(path: Path, width: int, height: int, seconds: float) -> None:
 
 
 def render_frames(layers: list[dict], assets: dict[str, str], backdrop: dict, times: list[float],
-                  out_dir: Path, formats: list[str], tag: str, camera: list[dict] | None = None) -> list[Path]:
+                  out_dir: Path, formats: list[str], tag: str, camera: list[dict] | None = None,
+                  layers_format: str = "9:16") -> list[Path]:
+    """PNG кадров ``times`` в каждом формате ``formats``; слои размечены в ``layers_format``."""
     from app import render as _render
-    from app.aspect import ASPECTS, asset_sizes, reframe_motion, reframe_plan
-    from app.motion_render import build_compositor_args, prepare_video_frames, write_comp
+    from app.aspect import asset_sizes, reframe_between, reframe_plan
+    from app.formats import comp_ref, frame_size, ref_size
+    from app.motion_render import build_compositor_args, prepare_video_frames, unit_width, write_comp
 
     out_dir.mkdir(parents=True, exist_ok=True)
     sizes = asset_sizes(layers, assets)
     made: list[Path] = []
     duration = max([float(layer.get("end") or 0) for layer in layers] + [max(times) + 0.5])
     for aspect in formats:
-        width, height = ASPECTS[aspect]
-        framed, cam = reframe_motion(layers, camera or [], width, height, sizes)
-        if aspect != "9:16":
-            plan = reframe_plan(layers, width, height, sizes, camera=camera)
+        width, height = frame_size(aspect)
+        framed, cam = reframe_between(layers, camera or [], layers_format, aspect, sizes)
+        if aspect != layers_format:
+            rw, rh = ref_size(aspect)
+            plan = reframe_plan(layers, rw, rh, sizes, camera=camera, ref=ref_size(layers_format))
             parts = ", ".join(f"{p['start']:g}–{p['end']:g} с: рамка {p['box']}" for p in plan["scenes"])
             print(f"{tag} {aspect}: масштаб {plan['scale']}; сцены: {parts}")
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,9 +86,11 @@ def render_frames(layers: list[dict], assets: dict[str, str], backdrop: dict, ti
             comp = write_comp(
                 work / "comp.json", width=width, height=height, fps=30, duration=duration, layers=framed, camera=cam,
                 key={"color": "#00ff00", "similarity": 0.25, "blend": 0.08, "despill": "green"}, background=backdrop,
+                ref=comp_ref(aspect),
             )
             for t in times:
-                videos, _notes = prepare_video_frames(framed, assets, work / f"v{t:g}", fps=30, out_width=width, at=t)
+                videos, _notes = prepare_video_frames(framed, assets, work / f"v{t:g}", fps=30,
+                                                      out_width=unit_width(width, aspect), at=t)
                 png = out_dir / f"{tag}-{aspect.replace(':', 'x')}-t{t:g}.png"
                 _render._run_compositor(
                     build_compositor_args(comp, work / "assets.json", input_path=base, frame=t, png_path=png,
@@ -109,7 +117,8 @@ def main() -> None:
     parser.add_argument("--layers", type=Path, help="файл клипа или JSON-список слоёв")
     parser.add_argument("--assets", type=Path, help="папка с файлами слоёв по id")
     parser.add_argument("--at", type=float, nargs="+", default=[1.0])
-    parser.add_argument("--formats", nargs="+", default=["9:16", "4:5", "1:1"])
+    parser.add_argument("--formats", nargs="+", default=["9:16", "4:5", "1:1", "16:9"])
+    parser.add_argument("--layers-format", default="9:16", help="в каком формате размечены слои (по умолчанию 9:16)")
     args = parser.parse_args()
 
     from app.motion import normalize_camera, normalize_layers
@@ -140,7 +149,7 @@ def main() -> None:
         assets = {"901": str(phone.resolve()), "902": str(band.resolve())}
         backdrop = SYNTHETIC_BACKDROP
         tag = "synthetic"
-    made = render_frames(layers, assets, backdrop, args.at, args.out, args.formats, tag, camera)
+    made = render_frames(layers, assets, backdrop, args.at, args.out, args.formats, tag, camera, args.layers_format)
     for t in args.at:
         row = [p for p in made if p.name.endswith(f"-t{t:g}.png")]
         sheet = args.out / f"{tag}-sheet-t{t:g}.png"
