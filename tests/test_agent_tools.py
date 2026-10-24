@@ -453,7 +453,7 @@ def test_clip_context_fills_project_id_and_auto_focus(tmp_path, monkeypatch):
     assert ok and seen["project"] == source["id"]  # проект — источник клипа, без «нужен project_id»
 
     # Настоящий app.autofocus тянет OpenCV (есть в контейнере, не в venv хоста) — подменяем модуль.
-    fake = types.SimpleNamespace(compute_segment_focus=lambda src, a, b, vlm_resolver=None: [
+    fake = types.SimpleNamespace(compute_segment_focus=lambda src, a, b, vlm_resolver=None, **_k: [
         {"t": 0.0, "x": 0.3}, {"t": 2.0, "x": 0.7, "cut": True}])
     monkeypatch.setitem(sys.modules, "app.autofocus", fake)
     out, ok = run_tool(ctx, "auto_focus", {})
@@ -477,7 +477,7 @@ def test_auto_focus_hands_piece_words_for_replies(tmp_path, monkeypatch):
         {"word": "Рик?", "start": 6.0, "end": 6.6, "speaker": "B"}]})
     seen = {}
 
-    def fake_focus(src, a, b, vlm_resolver=None, speech_words=None):
+    def fake_focus(src, a, b, vlm_resolver=None, speech_words=None, **_k):
         seen[(a, b)] = speech_words
         # Поворот внутри плана (без cut) — как от apply_answers.
         return [{"t": 0.0, "x": 0.72}, {"t": 1.65, "x": 0.72}, {"t": 2.0, "x": 0.4}]
@@ -491,6 +491,43 @@ def test_auto_focus_hands_piece_words_for_replies(tmp_path, monkeypatch):
     assert seen[(0.0, 5.0)] == [{"word": "Морти,", "start": 0.5, "end": 1.0, "speaker": "A"}]
     assert seen[(1.0, 6.0)] == [{"word": "Рик?", "start": 1.0, "end": 1.6, "speaker": "B"}]
     assert out["pieces"][0]["turns"] == 1
+
+
+def test_auto_focus_first_person_locks_on_crosshair(tmp_path, monkeypatch):
+    """Клипы 583–585: шутер без Gemini — окно прыгало за движением; теперь по названию игры
+    (или по прицелу в кадре) — неподвижный x на прицеле."""
+    import sys
+    import types
+
+    from app.agent_tools import run_tool
+
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+    seen = []
+
+    def fake_focus(src, a, b, vlm_resolver=None, first_person=False, **_k):
+        seen.append(first_person)
+        if first_person:  # как настоящий: прицел найден (или игра от первого лица) — одна точка
+            return [{"t": 0.0, "x": 0.5, "y": 0.5, "aim": True}]
+        return [{"t": 0.0, "x": 0.3}, {"t": 2.0, "x": 0.7, "cut": True}]
+
+    monkeypatch.setitem(sys.modules, "app.autofocus", types.SimpleNamespace(compute_segment_focus=fake_focus))
+    # Обычный клип: прицел ищется по кадрам ("auto"), а не включается вслепую.
+    run_tool(ctx, "auto_focus", {"use_vlm": False})
+    assert seen == ["auto", "auto"]
+    # Название клипа — Apex: игра от первого лица, окно на прицеле.
+    seen.clear()
+    store.update_clip_plan_text(plan["id"], "Apex: тройной нокдаун", "", "")
+    out, ok = run_tool(ctx, "auto_focus", {"use_vlm": False})
+    assert ok, out
+    assert seen == [True, True]
+    assert out["pieces"][0]["first_person"]["x"] == 0.5 and "apex" in out["pieces"][0]["first_person"]["why"]
+    assert "прицел" in out["note"]
+    assert store.get_clip_plan(plan["id"])["segments"][0]["focus"] == [{"t": 0.0, "x": 0.5}]
+    # Явно не от первого лица — обычный автофокус без поиска прицела.
+    seen.clear()
+    out, ok = run_tool(ctx, "auto_focus", {"use_vlm": False, "first_person": False})
+    assert ok and seen == [False, False] and "first_person" not in out["pieces"][0]
 
 
 def test_moving_main_captions_drags_voices_layer_and_overlap_is_warned(tmp_path, monkeypatch):

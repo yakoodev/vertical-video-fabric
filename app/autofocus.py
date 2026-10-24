@@ -250,6 +250,7 @@ def compute_segment_focus(
     vlm_resolver: Callable[..., list[float | None]] | None = None,
     speech_hint: Callable[[float, float], str] | None = None,
     speech_words: list[dict] | None = None,
+    first_person: bool | str = False,
 ) -> list[dict]:
     """Focus track for a segment.
 
@@ -258,6 +259,11 @@ def compute_segment_focus(
     this module stays pure CV) gets one frame per shot and returns the subject x.
     ``speech_words`` — слова субтитров (секунды от начала куска): длинный план с
     несколькими репликами Gemini смотрит по кадру на реплику (app/focus_replies).
+
+    ``first_person`` — игра от первого лица (app/first_person): True — окно стоит на прицеле
+    (найден — его x, иначе 0.5), ``"auto"`` — так же, если прицел виден по кадрам куска
+    (``auto_focus`` агента), False — как обычно (анализ, auto_crop_layer). Ответ тогда — одна точка ``{t: 0, x, y: 0.5, aim: True}`` без Gemini: в шутере всё
+    важное в центре, а погоня за движением уводит прицел с центра (клипы 583–585: x 0.51–0.58).
     """
     cfg = get_focus_preset(preset if preset is not None else source.get("focus_preset"))
     strat = str(strategy if strategy is not None else source.get("focus_strategy") or "").strip().lower() or DEFAULT_FOCUS_STRATEGY
@@ -290,6 +296,7 @@ def compute_segment_focus(
 
         points: list[dict] = []
         point_frames: list[Path] = []  # frame behind each point, for the VLM pass
+        grays: list[np.ndarray] = []  # для поиска прицела (игры от первого лица)
         prev_gray: np.ndarray | None = None
         prev_hist: np.ndarray | None = None
         prev_x: float | None = None
@@ -300,6 +307,8 @@ def compute_segment_focus(
             h, w = img.shape[:2]
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             t = round(min(dur, i / fps), 2)
+            if first_person:
+                grays.append(gray)
 
             # Hard cut detection: within one shot the histogram stays similar even
             # under heavy motion; a cut to another shot changes it wholesale.
@@ -366,6 +375,15 @@ def compute_segment_focus(
             prev_x = x
             prev_gray = gray
             prev_hist = hist
+
+        if first_person:
+            from app.first_person import crosshair_x
+
+            aim = crosshair_x(grays)
+            if aim is None and first_person is True:
+                aim = 0.5
+            if aim is not None:
+                return [{"t": 0.0, "x": aim, "y": 0.5, "aim": True}]
 
         # Grab the frames for the VLM while the temp dir still exists: one per shot, or
         # one per reply on a long dialogue shot; the VLM pass itself runs after the CV

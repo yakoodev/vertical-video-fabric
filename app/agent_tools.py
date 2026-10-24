@@ -3247,7 +3247,19 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
                 "note": f"формат {fmt}: исходник {source.get('width')}×{source.get('height')} ложится в кадр без "
                         "кропа — фокус не нужен, кадрировать нечего"}
     from app.autofocus import compute_segment_focus
+    from app.first_person import first_person_hint, source_texts
 
+    # Игра от первого лица — окно на прицеле (app/first_person): явно (first_person), по
+    # названию игры у записи/клипа, иначе — если прицел виден в центре кадров куска ("auto").
+    wanted = args.get("first_person")
+    if wanted is None or wanted == "auto":
+        game = first_person_hint(*source_texts(source, plan))
+        first_person: Any = True if game else "auto"
+        fp_reason = f"игра от первого лица по названию ({game})" if game else ""
+    else:
+        first_person = bool(wanted)
+        game = None
+        fp_reason = "first_person: true" if first_person else ""
     resolver = None
     # По умолчанию с Gemini по кадру на план: на мультфильмах лица не находятся, а монтажёр
     # use_vlm сам не ставил (проверочный прогон: кадр на руке Рика, пока говорит другой).
@@ -3267,8 +3279,11 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         # Слова куска: Gemini видит реплику плана, а длинный план с диалогом — по кадру на реплику.
         piece_words = _piece_words(words, plain_start, length) if resolver and words else []
         kwargs = {"speech_words": piece_words} if piece_words else {}
+        if first_person is not False:
+            kwargs["first_person"] = first_person
         points = compute_segment_focus(source, float(piece["source_start"]), float(piece["source_end"]),
                                        vlm_resolver=resolver, **kwargs)
+        aim = bool(points) and all(p.get("aim") for p in points)
         local = []
         for point in points:  # время точек — уже от начала куска
             item = {"t": round(float(point["t"]), 3), "x": round(float(point["x"]), 4)}
@@ -3280,9 +3295,16 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         item = {"piece": index, "points": len(local), "cuts": sum(1 for q in local if q.get("cut"))}
         if turns and resolver:
             item["turns"] = turns  # повороты к ответившему внутри плана (по репликам)
+        if aim:
+            item["first_person"] = {"x": local[0]["x"] if local else 0.5,
+                                    "why": fp_reason or "прицел виден в центре кадров куска"}
         done.append(item)
-    return {"ok": True, "pieces": done,
-            "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
+    out = {"ok": True, "pieces": done,
+           "note": "проверь contact_sheet: говорящий в кадре? Промах на плане — поправь set_focus этого куска"}
+    if any(p.get("first_person") for p in done):
+        out["note"] = ("игра от первого лица: окно стоит на прицеле (x неподвижен, без погони за движением). "
+                       "Герой не от первого лица — auto_focus(first_person: false); проверь contact_sheet")
+    return out
 
 
 def h_set_focus(ctx: ToolContext, args: dict) -> dict:
@@ -4905,8 +4927,12 @@ def _build_registry() -> list[Tool]:
             "(use_vlm:false — только лица/движение, быстрее). Длинный план с диалогом делит по репликам субтитров "
             "(пауза или смена голоса): кадр на реплику, плавный поворот окна к ответившему (turns в ответе) — "
             "поэтому сначала субтитры. Быстрее, чем подбирать x вручную; потом проверь contact_sheet и "
-            "поправь промахи set_focus. / Automatic 9:16 framing, per reply inside long dialogue shots.",
-            _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
+            "поправь промахи set_focus. Игра от первого лица (шутер: название игры у записи/клипа или прицел "
+            "виден в центре кадров) — окно неподвижно на прицеле (x ≈ 0.5), без погони за движением; "
+            "first_person: true/false — сказать явно. / Automatic 9:16 framing, per reply inside long dialogue shots.",
+            _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"},
+                  "first_person": {"type": "boolean",
+                                   "description": "игра от первого лица: окно на прицеле (по умолчанию — само)"}}),
             h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
         ),
         Tool(
