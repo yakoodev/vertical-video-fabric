@@ -997,8 +997,12 @@ def render_frame_png(
     layers: Any = None,
     camera: Any = None,
     inserts: bool = False,
+    layers_format: str | None = None,
 ) -> bytes:
     """PNG кадра клипа в момент ``t`` с камерой и слоями — для ИИ-агента и превью.
+
+    ``layers_format`` — в каком формате размечены переданные ``layers`` (обложка рисует титр
+    сразу в кадре формата клипа); не задан — как у слоёв клипа (``render.layers_format``).
 
     ``inserts`` — наложить поверх вставки-мемы (гифки, картинки, видео), активные
     в ``t``: в рендере они ложатся отдельным проходом, а агенту их надо видеть.
@@ -1035,10 +1039,10 @@ def render_frame_png(
     preset = service._preset_with_render_overrides(preset, mirror=rs["mirror"], layout=rs["layout"])
     # Формат вывода клипа (app/formats.py) — кадр того же размера, основа и раскладка, как
     # в рендере, слои перенесены из формата их разметки так же, как в рендере.
-    from app.formats import comp_ref
+    from app.formats import comp_ref, settings_format
 
     out_format = rs["format"]
-    layers_format = rs["layers_format"]
+    layers_format = settings_format(layers_format) if layers_format else rs["layers_format"]
     plan_source = store.get_source(int(plan["source_id"]))
     preset = _render._preset_with_output(preset, plan_source, out_format, 0.0, layers_format)
     width = int(preset.get("output_width") or 1080)

@@ -1012,10 +1012,31 @@ def clip_cover_media(clip_id: int, _auth: AuthDep) -> FileResponse:
 COVER_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
 
-@app.post("/api/covers", tags=["Render"], summary="Upload a cover image (fitted to 1080×1920 JPEG)")
-async def api_upload_cover(_auth: AuthDep, file: UploadFile = File(...)) -> dict:
-    """Store an uploaded picture as a cover. Normalised by ffmpeg into a 1080×1920
-    JPEG under a generated name — the only kind of name clip settings accept."""
+@app.post("/api/covers", tags=["Render"], summary="Upload a cover image (fitted to the clip format's frame JPEG)")
+async def api_upload_cover(
+    _auth: AuthDep,
+    file: UploadFile = File(...),
+    format: Annotated[str, Form(description="формат клипа: 9:16 (1080×1920, по умолчанию), 1:1, 4:5, 16:9 (1920×1080)")] = "",
+    clip_plan_id: Annotated[int | None, Form(description="или клип — формат из его настроек")] = None,
+) -> dict:
+    """Store an uploaded picture as a cover. Normalised by ffmpeg into a JPEG of the
+    format's frame (app/formats.py: 9:16 — 1080×1920 as always, 16:9 — 1920×1080, the
+    YouTube thumbnail) under a generated name — the only kind of name clip settings accept.
+    The render fits the cover to the output frame again, so a cover of another format still works."""
+    from app.formats import frame_size, normalize_format, settings_render_format
+
+    try:
+        if format:
+            fmt = normalize_format(format)
+        elif clip_plan_id is not None:
+            fmt = settings_render_format(store.get_clip_plan(int(clip_plan_id)).get("render_settings"))
+        else:
+            fmt = normalize_format(None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    width, height = frame_size(fmt)
     covers = settings.data_dir / "covers"
     covers.mkdir(parents=True, exist_ok=True)
     data = await file.read(COVER_UPLOAD_MAX_BYTES + 1)
@@ -1031,7 +1052,7 @@ async def api_upload_cover(_auth: AuthDep, file: UploadFile = File(...)) -> dict
     try:
         proc = subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(raw),
-             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
+             "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1",
              "-frames:v", "1", "-q:v", "2", str(out)],
             capture_output=True, text=True, timeout=60, check=False,
         )

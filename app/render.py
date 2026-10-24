@@ -1081,6 +1081,13 @@ class ClipRenderService:
             aspect = settings_render_format(plan.get("render_settings"))
         aspect = normalize_format(aspect)
         layers_format = settings_layers_format(plan.get("render_settings"))
+        saved_format = settings_render_format(plan.get("render_settings"))
+        if subtitle_margin_v is not None and saved_format != aspect:
+            # Отступ субтитров из настроек — доля высоты кадра СОХРАНЁННОГО формата
+            # (settings_to_render_kwargs); разовый рендер в другом формате — та же доля его кадра.
+            from app.formats import frame_size
+
+            subtitle_margin_v = round(subtitle_margin_v * frame_size(aspect)[1] / frame_size(saved_format)[1])
         end_hold = self._end_hold_sec(plan, end_hold_sec)
         # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
         # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
@@ -1668,6 +1675,10 @@ class ClipRenderService:
         margin_override = preset.get("subtitle_margin_v_override")
         if margin_override is not None:
             profile = {**profile, "margin_v": margin_override}
+        elif preset.get("format"):
+            # Формат не 9:16: отступ стиля задан в px кадра 1920 — та же доля высоты кадра формата.
+            height = int(preset.get("output_height") or 1920)
+            profile = {**profile, "margin_v": round(int(profile.get("margin_v") or 160) * height / 1920)}
         provider = get_subtitle_provider(profile["provider"])
         model = subtitle_model_for_profile(profile)
         track = self.store.create_subtitle_track(
@@ -1704,6 +1715,8 @@ class ClipRenderService:
                 ass_path,
                 width=int(preset.get("output_width") or 1080),
                 height=int(preset.get("output_height") or 1920),
+                # Формат вывода (только не 9:16): кегль, поля и отступ под кадр (app/subtitles/ass.py).
+                fmt=preset.get("format"),
             )
             _run_ffmpeg(
                 build_ffmpeg_burn_subtitle_args(input_path, output_path, ass_path.name, preset),
@@ -2406,11 +2419,11 @@ def _layout_filter(
     cam_crop = (
         f"[0:v]crop=iw*{cam['w']:.5f}:ih*{cam['h']:.5f}:iw*{cam['x']:.5f}:ih*{cam['y']:.5f}"
     )
-    border = scaled_px(float(layout["border"]["width"]), height)
+    border = scaled_px(float(layout["border"]["width"]), height, width)
     color = ff_color(layout["border"]["color"])
     tail = f"fps={_fps(fps)},format=yuv420p[vbase]"
     if layout["mode"] == "split":
-        cam_h, gap, game_h = split_geometry(layout, height)
+        cam_h, gap, game_h = split_geometry(layout, height, width)
         top = layout["cam_pos"] != "bottom"
         game = _fit_box(mode, anchor, width, game_h, source_crop, reframe_x, "lgame")
         # cover: вебка заполняет полосу целиком, лишнее срезается по центру.
@@ -2447,6 +2460,9 @@ def _layout_filter(
     return f"{game};{cam_chain}[lcam];[lgame][lcam]overlay=x={pos_x}:y={pos_y},{tail}"
 
 
+BANNER_MAX_WIDTH_SHARE = 0.9  # баннер в формате не 9:16 — не шире этой доли ширины кадра
+
+
 def _banner_overlay(banner: dict, preset: dict, height: int, banner_input: str, source_label: str) -> str:
     """Баннер поверх ``source_label`` → ``[vout]``.
 
@@ -2464,7 +2480,13 @@ def _banner_overlay(banner: dict, preset: dict, height: int, banner_input: str, 
     bh_frac = preset.get("banner_height_frac")
     if bh_frac:
         banner_h = max(1, int(round(float(bh_frac) * height)))
-        banner_chain += f",scale=-1:{banner_h}:flags=lanczos"
+        if preset.get("format"):
+            # Формат не 9:16 (app/formats.py): высота — та же доля высоты кадра, но баннер
+            # не шире 90 % кадра (широкая плашка в квадрате/4:5 вылезла бы за края).
+            max_w = max(2, int(round(int(preset.get("output_width") or 1080) * BANNER_MAX_WIDTH_SHARE)))
+            banner_chain += f",scale='min({max_w},iw*{banner_h}/ih)':-1:flags=lanczos"
+        else:
+            banner_chain += f",scale=-1:{banner_h}:flags=lanczos"
     banner_chain += "[banner]"
     return (
         f"{banner_chain};"
