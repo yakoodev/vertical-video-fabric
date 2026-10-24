@@ -42,7 +42,10 @@ import {
   type CaptionWord,
   type ChatMessage,
   type Layer,
+  type PngtuberLayer,
+  type VoiceTrack,
 } from "@/motion";
+import { motionApi } from "@/api/motion";
 import { browserEnv, layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { clipFormat } from "@/motion";
 import {
@@ -596,6 +599,8 @@ type MotionView = {
   selected: string | null;
   words?: CaptionWord[];
   chat?: ChatMessage[];
+  /** Состояния голоса PNGtuber по id слоя — тот же массив, что у компоновщика рендера. */
+  voice?: Record<string, VoiceTrack>;
   /** Направляющие прилипания во время перетаскивания слоя (центр кадра). */
   guides?: { v: boolean; h: boolean };
   /** Длина клипа: слой до конца держится на стоп-кадре без анимации выхода, как в рендере. */
@@ -806,7 +811,7 @@ function CropFrame({
               if (motion?.layers.length) {
                 const env = browserEnv(cv.width, cv.height, format);
                 const behind = shownLayers.filter((l) => !l.hidden);
-                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, camera: motion.camera }, clipT, env, "behind");
+                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, camera: motion.camera }, clipT, env, "behind");
               }
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
               ctx.drawImage(kc, 0, 0, cv.width, cv.height);
@@ -859,6 +864,7 @@ function CropFrame({
                   layers: shownLayers.filter((l) => !l.hidden),
                   words: motion.words,
                   chat: motion.chat,
+                  voice: motion.voice,
                   camera: motion.camera,
                   cameraBox: followBox ?? undefined,
                 },
@@ -892,7 +898,7 @@ function CropFrame({
             const sel = motion?.selected ? shownLayers.find((l) => l.id === motion.selected) : null;
             if (sel && sel.type !== "audio") {
               const env = browserEnv(ov.width, ov.height, format);
-              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat }, followCam);
+              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat, voice: motion?.voice }, followCam);
               const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
               if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
             }
@@ -1336,6 +1342,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     queryKey: ["plan-chat", editorPlanId],
     queryFn: () => api.get<ChatMessage[]>(`/api/clip-plans/${editorPlanId}/chat?limit=5000`),
     enabled: Boolean(editorPlanId && hasChatLayer),
+    staleTime: 300_000,
+  });
+  // PNGtuber: состояния голоса по кадрам считает сервер (как для рендера) — по слоям аватара:
+  // их интервалы и настройки голоса меняются — пересчёт.
+  const voiceLayers = layers.filter((l): l is PngtuberLayer => l.type === "pngtuber" && !l.hidden);
+  const voiceKey = JSON.stringify(voiceLayers.map((l) => [l.id, l.start, l.end, l.props?.voice ?? null, Boolean(l.props?.states?.shout)]));
+  const planVoice = useQuery({
+    queryKey: ["plan-voice", editorPlanId, voiceKey],
+    queryFn: () => motionApi.voice(Number(editorPlanId), voiceLayers),
+    enabled: Boolean(editorPlanId && voiceLayers.length),
     staleTime: 300_000,
   });
   const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });
@@ -2251,6 +2267,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
   const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
   const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
+  const voiceTracks = planVoice.data?.voice;
   // Длина клипа «кусками подряд» — та же шкала, что у слоёв в превью (clipTimeOf).
   const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
   // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
@@ -2263,6 +2280,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       selected: selectedLayerId,
       words: captionWords,
       chat: chatMessages,
+      voice: voiceTracks,
       duration: viewDuration,
       reframed: Boolean(reframedView),
     };
@@ -2273,6 +2291,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       selected: selectedLayerId,
       words: captionWords,
       chat: chatMessages,
+      voice: voiceTracks,
       duration: viewDuration,
     };
 
@@ -2289,13 +2308,13 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const cam = view.camera?.length ? frameCameraMatrix(view.camera, t, cv.width, cv.height) : null;
     const sel = view.selected ? view.layers.find((l) => l.id === view.selected) : null;
     if (sel && !sel.locked && sel.type !== "audio") {
-      const box = layerBox(ctx, sel, t, env, { words: view.words, chat: view.chat }, cam);
+      const box = layerBox(ctx, sel, t, env, { words: view.words, chat: view.chat, voice: view.voice }, cam);
       const handle = box ? handleAt(box, px, py, cssScale) : null;
       if (box && handle) return { layer: sel, handle, box, t };
     }
     const hit = layerAt(ctx, view.layers, t, env, px, py, view.words, cam);
     if (!hit) return null;
-    const box = layerBox(ctx, hit, t, env, { words: view.words, chat: view.chat }, cam);
+    const box = layerBox(ctx, hit, t, env, { words: view.words, chat: view.chat, voice: view.voice }, cam);
     return box ? { layer: hit, handle: "move" as TransformHandle, box, t } : null;
   };
 

@@ -9,7 +9,9 @@
 import {
   assetKey,
   assetUrl,
+  collectAnimRefs,
   collectImageRefs,
+  type AnimSource,
   formatEnv,
   type AssetSizes,
   invalidateTextCache,
@@ -48,6 +50,47 @@ export function imageFor(ref: string): HTMLImageElement | null {
 /** Заранее поставить в загрузку всё, что нужно слоям (без ожидания). */
 export function preloadLayerImages(layers: Layer[]): void {
   for (const ref of collectImageRefs(layers)) imageFor(ref);
+  for (const ref of collectAnimRefs(layers)) animFor(ref);
+}
+
+/* ---------- анимированные картинки (GIF/APNG/webm-alpha) ---------- */
+
+/**
+ * Анимация файла библиотеки — лист кадров с временами от сервера (те же кадры, что раскладывает
+ * рендер, app/anim_frames.py). Пока лист не пришёл (или файл статичный) — null: слой рисует
+ * картинку getImage. Ссылки пакетов (`sticker:`…) не анимируются — их не спрашиваем.
+ */
+type AnimEntry = { src: AnimSource | null };
+const anims = new Map<string, AnimEntry>();
+
+export function animFor(ref: string): AnimSource | null {
+  const hit = anims.get(ref);
+  if (hit) return hit.src;
+  const entry: AnimEntry = { src: null };
+  anims.set(ref, entry);
+  if (!/^\d+$/.test(ref)) return null;
+  motionApi
+    .assetAnim(ref)
+    .then((meta) => {
+      if (!meta.animated || !meta.sheet || !meta.count || !meta.cols || !meta.frame_w || !meta.frame_h) return;
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = () => {
+        const cols = meta.cols!;
+        const fw = meta.frame_w!;
+        const fh = meta.frame_h!;
+        entry.src = {
+          width: meta.width || fw,
+          height: meta.height || fh,
+          times: meta.times?.length ? meta.times : [0],
+          duration: meta.duration || 0,
+          frame: (i) => (i >= 0 && i < meta.count! ? { image: img, sx: (i % cols) * fw, sy: Math.floor(i / cols) * fh, sw: fw, sh: fh } : null),
+        };
+      };
+      img.src = meta.sheet;
+    })
+    .catch(() => undefined);
+  return null;
 }
 
 /* ---------- видео-слои ---------- */
@@ -171,9 +214,9 @@ export function layerAssetSizes(layers: Layer[], known: AssetSizes = {}): { size
   const sizes: AssetSizes = {};
   let missing = 0;
   for (const layer of layers) {
-    if (layer.type !== "image" && layer.type !== "video") continue;
-    const props = layer.props as { asset_id?: unknown; src?: unknown };
-    const ref = props.asset_id || props.src;
+    if (layer.type !== "image" && layer.type !== "video" && layer.type !== "pngtuber") continue;
+    const props = layer.props as { asset_id?: unknown; src?: unknown; states?: { idle?: unknown } };
+    const ref = layer.type === "pngtuber" ? props.states?.idle : props.asset_id || props.src;
     const key = assetKey(ref);
     if (!key || sizes[key]) continue;
     if (known[key]) {
@@ -182,7 +225,7 @@ export function layerAssetSizes(layers: Layer[], known: AssetSizes = {}): { size
     }
     let w = 0;
     let h = 0;
-    if (layer.type === "image") {
+    if (layer.type !== "video") {
       const img = imageFor(String(ref));
       w = img?.naturalWidth ?? 0;
       h = img?.naturalHeight ?? 0;
@@ -267,6 +310,7 @@ export function browserEnv(w: number, h: number, fmt?: unknown): RenderEnv {
       ...(ref.refWidth ? { refWidth: ref.refWidth, refHeight: ref.refHeight } : {}),
       getImage: imageFor,
       getVideo: videoFor,
+      getAnim: animFor,
       createCanvas: (cw, ch) => {
         const c = document.createElement("canvas");
         c.width = cw;

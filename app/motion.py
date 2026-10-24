@@ -55,7 +55,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio",
+    "chat", "audio", "pngtuber",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -135,6 +135,14 @@ TRACK_MAX_GAIN_DB = 12.0
 # Строка статуса телефона: true/"auto" — как у iPhone (доля ширины экрана), предел — STATUS_BAR_MAX.
 STATUS_BAR_AUTO = 0.14
 STATUS_BAR_MAX = 0.4
+# PNGtuber (аватар, который «говорит» голосом дорожки): состояния и разбор голоса (app/pngtuber.py).
+PNGTUBER_STATES = ("idle", "talk", "shout")
+VOICE_THRESHOLD_DB = -38.0
+VOICE_HOLD_SEC = 0.18
+VOICE_ATTACK_SEC = 0.03
+VOICE_SHOUT_DB = -12.0
+VOICE_SPEECH = "speech"
+VOICE_AUTO = "auto"
 
 
 # ---------------------------------------------------------------- описания полей
@@ -493,6 +501,49 @@ class OnOff:
         return {**self.spec.describe(), "shorthand": "true — с умолчаниями"}
 
 
+@dataclass(frozen=True)
+class VoiceTrack:
+    """Дорожка голоса PNGtuber: номер звуковой дорожки источника 0..7 или "speech" — дорожки
+    распознавания речи источника (speech_tracks; не заданы — смесь рендера)."""
+
+    def norm(self, value: Any, rep: _Report, where: str) -> int | str:
+        if value is None or (isinstance(value, str) and value.strip() == VOICE_SPEECH):
+            return VOICE_SPEECH
+        number = _finite(value.strip() if isinstance(value, str) else value)
+        if number is not None and number.is_integer() and 0 <= number <= MAX_TRACK:
+            return int(number)
+        rep(where, f"{value!r} — нужен номер дорожки 0..{MAX_TRACK} или \"{VOICE_SPEECH}\"")
+        return VOICE_SPEECH
+
+    def fill(self) -> str:
+        return VOICE_SPEECH
+
+    def describe(self) -> dict:
+        return {"type": "track", "default": VOICE_SPEECH, "min": 0, "max": MAX_TRACK,
+                "description": f"номер звуковой дорожки источника или \"{VOICE_SPEECH}\" (speech_tracks)"}
+
+
+@dataclass(frozen=True)
+class DbOrAuto:
+    """Порог в дБ или "auto" — по шуму дорожки (app/pngtuber.auto_threshold)."""
+
+    default: float
+    lo: float
+    hi: float
+
+    def norm(self, value: Any, rep: _Report, where: str) -> float | str:
+        if value == VOICE_AUTO:
+            return VOICE_AUTO
+        return Num(self.default, self.lo, self.hi, 1).norm(value, rep, where)
+
+    def fill(self) -> float:
+        return self.default
+
+    def describe(self) -> dict:
+        return {"type": "number", "default": self.default, "min": self.lo, "max": self.hi,
+                "description": f"дБ или \"{VOICE_AUTO}\" — по шуму дорожки"}
+
+
 def _norm_fields(src: dict, fields: dict, rep: _Report, where: str) -> dict:
     """Нормализовать известные поля; отсутствующие — умолчанием, лишние — выбросить."""
     out: dict = {}
@@ -759,6 +810,29 @@ PROPS: dict[str, dict] = {
         "fadeOut": Num(0, 0, 10, 3),
         "offset": Num(0, 0, MAX_TIME_SEC, 3),
         "duck": Flag(False),
+    },
+    # Аватар владельца, который «говорит»: состояние (idle/talk/shout) по громкости голоса
+    # дорожки — сервер считает его по кадрам (app/pngtuber.py) и отдаёт движку массивом
+    # (comp.voice). Каждое состояние — картинка или анимация (GIF/APNG/webm с альфой),
+    # циклится по времени клипа.
+    "pngtuber": {
+        "states": Obj({"idle": AssetRef(), "talk": AssetRef(), "shout": Opt(AssetRef())}),
+        "voice": Obj({
+            # Нет track и asset_id — "speech": дорожки распознавания речи источника.
+            "track": Opt(VoiceTrack()),
+            # Голос из файла библиотеки (звук), секунда файла = время от start слоя.
+            "asset_id": Opt(AssetRef()),
+            "threshold_db": Opt(DbOrAuto(VOICE_THRESHOLD_DB, -80, 0)),
+            "hold": Num(VOICE_HOLD_SEC, 0, 2, 3),
+            "attack": Num(VOICE_ATTACK_SEC, 0, 0.5, 3),
+            "shout_db": Num(VOICE_SHOUT_DB, -60, 0, 1),
+        }),
+        "w": Num(300, 10, 4000, 1),
+        # Масштаб без сглаживания (пиксель-арт); нет поля — авто: исходник ≤ 256 px.
+        "pixelated": Opt(Flag(True)),
+        # Подскок/растяжение в такт огибающей голоса, amount — опорные px (0..40).
+        "bounce": Opt(OnOff(Obj({"amount": Num(10, 0, 40, 1)}, nullable=True))),
+        "flipX": Flag(False),
     },
 }
 
@@ -1061,6 +1135,9 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.char", "не указан эмодзи")
     elif ltype == "audio" and props["asset_id"] is None:
         rep(f"{where}.props.asset_id", "у звука нужен asset_id (файл для монтажа) или sfx:<пак>/<файл>")
+    elif ltype == "pngtuber" and not (props["states"].get("idle") and props["states"].get("talk")):
+        rep(f"{where}.props.states", "у PNGtuber нужны states.idle (молчит) и states.talk (говорит) — "
+                                     "картинки/GIF из «Файлов для монтажа»")
     elif ltype == "chart" and not props["data"]:
         rep(f"{where}.props.data", "у графика нет данных")
     elif ltype == "callout" and not props["title"].strip() and not props["subtitle"].strip():
@@ -1223,6 +1300,14 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         ref = _as_ref(props.get("asset_id")) or _as_ref(props.get("src"))
         if ref is not None:
             refs.append(ref)
+    elif ltype == "pngtuber":
+        # Картинки/анимации состояний и (если голос из файла) звук.
+        states = props.get("states") if isinstance(props.get("states"), dict) else {}
+        voice = props.get("voice") if isinstance(props.get("voice"), dict) else {}
+        for value in (*(states.get(name) for name in PNGTUBER_STATES), voice.get("asset_id")):
+            ref = _as_ref(value)
+            if ref is not None and ref not in refs:
+                refs.append(ref)
     elif ltype == "callout" and props.get("icon"):
         # Значок плашки рисуется Twemoji — ему нужен тот же файл, что и эмодзи.
         ref = emoji_ref(props["icon"])
@@ -1303,6 +1388,14 @@ def has_chat(layers: Any) -> bool:
     """Есть ли видимый слой чата (тогда компоновщику нужны сообщения и картинки эмоутов)."""
     return any(
         isinstance(layer, dict) and layer.get("type") == "chat" and not layer.get("hidden")
+        for layer in layers or []
+    )
+
+
+def has_pngtuber(layers: Any) -> bool:
+    """Есть ли видимый PNGtuber (тогда компоновщику нужны состояния голоса по кадрам)."""
+    return any(
+        isinstance(layer, dict) and layer.get("type") == "pngtuber" and not layer.get("hidden")
         for layer in layers or []
     )
 
@@ -1413,6 +1506,16 @@ def schema_summary() -> dict:
             "effect": f"по умолчанию: громкие места звука ставятся под голос клипа, volume 0..{EFFECT_MAX_VOLUME:g} — тише",
             "track": f"дорожка (песня, звук ролика): без подгонки, volume 0..2 × gain_db {TRACK_MIN_GAIN_DB:g}.."
                      f"{TRACK_MAX_GAIN_DB:g}; общую громкость выравнивает финальная нормализация клипа",
+        },
+        "pngtuber": {
+            "states": "idle (молчит), talk (говорит), shout? (кричит) — картинки или анимации с альфой "
+                      "(GIF/APNG/webm-alpha) из библиотеки; каждое состояние циклится по времени клипа",
+            "voice": f"track — номер звуковой дорожки источника или \"{VOICE_SPEECH}\" (по умолчанию: speech_tracks); "
+                     f"asset_id — голос из файла; threshold_db {VOICE_THRESHOLD_DB:g} или \"{VOICE_AUTO}\", hold "
+                     f"{VOICE_HOLD_SEC:g} с, attack {VOICE_ATTACK_SEC:g} с, shout_db {VOICE_SHOUT_DB:g}",
+            "frames": "comp.voice = {id слоя: {t0, fps, states \"0012…\", levels [0..100]}} — состояние по кадрам; "
+                      "считает сервер (рендер и POST /api/clip-plans/{id}/voice для превью)",
+            "pixelated": "масштаб без сглаживания; по умолчанию — если исходник ≤ 256 px",
         },
         "devices": list(DEVICE_KINDS),
         "phone": {

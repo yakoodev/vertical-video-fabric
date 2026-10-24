@@ -6,6 +6,10 @@
   сохранённые) по-человечески и вернуть нормализованный вид. Ничего не сохраняет.
 * ``POST /api/clip-plans/{id}/motion/frame?t=`` — PNG кадра с камерой и слоями:
   агент «смотрит», что получилось, не дожидаясь рендера.
+* ``POST /api/clip-plans/{id}/voice`` — состояния голоса PNGtuber по кадрам (``comp.voice``) для
+  превью: тот же массив, что получает компоновщик рендера (app/pngtuber.py).
+* ``GET /api/montage-assets/{id}/anim`` и ``…/anim-sheet.png`` — анимация файла (GIF/APNG/webm с
+  альфой) одним листом кадров с их временами: превью рисует те же кадры, что рендер.
 
 Роутер собирается функцией: ``main.py`` передаёт свою зависимость авторизации и
 доступ к хранилищу (лямбдой — тесты подменяют ``app.main.store``), так что
@@ -29,6 +33,13 @@ from app.motion import (
     validate_camera,
     validate_layers,
 )
+
+
+class VoicePayload(BaseModel):
+    """Слои PNGtuber (несохранённые из редактора; нет — сохранённые) и частота кадров состояний."""
+
+    layers: list[Any] | None = None
+    fps: float | None = None
 
 
 class MotionPayload(BaseModel):
@@ -122,6 +133,75 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=f"кадр не нарисован: {str(exc)[:500]}") from exc
         return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @router.post(
+        "/api/clip-plans/{clip_plan_id}/voice",
+        summary="PNGtuber: состояния голоса по кадрам (молчит/говорит/кричит) — для превью",
+    )
+    def api_clip_voice(
+        clip_plan_id: int,
+        _auth: auth_dep,  # type: ignore[valid-type]
+        payload: VoicePayload | None = None,
+    ) -> dict:
+        """``{voice: {id слоя: {t0, fps, states, levels, threshold_db}}, notes}`` — шкала clip (как слои)."""
+        from app.pngtuber import plan_voice
+
+        store = get_store()
+        try:
+            plan = store.get_clip_plan(clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        saved = normalize_render_settings(plan.get("render_settings") or {})
+        layers = normalize_layers(payload.layers) if payload and payload.layers is not None else saved["layers"]
+        fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
+        voice, notes = plan_voice(store, plan, layers, fps, "clip")
+        return {"voice": voice, "notes": notes, "scale": "clip"}
+
+    def _asset_path(asset_id: int):
+        from pathlib import Path
+
+        try:
+            asset = get_store().get_montage_asset(asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        path = Path(str(asset.get("file_path") or ""))
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="файла нет на диске")
+        return path
+
+    def _sheet(asset_id: int):
+        from app.anim_frames import anim_sheet
+        from app.settings import settings
+
+        try:
+            return anim_sheet(_asset_path(asset_id), settings.runtime_dir / "anim-sheets")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=f"лист кадров не собран: {str(exc)[:300]}") from exc
+
+    @router.get(
+        "/api/montage-assets/{asset_id}/anim",
+        summary="Анимация файла (GIF/APNG/webm с альфой): разметка листа кадров и времена",
+    )
+    def api_asset_anim(asset_id: int, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        """``{animated: false}`` — статичная картинка; иначе сетка листа, ``times``, ``duration``
+        и ``sheet`` — адрес листа кадров (PNG с альфой)."""
+        _path, meta = _sheet(asset_id)
+        if meta.get("animated"):
+            meta = {**meta, "sheet": f"/api/montage-assets/{asset_id}/anim-sheet.png"}
+        return meta
+
+    @router.get(
+        "/api/montage-assets/{asset_id}/anim-sheet.png",
+        summary="Лист кадров анимации (PNG с альфой)",
+        response_class=Response,
+        responses={200: {"content": {"image/png": {}}}},
+    )
+    def api_asset_anim_sheet(asset_id: int, _auth: auth_dep) -> Response:  # type: ignore[valid-type]
+        path, _meta = _sheet(asset_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="файл не анимация")
+        return Response(content=path.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "private, max-age=3600"})
 
     @router.get(
         "/api/clip-plans/{clip_plan_id}/contact-sheet",

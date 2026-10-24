@@ -49,7 +49,28 @@ function listOf<T>(raw: unknown, ...keys: string[]): T[] {
   return [];
 }
 
+/** Анимация файла библиотеки одним листом кадров (GET /api/montage-assets/{id}/anim). */
+export type AssetAnim = {
+  animated: boolean;
+  count?: number;
+  cols?: number;
+  rows?: number;
+  frame_w?: number;
+  frame_h?: number;
+  times?: number[];
+  duration?: number;
+  width?: number;
+  height?: number;
+  sheet?: string;
+};
+
+/** Состояния голоса PNGtuber по кадрам (POST /api/clip-plans/{id}/voice). */
+export type VoiceTrackDto = { t0: number; fps: number; states: string; levels?: number[]; threshold_db?: number };
+
 export const motionApi = {
+  assetAnim: (assetId: string) => api.get<AssetAnim>(`/api/montage-assets/${encodeURIComponent(assetId)}/anim`),
+  voice: (planId: number, layers: unknown[], fps = 30) =>
+    api.post<{ voice: Record<string, VoiceTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/voice`, { layers, fps }),
   fonts: async () => listOf<MotionFont>(await api.get<unknown>("/api/motion/fonts"), "fonts", "items"),
   emoji: async (q: string, limit = 120) =>
     listOf<EmojiItem>(

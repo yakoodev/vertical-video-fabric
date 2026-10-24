@@ -332,6 +332,39 @@ export type AudioProps = {
   duck?: boolean;
 };
 
+/* ---------- PNGtuber ---------- */
+
+/**
+ * Аватар, который «говорит» (layers/pngtuber.ts): состояние по голосу — из `comp.voice[id]`,
+ * его считает сервер (app/pngtuber.py). Картинки/анимации состояний — файлы библиотеки.
+ */
+export type PngtuberProps = {
+  /** idle — молчит, talk — говорит, shout — кричит (нет — talk). */
+  states: { idle?: string; talk?: string; shout?: string };
+  /** Настройки голоса читает сервер; движку они не нужны (оставлены для редактора). */
+  voice?: {
+    track?: number | "speech";
+    asset_id?: string;
+    threshold_db?: number | "auto";
+    hold?: number;
+    attack?: number;
+    shout_db?: number;
+  };
+  /** Ширина, опорные px (высота — по пропорции idle). */
+  w?: number;
+  /** Масштаб без сглаживания; нет — авто: исходник ≤ 256 px (пиксель-арт). */
+  pixelated?: boolean;
+  /** Подскок/растяжение в такт огибающей голоса, опорные px 0..40. */
+  bounce?: { amount?: number } | null;
+  flipX?: boolean;
+};
+
+/**
+ * Состояния голоса по кадрам: кадр k — момент `t0 + k / fps` (шкала слоя), `states[k]` —
+ * "0" молчит, "1" говорит, "2" кричит; `levels[k]` — огибающая 0..100 (подскок).
+ */
+export type VoiceTrack = { t0: number; fps: number; states: string; levels?: number[]; threshold_db?: number };
+
 /* ---------- анимированные субтитры ---------- */
 
 /** Слово речи во времени клипа (секунды) — из субтитров клипа, их подаёт хост. */
@@ -454,6 +487,7 @@ export type LayerPropsMap = {
   captions: CaptionsProps;
   chat: ChatProps;
   audio: AudioProps;
+  pngtuber: PngtuberProps;
 };
 
 export type LayerType = keyof LayerPropsMap;
@@ -499,6 +533,7 @@ export type CalloutLayer = LayerOf<"callout">;
 export type CaptionsLayer = LayerOf<"captions">;
 export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
+export type PngtuberLayer = LayerOf<"pngtuber">;
 
 export type Layer =
   | TextLayer
@@ -513,7 +548,8 @@ export type Layer =
   | CalloutLayer
   | CaptionsLayer
   | ChatLayer
-  | AudioLayer;
+  | AudioLayer
+  | PngtuberLayer;
 
 export type CameraKey = {
   t: number;
@@ -538,6 +574,8 @@ export type Composition = {
   words?: CaptionWord[];
   /** Сообщения чата для слоёв `chat` (клиповое время, по возрастанию `t`). */
   chat?: ChatMessage[];
+  /** Состояния голоса слоёв `pngtuber` по их id (app/pngtuber.py). */
+  voice?: Record<string, VoiceTrack>;
   /** Хромакей основы: компоновщик вырезает фон, кладёт `background` и слои `behind`. */
   key?: ChromaKey;
   /** Фон за вырезанной основой (backgrounds.ts; старый `{color, color2}` тоже читается). */
@@ -608,6 +646,24 @@ export type VideoSource = {
   frame(time: number): VideoFrame | null;
 };
 
+/** Кадр анимации: картинка и прямоугольник в ней (в превью кадры лежат одним листом). */
+export type AnimFrame = { image: ImageLike; sx: number; sy: number; sw: number; sh: number };
+
+/**
+ * Анимированная картинка с альфой (GIF/APNG/webm-alpha): кадры и их времена от начала цикла.
+ * В рендере — PNG-кадры (app/anim_frames.prepare_anim_frames), в превью — лист кадров.
+ */
+export type AnimSource = {
+  /** Размер кадра исходника (для пропорций и «пиксель-арт ли»). */
+  width: number;
+  height: number;
+  /** Начало каждого кадра, с (по возрастанию, первый — 0), и длина цикла. */
+  times: number[];
+  duration: number;
+  /** Кадр по номеру; null — ещё не загружен. */
+  frame(index: number): AnimFrame | null;
+};
+
 /**
  * 2D-контекст. Берём браузерный тип как контракт: контекст @napi-rs/canvas
  * реализует то же API, в Node он приводится к этому типу один раз на входе.
@@ -634,6 +690,11 @@ export type RenderEnv = {
   getImage(ref: string): ImageLike | null;
   /** Видео слоя `video` (по слою: у каждого свой отрезок файла). Нет — слой рисует пустой экран. */
   getVideo?(layer: VideoLayer): VideoSource | null;
+  /**
+   * Анимация файла по ссылке (`asset_id`): null — статичная картинка или ещё не загружена,
+   * тогда слой рисует `getImage` (первый кадр).
+   */
+  getAnim?(ref: string): AnimSource | null;
   /**
    * Фабрика промежуточного холста. Нужна, чтобы полупрозрачный составной слой
    * (обводка + заливка, плашка + текст) гас целиком, без просвечивающих швов,

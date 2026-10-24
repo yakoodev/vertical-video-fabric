@@ -76,7 +76,8 @@ bearer_token_env_var = "VVF_TOKEN"
 | `list_fonts`, `search_emoji(q)`, `list_packs`, `search_pack(pack, q)` | шрифты, эмодзи, паки стикеров/звуков/мемов |
 | `list_assets(q?)` | «Файлы для монтажа» владельца (asset_id) |
 | `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
-| `upload_image(data_base64, filename, label?)` | своя картинка (скриншот сайта, сделанный у себя) → asset_id |
+| `upload_image(data_base64, filename, label?)` | своя картинка (скриншот сайта, сделанный у себя) → asset_id; GIF/APNG — ответ `animation` (кадры, fps, альфа): слой `image` играет её по кругу |
+| `add_pngtuber(idle_asset, talk_asset, shout_asset?, track?, x?, y?, w?, start?, end?, threshold_db?, hold?, attack?, shout_db?, bounce?, flipX?, pixelated?, voice_asset?)` | **PNGtuber**: аватар, который «говорит», когда звучит голос дорожки `track` (0 — игра, 1 — микрофон; `"speech"` — `speech_tracks`) — см. «PNGtuber» ниже; ответ `voice_check` — доля клипа с открытым ртом |
 | `upload_video(data_base64, filename, label?)` | своё видео (запись экрана приложения, .mp4/.webm/.mov, до 40 МБ) → asset_id для слоя `video`; больше — `vvf.py asset rec.mp4` или `POST /api/montage-assets` (до 300 МБ) |
 | `add_video_from_source(source_id, start?, end?, label?, audio?)` | кусок исходника сервиса (запись, загруженная проектом через `vvf.py upload`) → видео в библиотеку (до 180 с, со звуком; `audio: false` — немое) → asset_id для слоя `video` (звук играет только с `props.audio: true`) |
 | `add_video_from_url(url, start, end, label?)` | **отрезок ролика по ссылке владельца** (YouTube и всё, что умеет yt-dlp): скачивается только `start..end` (≤ 180 с, ≤ 1080p) тем же yt-dlp и прокси сервиса, что источники → видео со звуком в библиотеку → asset_id для слоя `video`. REST `POST /api/montage-assets/video-from-url {"url", "start", "end", "label"?}`, CLI `vvf.py asset-url URL --start 61 --end 79.5` |
@@ -246,6 +247,37 @@ python tools/vvf.py frame-motion 812 --at 3.2 -o f.png        # кадр со с
 Владелец видит и меняет то же в редакторе: группа «Звуковые дорожки» (галочки «в звук ролика»,
 дБ на дорожку, «Авто: голос над игрой», дорожка речи). Выбор общий для источника — не меняй его
 молча на чужой записи, если владелец уже настроил.
+
+## PNGtuber — аватар, который говорит голосом дорожки
+
+Аватар владельца в углу кадра: молчит — одна картинка/анимация, звучит его голос — другая (рот
+открыт), громко — третья. Состояние по кадрам считает сервис по громкости дорожки голоса — агенту
+ничего замерять не нужно.
+
+1. Загрузи состояния в библиотеку: `upload_image` (GIF/APNG/PNG, до 12 МБ) или `vvf.py asset idle.gif` —
+   ответ скажет «анимированная картинка: 5 кадров, 16.7 fps, с прозрачностью». Пиксель-арт (EmoteLab:
+   112×112) так и оставь — сервис увеличит его без мыла.
+2. `add_pngtuber(idle_asset, talk_asset, shout_asset?, track?)` — слой на весь клип, правый нижний угол
+   над безопасной зоной (у 16:9 — левее водяного знака), `w` ≈ 300 px. Голос:
+   - `track` — номер звуковой дорожки ИСХОДНИКА: запись NVIDIA/OBS — **0 игра, 1 микрофон** (сколько
+     дорожек — `get_clip.source.audio`);
+   - `"speech"` — дорожки распознавания речи источника (`speech_tracks` из `set_source_audio`);
+   - не задан — `speech_tracks`, если они свои; иначе у записи с несколькими дорожками — 1; иначе звук
+     клипа (игра и голос вместе — рот откроется и на взрывы: лучше разделить дорожки);
+   - `voice_asset` — голос из файла библиотеки (секунда файла = время от начала слоя).
+3. Ответ `voice_check.talking_share` — доля клипа с открытым ртом. Почти 0 — голос тише порога
+   (`threshold_db` −45 или `"auto"`) или не та дорожка; почти 1 — порог ниже шума/игры (`"auto"`, выше
+   порог). Поправить — `update_layer(id, {props: {voice: {...}}})`; место и размер — `x`, `y`, `props.w`.
+4. Тонкая настройка: `hold` (0.18 с — рот не хлопает между слогами), `attack` (0.03 с — щелчок клавиатуры
+   не открывает рот), `shout_db` (−12), `bounce` (px 0..40 — подскок в такт голосу), `flipX`,
+   `pixelated: false` — сглаживать (фото-аватар).
+
+Проверь `view_frame` в момент речи и в паузе: кадр агента считает голос вокруг `t`. Вырезы
+(`apply_cuts`) и наплывы учитываются — рот остаётся на голосе.
+
+Слой руками: `{type: "pngtuber", start, end, x, y, props: {states: {idle, talk, shout?}, voice: {track: 1},
+w: 300, bounce: {amount: 8}}}`. Слой `image` с анимированным GIF/APNG тоже играет его по кругу с
+прозрачностью (с начала слоя).
 
 ## Диалоги и многоплановые сцены (сериал 16:9 → 9:16)
 

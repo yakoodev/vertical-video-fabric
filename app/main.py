@@ -2756,6 +2756,12 @@ async def api_upload_montage_asset(
         name=f"describe-asset-{asset['id']}",
         daemon=True,
     ).start()
+    # Анимированная картинка (GIF/APNG/webm с альфой): кадры и fps — для vvf.py asset и агента.
+    from app.anim_frames import animation_info, brief, describe as describe_anim
+
+    anim = animation_info(dest) if kind in ("gif", "image", "video") else {}
+    if anim.get("animated"):
+        asset = {**asset, "animation": brief(anim), "animation_note": describe_anim(anim)}
     return asset
 
 

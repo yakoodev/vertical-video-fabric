@@ -1096,7 +1096,7 @@ class ClipRenderService:
         segment_ids = [segment["id"] for segment in segments]
         # Моушн, как и вставки, живёт в настройках самого клипа. Нет слоёв и
         # камеры — рендер ровно прежний (те же команды ffmpeg).
-        from app.motion import plan_motion, visual_motion
+        from app.motion import has_pngtuber, plan_motion, visual_motion
 
         motion = plan_motion(plan.get("render_settings"))
         visual = visual_motion(motion)
@@ -1119,6 +1119,13 @@ class ClipRenderService:
 
             motion = remap_motion(motion, self._finished_cut_mapper(plan, cut_plan))
         visual = self._with_chroma_key(plan, visual)
+        if visual and has_pngtuber(visual.get("layers")):
+            # PNGtuber: рот по голосу дорожки — состояния по кадрам во времени готового ролика
+            # (слои уже после вырезов), секунды источника — через ClipClock (app/pngtuber.py).
+            from app.pngtuber import attach_voice
+
+            voice_fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
+            visual = attach_voice(self.store, plan, visual, voice_fps, "final")
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
@@ -1443,6 +1450,7 @@ class ClipRenderService:
                         camera=camera,
                         words=motion.get("words"),
                         chat=motion.get("chat"),
+                        voice=motion.get("voice"),
                         key=motion.get("key"),
                         background=motion.get("background"),
                         backgrounds=motion.get("backgrounds"),
@@ -1457,11 +1465,18 @@ class ClipRenderService:
                         out_width=unit_width(comp_w, out_format), clip_duration=meta.duration_sec,
                     )
                     notes.extend(video_notes)
+                    # Анимации с альфой (PNGtuber, GIF в image): PNG-кадры (удаляются вместе с work).
+                    from app.anim_frames import prepare_anim_frames
+
+                    anims_path, anim_notes = prepare_anim_frames(layers, assets, work,
+                                                                 out_width=unit_width(comp_w, out_format))
+                    notes.extend(anim_notes)
                     out = work / "motion.mp4"
                     _run_compositor(
                         build_compositor_args(
                             comp, assets_path, input_path=video, output_path=out,
                             crf=_json_dict(preset.get("extra_json")).get("crf"), videos_path=videos_path,
+                            anims_path=anims_path,
                         ),
                         timeout=settings.motion_timeout_seconds,
                     )

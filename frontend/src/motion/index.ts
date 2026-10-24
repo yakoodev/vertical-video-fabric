@@ -31,7 +31,9 @@ export {
 } from "./camera";
 export { drawFrame, drawLayer, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
-export { collectImageRefs, collectAudioRefs, collectVideoLayers } from "./assets";
+export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
+export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";
+export { pngtuberRenderer, pngtuberStateRef, pngtuberSize, PIXEL_ART_MAX, PNGTUBER_DEFAULT_W } from "./layers/pngtuber";
 export { invalidateTextCache, layoutText, textBoxSize, backdropGeometry, type TextLayout } from "./layers/text";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
 export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";

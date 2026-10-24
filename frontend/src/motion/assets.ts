@@ -7,6 +7,8 @@ import { emojiRef, graphemes, isEmoji } from "./fonts";
 import { decorGlyph } from "./glyphs";
 import type { Layer, VideoLayer } from "./types";
 
+const PNGTUBER_STATES = ["idle", "talk", "shout"] as const;
+
 function emojiIn(text: string | undefined, out: Set<string>): void {
   if (!text) return;
   // Символы-декор (♥ ✔ ▶…) рисуются путями — картинка Twemoji им не нужна.
@@ -31,6 +33,13 @@ export function collectImageRefs(layers: Layer[]): string[] {
         if (ref) out.add(String(ref));
         break;
       }
+      case "pngtuber":
+        // Статичная картинка состояния (или первый кадр анимации, пока кадры не пришли).
+        for (const key of PNGTUBER_STATES) {
+          const ref = layer.props?.states?.[key];
+          if (ref) out.add(String(ref));
+        }
+        break;
       case "text":
         emojiIn(layer.props.text, out);
         break;
@@ -53,6 +62,24 @@ export function collectImageRefs(layers: Layer[]): string[] {
 export function collectAudioRefs(layers: Layer[]): string[] {
   const out = new Set<string>();
   for (const layer of layers || []) if (layer.type === "audio" && layer.props.asset_id) out.add(String(layer.props.asset_id));
+  return [...out];
+}
+
+/**
+ * Файлы, которые могут оказаться анимацией (GIF/APNG/webm-alpha): состояния PNGtuber и картинки
+ * image из библиотеки. Анимация ли — решает хост (рендер — манифест кадров, превью — лист).
+ */
+export function collectAnimRefs(layers: Layer[]): string[] {
+  const out = new Set<string>();
+  for (const layer of layers || []) {
+    if (layer.hidden) continue;
+    if (layer.type === "pngtuber") {
+      for (const key of PNGTUBER_STATES) {
+        const ref = layer.props?.states?.[key];
+        if (ref) out.add(String(ref));
+      }
+    } else if (layer.type === "image" && layer.props?.asset_id) out.add(String(layer.props.asset_id));
+  }
   return [...out];
 }
 

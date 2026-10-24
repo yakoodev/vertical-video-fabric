@@ -194,6 +194,14 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return size, size
     if kind in ("image", "video"):
         return _picture_size(layer, sizes)
+    if kind == "pngtuber":
+        # Аватар: ширина w, высота — по пропорции idle (как reframe.ts layerSize).
+        from app.motion import asset_key
+
+        w = _num(props.get("w"), 300)
+        states = props.get("states") if isinstance(props.get("states"), dict) else {}
+        natural = (sizes or {}).get(asset_key(states.get("idle")))
+        return w, (w * natural[1] / natural[0] if natural and natural[0] > 0 and natural[1] > 0 else w)
     if kind in ("shape", "progress", "chart"):
         return _num(props.get("w"), 400), _num(props.get("h"), 400 if kind != "progress" else 40)
     if kind == "callout":
@@ -726,10 +734,14 @@ def asset_sizes(layers: list[dict], assets: dict[str, str]) -> dict[str, tuple[i
 
     out: dict[str, tuple[int, int]] = {}
     for layer in layers:
-        if layer.get("type") not in ("image", "video"):
+        if layer.get("type") not in ("image", "video", "pngtuber"):
             continue
         props = layer.get("props") or {}
-        key = asset_key(props.get("asset_id") or props.get("src"))
+        if layer.get("type") == "pngtuber":
+            states = props.get("states") if isinstance(props.get("states"), dict) else {}
+            key = asset_key(states.get("idle"))
+        else:
+            key = asset_key(props.get("asset_id") or props.get("src"))
         path = assets.get(key)
         if not key or key in out or not path:
             continue

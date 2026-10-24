@@ -453,6 +453,8 @@ def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
         height = video_height(props)
     elif kind == "particles":
         height = 2 * ((_num(props.get("spread"), 360.0) or 0.0) + (_num(props.get("size"), 28.0) or 0.0))
+    elif kind == "pngtuber":
+        height = _num(props.get("w"), 300.0) or 300.0  # аватар обычно квадратный
     return height * scale / ref_h / 2, 0.0
 
 
@@ -747,6 +749,7 @@ def _layer_summary(layer: dict) -> str:
         "callout": lambda: f"плашка «{_short(props.get('title'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
+        "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
     }.get(kind, lambda: str(kind or "слой"))()
     return f"{what} на {(_num(layer.get('start'), 0.0) or 0.0):.1f} с"
 
@@ -2061,7 +2064,134 @@ def h_upload_image(ctx: ToolContext, args: dict) -> dict:
         **meta,
     )
     return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
-            "width": asset.get("width"), "height": asset.get("height")}
+            "width": asset.get("width"), "height": asset.get("height"), **_animation_fields(dest)}
+
+
+def _animation_fields(path: Path) -> dict:
+    """Анимированная картинка (GIF/APNG/webm-alpha)? — кадры, fps и подсказка, куда её ставить."""
+    from app.anim_frames import animation_info, brief, describe
+
+    info = animation_info(path)
+    if not info.get("animated"):
+        return {}
+    return {"animation": brief(info), "animation_note": describe(info) + " — слой image играет её по кругу, "
+            "PNGtuber (add_pngtuber) — как состояние аватара"}
+
+
+# ---- PNGtuber: аватар владельца, который «говорит» голосом дорожки -------------
+
+
+def _pngtuber_asset(ctx: ToolContext, value: Any, what: str, required: bool = True) -> str | None:
+    """Файл состояния аватара: картинка или анимация (GIF/APNG/webm с альфой) из библиотеки."""
+    if value in (None, ""):
+        if required:
+            raise ToolError(f"нужен {what} — id картинки/GIF из библиотеки (upload_image, list_assets)")
+        return None
+    try:
+        asset = ctx.store.get_montage_asset(int(value))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolError(f"{what}: файла для монтажа {value!r} нет — id из list_assets или upload_image") from exc
+    if asset.get("kind") not in ("image", "gif", "video"):
+        raise ToolError(f"{what}: файл {asset['id']} — {asset.get('kind')}, нужна картинка или GIF")
+    return str(asset["id"])
+
+
+def _pngtuber_track(ctx: ToolContext, args: dict) -> tuple[Any, str]:
+    """Дорожка голоса: задана — она; иначе своя дорожка речи источника (speech_tracks), иначе у
+    записи с несколькими дорожками — 1 (NVIDIA/OBS: 0 — игра, 1 — микрофон), иначе смесь."""
+    from app.source_audio import audio_view, normalize_tracks
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    try:
+        source = ctx.store.get_source(int(plan["source_id"]))
+    except (KeyError, TypeError, ValueError):
+        source = {}
+    total = len((audio_view(source) if source else {}).get("streams") or [])
+    if args.get("voice_asset") not in (None, ""):
+        return None, "голос — из файла библиотеки (секунда файла = время от начала слоя)"
+    track = args.get("track")
+    if track not in (None, ""):
+        if track == motion.VOICE_SPEECH:
+            return track, "голос — дорожки распознавания речи источника (speech_tracks)"
+        try:
+            index = int(track)
+        except (TypeError, ValueError) as exc:
+            raise ToolError("track — номер звуковой дорожки (0, 1…) или \"speech\"") from exc
+        if total and not 0 <= index < total:
+            raise ToolError(f"у записи {total} звуковых дорожек — track {index} нет (0..{total - 1})")
+        return index, f"голос — дорожка {index} записи"
+    if normalize_tracks(source.get("speech_tracks")):
+        return motion.VOICE_SPEECH, f"голос — дорожка речи источника {normalize_tracks(source.get('speech_tracks'))}"
+    if total >= 2:
+        return 1, "голос — дорожка 1 (у записи несколько дорожек: 0 — игра, 1 — микрофон); другая — track"
+    return motion.VOICE_SPEECH, "голос — звук клипа (у записи одна дорожка: игра и голос вместе — рот откроется и на громкую игру)"
+
+
+def h_add_pngtuber(ctx: ToolContext, args: dict) -> dict:
+    """PNGtuber на весь клип (или start..end): состояния из библиотеки, голос — дорожка источника."""
+    from app.formats import settings_layers_format
+    from app.pngtuber import default_placement, plan_voice
+
+    render = _current_render(ctx)
+    fmt = settings_layers_format(render)
+    states = {"idle": _pngtuber_asset(ctx, args.get("idle_asset"), "idle_asset (молчит)"),
+              "talk": _pngtuber_asset(ctx, args.get("talk_asset"), "talk_asset (говорит)")}
+    shout = _pngtuber_asset(ctx, args.get("shout_asset"), "shout_asset", required=False)
+    if shout:
+        states["shout"] = shout
+    track, voice_note = _pngtuber_track(ctx, args)
+    voice: dict = {}
+    if args.get("voice_asset") not in (None, ""):
+        voice["asset_id"] = str(int(args["voice_asset"]))
+    elif track is not None:
+        voice["track"] = track
+    for key in ("threshold_db", "hold", "attack", "shout_db"):
+        if args.get(key) is not None:
+            voice[key] = args[key]
+    place = default_placement(fmt)
+    duration = _clip_duration(ctx)
+    start = max(0.0, float(args.get("start") or 0.0))
+    end = float(args["end"]) if args.get("end") is not None else duration
+    props: dict = {"states": states, "voice": voice, "w": args.get("w") or place["w"]}
+    for key in ("pixelated", "flipX"):
+        if args.get(key) is not None:
+            props[key] = bool(args[key])
+    bounce = args.get("bounce")
+    if bounce not in (None, False, 0):
+        props["bounce"] = {"amount": bounce} if isinstance(bounce, (int, float)) and bounce is not True else True
+    layer = {"type": "pngtuber", "name": str(args.get("name") or "PNGtuber"), "start": start, "end": end,
+             "x": args.get("x", place["x"]), "y": args.get("y", place["y"]), "track": 5,
+             "props": props}
+    if args.get("id"):
+        layer["id"] = str(args["id"])
+    if args.get("follow_camera"):
+        layer["followCamera"] = True
+    out = h_add_layers(ctx, {"layers": [layer]})
+    added = out.get("added") or []
+    out["voice"] = voice_note
+    if added:
+        # Проверка голоса сразу: сколько клипа рот открыт — агент видит, слышит ли аватар голос.
+        fresh = next((l for l in _layers_of(_current_render(ctx)) if str(l.get("id")) == str(added[0]["id"])), None)
+        try:
+            plan = ctx.store.get_clip_plan(ctx.plan_id)
+            tracks, notes = plan_voice(ctx.store, plan, [fresh] if fresh else [], 30.0, "clip")
+            got = tracks.get(str(added[0]["id"])) if fresh else None
+            if got and got["states"]:
+                states_str = got["states"]
+                share = sum(1 for c in states_str if c != "0") / len(states_str)
+                out["voice_check"] = {
+                    "talking_share": round(share, 3), "shouting_share": round(states_str.count("2") / len(states_str), 3),
+                    "threshold_db": got.get("threshold_db"),
+                    "hint": ("рот почти не открывается — голос тише порога: threshold_db ниже (−45) или \"auto\", "
+                             "или не та дорожка (track)" if share < 0.03 else
+                             "рот открыт почти всё время — порог ниже шума/игры: threshold_db выше или \"auto\""
+                             if share > 0.9 else "ок"),
+                }
+            if notes:
+                out["voice_notes"] = notes
+        except Exception as exc:  # noqa: BLE001 - проверка — подсказка, слой уже стоит
+            out["voice_notes"] = [f"голос не проверен: {str(exc)[:160]}"]
+    return out
 
 
 MAX_UPLOAD_VIDEO_BYTES = 40 * 1024 * 1024
@@ -2121,7 +2251,7 @@ def h_upload_video(ctx: ToolContext, args: dict) -> dict:
         size_bytes=len(data),
         **meta,
     )
-    return _video_asset_result(asset)
+    return {**_video_asset_result(asset), **_animation_fields(dest)}
 
 
 def source_clip_args(src: Path, start: float, end: float, dest: Path, audio: bool = True) -> list[str]:
@@ -3908,6 +4038,14 @@ props по типу:
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
+  pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
+         анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
+         0 — игра, 1 — микрофон) | "speech" (speech_tracks; по умолчанию) | asset_id (голос из файла), threshold_db
+         {motion.VOICE_THRESHOLD_DB:g} | "auto" (по шуму), hold {motion.VOICE_HOLD_SEC:g} (рот не хлопает между слогами), attack {motion.VOICE_ATTACK_SEC:g},
+         shout_db {motion.VOICE_SHOUT_DB:g}}}, w (опорные px; высота — по пропорции idle), pixelated (по умолч. — если исходник ≤ 256 px:
+         пиксель-арт без мыла), bounce {{amount 0..40}} (подскок в такт голосу), flipX. Состояние по кадрам считает сервис
+         (comp.voice) — проще add_pngtuber(idle_asset, talk_asset, track): правый нижний угол над безопасной зоной, w ≈ 300
+  image с анимированным файлом (GIF/APNG/webm с альфой) играет его по кругу с прозрачностью с начала слоя
   audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
          effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
          track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};
@@ -4173,7 +4311,8 @@ def _build_registry() -> list[Tool]:
             "подсветка слова в субтитрах (captions props.highlightWords) — {text, nth?, color} вместо номера i: "
             "она переживёт set_subtitle_words; "
             "until_word — держать до начала другого слова. Не больше 30 слоёв за вызов. "
-            "Слой image рисует картинку статично (у GIF — первый кадр): анимированные гифки — add_insert. "
+            "Слой image с анимированным файлом (GIF/APNG/webm-alpha) играет его по кругу с прозрачностью; "
+            "аватар, который говорит голосом дорожки, — add_pngtuber. "
             "Звук (audio) сервис выравнивает сам: при речи — на 10 дБ тише голоса, в клипе без речи (игра) — "
             "на 4 дБ ниже его громких мест, не громче; volume 0.3–0.6, выше 1 срезается. "
             "Слой до самого конца клипа держится на финальном стоп-кадре — out у него не играет; "
@@ -4185,6 +4324,35 @@ def _build_registry() -> list[Tool]:
             "Возвращает id и предупреждения (безопасные зоны, перегруз, пустой кадр, нет финала). / Add motion layers.",
             _obj({"layers": {"type": "array", "items": layer}}, ["layers"]), h_add_layers,
             mutating=True, label=_label_add_layers,
+        ),
+        Tool(
+            "add_pngtuber", "Ставлю PNGtuber",
+            "PNGtuber — аватар владельца, который «говорит», когда звучит его голос: idle_asset (молчит, рот "
+            "закрыт) и talk_asset (говорит) — картинки или анимации с прозрачностью (GIF/APNG/webm-alpha) из "
+            "библиотеки (upload_image), shout_asset — кричит (громче shout_db, по умолчанию −12 дБ). Голос — "
+            "track: номер звуковой дорожки источника (запись NVIDIA/OBS: 0 — игра, 1 — микрофон) или \"speech\" "
+            "(speech_tracks источника); не задан — speech_tracks, иначе у записи с несколькими дорожками — 1; "
+            "voice_asset — голос из файла библиотеки. threshold_db (−38; \"auto\" — по шуму дорожки), hold "
+            "(0.18 с — рот не хлопает между слогами), attack (0.03 с). По умолчанию на весь клип (start/end — "
+            "интервал), правый нижний угол над безопасной зоной, w ≈ 300 px, пиксель-арт (≤ 256 px) — без "
+            "сглаживания (pixelated), bounce — подскок в такт голосу (px 0..40), flipX. Состояние по кадрам "
+            "сервис считает сам (рендер и превью одинаково). Ответ: voice_check — какая доля клипа рот открыт "
+            "(почти 0 или почти 1 — поправь порог/дорожку). Правка потом — update_layer (props.voice, x, y, "
+            "props.w). / Talking avatar driven by a voice track.",
+            _obj({"idle_asset": {"type": "integer"}, "talk_asset": {"type": "integer"},
+                  "shout_asset": {"type": "integer"},
+                  "track": {"type": ["integer", "string"], "description": "номер дорожки источника или \"speech\""},
+                  "voice_asset": {"type": "integer", "description": "голос из файла библиотеки вместо дорожки"},
+                  "start": {"type": "number"}, "end": {"type": "number"},
+                  "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"},
+                  "threshold_db": {"type": ["number", "string"], "description": "дБ (−38) или \"auto\""},
+                  "hold": {"type": "number"}, "attack": {"type": "number"}, "shout_db": {"type": "number"},
+                  "bounce": {"type": ["number", "boolean"], "description": "подскок в такт голосу, px 0..40"},
+                  "pixelated": {"type": "boolean"}, "flipX": {"type": "boolean"},
+                  "follow_camera": {"type": "boolean"}, "id": {"type": "string"}, "name": {"type": "string"}},
+                 ["idle_asset", "talk_asset"]),
+            h_add_pngtuber, mutating=True,
+            label=lambda a: f"Ставлю PNGtuber #{a.get('idle_asset')}/#{a.get('talk_asset')}",
         ),
         Tool(
             "update_layer", "Правлю слой",
