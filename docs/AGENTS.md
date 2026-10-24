@@ -77,7 +77,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `list_assets(q?)` | «Файлы для монтажа» владельца (asset_id) |
 | `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
 | `upload_image(data_base64, filename, label?)` | своя картинка (скриншот сайта, сделанный у себя) → asset_id; GIF/APNG — ответ `animation` (кадры, fps, альфа): слой `image` играет её по кругу |
-| `add_pngtuber(idle_asset, talk_asset, shout_asset?, track?, x?, y?, w?, start?, end?, threshold_db?, hold?, attack?, shout_db?, bounce?, flipX?, pixelated?, voice_asset?)` | **PNGtuber**: аватар, который «говорит», когда звучит голос дорожки `track` (0 — игра, 1 — микрофон; `"speech"` — `speech_tracks`) — см. «PNGtuber» ниже; ответ `voice_check` — доля клипа с открытым ртом |
+| `add_pngtuber(idle_asset, talk_asset, shout_asset?, track?, x?, y?, w?, start?, end?, threshold_db?, hold?, attack?, shout_db?, bounce?, flipX?, pixelated?, voice_asset?, id?, allow_multiple?)` | **PNGtuber**: аватар, который «говорит», когда звучит голос дорожки `track` (0 — игра, 1 — микрофон; `"speech"` — `speech_tracks`) — см. «PNGtuber» ниже; ответ `voice_check` — доля клипа с открытым ртом и выбранный порог. Один аватар на клип: повторный вызов заменяет прежний (второй — `allow_multiple: true`) |
 | `upload_video(data_base64, filename, label?)` | своё видео (запись экрана приложения, .mp4/.webm/.mov, до 40 МБ) → asset_id для слоя `video`; больше — `vvf.py asset rec.mp4` или `POST /api/montage-assets` (до 300 МБ) |
 | `add_video_from_source(source_id, start?, end?, label?, audio?)` | кусок исходника сервиса (запись, загруженная проектом через `vvf.py upload`) → видео в библиотеку (до 180 с, со звуком; `audio: false` — немое) → asset_id для слоя `video` (звук играет только с `props.audio: true`) |
 | `add_video_from_url(url, start, end, label?)` | **отрезок ролика по ссылке владельца** (YouTube и всё, что умеет yt-dlp): скачивается только `start..end` (≤ 180 с, ≤ 1080p) тем же yt-dlp и прокси сервиса, что источники → видео со звуком в библиотеку → asset_id для слоя `video`. REST `POST /api/montage-assets/video-from-url {"url", "start", "end", "label"?}`, CLI `vvf.py asset-url URL --start 61 --end 79.5` |
@@ -265,9 +265,14 @@ python tools/vvf.py frame-motion 812 --at 3.2 -o f.png        # кадр со с
    - не задан — `speech_tracks`, если они свои; иначе у записи с несколькими дорожками — 1; иначе звук
      клипа (игра и голос вместе — рот откроется и на взрывы: лучше разделить дорожки);
    - `voice_asset` — голос из файла библиотеки (секунда файла = время от начала слоя).
-3. Ответ `voice_check.talking_share` — доля клипа с открытым ртом. Почти 0 — голос тише порога
-   (`threshold_db` −45 или `"auto"`) или не та дорожка; почти 1 — порог ниже шума/игры (`"auto"`, выше
-   порог). Поправить — `update_layer(id, {props: {voice: {...}}})`; место и размер — `x`, `y`, `props.w`.
+   Повторный `add_pngtuber` (с тем же `id` или без `id`) **заменяет** аватар клипа, а не добавляет
+   второй; второй аватар (двое ведущих) — `allow_multiple: true`.
+3. Порог «звучит голос» по умолчанию — `"auto"`: шум дорожки (15-й перцентиль громкости) + 12 дБ, в рамках
+   **−55..−40 дБ** (тихая фраза на −42 дБ открывает рот, шум пустого микрофона — нет). Ответ
+   `voice_check`: `talking_share` — доля клипа с открытым ртом, `threshold` — какой порог выбран и почему.
+   Почти 0 — голос тише порога (`threshold_db` ниже, −50) или не та дорожка; почти 1 — порог ниже
+   шума/игры (`threshold_db` выше, −35, или другая дорожка). Поправить — `update_layer(id, {props: {voice:
+   {...}}})`, его ответ тоже с `voice_check`; место и размер — `x`, `y`, `props.w`.
 4. Тонкая настройка: `hold` (0.18 с — рот не хлопает между слогами), `attack` (0.03 с — щелчок клавиатуры
    не открывает рот), `shout_db` (−12), `bounce` (px 0..40 — подскок в такт голосу), `flipX`,
    `pixelated: false` — сглаживать (фото-аватар).

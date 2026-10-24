@@ -137,12 +137,15 @@ STATUS_BAR_AUTO = 0.14
 STATUS_BAR_MAX = 0.4
 # PNGtuber (аватар, который «говорит» голосом дорожки): состояния и разбор голоса (app/pngtuber.py).
 PNGTUBER_STATES = ("idle", "talk", "shout")
-VOICE_THRESHOLD_DB = -38.0
+# Порог «звучит голос» по умолчанию — "auto": по шуму настоящей дорожки (app/pngtuber.auto_threshold,
+# в рамках −55..−40 дБ). Число — запасной порог, когда дорожку разобрать нельзя (пусто, тишина).
+VOICE_THRESHOLD_DB = -45.0
 VOICE_HOLD_SEC = 0.18
 VOICE_ATTACK_SEC = 0.03
 VOICE_SHOUT_DB = -12.0
 VOICE_SPEECH = "speech"
 VOICE_AUTO = "auto"
+VOICE_THRESHOLD_DEFAULT = VOICE_AUTO
 
 
 # ---------------------------------------------------------------- описания полей
@@ -540,8 +543,8 @@ class DbOrAuto:
         return self.default
 
     def describe(self) -> dict:
-        return {"type": "number", "default": self.default, "min": self.lo, "max": self.hi,
-                "description": f"дБ или \"{VOICE_AUTO}\" — по шуму дорожки"}
+        return {"type": "number", "default": VOICE_THRESHOLD_DEFAULT, "min": self.lo, "max": self.hi,
+                "description": f"дБ или \"{VOICE_AUTO}\" (по умолчанию) — по шуму дорожки"}
 
 
 def _norm_fields(src: dict, fields: dict, rep: _Report, where: str) -> dict:
@@ -1511,7 +1514,8 @@ def schema_summary() -> dict:
             "states": "idle (молчит), talk (говорит), shout? (кричит) — картинки или анимации с альфой "
                       "(GIF/APNG/webm-alpha) из библиотеки; каждое состояние циклится по времени клипа",
             "voice": f"track — номер звуковой дорожки источника или \"{VOICE_SPEECH}\" (по умолчанию: speech_tracks); "
-                     f"asset_id — голос из файла; threshold_db {VOICE_THRESHOLD_DB:g} или \"{VOICE_AUTO}\", hold "
+                     f"asset_id — голос из файла; threshold_db \"{VOICE_AUTO}\" (по умолчанию: шум дорожки + запас, "
+                     f"−55..−40) или дБ, hold "
                      f"{VOICE_HOLD_SEC:g} с, attack {VOICE_ATTACK_SEC:g} с, shout_db {VOICE_SHOUT_DB:g}",
             "frames": "comp.voice = {id слоя: {t0, fps, states \"0012…\", levels [0..100]}} — состояние по кадрам; "
                       "считает сервер (рендер и POST /api/clip-plans/{id}/voice для превью)",
