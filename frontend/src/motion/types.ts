@@ -186,6 +186,15 @@ export type VideoProps = PictureProps & {
   freeze?: boolean;
   /** Стоп-кадр: весь слой держится кадр секунды `from` (speed/loop не действуют). */
   hold?: boolean;
+  /**
+   * Звук файла в миксе (дорожкой, без автоподгонки под голос): секунда звука — та же, что
+   * у картинки; hold и speed вне 0.5..2 — тишина. Нет поля — немое, как раньше.
+   */
+  audio?: boolean;
+  /** Громкость звука 0..2 (с audio). */
+  volume?: number;
+  /** Усиление звука, дБ −30..+12 (с audio); вместе с volume не громче +12 дБ. */
+  gain_db?: number;
 };
 
 export type EmojiProps = { char: string; size?: number };
@@ -292,7 +301,14 @@ export type CalloutProps = {
 
 export type AudioProps = {
   asset_id: string;
+  /**
+   * effect (нет поля) — эффект: сервис ставит громкие места под голос клипа, volume ≤ 1;
+   * track — дорожка (песня, звук ролика): без подгонки, volume 0..2 × gain_db.
+   */
+  mode?: "effect" | "track";
   volume?: number;
+  /** Усиление дорожки, дБ −30..+12 (только mode track). */
+  gain_db?: number;
   fadeIn?: number;
   fadeOut?: number;
   offset?: number;

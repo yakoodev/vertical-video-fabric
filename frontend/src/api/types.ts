@@ -200,6 +200,8 @@ export interface RenderSettings {
   gain?: { start: number; end: number; gain_db: number }[];
   /** Формат кадра: 9:16 (как всегда), 1:1 или 4:5 — пока только у холста (app/aspect.py). */
   aspect?: Aspect;
+  /** Стоп-кадр в конце готового ролика, с (0..1.5); null — как у сервиса (RENDER_END_HOLD_SEC). */
+  end_hold_sec?: number | null;
 }
 
 /** Формат готового ролика (app/aspect.py). */

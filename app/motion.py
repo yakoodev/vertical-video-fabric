@@ -121,6 +121,17 @@ DEFAULT_DEVICE_COLOR = "#2c2c2e"
 VIDEO_MIN_SPEED = 0.25
 VIDEO_MAX_SPEED = 4.0
 VIDEO_TAIL = 0.04
+# Звук видео-слоя (props.audio): при speed вне этих рамок звука нет (atempo дальше звучит
+# «бурундуком»/кашей, а превью браузера всё равно глушит такую скорость).
+VIDEO_AUDIO_MIN_SPEED = 0.5
+VIDEO_AUDIO_MAX_SPEED = 2.0
+# Громкость звуков. Эффект (audio, mode effect — по умолчанию) сервис сам ставит под голос,
+# volume — только «тише» (≤ EFFECT_MAX_VOLUME). Дорожка (audio mode track, звук video) —
+# без автоподгонки: volume × gain_db, вместе не громче TRACK_MAX_GAIN_DB.
+AUDIO_MODES = ("effect", "track")
+EFFECT_MAX_VOLUME = 1.0
+TRACK_MIN_GAIN_DB = -30.0
+TRACK_MAX_GAIN_DB = 12.0
 # Строка статуса телефона: true/"auto" — как у iPhone (доля ширины экрана), предел — STATUS_BAR_MAX.
 STATUS_BAR_AUTO = 0.14
 STATUS_BAR_MAX = 0.4
@@ -605,6 +616,11 @@ PROPS: dict[str, dict] = {
         "freeze": Flag(True),
         # Стоп-кадр: весь слой держится кадр секунды from (speed/loop не действуют).
         "hold": Opt(Flag(False)),
+        # Звук файла в микс рендера (режим «дорожка»: без автоподгонки, громкость — volume ×
+        # gain_db). Нет поля — немое, как раньше: старые клипы не меняются.
+        "audio": Opt(Flag(False)),
+        "volume": Opt(Num(1, 0, 2, 3)),
+        "gain_db": Opt(Num(0, TRACK_MIN_GAIN_DB, TRACK_MAX_GAIN_DB, 2)),
     },
     "emoji": {"char": Text("", 32), "size": Num(160, 12, 1000, 1)},
     # Частицы одним слоем; необязательные поля движок берёт по виду (burst — разлёт 1.2 с с тяжестью…).
@@ -734,7 +750,11 @@ PROPS: dict[str, dict] = {
     },
     "audio": {
         "asset_id": AssetRef(prefixes=("sfx",)),
+        # effect (нет поля) — эффект: сервис подгоняет громкие места под голос клипа, volume ≤ 1;
+        # track — дорожка (песня, звук ролика): без подгонки, volume 0..2 × gain_db.
+        "mode": Opt(Choice("effect", AUDIO_MODES)),
         "volume": Num(1, 0, 2, 3),
+        "gain_db": Opt(Num(0, TRACK_MIN_GAIN_DB, TRACK_MAX_GAIN_DB, 2)),
         "fadeIn": Num(0, 0, 10, 3),
         "fadeOut": Num(0, 0, 10, 3),
         "offset": Num(0, 0, MAX_TIME_SEC, 3),
@@ -949,7 +969,51 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         loop = {"type": loop}
     layer["loop"] = Obj(LOOP).norm(loop, rep, f"{where}.loop") if loop is not None else Obj(LOOP).fill()
     _check_required(layer, rep, where)
+    _clamp_effect_volume(layer, rep, where)
     return layer
+
+
+def _clamp_effect_volume(layer: dict, rep: _Report, where: str) -> None:
+    """Эффект громче 1 рендер не делает (сервис держит его под голосом) — схема говорит то же.
+
+    Раньше схема пускала volume до 2, а рендер молча резал до 1: агент ставил 1.5 и ждал
+    громче. Громче — только дорожкой (mode track + gain_db)."""
+    if layer["type"] != "audio" or is_track_audio(layer):
+        return
+    props = layer["props"]
+    if float(props.get("volume", 1)) > EFFECT_MAX_VOLUME:
+        rep(f"{where}.props.volume", f"{_fmt(props['volume'])} — у эффекта не больше {_fmt(EFFECT_MAX_VOLUME)} "
+                                     "(громкость под голос держит сервис); громче — mode \"track\" и gain_db")
+        props["volume"] = EFFECT_MAX_VOLUME
+    if "gain_db" in props:
+        rep(f"{where}.props.gain_db", "gain_db — только у дорожки (mode \"track\"); у эффекта отброшен")
+        props.pop("gain_db")
+
+
+def is_track_audio(layer: dict) -> bool:
+    """Звук слоя идёт «дорожкой» (без автоподгонки под голос): audio mode track, звук video."""
+    props = layer.get("props") or {}
+    if layer.get("type") == "video":
+        return True
+    return layer.get("type") == "audio" and props.get("mode") == "track"
+
+
+def has_layer_sound(layer: dict) -> bool:
+    """Слой даёт звук в микс рендера: audio — всегда, video — с props.audio true."""
+    if layer.get("hidden"):
+        return False
+    if layer.get("type") == "audio":
+        return True
+    return layer.get("type") == "video" and (layer.get("props") or {}).get("audio") is True
+
+
+def track_gain(props: dict) -> float:
+    """Множитель громкости дорожки: volume (0..2) × gain_db, не громче TRACK_MAX_GAIN_DB."""
+    volume = _finite(props.get("volume"))
+    volume = 1.0 if volume is None else max(0.0, min(2.0, volume))
+    gain_db = _finite(props.get("gain_db")) or 0.0
+    gain_db = max(TRACK_MIN_GAIN_DB, min(TRACK_MAX_GAIN_DB, gain_db))
+    return min(volume * 10 ** (gain_db / 20), 10 ** (TRACK_MAX_GAIN_DB / 20))
 
 
 # Где в слоях живёт видимый текст: титр, подписи счётчика, плашки, графика.
@@ -1325,7 +1389,15 @@ def schema_summary() -> dict:
                     "freeze (по умолчанию) — последний кадр, freeze false — кадра нет; hold true — "
                     "стоп-кадр секунды from на весь слой",
             "speed": [VIDEO_MIN_SPEED, VIDEO_MAX_SPEED],
-            "audio": "немое: звук видео-слоя не играет (нужен звук — отдельный слой audio)",
+            "audio": "по умолчанию немое; props.audio true — звук файла входит в микс рендера (с учётом "
+                     f"from/speed/loop/hold; speed вне {VIDEO_AUDIO_MIN_SPEED:g}..{VIDEO_AUDIO_MAX_SPEED:g} и hold — "
+                     "тишина) дорожкой: громкость volume 0..2 × gain_db, без автоподгонки",
+        },
+        "audio": {
+            "modes": list(AUDIO_MODES),
+            "effect": f"по умолчанию: громкие места звука ставятся под голос клипа, volume 0..{EFFECT_MAX_VOLUME:g} — тише",
+            "track": f"дорожка (песня, звук ролика): без подгонки, volume 0..2 × gain_db {TRACK_MIN_GAIN_DB:g}.."
+                     f"{TRACK_MAX_GAIN_DB:g}; общую громкость выравнивает финальная нормализация клипа",
         },
         "devices": list(DEVICE_KINDS),
         "phone": {

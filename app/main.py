@@ -549,6 +549,9 @@ class RenderClipPlanRequest(BaseModel):
     # Формат этого рендера поверх настроек клипа: "9:16" | "1:1" | "4:5" (не 9:16 — только
     # холст, app/aspect.py). Не задан — из настроек клипа (render_settings.aspect).
     aspect: str | None = None
+    # Стоп-кадр в конце этого рендера, с (0..1.5; мему — 0). Не задан — из настроек клипа
+    # (render_settings.end_hold_sec), там нет — RENDER_END_HOLD_SEC.
+    end_hold_sec: float | None = Field(default=None, ge=0, le=1.5)
 
 
 class RenderClipPlansRequest(BaseModel):
@@ -2297,6 +2300,8 @@ def api_render_clip_plan(
             }
         if payload and payload.aspect:
             kwargs["aspect"] = payload.aspect
+        if payload and payload.end_hold_sec is not None:
+            kwargs["end_hold_sec"] = payload.end_hold_sec
         return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2791,6 +2796,31 @@ def api_add_montage_asset_from_url(payload: AssetFromUrlRequest, _auth: AuthDep)
         raise HTTPException(status_code=502, detail=f"не удалось скачать: {str(exc)[:200]}") from exc
     threading.Thread(target=lambda: describe_asset(store, asset["id"]), daemon=True).start()
     return asset
+
+
+class VideoFromUrlRequest(BaseModel):
+    url: str = Field(max_length=2000)
+    start: float = Field(ge=0, description="секунда ролика по ссылке — начало отрезка")
+    end: float = Field(gt=0, description="конец отрезка (не дольше 180 с от start)")
+    label: str = Field(default="", max_length=120)
+
+
+@app.post(
+    "/api/montage-assets/video-from-url",
+    tags=["Montage assets"],
+    summary="Отрезок ролика по ссылке (yt-dlp, ≤ 180 с, ≤ 1080p, со звуком) → видео в библиотеку",
+)
+def api_add_montage_video_from_url(payload: VideoFromUrlRequest, _auth: AuthDep) -> dict:
+    """Скачивается только отрезок, тем же yt-dlp и прокси, что источники (app/video_import.py).
+    Звук файла играет в клипе, если у слоя ``video`` стоит ``props.audio: true``."""
+    from app.video_import import import_video_from_url
+
+    try:
+        return import_video_from_url(store, payload.url, payload.start, payload.end, payload.label)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - network/remote errors
+        raise HTTPException(status_code=502, detail=f"не удалось скачать: {str(exc)[:200]}") from exc
 
 
 class DescribeAssetsRequest(BaseModel):

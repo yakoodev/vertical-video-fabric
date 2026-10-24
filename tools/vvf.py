@@ -12,12 +12,14 @@ the service's code or database. Standard library only.
     vvf.py upload video.mp4                    # own video as a new project (prints its id)
     vvf.py canvas 20 -b grid -t "Промо"        # empty canvas clip: animated background, no video
     vvf.py asset rec.mp4 -l "Экран: задачи"    # file into the montage library (asset_id for video/image layers)
+    vvf.py asset-url URL --start 61 --end 79.5 # only that section of a video by link, with sound (yt-dlp)
     vvf.py clips 50 --favorites                # clips of a project
     vvf.py pull 812 -o clip-812.json           # the clip file
     vvf.py check clip-812.json                 # validate without applying
     vvf.py push clip-812.json                  # apply (all-or-nothing)
     vvf.py render 812                          # render with the file's settings, prints QC
     vvf.py render 812 --aspect 1:1             # square from the same edit (canvas clips only)
+    vvf.py render 812 --end-hold 0             # no freeze-frame at the end (memes)
     vvf.py qc 431                              # QC report of a finished render
     vvf.py download 431 -o out.mp4             # the rendered video
     vvf.py frame 50 --at 812.4 -o f.jpg        # a still of the source (to look at)
@@ -183,6 +185,18 @@ def cmd_asset(args) -> None:
           f" — слой {layer} props.asset_id")
 
 
+def cmd_asset_url(args) -> None:
+    body = {"url": args.url, "start": args.start, "end": args.end}
+    if args.label:
+        body["label"] = args.label
+    print(f"скачиваю отрезок {args.start:g}–{args.end:g} с… (только он, не весь ролик)", file=sys.stderr)
+    asset = call("POST", "/api/montage-assets/video-from-url", body)
+    sound = "со звуком (слой video props.audio: true)" if asset.get("has_audio") else "без звука"
+    print(f"asset_id {asset['id']}: video · {asset.get('label', '')} · "
+          f"{asset.get('width') or 0}×{asset.get('height') or 0} · {asset.get('duration_sec') or 0:.1f} с · {sound}"
+          " — слой video props.asset_id")
+
+
 def cmd_canvas(args) -> None:
     plan = call("POST", "/api/canvas-clips", {"duration": args.duration, "background": args.background,
                                               "title": args.title or ""})
@@ -259,8 +273,13 @@ def cmd_push(args) -> None:
 
 def cmd_render(args) -> None:
     aspect = getattr(args, "aspect", None)
-    print(f"рендер клипа {args.clip}" + (f" в {aspect}" if aspect else "") + "… (ждём, это может занять минуты)")
-    clip = call("POST", f"/api/clip-plans/{args.clip}/render", {"aspect": aspect} if aspect else {})
+    hold = getattr(args, "end_hold", None)
+    body = {"aspect": aspect} if aspect else {}
+    if hold is not None:
+        body["end_hold_sec"] = hold
+    print(f"рендер клипа {args.clip}" + (f" в {aspect}" if aspect else "")
+          + (f", стоп-кадр в конце {hold:g} с" if hold is not None else "") + "… (ждём, это может занять минуты)")
+    clip = call("POST", f"/api/clip-plans/{args.clip}/render", body)
     print(f"рендер {clip['id']}: {clip['status']}"
           + (f" · {clip.get('duration_sec'):.1f} с" if clip.get("duration_sec") else "")
           + (f" · ошибка: {clip.get('error')}" if clip.get("error") else ""))
@@ -407,6 +426,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("file")
     p.add_argument("--label", "-l", default="")
     p.set_defaults(fn=cmd_asset)
+    p = sub.add_parser("asset-url", help="отрезок ролика по ссылке (yt-dlp, ≤ 180 с, со звуком) → asset_id видео")
+    p.add_argument("url")
+    p.add_argument("--start", type=float, required=True, help="секунда ролика — начало отрезка")
+    p.add_argument("--end", type=float, required=True, help="конец отрезка (≤ 180 с от start)")
+    p.add_argument("--label", "-l", default="")
+    p.set_defaults(fn=cmd_asset_url)
     p = sub.add_parser("canvas", help="пустой холст: клип без видео, анимированный фон")
     p.add_argument("duration", type=float)
     p.add_argument("--background", "-b", default="aurora", help="aurora | grid | bokeh | waves | gradient | solid")
@@ -432,6 +457,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("clip", type=int)
     p.add_argument("--aspect", choices=["9:16", "1:1", "4:5"],
                    help="формат этого рендера (не 9:16 — только холст); не задан — из настроек клипа")
+    p.add_argument("--end-hold", type=float, metavar="S",
+                   help="стоп-кадр в конце, с (0..1.5; мему — 0); не задан — из настроек клипа (render.end_hold_sec)")
     p.set_defaults(fn=cmd_render)
     p = sub.add_parser("qc", help="отчёт о качестве рендера")
     p.add_argument("render", type=int)

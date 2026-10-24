@@ -85,7 +85,7 @@ def test_normalize_is_idempotent_and_normalized_layers_validate_clean():
     assert once[0]["in"]["duration"] == 0.05  # не больше половины слоя
     assert once[1]["in"]["type"] == "fade"  # draw — только у line/arrow/ellipse
     assert once[2]["props"]["asset_id"] == "7"  # id файла — строкой, как в движке
-    assert once[3]["props"]["volume"] == 2
+    assert once[3]["props"]["volume"] == 1  # эффект: не громче 1 — как в рендере (громче — mode track)
     assert once[4]["props"]["panel"] is None and "glow" not in once[4]["props"]  # Opt: нет — не подставляем
     assert once[5]["props"]["skew"] == 30
     assert [p["t"] for p in once[6]["keys"]["scale"]] == [0, 0.4]
