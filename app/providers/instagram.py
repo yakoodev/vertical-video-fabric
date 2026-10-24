@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.cookies import CookieRecord, tiktok_caption
 from app.providers.base import Provider, ProviderResult, safe_provider_error
+from app.publish_format import publish_plan
 
 
 class InstagramProvider(Provider):
@@ -24,7 +25,12 @@ class InstagramProvider(Provider):
         allow_comments: bool,
         account_label: str,
         proxy_url: str,
+        video_format: str = "9:16",
+        thumbnail_path: str = "",
     ) -> ProviderResult:
+        # 9:16 — Reels, как всегда; 1:1/4:5 — пост в ленту (её формат); 16:9 — тоже в ленту,
+        # с предупреждением: Reels только вертикальные (app/publish_format.py).
+        plan = publish_plan(self.platform, video_format)
         sessionid = _cookie_value(cookies, "sessionid")
         if not sessionid:
             return ProviderResult(status="needs_reauth", error="Instagram sessionid cookie is missing")
@@ -39,18 +45,27 @@ class InstagramProvider(Provider):
                 client.set_proxy(proxy_url)
             client.login_by_sessionid(sessionid)
             caption = tiktok_caption(title, description)
-            media = client.clip_upload(Path(file_path), caption)
+            if plan["publish_as"] == "feed":
+                media = client.video_upload(Path(file_path), caption)
+            else:
+                media = client.clip_upload(Path(file_path), caption)
         except Exception as exc:  # noqa: BLE001 - provider must report failures to the queue
             message = str(exc)
             return ProviderResult(status=_classify_instagram_error(message), error=_safe_error(message))
 
         code = getattr(media, "code", "") or ""
         remote_id = str(getattr(media, "pk", "") or code)
+        response = {"code": code, "pk": remote_id}
+        if plan["publish_as"] == "feed":
+            response.update({"format": video_format, "publish_as": "feed"})
+            if plan["warning"]:
+                response["format_warning"] = plan["warning"]
+        kind = "p" if plan["publish_as"] == "feed" else "reel"
         return ProviderResult(
             status="succeeded",
             remote_id=remote_id,
-            remote_url=f"https://www.instagram.com/reel/{code}/" if code else "",
-            response={"code": code, "pk": remote_id},
+            remote_url=f"https://www.instagram.com/{kind}/{code}/" if code else "",
+            response=response,
         )
 
 

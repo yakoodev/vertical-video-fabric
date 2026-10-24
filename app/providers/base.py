@@ -39,7 +39,12 @@ class Provider:
         allow_comments: bool,
         account_label: str,
         proxy_url: str,
+        video_format: str = "9:16",
+        thumbnail_path: str = "",
     ) -> ProviderResult:
+        """``video_format`` — формат клипа (app/publish_format.py): 16:9 на YouTube — обычное
+        видео, не Shorts; ``thumbnail_path`` — миниатюра обычного видео. Воркер передаёт их
+        только не для 9:16 — у вертикали вызов прежний."""
         raise NotImplementedError
 
 
