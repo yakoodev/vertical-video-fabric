@@ -141,6 +141,31 @@ def source_strategy(fmt: Any, source: dict | None, crop: dict | None = None) -> 
     return "fit" if (sw / sh) < ratio(fmt) * FIT_SOURCE_RATIO else "cover"
 
 
+# Исходник не шире кадра горизонтального формата больше чем на столько — окну некуда ехать.
+FOCUS_SLACK = 1.03
+
+
+def focus_needed(fmt: Any, source: dict | None, crop: dict | None = None) -> bool:
+    """Нужен ли фокус (трек x(t) окна кропа, автофокус, VLM) этому формату на этом исходнике.
+
+    У 9:16, 1:1, 4:5 — всегда да (как раньше). У 16:9 — только если исходник заметно шире
+    кадра (21:9): горизонтальный 16:9 идёт без кропа, а вертикальный/квадратный — целиком
+    на подложке (``fit``). Размер исходника неизвестен — да (как раньше)."""
+    if not is_landscape(fmt):
+        return True
+    if source_strategy(fmt, source, crop) == "fit":
+        return False
+    source = source or {}
+    sw, sh = float(source.get("width") or 0), float(source.get("height") or 0)
+    if sw <= 0 or sh <= 0:
+        return True
+    crop = crop if isinstance(crop, dict) else source.get("content_crop") or None
+    if crop:
+        sw *= float(crop.get("w") or 1.0)
+        sh *= float(crop.get("h") or 1.0)
+    return sh > 0 and (sw / sh) > ratio(fmt) * FOCUS_SLACK
+
+
 def describe(fmt: Any) -> dict:
     """Формат для API/агента: id, подпись, кадр и опорный кадр."""
     fmt = normalize_format(fmt)

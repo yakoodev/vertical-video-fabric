@@ -37,11 +37,14 @@ _auth = [Depends(require_auth)]
 MCP_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MCP_SERVER_INFO = {"name": "vertical-video-fabric", "title": "Vertical Video Fabric", "version": "1.0.0"}
 MCP_INSTRUCTIONS = """\
-Инструменты монтажа вертикальных клипов Vertical Video Fabric.
+Инструменты монтажа клипов Vertical Video Fabric: вертикаль 9:16, а также 1:1, 4:5 и 16:9.
 Порядок: list_projects → list_clips(project_id) → get_clip(clip_id) → правки → view_frame(clip_id, t),
-чтобы посмотреть результат. Время — секунды готового клипа, кадр 1080×1920, x/y — доли кадра.
+чтобы посмотреть результат. Время — секунды готового клипа, x/y — доли кадра. Кадр — формата клипа:
+get_clip → render.format и render.frame (9:16 — 1080×1920, 1:1 — 1080×1080, 4:5 — 1080×1350,
+16:9 — 1920×1080); px слоёв — опорные кадра разметки render.layers_format (render.layers_ref).
+Формат выбирает владелец (set_format — только по его просьбе).
 Слои: add_layers / update_layer / remove_layers, наезды: set_camera (заменяет все ключи).
-Справка по слоям: get_motion_reference; полный контракт — docs/motion/spec.md.
+Справка по слоям: get_motion_reference(format?); полный контракт — docs/motion/spec.md.
 Каждая правка делает снимок истории: владелец откатит её Ctrl+Z в редакторе."""
 
 
