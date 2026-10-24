@@ -71,13 +71,14 @@ def _promo_layers() -> list[dict]:
 
 def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
              frame: tuple[int, int] | None = None, source_size: tuple[int, int] | None = None,
-             subtitles: dict | None = None, banner: dict | None = None) -> dict:
+             subtitles: dict | None = None, banner: dict | None = None, aspect: str | None = None) -> dict:
     """Прогнать случай ``name`` и вернуть снимок (без путей и случайных id).
 
     ``extra`` — добавка к настройкам клипа (формат и т.п.), ``frame`` — размер основы для
     probe, ``source_size`` — размер исходника (тесты новых форматов; эталоны — без них).
-    ``subtitles`` — настоящий проход субтитров (поля стиля, ``sub_pos_pct``): в снимок идёт
-    текст ASS; ``banner`` — баннер (поля записи, ``height_pct``/``pos_pct``)."""
+    ``subtitles`` — настоящий проход субтитров (поля стиля, ``sub_pos_pct``; None — отступ
+    стиля без поправки): в снимок идёт текст ASS; ``banner`` — баннер (поля записи,
+    ``height_pct``/``pos_pct``); ``aspect`` — разовый формат рендера (как POST …/render)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from test_render import _store
 
@@ -197,6 +198,10 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
         sub = settings_to_render_kwargs({**render, "subs_on": True, "sub_id": profile["id"],
                                          "sub_pos_pct": subtitles.get("sub_pos_pct", 12.0)})
         kwargs.update(subtitle_profile_id=sub["subtitle_profile_id"], subtitle_margin_v=sub["subtitle_margin_v"])
+        if "sub_pos_pct" in subtitles and subtitles["sub_pos_pct"] is None:
+            kwargs.pop("subtitle_margin_v")
+    if aspect is not None:
+        kwargs["aspect"] = aspect
     if banner is not None:
         banner_path = settings.banner_dir / "banner.png"
         banner_path.parent.mkdir(parents=True, exist_ok=True)
