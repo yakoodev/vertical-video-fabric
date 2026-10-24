@@ -1326,3 +1326,69 @@ test("эталон: кадры компоновщика и движка 9:16 / 1
   }
   assert.deepEqual(got, JSON.parse(readFileSync(GOLDEN, "utf8")));
 });
+
+/* ---------- форматы вывода: опорный кадр 16:9 ---------- */
+
+test("formats.ts: реестр, старое поле aspect, окружение превью", () => {
+  assert.deepEqual(E.frameSize("16:9"), { w: 1920, h: 1080 });
+  assert.deepEqual(E.formatRefSize("9:16"), { w: 1080, h: 1920 });
+  assert.equal(E.normalizeFormat("landscape"), "16:9");
+  assert.equal(E.normalizeFormat("21:9"), "9:16");
+  assert.equal(E.clipFormat({ aspect: "1:1" }), "1:1");
+  assert.equal(E.clipFormat({ aspect: "1:1", format: "16:9" }), "16:9");
+  assert.equal(E.layersFormat({}), "9:16");
+  assert.deepEqual(E.formatEnv("9:16", 540), { width: 540, height: 960 });
+  assert.deepEqual(E.formatEnv("16:9", 960), { width: 960, height: 540, refWidth: 1920, refHeight: 1080 });
+  near(E.layerUnit({ width: 960, refWidth: 1920 }), 0.5);
+  near(E.layerUnit({ width: 540 }), 0.5);
+});
+
+/** Рамка красных пикселей кадра (r > 200, g < 60). */
+function redBox(data, w, h) {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (data[i] > 200 && data[i + 1] < 60 && data[i + 3] > 200) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  return { x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+test("кадр компоновщика 1920×1080: px слоя = px кадра, покачивание и центр в долях", async () => {
+  const rect = { id: "r", type: "shape", start: 0, end: 3, x: 0.25, y: 0.5, props: { kind: "rect", w: 400, h: 200, fill: "#ff0000" } };
+  const comp = { width: 1920, height: 1080, refWidth: 1920, refHeight: 1080, fps: 30, duration: 3, layers: [rect], camera: [] };
+  const p = writeInputs("wide169", comp);
+  const png = join(tmp, "wide169.png");
+  const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", "1", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  const img = await loadImage(readFileSync(png));
+  assert.equal(img.width, 1920);
+  assert.equal(img.height, 1080);
+  const cv = createCanvas(1920, 1080);
+  cv.getContext("2d").drawImage(img, 0, 0);
+  const b = redBox(cv.getContext("2d").getImageData(0, 0, 1920, 1080).data, 1920, 1080);
+  near(b.w, 400, 1.5);
+  near(b.h, 200, 1.5);
+  near(b.x0 + b.w / 2, 480, 1.5); // x = 0.25 кадра
+  near(b.y0 + b.h / 2, 540, 1.5);
+  // Без опорного кадра (старый comp.json) тот же слой — в единицах 1080 по ширине: в 1920/1080 раз крупнее.
+  const old = writeInputs("wide169old", { ...comp, refWidth: undefined, refHeight: undefined });
+  const png2 = join(tmp, "wide169old.png");
+  assert.equal(run(["--comp", old.comp, "--assets", old.assets, "--frame", "1", "--png", png2]).status, 0);
+  const img2 = await loadImage(readFileSync(png2));
+  const cv2 = createCanvas(1920, 1080);
+  cv2.getContext("2d").drawImage(img2, 0, 0);
+  near(redBox(cv2.getContext("2d").getImageData(0, 0, 1920, 1080).data, 1920, 1080).w, (400 * 1920) / 1080, 2);
+  // Покачивание float — 14 опорных px по высоте опорного кадра (1080), а не 1920.
+  const float = { ...rect, loop: { type: "float", amount: 1, speed: 1 } };
+  const t = 1 / (4 * 0.45); // пик синуса
+  const st = E.resolveLayer(float, t, { w: 1920, h: 1080 });
+  near((st.y - 0.5) * 1080, 14, 1e-6);
+  near((E.resolveLayer(float, t).y - 0.5) * 1920, 14, 1e-6); // по умолчанию — как всегда
+});

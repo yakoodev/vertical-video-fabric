@@ -61,8 +61,12 @@ def _promo_layers() -> list[dict]:
     ]
 
 
-def run_case(name: str, tmp_path: Path, monkeypatch) -> dict:
-    """Прогнать случай ``name`` и вернуть снимок (без путей и случайных id)."""
+def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
+             frame: tuple[int, int] | None = None, source_size: tuple[int, int] | None = None) -> dict:
+    """Прогнать случай ``name`` и вернуть снимок (без путей и случайных id).
+
+    ``extra`` — добавка к настройкам клипа (формат и т.п.), ``frame`` — размер основы для
+    probe, ``source_size`` — размер исходника (тесты новых форматов; эталоны — без них)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from test_render import _store
 
@@ -101,6 +105,8 @@ def run_case(name: str, tmp_path: Path, monkeypatch) -> dict:
     meta = _Meta()
     if name == "canvas_square":
         meta.height = 1080
+    if frame:
+        meta.width, meta.height = frame
     monkeypatch.setattr("app.render.probe_media", lambda path: meta)
     monkeypatch.setattr("app.render.run_qc", lambda *a, **k: None)
     monkeypatch.setattr("app.render._has_audio_stream", lambda path: True)
@@ -112,7 +118,7 @@ def run_case(name: str, tmp_path: Path, monkeypatch) -> dict:
     source_path.write_bytes(b"src")
     canvas = name in ("canvas_motion", "canvas_square")
     source_type = "canvas" if canvas else "upload"
-    size = (1080, 1920) if source_type == "canvas" else (1920, 1080)
+    size = source_size or ((1080, 1920) if source_type == "canvas" else (1920, 1080))
     source = store.create_source(source_type, source_path, duration_sec=120, width=size[0], height=size[1],
                                  fps=30, status="ready")
     if name == "chroma_backdrop" or canvas:
@@ -160,6 +166,7 @@ def run_case(name: str, tmp_path: Path, monkeypatch) -> dict:
         if name == "canvas_square":
             # Квадрат холста (app/aspect.py): старое поле aspect — перекомпоновка 9:16 → 1:1.
             render["aspect"] = "1:1"
+    render = {**render, **(extra or {})}
     if render:
         store.set_clip_plan_render_settings(plan["id"], render)
 
