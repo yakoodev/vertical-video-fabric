@@ -62,20 +62,27 @@ def _extent_px(layer, height, sizes=SIZES):
 def test_aspect_names_and_settings():
     assert normalize_aspect(None) == "9:16" and normalize_aspect("") == "9:16"
     assert normalize_aspect("1:1") == "1:1" and normalize_aspect("square") == "1:1" and normalize_aspect("4x5") == "4:5"
+    # 16:9 — теперь обычный формат (app/formats.py); мусор — ошибка / 9:16 в настройках.
+    assert normalize_aspect("16:9") == "16:9" and normalize_aspect("landscape") == "16:9"
     with pytest.raises(ValueError):
-        normalize_aspect("16:9")
-    assert settings_aspect("16:9") == "9:16"
+        normalize_aspect("21:9")
+    assert settings_aspect("21:9") == "9:16"
     from app.clip_settings import normalize_render_settings
 
-    assert normalize_render_settings({})["aspect"] == "9:16"
-    assert normalize_render_settings({"aspect": "1:1"})["aspect"] == "1:1"
+    assert normalize_render_settings({})["format"] == "9:16"
+    # Старое поле aspect читается как format; хранится одно поле format.
+    assert normalize_render_settings({"aspect": "1:1"})["format"] == "1:1"
+    assert "aspect" not in normalize_render_settings({"aspect": "1:1"})
+    assert normalize_render_settings({"aspect": "1:1", "format": "16:9"})["format"] == "16:9"
 
 
-def test_only_canvas_gets_other_formats():
+def test_any_clip_gets_any_format():
+    """Ограничение «не 9:16 — только холст» снято: формат у любого клипа."""
     assert check_aspect_source("1:1", CANVAS) == "1:1"
     assert check_aspect_source(None, UPLOAD) == "9:16"
-    with pytest.raises(ValueError, match="только для пустого холста"):
-        check_aspect_source("1:1", UPLOAD)
+    assert check_aspect_source("1:1", UPLOAD) == "1:1" and check_aspect_source("16:9", UPLOAD) == "16:9"
+    with pytest.raises(ValueError):
+        check_aspect_source("3:2", UPLOAD)
 
 
 def test_preset_output_size_for_square():
@@ -84,8 +91,9 @@ def test_preset_output_size_for_square():
     preset = _preset_with_output({"id": 1, "output_width": 1080, "output_height": 1920}, CANVAS, "1:1")
     assert (preset["output_width"], preset["output_height"], preset["aspect"]) == (1080, 1080, "1:1")
     assert _preset_with_output({"id": 1}, CANVAS, "4:5")["output_height"] == 1350
+    assert _preset_with_output({"id": 1}, UPLOAD, "1:1")["output_width"] == 1080
     with pytest.raises(ValueError):
-        _preset_with_output({"id": 1}, UPLOAD, "1:1")
+        _preset_with_output({"id": 1}, UPLOAD, "2:1")
 
 
 def test_vertical_is_untouched():
@@ -284,7 +292,7 @@ def test_compositor_square_zoom_keeps_phone_bottom_in_frame(tmp_path):
         assert max(red_rows) < 1080 - 30, (png.name, max(red_rows))
 
 
-def test_set_aspect_tool_saves_for_canvas_and_refuses_regular_clip(tmp_path, monkeypatch):
+def test_set_aspect_tool_saves_for_canvas_and_regular_clip(tmp_path, monkeypatch):
     from app.agent_tools import ToolContext, run_tool
     from app.manual_clips import create_manual_clip
     from test_render import _store
@@ -300,14 +308,20 @@ def test_set_aspect_tool_saves_for_canvas_and_refuses_regular_clip(tmp_path, mon
     out, ok = run_tool(ToolContext(store=store, clip_plan_id=plans["canvas"]["id"]), "set_aspect", {"aspect": "1:1"})
     assert ok, out
     assert '"1080×1080"' in out or "1080×1080" in str(out)
-    assert store.get_clip_plan(plans["canvas"]["id"])["render_settings"]["aspect"] == "1:1"
+    assert store.get_clip_plan(plans["canvas"]["id"])["render_settings"]["format"] == "1:1"
+    # Клип с исходником — теперь тоже (старое имя set_aspect и новое set_format).
     out, ok = run_tool(ToolContext(store=store, clip_plan_id=plans["upload"]["id"]), "set_aspect", {"aspect": "1:1"})
-    assert not ok and "холст" in str(out)
-    # Рендер клипа с исходником в квадрате — понятная ошибка до статуса «rendering».
+    assert ok, out
+    out, ok = run_tool(ToolContext(store=store, clip_plan_id=plans["upload"]["id"]), "set_format", {"format": "16:9"})
+    assert ok and "1920×1080" in str(out), out
+    assert store.get_clip_plan(plans["upload"]["id"])["render_settings"]["format"] == "16:9"
+    out, ok = run_tool(ToolContext(store=store, clip_plan_id=plans["upload"]["id"]), "set_format", {"format": "2:1"})
+    assert not ok
+    # Неверный формат рендера — понятная ошибка до статуса «rendering».
     from app.render import ClipRenderService
 
-    with pytest.raises(ValueError, match="только для пустого холста"):
-        ClipRenderService(store).render_clip_plan(plans["upload"]["id"], aspect="1:1")
+    with pytest.raises(ValueError, match="format"):
+        ClipRenderService(store).render_clip_plan(plans["upload"]["id"], aspect="2:1")
     assert store.get_clip_plan(plans["upload"]["id"])["status"] != "rendering"
 
 
@@ -317,7 +331,7 @@ def test_qc_accepts_square_and_four_five():
     def codes(width, height):
         return {i["code"] for i in parse_qc("", duration_sec=20, width=width, height=height)["issues"]}
 
-    assert "size" not in codes(1080, 1080) and "size" not in codes(1080, 1350)
+    assert "size" not in codes(1080, 1080) and "size" not in codes(1080, 1350) and "size" not in codes(1920, 1080)
     assert "size" in codes(720, 1280)
 
 
@@ -355,7 +369,7 @@ def test_compositor_draws_square_frame(tmp_path):
 
 def test_real_square_render_of_canvas_through_api(tmp_path, monkeypatch):
     """Холст целиком через API: рендер {"aspect": "1:1"} → файл 1080×1080 с фоном и слоями,
-    настройки клипа не меняются; клип с исходником в квадрате — 400 с понятной причиной."""
+    настройки клипа не меняются; неизвестный формат — 400 с понятной причиной."""
     from test_api_pipeline import _client, _require_ffmpeg
 
     _require_ffmpeg()
@@ -383,7 +397,7 @@ def test_real_square_render_of_canvas_through_api(tmp_path, monkeypatch):
     assert clip["status"] == "succeeded", clip.get("error")
     assert (clip["width"], clip["height"]) == (1080, 1080)
     assert not (clip.get("error") or "")  # моушн лёг, без пометок
-    assert store.get_clip_plan(plan["id"])["render_settings"]["aspect"] == "9:16"  # формат только этого рендера
+    assert store.get_clip_plan(plan["id"])["render_settings"]["format"] == "9:16"  # формат только этого рендера
 
     path = settings.source_dir / "real.mp4"
     path.write_bytes(b"x")
@@ -391,5 +405,5 @@ def test_real_square_render_of_canvas_through_api(tmp_path, monkeypatch):
     from app.manual_clips import create_manual_clip
 
     regular = create_manual_clip(store, source["id"], "обычный", [{"start_sec": 0.0, "end_sec": 8.0}], "")
-    resp = client.post(f"/api/clip-plans/{regular['id']}/render", json={"aspect": "1:1"})
-    assert resp.status_code == 400 and "только для пустого холста" in resp.json()["detail"]
+    resp = client.post(f"/api/clip-plans/{regular['id']}/render", json={"format": "2:1"})
+    assert resp.status_code == 400 and "format" in resp.json()["detail"]

@@ -416,7 +416,8 @@ function strokeGlow(
 /** Неоновая перспективная сетка: пол и потолок сходятся к светящемуся горизонту, сетка едет на зрителя. */
 const paintGrid: Painter = (ctx, W, H, p, [base, a1, a2], I, opts) => {
   const th = p * TAU;
-  const u = W / 1080;
+  // Единица — короткая сторона / 1080: у вертикали это ширина (как всегда), у 16:9 — высота.
+  const u = Math.min(W, H) / 1080;
   const hy = H * 0.5;
   const f = H - hy; // фокус: z = 1 — нижний край кадра
   fillBase(ctx, W, H, base, base);
@@ -498,7 +499,8 @@ const paintGrid: Painter = (ctx, W, H, p, [base, a1, a2], I, opts) => {
 /** Волны: пучки светящихся линий-синусоид, каждая сдвинута по фазе — «шёлк». */
 const paintWaves: Painter = (ctx, W, H, p, [base, a1, a2], I, opts) => {
   const th = p * TAU;
-  const u = W / 1080;
+  // Единица — короткая сторона / 1080: у вертикали это ширина (как всегда), у 16:9 — высота.
+  const u = Math.min(W, H) / 1080;
   fillBase(ctx, W, H, base, mix(base, a1, 0.08));
   ctx.globalCompositeOperation = "lighter";
   blob(ctx, W * 0.2, H * 0.3, W * 0.9, a2, I * 0.16);

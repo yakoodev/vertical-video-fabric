@@ -89,8 +89,10 @@ def parse_qc(log: str, *, duration_sec: float = 0.0, width: int = 0, height: int
         issue("warn", "no_audio", "в клипе нет звука")
     if peak is not None and peak > PEAK_MAX:
         issue("warn", "peak", f"пик {peak:.1f} dBFS — после пережатия площадкой возможен хрип")
-    # Квадрат и 4:5 холста (app/aspect.py) — заказанный формат, а не ошибка пресета.
-    if width and height and (width, height) not in ((1080, 1920), (1080, 1080), (1080, 1350)):
+    # Кадр любого формата вывода (app/formats.py) — заказанный формат, а не ошибка пресета.
+    from app.formats import format_of_size
+
+    if width and height and format_of_size(width, height) is None:
         issue("info", "size", f"размер {width}×{height}, для шортсов обычно 1080×1920")
     if duration_sec > SHORTS_MAX_SEC:
         issue("warn", "long", f"{duration_sec:.0f} с — длиннее 3 минут, YouTube не примет как Shorts")

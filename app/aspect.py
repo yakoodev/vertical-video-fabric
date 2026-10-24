@@ -1,32 +1,39 @@
-"""Формат кадра ролика: 9:16 (как всегда), квадрат 1:1 и 4:5 из того же монтажа.
+"""Перекомпоновка монтажа между форматами: слои и камера из одного опорного кадра в другой.
 
-Все слои размечены в опорном кадре 1080×1920 (docs/motion/spec.md): ``x``, ``y`` — доли
-кадра, размеры — опорные пиксели (движок умножает их на ширину / 1080). В кадре
-1080×1080 те же доли и размеры не влезают: телефон высотой 1350 px занял бы весь
-квадрат, а титр сверху наехал бы на него.
+Форматы и их размеры — app/formats.py (9:16, 1:1, 4:5, 16:9). Слои размечены в опорном
+кадре формата ``layers_format`` (нет — 9:16, 1080×1920; docs/motion/spec.md): ``x``,
+``y`` — доли кадра, размеры — опорные пиксели (движок умножает их на ширину кадра /
+ширину опорного). В другом кадре те же доли и размеры не влезают: телефон высотой
+1350 px занял бы весь квадрат, а титр сверху наехал бы на него. Ниже «исходный» опорный
+кадр — ``ref`` (sw×sh), новый — ``width``×``height`` (опорный кадр нужного формата).
 
 Правило перекомпоновки — один масштаб на весь монтаж («зум по содержимому»):
 
-1. Рамка слоя — от верха до низа (опорные px, обрезано по кадру 0..1920; учитываются
-   ``y`` слоя и его ключи ``y``, масштаб — ``scale`` и последний ключ ``scale``). Фоновые
-   слои во всю ширину (≥ 1060 px) и вспышки (ключи прозрачности кончаются нулём: взрыв
-   звёздочек, кольцо касания) в рамки не входят.
+1. Рамка слоя — от верха до низа (опорные px, обрезано по кадру 0..sh; учитываются
+   ``y`` слоя и его ключи ``y``, масштаб — ``scale`` и последний ключ ``scale``), и так
+   же слева направо. Фоновые слои во всю ширину (≥ 98 % sw) и вспышки (ключи
+   прозрачности кончаются нулём: взрыв звёздочек, кольцо касания) в рамки не входят.
 2. Сцены — слои, что идут вместе (перекрываются по времени ≥ 0.6 с; короткий нахлёст
    свайпа или ухода телефона под новый титр сцены не склеивает). Рамка сцены — общая
    рамка её слоёв; соседние сцены с почти той же рамкой (± 10 % кадра) — одна сцена,
    чтобы телефон, стоящий весь ролик на месте, не прыгал на сменах титров.
-3. Масштаб ``s`` = min(1, 1.25 · H/1920, W/1080, H · (1 − 2·4 %) / высота самой высокой
+3. Масштаб ``s`` = min(1, 1.25 · H/sh, по ширине, H · (1 − 2·4 %) / высота самой высокой
    сцены): каждая сцена целиком входит в новый кадр с полями 4 %, но не крупнее, чем
-   1.25 от «вписать весь кадр» (холст с одним титром не раздувается). Масштаб один на
-   весь ролик — размеры между сценами не прыгают.
+   1.25 от «вписать весь кадр» (холст с одним титром не раздувается). «По ширине» —
+   W/sw, а если новый кадр уже исходного (16:9 → 9:16) — сколько позволяет самая
+   широкая сцена (не меньше W/sw и не больше 1.25 · W/sw). Масштаб один на весь
+   ролик — размеры между сценами не прыгают.
 4. Каждый слой: центр рамки его сцены → центр кадра, ``x``/``y`` и их ключи — тем же
-   аффинным переносом, ``scale`` и ключи ``scale`` × ``s``. Внутри сцены взаимное
-   расположение не меняется вовсе: титр не наезжает на телефон, если не наезжал в 9:16,
+   аффинным переносом, ``scale`` и ключи ``scale`` × ``s``. По горизонтали центр сцены
+   берётся только когда новый кадр уже исходного; иначе — центр исходного кадра
+   (вертикаль → квадрат/16:9: середина остаётся серединой). Внутри сцены взаимное
+   расположение не меняется вовсе: титр не наезжает на телефон, если не наезжал,
    касания по экрану телефона остаются на своих кнопках; концовка с логотипом встаёт
-   по центру квадрата.
-5. Фон во всю ширину масштаб не меняет (как был во всю ширину, так и остаётся),
-   переносится только его центр (по сцене, с которой он дольше всего идёт) —
-   затемнение под титрами остаётся под ними.
+   по центру кадра.
+5. Фон во всю ширину не уменьшается: как был во всю ширину, так и остаётся (в кадре шире
+   исходного — растягивается до новой ширины: у фигуры растёт ``props.w``, у картинки —
+   масштаб; фон на весь кадр — «cover» и по высоте). Переносится только его центр (по
+   сцене, с которой он дольше всего идёт) — затемнение под титрами остаётся под ними.
 6. Камера (``render.camera``: zoom и центр x/y — доли кадра) перекомпонуется вместе со
    слоями (``reframe_camera``): центр наезда — та же точка содержимого (перенос сцены),
    а слои ``followCamera`` (телефон, кольца касаний), которые камера зумит вместе с
@@ -35,10 +42,13 @@
    из-за камеры уменьшается не больше чем в CAMERA_MAX_SHRINK раз; что не влезло —
    ограничивает zoom ключа. Центр ключа сдвигается ровно настолько, чтобы зумленное
    содержимое не вышло за поля: наезд остаётся наездом, а низ телефона не уходит за
-   край квадрата.
+   край кадра.
 
-Пока формат не 9:16 — только у холстов (app/canvas.py): у клипа с исходником
-кадрирование видео, раскладки, субтитры и баннеры размечены под 9:16.
+Из 9:16 в 9:16 (и вообще в тот же опорный кадр) слои и камера идут как есть. Для
+вертикального исходного кадра в 1:1 / 4:5 результат ровно прежний (до 16:9).
+
+Ограничение этапа 1: перекомпоновка 9:16 → 16:9 ставит монтаж колонкой по центру
+(масштаб по высоте), а не раскладывает сцены по горизонтали.
 """
 
 from __future__ import annotations
@@ -46,32 +56,37 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.formats import (
+    DEFAULT_FORMAT,
+    FORMATS,
+    frame_size,
+    normalize_format,
+    settings_format,
+)
+
 REF_W = 1080
 REF_H = 1920
-DEFAULT_ASPECT = "9:16"
-# Ширина у всех форматов — 1080: шрифты и слои меряются от неё (W / 1080).
-ASPECTS: dict[str, tuple[int, int]] = {
-    "9:16": (1080, 1920),
-    "1:1": (1080, 1080),
-    "4:5": (1080, 1350),
-}
-_ALIASES = {
-    "9x16": "9:16", "vertical": "9:16", "вертикаль": "9:16",
-    "1x1": "1:1", "square": "1:1", "квадрат": "1:1",
-    "4x5": "4:5",
-}
+REF = (REF_W, REF_H)
+DEFAULT_ASPECT = DEFAULT_FORMAT
+# Кадр каждого формата (app/formats.py). Старое имя: раньше тут были только 9:16 / 1:1 / 4:5.
+ASPECTS: dict[str, tuple[int, int]] = {fmt: info["frame"] for fmt, info in FORMATS.items()}
 # Не крупнее, чем «вписать весь опорный кадр» × столько.
 MAX_BOOST = 1.25
 # Поля сверху и снизу нового кадра (доля высоты).
 MARGIN = 0.04
-# Слой шире этого (опорные px) — фон во всю ширину: масштаб не трогаем, рамку не считаем.
-FULL_BLEED_W = 1060.0
+# Слой шире этой доли ширины опорного кадра — фон во всю ширину (1060 px у 1080).
+FULL_BLEED_FRAC = 1060.0 / 1080.0
+FULL_BLEED_W = FULL_BLEED_FRAC * REF_W
 # Слои одной сцены перекрываются по времени хотя бы на столько (с); короче — переход.
 SCENE_LINK_SEC = 0.6
-# Соседние сцены, у которых верх и низ рамки ближе этого (опорные px), — одна сцена.
-SCENE_SIMILAR = 0.10 * REF_H
+# Соседние сцены, у которых верх и низ рамки ближе этой доли высоты кадра, — одна сцена.
+SCENE_SIMILAR_FRAC = 0.10
+SCENE_SIMILAR = SCENE_SIMILAR_FRAC * REF_H
 # Нет слоёв — рамка = безопасная зона текста (10 %..80 % кадра).
-DEFAULT_BOX = (0.10 * REF_H, 0.80 * REF_H)
+DEFAULT_BOX_FRAC = (0.10, 0.80)
+DEFAULT_BOX = (DEFAULT_BOX_FRAC[0] * REF_H, DEFAULT_BOX_FRAC[1] * REF_H)
+# Фон «на весь кадр» — высотой не меньше этой доли опорного кадра.
+COVER_FRAC = 0.98
 # Пропорции экрана телефона по умолчанию (запись экрана 9:19.5) и корпус вокруг него.
 PHONE_SCREEN_RATIO = 19.5 / 9
 PHONE_EDGE = 0.047  # обод + рамка с каждой стороны, доля ширины экрана (device.ts)
@@ -83,43 +98,31 @@ CAMERA_MAX_SHRINK = 1.25
 # Шаг проверки содержимого под камерой, пока она стоит (ключи с тем же видом), с.
 CAMERA_HOLD_STEP = 0.1
 
-ONLY_CANVAS = (
-    "формат {aspect} пока только для пустого холста (create_canvas_clip): у клипа с исходником "
-    "кадрирование видео, раскладка, субтитры и баннер размечены под 9:16"
-)
-
 
 def normalize_aspect(value: Any) -> str:
-    """'9:16' | '1:1' | '4:5' (и синонимы 1x1, square, квадрат); пусто — 9:16."""
-    if value is None or value == "":
-        return DEFAULT_ASPECT
-    text = str(value).strip().lower().replace(" ", "")
-    text = _ALIASES.get(text, text)
-    if text not in ASPECTS:
-        raise ValueError(f"aspect — один из {', '.join(ASPECTS)}")
-    return text
+    """Формат кадра (app/formats.normalize_format): '9:16' | '1:1' | '4:5' | '16:9'; пусто — 9:16."""
+    return normalize_format(value)
 
 
 def settings_aspect(value: Any) -> str:
     """Для настроек клипа: мусор — 9:16 (нормализация настроек не падает)."""
-    try:
-        return normalize_aspect(value)
-    except ValueError:
-        return DEFAULT_ASPECT
+    return settings_format(value)
 
 
 def aspect_size(aspect: Any) -> tuple[int, int]:
-    return ASPECTS[normalize_aspect(aspect)]
+    return frame_size(aspect)
 
 
-def check_aspect_source(aspect: Any, source: dict | None) -> str:
-    """Формат для рендера этого источника: не 9:16 — только у холста (ValueError)."""
-    from app.canvas import is_canvas
+def check_aspect_source(aspect: Any, source: dict | None = None) -> str:
+    """Формат для рендера этого источника. Раньше не 9:16 был только у холста; теперь
+    любой формат у любого клипа — остаётся проверка имени (ValueError на мусор)."""
+    return normalize_format(aspect)
 
-    aspect = normalize_aspect(aspect)
-    if aspect != DEFAULT_ASPECT and not is_canvas(source):
-        raise ValueError(ONLY_CANVAS.format(aspect=aspect))
-    return aspect
+
+def _ref(ref: Any) -> tuple[float, float]:
+    if not ref:
+        return float(REF_W), float(REF_H)
+    return float(ref[0]), float(ref[1])
 
 
 # ---------------------------------------------------------------- размеры слоёв
@@ -224,37 +227,57 @@ def is_transient(layer: dict) -> bool:
     return _num(last.get("v"), 1.0) <= 0.05
 
 
-def is_full_bleed(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> bool:
-    """Фон во всю ширину кадра (звёзды, затемнение, лента): картинка/видео/фигура ≥ 1060 px."""
+def is_full_bleed(layer: dict, sizes: dict[str, tuple[int, int]] | None = None, ref: Any = None) -> bool:
+    """Фон во всю ширину кадра (звёзды, затемнение, лента): картинка/видео/фигура ≥ 98 %
+    ширины опорного кадра (1060 px у 1080)."""
     if layer.get("type") not in ("image", "video", "shape"):
         return False
     size = layer_size(layer, sizes)
-    return bool(size) and size[0] * _num(layer.get("scale"), 1.0) >= FULL_BLEED_W
+    sw = _ref(ref)[0]
+    limit = FULL_BLEED_W if sw == REF_W else FULL_BLEED_FRAC * sw
+    return bool(size) and size[0] * _num(layer.get("scale"), 1.0) >= limit
 
 
-def _counts_in_box(layer: dict, sizes: dict[str, tuple[int, int]] | None) -> bool:
-    return not (layer.get("hidden") or layer.get("type") == "audio" or is_full_bleed(layer, sizes)
+def _counts_in_box(layer: dict, sizes: dict[str, tuple[int, int]] | None, ref: Any = None) -> bool:
+    return not (layer.get("hidden") or layer.get("type") == "audio" or is_full_bleed(layer, sizes, ref)
                 or is_transient(layer) or not layer_size(layer, sizes))
 
 
-def layer_extent(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> tuple[float, float] | None:
-    """Верх и низ слоя в опорных px (0..1920) по ``y`` и всем ключам ``y``; за кадром — None."""
+def _extent(center: float, values: list[float], half: float, span: float) -> tuple[float, float] | None:
+    lo, hi = math.inf, -math.inf
+    for v in values:
+        a, b = max(0.0, v * span - half), min(float(span), v * span + half)
+        if b > a:
+            lo, hi = min(lo, a), max(hi, b)
+    return (lo, hi) if hi > lo else None
+
+
+def layer_extent(layer: dict, sizes: dict[str, tuple[int, int]] | None = None,
+                 ref: Any = None) -> tuple[float, float] | None:
+    """Верх и низ слоя в опорных px (0..sh) по ``y`` и всем ключам ``y``; за кадром — None."""
     size = layer_size(layer, sizes)
     if not size:
         return None
     half = size[1] * _settled_scale(layer) / 2
-    top, bottom = math.inf, -math.inf
     ys = [_num(layer.get("y"), 0.5)] + [_num(k.get("v"), 0.5) for k in (layer.get("keys") or {}).get("y") or []]
-    for y in ys:
-        a, b = max(0.0, y * REF_H - half), min(float(REF_H), y * REF_H + half)
-        if b > a:
-            top, bottom = min(top, a), max(bottom, b)
-    return (top, bottom) if bottom > top else None
+    return _extent(0.0, ys, half, _ref(ref)[1])
 
 
-def content_box(layers: list[dict], sizes: dict[str, tuple[int, int]] | None = None) -> tuple[float, float] | None:
-    """Верх и низ всего видимого содержимого в опорных px (0..1920); нет — None."""
-    extents = [layer_extent(layer, sizes) for layer in layers if _counts_in_box(layer, sizes)]
+def layer_hextent(layer: dict, sizes: dict[str, tuple[int, int]] | None = None,
+                  ref: Any = None) -> tuple[float, float] | None:
+    """Левый и правый край слоя в опорных px (0..sw) по ``x`` и ключам ``x``; за кадром — None."""
+    size = layer_size(layer, sizes)
+    if not size:
+        return None
+    half = size[0] * _settled_scale(layer) / 2
+    xs = [_num(layer.get("x"), 0.5)] + [_num(k.get("v"), 0.5) for k in (layer.get("keys") or {}).get("x") or []]
+    return _extent(0.0, xs, half, _ref(ref)[0])
+
+
+def content_box(layers: list[dict], sizes: dict[str, tuple[int, int]] | None = None,
+                ref: Any = None) -> tuple[float, float] | None:
+    """Верх и низ всего видимого содержимого в опорных px (0..sh); нет — None."""
+    extents = [layer_extent(layer, sizes, ref) for layer in layers if _counts_in_box(layer, sizes, ref)]
     extents = [e for e in extents if e]
     if not extents:
         return None
@@ -266,114 +289,193 @@ def _span(layer: dict) -> tuple[float, float]:
     return start, max(start, _num(layer.get("end"), start))
 
 
-def scenes(layers: list[dict], sizes: dict[str, tuple[int, int]] | None = None) -> list[dict]:
+def _union(a: tuple[float, float] | None, b: tuple[float, float] | None) -> tuple[float, float] | None:
+    if not a:
+        return b
+    if not b:
+        return a
+    return min(a[0], b[0]), max(a[1], b[1])
+
+
+def scenes(layers: list[dict], sizes: dict[str, tuple[int, int]] | None = None, ref: Any = None) -> list[dict]:
     """Сцены монтажа: слои содержимого, связанные по времени (перекрытие ≥ SCENE_LINK_SEC
     или половины короткого слоя). Короткий нахлёст на смене сцены (свайп, уход телефона
-    под новый титр) сцены не склеивает. ``[{start, end, box, members}]`` по времени."""
+    под новый титр) сцены не склеивает. ``[{start, end, box, hbox, members}]`` по времени;
+    ``box`` — верх/низ, ``hbox`` — лево/право (опорные px)."""
     items = sorted(
-        ((i, *_span(layer), layer_extent(layer, sizes)) for i, layer in enumerate(layers) if _counts_in_box(layer, sizes)),
+        ((i, *_span(layer), layer_extent(layer, sizes, ref), layer_hextent(layer, sizes, ref))
+         for i, layer in enumerate(layers) if _counts_in_box(layer, sizes, ref)),
         key=lambda item: item[1],
     )
     out: list[dict] = []
-    for index, start, end, extent in items:
+    for index, start, end, extent, hextent in items:
         if not extent:
             continue
         cur = out[-1] if out else None
         if cur is not None and min(cur["end"], end) - start >= min(SCENE_LINK_SEC, 0.5 * (end - start)):
             cur["end"] = max(cur["end"], end)
             cur["box"] = (min(cur["box"][0], extent[0]), max(cur["box"][1], extent[1]))
+            cur["hbox"] = _union(cur["hbox"], hextent)
             cur["members"].append(index)
         else:
-            out.append({"start": start, "end": end, "box": extent, "members": [index]})
-    return _merge_similar(out)
+            out.append({"start": start, "end": end, "box": extent, "hbox": hextent, "members": [index]})
+    return _merge_similar(out, ref)
 
 
-def _merge_similar(parts: list[dict]) -> list[dict]:
+def _merge_similar(parts: list[dict], ref: Any = None) -> list[dict]:
     """Соседние сцены с почти той же рамкой (верх и низ ближе SCENE_SIMILAR) — одна:
     иначе телефон, что стоит на месте весь ролик, прыгал бы на несколько px на каждой
     смене титра. Отдельной остаётся сцена с другой рамкой (концовка с логотипом)."""
+    sh = _ref(ref)[1]
+    similar = SCENE_SIMILAR if sh == REF_H else SCENE_SIMILAR_FRAC * sh
     out: list[dict] = []
     for part in parts:
         cur = out[-1] if out else None
-        if (cur is not None and abs(cur["box"][0] - part["box"][0]) <= SCENE_SIMILAR
-                and abs(cur["box"][1] - part["box"][1]) <= SCENE_SIMILAR):
+        if (cur is not None and abs(cur["box"][0] - part["box"][0]) <= similar
+                and abs(cur["box"][1] - part["box"][1]) <= similar):
             cur["end"] = max(cur["end"], part["end"])
             cur["box"] = (min(cur["box"][0], part["box"][0]), max(cur["box"][1], part["box"][1]))
+            cur["hbox"] = _union(cur.get("hbox"), part.get("hbox"))
             cur["members"].extend(part["members"])
         else:
             out.append({**part, "members": list(part["members"])})
     return out
 
 
+def _width_cap(width: float, sw: float, widest: float | None) -> float:
+    """Предел масштаба по ширине: W/sw; кадр уже исходного — сколько позволяет самая
+    широкая сцена (с полями), но не меньше W/sw и не больше MAX_BOOST · W/sw."""
+    fit = width / sw
+    if width >= sw or not widest:
+        return fit
+    return max(fit, min(MAX_BOOST * fit, width * (1 - 2 * MARGIN) / max(1.0, widest)))
+
+
 def reframe_plan(layers: list[dict], width: int, height: int,
-                 sizes: dict[str, tuple[int, int]] | None = None, camera: list[dict] | None = None) -> dict:
-    """План перекомпоновки в кадр ``width``×``height``: общий масштаб ``scale`` и центр
-    рамки (опорные px) — свой у каждой сцены (``scenes``) и общий ``center``.
+                 sizes: dict[str, tuple[int, int]] | None = None, camera: list[dict] | None = None,
+                 ref: Any = None) -> dict:
+    """План перекомпоновки из опорного кадра ``ref`` (нет — 1080×1920) в кадр
+    ``width``×``height`` (опорный кадр нужного формата): общий масштаб ``scale`` и центр
+    рамки (опорные px) — свой у каждой сцены (``scenes``) и общий ``center``; ``cx`` —
+    центр по горизонтали (у кадра не уже исходного — середина исходного кадра).
 
     Масштаб один на весь ролик (размеры не прыгают между сценами): самая высокая сцена
     входит в кадр с полями. Центр — свой у сцены: концовка с логотипом встаёт по центру
-    квадрата, а не туда, где она была в 9:16 относительно телефона из прошлой сцены.
+    кадра, а не туда, где она была относительно телефона из прошлой сцены.
     ``camera`` — ключи наездов: слои ``followCamera`` под самым сильным наездом тоже
     входят в кадр (масштаб меньше, но не больше чем в CAMERA_MAX_SHRINK раз)."""
-    parts = scenes(layers, sizes)
-    box = content_box(layers, sizes) or DEFAULT_BOX
+    sw, sh = _ref(ref)
+    parts = scenes(layers, sizes, ref)
+    default_box = DEFAULT_BOX if sh == REF_H else (DEFAULT_BOX_FRAC[0] * sh, DEFAULT_BOX_FRAC[1] * sh)
+    box = content_box(layers, sizes, ref) or default_box
     tallest = max((p["box"][1] - p["box"][0] for p in parts), default=box[1] - box[0])
-    cap = min(1.0, MAX_BOOST * height / REF_H, width / REF_W)
+    narrow = width < sw
+    widest = max((p["hbox"][1] - p["hbox"][0] for p in parts if p.get("hbox")), default=None) if narrow else None
+    cap = min(1.0, MAX_BOOST * height / sh, _width_cap(width, sw, widest))
     scale = min(cap, height * (1 - 2 * MARGIN) / max(1.0, tallest))
-    zoomed = _camera_scale(layers, camera, width, height, sizes)
+    zoomed = _camera_scale(layers, camera, width, height, sizes, ref)
     if zoomed < scale:
         scale = max(zoomed, scale / CAMERA_MAX_SHRINK)
+
+    def hcenter(hbox: tuple[float, float] | None) -> float:
+        return round((hbox[0] + hbox[1]) / 2, 2) if narrow and hbox else sw / 2
+
+    all_h = None
+    for p in parts:
+        all_h = _union(all_h, p.get("hbox"))
     return {
         "scale": round(scale, 4),
         "center": round((box[0] + box[1]) / 2, 2),
+        "cx": hcenter(all_h),
         "box": [round(v, 1) for v in box],
+        "ref": [sw, sh],
         "scenes": [
             {"start": round(p["start"], 3), "end": round(p["end"], 3), "box": [round(v, 1) for v in p["box"]],
-             "center": round((p["box"][0] + p["box"][1]) / 2, 2), "members": p["members"]}
+             "center": round((p["box"][0] + p["box"][1]) / 2, 2), "cx": hcenter(p.get("hbox")),
+             "members": p["members"]}
             for p in parts
         ],
     }
 
 
-def _layer_center(index: int, layer: dict, plan: dict) -> float:
-    """Центр рамки для слоя: его сцены; фон и вспышки — сцены, с которой дольше всего
-    совпадают по времени; ни с какой — общий."""
-    best, best_overlap = plan["center"], 0.0
+def _layer_scene(index: int, layer: dict, plan: dict) -> dict | None:
+    """Сцена слоя; фон и вспышки — сцена, с которой дольше всего совпадают по времени;
+    ни с какой — None (общий центр)."""
+    best, best_overlap = None, 0.0
     start, end = _span(layer)
     for scene in plan.get("scenes") or []:
         if index in scene["members"]:
-            return scene["center"]
+            return scene
         overlap = min(end, scene["end"]) - max(start, scene["start"])
         if overlap > best_overlap:
-            best, best_overlap = scene["center"], overlap
+            best, best_overlap = scene, overlap
     return best
 
 
-def _map_x(x: float, scale: float, width: int) -> float:
-    return round((width / 2 + (x * REF_W - REF_W / 2) * scale) / width, 4)
+def _layer_center(index: int, layer: dict, plan: dict) -> float:
+    """Центр рамки (по высоте) для слоя: его сцены; фон и вспышки — сцены, с которой
+    дольше всего совпадают по времени; ни с какой — общий."""
+    scene = _layer_scene(index, layer, plan)
+    return scene["center"] if scene else plan["center"]
 
 
-def _map_y(y: float, scale: float, center: float, height: int) -> float:
-    return round((height / 2 + (y * REF_H - center) * scale) / height, 4)
+def _plan_ref(plan: dict | None) -> tuple[float, float]:
+    return _ref((plan or {}).get("ref"))
+
+
+def _map_x(x: float, scale: float, width: int, ref_w: float = REF_W, cx: float | None = None) -> float:
+    cx = ref_w / 2 if cx is None else cx
+    return round((width / 2 + (x * ref_w - cx) * scale) / width, 4)
+
+
+def _map_y(y: float, scale: float, center: float, height: int, ref_h: float = REF_H) -> float:
+    return round((height / 2 + (y * ref_h - center) * scale) / height, 4)
+
+
+def _bleed_growth(layer: dict, sizes: dict[str, tuple[int, int]] | None, ref: Any,
+                  width: int, height: int) -> tuple[float, float]:
+    """Во сколько раз растянуть фон во всю ширину (по ширине, по высоте): кадр шире
+    исходного — до новой ширины; фон на весь кадр — ещё и до новой высоты. Уже — 1
+    (фон как был: остаётся во всю ширину)."""
+    sw, sh = _ref(ref)
+    size = layer_size(layer, sizes)
+    covers = bool(size) and size[1] * _num(layer.get("scale"), 1.0) >= COVER_FRAC * sh
+    return max(1.0, width / sw), max(1.0, height / sh) if covers else 1.0
 
 
 def reframe_layer(layer: dict, scale: float, center: float, width: int, height: int,
-                  full_bleed: bool = False) -> dict:
-    """Слой в новый кадр: x/y (и ключи) — переносом рамки с центром ``center`` в центр
-    кадра, scale (и ключи) — × ``scale`` (фон во всю ширину — как был)."""
+                  full_bleed: bool = False, *, ref: Any = None, cx: float | None = None,
+                  growth: tuple[float, float] = (1.0, 1.0)) -> dict:
+    """Слой в новый кадр: x/y (и ключи) — переносом рамки с центром ``center`` (по
+    горизонтали — ``cx``) в центр кадра, scale (и ключи) — × ``scale``. Фон во всю
+    ширину — масштаб как был, растянут на ``growth`` (по ширине, по высоте)."""
+    ref_w, ref_h = _ref(ref)
     out = dict(layer)
-    out["x"] = _map_x(_num(layer.get("x"), 0.5), scale, width)
-    out["y"] = _map_y(_num(layer.get("y"), 0.5), scale, center, height)
-    k = 1.0 if full_bleed else scale
+    out["x"] = _map_x(_num(layer.get("x"), 0.5), scale, width, ref_w, cx)
+    out["y"] = _map_y(_num(layer.get("y"), 0.5), scale, center, height, ref_h)
+    k = 1.0
+    if not full_bleed:
+        k = scale
+    elif growth != (1.0, 1.0):
+        props = layer.get("props") or {}
+        if layer.get("type") == "shape":
+            # Фигуру (затемнение, лента) тянем по сторонам — толщина ленты не растёт.
+            out["props"] = {**props, "w": round(_num(props.get("w"), 400) * growth[0], 1)}
+            if growth[1] > 1.0:
+                out["props"]["h"] = round(_num(props.get("h"), 400) * growth[1], 1)
+        else:
+            # Картинку/видео — одним масштабом «cover»: пропорции не ломаются.
+            k = max(growth)
     out["scale"] = round(_num(layer.get("scale"), 1.0) * k, 4)
     keys = layer.get("keys") or {}
     if keys:
         fresh = dict(keys)
         if keys.get("x"):
-            fresh["x"] = [{**key, "v": _map_x(_num(key.get("v"), 0.5), scale, width)} for key in keys["x"]]
+            fresh["x"] = [{**key, "v": _map_x(_num(key.get("v"), 0.5), scale, width, ref_w, cx)} for key in keys["x"]]
         if keys.get("y"):
-            fresh["y"] = [{**key, "v": _map_y(_num(key.get("v"), 0.5), scale, center, height)} for key in keys["y"]]
-        if keys.get("scale") and not full_bleed:
+            fresh["y"] = [{**key, "v": _map_y(_num(key.get("v"), 0.5), scale, center, height, ref_h)}
+                          for key in keys["y"]]
+        if keys.get("scale") and (not full_bleed or k != 1.0):
             fresh["scale"] = [{**key, "v": round(_num(key.get("v"), 1.0) * k, 4)} for key in keys["scale"]]
         out["keys"] = fresh
     return out
@@ -381,19 +483,28 @@ def reframe_layer(layer: dict, scale: float, center: float, width: int, height: 
 
 def reframe_layers(layers: list[dict], width: int, height: int,
                    sizes: dict[str, tuple[int, int]] | None = None, camera: list[dict] | None = None,
-                   plan: dict | None = None) -> list[dict]:
-    """Слои из опорного 1080×1920 в кадр ``width``×``height`` (правило — в начале модуля).
-    Кадр 9:16 — слои как есть. ``camera`` — ключи наездов (влияют на общий масштаб);
-    саму камеру переносит ``reframe_camera`` (слои и камера вместе — ``reframe_motion``)."""
-    if not layers or (int(width), int(height)) == (REF_W, REF_H):
+                   plan: dict | None = None, ref: Any = None) -> list[dict]:
+    """Слои из опорного кадра ``ref`` (нет — 1080×1920) в кадр ``width``×``height``
+    (правило — в начале модуля). Тот же кадр — слои как есть. ``camera`` — ключи наездов
+    (влияют на общий масштаб); саму камеру переносит ``reframe_camera`` (слои и камера
+    вместе — ``reframe_motion``)."""
+    ref = _plan_ref(plan) if plan and not ref else _ref(ref)
+    if not layers or (int(width), int(height)) == (int(ref[0]), int(ref[1])):
         return layers
-    plan = plan or reframe_plan(layers, int(width), int(height), sizes, camera)
-    return [
-        layer if layer.get("type") == "audio"
-        else reframe_layer(layer, plan["scale"], _layer_center(i, layer, plan), int(width), int(height),
-                           is_full_bleed(layer, sizes))
-        for i, layer in enumerate(layers)
-    ]
+    plan = plan or reframe_plan(layers, int(width), int(height), sizes, camera, ref)
+    out = []
+    for i, layer in enumerate(layers):
+        if layer.get("type") == "audio":
+            out.append(layer)
+            continue
+        scene = _layer_scene(i, layer, plan)
+        bleed = is_full_bleed(layer, sizes, ref)
+        out.append(reframe_layer(
+            layer, plan["scale"], scene["center"] if scene else plan["center"], int(width), int(height), bleed,
+            ref=ref, cx=scene.get("cx", plan.get("cx")) if scene else plan.get("cx"),
+            growth=_bleed_growth(layer, sizes, ref, int(width), int(height)) if bleed else (1.0, 1.0),
+        ))
+    return out
 
 
 # ---------------------------------------------------------------- камера
@@ -417,9 +528,9 @@ def _interp(points: list[dict] | None, t: float, fallback: float) -> float:
 
 def _follow_extent(layer: dict, t: float, width: float, height: float,
                    sizes: dict[str, tuple[int, int]] | None) -> tuple[float, float, float, float] | None:
-    """Рамка слоя (лево, верх, право, низ; px кадра ``width``×``height``) в клиповое время
-    ``t``. None — слой не идёт, или он въезжает/уезжает (частью за кадром): такой
-    держать в кадре не нужно."""
+    """Рамка слоя (лево, верх, право, низ; опорные px кадра ``width``×``height`` — слой
+    размечен в нём) в клиповое время ``t``. None — слой не идёт, или он въезжает/уезжает
+    (частью за кадром): такой держать в кадре не нужно."""
     start, end = _span(layer)
     if not start <= t < end:
         return None
@@ -430,7 +541,9 @@ def _follow_extent(layer: dict, t: float, width: float, height: float,
     local = t - start
     x = _interp(keys.get("x"), local, _num(layer.get("x"), 0.5)) * width
     y = _interp(keys.get("y"), local, _num(layer.get("y"), 0.5)) * height
-    k = max(0.0, _interp(keys.get("scale"), local, _num(layer.get("scale"), 1.0))) * width / REF_W
+    # px слоя — опорные px этого же кадра (width = его опорная ширина); запись та же,
+    # что была с REF_W, — у вертикали числа не меняются ни на бит.
+    k = max(0.0, _interp(keys.get("scale"), local, _num(layer.get("scale"), 1.0))) * width / width
     half_w, half_h = size[0] * k / 2, size[1] * k / 2
     box = (x - half_w, y - half_h, x + half_w, y + half_h)
     if box[0] < -0.5 or box[1] < -0.5 or box[2] > width + 0.5 or box[3] > height + 0.5:
@@ -444,7 +557,7 @@ def _follow_box(layers: list[dict], times: list[float], width: float, height: fl
     boxes = [
         box
         for layer in layers
-        if layer.get("followCamera") and _counts_in_box(layer, sizes)
+        if layer.get("followCamera") and _counts_in_box(layer, sizes, (width, height))
         for t in times
         if (box := _follow_extent(layer, t, width, height, sizes))
     ]
@@ -485,16 +598,17 @@ def _key_times(keys: list[dict], index: int) -> list[float]:
 
 
 def _camera_scale(layers: list[dict], camera: list[dict] | None, width: int, height: int,
-                  sizes: dict[str, tuple[int, int]] | None) -> float:
+                  sizes: dict[str, tuple[int, int]] | None, ref: Any = None) -> float:
     """Наибольший масштаб, при котором слои ``followCamera`` под каждым наездом целиком
     входят в кадр с полями (бесконечность — наездов на такие слои нет)."""
+    sw, sh = _ref(ref)
     keys = _sorted_camera(camera)
     best = math.inf
     for index, key in enumerate(keys):
         zoom = _camera_view(key)[0]
         if zoom <= 1.001:
             continue
-        box = _follow_box(layers, _key_times(keys, index), REF_W, REF_H, sizes)
+        box = _follow_box(layers, _key_times(keys, index), sw, sh, sizes)
         if not box:
             continue
         w, h = box[2] - box[0], box[3] - box[1]
@@ -505,20 +619,26 @@ def _camera_scale(layers: list[dict], camera: list[dict] | None, width: int, hei
     return best
 
 
-def _scene_center_at(t: float, layers: list[dict], plan: dict) -> float:
-    """Центр рамки сцены, что идёт в момент ``t`` (лучше — та, где сейчас слой ``followCamera``)."""
+def _scene_at(t: float, layers: list[dict], plan: dict) -> dict | None:
+    """Сцена, что идёт в момент ``t`` (лучше — та, где сейчас слой ``followCamera``)."""
     parts = plan.get("scenes") or []
     live = {i for i, layer in enumerate(layers)
             if layer.get("followCamera") and _span(layer)[0] <= t < _span(layer)[1]}
     for scene in parts:
         if live & set(scene["members"]):
-            return scene["center"]
+            return scene
     near = [s for s in parts if s["start"] <= t <= s["end"]]
     if near:
-        return max(near, key=lambda s: s["start"])["center"]
+        return max(near, key=lambda s: s["start"])
     if parts:
-        return min(parts, key=lambda s: min(abs(t - s["start"]), abs(t - s["end"])))["center"]
-    return plan["center"]
+        return min(parts, key=lambda s: min(abs(t - s["start"]), abs(t - s["end"])))
+    return None
+
+
+def _scene_center_at(t: float, layers: list[dict], plan: dict) -> float:
+    """Центр рамки сцены, что идёт в момент ``t``."""
+    scene = _scene_at(t, layers, plan)
+    return scene["center"] if scene else plan["center"]
 
 
 def _fit_center(center: float, lo_edge: float, hi_edge: float, zoom: float, size: float) -> float:
@@ -530,26 +650,30 @@ def _fit_center(center: float, lo_edge: float, hi_edge: float, zoom: float, size
 
 
 def reframe_camera(camera: list[dict] | None, layers: list[dict], width: int, height: int,
-                   sizes: dict[str, tuple[int, int]] | None = None, plan: dict | None = None) -> list[dict]:
-    """Ключи камеры из опорного 1080×1920 в кадр ``width``×``height`` (правило 6 в начале
-    модуля). ``layers`` — слои в опорном кадре. Кадр 9:16 — камера как есть.
+                   sizes: dict[str, tuple[int, int]] | None = None, plan: dict | None = None,
+                   ref: Any = None) -> list[dict]:
+    """Ключи камеры из опорного кадра ``ref`` (нет — 1080×1920) в кадр ``width``×``height``
+    (правило 6 в начале модуля). ``layers`` — слои в исходном опорном кадре. Тот же кадр —
+    камера как есть.
 
     Каждый ключ: центр — та же точка содержимого (перенос сцены); zoom — не сильнее, чем
     позволяют слои ``followCamera`` под ним (входят в кадр с полями); центр сдвинут ровно
     настолько, чтобы они не вышли за поля; итог зажат, как зажимает движок (окно в кадре)."""
     width, height = int(width), int(height)
-    if not camera or (width, height) == (REF_W, REF_H):
+    ref = _plan_ref(plan) if plan and not ref else _ref(ref)
+    if not camera or (width, height) == (int(ref[0]), int(ref[1])):
         return camera or []
-    plan = plan or reframe_plan(layers, width, height, sizes, camera)
+    plan = plan or reframe_plan(layers, width, height, sizes, camera, ref)
     scale = plan["scale"]
-    framed = reframe_layers(layers, width, height, sizes, plan=plan)
+    framed = reframe_layers(layers, width, height, sizes, plan=plan, ref=ref)
     keys = _sorted_camera(camera)
     out: list[dict] = []
     for index, key in enumerate(keys):
         zoom, x, y = _camera_view(key)
         t = _num(key.get("t"), 0)
-        cx = _map_x(x, scale, width) * width
-        cy = _map_y(y, scale, _scene_center_at(t, layers, plan), height) * height
+        scene = _scene_at(t, layers, plan)
+        cx = _map_x(x, scale, width, ref[0], (scene or plan).get("cx")) * width
+        cy = _map_y(y, scale, scene["center"] if scene else plan["center"], height, ref[1]) * height
         box = _follow_box(framed, _key_times(keys, index), width, height, sizes) if zoom > 1.001 else None
         if box:
             if box[3] > box[1]:
@@ -569,14 +693,30 @@ def reframe_camera(camera: list[dict] | None, layers: list[dict], width: int, he
 
 
 def reframe_motion(layers: list[dict], camera: list[dict] | None, width: int, height: int,
-                   sizes: dict[str, tuple[int, int]] | None = None) -> tuple[list[dict], list[dict]]:
-    """Слои и камера в кадр ``width``×``height`` одним планом (рендер, кадр проверки)."""
+                   sizes: dict[str, tuple[int, int]] | None = None,
+                   ref: Any = None) -> tuple[list[dict], list[dict]]:
+    """Слои и камера из опорного кадра ``ref`` (нет — 1080×1920) в кадр ``width``×``height``
+    одним планом (рендер, кадр проверки)."""
     width, height = int(width), int(height)
-    if not layers or (width, height) == (REF_W, REF_H):
+    ref = _ref(ref)
+    if not layers or (width, height) == (int(ref[0]), int(ref[1])):
         return layers, camera or []
-    plan = reframe_plan(layers, width, height, sizes, camera)
-    return (reframe_layers(layers, width, height, sizes, plan=plan),
-            reframe_camera(camera, layers, width, height, sizes, plan))
+    plan = reframe_plan(layers, width, height, sizes, camera, ref)
+    return (reframe_layers(layers, width, height, sizes, plan=plan, ref=ref),
+            reframe_camera(camera, layers, width, height, sizes, plan, ref))
+
+
+def reframe_between(layers: list[dict], camera: list[dict] | None, src_format: Any, dst_format: Any,
+                    sizes: dict[str, tuple[int, int]] | None = None) -> tuple[list[dict], list[dict]]:
+    """Слои и камера, размеченные в формате ``src_format``, — в формат ``dst_format``
+    (опорные кадры app/formats.ref_size). Один формат — как есть."""
+    from app.formats import ref_size
+
+    src, dst = normalize_format(src_format), normalize_format(dst_format)
+    if src == dst:
+        return layers, camera or []
+    dw, dh = ref_size(dst)
+    return reframe_motion(layers, camera, dw, dh, sizes, ref_size(src))
 
 
 def asset_sizes(layers: list[dict], assets: dict[str, str]) -> dict[str, tuple[int, int]]:

@@ -546,8 +546,10 @@ class RenderClipPlanRequest(BaseModel):
     banner_id: int | None = None
     music_track_id: int | None = None
     music_volume: float | None = None
-    # Формат этого рендера поверх настроек клипа: "9:16" | "1:1" | "4:5" (не 9:16 — только
-    # холст, app/aspect.py). Не задан — из настроек клипа (render_settings.aspect).
+    # Формат этого рендера поверх настроек клипа (app/formats.py): "9:16" | "1:1" | "4:5" |
+    # "16:9" — у любого клипа. Не задан — из настроек клипа (render_settings.format).
+    # ``aspect`` — старое имя того же поля.
+    format: str | None = None
     aspect: str | None = None
     # Стоп-кадр в конце этого рендера, с (0..1.5; мему — 0). Не задан — из настроек клипа
     # (render_settings.end_hold_sec), там нет — RENDER_END_HOLD_SEC.
@@ -2298,8 +2300,8 @@ def api_render_clip_plan(
                 "music_track_id": payload.music_track_id if payload else None,
                 "music_volume": payload.music_volume if payload else None,
             }
-        if payload and payload.aspect:
-            kwargs["aspect"] = payload.aspect
+        if payload and (payload.format or payload.aspect):
+            kwargs["aspect"] = payload.format or payload.aspect
         if payload and payload.end_hold_sec is not None:
             kwargs["end_hold_sec"] = payload.end_hold_sec
         return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
@@ -3036,6 +3038,13 @@ def api_set_clip_plan_render_settings(
             # автосохранением: нет ключа — остаются сохранённые. [] — убрать все.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["cuts"] = current.get("cuts") or []
+        if not {"format", "aspect", "layers_format"} <= set(settings_in):
+            # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
+            # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            if "format" not in settings_in and "aspect" not in settings_in:
+                settings_in["format"] = current.get("format") or current.get("aspect")
+            settings_in.setdefault("layers_format", current.get("layers_format"))
         snapshot_clip(store, clip_plan_id, "настройки клипа")
         return store.set_clip_plan_render_settings(clip_plan_id, settings_in)
     except KeyError as exc:

@@ -15,7 +15,7 @@ plan's settings back verbatim.
 
 from __future__ import annotations
 
-from app.aspect import settings_aspect
+from app.formats import settings_layers_format, settings_render_format
 from app.audio_mute import normalize_gain, normalize_mute
 from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
@@ -25,6 +25,13 @@ from app.stream_layout import normalize_layout
 from app.transitions import normalize_transition
 
 SUBTITLE_FRAME_HEIGHT = 1920
+
+
+def subtitle_frame_height(fmt: object) -> int:
+    """Высота кадра формата для отступа субтитров (sub_pos_pct — доля высоты кадра)."""
+    from app.formats import frame_size, settings_format
+
+    return frame_size(settings_format(fmt))[1]
 
 COVER_MODES = ("none", "frame", "image")
 # Uploaded covers are stored under a generated name — only such names are accepted,
@@ -150,9 +157,13 @@ def normalize_render_settings(raw: object) -> dict:
         "mute": normalize_mute(src.get("mute")),
         # Громкость звука исходника на отрезках {start, end, gain_db} — поднять тихое (app/audio_mute.py).
         "gain": normalize_gain(src.get("gain")),
-        # Формат кадра: 9:16 (как всегда) / 1:1 / 4:5 — пока только у холста (app/aspect.py).
+        # Формат вывода (app/formats.py): 9:16 (как всегда) / 1:1 / 4:5 / 16:9 — у любого клипа.
+        # Старое поле aspect (квадрат холста) читается как format; хранится одно поле format.
         # Рендер читает его прямо из настроек плана, как раскладку.
-        "aspect": settings_aspect(src.get("aspect")),
+        "format": settings_render_format(src),
+        # В каком формате размечены слои (их опорный кадр); другой формат рендера —
+        # перекомпоновка слоёв и камеры (app/aspect.py). Нет поля — 9:16.
+        "layers_format": settings_layers_format(src),
         # Стоп-кадр в конце ролика, с (0..1.5); None — как у сервиса (RENDER_END_HOLD_SEC).
         # Рендер читает прямо из настроек плана (ClipRenderService._end_hold_sec).
         "end_hold_sec": normalize_end_hold(src.get("end_hold_sec")),
@@ -175,7 +186,8 @@ def settings_to_render_kwargs(settings: dict, default_subtitle_profile_id: int |
         "ffmpeg_preset_id": s["preset_id"],
         "subtitle_profile_id": sub_id if subs else None,
         "subtitle_provider": (s["sub_engine"] or None) if subs else None,
-        "subtitle_margin_v": round(s["sub_pos_pct"] / 100 * SUBTITLE_FRAME_HEIGHT) if subs else None,
+        # Доля высоты кадра формата (ASS PlayResY = высота кадра); у 9:16 — от 1920, как всегда.
+        "subtitle_margin_v": round(s["sub_pos_pct"] / 100 * subtitle_frame_height(s["format"])) if subs else None,
         "banner_id": s["banner_id"] if banner else None,
         "banner_height_frac": s["banner_height_pct"] / 100 if banner else None,
         "banner_y_frac": s["banner_pos_pct"] / 100 if banner else None,

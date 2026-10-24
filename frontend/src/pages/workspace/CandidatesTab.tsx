@@ -37,6 +37,7 @@ import {
   type Layer,
 } from "@/motion";
 import { browserEnv, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
+import { clipFormat } from "@/motion";
 import {
   drawSelection,
   duplicateLayer,
@@ -1241,7 +1242,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [gain, setGain] = useState<GainSpan[]>([]);
   const gainRef = useRef<GainSpan[]>([]);
   gainRef.current = gain;
-  // Формат кадра холста (app/aspect.py): 9:16, квадрат 1:1 или 4:5 из того же монтажа.
+  // Формат вывода клипа (app/formats.py): 9:16, 1:1, 4:5 или 16:9 из того же монтажа.
+  // Превью редактора пока вертикальное (этап 2) — формат влияет на рендер и кадр агента.
   const [aspect, setAspect] = useState<Aspect>("9:16");
   // Стоп-кадр в конце готового ролика, с (render.end_hold_sec): null — как у сервиса, 0 — мем без «замирания».
   const [endHoldSec, setEndHoldSec] = useState<number | null>(null);
@@ -1391,7 +1393,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     backdrop,
     mute,
     gain,
-    aspect,
+    format: aspect,
     end_hold_sec: endHoldSec,
   });
   const settingsKey = JSON.stringify(panelSettings());
@@ -1470,7 +1472,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       backdrop: normalizeBackdrop(s.backdrop),
       mute: s.mute ?? [],
       gain: s.gain ?? [],
-      aspect: s.aspect ?? "9:16",
+      format: clipFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
     };
     if (JSON.stringify(loaded) === settingsKey) return;
@@ -1498,7 +1500,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setBackdrop(normalizeBackdrop(s.backdrop));
     setMute(s.mute ?? []);
     setGain(s.gain ?? []);
-    setAspect(s.aspect ?? "9:16");
+    setAspect(clipFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
@@ -4478,16 +4480,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Ко всем ★
               </button>
             </div>
-            {isCanvas && (
-              <label className="ed-aspect" title="Формат готового ролика: слои сами переносятся в кадр одним масштабом, фон — на весь кадр">
-                <span>Формат</span>
-                <select value={aspect} onChange={(e) => setAspect(e.target.value as Aspect)}>
-                  <option value="9:16">9:16 — вертикаль</option>
-                  <option value="1:1">1:1 — квадрат</option>
-                  <option value="4:5">4:5 — лента</option>
-                </select>
-              </label>
-            )}
+            <label className="ed-aspect" title="Формат готового ролика: видео кадрируется окном нужной пропорции, слои сами переносятся в кадр одним масштабом, фон — на весь кадр. Превью пока вертикальное">
+              <span>Формат</span>
+              <select value={aspect} onChange={(e) => setAspect(e.target.value as Aspect)}>
+                <option value="9:16">9:16 — вертикаль</option>
+                <option value="1:1">1:1 — квадрат</option>
+                <option value="4:5">4:5 — лента</option>
+                <option value="16:9">16:9 — горизонталь</option>
+              </select>
+            </label>
             <label className="ed-aspect" title="Последний кадр стоит, пока затухает звук (музыка доигрывает на нём). Мему — «без стоп-кадра»: ролик обрывается на последнем кадре">
               <span>Стоп-кадр в конце</span>
               <select

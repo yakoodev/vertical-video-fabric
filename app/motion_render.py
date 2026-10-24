@@ -253,12 +253,16 @@ def write_comp(
     camera_box: dict | None = None,
     pinned: list[dict] | None = None,
     backgrounds: list[dict] | None = None,
+    ref: dict | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
-    (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте."""
+    (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
+    ``ref`` — опорный кадр формата ``{refWidth, refHeight}`` (app/formats.comp_ref); пусто —
+    движок берёт 1080×1920, comp.json прежний."""
     comp = {
         "width": int(width),
         "height": int(height),
+        **(ref or {}),
         "fps": float(fps),
         "duration": round(float(duration), 3),
         "layers": hold_final_layers(layers, float(duration)),
@@ -574,6 +578,15 @@ def _key_values(layer: dict, prop: str) -> list[float]:
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def unit_width(width: int, fmt: Any = None) -> int:
+    """Ширина кадра «в единицах 1080»: px слоя × это / 1080 = px кадра. У форматов с опорной
+    шириной 1080 — сама ширина; у 16:9 (опорный 1920×1080) — 1080 при кадре 1920."""
+    from app.formats import ref_size, settings_format
+
+    ref_w = ref_size(settings_format(fmt))[0]
+    return int(width) if ref_w == 1080 else round(int(width) * 1080 / ref_w)
 
 
 def video_frame_width(layer: dict, out_width: int, natural: tuple[int, int] | None = None) -> int:
@@ -1020,17 +1033,14 @@ def render_frame_png(
     service = _render.ClipRenderService(store)
     preset = service._preset(rs["preset_id"])
     preset = service._preset_with_render_overrides(preset, mirror=rs["mirror"], layout=rs["layout"])
-    # Квадрат / 4:5 холста (app/aspect.py) — кадр того же размера и слои, перенесённые
-    # так же, как в рендере. У клипа с исходником формат всегда 9:16.
-    from app.aspect import DEFAULT_ASPECT
-    from app.canvas import is_canvas
+    # Формат вывода клипа (app/formats.py) — кадр того же размера, основа и раскладка, как
+    # в рендере, слои перенесены из формата их разметки так же, как в рендере.
+    from app.formats import comp_ref
 
-    aspect = rs.get("aspect") or DEFAULT_ASPECT
+    out_format = rs["format"]
+    layers_format = rs["layers_format"]
     plan_source = store.get_source(int(plan["source_id"]))
-    if aspect != DEFAULT_ASPECT and is_canvas(plan_source):
-        preset = _render._preset_with_output(preset, plan_source, aspect)
-    else:
-        aspect = DEFAULT_ASPECT
+    preset = _render._preset_with_output(preset, plan_source, out_format, 0.0, layers_format)
     width = int(preset.get("output_width") or 1080)
     height = int(preset.get("output_height") or 1920)
     fps = float(preset.get("fps") or 30)
@@ -1089,10 +1099,10 @@ def render_frame_png(
             timeout=120,
         )
         layers, assets, _notes = resolve_layer_assets(store, layers)
-        if aspect != DEFAULT_ASPECT:
-            from app.aspect import asset_sizes, reframe_motion
+        if out_format != layers_format:
+            from app.aspect import asset_sizes, reframe_between
 
-            layers, camera = reframe_motion(layers, camera, width, height, asset_sizes(layers, assets))
+            layers, camera = reframe_between(layers, camera, layers_format, out_format, asset_sizes(layers, assets))
         words = plan_caption_words(store, plan) if has_captions(layers) else None
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
@@ -1103,10 +1113,12 @@ def render_frame_png(
             chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
             camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
             backgrounds=[{"t0": 0.0, "t1": round(max(total, t) + 60.0, 3), **zone}] if zone else None,
+            ref=comp_ref(out_format),
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
-        videos_path, _video_notes = prepare_video_frames(layers, assets, work, fps=fps, out_width=width, at=t)
+        videos_path, _video_notes = prepare_video_frames(layers, assets, work, fps=fps,
+                                                         out_width=unit_width(width, out_format), at=t)
         out = work / "frame.png"
         _render._run_compositor(
             build_compositor_args(comp, assets_path, input_path=still, frame=t, png_path=out, command=command,

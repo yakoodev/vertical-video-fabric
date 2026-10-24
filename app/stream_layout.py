@@ -166,6 +166,48 @@ def camera_regions(
     return {"box": {"x": 0, "y": 0, "w": int(width), "h": int(height)}, "pinned": [rect]}
 
 
+# Горизонтальный кадр (16:9): вебка — окошком в углу. Ширина окошка из split — доля ширины
+# кадра; поле от краёв — доля высоты (то же число px по обеим осям).
+LANDSCAPE_PIP_W = 0.26
+LANDSCAPE_PIP_MARGIN = 0.035
+
+
+def layout_for_format(layout: object, fmt: object, source: dict | None = None) -> dict | None:
+    """Раскладка стрима для формата вывода (app/formats.py). У вертикали, квадрата и 4:5 —
+    как есть (геометрия считается от размера кадра). В горизонтальном кадре (16:9):
+
+    * ``split`` (вебка сверху/снизу) → ``pip_cam``: игра на весь кадр, вебка окошком в
+      правом верхнем (``cam_pos=top``) или правом нижнем (``bottom``) углу;
+    * ``pip_cam`` → то же окошко в ближайшем углу (по ``pip.x``/``pip.y``), той же ширины
+      в px, что и в вертикали (доля × 1080 / 1920);
+    * ``meme`` (видео сверху, фон снизу) → обычный кадр: горизонтальное видео и так
+      занимает весь кадр (None);
+    * ``single`` — как есть."""
+    from app.formats import frame_size, is_landscape
+
+    if not layout_active(layout) or not is_landscape(fmt):
+        return layout if isinstance(layout, dict) else None
+    lay = normalize_layout(layout)
+    if lay["mode"] == "meme":
+        return None
+    width, height = frame_size(fmt)
+    if lay["mode"] == "split":
+        w = LANDSCAPE_PIP_W
+        right, top = True, lay["cam_pos"] != "bottom"
+    else:
+        pip = lay["pip"]
+        w = min(0.45, max(0.12, float(pip["w"]) * height / width))
+        right, top = float(pip["x"]) >= 0.5, float(pip["y"]) < 0.5
+    src = source or {}
+    cam = lay["cam"]
+    aspect = (cam["w"] * float(src.get("width") or 16)) / max(1e-6, cam["h"] * float(src.get("height") or 9))
+    h = min(1.0, w * width / max(1e-6, aspect) / height)
+    mx = LANDSCAPE_PIP_MARGIN * height / width
+    x = 1 - mx - w / 2 if right else mx + w / 2
+    y = LANDSCAPE_PIP_MARGIN + h / 2 if top else 1 - LANDSCAPE_PIP_MARGIN - h / 2
+    return {**lay, "mode": "pip_cam", "pip": {"x": round(x, 4), "y": round(y, 4), "w": round(w, 4)}}
+
+
 def ff_color(color: str) -> str:
     """``#rrggbb`` → ``0xrrggbb`` (решётка в графе фильтров лишний риск)."""
     return "0x" + (color[1:] if _COLOR_RE.match(color or "") else "000000")

@@ -13,7 +13,7 @@
 import { clamp01, ease } from "../easing";
 import { fontString } from "../fonts";
 import type { CaptionAnimation, CaptionsLayer, CaptionsProps, CaptionWord, Ctx2D, RenderEnv, Stroke, TextBg } from "../types";
-import { REF_H } from "../types";
+import { refSize } from "../types";
 import type { LayerState } from "../animate";
 import { clearShadow, fillRoundRect, rgba, roundRectPath, type FrameInfo, type LayerRenderer } from "./common";
 import { deviceScale } from "./counter";
@@ -729,7 +729,8 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
     const font = fontString({ family: r.font, weight: r.weight, size: r.size }, envFont(env));
     // Не даём строкам уйти под интерфейс площадки: низ блока не ниже 82% кадра.
     const bottom = page.h / 2 + r.size * 0.25 + (r.bg?.padY ?? 0);
-    const room = (SAFE_BOTTOM * REF_H - st.y * REF_H) / Math.max(st.scale, 0.05);
+    const refH = refSize(env).h;
+    const room = (SAFE_BOTTOM * refH - st.y * refH) / Math.max(st.scale, 0.05);
     if (bottom > room) ctx.translate(0, room - bottom);
     if (r.tilt) ctx.rotate(((page.index % 2 ? -1 : 1) * r.tilt * Math.PI) / 180);
     const enter = pageEntrance(r, page, frame.t);
