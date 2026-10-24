@@ -32,12 +32,20 @@ class _Meta:
     raw: dict = {}
 
 
+_ROOT = str(Path(__file__).resolve().parent.parent).replace("\\", "/")
+
+
 def _scrub(value, tmp: str):
     if isinstance(value, str):
         text = value.replace("\\", "/")
-        text = text.replace(tmp, "<TMP>")
+        text = text.replace(tmp, "<TMP>").replace(_ROOT, "<ROOT>")
         return _HEX.sub("<ID>", text)
     if isinstance(value, list):
+        # Пак эмодзи (vendor/packs/twemoji) есть не в каждой копии репозитория — флаг зависит
+        # от окружения, а не от рендера.
+        if "--emoji-dir" in value:
+            i = value.index("--emoji-dir")
+            value = value[:i] + value[i + 2:]
         return [_scrub(v, tmp) for v in value]
     if isinstance(value, dict):
         return {k: _scrub(v, tmp) for k, v in value.items()}
@@ -112,6 +120,9 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
     monkeypatch.setattr("app.render._has_audio_stream", lambda path: True)
     monkeypatch.setattr("app.render.music_volume_for", lambda *a, **k: 0.5, raising=False)
     monkeypatch.setattr(service, "_render_subtitles", fake_subs)
+    # Громкость меряет настоящий ffmpeg по поддельному файлу — от окружения (.env, версия ffmpeg)
+    # зависит, дойдёт ли до ошибки; к формату кадра она не относится.
+    monkeypatch.setattr(service, "_normalize_loudness", lambda clip, hold=None: clip)
 
     preset = store.create_ffmpeg_preset("Вертикаль", output_width=1080, output_height=1920, fps=30)
     source_path = settings.source_dir / f"{name}.mp4"
