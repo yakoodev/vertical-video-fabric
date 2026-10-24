@@ -1482,3 +1482,216 @@ test("шаблоны в кадре другого формата (fitTemplate): 
   assert.equal(look.x, 0.62);
   assert.equal(look.y, 0.32);
 });
+
+/* ---------- PNGtuber и анимации с альфой ---------- */
+
+test("animFrameIndex: кадр по времени по кругу, свои длительности; voiceStateAt — состояние по кадрам", () => {
+  const times = [0, 0.06, 0.12, 0.3];
+  assert.equal(E.animFrameIndex(times, 0.4, 0), 0);
+  assert.equal(E.animFrameIndex(times, 0.4, 0.059), 0);
+  assert.equal(E.animFrameIndex(times, 0.4, 0.06), 1); // ровно на границе — уже следующий
+  assert.equal(E.animFrameIndex(times, 0.4, 0.29), 2); // длинный кадр (0.18 с)
+  assert.equal(E.animFrameIndex(times, 0.4, 0.35), 3);
+  assert.equal(E.animFrameIndex(times, 0.4, 0.41), 0); // по кругу
+  assert.equal(E.animFrameIndex(times, 0.4, -0.05), 3);
+  assert.equal(E.animFrameIndex([0], 0, 5), 0);
+  const tr = { t0: 1, fps: 10, states: "0112", levels: [0, 50, 100, 20] };
+  assert.equal(E.voiceStateAt(tr, 0.5), 0); // до начала — молчит
+  assert.equal(E.voiceStateAt(tr, 1.0), 0);
+  assert.equal(E.voiceStateAt(tr, 1.1), 1);
+  assert.equal(E.voiceStateAt(tr, 1.35), 2);
+  assert.equal(E.voiceStateAt(tr, 2), 0); // за концом — молчит
+  assert.equal(E.voiceStateAt(null, 1.2), 0);
+  near(E.voiceLevelAt(tr, 1.25), 1);
+  assert.equal(E.pngtuberStateRef({ states: { idle: "1", talk: "2" } }, 2), "2"); // нет shout — talk
+  assert.equal(E.pngtuberStateRef({ states: { idle: "1", talk: "2", shout: "3" } }, 2), "3");
+  assert.equal(E.pngtuberStateRef({ states: { idle: "1", talk: "2" } }, 0), "1");
+});
+
+/** Синтетический «GIF»: кадры 8×8 с прозрачным краем (1 px) и цветной серединой. */
+function fakeAnim(colors, step = 0.5) {
+  const frames = colors.map((c) => {
+    const cv = createCanvas(8, 8);
+    const x = cv.getContext("2d");
+    x.clearRect(0, 0, 8, 8);
+    x.fillStyle = c;
+    x.fillRect(1, 1, 6, 6);
+    return cv;
+  });
+  return {
+    width: 8,
+    height: 8,
+    times: colors.map((_c, i) => i * step),
+    duration: colors.length * step,
+    frame: (i) => ({ image: frames[i], sx: 0, sy: 0, sw: 8, sh: 8 }),
+  };
+}
+
+const pngtuberLayer = (over = {}) => ({
+  id: "av",
+  type: "pngtuber",
+  start: 0,
+  end: 10,
+  x: 0.5,
+  y: 0.5,
+  ...over,
+  props: { states: { idle: "1", talk: "2" }, w: 400, ...(over.props || {}) },
+});
+
+test("PNGtuber: состояние по comp.voice, кадр анимации по времени клипа, альфа — прозрачно", () => {
+  const anims = { 1: fakeAnim(["#ff0000", "#00ff00"]), 2: fakeAnim(["#0000ff", "#ffff00"]) };
+  const env = { width: 1080, height: 1920, getImage: () => null, getAnim: (ref) => anims[ref] ?? null };
+  // Голос: 0–1 с молчит, 1–2 с говорит (fps 2: "0011").
+  const voice = { av: { t0: 0, fps: 2, states: "0011" } };
+  const at = (t) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, pngtuberLayer(), t, env, { voice });
+    return (x, y) => [...ctx.getImageData(x, y, 1, 1).data];
+  };
+  assert.deepEqual(at(0.2)(540, 960), [255, 0, 0, 255]); // молчит, кадр 0
+  assert.deepEqual(at(0.7)(540, 960), [0, 255, 0, 255]); // молчит, кадр 1 (0.5 с на кадр)
+  assert.deepEqual(at(1.2)(540, 960), [0, 0, 255, 255]); // говорит: talk, кадр 0 (фаза — время клипа)
+  assert.deepEqual(at(1.7)(540, 960), [255, 255, 0, 255]); // говорит, кадр 1
+  // Прозрачный край кадра остаётся прозрачным (400 / 8 = 50 px на пиксель исходника).
+  assert.equal(at(1.2)(540 - 200 + 10, 960)[3], 0);
+  // Голоса нет — молчит; рамка слоя — по пропорции idle.
+  assert.deepEqual(at(5)(540, 960).slice(0, 3), [255, 0, 0]);
+  const box = E.layerBox(createCanvas(10, 10).getContext("2d"), pngtuberLayer(), 1, env, { voice });
+  near(box.w, 400, 1e-6);
+  near(box.h, 400, 1e-6);
+  // Анимации нет (статичная картинка) — рисуется getImage.
+  const still = createCanvas(4, 4);
+  still.getContext("2d").fillStyle = "#ff00ff";
+  still.getContext("2d").fillRect(0, 0, 4, 4);
+  const envImg = { width: 1080, height: 1920, getImage: (ref) => (ref === "2" ? still : null) };
+  const cv = createCanvas(1080, 1920);
+  E.drawLayer(cv.getContext("2d"), pngtuberLayer(), 1.2, envImg, { voice });
+  assert.deepEqual([...cv.getContext("2d").getImageData(540, 960, 1, 1).data], [255, 0, 255, 255]);
+});
+
+test("PNGtuber: пиксель-арт без сглаживания — соседние пиксели не размыты; pixelated: false — мягко", () => {
+  // Шахматка 4×4 → 400 px: клетка 100 px, на границе клеток только чистые цвета.
+  const cv = createCanvas(4, 4);
+  const x = cv.getContext("2d");
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      x.fillStyle = (i + j) % 2 ? "#ffffff" : "#000000";
+      x.fillRect(i, j, 1, 1);
+    }
+  }
+  const env = { width: 1080, height: 1920, getImage: (ref) => (ref === "1" ? cv : null) };
+  const row = (layer) => {
+    const out = createCanvas(1080, 1920);
+    const ctx = out.getContext("2d");
+    E.drawLayer(ctx, layer, 1, env, {});
+    return [...ctx.getImageData(340, 1010, 400, 1).data].filter((_v, k) => k % 4 === 0);
+  };
+  const sharp = row(pngtuberLayer({ props: { states: { idle: "1", talk: "1" } } }));
+  assert.ok(sharp.every((v) => v === 0 || v === 255), "только чёрный и белый");
+  assert.notEqual(sharp[99], sharp[100]); // граница клетки — ровно через 100 px, без полутонов
+  assert.equal(sharp[0], sharp[99]);
+  const soft = row(pngtuberLayer({ props: { states: { idle: "1", talk: "1" }, pixelated: false } }));
+  assert.ok(soft.some((v) => v > 20 && v < 235), "со сглаживанием есть полутона");
+});
+
+test("PNGtuber: подскок в такт огибающей только когда говорит, flipX зеркалит", () => {
+  const anims = { 1: fakeAnim(["#ff0000"]), 2: fakeAnim(["#0000ff"]) };
+  const env = { width: 1080, height: 1920, getImage: () => null, getAnim: (ref) => anims[ref] ?? null };
+  const voice = { av: { t0: 0, fps: 1, states: "01", levels: [0, 100] } };
+  const topEdge = (t) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, pngtuberLayer({ props: { bounce: { amount: 30 } } }), t, env, { voice });
+    const col = ctx.getImageData(540, 0, 1, 1920).data;
+    for (let y = 0; y < 1920; y++) if (col[y * 4 + 3] > 0) return y;
+    return -1;
+  };
+  const still = topEdge(0.5);
+  assert.equal(still, 960 - 200 + 50); // край кадра (1 px из 8) — 50 px прозрачный
+  const up = topEdge(1.5);
+  assert.ok(still - up >= 30, `подскок ${still - up}`); // вверх на amount и растяжение
+  // flipX: асимметричный кадр отражается.
+  const half = createCanvas(2, 1);
+  half.getContext("2d").fillStyle = "#00ff00";
+  half.getContext("2d").fillRect(0, 0, 1, 1);
+  const envFlip = { width: 1080, height: 1920, getImage: (ref) => (ref === "1" ? half : null) };
+  const side = (flipX) => {
+    const cv = createCanvas(1080, 1920);
+    const ctx = cv.getContext("2d");
+    E.drawLayer(ctx, pngtuberLayer({ props: { states: { idle: "1", talk: "1" }, flipX } }), 0.5, envFlip, {});
+    return ctx.getImageData(440, 960, 1, 1).data[3];
+  };
+  assert.equal(side(false), 255);
+  assert.equal(side(true), 0);
+});
+
+test("image с анимированным файлом (getAnim) играет кадры по локальному времени слоя", () => {
+  const anim = fakeAnim(["#ff0000", "#00ff00", "#0000ff"], 0.2);
+  const env = { width: 1080, height: 1920, getImage: () => null, getAnim: (ref) => (ref === "scr" ? anim : null) };
+  const c = (t) => drawAt(imageLayer({ props: { asset_id: "scr", w: 400 } }), t, env).px(540, 960).slice(0, 3);
+  assert.deepEqual(c(10.1), [255, 0, 0]); // start 10 — гифка с первого кадра
+  assert.deepEqual(c(10.3), [0, 255, 0]);
+  assert.deepEqual(c(10.5), [0, 0, 255]);
+  assert.deepEqual(c(10.7), [255, 0, 0]); // по кругу
+  // Без анимации — прежняя статичная картинка (обратная совместимость).
+  const still = createCanvas(4, 4);
+  still.getContext("2d").fillStyle = "#123456";
+  still.getContext("2d").fillRect(0, 0, 4, 4);
+  const plain = { width: 1080, height: 1920, getImage: (ref) => (ref === "scr" ? still : null) };
+  assert.deepEqual(drawAt(imageLayer({ props: { asset_id: "scr", w: 400 } }), 10.3, plain).px(540, 960).slice(0, 3), [0x12, 0x34, 0x56]);
+});
+
+test("CLI: PNGtuber из кадров anims.json (PNG с альфой) и comp.voice", async () => {
+  const mk = async (dir, colors) => {
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < colors.length; i++) {
+      const cv = createCanvas(8, 8);
+      const x = cv.getContext("2d");
+      x.fillStyle = colors[i];
+      x.fillRect(2, 0, 4, 8); // по бокам — прозрачно
+      writeFileSync(join(dir, `${String(i).padStart(5, "0")}.png`), await cv.encode("png"));
+    }
+  };
+  await mk(join(tmp, "anim-idle"), ["#ff0000", "#00ff00"]);
+  await mk(join(tmp, "anim-talk"), ["#0000ff", "#ffffff"]);
+  const anims = {
+    11: { dir: join(tmp, "anim-idle"), pattern: "%05d.png", count: 2, times: [0, 0.5], duration: 1, width: 8, height: 8 },
+    12: { dir: join(tmp, "anim-talk"), pattern: "%05d.png", count: 2, times: [0, 0.5], duration: 1, width: 8, height: 8 },
+  };
+  writeFileSync(join(tmp, "panims.json"), JSON.stringify(anims));
+  const comp = {
+    width: 540,
+    height: 960,
+    fps: 2,
+    duration: 4,
+    layers: [{ id: "av", type: "pngtuber", start: 0, end: 4, x: 0.5, y: 0.5, props: { states: { idle: "11", talk: "12" }, w: 400 } }],
+    voice: { av: { t0: 0, fps: 2, states: "00110000" } },
+  };
+  writeFileSync(join(tmp, "pcomp.json"), JSON.stringify(comp));
+  const frameAt = async (t) => {
+    const png = join(tmp, `p-${t}.png`);
+    const r = run(["--comp", join(tmp, "pcomp.json"), "--anims", join(tmp, "panims.json"), "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    const x = cv.getContext("2d");
+    x.drawImage(img, 0, 0);
+    return (px, py) => [...x.getImageData(px, py, 1, 1).data];
+  };
+  // 400 опорных px на кадре 540 — 200 px, пиксель исходника — 25 px, без сглаживания.
+  let p = await frameAt(0.2);
+  assert.deepEqual(p(270, 480), [255, 0, 0, 255]); // молчит, кадр 0
+  assert.equal(p(270 - 100 + 10, 480)[3], 0); // прозрачный бок
+  p = await frameAt(1.2);
+  assert.deepEqual(p(270, 480), [0, 0, 255, 255]); // говорит
+  p = await frameAt(1.7);
+  assert.deepEqual(p(270, 480), [255, 255, 255, 255]); // говорит, кадр 1
+  p = await frameAt(2.6);
+  assert.deepEqual(p(270, 480), [0, 255, 0, 255]); // снова молчит, кадр 1
+  // Видео целиком: кадры состояний в памяти, рендер не падает.
+  const out = join(tmp, "pmotion.mp4");
+  const r = run(["--comp", join(tmp, "pcomp.json"), "--anims", join(tmp, "panims.json"), "--output", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(Number(ffprobe(out).nb_read_frames), 8);
+});

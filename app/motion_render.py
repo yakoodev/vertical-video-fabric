@@ -186,9 +186,11 @@ def build_compositor_args(
     png_path: Path | None = None,
     command: list[str] | None = None,
     videos_path: Path | None = None,
+    anims_path: Path | None = None,
 ) -> list[str]:
     """CLI компоновщика: видео целиком (``--output``) или один кадр (``--frame --png``).
-    ``videos_path`` — videos.json с нарезанными кадрами видео-слоёв (``prepare_video_frames``)."""
+    ``videos_path`` — videos.json с нарезанными кадрами видео-слоёв (``prepare_video_frames``);
+    ``anims_path`` — anims.json с кадрами анимаций с альфой (app/anim_frames.prepare_anim_frames)."""
     from app.settings import settings
 
     args = list(command or compositor_command())
@@ -200,6 +202,8 @@ def build_compositor_args(
     args += ["--assets", str(assets_path), "--fonts-dir", str(settings.motion_fonts_dir), "--ffmpeg", "ffmpeg"]
     if videos_path is not None:
         args += ["--videos", str(videos_path)]
+    if anims_path is not None:
+        args += ["--anims", str(anims_path)]
     # Эмодзи внутри текста (титр «ОН ЭТО СДЕЛАЛ 🔥») не попадают в карту ассетов —
     # компоновщик берёт их прямо из пака Twemoji по имени файла.
     emoji_dir = Path(settings.motion_packs_dir) / "twemoji"
@@ -254,6 +258,7 @@ def write_comp(
     pinned: list[dict] | None = None,
     backgrounds: list[dict] | None = None,
     ref: dict | None = None,
+    voice: dict | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
@@ -276,6 +281,9 @@ def write_comp(
         comp["words"] = words
     if chat:
         comp["chat"] = chat
+    if voice:
+        # Состояния PNGtuber по кадрам (app/pngtuber.py): {id слоя: {t0, fps, states, levels}}.
+        comp["voice"] = voice
     if backgrounds and not key:
         # Анимированный фон основы (app/backgrounds.py): вне видео, до камеры и слоёв.
         comp["backgrounds"] = backgrounds
@@ -546,6 +554,9 @@ def _resolve_ref(store: Any, ref: int | str, layer_type: str) -> Path | None:
     kind = asset.get("kind")
     if layer_type == "audio":
         return path if kind == "audio" or asset.get("has_audio") else None
+    if layer_type == "pngtuber":
+        # Состояния — картинки/GIF/webm с альфой, голос из файла — звук: годится любой файл.
+        return path
     if layer_type == "video":
         return path if kind in _VIDEO_KINDS else None
     return path if kind in _IMAGE_KINDS else None
@@ -1108,6 +1119,12 @@ def render_frame_png(
 
             layers, camera = reframe_between(layers, camera, layers_format, out_format, asset_sizes(layers, assets))
         words = plan_caption_words(store, plan) if has_captions(layers) else None
+        voice = None
+        if any(layer.get("type") == "pngtuber" for layer in layers):
+            # Рот PNGtuber в этот кадр: голос слушаем около t (hold и attack смотрят назад).
+            from app.pngtuber import plan_voice
+
+            voice, _voice_notes = plan_voice(store, plan, layers, fps, "clip", window=(t - 1.0, t + 0.1))
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
         regions = _render.layout_camera_regions(preset, source, width, height) if camera else None
@@ -1117,16 +1134,19 @@ def render_frame_png(
             chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
             camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
             backgrounds=[{"t0": 0.0, "t1": round(max(total, t) + 60.0, 3), **zone}] if zone else None,
-            ref=comp_ref(out_format),
+            ref=comp_ref(out_format), voice=voice,
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
         videos_path, _video_notes = prepare_video_frames(layers, assets, work, fps=fps,
                                                          out_width=unit_width(width, out_format), at=t)
+        from app.anim_frames import prepare_anim_frames
+
+        anims_path, _anim_notes = prepare_anim_frames(layers, assets, work, out_width=unit_width(width, out_format))
         out = work / "frame.png"
         _render._run_compositor(
             build_compositor_args(comp, assets_path, input_path=still, frame=t, png_path=out, command=command,
-                                  videos_path=videos_path),
+                                  videos_path=videos_path, anims_path=anims_path),
             timeout=180,
         )
         if not out.is_file():

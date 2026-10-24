@@ -164,6 +164,7 @@ slideLeft, slideRight` (въезд с края на 0.15 кадра + fade), `dr
 | `callout` | Плашка «нижняя треть»: `title`, `subtitle`, `accent`, `style` (bar/box/pill/neon), `font`, `w` (наибольшая ширина; плашка по содержимому), `skew` (необяз., −30..30° — наклон всей плашки с текстом), `icon` (необяз., эмодзи слева, Twemoji) |
 | `captions` | Анимированные субтитры из слов речи клипа (`comp.words`, см. ниже). `style` — пресет (`hormozi` по умолчанию, `mrbeast`, `box`, `karaoke`, `neon`, `minimal`, `typewriter`, `comic`, `gradient`, `outline`); **всё остальное необязательно** и перекрывает пресет: `font`, `weight`, `size`, `color`, `dimColor` (несказанные слова в karaoke, null — как color), `activeColor` (звучащее слово), `activeBg` (плашка за звучащим словом или null), `gradient` `[c1,c2]`/null, `stroke` `{color,width}`/null, `glow` (цвет свечения или null), `bg` (плашка под страницей, как `text.bg`, или null), `uppercase`, `punctuation` (оставлять знаки препинания), `maxWords` 1..8 (слов на странице), `maxLines` 1..3, `maxWidth`, `lineHeight`, `letterSpacing`, `highlightWords` `[{i, color}]` (ключевые слова цветом, i — номер в `comp.words`), `emoji` `[{i, char}]` (эмодзи выпрыгивает над строкой, когда сказано слово i), `animation` pop/bounce/fade/karaoke/typewriter/none, `wordScale` 1..1.4 (рост звучащего слова), `tilt` (наклон страниц ±°, чередуется). Нормализация не подставляет умолчаний в необязательные поля — иначе пресет не сработал бы. Без `y` — 0.68, без `end` — до конца клипа |
 | `chat` | Чат стрима из сообщений клипа (`comp.chat`, см. ниже). `style` twitch-dark/bubbles/minimal/neon, `w` (ширина колонки, опорн. px, 200..1080, 760), `maxMessages` 1..12 (6), `fontSize` (34), `font` (необяз., по умолчанию Inter), `showBadges`, `showEmotes`, `filter` `{minLength, hideLinks, hideCommands}` (0 / true / true), `highlightUsers` `[ники]` (подсветка строки), `delay` 0..30 с (чат отстаёт от момента — сообщения показываются раньше на столько), `bg` 0..1 (непрозрачность подложки, 0.75), `ttl` (через сколько секунд сообщение гаснет само; 0 — висит, пока не вытеснят; 15) |
+| `pngtuber` | Аватар, который «говорит», когда звучит голос (см. «PNGtuber» ниже). `states` `{idle, talk, shout?}` — id картинок или анимаций с альфой (GIF/APNG/webm-alpha) из «Файлов для монтажа»: молчит / говорит / кричит (нет `shout` — `talk`); `voice` `{track?, asset_id?, threshold_db?, hold, attack, shout_db}` — `track`: номер звуковой дорожки источника 0..7 или `"speech"` (по умолчанию — дорожки распознавания речи источника `speech_tracks`, не заданы — смесь рендера), `asset_id` — голос из файла библиотеки (секунда файла = время от `start` слоя), `threshold_db` −38 или `"auto"` (по шуму дорожки), `hold` 0.18 с, `attack` 0.03 с, `shout_db` −12; `w` (опорн. px, 300; высота — по пропорции idle), `pixelated` (необяз.; нет — авто: исходник ≤ 256 px рисуется без сглаживания), `bounce` (необяз.) `{amount 0..40}` / `true` (10) — подскок и растяжение в такт огибающей голоса, `flipX`. Плюс обычные `x`, `y`, `scale`, `opacity`, `shadow`, `followCamera`, `in`/`out` |
 | `audio` | Не рисуется. `asset_id` (аудио из «Файлов для монтажа» или `sfx:<pack>/<file>`), `mode` (необяз.: `effect` по умолчанию — громкие места подгоняются под голос клипа, `volume` 0..1; `track` — дорожка без подгонки, `volume` 0..2 × `gain_db` −30..+12, края с фейдом 15 мс), `fadeIn`, `fadeOut`, `offset` (с какой секунды файла), `duck` (bool — приглушить исходник на время звука). Звучит с `start` до `end` |
 
 Цвета — `#rrggbb` или `#rrggbbaa`.
@@ -242,6 +243,50 @@ slideLeft, slideRight` (въезд с края на 0.15 кадра + fade), `dr
 * «Кадр для агента» (`/motion/frame`) режет по одному кадру на слой — тот, что виден в `t`.
 * Слой с `hold: true` (стоп-кадр) — тоже один кадр (секунда `from`; у самого конца файла — за 0.25 с до
   конца), а не нарезка на всю длину слоя. В превью элемент встаёт на паузу на `from`.
+
+### PNGtuber (`pngtuber`)
+
+Аватар владельца в углу, который открывает рот, когда звучит его голос. Рот решает **сервер**, а не
+движок — превью и рендер показывают одно и то же состояние в один и тот же кадр:
+
+1. `app/pngtuber.py` перед компоновщиком читает звук дорожки голоса (моно 8 кГц, ffmpeg
+   `app/source_audio.extract_args`, кусками по кускам клипа) и считает громкость каждого кадра слоя:
+   RMS в дБ по окну 1/fps вокруг момента. Время слоя (шкала `clip` — редактор и кадр агента, `final` —
+   рендер после вырезов) переводится в секунды источника через `app/timebase.ClipClock`: вырез или
+   наплыв не сдвигает рот с голоса.
+2. Громкость → состояния (`voice_states`): над `threshold_db` дольше `attack` — говорит; после спада
+   рот держится открытым ещё `hold` (не хлопает между слогами); громче `shout_db` (только если есть
+   `states.shout`) — кричит, с тем же attack/hold. `threshold_db: "auto"` — шум дорожки
+   (15-й перцентиль) + 12 дБ, не выше громких мест − 10 дБ, в рамках −65..−15.
+3. `comp.voice = {"<id слоя>": {t0, fps, states: "000111122…", levels: [0..100], threshold_db}}` —
+   кадр k — момент `t0 + k/fps`; `"0"` молчит, `"1"` говорит, `"2"` кричит; `levels` — огибающая для
+   подскока (плавный спад ~80 мс). Нет записи / за краем массива — молчит.
+4. Движок (`frontend/src/motion/layers/pngtuber.ts`): `voiceStateAt(track, t)` → файл состояния
+   (`shout` → `talk` → `idle`), кадр его анимации — `animFrameIndex(times, duration, t)` по времени
+   **клипа** (каждое состояние циклится своей анимацией, смена состояния не сбивает фазу). Статичная
+   картинка — просто `getImage`.
+
+Превью: `POST /api/clip-plans/{id}/voice {layers?, fps?}` → `{voice, notes}` — тот же массив в шкале
+`clip`; кадр для агента считает голос в окне вокруг `t`. Нет файла источника / дорожки — аватар молчит,
+пометка в ошибке клипа. Агенту проще `add_pngtuber` (docs/AGENTS.md, «PNGtuber»).
+
+### Анимированные картинки с альфой (GIF, APNG, webm-alpha)
+
+`app/anim_frames.py`: `animation_info(path)` — кадры, их времена (у GIF задержка своя у каждого кадра;
+0 и 10 мс — 100 мс, как в браузерах), fps, альфа. Кадры: ffmpeg `-fps_mode passthrough -pix_fmt rgba
+-c:v png` (webm с альфой — декодером `libvpx-vp9`), пиксель-арт (≤ 256 px) не пережимается, большие —
+до ширины на кадре ×1.15 (≤ 1080), не больше 600 кадров. Компоновщик получает `--anims anims.json`
+(`{"<asset_id>": {dir, pattern "%05d.png", count, times, duration, width, height}}`): маленькие анимации
+держит в памяти целиком, большие (> 48 МБ RGBA) — окном кадров, как видео-слой. Превью берёт те же кадры
+одним листом: `GET /api/montage-assets/{id}/anim` (`{animated, count, cols, rows, frame_w, frame_h,
+times, duration, sheet}`) и `…/anim-sheet.png` (PNG с альфой, кэш в `runtime/anim-sheets`).
+
+* Слой `image` с анимированным файлом играет его по кругу с **локального** времени слоя (гифка с
+  первого кадра, когда слой появился); статичная картинка — как раньше.
+* Анимированный WebP распознаётся (кадры, fps — из RIFF), но ffmpeg 8 его не декодирует: рисуется
+  первый кадр, загрузка подсказывает «перегони в GIF/APNG».
+* Загрузка (`POST /api/montage-assets`, `upload_image`, `vvf.py asset`) отвечает `animation {frames,
+  fps, duration, alpha, decodable}` и `animation_note` — «анимированная картинка: 5 кадров, 16.7 fps».
 
 ### Анимированные субтитры (`captions`)
 
@@ -373,6 +418,7 @@ node node/motion-render.mjs \
   --output motion.mp4     # видео без звука (h264, yuv420p, crf из --crf, по умолчанию 18)
   --assets assets.json    # {"<asset_id>": "/data/.../file.png", "emoji:1f525": "...svg", ...}
   [--videos videos.json]  # кадры видео-слоёв: {"<id слоя>": {dir, pattern, start, rate, count, duration}}
+  [--anims anims.json]    # кадры анимаций с альфой: {"<asset_id>": {dir, pattern, count, times, duration, width, height}}
   --fonts-dir /app/vendor/fonts   # fonts.json + файлы шрифтов
   [--emoji-dir DIR]               # запасной путь для emoji:<код> → DIR/<код>.svg
   [--ffmpeg ffmpeg] [--ffprobe ffprobe] [--crf 18] [--preset veryfast]
@@ -430,6 +476,11 @@ node node/motion-render.mjs \
   Тело необязательно: `{layers?, camera?}` — несохранённый вариант. Основа кадра —
   исходник с кропом/рефреймом/луком (без баннера и субтитров), готовый рендер — только
   если исходника нет. Нет компоновщика — 503.
+* `POST /api/clip-plans/{id}/voice` — тело `{layers?, fps?}` (нет слоёв — сохранённые) →
+  `{voice: {id слоя: {t0, fps, states, levels, threshold_db}}, notes, scale: "clip"}` — состояния
+  PNGtuber для превью (тот же массив, что `comp.voice` рендера).
+* `GET /api/montage-assets/{id}/anim`, `GET /api/montage-assets/{id}/anim-sheet.png` — анимация файла
+  листом кадров с временами (превью GIF/APNG/webm-alpha); статичный файл — `{animated: false}`.
 * `GET /api/motion/schema` — машиночитаемая схема слоёв (типы, props с умолчаниями и
   рамками, easing, анимации, пределы) — из `app/motion.py`.
 * `POST /api/clip-plans/{id}/layers/validate` — тело `{layers?, camera?}` (нет — берутся

@@ -5,6 +5,7 @@
  * Пока её нет (превью ещё качает файл), картинка не рисуется, а эмодзи
  * рисуется символом системного шрифта; в рендере все картинки загружены заранее.
  */
+import { animFrameIndex } from "../anim";
 import { emojiFont, emojiRef } from "../fonts";
 import type { LayerState } from "../animate";
 import type { Crop, EmojiLayer, ImageLayer, ImageLike, PictureProps, RenderEnv } from "../types";
@@ -45,8 +46,11 @@ export function measurePicture(p: PictureProps, crop: Crop | null, natural: Size
   return { w: s.w + b * 2, h: s.h + b * 2 };
 }
 
-/** Что рисовать: картинка и её собственный размер в пикселях (окно crop берётся от него). */
-export type PictureSource = { image: ImageLike; width: number; height: number };
+/**
+ * Что рисовать: картинка и её собственный размер в пикселях (окно crop берётся от него).
+ * `sx`/`sy` — где кадр лежит в картинке (кадр анимации на листе превью), по умолчанию 0.
+ */
+export type PictureSource = { image: ImageLike; width: number; height: number; sx?: number; sy?: number };
 
 /**
  * Нарисовать картинку/кадр видео: экран с маской скругления и рамкой — или в корпусе
@@ -70,7 +74,9 @@ export function drawPicture(
     if (p.flipX) ctx.scale(-1, 1);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    drawImageLike(ctx, src.image, src.width * c.x, src.height * c.y, src.width * c.w, src.height * c.h, x, y, w, h, env);
+    const ox = src.sx ?? 0;
+    const oy = src.sy ?? 0;
+    drawImageLike(ctx, src.image, ox + src.width * c.x, oy + src.height * c.y, src.width * c.w, src.height * c.h, x, y, w, h, env);
     ctx.restore();
   };
   if (p.device === "phone") {
@@ -117,12 +123,36 @@ function naturalOf(img: ImageLike | null, p: PictureProps): Size {
   return p.device === "phone" ? { w: 9, h: 19.5 } : { w: 1, h: 1 };
 }
 
+/**
+ * Анимированная картинка (GIF/APNG/webm-alpha из библиотеки): кадр по локальному времени слоя —
+ * гифка начинается с первого кадра, когда слой появился. Нет анимации — null (статичная).
+ */
+function animPicture(layer: ImageLayer, local: number, env: RenderEnv): PictureSource | null {
+  if (!layer.props.asset_id || !env.getAnim) return null;
+  const anim = env.getAnim(imageRef(layer));
+  if (!anim || anim.times.length < 2) return null;
+  const f = anim.frame(animFrameIndex(anim.times, anim.duration, local));
+  return f ? { image: f.image, width: f.sw, height: f.sh, sx: f.sx, sy: f.sy } : null;
+}
+
+function animNatural(layer: ImageLayer, env: RenderEnv): Size | null {
+  const anim = layer.props.asset_id ? env.getAnim?.(imageRef(layer)) : null;
+  return anim && anim.times.length > 1 && anim.width > 0 && anim.height > 0 ? { w: anim.width, h: anim.height } : null;
+}
+
 export const imageRenderer: LayerRenderer<ImageLayer> = {
   multipart: true,
   measure(_ctx, layer, st: LayerState, env) {
-    return measurePicture(layer.props, st.crop, naturalOf(env.getImage(imageRef(layer)), layer.props));
+    const natural = animNatural(layer, env) ?? naturalOf(env.getImage(imageRef(layer)), layer.props);
+    return measurePicture(layer.props, st.crop, natural);
   },
   draw(ctx, layer, st, env) {
+    const frame = animPicture(layer, st.local, env);
+    if (frame) {
+      // Пропорция — исходника (кадр листа превью бывает уменьшен), окно crop — от самого кадра.
+      drawPicture(ctx, layer.props, st.crop, animNatural(layer, env) ?? { w: frame.width, h: frame.height }, frame, env);
+      return;
+    }
     const img = env.getImage(imageRef(layer));
     if (!img && layer.props.device !== "phone") return;
     const natural = naturalOf(img, layer.props);

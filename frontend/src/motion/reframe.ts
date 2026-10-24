@@ -141,6 +141,12 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
     return [size, size];
   }
   if (kind === "image" || kind === "video") return pictureSize(layer, sizes);
+  if (kind === "pngtuber") {
+    // Аватар: ширина w, высота — по пропорции idle (как app/aspect.layer_size).
+    const w = num(props.w, 300);
+    const natural = (sizes || {})[assetKey(isObj(props.states) ? props.states.idle : null)];
+    return [w, natural && natural[0] > 0 && natural[1] > 0 ? (w * natural[1]) / natural[0] : w];
+  }
   if (kind === "shape" || kind === "progress" || kind === "chart")
     return [num(props.w, 400), num(props.h, kind !== "progress" ? 400 : 40)];
   if (kind === "callout") return [num(props.w, 900), props.subtitle ? 240.0 : 170.0];

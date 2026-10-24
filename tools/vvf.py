@@ -183,6 +183,9 @@ def cmd_asset(args) -> None:
     print(f"asset_id {asset['id']}: {asset.get('kind')} · {asset.get('label', '')} · "
           f"{asset.get('width') or 0}×{asset.get('height') or 0} · {asset.get('duration_sec') or 0:.1f} с"
           f" — слой {layer} props.asset_id")
+    if asset.get("animation_note"):
+        # GIF/APNG/webm с альфой: сервис разложит кадры с прозрачностью (слой image, PNGtuber).
+        print(f"  {asset['animation_note']}")
 
 
 def cmd_asset_url(args) -> None:

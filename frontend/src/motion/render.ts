@@ -18,10 +18,11 @@ import { chartRenderer } from "./layers/chart";
 import { counterRenderer, progressRenderer } from "./layers/counter";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { particlesRenderer } from "./layers/particles";
+import { pngtuberRenderer } from "./layers/pngtuber";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
-import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas } from "./types";
+import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas, VoiceTrack } from "./types";
 import { layerUnit, refSize } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
@@ -37,6 +38,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   callout: calloutRenderer as LayerRenderer,
   captions: captionsRenderer as LayerRenderer,
   chat: chatRenderer as LayerRenderer,
+  pngtuber: pngtuberRenderer as LayerRenderer,
 };
 
 const NO_WORDS: CaptionWord[] = [];
@@ -44,14 +46,14 @@ const NO_CHAT: ChatMessage[] = [];
 
 /**
  * Данные хоста для слоёв, которые рисуют не свои props, а данные клипа:
- * слова речи (`captions`) и сообщения чата (`chat`). Ради совместимости вместо
- * объекта можно передать просто массив слов.
+ * слова речи (`captions`), сообщения чата (`chat`) и состояния голоса (`pngtuber`,
+ * по id слоя). Ради совместимости вместо объекта можно передать просто массив слов.
  */
-export type FrameData = { words?: CaptionWord[]; chat?: ChatMessage[] };
+export type FrameData = { words?: CaptionWord[]; chat?: ChatMessage[]; voice?: Record<string, VoiceTrack> };
 
 function frameOf(t: number, data?: CaptionWord[] | FrameData): FrameInfo {
   if (Array.isArray(data)) return { t, words: data, chat: NO_CHAT };
-  return { t, words: data?.words || NO_WORDS, chat: data?.chat || NO_CHAT };
+  return { t, words: data?.words || NO_WORDS, chat: data?.chat || NO_CHAT, voice: data?.voice };
 }
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -108,7 +110,7 @@ export function drawFrame(
   env: RenderEnv,
   pass?: "behind" | "front",
 ): void {
-  const data: FrameData = { words: comp.words, chat: comp.chat };
+  const data: FrameData = { words: comp.words, chat: comp.chat, voice: comp.voice };
   const visible = visibleLayers(comp.layers || [], t);
   let cam: CameraMatrix | null | undefined;
   for (const layer of visible) {

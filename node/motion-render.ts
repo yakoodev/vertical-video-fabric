@@ -15,8 +15,10 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { createCanvas, GlobalFonts, ImageData, loadImage, type Image } from "@napi-rs/canvas";
 import {
+  animFrameIndex,
   cameraMatrix,
   clipAccent,
+  collectAnimRefs,
   collectChatImageRefs,
   collectImageRefs,
   collectVideoLayers,
@@ -26,6 +28,8 @@ import {
   normalizeBackground,
   paintBackground,
   paintBackgroundAround,
+  type AnimFrame,
+  type AnimSource,
   type BackgroundZone,
   type ChromaKey,
   type Composition,
@@ -36,7 +40,10 @@ import {
   type VideoFrame,
   type VideoLayer,
   type VideoSource,
+  type VoiceTrack,
   videoFileTime,
+  voiceStateAt,
+  pngtuberStateRef,
 } from "../frontend/src/motion/index";
 
 type Args = {
@@ -45,6 +52,7 @@ type Args = {
   output?: string;
   assets?: string;
   videos?: string;
+  anims?: string;
   fontsDir?: string;
   emojiDir?: string;
   ffmpeg: string;
@@ -83,6 +91,7 @@ function parseArgs(argv: string[]): Args {
     output: out.output,
     assets: out.assets,
     videos: out.videos,
+    anims: out.anims,
     fontsDir: out["fonts-dir"],
     emojiDir: out["emoji-dir"],
     ffmpeg: out.ffmpeg || "ffmpeg",
@@ -126,12 +135,32 @@ function readComp(path: string): Composition {
     chat: Array.isArray(raw.chat)
       ? raw.chat.filter((m) => m && Number.isFinite(Number(m.t))).sort((a, b) => Number(a.t) - Number(b.t))
       : [],
+    // Состояния голоса PNGtuber по id слоя (app/pngtuber.py): только целые записи.
+    ...readVoice(raw),
     // Опорный кадр формата (px слоёв): нет — движок берёт 1080×1920, как всегда.
     ...readRef(raw),
     ...readKey(raw),
     ...readRegions(raw, width - (width % 2), height - (height % 2)),
     ...readZones(raw, width - (width % 2), height - (height % 2)),
   };
+}
+
+/** comp.voice: {id слоя: {t0, fps, states "0012…", levels?}} — мусорные записи отбрасываются. */
+function readVoice(raw: Partial<Composition>): Pick<Composition, "voice"> {
+  const v = raw.voice;
+  if (!v || typeof v !== "object") return {};
+  const out: Record<string, VoiceTrack> = {};
+  for (const [id, tr] of Object.entries(v as Record<string, Partial<VoiceTrack>>)) {
+    if (!tr || typeof tr.states !== "string" || !/^[0-2]*$/.test(tr.states)) continue;
+    const fps = Number(tr.fps);
+    out[id] = {
+      t0: Number(tr.t0) || 0,
+      fps: Number.isFinite(fps) && fps > 0 ? fps : 30,
+      states: tr.states,
+      ...(Array.isArray(tr.levels) ? { levels: tr.levels.map((x) => Number(x) || 0) } : {}),
+    };
+  }
+  return Object.keys(out).length ? { voice: out } : {};
 }
 
 /** Опорный кадр формата (app/formats.py): оба числа в 16..8192 — иначе не задан. */
@@ -425,6 +454,124 @@ async function prepareVideos(comp: Composition, videos: Map<string, FrameSeq>, t
   await Promise.all(jobs);
 }
 
+/* ---------- анимированные картинки (GIF/APNG/webm-alpha) ---------- */
+
+/**
+ * Кадры анимации, разложенные бэкендом (app/anim_frames.prepare_anim_frames): PNG RGBA
+ * `dir/<pattern>` 0..count−1, `times` — начала кадров, `duration` — длина цикла.
+ */
+type AnimSeqInfo = { dir: string; pattern: string; count: number; times: number[]; duration: number; width: number; height: number };
+
+/** Маленькую анимацию — целиком в память (5 кадров 112×112 — копейки); больше — окном. */
+const ANIM_RAM_BYTES = 48 * 1024 * 1024;
+const ANIM_CACHE = 8;
+
+class AnimSeq implements AnimSource {
+  readonly width: number;
+  readonly height: number;
+  readonly times: number[];
+  readonly duration: number;
+  readonly whole: boolean;
+  private cache = new Map<number, Image>();
+  private pending = new Map<number, Promise<void>>();
+
+  constructor(private info: AnimSeqInfo) {
+    this.width = info.width;
+    this.height = info.height;
+    this.times = info.times;
+    this.duration = info.duration;
+    this.whole = info.count * Math.max(1, info.width) * Math.max(1, info.height) * 4 <= ANIM_RAM_BYTES;
+  }
+
+  private path(i: number): string {
+    const name = this.info.pattern.replace(/%0(\d)d/, (_m, n: string) => String(i).padStart(Number(n), "0"));
+    return join(this.info.dir, name);
+  }
+
+  load(i: number): Promise<void> {
+    if (this.cache.has(i) || i < 0 || i >= this.info.count) return Promise.resolve();
+    let p = this.pending.get(i);
+    if (!p) {
+      p = readFile(this.path(i))
+        .then((buf) => loadImage(buf))
+        .then((img) => void this.cache.set(i, img))
+        .catch((err: Error) => log(`кадр анимации ${this.path(i)}: ${err.message}`))
+        .finally(() => this.pending.delete(i));
+      this.pending.set(i, p);
+    }
+    return p;
+  }
+
+  async loadAll(): Promise<void> {
+    await Promise.all(Array.from({ length: this.info.count }, (_v, i) => this.load(i)));
+  }
+
+  /** Большая анимация: подгрузить кадр (и следующий), выкинуть далёкие. */
+  async prepare(i: number): Promise<void> {
+    if (this.whole) return;
+    void this.load((i + 1) % this.info.count);
+    await this.load(i);
+    if (this.cache.size > ANIM_CACHE) {
+      for (const key of this.cache.keys()) if (key !== i && key !== (i + 1) % this.info.count) this.cache.delete(key);
+    }
+  }
+
+  frame(index: number): AnimFrame | null {
+    const img = this.cache.get(index);
+    return img ? { image: img as unknown as ImageLike, sx: 0, sy: 0, sw: img.width, sh: img.height } : null;
+  }
+}
+
+/** anims.json: {"<ключ файла>": AnimSeqInfo}; берутся только файлы, на которые ссылаются слои. */
+async function loadAnims(path: string | undefined, comp: Composition): Promise<Map<string, AnimSeq>> {
+  const out = new Map<string, AnimSeq>();
+  if (!path) return out;
+  let raw: Record<string, Partial<AnimSeqInfo>> = {};
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    log(`anims: не читается ${path} (${(err as Error).message})`);
+    return out;
+  }
+  const base = dirname(resolve(path));
+  for (const ref of collectAnimRefs(comp.layers)) {
+    const a = raw[ref];
+    const count = Math.floor(Number(a?.count));
+    if (!a || !a.dir || !(count > 0)) continue;
+    const times = Array.isArray(a.times) ? a.times.slice(0, count).map((x) => Number(x) || 0) : [];
+    while (times.length < count) times.push(times.length * 0.1);
+    const seq = new AnimSeq({
+      dir: isAbsolute(a.dir) ? a.dir : resolve(base, a.dir),
+      pattern: typeof a.pattern === "string" && a.pattern ? a.pattern : "%05d.png",
+      count,
+      times,
+      duration: Number(a.duration) > 0 ? Number(a.duration) : count * 0.1,
+      width: Number(a.width) || 0,
+      height: Number(a.height) || 0,
+    });
+    // Маленькие — сразу все; большие — первый кадр (по нему пропорция слоя).
+    await (seq.whole ? seq.loadAll() : seq.load(0));
+    out.set(ref, seq);
+  }
+  return out;
+}
+
+/** Перед кадром t — подгрузить нужные кадры больших анимаций (отрисовка синхронная). */
+async function prepareAnims(comp: Composition, anims: Map<string, AnimSeq>, t: number): Promise<void> {
+  if (!anims.size) return;
+  const jobs: Promise<void>[] = [];
+  const need = (ref: string, time: number) => {
+    const seq = anims.get(ref);
+    if (seq && !seq.whole) jobs.push(seq.prepare(animFrameIndex(seq.times, seq.duration, time)));
+  };
+  for (const layer of comp.layers) {
+    if (!isLayerActive(layer, t)) continue;
+    if (layer.type === "pngtuber") need(pngtuberStateRef(layer.props, voiceStateAt(comp.voice?.[layer.id], t)), t);
+    else if (layer.type === "image" && layer.props?.asset_id) need(String(layer.props.asset_id), t - layer.start);
+  }
+  await Promise.all(jobs);
+}
+
 /* ---------- ffmpeg ---------- */
 
 function ffprobePath(args: Args): string {
@@ -520,13 +667,14 @@ async function* rawFrames(stream: NodeJS.ReadableStream, frameSize: number): Asy
 
 /* ---------- отрисовка ---------- */
 
-function makeEnv(comp: Composition, images: Map<string, Image>, videos: Map<string, FrameSeq>): RenderEnv {
+function makeEnv(comp: Composition, images: Map<string, Image>, videos: Map<string, FrameSeq>, anims: Map<string, AnimSeq> = new Map()): RenderEnv {
   return {
     width: comp.width,
     height: comp.height,
     ...(comp.refWidth && comp.refHeight ? { refWidth: comp.refWidth, refHeight: comp.refHeight } : {}),
     getImage: (ref: string) => (images.get(String(ref)) as unknown as ImageLike) ?? null,
     getVideo: (layer: VideoLayer) => videos.get(layer.id) ?? null,
+    getAnim: (ref: string) => anims.get(String(ref)) ?? null,
     createCanvas: (w: number, h: number) => createCanvas(w, h) as unknown as ReturnType<NonNullable<RenderEnv["createCanvas"]>>,
   };
 }
@@ -650,7 +798,7 @@ async function grabFrame(args: Args, comp: Composition, cs: string | null, seek:
   return out;
 }
 
-async function renderPng(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>): Promise<void> {
+async function renderPng(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>, anims: Map<string, AnimSeq>): Promise<void> {
   const t = Math.max(0, args.frame ?? 0);
   const painter = makePainter(comp, env);
   let base: Buffer | null = null;
@@ -662,6 +810,7 @@ async function renderPng(args: Args, comp: Composition, env: RenderEnv, videos: 
     if (!base) throw new Error(`не удалось взять кадр ${t} с из ${args.input}`);
   }
   await prepareVideos(comp, videos, t);
+  await prepareAnims(comp, anims, t);
   painter.paint(base, t);
   writeFileSync(args.png as string, await painter.canvas.encode("png"));
   log(`progress 1/1`);
@@ -696,7 +845,7 @@ function encoderArgs(args: Args, comp: Composition, colorspace: string | null): 
   ];
 }
 
-async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>): Promise<void> {
+async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>, anims: Map<string, AnimSeq>): Promise<void> {
   const W = comp.width;
   const H = comp.height;
   const total = Math.max(1, Math.round(comp.duration * comp.fps));
@@ -741,6 +890,7 @@ async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos
   let i = 0;
   const step = async (base: Buffer | null) => {
     await prepareVideos(comp, videos, i / comp.fps);
+    await prepareAnims(comp, anims, i / comp.fps);
     painter.paint(base, i / comp.fps);
     await write(frameOut());
     i++;
@@ -784,9 +934,10 @@ async function main(): Promise<void> {
   registerFonts(args.fontsDir);
   const images = await loadImages(comp, args.assets, args.emojiDir);
   const videos = await loadVideos(args.videos, comp);
-  const env = makeEnv(comp, images, videos);
-  if (args.frame !== undefined) await renderPng(args, comp, env, videos);
-  else await renderVideo(args, comp, env, videos);
+  const anims = await loadAnims(args.anims, comp);
+  const env = makeEnv(comp, images, videos, anims);
+  if (args.frame !== undefined) await renderPng(args, comp, env, videos, anims);
+  else await renderVideo(args, comp, env, videos, anims);
 }
 
 main().catch((err: unknown) => {
