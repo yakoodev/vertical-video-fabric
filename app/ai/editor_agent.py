@@ -254,8 +254,112 @@ build_app_promo: {"spec":{"brand":{"accent":"#FF6A1F"},"hook":["Ищешь ко�
 """
 
 
-def system_prompt() -> str:
-    return CRAFT + "\nСПРАВКА ПО СЛОЯМ\n" + agent_tools.motion_reference() + "\n\n" + EXAMPLES
+def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True) -> str:
+    """Системный промпт под формат клипа (app/formats.py). 9:16 со слоями в 9:16 (клип без
+    поля format) — ровно прежний текст; другой формат — кадр W×H, опорные px разметки и
+    правила раскладки этого формата (см. ``format_craft``)."""
+    from app.formats import settings_format
+
+    fmt, layers_format = settings_format(fmt), settings_format(layers_format)
+    return (format_craft(fmt, layers_format, has_layers=has_layers) + "\nСПРАВКА ПО СЛОЯМ\n"
+            + agent_tools.motion_reference(fmt, layers_format) + "\n\n" + EXAMPLES)
+
+
+# Правила композиции по формату — для слоёв, размеченных в этом же формате.
+FORMAT_LAYOUT = {
+    "16:9": """\
+ГОРИЗОНТАЛЬ 16:9 — композиция по ширине, а не этажами, как в вертикали:
+• хук — сверху по центру (y≈0.1–0.14), одна строка, кегль 80–110 (maxWidth ≤ 1400);
+• субтитры — снизу по центру (y≈0.84–0.88), строка не шире ~70% кадра, не на лице;
+• панчлайн, цифры (counter), плашки, мемы — в свободной левой или правой трети (x≈0.2–0.3 или 0.7–0.8),
+  рядом с героем, а не поверх него; «всё по центру» здесь — только хук и субтитры;
+• телефон (промо) — сбоку (x≈0.28 или 0.72, w 420–520), заголовок шага — на другой половине кадра,
+  крупно и по вертикальному центру; финал — логотип и плашка CTA по центру;
+• «вебки сверху» нет: в split вебка — окошко в углу, игра на весь кадр (раскладку делает set_layout сам);
+• наезды мягче (zoom до 1.2): горизонтальный кадр и так крупный, сильный наезд режет героя.""",
+    "1:1": """\
+КВАДРАТ 1:1 — кадр ниже вертикали, этажей меньше: хук (одна строка, кегль 80–100, y≈0.1–0.14), герой,
+субтитры (y≈0.8–0.84) — и всё. Панчлайн мельче (кегль 110–130), мемы и картинки w 380–480, на свободном
+месте у героя. Телефон (промо) короче — w 380–440, заголовок шага над ним одной строкой; финал компактнее
+(логотип, одна строка, плашка CTA). Наезды мягче (zoom до 1.25).""",
+    "4:5": """\
+4:5 — чуть ниже вертикали: те же этажи, но компактнее. Хук y≈0.1–0.13 (1–2 строки, кегль 90–110),
+субтитры y≈0.8–0.83, панчлайн кегль 120–150, мемы w 420–560. Телефон (промо) — w 440–500, заголовок над
+ним; финал — логотип, 1–2 строки, плашка CTA.""",
+    "9:16": "",
+}
+
+
+def format_craft(fmt: str, layers_format: str, *, has_layers: bool = True) -> str:
+    """Ремесло монтажёра под формат: 9:16/9:16 — ``CRAFT`` как есть; иначе — шапка, длина,
+    опорный кадр под формат и блок «ФОРМАТ КАДРА» (раскладка, перекомпоновка слоёв)."""
+    from app.formats import FORMATS, frame_size, ref_size
+
+    if fmt == "9:16" and layers_format == "9:16":
+        return CRAFT
+    width, height = frame_size(fmt)
+    rw, rh = ref_size(layers_format)
+    label = FORMATS[fmt]["label"]
+    text = CRAFT
+    head = {
+        "16:9": "монтажёр роликов со стримов; этот клип — ГОРИЗОНТАЛЬ 16:9 (обычное видео YouTube, не шортс)",
+        "1:1": "монтажёр коротких роликов со стримов; этот клип — КВАДРАТ 1:1 (лента соцсетей, Instagram)",
+        "4:5": "монтажёр коротких роликов со стримов; этот клип — 4:5 (лента Instagram)",
+    }.get(fmt)
+    if head:
+        text = text.replace("монтажёр вертикальных шортсов (TikTok, Shorts, Reels) со стримов", head)
+    text = text.replace("в центре кадра 9:16", f"в центре кадра {fmt}")
+    text = text.replace("в шортсе\nэто мёртвое время", "в ролике\nэто мёртвое время")
+    text = text.replace(
+        "Слой video во весь кадр (w 1080)", f"Слой video во весь кадр (w {rw})")
+    text = text.replace(
+        "ролик 4:3/16:9 → auto_crop_layer(layer_id) ведёт окно 9:16 по планам",
+        f"ролик шире кадра {layers_format} → auto_crop_layer(layer_id, aspect \"{layers_format}\") ведёт окно по планам")
+    if fmt == "16:9":
+        text = text.replace(
+            "7.5. ДЛИНА: готовый ролик 15–60 с.",
+            "7.5. ДЛИНА: горизонтальный ролик не обязан укладываться в 60 с — сколько нужно истории (бывает и\n"
+            "   несколько минут), но без воды.")
+    text = text.replace(
+        "Размеры — опорные пиксели кадра 1080×1920.",
+        f"Размеры — опорные пиксели кадра разметки слоёв {rw}×{rh} ({layers_format}).")
+    lines = [
+        f"{label} — кадр {width}×{height} (get_clip: render.format, render.frame); x, y — доли этого кадра.",
+        "Формат выбирает владелец: set_format без его просьбы не вызывай. Безопасные зоны и места для текста —",
+        "positions и warnings из get_clip (они уже под этот кадр) — главнее чисел ниже.",
+    ]
+    if layers_format != fmt and not has_layers:
+        lines += [
+            f"Слоёв ещё нет, а разметка по умолчанию — {layers_format} ({rw}×{rh}). Размечай сразу под {fmt}: сначала",
+            f"set_format(\"{fmt}\", layers_format=\"{fmt}\") — формат вывода тот же, меняется только опорный кадр",
+            "разметки (иначе слои перекомпонуются из чужого кадра и выйдут мельче).",
+        ]
+    elif layers_format != fmt:
+        lines += [
+            f"Слои размечены в {layers_format} (опорный кадр {rw}×{rh}, render.layers_format) и при рендере сами",
+            f"перекомпонуются в {fmt}: одним масштабом по рамке содержимого, камера — вместе с ними. НЕ переделывай",
+            f"слои и ключи камеры под {fmt}; новые слои ставь в опорных px {rw}×{rh}, как в кадре {layers_format}.",
+            f"Результат смотри view_frame/contact_sheet — они уже в {fmt}.",
+        ]
+        if FORMAT_LAYOUT.get(fmt):
+            lines.append(
+                f"Настоящая раскладка под {fmt} — только по просьбе владельца: разметить слои заново и "
+                f"set_format(\"{fmt}\", layers_format=\"{fmt}\").")
+    if FORMAT_LAYOUT.get(fmt) and (layers_format == fmt or not has_layers):
+        lines.append(FORMAT_LAYOUT[fmt])
+    block = "ФОРМАТ КАДРА\n" + "\n".join(lines) + "\n\n"
+    return text.replace("ВРЕМЯ И КООРДИНАТЫ\n", block + "ВРЕМЯ И КООРДИНАТЫ\n", 1)
+
+
+def clip_formats(store: Any, clip_plan_id: int) -> tuple[str, str, bool]:
+    """(формат вывода, формат разметки слоёв, есть ли слои) клипа — для промпта агента."""
+    from app.formats import settings_layers_format, settings_render_format
+
+    try:
+        render = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+    except Exception:  # noqa: BLE001 - промпт не должен падать из-за чтения клипа
+        render = {}
+    return settings_render_format(render), settings_layers_format(render), bool(render.get("layers"))
 
 
 # --------------------------------------------------------------------------- #
@@ -292,7 +396,8 @@ def _openapi_schema(schema: Any) -> Any:
 
 
 def _shrink_frame(image: ImageResult) -> tuple[bytes, str]:
-    """Кадр 1080×1920 PNG весит мегабайты — модели хватает JPEG 540×960."""
+    """Кадр 1080×1920 PNG весит мегабайты — модели хватает JPEG 540×960 (длинная сторона
+    FRAME_MAX_HEIGHT в любом формате: 16:9 — 960×540)."""
     try:
         import cv2
         import numpy as np
@@ -301,9 +406,10 @@ def _shrink_frame(image: ImageResult) -> tuple[bytes, str]:
         if frame is None:
             return image.data, image.mime_type
         height, width = frame.shape[:2]
-        if height > FRAME_MAX_HEIGHT:
-            scale = FRAME_MAX_HEIGHT / height
-            frame = cv2.resize(frame, (max(2, int(width * scale)), FRAME_MAX_HEIGHT), interpolation=cv2.INTER_AREA)
+        if max(height, width) > FRAME_MAX_HEIGHT:
+            scale = FRAME_MAX_HEIGHT / max(height, width)
+            size = (max(2, int(width * scale)), max(2, int(height * scale)))
+            frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if ok:
             return buf.tobytes(), "image/jpeg"
@@ -439,8 +545,10 @@ def run_agent(
 
     def call_model(tools_on: bool) -> dict:
         nonlocal use_json_schema
+        # Формат читаем на каждый вызов: агент мог сменить его set_format (по просьбе владельца).
+        fmt, layers_fmt, has_layers = clip_formats(store, clip_plan_id)
         payload: dict = {
-            "systemInstruction": {"parts": [{"text": system_prompt()}]},
+            "systemInstruction": {"parts": [{"text": system_prompt(fmt, layers_fmt, has_layers=has_layers)}]},
             "contents": contents,
             # Температуру не трогаем: Gemini 3 рассчитана на 1.0, ниже — зацикливается.
             # Потолок ответа: иногда модель «плывёт» в бесконечный повтор («- - - …»).

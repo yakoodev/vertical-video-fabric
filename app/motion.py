@@ -1355,12 +1355,22 @@ def visual_motion(motion: dict | None) -> dict | None:
 # ---------------------------------------------------------------- описание для UI/агента
 
 
+def _formats_summary() -> dict:
+    from app.formats import FORMATS
+
+    return {fmt: {"label": info["label"], "frame": list(info["frame"]), "ref": list(info["ref"])}
+            for fmt, info in FORMATS.items()}
+
+
 def schema_summary() -> dict:
     """Машиночитаемое описание слоёв — для ``GET /api/motion/schema``."""
     return {
         "version": 1,
         "spec": "docs/motion/spec.md",
         "frame": {"width": 1080, "height": 1920, "units": "x/y — доли кадра, размеры — опорные px 1080×1920"},
+        # Кадр по умолчанию (9:16) — выше; у клипа другого формата кадр и опорный кадр слоёв — тут
+        # (app/formats.py; формат клипа — render.format, разметка слоёв — render.layers_format).
+        "formats": _formats_summary(),
         "limits": {
             "max_layers": MAX_LAYERS,
             "max_camera_keys": MAX_CAMERA_KEYS,

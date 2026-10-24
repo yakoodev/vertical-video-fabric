@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from app.providers.registry import get_provider
+from app.publish_format import upload_extras
 from app.settings import settings
 from app.store import AppStore
 
@@ -47,6 +48,9 @@ class JobWorker:
                 cookies = self.store.get_account_cookies(target["account_id"])
                 proxy_url = self.store.get_account_proxy_url(target["account_id"])
                 provider = get_provider(target["platform"])
+                # Формат клипа (16:9 на YouTube — обычное видео, не Shorts; app/publish_format.py).
+                # У 9:16 и файла без клипа — пусто, вызов площадки прежний.
+                extras = upload_extras(self.store, fresh_job, target["platform"])
                 result = provider.upload(
                     cookies=cookies,
                     file_path=Path(fresh_job["source_path"]),
@@ -56,6 +60,7 @@ class JobWorker:
                     allow_comments=fresh_job["allow_comments"],
                     account_label=account["label"],
                     proxy_url=proxy_url,
+                    **extras,
                 )
                 # Persist any rotated cookies so the session self-heals next time.
                 if result.status == "succeeded" and result.refreshed_cookies:

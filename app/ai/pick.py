@@ -45,6 +45,24 @@ RULES = """\
 """
 
 
+def rules_for_format(fmt: str = "9:16", max_clip_sec: float = 180.0) -> str:
+    """RULES под формат будущих клипов (app/formats.py): 9:16, 1:1, 4:5 — прежний текст
+    (короткие ролики); 16:9 — обычное горизонтальное видео: не шортс, длиннее можно —
+    до ``max_clip_sec`` (LANDSCAPE_MAX_CLIP_SECONDS)."""
+    if fmt != "16:9":
+        return RULES
+    minutes = max(1.0, float(max_clip_sec or 180.0) / 60.0)
+    return RULES.replace(
+        "Ты — редактор шортсов (YouTube Shorts / TikTok / Reels) с чутьём на вирусное.",
+        "Ты — редактор роликов YouTube с чутьём на вирусное: клипы выйдут ГОРИЗОНТАЛЬНЫМ видео 16:9\n"
+        "(обычное видео, не шортс).",
+    ).replace(
+        "5. ДЛИНА: 15–60 с идеально; 2–3 минуты — только если там реально сильная история.",
+        f"5. ДЛИНА: горизонтальному ролику можно больше, чем шортсу: до {minutes:g} мин, если история держит\n"
+        "   до конца; короткий самодостаточный панч (15–60 с) тоже хорош.",
+    )
+
+
 def _schema() -> dict[str, Any]:
     pick = {
         "type": "object",
@@ -104,13 +122,21 @@ def pick_best(
     goal: str = "",
     client: GeminiClient | None = None,
     model: str | None = None,
+    output_format: str | None = None,
 ) -> dict:
-    """Ask the model, star the picks, remember score + reason. Returns the picks."""
+    """Ask the model, star the picks, remember score + reason. Returns the picks.
+
+    ``output_format`` — формат будущих клипов; не задан — настройка ``analysis_format``
+    (как у анализа), нет — 9:16 (прежний запрос)."""
+    from app.ai.service import _analysis_output_format, _landscape_max_clip_sec
+
     candidates = candidate_lines(store, source_id)
     if not candidates:
         raise RuntimeError("нет видимых моментов — сначала анализ")
     n = max(1, min(int(count), 50, len(candidates)))
-    prompt = RULES.format(n=n, goal=f"Пожелание владельца: {goal.strip()}\n" if goal.strip() else "")
+    fmt = _analysis_output_format(store, output_format)
+    rules = rules_for_format(fmt, _landscape_max_clip_sec(store) if fmt == "16:9" else 180.0)
+    prompt = rules.format(n=n, goal=f"Пожелание владельца: {goal.strip()}\n" if goal.strip() else "")
     prompt += "\n".join(json.dumps(c, ensure_ascii=False) for c in candidates)
     used_model = model or settings.gemini_pick_model
     response = (client or GeminiClient()).generate_content(
