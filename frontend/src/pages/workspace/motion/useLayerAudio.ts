@@ -7,6 +7,7 @@
 import { useEffect, useRef } from "react";
 import type { Layer } from "@/motion";
 import { packFileUrl } from "@/api/motion";
+import { previewVolume } from "./sound";
 
 /** URL звука слоя: файл пака (`sfx:<пак>/<файл>`) или файл из «Файлов для монтажа». */
 export function audioUrl(ref: string): string {
@@ -50,7 +51,8 @@ export function useLayerAudio(
           a.preload = "auto";
           players.set(layer.id, a);
         }
-        a.volume = Math.min(1, Math.max(0, layer.props.volume ?? 1));
+        // Эффект — volume ≤ 1, дорожка (mode track) — volume × gain_db (в браузере потолок 1).
+        a.volume = previewVolume(layer);
         const want = (layer.props.offset ?? 0) + (t! - layer.start);
         if (a.paused) {
           a.currentTime = want;

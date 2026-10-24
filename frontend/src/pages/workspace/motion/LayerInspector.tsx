@@ -669,6 +669,15 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 <Toggle label="Стоп-кадр в конце" checked={layer.props.freeze !== false} onChange={(freeze) => patchProps({ freeze })} />
                 <Toggle label="Замереть на «С секунды»" checked={Boolean(layer.props.hold)} onChange={(hold) => patchProps({ hold })} />
               </div>
+              <div title="Звук файла входит в микс рендера дорожкой (без автоподгонки под голос); стоп-кадр и скорость вне 0.5–2 — тишина">
+                <Toggle label="Звук видео" checked={layer.props.audio === true} onChange={(audio) => patchProps({ audio: audio || undefined })} />
+              </div>
+              {layer.props.audio === true ? (
+                <div className="li-row">
+                  <Num label="Громкость" value={layer.props.volume ?? 1} min={0} max={2} step={0.05} onChange={(volume) => patchProps({ volume })} />
+                  <Num label="Усиление, дБ" value={layer.props.gain_db ?? 0} min={-30} max={12} step={0.5} onChange={(gain_db) => patchProps({ gain_db })} />
+                </div>
+              ) : null}
             </>
           ) : null}
           <div className="li-row">
@@ -891,16 +900,30 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
 
       {layer.type === "audio" ? (
         <Section title="Звук">
+          <div title="Эффект — сервис сам ставит его под голос клипа, громкость только тише. Дорожка (песня, звук ролика) — без автоподгонки: громкость × усиление">
+            <Toggle
+              label="Дорожка (без подгонки под голос)"
+              checked={layer.props.mode === "track"}
+              onChange={(on) =>
+                patchProps(on ? { mode: "track" } : { mode: undefined, gain_db: undefined, volume: Math.min(1, layer.props.volume ?? 1) })
+              }
+            />
+          </div>
           <label className="field range">
             <span>Громкость · {Math.round((layer.props.volume ?? 1) * 100)}%</span>
             <input
               type="range"
               min={0}
-              max={200}
+              max={layer.props.mode === "track" ? 200 : 100}
               value={Math.round((layer.props.volume ?? 1) * 100)}
               onChange={(e) => patchProps({ volume: Number(e.target.value) / 100 })}
             />
           </label>
+          {layer.props.mode === "track" ? (
+            <div className="li-row">
+              <Num label="Усиление, дБ" value={layer.props.gain_db ?? 0} min={-30} max={12} step={0.5} onChange={(gain_db) => patchProps({ gain_db })} />
+            </div>
+          ) : null}
           <div className="li-row">
             <Num label="Вход, с" value={layer.props.fadeIn ?? 0} min={0} max={5} step={0.05} onChange={(fadeIn) => patchProps({ fadeIn })} />
             <Num label="Выход, с" value={layer.props.fadeOut ?? 0} min={0} max={5} step={0.05} onChange={(fadeOut) => patchProps({ fadeOut })} />

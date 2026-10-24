@@ -271,10 +271,13 @@ def test_upload_video_and_kind_check(tmp_path, monkeypatch):
                                                        "props": {"asset_id": out["asset_id"], "w": 300,
                                                                  "device": "phone"}}]})
     assert ok, res
-    # Кусок исходника → видео в библиотеку (немое).
+    # Кусок исходника → видео в библиотеку: со звуком (слой играет его только с props.audio), audio:false — немое.
     cut = h_add_video_from_source(ctx, {"source_id": source["id"], "start": 1, "end": 2.5})
     asset = store.get_montage_asset(cut["asset_id"])
-    assert asset["kind"] == "video" and 1.3 <= asset["duration_sec"] <= 1.7 and not asset["has_audio"]
+    assert asset["kind"] == "video" and 1.3 <= asset["duration_sec"] <= 1.7 and asset["has_audio"]
+    assert cut["has_audio"] and "props.audio" in cut["hint"]
+    mute = h_add_video_from_source(ctx, {"source_id": source["id"], "start": 1, "end": 2.5, "audio": False})
+    assert not store.get_montage_asset(mute["asset_id"])["has_audio"] and not mute["has_audio"]
     # end за концом исходника — до конца; пустой кусок и чужой id — понятная ошибка.
     whole = h_add_video_from_source(ctx, {"source_id": source["id"], "start": 5, "end": 500})
     assert whole["duration_sec"] == pytest.approx(source["duration_sec"] - 5, abs=0.3)

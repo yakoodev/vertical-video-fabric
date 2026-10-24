@@ -158,7 +158,8 @@ def mcp_tool_list() -> list[dict]:
                     "readOnlyHint": not tool.mutating,
                     "destructiveHint": tool.name in ("remove_layers", "clear_layers", "trim_piece", "remove_insert"),
                     "idempotentHint": False,
-                    "openWorldHint": tool.name in ("search_web_images", "add_image_from_url", "generate_image"),
+                    "openWorldHint": tool.name in ("search_web_images", "add_image_from_url", "generate_image",
+                                                   "add_video_from_url"),
                 },
             }
         )

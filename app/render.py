@@ -1061,7 +1061,10 @@ class ClipRenderService:
         layout: dict | None = None,
         music_start_sec: float | None = None,
         aspect: str | None = None,
+        end_hold_sec: float | None = None,
     ) -> dict:
+        """``end_hold_sec`` — стоп-кадр в конце для этого рендера (0..1.5); None — из настроек
+        клипа (render_settings.end_hold_sec), там нет — RENDER_END_HOLD_SEC."""
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
         if not segments:
@@ -1073,7 +1076,7 @@ class ClipRenderService:
         if aspect is None:
             aspect = (plan.get("render_settings") or {}).get("aspect")
         aspect = check_aspect_source(aspect, self.store.get_source(int(plan["source_id"])))
-        end_hold = self._end_hold_sec()
+        end_hold = self._end_hold_sec(plan, end_hold_sec)
         # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
         # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
         cut_plan = self._cut_plan(plan, ffmpeg_preset_id)
@@ -1194,7 +1197,7 @@ class ClipRenderService:
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion, plan)
-            clip = self._normalize_loudness(clip)
+            clip = self._normalize_loudness(clip, hold=end_hold)
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
@@ -1463,23 +1466,34 @@ class ClipRenderService:
             shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
-    def _end_hold_sec() -> float:
-        """Стоп-кадр в конце ролика (RENDER_END_HOLD_SEC); его кладёт финальный проход
-        звука — без него (RENDER_LOUDNORM=0) стоп-кадра нет."""
+    def _end_hold_sec(plan: dict | None = None, override: float | None = None) -> float:
+        """Стоп-кадр в конце ролика; его кладёт финальный проход звука — без него
+        (RENDER_LOUDNORM=0) стоп-кадра нет. Сколько: ``override`` (параметр рендера), иначе
+        настройка клипа ``end_hold_sec`` (мему — 0: концовка без «замирания»), иначе
+        RENDER_END_HOLD_SEC. Свои значения клипа — в рамках 0..END_HOLD_MAX_SEC."""
         if not settings.render_loudnorm:
             return 0.0
-        return max(0.0, float(settings.render_end_hold_sec or 0))
+        from app.clip_settings import normalize_end_hold
+
+        value = normalize_end_hold(override)
+        if value is None and plan is not None:
+            value = normalize_end_hold((plan.get("render_settings") or {}).get("end_hold_sec"))
+        if value is None:
+            value = float(settings.render_end_hold_sec or 0)
+        return max(0.0, value)
 
     def _apply_audio_layers(self, clip: dict, motion: dict, plan: dict | None = None) -> dict:
-        """Звуки ``audio``-слоёв в готовый клип — последним проходом, видео копией.
+        """Звуки ``audio``-слоёв и звук ``video``-слоёв с ``props.audio`` в готовый клип —
+        последним проходом, видео копией.
 
         Последним, а не в моушн-проходе: субтитры распознаются по звуку основы,
         и бум/свист поверх речи мешал бы распознаванию (как и музыка). Ошибка не
         теряет клип — пишется в его ошибку.
         """
+        from app.motion import has_layer_sound
         from app.motion_render import build_audio_layers_args, resolve_layer_assets
 
-        layers = [layer for layer in motion.get("layers") or [] if layer["type"] == "audio"]
+        layers = [layer for layer in motion.get("layers") or [] if has_layer_sound(layer)]
         path = Path(clip.get("output_path") or "")
         if not layers or not path.exists():
             return clip
@@ -1492,9 +1506,12 @@ class ClipRenderService:
             has_audio = _has_audio_stream(path)
             # Без речи (игра) «голос» — громкие места клипа: эффект чуть ниже них, а не на 10 дБ.
             speechless = bool(plan) and has_audio and plan_is_speechless(self.store, plan)
+            effects = any(layer["type"] == "audio" and not layer["props"].get("mode") == "track" for layer in layers)
             args = build_audio_layers_args(
                 path, tmp, layers, assets, meta.duration_sec, clip_has_audio=has_audio,
-                speech_db=speech_level_db(path) if has_audio else None, speechless=speechless,
+                # Уровень голоса нужен только эффектам (дорожки без автоподгонки) — без них не меряем.
+                speech_db=speech_level_db(path) if has_audio and effects else None, speechless=speechless,
+                notes=notes,
             )
             if args is not None:
                 _run_ffmpeg(args, timeout=60 * 20)
@@ -1508,14 +1525,15 @@ class ClipRenderService:
         except Exception as exc:  # noqa: BLE001 - звуки слоёв — надстройка, клип важнее
             return self._note_clip_error(clip["id"], f"звуки слоёв не наложены: {str(exc)[:200]}")
 
-    def _normalize_loudness(self, clip: dict) -> dict:
+    def _normalize_loudness(self, clip: dict, hold: float | None = None) -> dict:
         """Громкость под площадки: −14 LUFS и пик не выше −1.5 dBFS.
 
         Тихий рэп выходил на −20 LUFS, а клип со звуками — с пиком выше нуля:
         TikTok/Shorts всё равно приводят громкость к своей, только тихий ролик
         тогда звучит хуже соседей, а громкий хрипит. Два прохода loudnorm:
         замер, потом линейная поправка по замеру — без «качелей» громкости.
-        Заодно — финал: стоп-кадр RENDER_END_HOLD_SEC и затухание звука на нём.
+        Заодно — финал: стоп-кадр ``hold`` (None — RENDER_END_HOLD_SEC; у клипа — его
+        end_hold_sec, ``_end_hold_sec``) и затухание звука на нём.
         Пики — по true peak (лимитер на ×4 частоте), готовый файл проверяется замером
         и при перебое пересобирается с потолком ниже.
         Сбой не теряет клип.
@@ -1534,7 +1552,7 @@ class ClipRenderService:
             # Музыка уже доиграна на стоп-кадр (проход музыки, _music_filter с hold_sec):
             # звук длиннее картинки — стоп-кадр ровно на этот хвост, тишину не добавляем.
             tail = music_tail_sec(meta)
-            hold = tail if tail > 0 else self._end_hold_sec()
+            hold = tail if tail > 0 else (self._end_hold_sec() if hold is None else max(0.0, float(hold)))
             pad = [f"apad=pad_dur={hold:.3f}"] if hold > 0 and tail <= 0 else []
             import logging
 

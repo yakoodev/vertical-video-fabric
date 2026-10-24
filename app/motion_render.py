@@ -28,6 +28,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from app.motion import (
+    EFFECT_MAX_VOLUME,
     VIDEO_MAX_SPEED,
     VIDEO_MIN_SPEED,
     VIDEO_TAIL,
@@ -59,7 +60,9 @@ EFFECT_UNDER_SPEECH_DB = 10.0
 # и эффект на 10 дБ ниже них тонул (агент: «панчлайн-звук −8 дБ от среднего»).
 # Там цель — чуть ниже громких мест клипа, но не громче их.
 EFFECT_UNDER_LOUD_DB = 4.0
-MAX_EFFECT_VOLUME = 1.0
+# Потолок volume эффекта — тот же, что в схеме: схема и рендер согласны (раньше схема
+# пускала 2, а рендер молча резал до 1).
+MAX_EFFECT_VOLUME = EFFECT_MAX_VOLUME
 _LEVEL_CACHE: dict[tuple[str, float, float | None], tuple[float, float] | None] = {}
 
 
@@ -761,6 +764,65 @@ def build_motion_mux_args(
     return args
 
 
+# Края звука-дорожки (звук video, audio mode track): короткий фейд, чтобы обрезка посреди
+# волны не щёлкала. 15 мс — затухания не слышно, а щелчка нет.
+TRACK_EDGE_FADE = 0.015
+
+
+def _probe_sound(path: Path) -> tuple[float, bool]:
+    """(длина файла, с; есть ли звук) — для звука video-слоя."""
+    from app.montage_assets import probe_asset
+
+    meta = probe_asset(path)
+    return float(meta.get("duration_sec") or 0.0), bool(meta.get("has_audio"))
+
+
+def video_sound_item(layer: dict, path: str, duration: float, file_duration: float | None,
+                     has_audio: bool = True) -> tuple[dict | None, str | None]:
+    """Звук video-слоя с ``props.audio``: что подмешать, или (None, пометка), почему тишина.
+
+    Время — как у картинки (``video_file_time``): секунда файла = from + (t − start)·speed;
+    за концом файла loop — снова с from, иначе тишина (freeze держит кадр, но не звук);
+    hold — стоп-кадр, звука нет; speed вне VIDEO_AUDIO_MIN..MAX — звука нет (atempo дальше
+    звучит кашей)."""
+    from app.motion import VIDEO_AUDIO_MAX_SPEED, VIDEO_AUDIO_MIN_SPEED, track_gain
+
+    props = layer.get("props") or {}
+    lid = layer.get("id")
+    if not has_audio:
+        return None, f"слой {lid}: у видео нет звуковой дорожки — audio ничего не даст"
+    if props.get("hold"):
+        return None, None  # стоп-кадр — тишина, это ожидаемо
+    speed = min(VIDEO_MAX_SPEED, max(VIDEO_MIN_SPEED, float(props.get("speed") or 1.0)))
+    if not (VIDEO_AUDIO_MIN_SPEED - 1e-6 <= speed <= VIDEO_AUDIO_MAX_SPEED + 1e-6):
+        return None, (f"слой {lid}: speed {speed:g} вне {VIDEO_AUDIO_MIN_SPEED:g}..{VIDEO_AUDIO_MAX_SPEED:g} — "
+                      "звук видео не играет")
+    start = float(layer["start"])
+    end = min(float(layer["end"]), float(duration))
+    begin = max(0.0, float(props.get("from") or 0.0))
+    if end - start < 0.05:
+        return None, None
+    length = end - start  # секунды клипа
+    loop_span = None
+    if file_duration and file_duration > 0:
+        rest = file_duration - VIDEO_TAIL - begin
+        if rest <= 0.05:
+            return None, None  # from за концом файла — кадр стоит, звука нет
+        if props.get("loop") and rest < length * speed:
+            loop_span = rest
+        else:
+            length = min(length, rest / speed)
+    if length < 0.05:
+        return None, None
+    return {
+        "path": path, "start": start, "end": start + length, "len": length, "offset": begin,
+        # Сколько секунд файла читать: с петлёй — до конца файла (петлю делает aloop).
+        "read": None if loop_span else length * speed, "loop": loop_span, "tempo": speed,
+        "volume": track_gain(props), "fade_in": TRACK_EDGE_FADE, "fade_out": TRACK_EDGE_FADE,
+        "duck": False, "track": True,
+    }, None
+
+
 def build_audio_layers_args(
     clip_path: Path,
     output_path: Path,
@@ -770,55 +832,99 @@ def build_audio_layers_args(
     clip_has_audio: bool = True,
     speech_db: float | None = None,
     speechless: bool = False,
+    probe: Callable[[Path], tuple[float, bool]] | None = None,
+    notes: list[str] | None = None,
 ) -> list[str] | None:
-    """Подмешать звуки ``audio``-слоёв в готовый клип (видео копией).
+    """Подмешать звуки ``audio``-слоёв и звук ``video``-слоёв с ``props.audio`` (видео копией).
 
     ``speechless`` — в клипе нет речи (effect_gain_db: эффект чуть ниже громких мест).
 
     Каждый звук: с ``offset`` секунды файла, громкость, fadeIn/fadeOut, сдвиг на
-    ``start`` клипа (adelay). ``duck`` приглушает исходник на время звука.
-    None — подмешивать нечего.
+    ``start`` клипа (adelay). ``duck`` приглушает исходник на время звука. Эффект
+    (audio, mode effect) сначала подгоняется под голос клипа; дорожка (audio mode track,
+    звук video) — нет: volume × gain_db, края с фейдом TRACK_EDGE_FADE (итог всё равно
+    выравнивает финальная нормализация клипа). ``probe`` — (длина, есть ли звук) файла
+    video-слоя; ``notes`` — куда сказать, почему звук слоя не подмешан. None — нечего.
     """
+    from app.motion import has_layer_sound, is_track_audio, track_gain
+
+    probe = probe or _probe_sound
+    probed: dict[str, tuple[float, bool]] = {}
     usable: list[dict] = []
     for layer in layers:
+        if not has_layer_sound(layer):
+            continue
         props = layer["props"]
         path = assets.get(asset_key(props.get("asset_id")))
+        if not path:
+            continue
+        if layer["type"] == "video":
+            if path not in probed:
+                try:
+                    probed[path] = probe(Path(path))
+                except Exception:  # noqa: BLE001 - не узнали длину — считаем, что звук есть
+                    probed[path] = (0.0, True)
+            file_duration, has_audio = probed[path]
+            item, note = video_sound_item(layer, path, duration, file_duration, has_audio)
+            if note and notes is not None:
+                notes.append(note)
+            if item:
+                usable.append(item)
+            continue
         start = float(layer["start"])
         end = min(float(layer["end"]), float(duration))
-        if not path or end - start < 0.05:
+        if end - start < 0.05:
             continue
-        usable.append({"layer": layer, "path": path, "start": start, "end": end, "len": end - start})
+        track = is_track_audio(layer)
+        length = end - start
+        fade_in = min(float(props.get("fadeIn") or 0), length)
+        fade_out = min(float(props.get("fadeOut") or 0), length)
+        if track:
+            fade_in, fade_out = max(fade_in, TRACK_EDGE_FADE), max(fade_out, TRACK_EDGE_FADE)
+        usable.append({
+            "path": path, "start": start, "end": end, "len": length, "offset": float(props.get("offset") or 0),
+            "read": length, "loop": None, "tempo": 1.0,
+            "volume": track_gain(props) if track
+            else effect_volume(path, props.get("volume", 1), speech_db, speechless),
+            "fade_in": fade_in, "fade_out": fade_out, "duck": bool(props.get("duck")), "track": track,
+        })
     if not usable:
         return None
 
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(clip_path)]
     for item in usable:
-        offset = float(item["layer"]["props"].get("offset") or 0)
-        if offset > 0:
-            args += ["-ss", f"{offset:.3f}"]
-        args += ["-t", f"{item['len']:.3f}", "-i", item["path"]]
+        if item["offset"] > 0:
+            args += ["-ss", f"{item['offset']:.3f}"]
+        if item["read"] is not None:
+            args += ["-t", f"{item['read']:.3f}"]
+        args += ["-i", item["path"]]
 
     graph: list[str] = []
     parts: list[str] = []
     ducks: list[str] = []
     for n, item in enumerate(usable, start=1):
-        props = item["layer"]["props"]
         length = item["len"]
         # Звуки пака — моно: без стерео на входе amix сводил ВСЁ в моно (клип 575: музыка
         # потеряла стерео, а громкость потом мерилась уже по моно-дорожке).
-        chain = [f"[{n}:a]aresample=48000", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS",
-                 f"volume={effect_volume(item['path'], props.get('volume', 1), speech_db, speechless):.4f}"]
-        fade_in = min(float(props.get("fadeIn") or 0), length)
-        if fade_in > 0:
-            chain.append(f"afade=t=in:st=0:d={fade_in:.3f}")
-        fade_out = min(float(props.get("fadeOut") or 0), length)
-        if fade_out > 0:
-            chain.append(f"afade=t=out:st={max(0.0, length - fade_out):.3f}:d={fade_out:.3f}")
+        chain = [f"[{n}:a]aresample=48000", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS"]
+        if item["loop"]:
+            # Петля видео: от from до конца файла по кругу (как loop картинки).
+            chain.append(f"aloop=loop=-1:size={max(1, int(round(item['loop'] * 48000)))}")
+        if abs(item["tempo"] - 1.0) >= 1e-3:
+            chain.append(f"atempo={item['tempo']:.4f}")
+        if item["loop"] or abs(item["tempo"] - 1.0) >= 1e-3:
+            # Ровно длина слоя в клипе (петля бесконечна, atempo округляет).
+            chain += [f"atrim=0:{length:.3f}", "asetpts=PTS-STARTPTS"]
+        chain.append(f"volume={item['volume']:.4f}")
+        if item["fade_in"] > 0:
+            chain.append(f"afade=t=in:st=0:d={item['fade_in']:.3f}")
+        if item["fade_out"] > 0:
+            chain.append(f"afade=t=out:st={max(0.0, length - item['fade_out']):.3f}:d={item['fade_out']:.3f}")
         delay = int(round(item["start"] * 1000))
         chain.append(f"adelay=delays={delay}:all=1")
         graph.append(",".join(chain) + f"[a{n}]")
         parts.append(f"[a{n}]")
-        if props.get("duck"):
+        if item["duck"]:
             ducks.append(f"between(t,{item['start']:.3f},{item['end']:.3f})")
 
     if clip_has_audio:

@@ -384,7 +384,10 @@ console.log(JSON.stringify({{
     tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "CandidatesTab.tsx").read_text(encoding="utf-8")
     assert "    mute,\n    gain,\n" in tab and "gain: s.gain ?? []," in tab and "setGain(s.gain ?? []);" in tab
     # Формат кадра холста (app/aspect.py) — так же: в панели, при загрузке и в автосохранении.
-    assert "    gain,\n    aspect,\n  });" in tab and 'aspect: s.aspect ?? "9:16",' in tab and "setAspect(s.aspect" in tab
+    assert "    gain,\n    aspect,\n" in tab and 'aspect: s.aspect ?? "9:16",' in tab and "setAspect(s.aspect" in tab
+    # Стоп-кадр в конце (render.end_hold_sec) — тоже: иначе автосохранение редактора стирало бы set_end_hold.
+    assert "    aspect,\n    end_hold_sec: endHoldSec,\n  });" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
+    assert "setEndHoldSec(s.end_hold_sec ?? null);" in tab
 
 
 # ------------------------------------------------------------------ чат Twitch (п. 1)

@@ -72,6 +72,7 @@ import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
+import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import {
   GeneratePanel,
   MemesPanel,
@@ -1242,6 +1243,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   gainRef.current = gain;
   // Формат кадра холста (app/aspect.py): 9:16, квадрат 1:1 или 4:5 из того же монтажа.
   const [aspect, setAspect] = useState<Aspect>("9:16");
+  // Стоп-кадр в конце готового ролика, с (render.end_hold_sec): null — как у сервиса, 0 — мем без «замирания».
+  const [endHoldSec, setEndHoldSec] = useState<number | null>(null);
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
@@ -1389,6 +1392,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     mute,
     gain,
     aspect,
+    end_hold_sec: endHoldSec,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1467,6 +1471,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       mute: s.mute ?? [],
       gain: s.gain ?? [],
       aspect: s.aspect ?? "9:16",
+      end_hold_sec: s.end_hold_sec ?? null,
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1494,6 +1499,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setMute(s.mute ?? []);
     setGain(s.gain ?? []);
     setAspect(s.aspect ?? "9:16");
+    setEndHoldSec(s.end_hold_sec ?? null);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);
@@ -1922,6 +1928,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Заглушённые отрезки превью проигрывает без звука видео — как выйдет в рендере
   // (звуки слоёв и музыка играют). Глушим только то, что заглушили сами: свой
   // «без звука» в плеере владельца не трогаем.
+  // Видео-слои с audio: true звучат в превью, только если владелец не заглушил превью
+  // (наше автоглушение вырезанных отрезков звук слоёв не трогает — как в рендере).
+  const autoMutedRef = useRef(false);
+  useEffect(() => {
+    setPreviewSound(() => {
+      const v = videoRef.current;
+      return Boolean(v && (!v.muted || autoMutedRef.current) && v.volume > 0);
+    });
+    return () => setPreviewSound(() => false);
+  }, []);
   useEffect(() => {
     let raf = 0;
     let ours = false;
@@ -1937,6 +1953,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           v.muted = false;
           ours = false;
         }
+        autoMutedRef.current = ours;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -4471,6 +4488,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </select>
               </label>
             )}
+            <label className="ed-aspect" title="Последний кадр стоит, пока затухает звук (музыка доигрывает на нём). Мему — «без стоп-кадра»: ролик обрывается на последнем кадре">
+              <span>Стоп-кадр в конце</span>
+              <select
+                value={endHoldSec == null ? "" : String(endHoldSec)}
+                onChange={(e) => setEndHoldSec(e.target.value === "" ? null : Number(e.target.value))}
+              >
+                <option value="">как у сервиса</option>
+                <option value="0">без стоп-кадра</option>
+                <option value="0.25">0.25 с</option>
+                <option value="0.5">0.5 с</option>
+                <option value="1">1 с</option>
+                <option value="1.5">1.5 с</option>
+              </select>
+            </label>
             <div className="ed-render-btns">
               <button
                 className="btn primary"

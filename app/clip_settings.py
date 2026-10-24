@@ -94,6 +94,23 @@ def _pct(value: object, default: float, lo: float = 0.0, hi: float = 100.0) -> f
     return min(hi, max(lo, number))
 
 
+# Стоп-кадр в конце ролика на клип (end_hold_sec): 0 — мем без «замирания» в конце.
+END_HOLD_MAX_SEC = 1.5
+
+
+def normalize_end_hold(value: object) -> float | None:
+    """Стоп-кадр клипа, с: None (нет/мусор — как у сервиса, RENDER_END_HOLD_SEC) или 0..1.5."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN
+        return None
+    return round(min(END_HOLD_MAX_SEC, max(0.0, number)), 2)
+
+
 def normalize_render_settings(raw: object) -> dict:
     """Coerce whatever was stored/sent into the full settings shape."""
     src = raw if isinstance(raw, dict) else {}
@@ -136,6 +153,9 @@ def normalize_render_settings(raw: object) -> dict:
         # Формат кадра: 9:16 (как всегда) / 1:1 / 4:5 — пока только у холста (app/aspect.py).
         # Рендер читает его прямо из настроек плана, как раскладку.
         "aspect": settings_aspect(src.get("aspect")),
+        # Стоп-кадр в конце ролика, с (0..1.5); None — как у сервиса (RENDER_END_HOLD_SEC).
+        # Рендер читает прямо из настроек плана (ClipRenderService._end_hold_sec).
+        "end_hold_sec": normalize_end_hold(src.get("end_hold_sec")),
     }
 
 

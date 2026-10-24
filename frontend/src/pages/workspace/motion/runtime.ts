@@ -18,6 +18,7 @@ import {
   type VideoSource,
 } from "@/motion";
 import { motionApi, type MotionFont } from "@/api/motion";
+import { previewSoundOn, previewVolume, videoLayerAudible } from "./sound";
 
 type Entry = { img: HTMLImageElement | null; failed: boolean };
 
@@ -54,7 +55,15 @@ export function preloadLayerImages(layers: Layer[]): void {
  * играет) — элемент играет сам со скоростью слоя и подправляется только при заметном
  * рассинхроне; если время стоит (пауза, скраб) — точный seek на нужную секунду.
  */
-type VideoEntry = { el: HTMLVideoElement; src: VideoSource; lastT: number; lastWall: number; touched: number };
+type VideoEntry = {
+  el: HTMLVideoElement;
+  src: VideoSource;
+  lastT: number;
+  lastWall: number;
+  touched: number;
+  /** Последний вид слоя: скорость и звук правят в инспекторе, элемент остаётся тот же. */
+  layer: VideoLayer;
+};
 
 const videos = new Map<string, VideoEntry>();
 /** Играющий элемент правим, только если ушёл дальше этого (с); на паузе — точнее кадра. */
@@ -66,14 +75,18 @@ function videoEntry(layer: VideoLayer): VideoEntry | null {
   if (!ref) return null;
   const key = `${layer.id}|${ref}`;
   const hit = videos.get(key);
-  if (hit) return hit;
+  if (hit) {
+    hit.layer = layer;
+    return hit;
+  }
   const el = document.createElement("video");
-  el.muted = true; // видео-слой немой
+  el.muted = true; // немой, пока у слоя нет audio: true (и звук превью включён) — см. syncVideo
   el.playsInline = true;
   el.preload = "auto";
   el.src = assetUrl(ref);
   const entry: VideoEntry = {
     el,
+    layer,
     lastT: -1,
     lastWall: 0,
     touched: performance.now(),
@@ -87,7 +100,7 @@ function videoEntry(layer: VideoLayer): VideoEntry | null {
       get height() {
         return el.videoHeight;
       },
-      frame: (time) => syncVideo(entry, time, layer),
+      frame: (time) => syncVideo(entry, time, entry.layer),
     },
   };
   videos.set(key, entry);
@@ -110,6 +123,14 @@ function syncVideo(entry: VideoEntry, time: number, layer: VideoLayer) {
   } else {
     if (!el.paused) el.pause();
     if (!el.seeking && Math.abs(el.currentTime - time) > SEEK_EPS) el.currentTime = time;
+  }
+  // Звук слоя — как в рендере: только audio: true (не стоп-кадр, скорость 0.5..2), пока превью
+  // играет и его звук не заглушён владельцем. Иначе элемент немой, как раньше.
+  const audible = moving && videoLayerAudible(layer) && previewSoundOn();
+  if (el.muted === audible) el.muted = !audible;
+  if (audible) {
+    const volume = previewVolume(layer);
+    if (Math.abs(el.volume - volume) > 1e-3) el.volume = volume;
   }
   if (el.readyState < 2 || !el.videoWidth) return null;
   return { image: el as unknown as { width: number; height: number }, width: el.videoWidth, height: el.videoHeight };

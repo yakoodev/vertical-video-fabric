@@ -1895,10 +1895,13 @@ MAX_SOURCE_CLIP_SEC = 180.0
 
 
 def _video_asset_result(asset: dict) -> dict:
+    sound = ("звук файла в клипе — props.audio: true (дорожкой: volume 0..2, gain_db −30..+12), без него слой немой"
+             if asset.get("has_audio") else "у файла нет звука — слой немой")
     return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
             "width": asset.get("width"), "height": asset.get("height"), "duration_sec": asset.get("duration_sec"),
+            "has_audio": bool(asset.get("has_audio")),
             "hint": "слой {type: video, props: {asset_id, from, w, device: phone}} — запись в телефоне; "
-                    "звук видео-слой не играет"}
+                    "во весь кадр шире 9:16 — auto_crop_layer; " + sound}
 
 
 def h_upload_video(ctx: ToolContext, args: dict) -> dict:
@@ -1946,10 +1949,12 @@ def h_upload_video(ctx: ToolContext, args: dict) -> dict:
     return _video_asset_result(asset)
 
 
-def source_clip_args(src: Path, start: float, end: float, dest: Path) -> list[str]:
-    """ffmpeg: кусок исходника → немое видео для слоя video (h264, без звука, ≤ 1920 по стороне)."""
+def source_clip_args(src: Path, start: float, end: float, dest: Path, audio: bool = True) -> list[str]:
+    """ffmpeg: кусок исходника → видео для слоя video (h264, ≤ 1920 по стороне). ``audio`` — со
+    звуком (первая дорожка, AAC): слой играет его только с props.audio; False — немое."""
+    sound = ["-map", "0:v:0", "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio else ["-an"]
     return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.3f}", "-i", str(src),
-            "-t", f"{end - start:.3f}", "-an", "-sn", "-dn",
+            "-t", f"{end - start:.3f}", *sound, "-sn", "-dn",
             "-vf", "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", str(dest)]
@@ -1983,7 +1988,7 @@ def h_add_video_from_source(ctx: ToolContext, args: dict) -> dict:
                         "секунда внутри куска)")
     dest = assets_dir() / f"{uuid4().hex}-source{source['id']}-{start:.0f}-{end:.0f}.mp4"
     try:
-        _run_ffmpeg(source_clip_args(src, start, end, dest), timeout=900)
+        _run_ffmpeg(source_clip_args(src, start, end, dest, audio=args.get("audio", True) is not False), timeout=900)
     except Exception as exc:  # noqa: BLE001
         dest.unlink(missing_ok=True)
         raise ToolError(f"не нарезалось: {str(exc)[:200]}") from exc
@@ -2003,6 +2008,149 @@ def h_add_video_from_source(ctx: ToolContext, args: dict) -> dict:
         **meta,
     )
     return _video_asset_result(asset)
+
+
+def h_add_video_from_url(ctx: ToolContext, args: dict) -> dict:
+    """Отрезок ролика по ссылке владельца (yt-dlp, только start..end) → видео со звуком в библиотеку."""
+    from app.video_import import import_video_from_url
+
+    try:
+        asset = import_video_from_url(ctx.store, str(args.get("url") or ""), args.get("start"), args.get("end"),
+                                      str(args.get("label") or ""))
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
+        raise ToolError(f"не удалось скачать отрезок: {str(exc)[:200]}") from exc
+    return _video_asset_result(asset)
+
+
+def _crop_aspect(args: dict, props: dict, src_w: float, src_h: float) -> float:
+    """Пропорция окна: aspect из аргументов; нет — как у нынешнего окна crop; нет и его — 9:16."""
+    from app.layer_crop import parse_aspect
+
+    if args.get("aspect") not in (None, ""):
+        return parse_aspect(args.get("aspect"))
+    crop = props.get("crop") if isinstance(props.get("crop"), dict) else None
+    if crop and (crop.get("w", 1) < 0.999 or crop.get("h", 1) < 0.999):
+        return (float(crop["w"]) * src_w) / max(1e-6, float(crop["h"]) * src_h)
+    return parse_aspect(None)
+
+
+def h_auto_crop_layer(ctx: ToolContext, args: dict) -> dict:
+    """Окно video-слоя по планам: склейки — step, внутри плана — плавно за героем (app/layer_crop).
+
+    Детекция — та же, что у auto_focus кусков исходника (app/autofocus: объект/лица/движение,
+    склейки по гистограмме; Gemini по кадру на план — как у auto_focus, если ключ есть и use_vlm
+    не false). Склейки уточняются ffmpeg-детектором сцен (app/scene_cuts) по файлу слоя."""
+    from app.layer_crop import crop_keys_from_track, crop_window
+    from app.montage_assets import probe_asset
+    from app.motion import VIDEO_MAX_SPEED, VIDEO_MIN_SPEED, VIDEO_TAIL
+    from app.settings import settings
+
+    layer_id = str(args.get("layer_id") or args.get("id") or "")
+    render = _current_render(ctx)
+    layers = _layers_of(render)
+    index = next((i for i, l in enumerate(layers) if str(l.get("id")) == layer_id), None)
+    if index is None:
+        raise ToolError(f"слоя {layer_id or '?'} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
+    layer = layers[index]
+    if layer.get("type") != "video":
+        raise ToolError(f"слой {layer_id} — {layer.get('type')}, автофокус окна — только у video")
+    props = dict(layer.get("props") or {})
+    try:
+        asset = ctx.store.get_montage_asset(int(props.get("asset_id")))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolError(f"у слоя {layer_id} нет файла видео (asset_id)") from exc
+    path = Path(str(asset.get("file_path") or ""))
+    if not path.is_file():
+        raise ToolError(f"файла видео {asset['id']} нет на диске")
+    src_w, src_h = float(asset.get("width") or 0), float(asset.get("height") or 0)
+    file_duration = float(asset.get("duration_sec") or 0)
+    if not (src_w and src_h and file_duration):
+        meta = probe_asset(path)
+        src_w, src_h = float(meta.get("width") or 0), float(meta.get("height") or 0)
+        file_duration = float(meta.get("duration_sec") or 0)
+    try:
+        aspect = _crop_aspect(args, props, src_w, src_h)
+        axis, win_w, win_h = crop_window(src_w, src_h, aspect)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if axis is None:
+        raise ToolError(f"видео {src_w:.0f}×{src_h:.0f} уже пропорции окна — вести нечего (aspect другой?)")
+    window = win_w if axis == "x" else win_h
+
+    begin = max(0.0, float(props.get("from") or 0.0))
+    speed = 1.0 if props.get("hold") else min(VIDEO_MAX_SPEED, max(VIDEO_MIN_SPEED, float(props.get("speed") or 1.0)))
+    layer_len = max(0.1, float(layer["end"]) - float(layer["start"]))
+    available = max(0.0, file_duration - VIDEO_TAIL - begin) if file_duration else layer_len * speed
+    if available <= 0.1:
+        raise ToolError(f"from {begin:g} — за концом файла ({file_duration:g} с)")
+    span = min(0.6 if props.get("hold") else layer_len * speed, available)
+    loop_len = available / speed if props.get("loop") and available < layer_len * speed else None
+
+    resolver = None
+    if args.get("use_vlm", True) is not False and settings.gemini_api_key:
+        from app.ai.vlm_focus import shots_focus_x
+
+        resolver = shots_focus_x
+    from app.autofocus import compute_segment_focus
+
+    mode = "shot" if str(args.get("mode") or "").lower() == "shot" else "follow"
+    pseudo = {"local_path": str(path), "focus_preset": args.get("preset") or "balanced", "focus_strategy": mode}
+    try:
+        points = compute_segment_focus(pseudo, begin, begin + span, strategy=mode, vlm_resolver=resolver)
+    except ValueError as exc:
+        raise ToolError(f"автофокус не прошёл: {exc}") from exc
+    scene: list[float] = []
+    if not props.get("hold"):
+        from app.scene_cuts import detect_scene_cuts
+
+        scene = [t - begin for t in detect_scene_cuts(str(path)) if begin < t < begin + span]
+    if props.get("hold"):
+        points = points[:1]
+    result = crop_keys_from_track(points, axis=axis, window=window, speed=speed, layer_len=layer_len,
+                                  scene_times=scene, loop_len=loop_len)
+    keys = dict(layer.get("keys") or {})
+    prop = "cropX" if axis == "x" else "cropY"
+    other = "cropY" if axis == "x" else "cropX"
+    dropped = [name for name in ("cropW", "cropH", other) if keys.pop(name, None)]
+    base_x = result["base"] if axis == "x" else 0.0
+    base_y = result["base"] if axis == "y" else 0.0
+    props["crop"] = {"x": round(base_x, 4), "y": round(base_y, 4), "w": round(win_w, 4), "h": round(win_h, 4)}
+    if len(result["keys"]) > 1:
+        keys[prop] = result["keys"]
+    else:
+        keys.pop(prop, None)  # одна рамка на весь слой — хватает props.crop
+    layers[index] = motion.normalize_layers([{**layer, "props": props, "keys": keys}])[0]
+    fresh = _save_render(ctx, {**render, "layers": layers})
+    saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), layers[index])
+    cuts = sum(1 for k in result["keys"][:-1] if k.get("ease") == "step")
+    out: dict = {"ok": True, "layer_id": layer_id, "axis": prop, "window": {"w": win_w, "h": win_h},
+                 "keys": len(result["keys"]), "shots": result["shots"], "cuts": cuts,
+                 "vlm": resolver is not None, "crop": saved["props"].get("crop"),
+                 "note": "проверь contact_sheet по планам; промах — update_layer keys." + prop}
+    if dropped:
+        out["dropped_keys"] = dropped
+    if loop_len:
+        out["loop"] = f"ключи повторяются каждые {loop_len:.2f} с (loop)"
+    return out
+
+
+def h_set_end_hold(ctx: ToolContext, args: dict) -> dict:
+    """Стоп-кадр в конце ролика на клип: 0 — мем обрывается на последнем кадре, null — как у сервиса."""
+    from app.clip_settings import END_HOLD_MAX_SEC, normalize_end_hold
+    from app.settings import settings
+
+    raw = None if args.get("reset") else args.get("sec", args.get("end_hold_sec"))
+    value = normalize_end_hold(raw)
+    if raw not in (None, "") and value is None:
+        raise ToolError(f"sec — число 0..{END_HOLD_MAX_SEC:g} или null (как у сервиса)")
+    fresh = _save_render(ctx, {**_current_render(ctx), "end_hold_sec": value})
+    default = float(settings.render_end_hold_sec or 0)
+    effective = fresh["end_hold_sec"] if fresh["end_hold_sec"] is not None else default
+    return {"ok": True, "end_hold_sec": fresh["end_hold_sec"], "effective_sec": effective,
+            "note": ("готовый ролик кончится ровно на последнем кадре" if effective == 0 else
+                     f"последний кадр стоит {effective:g} с, пока затухает звук; музыка доигрывает на нём")}
 
 
 def h_generate_image(ctx: ToolContext, args: dict) -> dict:
@@ -3465,10 +3613,13 @@ props по типу:
          statusBar (true или доля ширины экрана 0..0.4: полоса «9:41 · связь · батарея» НАД записью, экран выше на неё;
          нужна, когда в записи нет строки статуса — иначе островок ляжет на шапку приложения), statusBarColor, screenGlare (блик стекла).
          island по умолчанию: у image — да, у video — только со statusBar
-  video: asset_id (видео из библиотеки: upload_video / add_video_from_source), from (секунда файла на start слоя),
+  video: asset_id (видео из библиотеки: upload_video / add_video_from_source / add_video_from_url), from (секунда файла на start слоя),
          speed 0.25..4, loop, freeze (по умолч. true — стоп-кадр в конце), hold (true — стоп-кадр секунды from на ВЕСЬ слой:
          «замереть на экране оплаты» = слой video с hold и нужным from), + всё от image (w, radius, crop, device, statusBar…).
-         НЕМОЕ. Промо приложения: запись экрана в device "phone"; нарезка 1–3 с = несколько video-слоёв подряд
+         По умолчанию НЕМОЕ; audio: true — звук файла в миксе (тот же from/speed/loop; hold и speed вне {motion.VIDEO_AUDIO_MIN_SPEED:g}..{motion.VIDEO_AUDIO_MAX_SPEED:g} — тишина)
+         дорожкой: volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g}, без автоподгонки — отдельный audio-слой со звуком ролика не нужен.
+         Кусок ролика 4:3/16:9 во весь кадр (w 1080) — auto_crop_layer(layer_id): окно crop + ключи cropX по планам (step на склейках).
+         Промо приложения: запись экрана в device "phone"; нарезка 1–3 с = несколько video-слоёв подряд
          с разными from; свайп между экранами = ключи x (0.5→−0.5 / 1.5→0.5); скролл = ключи cropY;
          наезд = ключи scale+y слоя (камера на холсте телефон не зумит)
   emoji: char ("🔥"), size
@@ -3481,11 +3632,15 @@ props по типу:
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
-  audio: asset_id ИЛИ "sfx:<pack>/<file>", volume 0..2, fadeIn, fadeOut, offset, duck (не рисуется)
+  audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
+         effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
+         track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};
+         итог всё равно выравнивает общая нормализация клипа)
 Все допустимые поля props (остальное отбрасывается): {fields}
 Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте)
   и слои с followCamera: true (путь камеры в их ключи не копируй).
   ease ключа — переход ОТ него к следующему ключу (по умолчанию inOutCubic); step — держать до следующего ключа и прыгнуть. zoom < 1 нет: шире окна — set_piece_fit.
+Конец ролика: последний кадр стоит ~0.5 с (стоп-кадр, пока затухает звук); мему без «замирания» — set_end_hold(sec: 0) (0..1.5).
 Субтитры captions: в hormozi/mrbeast/karaoke звучащее слово жёлтое — highlightWords жёлтым там не видны, бери #FF3B30 или #22C55E.
 Цвета: #rrggbb или #rrggbbaa."""
 
@@ -3860,12 +4015,25 @@ def _build_registry() -> list[Tool]:
             "add_video_from_source", "Беру кусок видео",
             "Кусок исходника сервиса (проект из list_projects: запись экрана, загруженная как видео) → видео "
             "в библиотеку для слоя video: source_id, start, end (секунды исходника, до 180 с; нет end — до "
-            "конца). Звук отбрасывается. / Cut a source range into the library for a video layer.",
+            "конца). Звук сохраняется (audio:false — немое); в клипе он играет только у слоя с props.audio: true. "
+            "/ Cut a source range into the library for a video layer.",
             _obj({"source_id": {"type": "integer"}, "start": {"type": "number"}, "end": {"type": "number"},
-                  "label": {"type": "string"}}, ["source_id"]),
+                  "label": {"type": "string"}, "audio": {"type": "boolean"}}, ["source_id"]),
             h_add_video_from_source, scope="global",
             label=lambda a: f"Беру кусок источника {a.get('source_id')} {_num(a.get('start'), 0.0) or 0:g}–"
             f"{a.get('end') if a.get('end') is not None else 'конец'} с",
+        ),
+        Tool(
+            "add_video_from_url", "Скачиваю отрезок видео",
+            "Отрезок ролика по ссылке ВЛАДЕЛЬЦА (YouTube и всё, что умеет yt-dlp): скачивается только start..end "
+            "(секунды ролика, до 180 с, ≤ 1080p) тем же способом и прокси, что источники, → видео СО ЗВУКОМ в "
+            "библиотеку (asset_id для слоя video; звук в клипе — props.audio: true). Сам ролики в интернете не "
+            "ищи — только ссылка владельца. / Download only a section of a video by the owner's link.",
+            _obj({"url": {"type": "string"}, "start": {"type": "number"}, "end": {"type": "number"},
+                  "label": {"type": "string"}}, ["url", "start", "end"]),
+            h_add_video_from_url, scope="global",
+            label=lambda a: f"Скачиваю отрезок {_num(a.get('start'), 0.0) or 0:g}–{_num(a.get('end'), 0.0) or 0:g} с"
+            + (f" «{_short(a.get('label'), 30)}»" if a.get("label") else ""),
         ),
         Tool(
             "generate_image", "Рисую картинку",
@@ -4043,6 +4211,17 @@ def _build_registry() -> list[Tool]:
             h_set_aspect, mutating=True, label=lambda a: f"Формат {a.get('aspect') or ''}".strip(),
         ),
         Tool(
+            "set_end_hold", "Ставлю стоп-кадр в конце",
+            "Стоп-кадр в конце готового ролика на этот клип: sec 0..1.5 (последний кадр стоит, пока затухает звук; "
+            "музыка доигрывает на нём). Мему — 0: ролик обрывается на последнем кадре, без «замирания». "
+            "reset:true (или sec не задан) — как у сервиса (RENDER_END_HOLD_SEC, обычно 0.5). "
+            "/ End freeze-frame per clip (0 for memes).",
+            _obj({"sec": {"type": "number", "minimum": 0, "maximum": 1.5}, "reset": {"type": "boolean"}}),
+            h_set_end_hold, mutating=True,
+            label=lambda a: "Стоп-кадр в конце: " + ("как у сервиса" if a.get("sec") is None or a.get("reset")
+                                                     else f"{a.get('sec')} с"),
+        ),
+        Tool(
             "set_backdrop", "Ставлю фон за персонажем",
             "Фон за вырезанным персонажем (нужен хромакей) — анимированный зацикленный, рисуется кодом: kind "
             f"{BG_KINDS_HINT}; colors — до 3 #rrggbb [тёмная основа, акцент, второй акцент], [] — в цветах ролика "
@@ -4190,6 +4369,20 @@ def _build_registry() -> list[Tool]:
             "поправь промахи set_focus. / Automatic 9:16 framing, per reply inside long dialogue shots.",
             _obj({"piece": {"type": "integer"}, "use_vlm": {"type": "boolean"}}),
             h_auto_focus, mutating=True, label=lambda a: "Ищу говорящего в кадре",
+        ),
+        Tool(
+            "auto_crop_layer", "Веду окно видео-слоя",
+            "Автофокус СЛОЯ video, чей файл шире (или выше) окна: окно props.crop пропорции aspect (\"9:16\" по "
+            "умолчанию; нет aspect, но есть crop — его пропорция) и ключи cropX (cropY у высокого видео) по "
+            "планам: склейки (как auto_focus + ffmpeg-детектор сцен) — ключ со step ровно на склейке, внутри "
+            "плана окно плавно ведёт лицо/главный объект (mode \"shot\" — одна рамка на план). Gemini по кадру "
+            "на план — как у auto_focus (use_vlm:false — только CV). Учитывает from/speed/loop/hold слоя; "
+            "ключей не больше предела точек на свойство. Заменяет cropX/cropY слоя (cropW/cropH убирает). "
+            "Мем «кусок ролика 4:3 во весь кадр» — вместо ручных ключей. / Auto-reframe a video layer's crop by shots.",
+            _obj({"layer_id": {"type": "string"}, "aspect": {"type": "string"},
+                  "mode": {"type": "string", "enum": ["follow", "shot"]}, "use_vlm": {"type": "boolean"},
+                  "preset": {"type": "string"}}, ["layer_id"]),
+            h_auto_crop_layer, mutating=True, label=lambda a: f"Веду окно слоя {a.get('layer_id') or ''}".strip(),
         ),
         Tool(
             "set_focus", "Кадрирую 9:16",
