@@ -94,6 +94,7 @@ class AutomationService:
                 model=analysis.get("model") or None,
                 prompt=analysis.get("prompt") or None,
                 use_transcript=analysis.get("use_transcript"),
+                **({"output_format": analysis["format"]} if analysis.get("format") else {}),
             )
             self.store.ensure_clip_plans_for_source(source["id"])
             plans = self.store.list_clip_plans(source_id=source["id"])

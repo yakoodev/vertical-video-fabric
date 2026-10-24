@@ -94,7 +94,8 @@ def parse_qc(log: str, *, duration_sec: float = 0.0, width: int = 0, height: int
 
     if width and height and format_of_size(width, height) is None:
         issue("info", "size", f"размер {width}×{height}, для шортсов обычно 1080×1920")
-    if duration_sec > SHORTS_MAX_SEC:
+    # Горизонталь (16:9) — обычное видео YouTube, а не Shorts: потолка 3 минуты нет.
+    if duration_sec > SHORTS_MAX_SEC and not (width and height and width > height):
         issue("warn", "long", f"{duration_sec:.0f} с — длиннее 3 минут, YouTube не примет как Shorts")
 
     return {

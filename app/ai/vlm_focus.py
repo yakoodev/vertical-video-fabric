@@ -62,6 +62,15 @@ _SCHEMA = {
 }
 
 
+_FRAME_WORDS = {"1:1": "a square 1:1 frame", "4:5": "a 4:5 portrait frame", "16:9": "a horizontal 16:9 frame"}
+
+
+def prompt_for_format(fmt: str = "9:16") -> str:
+    """Вопрос модели под окно формата клипа (app/formats.py); 9:16 — прежний текст."""
+    words = _FRAME_WORDS.get(fmt)
+    return _PROMPT.replace("a vertical 9:16 frame", words, 1) if words else _PROMPT
+
+
 def _loads_json_object(text: str) -> dict:
     """Parse the first JSON object in the response (tolerates ``` fences)."""
     raw = (text or "").strip()
@@ -80,9 +89,11 @@ def shots_focus_x(
     model: str | None = None,
     client: GeminiClient | None = None,
     hints: list[str] | None = None,
+    output_format: str = "9:16",
 ) -> list[float | None]:
     """One x per input frame (None where the model didn't answer). Never raises —
-    callers fall back to the CV framing."""
+    callers fall back to the CV framing. ``output_format`` — пропорция окна кропа (формат
+    клипа): модель знает, во что режут кадр."""
     if not images:
         return []
     try:
@@ -95,7 +106,7 @@ def shots_focus_x(
             hint = (hints[i] if hints and i < len(hints) else "") or ""
             parts.append({"text": f"Image {i}" + (f" — spoken at this moment: «{hint[:200]}»" if hint else "")})
             parts.append({"inline_data": {"mime_type": "image/png", "data": base64.b64encode(img).decode("ascii")}})
-        parts.append({"text": _PROMPT})
+        parts.append({"text": prompt_for_format(output_format)})
         payload = {
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
