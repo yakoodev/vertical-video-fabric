@@ -78,9 +78,22 @@ async function main() {
   });
   const safe = jsonSafe(response);
   const videoId = findVideoId(safe);
+  // Обычное (горизонтальное 16:9) видео: обложка — миниатюрой. Best effort: видео уже
+  // загружено, неудача с миниатюрой не делает загрузку проваленной.
+  const extra = {};
+  if (payload.thumbnailPath && videoId) {
+    try {
+      const thumbnail = await fs.readFile(payload.thumbnailPath);
+      await yt.studio.updateVideoMetadata(videoId, { thumbnail: new Uint8Array(thumbnail) });
+      extra.thumbnailSet = true;
+    } catch (error) {
+      extra.thumbnailError = String(error && error.message ? error.message : error).slice(0, 300);
+    }
+  }
   process.stdout.write(JSON.stringify({
     ok: true,
     videoId,
+    ...extra,
     refreshedCookies: Object.fromEntries(cookieJar),
     response: safe
   }));

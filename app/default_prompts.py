@@ -189,6 +189,46 @@ FOCUS_TRACK_INSTRUCTION = (
     "when the subject is genuinely centred; omit focus if the whole segment is centred."
 )
 
+# Формат вывода (app/formats.py) в промптах анализа: сохранённые промпты пишут «vertical
+# short-form» — для 9:16 так и есть, их текст не трогаем. Другой формат — только модели
+# дописывается блок OUTPUT FORMAT (как FOCUS_TRACK_INSTRUCTION), который это уточняет.
+_FORMAT_FRAME_WORDS = {"1:1": "a square 1:1 frame", "4:5": "a 4:5 portrait frame", "16:9": "a horizontal 16:9 frame"}
+
+
+def focus_track_instruction(fmt: str = "9:16") -> str:
+    """Фокус-трек под окно формата: 9:16 — прежний текст; 1:1/4:5/16:9 — окно своей пропорции."""
+    words = _FORMAT_FRAME_WORDS.get(fmt)
+    return FOCUS_TRACK_INSTRUCTION.replace("vertical 9:16", words, 1) if words else FOCUS_TRACK_INSTRUCTION
+
+
+def output_format_instruction(fmt: str = "9:16", max_clip_sec: float | None = None) -> str:
+    """Блок OUTPUT FORMAT для модели анализа; у 9:16 — пусто (прежний запрос).
+
+    1:1 и 4:5 — те же короткие ролики, только кадр ленты. 16:9 — обычное горизонтальное
+    видео: не шортс, кадр не режется, ролик может быть длиннее — до ``max_clip_sec`` (настройка
+    LANDSCAPE_MAX_CLIP_SECONDS; по умолчанию прежний потолок 180 с)."""
+    if fmt == "1:1" or fmt == "4:5":
+        place = "a square 1:1 feed post" if fmt == "1:1" else "a 4:5 portrait feed post (Instagram feed)"
+        return (
+            f"OUTPUT FORMAT — clips will be rendered as {place}, not a full-screen 9:16 vertical. "
+            "\"Vertical short-form\" above still means short standalone clips: keep the same lengths and "
+            "selection rules. The frame is shorter than 9:16, so prefer moments whose key action and faces "
+            "stay inside one compact area of the picture."
+        )
+    if fmt != "16:9":
+        return ""
+    limit = max(60.0, float(max_clip_sec or 180.0))
+    minutes = limit / 60.0
+    return (
+        "OUTPUT FORMAT — clips will be published as regular HORIZONTAL 16:9 videos (the main YouTube feed), "
+        "NOT vertical Shorts/TikTok/Reels. Ignore any \"vertical short-form\", \"Shorts\" or \"TikTok\" wording "
+        "above; every other rule still applies (standalone, hook, context, payoff, Russian titles and "
+        "descriptions). The whole wide frame is kept — no reframing. A horizontal video may be longer than "
+        f"a short: when the story needs it, a finished clip may run up to {limit:.0f} seconds "
+        f"(about {minutes:g} min) in total — never pad weak material to reach it. Each segment still stays "
+        "within the per-segment limits; build a longer clip from several ordered segments."
+    )
+
 BASE_ANALYSIS_PROMPT = """
 Analyze this source for vertical short-form publishing.
 
