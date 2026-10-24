@@ -16,7 +16,8 @@ from app.ai.contracts import AnalysisCancelled, AnalysisClip
 from app.ai.gemini import GeminiVideoAnalyzer
 from app.ai.registry import get_video_analyzer
 from app.ai.transcript import transcribe_source_cues
-from app.default_prompts import BASE_ANALYSIS_PROMPT, FOCUS_TRACK_INSTRUCTION
+from app.default_prompts import BASE_ANALYSIS_PROMPT, focus_track_instruction, output_format_instruction
+from app.formats import DEFAULT_FORMAT, focus_needed, settings_format
 from app.settings import settings
 from app.store import AppStore, MAX_SEGMENT_DURATION_SEC
 
@@ -70,7 +71,13 @@ class VideoAnalysisService:
         prompt: str | None = None,
         preprocessing: dict | None = None,
         use_transcript: bool | None = None,
+        output_format: str | None = None,
     ) -> dict:
+        """``output_format`` — формат будущих клипов (app/formats.py): не задан — настройка
+        приложения ``analysis_format``, нет и её — 9:16 (прежний запрос модели, слово в слово).
+        Другой формат дописывает модели блок OUTPUT FORMAT (не шортс у 16:9, длина до
+        LANDSCAPE_MAX_CLIP_SECONDS), а фокус-трек просит под окно своей пропорции или не
+        просит вовсе (16:9 из горизонтального исходника — кадр не режется)."""
         selected_provider = (
             provider
             or self.store.get_app_setting_value("default_ai_provider", settings.ai_video_provider)
@@ -95,8 +102,12 @@ class VideoAnalysisService:
         # wide sources can be dynamically reframed to 9:16. This augmentation goes
         # only to the model — the stored request keeps the user's clean prompt.
         analyzer_prompt = selected_prompt
-        if selected_provider in {"gemini", "polza", "artemox"}:
-            analyzer_prompt = f"{selected_prompt}\n\n{FOCUS_TRACK_INSTRUCTION}".strip()
+        clip_format = _analysis_output_format(self.store, output_format)
+        format_block = output_format_instruction(clip_format, _landscape_max_clip_sec(self.store))
+        if format_block:
+            analyzer_prompt = f"{analyzer_prompt}\n\n{format_block}".strip()
+        if selected_provider in {"gemini", "polza", "artemox"} and focus_needed(clip_format, source):
+            analyzer_prompt = f"{analyzer_prompt}\n\n{focus_track_instruction(clip_format)}".strip()
         # 💬 Импортированный чат Twitch: всплески реакций зрителей — подсказка, где
         # искать моменты. Тоже только модели; выключается настройкой analysis_use_chat.
         from app.twitch_chat import chat_prompt_block
@@ -119,7 +130,8 @@ class VideoAnalysisService:
             selected_provider,
             model=selected_model,
             prompt_version=PROMPT_VERSION,
-            request={"prompt": selected_prompt, "preprocessing": normalized_preprocessing},
+            request={"prompt": selected_prompt, "preprocessing": normalized_preprocessing,
+                     **({"format": clip_format} if clip_format != DEFAULT_FORMAT else {})},
         )
         self.store.update_source(source_id, status="analyzing", error="")
         self.store.mark_ai_analysis_running(analysis["id"])
@@ -225,6 +237,8 @@ class VideoAnalysisService:
                         retry_reason,
                         mode=ANALYSIS_MODE_NARRATIVE,
                     )
+                    if format_block:
+                        retry_prompt = f"{retry_prompt}\n\n{format_block}"
                     result = analyzer.analyze(analyzer_source, retry_prompt, selected_model, **gemini_kwargs)
                     retry_meta = {"reason": retry_reason}
                 quality_error = _narrative_quality_error(
@@ -323,6 +337,30 @@ def _default_model(provider: str) -> str:
 
 def _safe_error(exc: Exception) -> str:
     return str(exc).strip()[:500] or "analysis failed"
+
+
+def _analysis_output_format(store: AppStore, requested: str | None) -> str:
+    """Формат клипов анализа: из запроса, иначе настройка ``analysis_format``, иначе 9:16.
+    Явно заданный мусор — ValueError (понятная ошибка запроса), сохранённый — 9:16."""
+    from app.formats import normalize_format
+
+    if requested not in (None, ""):
+        return normalize_format(requested)
+    return settings_format(_app_setting(store, "analysis_format"))
+
+
+def _app_setting(store: AppStore, key: str) -> str:
+    getter = getattr(store, "get_app_setting_value", None)
+    return str((getter(key, "") if getter else "") or "")
+
+
+def _landscape_max_clip_sec(store: AppStore) -> float:
+    """Потолок длины клипа 16:9: настройка ``landscape_max_clip_sec`` или LANDSCAPE_MAX_CLIP_SECONDS."""
+    try:
+        value = float(_app_setting(store, "landscape_max_clip_sec") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0 else float(settings.landscape_max_clip_seconds)
 
 
 def _prompt_from_preset(preset: dict | None) -> str:

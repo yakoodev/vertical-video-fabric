@@ -85,6 +85,35 @@ wanted_images, и сервис добудет её сам: label (коротко
 Верни ТОЛЬКО JSON по схеме.
 """
 
+def _plan_format(store: Any, clip_plan_id: int) -> str:
+    """Формат вывода клипа (render_settings.format; нет — 9:16)."""
+    from app.formats import settings_render_format
+
+    try:
+        return settings_render_format(store.get_clip_plan(clip_plan_id).get("render_settings"))
+    except Exception:  # noqa: BLE001 - фейковые хранилища тестов и старые планы — как 9:16
+        return "9:16"
+
+
+def rules_for_format(fmt: str, store: Any = None) -> str:
+    """RULES под формат клипа: 9:16 / 1:1 / 4:5 — прежний текст; 16:9 — горизонтальное
+    видео YouTube (не шортс), итоговая длина — сколько нужно истории, до потолка
+    LANDSCAPE_MAX_CLIP_SECONDS (настройка landscape_max_clip_sec)."""
+    if fmt != "16:9":
+        return RULES
+    from app.ai.service import _landscape_max_clip_sec
+
+    limit = max(60.0, _landscape_max_clip_sec(store) if store is not None else settings.landscape_max_clip_seconds)
+    return RULES.replace(
+        "Ты — монтажёр вертикальных клипов (YouTube Shorts / TikTok / Reels).",
+        "Ты — монтажёр роликов YouTube; этот клип выйдет ГОРИЗОНТАЛЬНЫМ видео 16:9 (обычное видео, не шортс).",
+    ).replace(
+        "5. Итоговая длина: 35–75 с — то, что досматривают. Никогда не больше 175 с и",
+        "5. Итоговая длина: сколько нужно истории, без воды (горизонтальному ролику можно дольше\n"
+        f"   шортса). Никогда не больше {limit:.0f} с и",
+    )
+
+
 MAX_AI_INSERTS = 3
 MAX_WANTED_IMAGES = 2
 MAX_LIBRARY = 60
@@ -425,7 +454,8 @@ def propose_montage(
     spec, context = build_context(store, clip_plan_id)
     used_model = model or settings.gemini_montage_model
     gemini = client or GeminiClient()
-    request = RULES + (f"\nПожелание владельца: {goal.strip()}\n" if goal.strip() else "") + "\nКлип (JSON):\n"
+    request = rules_for_format(_plan_format(store, clip_plan_id), store)
+    request += (f"\nПожелание владельца: {goal.strip()}\n" if goal.strip() else "") + "\nКлип (JSON):\n"
     request += json.dumps(context, ensure_ascii=False)
     contents: list[dict] = [{"role": "user", "parts": [{"text": request}]}]
     problems: list[str] = []
@@ -490,7 +520,10 @@ def _draw_wanted(store: Any, spec: dict) -> dict:
     wishes = spec.pop("wanted_images", None)
     if not wishes:
         return spec
-    made = obtain_assets(store, wishes)
+    from app.formats import settings_render_format
+
+    fmt = settings_render_format(spec.get("render"))
+    made = obtain_assets(store, wishes, **({"output_format": fmt} if fmt != "9:16" else {}))
     if not made:
         return spec
     extra = []

@@ -34,20 +34,37 @@ PROMPT = (
 # Кадров на кусок: 3 на одном-двух кусках, 2 на трёх, дальше по одному (кадр — прогон компоновщика,
 # а рамки пересчитываются после каждой смены кадрирования); всего не больше 12.
 MAX_FRAMES = 12
+# Как назвать кадр формата клипа в вопросе модели (кадры рендерятся в формате клипа).
+_FRAME_WORDS = {"9:16": "вертикального видео 9:16", "1:1": "квадратного видео 1:1", "4:5": "видео 4:5",
+                "16:9": "горизонтального видео 16:9"}
+
+
+def prompt_for_format(fmt: str, n: int) -> str:
+    """Вопрос модели под кадр формата клипа; 9:16 — прежний текст."""
+    text = PROMPT.format(n=n)
+    words = _FRAME_WORDS.get(fmt)
+    return text.replace("вертикального видео 9:16", words, 1) if words else text
+
+
+def _plan_format(plan: dict) -> str:
+    from app.formats import settings_render_format
+
+    return settings_render_format(plan.get("render_settings"))
 
 
 def _cache_key(plan: dict) -> str:
     render = plan.get("render_settings") or {}
-    raw = json.dumps(
-        {"pieces": [(s["start_sec"], s["end_sec"], s.get("focus") or [], s.get("fit")) for s in plan.get("segments") or []],
-         "layout": render.get("layout"), "mirror": render.get("mirror")},
-        sort_keys=True,
-    )
+    key = {"pieces": [(s["start_sec"], s["end_sec"], s.get("focus") or [], s.get("fit")) for s in plan.get("segments") or []],
+           "layout": render.get("layout"), "mirror": render.get("mirror")}
+    fmt = _plan_format(plan)
+    if fmt != "9:16":  # другой кадр — другие рамки; у 9:16 ключ прежний (кэш не теряется)
+        key["format"] = fmt
+    raw = json.dumps(key, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def subject_box(store: Any, clip_plan_id: int, client: Any = None) -> dict | None:
-    """{x0,y0,x1,y1} героя в долях кадра 9:16 (объединение по всему клипу) или None."""
+    """{x0,y0,x1,y1} героя в долях кадра формата клипа (объединение по всему клипу) или None."""
     return subject_boxes(store, clip_plan_id, client)["union"]
 
 
@@ -102,7 +119,7 @@ def subject_boxes(store: Any, clip_plan_id: int, client: Any = None) -> dict:
     frames = _frame_times(store, plan)
     if not frames:
         return empty
-    parts: list[dict] = [{"text": PROMPT.format(n=len(frames))}]
+    parts: list[dict] = [{"text": prompt_for_format(_plan_format(plan), len(frames))}]
     for _index, t in frames:
         png = render_frame_png(store, clip_plan_id, t, layers=[], camera=[])
         parts.append({"inlineData": {"mimeType": "image/png", "data": base64.b64encode(_shrink(png)).decode()}})
@@ -159,13 +176,16 @@ def _box_of(data: Any) -> dict | None:
 
 
 def _shrink(png: bytes) -> bytes:
-    """1080×1920 PNG → JPEG 360×640: для рамки героя хватает, а токенов меньше."""
+    """1080×1920 PNG → JPEG 360×640: для рамки героя хватает, а токенов меньше. Другой
+    формат — та же длинная сторона 640 с его пропорцией (16:9 — 640×360, 1:1 — 640×640)."""
     try:
         import cv2
         import numpy as np
 
         img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-        img = cv2.resize(img, (360, 640), interpolation=cv2.INTER_AREA)
+        height, width = img.shape[:2]
+        scale = 640 / max(height, width)
+        img = cv2.resize(img, (max(2, round(width * scale)), max(2, round(height * scale))), interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".png", img)
         return buf.tobytes() if ok else png
     except Exception:  # noqa: BLE001 - без cv2 отдаём как есть

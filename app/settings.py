@@ -69,6 +69,10 @@ class Settings:
         # source is meaningfully longer than one window.
         self.analysis_window_seconds = float(os.getenv("ANALYSIS_WINDOW_SECONDS", "780"))
         self.analysis_window_overlap_seconds = float(os.getenv("ANALYSIS_WINDOW_OVERLAP_SECONDS", "30"))
+        # Анализ под горизонталь 16:9 (обычное видео, не шортс): потолок длины готового клипа,
+        # который просим у модели. По умолчанию прежний (180 с); «до нескольких минут» — задать больше.
+        # Переопределяется настройкой приложения landscape_max_clip_sec.
+        self.landscape_max_clip_seconds = float(os.getenv("LANDSCAPE_MAX_CLIP_SECONDS", "180"))
         # Local motion+audio action detector (provider "action"): no LLM/tokens.
         self.action_max_clips = int(os.getenv("ACTION_MAX_CLIPS", "18"))
         self.action_min_clip_seconds = float(os.getenv("ACTION_MIN_CLIP_SECONDS", "20"))

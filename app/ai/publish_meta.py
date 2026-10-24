@@ -27,6 +27,34 @@ BASE_RULES = """\
 """
 
 
+# Хэштеги вертикальных лент — у обычного горизонтального видео YouTube они лишние.
+VERTICAL_TAGS = {"#shorts", "#short", "#reels", "#reel", "#tiktok", "#шортс", "#шортсы"}
+
+
+def rules_for_format(fmt: str) -> str:
+    """BASE_RULES под формат клипа (app/formats.py). 9:16 — прежний текст; 16:9 — обычное видео
+    YouTube (не Shorts: другой заголовок/описание, без #shorts); 1:1 и 4:5 — пост в ленту."""
+    header = "Ты пишешь метаданные для публикации вертикального клипа (YouTube Shorts, TikTok, Instagram Reels)."
+    if fmt == "16:9":
+        return BASE_RULES.replace(header, (
+            "Ты пишешь метаданные для публикации ГОРИЗОНТАЛЬНОГО видео 16:9 на YouTube — это обычное видео, "
+            "не Shorts/TikTok/Reels (если указания пресета ниже говорят про Shorts — формат клипа важнее)."
+        )).replace(
+            "- description: 1–3 коротких предложения, раскрывают момент и зовут досмотреть; без хэштегов внутри.",
+            "- description: 2–4 предложения, как у ролика YouTube: что произошло, контекст, зачем смотреть; "
+            "без хэштегов внутри.",
+        ).replace(
+            "затем общие (#shorts, #стрим, #нарезка и т.п. по смыслу).",
+            "затем общие (#стрим, #нарезка и т.п. по смыслу). НЕ ставь #shorts, #reels, #tiktok — это не шортс.",
+        )
+    if fmt in ("1:1", "4:5"):
+        shape = "квадратного клипа 1:1" if fmt == "1:1" else "клипа 4:5"
+        return BASE_RULES.replace(header, (
+            f"Ты пишешь метаданные для публикации {shape} (пост в ленту Instagram, YouTube Shorts)."
+        ))
+    return BASE_RULES
+
+
 def _schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -110,12 +138,17 @@ def parse_metadata(text: str) -> dict[str, Any]:
 def generate_publish_metadata(
     store: Any, clip_id: int, client: GeminiClient | None = None, model: str | None = None
 ) -> dict[str, Any]:
+    from app.publish_format import clip_format
+
     clip = store.get_clip(clip_id)
     context = clip_context(store, clip)
+    fmt = clip_format(store, clip) or "9:16"
+    if fmt != "9:16":
+        context["format"] = fmt
     preset = store.get_default_prompt_preset("publishing")
     user_rules = str((preset or {}).get("prompt") or "").strip()
     prompt = (
-        BASE_RULES
+        rules_for_format(fmt)
         + (f"\nДополнительные указания (пресет «{preset.get('label')}»):\n{user_rules}\n" if user_rules else "")
         + "\nДанные клипа (JSON):\n"
         + json.dumps(context, ensure_ascii=False)
@@ -133,6 +166,14 @@ def generate_publish_metadata(
     meta = parse_metadata(_extract_response_text(response))
     meta["model"] = used_model
     meta["has_transcript"] = bool(context["transcript"])
+    if fmt != "9:16":
+        meta["format"] = fmt
+    if fmt == "16:9":  # обычное видео YouTube: теги вертикальных лент модели не оставляем
+        from app.publish_format import strip_shorts_tags
+
+        meta["hashtags"] = [t for t in meta["hashtags"] if t not in VERTICAL_TAGS]
+        meta["title"] = strip_shorts_tags(meta["title"]) or meta["title"]
+        meta["description"] = strip_shorts_tags(meta["description"])
     return meta
 
 

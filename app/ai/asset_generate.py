@@ -29,6 +29,13 @@ STYLE = (
     "бренды, товарные знаки, надписи на иностранных языках. Только собственный оригинальный рисунок."
 )
 MAX_PROMPT = 400
+_CLIP_WORDS = {"1:1": "квадратный клип 1:1", "4:5": "клип 4:5", "16:9": "горизонтальный клип 16:9"}
+
+
+def style_for_format(fmt: str = "9:16") -> str:
+    """STYLE под формат клипа (app/formats.py); 9:16 — прежний текст."""
+    words = _CLIP_WORDS.get(fmt)
+    return STYLE.replace("вертикальный клип", words, 1) if words else STYLE
 
 
 def _extract_image(response: dict) -> tuple[bytes, str]:
@@ -55,14 +62,16 @@ def generate_asset(
     when: str = "",
     client: GeminiClient | None = None,
     model: str | None = None,
+    output_format: str = "9:16",
 ) -> dict:
-    """Draw one original image and put it in the library (described, ready to use)."""
+    """Draw one original image and put it in the library (described, ready to use).
+    ``output_format`` — формат клипа, куда картинка пойдёт (кадр в подсказке модели)."""
     wish = " ".join(str(prompt or "").split())[:MAX_PROMPT]
     if not wish:
         raise ValueError("нужно описание картинки")
     used_model = model or settings.gemini_image_model
     payload = {
-        "contents": [{"role": "user", "parts": [{"text": f"{STYLE}\n\nЧто нарисовать: {wish}"}]}],
+        "contents": [{"role": "user", "parts": [{"text": f"{style_for_format(output_format)}\n\nЧто нарисовать: {wish}"}]}],
     }
     response = (client or GeminiClient()).generate_content(used_model, payload)
     blob, mime = _extract_image(response)
@@ -171,7 +180,9 @@ def image_matches(asset: dict, query: str, client: GeminiClient | None = None) -
         return True
 
 
-def obtain_assets(store: Any, wishes: list[dict], client: GeminiClient | None = None) -> list[dict]:
+def obtain_assets(
+    store: Any, wishes: list[dict], client: GeminiClient | None = None, output_format: str = "9:16"
+) -> list[dict]:
     """Добыть картинки, которые заказал ИИ-монтаж: сначала найти, иначе нарисовать.
 
     Владелец не должен искать руками: если агент написал search_query — лезем в
@@ -191,8 +202,9 @@ def obtain_assets(store: Any, wishes: list[dict], client: GeminiClient | None = 
             got.append({**found, "wish": wish})
             continue
         try:
+            extra = {"output_format": output_format} if output_format != "9:16" else {}
             asset = generate_asset(
-                store, str(wish.get("prompt") or ""), label=label, when=when, client=client
+                store, str(wish.get("prompt") or ""), label=label, when=when, client=client, **extra
             )
         except Exception:  # noqa: BLE001 - лишняя картинка, монтаж важнее
             continue

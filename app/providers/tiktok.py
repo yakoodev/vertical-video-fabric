@@ -14,6 +14,7 @@ from requests_auth_aws_sigv4 import AWSSigV4
 
 from app.cookies import CookieRecord, tiktok_caption
 from app.providers.base import Provider, ProviderResult, safe_provider_error
+from app.publish_format import publish_plan
 from app.settings import settings
 
 _UA = (
@@ -36,7 +37,12 @@ class TikTokProvider(Provider):
         allow_comments: bool,
         account_label: str,
         proxy_url: str,
+        video_format: str = "9:16",
+        thumbnail_path: str = "",
     ) -> ProviderResult:
+        # TikTok ждёт вертикаль: 16:9/1:1/4:5 публикуем как есть (площадка покажет с полосами),
+        # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт.
+        del thumbnail_path
         try:
             self._ensure_signature_helper()
             result = self._upload_with_vendor_requests(
@@ -49,6 +55,9 @@ class TikTokProvider(Provider):
                 account_label=account_label,
                 proxy_url=proxy_url,
             )
+            warning = publish_plan(self.platform, video_format)["warning"] if video_format != "9:16" else ""
+            if warning:
+                result.response = {**(result.response or {}), "format": video_format, "format_warning": warning}
             return result
         except Exception as exc:  # noqa: BLE001 - provider must report failures to queue
             message = str(exc)

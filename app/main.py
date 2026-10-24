@@ -382,6 +382,14 @@ class AnalyzeSourceRequest(BaseModel):
         default=None,
         description="Feed a Whisper speech transcript to the video LLM. Null = default (on for Gemini).",
     )
+    format: Literal["9:16", "1:1", "4:5", "16:9"] | None = Field(
+        default=None,
+        description=(
+            "Output format the clips are picked for (app/formats.py). Null = app setting analysis_format, "
+            "else 9:16. 16:9 — regular horizontal video, not Shorts: longer clips allowed "
+            "(LANDSCAPE_MAX_CLIP_SECONDS), no reframing focus for a horizontal source."
+        ),
+    )
     merge_audio_for_analysis: bool = Field(
         default=False,
         description="Merge source audio tracks before sending video to the analyzer.",
@@ -2134,6 +2142,7 @@ def api_analyze_source(
             model=payload.model if payload else None,
             prompt=_analysis_prompt_from_payload(payload),
             use_transcript=payload.use_transcript if payload else None,
+            output_format=payload.format if payload else None,
             preprocessing={
                 "enabled": bool(payload.preprocess_for_analysis) if payload else False,
                 "merge_audio_for_analysis": bool(payload.merge_audio_for_analysis)
@@ -2653,6 +2662,8 @@ def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, 
 class AiPickRequest(BaseModel):
     count: int = Field(default=10, ge=1, le=50)
     goal: str = Field(default="", max_length=500)
+    # Формат будущих клипов (app/formats.py): нет — настройка analysis_format, иначе 9:16.
+    format: Literal["9:16", "1:1", "4:5", "16:9"] | None = None
     # Chain: start 🤖 ИИ-монтаж on the picks right away (optionally rendering).
     montage: bool = False
     render: bool = False
@@ -2667,7 +2678,8 @@ class AiPickRequest(BaseModel):
 def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -> dict:
     try:
         store.get_source(source_id)
-        result = pick_best(store, source_id, count=payload.count, goal=payload.goal)
+        result = pick_best(store, source_id, count=payload.count, goal=payload.goal,
+                           **({"output_format": payload.format} if payload.format else {}))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -3251,6 +3263,25 @@ def api_clip_publish_meta(clip_id: int, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=502, detail=f"Не удалось сгенерировать: {exc}") from exc
 
 
+@app.get(
+    "/api/clips/{clip_id}/publish-check",
+    tags=["Posts"],
+    summary="How a clip goes out on each account by its format (16:9 on YouTube — a regular video, not Shorts)",
+)
+def api_clip_publish_check(clip_id: int, _auth: AuthDep, targets: str = "") -> dict:
+    """``targets`` — id аккаунтов через запятую. Ответ: формат клипа, по аккаунту — ``publish_as``
+    (shorts | video | reel | feed | tiktok) и ``warning`` (TikTok/Instagram ждут вертикаль)."""
+    from app.publish_format import check_targets
+
+    try:
+        ids = [int(x) for x in targets.replace(" ", "").split(",") if x]
+        return check_targets(store, clip_id, ids)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post(
     "/api/clips/{clip_id}/posts",
     response_model=JobRead,
@@ -3308,8 +3339,11 @@ def api_create_posts_batch(payload: ClipPostBatchRequest, _auth: AuthDep) -> dic
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     start = datetime.strptime(start_text, "%Y-%m-%d %H:%M:%S") if start_text else None
+    from app.publish_format import check_targets
+
     jobs: list[dict] = []
     skipped: list[dict] = []
+    format_warnings: list[dict] = []  # 16:9/1:1/4:5 на площадке, что ждёт вертикаль
     meta_errors = apply_ai_metadata(store, payload.clip_ids) if payload.ai_metadata else {}
     for index, clip_id in enumerate(dict.fromkeys(payload.clip_ids)):
         scheduled = ""
@@ -3331,9 +3365,12 @@ def api_create_posts_batch(payload: ClipPostBatchRequest, _auth: AuthDep) -> dic
                     scheduled_at=scheduled,
                 )
             )
+            check = check_targets(store, clip, payload.targets)
+            if check["warnings"]:
+                format_warnings.append({"clip_id": clip_id, "format": check["format"], "warnings": check["warnings"]})
         except (KeyError, ValueError) as exc:
             skipped.append({"clip_id": clip_id, "reason": str(exc)})
-    return {"jobs": jobs, "skipped": skipped, "metadata_errors": meta_errors}
+    return {"jobs": jobs, "skipped": skipped, "metadata_errors": meta_errors, "format_warnings": format_warnings}
 
 
 @app.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")

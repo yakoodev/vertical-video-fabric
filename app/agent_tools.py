@@ -1827,8 +1827,18 @@ def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
     return out
 
 
-def h_get_motion_reference(_ctx: ToolContext, _args: dict) -> dict:
-    return {"reference": motion_reference(), "spec": "docs/motion/spec.md"}
+def h_get_motion_reference(ctx: ToolContext, args: dict) -> dict:
+    """Шпаргалка под формат: из аргументов, иначе — формата текущего клипа (если он есть)."""
+    from app.formats import settings_layers_format, settings_render_format
+
+    fmt, layers_fmt = args.get("format"), args.get("layers_format")
+    if not fmt and ctx.clip_plan_id is not None:
+        try:
+            render = _current_render(ctx)
+            fmt, layers_fmt = settings_render_format(render), layers_fmt or settings_layers_format(render)
+        except KeyError:
+            pass
+    return {"reference": motion_reference(fmt, layers_fmt), "spec": "docs/motion/spec.md"}
 
 
 def _font_manifest() -> list[dict]:
@@ -3017,15 +3027,26 @@ def _piece_words(words: list[dict], plain_start: float, length: float) -> list[d
 
 
 def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
-    """Кадрирование 9:16 сам: лица/движение по планам (app/autofocus), для мультфильмов —
-    ещё и Gemini по кадру на план. Проверочный прогон: встроенный монтажёр 8 шагов
-    подбирал x «на глаз» по листам кадров и всё равно промахнулся на стене."""
-    from app.autofocus import compute_segment_focus
+    """Кадрирование окном формата клипа сам: лица/движение по планам (app/autofocus), для
+    мультфильмов — ещё и Gemini по кадру на план. Проверочный прогон: встроенный монтажёр 8 шагов
+    подбирал x «на глаз» по листам кадров и всё равно промахнулся на стене. 16:9 из
+    горизонтального исходника — кадр не режется, фокус не нужен (app/formats.focus_needed)."""
+    from app.formats import focus_needed, settings_render_format
     from app.settings import settings
 
     timeline = clip_timeline(ctx.store, ctx.plan_id)
     pieces = timeline["pieces"]
     indexes = [_piece_index(args, len(pieces))] if args.get("piece") is not None else list(range(len(pieces)))
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    source = ctx.store.get_source(int(plan["source_id"]))
+    fmt = settings_render_format(plan.get("render_settings"))
+    if not focus_needed(fmt, source):
+        # 16:9 из горизонтального исходника — кадр не режется (вертикальный — целиком на подложке).
+        return {"ok": True, "focus_needed": False, "format": fmt, "pieces": [],
+                "note": f"формат {fmt}: исходник {source.get('width')}×{source.get('height')} ложится в кадр без "
+                        "кропа — фокус не нужен, кадрировать нечего"}
+    from app.autofocus import compute_segment_focus
+
     resolver = None
     # По умолчанию с Gemini по кадру на план: на мультфильмах лица не находятся, а монтажёр
     # use_vlm сам не ставил (проверочный прогон: кадр на руке Рика, пока говорит другой).
@@ -3033,8 +3054,9 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
         from app.ai.vlm_focus import shots_focus_x
 
         resolver = shots_focus_x
-    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
-    source = ctx.store.get_source(int(plan["source_id"]))
+        if fmt != "9:16":  # окно кропа другой пропорции — модель должна это знать
+            def resolver(images, hints=None, _fmt=fmt):  # noqa: E306 - замыкание на формат
+                return shots_focus_x(images, hints=hints, output_format=_fmt)
     words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
     done = []
     for index in indexes:
@@ -3810,8 +3832,34 @@ def motion_enums() -> dict:
     }
 
 
-def motion_reference() -> str:
-    """Компактная шпаргалка по слоям (полный контракт — docs/motion/spec.md)."""
+def motion_reference(fmt: Any = None, layers_format: Any = None) -> str:
+    """Компактная шпаргалка по слоям (полный контракт — docs/motion/spec.md). Кадр — формата
+    клипа (app/formats.py); 9:16 со слоями в 9:16 (по умолчанию) — прежний текст."""
+    from app.formats import frame_size, ref_size, settings_format
+
+    fmt, layers_format = settings_format(fmt), settings_format(layers_format)
+    text = _motion_reference_text()
+    if fmt == "9:16" and layers_format == "9:16":
+        return text
+    (width, height), (rw, rh) = frame_size(fmt), ref_size(layers_format)
+    if layers_format == fmt:
+        head = f"КАДР {width}×{height} (формат {fmt}, опорные px)"
+    else:
+        head = (f"КАДР {width}×{height} (формат {fmt}); px слоёв — опорные кадра разметки {rw}×{rh} (layers_format "
+                f"{layers_format}, при рендере слои сами перекомпонуются в {fmt})")
+    # Безопасная зона площадок формата разметки слоёв (app/safe_zones.py) — её же проверяет add_layers.
+    from app.safe_zones import safe_zone
+
+    zone = safe_zone(layers_format)
+    head += (f". БЕЗОПАСНАЯ ЗОНА {layers_format} ({zone['platforms']}): края текста в {zone['top']:g}–{zone['bottom']:g} "
+             f"по высоте и {zone['left']:g}–{zone['right']:g} по ширине")
+    if zone["watermark"]:
+        head += ", не в правом нижнем углу (водяной знак канала)"
+    text = text.replace("КАДР 1080×1920 (опорные px)", head, 1)
+    return text.replace("Кусок ролика 4:3/16:9 во весь кадр (w 1080)", f"Кусок ролика шире кадра во весь кадр (w {rw})")
+
+
+def _motion_reference_text() -> str:
     enums = motion_enums()
     fields = "; ".join(f"{kind}: {', '.join(props)}" for kind, props in motion.PROPS.items())
     return f"""\
@@ -4111,8 +4159,12 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "get_motion_reference", "Справка по слоям",
-            "Шпаргалка по моушн-слоям: типы, props, анимации, easing, камера. / Motion layer cheat sheet.",
-            _obj({}), h_get_motion_reference, scope="global",
+            "Шпаргалка по моушн-слоям: типы, props, анимации, easing, камера. Кадр — формата клипа "
+            "(format/layers_format; не заданы — как у текущего клипа, без клипа — 9:16 1080×1920). "
+            "/ Motion layer cheat sheet.",
+            _obj({"format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]},
+                  "layers_format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]}}),
+            h_get_motion_reference, scope="global",
         ),
         Tool(
             "add_layers", "Добавляю слои",
@@ -4430,11 +4482,13 @@ def _build_registry() -> list[Tool]:
         Tool(
             "set_format", "Меняю формат вывода",
             "Формат вывода клипа: \"9:16\" (вертикаль, как всегда), \"1:1\" (1080×1080), \"4:5\" (1080×1350), "
-            "\"16:9\" (горизонталь 1920×1080) — у любого клипа, из того же монтажа. Видео кадрируется само: окно "
+            "\"16:9\" (горизонталь 1920×1080) — у любого клипа, из того же монтажа. Формат выбирает владелец: "
+            "не меняй без его просьбы. Видео кадрируется само: окно "
             "нужной пропорции с тем же фокусом; горизонтальный исходник в 16:9 — без кропа, вертикальный — по "
             "высоте на размытой подложке. Слои НЕ переделывай: они остаются в формате разметки (layers_format, "
             "обычно 9:16) и при рендере переносятся сами (один масштаб по рамке содержимого, фон — на весь кадр). "
-            "layers_format — только если слои уже размечены в другом формате (опорный кадр 16:9 — 1920×1080). "
+            "layers_format — только если слои уже размечены в другом формате (опорный кадр 16:9 — 1920×1080) "
+            "или слоёв ещё нет и размечаешь сразу под формат клипа (set_format(\"16:9\", layers_format=\"16:9\")). "
             "Два формата — два рендера: set_format(\"16:9\"), рендер, set_format(\"9:16\") (или REST render с "
             "{\"format\": \"16:9\"} без смены настроек). Субтитры/баннер/обложка пока под вертикаль. "
             "/ Output format: 9:16, 1:1, 4:5 or 16:9.",
@@ -4600,7 +4654,8 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "auto_focus", "Ищу говорящего в кадре",
-            "Кадрирование 9:16 автоматически: где лица/движение на каждом плане куска (piece — один кусок, "
+            "Кадрирование автоматически (окно пропорции формата клипа: 9:16, 1:1, 4:5; у 16:9 из горизонтального "
+            "исходника кадр не режется — ответ focus_needed:false, делать нечего): где лица/движение на каждом плане куска (piece — один кусок, "
             "без него — все), с жёсткой сменой на склейках. По умолчанию Gemini смотрит кадр каждого плана "
             "(use_vlm:false — только лица/движение, быстрее). Длинный план с диалогом делит по репликам субтитров "
             "(пауза или смена голоса): кадр на реплику, плавный поворот окна к ответившему (turns в ответе) — "
@@ -4625,7 +4680,8 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_focus", "Кадрирую 9:16",
-            "Кадрирование куска piece в 9:16: points [{t, x, cut?}] — центр окна x(t) внутри куска (t — секунды "
+            "Кадрирование куска piece в формат клипа (окно 9:16, 1:1, 4:5; у 16:9 — только если исходник шире 16:9): "
+            "points [{t, x, cut?}] — центр окна x(t) внутри куска (t — секунды "
             "от начала куска, или source_t — секунды исходника прямо из get_shots; x 0..1 — доля ширины "
             "исходника; cut:true — жёсткий переход в этой точке, ставь ровно на склейку плана). Между точками "
             "без cut окно плавно ведётся; одна точка — неподвижный кадр; [] — по центру. Заменяет трек куска "
