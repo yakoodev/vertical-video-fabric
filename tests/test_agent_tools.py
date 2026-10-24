@@ -247,6 +247,31 @@ def test_subtitle_gaps_find_pieces_with_speech_but_no_words():
     assert subtitle_gaps(Store(), {"id": 1, "source_id": 5}, pieces) == [0]
 
 
+def test_subtitle_gaps_ignore_short_laugh():
+    """Клипы 583–585: «речь есть, а субтитров нет» на коротком смехе — ложная тревога.
+    Фразы короче 0.6 с на куске или меньше 2 слов речью не считаются."""
+    from app.agent_tools import subtitle_gaps
+
+    cues = []
+
+    class Store:
+        def get_clip_plan_subtitles(self, _id):
+            return {"words": [{"word": "ага", "start": 11.0, "end": 11.4}]}
+
+        def get_source_transcript(self, _id):
+            return cues
+
+    pieces = [{"source_start": 100, "source_end": 110}, {"source_start": 200, "source_end": 210}]
+    plan = {"id": 1, "source_id": 5}
+    cues[:] = [{"start": 103.0, "end": 103.4, "text": "ха ха ха"},  # 0.4 с — смех
+               {"start": 105.0, "end": 106.5, "text": "ахахахаха"},  # одно «слово» — смех
+               {"start": 109.7, "end": 112.0, "text": "ну что там такое"}]  # на куске только 0.3 с
+    assert subtitle_gaps(Store(), plan, pieces) == []
+    # Настоящая фраза (≥ 0.6 с, ≥ 2 слов, всего ≥ 3 слов) — по-прежнему дыра.
+    cues.append({"start": 104.0, "end": 105.0, "text": "вот это да"})
+    assert subtitle_gaps(Store(), plan, pieces) == [0]
+
+
 def test_add_image_from_url_drops_off_topic_picture(monkeypatch):
     """Агент скачал картинку мимо запроса — она удаляется, агент получает ошибку и берёт другую."""
     from app.agent_tools import ToolContext, run_tool

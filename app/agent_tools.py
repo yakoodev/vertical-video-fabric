@@ -786,12 +786,19 @@ def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
     return {"has_subtitles": bool(lines), "edited": bool(payload.get("edited")), "lines": lines}
 
 
+# Фраза расшифровки, которая не считается речью для «речь есть, а субтитров нет»: короче
+# 0.6 с на куске или меньше 2 слов — смех, «а?», выдох (клипы 583–585: ложная тревога на смехе).
+GAP_MIN_PHRASE_SEC = 0.6
+GAP_MIN_PHRASE_WORDS = 2
+
+
 def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
     """Куски клипа, где в исходнике есть речь, а в субтитрах клипа — ни слова.
 
     Так бывает, когда куски поменяли после распознавания: субтитры остались от
     старого набора, и у части клипа текста нет (владелец: «у второго клипа
-    субтитров почему то нет»).
+    субтитров почему то нет»). Короткие фразы (< 0.6 с на куске или < 2 слов —
+    смех, междометие) речью не считаются.
     """
     payload = store.get_clip_plan_subtitles(plan["id"]) or {}
     words = payload.get("words") or []
@@ -806,11 +813,13 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         offset = hi
         if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
             continue
-        spoken = sum(
-            len(str(c.get("text") or "").split())
-            for c in cues
-            if float(c.get("start", 0)) < float(piece["source_end"]) and float(c.get("end", 0)) > float(piece["source_start"])
-        )
+        spoken = 0
+        for c in cues:
+            a = max(float(c.get("start", 0)), float(piece["source_start"]))
+            b = min(float(c.get("end", 0)), float(piece["source_end"]))
+            count = len(str(c.get("text") or "").split())
+            if b - a >= GAP_MIN_PHRASE_SEC and count >= GAP_MIN_PHRASE_WORDS:
+                spoken += count
         if spoken >= 3 or (not cues and words):
             gaps.append(index)
     return gaps
