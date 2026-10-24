@@ -1266,3 +1266,63 @@ test("200 слоёв: время кадра 1080×1920 (предел MAX_LAYERS)
   assert.ok(perLayers < 250, `200 слоёв: ${perLayers.toFixed(1)} мс/кадр`);
   assert.ok(perFx < 120, `200 частиц: ${perFx.toFixed(1)} мс/кадр`);
 });
+
+/* ---------- эталон: старые кадры не меняются (формат по умолчанию) ---------- */
+
+// Хэши пикселей сняты на main до универсальных форматов (tests/fixtures/motion_golden.json).
+// Обновить: VVF_UPDATE_GOLDEN=1 npm run test:motion.
+const GOLDEN = join(ROOT, "tests", "fixtures", "motion_golden.json");
+
+async function pixelsHash(data, w, h) {
+  const { createHash } = await import("node:crypto");
+  return `${w}x${h}:` + createHash("sha256").update(data).digest("hex").slice(0, 24);
+}
+
+async function pngHash(path) {
+  const img = await loadImage(readFileSync(path));
+  const cv = createCanvas(img.width, img.height);
+  cv.getContext("2d").drawImage(img, 0, 0);
+  return pixelsHash(cv.getContext("2d").getImageData(0, 0, img.width, img.height).data, img.width, img.height);
+}
+
+const canvasHash = (cv) => pixelsHash(cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
+
+/** Частицы, субтитры, покачивание, размытие, слой за камерой — то, что зависит от опорного кадра. */
+function richLayers() {
+  const L = (o) => ({ x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, track: 0, start: 0, end: 5, ...o });
+  return [
+    L({ id: "wig", type: "text", y: 0.15, loop: { type: "wiggle", amount: 1, speed: 1 }, props: { text: "Покачивание", size: 90, color: "#ffffff" } }),
+    L({ id: "flt", type: "shape", x: 0.3, y: 0.3, loop: { type: "float", amount: 1 }, blur: 6, props: { kind: "rect", w: 200, h: 120, fill: "#22D3EE" } }),
+    L({ id: "fx", type: "particles", y: 0.45, props: { kind: "burst", count: 40, glow: true, repeat: true } }),
+    L({ id: "cap", type: "captions", y: 0.8, props: { size: 80 } }),
+    L({ id: "fol", type: "shape", x: 0.7, y: 0.6, followCamera: true, shadow: { color: "#000000", blur: 18, y: 6, opacity: 0.7 }, props: { kind: "ellipse", w: 220, h: 220, fill: "#FF2D55" } }),
+    L({ id: "dev", type: "video", x: 0.5, y: 0.55, scale: 0.5, props: { device: "phone", w: 520 } }),
+  ];
+}
+const RICH_WORDS = [{ t0: 0.5, t1: 0.9, w: "Слово" }, { t0: 0.9, t1: 1.3, w: "за" }, { t0: 1.3, t1: 1.8, w: "словом" }];
+const RICH_CAMERA = [{ t: 0, zoom: 1, x: 0.5, y: 0.5 }, { t: 1, zoom: 1.5, x: 0.6, y: 0.55 }];
+
+test("эталон: кадры компоновщика и движка 9:16 / 1:1 / 4:5 / превью не изменились", async () => {
+  const got = {};
+  for (const [name, w, h] of [["v1080", 1080, 1920], ["sq1080", 1080, 1080], ["p45", 1080, 1350], ["prev540", 540, 960]]) {
+    const p = writeInputs(`golden-${name}`, { ...everyTypeComp(3), width: w, height: h });
+    const png = join(tmp, `golden-${name}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", "1.2", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    got[`cli-${name}`] = await pngHash(png);
+    const env = { width: w, height: h, getImage: () => null, createCanvas: (a, b) => createCanvas(a, b) };
+    const cv = createCanvas(w, h);
+    E.drawFrame(cv.getContext("2d"), { layers: richLayers(), camera: RICH_CAMERA, words: RICH_WORDS }, 1.1, env);
+    got[`rich-${name}`] = await canvasHash(cv);
+    for (const kind of ["aurora", "grid", "bokeh", "waves"]) {
+      const bg = createCanvas(w, h);
+      E.paintBackground(bg.getContext("2d"), E.normalizeBackground({ kind }), 1.3, w, h, { accent: "#22d3ee", createCanvas: (a, b) => createCanvas(a, b) });
+      got[`bg-${kind}-${name}`] = await canvasHash(bg);
+    }
+  }
+  if (process.env.VVF_UPDATE_GOLDEN === "1") {
+    writeFileSync(GOLDEN, JSON.stringify(got, null, 1));
+    return;
+  }
+  assert.deepEqual(got, JSON.parse(readFileSync(GOLDEN, "utf8")));
+});
