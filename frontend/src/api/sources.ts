@@ -65,6 +65,9 @@ export interface SourceAudioSaved {
   /** Замер «Авто»: громкость дорожек, дБ. */
   levels?: Record<string, { median_db: number; p90_db: number }>;
   auto_gain?: Record<string, number>;
+  /** Замер «auto» по дорожке голоса: громкость голоса и игры в моменты речи, итоговый перевес. */
+  auto?: Record<string, { gain_db: number; voice_db?: number; others_db?: number; over_db?: number;
+    speech_sec?: number; peak_limited?: boolean; note?: string }>;
   note?: string;
 }
 export interface SourceAudioPatch {

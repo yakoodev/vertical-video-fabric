@@ -282,14 +282,26 @@ def extract_args(source_path: Path, out_path: Path, tracks: Any, *, start: float
 
 
 _KEEP = object()
-# «Авто»: голос (дорожка с gain_db "auto") ставится так, чтобы его фразы (90-й перцентиль
-# громкости) были на AUTO_OVER_DB громче медианы остальных дорожек — игра под голосом,
-# а не голос под игрой. Пределы — чтобы шум пустого микрофона не задирался до небес.
-AUTO_OVER_DB = 6.0
+# «Авто»: голос (дорожка с gain_db "auto") — на AUTO_OVER_DB громче остальных дорожек смеси по
+# интегральной громкости В МОМЕНТЫ РЕЧИ: игру меряем в те же окна, где звучит голос. Прежний
+# расчёт (90-й перцентиль голоса против медианы игры за всё время) на апексе дал микрофону
+# +12…+16 дБ, а голос вышел на 2–3 дБ над игрой или ниже: когда стример говорит, в игре стреляют.
+AUTO_OVER_DB = 9.0
 AUTO_MIN_DB = -12.0
 AUTO_MAX_DB = 24.0
 AUTO_WINDOWS = 4
 AUTO_WINDOW_SEC = 60.0
+AUTO_STEP_SEC = 0.25
+# Окно — речь, если голос громче шума своей дорожки (20-й перцентиль) на столько и не тише пола.
+AUTO_SPEECH_OVER_FLOOR_DB = 12.0
+AUTO_SPEECH_MIN_DB = -60.0
+AUTO_MIN_SPEECH_SEC = 1.0
+# Пики: ролик потом доводится до −14 LUFS (settings.render_loudnorm_target) с потолком пика
+# −1.5 dBTP, лимитер без потери громкости срезает ~3 дБ (app/render: LOUDNESS_PEAK_DB,
+# LIMITER_ROOM_DB). Пик усиленного голоса выше громкости смеси больше чем на столько — запас
+# съеден, нормализация не дотянет −14: усиление снижается, но голос не ниже игры + AUTO_MIN_OVER_DB.
+AUTO_PEAK_ROOM_DB = -1.5 + 3.0 - (-14.0)
+AUTO_MIN_OVER_DB = 4.0
 
 
 def _auto_tracks(tracks: Any) -> list[int]:
@@ -298,10 +310,106 @@ def _auto_tracks(tracks: Any) -> list[int]:
             if t is not None]
 
 
-def track_levels(source: dict, track: int, *, windows: int = AUTO_WINDOWS,
-                 window_sec: float = AUTO_WINDOW_SEC) -> dict:
-    """Громкость одной дорожки по нескольким окнам записи: медиана и 90-й перцентиль (дБ)."""
-    from app.source_loudness import SILENCE_DB, pcm_levels, read_window_pcm
+def _power(db: float) -> float:
+    return 10 ** (float(db) / 10)
+
+
+def _power_db(power: float) -> float:
+    import math
+
+    return 10 * math.log10(power) if power > 0 else -90.0
+
+
+def _energy_mean_db(values: list[float]) -> float:
+    """Интегральная громкость окон (среднее мощности, а не среднее дБ — громкие места весят больше)."""
+    return _power_db(sum(_power(v) for v in values) / len(values)) if values else -90.0
+
+
+def _percentile(values: list[float], q: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, max(0, int(len(ordered) * q)))] if ordered else -90.0
+
+
+def auto_voice_gain(
+    voice: list[float],
+    others: list[list[float]],
+    voice_peaks: list[float] | None = None,
+    *,
+    others_peaks: list[list[float]] | None = None,
+    step: float = AUTO_STEP_SEC,
+    over_db: float = AUTO_OVER_DB,
+) -> dict:
+    """Усиление дорожки голоса (чистая функция, дБ по окнам ``step`` одних и тех же моментов записи).
+
+    ``voice`` — RMS голоса по окнам, ``others`` — RMS остальных дорожек смеси в те же окна,
+    ``voice_peaks`` / ``others_peaks`` — пики в окне (max |сэмпл|, дБ). Речь — окна, где голос громче
+    шума своей дорожки на AUTO_SPEECH_OVER_FLOOR_DB. Цель: голос в моменты речи на ``over_db`` громче
+    суммы остальных дорожек в те же моменты; усиление в AUTO_MIN_DB..AUTO_MAX_DB. Пики: если
+    пик смеси (усиленный голос или игра) выше громкости всей смеси больше чем на AUTO_PEAK_ROOM_DB —
+    снижаем по 0.5 дБ, если это возвращает запас не ниже перевеса AUTO_MIN_OVER_DB.
+
+    Ответ: ``gain_db`` (шаг 0.5) и замер ``voice_db``/``others_db`` (в моменты речи),
+    ``over_db`` (перевес голоса после усиления), ``speech_sec``, ``peak_limited``."""
+    n = min([len(voice), *(len(o) for o in others)]) if others else 0
+    if n == 0:
+        return {"gain_db": 0.0, "note": "нечего сравнивать: нужна дорожка голоса и хотя бы одна другая"}
+    v = [float(x) for x in voice[:n]]
+    floor = _percentile(v, 0.2)
+    bar = max(floor + AUTO_SPEECH_OVER_FLOOR_DB, AUTO_SPEECH_MIN_DB)
+    speech = [i for i in range(n) if v[i] >= bar]
+    speech_sec = round(len(speech) * step, 2)
+    if speech_sec < AUTO_MIN_SPEECH_SEC:
+        return {"gain_db": 0.0, "speech_sec": speech_sec,
+                "note": "в дорожке голоса не нашлось речи (громче шума на 12 дБ) — усиление не менял"}
+    other_power = [sum(_power(o[i]) for o in others) for i in range(n)]
+    voice_db = _energy_mean_db([v[i] for i in speech])
+    others_db = _power_db(sum(other_power[i] for i in speech) / len(speech))
+    want = others_db + over_db - voice_db
+    gain = min(AUTO_MAX_DB, max(AUTO_MIN_DB, want))
+    out: dict = {"voice_db": round(voice_db, 1), "others_db": round(others_db, 1), "speech_sec": speech_sec,
+                 "noise_db": round(floor, 1), "peak_limited": False}
+    if voice_peaks:
+        peaks = [float(voice_peaks[i]) for i in speech if i < len(voice_peaks)]
+        top = _percentile(peaks, 0.99) if peaks else None
+        # Пик смеси — громче из пика голоса (с усилением) и пиков остальных дорожек (взрывы игры).
+        top_others = (_percentile([max(float(o[i]) for o in others_peaks) for i in range(n)], 0.99)
+                      if others_peaks and all(len(o) >= n for o in others_peaks) else None)
+
+        def room(g: float) -> float:
+            mix = _power_db(sum(_power(v[i] + g) + other_power[i] for i in range(n)) / n)
+            peak = float(top) + g if top_others is None else max(float(top) + g, top_others)
+            return peak - mix
+
+        if top is not None and room(gain) > AUTO_PEAK_ROOM_DB:
+            out["peak_db"] = round(float(top), 1)
+            # Снижаем по 0.5 дБ до перевеса AUTO_MIN_OVER_DB — только если это возвращает запас:
+            # острые пики самой речи (пик выше громкости смеси при любом усилении) снижение не
+            # лечит, их сожмёт компрессор нормализации, а голос остаётся разборчивым.
+            lowest = max(AUTO_MIN_DB, min(gain, others_db + AUTO_MIN_OVER_DB - voice_db))
+            fixed = gain
+            while fixed - 0.5 >= lowest - 1e-9 and room(fixed) > AUTO_PEAK_ROOM_DB:
+                fixed -= 0.5
+            if room(fixed) <= AUTO_PEAK_ROOM_DB:
+                gain = fixed
+                out["peak_limited"] = True
+                out["note"] = (f"пики голоса съедали запас нормализации — усиление снижено до {fixed:g} дБ "
+                               f"(цель {want:.1f})")
+            else:
+                out["note"] = ("пики смеси (голос или игра) выше её громкости на "
+                               f"{room(gain):.1f} дБ при любом усилении голоса — снижение не поможет, сожмёт "
+                               "компрессор нормализации")
+            out["peak_over_mix_db"] = round(room(gain), 1)
+    gain = round(gain * 2) / 2
+    out["gain_db"] = gain
+    out["over_db"] = round(voice_db + gain - others_db, 1)
+    return out
+
+
+def track_profile(source: dict, track: int, *, windows: int = AUTO_WINDOWS,
+                  window_sec: float = AUTO_WINDOW_SEC, step: float = AUTO_STEP_SEC) -> dict:
+    """Громкость одной дорожки по окнам ``step`` в нескольких местах записи (одних и тех же для
+    всех дорожек — моменты совпадают): ``{db: [RMS дБ], peak_db: [пик дБ], step}``."""
+    from app.source_loudness import pcm_levels, pcm_peaks, read_window_pcm
 
     duration = float(source.get("duration_sec") or 0)
     if duration <= window_sec * windows:
@@ -309,31 +417,33 @@ def track_levels(source: dict, track: int, *, windows: int = AUTO_WINDOWS,
     else:
         spans = [(duration * (k + 1) / (windows + 1) - window_sec / 2, window_sec) for k in range(windows)]
     levels: list[float] = []
+    peaks: list[float] = []
     for start, length in spans:
-        levels += pcm_levels(read_window_pcm(source, max(0.0, start), length, tracks=[track]), 8000, 0.5)
-    heard = sorted(v for v in levels if v > SILENCE_DB + 20)
+        raw = read_window_pcm(source, max(0.0, start), length, tracks=[track])
+        got = pcm_levels(raw, 8000, step)
+        levels += got
+        peaks += pcm_peaks(raw, 8000, step)[: len(got)]
+    return {"db": levels, "peak_db": peaks, "step": step}
+
+
+def profile_summary(profile: dict) -> dict:
+    """Медиана и 90-й перцентиль громкости дорожки (дБ) — показать агенту рядом с auto_gain."""
+    from app.source_loudness import SILENCE_DB
+
+    heard = sorted(v for v in profile.get("db") or [] if v > SILENCE_DB + 20)
     if not heard:
         return {"median_db": SILENCE_DB, "p90_db": SILENCE_DB}
-    return {"median_db": round(heard[len(heard) // 2], 1), "p90_db": round(heard[min(len(heard) - 1, int(len(heard) * 0.9))], 1)}
-
-
-def auto_gain(levels: dict[int, dict], voice: int) -> float:
-    """Усиление голоса: его фразы на AUTO_OVER_DB громче медианы остальных дорожек."""
-    others = [lv["median_db"] for t, lv in levels.items() if t != voice]
-    if not others or voice not in levels:
-        return 0.0
-    want = max(others) + AUTO_OVER_DB - levels[voice]["p90_db"]
-    return round(min(AUTO_MAX_DB, max(AUTO_MIN_DB, want)) * 2) / 2
+    return {"median_db": round(heard[len(heard) // 2], 1), "p90_db": round(_percentile(heard, 0.9), 1)}
 
 
 def set_source_audio(store: Any, source_id: int, tracks: Any = _KEEP, speech_tracks: Any = _KEEP,
                      measure: Any = None) -> dict:
     """Выбрать дорожки источника и их громкость (REST и MCP). ``[]``/None — вернуть первую.
 
-    ``tracks`` — ``[0, 1]`` или ``[{track, gain_db}]`` (``gain_db: "auto"`` — замерить и поднять
-    голос над игрой); ``speech_tracks`` — дорожки для распознавания речи (``[]`` — как
+    ``tracks`` — ``[0, 1]`` или ``[{track, gain_db}]`` (``gain_db: "auto"`` — замерить и поставить
+    голос на ~9 дБ над игрой в моменты речи, ``auto_voice_gain``); ``speech_tracks`` — дорожки для распознавания речи (``[]`` — как
     ``tracks``). Номер за пределами файла — ошибка (ValueError), а не тихий «звук пропал»
-    на рендере. ``measure(source, track)`` — замер громкости (тесты подменяют)."""
+    на рендере. ``measure(source, track)`` — замер дорожки ``{db, peak_db, step}`` (тесты подменяют)."""
     source = store.get_source(int(source_id))
     total = len(audio_streams(source))
     fields: dict = {}
@@ -345,13 +455,22 @@ def set_source_audio(store: Any, source_id: int, tracks: Any = _KEEP, speech_tra
         _check_tracks([m["track"] for m in mix] if mix else None, total, "tracks")
         auto = [t for t in _auto_tracks(tracks) if mix and any(m["track"] == t for m in mix)]
         if auto and mix and len(mix) > 1:
-            measure = measure or track_levels
-            levels = {m["track"]: measure(source, m["track"]) for m in mix}
+            measure = measure or track_profile
+            profiles = {m["track"]: measure(source, m["track"]) for m in mix}
+            details = {}
             for m in mix:
                 if m["track"] in auto:
-                    m["gain_db"] = auto_gain(levels, m["track"])
-            out["levels"] = {str(t): lv for t, lv in levels.items()}
+                    rest = [t for t in profiles if t != m["track"] and t not in auto] or \
+                        [t for t in profiles if t != m["track"]]
+                    got = auto_voice_gain(profiles[m["track"]]["db"], [profiles[t]["db"] for t in rest],
+                                          profiles[m["track"]].get("peak_db"),
+                                          others_peaks=[profiles[t].get("peak_db") or [] for t in rest],
+                                          step=float(profiles[m["track"]].get("step") or AUTO_STEP_SEC))
+                    m["gain_db"] = _gain_db(got["gain_db"])
+                    details[str(m["track"])] = got
+            out["levels"] = {str(t): profile_summary(p) for t, p in profiles.items()}
             out["auto_gain"] = {str(m["track"]): m["gain_db"] for m in mix if m["track"] in auto}
+            out["auto"] = details
         fields["audio_tracks"] = mix_storage(mix)
     if speech_tracks is not _KEEP:
         if speech_tracks not in (None, [], "") and normalize_tracks(speech_tracks) is None:

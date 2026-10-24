@@ -208,13 +208,17 @@ def test_set_source_audio_gains_speech_track_and_auto(tmp_path, monkeypatch):
     assert store.get_source_transcript(source_id)
     assert run_tool(_ctx(store), "set_source_audio", {"project_id": source_id, "speech_tracks": [5]})[1] is False
 
-    # «auto»: голос (тихий микрофон) — на 6 дБ над медианой игры, по замеру.
-    levels = {0: {"median_db": -20.0, "p90_db": -14.0}, 1: {"median_db": -45.0, "p90_db": -36.0}}
-    monkeypatch.setattr(source_audio, "track_levels", lambda src, track, **k: levels[track])
+    # «auto»: голос (тихий микрофон) — на 9 дБ над игрой в моменты речи, по замеру
+    # (подробно — tests/test_auto_voice_gain.py).
+    profiles = {0: {"db": [-20.0] * 40, "step": 0.25},
+                1: {"db": [-60.0, -60.0, -36.0, -36.0] * 10, "step": 0.25}}
+    monkeypatch.setattr(source_audio, "track_profile", lambda src, track, **k: profiles[track])
     out, ok = run_tool(_ctx(store), "set_source_audio",
                        {"project_id": source_id, "tracks": [0, {"track": 1, "gain_db": "auto"}]})
     assert ok, out
-    assert out["auto_gain"] == {"1": 22.0} and out["audio"]["mix"][1]["gain_db"] == 22.0
+    # Цель −20 + 9 − (−36) = 25 дБ, потолок усиления — +24.
+    assert out["auto_gain"] == {"1": 24.0} and out["audio"]["mix"][1]["gain_db"] == 24.0
+    assert out["auto"]["1"]["voice_db"] == -36.0 and out["auto"]["1"]["others_db"] == -20.0
     # REST — то же.
     from fastapi.testclient import TestClient
 
