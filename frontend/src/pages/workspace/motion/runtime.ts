@@ -7,8 +7,11 @@
  * каждый кадр. Шрифты — те же файлы, что регистрирует рендер, через FontFace.
  */
 import {
+  assetKey,
   assetUrl,
   collectImageRefs,
+  formatEnv,
+  type AssetSizes,
   invalidateTextCache,
   VIDEO_MAX_SPEED,
   VIDEO_MIN_SPEED,
@@ -159,6 +162,46 @@ function videoFor(layer: VideoLayer): VideoSource | null {
   return videoEntry(layer)?.src ?? null;
 }
 
+/**
+ * Собственные размеры картинок и видео слоёв, что уже загрузились (для перекомпоновки
+ * между форматами — reframe.ts; на сервере их даёт ffprobe). `known` — размеры из библиотеки
+ * (файлы для монтажа по id), остальное — по загруженным <img>/<video>. `missing` — сколько ещё нет.
+ */
+export function layerAssetSizes(layers: Layer[], known: AssetSizes = {}): { sizes: AssetSizes; missing: number } {
+  const sizes: AssetSizes = {};
+  let missing = 0;
+  for (const layer of layers) {
+    if (layer.type !== "image" && layer.type !== "video") continue;
+    const props = layer.props as { asset_id?: unknown; src?: unknown };
+    const ref = props.asset_id || props.src;
+    const key = assetKey(ref);
+    if (!key || sizes[key]) continue;
+    if (known[key]) {
+      sizes[key] = known[key];
+      continue;
+    }
+    let w = 0;
+    let h = 0;
+    if (layer.type === "image") {
+      const img = imageFor(String(ref));
+      w = img?.naturalWidth ?? 0;
+      h = img?.naturalHeight ?? 0;
+      if (!img && images.get(String(ref))?.failed) continue;
+    } else {
+      for (const entry of videos.values()) {
+        if (assetKey(entry.layer.props.asset_id) === key && entry.el.videoWidth) {
+          w = entry.el.videoWidth;
+          h = entry.el.videoHeight;
+          break;
+        }
+      }
+    }
+    if (w > 0 && h > 0) sizes[key] = [w, h];
+    else missing += 1;
+  }
+  return { sizes, missing };
+}
+
 let fontsPromise: Promise<MotionFont[]> | null = null;
 
 /**
@@ -212,13 +255,16 @@ const envs = new Map<string, RenderEnv>();
  * держит промежуточный холст на окружение, и новый объект каждый кадр плодил бы
  * холсты.
  */
-export function browserEnv(w: number, h: number): RenderEnv {
-  const key = `${w}x${h}`;
+export function browserEnv(w: number, h: number, fmt?: unknown): RenderEnv {
+  // Опорный кадр формата (formats.ts): у 9:16 его нет — движок берёт 1080×1920, как всегда.
+  const ref: { refWidth?: number; refHeight?: number } = fmt === undefined ? {} : formatEnv(fmt, w);
+  const key = `${w}x${h}|${ref.refWidth ?? ""}x${ref.refHeight ?? ""}`;
   let env = envs.get(key);
   if (!env) {
     env = {
       width: w,
       height: h,
+      ...(ref.refWidth ? { refWidth: ref.refWidth, refHeight: ref.refHeight } : {}),
       getImage: imageFor,
       getVideo: videoFor,
       createCanvas: (cw, ch) => {

@@ -65,6 +65,8 @@ type Props = {
   keyed?: boolean;
   /** У клипа есть наезды камеры: слою есть смысл «ехать с камерой» (`followCamera`). */
   hasCamera?: boolean;
+  /** Ширина опорного кадра формата разметки слоёв (px): 1080, у 16:9 — 1920 (предел «Ширины»). */
+  refWidth?: number;
 };
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -205,10 +207,12 @@ function TextStyleFields({
   style,
   fonts,
   onPatch,
+  refWidth = 1080,
 }: {
   style: TextStyle;
   fonts: MotionFont[];
   onPatch: (patch: Partial<TextStyle>) => void;
+  refWidth?: number;
 }) {
   const families = fontFamilies(fonts);
   const fam = families.find((f) => f.family === style.font) ?? families[0];
@@ -308,7 +312,7 @@ function TextStyleFields({
         <Toggle label="ЗАГЛАВНЫЕ" checked={Boolean(style.uppercase)} onChange={(uppercase) => onPatch({ uppercase })} />
       </div>
       <div className="li-row">
-        <Num label="Ширина" value={style.maxWidth ?? 900} min={100} max={1080} step={10} onChange={(maxWidth) => onPatch({ maxWidth })} />
+        <Num label="Ширина" value={style.maxWidth ?? 900} min={100} max={refWidth} step={10} onChange={(maxWidth) => onPatch({ maxWidth })} />
         <Num label="Интервал" value={style.lineHeight ?? 1.1} min={0.8} max={2} step={0.05} onChange={(lineHeight) => onPatch({ lineHeight })} />
         <Num label="Трекинг" value={style.letterSpacing ?? 0} min={-10} max={40} onChange={(letterSpacing) => onPatch({ letterSpacing })} />
       </div>
@@ -383,7 +387,7 @@ function CaptionWords({
   );
 }
 
-export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false }: Props) {
+export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false, refWidth = 1080 }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
   const [t, setT] = useState(now());
@@ -465,7 +469,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             onChange={(e) => patchProps({ text: e.target.value })}
             placeholder="Текст титра"
           />
-          <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} />
+          <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} refWidth={refWidth} />
           <Toggle
             label="Затемнение за текстом"
             checked={Boolean(layer.props.backdrop)}
@@ -636,7 +640,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               <input className="input" value={layer.props.suffix ?? ""} onChange={(e) => patchProps({ suffix: e.target.value })} />
             </label>
           </div>
-          <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} />
+          <TextStyleFields style={layer.props} fonts={fonts} onPatch={patchProps} refWidth={refWidth} />
         </Section>
       ) : null}
 
@@ -792,7 +796,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             />
           </label>
           <div className="li-row">
-            <Num label="Ширина" value={layer.props.w ?? 800} min={40} max={1080} step={10} onChange={(w) => patchProps({ w })} />
+            <Num label="Ширина" value={layer.props.w ?? 800} min={40} max={refWidth} step={10} onChange={(w) => patchProps({ w })} />
             <Num label="Высота" value={layer.props.h ?? 60} min={6} max={400} onChange={(h) => patchProps({ h })} />
           </div>
           <div className="li-row">
@@ -892,7 +896,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             </label>
           </div>
           <div className="li-row">
-            <Num label="Ширина" value={layer.props.w ?? 860} min={200} max={1080} step={10} onChange={(w) => patchProps({ w })} />
+            <Num label="Ширина" value={layer.props.w ?? 860} min={200} max={refWidth} step={10} onChange={(w) => patchProps({ w })} />
             <Num label="Скос°" value={layer.props.skew ?? 0} min={-30} max={30} onChange={(skew) => patchProps({ skew })} />
           </div>
         </Section>

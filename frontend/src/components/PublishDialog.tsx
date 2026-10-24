@@ -55,7 +55,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
           </button>
         </div>
         <div className="pub-body">
-        <div className="pub-preview">
+        <div className="pub-preview" style={clip.width > 0 && clip.height > 0 ? { aspectRatio: `${clip.width} / ${clip.height}` } : undefined}>
           <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
         </div>
         <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
