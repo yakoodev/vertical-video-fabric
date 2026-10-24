@@ -23,7 +23,9 @@
 
 ``gap`` и ``border.width`` — пиксели кадра 1080×1920; на другом размере
 выхода масштабируются пропорционально высоте (превью считает так же, см.
-frontend/src/pages/workspace/layout.ts). ``single`` — ровно прежний рендер.
+frontend/src/pages/workspace/layout.ts). В кадре другого формата (1:1, 4:5, 16:9 —
+app/formats.py) — по короткой стороне, как px моушн-слоёв: рамка 6 px остаётся 6 px
+(``frame_px_scale``). ``single`` — ровно прежний рендер.
 
 Здесь только чистая геометрия и автопоиск вебки; граф ffmpeg собирает
 ``app.render._layout_filter``.
@@ -108,17 +110,36 @@ def even_px(value: float) -> int:
     return max(2, int(round(value / 2.0)) * 2)
 
 
-def scaled_px(value: float, height: int) -> int:
-    """Пиксели кадра 1080×1920 → пиксели выхода высотой ``height`` (чётные; 0 остаётся 0)."""
+# Кадр выше этого отношения высоты к ширине — вертикаль (9:16): px считаются от высоты, как всегда.
+VERTICAL_MIN_RATIO = 1.7
+
+
+def frame_px_scale(width: int | float | None, height: int | float) -> float:
+    """Множитель px кадра 1080×1920 → px выхода ``width``×``height``.
+
+    Вертикаль (и ширина не задана) — высота / 1920, как всегда. Квадрат, 4:5 и 16:9 — по
+    короткой стороне / 1080, как px моушн-слоёв: от высоты 1080 у 16:9 рамка 6 px стала бы 4."""
+    h = float(height or 0)
+    w = float(width or 0)
+    if w <= 0 or h <= 0 or h >= w * VERTICAL_MIN_RATIO:
+        return h / REFERENCE_HEIGHT
+    return min(w, h) / 1080
+
+
+def scaled_px(value: float, height: int, width: int | None = None) -> int:
+    """Пиксели кадра 1080×1920 → пиксели выхода высотой ``height`` (чётные; 0 остаётся 0).
+    ``width`` — ширина выхода: у не вертикального кадра — по короткой стороне (``frame_px_scale``)."""
     if value <= 0:
         return 0
-    return even_px(value * height / REFERENCE_HEIGHT)
+    if width is None:
+        return even_px(value * height / REFERENCE_HEIGHT)
+    return even_px(value * frame_px_scale(width, height))
 
 
-def split_geometry(layout: dict, height: int) -> tuple[int, int, int]:
+def split_geometry(layout: dict, height: int, width: int | None = None) -> tuple[int, int, int]:
     """(высота вебки, высота зазора, высота геймплея) в пикселях выхода; сумма = height."""
     cam_h = even_px(float(layout["ratio"]) * height)
-    gap = scaled_px(float(layout.get("gap") or 0), height)
+    gap = scaled_px(float(layout.get("gap") or 0), height, width)
     gap = min(gap, max(0, height - cam_h - 2))
     return cam_h, gap, height - cam_h - gap
 
@@ -126,7 +147,7 @@ def split_geometry(layout: dict, height: int) -> tuple[int, int, int]:
 def gameplay_height(layout: object, width: int, height: int) -> int:
     """Высота окна геймплея: в split она меньше кадра, иначе — весь кадр."""
     if isinstance(layout, dict) and layout.get("mode") == "split":
-        return split_geometry(layout, height)[2]
+        return split_geometry(layout, height, width)[2]
     return height
 
 
@@ -145,11 +166,11 @@ def camera_regions(
         return None
     layout = normalize_layout(layout)
     if layout["mode"] == "split":
-        cam_h, gap, game_h = split_geometry(layout, height)
+        cam_h, gap, game_h = split_geometry(layout, height, width)
         top = layout["cam_pos"] != "bottom"
         return {"box": {"x": 0, "y": cam_h + gap if top else 0, "w": int(width), "h": game_h}, "pinned": []}
     cam, pip = layout["cam"], layout["pip"]
-    border = scaled_px(float(layout["border"]["width"]), height)
+    border = scaled_px(float(layout["border"]["width"]), height, width)
     box_w = min(int(width), even_px(float(pip["w"]) * width))
     inner = max(2, box_w - 2 * border)
     aspect = (cam["w"] * float(src_w or 16)) / max(1e-6, cam["h"] * float(src_h or 9))

@@ -109,6 +109,15 @@ def caption_y_for(settings: dict | None) -> float:
     и обычные 0.72 легли бы ему на лицо: ставим субтитры на шов, чуть выше вебки.
     """
     layout = (settings or {}).get("layout") or {}
+    from app.formats import settings_layers_format
+
+    fmt = settings_layers_format(settings)
+    if fmt == "16:9":
+        # Слои размечены в горизонтали: субтитры внизу, как у YouTube, — над нижним полем зоны
+        # (app/safe_zones.py); полосы вебки в 16:9 нет (окошко в углу).
+        from app.safe_zones import safe_zone
+
+        return round(safe_zone(fmt)["captions_bottom"] - 0.12, 3)
     if layout.get("mode") == "split" and layout.get("cam_pos", "top") == "bottom":
         ratio = float(layout.get("ratio") or 0.38)
         return round(max(0.3, 1.0 - ratio - 0.05), 3)

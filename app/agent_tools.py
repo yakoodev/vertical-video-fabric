@@ -43,6 +43,7 @@ BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (н�
 
 # Безопасные зоны вертикального ролика: сверху — шапка площадки, снизу — подпись,
 # кнопки и прогресс-бар TikTok/Shorts/Reels. Текст там читается плохо или закрыт.
+# Зоны других форматов (1:1, 4:5 — лента, 16:9 — YouTube) — app/safe_zones.py.
 SAFE_TOP = 0.10
 SAFE_BOTTOM = 0.80
 # Не больше стольких графических слоёв на экране одновременно — дальше каша.
@@ -231,7 +232,9 @@ def _cover_problems(ctx: ToolContext, layers: list[dict]) -> list[str]:
     """Правило «не закрывать видео» — на холсте видео нет: картинка во весь кадр и есть монтаж."""
     if _source_canvas(ctx):
         return []
-    return covering_problems(layers, _source_keyed(ctx))
+    from app.formats import settings_layers_format
+
+    return covering_problems(layers, _source_keyed(ctx), settings_layers_format(_current_render(ctx)))
 
 
 def _current_render(ctx: ToolContext) -> dict:
@@ -256,10 +259,13 @@ def _camera_of(render: dict) -> list[dict]:
 
 
 def _lint_scene(ctx: ToolContext, render: dict) -> dict:
-    """Что нужно линту кроме слоёв: раскладка, холст, его фон (контраст финала) и камера (followCamera)."""
+    """Что нужно линту кроме слоёв: раскладка, холст, его фон (контраст финала), камера (followCamera)
+    и формат разметки слоёв (опорный кадр и безопасная зона площадок, app/safe_zones.py)."""
+    from app.formats import settings_layers_format
+
     canvas = _source_canvas(ctx)
     scene = {"layout": render.get("layout"), "canvas": canvas, "camera": _camera_of(render),
-             "backdrop": render.get("backdrop") if canvas else None}
+             "backdrop": render.get("backdrop") if canvas else None, "fmt": settings_layers_format(render)}
     layers = _layers_of(render)
     if canvas or has_device_layers(layers):
         # Пропорции картинок и записей экрана из библиотеки — для геометрии правил промо.
@@ -344,35 +350,80 @@ def text_lines(props: dict) -> int:
     return max(1, total)
 
 
-def text_half_height(props: dict, scale: float = 1.0) -> float:
-    """Половина высоты текстового слоя в долях кадра 1920 (строки × кегль × межстрочный)."""
+def _ref(fmt: Any = None) -> tuple[float, float]:
+    """Опорный кадр слоёв формата (app/formats.py): 9:16 — 1080×1920, 16:9 — 1920×1080."""
+    from app.formats import ref_size, settings_format
+
+    w, h = ref_size(settings_format(fmt))
+    return float(w), float(h)
+
+
+def _zone(fmt: Any = None) -> dict:
+    """Безопасная зона формата (app/safe_zones.py): у 9:16 — SAFE_TOP/SAFE_BOTTOM, как всегда."""
+    from app.safe_zones import safe_zone
+
+    return safe_zone(fmt)
+
+
+def text_half_height(props: dict, scale: float = 1.0, ref_h: float = 1920.0) -> float:
+    """Половина высоты текстового слоя в долях кадра высотой ``ref_h`` (опорный кадр формата;
+    9:16 — 1920): строки × кегль × межстрочный."""
     size = _num(props.get("size"), 96.0) or 96.0
     line_height = _num(props.get("lineHeight"), 1.15) or 1.15
-    return size * line_height * text_lines(props) * scale / 1920 / 2
+    return size * line_height * text_lines(props) * scale / ref_h / 2
 
 
-def safe_text_y(props: dict, y: float, scale: float = 1.0, top: float = SAFE_TOP) -> float:
+def text_half_width(props: dict, scale: float = 1.0) -> float:
+    """Половина ширины текстового слоя в опорных px: самая длинная строка (ширина буквы — как
+    в ``text_lines``), не шире ``maxWidth``."""
+    text = str(props.get("text") or "")
+    size = _num(props.get("size"), 96.0) or 96.0
+    width = _num(props.get("maxWidth"), 920.0) or 920.0
+    heavy = bool(props.get("uppercase")) or text.upper() == text
+    factor = 0.68 if heavy and (_num(props.get("weight"), 800.0) or 800.0) >= 700 else 0.58
+    longest = max((len(chunk) for chunk in text.split("\n")), default=0)
+    return min(width, longest * size * factor) * scale / 2
+
+
+def safe_text_y(props: dict, y: float, scale: float = 1.0, top: float = SAFE_TOP, ref_h: float = 1920.0) -> float:
     """Центр ``y`` текста, опущенный так, чтобы верх строк был не выше ``top`` (по умолчанию
-    SAFE_TOP; в split с вебкой сверху — низ полосы вебки, ``text_band``)."""
-    return round(max(y, math.ceil((top + text_half_height(props, scale)) * 1000) / 1000), 3)
+    SAFE_TOP; в split с вебкой сверху — низ полосы вебки, ``text_band``). ``ref_h`` — высота
+    опорного кадра формата слоёв (9:16 — 1920)."""
+    return round(max(y, math.ceil((top + text_half_height(props, scale, ref_h)) * 1000) / 1000), 3)
 
 
-def cam_strip(layout: Any) -> tuple[float, float] | None:
-    """Полоса вебки раскладки split на кадре 9:16: (верх, низ) в долях высоты; иначе None."""
-    from app.stream_layout import normalize_layout
+def cam_strip(layout: Any, fmt: Any = None) -> tuple[float, float] | None:
+    """Полоса вебки раскладки split: (верх, низ) в долях высоты кадра формата ``fmt`` (нет —
+    9:16); иначе None. В 16:9 полосы нет — вебка окошком в углу (stream_layout.layout_for_format)."""
+    from app.formats import frame_size, is_landscape, settings_format
+    from app.stream_layout import frame_px_scale, normalize_layout
 
     if not isinstance(layout, dict) or layout.get("mode") != "split":
         return None
+    fmt = settings_format(fmt)
+    if is_landscape(fmt):
+        return None
     layout = normalize_layout(layout)
-    height = float(layout["ratio"]) + float(layout.get("gap") or 0) / 1920
+    gap = float(layout.get("gap") or 0)
+    if fmt == "9:16":
+        gap /= 1920
+    else:  # зазор — px кадра 1080×1920 по короткой стороне (stream_layout.scaled_px)
+        w, h = frame_size(fmt)
+        gap = gap * frame_px_scale(w, h) / h
+    height = float(layout["ratio"]) + gap
     return (0.0, round(height, 4)) if layout["cam_pos"] != "bottom" else (round(1.0 - height, 4), 1.0)
 
 
 def text_band(render: dict | None) -> tuple[float, float]:
     """Где можно ставить текст по высоте (верх, низ): безопасная зона площадки минус полоса
-    вебки в split (агент стримов: хук на y 0.13 лёг на лицо в полосе вебки)."""
-    top, bottom = SAFE_TOP, SAFE_BOTTOM
-    strip = cam_strip((render or {}).get("layout"))
+    вебки в split (агент стримов: хук на y 0.13 лёг на лицо в полосе вебки). Зона — формата,
+    в котором размечены слои (``layers_format``; у 9:16 — SAFE_TOP/SAFE_BOTTOM)."""
+    from app.formats import settings_layers_format
+
+    fmt = settings_layers_format(render)
+    zone = _zone(fmt)
+    top, bottom = zone["top"], zone["bottom"]
+    strip = cam_strip((render or {}).get("layout"), fmt)
     if strip:
         if strip[0] <= 0.0:
             top = max(top, strip[1] + 0.015)
@@ -381,14 +432,15 @@ def text_band(render: dict | None) -> tuple[float, float]:
     return round(top, 4), round(bottom, 4)
 
 
-def _layer_box(layer: dict) -> tuple[float, float]:
-    """Примерная половина высоты слоя в долях кадра — для проверки безопасных зон."""
+def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
+    """Примерная половина высоты слоя в долях кадра (высота опорного кадра ``ref_h``) — для
+    проверки безопасных зон."""
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
     scale = _num(layer.get("scale"), 1.0) or 1.0
     kind = layer.get("type")
     height = 0.0
     if kind in ("text", "counter"):
-        return text_half_height(props, scale), 0.0
+        return text_half_height(props, scale, ref_h), 0.0
     if kind == "emoji":
         height = _num(props.get("size"), 160.0) or 160.0
     elif kind in ("shape", "progress", "chart"):
@@ -401,7 +453,7 @@ def _layer_box(layer: dict) -> tuple[float, float]:
         height = video_height(props)
     elif kind == "particles":
         height = 2 * ((_num(props.get("spread"), 360.0) or 0.0) + (_num(props.get("size"), 28.0) or 0.0))
-    return height * scale / 1920 / 2, 0.0
+    return height * scale / ref_h / 2, 0.0
 
 
 def video_height(props: dict) -> float:
@@ -420,15 +472,17 @@ def video_height(props: dict) -> float:
 MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура больше 40 % кадра — «закрыли видео»
 
 
-def cover_share(layer: dict) -> float:
-    """Какую долю кадра 1080×1920 непрозрачно закрывает слой-картинка/фигура (0, если прозрачный)."""
+def cover_share(layer: dict, fmt: Any = None) -> float:
+    """Какую долю кадра непрозрачно закрывает слой-картинка/фигура (0, если прозрачный); кадр —
+    опорный формата слоёв ``fmt`` (нет — 9:16, 1080×1920)."""
     if layer.get("type") not in ("shape", "image", "video"):
         return 0.0
+    ref_w, ref_h = _ref(fmt)
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
     if layer.get("type") == "video" and (_num(layer.get("opacity"), 1.0) or 0.0) >= 0.6:
         scale = _num(layer.get("scale"), 1.0) or 1.0
         w = (_num(props.get("w"), 600.0) or 600.0) * scale
-        return min(1.0, (w * video_height(props) * scale) / (1080 * 1920))
+        return min(1.0, (w * video_height(props) * scale) / (ref_w * ref_h))
     if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
         return 0.0
     if layer.get("type") == "shape" and props.get("fill") in (None, "", "none"):
@@ -436,10 +490,10 @@ def cover_share(layer: dict) -> float:
     scale = _num(layer.get("scale"), 1.0) or 1.0
     w = (_num(props.get("w"), 400.0) or 400.0) * scale
     h = (_num(props.get("h"), w) or w) * scale
-    return min(1.0, (w * h) / (1080 * 1920))
+    return min(1.0, (w * h) / (ref_w * ref_h))
 
 
-def covering_problems(layers: list[dict], keyed: bool = False) -> list[str]:
+def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) -> list[str]:
     """Ошибки: слой закрывает собой видео. Владелец: «плашки перекрывают видео — говно».
     Картинки и плашки ставим на пустое место, а не поверх героя/кадра.
 
@@ -452,7 +506,7 @@ def covering_problems(layers: list[dict], keyed: bool = False) -> list[str]:
                 out.append(f"{layer.get('id') or layer.get('type')}: behind работает только у источника с хромакеем "
                            "(set_chroma_key) — без него убери behind")
             continue
-        share = cover_share(layer)
+        share = cover_share(layer, fmt)
         if share > MAX_COVER_SHARE:
             out.append(f"{layer.get('id') or layer.get('type')}: закрывает {share:.0%} кадра — видео не перекрывать, "
                        f"картинки и плашки ≤ {MAX_COVER_SHARE:.0%} кадра и на пустом месте (раскладка «Мем» даёт "
@@ -460,7 +514,7 @@ def covering_problems(layers: list[dict], keyed: bool = False) -> list[str]:
     return out
 
 
-def is_decor_layer(layer: dict, canvas: bool = False) -> bool:
+def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> bool:
     """Фон и декор, а не «графика поверх» — в перегруз не считается.
 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
@@ -473,14 +527,14 @@ def is_decor_layer(layer: dict, canvas: bool = False) -> bool:
         if canvas and props.get("device") == "phone":
             return True  # телефон на холсте — сама сцена промо (на смене сцен их два), а не графика поверх
         width = (_num(props.get("w"), 600.0) or 0.0) * (_num(layer.get("scale"), 1.0) or 0.0)
-        if width >= 0.9 * 1080 and (canvas or (_num(layer.get("opacity"), 1.0) or 0.0) <= 0.6):
+        if width >= 0.9 * ref_w and (canvas or (_num(layer.get("opacity"), 1.0) or 0.0) <= 0.6):
             return True
     return False
 
 
 def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None,
                 layout: dict | None = None, canvas: bool = False, backdrop: dict | None = None,
-                camera: list | None = None, sizes: dict | None = None) -> list[str]:
+                camera: list | None = None, sizes: dict | None = None, fmt: Any = None) -> list[str]:
     """Предупреждения ремесла (не ошибки): безопасные зоны, перегруз, мелкий текст.
 
     Не блокируют правку — модель (или человек) решает сама, но видит, где
@@ -488,25 +542,39 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     клипа: в split текст на полосе вебки ложится на лицо стримера. ``canvas`` — клип-холст
     (промо): картинки во всю ширину там фон и в перегруз не идут. На холсте и с телефоном
     (device) — ещё правила промо (app/promo_lint.py): ``backdrop`` — фон холста для
-    контраста финального текста, ``camera`` — наезд для слоёв followCamera.
+    контраста финального текста, ``camera`` — наезд для слоёв followCamera. ``fmt`` — формат,
+    в котором размечены слои (``layers_format``; нет — 9:16): его опорный кадр и безопасная
+    зона площадок (app/safe_zones.py); у 1:1, 4:5, 16:9 — ещё поля по бокам, у 16:9 — угол
+    водяного знака YouTube.
     """
+    from app.formats import settings_format
+
+    fmt = settings_format(fmt)
+    ref_w, ref_h = _ref(fmt)
+    zone = _zone(fmt)
+    safe_top, safe_bottom = zone["top"], zone["bottom"]
+    sides = fmt != "9:16"
     warnings: list[str] = []
-    strip = cam_strip(layout)
+    strip = cam_strip(layout, fmt)
     visible = [l for l in layers if l.get("type") != "audio" and not l.get("hidden")]
     for layer in visible:
         lid = str(layer.get("id") or "?")
         if only_ids is not None and lid not in only_ids:
             continue
         y = _num(layer.get("y"), 0.5) or 0.0
-        half, _ = _layer_box(layer)
+        half, _ = _layer_box(layer, ref_h)
         textual = layer.get("type") in TEXTUAL_TYPES
-        if textual and y + half > SAFE_BOTTOM and y - half < 1.0:
-            warnings.append(f"{lid}: текст заходит в нижние 20% кадра (y={y:.2f}) — там подпись и кнопки площадки")
-        if textual and y - half < SAFE_TOP and y + half > 0.0:
+        if textual and y + half > safe_bottom and y - half < 1.0:
+            warnings.append(f"{lid}: текст заходит в нижние {round((1 - safe_bottom) * 100)}% кадра (y={y:.2f}) — "
+                            f"{zone['bottom_reason']}" + (f" ({fmt}, {zone['platforms']}) — подними до "
+                            f"y≤{math.floor((safe_bottom - half) * 1000) / 1000:.3f}" if sides else ""))
+        if textual and y - half < safe_top and y + half > 0.0:
             lines = text_lines(layer.get("props") or {}) if layer.get("type") in ("text", "counter") else 1
             warnings.append(
-                f"{lid}: верх текста на {y - half:.3f} — выше безопасной зоны {SAFE_TOP:.2f} (там шапка площадки; "
-                f"центр y={y:.2f}, ≈{lines} стр.) — опусти до y≥{math.ceil((SAFE_TOP + half) * 1000) / 1000:.3f} или сократи текст")
+                f"{lid}: верх текста на {y - half:.3f} — выше безопасной зоны {safe_top:.2f} ({zone['top_reason']}; "
+                f"центр y={y:.2f}, ≈{lines} стр.) — опусти до y≥{math.ceil((safe_top + half) * 1000) / 1000:.3f} или сократи текст")
+        if textual and sides:
+            warnings.extend(_side_warnings(layer, lid, fmt, zone, ref_w, half))
         if textual and strip and y - half < strip[1] and y + half > strip[0]:
             where = "сверху" if strip[0] <= 0 else "снизу"
             edge = (f"опусти до y≥{math.ceil((strip[1] + 0.015 + half) * 1000) / 1000:.3f}" if strip[0] <= 0
@@ -533,8 +601,10 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
             warnings.append(f"{lid}: титр виден {end - start:.2f} с — не успеют прочитать")
         if layer.get("type") == "captions":
             warnings.extend(f"{lid}: {w}" for w in caption_highlight_warnings(props))
+            if sides:
+                warnings.extend(f"{lid}: {w}" for w in caption_zone_warnings(layer, fmt))
     # Перегруз: сколько видимых слоёв одновременно в момент начала каждого слоя.
-    graphics = [o for o in visible if not is_decor_layer(o, canvas)]  # фон, декор и субтитры — не «графика» поверх
+    graphics = [o for o in visible if not is_decor_layer(o, canvas, ref_w)]  # фон, декор и субтитры — не «графика» поверх
     for layer in graphics:
         lid = str(layer.get("id") or "?")
         if only_ids is not None and lid not in only_ids:
@@ -546,8 +616,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         ]
         if len(together) > MAX_SIMULTANEOUS:
             warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
-    warnings.extend(caption_overlap_warnings(visible, only_ids))
-    promo = promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera, sizes=sizes)
+    warnings.extend(caption_overlap_warnings(visible, only_ids, ref_h))
+    promo = promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera, sizes=sizes,
+                           fmt=fmt)
     if promo:
         # Мелкий шрифт финала сказан правилом промо (про CTA) — общее «мелковат» не дублируем.
         final_small = {w.split(":", 1)[0] for w in promo if "в финале шрифт" in w}
@@ -556,12 +627,55 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     return list(dict.fromkeys(warnings))
 
 
+def _side_warnings(layer: dict, lid: str, fmt: str, zone: dict, ref_w: float, half_h: float) -> list[str]:
+    """Текст у левого/правого края и в углу водяного знака (форматы не 9:16: поля площадки)."""
+    from app.safe_zones import in_watermark
+
+    props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    x = _num(layer.get("x"), 0.5) or 0.0
+    y = _num(layer.get("y"), 0.5) or 0.0
+    scale = _num(layer.get("scale"), 1.0) or 1.0
+    if layer.get("type") in ("text", "counter"):
+        half_w = text_half_width(props, scale) / ref_w
+    else:  # плашка-выноска: ширина по умолчанию как у движка
+        half_w = (_num(props.get("w"), 800.0) or 800.0) * scale / ref_w / 2
+    out = []
+    if x - half_w < zone["left"] and x + half_w > 0.0:
+        out.append(f"{lid}: левый край текста на {x - half_w:.3f} — левее безопасной зоны {zone['left']:.2f} "
+                   f"({fmt}, {zone['platforms']}: край кадра режется) — сдвинь до "
+                   f"x≥{math.ceil((zone['left'] + half_w) * 1000) / 1000:.3f} или сократи строку")
+    if x + half_w > zone["right"] and x - half_w < 1.0:
+        out.append(f"{lid}: правый край текста на {x + half_w:.3f} — правее безопасной зоны {zone['right']:.2f} "
+                   f"({fmt}, {zone['platforms']}: край кадра режется) — сдвинь до "
+                   f"x≤{math.floor((zone['right'] - half_w) * 1000) / 1000:.3f} или сократи строку")
+    if in_watermark(fmt, x - half_w, y - half_h, x + half_w, y + half_h):
+        out.append(f"{lid}: текст в правом нижнем углу — там водяной знак канала {zone['platforms']} "
+                   "(и длительность ролика на превью); перенеси левее или выше")
+    return out
+
+
+def caption_zone_warnings(layer: dict, fmt: Any) -> list[str]:
+    """Субтитры-слой ниже безопасной зоны формата (не 9:16): движок поднимет блок сам, но
+    место в редакторе и в кадре разойдутся — лучше сразу поставить ``y`` выше."""
+    zone = _zone(fmt)
+    y = _num(layer.get("y"), 0.5) or 0.0
+    limit = round(zone["captions_bottom"] - CAPTIONS_ZONE_ROOM, 3)
+    if y <= limit:
+        return []
+    return [f"субтитры на y={y:.2f} — блок уйдёт ниже безопасной зоны {zone['captions_bottom']:.2f} "
+            f"({zone['platforms']}), движок поднимет его; поставь y≤{limit}"]
+
+
+CAPTIONS_ZONE_ROOM = 0.08  # центр субтитров-слоя — не ниже низа зоны минус столько (полблока)
 CAPTIONS_MIN_GAP = 0.12  # две строки главных субтитров — ~0.1 высоты кадра
 
 
-def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = None) -> list[str]:
+def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = None,
+                             ref_h: float = 1920.0) -> list[str]:
     """Два слоя субтитров (главный и «другие голоса») ближе ~0.12 по высоте — строки лягут
-    друг на друга («ВОЗЬМИ ДЕЛАЕШЬ» поверх «МНЕ НУЖНО ВЫТЯНУТЬ» в проверочном прогоне)."""
+    друг на друга («ВОЗЬМИ ДЕЛАЕШЬ» поверх «МНЕ НУЖНО ВЫТЯНУТЬ» в проверочном прогоне).
+    Порог — px кадра 1920: у кадра ниже (1:1, 16:9) это бо́льшая доля высоты."""
+    min_gap = CAPTIONS_MIN_GAP if ref_h == 1920.0 else round(CAPTIONS_MIN_GAP * 1920 / ref_h, 3)
     caps = [l for l in layers if l.get("type") == "captions"]
     out = []
     for i, a in enumerate(caps):
@@ -569,9 +683,9 @@ def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = Non
             if only_ids is not None and str(a.get("id")) not in only_ids and str(b.get("id")) not in only_ids:
                 continue
             ya, yb = _num(a.get("y"), 0.5) or 0.5, _num(b.get("y"), 0.5) or 0.5
-            if abs(ya - yb) < CAPTIONS_MIN_GAP:
+            if abs(ya - yb) < min_gap:
                 out.append(f"субтитры {a.get('id')} (y {ya:.2f}) и {b.get('id')} (y {yb:.2f}) ближе "
-                           f"{CAPTIONS_MIN_GAP} по высоте — строки лягут друг на друга; разведи y")
+                           f"{min_gap} по высоте — строки лягут друг на друга; разведи y")
     return out
 
 
@@ -721,7 +835,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
                    "audio": _source_audio_view(source)},
         "duration": timeline["duration"],
         **_cuts_view(plan_clock(ctx.store, plan), render, timeline["duration"]),
-        "frame": {"width": 1080, "height": 1920, "safe_zone": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM}},
+        "frame": _frame_view(render),
         "framing": _framing_view(ctx, source, render),
         "pieces": pieces,
         "render": {
@@ -753,6 +867,28 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
     }
+
+
+def _frame_view(render: dict) -> dict:
+    """Кадр слоёв для get_clip: опорный кадр формата их разметки (``layers_format``) и безопасная
+    зона площадок (app/safe_zones.py). У 9:16 — 1080×1920, зона SAFE_TOP/SAFE_BOTTOM, как всегда;
+    рендер в другом формате — ещё зона кадра готового ролика (``render_safe_zone``)."""
+    from app.formats import ref_size, settings_layers_format, settings_render_format
+    from app.safe_zones import describe
+
+    layers_fmt = settings_layers_format(render)
+    out_fmt = settings_render_format(render)
+    w, h = ref_size(layers_fmt)
+    if layers_fmt == "9:16" and out_fmt == "9:16":
+        return {"width": 1080, "height": 1920, "safe_zone": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM}}
+    out = {"width": w, "height": h, "format": layers_fmt, "safe_zone": describe(layers_fmt)}
+    if out_fmt != layers_fmt:
+        out["render_format"] = out_fmt
+        out["render_safe_zone"] = describe(out_fmt)
+        out["note"] = (f"слои размечены в {layers_fmt} и переносятся в кадр {out_fmt} при рендере: ставь их по зоне "
+                       f"{layers_fmt}; хочешь раскладку под {out_fmt} — set_format(\"{out_fmt}\", "
+                       f"layers_format=\"{out_fmt}\") и размечай в его опорном кадре")
+    return out
 
 
 def _source_audio_view(source: dict) -> dict:
@@ -886,7 +1022,8 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
     layout = (timeline.get("render") or {}).get("layout") or {}
     if layout.get("mode") in ("split", "pip_cam"):
         source = ctx.store.get_source(int(plan["source_id"]))
-        warnings.extend(f"Раскладка: {w}" for w in facecam_warnings(layout, source))
+        fmt = (timeline.get("render") or {}).get("format")
+        warnings.extend(f"Раскладка: {w}" for w in facecam_warnings(layout, source, fmt))
     music = _music_warning(ctx, timeline.get("render") or {})
     if music:
         warnings.append(music)
@@ -977,16 +1114,21 @@ def _subject_boxes(ctx: ToolContext) -> dict:
 
 
 def _framing_view(ctx: ToolContext, source: dict, render: dict) -> dict:
-    """Как кадрируется 9:16: какую долю ширины исходника видно и как это менять."""
+    """Как кадрируется формат клипа (9:16 и др.): какую долю ширины исходника видно и как это менять."""
+    from app.formats import frame_size, settings_render_format, source_strategy
     from app.render import effective_preset
     from app.video_crop import window_share
 
     preset = effective_preset(ctx.store, render.get("preset_id")) or {}
-    share = window_share(source, int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920))
+    fmt = settings_render_format(render)
+    if fmt == "9:16":
+        share = window_share(source, int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920))
+    else:
+        share = window_share(source, *frame_size(fmt))
     out: dict = {
         "window_w": share,
         "note": (
-            "Окно 9:16 видит долю window_w ширины исходника; центр окна — focus куска (pieces[].focus, "
+            f"Окно {fmt} видит долю window_w ширины исходника; центр окна — focus куска (pieces[].focus, "
             "t — секунды от начала куска, x 0..1 — доля ширины исходника; пусто — центр 0.5). Менять — "
             "set_focus(piece, points) с cut:true на склейках планов (get_shots). Двое дальше друг от друга, "
             "чем window_w, в окно не влезут: фокус на говорящего со сменой на склейке/реплике или "
@@ -995,6 +1137,9 @@ def _framing_view(ctx: ToolContext, source: dict, render: dict) -> dict:
     }
     if preset and not preset.get("smart_reframe"):
         out["warning"] = "у пресета выключен smart_reframe — фокус не действует, кадр по центру"
+    if fmt != "9:16" and source_strategy(fmt, source) == "fit":
+        out["fit"] = (f"исходник уже кадра {fmt}: он целиком по высоте на размытой подложке, фокус не нужен "
+                      "(см. «Форматы вывода»)")
     return out
 
 
@@ -1012,12 +1157,16 @@ def _recommended_positions(ctx: ToolContext, render: dict, boxes: dict | None = 
             places = text_positions(boxes["union"], caption_y_for(render))
     except Exception:  # noqa: BLE001 - без зрения — привычные места
         pass
+    from app.formats import settings_layers_format
+
     hook_props = {"size": 96, "weight": 900, "uppercase": True}
+    layers_fmt = settings_layers_format(render)
+    ref_h = _ref(layers_fmt)[1]
     # Верх зоны текста — с учётом полосы вебки (split сверху): хук под полосой, а не на лице.
     top, _bottom = text_band(render)
-    by_lines = {str(n): safe_text_y({**hook_props, "text": "\n".join(["X"] * n)}, HOOK_Y, top=top)
+    by_lines = {str(n): safe_text_y({**hook_props, "text": "\n".join(["X"] * n)}, HOOK_Y, top=top, ref_h=ref_h)
                 for n in (1, 2, 3)}
-    strip = cam_strip(render.get("layout"))
+    strip = cam_strip(render.get("layout"), layers_fmt)
     under = f" В раскладке split вебка сверху до {strip[1]:.2f} кадра — хук под ней." if strip and strip[0] <= 0 else ""
     out = {
         "hook": {"x": 0.5, "y": by_lines["1"], "y_by_lines": by_lines,
@@ -1040,12 +1189,25 @@ def _recommended_positions(ctx: ToolContext, render: dict, boxes: dict | None = 
     return out
 
 
+SUBTITLE_BAND = 0.12  # высота полосы прожигаемых субтитров в долях кадра 1920
+
+
 def _subtitle_zone(render: dict) -> dict | None:
-    """Где на кадре стоят субтитры — чтобы не класть титры поверх них."""
+    """Где на кадре стоят субтитры — чтобы не класть титры поверх них. Доли кадра формата клипа
+    (``render.format``): в 1:1/4:5/16:9 полоса выше (те же px на кадре ниже), а низ не опускается
+    ниже безопасной зоны площадки (рендер поднимет субтитры, app/subtitles/ass.py)."""
+    from app.formats import frame_size, settings_render_format
+    from app.safe_zones import safe_zone
+
     if not render.get("subs_on"):
         return None
     bottom = 1.0 - float(render.get("sub_pos_pct") or 12.0) / 100
-    return {"y_from": round(max(0.0, bottom - 0.12), 3), "y_to": round(bottom, 3)}
+    fmt = settings_render_format(render)
+    if fmt == "9:16":
+        return {"y_from": round(max(0.0, bottom - SUBTITLE_BAND), 3), "y_to": round(bottom, 3)}
+    bottom = min(bottom, safe_zone(fmt)["captions_bottom"])
+    band = SUBTITLE_BAND * 1920 / frame_size(fmt)[1]
+    return {"y_from": round(max(0.0, bottom - band), 3), "y_to": round(bottom, 3), "format": fmt}
 
 
 def h_get_transcript(ctx: ToolContext, args: dict) -> dict:
@@ -1510,10 +1672,12 @@ def scene_check(ctx: ToolContext) -> list[str]:
 
 def _scene_warnings(ctx: ToolContext, render: dict, duration: float) -> list[str]:
     """Пустой кадр на холсте и нет финала у промо — про весь клип, после любой правки слоёв."""
+    from app.formats import settings_layers_format
     from app.promo_lint import scene_warnings
 
     try:
-        return scene_warnings(_layers_of(render), duration, canvas=_source_canvas(ctx), camera=_camera_of(render))
+        return scene_warnings(_layers_of(render), duration, canvas=_source_canvas(ctx), camera=_camera_of(render),
+                              fmt=settings_layers_format(render))
     except Exception:  # noqa: BLE001 - линт не должен ронять правку
         return []
 
@@ -2205,11 +2369,14 @@ CAM_BIG_W = 0.30
 CAM_BIG_H = 0.45
 
 
-def facecam_warnings(layout: dict, source: dict) -> list[str]:
+def facecam_warnings(layout: dict, source: dict, fmt: Any = None) -> list[str]:
     """Вебка в раскладке: не режется ли под пропорции полосы и не захвачен ли лишний оверлей.
 
     Агент стримов: сохранённая facecam (0.63/0.4/0.37/0.6) захватила вшитый чат, а полоса
-    split шире вебки — компоновщик заполняет полосу и срезает верх и низ: аватар до лба."""
+    split шире вебки — компоновщик заполняет полосу и срезает верх и низ: аватар до лба.
+    ``fmt`` — формат вывода: полоса во всю ширину кадра формата; в 16:9 полосы нет (вебка
+    окошком в углу своей пропорции — срезать нечего)."""
+    from app.formats import frame_size, is_landscape, settings_format
     from app.stream_layout import normalize_layout
 
     layout = normalize_layout(layout)
@@ -2218,12 +2385,14 @@ def facecam_warnings(layout: dict, source: dict) -> list[str]:
     if cam["w"] > CAM_BIG_W or cam["h"] > CAM_BIG_H:
         out.append(f"вебка большая ({cam['w']:.2f}×{cam['h']:.2f} кадра исходника) — вебка стримера обычно меньше: "
                    "проверь source_contact_sheet / view_frame, не захвачен ли вшитый чат или оверлей; поправь cam")
-    if layout["mode"] != "split":
+    fmt = settings_format(fmt)
+    if layout["mode"] != "split" or is_landscape(fmt):
         return out
+    frame_w, frame_h = frame_size(fmt)
     src_w, src_h = float(source.get("width") or 16), float(source.get("height") or 9)
     cam_aspect = (cam["w"] * src_w) / max(1e-6, cam["h"] * src_h)
-    strip_aspect = 1080 / max(1.0, layout["ratio"] * 1920)
-    fit_ratio = round(min(0.6, max(0.2, 1080 / cam_aspect / 1920)), 3)
+    strip_aspect = frame_w / max(1.0, layout["ratio"] * frame_h)
+    fit_ratio = round(min(0.6, max(0.2, frame_w / cam_aspect / frame_h)), 3)
     if cam_aspect < strip_aspect:
         loss = 1 - cam_aspect / strip_aspect
         if loss > CAM_CROP_WARN:
@@ -2297,7 +2466,7 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["note"] = ("камера (set_camera) двигает только игру — полоса/окошко вебки стоят на месте; что из игры в "
                        "кадре — focus кусков (game_x здесь — один x на все куски, set_focus — трек по куску). "
                        "Проверь view_frame: лицо в полосе целиком, хук и субтитры не на лице (positions в get_clip)")
-        warnings = facecam_warnings(fresh["layout"], source)
+        warnings = facecam_warnings(fresh["layout"], source, fresh.get("format"))
         if warnings:
             out["warnings"] = warnings
     return out
@@ -2978,7 +3147,9 @@ def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
     out: dict = {"ok": True, "piece": index, "fit": fresh.get("fit"), "changes": changes}
     warnings = _shared_warning(ctx, fresh)
     source = ctx.store.get_source(int(timeline["plan"]["source_id"]))
-    share = window_share(source)
+    from app.formats import frame_size, settings_render_format
+
+    share = window_share(source, *frame_size(settings_render_format(_current_render(ctx))))
     if fit and share and fit["w"] <= share + 0.02:
         warnings.append(f"w={fit['w']} не шире обычного окна ({share}) — смысла нет, бери больше")
     mode = (_current_render(ctx).get("layout") or {}).get("mode") or "single"
@@ -3055,10 +3226,18 @@ HOOK_BOTTOM = 0.2
 def _fit_pip_insert(render: dict, entry: dict, asset: dict, clock: Any = None) -> str | None:
     """Окошко мема не должно лечь на субтитры и хук: ставим его над субтитрами
     и, если не влезает, уменьшаем. Вставки ложатся поверх субтитров при рендере,
-    а агент их в view_frame не видит — поэтому подгоняем здесь."""
+    а агент их в view_frame не видит — поэтому подгоняем здесь.
+
+    Вставка ложится на кадр готового ролика (формат клипа, ``render.format``): ``scale`` — доля
+    его ширины; кегль титров — px опорного кадра слоёв (``layers_format``). У 9:16 оба 1080×1920."""
+    from app.formats import frame_size, ref_size, settings_layers_format, settings_render_format
     from app.montage_assets import MIN_INSERT_SCALE, PIP_WIDTH
 
     from app.cuts import PINNED_START_SEC, CutMap, normalize_cuts
+
+    frame_w, frame_h = frame_size(settings_render_format(render))
+    ref_h = float(ref_size(settings_layers_format(render))[1])
+    cap_half = CAPTION_HALF if ref_h == 1920.0 else CAPTION_HALF * 1920 / ref_h
 
     # Сравниваем во времени ГОТОВОГО клипа: вырезанное начало сдвигает мем к хуку.
     # clock — шкалы клипа (app/timebase.py) с наплывами; без него — только вырезы.
@@ -3086,7 +3265,7 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict, clock: Any = None) -
     caps = [l for l in layers if l.get("type") == "captions" and active(l)]
     if not caps:
         return None
-    cap_top = float(caps[0].get("y", 0.68)) - CAPTION_HALF
+    cap_top = float(caps[0].get("y", 0.68)) - cap_half
     # Крупные титры (панчлайны) выше субтитров — тоже потолок для окошка мема.
     for l in layers:
         if l.get("type") != "text" or l.get("id") == "auto_hook" or not active(l):
@@ -3094,7 +3273,7 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict, clock: Any = None) -
         y = float(l.get("y", 0.5))
         if y < cap_top:
             size = float((l.get("props") or {}).get("size") or 96)
-            cap_top = min(cap_top, y - size * 0.65 / 1920)
+            cap_top = min(cap_top, y - size * 0.65 / ref_h)
     moved = ""
     hook = next((l for l in layers if l.get("id") == "auto_hook" and active(l)), None)
     if hook and cap_top - 0.015 - HOOK_BOTTOM < 0.12:
@@ -3110,13 +3289,13 @@ def _fit_pip_insert(render: dict, entry: dict, asset: dict, clock: Any = None) -
     aw, ah = float(asset.get("width") or 0), float(asset.get("height") or 0)
     ratio = ah / aw if aw > 0 and ah > 0 else 1.0  # высота / ширина
     scale = float(entry.get("scale") or PIP_WIDTH)
-    height = scale * 1080 * ratio / 1920
+    height = scale * frame_w * ratio / frame_h
     y = float(entry.get("y") if entry.get("y") is not None else 0.5)
     if y - height / 2 >= top and y + height / 2 <= cap_top - 0.015:
         return f"вставку {moved.rstrip(', ')}" if moved else None
     if height > room:
-        scale = max(MIN_INSERT_SCALE, int(room * 1920 / (1080 * ratio) * 1000) / 1000)
-        height = scale * 1080 * ratio / 1920
+        scale = max(MIN_INSERT_SCALE, int(room * frame_h / (frame_w * ratio) * 1000) / 1000)
+        height = scale * frame_w * ratio / frame_h
     entry["scale"] = scale
     entry["y"] = round(cap_top - 0.015 - height / 2, 3)
     entry["x"] = 0.5
@@ -3447,6 +3626,15 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
     dry = bool(args.get("dry_run"))
     if not _source_canvas(ctx):
         raise ToolError("build_app_promo — только на холсте: create_canvas_clip, потом build_app_promo с его clip_id")
+    from app.formats import settings_layers_format, settings_render_format
+
+    # Формат клипа: 9:16 / 1:1 / 4:5 — заготовка в опорном кадре 9:16 (в 1:1 и 4:5 переносится
+    # при рендере); 16:9 — понятный отказ (app/promo_scaffold.py, «Форматы»).
+    out_fmt = settings_render_format(_current_render(ctx))
+    try:
+        promo_scaffold.check_format(out_fmt)
+    except promo_scaffold.ScaffoldError as exc:
+        raise ToolError(str(exc), exc.problems) from exc
     try:
         spec = promo_scaffold.normalize_spec(raw)
     except promo_scaffold.ScaffoldError as exc:
@@ -3471,6 +3659,11 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
     render = _current_render(ctx)
     kept = [l for l in _layers_of(render) if not promo_scaffold.is_scaffold_layer(l)]
     replaced = len(_layers_of(render)) - len(kept)
+    layers_fmt = settings_layers_format(render)
+    if layers_fmt != promo_scaffold.SCAFFOLD_FORMAT and kept:
+        raise ToolError(f"свои слои клипа размечены в {layers_fmt}, а заготовка — в {promo_scaffold.SCAFFOLD_FORMAT}",
+                        [f"убери свои слои (remove_layers) или собери промо на новом холсте; формат вывода "
+                         f"{out_fmt} останется — слои 9:16 перенесутся в него при рендере"])
     if len(kept) + len(built["layers"]) > motion.MAX_LAYERS:
         raise ToolError(f"заготовка не влезает: своих слоёв {len(kept)} + заготовка {len(built['layers'])} > "
                         f"{motion.MAX_LAYERS}", ["убери лишние свои слои (remove_layers) и повтори"])
@@ -3523,8 +3716,13 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
     if skipped_sfx:
         out["sounds_skipped"] = (f"нет в паке звуков: {', '.join(sorted(set(skipped_sfx)))} — без них; свои — "
                                  "search_pack freesound")
+    if out_fmt != promo_scaffold.SCAFFOLD_FORMAT:
+        out["format"] = (f"клип {out_fmt}: заготовка размечена в {promo_scaffold.SCAFFOLD_FORMAT} (layers_format) и "
+                         f"переносится в кадр {out_fmt} одним масштабом — титры мельче, чем в вертикали; проверь "
+                         "view_frame (он уже в формате клипа)")
     if dry:
-        scene = {**_lint_scene(ctx, {**render, "layers": kept + new_layers, "camera": built["camera"]})}
+        scene = {**_lint_scene(ctx, {**render, "layers": kept + new_layers, "camera": built["camera"],
+                                     "layers_format": promo_scaffold.SCAFFOLD_FORMAT})}
         out.update(dry_run=True, warnings=lint_layers(kept + new_layers, duration, **scene),
                    note="ничего не применено; dry_run:false — применить")
         return out
@@ -3538,6 +3736,8 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
         kept = [l for l in _layers_of(render) if not promo_scaffold.is_scaffold_layer(l)]
         out["resized"] = f"длина холста {current:.2f} → {duration:.2f} с (по сетке долей)"
     update = {**render, "layers": kept + new_layers, "camera": built["camera"]}
+    if layers_fmt != promo_scaffold.SCAFFOLD_FORMAT:
+        update["layers_format"] = promo_scaffold.SCAFFOLD_FORMAT
     if built["music"]:
         update.update(music_on=True, track_id=int(built["music"]["track_id"]),
                       music_start_sec=float(built["music"]["start_sec"] or 0.0))

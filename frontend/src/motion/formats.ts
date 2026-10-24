@@ -60,6 +60,58 @@ export function formatRefSize(fmt: unknown): { w: number; h: number } {
   return { ...FORMATS[normalizeFormat(fmt)].ref };
 }
 
+/** Безопасная зона площадок формата (доли кадра) — зеркало app/safe_zones.py. */
+export type SafeZone = {
+  platforms: string;
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  /** Низ блока субтитров (слой captions и прожиг ASS) — не ниже этой доли кадра. */
+  captionsBottom: number;
+  /** Угол водяного знака канала (16:9, YouTube) — туда титры не ставим. */
+  watermark: { x0: number; y0: number; x1: number; y1: number } | null;
+};
+
+export const SAFE_ZONES: Record<FormatId, SafeZone> = {
+  // Shorts / Reels / TikTok: сверху шапка, снизу подпись и кнопки; бока не проверяем (как всегда).
+  "9:16": { platforms: "YouTube Shorts / Instagram Reels / TikTok", top: 0.1, bottom: 0.8, left: 0, right: 1, captionsBottom: 0.82, watermark: null },
+  // Лента Instagram / Telegram: интерфейса поверх нет, превью режут углы — поля 5 %.
+  "1:1": { platforms: "лента Instagram / Telegram", top: 0.05, bottom: 0.95, left: 0.05, right: 0.95, captionsBottom: 0.94, watermark: null },
+  "4:5": { platforms: "лента Instagram / Telegram", top: 0.05, bottom: 0.95, left: 0.05, right: 0.95, captionsBottom: 0.94, watermark: null },
+  // YouTube: поля 5 % со всех сторон, в правом нижнем углу — водяной знак канала.
+  "16:9": {
+    platforms: "YouTube", top: 0.05, bottom: 0.95, left: 0.05, right: 0.95, captionsBottom: 0.93,
+    watermark: { x0: 0.86, y0: 0.78, x1: 0.985, y1: 0.97 },
+  },
+};
+
+export function safeZone(fmt: unknown): SafeZone {
+  return SAFE_ZONES[normalizeFormat(fmt)];
+}
+
+/**
+ * Формат по размеру кадра (канвас превью, кадр компоновщика): ближайший по пропорции.
+ * Вертикаль (высота ≥ 1.7 ширины) — всегда 9:16.
+ */
+export function formatOfFrame(width: number, height: number): FormatId {
+  const w = Number(width);
+  const h = Number(height);
+  if (!(w > 0 && h > 0) || h >= w * 1.7) return DEFAULT_FORMAT;
+  const ratio = w / h;
+  let best: FormatId = DEFAULT_FORMAT;
+  let gap = Infinity;
+  for (const id of FORMAT_IDS) {
+    const f = FORMATS[id].frame;
+    const d = Math.abs(Math.log(ratio / (f.w / f.h)));
+    if (d < gap) {
+      gap = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
 /**
  * Поля RenderEnv для формата: размер кадра превью `width` (высота — по пропорции)
  * и опорный кадр. У 9:16 опорный не задаётся — движок берёт 1080×1920 сам.

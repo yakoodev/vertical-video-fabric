@@ -395,16 +395,18 @@ def _free_zones(blocked: list[tuple[float, float]], top: float, bottom: float) -
     return zones
 
 
-def cta_y(height: float, blocked: list[tuple[float, float]]) -> tuple[float, bool]:
+def cta_y(height: float, blocked: list[tuple[float, float]], fmt: Any = None) -> tuple[float, bool]:
     """Центр плашки-призыва по высоте и «влезла ли в свободное место».
 
     Свободные зоны — безопасная область кадра минус субтитры (и герой, если известен).
     Берём самую нижнюю, где плашка помещается: призыв читается в нижней трети, а лицо
-    обычно выше. Плашка прижимается к низу зоны — ровно над субтитрами."""
-    from app.agent_tools import SAFE_BOTTOM, SAFE_TOP
+    обычно выше. Плашка прижимается к низу зоны — ровно над субтитрами. ``fmt`` — формат
+    разметки слоёв: его безопасная зона (app/safe_zones.py; нет — 9:16)."""
+    from app.safe_zones import safe_zone
 
+    zone = safe_zone(fmt)
     gap = 0.015
-    zones = _free_zones(blocked, SAFE_TOP + 0.01, SAFE_BOTTOM - 0.01)
+    zones = _free_zones(blocked, zone["top"] + 0.01, zone["bottom"] - 0.01)
     fitting = [z for z in zones if z[1] - z[0] >= height + 2 * gap]
     if fitting:
         z0, z1 = max(fitting, key=lambda z: z[1])
@@ -425,8 +427,11 @@ def _subject_box(store: Any, clip_plan_id: int) -> dict | None:
         return None
 
 
-def build_cta(brand: dict, start: float, end: float, y: float, keyed: bool) -> list[dict]:
-    """Плашка-призыв: текст бренда + адрес акцентом. На зелёнке плашка — за персонажем."""
+def build_cta(brand: dict, start: float, end: float, y: float, keyed: bool, fmt: Any = None) -> list[dict]:
+    """Плашка-призыв: текст бренда + адрес акцентом. На зелёнке плашка — за персонажем, во всю
+    ширину опорного кадра формата ``fmt`` (нет — 9:16, 1080)."""
+    from app.formats import ref_size, settings_format
+
     cta, colors = brand["cta"], brand["colors"]
     lines = [t for t in (cta["text"], cta["url_text"]) if t]
     text = "\n".join(lines)
@@ -444,7 +449,8 @@ def build_cta(brand: dict, start: float, end: float, y: float, keyed: bool) -> l
         out.append({
             "id": CTA_PLATE_ID, "type": "shape", "name": "Бренд: плашка призыва", "start": start, "end": end,
             "track": 0, "x": 0.5, "y": y, "behind": True, "opacity": 0.94,
-            "props": {"kind": "rect", "w": 1080, "h": round(height), "fill": colors["plate"], "stroke": None},
+            "props": {"kind": "rect", "w": ref_size(settings_format(fmt))[0], "h": round(height),
+                      "fill": colors["plate"], "stroke": None},
             "in": {"type": "fade", "duration": 0.3}, "out": {"type": "none"},
         })
     else:
@@ -457,19 +463,25 @@ def build_cta(brand: dict, start: float, end: float, y: float, keyed: bool) -> l
     return out
 
 
-def build_logo(brand: dict, asset: dict, start: float, end: float) -> dict:
-    """Логотип в верхнем углу под шапкой площадки: ~1 % кадра, видео не закрывает."""
-    from app.agent_tools import SAFE_TOP
+def build_logo(brand: dict, asset: dict, start: float, end: float, fmt: Any = None) -> dict:
+    """Логотип в верхнем углу под шапкой площадки: ~1 % кадра, видео не закрывает. ``fmt`` —
+    формат разметки слоёв: опорный кадр и безопасная зона (у 16:9 — поля YouTube 5 %)."""
+    from app.formats import ref_size, settings_format
+    from app.safe_zones import safe_zone
 
+    fmt = settings_format(fmt)
+    ref_w, ref_h = ref_size(fmt)
+    zone = safe_zone(fmt)
     aw, ah = float(asset.get("width") or 0), float(asset.get("height") or 0)
     ratio = ah / aw if aw > 0 and ah > 0 else 1.0  # высота / ширина
     w = LOGO_PX if ratio <= 1 else LOGO_PX / ratio
     h = w * ratio
-    half_x = (LOGO_MARGIN_PX + w / 2) / 1080
+    margin = max(LOGO_MARGIN_PX, zone["left"] * ref_w)
+    half_x = (margin + w / 2) / ref_w
     x = half_x if brand["logo_corner"] == "top-left" else 1 - half_x
     return {
         "id": LOGO_ID, "type": "image", "name": "Бренд: логотип", "start": start, "end": end, "track": 4,
-        "x": round(x, 4), "y": round(SAFE_TOP + (h / 2 + 16) / 1920, 4), "opacity": 0.95,
+        "x": round(x, 4), "y": round(zone["top"] + (h / 2 + 16) / ref_h, 4), "opacity": 0.95,
         "props": {"asset_id": int(asset["id"]), "w": round(w, 1)},  # высота — по пропорциям картинки
         "in": {"type": "fade", "duration": 0.4}, "out": {"type": "fade", "duration": 0.3},
     }
@@ -485,6 +497,7 @@ def apply_brand(
     from app.agent_tools import clip_timeline, covering_problems, lint_layers
     from app.auto_edit import caption_y_for
     from app.chroma_key import normalize_backdrop
+    from app.formats import ref_size, settings_layers_format
 
     brand = store.get_brand(int(brand_id))
     timeline = clip_timeline(store, clip_plan_id)
@@ -492,6 +505,10 @@ def apply_brand(
     if duration <= 0:
         raise ValueError("в клипе нет кусков")
     keyed = bool(store.get_source(int(plan["source_id"])).get("chroma_key"))
+    # Слои бренда — в опорном кадре формата разметки слоёв клипа (9:16 — 1080×1920, как всегда).
+    fmt = settings_layers_format(render)
+    ref_h = ref_size(fmt)[1]
+    cap_half = CAPTION_HALF if ref_h == 1920 else CAPTION_HALF * 1920 / ref_h
     changes: list[str] = []
     warnings: list[str] = []
     layers = [dict(l) for l in render.get("layers") or [] if not _brand_owned(l)]
@@ -540,7 +557,7 @@ def apply_brand(
         want = min(cta["duration_sec"], max(1.0, duration * 0.4))
         cta_start = tail_start(render.get("cuts") or [], duration, want)
         blocked = [
-            (float(l.get("y", motion.DEFAULT_CAPTIONS_Y)) - CAPTION_HALF, float(l.get("y", motion.DEFAULT_CAPTIONS_Y)) + CAPTION_HALF)
+            (float(l.get("y", motion.DEFAULT_CAPTIONS_Y)) - cap_half, float(l.get("y", motion.DEFAULT_CAPTIONS_Y)) + cap_half)
             for l in layers
             if l.get("type") == "captions" and not l.get("hidden")
             and float(l.get("start") or 0) < duration and float(l.get("end") or 0) > cta_start
@@ -549,12 +566,12 @@ def apply_brand(
         if box:
             blocked.append((float(box["y0"]), float(box["y1"])))
         text = "\n".join(t for t in (cta["text"], cta["url_text"]) if t)
-        height = (_cta_lines(text, CTA_SIZE) * CTA_SIZE * 1.15 + 2 * CTA_PAD_Y) / 1920
-        y, fits = cta_y(height, blocked)
+        height = (_cta_lines(text, CTA_SIZE) * CTA_SIZE * 1.15 + 2 * CTA_PAD_Y) / ref_h
+        y, fits = cta_y(height, blocked, fmt)
         if not fits:
             warnings.append("призыву не нашлось свободного места между субтитрами и героем — проверь view_frame, "
                             "при нужде подвинь brand_cta (update_layer y)")
-        added += build_cta(brand, cta_start, duration, y, keyed)
+        added += build_cta(brand, cta_start, duration, y, keyed, fmt)
         changes.append(f"призыв «{text.replace(chr(10), ' / ')}» с {cta_start:.1f} с до конца")
 
     # 5. Логотип: после хука (он тоже наверху) и до призыва.
@@ -573,7 +590,7 @@ def apply_brand(
                 start = float(hook.get("end") or 0.0)
             end = cta_start if cta_start is not None else duration
             if end - start >= 1.0:
-                added.append(build_logo(brand, asset, round(start, 3), round(end, 3)))
+                added.append(build_logo(brand, asset, round(start, 3), round(end, 3), fmt))
                 changes.append("логотип в углу")
             else:
                 warnings.append("клип слишком короткий для логотипа между хуком и призывом")
@@ -585,7 +602,7 @@ def apply_brand(
         except (KeyError, TypeError, ValueError):
             return False
 
-    problems = covering_problems(added, keyed) + motion.validate_layers(added, duration, asset_exists=asset_exists)
+    problems = covering_problems(added, keyed, fmt) + motion.validate_layers(added, duration, asset_exists=asset_exists)
     if problems:
         raise ValueError("слои бренда не прошли проверку: " + "; ".join(problems))
 
@@ -621,7 +638,7 @@ def apply_brand(
         "ok": True,
         "brand": {"id": brand["id"], "name": brand["name"]},
         "changes": changes,
-        "warnings": warnings + lint_layers(fresh_layers, duration, only_ids=brand_ids),
+        "warnings": warnings + lint_layers(fresh_layers, duration, only_ids=brand_ids, fmt=fmt),
     }
     if cta_start is not None:
         out["check"] = (f"посмотри концовку: view_frame t={min(duration, cta_start + 0.8):.1f} — призыв читается "

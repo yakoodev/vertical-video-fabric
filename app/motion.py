@@ -1355,12 +1355,24 @@ def visual_motion(motion: dict | None) -> dict | None:
 # ---------------------------------------------------------------- описание для UI/агента
 
 
+def _formats_summary() -> dict:
+    """Опорный кадр и безопасная зона площадок каждого формата — для схемы слоёв."""
+    from app.formats import FORMATS
+    from app.safe_zones import describe
+
+    return {fmt: {"ref": list(info["ref"]), "frame": list(info["frame"]), "safe_zone": describe(fmt)}
+            for fmt, info in FORMATS.items()}
+
+
 def schema_summary() -> dict:
     """Машиночитаемое описание слоёв — для ``GET /api/motion/schema``."""
     return {
         "version": 1,
         "spec": "docs/motion/spec.md",
         "frame": {"width": 1080, "height": 1920, "units": "x/y — доли кадра, размеры — опорные px 1080×1920"},
+        # Другие форматы (app/formats.py): x/y — те же доли кадра, px — опорного кадра формата разметки
+        # слоёв (render.layers_format); пределы размеров (w ≤ 4000, maxWidth ≤ 2160) покрывают и 1920.
+        "formats": _formats_summary(),
         "limits": {
             "max_layers": MAX_LAYERS,
             "max_camera_keys": MAX_CAMERA_KEYS,
