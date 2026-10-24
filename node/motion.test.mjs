@@ -1392,3 +1392,93 @@ test("кадр компоновщика 1920×1080: px слоя = px кадра,
   near((st.y - 0.5) * 1080, 14, 1e-6);
   near((E.resolveLayer(float, t).y - 0.5) * 1920, 14, 1e-6); // по умолчанию — как всегда
 });
+
+/* ---------- перекомпоновка между форматами (reframe.ts — зеркало app/aspect.py) ---------- */
+
+// Сравнение с допуском: числа округлены до 4 знаков, а у Python и JS может разойтись
+// последняя цифра на половинке.
+function sameShape(got, want, path, eps = 2e-4) {
+  if (typeof want === "number") {
+    assert.equal(typeof got, "number", `${path}: ${got} вместо числа ${want}`);
+    assert.ok(Math.abs(got - want) <= eps * Math.max(1, Math.abs(want)), `${path}: ${got} ≉ ${want}`);
+    return;
+  }
+  if (Array.isArray(want)) {
+    assert.ok(Array.isArray(got), `${path}: не массив`);
+    assert.equal(got.length, want.length, `${path}: длина ${got.length} ≠ ${want.length}`);
+    want.forEach((w, i) => sameShape(got[i], w, `${path}[${i}]`, eps));
+    return;
+  }
+  if (want && typeof want === "object") {
+    assert.ok(got && typeof got === "object", `${path}: не объект`);
+    for (const k of Object.keys(want)) sameShape(got[k], want[k], `${path}.${k}`, eps);
+    return;
+  }
+  assert.equal(got, want, path);
+}
+
+test("reframe.ts: те же слои и камера, что app/aspect.reframe_between (фикстура Python)", () => {
+  const data = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "reframe_cases.json"), "utf8"));
+  assert.ok(data.cases.length >= 12);
+  for (const c of data.cases) {
+    const base = data.bases[c.base];
+    const out = E.reframeBetween(base.layers, base.camera, c.src, c.dst, base.sizes);
+    sameShape(out.layers, c.expect.layers, `${c.name} layers`);
+    sameShape(out.camera, c.expect.camera, `${c.name} camera`);
+  }
+  // Тот же формат — те же объекты, как в Python.
+  const base = data.bases.promo;
+  assert.equal(E.reframeBetween(base.layers, base.camera, "9:16", "9:16").layers, base.layers);
+  assert.equal(E.pyRound(0.125, 2), 0.12);
+  assert.equal(E.pyRound(0.375, 2), 0.38);
+  assert.equal(E.assetKey("007"), "7");
+  assert.equal(E.assetKey("sticker:a/b.png"), "sticker:a/b.png");
+});
+
+test("шаблоны в кадре другого формата (fitTemplate): влезают, края и доли — по правилам шаблона", () => {
+  const tpl = (id) => E.TEMPLATES.find((t) => t.id === id);
+  const defaults = (t) => Object.fromEntries(t.params.map((p) => [p.name, p.default]));
+  const build = (id, fmt) => E.fitTemplate(tpl(id).build(defaults(tpl(id)), 0), fmt, tpl(id).fit);
+  // 9:16 — как нарисовано.
+  const same = tpl("top-3").build(defaults(tpl("top-3")), 0);
+  assert.equal(E.fitTemplate(same, "9:16").layers, same.layers);
+  for (const fmt of ["1:1", "4:5", "16:9"]) {
+    const { w: W, h: H } = E.formatRefSize(fmt);
+    // Телефон (600 px, ~1356 px высотой в 9:16) и подпись — целиком в кадре с полями.
+    for (const id of ["phone-screen", "top-3", "progress", "pie-chart"]) {
+      for (const l of build(id, fmt).layers) {
+        const size = E.layerSize(l);
+        if (!size) continue;
+        const k = l.scale ?? 1;
+        const top = l.y * H - (size[1] * k) / 2;
+        const bottom = l.y * H + (size[1] * k) / 2;
+        assert.ok(top >= H * 0.04 - 1 && bottom <= H * 0.96 + 1, `${id} ${fmt} ${l.name}: ${top}..${bottom} из ${H}`);
+        assert.ok(l.x * W - (size[0] * k) / 2 >= -1 && l.x * W + (size[0] * k) / 2 <= W + 1, `${id} ${fmt} ${l.name} по ширине`);
+      }
+    }
+    // Мем-подпись: сверху и снизу — те же доли кадра, кегль тот же.
+    const meme = build("meme-caption", fmt).layers;
+    assert.deepEqual(meme.map((l) => l.y), [0.12, 0.86]);
+    assert.ok(meme.every((l) => (l.scale ?? 1) === 1));
+    // Бегущая строка: лента во всю ширину нового кадра, текст уезжает за край, кромка на краю ленты.
+    const ticker = build("news-ticker", fmt).layers;
+    const band = ticker.find((l) => l.name === "Лента");
+    const edge = ticker.find((l) => l.name === "Кромка");
+    assert.equal(band.props.w, W);
+    near((band.y - edge.y) * H, 52, 0.5);
+    const run = ticker.find((l) => l.name === "Бегущий текст");
+    assert.ok(run.keys.x[0].v > 1 && run.keys.x[1].v < 0);
+    // «Внимание!»: рамка по краю нового кадра, «До/После»: разделитель во всю высоту.
+    const frame = build("alert", fmt).layers.find((l) => l.name === "Рамка");
+    assert.equal(frame.props.w, W - 20);
+    assert.equal(frame.props.h, H - 20);
+    assert.equal(build("before-after", fmt).layers.find((l) => l.name === "Разделитель").props.h, H);
+  }
+  // Телефон в 16:9 меньше (≈0.64), в 4:5 — крупнее, чем в квадрате.
+  const phoneScale = (fmt) => build("phone-screen", fmt).layers.find((l) => l.name === "Телефон").scale;
+  assert.ok(phoneScale("16:9") < 0.7 && phoneScale("4:5") > phoneScale("1:1"));
+  // Стрелка «смотри»: цель (круг) — ровно на своей доле кадра.
+  const look = build("look-here", "16:9").layers[0];
+  assert.equal(look.x, 0.62);
+  assert.equal(look.y, 0.32);
+});

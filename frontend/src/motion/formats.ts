@@ -70,3 +70,36 @@ export function formatEnv(fmt: unknown, width: number): { width: number; height:
   if (info.ref.w === REF_W && info.ref.h === REF_H) return { width, height };
   return { width, height, refWidth: info.ref.w, refHeight: info.ref.h };
 }
+
+/** Горизонтальный кадр (16:9). */
+export function isLandscape(fmt: unknown): boolean {
+  const { w, h } = frameSize(fmt);
+  return w > h;
+}
+
+/** Исходник уже кадра горизонтального формата больше, чем во столько раз, — «fit» (app/formats.py). */
+export const FIT_SOURCE_RATIO = 0.75;
+
+/**
+ * Как основа ложится в кадр формата (app/formats.source_strategy): «cover» — умный кроп
+ * окном пропорции кадра; «fit» — исходник целиком по высоте на размытой подложке
+ * (вертикальный/квадратный исходник в 16:9). У 9:16, 1:1, 4:5 — всегда «cover».
+ */
+export function sourceStrategy(
+  fmt: unknown,
+  srcW: number,
+  srcH: number,
+  crop?: { w?: number; h?: number } | null,
+): "cover" | "fit" {
+  if (!isLandscape(fmt)) return "cover";
+  let sw = Number(srcW) || 0;
+  let sh = Number(srcH) || 0;
+  if (sw <= 0 || sh <= 0) return "cover";
+  if (crop) {
+    sw *= Number(crop.w) || 1;
+    sh *= Number(crop.h) || 1;
+  }
+  if (sh <= 0) return "cover";
+  const { w, h } = frameSize(fmt);
+  return sw / sh < (w / h) * FIT_SOURCE_RATIO ? "fit" : "cover";
+}
