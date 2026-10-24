@@ -1356,9 +1356,12 @@ def visual_motion(motion: dict | None) -> dict | None:
 
 
 def _formats_summary() -> dict:
+    """Подпись, кадр, опорный кадр и безопасная зона площадок каждого формата — для схемы слоёв."""
     from app.formats import FORMATS
+    from app.safe_zones import describe
 
-    return {fmt: {"label": info["label"], "frame": list(info["frame"]), "ref": list(info["ref"])}
+    return {fmt: {"label": info["label"], "frame": list(info["frame"]), "ref": list(info["ref"]),
+                  "safe_zone": describe(fmt)}
             for fmt, info in FORMATS.items()}
 
 
@@ -1369,7 +1372,9 @@ def schema_summary() -> dict:
         "spec": "docs/motion/spec.md",
         "frame": {"width": 1080, "height": 1920, "units": "x/y — доли кадра, размеры — опорные px 1080×1920"},
         # Кадр по умолчанию (9:16) — выше; у клипа другого формата кадр и опорный кадр слоёв — тут
-        # (app/formats.py; формат клипа — render.format, разметка слоёв — render.layers_format).
+        # (app/formats.py; формат клипа — render.format, разметка слоёв — render.layers_format):
+        # x/y — те же доли кадра, px — опорного кадра layers_format; пределы размеров (w ≤ 4000,
+        # maxWidth ≤ 2160) покрывают и 1920. safe_zone — зона площадок формата (app/safe_zones.py).
         "formats": _formats_summary(),
         "limits": {
             "max_layers": MAX_LAYERS,

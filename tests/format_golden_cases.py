@@ -70,11 +70,15 @@ def _promo_layers() -> list[dict]:
 
 
 def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
-             frame: tuple[int, int] | None = None, source_size: tuple[int, int] | None = None) -> dict:
+             frame: tuple[int, int] | None = None, source_size: tuple[int, int] | None = None,
+             subtitles: dict | None = None, banner: dict | None = None, aspect: str | None = None) -> dict:
     """Прогнать случай ``name`` и вернуть снимок (без путей и случайных id).
 
     ``extra`` — добавка к настройкам клипа (формат и т.п.), ``frame`` — размер основы для
-    probe, ``source_size`` — размер исходника (тесты новых форматов; эталоны — без них)."""
+    probe, ``source_size`` — размер исходника (тесты новых форматов; эталоны — без них).
+    ``subtitles`` — настоящий проход субтитров (поля стиля, ``sub_pos_pct``; None — отступ
+    стиля без поправки): в снимок идёт текст ASS; ``banner`` — баннер (поля записи,
+    ``height_pct``/``pos_pct``); ``aspect`` — разовый формат рендера (как POST …/render)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from test_render import _store
 
@@ -89,6 +93,9 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
 
     def fake_ffmpeg(args, timeout, cwd=None):
         calls.append(["ffmpeg", list(args)])
+        ass = next((a for a in args if isinstance(a, str) and a.startswith("ass=")), None)
+        if ass and cwd is not None:
+            calls.append(["ass", (Path(cwd) / ass[4:]).read_text(encoding="utf-8")])
         Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
         Path(args[-1]).write_bytes(b"video")
 
@@ -119,7 +126,8 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
     monkeypatch.setattr("app.render.run_qc", lambda *a, **k: None)
     monkeypatch.setattr("app.render._has_audio_stream", lambda path: True)
     monkeypatch.setattr("app.render.music_volume_for", lambda *a, **k: 0.5, raising=False)
-    monkeypatch.setattr(service, "_render_subtitles", fake_subs)
+    if subtitles is None:
+        monkeypatch.setattr(service, "_render_subtitles", fake_subs)
     # Громкость меряет настоящий ffmpeg по поддельному файлу — от окружения (.env, версия ffmpeg)
     # зависит, дойдёт ли до ошибки; к формату кадра она не относится.
     monkeypatch.setattr(service, "_normalize_loudness", lambda clip, hold=None: clip)
@@ -181,7 +189,31 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
     if render:
         store.set_clip_plan_render_settings(plan["id"], render)
 
-    clip = service.render_clip_plan(plan["id"], ffmpeg_preset_id=preset["id"])
+    kwargs: dict = {}
+    if subtitles is not None:
+        from app.clip_settings import settings_to_render_kwargs
+
+        style = {k: v for k, v in subtitles.items() if k != "sub_pos_pct"}
+        profile = store.create_subtitle_profile("Эталон", provider="mock", **style)
+        sub = settings_to_render_kwargs({**render, "subs_on": True, "sub_id": profile["id"],
+                                         "sub_pos_pct": subtitles.get("sub_pos_pct", 12.0)})
+        kwargs.update(subtitle_profile_id=sub["subtitle_profile_id"], subtitle_margin_v=sub["subtitle_margin_v"])
+        if "sub_pos_pct" in subtitles and subtitles["sub_pos_pct"] is None:
+            kwargs.pop("subtitle_margin_v")
+    if aspect is not None:
+        kwargs["aspect"] = aspect
+    if banner is not None:
+        banner_path = settings.banner_dir / "banner.png"
+        banner_path.parent.mkdir(parents=True, exist_ok=True)
+        banner_path.write_bytes(b"png")
+        fields = {k: v for k, v in banner.items() if k not in ("height_pct", "pos_pct")}
+        record = store.create_banner("Баннер", banner_path, **{"width": 1080, "height": 200, **fields})
+        kwargs.update(banner_id=record["id"])
+        if banner.get("height_pct") is not None:
+            kwargs["banner_height_frac"] = banner["height_pct"] / 100
+        if banner.get("pos_pct") is not None:
+            kwargs["banner_y_frac"] = banner["pos_pct"] / 100
+    clip = service.render_clip_plan(plan["id"], ffmpeg_preset_id=preset["id"], **kwargs)
     snapshot: dict = {"status": clip["status"], "error": clip.get("error"), "calls": list(calls)}
     if name in ("crop_focus_motion", "canvas_motion", "canvas_square"):
         from app.motion_render import render_frame_png

@@ -13,7 +13,8 @@
 import { clamp01, ease } from "../easing";
 import { fontString } from "../fonts";
 import type { CaptionAnimation, CaptionsLayer, CaptionsProps, CaptionWord, Ctx2D, RenderEnv, Stroke, TextBg } from "../types";
-import { refSize } from "../types";
+import { layerUnit, refSize } from "../types";
+import { formatOfFrame, SAFE_ZONES } from "../formats";
 import type { LayerState } from "../animate";
 import { clearShadow, fillRoundRect, rgba, roundRectPath, type FrameInfo, type LayerRenderer } from "./common";
 import { deviceScale } from "./counter";
@@ -713,6 +714,18 @@ function currentPage(ctx: Ctx2D, layer: CaptionsLayer, env: RenderEnv, frame: Fr
 /** Нижняя граница безопасной зоны: интерфейс TikTok/Shorts закрывает нижние ~18% кадра. */
 const SAFE_BOTTOM = 0.82;
 
+/**
+ * Низ блока субтитров и высота кадра в опорных px. 9:16 — как всегда (0.82 и высота опорного
+ * кадра); 1:1 / 4:5 / 16:9 — нижнее поле площадки (formats.ts SAFE_ZONES, app/safe_zones.py)
+ * и настоящая высота кадра в px слоя (у квадрата опорный по умолчанию был бы 1920 — блок
+ * уходил бы за кадр).
+ */
+function captionsFloor(env: RenderEnv): { bottom: number; refH: number } {
+  const fmt = formatOfFrame(env.width, env.height);
+  if (fmt === "9:16") return { bottom: SAFE_BOTTOM, refH: refSize(env).h };
+  return { bottom: SAFE_ZONES[fmt].captionsBottom, refH: env.height / layerUnit(env) };
+}
+
 export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
   multipart: true,
   measure(ctx, layer, _st, env, frame) {
@@ -729,8 +742,9 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
     const font = fontString({ family: r.font, weight: r.weight, size: r.size }, envFont(env));
     // Не даём строкам уйти под интерфейс площадки: низ блока не ниже 82% кадра.
     const bottom = page.h / 2 + r.size * 0.25 + (r.bg?.padY ?? 0);
-    const refH = refSize(env).h;
-    const room = (SAFE_BOTTOM * refH - st.y * refH) / Math.max(st.scale, 0.05);
+    const floor = captionsFloor(env);
+    const refH = floor.refH;
+    const room = (floor.bottom * refH - st.y * refH) / Math.max(st.scale, 0.05);
     if (bottom > room) ctx.translate(0, room - bottom);
     if (r.tilt) ctx.rotate(((page.index % 2 ? -1 : 1) * r.tilt * Math.PI) / 180);
     const enter = pageEntrance(r, page, frame.t);

@@ -166,10 +166,12 @@ export const clipPlansApi = {
   /** Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины. */
   createCanvas: (body: { duration: number; background?: Background | string | null; title?: string }) =>
     api.post<ClipPlan & { editor_url: string }>(`/api/canvas-clips`, body),
-  // Cover picture → fitted 1080×1920 JPEG on the server; returns its stored name.
-  uploadCover: (file: File) => {
+  // Cover picture → JPEG of the clip format's frame on the server (9:16 — 1080×1920, 16:9 —
+  // 1920×1080, app/formats.py); returns its stored name. No format — 9:16, as always.
+  uploadCover: (file: File, format?: string) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (format) fd.append("format", format);
     return api.post<{ image: string; url: string }>(`/api/covers`, fd);
   },
   // The clip file (vvf.clip/1): the whole clip as one document — see docs/AGENTS.md.

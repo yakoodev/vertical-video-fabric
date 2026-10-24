@@ -29,6 +29,14 @@
 Результат проходит motion.validate_layers и линт промо (app/promo_lint.py) без предупреждений и
 укладывается в пределы (motion.MAX_LAYERS, MAX_CAMERA_KEYS). Все слои — с именем «promo: …»:
 инструмент build_app_promo при повторном вызове заменяет только их.
+
+Форматы (app/formats.py). Заготовка размечает слои в опорном кадре 9:16 (``layers_format`` 9:16):
+клип 9:16 — как всегда; 1:1 и 4:5 — те же слои переносятся в кадр формата одним масштабом
+(app/aspect.py, телефон с титром — колонкой, ≈0.57 в квадрате, ≈0.7 в 4:5). 16:9 — честный отказ
+(``ScaffoldError``): приёмы эталонов — «телефон во весь рост + титр над ним + наезд на кнопку» —
+держатся на высоком кадре; в горизонтали нужна своя раскладка (телефон сбоку, титры рядом), её
+заготовка не собирает — промо 16:9 собирают из вертикали (set_format 16:9 переносит колонкой по
+центру) или вручную слоями с layers_format 16:9.
 """
 
 from __future__ import annotations
@@ -38,7 +46,14 @@ import random
 import re
 from typing import Any
 
-W, H = 1080.0, 1920.0
+from app.formats import ref_size, settings_format
+
+# Формат, в опорном кадре которого заготовка размечает слои, и форматы клипа, где она работает.
+SCAFFOLD_FORMAT = "9:16"
+SCAFFOLD_OUTPUT_FORMATS = ("9:16", "1:1", "4:5")
+LANDSCAPE_REFUSAL = ("build_app_promo — только для 9:16 / 1:1 / 4:5: заготовка промо (телефон во весь рост, титр "
+                     "над ним, наезды) держится на высоком кадре, в 16:9 своей раскладки у неё нет")
+W, H = (float(v) for v in ref_size(SCAFFOLD_FORMAT))
 MIN_DURATION_SEC, MAX_DURATION_SEC = 20.0, 40.0
 DEFAULT_BPM = 120.0
 MAX_SCENES = 6
@@ -610,11 +625,26 @@ def _music_start(music: dict | None, climax_t: float, duration: float) -> tuple[
     return round(start, 3), (f"с энергичной части трека ({floor:g} с)" if energy else "с начала трека")
 
 
-def build_app_promo(spec: Any, assets: dict | None = None) -> dict:
+def check_format(fmt: Any) -> str:
+    """Формат клипа, для которого собирается заготовка; 16:9 — ScaffoldError с объяснением."""
+    fmt = settings_format(fmt)
+    if fmt not in SCAFFOLD_OUTPUT_FORMATS:
+        raise ScaffoldError(LANDSCAPE_REFUSAL, [
+            "собери промо в 9:16 (set_format(\"9:16\")), потом set_format(\"16:9\") — слои перенесутся "
+            "колонкой по центру кадра (проверь view_frame)",
+            "или горизонтальная раскладка вручную: set_format(\"16:9\", layers_format=\"16:9\") и слои в опорном "
+            "кадре 1920×1080 (телефон слева/справа, титры сбоку, финал по центру)",
+        ])
+    return fmt
+
+
+def build_app_promo(spec: Any, assets: dict | None = None, fmt: Any = None) -> dict:
     """spec → {layers, camera, music, backdrop, duration, plan, notes}. Чистая функция: тот же spec —
     те же слои. ``assets`` — {asset_id: {width, height, duration, kind}} из библиотеки (пропорции
     записей и логотипа, длина записей); spec.music может нести bpm/energy_start_sec/drop_sec/duration
-    трека (инструмент подставляет их из list_music)."""
+    трека (инструмент подставляет их из list_music). ``fmt`` — формат клипа: 9:16, 1:1, 4:5 (слои —
+    в опорном кадре 9:16, ``SCAFFOLD_FORMAT``); 16:9 — ScaffoldError (см. шапку модуля)."""
+    check_format(fmt)
     spec = normalize_spec(spec)
     info = {str(k): v for k, v in (assets or {}).items()}
     brand = spec["brand"]

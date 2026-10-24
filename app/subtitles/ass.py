@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
@@ -24,6 +25,42 @@ CHAR_WIDTH_RATIO_UPPERCASE = 0.66
 # Сколько строк показываем разом. Две: фраза целиком не влезает в одну, а
 # читать вперёд звука не даёт прозрачность — несказанные слова не видно.
 MAX_SUBTITLE_LINES_PER_PAGE = 2
+# Горизонтальный кадр (16:9): строка субтитров не шире этой доли ширины — строка во всю
+# ширину 1920 (40+ символов) читается хуже двух коротких, как у субтитров YouTube.
+LANDSCAPE_LINE_SHARE = 0.64
+
+
+def format_style(profile: dict, fmt: Any, width: int, height: int) -> tuple[dict, int]:
+    """Стиль и боковое поле (px) субтитров под формат кадра (app/formats.py).
+
+    9:16 (или формат не задан) — как всегда: стиль как есть, поля 80 px; стиль задан под
+    кадр 1080×1920. Другие форматы:
+
+    * кегль, обводка и тень — от короткой стороны кадра, как px моушн-слоёв: у всех форматов
+      она 1080 — те же px, что в вертикали (PlayResY = высота кадра, кегль ASS — px кадра);
+    * поля по бокам — от ширины: в 16:9 строка не шире ``LANDSCAPE_LINE_SHARE`` кадра, и не
+      уже безопасной зоны площадки (app/safe_zones.py); переносы и караоке-страницы считаются
+      по этой ширине (``_chars_per_line``);
+    * отступ снизу (``margin_v``, px кадра) — не ниже нижней безопасной зоны формата.
+    """
+    from app.formats import DEFAULT_FORMAT, settings_format
+    from app.safe_zones import safe_zone
+
+    if fmt is None or settings_format(fmt) == DEFAULT_FORMAT:
+        return profile, SUBTITLE_SIDE_MARGIN
+    fmt = settings_format(fmt)
+    w, h = max(1, int(width or 1080)), max(1, int(height or 1080))
+    k = min(w, h) / 1080
+    out = dict(profile)
+    out["font_size"] = max(8, round(int(profile.get("font_size") or 64) * k))
+    out["outline_width"] = round(_style_number(profile.get("outline_width"), 5, minimum=0, maximum=20) * k, 2)
+    out["shadow"] = round(_style_number(profile.get("shadow"), 1, minimum=0, maximum=20) * k, 2)
+    zone = safe_zone(fmt)
+    side = max(round(SUBTITLE_SIDE_MARGIN * k), round(zone["left"] * w))
+    if w > h:
+        side = max(side, round(w * (1 - LANDSCAPE_LINE_SHARE) / 2))
+    out["margin_v"] = max(round((1 - zone["captions_bottom"]) * h), int(profile.get("margin_v") or 160))
+    return out, side
 
 
 def write_ass_subtitles(
@@ -32,7 +69,10 @@ def write_ass_subtitles(
     output_path: Path | None = None,
     width: int = 1080,
     height: int = 1920,
+    fmt: Any = None,
 ) -> Path:
+    """ASS-караоке на кадр ``width``×``height``. ``fmt`` — формат вывода (app/formats.py): у
+    1:1, 4:5, 16:9 стиль подстраивается под кадр (``format_style``); 9:16 и None — как всегда."""
     if not result.words:
         raise ValueError("word-level subtitle timestamps are required")
     settings.subtitle_dir.mkdir(parents=True, exist_ok=True)
@@ -40,16 +80,17 @@ def write_ass_subtitles(
     if not path.is_absolute():
         path = settings.subtitle_dir / path
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = _ass_header(profile, width, height)
+    profile, side = format_style(profile, fmt, width, height)
+    text = _ass_header(profile, width, height, side)
     text += "\n".join(
-        _dialogue_events(result.words, profile, max_duration=float(result.duration or 0), width=width)
+        _dialogue_events(result.words, profile, max_duration=float(result.duration or 0), width=width, side=side)
     )
     text += "\n"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _ass_header(profile: dict, width: int, height: int) -> str:
+def _ass_header(profile: dict, width: int, height: int, side: int = SUBTITLE_SIDE_MARGIN) -> str:
     font_family = _style_value(profile.get("font_family") or "Arial")
     font_size = int(profile.get("font_size") or 64)
     alignment = int(profile.get("alignment") or 2)
@@ -72,20 +113,21 @@ def _ass_header(profile: dict, width: int, height: int) -> str:
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Karaoke,{font_family},{font_size},{primary},{primary},{outline},{back},"
         f"-1,0,0,0,100,100,0,0,1,{_ass_number(outline_width)},{_ass_number(shadow)},{alignment},"
-        f"{SUBTITLE_SIDE_MARGIN},{SUBTITLE_SIDE_MARGIN},{margin_v},1\n\n"
+        f"{side},{side},{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
 
 def _dialogue_events(
-    words: list[SubtitleWord], profile: dict, max_duration: float = 0.0, width: int = 1080
+    words: list[SubtitleWord], profile: dict, max_duration: float = 0.0, width: int = 1080,
+    side: int = SUBTITLE_SIDE_MARGIN,
 ) -> list[str]:
     primary = ass_color(profile.get("primary_color") or "#FFFFFF")
     active = ass_color(profile.get("active_word_color") or "#FACC15")
     max_words_per_line = max(1, int(profile.get("max_words_per_line") or 5))
     uppercase = bool(profile.get("uppercase"))
-    chars_per_line = _chars_per_line(profile, width, uppercase)
+    chars_per_line = _chars_per_line(profile, width, uppercase, side)
     normalized = _normalized_words(words, uppercase)
     if not normalized:
         return []
@@ -117,17 +159,18 @@ def _dialogue_events(
     return events
 
 
-def _chars_per_line(profile: dict, width: int, uppercase: bool) -> int:
+def _chars_per_line(profile: dict, width: int, uppercase: bool, side: int = SUBTITLE_SIDE_MARGIN) -> int:
     """Сколько символов помещается в строку на этом кадре с этим кеглем.
 
     Раньше предел был жёстким (24 символа) и при крупном шрифте строка просто
     уезжала за край кадра — конец фразы обрезался. Теперь считаем от реальной
-    ширины: кадр минус поля, делённые на среднюю ширину символа.
+    ширины: кадр минус поля (``side`` — у формата свои, ``format_style``), делённые на
+    среднюю ширину символа.
     """
 
     font_size = max(8, int(profile.get("font_size") or 64))
     frame = max(1, int(width or 1080))
-    usable = max(int(frame * 0.4), frame - 2 * SUBTITLE_SIDE_MARGIN)
+    usable = max(int(frame * 0.4), frame - 2 * side)
     per_char = font_size * (CHAR_WIDTH_RATIO_UPPERCASE if uppercase else CHAR_WIDTH_RATIO)
     fits = int(usable / per_char)
     return max(MIN_SUBTITLE_CHARS_PER_LINE, min(MAX_SUBTITLE_CHARS_PER_LINE, fits))

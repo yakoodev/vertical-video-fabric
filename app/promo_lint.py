@@ -7,15 +7,23 @@
 
 Правила 3–5 (переход сцен, мелкий/бледный финальный текст, долгий хук) включаются только
 на холсте или когда в клипе есть телефон (device) — на клипах со стримов не шумят.
+
+Геометрия — в опорном кадре формата, в котором размечены слои (app/formats.py): 9:16 —
+1080×1920 (``W``, ``H``, как всегда), 16:9 — 1920×1080 и т.д. ``promo_warnings(fmt=…)`` /
+``frame_of(fmt)`` ставят кадр на время проверки (ContextVar — потокобезопасно).
 """
 
 from __future__ import annotations
 
+import contextvars
 import math
 import re
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
-W, H = 1080.0, 1920.0
+W, H = 1080.0, 1920.0  # опорный кадр 9:16 — по умолчанию
+_FRAME: contextvars.ContextVar[tuple[float, float, str]] = contextvars.ContextVar(
+    "promo_lint_frame", default=(W, H, "9:16"))
 STEP = 0.1  # шаг выборки по времени, с
 MIN_VISIBLE_OPACITY = 0.3
 # 1) титр на экране телефона
@@ -42,6 +50,36 @@ DARK_BASE = "#0b1018"
 # 5) хук висит слишком долго
 HOOK_START_SEC = 0.5
 HOOK_MAX_SEC = 6.0
+
+
+# ---------------------------------------------------------------- кадр формата
+
+
+def frame() -> tuple[float, float]:
+    """Опорный кадр проверки (ширина, высота), px: по умолчанию 1080×1920."""
+    w, h, _fmt = _FRAME.get()
+    return w, h
+
+
+@contextmanager
+def frame_of(fmt: Any) -> Iterator[tuple[float, float]]:
+    """Проверять в опорном кадре формата ``fmt`` (нет/мусор — 9:16)."""
+    from app.formats import ref_size, settings_format
+
+    fmt = settings_format(fmt)
+    w, h = ref_size(fmt)
+    token = _FRAME.set((float(w), float(h), fmt))
+    try:
+        yield float(w), float(h)
+    finally:
+        _FRAME.reset(token)
+
+
+def _safe_top() -> float:
+    """Верх безопасной зоны текущего формата (app/safe_zones.py; 9:16 — 0.10)."""
+    from app.safe_zones import safe_zone
+
+    return safe_zone(_FRAME.get()[2])["top"]
 
 
 # ---------------------------------------------------------------- ключи и камера
@@ -135,7 +173,8 @@ def _through_camera(rect: tuple, camera: Any, t: float) -> tuple:
     zoom, cx, cy = camera_view(camera, t)
     if zoom == 1.0:
         return rect
-    tx, ty = W / 2 - cx * W * zoom, H / 2 - cy * H * zoom
+    fw, fh = frame()
+    tx, ty = fw / 2 - cx * fw * zoom, fh / 2 - cy * fh * zoom
     x0, y0, x1, y1 = rect
     return x0 * zoom + tx, y0 * zoom + ty, x1 * zoom + tx, y1 * zoom + ty
 
@@ -225,7 +264,8 @@ def layer_rect(layer: dict, t: float, camera: Any = None, screen: bool = False) 
     else:
         return None
     w, h = w * st["scale"], h * st["scale"]
-    cx, cy = st["x"] * W, st["y"] * H
+    fw, fh = frame()
+    cx, cy = st["x"] * fw, st["y"] * fh
     rect = (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
     if layer.get("followCamera") and camera:
         rect = _through_camera(rect, camera, t)
@@ -265,7 +305,7 @@ def _samples(start: float, end: float) -> list[float]:
 
 def _width_share(layer: dict) -> float:
     w, _h = picture_size(layer)
-    return w * _num(layer.get("scale"), 1.0) / W
+    return w * _num(layer.get("scale"), 1.0) / frame()[0]
 
 
 def is_big_picture(layer: dict) -> bool:
@@ -345,6 +385,7 @@ def _camera_zoomed(layer: dict, t: float, camera: Any) -> bool:
 def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[tuple[tuple, str]]:
     """1) Титр поверх экрана телефона: закрывает интерфейс приложения."""
     out = []
+    fh = frame()[1]
     for text in texts:
         worst = None  # (доля, телефон, t0, t1, верх телефона)
         # Заголовок с затемнением (props.backdrop) телефон может накрыть на наезде ключом scale — так
@@ -354,7 +395,7 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
         for phone in phones:
             lo = max(_num(text.get("start"), 0.0), _num(phone.get("start"), 0.0))
             hi = min(_num(text.get("end"), 0.0), _num(phone.get("end"), 0.0))
-            hits, share_max, top = [], 0.0, H
+            hits, share_max, top = [], 0.0, fh
             for t in _samples(lo, hi):
                 if not (_visible(text, t) and _visible(phone, t)):
                     continue
@@ -376,12 +417,10 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
             share, phone, t0, t1, top = worst
             _w, th = text_size(text)
             half = th * layer_state(text, t0)["scale"] / 2
-            limit = (top - PHONE_GAP_PX - half) / H
-            from app.agent_tools import SAFE_TOP
-
-            where = (f"подними титр выше верха телефона: y ≤ {limit:.3f} (верх корпуса на {top / H:.3f}, "
-                     f"зазор ≥ {PHONE_GAP_PX} px)" if limit - half / H >= SAFE_TOP else
-                     f"над телефоном места нет (верх корпуса на {top / H:.3f}) — уменьши телефон (w/scale) или "
+            limit = (top - PHONE_GAP_PX - half) / fh
+            where = (f"подними титр выше верха телефона: y ≤ {limit:.3f} (верх корпуса на {top / fh:.3f}, "
+                     f"зазор ≥ {PHONE_GAP_PX} px)" if limit - half / fh >= _safe_top() else
+                     f"над телефоном места нет (верх корпуса на {top / fh:.3f}) — уменьши телефон (w/scale) или "
                      "опусти его (y), потом титр над ним с зазором ≥ 24 px; заезжает под титр только на наезде — "
                      "props.backdrop у титра")
             if _camera_zoomed(phone, t0, camera):
@@ -398,7 +437,7 @@ def text_over_phone(texts: list[dict], phones: list[dict], camera: Any) -> list[
 def off_frame(layers: list[dict], camera: Any, promo: bool) -> list[tuple[tuple, str]]:
     """2) Телефон/крупная картинка уезжает за край кадра (не въезд/выезд у краёв слоя)."""
     out = []
-    frame = (0.0, 0.0, W, H)
+    box = (0.0, 0.0, *frame())
     for layer in layers:
         if not (is_phone(layer) or (promo and is_big_picture(layer))):
             continue
@@ -410,7 +449,7 @@ def off_frame(layers: list[dict], camera: Any, promo: bool) -> list[tuple[tuple,
             rect = layer_rect(layer, t, camera)
             if not rect or _area(rect) <= 0:
                 continue
-            share = 1 - _intersection(rect, frame) / _area(rect)
+            share = 1 - _intersection(rect, box) / _area(rect)
             if share > OFF_FRAME_SHARE:
                 hits.append(t)
                 if share > worst[0]:
@@ -556,9 +595,10 @@ def is_backdrop_layer(layer: dict) -> bool:
     props = _props(layer)
     scale = _num(layer.get("scale"), 1.0)
     width = _num(props.get("w"), 600.0) * scale
+    fw, fh = frame()
     if kind == "shape":
-        return width >= BACKGROUND_SHARE * W and _num(props.get("h"), 400.0) * scale >= BACKGROUND_SHARE * H
-    return width >= BACKGROUND_SHARE * W
+        return width >= BACKGROUND_SHARE * fw and _num(props.get("h"), 400.0) * scale >= BACKGROUND_SHARE * fh
+    return width >= BACKGROUND_SHARE * fw
 
 
 def is_content_layer(layer: dict) -> bool:
@@ -577,7 +617,7 @@ def shown(layer: dict, t: float, camera: Any = None) -> bool:
     if state["opacity"] < MIN_VISIBLE_OPACITY or state["scale"] < 0.05:
         return False
     rect = layer_rect(layer, t, camera)
-    return rect is None or _intersection(rect, (0.0, 0.0, W, H)) > 0
+    return rect is None or _intersection(rect, (0.0, 0.0, *frame())) > 0
 
 
 def empty_frames(layers: list[dict], duration: float, camera: Any = None) -> list[tuple[tuple, str]]:
@@ -621,9 +661,14 @@ def missing_final(layers: list[dict], duration: float, camera: Any = None) -> li
                  "ссылка ≥ 44 px")]
 
 
-def scene_warnings(layers: list[dict], duration: float | None, canvas: bool = False, camera: Any = None) -> list[str]:
+def scene_warnings(layers: list[dict], duration: float | None, canvas: bool = False, camera: Any = None,
+                   fmt: Any = None) -> list[str]:
     """Пустой кадр (холст) и нет финала (промо с телефоном) — про весь клип, не про отдельный слой:
-    add_layers/update_layer показывают их всегда, а не только про новые слои."""
+    add_layers/update_layer показывают их всегда, а не только про новые слои. ``fmt`` — формат
+    разметки слоёв (нет — текущий кадр проверки, по умолчанию 9:16)."""
+    if fmt is not None:
+        with frame_of(fmt):
+            return scene_warnings(layers, duration, canvas=canvas, camera=camera)
     visible = [l for l in layers if l.get("type") != "audio" and not l.get("hidden")]
     if not duration or not visible:
         return []
@@ -635,9 +680,14 @@ def scene_warnings(layers: list[dict], duration: float | None, canvas: bool = Fa
 
 def promo_warnings(layers: list[dict], duration: float | None = None, only_ids: set[str] | None = None,
                    canvas: bool = False, backdrop: Any = None, camera: Any = None,
-                   sizes: dict | None = None) -> list[str]:
+                   sizes: dict | None = None, fmt: Any = None) -> list[str]:
     """Все предупреждения промо по видимым слоям; ``only_ids`` — только про эти слои (и пары с ними).
-    ``sizes`` — {asset_id: (ширина, высота)} файлов библиотеки: точная пропорция картинок и записей."""
+    ``sizes`` — {asset_id: (ширина, высота)} файлов библиотеки: точная пропорция картинок и записей.
+    ``fmt`` — формат, в котором размечены слои: геометрия в его опорном кадре (нет — 9:16)."""
+    if fmt is not None:
+        with frame_of(fmt):
+            return promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera,
+                                  sizes=sizes)
     visible = [l for l in layers if l.get("type") != "audio" and not l.get("hidden")]
     if sizes:
         visible = [{**l, "_natural": sizes.get(str(_props(l).get("asset_id")))}
