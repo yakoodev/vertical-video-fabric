@@ -18,6 +18,11 @@ SAMPLE_RATE = 16000
 MAX_SHIFT_SEC = 0.7  # дальше — уже не опоздание распознавания, а другое слово
 MIN_WORD_SEC = 0.05
 _GAP_FILL_FRAMES = 3  # паузы короче 60 мс внутри слова — не тишина
+# Поправка «распознавание спешит» для слов внутри сплошной речи: медиана сдвигов слов после
+# пауз, если таких слов хотя бы столько и сдвиг не меньше LEAD_MIN_SEC (иначе — не спешит).
+LEAD_MIN_SAMPLES = 3
+LEAD_MIN_SEC = 0.08
+MAX_LEAD_SEC = 0.6
 
 
 def wav_pcm(path) -> bytes:
@@ -72,10 +77,18 @@ def _at(voiced: list[bool], t: float) -> bool:
 
 
 def snap_words(words: list[dict], voiced: list[bool]) -> tuple[list[dict], int]:
-    """Слова ``{word, start, end}`` (по времени) → подогнанные к звуку; второе — сколько сдвинуто."""
+    """Слова ``{word, start, end}`` (по времени) → подогнанные к звуку; второе — сколько сдвинуто.
+
+    Слово после паузы прилипает к началу звука. Внутри сплошной речи паузы нет — там
+    начало слова двигается на ту же поправку, на какую распознавание спешило у слов
+    после пауз (медиана, если таких слов ≥ LEAD_MIN_SAMPLES): Whisper ставит начала
+    на ~0.3 с раньше, и агент вручную сдвигал все субтитры на +0.25 с."""
     if not voiced:
         return [dict(w) for w in words], 0
     out = [dict(w) for w in words]
+    original = [(float(w["start"]), float(w["end"])) for w in words]
+    leads: list[float] = []
+    stuck: list[int] = []  # начало в сплошном звуке — к началу звука не прилипло
     moved = 0
     n = len(voiced)
     for idx, w in enumerate(out):
@@ -92,6 +105,8 @@ def snap_words(words: list[dict], voiced: list[bool]) -> tuple[list[dict], int]:
                 j += 1
             if j < limit:
                 new_start = j * FRAME_SEC
+                if idx and 0 < new_start - start <= MAX_LEAD_SEC:
+                    leads.append(new_start - start)  # распознавание поспешило — на столько
         else:
             # Начало посреди звука — к началу этой фразы, если до неё была тишина
             # и предыдущее слово кончилось раньше (звук принадлежит этому слову).
@@ -101,6 +116,8 @@ def snap_words(words: list[dict], voiced: list[bool]) -> tuple[list[dict], int]:
             onset = j * FRAME_SEC
             if j > 0 and start - onset <= MAX_SHIFT_SEC and onset >= prev_end - 1e-6:
                 new_start = onset
+            elif idx:
+                stuck.append(idx)
         new_end = end
         if not _at(voiced, max(new_start, end - FRAME_SEC / 2)):
             k = min(n, int(end / FRAME_SEC))
@@ -113,10 +130,27 @@ def snap_words(words: list[dict], voiced: list[bool]) -> tuple[list[dict], int]:
         new_start = max(new_start, prev_end)
         if new_end - new_start < MIN_WORD_SEC:
             new_start, new_end = start, end
-        if abs(new_start - start) > 1e-3 or abs(new_end - end) > 1e-3:
-            moved += 1
         w["start"], w["end"] = round(new_start, 3), round(new_end, 3)
+    lead = _median(leads) if len(leads) >= LEAD_MIN_SAMPLES else 0.0
+    if lead >= LEAD_MIN_SEC:
+        for idx in stuck:
+            w = out[idx]
+            start, end = float(w["start"]), float(w["end"])
+            prev_end = float(out[idx - 1]["end"])
+            # Не дальше конца своего слова и не раньше конца предыдущего.
+            shifted = min(start + lead, end - MIN_WORD_SEC)
+            if shifted > start and shifted >= prev_end - 1e-6:
+                w["start"] = round(shifted, 3)
+    for w, (start, end) in zip(out, original):
+        if abs(float(w["start"]) - start) > 1e-3 or abs(float(w["end"]) - end) > 1e-3:
+            moved += 1
     return out, moved
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
 def snap_payload(payload: dict, pcm: bytes) -> int:

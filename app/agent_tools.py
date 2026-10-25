@@ -36,6 +36,7 @@ from app.clip_settings import normalize_render_settings
 from app.backgrounds import BACKGROUND_KINDS as BG_KINDS
 from app.canvas import is_canvas
 from app.promo_lint import has_device_layers, promo_warnings
+from app.subtitles.phantoms import is_phantom_text
 
 # Стили фона для подсказок инструментов (app/backgrounds.py).
 BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (неоновая перспективная сетка) | bokeh (блики) | "
@@ -813,16 +814,44 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         offset = hi
         if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
             continue
-        spoken = 0
+        phrases: list[tuple[float, float, int]] = []
         for c in cues:
             a = max(float(c.get("start", 0)), float(piece["source_start"]))
             b = min(float(c.get("end", 0)), float(piece["source_end"]))
             count = len(str(c.get("text") or "").split())
+            if is_phantom_text(c.get("text")):
+                continue  # «Субтитры сделал DimaTorzok» на тишине — не речь
             if b - a >= GAP_MIN_PHRASE_SEC and count >= GAP_MIN_PHRASE_WORDS:
-                spoken += count
-        if spoken >= 3 or (not cues and words):
+                phrases.append((a, b, count))
+        if sum(n for _a, _b, n in phrases) >= 3:
+            # Фраза расшифровки на тишине дорожки речи — галлюцинация распознавания, не речь.
+            phrases = [p for p, heard in zip(phrases, _phrases_heard(store, plan, piece, phrases)) if heard]
+        if sum(n for _a, _b, n in phrases) >= 3 or (not cues and words):
             gaps.append(index)
     return gaps
+
+
+def _phrases_heard(store: Any, plan: dict, piece: dict, phrases: list[tuple[float, float, int]]) -> list[bool]:
+    """Звучит ли на дорожке речи источника каждая фраза ``(start, end, слов)`` (секунды
+    источника внутри куска). Порог — авто-порог речи (как у голоса PNGtuber). Звук не
+    прочитать — считаем, что звучит (предупреждение как раньше)."""
+    try:
+        from app.source_audio import speech_mix
+        from app.source_loudness import read_window_pcm
+        from app.subtitles.phantoms import frame_levels, is_silent, speech_threshold
+
+        source = store.get_source(int(plan["source_id"]))
+        start = float(piece["source_start"])
+        rate = 16000
+        pcm = read_window_pcm(source, start, float(piece["source_end"]) - start, rate=rate,
+                              tracks=speech_mix(source))
+        levels = frame_levels(pcm, rate)
+        if not levels:
+            return [True] * len(phrases)
+        threshold = speech_threshold(levels)
+        return [not is_silent(levels, threshold, a - start, b - start) for a, b, _n in phrases]
+    except Exception:  # noqa: BLE001 - нет файла / ffmpeg — судим по расшифровке, как раньше
+        return [True] * len(phrases)
 
 
 def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
