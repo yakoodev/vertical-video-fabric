@@ -432,6 +432,15 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     return {**preset, "layout": None, "piece_fit": fit}
 
 
+def _needs_sar_fix(parts: list[dict]) -> bool:
+    """Куски клипа надо приводить к SAR 1:1: среди них есть «шире окна» (``fit``) — его
+    основа другая, и SAR обычного куска (10240:10239 от scale) с ним не склеивался
+    («concat … SAR 10240:10239»). Без ``fit`` рендер прежний (эталоны 9:16)."""
+    from app.video_crop import normalize_fit
+
+    return len(parts) > 1 and any(normalize_fit(part.get("fit")) for part in parts)
+
+
 def _with_background_zones(
     motion: dict | None, preset: dict, parts: list[dict], overlaps: list[float], source: dict
 ) -> dict | None:
@@ -688,16 +697,20 @@ class ClipRenderService:
             parts = cut_parts or segments
             jumps = list(jump_joins or []) if cut_parts else None
             motion = _with_background_zones(motion, preset, parts, part_overlaps(parts, join, jumps), source)
+            sar_fix = _needs_sar_fix(parts)
             rendered_parts: list[Path] = []
             for index, segment in enumerate(parts):
                 part_path = temp_dir / f"part-{index:03d}.mp4"
+                piece_preset = _preset_for_segment(base_preset, segment)
+                if sar_fix:
+                    piece_preset = {**piece_preset, "normalize_sar": True}
                 _run_ffmpeg(
                     build_ffmpeg_render_args(
                         source_path=Path(source["local_path"]),
                         output_path=part_path,
                         start_sec=float(segment["start_sec"]),
                         end_sec=float(segment["end_sec"]),
-                        preset=_preset_for_segment(base_preset, segment),
+                        preset=piece_preset,
                         banner=None if motion else banner,
                         source_crop=_base_crop(source, motion),
                         reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
@@ -2334,10 +2347,15 @@ def _render_filter(
             f"crop={width}:{height}:{crop_x}:{crop_y},"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
-    style = _video_style_filter(preset)
     source_label = "vbase"
+    if preset.get("normalize_sar"):
+        # scale с force_original_aspect_ratio подгоняет SAR под пропорцию (10240:10239), а у
+        # куска «шире окна» SAR 1:1 — concat таких кусков падал. Квадратный пиксель всем.
+        base = f"{base};[vbase]setsar=1[vsar]"
+        source_label = "vsar"
+    style = _video_style_filter(preset)
     if style:
-        base = f"{base};[vbase]{style}[vstyled]"
+        base = f"{base};[{source_label}]{style}[vstyled]"
         source_label = "vstyled"
     if not banner:
         return f"{base};[{source_label}]copy[vout]"
