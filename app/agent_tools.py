@@ -551,10 +551,12 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     водяного знака YouTube.
     """
     from app.formats import settings_format
+    from app.safe_zones import lint_limits
 
     fmt = settings_format(fmt)
     ref_w, ref_h = _ref(fmt)
     zone = _zone(fmt)
+    limits = lint_limits(fmt)  # кегль и перегруз — по площадке (16:9 — экран, не телефон)
     safe_top, safe_bottom = zone["top"], zone["bottom"]
     sides = fmt != "9:16"
     warnings: list[str] = []
@@ -587,8 +589,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
         if layer.get("type") == "text":
             size = (_num(props.get("size"), 80.0) or 80.0) * (_num(layer.get("scale"), 1.0) or 1.0)
-            if size < 44:
-                warnings.append(f"{lid}: шрифт {size:.0f}px мелковат для телефона (лучше ≥ 56)")
+            if size < limits["min_font"]:
+                warnings.append(f"{lid}: шрифт {size:.0f}px мелковат для {limits['screen']} "
+                                f"(лучше ≥ {limits['good_font']})")
             if len(str(props.get("text") or "")) > 60:
                 warnings.append(f"{lid}: длинный титр — на экране читают 3–6 слов")
         start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
@@ -617,8 +620,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
             o for o in graphics
             if (_num(o.get("start"), 0.0) or 0.0) <= t < (_num(o.get("end"), 0.0) or 0.0)
         ]
-        if len(together) > MAX_SIMULTANEOUS:
-            warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
+        if len(together) > limits["max_graphics"]:
+            warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз "
+                            f"(≤ {limits['max_graphics']})")
     warnings.extend(caption_overlap_warnings(visible, only_ids, ref_h))
     promo = promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera, sizes=sizes,
                            fmt=fmt)
@@ -1944,7 +1948,10 @@ def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
     for key in keys:
         if isinstance(key, dict) and "x" not in key and "y" not in key:
             zoom = _num(key.get("zoom"), 1.0) or 1.0
-            key = {**key, **camera_center(anchor, zoom)}
+            if str(key.get("anchor") or "") == "in_place":
+                key = {**key, "x": round(anchor["x"], 4), "y": round(anchor["y"], 4)}  # точка наезда — сам якорь
+            else:
+                key = {**key, **camera_center(anchor, zoom)}
         out.append(key)
     return out
 
@@ -1991,8 +1998,15 @@ def h_list_fonts(_ctx: ToolContext, _args: dict) -> dict:
         if not family:
             continue
         entry = families.setdefault(family, {"family": family, "weights": [], "cyrillic": True, "tags": [], "hint": ""})
-        if font.get("weight") is not None and font["weight"] not in entry["weights"]:
-            entry["weights"].append(font["weight"])
+        from app.user_fonts import font_weights
+
+        weights = font_weights(font) if font.get("variable") else (
+            [font["weight"]] if font.get("weight") is not None else [])
+        entry["weights"].extend(w for w in weights if w not in entry["weights"])
+        if font.get("user"):
+            entry["user"] = True  # свой, загруженный (upload_font)
+        if font.get("variable"):
+            entry["variable"] = True  # вес — любой из weights (ось wght), не одно начертание
         entry["cyrillic"] = entry["cyrillic"] and bool(font.get("cyrillic", True))
         for tag in font.get("tags") or []:
             if tag not in entry["tags"]:
@@ -2002,6 +2016,40 @@ def h_list_fonts(_ctx: ToolContext, _args: dict) -> dict:
     for entry in families.values():
         entry["weights"].sort()
     return {"fonts": list(families.values())}
+
+
+MAX_UPLOAD_FONT_B64 = 28 * 1024 * 1024  # 20 МБ файла в base64
+
+
+def h_upload_font(_ctx: ToolContext, args: dict) -> dict:
+    """Свой шрифт (TTF/OTF/WOFF2) в шрифты сервиса (data/fonts) — base64 в аргументах, как upload_image."""
+    import base64
+    import binascii
+
+    from app.user_fonts import FontError, font_weights
+
+    name = Path(str(args.get("filename") or "")).name
+    raw = str(args.get("data_base64") or "")
+    if len(raw) > MAX_UPLOAD_FONT_B64:
+        raise ToolError("шрифт больше 20 МБ")
+    if "," in raw[:100] and raw.startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ToolError("data_base64 — не base64") from exc
+    try:
+        entry = _motion_assets().upload_font(data, name, args.get("family"), args.get("weight"), args.get("style"))
+    except FontError as exc:
+        raise ToolError(f"шрифт не принят: {exc}") from exc
+    out = {"ok": True, "family": entry["family"], "file": entry["file"], "weights": font_weights(entry),
+           "style": entry["style"], "cyrillic": entry.get("cyrillic"), "variable": bool(entry.get("variable")),
+           "use": f"props.font: \"{entry['family']}\", props.weight — из weights"}
+    if entry.get("cyrillic") is False:
+        out["warning"] = "в шрифте нет кириллицы — русский текст нарисуется запасным шрифтом; бери для латиницы"
+    elif entry.get("cyrillic") is None:
+        out["note"] = "WOFF2: кириллицу не проверить — посмотри view_frame с русским титром"
+    return out
 
 
 def h_search_emoji(_ctx: ToolContext, args: dict) -> dict:
@@ -4215,7 +4263,7 @@ in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text
 loop: {', '.join(enums['loops'])}
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
-  text: text (≤400, \\n), font, weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
+  text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
         highlight {{words:[индексы слов], color, bg}},
         backdrop {{color #000000, opacity 0.55, spread px}}|true|null — мягкое затемнение-градиент ЗА текстом (scrim):
@@ -4595,7 +4643,10 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_camera", "Наезды камеры",
-            "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?}]. Пустой список — без наездов. "
+            "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?, anchor?}]. Пустой список — без наездов. "
+            "x/y — центр окна камеры (точка уезжает в центр кадра); anchor \"in_place\" — x/y точка наезда: "
+            "она остаётся на своём месте в кадре, кадр масштабируется вокруг неё (16:9 «титр слева, медиа "
+            "справа» — наезд на медиа не утаскивает его под титр; ставь на все ключи наезда и возврата). "
             "Между ключами значения плавно переходят; ease ключа A задаёт переход A → следующий ключ (по "
             "умолчанию inOutCubic); ease \"step\" — держать A до времени следующего ключа и прыгнуть "
             "(жёсткий кадр, без наезда). До первого ключа и после последнего — их значения. "
@@ -4605,13 +4656,28 @@ def _build_registry() -> list[Tool]:
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
-                "shake": {"type": "number"}}, ["t", "zoom"])}}, ["keys"]),
+                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]}},
+                ["t", "zoom"])}}, ["keys"]),
             h_set_camera, mutating=True, label=_label_camera,
         ),
         Tool(
             "list_fonts", "Смотрю шрифты",
-            "Шрифты для слоёв (family, weight, cyrillic). Для русского текста бери cyrillic=true. / Fonts.",
+            "Шрифты для слоёв (family, weight, cyrillic; user — свой загруженный, variable — любой вес из "
+            "weights). Для русского текста бери cyrillic=true. / Fonts.",
             _obj({}), h_list_fonts, scope="global",
+        ),
+        Tool(
+            "upload_font", "Загружаю шрифт",
+            "Свой шрифт (фирменный шрифт бренда) в шрифты сервиса: data_base64 — файл в base64 (можно data:-URL), "
+            "filename .ttf/.otf/.woff2 (до 20 МБ), family? (иначе из файла), weight? 100..900, style? normal|italic. "
+            "Файл проверяется (сигнатура, таблицы, кириллица); лицензия — на совести загружающего. Тот же "
+            "family+weight+style заменяет прежний. Вариативный (ось wght) — один файл, вес любой из weights. "
+            "Вернёт family для props.font. / Upload a font file.",
+            _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "family": {"type": "string"},
+                  "weight": {"type": "integer"}, "style": {"type": "string", "enum": ["normal", "italic"]}},
+                 ["data_base64", "filename"]),
+            h_upload_font, scope="global",
+            label=lambda a: f"Загружаю шрифт {(a.get('family') or a.get('filename') or '')[:40]}",
         ),
         Tool(
             "search_emoji", "Ищу эмодзи",

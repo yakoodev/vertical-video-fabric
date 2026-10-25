@@ -174,12 +174,21 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
             <span>Зум · {(key.zoom ?? 1).toFixed(2)}×</span>
             <input type="range" min={100} max={250} value={Math.round((key.zoom ?? 1) * 100)} onChange={(e) => patch({ zoom: Number(e.target.value) / 100 })} />
           </label>
+          <label className="switch li-switch" title="Точка наезда остаётся на своём месте в кадре, кадр масштабируется вокруг неё (не уезжает в центр)">
+            <input
+              type="checkbox"
+              checked={key.anchor === "in_place"}
+              onChange={(e) => patch({ anchor: e.target.checked ? "in_place" : undefined })}
+            />
+            <span className="switch-track" />
+            <span>Наезд на месте</span>
+          </label>
           <label className="field range">
-            <span>Центр по X · {Math.round((key.x ?? 0.5) * 100)}%</span>
+            <span>{key.anchor === "in_place" ? "Точка" : "Центр"} по X · {Math.round((key.x ?? 0.5) * 100)}%</span>
             <input type="range" min={0} max={100} value={Math.round((key.x ?? 0.5) * 100)} onChange={(e) => patch({ x: Number(e.target.value) / 100 })} />
           </label>
           <label className="field range">
-            <span>Центр по Y · {Math.round((key.y ?? 0.5) * 100)}%</span>
+            <span>{key.anchor === "in_place" ? "Точка" : "Центр"} по Y · {Math.round((key.y ?? 0.5) * 100)}%</span>
             <input type="range" min={0} max={100} value={Math.round((key.y ?? 0.5) * 100)} onChange={(e) => patch({ y: Number(e.target.value) / 100 })} />
           </label>
           <label className="field range">

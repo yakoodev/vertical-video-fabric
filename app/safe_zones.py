@@ -60,6 +60,29 @@ ZONES: dict[str, dict] = {
 }
 
 
+# Пороги линта по формату/площадке (agent_tools.lint_layers, promo_lint.final_text): кегль в px
+# опорного кадра формата (короткая сторона — 1080 у всех). 9:16, 1:1, 4:5 смотрят с телефона:
+# мельче 44 px не прочитать (лучше ≥ 56), больше 3 слоёв графики разом — каша. 16:9 — YouTube /
+# презентация на мониторе или ТВ: кадр шире, текст читается с экрана — 28 px (≈ 2.6 % высоты,
+# кегль субтитров плеера) ещё читается (лучше ≥ 36), а слайду с титром, подписью и двумя медиа
+# 5 слоёв графики — норма.
+LINT_LIMITS: dict[str, dict] = {
+    "9:16": {"min_font": 44, "good_font": 56, "max_graphics": 3, "screen": "телефона",
+             "final_font": 44, "final_good": "56–64"},
+    "1:1": {"min_font": 44, "good_font": 56, "max_graphics": 3, "screen": "телефона",
+            "final_font": 44, "final_good": "56–64"},
+    "4:5": {"min_font": 44, "good_font": 56, "max_graphics": 3, "screen": "телефона",
+            "final_font": 44, "final_good": "56–64"},
+    "16:9": {"min_font": 28, "good_font": 36, "max_graphics": 5, "screen": "экрана YouTube/презентации",
+             "final_font": 32, "final_good": "40–56"},
+}
+
+
+def lint_limits(fmt: Any = None) -> dict:
+    """Пороги линта формата (мусор и пусто — 9:16)."""
+    return LINT_LIMITS[settings_format(fmt)]
+
+
 def safe_zone(fmt: Any = None) -> dict:
     """Зона формата (мусор и пусто — 9:16)."""
     return ZONES[settings_format(fmt)]

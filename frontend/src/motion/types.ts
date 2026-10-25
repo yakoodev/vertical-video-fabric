@@ -551,6 +551,13 @@ export type Layer =
   | AudioLayer
   | PngtuberLayer;
 
+/**
+ * Как ключ камеры понимает свои x/y: `"center"` (по умолчанию) — центр окна камеры
+ * (точка уезжает в центр кадра); `"in_place"` — точка наезда: она остаётся на своём
+ * месте в кадре, кадр масштабируется вокруг неё (раскладка «титр слева, медиа справа»).
+ */
+export type CameraAnchor = "center" | "in_place";
+
 export type CameraKey = {
   t: number;
   zoom?: number;
@@ -558,6 +565,7 @@ export type CameraKey = {
   y?: number;
   ease?: Easing;
   shake?: number;
+  anchor?: CameraAnchor;
 };
 
 export type Composition = {

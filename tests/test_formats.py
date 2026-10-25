@@ -272,6 +272,59 @@ def test_render_pipeline_layers_in_16x9_render_vertical(tmp_path, monkeypatch):
     assert hook["scale"] < 1
 
 
+def test_render_pipeline_16x9_layers_16x9_render_as_is(tmp_path, monkeypatch):
+    """Слои размечены в 16:9 и рендер 16:9 — без перекомпоновки (раньше читалось как 9:16 →
+    слои сжимались колонкой ~0.70), и кадр агента — те же слои, что рендер."""
+    got = run_case("crop_focus_motion", tmp_path, monkeypatch,
+                   extra={"format": "16:9", "layers_format": "16:9"}, frame=(1920, 1080))
+    assert got["status"] == "succeeded", got.get("error")
+    comp = next(c[1]["comp"] for c in got["calls"] if c[0] == "compositor")
+    assert (comp["width"], comp["height"], comp["refWidth"]) == (1920, 1080, 1920)
+    hook = next(layer for layer in comp["layers"] if layer["id"] == "hook")
+    assert (hook["x"], hook["y"]) == (0.5, 0.2) and hook.get("scale", 1) == 1  # как размечен
+    assert comp["camera"][1]["zoom"] == 1.5 and comp["camera"][1]["x"] == 0.5
+    frame_comp = next(c[1]["comp"] for c in got["frame_calls"] if c[0] == "compositor")
+    assert frame_comp["layers"] == comp["layers"] and frame_comp["camera"] == comp["camera"]
+
+
+def test_preset_with_output_always_names_layers_format():
+    from app.formats import motion_formats
+    from app.render import _preset_with_output
+
+    base = {"id": 1, "output_width": 1080, "output_height": 1920}
+    assert motion_formats(base) == ("9:16", "9:16")  # пресет как есть
+    for out_fmt, layers_fmt in (("16:9", "16:9"), ("16:9", "9:16"), ("9:16", "16:9"), ("1:1", "1:1"), ("4:5", "9:16")):
+        preset = _preset_with_output(base, H_SRC, out_fmt, 0.0, layers_fmt)
+        assert preset["layers_format"] == layers_fmt
+        assert motion_formats(preset) == (out_fmt, layers_fmt)
+    # Старый пресет с format, но без layers_format (до правки) — слои в формате вывода.
+    assert motion_formats({"format": "16:9"}) == ("16:9", "16:9")
+
+
+def test_view_frame_and_render_share_reframe_path(tmp_path, monkeypatch):
+    """Рендер и view_frame решают перенос слоёв одной функцией (motion_render.reframe_for_output)
+    по одному пресету — предпросмотр не расходится с рендером."""
+    import app.motion_render as mr
+    from app.formats import motion_formats
+
+    seen: list = []
+    real = mr.reframe_for_output
+
+    def spy(layers, camera, preset, assets):
+        seen.append(motion_formats(preset))
+        return real(layers, camera, preset, assets)
+
+    monkeypatch.setattr(mr, "reframe_for_output", spy)
+    for extra, frame, want in (({"format": "16:9", "layers_format": "16:9"}, (1920, 1080), ("16:9", "16:9")),
+                               ({"format": "16:9"}, (1920, 1080), ("16:9", "9:16")),
+                               ({"layers_format": "16:9"}, None, ("9:16", "16:9"))):
+        seen.clear()
+        got = run_case("crop_focus_motion", tmp_path / want[1].replace(":", "x") / str(len(extra)), monkeypatch,
+                       extra=extra, frame=frame)
+        assert got["status"] == "succeeded", got.get("error")
+        assert seen == [want, want], (extra, seen)  # рендер, затем кадр агента
+
+
 def test_render_settings_patch_keeps_format(tmp_path, monkeypatch):
     """Редактор, что не шлёт format/layers_format, их не сбрасывает; старый aspect — формат."""
     from test_api_pipeline import _client

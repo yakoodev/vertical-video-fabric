@@ -1,6 +1,6 @@
 import { api } from "./client";
 
-/** Шрифт из `vendor/fonts/fonts.json` — тот же файл подключает и рендер. */
+/** Шрифт из `vendor/fonts/fonts.json` или свой (`data/fonts`, app/user_fonts.py) — тот же файл подключает и рендер. */
 export type MotionFont = {
   family: string;
   file: string;
@@ -10,6 +10,12 @@ export type MotionFont = {
   hint?: string;
   tags?: string[];
   url?: string;
+  /** Свой, загруженный владельцем/агентом (можно удалить). */
+  user?: boolean;
+  /** Вариативный: вес — любой из `weight_range` (ось wght); нет диапазона (WOFF2) — 100..900. */
+  variable?: boolean;
+  weight_range?: [number, number];
+  cyrillic?: boolean | null;
 };
 
 export type EmojiItem = { code: string; char: string; name?: string; group?: string; url?: string };
@@ -72,6 +78,14 @@ export const motionApi = {
   voice: (planId: number, layers: unknown[], fps = 30) =>
     api.post<{ voice: Record<string, VoiceTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/voice`, { layers, fps }),
   fonts: async () => listOf<MotionFont>(await api.get<unknown>("/api/motion/fonts"), "fonts", "items"),
+  /** Свой шрифт (TTF/OTF/WOFF2): POST /api/motion/fonts; лицензия — на совести загружающего. */
+  uploadFont: (file: File, family = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (family) fd.append("family", family);
+    return api.form<MotionFont>("/api/motion/fonts", fd);
+  },
+  deleteFont: (file: string) => api.del<{ deleted: boolean }>(`/api/motion/fonts/${encodeURIComponent(file)}`),
   emoji: async (q: string, limit = 120) =>
     listOf<EmojiItem>(
       await api.get<unknown>(`/api/motion/emoji?q=${encodeURIComponent(q)}&limit=${limit}`),

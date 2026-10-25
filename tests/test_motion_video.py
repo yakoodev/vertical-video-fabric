@@ -92,9 +92,62 @@ def test_frame_width_follows_layer_size_scale_and_crop():
     zoom = {**layer, "keys": {"scale": [{"t": 0, "v": 1}, {"t": 1, "v": 1.4}]}}
     assert video_frame_width(zoom, 1080) == 966
     window = {**layer, "props": {**layer["props"], "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.5}}}
-    assert video_frame_width(window, 1080) == 1080  # окно в полкадра — вдвое резче, но ≤ 1080
+    # Окно в полкадра — весь кадр файла вдвое шире (видимая часть 690 px остаётся резкой).
+    assert video_frame_width(window, 1080) == 1380
     assert video_frame_width(layer, 1080, natural=(480, 270)) == 480  # не больше исходника
     assert video_frame_width(layer, 1080) % 2 == 0
+
+
+def test_frame_width_cap_follows_output_format():
+    """Предел — ширина кадра вывода: 1080 у 9:16, 1920 у 16:9 (окно ~1040 px из 4K не мылится);
+    окно crop из 4K — с запасом, но площадь кадра и всех кадров слоя ограничены."""
+    from app.motion_render import (
+        VIDEO_MAX_FRAME_PIXELS,
+        VIDEO_MAX_TOTAL_PIXELS,
+        video_max_frame_width,
+    )
+
+    assert video_max_frame_width("9:16") == 1080 and video_max_frame_width(None) == 1080
+    assert video_max_frame_width("1:1") == 1080 and video_max_frame_width("16:9") == 1920
+    uhd = (3840, 2160)
+    wide = motion.normalize_layers([{**VIDEO, "props": {"asset_id": 7, "w": 1040}}])[0]
+    # 9:16 — как раньше (≤ 1080), 16:9 — 1040 × 1.15 = 1196 (опорные px 16:9 — px кадра 1920).
+    assert video_frame_width(wide, 1080, uhd) == 1080
+    assert video_frame_width(wide, 1080, uhd, "16:9") == 1196
+    full = motion.normalize_layers([{**VIDEO, "props": {"asset_id": 7, "w": 1920}}])[0]
+    assert video_frame_width(full, 1080, uhd, "16:9") == 1920  # во весь кадр — не шире кадра
+    # Окно 40 % 4K-записи на 1040 px: весь кадр 1196 / 0.4 = 2990 → потолок площади 2560 (16:9).
+    window = {**wide, "props": {**wide["props"], "crop": {"x": 0.3, "y": 0.3, "w": 0.4, "h": 0.4}}}
+    got = video_frame_width(window, 1080, uhd, "16:9")
+    assert got == 2560 and got * got * 9 / 16 <= VIDEO_MAX_FRAME_PIXELS
+    assert video_frame_width(window, 1080, (1920, 1080), "16:9") == 1920  # не больше исходника
+    # Длинный слой: все кадры — в бюджете площади, но не мельче прежних 1080.
+    assert video_frame_width(window, 1080, uhd, "16:9", count=9000) == 1920  # 5 мин — кадры 1920×1080
+    assert video_frame_width(window, 1080, uhd, "16:9", count=40000) == 1080  # пол — прежний предел
+    mid = video_frame_width(window, 1080, uhd, "16:9", count=6000)
+    assert 1920 < mid < 2560 and 6000 * mid * mid * 9 / 16 <= VIDEO_MAX_TOTAL_PIXELS * 1.01
+
+
+def test_wide_frames_cap_area_in_ffmpeg_by_real_aspect(tmp_path):
+    """Кадры шире 1080 — площадь ограничена и в ffmpeg (по пропорции после поворота):
+    9:16 и прежние ширины — та же команда, что раньше."""
+    plan = {"start": 0.0, "rate": None, "span": None, "count": 1}
+    old = build_video_frames_args(Path("a.mp4"), tmp_path, plan, 1080)
+    assert "scale=1080:-2:flags=lanczos" in old
+    args = build_video_frames_args(Path("a.mp4"), tmp_path, plan, 2560)
+    vf = args[args.index("-vf") + 1]
+    assert vf.startswith("scale='min(2560,trunc(sqrt(") and "*iw/ih)/2)*2)':-2" in vf
+    _ffmpeg_or_skip()
+    for size, want in (("3840x2160", (2560, 1440)), ("1080x1920", (1440, 2560))):
+        src = _synthetic(tmp_path / f"{size}.mp4", 0.2, size)
+        out = tmp_path / size
+        out.mkdir()
+        subprocess.run(build_video_frames_args(src, out, plan, 2560), check=True, capture_output=True)
+        probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "json",
+                                str(out / "00000.jpg")], capture_output=True, text=True, check=True)
+        stream = json.loads(probe.stdout)["streams"][0]
+        assert stream["width"] * stream["height"] <= 2560 * 1440 * 1.01, (size, stream)
+        assert abs(stream["width"] - min(2560, want[0])) <= 2, (size, stream)
 
 
 def test_frame_plan_samples_file_at_fps_over_speed():

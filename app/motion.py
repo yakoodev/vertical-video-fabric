@@ -869,6 +869,29 @@ CAMERA_FIELDS: dict = {
     "y": Num(0.5, 0, 1, 4),
 }
 
+# Как ключ камеры понимает x/y (frontend/src/motion/camera.ts): "center" — центр окна
+# камеры (по умолчанию, точка уезжает в центр кадра); "in_place" — точка наезда стоит на
+# своём месте в кадре, кадр масштабируется вокруг неё.
+CAMERA_ANCHORS = ("center", "in_place")
+_CAMERA_ANCHOR_ALIASES = {"pivot": "in_place", "inplace": "in_place", "in-place": "in_place", "stay": "in_place",
+                          "на месте": "in_place", "centre": "center", "центр": "center"}
+
+
+def in_place_center(p: float, zoom: float) -> float:
+    """Центр окна камеры, при котором точка ``p`` (доля кадра) стоит на месте при ``zoom``."""
+    z = min(4.0, max(1.0, float(zoom)))
+    return p + (0.5 - p) / z
+
+
+def camera_pivot(center: float, zoom: float, fallback: float) -> float:
+    """Обратное ``in_place_center``: точка, что стоит на месте при центре ``center``
+    (центр зажат в кадр); при zoom ≈ 1 — любая, берётся ``fallback``."""
+    z = min(4.0, max(1.0, float(zoom)))
+    if z <= 1.001:
+        return fallback
+    half = 0.5 / z
+    return min(1.0, max(0.0, (min(1 - half, max(half, center)) * z - 0.5) / (z - 1)))
+
 
 # ---------------------------------------------------------------- нормализация
 
@@ -1180,7 +1203,7 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
     for index, item in enumerate(raw[:MAX_CAMERA_KEYS]):
         where = f"camera[{index}]"
         if not isinstance(item, dict):
-            rep(where, "нужен объект {t, zoom, x, y, ease?, shake?}")
+            rep(where, "нужен объект {t, zoom, x, y, ease?, shake?, anchor?}")
             continue
         if _finite(item.get("t")) is None:
             rep(f"{where}.t", "нужно число — ключ отброшен")
@@ -1190,6 +1213,13 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
             ease = _norm_ease(item["ease"], rep, f"{where}.ease")
             if ease:
                 key["ease"] = ease
+        if item.get("anchor") not in (None, ""):
+            anchor = str(item["anchor"]).strip().lower()
+            anchor = _CAMERA_ANCHOR_ALIASES.get(anchor, anchor)
+            if anchor not in CAMERA_ANCHORS:
+                rep(f"{where}.anchor", f"одно из {', '.join(CAMERA_ANCHORS)} — взят center")
+            elif anchor == "in_place":
+                key["anchor"] = "in_place"
         if item.get("shake") not in (None, 0):
             shake = Num(0, 0, 1, 3).norm(item["shake"], rep, f"{where}.shake")
             if shake > 0:

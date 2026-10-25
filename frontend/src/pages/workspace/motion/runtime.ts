@@ -260,7 +260,9 @@ export function loadMotionFonts(): Promise<MotionFont[]> {
       for (const f of fonts) {
         const url = f.url || `/api/motion/fonts/${encodeURIComponent(f.file)}`;
         const face = new FontFace(f.family, `url(${url})`, {
-          weight: String(f.weight || 400),
+          // Вариативный — диапазоном: браузер сам ставит ось wght по font-weight (как
+          // fontVariationSettings компоновщика, node/motion-render.ts).
+          weight: fontFaceWeight(f),
           style: f.style === "italic" ? "italic" : "normal",
         });
         face
@@ -280,15 +282,36 @@ export function loadMotionFonts(): Promise<MotionFont[]> {
   return fontsPromise;
 }
 
-/** Семейства для выпадающего списка: одно на семейство, с доступными толщинами. */
-export function fontFamilies(fonts: MotionFont[]): { family: string; weights: number[]; label: string }[] {
-  const byFamily = new Map<string, { family: string; weights: number[]; label: string }>();
+/** Дескриптор weight для FontFace: вариативный — диапазон оси wght (WOFF2 без него — 100 900). */
+export function fontFaceWeight(f: MotionFont): string {
+  if (!f.variable) return String(f.weight || 400);
+  const [lo, hi] = f.weight_range ?? [100, 900];
+  return `${lo} ${hi}`;
+}
+
+/** Толщины шрифта: вариативный — сотни из диапазона wght (app/user_fonts.font_weights), иначе одна. */
+export function fontWeights(f: MotionFont): number[] {
+  if (!f.variable) return [f.weight];
+  const [lo, hi] = f.weight_range ?? [100, 900];
+  const out = [100, 200, 300, 400, 500, 600, 700, 800, 900].filter((w) => w >= lo && w <= hi);
+  return out.length ? out : [f.weight];
+}
+
+/** Семейства для выпадающего списка: одно на семейство, с доступными толщинами (свои — с пометкой). */
+export function fontFamilies(fonts: MotionFont[]): { family: string; weights: number[]; label: string; user?: boolean }[] {
+  const byFamily = new Map<string, { family: string; weights: number[]; label: string; user?: boolean }>();
   for (const f of fonts) {
-    const row = byFamily.get(f.family) ?? { family: f.family, weights: [], label: f.family };
-    if (!row.weights.includes(f.weight)) row.weights.push(f.weight);
+    const row = byFamily.get(f.family) ?? { family: f.family, weights: [], label: f.user ? `${f.family} · свой` : f.family, user: f.user };
+    for (const w of fontWeights(f)) if (!row.weights.includes(w)) row.weights.push(w);
     byFamily.set(f.family, row);
   }
   return [...byFamily.values()].map((r) => ({ ...r, weights: r.weights.sort((a, b) => a - b) }));
+}
+
+/** Сбросить загруженный список шрифтов (после загрузки своего) — следующий loadMotionFonts спросит сервер. */
+export function reloadMotionFonts(): Promise<MotionFont[]> {
+  fontsPromise = null;
+  return loadMotionFonts();
 }
 
 const envs = new Map<string, RenderEnv>();

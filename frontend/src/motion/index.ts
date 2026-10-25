@@ -26,6 +26,7 @@ export {
   isIdentityCamera,
   drawCameraFrame,
   frameCameraMatrix,
+  inPlaceCenter,
   type CameraState,
   type CameraMatrix,
 } from "./camera";

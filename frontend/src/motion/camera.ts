@@ -5,6 +5,11 @@
  * кроме слоёв с `followCamera`: они рисуются в той же трансформации, что и видео.
  * Центр зажимается так, чтобы окно камеры не вылезало за кадр: при zoom = 2
  * видна половина кадра, значит центр может гулять только в [0.25, 0.75].
+ *
+ * `anchor: "in_place"` у ключа — x/y не центр окна, а точка наезда: она стоит на месте,
+ * кадр масштабируется вокруг неё (центр окна = p + (0.5 − p) / zoom — всегда в кадре).
+ * Между ключами, где хоть один «на месте», зум и точка наезда идут плавно — точка не
+ * уезжает к центру по пути. Зеркала: app/promo_lint.camera_view, app/aspect._camera_view.
  */
 import { clamp, DEFAULT_EASE, ease, lerp } from "./easing";
 import { noise1 } from "./keys";
@@ -28,6 +33,29 @@ function field(key: CameraKey, name: "zoom" | "x" | "y" | "shake"): number {
   return typeof v === "number" && Number.isFinite(v) ? v : REST[name];
 }
 
+/** Центр окна камеры, при котором точка `p` (доля кадра) остаётся на своём месте при `zoom`. */
+export function inPlaceCenter(p: number, zoom: number): number {
+  const z = clamp(zoom, 1, 4);
+  return p + (0.5 - p) / z;
+}
+
+/** Точка, что стоит на месте при центре окна `c` и `zoom` (обратное inPlaceCenter); при
+ * zoom ≈ 1 — любая (берётся `fallback`). */
+function pivotOf(c: number, zoom: number, fallback: number): number {
+  const z = clamp(zoom, 1, 4);
+  if (z <= 1.001) return fallback;
+  const half = 0.5 / z;
+  return clamp((clamp(c, half, 1 - half) * z - 0.5) / (z - 1), 0, 1);
+}
+
+const inPlace = (k: CameraKey): boolean => k.anchor === "in_place";
+
+/** Центр окна ключа: «на месте» — пересчёт точки наезда в центр. */
+function keyCenter(k: CameraKey, s: CameraState): CameraState {
+  if (!inPlace(k)) return s;
+  return { ...s, x: inPlaceCenter(clamp(s.x, 0, 1), s.zoom), y: inPlaceCenter(clamp(s.y, 0, 1), s.zoom) };
+}
+
 function sortedKeys(keys: CameraKey[]): CameraKey[] {
   for (let i = 1; i < keys.length; i++) {
     if (keys[i].t < keys[i - 1].t) return [...keys].sort((a, b) => a.t - b.t);
@@ -45,9 +73,9 @@ export function cameraAt(keys: CameraKey[] | undefined | null, t: number): Camer
     y: field(k, "y"),
     shake: field(k, "shake"),
   });
-  if (t <= ks[0].t) return pick(ks[0]);
+  if (t <= ks[0].t) return keyCenter(ks[0], pick(ks[0]));
   const last = ks[ks.length - 1];
-  if (t >= last.t) return pick(last);
+  if (t >= last.t) return keyCenter(last, pick(last));
   for (let i = 0; i < ks.length - 1; i++) {
     const a = ks[i];
     const b = ks[i + 1];
@@ -56,15 +84,19 @@ export function cameraAt(keys: CameraKey[] | undefined | null, t: number): Camer
       const p = ease(a.ease ?? DEFAULT_EASE, span > 0 ? (t - a.t) / span : 1);
       const A = pick(a);
       const B = pick(b);
-      return {
-        zoom: lerp(A.zoom, B.zoom, p),
-        x: lerp(A.x, B.x, p),
-        y: lerp(A.y, B.y, p),
-        shake: lerp(A.shake, B.shake, p),
-      };
+      const zoom = lerp(A.zoom, B.zoom, p);
+      const shake = lerp(A.shake, B.shake, p);
+      if (!inPlace(a) && !inPlace(b)) return { zoom, x: lerp(A.x, B.x, p), y: lerp(A.y, B.y, p), shake };
+      // Хоть один ключ «на месте» — плавно ведём зум и точку наезда (центр-ключ — в точку,
+      // что стоит на месте при его центре; при zoom 1 — точка соседа).
+      const piv = (k: CameraKey, s: CameraState, o: CameraKey, os: CameraState, axis: "x" | "y"): number =>
+        inPlace(k) ? clamp(s[axis], 0, 1) : pivotOf(s[axis], s.zoom, inPlace(o) ? clamp(os[axis], 0, 1) : pivotOf(os[axis], os.zoom, 0.5));
+      const px = lerp(piv(a, A, b, B, "x"), piv(b, B, a, A, "x"), p);
+      const py = lerp(piv(a, A, b, B, "y"), piv(b, B, a, A, "y"), p);
+      return { zoom, x: inPlaceCenter(px, zoom), y: inPlaceCenter(py, zoom), shake };
     }
   }
-  return pick(last);
+  return keyCenter(last, pick(last));
 }
 
 /**
