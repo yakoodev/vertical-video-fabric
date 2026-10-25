@@ -571,3 +571,26 @@ def test_voice_api_for_preview(tmp_path, monkeypatch):
     assert len(track["states"]) == 90 and state_at(track, 1.2) == 1 and state_at(track, 2.5) == 0
     anim = client.get(f"/api/montage-assets/{idle}/anim", headers=headers)
     assert anim.status_code == 200 and anim.json() == {"animated": False}  # «GIF» без кадров — статичный
+
+
+def test_frame_durations_from_old_ffprobe_fields():
+    """ffprobe 5.1 (контейнер) отдаёт pkt_duration_time вместо duration_time — 30 fps не должно стать 10."""
+    from app.anim_frames import _frame_durations, animation_info
+
+    frames = [{"best_effort_timestamp_time": f"{i * 0.033:.3f}", "pkt_duration_time": "0.033000"} for i in range(9)]
+    assert _frame_durations(frames) == [0.033] * 9
+    # Нет ни одного поля длительности — по меткам времени, последний кадр как предыдущий.
+    bare = [{"best_effort_timestamp_time": f"{i * 0.05:.2f}"} for i in range(4)]
+    assert [round(d, 3) for d in _frame_durations(bare)] == [0.05, 0.05, 0.05, 0.05]
+
+    probe = lambda _p: {  # noqa: E731
+        "streams": [{"codec_name": "vp9", "width": 1024, "height": 1024, "pix_fmt": "yuv420p",
+                     "tags": {"alpha_mode": "1"}}],
+        "frames": frames,
+    }
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "talk.webm"
+        p.write_bytes(b"x")
+        info = animation_info(p, probe=probe)
+    assert info["frames"] == 9 and abs(info["fps"] - 30.3) < 0.5

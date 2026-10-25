@@ -107,10 +107,35 @@ def _probe(path: Path) -> dict:
     tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
     alpha_tag = str(tags.get("alpha_mode") or tags.get("ALPHA_MODE") or "") == "1"
     if stream.get("codec_name") in ("gif", "apng", "png", "webp") or alpha_tag:
-        frames = _ffprobe_json(["-show_entries", "frame=best_effort_timestamp_time,duration_time",
+        # ffprobe 5.x отдаёт длительность кадра как pkt_duration_time, новые — как duration_time.
+        frames = _ffprobe_json(["-show_entries",
+                                "frame=best_effort_timestamp_time,duration_time,pkt_duration_time",
                                 "-read_intervals", "%+60", str(path)])
         data["frames"] = frames.get("frames") or []
     return data
+
+
+def _num(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _frame_durations(frames: list[dict]) -> list[float]:
+    """Длительности кадров: duration_time (ffprobe 6+) или pkt_duration_time (5.x); если обоих нет —
+    разница меток времени соседних кадров (у последнего — как у предыдущего). Без этого webm из
+    EmoteLab (30 fps) в контейнере с ffprobe 5.1 шёл по 0.1 с на кадр — втрое медленнее."""
+    stamps = [_num(f.get("best_effort_timestamp_time")) for f in frames]
+    out: list[float] = []
+    for i, frame in enumerate(frames):
+        d = _num(frame.get("duration_time")) or _num(frame.get("pkt_duration_time"))
+        if d <= 0 and i + 1 < len(frames):
+            d = stamps[i + 1] - stamps[i]
+        if d <= 0 and out:
+            d = out[-1]
+        out.append(max(0.0, d))
+    return out
 
 
 def animation_info(path: str | Path, probe: Callable[[Path], dict] = _probe) -> dict:
@@ -139,12 +164,7 @@ def animation_info(path: str | Path, probe: Callable[[Path], dict] = _probe) -> 
         alpha = alpha_tag or any(p in pix for p in ("rgba", "bgra", "argb", "abgr", "yuva", "ya8", "pal8"))
         if codec == "gif":
             alpha = True  # прозрачность GIF — индекс палитры, декодер отдаёт bgra
-        durations = []
-        for frame in data.get("frames") or data.get("packets") or []:
-            try:
-                durations.append(float(frame.get("duration_time") or 0))
-            except (TypeError, ValueError):
-                durations.append(0.0)
+        durations = _frame_durations(data.get("frames") or data.get("packets") or [])
         info = _info_from_durations(durations, int(stream.get("width") or 0), int(stream.get("height") or 0),
                                     alpha, codec, _ALPHA_DECODERS.get(codec) if alpha_tag else None)
         if codec not in ("gif", "apng", "png", "webp") and not alpha_tag:
