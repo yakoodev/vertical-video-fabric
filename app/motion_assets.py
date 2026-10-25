@@ -2,7 +2,8 @@
 
 Откуда берётся:
 
-* шрифты — ``vendor/fonts/`` в репозитории (``fonts.json`` + ttf, OFL);
+* шрифты — ``vendor/fonts/`` в репозитории (``fonts.json`` + ttf, OFL) и свои, загруженные
+  владельцем/агентом, — ``data/fonts/`` (app/user_fonts.py, тот же формат реестра);
 * паки — ``vendor/packs/`` (``packs.json`` + ``emoji.json`` + каталоги паков),
   их качает ``tools/fetch_packs.py`` при сборке образа.
 
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, params
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, params
 from fastapi.responses import FileResponse
 
 from app.settings import settings
@@ -115,20 +116,41 @@ def _inside(base: Path, name: str) -> Path | None:
 # --------------------------------------------------------------------------- #
 
 
-def load_fonts() -> list[dict]:
+def load_vendor_fonts() -> list[dict]:
     raw = _load_json(fonts_dir() / "fonts.json", [])
     return [f for f in raw if isinstance(f, dict) and isinstance(f.get("file"), str) and FILE_RE.match(f["file"])]
 
 
+def load_fonts() -> list[dict]:
+    """Шрифты комплекта (vendor/fonts) и свои (data/fonts, app/user_fonts.py)."""
+    from app.user_fonts import load_user_fonts
+
+    user = [f for f in load_user_fonts() if FILE_RE.match(f["file"])]
+    return [*load_vendor_fonts(), *user]
+
+
 def font_path(file: str) -> Path | None:
-    """Файл шрифта по имени — только из fonts.json."""
-    if not any(f["file"] == file for f in load_fonts()):
-        return None
-    return _inside(fonts_dir(), file)
+    """Файл шрифта по имени — только из реестров (комплект, затем свои)."""
+    from app.user_fonts import load_user_fonts, user_fonts_dir
+
+    if any(f["file"] == file for f in load_vendor_fonts()):
+        return _inside(fonts_dir(), file)
+    if any(f.get("file") == file for f in load_user_fonts()):
+        return _inside(user_fonts_dir(), file)
+    return None
 
 
 def list_fonts() -> list[dict]:
     return [{**f, "url": f"/api/motion/fonts/{f['file']}"} for f in load_fonts()]
+
+
+def upload_font(data: bytes, filename: str, family: Any = None, weight: Any = None, style: Any = None) -> dict:
+    """Свой шрифт (app/user_fonts.add_font) — запись реестра с url. Ошибки — FontError (ValueError)."""
+    from app.user_fonts import add_font
+
+    vendor = {str(f.get("family") or "") for f in load_vendor_fonts()}
+    entry = add_font(data, filename, family=family, weight=weight, style=style, vendor_families=vendor)
+    return {**entry, "url": f"/api/motion/fonts/{entry['file']}"}
 
 
 # --------------------------------------------------------------------------- #
@@ -507,6 +529,31 @@ def build_router(auth_dep: Any = None, store: Any = None) -> APIRouter:
         if not path:
             raise HTTPException(status_code=404, detail="шрифт не найден")
         return _file_response(path)
+
+    @router.post("/fonts", summary="Загрузить свой шрифт (TTF/OTF/WOFF2; лицензия — на совести загружающего)")
+    async def api_font_upload(
+        file: Annotated[UploadFile, File()],
+        family: Annotated[str, Form()] = "",
+        weight: Annotated[str, Form()] = "",
+        style: Annotated[str, Form()] = "",
+    ) -> dict:
+        from app.user_fonts import MAX_FONT_BYTES, FontError
+
+        try:
+            data = await file.read(MAX_FONT_BYTES + 1)
+            return upload_font(data, file.filename or "", family or None, weight or None, style or None)
+        except FontError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await file.close()
+
+    @router.delete("/fonts/{file}", summary="Удалить свой шрифт")
+    def api_font_delete(file: str) -> dict:
+        from app.user_fonts import delete_font
+
+        if not FILE_RE.match(file) or not delete_font(file):
+            raise HTTPException(status_code=404, detail="своего шрифта с таким файлом нет")
+        return {"deleted": True}
 
     @router.get("/emoji", summary="Поиск эмодзи (русские и английские названия/теги)")
     def api_emoji(

@@ -482,15 +482,21 @@ node node/motion-render.mjs \
 `vendor/fonts/fonts.json`: `[{ "family": "Montserrat", "file": "Montserrat-Black.ttf",
 "weight": 900, "style": "normal", "cyrillic": true, "tags": ["display"] }, …]`.
 Браузер подключает те же файлы через `/api/motion/fonts` + `@font-face`.
-Нужны **статические** файлы на каждое начертание: Skia (компоновщик) у вариативного
-шрифта берёт только начертание по умолчанию, `weight` его не меняет. Строка шрифта
+Свои шрифты (app/user_fonts.py) — `data/fonts/` с реестром `data/fonts/fonts.json` той же схемы
+(+ `user`, `variable`, `weight_range`, `axes`): загрузка `POST /api/motion/fonts` (multipart `file`
+TTF/OTF/WOFF2 ≤ 20 МБ, `family?`, `weight?`, `style?`), удаление `DELETE /api/motion/fonts/{file}`,
+агенту — `upload_font`; компоновщику — `--user-fonts-dir`. Шрифты комплекта — статические файлы на
+каждое начертание. Вариативный свой: Skia (компоновщик) сама берёт только начертание по умолчанию,
+поэтому сеттер `ctx.font` в node/motion-render.ts ставит `fontVariationSettings` (`"wght"` — толщина
+из строки шрифта, `"opsz"` — кегль, как `font-optical-sizing: auto`); браузер — FontFace с диапазоном
+`weight_range`. Статические начертания не генерируются (fontTools нет в зависимостях). Строка шрифта
 одна и та же в превью и рендере — `fontString()` движка:
 `[italic ]<weight> <size>px "<family>", "Montserrat", "Rubik", "Inter", …, sans-serif`.
 Пустое `font` — семейство по умолчанию (`Montserrat`).
 
 ## API
 
-* `GET /api/motion/fonts` — список шрифтов; `GET /api/motion/fonts/{file}` — файл.
+* `GET /api/motion/fonts` — список шрифтов; `GET /api/motion/fonts/{file}` — файл; `POST /api/motion/fonts` — свой шрифт, `DELETE /api/motion/fonts/{file}` — убрать свой.
 * `GET /api/motion/templates` — шаблоны (готовые наборы слоёв с параметрами).
 * `GET /api/motion/emoji/{code}.svg`, `GET /api/motion/packs/...` — стикеры/звуки паков.
 * `POST /api/clip-plans/{id}/motion/frame?t=3.2` — PNG кадра готового вида (для агента).

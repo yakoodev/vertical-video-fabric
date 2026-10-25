@@ -200,6 +200,11 @@ def build_compositor_args(
     if output_path is not None:
         args += ["--output", str(output_path)]
     args += ["--assets", str(assets_path), "--fonts-dir", str(settings.motion_fonts_dir), "--ffmpeg", "ffmpeg"]
+    from app.user_fonts import registry_path
+
+    if registry_path().is_file():
+        # Свои шрифты (app/user_fonts.py) — тот же формат реестра; нет — команда прежняя.
+        args += ["--user-fonts-dir", str(registry_path().parent)]
     if videos_path is not None:
         args += ["--videos", str(videos_path)]
     if anims_path is not None:

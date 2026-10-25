@@ -56,6 +56,7 @@ type Args = {
   videos?: string;
   anims?: string;
   fontsDir?: string;
+  userFontsDir?: string;
   emojiDir?: string;
   ffmpeg: string;
   ffprobe?: string;
@@ -95,6 +96,7 @@ function parseArgs(argv: string[]): Args {
     videos: out.videos,
     anims: out.anims,
     fontsDir: out["fonts-dir"],
+    userFontsDir: out["user-fonts-dir"],
     emojiDir: out["emoji-dir"],
     ffmpeg: out.ffmpeg || "ffmpeg",
     ffprobe: out.ffprobe,
@@ -291,7 +293,70 @@ function readKey(raw: Partial<Composition>): Pick<Composition, "key" | "backgrou
 
 /* ---------- шрифты ---------- */
 
-type FontEntry = { family?: string; file?: string };
+type FontEntry = { family?: string; file?: string; weight?: number; style?: string; variable?: boolean; axes?: Record<string, number[]> };
+
+/**
+ * Вариативные шрифты (свои, app/user_fonts.py): семейство → оси {tag: [min, max]}. Skia берёт у
+ * такого файла только начертание по умолчанию, а вес из `ctx.font` не применяет — его ставит
+ * `fontVariationSettings` (installVariableFonts), как браузер по `font-weight` у FontFace с диапазоном.
+ */
+const VARIABLE = new Map<string, Record<string, [number, number]>>();
+
+const axisTag = (n: number) => String.fromCharCode((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+
+function rememberAxes(f: FontEntry): void {
+  if (!f.family) return;
+  const out: Record<string, [number, number]> = {};
+  try {
+    for (const a of GlobalFonts.getVariationAxes(f.family, f.weight ?? 400, 5, f.style === "italic" ? 1 : 0)) {
+      out[axisTag(a.tag).trim()] = [a.min, a.max];
+    }
+  } catch {
+    /* старый @napi-rs/canvas — оси из реестра */
+  }
+  if (!Object.keys(out).length) {
+    for (const [tag, v] of Object.entries(f.axes || {})) if (Array.isArray(v) && v.length === 3) out[tag] = [v[0], v[2]];
+  }
+  if (Object.keys(out).length) VARIABLE.set(f.family, out);
+}
+
+/** `fontVariationSettings` для строки шрифта движка (fontString: `[italic ]W Spx "Family", …`). */
+function variationFor(font: string): string {
+  const m = /^(?:italic\s+)?(\d{1,3})\s+([\d.]+)px\s+"([^"]+)"/.exec(font);
+  const axes = m ? VARIABLE.get(m[3]) : undefined;
+  if (!m || !axes) return "normal";
+  const clampTo = (v: number, [lo, hi]: [number, number]) => Math.min(hi, Math.max(lo, v));
+  const parts: string[] = [];
+  if (axes.wght) parts.push(`"wght" ${clampTo(Number(m[1]), axes.wght)}`);
+  // Оптический размер — по кеглю, как font-optical-sizing: auto в браузере (превью).
+  if (axes.opsz) parts.push(`"opsz" ${clampTo(Number(m[2]), axes.opsz)}`);
+  return parts.length ? parts.join(", ") : "normal";
+}
+
+/** Сеттер `ctx.font` ставит и оси вариативного шрифта (только если такие шрифты есть). */
+function installVariableFonts(): void {
+  if (!VARIABLE.size) return;
+  const proto = Object.getPrototypeOf(createCanvas(1, 1).getContext("2d"));
+  let owner = proto;
+  let desc: PropertyDescriptor | undefined;
+  while (owner && !(desc = Object.getOwnPropertyDescriptor(owner, "font"))) owner = Object.getPrototypeOf(owner);
+  if (!owner || !desc?.get || !desc.set || !desc.configurable) {
+    log("шрифты: вариативные — только начертание по умолчанию (сеттер ctx.font не перехватить)");
+    return;
+  }
+  const { get, set } = desc;
+  Object.defineProperty(owner, "font", {
+    configurable: true,
+    enumerable: desc.enumerable,
+    get() {
+      return get.call(this);
+    },
+    set(value: string) {
+      set.call(this, value);
+      (this as { fontVariationSettings: string }).fontVariationSettings = variationFor(String(value));
+    },
+  });
+}
 
 function registerFonts(dir: string | undefined): number {
   if (!dir) return 0;
@@ -313,7 +378,10 @@ function registerFonts(dir: string | undefined): number {
     const path = join(dir, f.file);
     if (!existsSync(path)) continue;
     // Начертание (жирность) Skia берёт из самого файла; family — имя, по которому зовут слои.
-    if (GlobalFonts.registerFromPath(path, f.family)) n++;
+    if (GlobalFonts.registerFromPath(path, f.family)) {
+      n++;
+      if (f.variable) rememberAxes(f);
+    }
   }
   return n;
 }
@@ -997,6 +1065,9 @@ async function main(): Promise<void> {
   const comp = readComp(args.comp);
   if (args.input && !existsSync(args.input)) throw new Error(`нет файла основы: ${args.input}`);
   registerFonts(args.fontsDir);
+  // Свои шрифты (app/user_fonts.py, data/fonts) — тот же формат реестра.
+  if (args.userFontsDir) log(`свои шрифты: ${registerFonts(args.userFontsDir)}`);
+  installVariableFonts();
   const images = await loadImages(comp, args.assets, args.emojiDir);
   const videos = await loadVideos(args.videos, comp);
   const anims = await loadAnims(args.anims, comp);

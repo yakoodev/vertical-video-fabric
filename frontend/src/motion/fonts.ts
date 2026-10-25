@@ -1,8 +1,11 @@
 /**
  * Шрифты и ссылки на картинки — общие правила для превью и рендера.
  *
- * Семейства берутся из `vendor/fonts/fonts.json` (в браузере — `/api/motion/fonts`
- * + `@font-face`, в Node — `GlobalFonts.registerFromPath`). Важно, чтобы строка
+ * Семейства берутся из `vendor/fonts/fonts.json` и своих шрифтов `data/fonts/fonts.json`
+ * (app/user_fonts.py; в браузере — `/api/motion/fonts` + `@font-face`, в Node —
+ * `GlobalFonts.registerFromPath`). Вариативный шрифт: браузер ставит ось wght по
+ * font-weight (FontFace с диапазоном), Node — `fontVariationSettings` по этой же строке
+ * (node/motion-render.ts, variationFor) — формат строки менять вместе. Важно, чтобы строка
  * шрифта собиралась одинаково в обоих местах: иначе ширина строк разойдётся и
  * перенос по словам в превью будет не таким, как в готовом видео.
  */

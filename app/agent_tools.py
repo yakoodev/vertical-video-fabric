@@ -1998,8 +1998,15 @@ def h_list_fonts(_ctx: ToolContext, _args: dict) -> dict:
         if not family:
             continue
         entry = families.setdefault(family, {"family": family, "weights": [], "cyrillic": True, "tags": [], "hint": ""})
-        if font.get("weight") is not None and font["weight"] not in entry["weights"]:
-            entry["weights"].append(font["weight"])
+        from app.user_fonts import font_weights
+
+        weights = font_weights(font) if font.get("variable") else (
+            [font["weight"]] if font.get("weight") is not None else [])
+        entry["weights"].extend(w for w in weights if w not in entry["weights"])
+        if font.get("user"):
+            entry["user"] = True  # свой, загруженный (upload_font)
+        if font.get("variable"):
+            entry["variable"] = True  # вес — любой из weights (ось wght), не одно начертание
         entry["cyrillic"] = entry["cyrillic"] and bool(font.get("cyrillic", True))
         for tag in font.get("tags") or []:
             if tag not in entry["tags"]:
@@ -2009,6 +2016,40 @@ def h_list_fonts(_ctx: ToolContext, _args: dict) -> dict:
     for entry in families.values():
         entry["weights"].sort()
     return {"fonts": list(families.values())}
+
+
+MAX_UPLOAD_FONT_B64 = 28 * 1024 * 1024  # 20 МБ файла в base64
+
+
+def h_upload_font(_ctx: ToolContext, args: dict) -> dict:
+    """Свой шрифт (TTF/OTF/WOFF2) в шрифты сервиса (data/fonts) — base64 в аргументах, как upload_image."""
+    import base64
+    import binascii
+
+    from app.user_fonts import FontError, font_weights
+
+    name = Path(str(args.get("filename") or "")).name
+    raw = str(args.get("data_base64") or "")
+    if len(raw) > MAX_UPLOAD_FONT_B64:
+        raise ToolError("шрифт больше 20 МБ")
+    if "," in raw[:100] and raw.startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ToolError("data_base64 — не base64") from exc
+    try:
+        entry = _motion_assets().upload_font(data, name, args.get("family"), args.get("weight"), args.get("style"))
+    except FontError as exc:
+        raise ToolError(f"шрифт не принят: {exc}") from exc
+    out = {"ok": True, "family": entry["family"], "file": entry["file"], "weights": font_weights(entry),
+           "style": entry["style"], "cyrillic": entry.get("cyrillic"), "variable": bool(entry.get("variable")),
+           "use": f"props.font: \"{entry['family']}\", props.weight — из weights"}
+    if entry.get("cyrillic") is False:
+        out["warning"] = "в шрифте нет кириллицы — русский текст нарисуется запасным шрифтом; бери для латиницы"
+    elif entry.get("cyrillic") is None:
+        out["note"] = "WOFF2: кириллицу не проверить — посмотри view_frame с русским титром"
+    return out
 
 
 def h_search_emoji(_ctx: ToolContext, args: dict) -> dict:
@@ -4222,7 +4263,7 @@ in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text
 loop: {', '.join(enums['loops'])}
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
-  text: text (≤400, \\n), font, weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
+  text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
         highlight {{words:[индексы слов], color, bg}},
         backdrop {{color #000000, opacity 0.55, spread px}}|true|null — мягкое затемнение-градиент ЗА текстом (scrim):
@@ -4621,8 +4662,22 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "list_fonts", "Смотрю шрифты",
-            "Шрифты для слоёв (family, weight, cyrillic). Для русского текста бери cyrillic=true. / Fonts.",
+            "Шрифты для слоёв (family, weight, cyrillic; user — свой загруженный, variable — любой вес из "
+            "weights). Для русского текста бери cyrillic=true. / Fonts.",
             _obj({}), h_list_fonts, scope="global",
+        ),
+        Tool(
+            "upload_font", "Загружаю шрифт",
+            "Свой шрифт (фирменный шрифт бренда) в шрифты сервиса: data_base64 — файл в base64 (можно data:-URL), "
+            "filename .ttf/.otf/.woff2 (до 20 МБ), family? (иначе из файла), weight? 100..900, style? normal|italic. "
+            "Файл проверяется (сигнатура, таблицы, кириллица); лицензия — на совести загружающего. Тот же "
+            "family+weight+style заменяет прежний. Вариативный (ось wght) — один файл, вес любой из weights. "
+            "Вернёт family для props.font. / Upload a font file.",
+            _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "family": {"type": "string"},
+                  "weight": {"type": "integer"}, "style": {"type": "string", "enum": ["normal", "italic"]}},
+                 ["data_base64", "filename"]),
+            h_upload_font, scope="global",
+            label=lambda a: f"Загружаю шрифт {(a.get('family') or a.get('filename') or '')[:40]}",
         ),
         Tool(
             "search_emoji", "Ищу эмодзи",

@@ -27,6 +27,8 @@ class Settings:
         # звуки, мемы) качает tools/fetch_packs.py при сборке образа.
         self.motion_fonts_dir = Path(os.getenv("MOTION_FONTS_DIR", root / "vendor" / "fonts")).resolve()
         self.motion_packs_dir = Path(os.getenv("MOTION_PACKS_DIR", root / "vendor" / "packs")).resolve()
+        # Свои шрифты (app/user_fonts.py) — в данных, не в репозитории; нет — data/fonts.
+        self.user_fonts_dir = Path(os.environ["USER_FONTS_DIR"]).resolve() if os.getenv("USER_FONTS_DIR") else None
         self.node_bin = os.getenv("NODE_BIN", "node")
         self.youtube_helper = Path(
             os.getenv("YOUTUBE_HELPER", root / "node" / "youtube-upload.mjs")

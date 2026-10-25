@@ -548,6 +548,40 @@ test("CLI: один кадр в PNG без основы (прозрачный ф
   assert.equal(buf.readUInt32BE(20), 1920);
 });
 
+// Вариативный шрифт из комплекта бренда (только читаем); нет диска — тест пропускается.
+const VARIABLE_FONT = "F:/repos/Antpro/marketing/video-kit/brand/fonts/BricolageGrotesque-Variable.ttf";
+
+test("CLI: свои шрифты (--user-fonts-dir) — вариативный рисуется толщиной слоя", { skip: !existsSync(VARIABLE_FONT) && "нет файла вариативного шрифта" }, async () => {
+  const dir = join(tmp, "user-fonts");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "u-brand.ttf"), readFileSync(VARIABLE_FONT));
+  writeFileSync(join(dir, "fonts.json"), JSON.stringify([
+    { family: "Brand Var", file: "u-brand.ttf", weight: 800, style: "normal", user: true, variable: true,
+      weight_range: [200, 800], axes: { wght: [200, 800, 800], opsz: [12, 96, 96] } },
+  ]));
+  const ink = async (weight) => {
+    const comp = { width: 1080, height: 1920, fps: 30, duration: 1,
+      layers: [textLayer({ start: 0, end: 1, props: { text: "Hello Brand", font: "Brand Var", weight, size: 140, color: "#ffffff" } })] };
+    const p = writeInputs(`var-${weight}`, comp);
+    const png = join(tmp, `var-${weight}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", "0.5", "--png", png, "--user-fonts-dir", dir]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /свои шрифты: 1/);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, img.width, img.height).data;
+    let s = 0;
+    for (let i = 3; i < d.length; i += 4) s += d[i];
+    return s;
+  };
+  const thin = await ink(200);
+  const bold = await ink(800);
+  // Без fontVariationSettings Skia рисует начертание по умолчанию (800) при любой толщине.
+  assert.ok(bold > thin * 1.4, `800: ${bold}, 200: ${thin}`);
+});
+
 test("CLI: 2 с видео поверх синтетической основы — длительность, размер, кадры", () => {
   const base = join(tmp, "base.mp4");
   const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30", "-t", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", base], { encoding: "utf8" });

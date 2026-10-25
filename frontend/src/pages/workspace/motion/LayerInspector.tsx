@@ -5,6 +5,7 @@
  * для остальных настроек клипа.
  */
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   CAPTION_STYLES,
   interpolateKeys,
@@ -17,8 +18,8 @@ import {
   type LoopType,
   type TextStyle,
 } from "@/motion";
-import type { MotionFont } from "@/api/motion";
-import { fontFamilies } from "@/pages/workspace/motion/runtime";
+import { motionApi, type MotionFont } from "@/api/motion";
+import { fontFamilies, reloadMotionFonts } from "@/pages/workspace/motion/runtime";
 import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
 import { LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
 
@@ -216,6 +217,26 @@ function TextStyleFields({
 }) {
   const families = fontFamilies(fonts);
   const fam = families.find((f) => f.family === style.font) ?? families[0];
+  const qc = useQueryClient();
+  const [fontNote, setFontNote] = useState("");
+  // Свой шрифт (TTF/OTF/WOFF2): в data/fonts на сервере, сразу в списке и в превью (@font-face).
+  const uploadFont = async (file: File | undefined) => {
+    if (!file) return;
+    setFontNote("Загружаю шрифт…");
+    try {
+      const font = await motionApi.uploadFont(file);
+      await reloadMotionFonts();
+      await qc.invalidateQueries({ queryKey: ["motion-fonts"] });
+      onPatch({ font: font.family, weight: font.variable ? (style.weight ?? font.weight) : font.weight });
+      setFontNote(
+        font.cyrillic === false
+          ? `«${font.family}» загружен — кириллицы в нём нет, русский текст будет запасным шрифтом`
+          : `«${font.family}» загружен${font.variable ? " (вариативный: любая толщина)" : ""}`,
+      );
+    } catch (err) {
+      setFontNote(`Шрифт не принят: ${(err as Error).message}`);
+    }
+  };
   return (
     <>
       <div className="li-row">
@@ -241,6 +262,19 @@ function TextStyleFields({
           </select>
         </label>
       </div>
+      <label className="btn ghost sm" title="TTF, OTF или WOFF2 до 20 МБ; лицензия шрифта — на совести загружающего">
+        ＋ Свой шрифт
+        <input
+          type="file"
+          accept=".ttf,.otf,.woff2,font/ttf,font/otf,font/woff2"
+          hidden
+          onChange={(e) => {
+            void uploadFont(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      {fontNote ? <div className="muted li-note">{fontNote}</div> : null}
       <label className="field range">
         <span>Размер · {Math.round(style.size ?? 96)} px</span>
         <input type="range" min={20} max={300} value={style.size ?? 96} onChange={(e) => onPatch({ size: Number(e.target.value) })} />
