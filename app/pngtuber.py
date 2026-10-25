@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,6 +55,8 @@ AUTO_MAX_DB = -40.0
 _SPAN_GAP_SEC = 0.25
 _PCM_CACHE: dict[tuple, bytes] = {}
 _PCM_CACHE_MAX = 24
+_PCM_CACHE_BYTES = 32 * 1024 * 1024
+_PCM_LOCK = threading.Lock()
 
 Reader = Callable[[Any, float, float], bytes]
 
@@ -293,12 +296,19 @@ def _wav_pcm(path: Path, args: list[str]) -> bytes:
 
 
 def _cached(key: tuple, load: Callable[[], bytes]) -> bytes:
-    if key in _PCM_CACHE:
-        return _PCM_CACHE[key]
+    """Звук голоса между кадрами агента и рендером. Кэш живёт в процессе всё время — держим
+    не больше ``_PCM_CACHE_MAX`` кусков и ``_PCM_CACHE_BYTES`` байт (голос из файла библиотеки
+    до 30 минут — 29 МБ на кусок; 24 таких — 0.7 ГБ, которые никто не отпускал)."""
+    with _PCM_LOCK:
+        if key in _PCM_CACHE:
+            return _PCM_CACHE[key]
     data = load()
-    if len(_PCM_CACHE) >= _PCM_CACHE_MAX:
-        _PCM_CACHE.pop(next(iter(_PCM_CACHE)))
-    _PCM_CACHE[key] = data
+    if len(data) > _PCM_CACHE_BYTES:
+        return data  # огромный кусок не кэшируем
+    with _PCM_LOCK:
+        _PCM_CACHE[key] = data
+        while len(_PCM_CACHE) > _PCM_CACHE_MAX or sum(map(len, _PCM_CACHE.values())) > _PCM_CACHE_BYTES:
+            _PCM_CACHE.pop(next(iter(_PCM_CACHE)))
     return data
 
 

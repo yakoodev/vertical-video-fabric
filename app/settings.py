@@ -40,6 +40,12 @@ class Settings:
         ).resolve()
         self.motion_fonts_dir = Path(os.getenv("MOTION_FONTS_DIR", root / "vendor" / "fonts")).resolve()
         self.motion_timeout_seconds = int(os.getenv("MOTION_TIMEOUT_SECONDS", str(60 * 30)))
+        # Тяжёлые задачи (рендер, распознавание Whisper, автофокус) — очередью, по столько
+        # сразу (app/heavy_queue.py): параллельные рендеры и generate_subtitles + auto_focus
+        # выбивали контейнер за лимит памяти 6 ГБ. 0 — без очереди (как раньше).
+        self.heavy_jobs_concurrency = int(os.getenv("HEAVY_JOBS_CONCURRENCY", "1") or 0)
+        # Кадры для агента (view_frame, contact_sheet) — своей очередью, по столько сразу.
+        self.frame_jobs_concurrency = int(os.getenv("FRAME_JOBS_CONCURRENCY", "2") or 0)
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))

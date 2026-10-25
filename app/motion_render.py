@@ -1006,7 +1006,16 @@ def _focus_x_at(focus: list, local: float) -> float | None:
     return points[-1][1]
 
 
-def render_frame_png(
+def render_frame_png(*args: Any, **kwargs: Any) -> bytes:
+    """Кадр клипа (``_render_frame_png``) — в очереди кадров (app/heavy_queue.frame_slot): каждый
+    кадр поднимает компоновщик, четыре агента с view_frame сразу — лишний гигабайт памяти."""
+    from app.heavy_queue import frame_slot
+
+    with frame_slot(f"клип {args[1] if len(args) > 1 else kwargs.get('clip_plan_id')}"):
+        return _render_frame_png(*args, **kwargs)
+
+
+def _render_frame_png(
     store: Any,
     clip_plan_id: int,
     t: float,

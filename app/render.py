@@ -11,6 +11,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from app.focus_presets import get_focus_preset
+from app.heavy_queue import heavy, heavy_slot
 from app.ingest import file_hash_and_size, probe_media
 from app.settings import settings
 from app.store import AppStore
@@ -37,9 +38,6 @@ from app.video_crop import build_reframe_x_expr
 
 # Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
 LOUDNORM_SILENCE_LUFS = -70.0
-
-# Один рендер клипа на весь сервис (см. ClipRenderService.render_clip_plan).
-_RENDER_LOCK = threading.RLock()
 
 
 # Тихая запись голоса (втубер на зелёнке, −32 LUFS) с потолком +12 выходила на −21.
@@ -480,6 +478,7 @@ class ClipRenderService:
         with self._cancel_lock:
             return self._cancel_marks.get(int(source_id), -1.0) > started_at
 
+    @heavy("render")
     def render_segment(
         self,
         segment_id: int,
@@ -619,6 +618,7 @@ class ClipRenderService:
             return presets[-1]
         return self.store.create_ffmpeg_preset("Default vertical")
 
+    @heavy("render")
     def render_montage(
         self,
         segment_ids: list[int],
@@ -811,6 +811,7 @@ class ClipRenderService:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    @heavy("render")
     def render_uploaded_clip(
         self,
         clip_id: int,
@@ -1065,8 +1066,9 @@ class ClipRenderService:
 
         Рендер тяжёлый (ffmpeg + компоновщик моушна). Два одновременных — два агента
         или агент и кнопка в редакторе — уже трижды роняли Docker по памяти; очередь
-        дешевле. RLock: рендер может позвать рендер в том же потоке (подборка)."""
-        with _RENDER_LOCK:
+        дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
+        может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
+        with heavy_slot("render", f"клип {clip_plan_id}"):
             return self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
 
     def _render_clip_plan_unlocked(

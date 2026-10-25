@@ -94,6 +94,14 @@ class WhisperSubtitleProvider:
         self._loader = model_loader
 
     def transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
+        """Распознать — в очереди тяжёлых задач (app/heavy_queue.py): Whisper large рядом с
+        рендером и автофокусом выбивал контейнер за лимит памяти."""
+        from app.heavy_queue import heavy_slot
+
+        with heavy_slot("whisper", Path(str(audio_path)).name):
+            return self._transcribe(audio_path, profile, model)
+
+    def _transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
         size = str(model or "").strip() or settings.whisper_model_size
         whisper = self._get_model(size)
         language = str(profile.get("language") or "").strip() or None
