@@ -111,6 +111,19 @@ def settings_layers_format(render: dict | None) -> str:
     return settings_format(render.get("layers_format"))
 
 
+def motion_formats(preset: dict | None) -> tuple[str, str]:
+    """(формат вывода, формат разметки слоёв) пресета рендера — одно решение для рендера
+    (render._apply_motion) и кадра агента (motion_render.render_frame_png).
+
+    Пресет готовит render._preset_with_output: он пишет ``format`` и ``layers_format``
+    всегда, когда что-то не 9:16 (в том числе 16:9 → 16:9 — без перекомпоновки). Ключа
+    ``layers_format`` нет у пресета как есть (9:16 со слоями 9:16) — слои в формате вывода."""
+    preset = preset if isinstance(preset, dict) else {}
+    out_format = settings_format(preset.get("format") or preset.get("aspect"))
+    layers_format = settings_format(preset.get("layers_format")) if preset.get("layers_format") else out_format
+    return out_format, layers_format
+
+
 def comp_ref(fmt: Any) -> dict:
     """Поля опорного кадра для comp.json компоновщика: только если ширина опорного не
     1080 (16:9). У 9:16, 1:1 и 4:5 движок считает px слоёв от 1080, как всегда, — их

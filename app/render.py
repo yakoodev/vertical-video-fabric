@@ -1495,12 +1495,13 @@ class ClipRenderService:
         основа (с баннером), а причина — в пометках для ошибки клипа.
         Возвращает пометки.
         """
-        from app.formats import DEFAULT_FORMAT, comp_ref
+        from app.formats import comp_ref, motion_formats
         from app.freeze import comp_freezes, freeze_zones
         from app.motion_render import (
             build_compositor_args,
             build_motion_mux_args,
             prepare_video_frames,
+            reframe_for_output,
             resolve_layer_assets,
             unit_width,
             write_comp,
@@ -1525,17 +1526,12 @@ class ClipRenderService:
                     if band:
                         comp_h = int(preset.get("output_height") or 1920)  # основа выше на полосу окошка
                     regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
-                    out_format = preset.get("format") or DEFAULT_FORMAT
-                    layers_format = preset.get("layers_format") or DEFAULT_FORMAT
-                    if out_format != layers_format:
-                        # Слои размечены в другом формате (9:16 → квадрат / 16:9 и т.п.) —
-                        # переносим в новый опорный кадр одним масштабом по содержимому
-                        # (app/aspect.py), камеру — тем же переносом (наезд не выталкивает
-                        # телефон followCamera за кадр).
-                        from app.aspect import asset_sizes, reframe_between
-
-                        layers, camera = reframe_between(layers, camera, layers_format, out_format,
-                                                         asset_sizes(layers, assets))
+                    # Слои размечены в другом формате (9:16 → квадрат / 16:9 и т.п.) —
+                    # переносим в новый опорный кадр одним масштабом по содержимому
+                    # (app/aspect.py), камеру — тем же переносом; тот же формат — как есть.
+                    # Тот же путь, что у кадра агента (view_frame).
+                    out_format = motion_formats(preset)[0]
+                    layers, camera = reframe_for_output(layers, camera, preset, assets)
                     comp = write_comp(
                         work / "comp.json",
                         width=comp_w,
@@ -1562,6 +1558,7 @@ class ClipRenderService:
                     videos_path, video_notes = prepare_video_frames(
                         layers, assets, work, fps=float(preset.get("fps") or 30),
                         out_width=unit_width(comp_w, out_format), clip_duration=meta.duration_sec,
+                        fmt=out_format,
                     )
                     notes.extend(video_notes)
                     # Анимации с альфой (PNGtuber, GIF в image): PNG-кадры (удаляются вместе с work).
@@ -2849,7 +2846,8 @@ def _preset_with_output(
     на нём — проход музыки). 9:16 со слоями 9:16 без стоп-кадра — пресет как есть.
 
     Ключи пресета: ``format`` (и старое ``aspect``) — формат не 9:16; ``layers_format`` —
-    формат разметки слоёв, если не совпадает с форматом вывода; ``base_fit`` — «fit»,
+    формат разметки слоёв (всегда, когда пресет меняется: 16:9 → 16:9 без него читался
+    бы как 9:16 и слои сжимались колонкой; читает app/formats.motion_formats); ``base_fit`` — «fit»,
     когда исходник вписывается на подложку; ``landscape`` — горизонтальный кадр."""
     from app.formats import (
         DEFAULT_FORMAT,
@@ -2868,8 +2866,7 @@ def _preset_with_output(
     preset = dict(preset)
     if hold > 0:
         preset["end_hold_sec"] = hold
-    if layers_fmt != fmt:
-        preset["layers_format"] = layers_fmt
+    preset["layers_format"] = layers_fmt
     if fmt != DEFAULT_FORMAT:
         width, height = frame_size(fmt)
         preset["format"] = fmt
