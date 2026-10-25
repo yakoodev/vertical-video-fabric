@@ -837,7 +837,10 @@ function CropFrame({
                 ctx.rect(box.x, box.y, box.w, box.h);
                 ctx.clip();
                 ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
-                ctx.drawImage(lc, 0, 0);
+                // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
+                // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
+                if (lay?.mode === "pip_cam") ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
+                else ctx.drawImage(lc, 0, 0);
                 ctx.restore();
                 for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
               }

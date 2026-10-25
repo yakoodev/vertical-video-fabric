@@ -35,6 +35,7 @@ import {
   type Composition,
   type Ctx2D,
   type PixelRect,
+  type PinnedRect,
   type ImageLike,
   type RenderEnv,
   type VideoFrame,
@@ -141,6 +142,7 @@ function readComp(path: string): Composition {
     ...readRef(raw),
     ...readKey(raw),
     ...readRegions(raw, width - (width % 2), height - (height % 2)),
+    ...readBaseHeight(raw, height - (height % 2)),
     ...readZones(raw, width - (width % 2), height - (height % 2)),
   };
 }
@@ -201,10 +203,22 @@ function readRect(raw: unknown, W: number, H: number): PixelRect | null {
 /** Раскладка стрима: где камера двигает кадр (окно игры) и что стоит на месте (окошко вебки). */
 function readRegions(raw: Partial<Composition>, W: number, H: number): Pick<Composition, "cameraBox" | "pinned"> {
   const box = readRect(raw.cameraBox, W, H);
-  const pinned = Array.isArray(raw.pinned)
-    ? raw.pinned.map((p) => readRect(p, W, H)).filter((p): p is PixelRect => p !== null).slice(0, 8)
-    : [];
+  const BH = readBaseHeight(raw, H).baseHeight ?? H;
+  const pinned: PinnedRect[] = [];
+  for (const p of Array.isArray(raw.pinned) ? raw.pinned.slice(0, 8) : []) {
+    const rect = readRect(p, W, H);
+    if (!rect) continue;
+    // Окошко в полосе под кадром: строка sy, целиком внутри основы.
+    const sy = Math.round(Number(p.sy));
+    pinned.push(BH > H && Number.isFinite(sy) && sy >= H && sy + rect.h <= BH ? { ...rect, sy } : rect);
+  }
   return { ...(box ? { cameraBox: box } : {}), ...(pinned.length ? { pinned } : {}) };
+}
+
+/** Высота основы с полосой окошка под кадром (app/render.pin_band): чётная, выше кадра, не больше двух. */
+function readBaseHeight(raw: Partial<Composition>, H: number): Pick<Composition, "baseHeight"> {
+  const bh = Math.round(Number(raw.baseHeight));
+  return Number.isFinite(bh) && bh > H && bh <= 2 * H && bh % 2 === 0 ? { baseHeight: bh } : {};
 }
 
 /** Хромакей и фон за основой. Лук идёт прямо в граф ffmpeg — только безопасные символы. */
@@ -601,9 +615,14 @@ function probeColorspace(args: Args, input: string): string | null {
 }
 
 /** ffmpeg-фильтр масштабирования основы в кадр композиции (с полями, без искажения). */
+/** Высота кадра основы: с полосой окошка под кадром — больше `comp.height`. */
+function baseHeight(comp: Composition): number {
+  return comp.baseHeight && comp.baseHeight > comp.height ? comp.baseHeight : comp.height;
+}
+
 function fitFilter(comp: Composition, colorspace: string | null): string {
   const W = comp.width;
-  const H = comp.height;
+  const H = baseHeight(comp);
   const inMatrix = colorspace === "bt709" ? ":in_color_matrix=bt709" : "";
   const key = comp.key;
   const fit =
@@ -689,6 +708,9 @@ type Painter = {
 function makePainter(comp: Composition, env: RenderEnv): Painter {
   const W = comp.width;
   const H = comp.height;
+  // Основа может быть выше кадра: под ним полоса окошка раскладки (comp.baseHeight).
+  const BH = baseHeight(comp);
+  const banded = BH > H;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d") as unknown as Ctx2D;
   // Отдельный холст под кадр основы — нужен, только когда камера двигается.
@@ -705,7 +727,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
     ctx,
     paint(base, t) {
       // ImageData копирует пиксели — буфер декодера можно сразу переиспользовать.
-      if (base) last = new ImageData(new Uint8ClampedArray(base.buffer, base.byteOffset, W * H * 4), W, H);
+      if (base) last = new ImageData(new Uint8ClampedArray(base.buffer, base.byteOffset, W * BH * 4), W, BH);
       const m = cameraMatrix(comp.camera, t, W, H);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       if (comp.key) {
@@ -713,13 +735,13 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         paintBackground(ctx, comp.background ?? normalizeBackground(null), t, W, H, bgOpts);
         drawFrame(ctx, comp, t, env, "behind");
         if (last) {
-          frameCanvas ??= createCanvas(W, H);
+          frameCanvas ??= createCanvas(W, BH);
           frameCanvas.getContext("2d").putImageData(last, 0, 0);
           ctx.save();
           if (!isIdentityCamera(m)) ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
-          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H);
+          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
           ctx.restore();
         }
         drawFrame(ctx, comp, t, env, "front");
@@ -730,7 +752,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       const zone = zoneAt(t);
       let staged = false;
       if (zone && last) {
-        frameCanvas ??= createCanvas(W, H);
+        frameCanvas ??= createCanvas(W, BH);
         const fctx = frameCanvas.getContext("2d") as unknown as Ctx2D;
         fctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
         paintBackgroundAround(fctx, zone.bg, t, W, H, zone.hole, bgOpts);
@@ -739,15 +761,15 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       if (!last) {
         ctx.clearRect(0, 0, W, H);
         if (zone) paintBackgroundAround(ctx, zone.bg, t, W, H, zone.hole, bgOpts);
-      } else if (isIdentityCamera(m)) {
+      } else if (isIdentityCamera(m) && !banded) {
         if (staged) ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0);
         else ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);
       } else if (comp.cameraBox || comp.pinned) {
         // Раскладка стрима: камера двигает только окно игры, окошко вебки и полоса
         // вебки стоят на месте (раньше зум увеличивал весь собранный кадр с окошком).
-        frameCanvas ??= createCanvas(W, H);
+        frameCanvas ??= createCanvas(W, BH);
         if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
-        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0);
+        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         const box = comp.cameraBox ?? { x: 0, y: 0, w: W, h: H };
         const bm = cameraMatrix(comp.camera, t, box.w, box.h);
         ctx.save();
@@ -758,20 +780,20 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H);
+        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         ctx.restore();
         for (const p of comp.pinned ?? []) {
-          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+          ctx.drawImage(frameCanvas as unknown as CanvasImageSource, p.x, p.sy ?? p.y, p.w, p.h, p.x, p.y, p.w, p.h);
         }
       } else {
-        frameCanvas ??= createCanvas(W, H);
+        frameCanvas ??= createCanvas(W, BH);
         if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
         // Зум ≥ 1 и центр зажат — кадр основы всегда закрывает холст целиком.
         ctx.save();
         ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H);
+        ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         ctx.restore();
       }
       drawFrame(ctx, comp, t, env);
@@ -788,7 +810,7 @@ async function grabFrame(args: Args, comp: Composition, cs: string | null, seek:
   argv.push("-vf", fitFilter(comp, cs), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1");
   const { proc, errors } = spawnFfmpeg(args.ffmpeg, argv, "ignore");
   let out: Buffer | null = null;
-  for await (const frame of rawFrames(proc.stdout!, comp.width * comp.height * 4)) {
+  for await (const frame of rawFrames(proc.stdout!, comp.width * baseHeight(comp) * 4)) {
     out = Buffer.from(frame);
     if (!last) break;
   }
@@ -905,7 +927,7 @@ async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos
         ["-v", "error", "-i", args.input, "-t", (total / comp.fps + 0.5).toFixed(3), "-vf", fitFilter(comp, colorspace), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"],
         "ignore",
       );
-      for await (const frame of rawFrames(dec.proc.stdout!, W * H * 4)) {
+      for await (const frame of rawFrames(dec.proc.stdout!, W * baseHeight(comp) * 4)) {
         if (i >= total) break;
         await step(frame);
       }

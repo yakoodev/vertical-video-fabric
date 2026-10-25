@@ -800,6 +800,62 @@ test("CLI: зона фона рисуется вне видео, видео в �
   console.log(`# фон grid: 30 кадров 1080×1920 за ${((Date.now() - t0) / 1000).toFixed(1)} с (с запуском и кодированием)`);
 });
 
+test("CLI: наезд в раскладке pip — окошко одно: камера зумит игру без него, окошко из полосы под кадром", async () => {
+  // Игра — зелёная, окошко килфида — красное (80×40 в точке 180,40 кадра 270×480).
+  const W = 270;
+  const H = 480;
+  const win = { x: 180, y: 40, w: 80, h: 40 };
+  const camera = [{ t: 0, zoom: 1.6, x: 0.8, y: 0.15 }];
+  const make = (name, h, box) => {
+    const file = join(tmp, `${name}.mp4`);
+    const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=0x00ff00:size=${W}x${h}:rate=30`, "-t", "1",
+      "-vf", `drawbox=x=${box.x}:y=${box.y}:w=${box.w}:h=${box.h}:color=0xff0000:t=fill`, "-pix_fmt", "yuv420p", file], { encoding: "utf8" });
+    assert.equal(g.status, 0, g.stderr);
+    return file;
+  };
+  const redOutside = async (png) => {
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(await loadImage(readFileSync(png)), 0, 0);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    let outside = 0;
+    let inside = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (!(d[i] > 180 && d[i + 1] < 90)) continue;
+        const inWin = x >= win.x - 2 && x < win.x + win.w + 2 && y >= win.y - 2 && y < win.y + win.h + 2;
+        if (inWin) inside++;
+        else outside++;
+      }
+    }
+    return { inside, outside };
+  };
+  // Было: окошко в самой основе — зум увеличивал и его, рядом с неподвижным — второе.
+  const old = writeInputs("pip-old", { width: W, height: H, fps: 30, duration: 1, layers: [], camera, pinned: [win] });
+  const oldPng = join(tmp, "pip-old.png");
+  const r1 = run(["--comp", old.comp, "--assets", old.assets, "--input", make("pip-old", H, win), "--frame", "0.5", "--png", oldPng]);
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.ok((await redOutside(oldPng)).outside > 500, "без полосы окно раздваивается (воспроизведение)");
+  // Стало: основа 270×(480+40) — игра без окошка, окошко в полосе (строка 480).
+  const comp = { width: W, height: H, fps: 30, duration: 1, layers: [], camera, pinned: [{ ...win, sy: H }], baseHeight: H + 40 };
+  const p = writeInputs("pip-band", comp);
+  const png = join(tmp, "pip-band.png");
+  const base = make("pip-band", H + 40, { x: win.x, y: H, w: win.w, h: win.h });
+  const r2 = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+  assert.equal(r2.status, 0, r2.stderr);
+  const got = await redOutside(png);
+  assert.equal(got.outside, 0, "копии окошка вне его места нет");
+  assert.ok(got.inside >= win.w * win.h * 0.9, "окошко на месте");
+  // Видео тоже: размер выхода — кадр, не основа с полосой.
+  const out = join(tmp, "pip-band.out.mp4");
+  const r3 = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--output", out]);
+  assert.equal(r3.status, 0, r3.stderr);
+  const info = ffprobe(out);
+  assert.equal(info.height, H);
+  assert.equal(Number(info.nb_read_frames), 30);
+});
+
 test("CLI: хромакей кладёт анимированный фон, старый {color} — заливкой", async () => {
   const base = join(tmp, "green.mp4");
   const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1", "-pix_fmt", "yuv420p", base], { encoding: "utf8" });

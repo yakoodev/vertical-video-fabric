@@ -259,9 +259,12 @@ def write_comp(
     backgrounds: list[dict] | None = None,
     ref: dict | None = None,
     voice: dict | None = None,
+    base_height: int | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
+    ``base_height`` — основа выше кадра на полосу окошка (app/render.pin_band): окошко
+    берётся из полосы (``pinned[].sy``), камера зумит игру без него.
     ``ref`` — опорный кадр формата ``{refWidth, refHeight}`` (app/formats.comp_ref); пусто —
     движок берёт 1080×1920, comp.json прежний."""
     comp = {
@@ -277,6 +280,8 @@ def write_comp(
         comp["cameraBox"] = camera_box
     if pinned:
         comp["pinned"] = pinned
+    if base_height and int(base_height) > int(height):
+        comp["baseHeight"] = int(base_height)
     if words:
         comp["words"] = words
     if chat:
@@ -1075,6 +1080,7 @@ def render_frame_png(
         source_path = Path(source.get("local_path") or "")
         keyed: dict = {}
         zone = None
+        band = None
         if source_path.is_file():
             # Зелёнка: основа как в рендере (без лука, поля цвета ключа), вырез — в компоновщике.
             preset, keyed = _render._keyed_render(preset, {"key": source.get("chroma_key")})
@@ -1085,6 +1091,10 @@ def render_frame_png(
                 framed["focus"] = [{"t": 0.0, "x": x}]
             # Кусок «шире окна» (fit) — своя основа, как в рендере.
             piece = _render._preset_for_segment(preset, segment)
+            # Окошко раскладки при камере — полосой под кадром, как в рендере (pin_band).
+            band = _render.pin_band(preset, source, {"camera": camera, "key": keyed.get("key")})
+            if band:
+                piece = {**piece, "pin_band": band}
             if not keyed.get("key"):
                 # Анимированный фон meme / куска «шире окна» — как в рендере (app/backgrounds.py).
                 from app.backgrounds import piece_zone
@@ -1115,7 +1125,7 @@ def render_frame_png(
             [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                 "-loop", "1", "-framerate", "2", "-i", str(base_png), "-t", f"{t + 1.0:.3f}",
-                "-vf", f"scale={width}:{height}", "-c:v", "libx264", "-preset", "ultrafast",
+                "-vf", f"scale={width}:{height + (int(band['h']) if band else 0)}", "-c:v", "libx264", "-preset", "ultrafast",
                 "-tune", "stillimage", "-pix_fmt", "yuv420p", str(still),
             ],
             timeout=120,
@@ -1139,7 +1149,9 @@ def render_frame_png(
             work / "comp.json", width=width, height=height, fps=fps,
             duration=max(total, t + 0.5), layers=hold_final_layers(layers, total), camera=camera, words=words,
             chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
-            camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
+            camera_box=(regions or {}).get("box"),
+            pinned=_render.banded_pinned((regions or {}).get("pinned"), band, height),
+            base_height=height + int(band["h"]) if band else None,
             backgrounds=[{"t0": 0.0, "t1": round(max(total, t) + 60.0, 3), **zone}] if zone else None,
             ref=comp_ref(out_format), voice=voice,
         )

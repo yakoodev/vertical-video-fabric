@@ -587,9 +587,17 @@ export type Composition = {
   backgrounds?: BackgroundZone[];
   /** Раскладка стрима: камера двигает только этот прямоугольник кадра (окно игры), px. */
   cameraBox?: PixelRect;
-  /** Прямоугольники основы, которые камера не трогает (окошко вебки pip), px. */
-  pinned?: PixelRect[];
+  /**
+   * Прямоугольники основы, которые камера не трогает (окошко вебки / килфида pip), px.
+   * `sy` — строка, с которой окошко лежит в полосе под кадром (основа высотой `baseHeight`):
+   * игру над полосой камера зумит без окошка, окошко кладётся на место из полосы.
+   */
+  pinned?: PinnedRect[];
+  /** Высота кадра основы, если под кадром полоса окошка (app/render.pin_band); нет — `height`. */
+  baseHeight?: number;
 };
+
+export type PinnedRect = PixelRect & { sy?: number };
 
 export type PixelRect = { x: number; y: number; w: number; h: number };
 
