@@ -11,6 +11,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from app.focus_presets import get_focus_preset
+from app.heavy_queue import heavy, heavy_slot
 from app.ingest import file_hash_and_size, probe_media
 from app.settings import settings
 from app.store import AppStore
@@ -37,9 +38,6 @@ from app.video_crop import build_reframe_x_expr
 
 # Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
 LOUDNORM_SILENCE_LUFS = -70.0
-
-# Один рендер клипа на весь сервис (см. ClipRenderService.render_clip_plan).
-_RENDER_LOCK = threading.RLock()
 
 
 # Тихая запись голоса (втубер на зелёнке, −32 LUFS) с потолком +12 выходила на −21.
@@ -432,6 +430,15 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     return {**preset, "layout": None, "piece_fit": fit}
 
 
+def _needs_sar_fix(parts: list[dict]) -> bool:
+    """Куски клипа надо приводить к SAR 1:1: среди них есть «шире окна» (``fit``) — его
+    основа другая, и SAR обычного куска (10240:10239 от scale) с ним не склеивался
+    («concat … SAR 10240:10239»). Без ``fit`` рендер прежний (эталоны 9:16)."""
+    from app.video_crop import normalize_fit
+
+    return len(parts) > 1 and any(normalize_fit(part.get("fit")) for part in parts)
+
+
 def _with_background_zones(
     motion: dict | None, preset: dict, parts: list[dict], overlaps: list[float], source: dict
 ) -> dict | None:
@@ -471,6 +478,7 @@ class ClipRenderService:
         with self._cancel_lock:
             return self._cancel_marks.get(int(source_id), -1.0) > started_at
 
+    @heavy("render")
     def render_segment(
         self,
         segment_id: int,
@@ -493,6 +501,7 @@ class ClipRenderService:
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
+        freezes: list[dict] | None = None,
     ) -> dict:
         """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше.
         ``aspect`` — формат вывода (app/formats.py), ``layers_format`` — в каком формате
@@ -515,6 +524,8 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        if freezes:
+            preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -539,7 +550,12 @@ class ClipRenderService:
             banner = self.store.get_banner(preset["banner_id"]) if preset.get("banner_id") else None
             base_preset, motion = _keyed_render(preset, motion)
             motion = _with_background_zones(motion, preset, [segment], [], source)
+            band = pin_band(preset, source, motion)
+            if band:
+                motion = {**motion, "pin_band": band}
             piece_preset = _preset_for_segment(base_preset, segment)
+            if band:
+                piece_preset = {**piece_preset, "pin_band": band}
             args = build_ffmpeg_render_args(
                 source_path=Path(source["local_path"]),
                 output_path=base_output_path,
@@ -552,6 +568,7 @@ class ClipRenderService:
                 reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
+            self._apply_freezes(base_output_path, preset)
             motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
@@ -605,6 +622,7 @@ class ClipRenderService:
             return presets[-1]
         return self.store.create_ffmpeg_preset("Default vertical")
 
+    @heavy("render")
     def render_montage(
         self,
         segment_ids: list[int],
@@ -632,6 +650,7 @@ class ClipRenderService:
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
+        freezes: list[dict] | None = None,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
         рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
@@ -658,6 +677,8 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        if freezes:
+            preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -688,16 +709,25 @@ class ClipRenderService:
             parts = cut_parts or segments
             jumps = list(jump_joins or []) if cut_parts else None
             motion = _with_background_zones(motion, preset, parts, part_overlaps(parts, join, jumps), source)
+            sar_fix = _needs_sar_fix(parts)
+            band = pin_band(preset, source, motion)
+            if band:
+                motion = {**motion, "pin_band": band}
             rendered_parts: list[Path] = []
             for index, segment in enumerate(parts):
                 part_path = temp_dir / f"part-{index:03d}.mp4"
+                piece_preset = _preset_for_segment(base_preset, segment)
+                if sar_fix:
+                    piece_preset = {**piece_preset, "normalize_sar": True}
+                if band:
+                    piece_preset = {**piece_preset, "pin_band": band}
                 _run_ffmpeg(
                     build_ffmpeg_render_args(
                         source_path=Path(source["local_path"]),
                         output_path=part_path,
                         start_sec=float(segment["start_sec"]),
                         end_sec=float(segment["end_sec"]),
-                        preset=_preset_for_segment(base_preset, segment),
+                        preset=piece_preset,
                         banner=None if motion else banner,
                         source_crop=_base_crop(source, motion),
                         reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
@@ -739,6 +769,7 @@ class ClipRenderService:
                     ),
                     timeout=60 * 30,
                 )
+            self._apply_freezes(base_output_path, preset)
             motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
@@ -788,6 +819,7 @@ class ClipRenderService:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    @heavy("render")
     def render_uploaded_clip(
         self,
         clip_id: int,
@@ -1042,8 +1074,9 @@ class ClipRenderService:
 
         Рендер тяжёлый (ffmpeg + компоновщик моушна). Два одновременных — два агента
         или агент и кнопка в редакторе — уже трижды роняли Docker по памяти; очередь
-        дешевле. RLock: рендер может позвать рендер в том же потоке (подборка)."""
-        with _RENDER_LOCK:
+        дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
+        может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
+        with heavy_slot("render", f"клип {clip_plan_id}"):
             return self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
 
     def _render_clip_plan_unlocked(
@@ -1126,6 +1159,22 @@ class ClipRenderService:
 
             voice_fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
             visual = attach_voice(self.store, plan, visual, voice_fps, "final")
+        # Стоп-кадры посреди ролика (app/freeze.py): основа получит их в render_*; здесь —
+        # слои «continue» сдвигаются за вставку, звуки слоёв — за любую вставку.
+        freezes = self._freezes(plan)
+        if freezes:
+            from app.cuts import remap_motion
+            from app.freeze import FreezeMap, holds_layers, shift_voice
+
+            def running(f: dict) -> bool:
+                return not holds_layers(f)
+
+            if visual:
+                moved = remap_motion(visual, FreezeMap(freezes, only=running))
+                if visual.get("voice"):
+                    moved = {**moved, "voice": shift_voice(visual["voice"], freezes, only=running)}
+                visual = moved
+            motion = remap_motion(motion, FreezeMap(freezes))
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
@@ -1164,6 +1213,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         elif len(segment_ids) == 1:
             clip = self.render_segment(
@@ -1187,6 +1237,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         else:
             clip = self.render_montage(
@@ -1213,6 +1264,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         if clip["status"] == "succeeded":
             clip = self._apply_mute(clip, plan, cut_plan)
@@ -1261,6 +1313,20 @@ class ClipRenderService:
         return plan_cuts(plan.get("segments") or [], cuts, fps)
 
     @staticmethod
+    def _freezes(plan: dict | None) -> list[dict]:
+        """Стоп-кадры посреди ролика из настроек клипа (app/freeze.py)."""
+        from app.freeze import normalize_freezes
+
+        return normalize_freezes(((plan or {}).get("render_settings") or {}).get("freezes"))
+
+    def _final_mapper(self, plan: dict, cut_plan=None):
+        """Время готового ролика без вырезов и стоп-кадров → в готовом ролике (None — то же)."""
+        from app.freeze import chain
+
+        cut = self._finished_cut_mapper(plan, cut_plan) if cut_plan is not None else None
+        return chain(cut, self._freezes(plan))
+
+    @staticmethod
     def _finished_cut_mapper(plan: dict, cut_plan):
         """Время готового клипа без вырезов → с вырезами (app/cuts.FinishedCutMap)."""
         transition = (plan.get("render_settings") or {}).get("transition")
@@ -1307,7 +1373,15 @@ class ClipRenderService:
             cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"), fps)
             # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на
             # настоящие overlap склеек (как их спланирует рендер).
-            return result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
+            final = subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan)
+            freezes = self._freezes(plan)
+            if freezes:
+                # Вставленный стоп-кадр: речь после него звучит позже (app/freeze.py).
+                from app.cuts import remap_subtitles
+                from app.freeze import FreezeMap
+
+                final = remap_subtitles(final, FreezeMap(freezes))
+            return result_from_payload(final)
         except (KeyError, ValueError, TypeError):
             return None
 
@@ -1326,8 +1400,8 @@ class ClipRenderService:
             return clip
         spans = [(m["start"], m["end"]) for m in mutes]
         boosts = [(g["start"], g["end"], g["gain_db"]) for g in gains]
-        if cut_plan is not None:
-            mapper = self._finished_cut_mapper(plan, cut_plan)
+        mapper = self._final_mapper(plan, cut_plan)
+        if mapper is not None:
             spans = [r for r in (mapper.range(a, b) for a, b in spans) if r]
             boosts = [(*r, g) for r, g in ((mapper.range(a, b), g) for a, b, g in boosts) if r]
         try:
@@ -1350,10 +1424,11 @@ class ClipRenderService:
         from app.montage_assets import build_inserts_args, normalize_inserts
 
         inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
-        if cut_plan is not None and inserts:
+        mapper = self._final_mapper(plan, cut_plan)
+        if mapper is not None and inserts:
             from app.cuts import remap_inserts
 
-            inserts = remap_inserts(inserts, self._finished_cut_mapper(plan, cut_plan))
+            inserts = remap_inserts(inserts, mapper)
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
@@ -1380,6 +1455,24 @@ class ClipRenderService:
         except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
             return self._note_clip_error(clip["id"], f"вставки не наложены: {str(exc)[:200]}")
 
+    @staticmethod
+    def _apply_freezes(base: Path, preset: dict) -> None:
+        """Стоп-кадры посреди ролика (app/freeze.py) — в основу, до компоновщика, субтитров и
+        музыки: музыка играет и на вставленном стоп-кадре, слои и субтитры ложатся уже на него."""
+        from app.freeze import build_freeze_args
+
+        freezes = preset.get("freezes") or []
+        if not freezes:
+            return
+        meta = probe_media(base)
+        tmp = base.with_name(base.stem + ".freeze" + base.suffix)
+        args = build_freeze_args(base, tmp, freezes, float(preset.get("fps") or 30), _has_audio_stream(base),
+                                 float(meta.duration_sec or 0))
+        if args is None:
+            return
+        _run_ffmpeg(args, timeout=60 * 20)
+        tmp.replace(base)
+
     def _note_clip_error(self, clip_id: int, text: str) -> dict:
         """Дописать пометку в ошибку удачного клипа (моушн, вставки), не затирая прежние."""
         current = str(self.store.get_clip(clip_id).get("error") or "").strip()
@@ -1403,6 +1496,7 @@ class ClipRenderService:
         Возвращает пометки.
         """
         from app.formats import DEFAULT_FORMAT, comp_ref
+        from app.freeze import comp_freezes, freeze_zones
         from app.motion_render import (
             build_compositor_args,
             build_motion_mux_args,
@@ -1421,12 +1515,15 @@ class ClipRenderService:
             notes.extend(motion.get("host_notes") or [])
             assets.update(motion.get("chat_assets") or {})
             camera = motion.get("camera") or []
+            band = motion.get("pin_band")
             drawn = video
             if layers or camera or motion.get("key") or motion.get("backgrounds"):
                 try:
                     meta = probe_media(video)
                     comp_w = meta.width or int(preset.get("output_width") or 1080)
                     comp_h = meta.height or int(preset.get("output_height") or 1920)
+                    if band:
+                        comp_h = int(preset.get("output_height") or 1920)  # основа выше на полосу окошка
                     regions = layout_camera_regions(preset, source, comp_w, comp_h) if camera else None
                     out_format = preset.get("format") or DEFAULT_FORMAT
                     layers_format = preset.get("layers_format") or DEFAULT_FORMAT
@@ -1453,9 +1550,11 @@ class ClipRenderService:
                         voice=motion.get("voice"),
                         key=motion.get("key"),
                         background=motion.get("background"),
-                        backgrounds=motion.get("backgrounds"),
+                        backgrounds=freeze_zones(motion.get("backgrounds"), preset.get("freezes")),
                         camera_box=(regions or {}).get("box"),
-                        pinned=(regions or {}).get("pinned"),
+                        pinned=banded_pinned((regions or {}).get("pinned"), band, comp_h),
+                        base_height=comp_h + int(band["h"]) if band else None,
+                        freezes=comp_freezes(preset.get("freezes")),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")
@@ -1485,6 +1584,11 @@ class ClipRenderService:
                     drawn = out
                 except Exception as exc:  # noqa: BLE001 - моушн — надстройка, клип важнее
                     notes.append(f"моушн не наложен: {_safe_error(exc)[:300]}")
+            if drawn is video and band:
+                # Компоновщик не справился — собрать прежний кадр: окошко из полосы на место.
+                drawn = work / "unbanded.mp4"
+                _run_ffmpeg(build_unband_args(video, drawn, band, int(preset.get("output_height") or 1920)),
+                            timeout=60 * 20)
             if drawn is video and not banner:
                 return notes
             muxed = work / "muxed.mp4"
@@ -2303,7 +2407,8 @@ def _render_filter(
         base = _piece_fit_filter(width, height, fps, preset["piece_fit"], source_crop, reframe_x)
     elif layout_active(layout):
         # Раскладка стрима (вебка + геймплей): своя основа, дальше — как всегда.
-        base = _layout_filter(width, height, fps, mode, anchor, normalize_layout(layout), source_crop, reframe_x)
+        base = _layout_filter(width, height, fps, mode, anchor, normalize_layout(layout), source_crop, reframe_x,
+                              game_out=bool(preset.get("pin_band")))
     elif mode == "blur_background":
         prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
         base = (
@@ -2334,11 +2439,37 @@ def _render_filter(
             f"crop={width}:{height}:{crop_x}:{crop_y},"
             f"fps={_fps(fps)},format=yuv420p[vbase]"
         )
-    style = _video_style_filter(preset)
     source_label = "vbase"
+    # Полоса окошка под кадром (pin_band): игра без окошка идёт своей веткой [vgame] — её
+    # зумит камера; лук и SAR — на обеих ветках одинаково, как на прежнем кадре.
+    band = preset.get("pin_band")
+    game_label = None
+    if band:
+        game_label = "vgame"
+        if "[vgame]" not in base:  # не окошко раскладки (кусок «шире окна») — кадр как есть
+            base = f"{base};[vbase]split=2[vbase0][vgame]"
+            source_label = "vbase0"
+    if preset.get("normalize_sar"):
+        # scale с force_original_aspect_ratio подгоняет SAR под пропорцию (10240:10239), а у
+        # куска «шире окна» SAR 1:1 — concat таких кусков падал. Квадратный пиксель всем.
+        base = f"{base};[{source_label}]setsar=1[vsar]"
+        source_label = "vsar"
+        if game_label:
+            base = f"{base};[{game_label}]setsar=1[vgsar]"
+            game_label = "vgsar"
+    style = _video_style_filter(preset)
     if style:
-        base = f"{base};[vbase]{style}[vstyled]"
+        base = f"{base};[{source_label}]{style}[vstyled]"
         source_label = "vstyled"
+        if game_label:
+            base = f"{base};[{game_label}]{style}[vgstyled]"
+            game_label = "vgstyled"
+    if game_label:
+        base = (
+            f"{base};[{source_label}]crop={width}:{int(band['h'])}:0:{int(band['y'])}[vband];"
+            f"[{game_label}][vband]vstack=inputs=2[vpinned]"
+        )
+        source_label = "vpinned"
     if not banner:
         return f"{base};[{source_label}]copy[vout]"
     return f"{base};{_banner_overlay(banner, preset, height, '1:v', source_label)}"
@@ -2423,8 +2554,11 @@ def _layout_filter(
     layout: dict,
     source_crop: dict | None,
     reframe_x: str | None,
+    game_out: bool = False,
 ) -> str:
     """Основа ``[vbase]`` для раскладки стрима (app/stream_layout.py).
+
+    ``game_out`` — у ``pip_cam`` ещё и ``[vgame]``: игра без окошка (для камеры, см. ``pin_band``).
 
     Вебка вырезается из ВСЕГО кадра исходника (``cam`` — доли исходника, до
     content-crop), геймплей идёт обычным путём (content-crop, рефрейм x(t)).
@@ -2472,6 +2606,11 @@ def _layout_filter(
         cam_chain += f",pad=iw+{2 * border}:ih+{2 * border}:{border}:{border}:color={color}"
     pos_x = f"clip({float(pip['x']):.4f}*W-w/2\\,0\\,W-w)"
     pos_y = f"clip({float(pip['y']):.4f}*H-h/2\\,0\\,H-h)"
+    if game_out:
+        return (
+            f"{game};{cam_chain}[lcam];[lgame]split=2[lgame0][lgame1];"
+            f"[lgame1][lcam]overlay=x={pos_x}:y={pos_y},{tail};[lgame0]fps={_fps(fps)},format=yuv420p[vgame]"
+        )
     return f"{game};{cam_chain}[lcam];[lgame][lcam]overlay=x={pos_x}:y={pos_y},{tail}"
 
 
@@ -2646,6 +2785,53 @@ def layout_camera_regions(preset: dict, source: dict | None, width: int, height:
     source = source or {}
     return camera_regions(layout, width, height, source.get("width"), source.get("height"),
                           mirror=bool(preset.get("mirror")))
+
+
+def pin_band(preset: dict, source: dict | None, motion: dict | None) -> dict | None:
+    """Полоса под основой для окошка раскладки, которое камера не двигает (``pinned``).
+
+    Раньше основа приходила в компоновщик уже с окошком (килфид / вебка pip): зум камеры
+    увеличивал весь кадр вместе с окошком, а поверх компоновщик клал то же окошко из
+    незумленного кадра — окно раздваивалось (большая копия ехала с камерой). Теперь при
+    камере основа ``W×(H+h)``: сверху игра без окошка (её и зумит камера), снизу — полоса
+    ``h`` строк собранного кадра с окошком (строки ``y..y+h``); компоновщик берёт
+    окошко из полосы (``pinned[].sy``) и кладёт на место. Окошко стоит, игра под ним
+    зумится. ``{"y", "h"}`` px выхода или None (нет камеры / окошка, хромакей)."""
+    motion = motion or {}
+    if not motion.get("camera") or motion.get("key"):
+        return None
+    width = int(preset.get("output_width") or 1080)
+    height = int(preset.get("output_height") or 1920)
+    pinned = (layout_camera_regions(preset, source, width, height) or {}).get("pinned") or []
+    if not pinned:
+        return None
+    top = min(int(p["y"]) for p in pinned)
+    top -= top % 2
+    bottom = max(int(p["y"]) + int(p["h"]) for p in pinned)
+    h = min(height - top, bottom - top + (bottom - top) % 2)
+    return {"y": top, "h": h} if h > 0 else None
+
+
+def build_unband_args(video: Path, output: Path, band: dict, height: int) -> list[str]:
+    """Основа с полосой окошка (``pin_band``) → обычный кадр ``W×height``: полоса ложится
+    на свои строки — ровно прежний собранный кадр (если компоновщик упал)."""
+    y, h = int(band["y"]), int(band["h"])
+    graph = (
+        f"[0:v]split=2[ug][ub];[ug]crop=iw:{height}:0:0[ugame];[ub]crop=iw:{h}:0:{height}[uband];"
+        f"[ugame][uband]overlay=0:{y},format=yuv420p[v]"
+    )
+    return [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(video),
+        "-filter_complex", graph, "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "18", "-c:a", "copy", "-movflags", "+faststart", str(output),
+    ]
+
+
+def banded_pinned(pinned: list[dict] | None, band: dict | None, height: int) -> list[dict] | None:
+    """Окошки ``pinned`` с ``sy`` — где их строки в полосе под кадром (см. ``pin_band``)."""
+    if not pinned or not band:
+        return pinned
+    return [{**p, "sy": int(height) + int(p["y"]) - int(band["y"])} for p in pinned]
 
 
 def _is_canvas(source: dict | None) -> bool:

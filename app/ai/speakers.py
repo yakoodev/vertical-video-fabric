@@ -30,6 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
+from app.subtitles.phantoms import is_phantom_text
 
 LETTERS = "ABCD"
 # Реплики Gemini дают слов сильно меньше whisper — значит, модель недослушала:
@@ -84,8 +85,8 @@ def parse_utterances(text: str) -> tuple[dict, list[dict]]:
         except (KeyError, TypeError, ValueError):
             continue
         words = str(u.get("text") or "").split()
-        if not words:
-            continue
+        if not words or is_phantom_text(" ".join(words)):
+            continue  # «Продолжение следует…» на тишине — модель дослушала титры, а не речь
         s = str(u.get("s") or "A").strip().upper()[:1]
         out.append({"s": s if s in allowed else "A", "start": max(0.0, s0), "end": max(s0 + 0.1, s1), "text": " ".join(words)})
     out.sort(key=lambda u: u["start"])

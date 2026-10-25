@@ -800,6 +800,83 @@ test("CLI: зона фона рисуется вне видео, видео в �
   console.log(`# фон grid: 30 кадров 1080×1920 за ${((Date.now() - t0) / 1000).toFixed(1)} с (с запуском и кодированием)`);
 });
 
+test("CLI: наезд в раскладке pip — окошко одно: камера зумит игру без него, окошко из полосы под кадром", async () => {
+  // Игра — зелёная, окошко килфида — красное (80×40 в точке 180,40 кадра 270×480).
+  const W = 270;
+  const H = 480;
+  const win = { x: 180, y: 40, w: 80, h: 40 };
+  const camera = [{ t: 0, zoom: 1.6, x: 0.8, y: 0.15 }];
+  const make = (name, h, box) => {
+    const file = join(tmp, `${name}.mp4`);
+    const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=0x00ff00:size=${W}x${h}:rate=30`, "-t", "1",
+      "-vf", `drawbox=x=${box.x}:y=${box.y}:w=${box.w}:h=${box.h}:color=0xff0000:t=fill`, "-pix_fmt", "yuv420p", file], { encoding: "utf8" });
+    assert.equal(g.status, 0, g.stderr);
+    return file;
+  };
+  const redOutside = async (png) => {
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(await loadImage(readFileSync(png)), 0, 0);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    let outside = 0;
+    let inside = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (!(d[i] > 180 && d[i + 1] < 90)) continue;
+        const inWin = x >= win.x - 2 && x < win.x + win.w + 2 && y >= win.y - 2 && y < win.y + win.h + 2;
+        if (inWin) inside++;
+        else outside++;
+      }
+    }
+    return { inside, outside };
+  };
+  // Было: окошко в самой основе — зум увеличивал и его, рядом с неподвижным — второе.
+  const old = writeInputs("pip-old", { width: W, height: H, fps: 30, duration: 1, layers: [], camera, pinned: [win] });
+  const oldPng = join(tmp, "pip-old.png");
+  const r1 = run(["--comp", old.comp, "--assets", old.assets, "--input", make("pip-old", H, win), "--frame", "0.5", "--png", oldPng]);
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.ok((await redOutside(oldPng)).outside > 500, "без полосы окно раздваивается (воспроизведение)");
+  // Стало: основа 270×(480+40) — игра без окошка, окошко в полосе (строка 480).
+  const comp = { width: W, height: H, fps: 30, duration: 1, layers: [], camera, pinned: [{ ...win, sy: H }], baseHeight: H + 40 };
+  const p = writeInputs("pip-band", comp);
+  const png = join(tmp, "pip-band.png");
+  const base = make("pip-band", H + 40, { x: win.x, y: H, w: win.w, h: win.h });
+  const r2 = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", "0.5", "--png", png]);
+  assert.equal(r2.status, 0, r2.stderr);
+  const got = await redOutside(png);
+  assert.equal(got.outside, 0, "копии окошка вне его места нет");
+  assert.ok(got.inside >= win.w * win.h * 0.9, "окошко на месте");
+  // Видео тоже: размер выхода — кадр, не основа с полосой.
+  const out = join(tmp, "pip-band.out.mp4");
+  const r3 = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--output", out]);
+  assert.equal(r3.status, 0, r3.stderr);
+  const info = ffprobe(out);
+  assert.equal(info.height, H);
+  assert.equal(Number(info.nb_read_frames), 30);
+});
+
+test("CLI: стоп-кадр посреди ролика (comp.freezes) — слои и камера стоят, после вставки идут со сдвигом", () => {
+  // Квадрат едет слева направо за 4 с; стоп-кадр в 1 с на 1 с (вставка, слои стоят).
+  const layers = [{ id: "sq", type: "shape", x: 0.1, y: 0.5, scale: 1, rotation: 0, opacity: 1, track: 0, start: 0, end: 6,
+    keys: { x: [{ t: 0, v: 0.1, ease: "linear" }, { t: 4, v: 0.9 }] }, props: { kind: "rect", w: 60, h: 60, fill: "#ff0000" } }];
+  const camera = [{ t: 0, zoom: 1, x: 0.5, y: 0.5 }, { t: 4, zoom: 2, x: 0.5, y: 0.5 }];
+  const base = { width: 270, height: 480, fps: 30, duration: 6, layers, camera };
+  const frame = (name, comp, t) => {
+    const p = writeInputs(name, comp);
+    const png = join(tmp, `${name}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(png);
+  };
+  const frozen = { ...base, freezes: [{ at: 1, d: 1, insert: true, hold: true }] };
+  const at1 = frame("fz-plain-1", base, 1);
+  assert.deepEqual(frame("fz-in-1", frozen, 1.5), at1, "на стоп-кадре слои стоят в at");
+  assert.deepEqual(frame("fz-in-2", frozen, 1.99), at1);
+  assert.deepEqual(frame("fz-after", frozen, 2.5), frame("fz-plain-15", base, 1.5), "после вставки — со сдвигом на её длину");
+  assert.notDeepEqual(frame("fz-plain-2", base, 2), at1);
+});
+
 test("CLI: хромакей кладёт анимированный фон, старый {color} — заливкой", async () => {
   const base = join(tmp, "green.mp4");
   const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1", "-pix_fmt", "yuv420p", base], { encoding: "utf8" });

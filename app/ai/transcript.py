@@ -118,6 +118,12 @@ def _transcribe_piece(path: Path, start: float, length: float | None, model: str
             if "no word-level timestamps" in str(exc):
                 return []
             raise
+        # Фантомы на тишине дорожки речи («Продолжение следует…»): иначе get_clip ругался
+        # «речь есть, а субтитров нет» на кусках, где никто не говорил.
+        from app.speech_onsets import wav_pcm
+        from app.subtitles.phantoms import drop_phantoms
+
+        result, _phantoms = drop_phantoms(result, wav_pcm(audio_path))
         usage = result.usage if isinstance(getattr(result, "usage", None), dict) else {}
         prob = usage.get("whisperLanguageProbability")
         if not state.get("language") and result.segments and isinstance(prob, (int, float)) and prob >= LANGUAGE_PIN_PROB:

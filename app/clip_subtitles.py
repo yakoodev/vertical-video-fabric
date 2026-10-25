@@ -352,6 +352,53 @@ def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
     }
 
 
+# Дорожка похожа на голос, если между тишиной и громкими местами столько дБ (микрофон:
+# пауза −70, речь −25; игра гудит ровно — разброс 10–15 дБ).
+VOICE_SPREAD_DB = 25.0
+
+
+def voice_spread(pcm: bytes, rate: int = 16000) -> float:
+    """Разброс громкости дорожки (90-й минус 15-й перцентиль кадров по 20 мс, дБ)."""
+    from app.subtitles.phantoms import frame_levels
+
+    levels = sorted(frame_levels(pcm, rate))
+    if len(levels) < 10:
+        return 0.0
+    return levels[int(len(levels) * 0.9)] - levels[int(len(levels) * 0.15)]
+
+
+def onset_pcm(source_path: Path, pieces: list[tuple[float, float]], source: dict, speech_pcm: bytes) -> bytes:
+    """Звук, по которому слова прилипают к началам звука (app/speech_onsets.py): дорожка речи.
+
+    ``speech_tracks`` заданы — тот же звук, что распознавался. Не заданы, а смесь рендера из
+    нескольких дорожек (запись NVIDIA: 0 — игра, 1 — микрофон) — распознавание идёт по смеси,
+    и в ней звучит всё время (игра): начало слова, поставленное распознаванием на 0.3 с раньше,
+    попадало в «звук» и не сдвигалось. Тогда берём дорожку, похожую на голос (паузы и речь —
+    разброс громкости ≥ VOICE_SPREAD_DB); такой нет — смесь, как раньше."""
+    from app.render import _run_ffmpeg  # local import: render imports this module
+    from app.source_audio import separate_speech, source_mix
+    from app.speech_onsets import wav_pcm
+
+    mix = source_mix(source) or []
+    if separate_speech(source) or len(mix) < 2:
+        return speech_pcm
+    best, best_spread = speech_pcm, VOICE_SPREAD_DB
+    for item in mix:
+        path = settings.tmp_dir / f"{uuid4().hex}.wav"
+        try:
+            _run_ffmpeg(build_clip_audio_args(source_path, pieces, path, [{"track": item["track"], "gain_db": 0.0}]),
+                        timeout=60 * 5)
+            pcm = wav_pcm(path)
+        except Exception:  # noqa: BLE001 - нет дорожки — остаёмся на смеси
+            continue
+        finally:
+            path.unlink(missing_ok=True)
+        spread = voice_spread(pcm)
+        if spread >= best_spread:
+            best, best_spread = pcm, spread
+    return best
+
+
 def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None, model: str | None = None) -> dict:
     """Cut the clip's audio, transcribe it, store editable lines on the plan."""
     from app.render import _run_ffmpeg  # local import: render imports this module
@@ -388,14 +435,21 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
             profile = {**profile, "provider": "whisper"}
             used_model = subtitle_model_for_profile(profile)
             result = get_subtitle_provider("whisper").transcribe(audio_path, profile, used_model)
+        from app.speech_onsets import snap_payload, wav_pcm
+        from app.subtitles.phantoms import drop_phantoms
+
+        pcm = wav_pcm(audio_path)
+        # «Субтитры сделал DimaTorzok», «Продолжение следует…» на тишине дорожки речи — прочь.
+        result, phantoms = drop_phantoms(result, pcm)
         total = sum(e - s for s, e in pieces)
         result = normalize_subtitle_timeline(result, total)
         payload = payload_from_result(result, str(profile.get("provider") or ""), used_model)
         payload["duration"] = round(total, 3)
-        # Начала слов — по настоящему звуку, а не по опаздывающему распознаванию.
-        from app.speech_onsets import snap_payload, wav_pcm
-
-        payload["snapped_words"] = snap_payload(payload, wav_pcm(audio_path))
+        if phantoms:
+            payload["dropped_phantoms"] = phantoms
+        # Начала слов — по настоящему звуку дорожки речи, а не по распознаванию (оно спешит
+        # или опаздывает). Онсеты — по микрофону, даже если распознавание шло по смеси.
+        payload["snapped_words"] = snap_payload(payload, onset_pcm(source_path, pieces, source, pcm))
         if saved.get("lines"):
             payload["previous_lines"] = len(saved["lines"])
         store.set_clip_plan_subtitles(clip_plan_id, payload)
@@ -522,7 +576,10 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
             _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source)), timeout=60 * 5)
             level_pcm = wav_pcm(mix_path)
         try:
+            from app.subtitles.phantoms import drop_phantoms
+
             result = get_subtitle_provider("whisper").transcribe(audio_path, profile, QUALITY_WHISPER_MODEL)
+            result, _phantoms = drop_phantoms(result, pcm)  # «Продолжение следует…» на тишине — не речь
             raw_words = [w.to_dict() for w in result.words]
         except RuntimeError as exc:
             # Игра, музыка, тишина — Whisper не нашёл ни слова: это ответ «речи нет», а не сбой.
@@ -530,7 +587,8 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
                 raise
             raw_words = []
         # Те же начала слов по звуку, что у generate_subtitles — иначе времена расходятся.
-        heard, _moved = snap_words(raw_words, voiced_frames(pcm)) if raw_words else ([], 0)
+        heard, _moved = (snap_words(raw_words, voiced_frames(onset_pcm(source_path, pieces, source, pcm)))
+                         if raw_words else ([], 0))
     finally:
         audio_path.unlink(missing_ok=True)
         mix_path.unlink(missing_ok=True)

@@ -259,9 +259,13 @@ def write_comp(
     backgrounds: list[dict] | None = None,
     ref: dict | None = None,
     voice: dict | None = None,
+    base_height: int | None = None,
+    freezes: list[dict] | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
+    ``base_height`` — основа выше кадра на полосу окошка (app/render.pin_band): окошко
+    берётся из полосы (``pinned[].sy``), камера зумит игру без него.
     ``ref`` — опорный кадр формата ``{refWidth, refHeight}`` (app/formats.comp_ref); пусто —
     движок берёт 1080×1920, comp.json прежний."""
     comp = {
@@ -277,6 +281,12 @@ def write_comp(
         comp["cameraBox"] = camera_box
     if pinned:
         comp["pinned"] = pinned
+    if base_height and int(base_height) > int(height):
+        comp["baseHeight"] = int(base_height)
+    if freezes:
+        # Стоп-кадры, на которых слои стоят (app/freeze.comp_freezes): компоновщик читает
+        # слои, камеру и слова во «времени слоёв» (motionTime), основа уже со стоп-кадрами.
+        comp["freezes"] = freezes
     if words:
         comp["words"] = words
     if chat:
@@ -1001,7 +1011,16 @@ def _focus_x_at(focus: list, local: float) -> float | None:
     return points[-1][1]
 
 
-def render_frame_png(
+def render_frame_png(*args: Any, **kwargs: Any) -> bytes:
+    """Кадр клипа (``_render_frame_png``) — в очереди кадров (app/heavy_queue.frame_slot): каждый
+    кадр поднимает компоновщик, четыре агента с view_frame сразу — лишний гигабайт памяти."""
+    from app.heavy_queue import frame_slot
+
+    with frame_slot(f"клип {args[1] if len(args) > 1 else kwargs.get('clip_plan_id')}"):
+        return _render_frame_png(*args, **kwargs)
+
+
+def _render_frame_png(
     store: Any,
     clip_plan_id: int,
     t: float,
@@ -1011,8 +1030,13 @@ def render_frame_png(
     layers_format: str | None = None,
     subtitles: bool = False,
     notes: list[str] | None = None,
+    layer_t: float | None = None,
+    sub_t: float | None = None,
 ) -> bytes:
     """PNG кадра клипа в момент ``t`` с камерой и слоями — для ИИ-агента и превью.
+
+    ``layer_t`` / ``sub_t`` — другое время слоёв (и камеры) и субтитров, чем у кадра основы
+    ``t`` (шкала clip): кадр на стоп-кадре посреди ролика (app/freeze.post_to_pre).
 
     ``subtitles`` — прожечь поверх те же субтитры, что прожжёт рендер (тот же ASS: стиль,
     отступ, формат кадра), если они у клипа включены (``subs_on``) и не заменены слоем
@@ -1048,6 +1072,8 @@ def render_frame_png(
         raise ValueError("в клипе нет кусков")
     starts, total = clip_timeline([(float(s["start_sec"]), float(s["end_sec"])) for s in segments], rs["transition"])
     t = min(max(0.0, float(t)), max(0.0, total - 0.02))
+    lt = t if layer_t is None else min(max(0.0, float(layer_t)), max(0.0, total - 0.02))
+    st = t if sub_t is None else min(max(0.0, float(sub_t)), max(0.0, total - 0.02))
     index = max(i for i, start in enumerate(starts) if start <= t + 1e-9)
     segment = segments[index]
     local = t - starts[index]
@@ -1075,6 +1101,7 @@ def render_frame_png(
         source_path = Path(source.get("local_path") or "")
         keyed: dict = {}
         zone = None
+        band = None
         if source_path.is_file():
             # Зелёнка: основа как в рендере (без лука, поля цвета ключа), вырез — в компоновщике.
             preset, keyed = _render._keyed_render(preset, {"key": source.get("chroma_key")})
@@ -1085,6 +1112,10 @@ def render_frame_png(
                 framed["focus"] = [{"t": 0.0, "x": x}]
             # Кусок «шире окна» (fit) — своя основа, как в рендере.
             piece = _render._preset_for_segment(preset, segment)
+            # Окошко раскладки при камере — полосой под кадром, как в рендере (pin_band).
+            band = _render.pin_band(preset, source, {"camera": camera, "key": keyed.get("key")})
+            if band:
+                piece = {**piece, "pin_band": band}
             if not keyed.get("key"):
                 # Анимированный фон meme / куска «шире окна» — как в рендере (app/backgrounds.py).
                 from app.backgrounds import piece_zone
@@ -1114,8 +1145,8 @@ def render_frame_png(
         _render._run_ffmpeg(
             [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-loop", "1", "-framerate", "2", "-i", str(base_png), "-t", f"{t + 1.0:.3f}",
-                "-vf", f"scale={width}:{height}", "-c:v", "libx264", "-preset", "ultrafast",
+                "-loop", "1", "-framerate", "2", "-i", str(base_png), "-t", f"{max(t, lt) + 1.0:.3f}",
+                "-vf", f"scale={width}:{height + (int(band['h']) if band else 0)}", "-c:v", "libx264", "-preset", "ultrafast",
                 "-tune", "stillimage", "-pix_fmt", "yuv420p", str(still),
             ],
             timeout=120,
@@ -1131,16 +1162,18 @@ def render_frame_png(
             # Рот PNGtuber в этот кадр: голос слушаем около t (hold и attack смотрят назад).
             from app.pngtuber import plan_voice
 
-            voice, _voice_notes = plan_voice(store, plan, layers, fps, "clip", window=(t - 1.0, t + 0.1))
+            voice, _voice_notes = plan_voice(store, plan, layers, fps, "clip", window=(lt - 1.0, lt + 0.1))
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
         regions = _render.layout_camera_regions(preset, source, width, height) if camera else None
         comp = write_comp(
             work / "comp.json", width=width, height=height, fps=fps,
-            duration=max(total, t + 0.5), layers=hold_final_layers(layers, total), camera=camera, words=words,
+            duration=max(total, lt + 0.5), layers=hold_final_layers(layers, total), camera=camera, words=words,
             chat=host.get("chat"), key=keyed.get("key"), background=rs["backdrop"],
-            camera_box=(regions or {}).get("box"), pinned=(regions or {}).get("pinned"),
-            backgrounds=[{"t0": 0.0, "t1": round(max(total, t) + 60.0, 3), **zone}] if zone else None,
+            camera_box=(regions or {}).get("box"),
+            pinned=_render.banded_pinned((regions or {}).get("pinned"), band, height),
+            base_height=height + int(band["h"]) if band else None,
+            backgrounds=[{"t0": 0.0, "t1": round(max(total, lt) + 60.0, 3), **zone}] if zone else None,
             ref=comp_ref(out_format), voice=voice,
         )
         assets_path = work / "assets.json"
@@ -1152,7 +1185,7 @@ def render_frame_png(
         anims_path, _anim_notes = prepare_anim_frames(layers, assets, work, out_width=unit_width(width, out_format))
         out = work / "frame.png"
         _render._run_compositor(
-            build_compositor_args(comp, assets_path, input_path=still, frame=t, png_path=out, command=command,
+            build_compositor_args(comp, assets_path, input_path=still, frame=lt, png_path=out, command=command,
                                   videos_path=videos_path, anims_path=anims_path),
             timeout=180,
         )
@@ -1162,7 +1195,7 @@ def render_frame_png(
             _overlay_inserts(store, rs.get("inserts") or [], t, out, width, height)
         if subtitles and not words:
             # Слой captions со словами заменяет прожигаемые субтитры (как в рендере) — тогда они уже в кадре.
-            _overlay_subtitles(store, plan, rs, preset, t, out, width, height, notes)
+            _overlay_subtitles(store, plan, rs, preset, st, out, width, height, notes)
         return out.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)

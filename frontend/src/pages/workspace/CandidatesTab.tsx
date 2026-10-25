@@ -14,7 +14,7 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, Aspect, CoverSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
+import type { AiSegment, Aspect, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
@@ -837,7 +837,10 @@ function CropFrame({
                 ctx.rect(box.x, box.y, box.w, box.h);
                 ctx.clip();
                 ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
-                ctx.drawImage(lc, 0, 0);
+                // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
+                // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
+                if (lay?.mode === "pip_cam") ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
+                else ctx.drawImage(lc, 0, 0);
                 ctx.restore();
                 for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
               }
@@ -1280,6 +1283,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // 🔇 Тишина вместо звука исходника (app/audio_mute.py): полосы на дорожке «Звук»
   // таймлайна; агент ставит их же инструментом mute_audio.
   const [mute, setMute] = useState<MuteSpan[]>([]);
+  // Стоп-кадры посреди ролика ставит агент (freeze_frame): панель их не правит, но сохраняет как есть.
+  const [freezes, setFreezes] = useState<FreezeFrame[]>([]);
   const cutsRef = useRef<JumpCut[]>([]);
   cutsRef.current = cuts;
   const muteRef = useRef<MuteSpan[]>([]);
@@ -1486,6 +1491,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     format: aspect,
     layers_format: layersFmt,
     end_hold_sec: endHoldSec,
+    freezes,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1531,6 +1537,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setCuts([]);
       setMute([]);
       setGain([]);
+      setFreezes([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
       setTlSelected(null);
@@ -1566,6 +1573,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       format: clipFormat(s),
       layers_format: layersFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
+      freezes: s.freezes ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1591,6 +1599,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setCuts(s.cuts ?? []);
     setBackdrop(normalizeBackdrop(s.backdrop));
     setMute(s.mute ?? []);
+    setFreezes(s.freezes ?? []);
     setGain(s.gain ?? []);
     setAspect(clipFormat(s));
     setLayersFmt(layersFormat(s));
@@ -1631,6 +1640,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           cuts: p.render_settings?.cuts ?? [],
           mute: p.render_settings?.mute ?? [],
           gain: p.render_settings?.gain ?? [],
+          freezes: p.render_settings?.freezes ?? [],
           cover: settings.cover.mode === "image" ? (p.render_settings?.cover ?? DEFAULT_COVER) : settings.cover,
         }),
       ),

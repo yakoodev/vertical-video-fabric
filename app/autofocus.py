@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from app.focus_presets import DEFAULT_FOCUS_STRATEGY, get_focus_preset
+from app.heavy_queue import heavy
 from app.focus_replies import apply_answers, plan_units
 from app.object_detect import subject_center
 
@@ -240,6 +241,7 @@ def _median_filter(values: list[float], k: int = 5) -> list[float]:
     return out
 
 
+@heavy("autofocus")  # в очереди с рендером и Whisper (app/heavy_queue.py): память
 def compute_segment_focus(
     source: dict,
     start_sec: float,

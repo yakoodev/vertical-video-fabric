@@ -21,6 +21,11 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # показывает долю ``w`` ширины исходника (1 — весь кадр), сверху и снизу — фон.
 FIT_MIN_W = 0.35
 FIT_BGS = ("blur", "black")
+# Допуск прореживания опор короткого куска (доля ширины): 0.0002 · 1920 ≈ 0.4 px.
+_EXACT_TOLERANCE = 0.0002
+# Больше стольких опор x(t) — не цепочка вложенных if, а сбалансированное дерево: ffmpeg
+# не разбирает выражение с вложенностью ~100 (кусок 20 с — 101 опора по 0.2 с).
+CHAIN_MAX_ANCHORS = 40
 
 
 def normalize_fit(value: object) -> dict | None:
@@ -299,6 +304,10 @@ def build_reframe_x_expr(
         # равномерном прореживании быстрый переход на говорящего растягивался на весь
         # промежуток между опорами (владелец: «фокус надо делать быстрее но плавно»).
         idxs = _simplify_indices(xs, max_anchors)
+    elif n > CHAIN_MAX_ANCHORS:
+        # Кусок 8–24 с: выкидываем только опоры на прямой (ошибка ≤ 0.02 % ширины —
+        # доли пикселя). Стоячий кадр из одной точки фокуса — две опоры, а не 100.
+        idxs = _simplify_indices(xs, max_anchors, tolerance=_EXACT_TOLERANCE)
     else:
         idxs = set(range(n))
     # Склейка кадра должна остаться ступенькой: прореживание до max_anchors
@@ -310,19 +319,60 @@ def build_reframe_x_expr(
     order = sorted(idxs)
     anchors = [(round(i * dt, 3), round(xs[i], 5)) for i in order]
 
-    # Build the normalized X(t) as a nested piecewise-linear expression.
+    cuts = [cut_time.get(order[i + 1]) for i in range(len(anchors) - 1)]
+    if len(anchors) <= CHAIN_MAX_ANCHORS:
+        expr = _chain_expr(anchors, cuts)
+    else:
+        expr = _piecewise_expr(anchors, cuts)
+    half_w = output_width / 2.0
+    return f"clip(({expr})*iw-{half_w:.1f}\\,0\\,iw-{output_width})"
+
+
+def _chain_expr(anchors: list[tuple[float, float]], cuts: list[float | None]) -> str:
+    """Ломаная X(t) цепочкой вложенных ``if`` — для ≤ CHAIN_MAX_ANCHORS опор (короткие
+    куски; эталоны 9:16 сняты с неё)."""
     expr = f"{anchors[-1][1]:.5f}"
     for i in range(len(anchors) - 2, -1, -1):
         t0, x0 = anchors[i]
         t1, x1 = anchors[i + 1]
-        if order[i + 1] in cut_time:
+        if cuts[i] is not None:
             # Стык: старый кадр до точного времени склейки, дальше — новый.
-            at = max(t0, cut_time[order[i + 1]])
+            at = max(t0, float(cuts[i]))
             expr = f"if(lt(t\\,{at:.3f})\\,{x0:.5f}\\,{expr})"
             continue
         seg = max(1e-3, t1 - t0)
         lerp = f"({x0:.5f}+({x1 - x0:.5f})*(t-{t0:.3f})/{seg:.3f})"
         expr = f"if(lt(t\\,{t1:.3f})\\,{lerp}\\,{expr})"
+    return expr
 
-    half_w = output_width / 2.0
-    return f"clip(({expr})*iw-{half_w:.1f}\\,0\\,iw-{output_width})"
+
+def _piecewise_expr(anchors: list[tuple[float, float]], cuts: list[float | None]) -> str:
+    """Ломаная X(t) по опорам ``(t, x)`` — сбалансированное дерево ``if`` (бинарный
+    поиск по времени), а не цепочка: у цепочки из 100 опор вложенность 100, и ffmpeg
+    отказывался разбирать выражение («Missing ')' or too many args» — кусок 20–24 с с
+    одной точкой фокуса, view_frame без слоёв). Глубина дерева — log2(опор), ≤ 7 при 120.
+
+    ``cuts[i]`` — время склейки внутри отрезка ``i`` (до него старый кадр ``x_i``,
+    после — новый ``x_{i+1}``, ступенькой) или None — линейный переход."""
+
+    def leaf(i: int) -> str:
+        t0, x0 = anchors[i]
+        if i >= len(anchors) - 1:
+            return f"{x0:.5f}"  # после последней опоры кадр стоит
+        t1, x1 = anchors[i + 1]
+        if cuts[i] is not None:
+            at = max(t0, float(cuts[i]))
+            return f"if(lt(t\\,{at:.3f})\\,{x0:.5f}\\,{x1:.5f})"
+        if abs(x1 - x0) < 5e-6:
+            return f"{x0:.5f}"
+        seg = max(1e-3, t1 - t0)
+        return f"({x0:.5f}+({x1 - x0:.5f})*(t-{t0:.3f})/{seg:.3f})"
+
+    def tree(lo: int, hi: int) -> str:
+        # Отрезки lo..hi; отрезок i — от anchors[i] до anchors[i+1], последний — хвост.
+        if lo == hi:
+            return leaf(lo)
+        mid = (lo + hi) // 2
+        return f"if(lt(t\\,{anchors[mid + 1][0]:.3f})\\,{tree(lo, mid)}\\,{tree(mid + 1, hi)})"
+
+    return tree(0, len(anchors) - 1)

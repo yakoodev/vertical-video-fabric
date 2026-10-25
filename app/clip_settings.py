@@ -19,6 +19,7 @@ from app.formats import settings_layers_format, settings_render_format
 from app.audio_mute import normalize_gain, normalize_mute
 from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
+from app.freeze import normalize_freezes
 from app.montage_assets import normalize_inserts
 from app.motion import normalize_camera, normalize_layers
 from app.stream_layout import normalize_layout
@@ -167,6 +168,8 @@ def normalize_render_settings(raw: object) -> dict:
         # Стоп-кадр в конце ролика, с (0..1.5); None — как у сервиса (RENDER_END_HOLD_SEC).
         # Рендер читает прямо из настроек плана (ClipRenderService._end_hold_sec).
         "end_hold_sec": normalize_end_hold(src.get("end_hold_sec")),
+        # Стоп-кадры посреди ролика {at, duration, audio, layers} (app/freeze.py); at — шкала final.
+        "freezes": normalize_freezes(src.get("freezes")),
     }
 
 

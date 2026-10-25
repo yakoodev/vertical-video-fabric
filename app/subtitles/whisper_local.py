@@ -12,19 +12,10 @@ from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWor
 _NO_SPEECH_THRESHOLD = 0.6
 _MIN_AVG_LOGPROB = -1.0
 _MUSIC_LOGPROB = -0.5  # «песня» под музыкой обычно декодируется неуверенно
-# Известные «субтитры из ниоткуда» Whisper на тишине и музыке (из обучающих титров).
-_KNOWN_PHANTOMS = (
-    "субтитры сделал", "субтитры создавал", "редактор субтитров", "корректор",
-    "продолжение следует", "спасибо за просмотр", "подписывайтесь на канал",
-    "amara.org", "dimatorzok",
-)
-
-
 def _is_hallucination(segment: Any) -> bool:
     """True when a decoded segment looks like non-speech (music, silence) rather
     than real dialogue — the usual source of phantom subtitles."""
-    text = str(getattr(segment, "text", "") or "").lower()
-    if any(phrase in text for phrase in _KNOWN_PHANTOMS):
+    if _is_phantom(segment):
         return True
     no_speech = _num(getattr(segment, "no_speech_prob", None))
     avg_logprob = _num(getattr(segment, "avg_logprob", None))
@@ -55,8 +46,10 @@ _SALVAGE_MIN_DISTINCT = 0.5
 
 
 def _is_phantom(segment: Any) -> bool:
-    text = str(getattr(segment, "text", "") or "").lower()
-    return any(phrase in text for phrase in _KNOWN_PHANTOMS)
+    """Известные «субтитры из ниоткуда» Whisper на тишине и музыке (app/subtitles/phantoms.py)."""
+    from app.subtitles.phantoms import is_phantom_text
+
+    return is_phantom_text(getattr(segment, "text", "") or "")
 
 
 def _salvage_words(segment: Any) -> list[Any]:
@@ -101,6 +94,14 @@ class WhisperSubtitleProvider:
         self._loader = model_loader
 
     def transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
+        """Распознать — в очереди тяжёлых задач (app/heavy_queue.py): Whisper large рядом с
+        рендером и автофокусом выбивал контейнер за лимит памяти."""
+        from app.heavy_queue import heavy_slot
+
+        with heavy_slot("whisper", Path(str(audio_path)).name):
+            return self._transcribe(audio_path, profile, model)
+
+    def _transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
         size = str(model or "").strip() or settings.whisper_model_size
         whisper = self._get_model(size)
         language = str(profile.get("language") or "").strip() or None
