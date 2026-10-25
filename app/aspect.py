@@ -576,11 +576,16 @@ def _follow_box(layers: list[dict], times: list[float], width: float, height: fl
 
 def _camera_view(key: dict) -> tuple[float, float, float]:
     """Вид камеры ключа, как его покажет движок (camera.ts): zoom 1..4, центр зажат так,
-    что окно не выходит за кадр."""
+    что окно не выходит за кадр (ключ «на месте» — центр из точки наезда)."""
+    from app.motion import in_place_center
+
     zoom = min(4.0, max(1.0, _num(key.get("zoom"), 1.0)))
     half = 0.5 / zoom
-    x = min(1 - half, max(half, _num(key.get("x"), 0.5)))
-    y = min(1 - half, max(half, _num(key.get("y"), 0.5)))
+    x, y = _num(key.get("x"), 0.5), _num(key.get("y"), 0.5)
+    if key.get("anchor") == "in_place":
+        x, y = in_place_center(min(1.0, max(0.0, x)), zoom), in_place_center(min(1.0, max(0.0, y)), zoom)
+    x = min(1 - half, max(half, x))
+    y = min(1 - half, max(half, y))
     return zoom, x, y
 
 
@@ -691,12 +696,18 @@ def reframe_camera(camera: list[dict] | None, layers: list[dict], width: int, he
             cx = _fit_center(cx, box[0], box[2], zoom, width)
             cy = _fit_center(cy, box[1], box[3], zoom, height)
         half = 0.5 / zoom
-        out.append({
-            **key,
-            "zoom": round(zoom, 4),
-            "x": round(min(1 - half, max(half, cx / width)), 4),
-            "y": round(min(1 - half, max(half, cy / height)), 4),
-        })
+        x, y = min(1 - half, max(half, cx / width)), min(1 - half, max(half, cy / height))
+        if key.get("anchor") == "in_place":
+            # Ключ «на месте» остаётся им: центр — обратно в точку наезда (при zoom 1 —
+            # перенесённая точка самого ключа).
+            from app.motion import camera_pivot
+
+            px = _map_x(min(1.0, max(0.0, _num(key.get("x"), 0.5))), scale, width, ref[0], (scene or plan).get("cx"))
+            py = _map_y(min(1.0, max(0.0, _num(key.get("y"), 0.5))), scale,
+                        scene["center"] if scene else plan["center"], height, ref[1])
+            x = camera_pivot(x, zoom, min(1.0, max(0.0, px)))
+            y = camera_pivot(y, zoom, min(1.0, max(0.0, py)))
+        out.append({**key, "zoom": round(zoom, 4), "x": round(x, 4), "y": round(y, 4)})
     return out
 
 

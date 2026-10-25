@@ -145,23 +145,50 @@ def layer_state(layer: dict, t: float) -> dict:
 
 
 def camera_view(camera: Any, t: float) -> tuple[float, float, float]:
-    """(zoom, x, y) камеры в момент ``t`` (как camera.ts, без тряски)."""
+    """(zoom, x, y) камеры в момент ``t`` (как camera.ts, без тряски); x/y — центр окна
+    (ключи ``anchor: "in_place"`` пересчитаны из точки наезда)."""
     keys = sorted((k for k in camera or [] if isinstance(k, dict)), key=lambda k: _num(k.get("t"), 0.0))
     if not keys:
         return 1.0, 0.5, 0.5
 
+    from app.motion import camera_pivot, in_place_center
+
     def pick(k: dict) -> tuple[float, float, float]:
         return _num(k.get("zoom"), 1.0), _num(k.get("x"), 0.5), _num(k.get("y"), 0.5)
 
-    state = pick(keys[-1])
+    def placed(k: dict) -> bool:
+        return k.get("anchor") == "in_place"
+
+    def centered(k: dict) -> tuple[float, float, float]:
+        z, x, y = pick(k)
+        if placed(k):
+            x, y = in_place_center(min(1.0, max(0.0, x)), z), in_place_center(min(1.0, max(0.0, y)), z)
+        return z, x, y
+
+    def pivot(k: dict, o: dict, axis: int) -> float:
+        # Точка наезда ключа (как pivotOf в camera.ts): центр-ключ — точка, что стоит на
+        # месте при его центре; при zoom 1 — точка соседа.
+        s, so = pick(k), pick(o)
+        if placed(k):
+            return min(1.0, max(0.0, s[axis]))
+        other = min(1.0, max(0.0, so[axis])) if placed(o) else camera_pivot(so[axis], so[0], 0.5)
+        return camera_pivot(s[axis], s[0], other)
+
+    state = centered(keys[-1])
     if t <= _num(keys[0].get("t"), 0.0):
-        state = pick(keys[0])
+        state = centered(keys[0])
     else:
         for a, b in zip(keys, keys[1:]):
             ta, tb = _num(a.get("t"), 0.0), _num(b.get("t"), 0.0)
             if ta <= t < tb:
                 p = _ease(a.get("ease"), (t - ta) / (tb - ta) if tb > ta else 1.0)
-                state = tuple(u + (v - u) * p for u, v in zip(pick(a), pick(b)))
+                if placed(a) or placed(b):
+                    zoom = pick(a)[0] + (pick(b)[0] - pick(a)[0]) * p
+                    px = pivot(a, b, 1) + (pivot(b, a, 1) - pivot(a, b, 1)) * p
+                    py = pivot(a, b, 2) + (pivot(b, a, 2) - pivot(a, b, 2)) * p
+                    state = (zoom, in_place_center(px, zoom), in_place_center(py, zoom))
+                else:
+                    state = tuple(u + (v - u) * p for u, v in zip(pick(a), pick(b)))
                 break
     zoom = min(4.0, max(1.0, state[0]))
     half = 0.5 / zoom

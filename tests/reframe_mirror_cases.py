@@ -66,6 +66,21 @@ def _scenes() -> dict:
     return {"name": "scenes", "layers": layers, "camera": [], "sizes": {"12": [2048, 1356]}}
 
 
+def _in_place() -> dict:
+    """Презентация «титр слева, медиа справа» с наездом на медиа «на месте» (anchor in_place)."""
+    layers = normalize_layers([
+        {"id": "title", "type": "text", "start": 0, "end": 6, "x": 0.28, "y": 0.4,
+         "props": {"text": "Задачи команды", "size": 64, "maxWidth": 700}},
+        {"id": "media", "type": "image", "start": 0, "end": 6, "x": 0.72, "y": 0.5, "followCamera": True,
+         "props": {"asset_id": 9, "w": 300}},
+    ])
+    camera = normalize_camera([{"t": 0, "zoom": 1, "anchor": "in_place", "x": 0.72, "y": 0.5},
+                               {"t": 1, "zoom": 1.4, "anchor": "in_place", "x": 0.72, "y": 0.5},
+                               {"t": 3, "zoom": 1.4, "anchor": "in_place", "x": 0.72, "y": 0.5},
+                               {"t": 4, "zoom": 1}])
+    return {"name": "in_place", "layers": layers, "camera": camera, "sizes": {"9": [1600, 1000]}}
+
+
 def _scaffold() -> dict:
     """Настоящий клип промо-заготовки (клип 581: 40 слоёв, 18 ключей камеры)."""
     data = json.loads((FIXTURES / "clip581_scaffold.json").read_text(encoding="utf-8"))
@@ -78,7 +93,7 @@ def _scaffold() -> dict:
 def build_cases() -> dict:
     """Входы (``bases``) и ответ Python по всем парам форматов (``cases``)."""
     bases, cases = {}, []
-    for base in (_promo(), _scenes(), _scaffold()):
+    for base in (_promo(), _scenes(), _scaffold(), _in_place()):
         name = base.pop("name")
         bases[name] = base
         sizes = {k: tuple(v) for k, v in base["sizes"].items()}

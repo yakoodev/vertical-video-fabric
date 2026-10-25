@@ -1944,7 +1944,10 @@ def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
     for key in keys:
         if isinstance(key, dict) and "x" not in key and "y" not in key:
             zoom = _num(key.get("zoom"), 1.0) or 1.0
-            key = {**key, **camera_center(anchor, zoom)}
+            if str(key.get("anchor") or "") == "in_place":
+                key = {**key, "x": round(anchor["x"], 4), "y": round(anchor["y"], 4)}  # точка наезда — сам якорь
+            else:
+                key = {**key, **camera_center(anchor, zoom)}
         out.append(key)
     return out
 
@@ -4595,7 +4598,10 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "set_camera", "Наезды камеры",
-            "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?}]. Пустой список — без наездов. "
+            "Заменить ВСЕ ключи камеры: [{t, zoom 1..4, x, y, ease?, shake?, anchor?}]. Пустой список — без наездов. "
+            "x/y — центр окна камеры (точка уезжает в центр кадра); anchor \"in_place\" — x/y точка наезда: "
+            "она остаётся на своём месте в кадре, кадр масштабируется вокруг неё (16:9 «титр слева, медиа "
+            "справа» — наезд на медиа не утаскивает его под титр; ставь на все ключи наезда и возврата). "
             "Между ключами значения плавно переходят; ease ключа A задаёт переход A → следующий ключ (по "
             "умолчанию inOutCubic); ease \"step\" — держать A до времени следующего ключа и прыгнуть "
             "(жёсткий кадр, без наезда). До первого ключа и после последнего — их значения. "
@@ -4605,7 +4611,8 @@ def _build_registry() -> list[Tool]:
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
-                "shake": {"type": "number"}}, ["t", "zoom"])}}, ["keys"]),
+                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]}},
+                ["t", "zoom"])}}, ["keys"]),
             h_set_camera, mutating=True, label=_label_camera,
         ),
         Tool(

@@ -333,6 +333,46 @@ test("камера: зум 1..4, центр зажат так, что окно �
   assert.ok(E.isIdentityCamera(E.cameraMatrix([], 0, 1080, 1920)));
 });
 
+test("камера anchor in_place: точка наезда стоит на месте, кадр не открывает край; по умолчанию — прежний центр", () => {
+  const W = 1920;
+  const H = 1080;
+  // Раскладка «титр слева, медиа справа»: наезд на медиа (0.75, 0.45).
+  const keys = [
+    { t: 0, zoom: 1, ease: "linear" },
+    { t: 1, zoom: 1.6, x: 0.75, y: 0.45, anchor: "in_place", ease: "inOutCubic" },
+    { t: 3, zoom: 1.6, x: 0.75, y: 0.45, anchor: "in_place" },
+    { t: 4, zoom: 1 },
+  ];
+  for (let t = 0; t <= 4.5; t += 0.05) {
+    const m = E.cameraMatrix(keys, t, W, H);
+    // Точка (0.75, 0.45) после матрицы — там же, где была (на всём пути наезда и возврата).
+    near(m.scale * 0.75 * W + m.tx, 0.75 * W, 1e-6);
+    near(m.scale * 0.45 * H + m.ty, 0.45 * H, 1e-6);
+    assert.ok(m.tx <= 1e-6 && m.tx + W * m.scale >= W - 1e-6, `x вылез на t=${t}`);
+    assert.ok(m.ty <= 1e-6 && m.ty + H * m.scale >= H - 1e-6, `y вылез на t=${t}`);
+  }
+  const v = E.cameraView(keys, 2);
+  near(v.zoom, 1.6);
+  near(v.x, E.inPlaceCenter(0.75, 1.6));
+  near(v.x, 0.75 + (0.5 - 0.75) / 1.6);
+  // Ключ без anchor — прежнее поведение: точка уезжает в центр кадра (медиа справа — под титр).
+  const old = E.cameraMatrix([{ t: 0, zoom: 1.6, x: 0.65, y: 0.45 }], 0, W, H);
+  near(old.scale * 0.65 * W + old.tx, W / 2, 1e-6);
+  const was = E.cameraMatrix([{ t: 0, zoom: 1.6, x: 0.65, y: 0.45, anchor: "in_place" }], 0, W, H);
+  near(was.scale * 0.65 * W + was.tx, 0.65 * W, 1e-6);
+  // Точка у самого края (x = 1) — край кадра стоит, ничего не открывается.
+  const edge = E.cameraMatrix([{ t: 0, zoom: 2, x: 1, y: 0, anchor: "in_place" }], 0, W, H);
+  near(edge.tx + W * edge.scale, W, 1e-6);
+  near(edge.ty, 0, 1e-6);
+  // Тряска поверх «на месте» тоже не показывает край.
+  const shaky = [{ t: 0, zoom: 1.2, x: 0.9, y: 0.1, anchor: "in_place", shake: 1 }];
+  for (let t = 0; t <= 2; t += 0.037) {
+    const m = E.cameraMatrix(shaky, t, W, H);
+    assert.ok(m.tx <= 1e-6 && m.tx + W * m.scale >= W - 1e-6);
+    assert.ok(m.ty <= 1e-6 && m.ty + H * m.scale >= H - 1e-6);
+  }
+});
+
 test("тряска камеры никогда не показывает край кадра", () => {
   const keys = [
     { t: 0, zoom: 1, x: 0.5, y: 0.5, shake: 1 },

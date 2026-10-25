@@ -11,6 +11,7 @@
  * `sizes` — собственные размеры картинок и видео слоёв по ключу файла (`assetKey`):
  * на сервере — ffprobe, в браузере — загруженные <img>/<video>.
  */
+import { inPlaceCenter } from "./camera";
 import { formatRefSize, normalizeFormat } from "./formats";
 import type { CameraKey, Layer } from "./types";
 import { REF_H, REF_W } from "./types";
@@ -480,12 +481,29 @@ function followBox(layers: Obj[], times: number[], width: number, height: number
   ];
 }
 
+const unit = (v: number): number => Math.min(1, Math.max(0, v));
+
 function cameraViewOf(key: Obj): [number, number, number] {
   const zoom = Math.min(4.0, Math.max(1.0, num(key.zoom, 1.0)));
   const half = 0.5 / zoom;
-  const x = Math.min(1 - half, Math.max(half, num(key.x, 0.5)));
-  const y = Math.min(1 - half, Math.max(half, num(key.y, 0.5)));
+  let x = num(key.x, 0.5);
+  let y = num(key.y, 0.5);
+  if (key.anchor === "in_place") {
+    // Ключ «на месте» (camera.ts): центр окна из точки наезда.
+    x = inPlaceCenter(unit(x), zoom);
+    y = inPlaceCenter(unit(y), zoom);
+  }
+  x = Math.min(1 - half, Math.max(half, x));
+  y = Math.min(1 - half, Math.max(half, y));
   return [zoom, x, y];
+}
+
+/** Точка, что стоит на месте при центре `c` (app/motion.camera_pivot); zoom ≈ 1 — `fallback`. */
+function cameraPivot(c: number, zoom: number, fallback: number): number {
+  const z = Math.min(4.0, Math.max(1.0, zoom));
+  if (z <= 1.001) return fallback;
+  const half = 0.5 / z;
+  return unit((Math.min(1 - half, Math.max(half, c)) * z - 0.5) / (z - 1));
 }
 
 function sortedCamera(camera: Obj[] | null | undefined): Obj[] {
@@ -568,6 +586,13 @@ function reframeCameraWith(camera: Obj[], layers: Obj[], width: number, height: 
     const half = 0.5 / zoom;
     x = Math.min(1 - half, Math.max(half, cx / width));
     y = Math.min(1 - half, Math.max(half, cy / height));
+    if (key.anchor === "in_place") {
+      // Ключ «на месте» остаётся им: центр — обратно в точку наезда.
+      const px = mapX(unit(num(key.x, 0.5)), scale, width, ref[0], (scene || plan).cx);
+      const py = mapY(unit(num(key.y, 0.5)), scale, scene ? scene.center : plan.center, height, ref[1]);
+      x = cameraPivot(x, zoom, unit(px));
+      y = cameraPivot(y, zoom, unit(py));
+    }
     return { ...key, zoom: pyRound(zoom, 4), x: pyRound(x, 4), y: pyRound(y, 4) };
   });
 }
