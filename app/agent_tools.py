@@ -895,6 +895,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "cover": (render.get("cover") or {}).get("mode"),
             "mute": render.get("mute") or [],
             "gain": render.get("gain") or [],
+            # Стоп-кадры посреди ролика (freeze_frame): at — шкала final без стоп-кадров.
+            "freezes": render.get("freezes") or [],
             # Формат вывода (app/formats.py): format, кадр и опорный кадр слоёв; aspect — старое имя.
             **_format_view(render),
             **_key_view(source, render),
@@ -1282,12 +1284,75 @@ def _clip_time_arg(ctx: ToolContext, args: dict, key: str = "t") -> tuple[float,
 
 
 def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
-    t, scale = _clip_time_arg(ctx, args)
+    from app.freeze import normalize_freezes, post_to_pre
+
     with_layers = args.get("with_layers", True) is not False
     # Субтитры клипа (если включены) — по умолчанию в кадре: наезд на HUD игры видно до рендера.
     subtitles = with_layers and args.get("subtitles", True) is not False
+    freezes = normalize_freezes(_current_render(ctx).get("freezes"))
+    if args.get("final") and freezes:
+        # Готовый ролик со стоп-кадрами: что в момент t видно (кадр), где слои и субтитры.
+        u = _num(args.get("t"), 0.0) or 0.0
+        where = post_to_pre(u, freezes)
+        clock = _clock(ctx)
+        t = clock.final_to_clip(where["video"])
+        data, mime, info = render_clip_frame(
+            ctx.store, ctx.plan_id, t, with_layers=with_layers, subtitles=subtitles,
+            layer_t=clock.final_to_clip(where["layers"]), sub_t=clock.final_to_clip(where["audio"]))
+        scale = {"time": "clip", "final_t": round(u, 3),
+                 "final_note": "final — готовый ролик СО стоп-кадрами (freeze_frame)"}
+        if where["freeze"] is not None:
+            scale["freeze"] = freezes[where["freeze"]]
+        return ImageResult(data=data, mime_type=mime,
+                           info={"t": round(t, 3), **scale, "with_layers": with_layers, **info})
+    t, scale = _clip_time_arg(ctx, args)
     data, mime, info = render_clip_frame(ctx.store, ctx.plan_id, t, with_layers=with_layers, subtitles=subtitles)
     return ImageResult(data=data, mime_type=mime, info={"t": round(t, 3), **scale, "with_layers": with_layers, **info})
+
+
+def h_freeze_frame(ctx: ToolContext, args: dict) -> dict:
+    """Стоп-кадр посреди ролика (app/freeze.py): кадр в at (шкала final) замирает на duration с."""
+    from app.freeze import finished_with_freezes, freeze_problem, normalize_freezes
+
+    render = _current_render(ctx)
+    current = normalize_freezes(render.get("freezes"))
+    clock = _clock(ctx)
+    if args.get("reset"):
+        fresh = _save_render(ctx, {**render, "freezes": []})
+        return {"ok": True, "freezes": fresh.get("freezes") or [], "finished_duration": clock.final_duration}
+    at = _num(args.get("at"))
+    if args.get("remove"):
+        if at is None:
+            raise ToolError("remove: укажи at стоп-кадра (или reset: true — снять все)")
+        kept = [f for f in current if abs(f["at"] - at) > 0.05]
+        if len(kept) == len(current):
+            raise ToolError(f"стоп-кадра в {at:g} с нет; есть: {[f['at'] for f in current]}")
+        fresh = _save_render(ctx, {**render, "freezes": kept})
+        return {"ok": True, "freezes": fresh.get("freezes") or []}
+    raw = {"at": at, "duration": _num(args.get("duration"), 1.0), "audio": args.get("audio") or "silence",
+           "layers": args.get("layers") or "freeze"}
+    problem = freeze_problem(raw, clock.final_duration)
+    if problem:
+        raise ToolError(f"freeze_frame: {problem}")
+    others = [f for f in current if abs(f["at"] - float(at)) > 0.05]
+    wanted = normalize_freezes([*others, raw])
+    if not any(abs(f["at"] - float(at)) <= 0.001 for f in wanted):
+        raise ToolError("freeze_frame: на это место уже приходится другой стоп-кадр — "
+                        f"есть {[{'at': f['at'], 'duration': f['duration']} for f in others]}")
+    fresh = _save_render(ctx, {**render, "freezes": wanted})
+    freezes = fresh.get("freezes") or []
+    total = finished_with_freezes(clock.final_duration, freezes)
+    insert = raw["audio"] == "silence"
+    return {
+        "ok": True, "freezes": freezes, "time": "final",
+        "finished_duration": clock.final_duration, "finished_with_freezes": total,
+        "note": (("кадр стоит, звук исходника молчит, музыка играет; ролик длиннее на "
+                  f"{float(raw['duration']):g} с, всё после {float(at):g} с сдвинется" if insert else
+                  "кадр стоит, звук идёт дальше; длина ролика та же")
+                 + ("; слои и камера стоят с кадром" if raw["layers"] == "freeze" else "; слои анимируются дальше")
+                 + f". Проверь view_frame(t, final: true) — t в готовом ролике со стоп-кадрами "
+                   f"({total:g} с)"),
+    }
 
 
 def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
@@ -1422,7 +1487,8 @@ def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
 
 
 def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool = True,
-                      subtitles: bool = False) -> tuple[bytes, str, dict]:
+                      subtitles: bool = False, layer_t: float | None = None,
+                      sub_t: float | None = None) -> tuple[bytes, str, dict]:
     """Кадр готового вида на клиповом времени ``t``.
 
     Сначала — моушн-кадр (камера + слои тем же кодом, что и рендер,
@@ -1437,8 +1503,9 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
         layers = None if with_layers else []
         camera = None if with_layers else []
         notes: list[str] = []
+        extra = {k: v for k, v in (("layer_t", layer_t), ("sub_t", sub_t)) if v is not None}
         data = render_frame_png(store, clip_plan_id, t, layers=layers, camera=camera, inserts=with_layers,
-                                subtitles=subtitles, notes=notes)
+                                subtitles=subtitles, notes=notes, **extra)
         info: dict = {"kind": "motion"}
         if notes:
             info["subtitles"] = "; ".join(notes)
@@ -4322,7 +4389,8 @@ def _build_registry() -> list[Tool]:
             "/ Render the clip frame at t.",
             _obj({"t": {"type": "number"}, "with_layers": {"type": "boolean"},
                   "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
-                  "final": {"type": "boolean", "description": "t — секунды готового ролика (после вырезов)"}},
+                  "final": {"type": "boolean", "description": "t — секунды готового ролика (после вырезов; "
+                                                                     "со стоп-кадрами freeze_frame, если они есть)"}},
                  ["t"]), h_view_frame,
             label=lambda a: f"Смотрю кадр на {(_num(a.get('t'), 0.0) or 0.0):.1f} с",
         ),
@@ -4833,6 +4901,26 @@ def _build_registry() -> list[Tool]:
             h_set_end_hold, mutating=True,
             label=lambda a: "Стоп-кадр в конце: " + ("как у сервиса" if a.get("sec") is None or a.get("reset")
                                                      else f"{a.get('sec')} с"),
+        ),
+        Tool(
+            "freeze_frame", "Ставлю стоп-кадр",
+            "Стоп-кадр посреди ролика: кадр в момент at (секунды ГОТОВОГО ролика — шкала final, как "
+            "contact_sheet и listen; без других стоп-кадров) замирает на duration 0.2–2.0 с (по умолчанию 1). "
+            "audio: \"silence\" (по умолчанию) — стоп-кадр вставляется: звук исходника молчит, музыка играет, "
+            "ролик длиннее на duration, субтитры, слои, звуки и вставки после at сдвигаются сами; "
+            "\"continue\" — звук идёт дальше (стример договаривает), картинка стоит и продолжается с at+duration, "
+            "длина та же. layers: \"freeze\" (по умолчанию) — слои, камера и анимированные субтитры стоят с "
+            "кадром; \"continue\" — анимируются дальше на замершем кадре. Тот же at — заменить; remove:true + at — "
+            "снять один; reset:true — снять все. Проверка — view_frame(t, final: true): t в готовом ролике СО "
+            "стоп-кадрами. / Freeze-frame mid-clip.",
+            _obj({"at": {"type": "number", "minimum": 0},
+                  "duration": {"type": "number", "minimum": 0.2, "maximum": 2.0},
+                  "audio": {"type": "string", "enum": ["silence", "continue"]},
+                  "layers": {"type": "string", "enum": ["freeze", "continue"]},
+                  "remove": {"type": "boolean"}, "reset": {"type": "boolean"}}),
+            h_freeze_frame, mutating=True,
+            label=lambda a: ("Снимаю стоп-кадры" if a.get("reset") or a.get("remove") else
+                             f"Стоп-кадр на {(_num(a.get('at'), 0.0) or 0.0):.1f} с"),
         ),
         Tool(
             "set_backdrop", "Ставлю фон за персонажем",

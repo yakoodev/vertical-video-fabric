@@ -595,7 +595,15 @@ export type Composition = {
   pinned?: PinnedRect[];
   /** Высота кадра основы, если под кадром полоса окошка (app/render.pin_band); нет — `height`. */
   baseHeight?: number;
+  /**
+   * Стоп-кадры посреди ролика, на которых слои стоят (app/freeze.py): основа уже со стоп-кадрами,
+   * слои, камера и слова читаются во «времени слоёв» — `motionTime` компоновщика.
+   * `at` — секунда без стоп-кадров, `d` — длина, `insert` — вставлен (ролик длиннее), `hold` — слои стоят.
+   */
+  freezes?: FreezeSpan[];
 };
+
+export type FreezeSpan = { at: number; d: number; insert: boolean; hold: boolean };
 
 export type PinnedRect = PixelRect & { sy?: number };
 

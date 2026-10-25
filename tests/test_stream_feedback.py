@@ -393,8 +393,11 @@ console.log(JSON.stringify({{
     # Стоп-кадр в конце (render.end_hold_sec) — тоже: иначе автосохранение редактора стирало бы set_end_hold.
     # Формат разметки слоёв (layers_format) — так же: «Разметить слои в этом формате» сохраняет его.
     assert "    layers_format: layersFmt,\n" in tab and "layers_format: layersFormat(s)," in tab and "setLayersFmt(layersFormat(s));" in tab
-    assert "    format: aspect,\n    layers_format: layersFmt,\n    end_hold_sec: endHoldSec,\n  });" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
+    assert "    format: aspect,\n    layers_format: layersFmt,\n    end_hold_sec: endHoldSec,\n" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
     assert "setEndHoldSec(s.end_hold_sec ?? null);" in tab
+    # Стоп-кадры посреди ролика (freeze_frame агента) — панель их не правит, но и не стирает.
+    assert "    end_hold_sec: endHoldSec,\n    freezes,\n  });" in tab and "freezes: s.freezes ?? []," in tab
+    assert "setFreezes(s.freezes ?? []);" in tab
 
 
 # ------------------------------------------------------------------ чат Twitch (п. 1)

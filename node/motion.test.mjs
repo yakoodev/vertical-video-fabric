@@ -856,6 +856,27 @@ test("CLI: наезд в раскладке pip — окошко одно: ка�
   assert.equal(Number(info.nb_read_frames), 30);
 });
 
+test("CLI: стоп-кадр посреди ролика (comp.freezes) — слои и камера стоят, после вставки идут со сдвигом", () => {
+  // Квадрат едет слева направо за 4 с; стоп-кадр в 1 с на 1 с (вставка, слои стоят).
+  const layers = [{ id: "sq", type: "shape", x: 0.1, y: 0.5, scale: 1, rotation: 0, opacity: 1, track: 0, start: 0, end: 6,
+    keys: { x: [{ t: 0, v: 0.1, ease: "linear" }, { t: 4, v: 0.9 }] }, props: { kind: "rect", w: 60, h: 60, fill: "#ff0000" } }];
+  const camera = [{ t: 0, zoom: 1, x: 0.5, y: 0.5 }, { t: 4, zoom: 2, x: 0.5, y: 0.5 }];
+  const base = { width: 270, height: 480, fps: 30, duration: 6, layers, camera };
+  const frame = (name, comp, t) => {
+    const p = writeInputs(name, comp);
+    const png = join(tmp, `${name}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(png);
+  };
+  const frozen = { ...base, freezes: [{ at: 1, d: 1, insert: true, hold: true }] };
+  const at1 = frame("fz-plain-1", base, 1);
+  assert.deepEqual(frame("fz-in-1", frozen, 1.5), at1, "на стоп-кадре слои стоят в at");
+  assert.deepEqual(frame("fz-in-2", frozen, 1.99), at1);
+  assert.deepEqual(frame("fz-after", frozen, 2.5), frame("fz-plain-15", base, 1.5), "после вставки — со сдвигом на её длину");
+  assert.notDeepEqual(frame("fz-plain-2", base, 2), at1);
+});
+
 test("CLI: хромакей кладёт анимированный фон, старый {color} — заливкой", async () => {
   const base = join(tmp, "green.mp4");
   const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00fe00:size=270x480:rate=30", "-t", "1", "-pix_fmt", "yuv420p", base], { encoding: "utf8" });

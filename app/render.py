@@ -501,6 +501,7 @@ class ClipRenderService:
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
+        freezes: list[dict] | None = None,
     ) -> dict:
         """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше.
         ``aspect`` — формат вывода (app/formats.py), ``layers_format`` — в каком формате
@@ -523,6 +524,8 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        if freezes:
+            preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -565,6 +568,7 @@ class ClipRenderService:
                 reframe_x=_segment_reframe_x(segment, _preset_for_segment(preset, segment), source),
             )
             _run_ffmpeg(args, timeout=60 * 30)
+            self._apply_freezes(base_output_path, preset)
             motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
@@ -646,6 +650,7 @@ class ClipRenderService:
         aspect: str | None = None,
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
+        freezes: list[dict] | None = None,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
         рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
@@ -672,6 +677,8 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        if freezes:
+            preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
             # У холста основа немая — профиль субтитров пресета прогнал бы распознавание
             # по тишине и мог бы выдумать текст; явный subtitle_profile_id уважаем.
@@ -762,6 +769,7 @@ class ClipRenderService:
                     ),
                     timeout=60 * 30,
                 )
+            self._apply_freezes(base_output_path, preset)
             motion_notes = self._apply_motion(render_id, base_output_path, preset, banner, motion, source) if motion else []
             final_output_path, post_temps = self._finalize_render(
                 clip_id=clip["id"],
@@ -1151,6 +1159,22 @@ class ClipRenderService:
 
             voice_fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
             visual = attach_voice(self.store, plan, visual, voice_fps, "final")
+        # Стоп-кадры посреди ролика (app/freeze.py): основа получит их в render_*; здесь —
+        # слои «continue» сдвигаются за вставку, звуки слоёв — за любую вставку.
+        freezes = self._freezes(plan)
+        if freezes:
+            from app.cuts import remap_motion
+            from app.freeze import FreezeMap, holds_layers, shift_voice
+
+            def running(f: dict) -> bool:
+                return not holds_layers(f)
+
+            if visual:
+                moved = remap_motion(visual, FreezeMap(freezes, only=running))
+                if visual.get("voice"):
+                    moved = {**moved, "voice": shift_voice(visual["voice"], freezes, only=running)}
+                visual = moved
+            motion = remap_motion(motion, FreezeMap(freezes))
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
         if layout is None:
             layout = (plan.get("render_settings") or {}).get("layout")
@@ -1189,6 +1213,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         elif len(segment_ids) == 1:
             clip = self.render_segment(
@@ -1212,6 +1237,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         else:
             clip = self.render_montage(
@@ -1238,6 +1264,7 @@ class ClipRenderService:
                 aspect=aspect,
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
+                freezes=freezes,
             )
         if clip["status"] == "succeeded":
             clip = self._apply_mute(clip, plan, cut_plan)
@@ -1286,6 +1313,20 @@ class ClipRenderService:
         return plan_cuts(plan.get("segments") or [], cuts, fps)
 
     @staticmethod
+    def _freezes(plan: dict | None) -> list[dict]:
+        """Стоп-кадры посреди ролика из настроек клипа (app/freeze.py)."""
+        from app.freeze import normalize_freezes
+
+        return normalize_freezes(((plan or {}).get("render_settings") or {}).get("freezes"))
+
+    def _final_mapper(self, plan: dict, cut_plan=None):
+        """Время готового ролика без вырезов и стоп-кадров → в готовом ролике (None — то же)."""
+        from app.freeze import chain
+
+        cut = self._finished_cut_mapper(plan, cut_plan) if cut_plan is not None else None
+        return chain(cut, self._freezes(plan))
+
+    @staticmethod
     def _finished_cut_mapper(plan: dict, cut_plan):
         """Время готового клипа без вырезов → с вырезами (app/cuts.FinishedCutMap)."""
         transition = (plan.get("render_settings") or {}).get("transition")
@@ -1332,7 +1373,15 @@ class ClipRenderService:
             cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"), fps)
             # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на
             # настоящие overlap склеек (как их спланирует рендер).
-            return result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
+            final = subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan)
+            freezes = self._freezes(plan)
+            if freezes:
+                # Вставленный стоп-кадр: речь после него звучит позже (app/freeze.py).
+                from app.cuts import remap_subtitles
+                from app.freeze import FreezeMap
+
+                final = remap_subtitles(final, FreezeMap(freezes))
+            return result_from_payload(final)
         except (KeyError, ValueError, TypeError):
             return None
 
@@ -1351,8 +1400,8 @@ class ClipRenderService:
             return clip
         spans = [(m["start"], m["end"]) for m in mutes]
         boosts = [(g["start"], g["end"], g["gain_db"]) for g in gains]
-        if cut_plan is not None:
-            mapper = self._finished_cut_mapper(plan, cut_plan)
+        mapper = self._final_mapper(plan, cut_plan)
+        if mapper is not None:
             spans = [r for r in (mapper.range(a, b) for a, b in spans) if r]
             boosts = [(*r, g) for r, g in ((mapper.range(a, b), g) for a, b, g in boosts) if r]
         try:
@@ -1375,10 +1424,11 @@ class ClipRenderService:
         from app.montage_assets import build_inserts_args, normalize_inserts
 
         inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
-        if cut_plan is not None and inserts:
+        mapper = self._final_mapper(plan, cut_plan)
+        if mapper is not None and inserts:
             from app.cuts import remap_inserts
 
-            inserts = remap_inserts(inserts, self._finished_cut_mapper(plan, cut_plan))
+            inserts = remap_inserts(inserts, mapper)
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
@@ -1405,6 +1455,24 @@ class ClipRenderService:
         except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
             return self._note_clip_error(clip["id"], f"вставки не наложены: {str(exc)[:200]}")
 
+    @staticmethod
+    def _apply_freezes(base: Path, preset: dict) -> None:
+        """Стоп-кадры посреди ролика (app/freeze.py) — в основу, до компоновщика, субтитров и
+        музыки: музыка играет и на вставленном стоп-кадре, слои и субтитры ложатся уже на него."""
+        from app.freeze import build_freeze_args
+
+        freezes = preset.get("freezes") or []
+        if not freezes:
+            return
+        meta = probe_media(base)
+        tmp = base.with_name(base.stem + ".freeze" + base.suffix)
+        args = build_freeze_args(base, tmp, freezes, float(preset.get("fps") or 30), _has_audio_stream(base),
+                                 float(meta.duration_sec or 0))
+        if args is None:
+            return
+        _run_ffmpeg(args, timeout=60 * 20)
+        tmp.replace(base)
+
     def _note_clip_error(self, clip_id: int, text: str) -> dict:
         """Дописать пометку в ошибку удачного клипа (моушн, вставки), не затирая прежние."""
         current = str(self.store.get_clip(clip_id).get("error") or "").strip()
@@ -1428,6 +1496,7 @@ class ClipRenderService:
         Возвращает пометки.
         """
         from app.formats import DEFAULT_FORMAT, comp_ref
+        from app.freeze import comp_freezes, freeze_zones
         from app.motion_render import (
             build_compositor_args,
             build_motion_mux_args,
@@ -1481,10 +1550,11 @@ class ClipRenderService:
                         voice=motion.get("voice"),
                         key=motion.get("key"),
                         background=motion.get("background"),
-                        backgrounds=motion.get("backgrounds"),
+                        backgrounds=freeze_zones(motion.get("backgrounds"), preset.get("freezes")),
                         camera_box=(regions or {}).get("box"),
                         pinned=banded_pinned((regions or {}).get("pinned"), band, comp_h),
                         base_height=comp_h + int(band["h"]) if band else None,
+                        freezes=comp_freezes(preset.get("freezes")),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

@@ -36,6 +36,7 @@ import {
   type Ctx2D,
   type PixelRect,
   type PinnedRect,
+  type FreezeSpan,
   type ImageLike,
   type RenderEnv,
   type VideoFrame,
@@ -143,6 +144,7 @@ function readComp(path: string): Composition {
     ...readKey(raw),
     ...readRegions(raw, width - (width % 2), height - (height % 2)),
     ...readBaseHeight(raw, height - (height % 2)),
+    ...readFreezes(raw),
     ...readZones(raw, width - (width % 2), height - (height % 2)),
   };
 }
@@ -213,6 +215,45 @@ function readRegions(raw: Partial<Composition>, W: number, H: number): Pick<Comp
     pinned.push(BH > H && Number.isFinite(sy) && sy >= H && sy + rect.h <= BH ? { ...rect, sy } : rect);
   }
   return { ...(box ? { cameraBox: box } : {}), ...(pinned.length ? { pinned } : {}) };
+}
+
+/** comp.freezes: стоп-кадры по времени, мусорные записи отбрасываются (не больше 8). */
+function readFreezes(raw: Partial<Composition>): Pick<Composition, "freezes"> {
+  if (!Array.isArray(raw.freezes)) return {};
+  const out: FreezeSpan[] = [];
+  for (const f of raw.freezes) {
+    const at = Number(f?.at);
+    const d = Number(f?.d);
+    if (!Number.isFinite(at) || at < 0 || !Number.isFinite(d) || d <= 0) continue;
+    out.push({ at, d: Math.min(10, d), insert: !!f.insert, hold: !!f.hold });
+  }
+  out.sort((a, b) => a.at - b.at);
+  return out.length ? { freezes: out.slice(0, 8) } : {};
+}
+
+/**
+ * Время готового ролика (основа со стоп-кадрами) → время слоёв, камеры и слов — как
+ * app/freeze.motion_time: на стоп-кадре с `hold` время стоит, после вставки идёт с вычетом её
+ * длины; у стоп-кадра без `hold` слои уже сдвинуты сервисом — их время идёт дальше.
+ */
+function motionTime(freezes: FreezeSpan[] | undefined, u: number): number {
+  if (!freezes?.length) return u;
+  let offAll = 0;
+  let offCont = 0;
+  for (const f of freezes) {
+    const atPost = f.at + offAll;
+    if (u < atPost) break;
+    if (u < atPost + f.d) {
+      if (f.hold) return f.at + offCont;
+      if (f.insert) return f.at + offCont + (u - atPost);
+      return u - offAll + offCont;
+    }
+    if (f.insert) {
+      offAll += f.d;
+      if (!f.hold) offCont += f.d;
+    }
+  }
+  return u - offAll + offCont;
 }
 
 /** Высота основы с полосой окошка под кадром (app/render.pin_band): чётная, выше кадра, не больше двух. */
@@ -728,12 +769,14 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
     paint(base, t) {
       // ImageData копирует пиксели — буфер декодера можно сразу переиспользовать.
       if (base) last = new ImageData(new Uint8ClampedArray(base.buffer, base.byteOffset, W * BH * 4), W, BH);
-      const m = cameraMatrix(comp.camera, t, W, H);
+      // Время слоёв, камеры и слов: на стоп-кадре посреди ролика оно стоит (comp.freezes).
+      const tm = motionTime(comp.freezes, t);
+      const m = cameraMatrix(comp.camera, tm, W, H);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       if (comp.key) {
         // Хромакей: фон → слои «за персонажем» → вырезанная основа → остальные слои.
         paintBackground(ctx, comp.background ?? normalizeBackground(null), t, W, H, bgOpts);
-        drawFrame(ctx, comp, t, env, "behind");
+        drawFrame(ctx, comp, tm, env, "behind");
         if (last) {
           frameCanvas ??= createCanvas(W, BH);
           frameCanvas.getContext("2d").putImageData(last, 0, 0);
@@ -744,7 +787,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
           ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
           ctx.restore();
         }
-        drawFrame(ctx, comp, t, env, "front");
+        drawFrame(ctx, comp, tm, env, "front");
         return;
       }
       // Анимированный фон основы (meme, кусок «шире окна») — часть основы: рисуется
@@ -771,7 +814,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
         ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         const box = comp.cameraBox ?? { x: 0, y: 0, w: W, h: H };
-        const bm = cameraMatrix(comp.camera, t, box.w, box.h);
+        const bm = cameraMatrix(comp.camera, tm, box.w, box.h);
         ctx.save();
         ctx.beginPath();
         ctx.rect(box.x, box.y, box.w, box.h);
@@ -796,7 +839,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         ctx.restore();
       }
-      drawFrame(ctx, comp, t, env);
+      drawFrame(ctx, comp, tm, env);
     },
   };
 }
@@ -831,8 +874,8 @@ async function renderPng(args: Args, comp: Composition, env: RenderEnv, videos: 
     base ??= await grabFrame(args, comp, cs, ["-sseof", "-0.5"], true);
     if (!base) throw new Error(`не удалось взять кадр ${t} с из ${args.input}`);
   }
-  await prepareVideos(comp, videos, t);
-  await prepareAnims(comp, anims, t);
+  await prepareVideos(comp, videos, motionTime(comp.freezes, t));
+  await prepareAnims(comp, anims, motionTime(comp.freezes, t));
   painter.paint(base, t);
   writeFileSync(args.png as string, await painter.canvas.encode("png"));
   log(`progress 1/1`);
@@ -911,8 +954,8 @@ async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos
   const started = Date.now();
   let i = 0;
   const step = async (base: Buffer | null) => {
-    await prepareVideos(comp, videos, i / comp.fps);
-    await prepareAnims(comp, anims, i / comp.fps);
+    await prepareVideos(comp, videos, motionTime(comp.freezes, i / comp.fps));
+    await prepareAnims(comp, anims, motionTime(comp.freezes, i / comp.fps));
     painter.paint(base, i / comp.fps);
     await write(frameOut());
     i++;

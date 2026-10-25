@@ -206,7 +206,17 @@ export interface RenderSettings {
   aspect?: Aspect;
   /** Стоп-кадр в конце готового ролика, с (0..1.5); null — как у сервиса (RENDER_END_HOLD_SEC). */
   end_hold_sec?: number | null;
+  /** Стоп-кадры посреди ролика (app/freeze.py, инструмент агента freeze_frame); at — шкала final. */
+  freezes?: FreezeFrame[];
 }
+
+/** Стоп-кадр посреди ролика: кадр в `at` стоит `duration` с; звук молчит (вставка) или идёт дальше. */
+export type FreezeFrame = {
+  at: number;
+  duration: number;
+  audio: "silence" | "continue";
+  layers: "freeze" | "continue";
+};
 
 /** Формат готового ролика (app/formats.py, motion/formats.ts). */
 export type Aspect = FormatId;
