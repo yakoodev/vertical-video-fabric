@@ -39,9 +39,14 @@ BACKGROUND_SHARE = 0.9  # во всю ширину — фон холста, не
 # 3) переход сцен без разведения
 SCENE_OVERLAP_SHARE = 0.25
 SCENE_OVERLAP_SEC = 0.3
+# Сцена-комбо (не 9:16): телефон и окно-медиа живут вместе большую часть жизни (не переход
+# сцен, а одна раскладка — 16:9 «телефон + окно записи/скрин»). Нахлёст там намеренный: молчим,
+# а при перекрытии больше COMBO_HEAVY_SHARE меньшего — мягкая подсказка, не «переход без разведения».
+COMBO_TOGETHER_SHARE = 0.6
+COMBO_HEAVY_SHARE = 0.6
 # 4) финал: мелкий или бледный текст
 FINAL_SEC = 4.0
-FINAL_MIN_FONT = 44
+# кегль финала — app/safe_zones.LINT_LIMITS (final_font: 44 у 9:16, 32 у 16:9)
 MIN_CONTRAST = 3.0
 # Крупный жирный текст на сплошной плашке читается и при 2.5:1 — белый на фирменном
 # оранжевом (#ff6a1f, 2.9:1) — обычная кнопка CTA, не шумим.
@@ -73,6 +78,11 @@ def frame_of(fmt: Any) -> Iterator[tuple[float, float]]:
         yield float(w), float(h)
     finally:
         _FRAME.reset(token)
+
+
+def _format() -> str:
+    """Формат кадра текущей проверки (``frame_of``; по умолчанию 9:16)."""
+    return _FRAME.get()[2]
 
 
 def _safe_top() -> float:
@@ -503,6 +513,22 @@ def is_record_window(window: dict, phone: dict) -> bool:
             and _num(window.get("start"), 0.0) >= _num(phone.get("start"), 0.0))
 
 
+def _life(layer: dict) -> float:
+    return max(0.0, _num(layer.get("end"), 0.0) - _num(layer.get("start"), 0.0))
+
+
+def is_combo(a: dict, b: dict) -> bool:
+    """Сцена-комбо: телефон (device) и окно-медиа (картинка/видео, не телефон) идут вместе не
+    меньше COMBO_TOGETHER_SHARE жизни короткого — одна раскладка, а не смена сцен (логотип,
+    влетевший на уходе телефона, живёт с ним недолго — не комбо)."""
+    if is_phone(a) == is_phone(b):
+        return False
+    together = min(_num(a.get("end"), 0.0), _num(b.get("end"), 0.0)) - max(_num(a.get("start"), 0.0),
+                                                                          _num(b.get("start"), 0.0))
+    short = min(_life(a), _life(b))
+    return short > 0 and together >= COMBO_TOGETHER_SHARE * short
+
+
 def scenes_without_gap(layers: list[dict], camera: Any) -> list[tuple[tuple, str]]:
     """3) Две крупные сцены одновременно и внахлёст: логотип влетел поверх не ушедшего телефона."""
     big = [l for l in layers if is_big_picture(l)]
@@ -529,6 +555,12 @@ def scenes_without_gap(layers: list[dict], camera: Any) -> list[tuple[tuple, str
                     share_max = max(share_max, share)
             if len(hits) * STEP > SCENE_OVERLAP_SEC + 1e-6:
                 first, later = sorted((a, b), key=lambda l: (_num(l.get("start"), 0.0), str(l.get("id"))))
+                if _format() != "9:16" and is_combo(a, b):
+                    if share_max > COMBO_HEAVY_SHARE:
+                        out.append(((a.get("id"), b.get("id")),
+                                    f"{first.get('id')} и {later.get('id')}: сцена-комбо — телефон внахлёст на "
+                                    f"окне ({share_max:.0%} меньшего) — если так задумано, ок; иначе раздвинь их"))
+                    continue
                 enter = _num(later.get("start"), 0.0)
                 out.append(((a.get("id"), b.get("id")),
                             f"{first.get('id')} и {later.get('id')}: {len(hits) * STEP:.1f} с вместе и внахлёст "
@@ -539,7 +571,10 @@ def scenes_without_gap(layers: list[dict], camera: Any) -> list[tuple[tuple, str
 
 
 def final_text(texts: list[dict], duration: float, backdrop: Any) -> list[tuple[tuple, str]]:
-    """4) Финал (последние 4 с): ссылка/CTA мелкая или сливается с фоном."""
+    """4) Финал (последние 4 с): ссылка/CTA мелкая или сливается с фоном (кегль — по формату)."""
+    from app.safe_zones import lint_limits
+
+    limits = lint_limits(_format())
     colors = _backdrop_colors(backdrop)
     base = colors[0] if colors else DARK_BASE
     accents = colors[1:]
@@ -550,9 +585,9 @@ def final_text(texts: list[dict], duration: float, backdrop: Any) -> list[tuple[
         props = _props(text)
         lid = text.get("id")
         size = _num(props.get("size"), 80.0) * _num(text.get("scale"), 1.0)
-        if size < FINAL_MIN_FONT:
+        if size < limits["final_font"]:
             out.append(((lid,), f"{lid}: в финале шрифт {size:.0f}px — ссылку/CTA не прочитать; "
-                                f"≥ {FINAL_MIN_FONT} px (лучше 56–64) и контрастным цветом"))
+                                f"≥ {limits['final_font']} px (лучше {limits['final_good']}) и контрастным цветом"))
         color = props.get("color") or "#ffffff"
         if props.get("gradient"):
             continue

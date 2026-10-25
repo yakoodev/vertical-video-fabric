@@ -551,10 +551,12 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     водяного знака YouTube.
     """
     from app.formats import settings_format
+    from app.safe_zones import lint_limits
 
     fmt = settings_format(fmt)
     ref_w, ref_h = _ref(fmt)
     zone = _zone(fmt)
+    limits = lint_limits(fmt)  # кегль и перегруз — по площадке (16:9 — экран, не телефон)
     safe_top, safe_bottom = zone["top"], zone["bottom"]
     sides = fmt != "9:16"
     warnings: list[str] = []
@@ -587,8 +589,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
         if layer.get("type") == "text":
             size = (_num(props.get("size"), 80.0) or 80.0) * (_num(layer.get("scale"), 1.0) or 1.0)
-            if size < 44:
-                warnings.append(f"{lid}: шрифт {size:.0f}px мелковат для телефона (лучше ≥ 56)")
+            if size < limits["min_font"]:
+                warnings.append(f"{lid}: шрифт {size:.0f}px мелковат для {limits['screen']} "
+                                f"(лучше ≥ {limits['good_font']})")
             if len(str(props.get("text") or "")) > 60:
                 warnings.append(f"{lid}: длинный титр — на экране читают 3–6 слов")
         start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
@@ -617,8 +620,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
             o for o in graphics
             if (_num(o.get("start"), 0.0) or 0.0) <= t < (_num(o.get("end"), 0.0) or 0.0)
         ]
-        if len(together) > MAX_SIMULTANEOUS:
-            warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз (≤ {MAX_SIMULTANEOUS})")
+        if len(together) > limits["max_graphics"]:
+            warnings.append(f"{lid}: на {t:.1f} с на экране {len(together)} слоя графики — перегруз "
+                            f"(≤ {limits['max_graphics']})")
     warnings.extend(caption_overlap_warnings(visible, only_ids, ref_h))
     promo = promo_warnings(layers, duration, only_ids, canvas=canvas, backdrop=backdrop, camera=camera, sizes=sizes,
                            fmt=fmt)
