@@ -100,6 +100,9 @@ class Settings:
         self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"
         self.whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
         self.whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"
+        # Модель Whisper выгружается после стольких секунд простоя (и перед рендером /
+        # автофокусом): в памяти лежит не дольше пачки распознаваний.
+        self.whisper_idle_unload_sec = float(os.getenv("WHISPER_IDLE_UNLOAD_SEC", "120") or 0)
         self.polza_api_key = os.getenv("POLZA_API_KEY", "").strip()
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(

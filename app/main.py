@@ -35,6 +35,7 @@ from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.downloads import DownloadService
+from app import memory
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app import proxy_config
@@ -70,6 +71,9 @@ from app.platform_stats import StatsCollector
 from app.agent_api import router as agent_router
 
 settings.ensure_dirs()
+# Пока потоков мало: меньше арен malloc — меньше «осевшей» памяти (OOM 25–26.10, app/memory.py).
+memory.limit_arenas()
+memory.log_to_stderr()
 settings.ensure_api_token()
 db = Database(settings.db_path)
 db.init()
