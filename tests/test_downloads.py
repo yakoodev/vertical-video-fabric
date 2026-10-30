@@ -152,3 +152,65 @@ def test_download_cancelled_is_not_reported_as_failure():
     _wait_for(lambda: service.get(task["id"])["status"] == "cancelled")
 
     assert service.get(task["id"])["error"] == ""
+
+
+class _SourceStore:
+    def get_source(self, source_id: int) -> dict:
+        return {"id": source_id, "status": "ready"}
+
+
+def test_source_by_url_waits_for_background_download_without_blocking_the_loop(monkeypatch):
+    """POST /api/sources с url: 4,8-часовой VOD в async-обработчике держал event loop 40 минут."""
+    import asyncio
+
+    import app.main as main_module
+
+    ingestor = FakeIngestor()
+    monkeypatch.setattr(main_module, "source_ingestor", ingestor)
+    monkeypatch.setattr(main_module, "store", _SourceStore())
+
+    async def scenario():
+        request = asyncio.create_task(
+            main_module._download_source_url("https://gromfaer.top/series/1/", {"quality": "720"})
+        )
+        while not ingestor.started.is_set():
+            await asyncio.sleep(0.01)
+        ticks = 0
+        for _ in range(10):  # загрузка идёт — а цикл крутится
+            await asyncio.sleep(0.01)
+            ticks += 1
+        assert not request.done()
+        ingestor.release.set()
+        return await request, ticks
+
+    source, ticks = asyncio.run(scenario())
+    assert ticks == 10 and source == {"id": 7, "status": "ready"}
+    assert ingestor.calls == [("url", "https://gromfaer.top/series/1/", "720")]
+    # Загрузка — обычная задача: видна в «Активности» и отменяема.
+    task = main_module.download_service.list_tasks()[0]
+    assert task["status"] == "succeeded" and task["source_id"] == 7
+
+
+def test_source_by_url_api_keeps_old_contract_and_hides_proxy_credentials(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    failing = FakeIngestor(error=ValueError("ERROR: Unable to connect to proxy http://user:secret@proxy.example:3128"))
+    failing.release.set()
+    monkeypatch.setattr(main_module, "source_ingestor", failing)
+    client = TestClient(main_module.app)
+
+    response = client.post("/api/sources", json={"url": "https://www.twitch.tv/videos/1"})
+    assert response.status_code == 400
+    assert "secret" not in response.text and "•••@proxy.example" in response.json()["detail"]
+
+    # wait: false — сразу задача загрузки, без ожидания.
+    blocked = FakeIngestor()
+    monkeypatch.setattr(main_module, "source_ingestor", blocked)
+    response = client.post("/api/sources", json={"url": "https://www.twitch.tv/videos/2", "wait": False})
+    assert response.status_code == 202 and response.json()["status"] in {"queued", "downloading"}
+    blocked.release.set()
+    assert client.post("/api/sources", json={"url": "nope"}).status_code == 400

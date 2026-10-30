@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from datetime import date
@@ -60,6 +61,32 @@ def masked(url: str) -> str:
     parsed = urlsplit(url)
     auth = "•••@" if parsed.username else ""
     return f"{parsed.scheme}://{auth}{parsed.hostname}:{parsed.port}"
+
+
+# «схема://логин:пароль@» в любом тексте (ошибка yt-dlp, httpx, лог) → «схема://•••@».
+_CREDENTIALS_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/]+@")  # до последней @: пароль бывает с @
+
+
+def mask_secrets(text: object) -> str:
+    """Логин и пароль прокси (и любого URL с кредами) скрыты — для логов и текстов ошибок."""
+    return _CREDENTIALS_RE.sub(r"\1•••@", str(text or ""))
+
+
+def proxy_env(proxy: str, base: dict | None = None) -> dict[str, str]:
+    """Окружение дочернего процесса (yt-dlp и его ffmpeg) с прокси.
+
+    ``--proxy логин:пароль@…`` в argv видно любому в ``ps`` контейнера; переменные
+    окружения процесса — только его владельцу. yt-dlp берёт прокси из окружения
+    (urllib ``getproxies``), ffmpeg — из ``http_proxy``.
+    """
+    env = dict(os.environ if base is None else base)
+    for key in ("no_proxy", "NO_PROXY"):
+        env.pop(key, None)
+    if proxy:
+        for key in ("http_proxy", "https_proxy", "all_proxy"):
+            env[key] = proxy
+            env[key.upper()] = proxy
+    return env
 
 
 def load() -> dict:
@@ -139,5 +166,5 @@ def test(url: str | None = None) -> dict:
             out[name] = {"ok": response.status_code < 500, "status": response.status_code,
                          "ms": int((time.monotonic() - started) * 1000)}
         except Exception as exc:  # noqa: BLE001 - отчёт, а не падение
-            out[name] = {"ok": False, "error": re.sub(r"\s+", " ", str(exc))[:160]}
+            out[name] = {"ok": False, "error": re.sub(r"\s+", " ", mask_secrets(exc))[:160]}
     return out

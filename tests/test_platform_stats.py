@@ -87,15 +87,17 @@ def test_ytdlp_retries_through_download_proxy(monkeypatch):
     calls: list = []
 
     def fake_run(args, **kw):
-        calls.append(args)
-        if "--proxy" not in args:
+        calls.append((args, kw.get("env")))
+        if not kw.get("env"):
             return subprocess.CompletedProcess(args, 1, "", "ERROR: blocked\n")
         return subprocess.CompletedProcess(args, 0, json.dumps({"view_count": 5}), "")
 
     monkeypatch.setattr(platform_stats.subprocess, "run", fake_run)
-    monkeypatch.setattr("app.proxy_config.download_proxy", lambda: "http://proxy:1")
+    monkeypatch.setattr("app.proxy_config.download_proxy", lambda: "http://u:secret@proxy:1")
     assert platform_stats.fetch_ytdlp_stats(YT)["views"] == 5
-    assert len(calls) == 2 and calls[1][calls[1].index("--proxy") + 1] == "http://proxy:1"
+    # Прокси — окружением процесса, не argv (креды видно в ps).
+    assert len(calls) == 2 and calls[1][1]["HTTPS_PROXY"] == "http://u:secret@proxy:1"
+    assert not any("secret" in arg or arg == "--proxy" for args, _env in calls for arg in args)
 
 
 def test_collect_one_by_one_with_pause_and_skips(tmp_path, monkeypatch):

@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -19,7 +20,7 @@ from uuid import uuid4
 import httpx
 
 from app.smotvibe import discover_smotvibe_download_targets, is_player_page_url
-from app.proxy_config import download_proxy
+from app.proxy_config import download_proxy, mask_secrets, proxy_env
 from app.settings import settings
 from app.store import AppStore
 
@@ -31,6 +32,12 @@ CONTENT_TYPE_EXTENSIONS = {
     "video/webm": ".webm",
 }
 SMOTVIBE_FORMAT_SELECTOR = "bv*[height<=720]+ba[format_id!*=failover]/b[height<=720]/b"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
+)
+GB = 1024**3
+SIZE_PROBE_TIMEOUT = 90  # yt-dlp --dump-json: метаданные, не загрузка
 
 # Download-quality choices for URL ingestion.
 #   "" / "default" -> keep each source's built-in cap (best for generic/YouTube,
@@ -375,6 +382,7 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
             suffix = CONTENT_TYPE_EXTENSIONS.get(content_type, ".mp4")
             original_filename = f"{Path(original_filename).stem or 'source'}{suffix}"
         total = _float_or_zero(response.headers.get("content-length"))
+        ensure_free_space((int(total), int(total)) if total > 0 else None)
         dest = settings.source_dir / f"{uuid4().hex}-{Path(original_filename).name}"
         with dest.open("wb") as out:
             for chunk in response.iter_bytes():
@@ -402,13 +410,15 @@ def download_youtube_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "youtube_url":
         raise ValueError("url is not a YouTube URL")
     settings.source_dir.mkdir(parents=True, exist_ok=True)
+    format_selector = format_selector_for_quality(quality, default_cap=None)
+    ensure_free_space(_ytdlp_disk_need(_size_probe_args(url, format_selector)))
     token = uuid4().hex
     output_template = settings.source_dir / f"{token}.%(ext)s"
     proc = subprocess.run(
         [
             "yt-dlp",
             "-f",
-            format_selector_for_quality(quality, default_cap=None),
+            format_selector,
             "--merge-output-format",
             "mp4",
             "-o",
@@ -530,12 +540,14 @@ def _download_with_ytdlp(
     safe_stem = _safe_filename_stem(filename_stem)
     output_basename = f"{token}-{safe_stem}" if safe_stem else token
     output_template = settings.source_dir / f"{output_basename}.%(ext)s"
+    header_args = ["--user-agent", BROWSER_USER_AGENT]
+    if referer:
+        header_args.extend(["--referer", referer, "--add-header", f"Origin:{_origin(referer)}"])
     command_args = [
         "--continue",
         # Свой загрузчик HLS (не ffmpeg): он помнит скачанные фрагменты и умеет докачку.
         "--hls-prefer-native",
-        "--user-agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+        *header_args,
         "--no-playlist",
         "-f",
         format_selector,
@@ -559,19 +571,22 @@ def _download_with_ytdlp(
         "--newline",
         "-o",
         str(output_template),
+        url,
     ]
-    if referer:
-        command_args.extend(["--referer", referer])
-        command_args.extend(["--add-header", f"Origin:{_origin(referer)}"])
-    command_args.append(url)
+    proxy = download_proxy()
     try:
+        # Места не хватит — отказ сразу, а не ENOSPC через 40 минут загрузки.
+        # Уже скачанное (докачка) место не просит.
+        ensure_free_space(
+            _ytdlp_disk_need(_size_probe_args(url, format_selector, header_args), proxy=proxy),
+            already=sum(p.stat().st_size for p in settings.source_dir.glob(f"{output_basename}.*") if p.is_file()),
+        )
         proc = _run_ytdlp(command_args)
-        proxy = download_proxy()
         if proc.returncode != 0 and proxy:
             # Напрямую не вышло (CDN режет соединение) — повторяем через прокси
             # (настройки сервиса → «Прокси», запасной — DOWNLOAD_PROXY_URL).
             # Трафик через прокси платный: из одинаковых по высоте берём меньший битрейт.
-            proc = _run_ytdlp(["--proxy", proxy, "-S", "res,fps,+br", *command_args])
+            proc = _run_ytdlp(["-S", "res,fps,+br", *command_args], proxy=proxy)
     except DownloadCancelled:
         _remove_partials(output_basename)
         raise
@@ -632,15 +647,115 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
 
 
-def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess[str]:
+def ytdlp_disk_need(info: dict) -> tuple[int, int] | None:
+    """(размер файла, пик на диске) по метаданным yt-dlp; None — размер неизвестен.
+
+    Пик вдвое больше файла, когда после загрузки ffmpeg пишет копию: склейка видео +
+    звук или ремукс HLS (MPEG-TS → mp4) — исходник и копия лежат рядом до конца.
+    """
+    formats = info.get("requested_formats") or [info]
+    sizes = [f.get("filesize") or f.get("filesize_approx") for f in formats]
+    if not all(isinstance(s, (int, float)) and s > 0 for s in sizes):
+        total = info.get("filesize") or info.get("filesize_approx")
+        if not isinstance(total, (int, float)) or total <= 0:
+            return None
+        sizes = [total]
+    size = int(sum(sizes))
+    copies = len(formats) > 1 or any(str(f.get("protocol") or "").startswith("m3u8") for f in formats)
+    return size, size * 2 if copies else size
+
+
+def ensure_free_space(need: tuple[int, int] | None, *, already: int = 0, directory: Path | None = None) -> None:
+    """ValueError, если в каталоге источников меньше места, чем пик загрузки + запас.
+
+    ``need`` — (размер, пик на диске) из ``ytdlp_disk_need`` или Content-Length; None —
+    размер неизвестен, тогда требуем хотя бы запас. ``already`` — недокачанное с
+    прошлой попытки: оно уже лежит на диске.
+    """
+    directory = directory or settings.source_dir
+    reserve = int(max(0.0, settings.download_free_reserve_gb) * GB)
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        return
+    size, peak = need or (0, 0)
+    required = max(0, peak - already) + reserve
+    if free >= required:
+        return
+    if need:
+        copy = " и его копия при склейке" if peak > size else ""
+        raise ValueError(
+            f"мало места для загрузки: свободно {free / GB:.1f} ГБ, нужно ~{required / GB:.1f} ГБ "
+            f"(файл ~{size / GB:.1f} ГБ{copy} + запас {reserve / GB:.0f} ГБ) — освободи место в каталоге источников"
+        )
+    raise ValueError(
+        f"мало места для загрузки: свободно {free / GB:.1f} ГБ, нужно хотя бы {reserve / GB:.0f} ГБ запаса "
+        "— освободи место в каталоге источников"
+    )
+
+
+def _size_probe_args(url: str, format_selector: str, header_args: list[str] | None = None) -> list[str]:
+    return ["--dump-json", "--skip-download", "--no-playlist", "--no-warnings",
+            "-f", format_selector, *(header_args or []), url]
+
+
+def _ytdlp_disk_need(args: list[str], *, proxy: str = "") -> tuple[int, int] | None:
+    """Размер будущей загрузки у yt-dlp (``--dump-json``): напрямую, не вышло — через прокси.
+
+    Любой сбой — «размер неизвестен»: проверка места не должна ломать загрузку.
+    """
+    if not settings.download_size_probe:
+        return None
+    token = current_cancel_token()
+    for attempt_proxy in ("", proxy) if proxy else ("",):
+        if token:
+            token.check()
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "yt_dlp", *args],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                errors="replace",
+                env=proxy_env(attempt_proxy) if attempt_proxy else None,
+            )
+        except OSError:
+            return None
+        if token:
+            token.attach(proc)
+        try:
+            out, _ = proc.communicate(timeout=SIZE_PROBE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            continue
+        finally:
+            if token:
+                token.detach()
+        if token:
+            token.check()
+        if proc.returncode != 0 or not out.strip():
+            continue
+        try:
+            info = json.loads(out.strip().splitlines()[0])
+        except ValueError:
+            return None
+        return ytdlp_disk_need(info) if isinstance(info, dict) else None
+    return None
+
+
+def _run_ytdlp(args: list[str], *, proxy: str = "") -> subprocess.CompletedProcess[str]:
+    """yt-dlp с аргументами ``args``; ``proxy`` — через окружение процесса, не argv
+    (логин и пароль прокси в ``--proxy`` видно в ``ps`` контейнера)."""
     commands = [
         [sys.executable, "-m", "yt_dlp", *args],
         ["yt-dlp", *args],
     ]
+    env = proxy_env(proxy) if proxy else None
     last_error = ""
     for index, command in enumerate(commands):
         try:
-            proc = _stream_ytdlp(command)
+            proc = _stream_ytdlp(command, env=env)
         except subprocess.TimeoutExpired:
             last_error = f"yt-dlp timed out after {settings.external_download_timeout_seconds}s"
             continue
@@ -656,7 +771,7 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(commands[-1], 1, "", last_error)
 
 
-def _stream_ytdlp(command: list[str]) -> subprocess.CompletedProcess[str]:
+def _stream_ytdlp(command: list[str], *, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     """Run yt-dlp while reading its output line by line.
 
     Streaming (instead of ``subprocess.run``) is what makes a download both
@@ -674,6 +789,7 @@ def _stream_ytdlp(command: list[str]) -> subprocess.CompletedProcess[str]:
         text=True,
         errors="replace",
         bufsize=1,
+        env=env,
     )
     if token:
         token.attach(proc)
@@ -706,7 +822,8 @@ def _stream_ytdlp(command: list[str]) -> subprocess.CompletedProcess[str]:
         token.check()
     if timed_out:
         raise subprocess.TimeoutExpired(command, timeout)
-    return subprocess.CompletedProcess(command, proc.returncode, "\n".join(tail), "")
+    # yt-dlp может назвать прокси в ошибке («Unable to connect to proxy …») — без кредов.
+    return subprocess.CompletedProcess(command, proc.returncode, mask_secrets("\n".join(tail)), "")
 
 
 def _remove_partials(output_basename: str) -> None:
@@ -808,8 +925,8 @@ def _float_or_zero(value) -> float:
 
 def _safe_error(exc) -> str:
     """Причина ошибки для UI: строки ERROR из лога yt-dlp (они в конце, после
-    болтовни про метаданные), иначе — хвост текста."""
-    text = str(exc or "").strip()
+    болтовни про метаданные), иначе — хвост текста. Креды прокси скрыты."""
+    text = mask_secrets(exc).strip()
     errors = [line for line in text.splitlines() if line.startswith("ERROR")]
     if errors:
         return "\n".join(errors)[-500:]

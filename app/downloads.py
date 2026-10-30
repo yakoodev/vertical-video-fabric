@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from datetime import datetime, timezone
 from itertools import count
 from urllib.parse import urlsplit
 
 from app.ingest import CancelToken, DownloadCancelled, cancellable, classify_source_url
+from app.proxy_config import mask_secrets
 
 
 ACTIVE_STATUSES = {"queued", "downloading", "cancelling"}
@@ -17,7 +19,7 @@ def _now_text() -> str:
 
 
 def _safe_error(exc: object) -> str:
-    text = str(exc or "").strip()
+    text = mask_secrets(exc).strip()
     return text[:500] or "download failed"
 
 
@@ -58,7 +60,9 @@ class DownloadService:
                     return dict(task)
         raise KeyError(f"download {task_id} not found")
 
-    def start(self, url: str, *, quality: str = "", selection: dict | None = None) -> dict:
+    def start(self, url: str, *, quality: str = "", selection: dict | None = None, ingestor=None) -> dict:
+        """Запустить загрузку в фоне. ``ingestor`` — свой на этот вызов (main.py отдаёт
+        текущий ``source_ingestor``, его подменяют тесты); по умолчанию — сервиса."""
         url = url.strip()
         # Fail fast on a malformed URL so the user sees it in the response instead
         # of having to open the activity panel for it.
@@ -67,12 +71,21 @@ class DownloadService:
         task = self._new_task(url=url, quality=quality, label=_label_for(url, selection))
         thread = threading.Thread(
             target=self._run,
-            args=(task["id"], url, quality, selection),
+            args=(task["id"], url, quality, selection, ingestor or self.ingestor),
             name=f"download-{task['id']}",
             daemon=True,
         )
         thread.start()
         return self.get(task["id"])
+
+    async def wait(self, task_id: int, *, poll: float = 0.5) -> dict:
+        """Дождаться конца загрузки, не занимая event loop и поток пула: многочасовой
+        VOD синхронно в обработчике однажды повесил весь API на 40 минут."""
+        task = self.get(task_id)
+        while task["status"] in ACTIVE_STATUSES:
+            await asyncio.sleep(poll)
+            task = self.get(task_id)
+        return task
 
     def cancel(self, task_id: int) -> dict:
         with self._lock:
@@ -120,7 +133,7 @@ class DownloadService:
             self._tasks.remove(stale)
             self._tokens.pop(stale["id"], None)
 
-    def _run(self, task_id: int, url: str, quality: str, selection: dict) -> None:
+    def _run(self, task_id: int, url: str, quality: str, selection: dict, ingestor) -> None:
         # Percentages come from yt-dlp's own progress lines; keep the last one so a
         # cancel mid-download still shows where it stopped.
         def on_progress(percent: float, message: str) -> None:
@@ -132,7 +145,7 @@ class DownloadService:
         self._update(task_id, status="downloading", message="Скачивание…")
         try:
             with cancellable(token):
-                source = self._ingest(url, quality, selection)
+                source = self._ingest(ingestor, url, quality, selection)
         except DownloadCancelled:
             self._update(task_id, status="cancelled", message="Отменено", progress=0.0)
             return
@@ -159,9 +172,9 @@ class DownloadService:
             source_id=source.get("id"),
         )
 
-    def _ingest(self, url: str, quality: str, selection: dict) -> dict:
+    def _ingest(self, ingestor, url: str, quality: str, selection: dict) -> dict:
         if selection.get("media_url"):
-            return self.ingestor.ingest_smotvibe_selection(
+            return ingestor.ingest_smotvibe_selection(
                 url,
                 media_url=selection.get("media_url", ""),
                 referer=selection.get("referer", ""),
@@ -169,7 +182,7 @@ class DownloadService:
                 filename_label=selection.get("filename_label", ""),
                 quality=quality,
             )
-        return self.ingestor.ingest_url(url, quality=quality)
+        return ingestor.ingest_url(url, quality=quality)
 
     def as_tasks(self) -> list[dict]:
         """Shape download tasks like the rows behind /api/tasks."""

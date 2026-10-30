@@ -761,12 +761,14 @@ def test_twitch_download_retries_through_proxy_when_direct_fails(tmp_path, monke
     import subprocess
 
     monkeypatch.setattr(settings, "source_dir", tmp_path)
-    monkeypatch.setattr(settings, "download_proxy_url", "http://proxy.example:3128")
+    monkeypatch.setattr(settings, "download_proxy_url", "http://user:secret@proxy.example:3128")
     calls = []
+    proxies = []
 
-    def fake_run(args):
+    def fake_run(args, *, proxy=""):
         calls.append(args)
-        if "--proxy" not in args:
+        proxies.append(proxy)
+        if not proxy:
             return subprocess.CompletedProcess(args, 1, "", "ERROR: ffmpeg exited with code 1")
         template = args[args.index("-o") + 1]
         Path(template.replace("%(ext)s", "mp4")).write_bytes(b"video")
@@ -775,7 +777,10 @@ def test_twitch_download_retries_through_proxy_when_direct_fails(tmp_path, monke
     monkeypatch.setattr(ingest_module, "_run_ytdlp", fake_run)
     stored = ingest_module.download_twitch_url("https://www.twitch.tv/videos/2905714957")
     assert stored.path.exists() and len(calls) == 2
-    assert calls[1][:4] == ["--proxy", "http://proxy.example:3128", "-S", "res,fps,+br"]
+    # Прокси — окружением yt-dlp, не argv: логин и пароль в ps контейнера не видны.
+    assert proxies == ["", "http://user:secret@proxy.example:3128"]
+    assert calls[1][:2] == ["-S", "res,fps,+br"]
+    assert not any("secret" in arg or arg == "--proxy" for args in calls for arg in args)
 
 
 def test_download_error_shows_ytdlp_error_lines():
@@ -817,3 +822,147 @@ def test_failed_download_keeps_partial_and_retry_resumes_same_name(tmp_path, mon
     stored = ingest_module.download_twitch_url("https://www.twitch.tv/videos/2905714957")
     assert templates[0] == templates[1]
     assert stored.path.exists() and not stored.path.name.startswith("dl-")
+
+
+def test_ytdlp_gets_proxy_through_env_not_argv_and_masks_it(monkeypatch):
+    """Креды прокси не в argv (их видно в ps контейнера) и не в тексте ошибки."""
+    seen = []
+
+    def fake_popen(command, **kwargs):
+        seen.append((command, kwargs.get("env")))
+        return FakePopen(command, ["ERROR: Unable to connect to proxy http://user:secret@proxy.example:3128"], 1)
+
+    monkeypatch.setattr("app.ingest.subprocess.Popen", fake_popen)
+    proc = _run_ytdlp(["https://cdn.example/master.m3u8"], proxy="http://user:secret@proxy.example:3128")
+
+    command, env = seen[0]
+    assert not any("secret" in arg for arg in command) and "--proxy" not in command
+    for key in ("http_proxy", "HTTPS_PROXY", "all_proxy"):
+        assert env[key] == "http://user:secret@proxy.example:3128"
+    assert "secret" not in proc.stdout and "http://•••@proxy.example:3128" in proc.stdout
+    assert "secret" not in ingest_module._safe_error(proc.stdout)
+
+    # Без прокси — окружение сервиса как есть.
+    envs = []
+
+    def plain_popen(command, **kwargs):
+        envs.append(kwargs.get("env"))
+        return FakePopen(command, ["ok"], 0)
+
+    monkeypatch.setattr("app.ingest.subprocess.Popen", plain_popen)
+    _run_ytdlp(["--version"])
+    assert envs == [None]
+
+
+def test_ytdlp_disk_need_reads_sizes_and_counts_the_merge_copy():
+    from app.ingest import ytdlp_disk_need
+
+    gb = 1024**3
+    # Видео + звук отдельно: после загрузки ffmpeg склеивает в третий файл — пик вдвое.
+    merged = {"requested_formats": [{"filesize": 3 * gb, "protocol": "https"},
+                                    {"filesize_approx": gb, "protocol": "https"}]}
+    assert ytdlp_disk_need(merged) == (4 * gb, 8 * gb)
+    # Twitch VOD: HLS → ремукс MPEG-TS в mp4 тоже пишет копию.
+    assert ytdlp_disk_need({"filesize_approx": 13 * gb, "protocol": "m3u8_native"}) == (13 * gb, 26 * gb)
+    # Готовый mp4 одним файлом — без копии.
+    assert ytdlp_disk_need({"filesize": 5 * gb, "protocol": "https"}) == (5 * gb, 5 * gb)
+    # Размер одной из частей неизвестен — берём общий, если yt-dlp его посчитал.
+    partial = {"requested_formats": [{"filesize": gb}, {}], "filesize_approx": 2 * gb}
+    assert ytdlp_disk_need(partial) == (2 * gb, 4 * gb)
+    assert ytdlp_disk_need({"protocol": "m3u8"}) is None
+
+
+def _disk(monkeypatch, free_gb: float) -> None:
+    from collections import namedtuple
+
+    gb = 1024**3
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr("app.ingest.shutil.disk_usage", lambda path: usage(100 * gb, int((100 - free_gb) * gb),
+                                                                            int(free_gb * gb)))
+
+
+def test_free_space_check_refuses_with_a_clear_error(tmp_path, monkeypatch):
+    from app.ingest import ensure_free_space
+
+    gb = 1024**3
+    monkeypatch.setattr(settings, "source_dir", tmp_path)
+    monkeypatch.setattr(settings, "download_free_reserve_gb", 2)
+    _disk(monkeypatch, 10)
+
+    ensure_free_space((7 * gb, 7 * gb))  # 7 + 2 запаса ≤ 10
+    with pytest.raises(ValueError, match=r"мало места.*свободно 10\.0 ГБ.*файл ~9\.0 ГБ \+ запас 2 ГБ"):
+        ensure_free_space((9 * gb, 9 * gb))
+    with pytest.raises(ValueError, match="копия при склейке"):
+        ensure_free_space((5 * gb, 10 * gb))
+    # Докачка: 3 ГБ уже на диске — просим только недостающее.
+    ensure_free_space((9 * gb, 9 * gb), already=3 * gb)
+    # Размер неизвестен — нужен хотя бы запас.
+    ensure_free_space(None)
+    _disk(monkeypatch, 1)
+    with pytest.raises(ValueError, match="хотя бы 2 ГБ запаса"):
+        ensure_free_space(None)
+
+
+def test_ytdlp_download_refuses_before_starting_when_disk_is_short(tmp_path, monkeypatch):
+    """13 ГБ VOD на диск с 10 ГБ — отказ до загрузки, а не ENOSPC через 40 минут."""
+    import json as json_module
+
+    gb = 1024**3
+    monkeypatch.setattr(settings, "source_dir", tmp_path)
+    monkeypatch.setattr(settings, "download_size_probe", True)
+    monkeypatch.setattr(settings, "download_free_reserve_gb", 2)
+    monkeypatch.setattr(settings, "download_proxy_url", "")
+    _disk(monkeypatch, 10)
+    probes = []
+
+    class ProbePopen:
+        def __init__(self, command, **kwargs):
+            probes.append(command)
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            info = {"id": "v1", "filesize_approx": 13 * gb, "protocol": "m3u8_native"}
+            return json_module.dumps(info) + "\n", None
+
+        def poll(self):
+            return self.returncode
+
+    def unexpected_download(args, **kwargs):
+        raise AssertionError("загрузка не должна начаться")
+
+    monkeypatch.setattr("app.ingest.subprocess.Popen", ProbePopen)
+    monkeypatch.setattr("app.ingest._run_ytdlp", unexpected_download)
+
+    with pytest.raises(ValueError, match="мало места"):
+        download_twitch_url("https://www.twitch.tv/videos/2905714957")
+    probe = probes[0]
+    assert "--dump-json" in probe and "--skip-download" in probe and probe[-1].endswith("2905714957")
+    assert "-f" in probe and "--user-agent" in probe and "-o" not in probe
+
+
+def test_direct_download_checks_free_space_by_content_length(tmp_path, monkeypatch):
+    gb = 1024**3
+    monkeypatch.setattr(settings, "source_dir", tmp_path)
+    monkeypatch.setattr(settings, "download_free_reserve_gb", 2)
+    _disk(monkeypatch, 3)
+
+    class Response:
+        headers = {"content-type": "video/mp4", "content-length": str(5 * gb)}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            raise AssertionError("тело не должно читаться")
+
+    class Stream:
+        def __enter__(self):
+            return Response()
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("app.ingest.httpx.stream", lambda *a, **kw: Stream())
+    with pytest.raises(ValueError, match="мало места"):
+        download_direct_url("https://cdn.example/video.mp4")
+    assert list(tmp_path.glob("*")) == []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -699,7 +700,7 @@ async def ui_upload_source(
     file: Annotated[UploadFile, File()],
 ) -> RedirectResponse:
     try:
-        source = source_ingestor.ingest_upload(file.file, file.filename or "source.mp4")
+        source = await asyncio.to_thread(source_ingestor.ingest_upload, file.file, file.filename or "source.mp4")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
@@ -1691,7 +1692,10 @@ def api_smotvibe_options(payload: SmotvibeOptionsRequest, _auth: AuthDep) -> lis
     summary="Ingest a source video",
     description=(
         "Accepts either multipart `file` upload or JSON body `{ \"url\": \"...\" }`. "
-        "Direct mp4/mov/webm URLs, YouTube URLs, Twitch URLs, and Smotvibe player pages are supported."
+        "Direct mp4/mov/webm URLs, YouTube URLs, Twitch URLs, and Smotvibe player pages are supported. "
+        "A URL is downloaded as a background task (same as `/api/sources/download`: visible in "
+        "`/api/tasks/active`, cancellable); the request waits for it and returns the source. "
+        "With `wait: false` it returns the download task at once (202)."
     ),
 )
 async def api_create_source(request: Request, _auth: AuthDep) -> dict:
@@ -1702,33 +1706,57 @@ async def api_create_source(request: Request, _auth: AuthDep) -> dict:
             url = str(form.get("url") or "").strip()
             if upload is not None and hasattr(upload, "file"):
                 try:
-                    return source_ingestor.ingest_upload(upload.file, upload.filename or "source.mp4")
+                    # Копия многогигабайтного файла, sha256 и ffprobe — в потоке, не в event loop.
+                    return await asyncio.to_thread(
+                        source_ingestor.ingest_upload, upload.file, upload.filename or "source.mp4"
+                    )
                 finally:
                     await upload.close()
             if url:
-                return _ingest_source_url(
-                    url,
-                    quality=str(form.get("quality") or ""),
-                    smotvibe_media_url=str(form.get("smotvibe_media_url") or ""),
-                    smotvibe_referer=str(form.get("smotvibe_referer") or ""),
-                    smotvibe_audio_format_id=str(form.get("smotvibe_audio_format_id") or ""),
-                    smotvibe_filename_label=str(form.get("smotvibe_filename_label") or ""),
-                )
+                return await _download_source_url(url, form)
             raise ValueError("multipart request must include file or url")
         payload = await request.json()
         url = str(payload.get("url") or "").strip()
         if not url:
             raise ValueError("json request must include url")
-        return _ingest_source_url(
-            url,
-            quality=str(payload.get("quality") or ""),
-            smotvibe_media_url=str(payload.get("smotvibe_media_url") or ""),
-            smotvibe_referer=str(payload.get("smotvibe_referer") or ""),
-            smotvibe_audio_format_id=str(payload.get("smotvibe_audio_format_id") or ""),
-            smotvibe_filename_label=str(payload.get("smotvibe_filename_label") or ""),
-        )
+        return await _download_source_url(url, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _wants_wait(value) -> bool:
+    if value is None or isinstance(value, bool):
+        return value is not False
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+async def _download_source_url(url: str, fields) -> dict | JSONResponse:
+    """URL источника — фоновой загрузкой (download_service), ответ — как раньше: источник.
+
+    Раньше обработчик (async) качал синхронно: 4,8-часовой Twitch VOD держал event loop
+    40 минут, и весь API стоял. Теперь загрузка в своём потоке и видна в «Активности»,
+    а запрос ждёт её через asyncio.sleep. ``wait: false`` — сразу задача загрузки (202).
+    """
+    task = download_service.start(
+        url,
+        quality=str(fields.get("quality") or ""),
+        selection={
+            "media_url": str(fields.get("smotvibe_media_url") or ""),
+            "referer": str(fields.get("smotvibe_referer") or ""),
+            "audio_format_id": str(fields.get("smotvibe_audio_format_id") or ""),
+            "filename_label": str(fields.get("smotvibe_filename_label") or ""),
+        },
+        ingestor=source_ingestor,
+    )
+    if not _wants_wait(fields.get("wait")):
+        return JSONResponse(task, status_code=202)
+    task = await download_service.wait(task["id"])
+    if task.get("source_id"):
+        # Скачалось, но ffprobe не прочитал — источник со status failed, как раньше.
+        return store.get_source(task["source_id"])
+    if task["status"] == "cancelled":
+        raise ValueError("download cancelled")
+    raise ValueError(task.get("error") or "download failed")
 
 
 @app.post(

@@ -27,6 +27,8 @@ os.environ.setdefault("TWITCH_CHAT_AUTO_IMPORT", "0")
 os.environ.setdefault("RENDER_LOUDNORM", "0")
 # Фоновый сбор статистики площадок ходит в сеть — в тестах выключен.
 os.environ.setdefault("STATS_INTERVAL_HOURS", "0")
+# Размер загрузки yt-dlp узнаёт по сети — в тестах только явно (settings.download_size_probe).
+os.environ.setdefault("DOWNLOAD_SIZE_PROBE", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")
