@@ -7,8 +7,8 @@ Whisper (и Gemini, когда слушает голоса) на тихих ме
 
 * текст из стоп-листа известных фантомов (``is_phantom_text``) — выкидывается всегда;
 * сегмент, на время которого дорожка речи (``speech_tracks`` — микрофон) тише порога
-  речи (``speech_threshold`` — тот же авто-порог, что у голоса PNGtuber: шум дорожки +
-  12 дБ в рамках −55..−40) — распознан на тишине. На смеси с игрой громко почти всегда,
+  речи (``speech_threshold``: шум дорожки + 12 дБ в рамках −55..−40 — прежний авто-порог
+  PNGtuber; у рта теперь свой, под речью) — распознан на тишине. На смеси с игрой громко почти всегда,
   такой сегмент остаётся: проверка ничего не выкидывает, когда звук не тихий.
 
 Чистые функции; звук — сырые 16-битные сэмплы моно (``wav_pcm``).
@@ -62,11 +62,25 @@ def frame_levels(pcm: bytes, rate: int = 16000, step: float = FRAME_SEC) -> list
     return out
 
 
-def speech_threshold(levels: list[float]) -> float:
-    """Порог «звучит голос» по шуму дорожки — как авто-порог голоса PNGtuber."""
-    from app.pngtuber import auto_threshold
+# Порог «на дорожке речи что-то звучит» для фильтра фантомов: шум (15-й перцентиль) + 12 дБ, не выше
+# громких мест (95-й) − 10, в рамках −55..−40. Свой, а не авто-порог PNGtuber: рту нужен порог под
+# речью (дыхание — не речь), а фильтру — мягкий: выкидывать только сегменты на настоящей тишине.
+SPEECH_OVER_FLOOR_DB = 12.0
+SPEECH_UNDER_PEAK_DB = 10.0
+SPEECH_MIN_DB = -55.0
+SPEECH_MAX_DB = -40.0
+SPEECH_FALLBACK_DB = -45.0
 
-    return auto_threshold(levels)
+
+def speech_threshold(levels: list[float]) -> float:
+    """Порог «звучит голос» по шуму дорожки (тишина цифрового нуля не в счёт)."""
+    heard = sorted(v for v in levels if v is not None and v > -89.0)
+    if len(heard) < 4:
+        return SPEECH_FALLBACK_DB
+    floor = heard[int(len(heard) * 0.15)]
+    peak = heard[min(len(heard) - 1, int(len(heard) * 0.95))]
+    want = max(min(floor + SPEECH_OVER_FLOOR_DB, peak - SPEECH_UNDER_PEAK_DB), floor + 4.0)
+    return round(min(SPEECH_MAX_DB, max(SPEECH_MIN_DB, want)), 1)
 
 
 def heard_sec(levels: list[float], threshold: float, start: float, end: float, step: float = FRAME_SEC) -> float:
