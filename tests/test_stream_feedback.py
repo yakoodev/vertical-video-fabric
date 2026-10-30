@@ -216,8 +216,9 @@ def test_set_source_audio_gains_speech_track_and_auto(tmp_path, monkeypatch):
     out, ok = run_tool(_ctx(store), "set_source_audio",
                        {"project_id": source_id, "tracks": [0, {"track": 1, "gain_db": "auto"}]})
     assert ok, out
-    # Цель −20 + 9 − (−36) = 25 дБ, потолок усиления — +24.
-    assert out["auto_gain"] == {"1": 24.0} and out["audio"]["mix"][1]["gain_db"] == 24.0
+    # Цель −20 + 9 − (−36) = 25 дБ, потолок усиления — +24: недостающий 1 дБ — игра тише.
+    assert out["auto_gain"] == {"0": -1.0, "1": 24.0} and out["audio"]["mix"][1]["gain_db"] == 24.0
+    assert out["audio"]["mix"][0] == {"track": 0, "gain_db": -1.0} and out["auto"]["1"]["over_db"] == 9.0
     assert out["auto"]["1"]["voice_db"] == -36.0 and out["auto"]["1"]["others_db"] == -20.0
     # REST — то же.
     from fastapi.testclient import TestClient
