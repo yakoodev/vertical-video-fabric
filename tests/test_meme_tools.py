@@ -326,10 +326,12 @@ def test_import_video_from_url_uses_ingest_ytdlp_and_proxy_retry(tmp_path, monke
 
     store = _store(tmp_path, monkeypatch)
     runs: list[list[str]] = []
+    proxies: list[str] = []
 
-    def fake_ytdlp(args):  # без сети: первый раз «CDN режет», через прокси — файл
+    def fake_ytdlp(args, *, proxy=""):  # без сети: первый раз «CDN режет», через прокси — файл
         runs.append(args)
-        if "--proxy" not in args:
+        proxies.append(proxy)
+        if not proxy:
             return subprocess.CompletedProcess(args, 1, "ERROR: unable to download video data: HTTP 403", "")
         template = Path(args[args.index("-o") + 1])
         (template.parent / "dl.mp4").write_bytes(b"section")
@@ -347,7 +349,8 @@ def test_import_video_from_url_uses_ingest_ytdlp_and_proxy_retry(tmp_path, monke
     monkeypatch.setattr(montage_assets, "probe_asset",
                         lambda p: {"duration_sec": 18.5, "width": 1440, "height": 1080, "has_audio": True})
     asset = import_video_from_url(store, "https://www.youtube.com/watch?v=abc", 61, 79.5)
-    assert len(runs) == 2 and runs[1][:4] == ["--proxy", "http://u:p@proxy:8080", "-S", "res,fps,+br"]
+    assert len(runs) == 2 and runs[1][:2] == ["-S", "res,fps,+br"] and "--proxy" not in runs[1]
+    assert proxies == ["", "http://u:p@proxy:8080"]
     assert "*61.000-79.500" in runs[0]
     assert encodes[0][encodes[0].index("-t") + 1] == "18.500" and "aac" in encodes[0]
     assert asset["kind"] == "video" and asset["has_audio"] and asset["width"] == 1440
@@ -357,7 +360,7 @@ def test_import_video_from_url_uses_ingest_ytdlp_and_proxy_retry(tmp_path, monke
 
     # Не скачалось и через прокси — понятная ошибка с ERROR-строкой yt-dlp.
     monkeypatch.setattr(ingest, "_run_ytdlp",
-                        lambda args: subprocess.CompletedProcess(args, 1, "noise\nERROR: Video unavailable", ""))
+                        lambda args, proxy="": subprocess.CompletedProcess(args, 1, "noise\nERROR: Video unavailable", ""))
     with pytest.raises(ValueError, match="Video unavailable"):
         import_video_from_url(store, "https://youtu.be/zzz", 0, 5)
     with pytest.raises(ValueError, match="http"):

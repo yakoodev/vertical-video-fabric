@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
+import time
 from pathlib import Path
+from typing import Iterable, Iterator
 
 from app.ai.contracts import AnalysisClip, AnalysisResult, AnalysisSegment
 from app.settings import settings
@@ -13,6 +16,12 @@ _MOTION_W = 64
 _MOTION_H = 36
 _MOTION_FPS = 2
 _AUDIO_SR = 16000
+# Сигналы считаются потоком, по блокам: 4,8-часовой VOD целиком — 0.55 ГБ PCM, его float32
+# и квадрат (ещё 2.2 ГБ) плюс кадры во float32 и их разность (0.6 ГБ) — почти половина
+# лимита контейнера на одну задачу, и освобождённое оседало в кучах malloc.
+_FRAMES_PER_BLOCK = 512
+_HOPS_PER_BLOCK = 256
+_FFMPEG_TIMEOUT = 60 * 20
 
 
 class ActionVideoAnalyzer:
@@ -33,16 +42,20 @@ class ActionVideoAnalyzer:
         duration = float(source.get("duration_sec") or 0)
         if not path.exists():
             raise RuntimeError("source media not found for action detection")
-        regions = detect_action_regions(
-            path,
-            duration,
-            max_clips=int(settings.action_max_clips),
-            min_len=float(settings.action_min_clip_seconds),
-            max_len=float(settings.action_max_clip_seconds),
-            lead=float(settings.action_lead_seconds),
-            tail=float(settings.action_tail_seconds),
-            merge_gap=float(settings.action_merge_gap_seconds),
-        )
+        from app.heavy_queue import heavy_slot
+
+        # Декод всего исходника — в очереди тяжёлых задач, не рядом с рендером и Whisper.
+        with heavy_slot("action", path.name):
+            regions = detect_action_regions(
+                path,
+                duration,
+                max_clips=int(settings.action_max_clips),
+                min_len=float(settings.action_min_clip_seconds),
+                max_len=float(settings.action_max_clip_seconds),
+                lead=float(settings.action_lead_seconds),
+                tail=float(settings.action_tail_seconds),
+                merge_gap=float(settings.action_merge_gap_seconds),
+            )
         if not regions:
             raise RuntimeError("no action regions detected in the source")
         clips: list[AnalysisClip] = []
@@ -100,23 +113,20 @@ def detect_action_regions(
 
     import numpy as np
 
-    raw = _run_ffmpeg(
-        ["-i", str(path), "-vf", f"fps={_MOTION_FPS},scale={_MOTION_W}:{_MOTION_H},format=gray", "-f", "rawvideo", "-"]
-    )
     pixels = _MOTION_W * _MOTION_H
-    frame_count = len(raw) // pixels
-    if frame_count < 4:
+    motion = motion_signal(_ffmpeg_blocks(
+        ["-i", str(path), "-vf", f"fps={_MOTION_FPS},scale={_MOTION_W}:{_MOTION_H},format=gray", "-f", "rawvideo", "-"],
+        pixels * _FRAMES_PER_BLOCK,
+    ))
+    if len(motion) < 3:  # меньше 4 кадров
         return []
-    frames = np.frombuffer(raw, dtype=np.uint8)[: frame_count * pixels].reshape(frame_count, pixels).astype(np.float32)
-    motion = np.abs(np.diff(frames, axis=0)).mean(axis=1)
 
-    wav = _run_ffmpeg(["-i", str(path), "-ac", "1", "-ar", str(_AUDIO_SR), "-f", "s16le", "-"])
-    audio = np.frombuffer(wav, dtype=np.int16).astype(np.float32) / 32768.0
     hop = _AUDIO_SR // _MOTION_FPS
-    audio_windows = len(audio) // hop
-    if audio_windows:
-        loudness = np.sqrt((audio[: audio_windows * hop].reshape(audio_windows, hop) ** 2).mean(axis=1))
-    else:
+    loudness = loudness_signal(_ffmpeg_blocks(
+        ["-i", str(path), "-ac", "1", "-ar", str(_AUDIO_SR), "-f", "s16le", "-"], hop * 2 * _HOPS_PER_BLOCK,
+    ))
+    audio_windows = len(loudness)
+    if not audio_windows:
         loudness = np.zeros(len(motion), dtype=np.float32)
 
     length = min(len(motion), len(loudness)) or len(motion)
@@ -183,13 +193,65 @@ def detect_action_regions(
     return candidates[:max_clips]
 
 
-def _run_ffmpeg(args: list[str]) -> bytes:
-    proc = subprocess.run(
-        ["ffmpeg", "-v", "error", *args],
-        capture_output=True,
-        timeout=60 * 20,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed during action detection: {proc.stderr.decode('utf-8', 'ignore')[:300]}")
-    return proc.stdout
+def motion_signal(blocks: Iterable[bytes]):
+    """Движение по кадрам: средняя |разность| соседних кадров (64×36, серые), блоками кадров.
+
+    Те же числа, что ``np.abs(np.diff(frames)).mean(axis=1)`` по всем кадрам сразу, но в
+    памяти — один блок, а не весь исходник."""
+    import numpy as np
+
+    pixels = _MOTION_W * _MOTION_H
+    parts = []
+    prev = None
+    for block in blocks:
+        count = len(block) // pixels
+        if not count:
+            continue
+        frames = np.frombuffer(block, dtype=np.uint8)[: count * pixels].reshape(count, pixels).astype(np.float32)
+        if prev is not None:
+            frames = np.concatenate([prev, frames])
+        if len(frames) > 1:
+            parts.append(np.abs(np.diff(frames, axis=0)).mean(axis=1))
+        prev = frames[-1:]
+    return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+
+
+def loudness_signal(blocks: Iterable[bytes]):
+    """Громкость (RMS) окнами по полсекунды из 16-битного моно PCM, блоками окон."""
+    import numpy as np
+
+    hop = _AUDIO_SR // _MOTION_FPS
+    parts = []
+    for block in blocks:
+        audio = np.frombuffer(block[: len(block) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        windows = len(audio) // hop
+        if windows:
+            parts.append(np.sqrt((audio[: windows * hop].reshape(windows, hop) ** 2).mean(axis=1)))
+    return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+
+
+def _ffmpeg_blocks(args: list[str], block_bytes: int) -> Iterator[bytes]:
+    """Вывод ffmpeg блоками по ``block_bytes`` (последний — что осталось), без чтения целиком."""
+    with tempfile.TemporaryFile() as stderr:
+        proc = subprocess.Popen(["ffmpeg", "-v", "error", *args], stdout=subprocess.PIPE, stderr=stderr)
+        deadline = time.monotonic() + _FFMPEG_TIMEOUT
+        finished = False
+        try:
+            assert proc.stdout is not None
+            while True:
+                block = proc.stdout.read(block_bytes)
+                if not block:
+                    break
+                yield block
+                if time.monotonic() > deadline:
+                    raise subprocess.TimeoutExpired(proc.args, _FFMPEG_TIMEOUT)
+            finished = True
+        finally:
+            if not finished and proc.poll() is None:
+                proc.kill()
+            proc.stdout.close()
+            returncode = proc.wait()
+        if returncode != 0:
+            stderr.seek(0)
+            detail = stderr.read().decode("utf-8", "ignore")[:300]
+            raise RuntimeError(f"ffmpeg failed during action detection: {detail}")

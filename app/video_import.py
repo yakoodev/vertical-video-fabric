@@ -88,7 +88,7 @@ def _download(url: str, template: Path, start: float, end: float):
         # «Прокси», запасной — DOWNLOAD_PROXY_URL); из одинаковых по высоте — меньший битрейт.
         for leftover in template.parent.glob("dl.*"):
             leftover.unlink(missing_ok=True)
-        proc = _run_ytdlp(["--proxy", proxy, "-S", "res,fps,+br", *args])
+        proc = _run_ytdlp(["-S", "res,fps,+br", *args], proxy=proxy)
     return proc
 
 

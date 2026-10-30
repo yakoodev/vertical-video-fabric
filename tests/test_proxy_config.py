@@ -45,3 +45,19 @@ def _store(tmp_path):
     db = Database(tmp_path / "t.sqlite3")
     db.init()
     return AppStore(db, CookieCipher(tmp_path / "k.key"))
+
+
+def test_mask_secrets_hides_proxy_credentials_anywhere_in_text():
+    text = "ERROR: Unable to connect to proxy http://user1:p@ss@158.46.183.32:49155 (socks5://a:b@h:1)"
+    out = proxy_config.mask_secrets(text)
+    assert "user1" not in out and "p@ss" not in out and ":b@" not in out
+    assert "http://•••@158.46.183.32:49155" in out and "socks5://•••@h:1" in out
+    assert proxy_config.mask_secrets("https://cdn.example/a.m3u8") == "https://cdn.example/a.m3u8"
+    assert proxy_config.mask_secrets(None) == ""
+
+
+def test_proxy_env_sets_every_proxy_variable_and_drops_no_proxy():
+    env = proxy_config.proxy_env("http://u:p@h:1", {"PATH": "/bin", "NO_PROXY": "*", "no_proxy": "*"})
+    assert env["PATH"] == "/bin" and "NO_PROXY" not in env and "no_proxy" not in env
+    for key in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        assert env[key] == "http://u:p@h:1"

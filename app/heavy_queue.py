@@ -12,6 +12,11 @@
 ждёт — иначе очередь в одно место заперла бы сама себя. Кадр для агента (view_frame) в
 эту очередь не встаёт (ждать минутный рендер ради картинки незачем) — у кадров своя,
 пошире (``frame_slot``, ``FRAME_JOBS_CONCURRENCY``, по умолчанию 2).
+
+Память (app/memory.py): после каждой тяжёлой задачи — gc и ``malloc_trim`` (освобождённое
+задачей возвращается системе, а не оседает в кучах glibc) и строка в лог с RSS процесса до
+задачи, после неё и после очистки. Перед задачей другого рода выгружается то, что держит
+прошлый род (``release_before_other``: модель Whisper не лежит рядом с рендером).
 """
 
 from __future__ import annotations
@@ -19,16 +24,25 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger(__name__)
+
+# Род задачи → «отпусти память» (модель Whisper): зовётся перед задачей ДРУГОГО рода.
+_release_before_other: dict[str, Callable[[], None]] = {}
+
+
+def release_before_other(kind: str, release: Callable[[], None]) -> None:
+    """``release`` вызовется перед каждой тяжёлой задачей не рода ``kind`` (выгрузить модель)."""
+    _release_before_other[kind] = release
 
 
 class HeavyQueue:
     """FIFO-очередь с ``limit()`` мест; ``slot(kind, label)`` — контекстный менеджер."""
 
-    def __init__(self, limit: Any = None) -> None:
+    def __init__(self, limit: Any = None, *, track_memory: bool = False) -> None:
         self._limit = limit
+        self._track_memory = track_memory
         self._cond = threading.Condition()
         self._local = threading.local()
         self._waiting: list[int] = []
@@ -80,22 +94,60 @@ class HeavyQueue:
         if waited > 1.0:
             log.info("heavy queue: %s %s ждал %.1f с", kind, label, waited)
         self._local.depth = 1
+        if self._track_memory:
+            self._before_task(ticket, kind)
         return ticket
 
     def _exit(self, ticket: int | None) -> None:
         self._local.depth = max(0, getattr(self._local, "depth", 1) - 1)
         if ticket is None:
             return
+        if self._track_memory:
+            # Очистка — пока место занято: следующая задача стартует с отданной памятью.
+            self._after_task(ticket)
         with self._cond:
             self._active.pop(ticket, None)
             self._cond.notify_all()
+
+    def _before_task(self, ticket: int, kind: str) -> None:
+        from app import memory
+
+        try:
+            for owner, release in list(_release_before_other.items()):
+                if owner != kind:
+                    release()
+            rss = memory.rss_mb()
+        except Exception:  # noqa: BLE001 - память — забота, не повод сорвать задачу
+            log.warning("heavy queue: подготовка памяти перед %s не удалась", kind, exc_info=True)
+            return
+        with self._cond:
+            if ticket in self._active:
+                self._active[ticket]["rss_mb"] = rss
+
+    def _after_task(self, ticket: int) -> None:
+        from app import memory
+
+        with self._cond:
+            info = dict(self._active.get(ticket) or {})
+        try:
+            after = memory.rss_mb()
+            memory.release()
+            trimmed = memory.rss_mb()
+        except Exception:  # noqa: BLE001
+            log.warning("heavy queue: очистка памяти после %s не удалась", info.get("kind"), exc_info=True)
+            return
+        log.info(
+            "heavy queue: %s %s — RSS до %s МБ, после %s МБ, после очистки %s МБ (%.0f с)",
+            info.get("kind"), info.get("label") or "", memory.fmt(info.get("rss_mb")), memory.fmt(after),
+            memory.fmt(trimmed), time.time() - float(info.get("since") or time.time()),
+        )
 
     def status(self) -> dict:
         """Что идёт и сколько ждёт (для отладки и ответа агенту)."""
         with self._cond:
             return {
                 "limit": self.limit(),
-                "running": [dict(v) for v in self._active.values()],
+                "running": [{k: v for k, v in item.items() if k != "rss_mb"} for item in self._active.values()],
                 "waiting": len(self._waiting),
             }
 
@@ -113,7 +165,7 @@ class _Slot:
         self.queue._exit(self.ticket)
 
 
-HEAVY = HeavyQueue()
+HEAVY = HeavyQueue(track_memory=True)
 
 
 def _frame_limit() -> int:

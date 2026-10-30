@@ -2393,7 +2393,8 @@ def _replace_layer(ctx: ToolContext, index: int, layer: dict) -> dict:
 def _voice_check(ctx: ToolContext, layer_id: str) -> dict:
     """Доля клипа, где у PNGtuber ``layer_id`` открыт рот, и выбранный порог — сразу после правки,
     чтобы агент видел, слышит ли аватар голос (add_pngtuber и update_layer)."""
-    from app.pngtuber import plan_voice
+    from app.motion_render import plan_caption_words
+    from app.pngtuber import open_outside_speech_pct, plan_voice
 
     fresh = next((l for l in _layers_of(_current_render(ctx)) if str(l.get("id")) == str(layer_id)), None)
     if not fresh or fresh.get("type") != "pngtuber":
@@ -2408,18 +2409,30 @@ def _voice_check(ctx: ToolContext, layer_id: str) -> dict:
             share = sum(1 for c in states_str if c != "0") / len(states_str)
             threshold = got.get("threshold_db")
             if got.get("threshold_auto"):
-                noise = got.get("noise_db")
-                how = (f"auto: шум дорожки {noise:g} дБ + запас, в рамках −55..−40 → {threshold:g} дБ"
-                       if noise is not None else f"auto: дорожка пустая — запасной {threshold:g} дБ")
+                noise, speech = got.get("noise_db"), got.get("speech_db")
+                if noise is None:
+                    how = f"auto: дорожка пустая — запасной {threshold:g} дБ"
+                elif speech is not None:
+                    how = f"auto: шум {noise:g} дБ + 12, не выше речи {speech:g} − 12, не ниже −55 → {threshold:g} дБ"
+                else:
+                    how = f"auto: шум дорожки {noise:g} дБ, речи над ним нет → {threshold:g} дБ"
             else:
                 how = f"задан: {threshold:g} дБ"
+            hint = ("рот почти не открывается — голос тише порога: threshold_db ниже (−50) "
+                    "или не та дорожка (track)" if share < 0.03 else
+                    "рот открыт почти всё время — порог ниже шума/игры: threshold_db выше (−35) или другая "
+                    "дорожка (track)" if share > 0.9 else "ок")
+            # Рот открыт, пока никто не говорит (дыхание, шум, игра в микрофоне): сверка со словами субтитров.
+            outside = open_outside_speech_pct(got, plan_caption_words(ctx.store, plan))
+            if outside is not None and outside > 5.0:
+                extra = (f"рот открыт вне речи {outside:g}% клипа (дыхание, шум, игра в микрофоне) — "
+                         f"threshold_db выше ({threshold + 4:g}…{threshold + 8:g}) или track — дорожка микрофона")
+                hint = extra if hint == "ок" else f"{hint}; {extra}"
             out["voice_check"] = {
                 "talking_share": round(share, 3), "shouting_share": round(states_str.count("2") / len(states_str), 3),
                 "threshold_db": threshold, "threshold": how,
-                "hint": ("рот почти не открывается — голос тише порога: threshold_db ниже (−50) "
-                         "или не та дорожка (track)" if share < 0.03 else
-                         "рот открыт почти всё время — порог ниже шума/игры: threshold_db выше (−35) или другая "
-                         "дорожка (track)" if share > 0.9 else "ок"),
+                "open_outside_speech_pct": outside,
+                "hint": hint,
             }
         if notes:
             out["voice_notes"] = notes
@@ -4297,7 +4310,7 @@ props по типу:
   pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
          анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
          0 — игра, 1 — микрофон) | "speech" (speech_tracks; по умолчанию) | asset_id (голос из файла), threshold_db
-         "auto" (по умолчанию: шум дорожки + запас, −55..−40) | дБ, hold {motion.VOICE_HOLD_SEC:g} (рот не хлопает между слогами), attack {motion.VOICE_ATTACK_SEC:g},
+         "auto" (по умолчанию: шум дорожки + 12, не выше речи − 12, не ниже −55) | дБ, hold {motion.VOICE_HOLD_SEC:g} (рот не хлопает между слогами), attack {motion.VOICE_ATTACK_SEC:g},
          shout_db {motion.VOICE_SHOUT_DB:g}}}, w (опорные px; высота — по пропорции idle), pixelated (по умолч. — если исходник ≤ 256 px:
          пиксель-арт без мыла), bounce {{amount 0..40}} (подскок в такт голосу), flipX. Состояние по кадрам считает сервис
          (comp.voice) — проще add_pngtuber(idle_asset, talk_asset, track): правый нижний угол над безопасной зоной, w ≈ 300
@@ -4539,7 +4552,9 @@ def _build_registry() -> list[Tool]:
             "set_source_audio", "Выбираю звуковую дорожку",
             "Звуковые дорожки исходника (запись NVIDIA/OBS: часто 0 — игра, 1 — микрофон). tracks — смесь для "
             "рендера: [0], [1], [0, 1] или со своей громкостью [{track, gain_db}] (gain_db — дБ −30..+30; "
-            "\"auto\" — замерить и поставить голос на ~9 дБ над игрой в моменты речи, ответ auto: over_db, peak_limited): тихий микрофон в смеси поровну тонет. "
+            "\"auto\" — замерить и поставить голос на ~9 дБ над игрой в моменты речи; не хватает запаса пика голоса — "
+            "остальные дорожки получают отрицательный gain_db; ответ: auto_gain — громкость всех дорожек, auto — "
+            "over_db, peak_limited): тихий микрофон в смеси поровну тонет. "
             "speech_tracks — дорожки для РАСПОЗНАВАНИЯ речи (расшифровка исходника, субтитры, listen, сверка "
             "субтитров в QC), например [1] — один микрофон: на смеси с игрой Whisper выдумывает; [] — как tracks. "
             "Сменился звук для распознавания — расшифровка исходника сбрасывается. Сколько дорожек — "
@@ -4594,13 +4609,14 @@ def _build_registry() -> list[Tool]:
             "библиотеки (upload_image), shout_asset — кричит (громче shout_db, по умолчанию −12 дБ). Голос — "
             "track: номер звуковой дорожки источника (запись NVIDIA/OBS: 0 — игра, 1 — микрофон) или \"speech\" "
             "(speech_tracks источника); не задан — speech_tracks, иначе у записи с несколькими дорожками — 1; "
-            "voice_asset — голос из файла библиотеки. threshold_db — по умолчанию \"auto\" (шум дорожки + запас, "
-            "в рамках −55..−40 дБ) или число дБ, hold "
-            "(0.18 с — рот не хлопает между слогами), attack (0.03 с). По умолчанию на весь клип (start/end — "
+            "voice_asset — голос из файла библиотеки. threshold_db — по умолчанию \"auto\" (шум дорожки + 12 дБ, "
+            "не выше речи − 12, не ниже −55) или число дБ, hold "
+            "(0.15 с — рот не хлопает между слогами), attack (0.03 с). По умолчанию на весь клип (start/end — "
             "интервал), правый нижний угол над безопасной зоной, w ≈ 300 px, пиксель-арт (≤ 256 px) — без "
             "сглаживания (pixelated), bounce — подскок в такт голосу (px 0..40), flipX. Состояние по кадрам "
             "сервис считает сам (рендер и превью одинаково). Ответ: voice_check — какая доля клипа рот открыт "
-            "(почти 0 или почти 1 — поправь порог/дорожку) и какой порог выбран. Один аватар на клип: повторный "
+            "(почти 0 или почти 1 — поправь порог/дорожку), какой порог выбран и open_outside_speech_pct — "
+            "сколько % клипа рот открыт вне речи (слова субтитров ± 0.15 с; больше 5% — порог выше). Один аватар на клип: повторный "
             "вызов (тот же id или без id) ЗАМЕНЯЕТ прежний PNGtuber, второй — allow_multiple: true. Правка потом — "
             "update_layer (props.voice, x, y, props.w; ответ тоже с voice_check). / Talking avatar driven by a voice track.",
             _obj({"idle_asset": {"type": "integer"}, "talk_asset": {"type": "integer"},

@@ -11,7 +11,8 @@
 (``clip``) или готового ролика (``final``, после вырезов); в секунды источника его
 переводит ``app.timebase.ClipClock`` — вырез или наплыв не сбивает рот с голоса.
 
-Порог по умолчанию — ``"auto"``: шум дорожки + запас в рамках −55..−40 дБ (``auto_threshold``).
+Порог по умолчанию — ``"auto"``: шум дорожки + 12 дБ, но не выше речи − 12 дБ и не ниже −55
+(``auto_threshold``).
 
 Чистые функции (``voice_states``, ``auto_threshold``, ``voice_levels``,
 ``frame_sources``) проверяются на синтетике без ffmpeg; чтение звука — подменяемое.
@@ -44,13 +45,20 @@ LEVEL_RELEASE_SEC = 0.08
 LEVEL_SPAN_DB = 24.0
 # Длиннее — дальше молчит (минуты клипа; часы — явная ошибка слоя).
 MAX_VOICE_SEC = 30 * 60.0
-# Авто-порог (по умолчанию): шум дорожки (15-й перцентиль) + запас, но не выше «громких мест» − 10 дБ
-# и в рамках −55..−40. Клипы 583–585: при −38 тихие фразы (−42 дБ) рот не открывали — потолок −40
-# ловит тихую речь, пол −55 не даёт шуму пустого микрофона открывать рот.
+# Авто-порог (по умолчанию): шум дорожки (15-й перцентиль) + 12 дБ, но не выше речи − 12 дБ (речь —
+# 75-й перцентиль кадров, громче шума на 6+ дБ) и не ниже −55 (шум пустого микрофона рот не
+# открывает). Был фиксированный потолок −40: на выровненном микрофоне (речь ≈ −26 дБFS) дыхание и
+# шум выше −40, и рот был открыт, пока стример молчал. Клипы 583–585 (тихие фразы −42 дБ при пороге
+# −38) относительный потолок тоже ловит: тихая речь — ниже и порог.
 AUTO_OVER_FLOOR_DB = 12.0
-AUTO_UNDER_PEAK_DB = 10.0
+AUTO_UNDER_SPEECH_DB = 12.0
+AUTO_VOICED_OVER_FLOOR_DB = 6.0
+AUTO_SPEECH_PERCENTILE = 0.75
 AUTO_MIN_DB = -55.0
-AUTO_MAX_DB = -40.0
+# Ровная дорожка без пауз (всё — «шум»): громче этого — сплошная речь, порог под ней; тише — шум.
+AUTO_FLAT_SPEECH_DB = -40.0
+# Речь для сверки рта с субтитрами (voice_check): слово ± столько секунд.
+SPEECH_PAD_SEC = 0.15
 # Склейка соседних кадров в один кусок чтения звука: разрыв больше — отдельное чтение.
 _SPAN_GAP_SEC = 0.25
 _PCM_CACHE: dict[tuple, bytes] = {}
@@ -72,17 +80,67 @@ def noise_floor(levels: list[float | None]) -> float | None:
     return heard[int(len(heard) * 0.15)]
 
 
+def gated(levels: list[float | None]) -> bool:
+    """Микрофон с шумодавом (гейтом OBS): между фразами цифровой ноль хотя бы в 15% кадров —
+    шума как такового нет, «шум» по слышимым кадрам — это уже тихая речь."""
+    known = [v for v in levels if v is not None]
+    return bool(known) and sum(1 for v in known if v <= SILENCE_DB + 1) >= len(known) * 0.15
+
+
+def speech_level(levels: list[float | None]) -> float | None:
+    """Громкость речи дорожки — 75-й перцентиль «озвученных» кадров (громче шума на 6+ дБ; у
+    микрофона с гейтом — всех слышимых); None — таких кадров почти нет (пустой микрофон или
+    ровная дорожка без пауз)."""
+    floor = noise_floor(levels)
+    if floor is None:
+        return None
+    over = SILENCE_DB + 1 if gated(levels) else floor + AUTO_VOICED_OVER_FLOOR_DB
+    voiced = sorted(v for v in levels if v is not None and v > over - 1e-9)
+    if len(voiced) < 4:
+        return None
+    return voiced[min(len(voiced) - 1, int(len(voiced) * AUTO_SPEECH_PERCENTILE))]
+
+
 def auto_threshold(levels: list[float | None]) -> float:
-    """Порог «звучит голос» по шуму дорожки: шум (15-й перцентиль) + 12 дБ, не выше
-    громких мест (95-й) − 10 дБ, в рамках −55..−40; пустая дорожка — запасной порог (−45)."""
-    heard = sorted(v for v in levels if v is not None and v > SILENCE_DB + 1)
+    """Порог «звучит голос»: шум (15-й перцентиль) + 12 дБ, но не выше речи (``speech_level``)
+    − 12 дБ и не ниже −55; микрофон с гейтом — речь − 12; пустая дорожка — запасной порог (−45)."""
     floor = noise_floor(levels)
     if floor is None:
         return VOICE_THRESHOLD_DB
-    peak = heard[min(len(heard) - 1, int(len(heard) * 0.95))]
-    want = min(floor + AUTO_OVER_FLOOR_DB, peak - AUTO_UNDER_PEAK_DB)
-    want = max(want, floor + 4.0)  # ровная дорожка (всё время речь) — всё равно над шумом
-    return round(min(AUTO_MAX_DB, max(AUTO_MIN_DB, want)), 1)
+    speech = speech_level(levels)
+    if speech is not None and gated(levels):
+        want = speech - AUTO_UNDER_SPEECH_DB  # всё слышимое — голос: порог под речью
+    elif speech is not None:
+        want = min(floor + AUTO_OVER_FLOOR_DB, speech - AUTO_UNDER_SPEECH_DB)
+        want = max(want, floor + 4.0)  # речь чуть громче шума — порог всё равно над шумом
+    elif floor >= AUTO_FLAT_SPEECH_DB:
+        want = floor - AUTO_UNDER_SPEECH_DB  # ровная громкая дорожка — сплошная речь (окно без пауз)
+    else:
+        want = floor + AUTO_OVER_FLOOR_DB
+    return round(max(AUTO_MIN_DB, want), 1)
+
+
+def open_outside_speech_pct(track: dict | None, words: list[dict], pad: float = SPEECH_PAD_SEC) -> float | None:
+    """Доля дорожки рта (``comp.voice[id]``), %, где рот открыт, а речи нет: речь — слова
+    субтитров клипа (``{t0, t1}``, время клипа) ± ``pad``. Дыхание, шум, игра в микрофоне.
+    None — нет слов или кадров (не с чем сверить)."""
+    states = str((track or {}).get("states") or "")
+    spans = sorted((float(w["t0"]) - pad, float(w["t1"]) + pad) for w in words or []
+                   if w.get("t0") is not None and w.get("t1") is not None)
+    if not states or not spans:
+        return None
+    t0 = float(track.get("t0") or 0.0)
+    fps = float(track.get("fps") or 30.0)
+    outside = 0
+    j = 0
+    for k, state in enumerate(states):
+        t = t0 + k / fps
+        while j < len(spans) and spans[j][1] < t:
+            j += 1
+        speaking = j < len(spans) and spans[j][0] <= t  # отсортированы по началу: первый не кончившийся
+        if state != "0" and not speaking:
+            outside += 1
+    return round(100.0 * outside / len(states), 1)
 
 
 def voice_states(
@@ -278,9 +336,12 @@ def track_from_levels(levels: list[float | None], t0: float, fps: float, cfg: di
     if auto:
         # Как выбран порог — агенту в voice_check (движок эти поля не читает).
         floor = noise_floor(basis)
+        speech = speech_level(basis)
         out["threshold_auto"] = True
         if floor is not None:
             out["noise_db"] = round(floor, 1)
+        if speech is not None:
+            out["speech_db"] = round(speech, 1)
     return out
 
 

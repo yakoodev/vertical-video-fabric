@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 from typing import Any, Callable
 
 from app.settings import settings
 from app.subtitles.contracts import SubtitleResult, SubtitleSegment, SubtitleWord
+
+log = logging.getLogger(__name__)
 
 # Whisper invents speech on instrumental music / room tone. These guards drop it:
 # the decoder's own "this is not speech" probability, and a floor on confidence.
@@ -83,7 +86,9 @@ class WhisperSubtitleProvider:
     of drifting a second or two ahead on some clips.
 
     Models are heavy to load, so a single instance is cached process-wide per
-    (size, device, compute) and reused across renders.
+    (size, device, compute) and reused across renders — one model at a time, unloaded
+    after ``WHISPER_IDLE_UNLOAD_SEC`` of idle time or before a heavy task of another
+    kind (render, autofocus) takes the queue.
     """
 
     provider = "whisper"
@@ -99,7 +104,11 @@ class WhisperSubtitleProvider:
         from app.heavy_queue import heavy_slot
 
         with heavy_slot("whisper", Path(str(audio_path)).name):
-            return self._transcribe(audio_path, profile, model)
+            try:
+                return self._transcribe(audio_path, profile, model)
+            finally:
+                # Простой считается от конца распознавания: пачка клипов модель не перегружает.
+                self._schedule_unload()
 
     def _transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
         size = str(model or "").strip() or settings.whisper_model_size
@@ -201,37 +210,67 @@ class WhisperSubtitleProvider:
 
     # Модель (large — полтора гигабайта) выгружается после простоя: память машины
     # небольшая, а распознают клипы редко и пачками.
-    IDLE_UNLOAD_SEC = 600.0
     _unload_timer: threading.Timer | None = None
 
     @classmethod
-    def _schedule_unload(cls) -> None:
+    def _cancel_unload(cls) -> None:
         with cls._lock:
             if cls._unload_timer is not None:
                 cls._unload_timer.cancel()
-            timer = threading.Timer(cls.IDLE_UNLOAD_SEC, cls._unload)
+                cls._unload_timer = None
+
+    @classmethod
+    def _schedule_unload(cls) -> None:
+        idle = max(0.0, float(settings.whisper_idle_unload_sec))
+        with cls._lock:
+            if cls._unload_timer is not None:
+                cls._unload_timer.cancel()
+                cls._unload_timer = None
+            if not cls._models:
+                return
+            timer = threading.Timer(idle, cls.unload)
             timer.daemon = True
             cls._unload_timer = timer
             timer.start()
 
     @classmethod
-    def _unload(cls) -> None:
-        with cls._lock:
-            cls._models.clear()
-            cls._unload_timer = None
-        import gc
+    def unload(cls) -> None:
+        """Выгрузить модель и отдать её память системе (gc + malloc_trim, app/memory.py).
 
-        gc.collect()
+        Просто убрать ссылку мало: glibc оставлял освобождённые веса в своих кучах, и RSS
+        процесса после выгрузки не падал."""
+        from app import memory
+
+        with cls._lock:
+            if cls._unload_timer is not None:
+                cls._unload_timer.cancel()
+                cls._unload_timer = None
+            if not cls._models:
+                return
+            names = ", ".join(key[0] for key in cls._models)
+            cls._models.clear()
+        before = memory.rss_mb()
+        memory.release()
+        log.info("whisper: модель %s выгружена, RSS %s → %s МБ", names, memory.fmt(before), memory.fmt(memory.rss_mb()))
 
     def _get_model(self, size: str) -> Any:
         key = (size, settings.whisper_device, settings.whisper_compute_type)
-        self._schedule_unload()
+        self._cancel_unload()
+        with self._lock:
+            model = self._models.get(key)
+            if model is not None:
+                return model
+            # Держим в памяти одну модель: память машины небольшая, а large-v3 рядом с
+            # turbo — лишние полтора гигабайта. Старую отдаём системе до загрузки новой.
+            stale = bool(self._models)
+            self._models.clear()
+        if stale:
+            from app import memory
+
+            memory.release()
         with self._lock:
             model = self._models.get(key)
             if model is None:
-                # Держим в памяти одну модель: память машины небольшая, а large
-                # рядом со small — лишние полтора гигабайта.
-                self._models.clear()
                 model = self._load(size)
                 self._models[key] = model
             return model
@@ -271,3 +310,13 @@ def _num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# Рендер или автофокус занимает очередь — модель Whisper ему не нужна: выгрузить заранее.
+def _register_release() -> None:
+    from app.heavy_queue import release_before_other
+
+    release_before_other("whisper", WhisperSubtitleProvider.unload)
+
+
+_register_release()

@@ -113,12 +113,12 @@ def test_auto_threshold_from_noise_floor():
     st = voice_states(noise + voiced, FPS, threshold_db=thr, hold=0)
     assert set(st[:60]) == {0} and set(st[60:]) == {1}
     assert auto_threshold([]) == motion.VOICE_THRESHOLD_DB == -45.0
-    # Шумный микрофон (−40) — порог поднимается вместе с шумом, но не выше −40.
-    assert auto_threshold([-40.0] * 50 + [-15.0] * 50) == -40.0
+    # Шумный микрофон (−40) — порог поднимается вместе с шумом: шум + 12, речь −15 − 12 выше.
+    assert auto_threshold([-40.0] * 50 + [-15.0] * 50) == -28.0
 
 
 def test_auto_threshold_catches_quiet_phrase_and_ignores_empty_mic():
-    """Клипы 583–585: при −38 тихие фразы (−42 дБ) рот не открывали; "auto" в −55..−40 — открывают."""
+    """Клипы 583–585: при −38 тихие фразы (−42 дБ) рот не открывали; "auto" (не выше речи − 12) — открывают."""
     noise = [-63.0 + (i % 3) for i in range(80)]
     quiet = [-42.0 + (i % 2) for i in range(20)]
     thr = auto_threshold(noise + quiet)
@@ -127,8 +127,70 @@ def test_auto_threshold_catches_quiet_phrase_and_ignores_empty_mic():
     assert set(st[:80]) == {0} and set(st[80:]) == {1}
     # Очень тихий микрофон (шум −80): порог не ниже −55 — шорохи рот не открывают.
     assert auto_threshold([-80.0] * 50 + [-30.0] * 10) == -55.0
-    # Сплошная речь (окно без пауз) — порог всё равно не выше −40.
-    assert auto_threshold([-20.0] * 60) == -40.0
+    # Сплошная речь (окно без пауз) — порог на 12 дБ ниже неё; ровный тихий шум — над ним.
+    assert auto_threshold([-20.0] * 60) == -32.0
+    assert auto_threshold([-70.0] * 60) == -55.0
+
+
+def _aligned_mic(n_cycles: int = 6):
+    """Выровненный микрофон по кадрам 30 к/с: фраза 1.5 с речи (−26 ± 2 дБ), пауза 1.5 с — шум
+    −48 ± 1 и вдохи до −41 (выше старого потолка −40 почти вплотную)."""
+    levels: list[float] = []
+    for _ in range(n_cycles):
+        levels += [-26.0 + (k % 5) - 2 for k in range(45)]
+        levels += [(-41.0 if k % 15 == 7 else -48.0 + (k % 3) - 1) for k in range(45)]
+    return levels
+
+
+def test_auto_threshold_follows_speech_on_aligned_mic_and_keeps_pauses_closed():
+    """Выровненный микрофон: шум −48, речь −26 → порог ≈ −38 (речь − 12), в паузах рот закрыт.
+    С потолком −40 вдохи (−41…−40) и шум у самого порога держали рот открытым в тишине."""
+    levels = _aligned_mic()
+    thr = auto_threshold(levels)
+    assert thr == pytest.approx(-38.0, abs=1.0)
+    st = voice_states(levels, FPS, threshold_db=thr)  # hold по умолчанию
+    hold_n = round(motion.VOICE_HOLD_SEC * FPS)
+    for cycle in range(6):
+        speech = st[cycle * 90: cycle * 90 + 45]
+        pause = st[cycle * 90 + 45 + hold_n + 1: cycle * 90 + 90]
+        assert speech[2:] == [1] * 43  # говорит (после attack)
+        assert set(pause) == {0}, cycle  # молчит — рот закрыт
+    assert motion.VOICE_HOLD_SEC == pytest.approx(0.15)
+
+
+def test_auto_threshold_quiet_mic_still_opens_the_mouth():
+    """Тихий микрофон: речь −42 при шуме −60 — рот открывается (порог под речью, не выше −40 по шуму)."""
+    levels: list[float] = []
+    for _ in range(5):
+        levels += [-42.0 + (k % 3) - 1 for k in range(30)] + [-60.0 + (k % 3) - 1 for k in range(60)]
+    thr = auto_threshold(levels)
+    assert -55.0 <= thr <= -50.0
+    st = voice_states(levels, FPS, threshold_db=thr, hold=0)
+    assert all(st[c * 90 + 2: c * 90 + 30] == [1] * 28 for c in range(5))
+    assert all(set(st[c * 90 + 31: c * 90 + 90]) == {0} for c in range(5))
+
+
+def test_auto_threshold_on_gated_mic_sits_under_speech():
+    """Шумодав (гейт OBS): между фразами цифровой ноль — «шума» нет, порог — речь − 12."""
+    from app.pngtuber import SILENCE_DB, gated
+
+    levels = ([SILENCE_DB] * 60 + [-26.0 + (k % 3) - 1 for k in range(30)] + [-44.0] * 5) * 3
+    assert gated(levels) and not gated(_aligned_mic())
+    thr = auto_threshold(levels)
+    assert thr == pytest.approx(-38.0, abs=1.0)
+    st = voice_states(levels, FPS, threshold_db=thr, hold=0)
+    assert st[62:90] == [1] * 28 and set(st[90:95]) == {0}  # хвост гейта (−44) рот не открывает
+
+
+def test_open_outside_speech_pct_against_subtitle_words():
+    from app.pngtuber import open_outside_speech_pct
+
+    track = {"t0": 0.0, "fps": 10.0, "states": "0011110000" + "1111111111"}  # 2 с по 10 кадров
+    words = [{"t0": 0.2, "t1": 0.55, "w": "да"}]
+    # Речь 0.05–0.7 с (слово ± 0.15): кадры 2–5 внутри, вторая секунда — рот открыт без слов.
+    assert open_outside_speech_pct(track, words) == 50.0
+    assert open_outside_speech_pct(track, words + [{"t0": 1.0, "t1": 1.85, "w": "нет"}]) == 0.0
+    assert open_outside_speech_pct(track, []) is None and open_outside_speech_pct(None, words) is None
 
 
 def test_default_threshold_is_auto_and_window_uses_whole_layer():
@@ -242,7 +304,7 @@ def test_pngtuber_schema_normalization_and_validation():
         "states": {"idle": 5, "talk": "6"}, "voice": {"track": "1", "threshold_db": "auto"}, "bounce": True}}])[0]
     props = layer["props"]
     assert props["states"] == {"idle": "5", "talk": "6"}
-    assert props["voice"] == {"track": 1, "threshold_db": "auto", "hold": 0.18, "attack": 0.03, "shout_db": -12.0}
+    assert props["voice"] == {"track": 1, "threshold_db": "auto", "hold": 0.15, "attack": 0.03, "shout_db": -12.0}
     assert props["w"] == 300 and props["bounce"] == {"amount": 10} and "pixelated" not in props  # pixelated — авто
     assert motion.layer_asset_refs(layer) == [5, 6]
     with_voice_file = normalize_layers([{"type": "pngtuber", "props": {"states": {"idle": 1, "talk": 2, "shout": 3},
@@ -463,6 +525,37 @@ def test_add_pngtuber_tool_defaults_mic_track_and_checks_voice(tmp_path, monkeyp
     assert not ok and "дорожек" in bad["error"]
     bad, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle})
     assert not ok and "talk_asset" in bad["error"]
+
+
+def test_voice_check_reports_mouth_open_outside_subtitle_speech(tmp_path, monkeypatch):
+    """Рот открыт, пока стример молчит (шум/дыхание над порогом), — voice_check это видит по словам
+    субтитров клипа (± 0.15 с) и подсказывает поднять порог."""
+    from app.agent_tools import ToolContext, run_tool
+
+    store, _service, plan, (idle, talk), *_ = _plan_with_assets(tmp_path, monkeypatch)
+    # Речь 1–2 с (−13.5 дБ), шум −50 дБ, «вдох» 3.0–3.6 с на −27 дБ — громче порога, но слов там нет.
+    monkeypatch.setattr("app.pngtuber.source_reader", lambda store, track, notes: _reader(
+        lambda t: 0.3 if 1.0 <= t < 2.0 else (0.06 if 3.0 <= t < 3.6 else 0.0045)))
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 1.0, "end": 2.0, "text": "привет всем"}],
+        "words": [{"word": "привет", "start": 1.0, "end": 1.5}, {"word": "всем", "start": 1.5, "end": 2.0}],
+    })
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "add_pngtuber", {"idle_asset": idle, "talk_asset": talk, "id": "av"})
+    assert ok, out
+    check = out["voice_check"]
+    assert check["open_outside_speech_pct"] == pytest.approx(0.75 / 5 * 100, abs=3)  # вдох + hold
+    assert "вне речи" in check["hint"] and "threshold_db выше" in check["hint"]
+    assert "речи" in check["threshold"]
+    # Порог выше вдоха — вне речи рот закрыт, подсказки нет.
+    out, ok = run_tool(ctx, "update_layer", {"id": "av", "patch": {"props": {"voice": {"track": 1,
+                                                                                       "threshold_db": -22}}}})
+    assert ok, out
+    assert out["voice_check"]["open_outside_speech_pct"] == 0.0 and out["voice_check"]["hint"] == "ок"
+    # Без субтитров — не с чем сверить.
+    store.set_clip_plan_subtitles(plan["id"], None)
+    out, ok = run_tool(ctx, "update_layer", {"id": "av", "patch": {"x": 0.7}})
+    assert ok and out["voice_check"]["open_outside_speech_pct"] is None
 
 
 def test_add_pngtuber_replaces_instead_of_stacking(tmp_path, monkeypatch):

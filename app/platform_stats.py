@@ -54,11 +54,9 @@ def platform_of_url(url: str) -> str:
     return ""
 
 
-def build_ytdlp_stats_args(url: str, proxy: str = "") -> list[str]:
-    args = ["yt-dlp", "--dump-json", "--skip-download", "--no-playlist", "--no-warnings"]
-    if proxy:
-        args += ["--proxy", proxy]
-    return [*args, url]
+def build_ytdlp_stats_args(url: str) -> list[str]:
+    # Прокси — окружением процесса (proxy_config.proxy_env), не --proxy: креды видно в ps.
+    return ["yt-dlp", "--dump-json", "--skip-download", "--no-playlist", "--no-warnings", url]
 
 
 def _count(info: dict, *keys: str) -> int | None:
@@ -80,7 +78,7 @@ def parse_ytdlp_info(info: dict) -> dict:
 
 def fetch_ytdlp_stats(url: str) -> dict:
     """Числа публичной ссылки из метаданных yt-dlp. Ошибка — RuntimeError с хвостом лога."""
-    from app.proxy_config import download_proxy
+    from app.proxy_config import download_proxy, mask_secrets, proxy_env
 
     attempts = [""]
     proxy = download_proxy()
@@ -89,8 +87,9 @@ def fetch_ytdlp_stats(url: str) -> dict:
     last_error = "yt-dlp ничего не вернул"
     for proxy_url in attempts:
         try:
-            proc = subprocess.run(build_ytdlp_stats_args(url, proxy_url), capture_output=True, text=True,
-                                  timeout=YTDLP_TIMEOUT, check=False)
+            proc = subprocess.run(build_ytdlp_stats_args(url), capture_output=True, text=True,
+                                  timeout=YTDLP_TIMEOUT, check=False,
+                                  env=proxy_env(proxy_url) if proxy_url else None)
         except subprocess.TimeoutExpired:
             last_error = f"yt-dlp не ответил за {YTDLP_TIMEOUT} с"
             continue
@@ -107,7 +106,7 @@ def fetch_ytdlp_stats(url: str) -> dict:
                 raise RuntimeError("площадка не отдала числа (видео скрыто или удалено?)")
             return stats
         tail = [line for line in (proc.stderr or proc.stdout or "").splitlines() if line.strip()][-1:]
-        last_error = (" ".join(tail) or f"yt-dlp код {proc.returncode}")[:240]
+        last_error = mask_secrets(" ".join(tail) or f"yt-dlp код {proc.returncode}")[:240]
     raise RuntimeError(last_error)
 
 

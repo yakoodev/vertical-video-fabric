@@ -100,6 +100,9 @@ class Settings:
         self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"
         self.whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
         self.whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"
+        # Модель Whisper выгружается после стольких секунд простоя (и перед рендером /
+        # автофокусом): в памяти лежит не дольше пачки распознаваний.
+        self.whisper_idle_unload_sec = float(os.getenv("WHISPER_IDLE_UNLOAD_SEC", "120") or 0)
         self.polza_api_key = os.getenv("POLZA_API_KEY", "").strip()
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(
@@ -120,6 +123,11 @@ class Settings:
         # Прокси для скачивания исходников, когда напрямую не выходит (видео-CDN
         # Twitch бывает недоступен). Только запасной путь: сначала качаем напрямую.
         self.download_proxy_url = os.getenv("DOWNLOAD_PROXY_URL", "").strip()
+        # Запас места в каталоге источников сверх размера загрузки: ENOSPC посреди
+        # 12-гигабайтного VOD уже случался. Размер узнаём у yt-dlp заранее (отдельный
+        # запуск --dump-json; DOWNLOAD_SIZE_PROBE=0 — не спрашивать, только запас).
+        self.download_free_reserve_gb = float(os.getenv("DOWNLOAD_FREE_RESERVE_GB", "2") or 0)
+        self.download_size_probe = os.getenv("DOWNLOAD_SIZE_PROBE", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()
