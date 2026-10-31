@@ -69,7 +69,8 @@ function NameplateSketch({ np, accent, font }: { np: BrandNameplate; accent: str
       start: 0,
       end: 1,
       x: center ? 0.5 : right ? 1 - (24 + 260) / 1080 : (24 + 260) / 1080,
-      y: top ? 0.13 : 0.6,
+      // Схема: «под разделителем» — между хуком и призывом (настоящее место считает сервер по раскладке клипа).
+      y: top ? 0.2 : 0.45,
       shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.45 },
       props: {
         platform: np.platform,
@@ -89,7 +90,8 @@ function NameplateSketch({ np, accent, font }: { np: BrandNameplate; accent: str
 
 function toInput(b: Brand): BrandInput {
   const { id: _id, created_at: _c, updated_at: _u, ...rest } = b;
-  return rest;
+  // Сервер до плашки канала отдавал бренд без nameplate — форма не должна падать.
+  return { ...rest, nameplate: { ...EMPTY.nameplate, ...(rest.nameplate ?? {}) } };
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
