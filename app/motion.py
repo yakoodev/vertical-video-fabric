@@ -1193,6 +1193,16 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         react = _norm_react(raw["react"], rep, f"{where}.react", ltype)
         if react is not None:
             layer["react"] = react
+    if raw.get("tracking") is not None:
+        # Пометка трекинга (app/tracking.py): какие ключи записал трек — повторный запуск их
+        # заменяет, вырезы и стоп-кадры двигают их вместе с содержимым кадра.
+        from app.tracking import normalize_tracking
+
+        tracking = normalize_tracking(raw["tracking"])
+        if tracking is not None:
+            layer["tracking"] = tracking
+        else:
+            rep(f"{where}.tracking", "пометка трекинга не разобрана — отброшена (ключи остались)")
     if ltype == "fx":
         _fx_rules(layer, raw, rep, where)
     _check_required(layer, rep, where)

@@ -1082,6 +1082,25 @@ def _focus_x_at(focus: list, local: float) -> float | None:
     return points[-1][1]
 
 
+def frame_preset(store: Any, plan: dict, rs: dict, layers_format: str | None = None) -> tuple[dict, str, str]:
+    """Пресет основы кадра клипа, как в рендере: лук, зеркало, раскладка, формат вывода —
+    ``(preset, формат вывода, формат разметки слоёв)``. Один расчёт для кадра агента
+    (``render_frame_png``) и трекинга (app/tracking.py): слой попадает в цель на той же основе."""
+    from app import render as _render
+    from app.formats import motion_formats, settings_format
+
+    service = _render.ClipRenderService(store)
+    preset = service._preset(rs["preset_id"])
+    preset = service._preset_with_render_overrides(preset, mirror=rs["mirror"], layout=rs["layout"])
+    # Формат вывода клипа (app/formats.py) — кадр того же размера, основа и раскладка, как
+    # в рендере, слои перенесены из формата их разметки так же, как в рендере.
+    layers_format = settings_format(layers_format) if layers_format else rs["layers_format"]
+    plan_source = store.get_source(int(plan["source_id"]))
+    preset = _render._preset_with_output(preset, plan_source, rs["format"], 0.0, layers_format)
+    out_format, layers_format = motion_formats(preset)
+    return preset, out_format, layers_format
+
+
 def render_frame_png(*args: Any, **kwargs: Any) -> bytes:
     """Кадр клипа (``_render_frame_png``) — в очереди кадров (app/heavy_queue.frame_slot): каждый
     кадр поднимает компоновщик, четыре агента с view_frame сразу — лишний гигабайт памяти."""
@@ -1151,17 +1170,9 @@ def _render_frame_png(
     segment = segments[index]
     local = t - starts[index]
 
-    service = _render.ClipRenderService(store)
-    preset = service._preset(rs["preset_id"])
-    preset = service._preset_with_render_overrides(preset, mirror=rs["mirror"], layout=rs["layout"])
-    # Формат вывода клипа (app/formats.py) — кадр того же размера, основа и раскладка, как
-    # в рендере, слои перенесены из формата их разметки так же, как в рендере.
-    from app.formats import comp_ref, motion_formats, settings_format
+    from app.formats import comp_ref
 
-    layers_format = settings_format(layers_format) if layers_format else rs["layers_format"]
-    plan_source = store.get_source(int(plan["source_id"]))
-    preset = _render._preset_with_output(preset, plan_source, rs["format"], 0.0, layers_format)
-    out_format, layers_format = motion_formats(preset)
+    preset, out_format, layers_format = frame_preset(store, plan, rs, layers_format)
     width = int(preset.get("output_width") or 1080)
     height = int(preset.get("output_height") or 1920)
     fps = float(preset.get("fps") or 30)

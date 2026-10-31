@@ -99,7 +99,7 @@ def test_track_mute_goes_into_the_part_graph_not_the_final_pass(tmp_path, monkey
     parts = [c for c in calls if "-frames:v" in c]
     first, second = (c[c.index("-filter_complex") + 1] for c in parts[:2])
     # Секунда клипа 6–7 = секунды исходника 11–12 (второй кусок), только дорожка 1, до смешивания.
-    assert "[0:a:1]volume='(1-1.00000*min(clip(((t+10.000)-11.000)" in second
+    assert "[0:a:1]asetnsamples=n=256:p=0,volume='(1-1.00000*min(clip(((t+10.000)-11.000)" in second
     assert "[0:a:0]anull" in second and "a_src_t" not in first
     assert not any("-af" in c and "volume='" in " ".join(c) for c in calls)  # финальный проход тишины не нужен
 

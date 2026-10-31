@@ -18,7 +18,7 @@
 
 ``style`` (только у помеченных) — чем заполнена заглушённая середина слова (``MUTE_STYLES``):
 ``silence`` — тишина (отрезок без стиля — тоже тишина: старые клипы звучат как раньше), ``duck`` —
-приглушить на ``DUCK_DB``, не в ноль; это громкость, как у тишины. ``beep``, ``noise``, ``reverse``,
+приглушить на ``DUCK_DB``, не в ноль, с плавными краями ``DUCK_RAMP_SEC``; это громкость, как у тишины. ``beep``, ``noise``, ``reverse``,
 ``lowpass``, ``stretch`` — эффекты на отрезке звукового монтажа (app/audio_edit.py, ``censor_fx``):
 рендер куска накладывает их на дорожку ``track`` или на весь звук исходника, финальный проход
 тишины такие отрезки пропускает.
@@ -35,6 +35,10 @@ MAX_MUTES = 60
 MIN_MUTE_SEC = 0.05
 RAMP_SEC = 0.03
 MUTE_TAGS = ("censor",)
+# volume с eval=frame считает множитель раз на кадр звука: у aac кадр 21 мс, у wav — до 85 мс, и
+# края тишины/приглушения (рампы 30–50 мс) выходили ступенькой и сдвигались на кадр. Кадры по
+# 256 сэмплов (5 мс) перед volume — края плавные и на своём месте.
+ENVELOPE_FRAMES = "asetnsamples=n=256:p=0"
 
 # Чем заполнить заглушённую середину слова мата (см. вверху). Порядок — для подсказок и UI.
 MUTE_STYLES: dict[str, str] = {
@@ -44,9 +48,14 @@ MUTE_STYLES: dict[str, str] = {
     "reverse": "середина задом наперёд",
     "lowpass": "«под водой» (lowpass ~400 Гц)",
     "stretch": "растянута с понижением тона",
-    "duck": "приглушена на −25 дБ, не в ноль",
+    "duck": "приглушена на −35 дБ, не в ноль",
 }
-DUCK_DB = -25.0
+# Было −25 дБ: владелец приглушения не услышал («у 7 нет утки»). Замер: внутри отрезка −25 дБ ровно,
+# но огибающая считалась раз на кадр звука (см. ENVELOPE_FRAMES) — громкая часть середины слова
+# оставалась целой, в среднем выходило −8…−20 дБ; а ослабленная на 25 дБ речь всё ещё громче фона
+# стрима. −35 дБ и края 50 мс по smoothstep — провал слышен, середина не обрывается щелчком.
+DUCK_DB = -35.0
+DUCK_RAMP_SEC = 0.05
 # Громкость середины у стилей-громкостей; остальные стили — эффекты (app/audio_edit.censor_fx).
 VOLUME_STYLES: dict[str, float] = {"silence": 0.0, "duck": round(10 ** (DUCK_DB / 20), 5)}
 
@@ -140,14 +149,18 @@ def normalize_mute(raw: Any) -> list[dict]:
 
 
 def mute_volume_expr(spans: list[tuple]) -> str:
-    """Выражение громкости ffmpeg: 0 внутри отрезков (у ``(a, b, floor)`` — ``floor``), 1 вне,
-    рампы RAMP_SEC по краям."""
+    """Выражение громкости ffmpeg: 0 внутри отрезков, 1 вне, рампы RAMP_SEC снаружи краёв.
+    ``(a, b, floor)`` с ``floor`` > 0 — приглушение (duck): внутри ``floor``, рампы DUCK_RAMP_SEC
+    по smoothstep."""
     factors = []
     for span in spans:
         a, b = span[0], span[1]
         floor = float(span[2]) if len(span) > 2 else 0.0
-        out = f"max(clip(({a:.3f}-t)/{RAMP_SEC},0,1),clip((t-{b:.3f})/{RAMP_SEC},0,1))"
-        factors.append(out if floor <= 0 else f"({floor:.5f}+{1 - floor:.5f}*{out})")
+        if floor <= 0:
+            factors.append(f"max(clip(({a:.3f}-t)/{RAMP_SEC},0,1),clip((t-{b:.3f})/{RAMP_SEC},0,1))")
+            continue
+        u = f"max(clip(({a:.3f}-t)/{DUCK_RAMP_SEC},0,1),clip((t-{b:.3f})/{DUCK_RAMP_SEC},0,1))"
+        factors.append(f"({floor:.5f}+{1 - floor:.5f}*{u}*{u}*(3-2*{u}))")
     return "*".join(factors) or "1"
 
 
@@ -174,7 +187,7 @@ def build_mute_args(clip_path: Path, output_path: Path, spans: list[tuple[float,
     return [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(clip_path),
         "-map", "0:v:0", "-map", "0:a:0",
-        "-af", f"volume='{mute_volume_expr(spans)}':eval=frame",
+        "-af", f"{ENVELOPE_FRAMES},volume='{mute_volume_expr(spans)}':eval=frame",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path),
     ]
 
@@ -243,7 +256,7 @@ def build_source_volume_args(clip_path: Path, output_path: Path, mutes: list[tup
     parts = [mute_volume_expr(mutes)] if mutes else []
     if gains:
         parts.append(gain_volume_expr(gains))
-    chain = f"volume='{'*'.join(parts)}':eval=frame"
+    chain = f"{ENVELOPE_FRAMES},volume='{'*'.join(parts)}':eval=frame"
     if any(g > 0 for _a, _b, g in gains):
         chain += ",alimiter=limit=0.95:level=disabled"
     return [

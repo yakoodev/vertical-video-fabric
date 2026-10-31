@@ -1878,6 +1878,77 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def _layer_index(layers: list[dict], layer_id: str) -> int:
+    index = next((i for i, l in enumerate(layers) if str(l.get("id")) == layer_id), None)
+    if index is None:
+        raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
+    return index
+
+
+def _tracking_presets() -> tuple[str, ...]:
+    from app.tracking import PRESETS
+
+    return tuple(PRESETS)
+
+
+def h_track_layer(ctx: ToolContext, args: dict) -> Any:
+    """Слой следует за лицом / объектом / точкой (app/tracking.py): ключи x/y(/scale) с пометкой
+    tracking, повторный вызов их заменяет. Ответ — лист из 2–3 кадров с этим слоем: попал ли."""
+    from app import tracking
+
+    layer_id = str(args.get("layer_id") or args.get("id") or "")
+    if not layer_id:
+        raise ToolError("нужен layer_id")
+    render = _current_render(ctx)
+    layers = _layers_of(render)
+    index = _layer_index(layers, layer_id)
+    layer = dict(layers[index])
+    if args.get("start") is not None or args.get("end") is not None:
+        layer["start"] = _num(args.get("start"), layer["start"])
+        layer["end"] = _num(args.get("end"), layer["end"])
+    try:
+        fresh, report = tracking.track_layer(
+            ctx.store, ctx.plan_id, layer, args.get("target"), offset=args.get("offset"), follow=args.get("follow"),
+            smooth=args.get("smooth"), fps=_num(args.get("fps")), preset=args.get("preset"))
+    except tracking.TrackError as exc:
+        raise ToolError(f"трек не построен: {exc}", exc.hints) from exc
+    normalized = motion.normalize_layers([fresh])[0]
+    layers[index] = normalized
+    fresh_render = _save_render(ctx, {**render, "layers": layers})
+    duration = _clip_duration(ctx)
+    report["warnings"] = list(report.get("warnings") or []) + lint_layers(
+        _layers_of(fresh_render), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh_render))
+    report = {"ok": True, "layer_id": layer_id, "time": "clip", **report,
+              "note": "кадры ниже — шкала clip (как слои): слой на цели? Промах — поправь offset или цель "
+                      "(target near/index/point) и вызови снова; снять — untrack_layer"}
+    if args.get("check") is False:
+        return report
+    from app.motion_render import contact_sheet_jpeg
+
+    try:
+        data = contact_sheet_jpeg(ctx.store, ctx.plan_id, times=report["check_times"], width=300,
+                                  before_cuts=True)
+    except Exception as exc:  # noqa: BLE001 - нет кадра — отчёт всё равно нужен
+        report["check_error"] = f"кадры проверки не собраны: {str(exc)[:200]}"
+        return report
+    return ImageResult(data=data, mime_type="image/jpeg", info=report)
+
+
+def h_untrack_layer(ctx: ToolContext, args: dict) -> dict:
+    from app import tracking
+
+    layer_id = str(args.get("layer_id") or args.get("id") or "")
+    render = _current_render(ctx)
+    layers = _layers_of(render)
+    index = _layer_index(layers, layer_id)
+    if not layers[index].get("tracking"):
+        return {"ok": True, "layer_id": layer_id, "note": "у слоя нет трека — снимать нечего"}
+    layers[index] = motion.normalize_layers([tracking.untrack_layer(layers[index])])[0]
+    _save_render(ctx, {**render, "layers": layers})
+    return {"ok": True, "layer_id": layer_id, "layer": layers[index],
+            "note": "ключи трека сняты, слой стоит там, где трек начинался"}
+
+
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
     ids = {str(i) for i in args.get("ids") or []}
     if not ids:
@@ -4842,6 +4913,44 @@ def _build_registry() -> list[Tool]:
             mutating=True, label=lambda a: f"Правлю слой {a.get('id')}",
         ),
         Tool(
+            "track_layer", "Веду слой за целью",
+            "Слой (эмодзи, стикер, стрелка, плашка, текст) следует за целью в кадре: ключи x/y (и scale по "
+            "размеру цели) на всё время слоя, с учётом рефрейма, кропа, раскладки, кусков, вырезов и наезда "
+            "камеры. target: {kind: face} — самое крупное лицо; {kind: face, x, y, t} — лицо ближе к точке "
+            "(доли кадра, как на view_frame в момент t); {kind: face, index} — i-е слева; {kind: object, class: "
+            "\"person\"|\"car\"|\"dog\"|…} — объект класса COCO (можно по-русски: человек, машина); {kind: point, "
+            "x, y, t, w?, h?} — точка/область вручную (аниме-модель VTuber, предмет, HUD — детектор лиц её не "
+            "видит). preset: above_head (эмодзи на голову, растёт с лицом), under_face (плашка с именем под "
+            "лицом), arrow_to (стрелка из угла смотрит на цель; слою shape arrow), on_target. offset {x, y, "
+            "units: frame|target, dx, dy} — сдвиг от центра цели (target — в размерах цели, dx/dy — опорные "
+            "px); follow {x, y, scale}; smooth 0..1 (0.5). Повторный вызов заменяет ключи трека. Слой НЕ "
+            "должен закрывать лицо — ответ предупредит. Ответ — лист 2–3 кадров проверки. Цель потеряна "
+            "надолго — отказ с причиной. / Make a layer follow a face, object or point.",
+            _obj({"layer_id": {"type": "string"},
+                  "target": _obj({"kind": {"type": "string", "enum": ["face", "object", "point"]},
+                                  "mode": {"type": "string", "enum": ["largest", "near", "index"]},
+                                  "class": {"type": "string"}, "index": {"type": "integer"},
+                                  "x": {"type": "number"}, "y": {"type": "number"}, "t": {"type": "number"},
+                                  "w": {"type": "number"}, "h": {"type": "number"}}, ["kind"]),
+                  "preset": {"type": "string", "enum": list(_tracking_presets())},
+                  "offset": _obj({"x": {"type": "number"}, "y": {"type": "number"},
+                                  "units": {"type": "string", "enum": ["frame", "target"]},
+                                  "dx": {"type": "number"}, "dy": {"type": "number"}}),
+                  "follow": _obj({"x": {"type": "boolean"}, "y": {"type": "boolean"}, "scale": {"type": "boolean"}}),
+                  "smooth": {"type": "number"}, "fps": {"type": "number"},
+                  "start": {"type": "number"}, "end": {"type": "number"}, "check": {"type": "boolean"}},
+                 ["layer_id", "target"]),
+            h_track_layer, mutating=True,
+            label=lambda a: f"Веду слой {a.get('layer_id')} за {(a.get('target') or {}).get('kind', 'целью')}",
+        ),
+        Tool(
+            "untrack_layer", "Снимаю трек слоя",
+            "Снять трек со слоя: ключи, записанные track_layer, убираются, слой стоит там, где трек начинался. "
+            "/ Remove tracking keys from a layer.",
+            _obj({"layer_id": {"type": "string"}}, ["layer_id"]), h_untrack_layer,
+            mutating=True, label=lambda a: f"Снимаю трек слоя {a.get('layer_id')}",
+        ),
+        Tool(
             "remove_layers", "Убираю слои",
             "Удалить слои по id. / Remove layers by id.",
             _obj({"ids": {"type": "array", "items": {"type": "string"}}}, ["ids"]), h_remove_layers,
@@ -5152,9 +5261,9 @@ def _build_registry() -> list[Tool]:
             "игра+микрофон со своей speech_tracks; неизвестна — весь звук), число — эту дорожку; слово, что "
             "узнаётся и так, verify заглушит целиком. style — чем заполнить середину: silence (тишина), beep "
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
-            "тон ниже), duck (−25 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
-            "— silence. Лучше всех маскируют silence и noise, хуже всех duck, писк Whisper часто дописывает как "
-            "«блядь»: узнаётся на уровне 3 со слабым стилем — повтори со style silence/noise. "
+            "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
+            "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
+            "silence, затем noise (только его; style_switched в ответе). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
             _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},

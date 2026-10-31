@@ -30,6 +30,7 @@ import { motionApi, type MotionFont } from "@/api/motion";
 import { fontFamilies, reloadMotionFonts } from "@/pages/workspace/motion/runtime";
 import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
 import { FX_TITLES, LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
+import { TrackPanel, type PickedPoint } from "@/pages/workspace/motion/TrackPanel";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -94,6 +95,10 @@ type Props = {
   hasCamera?: boolean;
   /** Ширина опорного кадра формата разметки слоёв (px): 1080, у 16:9 — 1920 (предел «Ширины»). */
   refWidth?: number;
+  /** Клип (для трекинга «Следовать за…»); нет — кнопка неактивна. */
+  planId?: number;
+  /** Взвести выбор точки кликом по превью (трекинг ручной точки / нужного лица). */
+  onPickPoint?: (cb: ((p: PickedPoint) => void) | null) => void;
 };
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -512,7 +517,7 @@ function HighlightFields({ highlight, text, onChange }: { highlight: Highlight |
   );
 }
 
-export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false, refWidth = 1080 }: Props) {
+export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false, refWidth = 1080, planId, onPickPoint }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
   const [t, setT] = useState(now());
@@ -1194,6 +1199,9 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               />
               {!hasCamera ? <div className="li-note muted">У клипа нет наездов камеры — слой стоит на месте.</div> : null}
             </div>
+          ) : null}
+          {layer.type !== "fx" && layer.type !== "captions" ? (
+            <TrackPanel layer={layer} planId={planId} now={now} onChange={onChange} onPickPoint={onPickPoint} />
           ) : null}
           {!inside ? <div className="li-note muted">Курсор вне слоя — значения показаны на ближайшем краю.</div> : null}
           {transformRow("x", "X", 100, 0.5, -1, 2, "%")}

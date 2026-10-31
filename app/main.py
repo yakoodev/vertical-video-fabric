@@ -2588,7 +2588,8 @@ class CensorRequest(BaseModel):
     track: int | str | None = Field(default=None, description='глушить только дорожку: номер или "voice" '
                                                               "(дорожка голоса записи, если известна)")
     style: Literal["silence", "beep", "noise", "reverse", "lowpass", "stretch", "duck"] | None = Field(
-        default=None, description="чем заполнить заглушённую середину слова; не задан — прежний стиль клипа")
+        default=None, description="чем заполнить заглушённую середину слова; не задан — прежний стиль клипа, "
+                                  "у нового — reverse")
 
 
 @app.post(
