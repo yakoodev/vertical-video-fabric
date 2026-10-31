@@ -47,6 +47,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.audio_mute import ENVELOPE_FRAMES
+
 MAX_SHIFT_SEC = 1.5
 JL_XFADE_SEC = 0.08
 # J/L не забирает больше этой доли соседнего куска (иначе кусок «съеден» чужим звуком).
@@ -392,7 +394,7 @@ def fx_graph(label: str, items: list[dict], tv: str, stream0: float, out_label: 
                 continue
             fade = min(ramp, length / 2)
             ms = int(round((lo - stream0) * 1000))
-            out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,"
+            out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,{ENVELOPE_FRAMES},"
                        f"volume='1-{env}':eval=frame[{p}dd]")
             # pan, а не aformat: моно → стерео у aformat тише на 3 дБ, писк был бы −21 dBFS.
             out.append(f"{gen_source(kind, length)},pan=stereo|c0=c0|c1=c0,aformat=sample_rates=48000,"
@@ -401,7 +403,8 @@ def fx_graph(label: str, items: list[dict], tv: str, stream0: float, out_label: 
             out.append(f"[{p}dd][{p}ww]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[{nxt}]")
             current = nxt
             continue
-        out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[{p}d][{p}w]")
+        out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,{ENVELOPE_FRAMES},"
+                   f"asplit=2[{p}d][{p}w]")
         out.append(f"[{p}d]volume='1-{env}':eval=frame[{p}dd]")
         if kind in TIME_FX:
             chain, need = _time_fx_chain(item)
@@ -409,11 +412,12 @@ def fx_graph(label: str, items: list[dict], tv: str, stream0: float, out_label: 
             ms = int(round(s0 * 1000))
             out.append(f"[{p}w]atrim=start={s0:.3f}:end={s0 + need:.3f},asetpts=PTS-STARTPTS,{chain},"
                        f"apad,atrim=end={b - a:.3f},asetpts=PTS-STARTPTS,adelay={ms}:all=1,apad,"
-                       f"volume='{env}':eval=frame[{p}ww]")
+                       f"{ENVELOPE_FRAMES},volume='{env}':eval=frame[{p}ww]")
         elif kind in TAIL_FX:
             out.append(f"[{p}w]volume='{env}':eval=frame,{fx_chain(kind, item.get('amount', 0.5))}[{p}ww]")
         else:
-            out.append(f"[{p}w]{fx_chain(kind, item.get('amount', 0.5))},volume='{env}':eval=frame[{p}ww]")
+            out.append(f"[{p}w]{fx_chain(kind, item.get('amount', 0.5))},{ENVELOPE_FRAMES},"
+                       f"volume='{env}':eval=frame[{p}ww]")
         out.append(f"[{p}dd][{p}ww]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[{nxt}]")
         current = nxt
     return out
@@ -451,10 +455,11 @@ def source_graph(input_index: int, tracks: Any, edit: dict, out_label: str) -> s
     for n, (track, gain) in enumerate(items):
         own = _ops_for_track(ops, track)
         chain = [f"volume={_ff_db(gain)}"] if gain else []
-        vols = [(float(o["start"]), float(o["end"]), float(o.get("factor", 0.0)))
-                for o in own if o.get("kind") == "vol"]
+        vols = [o for o in own if o.get("kind") == "vol"]
         if vols:
-            chain.append(f"volume='{spans_factor(vols, tv)}':eval=frame")
+            expr = "*".join(span_factor(float(o["start"]), float(o["end"]), float(o.get("factor", 0.0)), tv,
+                                        float(o.get("ramp") or 0.03)) for o in vols)
+            chain.append(f"{ENVELOPE_FRAMES},volume='{expr}':eval=frame")
         fx = [o for o in own if o.get("kind") == "fx"]
         label = f"{uid}_t{n}"
         if fx:
@@ -506,7 +511,7 @@ def source_ops(render: dict, clock: Any, mix_tracks: list[int] | None = None) ->
     """Операции звука исходника (секунды исходника) из настроек клипа: mute/gain с ``track`` и
     ``audio.fx``. ``mix_tracks`` — дорожки смеси рендера: операции других дорожек не слышны —
     пропускаются с пометкой. → (ops, notes)."""
-    from app.audio_mute import is_fx_style, normalize_gain, normalize_mute, span_floor, span_style
+    from app.audio_mute import DUCK_RAMP_SEC, is_fx_style, normalize_gain, normalize_mute, span_floor, span_style
 
     audio = normalize_audio(render.get("audio"))
     heard = set(mix_tracks or [0])
@@ -531,7 +536,9 @@ def source_ops(render: dict, clock: Any, mix_tracks: list[int] | None = None) ->
                                 "ramp": CENSOR_RAMP_SEC, "by": m.get("by")})
         elif m.get("track") is not None and keep(m["track"]):
             for a, b in clip_span_to_source(clock, m["start"], m["end"]):
-                ops.append({"kind": "vol", "track": m["track"], "start": a, "end": b, "factor": span_floor(m)})
+                floor = span_floor(m)
+                ops.append({"kind": "vol", "track": m["track"], "start": a, "end": b, "factor": floor,
+                            **({"ramp": DUCK_RAMP_SEC} if floor > 0 else {})})
     for g in normalize_gain(render.get("gain")):
         if g.get("track") is not None and keep(g["track"]):
             for a, b in clip_span_to_source(clock, g["start"], g["end"]):
