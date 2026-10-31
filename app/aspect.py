@@ -211,7 +211,8 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         h = _num(props.get("size"), 74)
         icon = h * 0.82 if props.get("platform") and props.get("platform") != "none" else 0.0
         text = len(str(props.get("handle") or "")) * h * 0.5 * GLYPH_W
-        return max(_num(props.get("boxWidth"), 0), h, h * 0.84 + icon + text), h
+        live = h * 0.48 if props.get("live") is True else 0.0  # точка LIVE с зазором
+        return max(_num(props.get("boxWidth"), 0), h, h * 0.84 + icon + text + live), h
     if kind == "captions":
         size = _num(props.get("size"), 88)
         lines = _num(props.get("maxLines"), 2)

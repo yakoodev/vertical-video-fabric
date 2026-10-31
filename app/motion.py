@@ -86,6 +86,10 @@ CALLOUT_STYLES = ("bar", "box", "pill", "neon")
 # вид — стекло с обводкой или заливка акцентом; высота пилюли по умолчанию — как на шортсах.
 NAMEPLATE_PLATFORMS = ("twitch", "youtube", "tiktok", "telegram", "kick", "none")
 NAMEPLATE_STYLES = ("glass", "solid")
+# Своя анимация плашки (вход от значка, редкий блик и тик значка) и свёртка в значок в конце слоя.
+NAMEPLATE_ANIMS = ("none", "subtle", "lively")
+NAMEPLATE_OUTROS = ("none", "collapse")
+NAMEPLATE_OUTRO_SEC = 0.6
 NAMEPLATE_SIZE = 74
 ALIGNS = ("left", "center", "right")
 # Анимированные субтитры: пресеты вида (CAPTION_STYLES движка) и анимации слов.
@@ -761,6 +765,9 @@ PROPS: dict[str, dict] = {
         "color": Color("#ffffff"),
         "align": Choice("center", ALIGNS),
         "boxWidth": Opt(Num(0, 0, 2160, 1)),
+        "anim": Choice("subtle", NAMEPLATE_ANIMS),
+        "live": Flag(False),
+        "outro": Choice("none", NAMEPLATE_OUTROS),
     },
     # Всё, кроме style, необязательно: не задано — берётся из пресета style в движке.
     # Подставь мы здесь свои умолчания, пресет бы не работал.
@@ -1591,6 +1598,12 @@ def schema_summary() -> dict:
         "nameplate": {
             "platforms": list(NAMEPLATE_PLATFORMS),
             "styles": list(NAMEPLATE_STYLES),
+            "anims": list(NAMEPLATE_ANIMS),
+            "outros": list(NAMEPLATE_OUTROS),
+            "anim": "своя анимация слоя (функция времени, превью = рендер): none — стоит; subtle — вход от значка "
+                    "(pop, пилюля вытягивается, ник по буквам, 0.7 с), блик и тик значка с 6.6 с каждые 7 с; lively — "
+                    "ярче, тик каждые 3.5 с; live — красная пульсирующая точка; outro collapse — последние "
+                    f"{NAMEPLATE_OUTRO_SEC:g} с сворачивается в значок",
             "note": "плашка канала: значок площадки (свой векторный глиф) + ник; glass — тёмное стекло с "
                     "обводкой accent, solid — заливка accent; accent null — цвет площадки; size — высота "
                     f"пилюли (опорн. px, {NAMEPLATE_SIZE}); boxWidth + align — пилюля у края рамки слоя",

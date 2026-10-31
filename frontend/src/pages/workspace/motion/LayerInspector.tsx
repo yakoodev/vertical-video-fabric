@@ -967,6 +967,28 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               <option value="right">У правого края рамки</option>
             </select>
           </div>
+          <div className="li-row">
+            <select
+              className="input"
+              title="Своя анимация плашки: вход от значка, редкий блик и тик значка"
+              value={layer.props.anim ?? "subtle"}
+              onChange={(e) => patchProps({ anim: e.target.value })}
+            >
+              <option value="none">Без анимации</option>
+              <option value="subtle">Анимация: мягко</option>
+              <option value="lively">Анимация: живо</option>
+            </select>
+            <select
+              className="input"
+              title="Свернуться в значок в последние 0.6 с слоя"
+              value={layer.props.outro ?? "none"}
+              onChange={(e) => patchProps({ outro: e.target.value })}
+            >
+              <option value="none">Без свёртки</option>
+              <option value="collapse">Свернуться в конце</option>
+            </select>
+          </div>
+          <Toggle label="Точка LIVE" checked={Boolean(layer.props.live)} onChange={(live) => patchProps({ live })} />
         </Section>
       ) : null}
 

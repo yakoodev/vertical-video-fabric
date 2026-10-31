@@ -65,7 +65,7 @@ def _scenes() -> dict:
         {"id": "np", "type": "nameplate", "start": 0, "end": 9, "x": 0.263, "y": 0.6,
          "props": {"platform": "twitch", "handle": "sareamura", "align": "left", "boxWidth": 520}},
         {"id": "np2", "type": "nameplate", "start": 0, "end": 9, "x": 0.8, "y": 0.13,
-         "props": {"platform": "none", "handle": "магазин", "size": 90}},
+         "props": {"platform": "none", "handle": "магазин", "size": 90, "live": True}},
     ])
     return {"name": "scenes", "layers": layers, "camera": [], "sizes": {"12": [2048, 1356]}}
 

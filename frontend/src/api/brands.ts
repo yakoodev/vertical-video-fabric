@@ -16,8 +16,14 @@ export interface BrandNameplate {
   position: "auto" | "top-left" | "top-right" | "under-split-left" | "under-split-center";
   /** Высота пилюли, px кадра 1080×1920. */
   size: number;
-  /** Мягкое появление в начале; иначе видна сразу. */
+  /** Мягкое появление в начале (только без своей анимации, anim none). */
   fade: boolean;
+  /** Своя анимация: вход от значка, редкий блик и тик значка (subtle — по умолчанию). */
+  anim: "none" | "subtle" | "lively";
+  /** Красная пульсирующая точка LIVE. */
+  live: boolean;
+  /** Свёртка в значок: auto — к призыву бренда, collapse — в конце ролика, none — нет. */
+  outro: "auto" | "collapse" | "none";
 }
 
 export interface Brand {
