@@ -233,6 +233,8 @@ export function layerTitle(layer: Layer): string {
       return `${layer.props.prefix ?? ""}${layer.props.to ?? ""}${layer.props.suffix ?? ""}` || "Счётчик";
     case "callout":
       return layer.props.title || "Плашка";
+    case "nameplate":
+      return layer.props.handle ? `Канал ${layer.props.handle}` : "Плашка канала";
     case "chart":
       return layer.props.title || "График";
     case "progress":
@@ -269,6 +271,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   progress: "▭",
   chart: "📊",
   callout: "▤",
+  nameplate: "@",
   captions: "💬",
   chat: "🗨",
   audio: "♪",

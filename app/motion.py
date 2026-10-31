@@ -55,7 +55,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio", "pngtuber",
+    "chat", "audio", "pngtuber", "nameplate",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -82,6 +82,11 @@ MAX_PARTICLES = 200
 DECOR_GLYPHS = "✦✧★☆✶✷•●○◆◇♥♡→←↑↓✓✔✕✖▶►"
 CHART_KINDS = ("bar", "hbar", "line", "pie", "donut")
 CALLOUT_STYLES = ("bar", "box", "pill", "neon")
+# Плашка канала (frontend/src/motion/layers/nameplate.ts): площадка — свой векторный значок,
+# вид — стекло с обводкой или заливка акцентом; высота пилюли по умолчанию — как на шортсах.
+NAMEPLATE_PLATFORMS = ("twitch", "youtube", "tiktok", "telegram", "kick", "none")
+NAMEPLATE_STYLES = ("glass", "solid")
+NAMEPLATE_SIZE = 74
 ALIGNS = ("left", "center", "right")
 # Анимированные субтитры: пресеты вида (CAPTION_STYLES движка) и анимации слов.
 CAPTION_STYLES = (
@@ -743,6 +748,20 @@ PROPS: dict[str, dict] = {
         "skew": Opt(Num(0, -30, 30, 2)),
         "icon": Opt(Text("", 32)),
     },
+    # Плашка канала: пилюля со значком площадки и ником. accent null — цвет площадки;
+    # boxWidth — рамка слоя, пилюля в ней по align (бренд ставит её от края кадра).
+    "nameplate": {
+        "platform": Choice("twitch", NAMEPLATE_PLATFORMS),
+        "handle": Text("", 40),
+        "style": Choice("glass", NAMEPLATE_STYLES),
+        "accent": Color(None, nullable=True),
+        "size": Num(NAMEPLATE_SIZE, 32, 200, 1),
+        "font": FONT,
+        "weight": Num(800, 100, 900, integer=True),
+        "color": Color("#ffffff"),
+        "align": Choice("center", ALIGNS),
+        "boxWidth": Opt(Num(0, 0, 2160, 1)),
+    },
     # Всё, кроме style, необязательно: не задано — берётся из пресета style в движке.
     # Подставь мы здесь свои умолчания, пресет бы не работал.
     "captions": {
@@ -1124,6 +1143,7 @@ TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "counter": ("prefix", "suffix"),
     "callout": ("title", "subtitle"),
     "chart": ("title", "centerLabel"),
+    "nameplate": ("handle",),
 }
 # Gemini пишет перенос в JSON двойным экранированием ("СТРОКА\\nСТРОКА") — в строке
 # остаются обратный слэш и n, а капс в движке делал из них «\N» прямо в кадре (прогон 578).
@@ -1170,6 +1190,8 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.data", "у графика нет данных")
     elif ltype == "callout" and not props["title"].strip() and not props["subtitle"].strip():
         rep(f"{where}.props", "у плашки пустые title и subtitle")
+    elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":
+        rep(f"{where}.props.handle", "у плашки канала нет ни ника (handle), ни площадки — слой ничего не покажет")
 
 
 def _normalize_layers(raw: Any, rep: _Report) -> list[tuple[int, dict]]:
@@ -1566,6 +1588,13 @@ def schema_summary() -> dict:
             "deterministic": "раскладка — от seed (нет — от id слоя): превью и рендер совпадают",
         },
         "decor_glyphs": DECOR_GLYPHS,
+        "nameplate": {
+            "platforms": list(NAMEPLATE_PLATFORMS),
+            "styles": list(NAMEPLATE_STYLES),
+            "note": "плашка канала: значок площадки (свой векторный глиф) + ник; glass — тёмное стекло с "
+                    "обводкой accent, solid — заливка accent; accent null — цвет площадки; size — высота "
+                    f"пилюли (опорн. px, {NAMEPLATE_SIZE}); boxWidth + align — пилюля у края рамки слоя",
+        },
         "chat": {
             "styles": list(CHAT_STYLES),
             "messages": "comp.chat = [{t, user, color, text, fragments, badges}] — чат клипа "

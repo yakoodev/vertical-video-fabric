@@ -62,6 +62,10 @@ def _scenes() -> dict:
          "props": {"text": "t.me/app", "size": 64, "boxWidth": 700}},
         {"id": "hid", "type": "text", "start": 0, "end": 9, "x": 0.5, "y": 0.95, "hidden": True,
          "props": {"text": "скрытый", "size": 50}},
+        {"id": "np", "type": "nameplate", "start": 0, "end": 9, "x": 0.263, "y": 0.6,
+         "props": {"platform": "twitch", "handle": "sareamura", "align": "left", "boxWidth": 520}},
+        {"id": "np2", "type": "nameplate", "start": 0, "end": 9, "x": 0.8, "y": 0.13,
+         "props": {"platform": "none", "handle": "магазин", "size": 90}},
     ])
     return {"name": "scenes", "layers": layers, "camera": [], "sizes": {"12": [2048, 1356]}}
 

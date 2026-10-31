@@ -10,9 +10,10 @@
  */
 import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE } from "./layers/captions";
 import { CHAT_STYLES } from "./layers/chat";
+import { NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES } from "./layers/nameplate";
 import { formatRefSize } from "./formats";
 import { isTransient, layerSize } from "./reframe";
-import type { CameraKey, ChatStyle, KeyPoint, Layer, LayerBase, LayerPropsMap, LayerType, Shadow } from "./types";
+import type { CameraKey, ChatStyle, KeyPoint, Layer, LayerBase, LayerPropsMap, LayerType, NameplatePlatform, Shadow } from "./types";
 import { REF_H, REF_W } from "./types";
 
 export type TemplateParamType = "text" | "number" | "color" | "emoji" | "select" | "bool" | "sound";
@@ -1166,6 +1167,47 @@ const newsTicker: MotionTemplate = {
   },
 };
 
+/** Ширина рамки плашки канала: ник до ~16 букв помещается, пилюля прижата к краю рамки. */
+const PLATE_BOX = 520;
+
+const channelPlate: MotionTemplate = {
+  id: "channel-plate",
+  fit: { x: "frame", y: "frame" },
+  name: "Плашка канала",
+  category: "Плашки",
+  description: "Значок площадки и ник в тёмной стеклянной пилюле — весь ролик, у края кадра",
+  duration: 60,
+  params: [
+    { name: "handle", label: "Ник", type: "text", default: "channel" },
+    { name: "platform", label: "Площадка", type: "select", default: "twitch", options: [...NAMEPLATE_PLATFORMS] },
+    { name: "style", label: "Вид", type: "select", default: "glass", options: [...NAMEPLATE_STYLES] },
+    { name: "side", label: "Сторона", type: "select", default: "left", options: ["left", "right"] },
+    { name: "y", label: "Высота", type: "number", default: 0.13, min: 0.1, max: 0.8 },
+    durationParam(60),
+  ],
+  build(p, at) {
+    const platform = str(p, "platform", "twitch");
+    const style = str(p, "style", "glass");
+    const right = str(p, "side", "left") === "right";
+    const half = (24 + PLATE_BOX / 2) / REF_W;
+    return {
+      layers: [
+        layer(
+          "nameplate",
+          { start: at, end: at + dur(p, 60), x: right ? 1 - half : half, y: num(p, "y", 0.13), track: 4, name: "Плашка канала", shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.45 } },
+          {
+            platform: ((NAMEPLATE_PLATFORMS as readonly string[]).includes(platform) ? platform : "twitch") as NameplatePlatform,
+            handle: str(p, "handle", "channel"),
+            style: style === "solid" ? "solid" : "glass",
+            align: right ? "right" : "left",
+            boxWidth: PLATE_BOX,
+          },
+        ),
+      ],
+    };
+  },
+};
+
 /* ---------- утилиты ---------- */
 
 function parseData(labels: string, values: string) {
@@ -1209,6 +1251,7 @@ export const TEMPLATES: MotionTemplate[] = [
   lowerThird("pill", "Нижняя треть · таблетка", "Светлая округлая плашка со значком в кружке", RED, 0),
   lowerThird("neon", "Нижняя треть · неон", "Тёмное стекло с неоновой обводкой", "#22D3EE", 0),
   newsTicker,
+  channelPlate,
   counter,
   progressBar,
   barChart,

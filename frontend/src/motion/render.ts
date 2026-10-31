@@ -16,6 +16,7 @@ import { rgba } from "./layers/common";
 import { calloutRenderer } from "./layers/callout";
 import { chartRenderer } from "./layers/chart";
 import { counterRenderer, progressRenderer } from "./layers/counter";
+import { nameplateRenderer } from "./layers/nameplate";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { particlesRenderer } from "./layers/particles";
 import { pngtuberRenderer } from "./layers/pngtuber";
@@ -36,6 +37,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   progress: progressRenderer as LayerRenderer,
   chart: chartRenderer as LayerRenderer,
   callout: calloutRenderer as LayerRenderer,
+  nameplate: nameplateRenderer as LayerRenderer,
   captions: captionsRenderer as LayerRenderer,
   chat: chatRenderer as LayerRenderer,
   pngtuber: pngtuberRenderer as LayerRenderer,

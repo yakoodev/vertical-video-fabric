@@ -206,6 +206,12 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return _num(props.get("w"), 400), _num(props.get("h"), 400 if kind != "progress" else 40)
     if kind == "callout":
         return _num(props.get("w"), 900), 240.0 if props.get("subtitle") else 170.0
+    if kind == "nameplate":
+        # Пилюля: поля 0.42·H с двух сторон, значок 0.56·H + зазор 0.26·H, ник кеглем 0.5·H (как reframe.ts).
+        h = _num(props.get("size"), 74)
+        icon = h * 0.82 if props.get("platform") and props.get("platform") != "none" else 0.0
+        text = len(str(props.get("handle") or "")) * h * 0.5 * GLYPH_W
+        return max(_num(props.get("boxWidth"), 0), h, h * 0.84 + icon + text), h
     if kind == "captions":
         size = _num(props.get("size"), 88)
         lines = _num(props.get("maxLines"), 2)
