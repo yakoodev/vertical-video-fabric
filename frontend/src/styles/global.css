@@ -3913,6 +3913,19 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .li-data { display: grid; gap: 6px; }
 .li-note { font-size: 11.5px; }
 .li-dur { font-size: 12px; padding-bottom: 6px; }
+/* «Следовать за…» — трекинг слоя (TrackPanel.tsx) */
+.li-track { display: grid; gap: 8px; }
+.li-track > .btn { justify-self: start; }
+.li-track-on { display: grid; gap: 6px; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: rgba(124, 92, 255, 0.12); border: 1px solid rgba(124, 92, 255, 0.35); }
+.li-track-form { display: grid; gap: 8px; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); }
+.li-track-seg .seg-item { height: 28px; font-size: 12.5px; }
+.li-track-wait { color: var(--accent); font-weight: 600; animation: li-track-blink 1.1s ease-in-out infinite; }
+@keyframes li-track-blink { 50% { opacity: 0.45; } }
+.li-track-progress { display: grid; gap: 4px; }
+.li-track-bar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.li-track-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.3s var(--ease); }
+.li-track-err { color: var(--danger, #ff5c7a); }
+.ed-phone-overlay.picking { cursor: crosshair; }
 .li-tr { display: grid; grid-template-columns: 26px 72px minmax(0, 1fr) 18px; align-items: center; gap: 6px; }
 .li-tr .input { height: 28px; padding: 0 6px; }
 .li-tr em { font-size: 11px; color: var(--muted); font-style: normal; }

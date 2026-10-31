@@ -1946,6 +1946,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // per-segment keyframe editor (which it used to override). Patch the cache
   // immediately (preview moves live), persist after a short debounce.
   const manualSaveTimer = useRef<number | null>(null);
+  // «Следовать за…» (трекинг слоя): следующий клик по превью — точка цели, а не выбор слоя.
+  const pickPointRef = useRef<((p: { x: number; y: number; t: number }) => void) | null>(null);
+  const [pickingPoint, setPickingPoint] = useState(false);
   const constTrack = (seg: AiSegment, cx: number): FocusPoint[] => [
     { t: 0, x: cx },
     { t: Math.max(0.01, seg.end_sec - seg.start_sec), x: cx },
@@ -2467,6 +2470,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   const onInsertPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { px, py, cv } = canvasPoint(e);
+    const pickPoint = pickPointRef.current;
+    if (pickPoint) {
+      // Цель трекинга: точка кадра как её видно на превью (с наездом камеры) и момент клипа.
+      pickPointRef.current = null;
+      setPickingPoint(false);
+      e.preventDefault();
+      pickPoint({ x: px / cv.width, y: py / cv.height, t: clipTimeExact() });
+      return;
+    }
     const picked = pickLayer(cv, px, py);
     if (picked) {
       const { layer, handle, box, t } = picked;
@@ -3545,7 +3557,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 />
                 <canvas
                   ref={phoneOverlayRef}
-                  className="ed-phone-overlay"
+                  className={`ed-phone-overlay${pickingPoint ? " picking" : ""}`}
                   width={frameSize(aspect).w}
                   height={frameSize(aspect).h}
                   style={{ pointerEvents: "auto", touchAction: "none" }}
@@ -3729,6 +3741,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 onSeek={(t) => seekClipTime(t, false)}
                 keyed={Boolean(source.chroma_key)}
                 hasCamera={camera.length > 0}
+                planId={activePlan?.id}
+                onPickPoint={(cb) => {
+                  pickPointRef.current = cb;
+                  setPickingPoint(Boolean(cb));
+                }}
               />
             ) : null}
             <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>
