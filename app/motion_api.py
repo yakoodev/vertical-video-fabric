@@ -8,6 +8,8 @@
   агент «смотрит», что получилось, не дожидаясь рендера.
 * ``POST /api/clip-plans/{id}/voice`` — состояния голоса PNGtuber по кадрам (``comp.voice``) для
   превью: тот же массив, что получает компоновщик рендера (app/pngtuber.py).
+* `POST /api/clip-plans/{id}/levels` — огибающие громкости клипа (голос / музыка / весь звук) для
+  `react` слоёв в превью — тот же массив, что `comp.levels` рендера (app/audio_react.py).
 * ``GET /api/montage-assets/{id}/anim`` и ``…/anim-sheet.png`` — анимация файла (GIF/APNG/webm с
   альфой) одним листом кадров с их временами: превью рисует те же кадры, что рендер.
 
@@ -39,6 +41,13 @@ class VoicePayload(BaseModel):
     """Слои PNGtuber (несохранённые из редактора; нет — сохранённые) и частота кадров состояний."""
 
     layers: list[Any] | None = None
+    fps: float | None = None
+
+
+class LevelsPayload(BaseModel):
+    """Чьи огибающие нужны (voice/music/mix; нет — по react сохранённых слоёв) и частота кадров."""
+
+    sources: list[str] | None = None
     fps: float | None = None
 
 
@@ -156,6 +165,32 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
         voice, notes = plan_voice(store, plan, layers, fps, "clip")
         return {"voice": voice, "notes": notes, "scale": "clip"}
+
+    @router.post(
+        "/api/clip-plans/{clip_plan_id}/levels",
+        summary="Реакция на звук: огибающие громкости клипа по кадрам (голос, музыка, весь звук) — для превью",
+    )
+    def api_clip_levels(
+        clip_plan_id: int,
+        _auth: auth_dep,  # type: ignore[valid-type]
+        payload: LevelsPayload | None = None,
+    ) -> dict:
+        """``{levels: {voice|music|mix: {t0, fps, v [0..100]}}, notes}`` — шкала clip (как слои)."""
+        from app.audio_react import plan_levels
+        from app.motion import REACT_SOURCES, react_sources
+
+        store = get_store()
+        try:
+            plan = store.get_clip_plan(clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if payload and payload.sources is not None:
+            sources = [s for s in REACT_SOURCES if s in set(payload.sources)]
+        else:
+            sources = react_sources(normalize_render_settings(plan.get("render_settings") or {})["layers"])
+        fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
+        levels, notes = plan_levels(store, plan, sources, fps, "clip")
+        return {"levels": levels, "notes": notes, "scale": "clip"}
 
     def _asset_path(asset_id: int):
         from pathlib import Path

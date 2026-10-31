@@ -376,18 +376,21 @@ def _cached(key: tuple, load: Callable[[], bytes]) -> bytes:
 def source_tracks_for(source: dict, track: Any) -> tuple[list[dict] | None, str | None]:
     """Какие дорожки источника слушать: номер — одна дорожка (если она есть в файле),
     "speech" — дорожки распознавания речи (speech_mix). Второе — пометка, если номер не годится."""
-    from app.source_audio import audio_streams, speech_mix
+    from app.source_audio import audio_streams, source_mix, speech_mix
 
     if track == VOICE_SPEECH or track is None:
         return speech_mix(source), None
+    if track == "mix":
+        return source_mix(source), None  # весь звук рендера (react слоёв, app/audio_react.py)
     total = len(audio_streams(source, probe=False)) or None
     if total is not None and int(track) >= total:
         return speech_mix(source), f"у записи {total} звуковых дорожек — дорожки {track} нет, голос по speech"
     return [{"track": int(track), "gain_db": 0.0}], None
 
 
-def source_reader(store: Any, track: Any, notes: list[str]) -> Reader:
-    """Чтение звука источника (дорожки голоса) моно 8 кГц: ``read(id источника, от, длина)``."""
+def source_reader(store: Any, track: Any, notes: list[str], silent: str = "PNGtuber молчит") -> Reader:
+    """Чтение звука источника (дорожки голоса) моно 8 кГц: ``read(id источника, от, длина)``.
+    ``silent`` — чем кончается пометка, если файла нет (кто останется без звука)."""
     from uuid import uuid4
 
     from app.settings import settings
@@ -401,7 +404,7 @@ def source_reader(store: Any, track: Any, notes: list[str]) -> Reader:
         source = sources[source_id]
         path = Path(str(source.get("local_path") or ""))
         if not path.is_file():
-            note = f"файла источника {source_id} нет — PNGtuber молчит"
+            note = f"файла источника {source_id} нет — {silent}"
             if note not in notes:
                 notes.append(note)
             return b""

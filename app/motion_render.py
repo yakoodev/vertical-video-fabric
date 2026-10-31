@@ -37,6 +37,7 @@ from app.motion import (
     has_captions,
     has_chat,
     layer_asset_refs,
+    react_sources,
     video_file_time,
 )
 
@@ -264,6 +265,7 @@ def write_comp(
     backgrounds: list[dict] | None = None,
     ref: dict | None = None,
     voice: dict | None = None,
+    levels: dict | None = None,
     base_height: int | None = None,
     freezes: list[dict] | None = None,
 ) -> Path:
@@ -299,6 +301,9 @@ def write_comp(
     if voice:
         # Состояния PNGtuber по кадрам (app/pngtuber.py): {id слоя: {t0, fps, states, levels}}.
         comp["voice"] = voice
+    if levels:
+        # Огибающие громкости для react слоёв (app/audio_react.py): {voice|music|mix: {t0, fps, v}}.
+        comp["levels"] = levels
     if backgrounds and not key:
         # Анимированный фон основы (app/backgrounds.py): вне видео, до камеры и слоёв.
         comp["backgrounds"] = backgrounds
@@ -1217,6 +1222,12 @@ def _render_frame_png(
             from app.pngtuber import plan_voice
 
             voice, _voice_notes = plan_voice(store, plan, layers, fps, "clip", window=(lt - 1.0, lt + 0.1))
+        levels = None
+        if react_sources(layers):
+            # Реакция на звук в этот кадр: огибающая всего клипа (нормировка — по всему, как в рендере).
+            from app.audio_react import plan_levels
+
+            levels, _level_notes = plan_levels(store, plan, react_sources(layers), fps, "clip")
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
         regions = _render.layout_camera_regions(preset, source, width, height) if camera else None
@@ -1228,7 +1239,7 @@ def _render_frame_png(
             pinned=_render.banded_pinned((regions or {}).get("pinned"), band, height),
             base_height=height + int(band["h"]) if band else None,
             backgrounds=[{"t0": 0.0, "t1": round(max(total, lt) + 60.0, 3), **zone}] if zone else None,
-            ref=comp_ref(out_format), voice=voice,
+            ref=comp_ref(out_format), voice=voice, levels=levels,
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

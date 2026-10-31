@@ -1129,7 +1129,7 @@ class ClipRenderService:
         segment_ids = [segment["id"] for segment in segments]
         # Моушн, как и вставки, живёт в настройках самого клипа. Нет слоёв и
         # камеры — рендер ровно прежний (те же команды ffmpeg).
-        from app.motion import has_pngtuber, plan_motion, visual_motion
+        from app.motion import has_pngtuber, plan_motion, react_sources, visual_motion
 
         motion = plan_motion(plan.get("render_settings"))
         visual = visual_motion(motion)
@@ -1159,6 +1159,18 @@ class ClipRenderService:
 
             voice_fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
             visual = attach_voice(self.store, plan, visual, voice_fps, "final")
+        if visual and react_sources(visual.get("layers")):
+            # Реакция слоёв на звук: огибающие громкости по кадрам готового ролика (app/audio_react.py);
+            # музыка — та, что ляжет в этот рендер (выбор запроса или настройки клипа).
+            from app.audio_react import attach_levels
+
+            rs = plan.get("render_settings") or {}
+            music = None
+            if music_track_id is not None:
+                music = {"track_id": music_track_id,
+                         "start_sec": music_start_sec if music_start_sec is not None else rs.get("music_start_sec")}
+            visual = attach_levels(self.store, plan, visual, float(self._preset(ffmpeg_preset_id).get("fps") or 30),
+                                   "final", music)
         # Стоп-кадры посреди ролика (app/freeze.py): основа получит их в render_*; здесь —
         # слои «continue» сдвигаются за вставку, звуки слоёв — за любую вставку.
         freezes = self._freezes(plan)
@@ -1173,6 +1185,10 @@ class ClipRenderService:
                 moved = remap_motion(visual, FreezeMap(freezes, only=running))
                 if visual.get("voice"):
                     moved = {**moved, "voice": shift_voice(visual["voice"], freezes, only=running)}
+                if visual.get("levels"):
+                    from app.audio_react import shift_levels
+
+                    moved = {**moved, "levels": shift_levels(visual["levels"], freezes, only=running)}
                 visual = moved
             motion = remap_motion(motion, FreezeMap(freezes))
         # Раскладка стрима — тоже из настроек клипа (single = прежний рендер).
@@ -1544,6 +1560,7 @@ class ClipRenderService:
                         words=motion.get("words"),
                         chat=motion.get("chat"),
                         voice=motion.get("voice"),
+                        levels=motion.get("levels"),
                         key=motion.get("key"),
                         background=motion.get("background"),
                         backgrounds=freeze_zones(motion.get("backgrounds"), preset.get("freezes")),
