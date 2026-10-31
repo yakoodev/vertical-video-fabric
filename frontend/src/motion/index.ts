@@ -35,7 +35,20 @@ export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type 
 export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
 export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";
 export { pngtuberRenderer, pngtuberStateRef, pngtuberSize, PIXEL_ART_MAX, PNGTUBER_DEFAULT_W } from "./layers/pngtuber";
-export { invalidateTextCache, layoutText, textBoxSize, backdropGeometry, type TextLayout } from "./layers/text";
+export {
+  invalidateTextCache,
+  layoutText,
+  textBoxSize,
+  backdropGeometry,
+  highlightProgress,
+  scrambleChar,
+  scrambleFront,
+  SCRAMBLE_RATE,
+  MARKER_COLOR,
+  type TextLayout,
+} from "./layers/text";
+export { FX_KINDS, FX_DEFAULTS, LEAK_COLORS, resolveFx, drawFx, flashEnvelope, type ResolvedFx } from "./layers/fx";
+export { REACT_SOURCES, REACT_PROPS, REACT_MAX_WINDOW, levelAt, reactAt, type Levels, type ReactEffect } from "./levels";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
 export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";
 export {

@@ -11,6 +11,7 @@
  * только находит страницу и активное слово — 30 кадров в секунду это дёшево.
  */
 import { clamp01, ease } from "../easing";
+import { noise1 } from "../keys";
 import { fontString } from "../fonts";
 import type { CaptionAnimation, CaptionsLayer, CaptionsProps, CaptionWord, Ctx2D, RenderEnv, Stroke, TextBg } from "../types";
 import { layerUnit, refSize } from "../types";
@@ -132,6 +133,16 @@ export const CAPTION_STYLES: CaptionStyle[] = [
       font: "Montserrat", weight: 900, size: 96, color: "#00000000", activeColor: "#ffffff",
       stroke: { color: "#ffffff", width: 3 }, uppercase: true, maxWords: 3, maxLines: 2,
       animation: "pop", wordScale: 1.1,
+    },
+  },
+  {
+    id: "stomp",
+    name: "Удар",
+    description: "Крупные слова по одному-два «впечатываются» с встряской, подсвеченные бьют сильнее",
+    props: {
+      font: "Rubik", weight: 900, size: 120, color: "#ffffff", activeColor: "#ffffff",
+      stroke: { color: "#000000", width: 13 }, uppercase: true, maxWords: 2, maxLines: 1,
+      animation: "stomp", wordScale: 1.06, maxWidth: 900,
     },
   },
 ];
@@ -438,8 +449,12 @@ type WordLook = {
   scale: number;
   /** Масштаб для раскладки: только рост активного слова — соседи раздвигаются под него. */
   lay: number;
-  /** Сдвиг вверх-вниз в опорных px (bounce). */
+  /** Сдвиг вверх-вниз в опорных px (bounce, встряска stomp). */
   dy: number;
+  /** Сдвиг вбок в опорных px (встряска stomp). */
+  dx: number;
+  /** Поворот слова в радианах (встряска stomp). */
+  rot: number;
   active: boolean;
   /** Доля слова, уже залитая цветом (karaoke). */
   fill: number;
@@ -449,13 +464,17 @@ type WordLook = {
   box: number;
 };
 
-function wordLook(r: ResolvedCaptions, words: CaptionPageWord[], k: number, active: number, t: number): WordLook {
+/** Удар слова (stomp): влёт до «впечатывания», с и встряска после него, с. */
+const STOMP_IN = 0.09;
+const STOMP_SHAKE = 0.32;
+
+function wordLook(r: ResolvedCaptions, words: CaptionPageWord[], k: number, active: number, t: number, strong = false): WordLook {
   const w = words[k];
   const since = t - w.t0;
   const started = since >= 0;
   const isActive = k === active;
   const ws = r.wordScale;
-  const look: WordLook = { visible: true, alpha: 1, scale: 1, lay: 1, dy: 0, active: isActive, fill: 0, chars: Infinity, box: 0 };
+  const look: WordLook = { visible: true, alpha: 1, scale: 1, lay: 1, dy: 0, dx: 0, rot: 0, active: isActive, fill: 0, chars: Infinity, box: 0 };
   // Плавный возврат увеличения, когда слово перестало быть активным.
   const next = words[k + 1];
   const release = !isActive && started && next ? clamp01((t - next.t0) / 0.1) : 1;
@@ -492,6 +511,28 @@ function wordLook(r: ResolvedCaptions, words: CaptionPageWord[], k: number, acti
       look.chars = Math.max(1, Math.ceil(Array.from(w.text).length * clamp01(since / span)));
       break;
     }
+    case "stomp": {
+      // Слово влетает крупным и «впечатывается» в свой момент, потом встряска затухает.
+      // Подсвеченное (акцент) бьёт сильнее. Шум — от номера слова: превью == рендер.
+      if (!started) return { ...look, visible: false };
+      look.lay = isActive ? ws : grow(1 - release);
+      const power = strong ? 1.35 : 1;
+      if (since < STOMP_IN) {
+        const q = since / STOMP_IN;
+        look.scale = look.lay * (1 + 0.7 * power * (1 - q * q));
+        look.alpha = clamp01(q * 4);
+      } else {
+        const q = clamp01((since - STOMP_IN) / STOMP_SHAKE);
+        const decay = (1 - q) * (1 - q);
+        const f = 40 * since;
+        const seed = 977 * (w.i + 1);
+        look.scale = look.lay * (1 - 0.05 * power * Math.sin(Math.PI * Math.min(1, q * 3)) * (1 - q));
+        look.dx = r.size * 0.07 * power * decay * noise1(seed, f);
+        look.dy = r.size * 0.07 * power * decay * noise1(seed + 1, f);
+        look.rot = 0.05 * power * decay * noise1(seed + 2, f);
+      }
+      break;
+    }
     case "none":
     default:
       break;
@@ -501,7 +542,8 @@ function wordLook(r: ResolvedCaptions, words: CaptionPageWord[], k: number, acti
 }
 
 function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scale: number; alpha: number } {
-  if (r.animation === "none" || r.animation === "typewriter") return { scale: 1, alpha: 1 };
+  // У удара каждое слово влетает само — страница целиком не выпрыгивает.
+  if (r.animation === "none" || r.animation === "typewriter" || r.animation === "stomp") return { scale: 1, alpha: 1 };
   const p = clamp01((t - page.t0) / 0.12);
   return { scale: 0.86 + 0.14 * ease("outBack", p), alpha: clamp01(p * 3) };
 }
@@ -545,8 +587,8 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
   words.forEach((w, k) => {
     if (w.t0 <= t) active = k;
   });
-  const looks = words.map((_, k) => wordLook(r, words, k, active, t));
   const hl = new Map(r.highlightWords.map((h) => [h.i, h.color] as [number, string]));
+  const looks = words.map((w, k) => wordLook(r, words, k, active, t, hl.has(w.i)));
   const lineY = (line: number) => -page.h / 2 + lineH * (line + 0.5);
   // Раскладка на этот кадр: увеличенное активное слово раздвигает соседей,
   // строка остаётся по центру. centers[k] — центр слова k по горизонтали.
@@ -596,7 +638,7 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
     const w = words[active];
     const lk = looks[active];
     if (lk.visible && lk.box > 0) {
-      const cx = centers[active];
+      const cx = centers[active] + lk.dx;
       const cy = lineY(w.line) + lk.dy;
       const s = lk.scale * (0.7 + 0.3 * Math.max(0, ease("outBack", lk.box)));
       const padX = r.size * 0.2;
@@ -604,7 +646,7 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
       ctx.save();
       ctx.translate(cx, cy);
       ctx.scale(s, s);
-      ctx.rotate(-0.03);
+      ctx.rotate(-0.03 + lk.rot);
       fillRoundRect(ctx, -w.w / 2 - padX, -bh / 2, w.w + padX * 2, bh, r.size * 0.2, rgba(r.activeBg));
       ctx.restore();
     }
@@ -617,14 +659,16 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
     words.forEach((w, k) => {
       const lk = looks[k];
       if (!lk.visible || lk.alpha <= 0.001 || lk.scale <= 0.001) return;
-      const x = centers[k] - w.w / 2;
+      const cxw = centers[k] + lk.dx;
+      const x = cxw - w.w / 2;
       const cy = lineY(w.line) + lk.dy;
       ctx.save();
       if (lk.alpha < 1) ctx.globalAlpha *= lk.alpha;
-      if (lk.scale !== 1) {
-        ctx.translate(centers[k], cy);
+      if (lk.scale !== 1 || lk.rot) {
+        ctx.translate(cxw, cy);
+        if (lk.rot) ctx.rotate(lk.rot);
         ctx.scale(lk.scale, lk.scale);
-        ctx.translate(-centers[k], -cy);
+        ctx.translate(-cxw, -cy);
       }
       fn(w, lk, x, cy + capH / 2);
       ctx.restore();
@@ -731,7 +775,8 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
   measure(ctx, layer, _st, env, frame) {
     const r = resolveCaptions(layer.props);
     const page = currentPage(ctx, layer, env, frame);
-    const pad = (r.stroke?.width ?? 0) * 2 + r.size * 0.3;
+    // Удар влетает крупнее страницы — запас промежуточному холсту.
+    const pad = (r.stroke?.width ?? 0) * 2 + r.size * (r.animation === "stomp" ? 1.2 : 0.3);
     if (!page) return { w: r.maxWidth, h: r.size * r.lineHeight * r.maxLines };
     return { w: page.w * r.wordScale + pad * 2, h: page.h + pad * 2 };
   },

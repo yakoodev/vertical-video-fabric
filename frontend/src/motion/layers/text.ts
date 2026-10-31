@@ -9,7 +9,8 @@
 import { clamp01, ease } from "../easing";
 import { DEFAULT_FONT, emojiFont, emojiRef, fontString, graphemes, isEmoji } from "../fonts";
 import { decorGlyph, drawDecorGlyph, type DecorGlyph } from "../glyphs";
-import type { Reveal } from "../animate";
+import { animDuration, DEFAULT_IN_DURATION, type LayerState, type Reveal } from "../animate";
+import { hashString, rand01 } from "../keys";
 import type { Ctx2D, Highlight, RenderEnv, TextLayer, TextStyle } from "../types";
 import { clearShadow, drawImageLike, fillRoundRect, rgba, roundRectPath, type LayerRenderer } from "./common";
 
@@ -364,6 +365,10 @@ export function lineBand(L: TextLayout, line: LaidLine, stroke = 0, bg?: TextSty
 
 function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefined, band?: Band): WordView | null {
   if (!reveal) return { graphemes: word.g, scale: 1, alpha: 1 };
+  if (reveal.mode === "scramble") {
+    // Слово видно, как только до него дошёл «фронт» перебора; буквы прячет и подменяет charFx.
+    return scrambleFront(L, reveal.fraction) > word.gStart ? { graphemes: word.g, scale: 1, alpha: 1 } : null;
+  }
   if (reveal.mode === "chars") {
     const shown = Math.floor(clamp01(reveal.fraction) * L.totalG + 1e-6);
     const visible = shown - word.gStart;
@@ -436,6 +441,208 @@ function drawSegs(ctx: Ctx2D, segs: Seg[], x: number, baseline: number, cy: numb
   }
 }
 
+/* ---------- побуквенные эффекты: волна и расшифровка ---------- */
+
+/**
+ * Как рисовать графему номер `gi` (во всём тексте, как у typewriter): сдвиг вниз `dy` (опорн. px)
+ * и символ `ch` вместо неё (расшифровка); null — ещё не видна.
+ */
+type CharFx = (gi: number, g: string) => { dy: number; ch: string } | null;
+
+/** Перебор символов расшифровки — 20 смен в секунду (не кадр превью: превью и рендер совпадают). */
+export const SCRAMBLE_RATE = 20;
+const SCRAMBLE_UPPER = "АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const SCRAMBLE_LOWER = "абвгдежзиклмнопрстуфхцчшщэюяabcdefghijklmnopqrstuvwxyz0123456789";
+const LOWER = /\p{Ll}/u;
+
+/** Ширина «волны» перебора перед расшифрованными буквами, в графемах. */
+function scrambleWindow(L: TextLayout): number {
+  return Math.max(3, Math.min(12, L.totalG * 0.35));
+}
+
+/** Сколько графем «прошёл» фронт перебора при доле входа `fraction` (с окном перебора). */
+export function scrambleFront(L: TextLayout, fraction: number): number {
+  return clamp01(fraction) * (Math.max(1, L.totalG) + scrambleWindow(L));
+}
+
+/**
+ * Случайная буква для графемы `gi` на шаге `tick`: регистр как у настоящей, набор — кириллица,
+ * латиница и цифры. Зерно — id слоя: два одинаковых титра перебираются по-разному.
+ */
+export function scrambleChar(g: string, seed: number, tick: number, gi: number): string {
+  const set = LOWER.test(g) ? SCRAMBLE_LOWER : SCRAMBLE_UPPER;
+  return set[Math.floor(rand01(seed, tick * 7919 + gi * 131) * set.length) % set.length];
+}
+
+function makeCharFx(L: TextLayout, fx: TextFx, scramble: number | null): CharFx {
+  const win = scrambleWindow(L);
+  const front = scramble === null ? Infinity : scrambleFront(L, scramble);
+  const tick = Math.floor(fx.local * SCRAMBLE_RATE);
+  const amp = L.size * 0.12 * fx.wave;
+  const phase = Math.PI * 2 * 0.9 * fx.waveSpeed * fx.local;
+  return (gi, g) => {
+    const d = front - gi;
+    if (d <= 0) return null;
+    const ch = d < win && /\S/.test(g) ? scrambleChar(g, fx.seed, tick, gi) : g;
+    return { dy: amp ? -amp * Math.sin(phase - gi * 0.55) : 0, ch };
+  };
+}
+
+/** Сегменты по одной графеме: позиции — по ширине префикса (кернинг строки сохраняется). */
+function drawSegsFx(
+  ctx: Ctx2D,
+  segs: Seg[],
+  x: number,
+  baseline: number,
+  cy: number,
+  L: TextLayout,
+  pass: Pass,
+  env: RenderEnv,
+  g0: number,
+  chars: CharFx,
+): void {
+  let cx = x;
+  let gi = g0;
+  for (const s of segs) {
+    if (s.glyph || s.ref || s.cell) {
+      // Эмодзи, символ-декор, цифра счётчика — целиком, только сдвиг волны.
+      const v = chars(gi++, s.text);
+      if (v) {
+        ctx.save();
+        ctx.translate(0, v.dy);
+        drawSegs(ctx, [s], cx, baseline, cy, L, pass, env);
+        ctx.restore();
+      }
+      cx += s.w;
+      continue;
+    }
+    let prefix = "";
+    let px = 0;
+    for (const g of graphemes(s.text)) {
+      const next = measure(ctx, L.font, L.letterSpacing, prefix + g);
+      const v = chars(gi++, g);
+      if (v) {
+        // Подменённая буква — по центру ячейки настоящей: строка не «прыгает» по ширине.
+        const off = v.ch === g ? 0 : (next - px - measure(ctx, L.font, L.letterSpacing, v.ch)) / 2;
+        if (pass === "stroke") ctx.strokeText(v.ch, cx + px + off, baseline + v.dy);
+        else ctx.fillText(v.ch, cx + px + off, baseline + v.dy);
+      }
+      prefix += g;
+      px = next;
+    }
+    cx += s.w;
+  }
+}
+
+/* ---------- подсветка слов: плашка и маркер ---------- */
+
+const sameColor = (a: string, b: string) => a.slice(0, 7).toLowerCase() === b.slice(0, 7).toLowerCase();
+
+/** Цвет маркера по умолчанию — жёлтый текстовыделитель. */
+export const MARKER_COLOR = "#ffd400";
+
+/**
+ * Полоса маркера под буквами строки от x0 до x1 (доля `part` прорисована слева направо):
+ * от верхней трети заглавных до ниже строки, со скосом штриха и скруглёнными краями.
+ */
+function drawMarker(ctx: Ctx2D, L: TextLayout, line: LaidLine, x0: number, x1: number, part: number, color: string): void {
+  const pad = L.size * 0.1;
+  const top = line.cy - L.capH * 0.42;
+  const bottom = line.cy + L.capH / 2 + L.size * 0.18;
+  const h = bottom - top;
+  const a = x0 - pad;
+  const w = (x1 + pad - a) * part;
+  if (w <= 0.5) return;
+  ctx.save();
+  ctx.translate(a, line.cy);
+  ctx.rotate(-0.012);
+  ctx.transform(1, 0, -0.2, 1, 0, 0);
+  ctx.beginPath();
+  roundRectPath(ctx, 0, top - line.cy, w, h, Math.min(h * 0.22, w / 2));
+  ctx.fillStyle = rgba(color, 0.92);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Плашки и маркер подсвеченных слов (под текстом). `drawn` 0..1 — сколько общей длины уже
+ * прорисовано слева направо по порядку чтения: у маркера соседние слова строки — одна полоса.
+ */
+function drawHighlights(
+  ctx: Ctx2D,
+  L: TextLayout,
+  hl: Highlight,
+  views: (WordView | null)[][],
+  left: number,
+  maskX: number,
+  maskW: number,
+  drawn: number,
+): void {
+  const marker = hl.style === "marker";
+  if (!hl.bg && !marker) return;
+  const set = new Set(hl.words);
+  type Span = { li: number; wis: number[]; x0: number; x1: number };
+  const spans: Span[] = [];
+  L.lines.forEach((line, li) => {
+    let cur: Span | null = null;
+    line.words.forEach((w, wi) => {
+      if (!set.has(w.index) || !views[li][wi]) {
+        cur = null;
+        return;
+      }
+      const x0 = left + line.x0 + w.x;
+      if (marker && cur) {
+        cur.x1 = x0 + w.w;
+        cur.wis.push(wi);
+      } else {
+        cur = { li, wis: [wi], x0, x1: x0 + w.w };
+        spans.push(cur);
+      }
+    });
+  });
+  const total = spans.reduce((s, sp) => s + (sp.x1 - sp.x0), 0);
+  let budget = clamp01(drawn) * total;
+  for (const sp of spans) {
+    const width = sp.x1 - sp.x0;
+    const part = drawn >= 1 ? 1 : clamp01(budget / Math.max(1e-6, width));
+    budget -= width;
+    if (part <= 0) break;
+    const line = L.lines[sp.li];
+    if (marker) {
+      const v = views[sp.li][sp.wis[0]] as WordView;
+      ctx.save();
+      ctx.globalAlpha *= v.alpha;
+      drawMarker(ctx, L, line, sp.x0, sp.x1, part, hl.bg || MARKER_COLOR);
+      ctx.restore();
+      continue;
+    }
+    const w = line.words[sp.wis[0]];
+    const v = views[sp.li][sp.wis[0]] as WordView;
+    withWordTransform(ctx, sp.x0 + w.w / 2, line.cy, v, maskX, maskW, () => {
+      const px = L.size * 0.14;
+      const top = line.cy - L.capH / 2 - L.size * 0.14;
+      const h = L.capH + L.size * 0.32;
+      ctx.save();
+      if (part < 1) {
+        // Плашка «выезжает» слева направо: маска по доле её ширины.
+        ctx.beginPath();
+        ctx.rect(sp.x0 - px * 2, line.cy - L.size * 2, (w.w + px * 4) * part, L.size * 4);
+        ctx.clip();
+      }
+      ctx.translate(sp.x0 + w.w / 2, line.cy);
+      ctx.rotate(-0.035);
+      fillRoundRect(ctx, -w.w / 2 - px, top - line.cy, w.w + px * 2, h, L.size * 0.16, rgba(hl.bg as string));
+      ctx.restore();
+    });
+  }
+}
+
+/**
+ * Эффекты текстового слоя поверх раскладки: волна букв, доля прорисовки подсветки (маркер),
+ * зерно и время для расшифровки. Без них (счётчик, плашки, подписи) — как раньше.
+ */
+export type TextFx = { seed: number; local: number; wave: number; waveSpeed: number; highlight: number };
+
 /**
  * Нарисовать разложенный текст с центром блока в (0, 0) текущей системы.
  * Порядок: плашка → подсветки слов → обводка всех строк → заливка всех строк
@@ -447,8 +654,11 @@ export function drawTextLayout(
   opts: TextBlockOptions,
   env: RenderEnv,
   reveal?: Reveal | null,
+  fx?: TextFx | null,
 ): void {
   const left = -L.w / 2;
+  const scramble = reveal?.mode === "scramble" ? reveal.fraction : null;
+  const chars = fx && (fx.wave > 0 || scramble !== null) ? makeCharFx(L, fx, scramble) : null;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   const strokeW = opts.stroke && opts.stroke.width > 0 ? opts.stroke.width : 0;
@@ -471,25 +681,8 @@ export function drawTextLayout(
   const hl = opts.highlight;
   const hlSet = new Set(hl?.words ?? []);
 
-  // Подсветка слова плашкой (под текстом).
-  if (hl?.bg) {
-    L.lines.forEach((line, li) =>
-      line.words.forEach((w, wi) => {
-        const v = views[li][wi];
-        if (!v || !hlSet.has(w.index)) return;
-        withWordTransform(ctx, left + line.x0 + w.x + w.w / 2, line.cy, v, maskX, maskW, () => {
-          const px = L.size * 0.14;
-          const top = line.cy - L.capH / 2 - L.size * 0.14;
-          const h = L.capH + L.size * 0.32;
-          ctx.save();
-          ctx.translate(left + line.x0 + w.x + w.w / 2, line.cy);
-          ctx.rotate(-0.035);
-          fillRoundRect(ctx, -w.w / 2 - px, top - line.cy, w.w + px * 2, h, L.size * 0.16, rgba(hl.bg as string));
-          ctx.restore();
-        });
-      }),
-    );
-  }
+  // Подсветка слова плашкой или маркером (под текстом), с прорисовкой слева направо.
+  if (hl && (hl.bg || hl.style === "marker")) drawHighlights(ctx, L, hl, views, left, maskX, maskW, fx?.highlight ?? 1);
 
   const stroke = opts.stroke && opts.stroke.width > 0 ? opts.stroke : null;
   let fill: string | CanvasGradient = rgba(opts.color ?? "#ffffff");
@@ -501,7 +694,15 @@ export function drawTextLayout(
     grad.addColorStop(1, rgba(opts.gradient[1]));
     fill = grad;
   }
-  const hlColor = hl ? hl.color || (hl.bg ? null : "#FFD400") : null;
+  // У маркера буквы своего цвета, если цвет подсветки не задан отдельно (жёлтое на жёлтом не видно).
+  const markerPaint = hl?.style === "marker" ? hl.bg || MARKER_COLOR : null;
+  const hlColor = !hl
+    ? null
+    : markerPaint
+      ? hl.color && !sameColor(hl.color, markerPaint)
+        ? hl.color
+        : null
+      : hl.color || (hl.bg ? null : "#FFD400");
 
   const passes: Pass[] = stroke ? ["stroke", "fill"] : ["fill"];
   for (const pass of passes) {
@@ -523,7 +724,8 @@ export function drawTextLayout(
         const x = left + line.x0 + w.x;
         withWordTransform(ctx, x + w.w / 2, line.cy, v, maskX, maskW, () => {
           if (pass === "fill") ctx.fillStyle = hlColor && hlSet.has(w.index) ? rgba(hlColor) : fill;
-          drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env);
+          if (chars) drawSegsFx(ctx, segs, x, baseline, line.cy, L, pass, env, w.gStart, chars);
+          else drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env);
         });
       });
     });
@@ -582,15 +784,96 @@ export function cachedLayout(ctx: Ctx2D, props: TextBlockOptions, defaultFont: s
 /** Семейство по умолчанию из окружения рендера. */
 export const envFont = (env: RenderEnv) => env.defaultFont || DEFAULT_FONT;
 
+/** Доля прорисовки подсветки (маркер / плашка с `draw`) в момент слоя; 1 — целиком. */
+export function highlightProgress(layer: TextLayer, st: LayerState): number {
+  const hl = layer.props.highlight;
+  if (!hl) return 1;
+  const span = typeof hl.draw === "number" ? hl.draw : hl.style === "marker" ? 0.45 : 0;
+  if (!(span > 0)) return 1;
+  // Нет delay — сразу после входа: подсветка ложится на уже появившийся текст.
+  const delay = typeof hl.delay === "number" ? hl.delay : animDuration(layer.in, st.duration, DEFAULT_IN_DURATION);
+  return ease("inOutCubic", (st.local - delay) / span);
+}
+
+/**
+ * Глитч текста: красная и голубая копии букв вразъезд, несколько горизонтальных срезов
+ * сдвинуты вбок, редкое мерцание. Сила `g` 0..1, всё «случайное» — rand01 от id слоя и шага
+ * 1/24 с: превью и рендер совпадают.
+ */
+function drawGlitchText(ctx: Ctx2D, L: TextLayout, props: TextLayer["props"], env: RenderEnv, st: LayerState, seed: number, fx: TextFx): void {
+  const g = clamp01(st.glitch);
+  const tick = Math.floor(st.local * 24);
+  const r = (n: number) => rand01(seed, tick * 97 + n);
+  if (r(0) < 0.07 * g) return; // кадр «выпал» целиком
+  if (r(1) < 0.2 * g) ctx.globalAlpha *= 0.4;
+  const box = textBoxSize(L, props);
+  // Копии разъезжаются дальше обводки — иначе она их закрывает.
+  const stroke = props.stroke && props.stroke.width > 0 ? props.stroke.width : 0;
+  const d = (stroke + (0.04 + 0.08 * r(2)) * L.size) * g * (r(3) < 0.5 ? -1 : 1);
+  const ghost = { ...props, gradient: null, stroke: null, bg: null, backdrop: null, highlight: null };
+  const paint = () => {
+    const shadow = [ctx.shadowColor, ctx.shadowBlur, ctx.shadowOffsetX, ctx.shadowOffsetY] as const;
+    clearShadow(ctx);
+    ctx.save();
+    ctx.globalAlpha *= 0.9;
+    ctx.translate(-d, 0);
+    drawTextLayout(ctx, L, { ...ghost, color: "#ff2a55" }, env, st.reveal, fx);
+    ctx.translate(d * 2, 0);
+    drawTextLayout(ctx, L, { ...ghost, color: "#19f0ff" }, env, st.reveal, fx);
+    ctx.restore();
+    ctx.shadowColor = shadow[0];
+    ctx.shadowBlur = shadow[1];
+    ctx.shadowOffsetX = shadow[2];
+    ctx.shadowOffsetY = shadow[3];
+    drawTextLayout(ctx, L, props, env, st.reveal, fx);
+  };
+  // Срезы: 1–4 полосы по высоте блока, каждая со своим сдвигом; между ними — как есть.
+  const top = -box.h / 2 - L.size * 0.3;
+  const bottom = box.h / 2 + L.size * 0.3;
+  const n = 1 + Math.floor(r(4) * 3 * g + 0.5);
+  const cuts: { y0: number; y1: number; dx: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const h = (0.06 + 0.2 * r(10 + i)) * (bottom - top);
+    const y0 = top + r(20 + i) * (bottom - top - h);
+    cuts.push({ y0, y1: y0 + h, dx: (r(30 + i) * 2 - 1) * 0.3 * L.size * g });
+  }
+  cuts.sort((a, b) => a.y0 - b.y0);
+  const wide = box.w + L.size * 4;
+  let y = top;
+  const band = (y0: number, y1: number, dx: number) => {
+    if (y1 - y0 <= 0.5) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-wide / 2, y0, wide, y1 - y0);
+    ctx.clip();
+    if (dx) ctx.translate(dx, 0);
+    paint();
+    ctx.restore();
+  };
+  for (const c of cuts) {
+    const y0 = Math.max(y, c.y0);
+    band(y, y0, 0);
+    band(y0, c.y1, c.dx);
+    y = Math.max(y, c.y1);
+  }
+  band(y, bottom, 0);
+}
+
 export const textRenderer: LayerRenderer<TextLayer> = {
   multipart: true,
-  measure(ctx, layer, _st, env) {
+  measure(ctx, layer, st, env) {
     const L = cachedLayout(ctx, layer.props, envFont(env));
-    return textBoxSize(L, layer.props);
+    const size = textBoxSize(L, layer.props);
+    // Глитч и волна выходят за рамку текста — запас промежуточному холсту.
+    const room = st.glitch > 0 ? L.size * 0.8 : st.wave > 0 ? L.size * 0.3 * st.wave : 0;
+    return room ? { w: size.w + room * 2, h: size.h + room } : size;
   },
   draw(ctx, layer, st, env) {
     if (!layer.props.text) return;
     const L = cachedLayout(ctx, layer.props, envFont(env));
-    drawTextLayout(ctx, L, layer.props, env, st.reveal);
+    const seed = hashString(layer.id || "text");
+    const fx: TextFx = { seed, local: st.local, wave: st.wave, waveSpeed: st.waveSpeed, highlight: highlightProgress(layer, st) };
+    if (st.glitch > 0.01) drawGlitchText(ctx, L, layer.props, env, st, seed, fx);
+    else drawTextLayout(ctx, L, layer.props, env, st.reveal, fx);
   },
 };

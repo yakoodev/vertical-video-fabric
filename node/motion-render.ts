@@ -43,6 +43,7 @@ import {
   type VideoLayer,
   type VideoSource,
   type VoiceTrack,
+  type LevelTrack,
   videoFileTime,
   voiceStateAt,
   pngtuberStateRef,
@@ -141,6 +142,8 @@ function readComp(path: string): Composition {
       : [],
     // Состояния голоса PNGtuber по id слоя (app/pngtuber.py): только целые записи.
     ...readVoice(raw),
+    // Огибающие громкости для react слоёв (app/audio_react.py).
+    ...readLevels(raw),
     // Опорный кадр формата (px слоёв): нет — движок берёт 1080×1920, как всегда.
     ...readRef(raw),
     ...readKey(raw),
@@ -167,6 +170,24 @@ function readVoice(raw: Partial<Composition>): Pick<Composition, "voice"> {
     };
   }
   return Object.keys(out).length ? { voice: out } : {};
+}
+
+/** comp.levels: {voice|music|mix: {t0, fps, v [0..100]}} (app/audio_react.py) — мусор отбрасывается. */
+function readLevels(raw: Partial<Composition>): Pick<Composition, "levels"> {
+  const v = raw.levels;
+  if (!v || typeof v !== "object") return {};
+  const out: NonNullable<Composition["levels"]> = {};
+  for (const source of ["voice", "music", "mix"] as const) {
+    const tr = (v as Record<string, Partial<LevelTrack>>)[source];
+    if (!tr || !Array.isArray(tr.v)) continue;
+    const fps = Number(tr.fps);
+    out[source] = {
+      t0: Number(tr.t0) || 0,
+      fps: Number.isFinite(fps) && fps > 0 ? fps : 30,
+      v: tr.v.map((x) => Math.max(0, Math.min(100, Number(x) || 0))),
+    };
+  }
+  return Object.keys(out).length ? { levels: out } : {};
 }
 
 /** Опорный кадр формата (app/formats.py): оба числа в 16..8192 — иначе не задан. */

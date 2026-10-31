@@ -1846,3 +1846,207 @@ test("CLI: PNGtuber из кадров anims.json (PNG с альфой) и comp.v
   assert.equal(r.status, 0, r.stderr);
   assert.equal(Number(ffprobe(out).nb_read_frames), 8);
 });
+
+/* ---------- кинетическая типографика, эффект кадра, реакция на звук ---------- */
+
+const pixels = (layers, t, extra = {}, base = null) => {
+  const cv = createCanvas(540, 960);
+  const ctx = cv.getContext("2d");
+  if (base) base(ctx);
+  E.drawFrame(ctx, { layers, ...extra }, t, { width: 540, height: 960, getImage: () => null, createCanvas: (w, h) => createCanvas(w, h) });
+  return ctx.getImageData(0, 0, 540, 960).data;
+};
+const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const gradientBase = (ctx) => {
+  const g = ctx.createLinearGradient(0, 0, 540, 960);
+  g.addColorStop(0, "#1e3a8a");
+  g.addColorStop(0.5, "#f59e0b");
+  g.addColorStop(1, "#10b981");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 540, 960);
+  ctx.fillStyle = "#ffffff";
+  for (let x = 0; x < 540; x += 60) ctx.fillRect(x, 0, 20, 960);
+};
+
+test("glitch/scramble — только у текста (у прочих fade), циклы glitch/wave — shake/float, stomp — у любого", () => {
+  const shape = (over) => ({ ...textLayer(), type: "shape", props: { kind: "rect" }, ...over });
+  const g = E.resolveLayer(shape({ in: { type: "glitch", duration: 1 } }), 10.5);
+  const f = E.resolveLayer(shape({ in: { type: "fade", duration: 1 } }), 10.5);
+  near(g.opacity, f.opacity);
+  assert.equal(g.glitch, 0);
+  const sh = E.resolveLayer(shape({ loop: { type: "glitch" } }), 11.3);
+  const sk = E.resolveLayer(shape({ loop: { type: "shake" } }), 11.3);
+  near(sh.x, sk.x);
+  near(E.resolveLayer(shape({ loop: { type: "wave" } }), 11.3).y, E.resolveLayer(shape({ loop: { type: "float" } }), 11.3).y);
+  // Текст: цикл wave — волна букв (y слоя на месте), glitch — вспышки силы глитча.
+  const w = E.resolveLayer(textLayer({ loop: { type: "wave", amount: 2, speed: 1.5 } }), 11);
+  assert.equal(w.wave, 2);
+  near(w.y, 0.5);
+  const bursts = Array.from({ length: 200 }, (_, i) => E.resolveLayer(textLayer({ loop: { type: "glitch" } }), 10 + i * 0.02).glitch);
+  assert.ok(bursts.some((v) => v > 0.3) && bursts.filter((v) => v > 0).length < 150, "вспышки короткие и редкие");
+  // Удар: влетает крупным, к концу входа — ровно на месте; встряска одна и та же при повторе.
+  const stomp = (t) => E.resolveLayer(shape({ in: { type: "stomp", duration: 0.5 } }), t);
+  assert.ok(stomp(10.01).scale > 1.8);
+  near(stomp(10.5).scale, 1);
+  near(stomp(10.5).x, 0.5);
+  assert.deepEqual(stomp(10.3), stomp(10.3));
+  assert.ok(Math.abs(stomp(10.3).x - 0.5) > 1e-5, "после удара — встряска");
+});
+
+test("scramble: перебор детерминирован, буквы из набора с тем же регистром; после входа — как без анимации", () => {
+  const up = E.scrambleChar("Ж", 42, 7, 3);
+  const low = E.scrambleChar("ж", 42, 7, 3);
+  assert.equal(up, E.scrambleChar("Ж", 42, 7, 3));
+  assert.match(up, /^[А-ЯA-Z0-9]$/);
+  assert.match(low, /^[а-яa-z0-9]$/);
+  assert.notEqual(E.scrambleChar("Ж", 42, 8, 3) + E.scrambleChar("Ж", 42, 9, 3) + E.scrambleChar("Ж", 42, 10, 3), up.repeat(3));
+  const props = { text: "Пароль 2077", size: 90, color: "#ffffff" };
+  const plain = pixels([textLayer({ props })], 12);
+  const scr = textLayer({ props, in: { type: "scramble", duration: 1 } });
+  assert.ok(same(pixels([scr], 11.5), plain), "после входа — те же пиксели");
+  assert.ok(same(pixels([scr], 10.4), pixels([scr], 10.4)), "превью == рендер");
+  assert.ok(!same(pixels([scr], 10.4), plain), "в середине входа — перебор");
+  assert.ok(pixels([scr], 10).every((v, i) => i % 4 !== 3 || v === 0), "в начале — пусто");
+});
+
+test("glitch и wave текста: кадр детерминирован, вне вспышки/без волны — как обычный текст", () => {
+  const props = { text: "СБОЙ", size: 140, color: "#ffffff", stroke: { color: "#000000", width: 8 } };
+  const plain = pixels([textLayer({ props })], 12);
+  const gl = textLayer({ props, in: { type: "glitch", duration: 0.6 } });
+  assert.ok(same(pixels([gl], 10.2), pixels([gl], 10.2)));
+  assert.ok(!same(pixels([gl], 10.2), plain), "во входе — расслоение");
+  assert.ok(same(pixels([gl], 11), plain), "после входа — чисто");
+  // Цветные копии: рядом с белыми буквами есть красные и голубые пиксели.
+  const d = pixels([gl], 10.15);
+  let red = 0;
+  let cyan = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 100) continue;
+    if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] < 140) red++;
+    if (d[i] < 90 && d[i + 1] > 200 && d[i + 2] > 200) cyan++;
+  }
+  assert.ok(red > 50 && cyan > 50, `копии видны: красных ${red}, голубых ${cyan}`);
+  const wv = textLayer({ props, loop: { type: "wave", amount: 1.5 } });
+  assert.ok(same(pixels([wv], 10.7), pixels([wv], 10.7)));
+  assert.ok(!same(pixels([wv], 10.7), plain), "буквы волной");
+});
+
+test("маркер: прорисовка слева направо после входа, буквы своего цвета; плашка с draw — тоже", () => {
+  const hl = { words: [1], style: "marker", bg: "#ffd400", color: "#ffd400", draw: 0.5 };
+  const layer = textLayer({ props: { text: "очень важно", size: 120, color: "#ffffff", highlight: hl }, in: { type: "fade", duration: 0.4 } });
+  const st = (t) => E.resolveLayer(layer, t);
+  near(E.highlightProgress(layer, st(10.3)), 0); // до конца входа маркера нет
+  near(E.highlightProgress(layer, st(10.9)), 1);
+  assert.ok(E.highlightProgress(layer, st(10.65)) > 0.2 && E.highlightProgress(layer, st(10.65)) < 0.8);
+  near(E.highlightProgress({ ...layer, props: { ...layer.props, highlight: { ...hl, delay: 1.2 } } }, st(11)), 0);
+  const yellow = (d) => {
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 170 && d[i + 2] < 60 && d[i + 3] > 200) n++;
+    return n;
+  };
+  const half = yellow(pixels([layer], 10.65));
+  const full = yellow(pixels([layer], 12));
+  assert.ok(full > 2000 && half > 100 && half < full * 0.85, `маркер растёт: ${half} → ${full}`);
+  // Буквы слова под маркером — белые (цвет как у маркера не берётся): белых почти столько же, сколько
+  // без маркера (края букв на жёлтом смешиваются), а жёлтыми буквами их было бы вдвое меньше.
+  const white = (d) => {
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) n++;
+    return n;
+  };
+  const bare = textLayer({ props: { text: "очень важно", size: 120, color: "#ffffff" } });
+  assert.ok(white(pixels([layer], 12)) > white(pixels([bare], 12)) * 0.85);
+  // Плашка с draw тоже прорисовывается: на полпути её меньше, чем в конце.
+  const plate = textLayer({ props: { text: "очень важно", size: 120, color: "#ffffff", highlight: { words: [1], bg: "#ffd400", color: "#111111", draw: 0.5 } }, in: { type: "fade", duration: 0.4 } });
+  assert.ok(yellow(pixels([plate], 10.65)) < yellow(pixels([plate], 12)) * 0.85);
+});
+
+test("fx: каждый вид меняет кадр одинаково дважды; слои выше по дорожке — чистые; прозрачность гасит", () => {
+  const top = { ...textLayer(), id: "top", type: "shape", track: 3, x: 0.5, y: 0.2, props: { kind: "rect", w: 300, h: 200, fill: "#00ff00" } };
+  const under = { ...textLayer(), id: "under", type: "shape", track: 0, x: 0.5, y: 0.6, props: { kind: "ellipse", w: 500, h: 500, fill: "#ff00ff" } };
+  const base = pixels([under, top], 11, {}, gradientBase);
+  for (const kind of E.FX_KINDS) {
+    const fx = { ...textLayer(), id: `fx_${kind}`, type: "fx", track: 1, start: 10.5, end: 12, props: { kind, intensity: 1 } };
+    const a = pixels([under, fx, top], 10.62, {}, gradientBase);
+    assert.ok(same(a, pixels([under, fx, top], 10.62, {}, gradientBase)), `${kind}: превью == рендер`);
+    assert.ok(!same(a, base), `${kind}: кадр изменился`);
+    // Центр зелёного прямоугольника над эффектом — ровно зелёный.
+    const i = (192 * 540 + 270) * 4;
+    assert.deepEqual([...a.slice(i, i + 4)], [0, 255, 0, 255], `${kind}: слой выше чистый`);
+    const off = pixels([under, { ...fx, opacity: 0 }, top], 10.62, {}, gradientBase);
+    assert.ok(same(off, base), `${kind}: opacity 0 — без эффекта`);
+  }
+  assert.equal(E.flashEnvelope(0, 0.4), 0);
+  near(E.flashEnvelope(0.06, 0.4), 1);
+  assert.ok(E.flashEnvelope(0.3, 0.4) < 0.2);
+  assert.deepEqual(E.resolveFx({ id: "x", type: "fx", props: { kind: "нет-такого" } }).kind, "vhs");
+  // Мышью эффект не ловится, рамка — весь кадр.
+  const box = E.layerBox(createCanvas(8, 8).getContext("2d"), { ...textLayer(), type: "fx", props: { kind: "vhs" } }, 11, { width: 540, height: 960, getImage: () => null });
+  assert.deepEqual(box, { cx: 270, cy: 480, w: 540, h: 960, rotation: 0 });
+});
+
+test("react: огибающая по кадрам, сглаживание окном назад; scale/opacity/y/glow; без levels — как было", () => {
+  const track = { t0: 0, fps: 10, v: [0, 0, 100, 100, 0, 0, 50, 0, 0, 0] };
+  near(E.levelAt(track, 0.25), 1);
+  near(E.levelAt(track, 0.45), 0);
+  near(E.levelAt(track, 5), 0);
+  const sm = E.levelAt(track, 0.45, 0.4);
+  assert.ok(sm > 0.2 && sm < 0.9, `сглажено: ${sm}`);
+  near(E.levelAt(track, 0.45, 0.4), sm); // без состояния — то же при повторе
+  const levels = { voice: { t0: 10, fps: 10, v: [100, 100, 0, 0] }, music: { t0: 10, fps: 10, v: [0, 0, 0, 0] } };
+  const L = (react) => textLayer({ react });
+  const loud = (react, t = 10.05) => E.resolveLayer(L(react), t, undefined, levels);
+  near(loud({ prop: "scale", amount: 1, smooth: 0 }).scale, 1.25);
+  near(loud({ prop: "scale", amount: 1, smooth: 0 }, 10.25).scale, 1);
+  near(loud({ prop: "opacity", amount: 1, smooth: 0 }, 10.25).opacity, 0);
+  near(loud({ prop: "y", amount: 1, smooth: 0 }).y, 0.5 - 40 / 1920);
+  near(loud({ prop: "glow", amount: 2, smooth: 0 }).glow, 2);
+  near(loud({ source: "music", prop: "scale", smooth: 0 }).scale, 1);
+  near(E.resolveLayer(L({ prop: "scale" }), 10.05).scale, 1); // огибающих нет — слой глух
+  // Свечение рисуется тенью: пикселей вокруг букв больше.
+  const props = { text: "ГРОМКО", size: 120, color: "#ffffff" };
+  const lit = (d) => d.reduce((n, v, i) => n + (i % 4 === 3 && v > 0 ? 1 : 0), 0);
+  const glow = pixels([textLayer({ props, react: { prop: "glow", amount: 1.5, smooth: 0, color: "#ff00ff" } })], 10.05, { levels });
+  assert.ok(lit(glow) > lit(pixels([textLayer({ props })], 10.05)) * 1.3);
+});
+
+test("субтитры stomp: слово видно с момента и «впечатывается», подсвеченное — сильнее; кадр детерминирован", () => {
+  const words = [{ t0: 1, t1: 1.3, w: "БАХ" }, { t0: 1.4, t1: 1.8, w: "БУМ" }];
+  const caps = (hl = []) => ({ id: "c", type: "captions", start: 0, end: 3, x: 0.5, y: 0.5, props: { style: "stomp", highlightWords: hl } });
+  const lit = (d) => d.reduce((n, v, i) => n + (i % 4 === 3 && v > 0 ? 1 : 0), 0);
+  assert.equal(lit(pixels([caps()], 0.99, { words })), 0);
+  const hit = pixels([caps()], 1.02, { words });
+  const rest = pixels([caps()], 1.35, { words });
+  assert.ok(same(hit, pixels([caps()], 1.02, { words })));
+  assert.ok(lit(hit) > lit(rest) * 1.2, "на ударе слово крупнее");
+  assert.ok(lit(pixels([caps([{ i: 0, color: "#ff3b30" }])], 1.02, { words })) > lit(hit), "акцент бьёт сильнее");
+  assert.ok(E.CAPTION_STYLES.some((s) => s.id === "stomp" && s.props.animation === "stomp"));
+});
+
+test("CLI: эффект кадра и огибающая громкости из comp.json", async () => {
+  const comp = {
+    width: 270,
+    height: 480,
+    fps: 10,
+    duration: 1,
+    layers: [
+      { id: "t", type: "text", start: 0, end: 1, x: 0.5, y: 0.4, react: { source: "mix", prop: "scale", amount: 2, smooth: 0 }, props: { text: "ОК", size: 200, color: "#ffffff" } },
+      { id: "f", type: "fx", start: 0, end: 1, track: 2, props: { kind: "grain_overlay", intensity: 1 } },
+    ],
+    levels: { mix: { t0: 0, fps: 10, v: [0, 0, 0, 0, 0, 100, 100, 100, 100, 100] }, junk: 5 },
+  };
+  writeFileSync(join(tmp, "fxcomp.json"), JSON.stringify(comp));
+  const frame = async (t) => {
+    const png = join(tmp, `fx-${t}.png`);
+    const r = run(["--comp", join(tmp, "fxcomp.json"), "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    cv.getContext("2d").drawImage(img, 0, 0);
+    return cv.getContext("2d").getImageData(0, 0, img.width, img.height).data;
+  };
+  const quiet = await frame(0.2);
+  const loud = await frame(0.7);
+  const opaque = (d) => d.reduce((n, v, i) => n + (i % 4 === 3 && v > 250 ? 1 : 0), 0);
+  assert.ok(opaque(loud) > opaque(quiet) * 1.5, "громко — текст крупнее");
+});

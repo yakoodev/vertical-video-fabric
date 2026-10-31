@@ -53,7 +53,7 @@ export type MotionTemplate = {
   fit?: { x?: "group" | "frame"; y?: "group" | "frame"; anchor?: "box" | "first" };
 };
 
-export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо"] as const;
+export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо", "Эффекты"] as const;
 
 /* ---------- кирпичики ---------- */
 
@@ -1114,6 +1114,70 @@ const particlesTpl: MotionTemplate = {
   },
 };
 
+/** Эффект кадра (fx) одним слоем: VHS, строки, засветка, аберрация, вспышка, зерно. */
+const fxTpl: MotionTemplate = {
+  id: "fx",
+  name: "Эффект кадра",
+  category: "Эффекты",
+  description: "VHS, строки развёртки, засветка по краям, аберрация, вспышка или зерно — поверх видео и слоёв ниже",
+  duration: 3,
+  params: [
+    { name: "kind", label: "Вид", type: "select", default: "vhs", options: ["vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain_overlay"] },
+    { name: "intensity", label: "Сила", type: "number", default: 0.6, min: 0, max: 1 },
+    durationParam(3),
+  ],
+  build(p, at) {
+    const kinds = ["vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain_overlay"] as const;
+    const kind = kinds.find((k) => k === str(p, "kind", "vhs")) ?? "vhs";
+    // Вспышка — короткая сама по себе; остальное мягко проявляется и гаснет.
+    const len = kind === "flash_frame" ? Math.min(0.5, dur(p, 0.35)) : dur(p, 3);
+    const soft = kind === "flash_frame" ? null : { type: "fade" as const, duration: 0.3 };
+    return {
+      layers: [
+        layer(
+          "fx",
+          { start: at, end: at + len, track: 6, name: "Эффект", in: soft ?? { type: "none" }, out: soft ?? { type: "none" } },
+          { kind, intensity: Math.max(0, Math.min(1, num(p, "intensity", 0.6))), speed: 1 },
+        ),
+      ],
+    };
+  },
+};
+
+/** Глитч-титр: влетает глитчем и иногда «сбоит» — геймерские и мемные моменты. */
+const glitchTitle: MotionTemplate = {
+  id: "glitch-title",
+  name: "Глитч-титр",
+  category: "Титры",
+  description: "Капс влетает RGB-расслоением со срезами и изредка сбоит, пока виден",
+  duration: 2.5,
+  params: [
+    { name: "text", label: "Текст", type: "text", default: "СИСТЕМА СЛОМАНА" },
+    { name: "y", label: "Высота (0 — верх)", type: "number", default: 0.3, min: 0, max: 1 },
+    durationParam(2.5),
+  ],
+  build(p, at) {
+    return {
+      layers: [
+        layer(
+          "text",
+          {
+            start: at,
+            end: at + dur(p, 2.5),
+            track: 2,
+            y: num(p, "y", 0.3),
+            name: "Глитч-титр",
+            in: { type: "glitch", duration: 0.45 },
+            out: { type: "glitch", duration: 0.3 },
+            loop: { type: "glitch", speed: 1, amount: 0.8 },
+          },
+          { text: str(p, "text", "СИСТЕМА СЛОМАНА"), font: FONT, weight: 900, size: 104, color: "#ffffff", stroke: { color: "#000000", width: 8 }, uppercase: true, maxWidth: 940 },
+        ),
+      ],
+    };
+  },
+};
+
 const newsTicker: MotionTemplate = {
   id: "news-ticker",
   fit: { x: "frame" },
@@ -1223,6 +1287,8 @@ export const TEMPLATES: MotionTemplate[] = [
   top3,
   phoneScreen,
   particlesTpl,
+  glitchTitle,
+  fxTpl,
 ];
 
 export function getTemplate(id: string): MotionTemplate | undefined {

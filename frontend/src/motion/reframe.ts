@@ -406,7 +406,8 @@ function reframeLayer(
 
 function reframeLayersWith(layers: Obj[], width: number, height: number, sizes: AssetSizes | null, plan: ReframePlan, ref: Ref): Obj[] {
   return layers.map((layer, i) => {
-    if (layer.type === "audio") return layer;
+    // Звук не рисуется, эффект кадра — во весь кадр (его масштаб — сила): переносить нечего.
+    if (layer.type === "audio" || layer.type === "fx") return layer;
     const scene = layerScene(i, layer, plan);
     const bleed = isFullBleed(layer, sizes, ref);
     return reframeLayer(
