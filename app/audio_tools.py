@@ -67,8 +67,9 @@ def h_audio_map(ctx: Any, args: dict) -> Any:
     except ValueError as exc:
         raise at.ToolError(f"audio_map: {exc}") from exc
     if png:
-        out = {**out, "image_note": "картинка: громкость столбиками, зелёная полоса — речь, красные — удары, "
-                                    "жёлтые — стыки кусков, подписи — секунды шкалы ответа"}
+        out = {**out, "image_note": "картинка: громкость столбиками (−60…0 дБ), зелёная полоса — речь, красные "
+                                    "риски — удары, жёлтые линии — стыки кусков; засечки снизу — каждая секунда "
+                                    "шкалы ответа, длинные — кратные 5 с"}
         return at.ImageResult(data=png, mime_type="image/png", info=out)
     return {"ok": True, **out}
 
