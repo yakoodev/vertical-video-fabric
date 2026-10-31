@@ -328,11 +328,14 @@ def build_join_args(
     audio_codec: str = "aac",
     audio_bitrate: str = "",
     jump_joins: list[bool] | None = None,
+    jl: dict | None = None,
 ) -> list[str]:
     """ffmpeg args joining ``parts`` with the given transition settings.
 
     ``jump_joins`` — какие склейки это джамп-каты (app/cuts.py): встык, без
     звука стыка и всегда с коротким фейдом звука против щелчка.
+    ``jl`` — J/L-склейки (app/audio_edit.py): ``{plan: plan_jl(...), handles: [(часть, "head"|"tail",
+    путь)]}`` — звук собирается по плану, ручки звука — дополнительные входы; картинка как всегда.
     """
     if len(parts) != len(durations) or not parts:
         raise ValueError("parts and durations must be non-empty and the same length")
@@ -344,6 +347,10 @@ def build_join_args(
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
     for part in parts:
         args.extend(["-i", str(part)])
+    handle_inputs: dict[tuple[int, str], int] = {}
+    for k, side, path in (jl or {}).get("handles") or []:
+        handle_inputs[(int(k), str(side))] = n + len(handle_inputs)
+        args.extend(["-i", str(path)])
 
     filters: list[str] = []
 
@@ -380,7 +387,11 @@ def build_join_args(
     audio_label = None
     if has_audio:
         smooth = transition["audio"] == "smooth"
-        if smooth and any(o > 0 for o in overlaps):
+        if jl and jl.get("plan"):
+            from app.audio_edit import jl_audio_filters
+
+            filters.extend(jl_audio_filters(n, durations, jl["plan"], handle_inputs, jump_joins, smooth))
+        elif smooth and any(o > 0 for o in overlaps):
             # Плавно: кроссфейд под переходом, встык — микрофейд от щелчка.
             # Звук каждого куска — ровно длины его картинки (apad+atrim), иначе
             # склейки копят сдвиг звука относительно картинки.

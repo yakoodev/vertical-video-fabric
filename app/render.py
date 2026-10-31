@@ -502,11 +502,15 @@ class ClipRenderService:
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
         freezes: list[dict] | None = None,
+        audio_edit: dict | None = None,
     ) -> dict:
         """``motion`` — видимые слои и камера (``visual_motion``); None — как раньше.
         ``aspect`` — формат вывода (app/formats.py), ``layers_format`` — в каком формате
         размечены слои (другой — перекомпоновка), ``end_hold_sec`` — стоп-кадр в конце,
-        который потом добавит ``_normalize_loudness``: музыка доигрывает на нём."""
+        который потом добавит ``_normalize_loudness``: музыка доигрывает на нём.
+        ``audio_edit`` — звуковой монтаж клипа (app/audio_edit.render_plan); None — как раньше."""
+        from app.audio_edit import part_edit
+
         segment = self.store.get_ai_segment(segment_id)
         source = self.store.get_source(segment["source_id"])
         preset = self._preset(ffmpeg_preset_id)
@@ -524,6 +528,7 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        preset = _preset_with_music_automation(preset, audio_edit)
         if freezes:
             preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
@@ -556,6 +561,9 @@ class ClipRenderService:
             piece_preset = _preset_for_segment(base_preset, segment)
             if band:
                 piece_preset = {**piece_preset, "pin_band": band}
+            edit = part_edit(audio_edit, 0, float(segment["start_sec"]), float(segment["end_sec"]))
+            if edit:
+                piece_preset = {**piece_preset, "audio_edit": edit}
             args = build_ffmpeg_render_args(
                 source_path=Path(source["local_path"]),
                 output_path=base_output_path,
@@ -651,9 +659,14 @@ class ClipRenderService:
         end_hold_sec: float = 0.0,
         layers_format: str | None = None,
         freezes: list[dict] | None = None,
+        audio_edit: dict | None = None,
     ) -> dict:
         """``cut_parts``/``jump_joins`` — клип с джамп-катами (app/cuts.py): части
-        рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом."""
+        рендерятся вместо кусков, склейки ``jump_joins`` — встык с микрофейдом.
+        ``audio_edit`` — звуковой монтаж (app/audio_edit.render_plan): операции звука частей,
+        J/L на склейках, автоматизация музыки; None — как раньше."""
+        from app.audio_edit import part_edit
+
         if not segment_ids:
             raise ValueError("at least one segment is required")
         join = normalize_transition(transition)
@@ -677,6 +690,7 @@ class ClipRenderService:
         )
         preset = _preset_with_source_audio(preset, source)
         preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        preset = _preset_with_music_automation(preset, audio_edit)
         if freezes:
             preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
         if subtitle_profile_id is None and not _is_canvas(source):
@@ -721,6 +735,9 @@ class ClipRenderService:
                     piece_preset = {**piece_preset, "normalize_sar": True}
                 if band:
                     piece_preset = {**piece_preset, "pin_band": band}
+                edit = part_edit(audio_edit, index, float(segment["start_sec"]), float(segment["end_sec"]))
+                if edit:
+                    piece_preset = {**piece_preset, "audio_edit": edit}
                 _run_ffmpeg(
                     build_ffmpeg_render_args(
                         source_path=Path(source["local_path"]),
@@ -735,7 +752,8 @@ class ClipRenderService:
                     timeout=60 * 30,
                 )
                 rendered_parts.append(part_path)
-            if is_plain_concat(join) and not any(jumps or []):
+            shifts = (audio_edit or {}).get("shifts") if len(rendered_parts) > 1 else None
+            if is_plain_concat(join) and not any(jumps or []) and not any(shifts or []):
                 # Hard cut on picture and sound, nothing on the join: the old
                 # stream-copy concat is exact and much faster than re-encoding.
                 concat_list_path = temp_dir / "concat.txt"
@@ -751,11 +769,16 @@ class ClipRenderService:
                     for m in probes
                 )
                 extra = _json_dict(preset.get("extra_json"))
+                # По картинке, а не по контейнеру: звук подгоняется под неё.
+                durations = [_video_duration(m) for m in probes]
+                jl = None
+                if has_audio and any(shifts or []):
+                    jl = self._jl_handles(source, base_preset, parts, durations, join, jumps, shifts,
+                                          audio_edit, temp_dir)
                 _run_ffmpeg(
                     build_join_args(
                         rendered_parts,
-                        # По картинке, а не по контейнеру: звук подгоняется под неё.
-                        [_video_duration(m) for m in probes],
+                        durations,
                         base_output_path,
                         join,
                         has_audio=has_audio,
@@ -766,6 +789,7 @@ class ClipRenderService:
                         audio_codec=str(preset.get("audio_codec") or "aac"),
                         audio_bitrate=str(preset.get("audio_bitrate") or "").strip(),
                         jump_joins=jumps,
+                        jl=jl,
                     ),
                     timeout=60 * 30,
                 )
@@ -1185,6 +1209,8 @@ class ClipRenderService:
             # Анимированный фон meme / куска «шире окна» рисует компоновщик — он нужен
             # и клипу без слоёв (зоны фона считает рендер, app/backgrounds.py).
             visual = visual or {"layers": [], "camera": []}
+        # Звуковой монтаж (app/audio_edit.py): дорожки, эффекты, J/L, ключи — None, если его нет.
+        audio_plan = self._audio_plan(plan, cut_plan)
         if cut_plan is not None:
             # Куски делятся на части в обход вырезов — это всегда путь монтажа.
             clip = self.render_montage(
@@ -1214,6 +1240,7 @@ class ClipRenderService:
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
                 freezes=freezes,
+                **({"audio_edit": audio_plan} if audio_plan else {}),
             )
         elif len(segment_ids) == 1:
             clip = self.render_segment(
@@ -1238,6 +1265,7 @@ class ClipRenderService:
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
                 freezes=freezes,
+                **({"audio_edit": audio_plan} if audio_plan else {}),
             )
         else:
             clip = self.render_montage(
@@ -1265,7 +1293,10 @@ class ClipRenderService:
                 end_hold_sec=end_hold,
                 layers_format=layers_format,
                 freezes=freezes,
+                **({"audio_edit": audio_plan} if audio_plan else {}),
             )
+        if clip["status"] == "succeeded" and (audio_plan or {}).get("notes"):
+            clip = self._note_clip_error(clip["id"], "; ".join(audio_plan["notes"]))
         if clip["status"] == "succeeded":
             clip = self._apply_mute(clip, plan, cut_plan)
             clip = self._apply_inserts(clip, plan, cut_plan)
@@ -1393,8 +1424,9 @@ class ClipRenderService:
         from app.audio_mute import build_source_volume_args, normalize_gain, normalize_mute
 
         settings_ = plan.get("render_settings") or {}
-        mutes = normalize_mute(settings_.get("mute"))
-        gains = normalize_gain(settings_.get("gain"))
+        # Отрезки одной дорожки (track) уже наложены при рендере кусков (app/audio_edit.py).
+        mutes = [m for m in normalize_mute(settings_.get("mute")) if m.get("track") is None]
+        gains = [g for g in normalize_gain(settings_.get("gain")) if g.get("track") is None]
         path = Path(clip.get("output_path") or "")
         if not (mutes or gains) or not path.exists() or not _has_audio_stream(path):
             return clip
@@ -1414,6 +1446,47 @@ class ClipRenderService:
             return self.store.update_clip(clip["id"], size_bytes=path.stat().st_size)
         except Exception as exc:  # noqa: BLE001 - тишина и громкость — надстройка, клип важнее
             return self._note_clip_error(clip["id"], f"тишина/громкость не наложены: {str(exc)[:200]}")
+
+    # ---- звуковой монтаж: J/L, дорожки, ключи, эффекты (app/audio_edit.py) ----
+
+    def _audio_plan(self, plan: dict, cut_plan=None) -> dict | None:
+        """План звукового монтажа клипа для рендера; None — рендер звука прежний."""
+        from app.audio_edit import render_plan, wants_render_plan
+
+        if not wants_render_plan(plan.get("render_settings") or {}):
+            return None
+        try:
+            source = self.store.get_source(int(plan["source_id"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        return render_plan(plan, source, self._final_mapper(plan, cut_plan), cut_plan)
+
+    def _jl_handles(self, source: dict, preset: dict, parts: list[dict], durations: list[float], join: dict,
+                    jumps: list[bool] | None, shifts: list[float], audio_edit: dict | None, temp_dir: Path) -> dict:
+        """J/L: «ручки» звука из исходника (секунды до начала / после конца части) — тем же
+        графом звука, что у частей (дорожки, операции). Не прочиталась — тишина нужной длины."""
+        from app.audio_edit import handle_windows, part_edit, plan_jl
+        from app.transitions import plan_joins
+
+        overlaps = plan_joins(join, durations, _source_gaps(parts), jumps)
+        plan = plan_jl(durations, overlaps, shifts, join["audio"], jumps)
+        clip0 = list((audio_edit or {}).get("clip0") or [])
+        handles = []
+        for item in handle_windows(parts, plan):
+            k, start, length = item["part"], item["start"], item["length"]
+            path = temp_dir / f"handle-{k:03d}-{item['side']}.wav"
+            edit = part_edit(audio_edit, k, max(0.0, start), max(0.0, start) + length)
+            if edit and k < len(clip0):
+                edit["clip0"] = round(clip0[k] + (max(0.0, start) - float(parts[k]["start_sec"])), 3)
+            piece_preset = {**preset, "audio_edit": edit} if edit else preset
+            try:
+                _run_ffmpeg(build_audio_handle_args(Path(source["local_path"]), path, start, length, piece_preset),
+                            timeout=60 * 5)
+            except Exception:  # noqa: BLE001 - ручки нет (конец записи) — тишина, склейка цела
+                _run_ffmpeg(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "anullsrc=r=48000:cl=stereo", "-t", f"{length:.3f}", str(path)], timeout=60)
+            handles.append((k, item["side"], path))
+        return {"plan": plan, "handles": handles}
 
     def _apply_inserts(self, clip: dict, plan: dict, cut_plan=None) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.
@@ -2303,6 +2376,10 @@ def _music_filter(music: dict) -> str:
     if start_sec > 0:
         # Музыка с секунды трека start_sec: начало отрезается (с петлёй — только у первого круга).
         music_chain[:0] = [f"atrim=start={_ff_number(start_sec)}", "asetpts=PTS-STARTPTS"]
+    if music.get("automation"):
+        from app.audio_edit import music_volume_expr
+
+        music_chain.append(f"volume='{music_volume_expr(music['automation'])}':eval=frame")
     music_chain[0] = "[1:a]" + music_chain[0]
     if fade_in > 0:
         music_chain.append(f"afade=t=in:st=0:d={_ff_number(fade_in)}")
@@ -2347,6 +2424,8 @@ def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
         "fade_out_sec": preset.get("music_fade_out_sec"),
         "duck": bool(preset.get("music_duck", True)),
         "duck_amount": preset.get("music_duck_amount"),
+        # Ключи, ручной ducking, провалы перед ударом (app/audio_edit.py), секунды готового ролика.
+        "automation": preset.get("music_automation"),
     }
 
 
@@ -2895,7 +2974,50 @@ def _preset_with_source_audio(preset: dict, source: dict) -> dict:
     return {**preset, "source_audio_tracks": tracks} if tracks else preset
 
 
+def _preset_with_music_automation(preset: dict, audio_edit: dict | None) -> dict:
+    """Ключи громкости, ручной ducking и провалы музыки (app/audio_edit.py) — в проход музыки."""
+    music = (audio_edit or {}).get("music")
+    return {**preset, "music_automation": music} if music else preset
+
+
+def _source_edit(preset: dict) -> dict | None:
+    """Операции звука части (app/audio_edit.part_edit), если граф звука их понимает: смесь
+    дорожек источника или первая/своя дорожка пресета (старые режимы mix/secondary — без них)."""
+    from app.audio_edit import has_source_ops
+
+    edit = preset.get("audio_edit")
+    if not has_source_ops(edit):
+        return None
+    mode = str(preset.get("audio_mix_mode") or "primary").strip().lower()
+    return edit if preset.get("source_audio_tracks") or mode == "primary" else None
+
+
+def build_audio_handle_args(source_path: Path, output_path: Path, start: float, length: float, preset: dict) -> list[str]:
+    """«Ручка» звука J/L: ``length`` секунд исходника с ``start`` (тот же граф дорожек и операций,
+    что у частей), 48 кГц стерео wav. ``start`` < 0 — начало записи: недостающее спереди — тишина."""
+    lead = max(0.0, -float(start))
+    begin = max(0.0, float(start))
+    span = max(0.01, float(length) - lead)
+    graph = _audio_filter(preset) or "[0:a:0]anull[aout]"
+    tail = f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+    if lead > 0:
+        tail += f",adelay={int(round(lead * 1000))}:all=1"
+    tail += f",apad,atrim=end={float(length):.3f}"
+    return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", _seconds(begin), "-t", _seconds(span),
+            "-i", str(source_path), "-filter_complex", f"{graph};[aout]{tail}[hout]", "-map", "[hout]",
+            "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", str(output_path)]
+
+
 def _audio_filter(preset: dict) -> str:
+    edit = _source_edit(preset)
+    if edit:
+        # Звуковой монтаж части: дорожки по отдельности (тишина/громкость/эффекты дорожки), потом
+        # общие эффекты и ключи громкости исходника (app/audio_edit.source_graph).
+        from app.audio_edit import source_graph
+
+        tracks = preset.get("source_audio_tracks") or [_stream_index(preset.get("audio_primary_stream"), 0)]
+        volume = _volume(preset.get("audio_primary_volume"), 1)
+        return f"{source_graph(0, list(tracks), edit, 'a_src')};[a_src]volume={_ff_number(volume)},aresample=48000[aout]"
     tracks = preset.get("source_audio_tracks")
     if tracks:
         # Выбор источника важнее пресета: запись с игрой и микрофоном смешивается всегда.
@@ -2936,7 +3058,7 @@ def _video_duration(meta: Any) -> float:
 
 
 def _audio_map(preset: dict) -> str:
-    if preset.get("source_audio_tracks"):
+    if preset.get("source_audio_tracks") or _source_edit(preset):
         return "[aout]"
     mode = str(preset.get("audio_mix_mode") or "primary").strip().lower()
     primary_stream = _stream_index(preset.get("audio_primary_stream"), 0)

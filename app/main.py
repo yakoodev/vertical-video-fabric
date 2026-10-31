@@ -2563,6 +2563,8 @@ class CensorRequest(BaseModel):
     stars: bool = Field(default=True, description="мат в субтитрах — первая буква и звёздочки")
     skip: list[int] = Field(default_factory=list, description="номера слов субтитров, которые не трогать")
     clear: bool = Field(default=False, description="снять отрезки цензуры (ручные mute остаются)")
+    track: int | str | None = Field(default=None, description='глушить только дорожку: номер или "voice" '
+                                                              "(дорожка голоса записи, если известна)")
 
 
 @app.post(
@@ -3152,6 +3154,10 @@ def api_set_clip_plan_render_settings(
             # автосохранением: нет ключа — остаются сохранённые. [] — убрать все.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["cuts"] = current.get("cuts") or []
+        if "audio" not in settings_in:
+            # Звуковой монтаж (J/L, ключи, эффекты — app/audio_edit.py) — так же: нет ключа — остаётся.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["audio"] = current.get("audio") or {}
         if not {"format", "aspect", "layers_format"} <= set(settings_in):
             # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
             # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).

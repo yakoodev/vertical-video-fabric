@@ -10,6 +10,11 @@
 — глушение мата (app/censor.py). Помеченные не сливаются ни с чем (повторный запуск цензуры
 заменяет только свои, по метке), ручные — сливаются между собой, как раньше. Пересечение
 ручного с помеченным рендеру не мешает: множители громкости просто перемножаются.
+
+``track`` (номер звуковой дорожки исходника, 0..7) — тишина/громкость только этой дорожки: мат
+глушится на микрофоне, игра звучит дальше. Такие отрезки рендер накладывает на дорожку ДО
+смешивания (app/audio_edit.py, по секундам исходника), а не на готовый звук; сливаются они
+только с отрезками той же дорожки. Без ``track`` — весь звук исходника, как раньше.
 """
 
 from __future__ import annotations
@@ -40,10 +45,30 @@ def _mute_tag(item: dict) -> dict:
     return tag
 
 
+MAX_TRACK = 7
+
+
+def span_track(item: Any) -> int | None:
+    """Дорожка отрезка (``track`` 0..7) или None — весь звук исходника."""
+    value = item.get("track") if isinstance(item, dict) else None
+    if value is None or isinstance(value, bool) or value == "":
+        return None
+    try:
+        track = int(value)
+    except (TypeError, ValueError):
+        return None
+    return track if 0 <= track <= MAX_TRACK else None
+
+
+def _with_track(track: int | None) -> dict:
+    return {} if track is None else {"track": track}
+
+
 def normalize_mute(raw: Any) -> list[dict]:
     """``[{start, end}]`` по порядку, ручные слиты, каждый ≥ MIN_MUTE_SEC, не больше MAX_MUTES.
 
-    Помеченные (``by``) остаются отдельными отрезками со своей меткой; точный повтор — один."""
+    Помеченные (``by``) остаются отдельными отрезками со своей меткой; точный повтор — один.
+    Ручные сливаются только с отрезками той же дорожки (``track``; без неё — весь звук)."""
     spans = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
@@ -56,22 +81,23 @@ def normalize_mute(raw: Any) -> list[dict]:
             continue
         a, b = max(0.0, a), max(0.0, b)
         if b - a >= MIN_MUTE_SEC:
-            spans.append((a, b, _mute_tag(item)))
+            spans.append((a, b, _mute_tag(item), span_track(item)))
     merged: list[list] = []
-    last_plain: int | None = None
+    last_plain: dict = {}
     seen: set = set()
-    for a, b, tag in sorted(spans, key=lambda s: (s[0], s[1])):
+    for a, b, tag, track in sorted(spans, key=lambda s: (s[0], s[1], -1 if s[3] is None else s[3])):
         if tag:
-            key = (round(a, 3), round(b, 3), tag.get("by"))
+            key = (round(a, 3), round(b, 3), tag.get("by"), track)
             if key not in seen:
                 seen.add(key)
-                merged.append([a, b, tag])
-        elif last_plain is not None and a <= merged[last_plain][1] + 1e-9:
-            merged[last_plain][1] = max(merged[last_plain][1], b)
+                merged.append([a, b, tag, track])
+        elif track in last_plain and a <= merged[last_plain[track]][1] + 1e-9:
+            merged[last_plain[track]][1] = max(merged[last_plain[track]][1], b)
         else:
-            merged.append([a, b, tag])
-            last_plain = len(merged) - 1
-    return [{"start": round(a, 3), "end": round(b, 3), **tag} for a, b, tag in merged[:MAX_MUTES]]
+            merged.append([a, b, tag, track])
+            last_plain[track] = len(merged) - 1
+    return [{"start": round(a, 3), "end": round(b, 3), **tag, **_with_track(track)}
+            for a, b, tag, track in merged[:MAX_MUTES]]
 
 
 def mute_volume_expr(spans: list[tuple[float, float]]) -> str:
@@ -112,7 +138,8 @@ GAIN_RAMP_SEC = 0.05
 
 def normalize_gain(raw: Any) -> list[dict]:
     """``[{start, end, gain_db}]`` по порядку, без перекрытий (позднее начало подрезается
-    концом прежнего), каждый ≥ MIN_GAIN_SEC, gain_db в пределах и не 0, не больше MAX_GAINS."""
+    концом прежнего той же дорожки), каждый ≥ MIN_GAIN_SEC, gain_db в пределах и не 0, не
+    больше MAX_GAINS. ``track`` — громкость одной дорожки исходника (см. вверху)."""
     spans = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
@@ -126,13 +153,15 @@ def normalize_gain(raw: Any) -> list[dict]:
         g = round(min(GAIN_MAX_DB, max(GAIN_MIN_DB, g)), 1)
         a, b = max(0.0, a), max(0.0, b)
         if b - a >= MIN_GAIN_SEC and g != 0:
-            spans.append((a, b, g))
+            spans.append((a, b, g, span_track(item)))
     out: list[dict] = []
-    for a, b, g in sorted(spans):
-        if out and a < out[-1]["end"]:
-            a = out[-1]["end"]
+    last_end: dict = {}
+    for a, b, g, track in sorted(spans, key=lambda s: (s[0], s[1], s[2], -1 if s[3] is None else s[3])):
+        if track in last_end and a < last_end[track]:
+            a = last_end[track]
         if b - a >= MIN_GAIN_SEC:
-            out.append({"start": round(a, 3), "end": round(b, 3), "gain_db": g})
+            out.append({"start": round(a, 3), "end": round(b, 3), "gain_db": g, **_with_track(track)})
+            last_end[track] = b
     return out[:MAX_GAINS]
 
 
