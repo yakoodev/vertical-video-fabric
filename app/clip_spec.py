@@ -397,7 +397,7 @@ def json_schema() -> dict:
                 ),
                 "properties": {
                     "layers": {"type": "array", "description": "моушн-слои: text/shape/image/emoji/counter/"
-                               "progress/chart/callout/audio; время — секунды готового клипа"},
+                               "progress/chart/callout/nameplate/audio; время — секунды готового клипа"},
                     "camera": {"type": "array", "description": "ключи камеры {t, zoom 1..4, x, y, ease?, shake?}"},
                     "cuts": {
                         "type": "array",

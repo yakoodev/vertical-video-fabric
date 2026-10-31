@@ -162,6 +162,7 @@ slideLeft, slideRight` (въезд с края на 0.15 кадра + fade), `dr
 | `progress` | `w`, `h`, `value` 0..1 (итог), `track` цвет, `fill` цвет или `[c1,c2]`, `radius`, `label` (bool, «73%» над головой заливки), `font`, `labelColor`, `glow` (необяз., bool, по умолчанию true — неоновое свечение заливки). Ход — свойство `progress` как у counter |
 | `chart` | `kind` bar/hbar/line/pie/donut, `data` `[{label,value,color?}]` (≤ 12), `w`, `h`, `palette` `[цвета]`, `font`, `labelColor`, `showValues`, `title`, `panel` (необяз.: цвет карточки под графиком или null — без карточки; не задан — тёмное стекло `#0d0b1ad9`), `glow` (необяз., bool, true), `centerLabel` (необяз., donut: подпись под крупным % первого сегмента в центре). Рост по `progress` (по умолчанию 0→1 за первые 40% слоя) волной со сдвигом между элементами. Легенда у pie/donut появляется, если `h` заметно больше `w` |
 | `callout` | Плашка «нижняя треть»: `title`, `subtitle`, `accent`, `style` (bar/box/pill/neon), `font`, `w` (наибольшая ширина; плашка по содержимому), `skew` (необяз., −30..30° — наклон всей плашки с текстом), `icon` (необяз., эмодзи слева, Twemoji) |
+| `nameplate` | Плашка канала (см. ниже): `platform` twitch/youtube/tiktok/telegram/kick/none (значок — свой векторный глиф), `handle` (ник, ≤ 40 симв.), `style` glass (тёмное стекло `#0e0a18ab` + обводка `accent`) / solid (заливка `accent`), `accent` (null — цвет площадки), `size` (высота пилюли, опорн. px, 74), `font` (Montserrat), `weight` (800), `color` (ник, `#ffffff`), `align` left/center/right + `boxWidth` (необяз.: рамка слоя, пилюля прижата к её краю) |
 | `captions` | Анимированные субтитры из слов речи клипа (`comp.words`, см. ниже). `style` — пресет (`hormozi` по умолчанию, `mrbeast`, `box`, `karaoke`, `neon`, `minimal`, `typewriter`, `comic`, `gradient`, `outline`); **всё остальное необязательно** и перекрывает пресет: `font`, `weight`, `size`, `color`, `dimColor` (несказанные слова в karaoke, null — как color), `activeColor` (звучащее слово), `activeBg` (плашка за звучащим словом или null), `gradient` `[c1,c2]`/null, `stroke` `{color,width}`/null, `glow` (цвет свечения или null), `bg` (плашка под страницей, как `text.bg`, или null), `uppercase`, `punctuation` (оставлять знаки препинания), `maxWords` 1..8 (слов на странице), `maxLines` 1..3, `maxWidth`, `lineHeight`, `letterSpacing`, `highlightWords` `[{i, color}]` (ключевые слова цветом, i — номер в `comp.words`), `emoji` `[{i, char}]` (эмодзи выпрыгивает над строкой, когда сказано слово i), `animation` pop/bounce/fade/karaoke/typewriter/none, `wordScale` 1..1.4 (рост звучащего слова), `tilt` (наклон страниц ±°, чередуется). Нормализация не подставляет умолчаний в необязательные поля — иначе пресет не сработал бы. Без `y` — 0.68, без `end` — до конца клипа |
 | `chat` | Чат стрима из сообщений клипа (`comp.chat`, см. ниже). `style` twitch-dark/bubbles/minimal/neon, `w` (ширина колонки, опорн. px, 200..1080, 760), `maxMessages` 1..12 (6), `fontSize` (34), `font` (необяз., по умолчанию Inter), `showBadges`, `showEmotes`, `filter` `{minLength, hideLinks, hideCommands}` (0 / true / true), `highlightUsers` `[ники]` (подсветка строки), `delay` 0..30 с (чат отстаёт от момента — сообщения показываются раньше на столько), `bg` 0..1 (непрозрачность подложки, 0.75), `ttl` (через сколько секунд сообщение гаснет само; 0 — висит, пока не вытеснят; 15) |
 | `pngtuber` | Аватар, который «говорит», когда звучит голос (см. «PNGtuber» ниже). `states` `{idle, talk, shout?}` — id картинок или анимаций с альфой (GIF/APNG/webm-alpha) из «Файлов для монтажа»: молчит / говорит / кричит (нет `shout` — `talk`); `voice` `{track?, asset_id?, threshold_db?, hold, attack, shout_db}` — `track`: номер звуковой дорожки источника 0..7 или `"speech"` (по умолчанию — дорожки распознавания речи источника `speech_tracks`, не заданы — смесь рендера), `asset_id` — голос из файла библиотеки (секунда файла = время от `start` слоя), `threshold_db` `"auto"` (по умолчанию — шум дорожки + 12, не выше речи − 12, не ниже −55) или дБ, `hold` 0.15 с, `attack` 0.03 с, `shout_db` −12; `w` (опорн. px, 300; высота — по пропорции idle), `pixelated` (необяз.; нет — авто: исходник ≤ 256 px рисуется без сглаживания), `bounce` (необяз.) `{amount 0..40}` / `true` (10) — подскок и растяжение в такт огибающей голоса, `flipX`. Плюс обычные `x`, `y`, `scale`, `opacity`, `shadow`, `followCamera`, `in`/`out` |
@@ -197,6 +198,29 @@ slideLeft, slideRight` (въезд с края на 0.15 кадра + fade), `dr
 текст раскладывает `layoutText` (text, counter, callout, подписи графиков). С селектором эмодзи
 (`♥️` = ♥ + FE0F) символ остаётся эмодзи Twemoji. Агентский фильтр эмодзи (владелец их запретил)
 эти символы не вычищает.
+
+### Плашка канала (`nameplate`)
+
+`layers/nameplate.ts`. Пилюля высотой `size` = H: поля 0.42·H, значок высотой 0.56·H, зазор 0.26·H,
+ник кеглем 0.5·H (раскладка `layoutText` — ширина та же в превью и рендере). Без ника — только значок
+(пилюля не уже H), без значка (`none`) — только ник; ни того ни другого — слой пуст (проверка ругается).
+`glass` — стекло `rgba(14,10,24,0.67)` с обводкой `max(2, 0.034·H)` цветом `accent`, значок цветом
+`accent` (TikTok — белая нота с голубой и красной копиями), ник `color`; `solid` — заливка `accent`,
+значок и ник белые (на светлом акценте, как зелёный Kick, — тёмные). Цвета площадок (`PLATFORM_COLORS`,
+зеркало `app/brand_kit.PLATFORM_COLORS`): Twitch `#9146ff`, YouTube `#ff0033`, TikTok `#fe2c55`,
+Telegram `#229ed9`, Kick `#53fc18`.
+
+**Значки** — `PLATFORM_ICONS` в `glyphs.ts`, свои упрощённые глифы путями (как символы-декор), не файлы
+логотипов: Twitch — «пузырь» со срезанным углом и двумя полосками, YouTube — скруглённый экран с
+треугольником, TikTok — нота, Telegram — круг с самолётиком, Kick — ступенчатая K. Внутренние контуры
+вырезаются правилом evenodd — сквозь полоски и треугольник видна плашка.
+
+**Рамка**: размер слоя — `max(boxWidth, ширина пилюли) × H`; пилюля в рамке по `align`. Так плашка
+ставится «от края кадра», не зная ширины ника: `align: "left"`, `x = (24 + boxWidth/2) / 1080`. Тень
+слоя (`shadow`) отбрасывает пилюля. Анимаций своих нет — обычные `in`/`out` (бренд ставит без анимации
+или `fade`). Поставить по бренду или одной командой — `set_nameplate` / `apply_brand` (docs/AGENTS.md):
+место считает `app/brand_kit.nameplate_place` (под разделителем раскладки split, ниже субтитров, иначе
+безопасный угол). Шаблон «Плашка канала» (`channel-plate`, категория «Плашки»).
 
 ### Затемнение за текстом (`backdrop`, scrim)
 

@@ -48,7 +48,8 @@ export {
   particleSeed,
   type Particle,
 } from "./layers/particles";
-export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, type DecorGlyph } from "./glyphs";
+export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, PLATFORM_ICONS, platformIcon, drawPlatformIcon, type DecorGlyph, type PlatformIcon } from "./glyphs";
+export { nameplateRenderer, nameplateAccent, PLATFORM_COLORS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_SIZE } from "./layers/nameplate";
 export { formatCounter, counterValue } from "./layers/counter";
 export { DEFAULT_PALETTE } from "./layers/chart";
 export {
