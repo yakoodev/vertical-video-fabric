@@ -7,28 +7,50 @@
  * тест через node (tests/test_frontend_mute.py).
  */
 
-export type MuteSpan = { start: number; end: number };
+/**
+ * `by: "censor"` — отрезок поставило глушение мата (app/censor.py, кнопка «Заглушить мат»),
+ * `level` — его уровень 1–3. Такие не сливаются ни с чем: повторный запуск заменяет только
+ * свои. Отрезок, который потянули мышью, становится ручным (метка снимается).
+ */
+export type MuteSpan = { start: number; end: number; by?: "censor"; level?: number };
 
 /** Как на сервере (app/audio_mute.py). */
 export const MIN_MUTE_SEC = 0.05;
-export const MAX_MUTES = 20;
+export const MAX_MUTES = 60;
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-/** По порядку, пересечения и стыки слиты, короткие выброшены, не больше MAX_MUTES. */
+function muteTag(s: MuteSpan): { by?: "censor"; level?: number } {
+  if (s.by !== "censor") return {};
+  const level = Math.trunc(Number(s.level));
+  return level >= 1 && level <= 3 ? { by: "censor", level } : { by: "censor" };
+}
+
+/** По порядку, ручные пересечения и стыки слиты, короткие выброшены, не больше MAX_MUTES. */
 export function normalizeMute(spans: readonly MuteSpan[] | null | undefined): MuteSpan[] {
   const sorted = (spans ?? [])
     .filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end))
-    .map((s) => ({ start: Math.max(0, s.start), end: Math.max(0, s.end) }))
+    .map((s) => ({ start: Math.max(0, s.start), end: Math.max(0, s.end), tag: muteTag(s) }))
     .filter((s) => s.end - s.start >= MIN_MUTE_SEC - 1e-9)
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  const out: MuteSpan[] = [];
+  const out: { start: number; end: number; tag: ReturnType<typeof muteTag> }[] = [];
+  const seen = new Set<string>();
+  let lastPlain = -1;
   for (const s of sorted) {
-    const last = out[out.length - 1];
-    if (last && s.start <= last.end + 1e-9) last.end = Math.max(last.end, s.end);
-    else out.push(s);
+    if (s.tag.by) {
+      const key = `${round3(s.start)}|${round3(s.end)}|${s.tag.by}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(s);
+      }
+    } else if (lastPlain >= 0 && s.start <= out[lastPlain].end + 1e-9) {
+      out[lastPlain].end = Math.max(out[lastPlain].end, s.end);
+    } else {
+      out.push(s);
+      lastPlain = out.length - 1;
+    }
   }
-  return out.slice(0, MAX_MUTES).map((s) => ({ start: round3(s.start), end: round3(s.end) }));
+  return out.slice(0, MAX_MUTES).map((s) => ({ start: round3(s.start), end: round3(s.end), ...s.tag }));
 }
 
 /** Заглушить ещё отрезок a..b (края в любом порядке) — с уже заглушённым он сольётся. */

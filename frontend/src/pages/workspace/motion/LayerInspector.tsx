@@ -8,7 +8,9 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   CAPTION_STYLES,
+  NAMEPLATE_SIZE,
   interpolateKeys,
+  nameplateAccent,
   type AnimatableProp,
   type CaptionWord,
   type ChartDatum,
@@ -1078,6 +1080,38 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           <div className="li-row">
             <Num label="Ширина" value={layer.props.w ?? 860} min={200} max={refWidth} step={10} onChange={(w) => patchProps({ w })} />
             <Num label="Скос°" value={layer.props.skew ?? 0} min={-30} max={30} onChange={(skew) => patchProps({ skew })} />
+          </div>
+        </Section>
+      ) : null}
+
+      {layer.type === "nameplate" ? (
+        <Section title="Плашка канала">
+          <label>
+            <span className="li-cap">Ник</span>
+            <input className="input" value={layer.props.handle ?? ""} maxLength={40} onChange={(e) => patchProps({ handle: e.target.value })} />
+          </label>
+          <div className="li-row">
+            <select className="input" value={layer.props.platform ?? "twitch"} onChange={(e) => patchProps({ platform: e.target.value })}>
+              <option value="twitch">Twitch</option>
+              <option value="youtube">YouTube</option>
+              <option value="tiktok">TikTok</option>
+              <option value="telegram">Telegram</option>
+              <option value="kick">Kick</option>
+              <option value="none">Без значка</option>
+            </select>
+            <select className="input" value={layer.props.style ?? "glass"} onChange={(e) => patchProps({ style: e.target.value })}>
+              <option value="glass">Стекло</option>
+              <option value="solid">Заливка</option>
+            </select>
+            <Color label="Акцент" value={nameplateAccent(layer.props)} onChange={(accent) => patchProps({ accent })} />
+          </div>
+          <div className="li-row">
+            <Num label="Высота" value={layer.props.size ?? NAMEPLATE_SIZE} min={32} max={200} onChange={(size) => patchProps({ size })} />
+            <select className="input" value={layer.props.align ?? "center"} onChange={(e) => patchProps({ align: e.target.value })}>
+              <option value="left">У левого края рамки</option>
+              <option value="center">По центру</option>
+              <option value="right">У правого края рамки</option>
+            </select>
           </div>
         </Section>
       ) : null}

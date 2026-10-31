@@ -25,6 +25,11 @@ CASES = [
     [{"start": 4, "end": 2}],  # перевёрнутый — выброшен, как на сервере
     [{"start": i, "end": i + 0.5} for i in range(30)],  # больше MAX_MUTES
     [{"start": 1.23456, "end": 2.34567}],
+    # Отрезки цензуры (by/level) не сливаются ни с ручными, ни между собой; ручные — как прежде.
+    [{"start": 1, "end": 2}, {"start": 1.5, "end": 1.7, "by": "censor", "level": 2},
+     {"start": 1.6, "end": 2.5}, {"start": 1.65, "end": 1.9, "by": "censor", "level": 9},
+     {"start": 1.5, "end": 1.7, "by": "censor", "level": 2}, {"start": 3, "end": 3.2, "by": "other"}],
+    [{"start": i * 0.4, "end": i * 0.4 + 0.2, "by": "censor", "level": 1} for i in range(70)],
 ]
 
 

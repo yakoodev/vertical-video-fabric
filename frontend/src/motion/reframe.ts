@@ -151,6 +151,13 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
   if (kind === "shape" || kind === "progress" || kind === "chart")
     return [num(props.w, 400), num(props.h, kind !== "progress" ? 400 : 40)];
   if (kind === "callout") return [num(props.w, 900), props.subtitle ? 240.0 : 170.0];
+  if (kind === "nameplate") {
+    // Пилюля: поля 0.42·H с двух сторон, значок 0.56·H + зазор 0.26·H, ник кеглем 0.5·H (как layers/nameplate.ts).
+    const h = num(props.size, 74);
+    const icon = props.platform && props.platform !== "none" ? h * 0.82 : 0;
+    const text = Array.from(String(props.handle ?? "")).length * h * 0.5 * GLYPH_W;
+    return [Math.max(num(props.boxWidth, 0), h, h * 0.84 + icon + text), h];
+  }
   if (kind === "captions") {
     const size = num(props.size, 88);
     const lines = num(props.maxLines, 2);

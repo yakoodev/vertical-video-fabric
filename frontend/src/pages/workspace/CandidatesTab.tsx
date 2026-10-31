@@ -1747,6 +1747,30 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автомонтаж не удался"),
   });
+  // 🤬 Мат (app/censor.py): тишина серединой слова + звёздочки в субтитрах, без рендера.
+  // Проверку рендером и Whisper (verify) зовут агенты — это минуты, кнопке ждать незачем.
+  const censorMat = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      await flushSettings();
+      return api.post<{ words: { i: number; word: string; level: number }[]; stars: number; manual_kept: number }>(
+        `/api/clip-plans/${clipPlanId}/censor`,
+        { verify: false },
+      );
+    },
+    onSuccess: async (r) => {
+      if (!r.words.length) toast.success("Мата в субтитрах не найдено");
+      else
+        toast.success(
+          `Мат: ${r.words.length} сл. заглушено серединой${r.stars ? `, в субтитрах звёздочки (${r.stars})` : ""}` +
+            (r.manual_kept ? ` · ручные отрезки целы (${r.manual_kept})` : "") +
+            " — Ctrl+Z откатит",
+        );
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      await qc.invalidateQueries({ queryKey: ["plan-subtitles"] });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Мат не заглушён"),
+  });
   // Бренд заказчика (app/brand_kit.py): субтитры и хук в его цветах, логотип, призыв в конце.
   const brands = useQuery({ queryKey: qk.brands, queryFn: brandsApi.list, staleTime: 60_000 });
   const [brandPick, setBrandPick] = useState(0);
@@ -3678,19 +3702,34 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
                 Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
               </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={!activePlan || censorMat.isPending}
+                  onClick={() => activePlan && censorMat.mutate(activePlan.id)}
+                  title="По словам субтитров: каждое матерное слово глушится серединой (человек поймёт, автосубтитры площадок — нет), в субтитрах — «б****». Ручные отрезки не трогает, повторное нажатие заменяет только свои. Ctrl+Z откатит."
+                >
+                  {censorMat.isPending ? "Ищу мат…" : "🤬 Заглушить мат"}
+                </button>
+              </div>
               {mute.length ? (
                 <div className="ed-layer-list">
                   {mute.map((m, i) => (
                     <div
-                      key={`${m.start}-${m.end}`}
+                      key={`${m.start}-${m.end}-${m.by ?? ""}`}
                       className={`ed-layer-row${tlSelected?.kind === "mute" && tlSelected.index === i ? " on" : ""}`}
                       onClick={() => {
                         setTlSelected({ kind: "mute", index: i });
                         seekClipTime(Math.max(0, m.start - 1), false);
                       }}
-                      title="Перейти на секунду раньше отрезка — послушать стык"
+                      title={
+                        m.by === "censor"
+                          ? `Мат, уровень ${m.level ?? 1} (кнопка «Заглушить мат» заменит). Перейти на секунду раньше`
+                          : "Перейти на секунду раньше отрезка — послушать стык"
+                      }
                     >
-                      <span className="ed-layer-ico">🔇</span>
+                      <span className="ed-layer-ico">{m.by === "censor" ? "🤬" : "🔇"}</span>
                       <span className="ed-layer-name mono">
                         {formatTimecode(m.start)} – {formatTimecode(m.end)}
                       </span>

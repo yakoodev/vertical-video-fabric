@@ -565,8 +565,12 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
         profile = {"provider": "whisper"}
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     mix_path = settings.tmp_dir / f"{uuid4().hex}.wav"
+    # Тишина рендера (render.mute: шум, мат censor_profanity) молчит и здесь: раньше listen
+    # слышал заглушённое, и проверить им глушение мата было нельзя.
+    muted = mute_in_parts(clock, (plan.get("render_settings") or {}).get("mute"), p_lo, p_hi)
     try:
         _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source)), timeout=60 * 5)
+        silence_wav(audio_path, muted)
         from app.speech_onsets import snap_words, voiced_frames, wav_pcm
 
         pcm = wav_pcm(audio_path)
@@ -574,6 +578,7 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
         if separate_speech(source):
             # Громкость — того, что услышит зритель (смесь рендера), а не одного микрофона.
             _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source)), timeout=60 * 5)
+            silence_wav(mix_path, muted)
             level_pcm = wav_pcm(mix_path)
         try:
             from app.subtitles.phantoms import drop_phantoms
@@ -602,6 +607,8 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
                                  "; before_cuts=true — шкала clip (как слои и субтитры get_clip)")
     if not words:
         note = "речи нет — громкость отрезка в level (RMS дБ); " + note
+    if muted:
+        note += f"; заглушённое mute ({len(muted)} отр.) молчит, как в рендере"
     return {
         "time": scale,
         "from": round(lo, 2),
@@ -614,6 +621,44 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
         "level": _pcm_level(level_pcm),
         "note": note,
     }
+
+
+def mute_in_parts(clock: Any, mute: Any, p_lo: float, p_hi: float) -> list[tuple[float, float]]:
+    """Отрезки ``render.mute`` (шкала clip) → секунды звука listen (части подряд от ``p_lo``).
+
+    listen режет звук из исходника частями подряд (после вырезов, без наплывов); тишина
+    рендера — на шкале clip. Перевод: clip → куски подряд → части (вырезы) → от начала отрезка."""
+    from app.audio_mute import normalize_mute
+
+    out = []
+    for m in normalize_mute(mute):
+        a, b = clock.clip_range_to_plain(m["start"], m["end"])
+        if clock.cut_plan is not None:
+            a, b = clock.cut_plan.mapper.clamp(a), clock.cut_plan.mapper.clamp(b)
+        a, b = max(a, p_lo), min(b, p_hi)
+        if b - a > 0.005:
+            out.append((round(a - p_lo, 3), round(b - p_lo, 3)))
+    return out
+
+
+def silence_wav(path: Path, spans: list[tuple[float, float]]) -> None:
+    """Обнулить звук wav (16-бит PCM) на отрезках ``spans`` (секунды от начала файла)."""
+    import wave
+
+    if not spans:
+        return
+    with wave.open(str(path), "rb") as src:
+        params = src.getparams()
+        frames = bytearray(src.readframes(src.getnframes()))
+    step = params.sampwidth * params.nchannels
+    total = len(frames) // step
+    for a, b in spans:
+        i0 = max(0, min(total, int(round(a * params.framerate))))
+        i1 = max(0, min(total, int(round(b * params.framerate))))
+        frames[i0 * step:i1 * step] = bytes((i1 - i0) * step)
+    with wave.open(str(path), "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(bytes(frames))
 
 
 def _pcm_level(pcm: bytes) -> dict:

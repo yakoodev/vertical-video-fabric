@@ -448,6 +448,8 @@ def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
         height = _num(props.get("h"), 120.0) or 120.0
     elif kind == "callout":
         height = 180.0
+    elif kind == "nameplate":
+        height = _num(props.get("size"), float(motion.NAMEPLATE_SIZE)) or float(motion.NAMEPLATE_SIZE)
     elif kind == "image":
         height = _num(props.get("w"), 400.0) or 400.0
     elif kind == "video":
@@ -523,7 +525,8 @@ def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
     во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
     kind = layer.get("type")
-    if kind in ("shape", "captions", "particles", "fx") or layer.get("behind"):
+    if kind in ("shape", "captions", "particles", "nameplate", "fx") or layer.get("behind"):
+        # Плашка канала висит весь ролик маленькой подписью в углу — не «графика поверх».
         return True
     if kind in ("image", "video"):
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
@@ -753,6 +756,7 @@ def _layer_summary(layer: dict) -> str:
         "progress": lambda: "шкала",
         "chart": lambda: f"график {props.get('kind') or ''}",
         "callout": lambda: f"плашка «{_short(props.get('title'))}»",
+        "nameplate": lambda: f"плашка канала {props.get('platform') or ''} «{_short(props.get('handle'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
@@ -2902,9 +2906,48 @@ def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
     duration = _clip_duration(ctx)
     clean = [m for m in normalize_mute(ranges) if m["start"] < duration]
     render = _current_render(ctx)
+    note = "звук исходника там заглушён; звуки слоёв и музыка играют. Проверь listen (он слышит mute)."
+    # Отрезки цензуры мата (by: censor, app/censor.py) — свои: список без помеченных их не стирает.
+    censored = [m for m in render.get("mute") or [] if m.get("by") == "censor"]
+    if censored and not any(m.get("by") for m in clean):
+        clean = normalize_mute(clean + censored)
+        note += (f" Отрезки мата ({len(censored)}, by: censor) оставлены — снять их: "
+                 "censor_profanity(clear=true).")
     fresh = _save_render(ctx, {**render, "mute": clean})
-    return {"ok": True, "mute": fresh["mute"],
-            "note": "звук исходника там заглушён; звуки слоёв и музыка играют. Проверь listen."}
+    return {"ok": True, "mute": fresh["mute"], "note": note}
+
+
+def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
+    """Мат одной командой (app/censor.py): тишина серединой слова, звёздочки в субтитрах и,
+    если verify, круги «рендер → Whisper по готовому файлу → шире, где узнаётся»."""
+    from app import censor
+
+    options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
+               "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    levels = args.get("levels")
+    if args.get("level") is not None and levels is None:
+        levels = args.get("level")
+    if censor.job_running(ctx.plan_id):
+        if args.get("verify", True) is False or args.get("clear"):
+            raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
+                            "повтори censor_profanity без verify=false")
+    try:
+        if args.get("clear"):
+            ctx.before_change()
+            return {"ok": True, **censor.censor_plan(ctx.store, ctx.plan_id, clear=True)}
+        if args.get("verify", True) is False:
+            ctx.before_change()
+            out = censor.censor_plan(ctx.store, ctx.plan_id, levels, **options)
+            out["note"] += ". Без проверки: рендер и Whisper не запускались (verify=true — проверит сам)"
+            return {"ok": True, "verified": False, **out}
+        if not censor.job_running(ctx.plan_id):
+            ctx.before_change()
+        out = censor.censor_job(ctx.store, ctx.plan_id, levels=levels,
+                                max_rounds=int(_num(args.get("max_rounds"), censor.DEFAULT_MAX_ROUNDS) or 3),
+                                **options)
+    except ValueError as exc:
+        raise ToolError(f"censor_profanity: {exc}") from exc
+    return {"ok": True, **out}
 
 
 def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
@@ -3077,10 +3120,49 @@ def h_apply_brand(ctx: ToolContext, args: dict) -> dict:
         ctx.store.get_brand(int(brand_id))
     except (KeyError, TypeError, ValueError) as exc:
         raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    plate = False if args.get("remove_nameplate") is True else args.get("nameplate")
+    if plate is not None and not isinstance(plate, (dict, bool)):
+        raise ToolError("nameplate — объект полей плашки канала или false (снять)")
     try:
-        return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change)
+        return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change,
+                           nameplate=None if plate is True else plate)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
+
+
+NAMEPLATE_FIELDS = ("platform", "handle", "style", "accent", "position", "size", "fade")
+
+
+def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
+    """Плашка канала (значок площадки + ник) на весь ролик без остального бренда (app/brand_kit.py)."""
+    from app.brand_kit import set_nameplate
+
+    brand_id = args.get("brand_id")
+    if brand_id:
+        try:
+            ctx.store.get_brand(int(brand_id))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    fields = {k: args[k] for k in NAMEPLATE_FIELDS if k in args}
+    try:
+        return set_nameplate(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
+                             remove=args.get("remove") is True, before_change=ctx.before_change)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_get_playbook(_ctx: ToolContext, args: dict) -> dict:
+    """Плейбук — пошаговый рецепт заказа (docs/playbooks/<name>.md); без name — список."""
+    from app import playbooks
+
+    name = str(args.get("name") or "").strip()
+    items = playbooks.list_playbooks()
+    if not name:
+        return {"playbooks": items, "note": "get_playbook(name) — текст рецепта: шаги, инструменты, чек-лист"}
+    try:
+        return playbooks.get_playbook(name)
+    except KeyError as exc:
+        raise ToolError(f"плейбука «{name}» нет; есть: {', '.join(p['name'] for p in items) or '—'}") from exc
 
 
 def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
@@ -4312,6 +4394,10 @@ props по типу:
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
+  nameplate (плашка канала, весь ролик): platform {'|'.join(motion.NAMEPLATE_PLATFORMS)} (свой векторный значок), handle (ник),
+         style glass (тёмное стекло + обводка accent) | solid (заливка accent), accent (нет — цвет площадки), size (высота
+         пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки). Проще set_nameplate —
+         сам найдёт место под разделителем раскладки / в безопасном углу
   pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
          анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
          0 — игра, 1 — микрофон) | "speech" (speech_tracks; по умолчанию) | asset_id (голос из файла), threshold_db
@@ -4481,7 +4567,8 @@ def _build_registry() -> list[Tool]:
             "шкала clip (до вырезов, как слои и субтитры get_clip). Распознаёт дорожку речи (speech_tracks). "
             "Слова с временем и тишина после последнего слова, громкость отрезка (level, RMS дБ). Без "
             "параметров — последние 6 с: проверь, договорена ли развязка и есть ли хвост реакции. Речи нет "
-            "(игра, музыка) — words [] и пометка. Для концовок, вырезов и «не торчит ли слово» — НЕ для "
+            "(игра, музыка) — words [] и пометка. Заглушённое (mute, в т.ч. мат censor_profanity) молчит, как в "
+            "рендере. Для концовок, вырезов и «не торчит ли слово» — НЕ для "
             "исправления распознавания: это тот же Whisper и он повторит те же ошибки (неверное слово правь "
             "по смыслу/на слух владельца через set_subtitle_words). / Transcribe the finished clip audio in a range.",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"},
@@ -4921,10 +5008,33 @@ def _build_registry() -> list[Tool]:
             "mute_audio", "Глушу звук исходника",
             "Тишина вместо звука исходника на отрезках ranges [{start, end}] (секунды клипа до вырезов), "
             "картинка остаётся — для вшитых эффектов старого монтажа, шума, мата (find_noises покажет где). "
-            "Заменяет прежний список; [] — снять. / Mute source audio in ranges.",
+            "Заменяет прежний список ручных; [] — снять их. Отрезки мата (by: censor, censor_profanity) остаются, "
+            "если в ranges нет помеченных. / Mute source audio in ranges.",
             _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"}},
                                                             ["start", "end"])}}, ["ranges"]),
             h_mute_audio, mutating=True, label=lambda a: f"Глушу звук ({len(a.get('ranges') or [])} отр.)",
+        ),
+        Tool(
+            "censor_profanity", "Глушу мат",
+            "Мат одной командой по словам субтитров (нужны generate_subtitles): каждое матерное слово глушится "
+            "СЕРЕДИНОЙ (mute с меткой by: censor, уровень 1 — 30–85% слова, 2 — шире, 3 — слышна только первая "
+            "согласная) — человек понимает, автосубтитры TikTok/YouTube мат не распознают; в субтитрах — первая "
+            "буква и звёздочки («б****»). Ручные mute не трогает, свои прежние отрезки заменяет; повторный "
+            "запуск идемпотентен (звёздочки находит сам). По умолчанию мат + «сука»; soft=true — ещё блин, "
+            "хрен, жопа, говно. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
+            "мат ещё узнаётся (±0.4 с), уровень +1 и новый рендер, не больше max_rounds (3) кругов; это минуты: "
+            "ответ status running — повтори тот же вызов через retry_after_sec. Итог: words [{i, word, start, "
+            "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
+            "услышал мимо субтитров. heard на уровне 3 — «узнаётся по контексту»: тишиной не лечится. "
+            "verify=false — быстро, без рендера. levels — число всем или {i: уровень}; skip [i] — не трогать "
+            "слово; clear=true — снять свои отрезки. / Mute profanity mid-word, star it in subtitles, "
+            "verify by Whisper on the render.",
+            _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
+                  "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
+                  "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
+                  "clear": {"type": "boolean"}}),
+            h_censor_profanity, mutating=True,
+            label=lambda a: "Глушу мат" + ("" if a.get("verify") is False else " и проверяю рендером"),
         ),
         Tool(
             "set_source_gain", "Громкость исходника на отрезках",
@@ -5029,18 +5139,58 @@ def _build_registry() -> list[Tool]:
         Tool(
             "list_brands", "Смотрю бренды",
             "Бренды владельца (повторяющиеся заказчики, например магазин): шрифт, цвета, логотип, призыв в "
-            "конце (cta), музыка, фон, политика эффектов. Создаёт и правит их только владелец. / Brand kits.",
+            "конце (cta), плашка канала (nameplate), музыка, фон, политика эффектов. Создаёт и правит их только "
+            "владелец. / Brand kits.",
             _obj({}), h_list_brands, scope="global",
         ),
         Tool(
             "apply_brand", "Оформляю в стиле бренда",
             "Ролик для бренда (реклама повторяющегося заказчика) — в его стиле одной командой: перекрашивает "
-            "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, музыку "
-            "и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа (auto_edit, хук, вырезы): повтор "
-            "ничего не дублирует (слои brand_*). Потом view_frame на концовке — призыв не на лице. "
-            "/ Apply a brand kit to the clip.",
-            _obj({"brand_id": {"type": "integer"}}, ["brand_id"]),
+            "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, плашку "
+            "канала (если она есть в бренде), музыку и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа "
+            "(auto_edit, хук, вырезы): повтор ничего не дублирует (слои brand_*). nameplate — плашка канала "
+            "на этот ролик: поля как у set_nameplate поверх плашки бренда; remove_nameplate:true — снять. "
+            "Потом view_frame на концовке — призыв не на лице. / Apply a brand kit to the clip.",
+            _obj({"brand_id": {"type": "integer"},
+                  "nameplate": {"type": "object", "description": "поля плашки канала, как у set_nameplate"},
+                  "remove_nameplate": {"type": "boolean"}},
+                 ["brand_id"]),
             h_apply_brand, mutating=True, label=lambda a: f"Бренд #{a.get('brand_id')}",
+        ),
+        Tool(
+            "set_nameplate", "Ставлю плашку канала",
+            "Плашка канала на весь ролик: значок площадки (свой векторный глиф) + ник в пилюле — как на "
+            "нарезках стримов. platform twitch|youtube|tiktok|telegram|kick|none, handle (ник как есть), style "
+            "glass (тёмное стекло + обводка цветом площадки, по умолчанию) | solid (заливка), accent #rrggbb "
+            "(нет — цвет площадки), size (высота пилюли, px кадра 1080×1920, 74), fade (мягкое появление; по "
+            "умолчанию без анимации). position: auto (по умолчанию: в раскладке «игра + вебка» — на 72 px ниже "
+            "разделителя и ниже субтитров, слева; иначе — безопасный верхний угол, напротив логотипа бренда) | "
+            "under-split-left | under-split-center | top-left | top-right. Место считается от зон площадок "
+            "(вкладки сверху, подпись снизу, кнопки TikTok справа), субтитров, хука и логотипа. brand_id — "
+            "взять плашку бренда за основу. remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
+            "Потом view_frame. / Channel nameplate (platform icon + handle) for the whole clip.",
+            _obj({"platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
+                  "handle": {"type": "string"},
+                  "style": {"type": "string", "enum": ["glass", "solid"]},
+                  "accent": {"type": "string"},
+                  "position": {"type": "string", "enum": ["auto", "top-left", "top-right", "under-split-left",
+                                                          "under-split-center"]},
+                  "size": {"type": "number", "minimum": 40, "maximum": 160},
+                  "fade": {"type": "boolean"},
+                  "brand_id": {"type": "integer"},
+                  "remove": {"type": "boolean"}}),
+            h_set_nameplate, mutating=True,
+            label=lambda a: "Снимаю плашку канала" if a.get("remove") else f"Плашка канала {a.get('handle') or ''}".strip(),
+        ),
+        Tool(
+            "get_playbook", "Читаю плейбук",
+            "Плейбук — пошаговый рецепт типового заказа по опыту реальных работ: шаги, какие инструменты, "
+            "чек-лист перед сдачей. Без name — список (stream-shorts — нарезка стрима в вертикальные шортсы, "
+            "stream-horizontal — горизонтальная нарезка стрима 10–15 мин, meme-insert — мем/вставка поверх "
+            "видео, app-promo — промо приложения). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
+            "for a typical order; no name — list.",
+            _obj({"name": {"type": "string"}}), h_get_playbook, scope="global",
+            label=lambda a: f"Плейбук {a.get('name') or ''}".strip(),
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",

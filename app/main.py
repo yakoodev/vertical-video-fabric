@@ -2555,6 +2555,49 @@ def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class CensorRequest(BaseModel):
+    verify: bool = Field(default=True, description="рендер + Whisper по готовому файлу, шире там, где мат узнаётся")
+    max_rounds: int | None = Field(default=None, ge=1, le=5, description="кругов рендер→Whisper (по умолчанию 3)")
+    levels: int | dict[str, int] | None = Field(default=None, description="уровень 1–3 всем или {номер слова: уровень}")
+    soft: bool = Field(default=False, description="ещё и мягкое: блин, хрен, жопа, говно")
+    stars: bool = Field(default=True, description="мат в субтитрах — первая буква и звёздочки")
+    skip: list[int] = Field(default_factory=list, description="номера слов субтитров, которые не трогать")
+    clear: bool = Field(default=False, description="снять отрезки цензуры (ручные mute остаются)")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/censor",
+    tags=["Subtitles"],
+    summary="🤬 Заглушить мат серединой слова, звёздочки в субтитрах, проверка Whisper по рендеру",
+)
+def api_clip_plan_censor(
+    clip_plan_id: int, _auth: AuthDep, response: Response, payload: CensorRequest | None = None
+) -> dict:
+    """Тот же инструмент, что у агентов (censor_profanity, app/censor.py). С ``verify`` —
+    фоном: запрос ждёт не дольше ~45 с, иначе 202 и ``{status: running, retry_after_sec}`` —
+    повтори тот же запрос. Без ``verify`` — сразу (только mute и звёздочки)."""
+    from app import agent_tools
+
+    body = payload or CensorRequest()
+    try:
+        store.get_clip_plan(clip_plan_id, include_segments=False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ctx = agent_tools.ToolContext(
+        store=store, clip_plan_id=clip_plan_id,
+        on_first_change=lambda: snapshot_clip(store, clip_plan_id, "цензура мата"),
+    )
+    result, ok = agent_tools.run_tool(ctx, "censor_profanity", body.model_dump(exclude_none=True))
+    if not ok:
+        problems = "; ".join(str(p) for p in result.get("problems") or [])
+        raise HTTPException(status_code=400, detail=str(result.get("error") or "цензура не удалась")
+                            + (f": {problems}" if problems else ""))
+    if result.get("status") == "running":
+        response.status_code = 202
+        response.headers["Retry-After"] = str(result.get("retry_after_sec") or 30)
+    return result
+
+
 class SeparateVoicesRequest(BaseModel):
     retranscribe: bool = Field(default=True, description="сначала распознать речь точной моделью (large-v3-turbo)")
 

@@ -208,3 +208,153 @@ export function drawDecorGlyph(ctx: Ctx2D, g: DecorGlyph, x: number, cellW: numb
     ctx.restore();
   } else ctx.fill();
 }
+
+/* ---------- значки площадок (плашка канала) ---------- */
+
+/**
+ * Значки площадок для плашки канала (layers/nameplate.ts) — свои упрощённые глифы путями,
+ * не файлы логотипов: одинаково в превью и в Node, без загрузки картинок. Значок вписан
+ * в высоту `h`, ширина — `adv · h`. «Дырки» (полоски Twitch, треугольник YouTube, самолётик
+ * Telegram) вырезаются правилом evenodd — сквозь них видна плашка.
+ */
+export type PlatformIcon = {
+  /** Ширина значка, доли его высоты. */
+  adv: number;
+  /** evenodd — внутренние контуры становятся дырками; nonzero — части складываются. */
+  rule: "evenodd" | "nonzero";
+  /** Контур значка с центром (cx, cy) высотой h — в текущий путь канваса. */
+  path: (ctx: Ctx2D, cx: number, cy: number, h: number) => void;
+};
+
+function polyPath(ctx: Ctx2D, pts: [number, number][], cx: number, cy: number, k: number): void {
+  pts.forEach(([x, y], i) => {
+    if (i) ctx.lineTo(cx + x * k, cy + y * k);
+    else ctx.moveTo(cx + x * k, cy + y * k);
+  });
+  ctx.closePath();
+}
+
+/** Прямоугольник по часовой (направление важно для nonzero вместе с другими частями). */
+function rectPath(ctx: Ctx2D, x0: number, y0: number, x1: number, y1: number): void {
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y0);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x0, y1);
+  ctx.closePath();
+}
+
+/** Twitch: «пузырь» со срезанным углом и хвостиком снизу, внутри две полоски-дырки. */
+function twitchPath(ctx: Ctx2D, cx: number, cy: number, h: number): void {
+  const w = h * 0.86;
+  const x = cx - w / 2;
+  const y = cy - h / 2;
+  const c = h * 0.12;
+  const pts: [number, number][] = [
+    [c, 0], [w, 0], [w, h * 0.62], [w - h * 0.2, h * 0.82], [w * 0.52, h * 0.82], [w * 0.34, h],
+    [w * 0.34, h * 0.82], [0, h * 0.82], [0, c],
+  ];
+  polyPath(ctx, pts, x, y, 1);
+  const bw = w * 0.11;
+  for (const bx of [w * 0.42, w * 0.68]) rectPath(ctx, x + bx, y + h * 0.2, x + bx + bw, y + h * 0.5);
+}
+
+/** YouTube: скруглённый «экран» с треугольником «играть»-дыркой. */
+function youtubePath(ctx: Ctx2D, cx: number, cy: number, h: number): void {
+  const w = h * 1.36;
+  const rh = h * 0.94;
+  const r = rh * 0.28;
+  const x = cx - w / 2;
+  const y = cy - rh / 2;
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + rh - r);
+  ctx.quadraticCurveTo(x + w, y + rh, x + w - r, y + rh);
+  ctx.lineTo(x + r, y + rh);
+  ctx.quadraticCurveTo(x, y + rh, x, y + rh - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  polyPath(ctx, [[-0.17, -0.24], [0.27, 0], [-0.17, 0.24]], cx + h * 0.02, cy, h);
+}
+
+/** TikTok: нота — головка, ножка и флажок (части складываются, nonzero). */
+function tiktokPath(ctx: Ctx2D, cx: number, cy: number, h: number): void {
+  const u = h / 2;
+  // Головка — круг по часовой.
+  const hx = cx - u * 0.2;
+  const hy = cy + u * 0.48;
+  const hr = u * 0.5;
+  ctx.moveTo(hx + hr, hy);
+  ctx.arc(hx, hy, hr, 0, Math.PI * 2);
+  ctx.closePath();
+  // Ножка.
+  rectPath(ctx, hx + hr - u * 0.26, cy - u, hx + hr, hy);
+  // Флажок: изогнутая лента от верха ножки вправо-вниз.
+  const sx = hx + hr - u * 0.26;
+  ctx.moveTo(sx, cy - u);
+  ctx.quadraticCurveTo(sx + u * 0.26, cy - u * 0.42, sx + u * 0.82, cy - u * 0.42);
+  ctx.lineTo(sx + u * 0.82, cy - u * 0.04);
+  ctx.quadraticCurveTo(sx + u * 0.26, cy - u * 0.04, sx, cy - u * 0.4);
+  ctx.closePath();
+}
+
+/** Telegram: круг с бумажным самолётиком-дыркой. */
+function telegramPath(ctx: Ctx2D, cx: number, cy: number, h: number): void {
+  const u = h / 2;
+  ctx.moveTo(cx + u, cy);
+  ctx.arc(cx, cy, u, 0, Math.PI * 2);
+  ctx.closePath();
+  polyPath(ctx, [[-0.6, 0.02], [0.5, -0.44], [0.32, 0.5], [0.04, 0.26], [-0.12, 0.44], [-0.16, 0.14]], cx - u * 0.04, cy, u);
+}
+
+/** Kick: «пиксельная» K ступеньками. */
+function kickPath(ctx: Ctx2D, cx: number, cy: number, h: number): void {
+  const u = h / 2;
+  const pts: [number, number][] = [
+    [-0.8, -1], [-0.3, -1], [-0.3, -0.3], [0.05, -0.3], [0.05, -0.62], [0.4, -0.62], [0.4, -1], [0.85, -1],
+    [0.85, -0.45], [0.5, -0.45], [0.5, -0.12], [0.18, -0.12], [0.18, 0.12], [0.5, 0.12], [0.5, 0.45], [0.85, 0.45],
+    [0.85, 1], [0.4, 1], [0.4, 0.62], [0.05, 0.62], [0.05, 0.3], [-0.3, 0.3], [-0.3, 1], [-0.8, 1],
+  ];
+  polyPath(ctx, pts, cx, cy, u * 0.86);
+}
+
+export const PLATFORM_ICONS: Record<string, PlatformIcon> = {
+  twitch: { adv: 0.86, rule: "evenodd", path: twitchPath },
+  youtube: { adv: 1.36, rule: "evenodd", path: youtubePath },
+  tiktok: { adv: 0.92, rule: "nonzero", path: tiktokPath },
+  telegram: { adv: 1, rule: "evenodd", path: telegramPath },
+  kick: { adv: 0.74, rule: "nonzero", path: kickPath },
+};
+
+/** Значок площадки (none и неизвестная — без значка). */
+export function platformIcon(platform: string | null | undefined): PlatformIcon | null {
+  return (platform && PLATFORM_ICONS[platform]) || null;
+}
+
+/**
+ * Нарисовать значок площадки цветом `color` с центром (cx, cy) высотой h. `chroma` — у
+ * TikTok сдвинутые голубая и красная копии под нотой (его фирменный «глитч»).
+ */
+export function drawPlatformIcon(
+  ctx: Ctx2D,
+  icon: PlatformIcon,
+  cx: number,
+  cy: number,
+  h: number,
+  color: string,
+  chroma?: [string, string] | null,
+): void {
+  const fill = (x: number, y: number, style: string) => {
+    ctx.beginPath();
+    icon.path(ctx, x, y, h);
+    ctx.fillStyle = style;
+    ctx.fill(icon.rule);
+  };
+  if (chroma) {
+    const d = h * 0.06;
+    fill(cx - d, cy - d * 0.7, chroma[0]);
+    fill(cx + d, cy + d * 0.7, chroma[1]);
+  }
+  fill(cx, cy, color);
+}

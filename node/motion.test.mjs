@@ -2050,3 +2050,135 @@ test("CLI: эффект кадра и огибающая громкости из
   const opaque = (d) => d.reduce((n, v, i) => n + (i % 4 === 3 && v > 250 ? 1 : 0), 0);
   assert.ok(opaque(loud) > opaque(quiet) * 1.5, "громко — текст крупнее");
 });
+
+/* ---------- плашка канала (nameplate) ---------- */
+
+const plateLayer = (over = {}) => ({
+  id: "np",
+  type: "nameplate",
+  start: 0,
+  end: 10,
+  x: (24 + 260) / 1080,
+  y: 0.6,
+  track: 4,
+  ...over,
+  props: { platform: "twitch", handle: "sareamura", style: "glass", size: 74, align: "left", boxWidth: 520, ...(over.props || {}) },
+});
+
+test("плашка канала: рамка boxWidth, пилюля у левого края, значок цветом площадки, справа пусто", () => {
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const ctx = createCanvas(10, 10).getContext("2d");
+  const box = E.layerBox(ctx, plateLayer(), 1, env);
+  near(box.w, 520, 1e-6);
+  near(box.h, 74, 1e-6);
+  // Без boxWidth рамка — по пилюле: поля + значок + ник, не уже высоты.
+  const tight = E.layerBox(ctx, plateLayer({ props: { boxWidth: undefined } }), 1, env);
+  assert.ok(tight.w > 74 * 2 && tight.w < 520, `ширина ${tight.w}`);
+  const cv = createCanvas(1080, 1920);
+  const c = cv.getContext("2d");
+  E.drawLayer(c, plateLayer(), 1, env);
+  const cy = 0.6 * 1920;
+  // Левый край пилюли — ровно x 24: левее пусто, у края — обводка #9146ff.
+  assert.equal(pxOf(c, 20, cy)[3], 0);
+  const edge = pxOf(c, 25, cy);
+  assert.ok(edge[3] > 200 && edge[2] > 200 && edge[1] < 120, `обводка ${edge}`);
+  // Значок Twitch: тело цветом площадки, полоски — дырки (видна тёмная плашка).
+  const iconLeft = 24 + 74 * 0.42;
+  const iconH = 74 * 0.56;
+  const iconW = 0.86 * iconH;
+  const body = pxOf(c, iconLeft + iconW * 0.2, cy - iconH * 0.2);
+  assert.ok(body[2] > 200 && body[0] > 110 && body[1] < 110, `тело значка ${body}`);
+  const bar = pxOf(c, iconLeft + iconW * 0.475, cy - iconH * 0.15);
+  assert.ok(bar[0] < 60 && bar[2] < 60, `полоска-дырка ${bar}`);
+  // Правее пилюли (в рамке 520) — пусто: пилюля по нику, а не во всю рамку.
+  assert.equal(pxOf(c, 24 + 510, cy)[3], 0);
+  // align right — пилюля у правого края рамки.
+  const cv2 = createCanvas(1080, 1920);
+  E.drawLayer(cv2.getContext("2d"), plateLayer({ x: 1 - (24 + 260) / 1080, props: { align: "right" } }), 1, env);
+  assert.ok(pxOf(cv2.getContext("2d"), 1080 - 26, cy)[3] > 200);
+  assert.equal(pxOf(cv2.getContext("2d"), 1080 - 20, cy)[3], 0);
+});
+
+test("плашка канала: значок каждой площадки рисуется, none — без значка, solid на светлом акценте — тёмный ник", () => {
+  const env = { width: 1080, height: 1920, getImage: () => null };
+  const inked = (layer, x0, x1) => {
+    const cv = createCanvas(1080, 1920);
+    const c = cv.getContext("2d");
+    E.drawLayer(c, layer, 1, env);
+    const d = c.getImageData(Math.round(x0), Math.round(0.6 * 1920 - 20), Math.round(x1 - x0), 40).data;
+    let bright = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] + d[i + 1] + d[i + 2] > 300) bright++;
+    return bright;
+  };
+  for (const platform of ["twitch", "youtube", "tiktok", "telegram", "kick"]) {
+    assert.ok(E.platformIcon(platform), platform);
+    // Только значок (без ника): в середине пилюли — светлые пиксели значка.
+    const n = inked(plateLayer({ props: { platform, handle: "" } }), 24 + 10, 24 + 64);
+    assert.ok(n > 40, `${platform}: значок пуст (${n})`);
+  }
+  assert.equal(E.platformIcon("none"), null);
+  assert.equal(E.platformIcon("vk"), null);
+  // Цвет площадки — акцент по умолчанию; свой accent перекрывает.
+  assert.equal(E.nameplateAccent({ platform: "youtube" }), "#ff0033");
+  assert.equal(E.nameplateAccent({ platform: "twitch", accent: "#00ff00" }), "#00ff00");
+  // solid на светлом акценте (Kick) — ник тёмный, на тёмном (Twitch) — белый.
+  const nick = (accent) => {
+    const cv = createCanvas(1080, 1920);
+    const c = cv.getContext("2d");
+    E.drawLayer(c, plateLayer({ props: { platform: "none", style: "solid", accent, handle: "IIIIIIII", size: 120 } }), 1, env);
+    const d = c.getImageData(24 + 60, Math.round(0.6 * 1920 - 20), 300, 40).data;
+    let dark = 0;
+    let white = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 200) continue;
+      if (d[i] + d[i + 1] + d[i + 2] < 120) dark++;
+      if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) white++;
+    }
+    return { dark, white };
+  };
+  const kick = nick("#53fc18");
+  const twitch = nick("#9146ff");
+  assert.ok(kick.dark > 100 && kick.white === 0, `kick ${JSON.stringify(kick)}`);
+  assert.ok(twitch.white > 100 && twitch.dark === 0, `twitch ${JSON.stringify(twitch)}`);
+  // Пустая плашка (ни ника, ни значка) ничего не рисует.
+  const cv = createCanvas(1080, 1920);
+  E.drawLayer(cv.getContext("2d"), plateLayer({ props: { platform: "none", handle: "" } }), 1, env);
+  assert.equal(pxOf(cv.getContext("2d"), 24 + 37, 0.6 * 1920)[3], 0);
+});
+
+test("плашка канала: кадр компоновщика (рендер) = кадр движка (превью) пиксель в пиксель; шаблон", async () => {
+  // Превью — тот же движок с тем же шрифтом: регистрируем Montserrat ExtraBold, как компоновщик.
+  const { GlobalFonts } = await import("@napi-rs/canvas");
+  GlobalFonts.registerFromPath(join(FONTS, "Montserrat-ExtraBold.ttf"), "Montserrat");
+  E.invalidateTextCache();
+  const layers = [
+    plateLayer({ shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.45 } }),
+    plateLayer({ id: "np2", x: 1 - (24 + 260) / 1080, y: 0.13, props: { platform: "youtube", handle: "shop", style: "solid", align: "right" } }),
+  ];
+  const comp = { width: 1080, height: 1920, fps: 30, duration: 3, layers };
+  writeFileSync(join(tmp, "np.json"), JSON.stringify(comp));
+  writeFileSync(join(tmp, "np.assets.json"), "{}");
+  const png = join(tmp, "np.png");
+  const r = run(["--comp", join(tmp, "np.json"), "--assets", join(tmp, "np.assets.json"), "--frame", "1", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  const img = await loadImage(readFileSync(png));
+  const a = createCanvas(1080, 1920);
+  a.getContext("2d").drawImage(img, 0, 0);
+  const b = createCanvas(1080, 1920);
+  E.drawFrame(b.getContext("2d"), { layers }, 1, { width: 1080, height: 1920, getImage: () => null, createCanvas: (w, h) => createCanvas(w, h) });
+  const da = a.getContext("2d").getImageData(0, 0, 1080, 1920).data;
+  const db = b.getContext("2d").getImageData(0, 0, 1080, 1920).data;
+  let diff = 0;
+  let inked = 0;
+  for (let i = 0; i < da.length; i += 4) {
+    if (da[i + 3] > 0) inked++;
+    if (Math.abs(da[i] - db[i]) > 2 || Math.abs(da[i + 1] - db[i + 1]) > 2 || Math.abs(da[i + 2] - db[i + 2]) > 2 || Math.abs(da[i + 3] - db[i + 3]) > 2) diff++;
+  }
+  assert.ok(inked > 5000, `плашки не нарисованы (${inked})`);
+  assert.ok(diff <= inked * 0.002, `расхождение рендера и превью: ${diff} из ${inked}`);
+  // Шаблон «Плашка канала»: слой nameplate у края кадра, весь ролик.
+  const tpl = E.buildTemplate("channel-plate", { handle: "sareamura" }, 0);
+  assert.equal(tpl.layers[0].type, "nameplate");
+  assert.equal(tpl.layers[0].props.align, "left");
+  near(tpl.layers[0].x * 1080 - tpl.layers[0].props.boxWidth / 2, 24, 1e-6);
+});

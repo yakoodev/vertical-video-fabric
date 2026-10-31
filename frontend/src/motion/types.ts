@@ -336,6 +336,34 @@ export type CalloutProps = {
   icon?: string;
 };
 
+/** Площадка канала: значок рисуется векторно своим глифом (glyphs.ts, PLATFORM_ICONS). */
+export type NameplatePlatform = "twitch" | "youtube" | "tiktok" | "telegram" | "kick" | "none";
+
+export type NameplateStyle = "glass" | "solid";
+
+/**
+ * Плашка канала: пилюля со значком площадки и ником (layers/nameplate.ts).
+ * glass — тёмное стекло с обводкой акцентом, solid — заливка акцентом.
+ */
+export type NameplateProps = {
+  platform?: NameplatePlatform;
+  /** Ник канала как есть («sareamura», «@shop»). */
+  handle?: string;
+  style?: NameplateStyle;
+  /** Обводка (glass) или заливка (solid); нет — цвет площадки (PLATFORM_COLORS). */
+  accent?: string | null;
+  /** Высота пилюли, опорн. px (74 — как на шортсах 1080×1920). */
+  size?: number;
+  font?: string;
+  weight?: number;
+  /** Цвет ника (на solid со светлым акцентом — тёмный сам). */
+  color?: string;
+  /** Где пилюля внутри рамки слоя шириной `boxWidth`: у левого края, по центру, у правого. */
+  align?: "left" | "center" | "right";
+  /** Ширина рамки слоя, опорн. px; нет или меньше пилюли — рамка по пилюле. */
+  boxWidth?: number;
+};
+
 export type AudioProps = {
   asset_id: string;
   /**
@@ -547,6 +575,7 @@ export type LayerPropsMap = {
   progress: ProgressProps;
   chart: ChartProps;
   callout: CalloutProps;
+  nameplate: NameplateProps;
   captions: CaptionsProps;
   chat: ChatProps;
   audio: AudioProps;
@@ -596,6 +625,7 @@ export type CounterLayer = LayerOf<"counter">;
 export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
 export type CalloutLayer = LayerOf<"callout">;
+export type NameplateLayer = LayerOf<"nameplate">;
 export type CaptionsLayer = LayerOf<"captions">;
 export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
@@ -613,6 +643,7 @@ export type Layer =
   | ProgressLayer
   | ChartLayer
   | CalloutLayer
+  | NameplateLayer
   | CaptionsLayer
   | ChatLayer
   | AudioLayer
