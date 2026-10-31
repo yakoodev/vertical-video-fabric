@@ -24,6 +24,10 @@ import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import {
   cameraMatrix,
+  camera3dAt,
+  drawBasePlane,
+  has3dCamera,
+  layerUnit,
   captionWordsFrom,
   clipAccent,
   drawFrame,
@@ -709,6 +713,8 @@ function CropFrame({
   const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
   // Собранный кадр раскладки до камеры: камера зумит только игру, окошко вебки — на месте.
   const layoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Кадр основы перед 3D-камерой (плоскость на глубине — space3d.drawBasePlane).
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const insertsRef = useRef(insertsPreview);
   insertsRef.current = insertsPreview;
   const draggingRef = useRef(false);
@@ -786,6 +792,8 @@ function CropFrame({
           const shownLayers = motion ? holdFinalLayers(motion.layers, motion.duration) : [];
           // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
+          // 3D-камера (dolly, облёт, фокусное) — основа плоскостью на глубине, как в компоновщике.
+          const cam3 = motion && has3dCamera(motion.camera) ? camera3dAt(motion.camera, clipT) : null;
           const rect = {
             x: (c.x + lc * c.w) * vw,
             y: (c.y + tc * c.h) * vh,
@@ -822,8 +830,14 @@ function CropFrame({
                 const behind = shownLayers.filter((l) => !l.hidden);
                 drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, levels: motion.levels, camera: motion.camera }, clipT, env, "behind");
               }
-              if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-              ctx.drawImage(kc, 0, 0, cv.width, cv.height);
+              if (cam3) {
+                // 3D-камера: вырезанное видео — плоскость на глубине baseZ, как в компоновщике.
+                const env3 = browserEnv(cv.width, cv.height, format);
+                drawBasePlane(ctx, env3, kc, cam3, cam, layerUnit(env3), kc.width, kc.height);
+              } else {
+                if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+                ctx.drawImage(kc, 0, 0, cv.width, cv.height);
+              }
             }
           } else if (ctx) {
             const regions = cam && motion && !fit && !contain ? cameraRegions(lay, vw, vh, cv.width, cv.height, out) : null;
@@ -852,6 +866,23 @@ function CropFrame({
                 else ctx.drawImage(lc, 0, 0);
                 ctx.restore();
                 for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+              }
+            } else if (cam3 && !regions) {
+              // 3D-камера: кадр основы на свой холст, потом плоскостью на глубине baseZ (space3d.ts).
+              const bc = (baseCanvasRef.current ??= document.createElement("canvas"));
+              if (bc.width !== cv.width || bc.height !== cv.height) {
+                bc.width = cv.width;
+                bc.height = cv.height;
+              }
+              const bctx = bc.getContext("2d");
+              if (bctx) {
+                bctx.setTransform(1, 0, 0, 1, 0, 0);
+                drawBase(bctx, lay, cv.width, cv.height);
+                const env3 = browserEnv(cv.width, cv.height, format);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.fillStyle = "#000000";
+                ctx.fillRect(0, 0, cv.width, cv.height);
+                drawBasePlane(ctx, env3, bc, cam3, cam, layerUnit(env3));
               }
             } else {
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);

@@ -1941,6 +1941,26 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_camera_preset(ctx: ToolContext, args: dict) -> dict:
+    """3D-движение камеры одной командой (app/camera3d.py): ключи на отрезке start..start+duration."""
+    from app.camera3d import PresetError, apply_preset
+
+    render = _current_render(ctx)
+    try:
+        res = apply_preset(args.get("preset"), args.get("start"), args.get("duration"), args.get("intensity"),
+                           camera=render.get("camera"), layers=render.get("layers"), layer_id=args.get("layer_id"),
+                           clip_duration=_clip_duration(ctx))
+    except (PresetError, ValueError) as exc:
+        raise ToolError(f"пресет не поставлен: {exc}", getattr(exc, "hints", [])) from exc
+    fresh = _save_render(ctx, {**render, "camera": res["camera"], "layers": res["layers"]})
+    out = {"ok": True, "preset": res["preset"], "range": res["range"], "keys": res["keys"],
+           "camera_keys": len(_camera_of(fresh)),
+           "check": f"view_frame на {res['range'][0] + (res['range'][1] - res['range'][0]) / 2:.2f} с и на конце"}
+    if res["note"]:
+        out["note"] = res["note"]
+    return out
+
+
 def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
     """Наезд без своих x/y — в героя: край героя со стороны текста стоит на месте,
     и при zoom он не заезжает под субтитры (по умолчанию камера зумит в центр кадра)."""
@@ -4432,6 +4452,9 @@ in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text
 loop: {', '.join(enums['loops'])} (glitch — редкие сбои, wave — буквы волной: только text)
 react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0..1, color?}} у любого слоя — дышит громкостью клипа
   (огибающую считает сервис; music — фоновый трек клипа). Не больше 1–2 «дышащих» слоёв на сцену
+3D: у слоя z (глубина, опорн. px: −300 ближе … 600 дальше; задана — слой в сцене, едет с камерой), rotX/rotY (наклон
+  с перспективой, °; ключи z/rotX/rotY); у ключа камеры z (dolly), rotX/rotY (наклон/облёт ±12°), fov (40), baseZ (видео, 1000).
+  Проще camera_preset(preset, start): parallax_push, orbit, dolly_zoom, tilt_reveal, float, card_flip (layer_id)
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
   text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
@@ -4840,9 +4863,27 @@ def _build_registry() -> list[Tool]:
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
-                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]}},
+                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]},
+                # 3D (camera_preset ставит их сам): dolly, наклон, облёт, поле зрения, глубина основы.
+                "z": {"type": "number"}, "rotX": {"type": "number"}, "rotY": {"type": "number"},
+                "fov": {"type": "number"}, "baseZ": {"type": "number"}},
                 ["t", "zoom"])}}, ["keys"]),
             h_set_camera, mutating=True, label=_label_camera,
+        ),
+        Tool(
+            "camera_preset", "3D-движение камеры",
+            "3D-движение одной командой (псевдо-3D: глубина z слоёв, перспектива): preset parallax_push (наезд с "
+            "параллаксом, держится) | orbit (облёт ±10°) | dolly_zoom (Хичкок, держится) | tilt_reveal (раскрытие "
+            "наклоном) | float (дыхание камеры) | card_flip (переворот слоя layer_id); start — с, duration? (по "
+            "умолчанию свой у пресета), intensity 0.2..2 (1). Ключи камеры внутри отрезка заменяются. Параллакс "
+            "виден у слоёв с z (−300…600) или followCamera; без z слой стоит на экране. Не чаще одного 3D-движения "
+            "на 5–8 с, для промо, интро и ярких моментов. / Camera 3D move preset.",
+            _obj({"preset": {"type": "string", "enum": ["parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float",
+                                                        "card_flip"]},
+                  "start": {"type": "number"}, "duration": {"type": "number"}, "intensity": {"type": "number"},
+                  "layer_id": {"type": "string"}}, ["preset", "start"]),
+            h_camera_preset, mutating=True,
+            label=lambda a: f"Ставлю 3D-движение {a.get('preset')} на {a.get('start')} с",
         ),
         Tool(
             "list_fonts", "Смотрю шрифты",

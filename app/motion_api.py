@@ -51,6 +51,19 @@ class LevelsPayload(BaseModel):
     fps: float | None = None
 
 
+class CameraPresetPayload(BaseModel):
+    """Пресет 3D-движения для редактора: текущие (несохранённые) ключи камеры и слои — ответ с новыми."""
+
+    preset: str
+    start: float
+    duration: float | None = None
+    intensity: float | None = None
+    layer_id: str | None = None
+    camera: list[Any] | None = None
+    layers: list[Any] | None = None
+    clip_duration: float | None = None
+
+
 class MotionPayload(BaseModel):
     """Несохранённый вариант из редактора/агента; поле не прислано — берётся из клипа."""
 
@@ -64,6 +77,25 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
     @router.get("/api/motion/schema", summary="Схема моушн-слоёв: типы, props, пределы, easing")
     def api_motion_schema(_auth: auth_dep) -> dict:  # type: ignore[valid-type]
         return schema_summary()
+
+    @router.get("/api/motion/camera-presets", summary="Пресеты 3D-движения камеры (app/camera3d.py)")
+    def api_camera_presets(_auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        from app.camera3d import describe
+
+        return {"presets": describe()}
+
+    @router.post("/api/motion/camera-preset", summary="Поставить пресет 3D-движения (ничего не сохраняет)")
+    def api_camera_preset(payload: CameraPresetPayload, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        """``{preset, camera, layers, keys, range, note}`` — новые ключи камеры (и слои у card_flip);
+        редактор кладёт их в свои настройки, автосохранение и Ctrl+Z — как у остальных правок."""
+        from app.camera3d import PresetError, apply_preset
+
+        try:
+            return apply_preset(payload.preset, payload.start, payload.duration, payload.intensity,
+                                camera=payload.camera, layers=payload.layers, layer_id=payload.layer_id,
+                                clip_duration=payload.clip_duration)
+        except PresetError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc), "hints": exc.hints}) from exc
 
     @router.post(
         "/api/clip-plans/{clip_plan_id}/layers/validate",

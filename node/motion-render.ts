@@ -25,6 +25,9 @@ import {
   drawFrame,
   isLayerActive,
   isIdentityCamera,
+  has3dCamera,
+  camera3dAt,
+  drawBasePlane,
   normalizeBackground,
   paintBackground,
   paintBackgroundAround,
@@ -868,6 +871,9 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       // Время слоёв, камеры и слов: на стоп-кадре посреди ролика оно стоит (comp.freezes).
       const tm = motionTime(comp.freezes, t);
       const m = cameraMatrix(comp.camera, tm, W, H);
+      // 3D-камера (dolly, облёт, фокусное): основа — плоскость на глубине baseZ (space3d.ts);
+      // в раскладке стрима (окно игры, окошко) — только плоский наезд, как раньше.
+      const cam3 = has3dCamera(comp.camera) && !comp.cameraBox && !comp.pinned ? camera3dAt(comp.camera, tm) : null;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       if (comp.key) {
         // Хромакей: фон → слои «за персонажем» → вырезанная основа → остальные слои.
@@ -876,12 +882,15 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         if (last) {
           frameCanvas ??= createCanvas(W, BH);
           frameCanvas.getContext("2d").putImageData(last, 0, 0);
+          if (cam3) drawBasePlane(ctx, env, frameCanvas as unknown as CanvasImageSource, cam3, m, W / (comp.refWidth || 1080));
+          else {
           ctx.save();
           if (!isIdentityCamera(m)) ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
           ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
           ctx.restore();
+          }
         }
         endScreen(tm);
         drawFrame(ctx, comp, tm, env, "front");
@@ -901,6 +910,12 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
       if (!last) {
         ctx.clearRect(0, 0, W, H);
         if (zone) paintBackgroundAround(ctx, zone.bg, t, W, H, zone.hole, bgOpts);
+      } else if (cam3) {
+        frameCanvas ??= createCanvas(W, BH);
+        if (!staged) frameCanvas.getContext("2d").putImageData(last, 0, 0);
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, W, H);
+        drawBasePlane(ctx, env, frameCanvas as unknown as CanvasImageSource, cam3, m, W / (comp.refWidth || 1080));
       } else if (isIdentityCamera(m) && !banded) {
         if (staged) ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0);
         else ctx.putImageData(last as unknown as globalThis.ImageData, 0, 0);

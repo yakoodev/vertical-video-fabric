@@ -124,7 +124,7 @@ export function baseValue(layer: Layer, prop: AnimatableProp): number {
     const crop = layer.type === "image" || layer.type === "video" ? layer.props.crop : null;
     return clampCrop(crop ?? {})[CROP_FIELD[prop]];
   }
-  const defaults = { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, progress: 1 };
+  const defaults = { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1, progress: 1, z: 0, rotX: 0, rotY: 0 };
   if (prop === "progress") return defaults.progress;
   const v = layer[prop];
   return typeof v === "number" ? v : defaults[prop];
