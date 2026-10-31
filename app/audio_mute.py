@@ -15,6 +15,13 @@
 глушится на микрофоне, игра звучит дальше. Такие отрезки рендер накладывает на дорожку ДО
 смешивания (app/audio_edit.py, по секундам исходника), а не на готовый звук; сливаются они
 только с отрезками той же дорожки. Без ``track`` — весь звук исходника, как раньше.
+
+``style`` (только у помеченных) — чем заполнена заглушённая середина слова (``MUTE_STYLES``):
+``silence`` — тишина (отрезок без стиля — тоже тишина: старые клипы звучат как раньше), ``duck`` —
+приглушить на ``DUCK_DB``, не в ноль; это громкость, как у тишины. ``beep``, ``noise``, ``reverse``,
+``lowpass``, ``stretch`` — эффекты на отрезке звукового монтажа (app/audio_edit.py, ``censor_fx``):
+рендер куска накладывает их на дорожку ``track`` или на весь звук исходника, финальный проход
+тишины такие отрезки пропускает.
 """
 
 from __future__ import annotations
@@ -29,9 +36,39 @@ MIN_MUTE_SEC = 0.05
 RAMP_SEC = 0.03
 MUTE_TAGS = ("censor",)
 
+# Чем заполнить заглушённую середину слова мата (см. вверху). Порядок — для подсказок и UI.
+MUTE_STYLES: dict[str, str] = {
+    "silence": "тишина",
+    "beep": "тихий писк (~900 Гц, −18 dBFS)",
+    "noise": "тихий розовый шум",
+    "reverse": "середина задом наперёд",
+    "lowpass": "«под водой» (lowpass ~400 Гц)",
+    "stretch": "растянута с понижением тона",
+    "duck": "приглушена на −25 дБ, не в ноль",
+}
+DUCK_DB = -25.0
+# Громкость середины у стилей-громкостей; остальные стили — эффекты (app/audio_edit.censor_fx).
+VOLUME_STYLES: dict[str, float] = {"silence": 0.0, "duck": round(10 ** (DUCK_DB / 20), 5)}
+
+
+def span_style(item: Any) -> str:
+    """Стиль отрезка (``style`` из MUTE_STYLES); нет или неизвестный — ``silence``, как раньше."""
+    style = item.get("style") if isinstance(item, dict) else None
+    return style if style in MUTE_STYLES else "silence"
+
+
+def is_fx_style(item: Any) -> bool:
+    """Отрезок заполняется эффектом звукового монтажа (рендер куска), а не громкостью."""
+    return span_style(item) not in VOLUME_STYLES
+
+
+def span_floor(item: Any) -> float:
+    """Громкость внутри отрезка-громкости: 0 — тишина, у ``duck`` — −25 дБ."""
+    return VOLUME_STYLES.get(span_style(item), 0.0)
+
 
 def _mute_tag(item: dict) -> dict:
-    """Метка отрезка (``by`` из MUTE_TAGS и ``level`` 1–3) или {} — ручной отрезок."""
+    """Метка отрезка (``by`` из MUTE_TAGS, ``level`` 1–3, ``style``) или {} — ручной отрезок."""
     by = item.get("by")
     if by not in MUTE_TAGS:
         return {}
@@ -42,6 +79,8 @@ def _mute_tag(item: dict) -> dict:
         level = 0
     if 1 <= level <= 3:
         tag["level"] = level
+    if item.get("style") in MUTE_STYLES:
+        tag["style"] = item["style"]
     return tag
 
 
@@ -100,12 +139,32 @@ def normalize_mute(raw: Any) -> list[dict]:
             for a, b, tag, track in merged[:MAX_MUTES]]
 
 
-def mute_volume_expr(spans: list[tuple[float, float]]) -> str:
-    """Выражение громкости ffmpeg: 0 внутри отрезков, 1 вне, рампы RAMP_SEC по краям."""
-    factors = [
-        f"max(clip(({a:.3f}-t)/{RAMP_SEC},0,1),clip((t-{b:.3f})/{RAMP_SEC},0,1))" for a, b in spans
-    ]
+def mute_volume_expr(spans: list[tuple]) -> str:
+    """Выражение громкости ffmpeg: 0 внутри отрезков (у ``(a, b, floor)`` — ``floor``), 1 вне,
+    рампы RAMP_SEC по краям."""
+    factors = []
+    for span in spans:
+        a, b = span[0], span[1]
+        floor = float(span[2]) if len(span) > 2 else 0.0
+        out = f"max(clip(({a:.3f}-t)/{RAMP_SEC},0,1),clip((t-{b:.3f})/{RAMP_SEC},0,1))"
+        factors.append(out if floor <= 0 else f"({floor:.5f}+{1 - floor:.5f}*{out})")
     return "*".join(factors) or "1"
+
+
+def final_pass_mutes(mute: Any, fx_rendered: bool = True) -> list[dict]:
+    """Отрезки для финального прохода тишины (весь звук готового клипа): без ``track`` и не
+    эффекты. ``fx_rendered`` False — эффекты звукового монтажа к клипу не применялись (холст):
+    тогда их отрезки — тишиной, чтобы мат всё равно не прозвучал."""
+    out = []
+    for m in normalize_mute(mute):
+        if m.get("track") is not None:
+            continue
+        if is_fx_style(m):
+            if fx_rendered:
+                continue
+            m = {**m, "style": "silence"}
+        out.append(m)
+    return out
 
 
 def build_mute_args(clip_path: Path, output_path: Path, spans: list[tuple[float, float]]) -> list[str] | None:
