@@ -313,6 +313,60 @@ times, duration, sheet}`) и `…/anim-sheet.png` (PNG с альфой, кэш �
   первый кадр, загрузка подсказывает «перегони в GIF/APNG».
 * Загрузка (`POST /api/montage-assets`, `upload_image`, `vvf.py asset`) отвечает `animation {frames,
   fps, duration, alpha, decodable}` и `animation_note` — «анимированная картинка: 5 кадров, 16.7 fps».
+* Webm с альфой (kind `video`) годится и слою `image`: рендер берёт его анимацией (`_resolve_ref`), превью
+  играет сам файл в `<video>` (`anim` отвечает `video: true`; лист кадров большого баннера вышел бы мыльным).
+
+**SVG → webm с альфой** (`app/svg_webm.py` + `node/svg-to-webm.mjs` — перенос
+[svg-to-webm](https://github.com/yakoodev/svg-to-webm) владельца). SVG с CSS `@keyframes`/SMIL открывается в
+headless Chromium (CDP через `--remote-debugging-pipe`, без Puppeteer; в образе — `/usr/bin/chromium`), на
+каждый кадр все анимации ставятся на паузу и перематываются на его время (`pauseAnimations` +
+`setCurrentTime`, `getAnimations()` → `currentTime`), PNG с прозрачным фоном потоком идёт в ffmpeg
+(`libvpx-vp9`, `yuva420p`, `alpha_mode=1`, crf 18). Кадров ровно `round(duration·fps)`, тяжёлый SVG просто
+считается дольше. Шрифты сервиса (`vendor/fonts`, `data/fonts`) подключаются по семействам из текста SVG;
+`<script>`/`on*` вырезаются, сеть браузеру закрыта; `data-fit="<px>"` у `<text>` ужимает кегль до ширины.
+Без `duration` — доминирующая длительность анимаций SVG (как у оригинала), `strip_bg` — убрать первый
+прямоугольник-фон. Кэш — по sha256 SVG + параметров: файл `data/montage_assets/svg-webm/<хеш>.webm` и тот же
+файл библиотеки (тот же `asset_id`). Браузер — один за раз и закрывается после конвертации. Вход:
+`POST /api/svg-to-webm {svg | asset_id, duration?, fps?, width?, height?, scale?, strip_bg?, label?}`, MCP
+`svg_to_webm`; SVG-баннер рендера (`POST /api/banners` с `.svg`) переводится в webm сам.
+
+### Концовка-баннер (`render.end_screen`)
+
+Отдельное решение монтажа, а не ещё один титр (`app/end_screen.py`): на последних `duration` с готового
+ролика основа плавно уходит в размытие и темнеет, поверх — анимированный баннер.
+
+```jsonc
+"end_screen": {"duration": 3, "blur": 18, "dim": 0.35, "ramp": 0.6,   // 1.5..8 с; px сигмы 0..60; 0..0.8; 0.1..2 с
+               "template": "live", "svg_asset_id": null,              // шаблон или свой SVG из библиотеки
+               "asset_id": 41,                                         // собранный webm баннера
+               "text": "Стримлю с 8 утра — заходи", "handle": "sareamura", "platform": "twitch",
+               "accent": null, "days": "пн–пт", "time": "8:00 МСК", "font": ""}
+```
+
+* **Размытие — фильтр, не слой.** Компоновщик между основой и слоями зовёт `paintEndScreen`
+  (`frontend/src/motion/endscreen.ts`): всё, что уже на холсте (видео, фон раскладки, слои `behind`), —
+  размытие с сигмой `blur·min(W,H)/1080` и чёрный поверх с `dim`; ход `inOutCubic` за `ramp`. Размытие
+  считается на уменьшенной копии с краями «edge-clamp» (у кромки нет каймы и наезда). Слои, баннер,
+  субтитры — резкие. Превью редактора (CandidatesTab) зовёт ту же функцию на холсте основы.
+* `comp.endScreen = {start, ramp, blur, dim}` (`app/end_screen.comp_end_screen`): `start` — начало слоя
+  `end_banner` в этой композиции (вырезы и стоп-кадры его уже сдвинули), без слоя — `duration − end_screen.duration`.
+  Концовка без слоёв и камеры тоже включает моушн-проход (`plan_motion`).
+* **Баннер** — слой `image` `end_banner` (дорожка 7, `w` 960, `y` 0.44, без in/out — анимация в самом
+  webm) на `tail_start(cuts, длина, duration)` … конец; webm на 0.5 с длиннее слоя (не начнётся заново).
+  Шаблоны (`TEMPLATES`, SVG собирается в Python, анимации CSS с `cubic-bezier(.16,1,.3,1)` и пружинкой на «поп»,
+  stagger 0.06–0.1 с, свечение фильтрами): `live` — стеклянная карточка, красная пилюля LIVE с пульсирующей
+  точкой и кольцом, фраза крупно (после « — » вторая строка акцентом), ник со значком площадки (глифы
+  `PLATFORM_ICONS` слоя `nameplate`), кнопка-стрелка, блик по стеклу; `schedule` — дни недели чипами,
+  время крупно с неоновым свечением; `neon` — ник светящейся обводкой (рисуется и вспыхивает), адрес канала.
+  Акцент по умолчанию — цвет площадки; шрифт заголовка — Unbounded (или `font`), текст — Manrope.
+* Удалили слой `end_banner` руками — концовка снимается целиком (`normalize_render_settings`); редактор, не
+  знающий поля, его не стирает (`PATCH …/render-settings` без `end_screen` оставляет сохранённое).
+* Правило «не закрывай видео» (≤ 40 % кадра) к `end_banner` не относится — под ним размытое видео.
+* Бренд: `cta.style = "banner"` (+ `template`, `blur`) — `apply_brand` ставит концовку-баннер вместо плашки
+  `brand_cta` (текст — `cta.text — cta.url_text`, ник и площадка — `nameplate`, шрифт и акцент — бренда);
+  нет браузера — плашка, как раньше, с пометкой.
+* API: `POST /api/clip-plans/{id}/end-screen` (поля выше + `y`, `w`, `brand_id`), `DELETE` — снять;
+  `GET /api/end-screen/templates`; MCP `set_end_screen`.
 
 ### Анимированные субтитры (`captions`)
 
@@ -497,6 +551,8 @@ node node/motion-render.mjs \
   стоп-кадром, и плашка не гаснет перед ним. Музыка клипа доигрывает и затухает на этом
   стоп-кадре (проход музыки тянет её на `RENDER_END_HOLD_SEC`, финальный проход держит
   кадр ровно на хвост звука).
+* `comp.endScreen {start, ramp, blur, dim}` — концовка-баннер: с `start` основа (с фоном и слоями `behind`)
+  размывается и темнеет под слоями (см. «Концовка-баннер»).
 * Без `--input`: `.mp4` — слои на чёрном; `.mov` — ProRes 4444 с альфой.
 * Кадры идут потоком (один кадр в памяти), запись в кодировщик ждёт `drain`.
   Скорость на обычном CPU — около 45–50 кадр/с для 1080×1920 с десятком слоёв
