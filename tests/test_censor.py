@@ -106,8 +106,8 @@ def test_censor_quick_mutes_middles_stars_and_keeps_manual(tmp_path, monkeypatch
     mute = store.get_clip_plan(plan["id"])["render_settings"]["mute"]
     assert {"start": 8.0, "end": 9.0} in mute  # ручной на месте
     ours = [m for m in mute if m.get("by") == "censor"]
-    assert ours == [{"start": 1.42, "end": 1.64, "by": "censor", "level": 1},
-                    {"start": 5.12, "end": 5.34, "by": "censor", "level": 1}]
+    assert ours == [{"start": 1.42, "end": 1.64, "by": "censor", "level": 1, "style": "silence"},
+                    {"start": 5.12, "end": 5.34, "by": "censor", "level": 1, "style": "silence"}]
     subs = store.get_clip_plan_subtitles(plan["id"])
     assert [w["word"] for w in subs["words"]] == ["ну", "б****", "какое", "небо", "С***,", "опять!"]
     assert [line["text"] for line in subs["lines"]] == ["ну б**** какое небо", "С***, опять!"]

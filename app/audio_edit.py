@@ -19,7 +19,11 @@
   - ``fx`` — эффекты на отрезке ``[{start, end, fx, track?, amount?, rate?, keep_pitch?}]`` (шкала
     clip): ``muffle`` (за стеной), ``underwater``, ``echo``, ``reverb``, ``phone``, ``radio``,
     ``denoise``, ``speed`` (``rate`` 0.5–2: замедлить/ускорить звук, длина отрезка та же),
-    ``reverse``.
+    ``reverse``, ``beep`` (тон ~900 Гц −18 dBFS вместо звука), ``noise`` (тихий розовый шум вместо звука).
+
+* ``mute`` цензуры мата со ``style`` (app/audio_mute.py) — те же эффекты на отрезке (``censor_fx``):
+  beep, noise, reverse, lowpass (muffle — lowpass 400 Гц), stretch (speed 0.6, тон ниже); края — короткие
+  ``CENSOR_RAMP_SEC``, чтобы исходное слово не просачивалось по краям, как у тишины.
 
 Как рендерится (решения):
 
@@ -73,8 +77,25 @@ FX_KINDS: dict[str, str] = {
     "denoise": "шумодав",
     "speed": "замедлить/ускорить звук (rate)",
     "reverse": "задом наперёд",
+    "beep": "писк (тон вместо звука)",
+    "noise": "тихий розовый шум вместо звука",
 }
 TIME_FX = ("speed", "reverse")
+# Свой звук вместо исходного (генератор ffmpeg, а не фильтр звука): тон и шум.
+GEN_FX = ("beep", "noise")
+BEEP_HZ = 900
+# sine у ffmpeg — амплитуда 1/8, это и есть −18 dBFS (пик); volume не нужен.
+BEEP_DBFS = -18.0
+NOISE_AMPLITUDE = 0.08  # розовый шум anoisesrc: RMS около −30 dBFS — тише речи, но сплошной
+CENSOR_RAMP_SEC = 0.008
+# Стиль глушения мата (app/audio_mute.MUTE_STYLES) → эффект на отрезке.
+CENSOR_FX: dict[str, dict] = {
+    "beep": {"fx": "beep"},
+    "noise": {"fx": "noise"},
+    "reverse": {"fx": "reverse"},
+    "lowpass": {"fx": "muffle", "amount": 1.0},  # lowpass 400 Гц ×2 (vibrato underwater — не нужно)
+    "stretch": {"fx": "speed", "rate": 0.6},  # растянута, тон ниже (asetrate)
+}
 TAIL_FX = {"echo": 0.9, "reverb": 0.6}
 AUDIO_KEYS = ("joins", "source_keys", "music_keys", "music_duck", "music_dips", "fx")
 
@@ -323,6 +344,19 @@ def fx_chain(kind: str, amount: float = 0.5) -> str:
     return "anull"
 
 
+def censor_fx(style: str) -> dict | None:
+    """Эффект на отрезке для стиля глушения мата; None — стиль-громкость (тишина, duck)."""
+    found = CENSOR_FX.get(str(style or ""))
+    return dict(found) if found else None
+
+
+def gen_source(kind: str, length: float) -> str:
+    """Генератор ffmpeg для ``beep``/``noise`` длиной ``length`` с (без входа: свой звук)."""
+    if kind == "noise":
+        return f"anoisesrc=color=pink:sample_rate=48000:amplitude={NOISE_AMPLITUDE}:duration={length:.3f}:seed=7"
+    return f"sine=frequency={BEEP_HZ}:sample_rate=48000:duration={length:.3f}"
+
+
 def _time_fx_chain(item: dict) -> tuple[str, float]:
     """(фильтры, сколько секунд звука нужно с начала отрезка) для speed/reverse."""
     length = float(item["end"]) - float(item["start"])
@@ -342,12 +376,33 @@ def fx_graph(label: str, items: list[dict], tv: str, stream0: float, out_label: 
     current = label
     for n, item in enumerate(items):
         a, b = float(item["start"]), float(item["end"])
-        env = f"min(clip(({tv}-{_f(a)})/{FX_RAMP_SEC},0,1),clip(({_f(b)}-{tv})/{FX_RAMP_SEC},0,1))"
+        ramp = max(0.001, float(item.get("ramp") or FX_RAMP_SEC))
+        env = f"min(clip(({tv}-{_f(a)})/{ramp:.3f},0,1),clip(({_f(b)}-{tv})/{ramp:.3f},0,1))"
         p = f"{uid}f{n}"
         nxt = out_label if n == len(items) - 1 else f"{p}o"
+        kind = item["fx"]
+        if kind in GEN_FX:
+            # Тон/шум вместо звука: исходник на отрезке гаснет, генератор встаёт на его место
+            # (adelay — к началу отрезка в потоке, края — afade той же длины, что рампа).
+            lo = max(a, stream0)
+            length = b - lo
+            if length <= 0.005:
+                out.append(f"[{current}]anull[{nxt}]")
+                current = nxt
+                continue
+            fade = min(ramp, length / 2)
+            ms = int(round((lo - stream0) * 1000))
+            out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,"
+                       f"volume='1-{env}':eval=frame[{p}dd]")
+            # pan, а не aformat: моно → стерео у aformat тише на 3 дБ, писк был бы −21 dBFS.
+            out.append(f"{gen_source(kind, length)},pan=stereo|c0=c0|c1=c0,aformat=sample_rates=48000,"
+                       f"afade=t=in:st=0:d={fade:.3f},afade=t=out:st={length - fade:.3f}:d={fade:.3f},"
+                       f"adelay={ms}:all=1,apad[{p}ww]")
+            out.append(f"[{p}dd][{p}ww]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[{nxt}]")
+            current = nxt
+            continue
         out.append(f"[{current}]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[{p}d][{p}w]")
         out.append(f"[{p}d]volume='1-{env}':eval=frame[{p}dd]")
-        kind = item["fx"]
         if kind in TIME_FX:
             chain, need = _time_fx_chain(item)
             s0 = max(0.0, a - stream0)
@@ -451,7 +506,7 @@ def source_ops(render: dict, clock: Any, mix_tracks: list[int] | None = None) ->
     """Операции звука исходника (секунды исходника) из настроек клипа: mute/gain с ``track`` и
     ``audio.fx``. ``mix_tracks`` — дорожки смеси рендера: операции других дорожек не слышны —
     пропускаются с пометкой. → (ops, notes)."""
-    from app.audio_mute import normalize_gain, normalize_mute
+    from app.audio_mute import is_fx_style, normalize_gain, normalize_mute, span_floor, span_style
 
     audio = normalize_audio(render.get("audio"))
     heard = set(mix_tracks or [0])
@@ -466,9 +521,17 @@ def source_ops(render: dict, clock: Any, mix_tracks: list[int] | None = None) ->
         return False
 
     for m in normalize_mute(render.get("mute")):
-        if m.get("track") is not None and keep(m["track"]):
+        if is_fx_style(m):
+            # Мат со стилем-эффектом (писк, шум, реверс…): эффект на отрезке своей дорожки
+            # или всего звука исходника; финальный проход тишины его пропускает.
+            if keep(m.get("track")):
+                fx = censor_fx(span_style(m)) or {}
+                for a, b in clip_span_to_source(clock, m["start"], m["end"]):
+                    ops.append({**fx, "kind": "fx", "start": a, "end": b, "track": m.get("track"),
+                                "ramp": CENSOR_RAMP_SEC, "by": m.get("by")})
+        elif m.get("track") is not None and keep(m["track"]):
             for a, b in clip_span_to_source(clock, m["start"], m["end"]):
-                ops.append({"kind": "vol", "track": m["track"], "start": a, "end": b, "factor": 0.0})
+                ops.append({"kind": "vol", "track": m["track"], "start": a, "end": b, "factor": span_floor(m)})
     for g in normalize_gain(render.get("gain")):
         if g.get("track") is not None and keep(g["track"]):
             for a, b in clip_span_to_source(clock, g["start"], g["end"]):
@@ -707,8 +770,12 @@ def music_volume_expr(auto: dict | None, tv: str = "t") -> str:
 
 def wants_render_plan(render: dict) -> bool:
     """Есть ли у клипа хоть что-то из звукового монтажа (иначе рендер ровно прежний)."""
+    from app.audio_mute import MUTE_TAGS, is_fx_style
+
     if normalize_audio(render.get("audio")):
         return True
+    if any(isinstance(m, dict) and m.get("by") in MUTE_TAGS and is_fx_style(m) for m in render.get("mute") or []):
+        return True  # мат со стилем-эффектом рендерится в звуке куска
     return any(isinstance(m, dict) and m.get("track") is not None
                for m in [*(render.get("mute") or []), *(render.get("gain") or [])])
 

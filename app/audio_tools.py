@@ -329,13 +329,13 @@ def tools() -> list:
             "clip; или at_word + duration): muffle — «за стеной», underwater — «под водой», echo — эхо на слове, "
             "reverb — зал, phone — телефон, radio — рация, denoise — шумодав микрофона (track — дорожка "
             "микрофона), speed — замедлить/ускорить звук (rate 0.5–2, длина отрезка та же), reverse — задом "
-            "наперёд. amount 0..1 — сила (0.5). 0–2 эффекта на ролик, на смысловом моменте. Заменяет список; [] — "
+            "наперёд, beep — писк вместо звука, noise — розовый шум вместо звука. amount 0..1 — сила (0.5). 0–2 эффекта на ролик, на смысловом моменте. Заменяет список; [] — "
             "снять. Проверь listen. / Audio effects on ranges (lowpass, echo, reverb, phone, radio, denoise, "
             "speed, reverse).",
             obj({"fx": {"type": "array", "items": obj({
                 "start": {"type": "number"}, "end": {"type": "number"},
                 "fx": {"type": "string", "enum": ["muffle", "underwater", "echo", "reverb", "phone", "radio",
-                                                  "denoise", "speed", "reverse"]},
+                                                  "denoise", "speed", "reverse", "beep", "noise"]},
                 "track": {"type": "integer"}, "amount": {"type": "number"}, "rate": {"type": "number"},
                 "keep_pitch": {"type": "boolean"}, "at_word": at._AT_WORD_SCHEMA,
                 "duration": {"type": "number"}}, ["fx"])}}, ["fx"]),

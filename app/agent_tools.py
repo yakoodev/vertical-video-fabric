@@ -2974,6 +2974,11 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
                "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
     if args.get("track") not in (None, ""):
         options["track"] = args.get("track")  # только эта дорожка (число или "voice"), app/censor.py
+    if args.get("style") not in (None, ""):
+        try:
+            options["style"] = censor.clamp_style(args.get("style"))  # чем заполнить середину слова
+        except ValueError as exc:
+            raise ToolError(f"censor_profanity: {exc}") from exc
     levels = args.get("levels")
     if args.get("level") is not None and levels is None:
         levels = args.get("level")
@@ -5145,13 +5150,19 @@ def _build_registry() -> list[Tool]:
             "verify=false — быстро, без рендера. levels — число всем или {i: уровень}; skip [i] — не трогать "
             "слово; clear=true — снять свои отрезки. track: \"voice\" — глушить только дорожку голоса (запись "
             "игра+микрофон со своей speech_tracks; неизвестна — весь звук), число — эту дорожку; слово, что "
-            "узнаётся и так, verify заглушит целиком. / Mute profanity mid-word, star it in subtitles, "
-            "verify by Whisper on the render.",
+            "узнаётся и так, verify заглушит целиком. style — чем заполнить середину: silence (тишина), beep "
+            "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
+            "тон ниже), duck (−25 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
+            "— silence. Лучше всех маскируют silence и noise, хуже всех duck, писк Whisper часто дописывает как "
+            "«блядь»: узнаётся на уровне 3 со слабым стилем — повтори со style silence/noise. "
+            "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
             _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
                   "clear": {"type": "boolean"},
-                  "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"}}),
+                  "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"},
+                  "style": {"type": "string", "enum": ["silence", "beep", "noise", "reverse", "lowpass", "stretch",
+                                                       "duck"]}}),
             h_censor_profanity, mutating=True,
             label=lambda a: "Глушу мат" + ("" if a.get("verify") is False else " и проверяю рендером"),
         ),
