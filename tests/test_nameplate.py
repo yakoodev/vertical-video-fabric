@@ -156,6 +156,37 @@ def test_mcp_set_nameplate_place_replace_remove(tmp_path, monkeypatch):
     assert NAMEPLATE_ID in _layers(store, plan)
 
 
+def test_frame_with_nameplate_through_real_compositor(tmp_path, monkeypatch):
+    """Кадр агента (тот же компоновщик, что рендер): плашка на месте, обводка цветом Twitch."""
+    _require_ffmpeg()
+    import subprocess
+
+    from app.settings import settings
+    from test_motion import _real_compositor
+
+    compositor = _real_compositor()
+    client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "motion_compositor", compositor)
+    store.set_clip_plan_render_settings(plan["id"], {"layout": SPLIT})
+    out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"platform": "twitch", "handle": "sareamura"})
+    assert ok, out
+    res = client.post(f"/api/clip-plans/{plan['id']}/motion/frame?t=1")
+    assert res.status_code == 200, res.text
+    png = tmp_path / "frame.png"
+    png.write_bytes(res.content)
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                            str(png)], capture_output=True, text=True, check=True).stdout
+    w, h = (int(v) for v in probe.strip().split(","))
+    # Тело значка Twitch (левая часть «пузыря» над полосками) — цвет площадки #9146ff.
+    icon_h = 74 * 0.56
+    x = round((24 + 74 * 0.42 + 0.86 * icon_h * 0.2) * w / 1080)
+    y = round(out["y"] * h - icon_h * 0.2 * w / 1080)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(png), "-vf", f"crop=1:1:{x}:{y}", "-f", "rawvideo",
+                          "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    r, g, b = raw[0], raw[1], raw[2]
+    assert b > 170 and r > 90 and g < 120, (r, g, b)
+
+
 def test_apply_brand_nameplate(tmp_path, monkeypatch):
     _require_ffmpeg()
     monkeypatch.setattr(brand_kit, "_subject_box", lambda store, plan_id: None)
