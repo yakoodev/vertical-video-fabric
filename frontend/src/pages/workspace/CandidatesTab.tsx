@@ -24,11 +24,17 @@ import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import {
   cameraMatrix,
+  camera3dAt,
+  drawBasePlane,
+  has3dCamera,
+  layerUnit,
   captionWordsFrom,
   clipAccent,
   drawFrame,
+  endScreenFor,
   frameCameraMatrix,
   holdFinalLayers,
+  paintEndScreen,
   interpolateKeys,
   layerBox,
   formatRefSize,
@@ -41,6 +47,7 @@ import {
   type CameraKey,
   type CaptionWord,
   type ChatMessage,
+  type EndScreenFx,
   type Layer,
   type PngtuberLayer,
   type VoiceTrack,
@@ -85,6 +92,7 @@ import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/page
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
+import { compactAudio, jlSourceAt, type AudioEdit } from "@/api/audioEdit";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import {
@@ -610,6 +618,8 @@ type MotionView = {
   duration?: number;
   /** Слои показаны перекомпонованными из формата разметки — мышью их не двигаем. */
   reframed?: boolean;
+  /** Концовка-баннер: размытие основы под слоями — как компоновщик рендера (motion/endscreen.ts). */
+  endScreen?: EndScreenFx | null;
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -703,6 +713,8 @@ function CropFrame({
   const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
   // Собранный кадр раскладки до камеры: камера зумит только игру, окошко вебки — на месте.
   const layoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Кадр основы перед 3D-камерой (плоскость на глубине — space3d.drawBasePlane).
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const insertsRef = useRef(insertsPreview);
   insertsRef.current = insertsPreview;
   const draggingRef = useRef(false);
@@ -780,6 +792,8 @@ function CropFrame({
           const shownLayers = motion ? holdFinalLayers(motion.layers, motion.duration) : [];
           // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
+          // 3D-камера (dolly, облёт, фокусное) — основа плоскостью на глубине, как в компоновщике.
+          const cam3 = motion && has3dCamera(motion.camera) ? camera3dAt(motion.camera, clipT) : null;
           const rect = {
             x: (c.x + lc * c.w) * vw,
             y: (c.y + tc * c.h) * vh,
@@ -816,8 +830,14 @@ function CropFrame({
                 const behind = shownLayers.filter((l) => !l.hidden);
                 drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, levels: motion.levels, camera: motion.camera }, clipT, env, "behind");
               }
-              if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-              ctx.drawImage(kc, 0, 0, cv.width, cv.height);
+              if (cam3) {
+                // 3D-камера: вырезанное видео — плоскость на глубине baseZ, как в компоновщике.
+                const env3 = browserEnv(cv.width, cv.height, format);
+                drawBasePlane(ctx, env3, kc, cam3, cam, layerUnit(env3), kc.width, kc.height);
+              } else {
+                if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+                ctx.drawImage(kc, 0, 0, cv.width, cv.height);
+              }
             }
           } else if (ctx) {
             const regions = cam && motion && !fit && !contain ? cameraRegions(lay, vw, vh, cv.width, cv.height, out) : null;
@@ -847,12 +867,34 @@ function CropFrame({
                 ctx.restore();
                 for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
               }
+            } else if (cam3 && !regions) {
+              // 3D-камера: кадр основы на свой холст, потом плоскостью на глубине baseZ (space3d.ts).
+              const bc = (baseCanvasRef.current ??= document.createElement("canvas"));
+              if (bc.width !== cv.width || bc.height !== cv.height) {
+                bc.width = cv.width;
+                bc.height = cv.height;
+              }
+              const bctx = bc.getContext("2d");
+              if (bctx) {
+                bctx.setTransform(1, 0, 0, 1, 0, 0);
+                drawBase(bctx, lay, cv.width, cv.height);
+                const env3 = browserEnv(cv.width, cv.height, format);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.fillStyle = "#000000";
+                ctx.fillRect(0, 0, cv.width, cv.height);
+                drawBasePlane(ctx, env3, bc, cam3, cam, layerUnit(env3));
+              }
             } else {
               if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
               drawBase(ctx, lay, cv.width, cv.height);
             }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
+          // Концовка-баннер: основа (с фоном и слоями behind) в размытие и тень — та же функция, что
+          // у компоновщика рендера; слои, баннер и субтитры на overlay остаются резкими.
+          if (ctx && motion?.endScreen) {
+            paintEndScreen(ctx, cv, cv.width, cv.height, motion.endScreen, clipT, browserEnv(cv.width, cv.height).createCanvas!);
+          }
           const ov = overlayRef?.current;
           const octx = ov?.getContext("2d");
           if (ov && octx) {
@@ -1301,6 +1343,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [gain, setGain] = useState<GainSpan[]>([]);
   const gainRef = useRef<GainSpan[]>([]);
   gainRef.current = gain;
+  // 🎚 Звуковой монтаж (render.audio, app/audio_edit.py): J/L на стыках тянут на дорожке «Звук»,
+  // ключи громкости, ducking, провалы музыки и эффекты ставит агент — панель их показывает и хранит.
+  const [audioEdit, setAudioEdit] = useState<AudioEdit>({});
+  const audioEditRef = useRef<AudioEdit>({});
+  audioEditRef.current = audioEdit;
   // Формат вывода клипа (app/formats.py): 9:16, 1:1, 4:5 или 16:9 из того же монтажа.
   // Превью, холст слоёв и окно кропа — в пропорциях этого формата.
   const [aspect, setAspect] = useState<Aspect>("9:16");
@@ -1504,6 +1551,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     backdrop,
     mute,
     gain,
+    audio: audioEdit,
     format: aspect,
     layers_format: layersFmt,
     end_hold_sec: endHoldSec,
@@ -1516,7 +1564,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (prev) {
       qc.setQueryData<SourceDetail>(qk.source(sourceId), {
         ...prev,
-        clip_plans: prev.clip_plans.map((p) => (p.id === planId ? { ...p, render_settings: settings } : p)),
+        // Концовку ставит агент (set_end_screen) — панель её не шлёт, сервер её хранит; в кэше тоже держим.
+        clip_plans: prev.clip_plans.map((p) =>
+          p.id === planId ? { ...p, render_settings: { end_screen: p.render_settings?.end_screen, ...settings } } : p,
+        ),
       });
     }
     return clipPlansApi
@@ -1553,6 +1604,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setCuts([]);
       setMute([]);
       setGain([]);
+      setAudioEdit({});
       setFreezes([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
@@ -1586,6 +1638,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       backdrop: normalizeBackdrop(s.backdrop),
       mute: s.mute ?? [],
       gain: s.gain ?? [],
+      audio: compactAudio(s.audio),
       format: clipFormat(s),
       layers_format: layersFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
@@ -1617,6 +1670,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setMute(s.mute ?? []);
     setFreezes(s.freezes ?? []);
     setGain(s.gain ?? []);
+    setAudioEdit(compactAudio(s.audio));
     setAspect(clipFormat(s));
     setLayersFmt(layersFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
@@ -2084,6 +2138,42 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     });
     return () => setPreviewSound(() => false);
   }, []);
+  // J/L в превью: у стыка звук картинки молчит, а второй плеер того же исходника играет звук
+  // соседнего куска (хвост прошлого — L, начало следующего — J), как склеит рендер.
+  const jlMutedRef = useRef(false);
+  useEffect(() => {
+    let raf = 0;
+    const side = new Audio();
+    side.preload = "auto";
+    const tick = () => {
+      const v = videoRef.current;
+      const joins = audioEditRef.current.joins;
+      let src: number | null = null;
+      // Свой «без звука» владельца уважаем: глушил плеер он — второй плеер тоже молчит.
+      if (v && !v.paused && inEditorRef.current && joins?.length && (!v.muted || autoMutedRef.current)) {
+        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
+        src = t == null ? null : jlSourceAt(tcSegsRef.current, joins, t);
+      }
+      if (src != null && v) {
+        if (side.src !== v.currentSrc) side.src = v.currentSrc;
+        if (Math.abs(side.currentTime - src) > 0.12) side.currentTime = src;
+        side.volume = v.volume;
+        if (side.paused) void side.play().catch(() => undefined);
+        jlMutedRef.current = true;
+      } else {
+        if (!side.paused) side.pause();
+        jlMutedRef.current = false;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      side.pause();
+      side.removeAttribute("src");
+      jlMutedRef.current = false;
+    };
+  }, []);
   useEffect(() => {
     let raf = 0;
     let ours = false;
@@ -2091,7 +2181,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       const v = videoRef.current;
       if (v) {
         const t = inEditorRef.current && muteRef.current.length ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
-        const want = t != null && isMutedAt(muteRef.current, t);
+        const want = (t != null && isMutedAt(muteRef.current, t)) || jlMutedRef.current;
         if (want && !ours && !v.muted) {
           v.muted = true;
           ours = true;
@@ -2324,6 +2414,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
   // мышью такие нельзя (сдвиг лёг бы не в те координаты) — сначала «Разметить слои в этом формате».
   const shown = reframedView ?? { layers, camera };
+  // Концовка-баннер (render.end_screen): начало — начало слоя end_banner, как в рендере.
+  const endScreen = endScreenFor(activePlan?.render_settings?.end_screen, shown.layers, viewDuration);
   if (!layerDragRef.current)
     motionViewRef.current = {
       layers: shown.layers,
@@ -2335,6 +2427,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       levels: levelTracks,
       duration: viewDuration,
       reframed: Boolean(reframedView),
+      endScreen,
     };
   else
     motionViewRef.current = {
@@ -2346,6 +2439,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       voice: voiceTracks,
       levels: levelTracks,
       duration: viewDuration,
+      endScreen,
     };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
@@ -4815,6 +4909,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               onDropLayers={(payload, at, track) => dropLayersAt(payload, at, track)}
               mute={mute}
               onMuteChange={setMute}
+              audioEdit={audioEdit}
+              onAudioEditChange={setAudioEdit}
               onSubLinesChange={(next) => {
                 setSubLines(next);
                 subLinesRef.current = next;

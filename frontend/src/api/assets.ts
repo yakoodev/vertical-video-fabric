@@ -18,6 +18,8 @@ export interface Banner {
   label: string;
   position: string;
   opacity: number;
+  mime_type?: string;
+  original_filename?: string;
 }
 export interface AudioTrack {
   id: number;

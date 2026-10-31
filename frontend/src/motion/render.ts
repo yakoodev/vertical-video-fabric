@@ -9,6 +9,20 @@
  */
 import { isLayerActive, resolveLayer, type LayerState } from "./animate";
 import { frameCameraMatrix, isIdentityCamera, type CameraMatrix } from "./camera";
+import {
+  affinePlaneMatrix,
+  camera3dAt,
+  cameraDepth,
+  depthSkew,
+  envBuffer,
+  has3dCamera,
+  isAffinePlane,
+  makeProjector,
+  planePoint,
+  warpImage,
+  type Camera3D,
+  type Plane,
+} from "./space3d";
 import type { FrameInfo, LayerRenderer } from "./layers/common";
 import { captionsRenderer } from "./layers/captions";
 import { chatRenderer } from "./layers/chat";
@@ -118,6 +132,8 @@ export function drawFrame(
   const data: FrameData = { words: comp.words, chat: comp.chat, voice: comp.voice, levels: comp.levels };
   const visible = visibleLayers(comp.layers || [], t);
   let cam: CameraMatrix | null | undefined;
+  // 3D-камера (dolly, облёт, фокусное); в раскладке стрима (окно игры) — только плоский наезд.
+  const cam3 = has3dCamera(comp.camera) && (comp.key || !comp.cameraBox) ? camera3dAt(comp.camera, t) : null;
   for (const layer of visible) {
     // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
     if (pass && !!layer.behind !== (pass === "behind")) continue;
@@ -130,6 +146,13 @@ export function drawFrame(
     // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
     // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
     if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;
+    const scene = inScene(layer);
+    if (has3dFields(layer) || (scene && cam3)) {
+      // Глубина, наклоны или 3D-камера: плоскость слоя в пространстве (space3d.ts).
+      cam ??= comp.camera?.length ? frameCameraMatrix(comp.camera, t, env.width, env.height, comp.key ? null : comp.cameraBox) : null;
+      drawLayer3D(ctx, layer, t, env, data, scene ? cam3 : null, scene ? cam : null);
+      continue;
+    }
     if (layer.followCamera && comp.camera?.length) {
       // Слой едет и зумится вместе с видео: та же матрица, что у кадра основы
       // (с хромакеем — во весь кадр, в раскладке стрима — внутри окна игры).
@@ -144,6 +167,101 @@ export function drawFrame(
     }
     drawLayer(ctx, layer, t, env, data);
   }
+}
+
+/* ---------- псевдо-3D ---------- */
+
+/** Слой в сцене: едет с камерой (наезд и 3D) — `followCamera` или задана глубина `z`. */
+export function inScene(layer: Layer): boolean {
+  return Boolean(layer.followCamera) || typeof layer.z === "number";
+}
+
+/** У слоя есть 3D-поля (глубина, наклоны или их ключи) — рисуется через space3d. */
+export function has3dFields(layer: Layer): boolean {
+  const k = layer.keys;
+  return (
+    typeof layer.z === "number" ||
+    Boolean(layer.rotX) ||
+    Boolean(layer.rotY) ||
+    Boolean(k?.z?.length || k?.rotX?.length || k?.rotY?.length)
+  );
+}
+
+/** Плоскость слоя в мире (px кадра) в его состоянии `st`. */
+function layerPlane(st: LayerState, env: RenderEnv): Plane {
+  return { cx: st.x * env.width, cy: st.y * env.height, z: st.z * layerUnit(env), rotX: st.rotX, rotY: st.rotY };
+}
+
+/**
+ * Слой в пространстве: без наклонов (только глубина, dolly, фокусное) — обычный рисунок под
+ * аффинной матрицей проекции; с наклоном — плоский рисунок на промежуточный холст и перенос
+ * сеткой с перспективой (space3d.warpImage). `cam3`/`m2d` — камера сцены (null — слой на экране).
+ */
+function drawLayer3D(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, data: FrameData, cam3: Camera3D | null, m2d: CameraMatrix | null): void {
+  const st = resolveLayer(layer, t, refSize(env), data.levels);
+  const r = RENDERERS[layer.type];
+  if (!st || !r || st.opacity <= 0.002 || st.scale <= 0.002) return;
+  const W = env.width;
+  const H = env.height;
+  const unit = layerUnit(env);
+  const pl = layerPlane(st, env);
+  const proj = makeProjector(cam3, W, H, unit, m2d);
+  if (isAffinePlane(pl, cam3)) {
+    const A = affinePlaneMatrix(pl, proj, W, H);
+    if (!A) return;
+    ctx.save();
+    ctx.transform(A[0], A[1], A[2], A[3], A[4], A[5]);
+    drawLayer(ctx, layer, t, env, data);
+    ctx.restore();
+    return;
+  }
+  // Плоский рисунок слоя — рамка с полями под обводку, тень и размытие; не шире кадра вдвое.
+  const frame = frameOf(t, data);
+  ctx.save();
+  const size = r.measure(ctx, layer, st, env, frame);
+  ctx.restore();
+  const shadow = shadowParams(layer, st, env);
+  const blurPx = st.blur > 0.05 ? st.blur * unit * st.scale : 0;
+  const margin = 24 * unit + (shadow ? shadow.blur * 1.6 + Math.max(Math.abs(shadow.x), Math.abs(shadow.y)) : 0) + blurPx * 2;
+  const k = unit * st.scale;
+  const a = (st.rotation * Math.PI) / 180;
+  const hw = (size.w / 2) * k + margin;
+  const hh = (size.h / 2) * k + margin;
+  const ex = hw * Math.abs(Math.cos(a)) + hh * Math.abs(Math.sin(a));
+  const ey = hw * Math.abs(Math.sin(a)) + hh * Math.abs(Math.cos(a));
+  const x0 = Math.floor(Math.max(-W / 2, pl.cx - ex));
+  const y0 = Math.floor(Math.max(-H / 2, pl.cy - ey));
+  const x1 = Math.ceil(Math.min(W * 1.5, pl.cx + ex));
+  const y1 = Math.ceil(Math.min(H * 1.5, pl.cy + ey));
+  if (x1 <= x0 || y1 <= y0) return;
+  const buf = envBuffer(env, "plane", x1 - x0, y1 - y0);
+  if (!buf) {
+    // Нет фабрики холстов — хотя бы без перспективы, по центру проекции.
+    const A = affinePlaneMatrix({ ...pl, rotX: 0, rotY: 0 }, makeProjector(cam3 ? { ...cam3, rotX: 0, rotY: 0 } : null, W, H, unit, m2d), W, H);
+    if (!A) return;
+    ctx.save();
+    ctx.transform(A[0], A[1], A[2], A[3], A[4], A[5]);
+    drawLayer(ctx, layer, t, env, data);
+    ctx.restore();
+    return;
+  }
+  const bw = Math.min(x1 - x0, buf.canvas.width);
+  const bh = Math.min(y1 - y0, buf.canvas.height);
+  const p = buf.ctx;
+  p.setTransform(1, 0, 0, 1, 0, 0);
+  p.globalAlpha = 1;
+  p.globalCompositeOperation = "source-over";
+  p.clearRect(0, 0, bw + 2, bh + 2);
+  p.translate(-x0, -y0);
+  // Наложение — уже при переносе на кадр: на прозрачном холсте оно бессмысленно.
+  drawLayer(p, layer.blend && layer.blend !== "normal" ? ({ ...layer, blend: "normal" } as Layer) : layer, t, env, data);
+  p.setTransform(1, 0, 0, 1, 0, 0);
+  const world = (u: number, v: number) => planePoint(pl, u + x0 - pl.cx, v + y0 - pl.cy, W, H);
+  const [skX, skY] = depthSkew((u, v) => cameraDepth(cam3, H, unit, ...world(u, v)), 0, 0, bw, bh);
+  warpImage(ctx, env, buf.canvas as unknown as CanvasImageSource, 0, 0, bw, bh, (u, v) => proj(...world(u, v)), skX, skY, {
+    composite: BLEND[layer.blend ?? "normal"] ?? "source-over",
+    cull: true,
+  });
 }
 
 /** Крупный текст (панчлайн, счётчик) рядом с субтитрами по высоте — ближе 0.16 кадра.
@@ -194,7 +312,13 @@ export function layerBox(
   ctx.save();
   const size = r.measure(ctx, layer, st, env, frame);
   ctx.restore();
-  const z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
+  let z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
+  if (has3dFields(layer)) {
+    // Глубина: рамка — по проекции центра плоскости (наклон рамка не показывает).
+    const pl = layerPlane(st, env);
+    const A = affinePlaneMatrix({ ...pl, rotX: 0, rotY: 0 }, makeProjector(null, env.width, env.height, layerUnit(env), inScene(layer) ? cam : null), env.width, env.height);
+    if (A) z = { scale: A[0], tx: A[4], ty: A[5] };
+  }
   const k = layerUnit(env) * st.scale * z.scale;
   return {
     cx: st.x * env.width * z.scale + z.tx,

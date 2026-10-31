@@ -53,7 +53,10 @@ export type KeyPoint = { t: number; v: number; ease?: Easing };
  * cropX/cropY/cropW/cropH — окно `crop` картинки (image) и видео (video) в долях: скролл
  * экрана внутри неподвижного телефона = ключи cropY при неизменном размере окна.
  */
-export type AnimatableProp = "x" | "y" | "scale" | "rotation" | "opacity" | "progress" | CropProp;
+export type AnimatableProp = "x" | "y" | "scale" | "rotation" | "opacity" | "progress" | CropProp | DepthProp;
+
+/** Псевдо-3D (space3d.ts): глубина (опорн. px, плюс — дальше) и наклоны по осям, градусы. */
+export type DepthProp = "z" | "rotX" | "rotY";
 
 export type CropProp = "cropX" | "cropY" | "cropW" | "cropH";
 
@@ -616,6 +619,14 @@ export type LayerBase = {
   followCamera?: boolean;
   /** Реакция на громкость клипа (comp.levels); нет — слой к звуку глух. */
   react?: LayerReact | null;
+  /**
+   * Глубина, опорн. px (0 — плоскость кадра, плюс — дальше, минус — ближе). Задана (хоть 0) —
+   * слой в сцене: едет с 3D-камерой и наездом, как `followCamera`. Нет — стоит на экране.
+   */
+  z?: number;
+  /** Наклон с перспективой, градусы: rotX — верх уходит вглубь, rotY — правый край уходит вглубь. */
+  rotX?: number;
+  rotY?: number;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */
@@ -671,6 +682,15 @@ export type CameraKey = {
   ease?: Easing;
   shake?: number;
   anchor?: CameraAnchor;
+  /** 3D (space3d.ts): dolly, опорн. px (плюс — камера ближе к сцене). */
+  z?: number;
+  /** Наклон и облёт камеры вокруг центра плоскости кадра, градусы. */
+  rotX?: number;
+  rotY?: number;
+  /** Поле зрения по вертикали, градусы (40 — покой; меньше — «телевик»). */
+  fov?: number;
+  /** Глубина плоскости видео-основы, опорн. px (1000). */
+  baseZ?: number;
 };
 
 export type Composition = {
@@ -716,6 +736,8 @@ export type Composition = {
    * `at` — секунда без стоп-кадров, `d` — длина, `insert` — вставлен (ролик длиннее), `hold` — слои стоят.
    */
   freezes?: FreezeSpan[];
+  /** Концовка-баннер: размытие и затемнение основы под слоями с `start` (endscreen.ts, app/end_screen.py). */
+  endScreen?: import("./endscreen").EndScreenFx;
 };
 
 export type FreezeSpan = { at: number; d: number; insert: boolean; hold: boolean };

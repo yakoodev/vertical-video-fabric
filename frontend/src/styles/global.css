@@ -3593,6 +3593,58 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .ctl-block--mute.is-draft { pointer-events: none; opacity: 0.7; border-style: dashed; }
 .ctl-mute-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: #f87171; pointer-events: none; }
 .ctl-mute-armed { color: #f87171; border-color: rgba(248, 113, 113, 0.6); }
+/* 🎚 Звуковой монтаж на дорожке «Звук» (render.audio): J/L, эффекты, провалы и ducking музыки, ключи. */
+.ctl-aud {
+  position: absolute;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  border-radius: 4px;
+  pointer-events: auto;
+}
+.ctl-aud--fx {
+  top: 2px;
+  height: 16px;
+  padding: 0 3px;
+  background: rgba(56, 189, 248, 0.28);
+  border: 1px solid rgba(56, 189, 248, 0.7);
+  color: #dff4ff;
+  cursor: default;
+}
+.ctl-aud--dip {
+  bottom: 2px;
+  height: 14px;
+  text-align: center;
+  background: repeating-linear-gradient(90deg, rgba(251, 146, 60, 0.5) 0 3px, transparent 3px 6px);
+  color: #ffe2c7;
+}
+.ctl-aud--duck { bottom: 2px; height: 4px; background: rgba(251, 146, 60, 0.55); pointer-events: none; }
+.ctl-aud--jl {
+  top: 20px;
+  height: 16px;
+  padding: 0 3px;
+  pointer-events: none;
+  background: rgba(250, 204, 21, 0.22);
+  border: 1px dashed rgba(250, 204, 21, 0.8);
+  color: #fff3b0;
+  font-family: var(--mono);
+}
+.ctl-jl-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  margin-left: -3px;
+  cursor: ew-resize;
+  border-left: 2px solid rgba(250, 204, 21, 0.35);
+}
+.ctl-jl-handle:hover,
+.ctl-jl-handle.on { border-left-color: #facc15; }
+.ctl-aud-keys { position: absolute; left: 0; top: 0; pointer-events: none; }
+.ctl-aud-keys polyline { fill: none; stroke-width: 1.5; }
+.ctl-aud-key--source { stroke: rgba(74, 222, 128, 0.9); }
+.ctl-aud-key--music { stroke: rgba(251, 146, 60, 0.9); stroke-dasharray: 4 3; }
 .ctl-empty {
   position: absolute;
   left: 10px;

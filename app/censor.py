@@ -91,16 +91,46 @@ def _levels_arg(levels: Any) -> tuple[int | None, dict[int, int]]:
     return None, out
 
 
+def resolve_track(store: Any, plan: dict, track: Any) -> tuple[int | None, str | None]:
+    """``track`` цензуры: None — весь звук (как раньше); ``"voice"`` — дорожка голоса, если она известна
+    (своя дорожка речи speech_tracks в смеси из нескольких), иначе весь звук; число — эта дорожка.
+    → (дорожка или None, пояснение)."""
+    if track is None or track == "" or track is False:
+        return None, None
+    from app.audio_edit import voice_track
+    from app.source_audio import source_tracks
+
+    source = store.get_source(int(plan["source_id"]))
+    if str(track).lower() in ("voice", "auto", "mic", "true"):
+        found = voice_track(source)
+        if found is None:
+            return None, "дорожка голоса неизвестна (нет своей speech_tracks в смеси из нескольких) — глушу весь звук"
+        return found, f"глушу только дорожку голоса {found}: игра и остальное звучат"
+    try:
+        number = int(track)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('track — номер дорожки или "voice"') from exc
+    mix = source_tracks(source) or [0]
+    if number not in mix:
+        raise ValueError(f"дорожки {number} нет в звуке ролика (смесь {mix}) — глушить там нечего")
+    return number, f"глушу только дорожку {number}"
+
+
 def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: bool = True, soft: bool = False,
-                groups: Any = None, skip: Any = (), clear: bool = False) -> dict:
+                groups: Any = None, skip: Any = (), clear: bool = False, track: Any = None,
+                full_words: Any = ()) -> dict:
     """Мат клипа: тишина серединой слова (свои отрезки ``by: censor`` заменяются, ручные — нет)
     и звёздочки в субтитрах. Без рендера. Уровень слова: из ``levels``, иначе прежний (от
-    прошлого запуска), иначе 1. ``clear`` — снять свои отрезки (звёздочки остаются: Ctrl+Z)."""
+    прошлого запуска), иначе 1. ``clear`` — снять свои отрезки (звёздочки остаются: Ctrl+Z).
+    ``track`` — глушить только эту дорожку (``resolve_track``: число или ``"voice"``); ``full_words``
+    — номера слов, которые всё равно глушатся целиком (голос протекает в другую дорожку)."""
     from app.clip_settings import normalize_render_settings
 
     picked = _groups(soft, groups)
     level_all, level_by_word = _levels_arg(levels)
     plan = store.get_clip_plan(clip_plan_id)
+    only_track, track_note = resolve_track(store, plan, track) if not clear else (None, None)
+    full = {int(i) for i in full_words or ()}
     render = normalize_render_settings(plan.get("render_settings") or {})
     old_mute = render.get("mute") or []
     manual = [m for m in old_mute if m.get("by") != TAG]
@@ -128,12 +158,15 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
                     default=0)
         level = level_by_word.get(item["i"]) or level_all or prior or 1
         a, b = mute_range(item["start"], item["end"], level)
-        spans = [{"start": p["start"], "end": min(p["end"], duration), "by": TAG, "level": level}
+        word_track = None if item["i"] in full else only_track
+        spans = [{"start": p["start"], "end": min(p["end"], duration), "by": TAG, "level": level,
+                  **({"track": word_track} if word_track is not None else {})}
                  for p in clock.plain_range_to_clip(a, b) if p["start"] < duration]
         fresh.extend(spans)
         report.append({"i": item["i"], "word": item["word"], "group": item["group"],
                        "start": round(w0, 3), "end": round(w1, 3), "level": level,
-                       "mute": [[s["start"], s["end"]] for s in spans]})
+                       "mute": [[s["start"], s["end"]] for s in spans],
+                       **({"track": word_track} if word_track is not None else {})})
     if len(manual) + len(fresh) > MAX_MUTES:
         raise ValueError(f"отрезков тишины больше {MAX_MUTES} (ручных {len(manual)}, мата {len(fresh)}) — "
                          "слей ручные mute_audio или вырежи часть мата apply_cuts")
@@ -151,8 +184,18 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
                     row["word"] = stored[row["i"]].get("word") or row["word"]
     note = (f"мат: {len(report)} слов — тишина серединой слова (шкала clip), в субтитрах звёздочки"
             if report else "мата в словах субтитров не найдено")
+    if track_note and report:
+        note += "; " + track_note
+    elif track is None and report:
+        from app.audio_edit import voice_track
+
+        voice = voice_track(store.get_source(int(plan["source_id"])))
+        if voice is not None:
+            note += (f"; глушится весь звук — у записи своя дорожка голоса {voice}: track \"voice\" "
+                     "заглушит только её, игра будет звучать")
     return {"words": report, "groups": list(picked), "manual_kept": len(manual), "stars": starred,
-            "removed": len(previous), "time": "clip", "note": note}
+            "removed": len(previous), "time": "clip", "note": note,
+            **({"track": only_track} if only_track is not None else {})}
 
 
 # --------------------------------------------------------------------------- #
@@ -264,11 +307,15 @@ def heard_profanity(heard: list[dict], windows: dict[int, Any], groups: Any) -> 
 
 def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds: int = DEFAULT_MAX_ROUNDS,
                 stars: bool = True, soft: bool = False, groups: Any = None, skip: Any = (),
-                progress: Callable[[dict], None] | None = None) -> dict:
-    """Глушение + круги «рендер → Whisper → шире там, где узнаётся». Итог — по последнему кругу."""
+                progress: Callable[[dict], None] | None = None, track: Any = None) -> dict:
+    """Глушение + круги «рендер → Whisper → шире там, где узнаётся». Итог — по последнему кругу.
+
+    С ``track`` слово, которое узнаётся и на последнем уровне, глушится в следующем круге целиком
+    (голос протёк в дорожку игры) — ``full_words`` в ответе."""
     picked = _groups(soft, groups)
     rounds_max = max(1, min(MAX_ROUNDS_LIMIT, int(max_rounds or DEFAULT_MAX_ROUNDS)))
-    state = censor_plan(store, clip_plan_id, levels, stars=stars, groups=picked, skip=skip)
+    full: set[int] = set()
+    state = censor_plan(store, clip_plan_id, levels, stars=stars, groups=picked, skip=skip, track=track)
     if not state["words"]:
         return {**state, "rounds": [], "render_id": None, "verified": False,
                 "note": "мата в словах субтитров не найдено — рендер не запускался"}
@@ -295,10 +342,13 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
             if not near or n == rounds_max:
                 break
             bump = {i: level_now[i] + 1 for i in near if level_now.get(i, MAX_LEVEL) < MAX_LEVEL}
-            if not bump:
+            widen = {i for i in near if i not in bump and i not in full} if state.get("track") is not None else set()
+            if not bump and not widen:
                 break  # всё узнанное уже на последнем уровне — тишиной дальше не помочь
             level_now.update(bump)
-            state = censor_plan(store, clip_plan_id, level_now, stars=False, groups=picked, skip=skip)
+            full |= widen
+            state = censor_plan(store, clip_plan_id, level_now, stars=False, groups=picked, skip=skip,
+                                track=track, full_words=full)
     finally:
         _release_whisper()
     in_final = final_windows(store, store.get_clip_plan(clip_plan_id), clip, state["words"]) if clip else {}
@@ -320,8 +370,10 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
             f"узнаётся {len(still)} из {len(words)}: " + ", ".join(f"#{w['i']} {w['note']}" for w in still[:5]))
     if stray:
         note += f"; ещё мат вне заглушённого ({len(stray)}) — в субтитрах его нет, см. unmuted_heard"
+    if full:
+        note += f"; слова {sorted(full)} узнавались и на дорожке игры — заглушены целиком (full_words)"
     return {**state, "words": words, "rounds": rounds, "render_id": clip.get("id"), "verified": True,
-            "unmuted_heard": stray, "note": note}
+            "unmuted_heard": stray, "note": note, **({"full_words": sorted(full)} if full else {})}
 
 
 # --------------------------------------------------------------------------- #

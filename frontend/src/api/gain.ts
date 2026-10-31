@@ -6,7 +6,8 @@
  * меняются. Модуль без импортов — его гоняет тест через node (tests/test_frontend_gain.py).
  */
 
-export type GainSpan = { start: number; end: number; gain_db: number };
+/** `track` — громкость только этой дорожки записи (рендер — до смешивания; превью её не играет). */
+export type GainSpan = { start: number; end: number; gain_db: number; track?: number };
 
 /** Как на сервере (app/audio_mute.py). */
 export const MIN_GAIN_SEC = 0.1;
@@ -26,14 +27,19 @@ export function normalizeGain(spans: readonly GainSpan[] | null | undefined): Ga
       start: Math.max(0, s.start),
       end: Math.max(0, s.end),
       gain_db: round1(Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, s.gain_db))),
+      track: Number.isInteger(s.track) && (s.track as number) >= 0 && (s.track as number) <= 7 ? s.track : undefined,
     }))
     .filter((s) => s.end - s.start >= MIN_GAIN_SEC - 1e-9 && s.gain_db !== 0)
-    .sort((a, b) => a.start - b.start || a.end - b.end || a.gain_db - b.gain_db);
+    .sort((a, b) => a.start - b.start || a.end - b.end || a.gain_db - b.gain_db || (a.track ?? -1) - (b.track ?? -1));
   const out: GainSpan[] = [];
+  const lastEnd = new Map<number | undefined, number>();
   for (const s of sorted) {
-    const last = out[out.length - 1];
-    const start = last && s.start < last.end ? last.end : s.start;
-    if (s.end - start >= MIN_GAIN_SEC - 1e-9) out.push({ start: round3(start), end: round3(s.end), gain_db: s.gain_db });
+    const prev = lastEnd.get(s.track);
+    const start = prev !== undefined && s.start < prev ? prev : s.start;
+    if (s.end - start >= MIN_GAIN_SEC - 1e-9) {
+      out.push({ start: round3(start), end: round3(s.end), gain_db: s.gain_db, ...(s.track === undefined ? {} : { track: s.track }) });
+      lastEnd.set(s.track, s.end);
+    }
   }
   return out.slice(0, MAX_GAINS);
 }
@@ -42,6 +48,7 @@ export function normalizeGain(spans: readonly GainSpan[] | null | undefined): Ga
 export function gainFactorAt(spans: readonly GainSpan[] | null | undefined, t: number): number {
   let factor = 1;
   for (const s of spans ?? []) {
+    if (s.track !== undefined) continue; // одна дорожка — превью её отдельно не играет
     const k = Math.pow(10, s.gain_db / 20);
     const inside = Math.min(clip01((t - s.start) / GAIN_RAMP_SEC), clip01((s.end - t) / GAIN_RAMP_SEC));
     factor *= 1 + (k - 1) * inside;
@@ -57,6 +64,6 @@ const clip01 = (v: number) => Math.min(1, Math.max(0, v));
  * (рендер потом всё равно выравнивает ролик целиком до −14 LUFS).
  */
 export function previewVolume(spans: readonly GainSpan[] | null | undefined, t: number, base = 1): number {
-  const peak = Math.max(1, ...(spans ?? []).map((s) => Math.pow(10, s.gain_db / 20)));
+  const peak = Math.max(1, ...(spans ?? []).filter((s) => s.track === undefined).map((s) => Math.pow(10, s.gain_db / 20)));
   return Math.min(1, Math.max(0, (base * gainFactorAt(spans, t)) / peak));
 }

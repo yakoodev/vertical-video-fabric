@@ -132,12 +132,19 @@ export function BannersSettings() {
     <div style={{ display: "grid", gap: 14 }}>
       <div className="panel" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: 560 }}>
         <input className="input" style={{ flex: 1, minWidth: 160 }} placeholder="Название баннера" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <UploadButton label="📤 Загрузить баннер" accept="image/*,video/*" busy={upload.isPending} onPick={(f) => upload.mutate(f)} />
+        <UploadButton label="📤 Загрузить баннер" accept="image/*,video/*,.svg" busy={upload.isPending} onPick={(f) => upload.mutate(f)} />
+        <span className="muted" style={{ fontSize: 12, flexBasis: "100%" }}>
+          PNG, WebM с прозрачностью или SVG с анимацией — SVG сервис сам переведёт в WebM с альфой.
+        </span>
       </div>
       <div className="card-grid">
         {q.data?.map((b) => (
           <div key={b.id} className="panel" style={{ display: "grid", gap: 8 }}>
-            <img src={`/media/banners/${b.id}`} alt={b.label} style={{ width: "100%", borderRadius: 8, background: "#000" }} />
+            {/\.webm$|\.mp4$|\.mov$/i.test(b.original_filename ?? "") || (b.mime_type ?? "").startsWith("video/") ? (
+              <video src={`/media/banners/${b.id}`} muted autoPlay loop playsInline style={{ width: "100%", borderRadius: 8, background: "#000" }} />
+            ) : (
+              <img src={`/media/banners/${b.id}`} alt={b.label} style={{ width: "100%", borderRadius: 8, background: "#000" }} />
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <strong style={{ flex: 1 }}>{b.label}</strong>
               <span className="muted" style={{ fontSize: 12 }}>{b.position}</span>

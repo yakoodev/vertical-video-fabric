@@ -368,6 +368,9 @@ def anim_sheet(path: str | Path, cache_dir: Path, run: Callable[[list[str], int]
         "duration": float(info["times"][count]) if count < len(info["times"]) else info["duration"],
         "width": info.get("width"), "height": info.get("height"), "alpha": info.get("alpha"),
         "pixelated": bool(info.get("width")) and int(info["width"]) <= PIXEL_ART_MAX,
+        # webm с альфой (SVG → webm, свои анимации): превью играет сам файл <video> — лист кадров
+        # для больших баннеров слишком мелкий (frontend runtime.ts animFor).
+        "video": info.get("codec") in _ALPHA_DECODERS,
     }
     digest = hashlib.sha1(f"{path}|{path.stat().st_mtime}|{max_side}".encode("utf-8")).hexdigest()[:16]
     cache_dir.mkdir(parents=True, exist_ok=True)

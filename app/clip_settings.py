@@ -16,9 +16,11 @@ plan's settings back verbatim.
 from __future__ import annotations
 
 from app.formats import settings_layers_format, settings_render_format
+from app.audio_edit import normalize_audio
 from app.audio_mute import normalize_gain, normalize_mute
 from app.chroma_key import normalize_backdrop
 from app.cuts import normalize_cuts
+from app.end_screen import normalize_end_screen
 from app.freeze import normalize_freezes
 from app.montage_assets import normalize_inserts
 from app.motion import normalize_camera, normalize_layers
@@ -158,6 +160,9 @@ def normalize_render_settings(raw: object) -> dict:
         "mute": normalize_mute(src.get("mute")),
         # Громкость звука исходника на отрезках {start, end, gain_db} — поднять тихое (app/audio_mute.py).
         "gain": normalize_gain(src.get("gain")),
+        # Звуковой монтаж: J/L на стыках, ключи громкости исходника и музыки, ручной ducking,
+        # провалы музыки перед ударом, эффекты на отрезке (app/audio_edit.py). {} — как раньше.
+        "audio": normalize_audio(src.get("audio")),
         # Формат вывода (app/formats.py): 9:16 (как всегда) / 1:1 / 4:5 / 16:9 — у любого клипа.
         # Старое поле aspect (квадрат холста) читается как format; хранится одно поле format.
         # Рендер читает его прямо из настроек плана, как раскладку.
@@ -170,7 +175,22 @@ def normalize_render_settings(raw: object) -> dict:
         "end_hold_sec": normalize_end_hold(src.get("end_hold_sec")),
         # Стоп-кадры посреди ролика {at, duration, audio, layers} (app/freeze.py); at — шкала final.
         "freezes": normalize_freezes(src.get("freezes")),
+        # Концовка-баннер {duration, blur, dim, template|svg_asset_id, asset_id, тексты} или None
+        # (app/end_screen.py): размытие основы на хвосте + слой end_banner. Рендер читает из плана.
+        "end_screen": _end_screen(src),
     }
+
+
+def _end_screen(src: dict) -> dict | None:
+    """Концовка клипа; удалили её баннер (слой end_banner) руками — концовка снята целиком,
+    иначе на хвосте осталось бы размытие без баннера."""
+    from app.end_screen import END_LAYER_ID
+
+    es = normalize_end_screen(src.get("end_screen"))
+    layers = src.get("layers") if isinstance(src.get("layers"), list) else []
+    if es and es.get("asset_id") and not any(isinstance(l, dict) and l.get("id") == END_LAYER_ID for l in layers):
+        return None
+    return es
 
 
 def settings_to_render_kwargs(settings: dict, default_subtitle_profile_id: int | None = None) -> dict:

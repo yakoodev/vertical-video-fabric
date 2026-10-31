@@ -48,6 +48,10 @@ export type LayerState = {
   waveSpeed: number;
   /** Свечение от звука (react glow) 0..; 0 — нет. */
   glow: number;
+  /** Псевдо-3D (space3d.ts): глубина, опорн. px, и наклоны, градусы (база + ключи). */
+  z: number;
+  rotX: number;
+  rotY: number;
 };
 
 export const DEFAULT_IN_DURATION = 0.35;
@@ -346,6 +350,9 @@ export function resolveLayer(
     wave: 0,
     waveSpeed: 1,
     glow: 0,
+    z: interpolateKeys(keys.z, local, layer.z ?? 0),
+    rotX: interpolateKeys(keys.rotX, local, layer.rotX ?? 0),
+    rotY: interpolateKeys(keys.rotY, local, layer.rotY ?? 0),
   };
 
   const seed = hashString(layer.id || "layer");

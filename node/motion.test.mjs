@@ -2269,3 +2269,136 @@ test("плашка канала: анимация — вход, блик, тик
     }
   }
 });
+
+/* ---------- псевдо-3D: глубина, перспектива, 3D-камера ---------- */
+
+const env3 = { width: 540, height: 960, getImage: () => null, createCanvas: (w, h) => createCanvas(w, h) };
+const draw3 = (layers, camera, t = 1) => {
+  const cv = createCanvas(540, 960);
+  const ctx = cv.getContext("2d");
+  E.drawFrame(ctx, { layers, camera }, t, env3);
+  return ctx.getImageData(0, 0, 540, 960).data;
+};
+const alphaBox = (d) => {
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < 960; y++) for (let x = 0; x < 540; x++) if (d[(y * 540 + x) * 4 + 3] > 64) {
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  return { x0, x1, y0, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+};
+const plate = (over = {}) => ({ id: "p", type: "shape", start: 0, end: 5, x: 0.5, y: 0.5, props: { kind: "rect", w: 400, h: 600, fill: "#ff0000" }, ...over });
+
+test("3D: проекция — в покое плоскость кадра один в один, глубина f0 — вдвое меньше, облёт крутит дальнее", () => {
+  const f0 = E.focal(960, E.DEFAULT_FOV);
+  const p = E.makeProjector(null, 540, 960, 0.5);
+  assert.deepEqual(p(0, 0, 0), [270, 480]);
+  const [x] = p(100, 0, 0);
+  near(x, 370, 1e-9);
+  near(p(100, 0, f0)[0], 320, 1e-9); // вдвое дальше от камеры — вдвое меньше
+  assert.equal(p(0, 0, -f0), null); // за камерой — не рисуется
+  // Облёт вокруг центра плоскости кадра: центр стоит, дальняя точка уходит, ближняя — в другую сторону (параллакс).
+  const o = E.makeProjector({ z: 0, rotX: 0, rotY: 10, fov: 40, baseZ: 1000 }, 540, 960, 0.5);
+  near(o(0, 0, 0)[0], 270, 1e-9);
+  const far = o(0, 0, 500)[0] - 270;
+  const close = o(0, 0, -300)[0] - 270;
+  assert.ok(far * close < 0 && Math.abs(far) > 20, `параллакс: дальняя ${far}, ближняя ${close}`);
+  // Dolly вперёд: ближнее растёт быстрее дальнего.
+  const d = E.makeProjector({ z: 300, rotX: 0, rotY: 0, fov: 40, baseZ: 1000 }, 540, 960, 0.5);
+  const grow = (z) => (d(100, 0, z)[0] - 270) / (p(100, 0, z)[0] - 270);
+  assert.ok(grow(-200) > grow(0) && grow(0) > grow(600));
+  // Старые ключи (наезд без 3D) — камера плоская, как раньше.
+  assert.equal(E.has3dCamera([{ t: 0, zoom: 1.3, x: 0.4 }]), false);
+  assert.equal(E.has3dCamera([{ t: 0, zoom: 1, rotY: 5 }]), true);
+  near(E.camera3dAt([{ t: 0, z: 0, ease: "linear" }, { t: 2, z: 200 }], 1).z, 100, 1e-9);
+});
+
+test("3D: слой без 3D-полей рисуется как раньше; z: 0 = followCamera; глубина уменьшает слой", () => {
+  const camera = [{ t: 0, zoom: 1.5, x: 0.5, y: 0.5 }];
+  assert.ok(same(draw3([plate({ followCamera: true })], camera), draw3([plate({ z: 0 })], camera)), "z: 0 — слой в сцене, как followCamera");
+  assert.ok(same(draw3([plate()], camera), draw3([plate({ rotX: 0, rotY: 0 })], camera)), "нулевые наклоны — тот же кадр");
+  const f0ref = E.focal(1920, E.DEFAULT_FOV);
+  const flat = alphaBox(draw3([plate()], []));
+  const deep = alphaBox(draw3([plate({ z: f0ref })], []));
+  near(deep.w / flat.w, 0.5, 0.02);
+  near(deep.h / flat.h, 0.5, 0.02);
+});
+
+test("3D: перспектива сеткой — без швов, наклон сужает дальний край, изнанка не рисуется; кадр детерминирован", () => {
+  const d = draw3([plate({ props: { kind: "rect", w: 400, h: 600, fill: "#ff000080" }, rotY: 30 })], []);
+  let full = 0;
+  let seam = 0;
+  for (let y = 300; y < 660; y += 2) for (let x = 0; x < 540; x += 2) {
+    const a = d[(y * 540 + x) * 4 + 3];
+    if (a >= 126 && a <= 130) full++;
+    else if (a > 20 && a < 120) seam++;
+  }
+  assert.ok(seam < full * 0.04, `швы: ${seam} из ${full}`);
+  // rotY > 0 — правый край уходит вглубь: справа слой ниже, чем слева.
+  const colH = (x) => { let n = 0; for (let y = 0; y < 960; y++) if (d[(y * 540 + x) * 4 + 3] > 64) n++; return n; };
+  const box = alphaBox(d);
+  assert.ok(colH(box.x1 - 3) < colH(box.x0 + 3) * 0.95, "дальний край ниже ближнего");
+  assert.ok(same(d, draw3([plate({ props: { kind: "rect", w: 400, h: 600, fill: "#ff000080" }, rotY: 30 })], [])));
+  assert.ok(draw3([plate({ rotY: 120 })], []).every((v, i) => i % 4 !== 3 || v === 0), "изнанка не видна");
+  // Ключи наклона: переворот карточки — из ребра (90°) к лицу.
+  const flip = plate({ keys: { rotY: [{ t: 0, v: 90 }, { t: 1, v: 0 }] } });
+  assert.ok(alphaBox(draw3([flip], [], 0.2)).w < alphaBox(draw3([flip], [], 1.5)).w * 0.6);
+});
+
+test("3D: основа — плоскость на глубине baseZ закрывает кадр при облёте; в покое — как раньше", () => {
+  const W = 540;
+  const H = 960;
+  const rest = { z: 0, rotX: 0, rotY: 0, fov: 40, baseZ: 1000 };
+  const f0 = E.focal(H, 40);
+  near(E.baseCover(rest, W, H, 0.5), (f0 + 500) / f0, 1e-9);
+  assert.ok(E.baseCover({ ...rest, rotY: 12, rotX: -6 }, W, H, 0.5) > (f0 + 500) / f0);
+  const src = createCanvas(W, H);
+  const s = src.getContext("2d");
+  s.fillStyle = "#33aa66";
+  s.fillRect(0, 0, W, H);
+  for (const cam of [rest, { ...rest, rotY: 12, rotX: -6, z: 200 }, { ...rest, z: -1600, fov: 25.5 }]) {
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext("2d");
+    E.drawBasePlane(ctx, env3, src, cam, null, 0.5);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    for (const [x, y] of [[0, 0], [W - 1, 0], [0, H - 1], [W - 1, H - 1], [270, 480]]) assert.equal(d[(y * W + x) * 4 + 3], 255, `угол ${x},${y} закрыт`);
+  }
+});
+
+test("3D: шаблоны галереи — категория 3D, слои с глубиной и наклоном", () => {
+  for (const id of ["phone-3d", "depth-title", "cards-fan"]) {
+    const t = E.TEMPLATES.find((x) => x.id === id);
+    assert.ok(t && t.category === "3D", id);
+    const r = E.buildTemplate(id, {}, 2);
+    assert.ok(r.layers.some((l) => typeof l.z === "number"), `${id}: глубина`);
+    assert.ok(r.layers.every((l) => l.start >= 2 - 1e-6));
+  }
+  assert.ok(E.buildTemplate("depth-title", {}, 0).camera.some((k) => k.z > 0), "заголовок с глубиной — наезд dolly");
+});
+
+test("CLI: 3D-камера двигает основу и слои по-разному (параллакс), без 3D — кадр прежний", async () => {
+  const base = join(tmp, "b3d.mp4");
+  const r0 = spawnSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=270x480:r=10:d=1", "-pix_fmt", "yuv420p", base]);
+  assert.equal(r0.status, 0, String(r0.stderr));
+  const layer = { id: "t", type: "shape", start: 0, end: 1, x: 0.5, y: 0.5, z: -300, props: { kind: "rect", w: 200, h: 200, fill: "#ff00ff" } };
+  const frame = async (name, camera, layers = [layer]) => {
+    writeFileSync(join(tmp, `${name}.json`), JSON.stringify({ width: 270, height: 480, fps: 10, duration: 1, layers, camera }));
+    const png = join(tmp, `${name}.png`);
+    const r = run(["--comp", join(tmp, `${name}.json`), "--input", base, "--frame", "0.5", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    cv.getContext("2d").drawImage(img, 0, 0);
+    return cv.getContext("2d").getImageData(0, 0, img.width, img.height).data;
+  };
+  const still = await frame("c3d0", []);
+  const old = await frame("c3d1", [{ t: 0, zoom: 1 }]);
+  assert.ok(same(still, old), "наезд zoom 1 без 3D-полей — кадр как без камеры");
+  const orbit = await frame("c3d2", [{ t: 0, rotY: 10, rotX: -4, z: 150 }]);
+  assert.ok(!same(still, orbit));
+  const magenta = (d) => {
+    let sx = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 230 && d[i + 1] < 40 && d[i + 2] > 230) { sx += (i / 4) % 270; n++; }
+    return n ? sx / n : -1;
+  };
+  assert.ok(Math.abs(magenta(orbit) - magenta(still)) > 3, "ближний слой уехал при облёте");
+});

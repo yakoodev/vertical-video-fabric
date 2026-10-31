@@ -506,6 +506,8 @@ def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) 
     только фон (скрин сайта во весь кадр за втубером — это и есть монтаж)."""
     out = []
     for layer in layers:
+        if layer.get("id") == "end_banner":
+            continue  # баннер концовки (app/end_screen.py) лежит на уже размытом видео
         if layer.get("behind"):
             if not keyed:
                 out.append(f"{layer.get('id') or layer.get('type')}: behind работает только у источника с хромакеем "
@@ -905,6 +907,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "cover": (render.get("cover") or {}).get("mode"),
             "mute": render.get("mute") or [],
             "gain": render.get("gain") or [],
+            # Звуковой монтаж: J/L (piece — номер куска), ключи, ducking, эффекты (app/audio_tools.py).
+            "audio": _audio_view(render, plan.get("segments") or []),
             # Стоп-кадры посреди ролика (freeze_frame): at — шкала final без стоп-кадров.
             "freezes": render.get("freezes") or [],
             # Формат вывода (app/formats.py): format, кадр и опорный кадр слоёв; aspect — старое имя.
@@ -920,6 +924,12 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
     }
+
+
+def _audio_view(render: dict, segments: list[dict]) -> dict:
+    from app.audio_tools import audio_view
+
+    return audio_view(render, segments)
 
 
 def _frame_view(render: dict) -> dict:
@@ -1931,6 +1941,26 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_camera_preset(ctx: ToolContext, args: dict) -> dict:
+    """3D-движение камеры одной командой (app/camera3d.py): ключи на отрезке start..start+duration."""
+    from app.camera3d import PresetError, apply_preset
+
+    render = _current_render(ctx)
+    try:
+        res = apply_preset(args.get("preset"), args.get("start"), args.get("duration"), args.get("intensity"),
+                           camera=render.get("camera"), layers=render.get("layers"), layer_id=args.get("layer_id"),
+                           clip_duration=_clip_duration(ctx))
+    except (PresetError, ValueError) as exc:
+        raise ToolError(f"пресет не поставлен: {exc}", getattr(exc, "hints", [])) from exc
+    fresh = _save_render(ctx, {**render, "camera": res["camera"], "layers": res["layers"]})
+    out = {"ok": True, "preset": res["preset"], "range": res["range"], "keys": res["keys"],
+           "camera_keys": len(_camera_of(fresh)),
+           "check": f"view_frame на {res['range'][0] + (res['range'][1] - res['range'][0]) / 2:.2f} с и на конце"}
+    if res["note"]:
+        out["note"] = res["note"]
+    return out
+
+
 def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
     """Наезд без своих x/y — в героя: край героя со стороны текста стоит на месте,
     и при zoom он не заезжает под субтитры (по умолчанию камера зумит в центр кадра)."""
@@ -2914,7 +2944,25 @@ def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
         note += (f" Отрезки мата ({len(censored)}, by: censor) оставлены — снять их: "
                  "censor_profanity(clear=true).")
     fresh = _save_render(ctx, {**render, "mute": clean})
-    return {"ok": True, "mute": fresh["mute"], "note": note}
+    out = {"ok": True, "mute": fresh["mute"], "note": note}
+    warnings = _track_warnings(ctx, fresh["mute"])
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _track_warnings(ctx: ToolContext, spans: list[dict]) -> list[str]:
+    """Отрезки дорожки, которой нет в звуке ролика (set_source_audio), ничего не изменят."""
+    from app.source_audio import source_tracks
+
+    tracks = {s["track"] for s in spans if s.get("track") is not None}
+    if not tracks:
+        return []
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    mix = source_tracks(ctx.store.get_source(int(plan["source_id"]))) or [0]
+    missing = sorted(t for t in tracks if t not in mix)
+    return ([f"дорожек {missing} нет в звуке ролика (смесь {mix}) — их отрезки ничего не изменят; "
+             "set_source_audio tracks"] if missing else [])
 
 
 def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
@@ -2924,6 +2972,8 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
 
     options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
                "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    if args.get("track") not in (None, ""):
+        options["track"] = args.get("track")  # только эта дорожка (число или "voice"), app/censor.py
     levels = args.get("levels")
     if args.get("level") is not None and levels is None:
         levels = args.get("level")
@@ -3149,6 +3199,44 @@ def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
                              remove=args.get("remove") is True, before_change=ctx.before_change)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
+
+
+END_SCREEN_FIELDS = ("template", "svg_asset_id", "text", "handle", "platform", "accent", "days", "time", "font",
+                     "duration", "blur", "dim", "ramp", "y", "w")
+
+
+def h_set_end_screen(ctx: ToolContext, args: dict) -> dict:
+    """Концовка-баннер: размытие основы на хвосте + анимированный баннер из SVG (app/end_screen.py)."""
+    from app.end_screen import set_end_screen
+    from app.svg_webm import SvgWebmError
+
+    brand_id = args.get("brand_id")
+    if brand_id:
+        try:
+            ctx.store.get_brand(int(brand_id))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    fields = {k: args[k] for k in END_SCREEN_FIELDS if k in args}
+    try:
+        return set_end_screen(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
+                              remove=args.get("remove") is True, before_change=ctx.before_change)
+    except (ValueError, SvgWebmError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_svg_to_webm(ctx: ToolContext, args: dict) -> dict:
+    """SVG (текст или файл библиотеки) → webm с альфой в «Файлы для монтажа» (app/svg_webm.py)."""
+    from app.svg_webm import SvgWebmError, asset_svg_text, svg_to_asset
+
+    try:
+        svg = asset_svg_text(ctx.store, args["asset_id"]) if args.get("asset_id") else args.get("svg")
+        asset, info = svg_to_asset(ctx.store, svg, args, label=str(args.get("label") or "SVG-анимация"))
+    except (ValueError, SvgWebmError) as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "asset_id": asset["id"], "label": asset["label"], "cached": info["cached"],
+            "frames": info.get("frames"), "fps": info.get("fps"), "duration": info.get("duration"),
+            "width": info.get("width"), "height": info.get("height"),
+            "note": "слой image с этим asset_id играет анимацию с прозрачностью (с начала слоя, по кругу)"}
 
 
 def h_get_playbook(_ctx: ToolContext, args: dict) -> dict:
@@ -3921,6 +4009,9 @@ def h_set_source_gain(ctx: ToolContext, args: dict) -> dict:
     if any(g["gain_db"] > 12 for g in clean):
         out["warnings"] = ["подъём больше 12 дБ поднимает и шум — если голос тонет в игре по всему ролику, лучше "
                            "громкость дорожки микрофона: set_source_audio tracks [{track, gain_db}]"]
+    out["warnings"] = out.get("warnings", []) + _track_warnings(ctx, fresh["gain"])
+    if not out["warnings"]:
+        out.pop("warnings")
     return out
 
 
@@ -4361,6 +4452,9 @@ in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text
 loop: {', '.join(enums['loops'])} (glitch — редкие сбои, wave — буквы волной: только text)
 react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0..1, color?}} у любого слоя — дышит громкостью клипа
   (огибающую считает сервис; music — фоновый трек клипа). Не больше 1–2 «дышащих» слоёв на сцену
+3D: у слоя z (глубина, опорн. px: −300 ближе … 600 дальше; задана — слой в сцене, едет с камерой), rotX/rotY (наклон
+  с перспективой, °; ключи z/rotX/rotY); у ключа камеры z (dolly), rotX/rotY (наклон/облёт ±12°), fov (40), baseZ (видео, 1000).
+  Проще camera_preset(preset, start): parallax_push, orbit, dolly_zoom, tilt_reveal, float, card_flip (layer_id)
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
   text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
@@ -4769,9 +4863,27 @@ def _build_registry() -> list[Tool]:
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
-                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]}},
+                "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]},
+                # 3D (camera_preset ставит их сам): dolly, наклон, облёт, поле зрения, глубина основы.
+                "z": {"type": "number"}, "rotX": {"type": "number"}, "rotY": {"type": "number"},
+                "fov": {"type": "number"}, "baseZ": {"type": "number"}},
                 ["t", "zoom"])}}, ["keys"]),
             h_set_camera, mutating=True, label=_label_camera,
+        ),
+        Tool(
+            "camera_preset", "3D-движение камеры",
+            "3D-движение одной командой (псевдо-3D: глубина z слоёв, перспектива): preset parallax_push (наезд с "
+            "параллаксом, держится) | orbit (облёт ±10°) | dolly_zoom (Хичкок, держится) | tilt_reveal (раскрытие "
+            "наклоном) | float (дыхание камеры) | card_flip (переворот слоя layer_id); start — с, duration? (по "
+            "умолчанию свой у пресета), intensity 0.2..2 (1). Ключи камеры внутри отрезка заменяются. Параллакс "
+            "виден у слоёв с z (−300…600) или followCamera; без z слой стоит на экране. Не чаще одного 3D-движения "
+            "на 5–8 с, для промо, интро и ярких моментов. / Camera 3D move preset.",
+            _obj({"preset": {"type": "string", "enum": ["parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float",
+                                                        "card_flip"]},
+                  "start": {"type": "number"}, "duration": {"type": "number"}, "intensity": {"type": "number"},
+                  "layer_id": {"type": "string"}}, ["preset", "start"]),
+            h_camera_preset, mutating=True,
+            label=lambda a: f"Ставлю 3D-движение {a.get('preset')} на {a.get('start')} с",
         ),
         Tool(
             "list_fonts", "Смотрю шрифты",
@@ -5011,9 +5123,11 @@ def _build_registry() -> list[Tool]:
             "Тишина вместо звука исходника на отрезках ranges [{start, end}] (секунды клипа до вырезов), "
             "картинка остаётся — для вшитых эффектов старого монтажа, шума, мата (find_noises покажет где). "
             "Заменяет прежний список ручных; [] — снять их. Отрезки мата (by: censor, censor_profanity) остаются, "
-            "если в ranges нет помеченных. / Mute source audio in ranges.",
-            _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"}},
-                                                            ["start", "end"])}}, ["ranges"]),
+            "если в ranges нет помеченных. track — только эта дорожка записи (0 — игра, 1 — микрофон у NVIDIA/OBS): "
+            "остальные звучат. / Mute source audio in ranges (optionally one track).",
+            _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"},
+                                                            "track": {"type": "integer"}},
+                                                           ["start", "end"])}}, ["ranges"]),
             h_mute_audio, mutating=True, label=lambda a: f"Глушу звук ({len(a.get('ranges') or [])} отр.)",
         ),
         Tool(
@@ -5029,12 +5143,15 @@ def _build_registry() -> list[Tool]:
             "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
             "услышал мимо субтитров. heard на уровне 3 — «узнаётся по контексту»: тишиной не лечится. "
             "verify=false — быстро, без рендера. levels — число всем или {i: уровень}; skip [i] — не трогать "
-            "слово; clear=true — снять свои отрезки. / Mute profanity mid-word, star it in subtitles, "
+            "слово; clear=true — снять свои отрезки. track: \"voice\" — глушить только дорожку голоса (запись "
+            "игра+микрофон со своей speech_tracks; неизвестна — весь звук), число — эту дорожку; слово, что "
+            "узнаётся и так, verify заглушит целиком. / Mute profanity mid-word, star it in subtitles, "
             "verify by Whisper on the render.",
             _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
-                  "clear": {"type": "boolean"}}),
+                  "clear": {"type": "boolean"},
+                  "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"}}),
             h_censor_profanity, mutating=True,
             label=lambda a: "Глушу мат" + ("" if a.get("verify") is False else " и проверяю рендером"),
         ),
@@ -5044,9 +5161,11 @@ def _build_registry() -> list[Tool]:
             "вырезов, как mute_audio и find_noises): поднять тихий кусок (+6..+12 дБ) или приглушить громкий "
             "(−6..−20 дБ), картинка та же; звуки слоёв и музыка не меняются, ролик потом выравнивается целиком. "
             "Заменяет прежний список; [] — снять. Тихий микрофон по всему ролику — громкость дорожки "
-            "(set_source_audio tracks [{track, gain_db}]), а не отрезки. / Source audio gain in ranges.",
+            "(set_source_audio tracks [{track, gain_db}]), а не отрезки. track — громкость только этой дорожки "
+            "(приглушить игру под фразой, микрофон не трогая). / Source audio gain in ranges (optionally one track).",
             _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"},
-                                                            "gain_db": {"type": "number"}},
+                                                            "gain_db": {"type": "number"},
+                                                            "track": {"type": "integer"}},
                                                            ["start", "end", "gain_db"])}}, ["ranges"]),
             h_set_source_gain, mutating=True,
             label=lambda a: f"Громкость исходника ({len(a.get('ranges') or [])} отр.)",
@@ -5189,6 +5308,48 @@ def _build_registry() -> list[Tool]:
                   "remove": {"type": "boolean"}}),
             h_set_nameplate, mutating=True,
             label=lambda a: "Снимаю плашку канала" if a.get("remove") else f"Плашка канала {a.get('handle') or ''}".strip(),
+        ),
+        Tool(
+            "set_end_screen", "Ставлю концовку-баннер",
+            "Концовка шортса отдельным решением: на последних duration с (1.5–8, по умолчанию 3; не больше половины "
+            "ролика) видео плавно уходит в размытие (blur 0–60, 18) и темнеет (dim 0–0.8, 0.35) за ramp с (0.6), "
+            "поверх — анимированный баннер (SVG → webm с альфой, слой end_banner). template: live (стеклянная "
+            "карточка, пульсирующая точка LIVE, фраза крупно — после « — » акцентом, ник со значком площадки) | "
+            "schedule (дни недели чипами, время крупно) | neon (ник светящейся обводкой, адрес канала); или "
+            "svg_asset_id — свой SVG из библиотеки. text («Стримлю с 8 утра — заходи»), handle, platform "
+            "twitch|youtube|tiktok|telegram|kick|none, accent #rrggbb (нет — цвет площадки), days («пн–пт», "
+            "«будни»), time («8:00 МСК»), font; y — центр баннера (0.44), w — ширина (960 px кадра 1080). "
+            "brand_id — тексты, шрифт и акцент из бренда. Когда: стример — анонс расписания; реклама — призыв "
+            "бренда; НЕ на каждый мем и не поверх развязки. remove:true — снять. Повтор заменяет. Потом "
+            "view_frame на концовке. / Blurred end screen with an animated banner.",
+            _obj({"template": {"type": "string", "enum": ["live", "schedule", "neon"]},
+                  "svg_asset_id": {"type": "integer"},
+                  "text": {"type": "string"}, "handle": {"type": "string"},
+                  "platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
+                  "accent": {"type": "string"}, "days": {"type": "string"}, "time": {"type": "string"},
+                  "font": {"type": "string"},
+                  "duration": {"type": "number", "minimum": 1.5, "maximum": 8},
+                  "blur": {"type": "number", "minimum": 0, "maximum": 60},
+                  "dim": {"type": "number", "minimum": 0, "maximum": 0.8},
+                  "ramp": {"type": "number", "minimum": 0.1, "maximum": 2},
+                  "y": {"type": "number"}, "w": {"type": "number"},
+                  "brand_id": {"type": "integer"}, "remove": {"type": "boolean"}}),
+            h_set_end_screen, mutating=True,
+            label=lambda a: "Снимаю концовку" if a.get("remove") else f"Концовка {a.get('template') or ''}".strip(),
+        ),
+        Tool(
+            "svg_to_webm", "Перевожу SVG в анимацию",
+            "SVG с анимацией (CSS @keyframes / SMIL) → webm с прозрачностью в «Файлы для монтажа»: покадрово в "
+            "headless-браузере (анимации на паузе и перемотаны на время кадра — без рывков и пропусков). svg — "
+            "текст SVG или asset_id — SVG из библиотеки; duration (с; нет — по анимациям SVG), fps (30), width/"
+            "height (нет — из SVG), scale (1), strip_bg (убрать первый прямоугольник-фон). Тот же SVG — тот же "
+            "файл (кэш). Ответ asset_id: слой image играет его с альфой. / Animated SVG → alpha webm asset.",
+            _obj({"svg": {"type": "string"}, "asset_id": {"type": "integer"}, "label": {"type": "string"},
+                  "duration": {"type": "number", "minimum": 0.2, "maximum": 30},
+                  "fps": {"type": "integer", "minimum": 1, "maximum": 60},
+                  "width": {"type": "integer"}, "height": {"type": "integer"},
+                  "scale": {"type": "number", "minimum": 0.25, "maximum": 3}, "strip_bg": {"type": "boolean"}}),
+            h_svg_to_webm, scope="global", label=lambda a: "SVG → webm",
         ),
         Tool(
             "get_playbook", "Читаю плейбук",
@@ -5468,7 +5629,10 @@ DISCOVERY_TOOLS = [
 def registry() -> dict[str, Tool]:
     global _REGISTRY
     if _REGISTRY is None:
-        _REGISTRY = {tool.name: tool for tool in _build_registry()}
+        # Звуковой монтаж (audio_map, J/L, ключи, ducking, эффекты) — свой модуль app/audio_tools.py.
+        from app.audio_tools import tools as audio_tools
+
+        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools()]}
     return _REGISTRY
 
 

@@ -1,5 +1,6 @@
 import type { Background, CameraKey, FormatId, Layer } from "@/motion";
 import type { StreamLayout } from "@/pages/workspace/layout";
+import type { AudioEdit } from "@/api/audioEdit";
 export interface CropRect {
   x: number;
   y: number;
@@ -196,10 +197,12 @@ export interface RenderSettings {
   cuts?: { start: number; end: number }[];
   /** Фон за вырезанным персонажем (источник с хромакеем), анимированный — app/backgrounds.py. */
   backdrop?: Background;
-  /** Тишина вместо звука исходника на отрезках (секунды клипа до вырезов). */
-  mute?: { start: number; end: number }[];
+  /** Тишина вместо звука исходника на отрезках (секунды клипа до вырезов); track — одна дорожка. */
+  mute?: { start: number; end: number; track?: number }[];
   /** Громкость звука исходника на отрезках, дБ (секунды клипа до вырезов, app/audio_mute.py). */
-  gain?: { start: number; end: number; gain_db: number }[];
+  gain?: { start: number; end: number; gain_db: number; track?: number }[];
+  /** 🎚 Звуковой монтаж: J/L, ключи громкости, ducking и провалы музыки, эффекты (app/audio_edit.py). */
+  audio?: AudioEdit;
   /** Формат вывода (app/formats.py): 9:16 (как всегда), 1:1, 4:5 или 16:9 — у любого клипа. */
   format?: Aspect;
   /** В каком формате размечены слои (их опорный кадр, motion/formats.ts); нет — 9:16. */
@@ -210,6 +213,11 @@ export interface RenderSettings {
   end_hold_sec?: number | null;
   /** Стоп-кадры посреди ролика (app/freeze.py, инструмент агента freeze_frame); at — шкала final. */
   freezes?: FreezeFrame[];
+  /**
+   * Концовка-баннер (app/end_screen.py, MCP set_end_screen): последние `duration` с видео уходит в
+   * размытие (`blur` px) и темнеет (`dim`), поверх — слой `end_banner`. Превью — та же функция движка.
+   */
+  end_screen?: { duration: number; blur: number; dim: number; ramp: number; template?: string | null; [k: string]: unknown } | null;
 }
 
 /** Стоп-кадр посреди ролика: кадр в `at` стоит `duration` с; звук молчит (вставка) или идёт дальше. */

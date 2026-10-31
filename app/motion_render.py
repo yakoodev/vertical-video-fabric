@@ -268,6 +268,7 @@ def write_comp(
     levels: dict | None = None,
     base_height: int | None = None,
     freezes: list[dict] | None = None,
+    end_screen: dict | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
@@ -294,6 +295,9 @@ def write_comp(
         # Стоп-кадры, на которых слои стоят (app/freeze.comp_freezes): компоновщик читает
         # слои, камеру и слова во «времени слоёв» (motionTime), основа уже со стоп-кадрами.
         comp["freezes"] = freezes
+    if end_screen:
+        # Концовка-баннер (app/end_screen.comp_end_screen): {start, ramp, blur, dim} — размытие основы под слоями.
+        comp["endScreen"] = end_screen
     if words:
         comp["words"] = words
     if chat:
@@ -579,6 +583,11 @@ def _resolve_ref(store: Any, ref: int | str, layer_type: str) -> Path | None:
         return path
     if layer_type == "video":
         return path if kind in _VIDEO_KINDS else None
+    if kind == "video" and layer_type == "image":
+        # webm с альфой (SVG → webm, app/svg_webm.py) — анимированная картинка, не видео-слой.
+        from app.anim_frames import animation_info
+
+        return path if animation_info(path).get("animated") else None
     return path if kind in _IMAGE_KINDS else None
 
 
@@ -1126,6 +1135,8 @@ def _render_frame_png(
     command = compositor_command()  # нет компоновщика — сразу понятная ошибка
     plan = store.get_clip_plan(clip_plan_id)
     rs = normalize_render_settings(plan.get("render_settings") or {})
+    from app.end_screen import comp_end_screen
+
     layers = rs["layers"] if layers is None else normalize_layers(layers)
     camera = rs["camera"] if camera is None else normalize_camera(camera)
     layers = [layer for layer in layers if not layer["hidden"] and layer["type"] != "audio"]
@@ -1240,6 +1251,7 @@ def _render_frame_png(
             base_height=height + int(band["h"]) if band else None,
             backgrounds=[{"t0": 0.0, "t1": round(max(total, lt) + 60.0, 3), **zone}] if zone else None,
             ref=comp_ref(out_format), voice=voice, levels=levels,
+            end_screen=comp_end_screen(rs.get("end_screen"), layers, total),
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

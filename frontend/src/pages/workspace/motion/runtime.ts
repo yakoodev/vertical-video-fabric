@@ -72,6 +72,10 @@ export function animFor(ref: string): AnimSource | null {
   motionApi
     .assetAnim(ref)
     .then((meta) => {
+      if (meta.animated && meta.video && meta.width && meta.height) {
+        entry.src = webmAnim(ref, meta.width, meta.height, meta.times?.length ? meta.times : [0], meta.duration || 0);
+        return;
+      }
       if (!meta.animated || !meta.sheet || !meta.count || !meta.cols || !meta.frame_w || !meta.frame_h) return;
       const img = new Image();
       img.decoding = "async";
@@ -91,6 +95,28 @@ export function animFor(ref: string): AnimSource | null {
     })
     .catch(() => undefined);
   return null;
+}
+
+/**
+ * webm с альфой (баннер концовки из SVG и т.п.) — сам файл в <video>: Chrome рисует VP9-альфу на
+ * холст, кадр в полном размере (лист кадров для баннера 960 px вышел бы мыльным). Время кадра i —
+ * `times[i]`; играет и подправляется, как видео-слой (syncVideo), на паузе — точный seek.
+ */
+function webmAnim(ref: string, width: number, height: number, times: number[], duration: number): AnimSource {
+  const layer = { id: `anim:${ref}`, type: "video", props: { asset_id: ref, speed: 1 } } as unknown as VideoLayer;
+  return {
+    width,
+    height,
+    times,
+    duration,
+    frame: (i) => {
+      // Каждый раз через videoEntry: давно не нужный элемент отпускается и создаётся заново.
+      const entry = videoEntry(layer);
+      if (!entry) return null;
+      const f = syncVideo(entry, times[Math.max(0, Math.min(times.length - 1, i))] ?? 0, entry.layer);
+      return f ? { image: f.image, sx: 0, sy: 0, sw: f.width, sh: f.height } : null;
+    },
+  };
 }
 
 /* ---------- видео-слои ---------- */
