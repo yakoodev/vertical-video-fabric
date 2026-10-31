@@ -34,6 +34,7 @@ MAX_LINES = 400
 
 def build_clip_audio_args(
     source_path: Path, pieces: list[tuple[float, float]], out_path: Path, tracks: Any = None,
+    ops: list[dict] | None = None,
 ) -> list[str]:
     """One wav with the clip's pieces played back to back — the audio the render burns onto.
 
@@ -49,7 +50,17 @@ def build_clip_audio_args(
     inputs: list[str] = []
     for start, end in pieces:
         inputs += ["-ss", f"{start:.3f}", "-t", f"{max(0.01, end - start):.3f}", "-i", str(source_path)]
-    if tracks and not is_default_mix(tracks):
+    from app.audio_edit import ops_in_window, source_graph
+
+    windows = [ops_in_window(ops or [], a, b) for a, b in pieces]
+    if any(windows):
+        # Тишина/громкость/эффекты одной дорожки и эффекты на отрезке (app/audio_edit.py) — как в рендере.
+        chains = [source_graph(i, list(tracks or []), {"ops": windows[i], "src0": pieces[i][0]}, f"p{i}r")
+                  + f";[p{i}r]aresample=48000,aformat=sample_fmts=s16:channel_layouts=stereo[p{i}]"
+                  for i in range(len(pieces))]
+        joined = "".join(f"[p{i}]" for i in range(len(pieces)))
+        graph = ";".join(chains) + f";{joined}concat=n={len(pieces)}:v=0:a=1[out]"
+    elif tracks and not is_default_mix(tracks):
         chains = [mix_chain(i, list(tracks), f"p{i}") for i in range(len(pieces))]
         if len(pieces) > 1:
             joined = "".join(f"[p{i}]" for i in range(len(pieces)))
@@ -568,8 +579,12 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
     # Тишина рендера (render.mute: шум, мат censor_profanity) молчит и здесь: раньше listen
     # слышал заглушённое, и проверить им глушение мата было нельзя.
     muted = mute_in_parts(clock, (plan.get("render_settings") or {}).get("mute"), p_lo, p_hi)
+    # Тишина/эффекты одной дорожки (track) и эффекты на отрезке — в самом звуке, как в рендере.
+    from app.audio_edit import plan_source_ops
+
+    ops = plan_source_ops(plan, source)
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source)), timeout=60 * 5)
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source), ops), timeout=60 * 5)
         silence_wav(audio_path, muted)
         from app.speech_onsets import snap_words, voiced_frames, wav_pcm
 
@@ -577,7 +592,7 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
         level_pcm = pcm
         if separate_speech(source):
             # Громкость — того, что услышит зритель (смесь рендера), а не одного микрофона.
-            _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source)), timeout=60 * 5)
+            _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source), ops), timeout=60 * 5)
             silence_wav(mix_path, muted)
             level_pcm = wav_pcm(mix_path)
         try:
@@ -632,6 +647,8 @@ def mute_in_parts(clock: Any, mute: Any, p_lo: float, p_hi: float) -> list[tuple
 
     out = []
     for m in normalize_mute(mute):
+        if m.get("track") is not None:
+            continue  # тишина одной дорожки — уже в самом звуке (build_clip_audio_args ops)
         a, b = clock.clip_range_to_plain(m["start"], m["end"])
         if clock.cut_plan is not None:
             a, b = clock.cut_plan.mapper.clamp(a), clock.cut_plan.mapper.clamp(b)
@@ -698,8 +715,11 @@ def find_noises(store: Any, clip_plan_id: int, threshold_db: float | None = None
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     voice_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     voiced: list[bool] = []
+    from app.audio_edit import plan_source_ops
+
+    ops = plan_source_ops(plan, source)
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_mix(source)), timeout=60 * 5)
+        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, source_mix(source), ops), timeout=60 * 5)
         from app.speech_onsets import FRAME_SEC, voiced_frames, wav_pcm
 
         raw = wav_pcm(audio_path)

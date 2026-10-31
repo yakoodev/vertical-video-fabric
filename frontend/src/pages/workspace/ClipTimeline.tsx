@@ -4,6 +4,7 @@ import type { SubtitleLine } from "@/api/clipPlans";
 import type { AiSegment, MontageInsert } from "@/api/types";
 import { formatDuration } from "@/components/ui";
 import { addMute, normalizeMute, type MuteSpan } from "@/api/mute";
+import { FX_LABEL, joinShift, keyDbAt, maxShift, setJoinShift, type AudioEdit, type VolumeKey } from "@/api/audioEdit";
 import type { Background, CameraKey, Layer } from "@/motion";
 import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
 import { BackdropStrip, canvasLabel } from "@/pages/workspace/canvasClip";
@@ -131,6 +132,8 @@ export function ClipTimeline({
   onDropLayers,
   mute = [],
   onMuteChange,
+  audioEdit,
+  onAudioEditChange,
   canvas,
 }: {
   pieces: AiSegment[];
@@ -164,6 +167,9 @@ export function ClipTimeline({
   /** Тишина вместо звука исходника (render.mute) — полосы на дорожке «Звук». */
   mute?: MuteSpan[];
   onMuteChange?: (next: MuteSpan[]) => void;
+  /** 🎚 Звуковой монтаж (render.audio): J/L тянут ручкой на стыке, эффекты и провалы видны полосами. */
+  audioEdit?: AudioEdit;
+  onAudioEditChange?: (next: AudioEdit) => void;
   /** Пустой холст: вместо зелёных кадров основы — фон клипа (и его акцент). */
   canvas?: { bg: Background; accent?: string | null; tileAspect?: number } | null;
 }) {
@@ -179,6 +185,8 @@ export function ClipTimeline({
   const [muteDraft, setMuteDraft] = useState<{ from: number; to: number; startX: number } | null>(null);
   // «Заглушить отсюда… до сюда»: первое нажатие запоминает курсор, второе ставит отрезок.
   const [muteMark, setMuteMark] = useState<number | null>(null);
+  // J/L: ручку стыка k тянут вправо (L — звук прошлого куска дольше) или влево (J — звук следующего раньше).
+  const [jlDrag, setJlDrag] = useState<{ k: number; startX: number; base: number; shift: number } | null>(null);
 
   const bounds = pieceBounds(pieces);
   const duration = bounds.length ? bounds[bounds.length - 1].end : 0;
@@ -309,7 +317,10 @@ export function ClipTimeline({
         const b2 = Number(live.b.toFixed(3));
         if (a2 === mute[d.index].start && b2 === mute[d.index].end) return;
         // Наехал на соседний отрезок — сольются; выделение переводим на итоговый.
-        const next = normalizeMute(mute.map((m, i) => (i === d.index ? { start: a2, end: b2 } : m)));
+        // Дорожка (track) у отрезка остаётся: тянули время, а не то, что глушится.
+        const next = normalizeMute(
+          mute.map((m, i) => (i === d.index ? { start: a2, end: b2, ...(m.track !== undefined ? { track: m.track } : {}) } : m)),
+        );
         onMuteChange(next);
         const at = next.findIndex((m) => a2 >= m.start - 1e-6 && a2 < m.end);
         onSelect(at >= 0 ? { kind: "mute", index: at } : null);
@@ -341,6 +352,33 @@ export function ClipTimeline({
       window.removeEventListener("pointerup", onUp);
     };
   }, [pps, duration, snap, inserts, subLines, bounds, layers, camera, mute, onInsertsChange, onSubLinesChange, onPieceCommit, onLayersChange, onCameraChange, onMuteChange, onSelect]);
+
+  // Ручка J/L: живой сдвиг пока тянут, на отпускании — в render.audio.joins.
+  useEffect(() => {
+    if (!jlDrag) return;
+    const prev = pieces[jlDrag.k];
+    const next = pieces[jlDrag.k + 1];
+    if (!prev || !next || !pps) return;
+    const limit = maxShift(prev, next);
+    let shift = jlDrag.shift;
+    const onMove = (e: PointerEvent) => {
+      shift = Number(clamp(jlDrag.base + (e.clientX - jlDrag.startX) / pps, -limit, limit).toFixed(2));
+      if (Math.abs(shift) < 0.05) shift = 0;
+      setJlDrag((d) => (d ? { ...d, shift } : d));
+    };
+    const onUp = () => {
+      setJlDrag(null);
+      if (shift !== jlDrag.base) {
+        onAudioEditChange?.({ ...(audioEdit ?? {}), joins: setJoinShift(audioEdit?.joins, prev.id, next.id, shift) });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [jlDrag?.k, jlDrag?.startX]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startDrag = (e: React.PointerEvent, d: Omit<Drag, "startX">) => {
     const mode = ((e.target as HTMLElement).closest("[data-resize]")?.getAttribute("data-resize") as Drag["mode"]) || "move";
@@ -433,6 +471,105 @@ export function ClipTimeline({
     : muteMark == null
       ? "Заглушить звук исходника: нажмите здесь, подведите курсор к концу и нажмите ещё раз. Или протяните мышью по дорожке «Звук»"
       : `Начало ${formatDuration(muteMark)} — подведите курсор к концу и нажмите ещё раз (то же место — отмена)`;
+
+  // 🎚 Звуковой монтаж поверх волны: ручки J/L на стыках, эффекты, провалы и ducking музыки,
+  // линии ключей громкости (исходник — зелёная, музыка — оранжевая). Ставит их в основном агент.
+  const audioEditOverlay = () => {
+    const edit = audioEdit ?? {};
+    const keyLine = (keys: VolumeKey[] | undefined, cls: string) => {
+      if (!keys?.length) return null;
+      const pts: string[] = [];
+      const stepPx = 4;
+      for (let x = 0; x <= duration * pps; x += stepPx) {
+        const db = keyDbAt(keys, x / pps);
+        pts.push(`${x.toFixed(0)},${(4 + ((12 - clamp(db, -40, 12)) / 52) * 46).toFixed(1)}`);
+      }
+      return <polyline className={cls} points={pts.join(" ")} />;
+    };
+    const removeFx = (i: number) =>
+      onAudioEditChange?.({ ...edit, fx: (edit.fx ?? []).filter((_, j) => j !== i) });
+    const removeDip = (i: number) =>
+      onAudioEditChange?.({ ...edit, music_dips: (edit.music_dips ?? []).filter((_, j) => j !== i) });
+    return (
+      <>
+        {edit.source_keys?.length || edit.music_keys?.length ? (
+          <svg className="ctl-aud-keys" width={innerW} height={54}>
+            {keyLine(edit.source_keys, "ctl-aud-key--source")}
+            {keyLine(edit.music_keys, "ctl-aud-key--music")}
+          </svg>
+        ) : null}
+        {(edit.music_duck ?? []).map((d, i) => (
+          <span
+            key={`duck${i}`}
+            className="ctl-aud ctl-aud--duck"
+            style={{ left: d.start * pps, width: Math.max(4, (d.end - d.start) * pps) }}
+            title={`Музыка тише на ${Math.abs(d.gain_db)} дБ: ${formatDuration(d.start)}–${formatDuration(d.end)}`}
+          />
+        ))}
+        {(edit.music_dips ?? []).map((d, i) => (
+          <span
+            key={`dip${i}`}
+            className="ctl-aud ctl-aud--dip"
+            style={{ left: (d.at - d.before) * pps, width: Math.max(4, d.before * pps) }}
+            title={`Тишина музыки перед ударом на ${formatDuration(d.at)} (${d.before.toFixed(2)} с). Двойной щелчок — убрать`}
+            onDoubleClick={() => removeDip(i)}
+          >
+            ♪✕
+          </span>
+        ))}
+        {(edit.fx ?? []).map((f, i) => (
+          <span
+            key={`fx${i}`}
+            className="ctl-aud ctl-aud--fx"
+            style={{ left: f.start * pps, width: Math.max(8, (f.end - f.start) * pps) }}
+            title={`${FX_LABEL[f.fx] ?? f.fx}${f.track !== undefined ? ` · дорожка ${f.track}` : ""}${
+              f.rate ? ` · ×${f.rate}` : ""
+            }: ${formatDuration(f.start)}–${formatDuration(f.end)}. Двойной щелчок — убрать`}
+            onDoubleClick={() => removeFx(i)}
+          >
+            {(FX_LABEL[f.fx] ?? f.fx).split(" ")[0]}
+          </span>
+        ))}
+        {onAudioEditChange
+          ? bounds.slice(0, -1).map((row, k) => {
+              const prev = pieces[k];
+              const next = pieces[k + 1];
+              if (!prev || !next) return null;
+              const shift = jlDrag?.k === k ? jlDrag.shift : joinShift(edit.joins, prev.id, next.id);
+              const x = row.end * pps;
+              return (
+                <span key={`jl${k}`}>
+                  {shift ? (
+                    <span
+                      className={`ctl-aud ctl-aud--jl${shift > 0 ? " is-l" : " is-j"}`}
+                      style={{ left: Math.min(x, x + shift * pps), width: Math.abs(shift) * pps }}
+                    >
+                      {shift > 0 ? "L" : "J"} {Math.abs(shift).toFixed(2)}
+                    </span>
+                  ) : null}
+                  <span
+                    className={`ctl-jl-handle${shift ? " on" : ""}`}
+                    style={{ left: x + shift * pps }}
+                    title={
+                      "J/L: тяните вправо — звук этого куска тянется под следующую картинку (L), влево — звук " +
+                      "следующего куска начинается раньше картинки (J). Двойной щелчок — без J/L"
+                    }
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setJlDrag({ k, startX: e.clientX, base: shift, shift });
+                    }}
+                    onDoubleClick={() =>
+                      onAudioEditChange({ ...edit, joins: setJoinShift(edit.joins, prev.id, next.id, 0) })
+                    }
+                  />
+                </span>
+              );
+            })
+          : null}
+      </>
+    );
+  };
 
   return (
     <div className="ctl">
@@ -735,10 +872,14 @@ export function ClipTimeline({
                     className={`ctl-block ctl-block--mute${selected?.kind === "mute" && selected.index === i ? " on" : ""}`}
                     style={{ left: lv.a * pps, width: Math.max(8, (lv.b - lv.a) * pps) }}
                     onPointerDown={(e) => startDrag(e, { kind: "mute", index: i, mode: "move", a: m.start, b: m.end })}
-                    title={`Тишина ${formatDuration(m.start)}–${formatDuration(m.end)}: звук исходника заглушён, картинка остаётся. Del — убрать`}
+                    title={`Тишина ${formatDuration(m.start)}–${formatDuration(m.end)}: ${
+                      m.track !== undefined
+                        ? `заглушена дорожка ${m.track} записи (остальные звучат; превью её не глушит)`
+                        : "звук исходника заглушён"
+                    }, картинка остаётся. Del — убрать`}
                   >
                     <span className="ctl-grip" data-resize="start" />
-                    <span className="ctl-block-label">🔇</span>
+                    <span className="ctl-block-label">{m.track !== undefined ? `🔇${m.track}` : "🔇"}</span>
                     <span className="ctl-grip" data-resize="end" />
                   </div>
                 );
@@ -750,6 +891,7 @@ export function ClipTimeline({
                 />
               ) : null}
               {muteMark != null ? <span className="ctl-mute-mark" style={{ left: muteMark * pps }} title="Начало тишины" /> : null}
+              {audioEditOverlay()}
             </div>
 
             <div className="ctl-playhead" style={{ left: playhead * pps }} />

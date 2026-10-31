@@ -141,6 +141,10 @@ def remap_render(render: dict, old_pieces: list[dict], new_pieces: list[dict]) -
             cuts.append({**cut, "start": got[0], "end": got[1]})
     fresh["cuts"] = cuts
     fresh["mute"], fresh["gain"] = remap_spans(render.get("mute"), mapper), remap_spans(render.get("gain"), mapper)
+    if render.get("audio"):
+        from app.audio_edit import remap_audio
+
+        fresh["audio"] = remap_audio(render.get("audio"), mapper)
     lost = len(render.get("layers") or []) - len(fresh["layers"])
     note = "слои, камера, вставки, вырезы, тишина и громкость исходника сдвинуты вслед за кусками"
     if lost > 0:
@@ -219,12 +223,13 @@ class TransitionMap:
 
 def remap_for_transition(render: dict, segments: list[dict], old_transition: Any) -> dict:
     """Перенести титры, камеру и вставки на новый переход (render уже с новым)."""
+    from app.audio_edit import remap_audio
     from app.cuts import remap_camera, remap_inserts, remap_layers
 
     mapper = TransitionMap(segments, old_transition, render.get("transition"))
     if not mapper or len(segments or []) < 2:
         return render
-    return {
+    out = {
         **render,
         "layers": remap_layers(render.get("layers") or [], mapper),
         "camera": remap_camera(render.get("camera") or [], mapper),
@@ -232,3 +237,6 @@ def remap_for_transition(render: dict, segments: list[dict], old_transition: Any
         "mute": remap_spans(render.get("mute"), mapper),
         "gain": remap_spans(render.get("gain"), mapper),
     }
+    if render.get("audio"):
+        out["audio"] = remap_audio(render.get("audio"), mapper)
+    return out

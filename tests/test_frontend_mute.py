@@ -30,6 +30,10 @@ CASES = [
      {"start": 1.6, "end": 2.5}, {"start": 1.65, "end": 1.9, "by": "censor", "level": 9},
      {"start": 1.5, "end": 1.7, "by": "censor", "level": 2}, {"start": 3, "end": 3.2, "by": "other"}],
     [{"start": i * 0.4, "end": i * 0.4 + 0.2, "by": "censor", "level": 1} for i in range(70)],
+    # Тишина одной дорожки (track): сливается только со своей дорожкой, мат дорожки — отдельно.
+    [{"start": 1, "end": 2, "track": 1}, {"start": 1.5, "end": 3, "track": 1}, {"start": 1.2, "end": 1.8},
+     {"start": 1.9, "end": 2.2, "track": 0}, {"start": 1, "end": 2, "by": "censor", "level": 2, "track": 1},
+     {"start": 1, "end": 2, "by": "censor", "level": 2}, {"start": 4, "end": 5, "track": 9}],
 ]
 
 

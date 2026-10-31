@@ -907,6 +907,8 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
             "cover": (render.get("cover") or {}).get("mode"),
             "mute": render.get("mute") or [],
             "gain": render.get("gain") or [],
+            # Звуковой монтаж: J/L (piece — номер куска), ключи, ducking, эффекты (app/audio_tools.py).
+            "audio": _audio_view(render, plan.get("segments") or []),
             # Стоп-кадры посреди ролика (freeze_frame): at — шкала final без стоп-кадров.
             "freezes": render.get("freezes") or [],
             # Формат вывода (app/formats.py): format, кадр и опорный кадр слоёв; aspect — старое имя.
@@ -922,6 +924,12 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
     }
+
+
+def _audio_view(render: dict, segments: list[dict]) -> dict:
+    from app.audio_tools import audio_view
+
+    return audio_view(render, segments)
 
 
 def _frame_view(render: dict) -> dict:
@@ -2916,7 +2924,25 @@ def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
         note += (f" Отрезки мата ({len(censored)}, by: censor) оставлены — снять их: "
                  "censor_profanity(clear=true).")
     fresh = _save_render(ctx, {**render, "mute": clean})
-    return {"ok": True, "mute": fresh["mute"], "note": note}
+    out = {"ok": True, "mute": fresh["mute"], "note": note}
+    warnings = _track_warnings(ctx, fresh["mute"])
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _track_warnings(ctx: ToolContext, spans: list[dict]) -> list[str]:
+    """Отрезки дорожки, которой нет в звуке ролика (set_source_audio), ничего не изменят."""
+    from app.source_audio import source_tracks
+
+    tracks = {s["track"] for s in spans if s.get("track") is not None}
+    if not tracks:
+        return []
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    mix = source_tracks(ctx.store.get_source(int(plan["source_id"]))) or [0]
+    missing = sorted(t for t in tracks if t not in mix)
+    return ([f"дорожек {missing} нет в звуке ролика (смесь {mix}) — их отрезки ничего не изменят; "
+             "set_source_audio tracks"] if missing else [])
 
 
 def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
@@ -2926,6 +2952,8 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
 
     options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
                "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    if args.get("track") not in (None, ""):
+        options["track"] = args.get("track")  # только эта дорожка (число или "voice"), app/censor.py
     levels = args.get("levels")
     if args.get("level") is not None and levels is None:
         levels = args.get("level")
@@ -3961,6 +3989,9 @@ def h_set_source_gain(ctx: ToolContext, args: dict) -> dict:
     if any(g["gain_db"] > 12 for g in clean):
         out["warnings"] = ["подъём больше 12 дБ поднимает и шум — если голос тонет в игре по всему ролику, лучше "
                            "громкость дорожки микрофона: set_source_audio tracks [{track, gain_db}]"]
+    out["warnings"] = out.get("warnings", []) + _track_warnings(ctx, fresh["gain"])
+    if not out["warnings"]:
+        out.pop("warnings")
     return out
 
 
@@ -5051,9 +5082,11 @@ def _build_registry() -> list[Tool]:
             "Тишина вместо звука исходника на отрезках ranges [{start, end}] (секунды клипа до вырезов), "
             "картинка остаётся — для вшитых эффектов старого монтажа, шума, мата (find_noises покажет где). "
             "Заменяет прежний список ручных; [] — снять их. Отрезки мата (by: censor, censor_profanity) остаются, "
-            "если в ranges нет помеченных. / Mute source audio in ranges.",
-            _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"}},
-                                                            ["start", "end"])}}, ["ranges"]),
+            "если в ranges нет помеченных. track — только эта дорожка записи (0 — игра, 1 — микрофон у NVIDIA/OBS): "
+            "остальные звучат. / Mute source audio in ranges (optionally one track).",
+            _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"},
+                                                            "track": {"type": "integer"}},
+                                                           ["start", "end"])}}, ["ranges"]),
             h_mute_audio, mutating=True, label=lambda a: f"Глушу звук ({len(a.get('ranges') or [])} отр.)",
         ),
         Tool(
@@ -5069,12 +5102,15 @@ def _build_registry() -> list[Tool]:
             "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
             "услышал мимо субтитров. heard на уровне 3 — «узнаётся по контексту»: тишиной не лечится. "
             "verify=false — быстро, без рендера. levels — число всем или {i: уровень}; skip [i] — не трогать "
-            "слово; clear=true — снять свои отрезки. / Mute profanity mid-word, star it in subtitles, "
+            "слово; clear=true — снять свои отрезки. track: \"voice\" — глушить только дорожку голоса (запись "
+            "игра+микрофон со своей speech_tracks; неизвестна — весь звук), число — эту дорожку; слово, что "
+            "узнаётся и так, verify заглушит целиком. / Mute profanity mid-word, star it in subtitles, "
             "verify by Whisper on the render.",
             _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
-                  "clear": {"type": "boolean"}}),
+                  "clear": {"type": "boolean"},
+                  "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"}}),
             h_censor_profanity, mutating=True,
             label=lambda a: "Глушу мат" + ("" if a.get("verify") is False else " и проверяю рендером"),
         ),
@@ -5084,9 +5120,11 @@ def _build_registry() -> list[Tool]:
             "вырезов, как mute_audio и find_noises): поднять тихий кусок (+6..+12 дБ) или приглушить громкий "
             "(−6..−20 дБ), картинка та же; звуки слоёв и музыка не меняются, ролик потом выравнивается целиком. "
             "Заменяет прежний список; [] — снять. Тихий микрофон по всему ролику — громкость дорожки "
-            "(set_source_audio tracks [{track, gain_db}]), а не отрезки. / Source audio gain in ranges.",
+            "(set_source_audio tracks [{track, gain_db}]), а не отрезки. track — громкость только этой дорожки "
+            "(приглушить игру под фразой, микрофон не трогая). / Source audio gain in ranges (optionally one track).",
             _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"},
-                                                            "gain_db": {"type": "number"}},
+                                                            "gain_db": {"type": "number"},
+                                                            "track": {"type": "integer"}},
                                                            ["start", "end", "gain_db"])}}, ["ranges"]),
             h_set_source_gain, mutating=True,
             label=lambda a: f"Громкость исходника ({len(a.get('ranges') or [])} отр.)",
@@ -5549,7 +5587,10 @@ DISCOVERY_TOOLS = [
 def registry() -> dict[str, Tool]:
     global _REGISTRY
     if _REGISTRY is None:
-        _REGISTRY = {tool.name: tool for tool in _build_registry()}
+        # Звуковой монтаж (audio_map, J/L, ключи, ducking, эффекты) — свой модуль app/audio_tools.py.
+        from app.audio_tools import tools as audio_tools
+
+        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools()]}
     return _REGISTRY
 
 
