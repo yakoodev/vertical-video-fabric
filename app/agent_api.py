@@ -8,7 +8,8 @@ Codex и любого MCP-клиента по транспорту Streamable HT
 JSON-RPC, а не официальный SDK ``mcp``: SDK тянет десяток пакетов и требует
 встроить свой менеджер сессий в lifespan приложения (main.py), а авторизация
 у нас — тот же Bearer-токен, что и у всего API. Нам нужен ровно stateless-срез
-протокола: ``initialize``, ``ping``, ``tools/list``, ``tools/call`` и уведомления.
+протокола: ``initialize``, ``ping``, ``tools/list``, ``tools/call``, ``prompts/list``,
+``prompts/get`` (плейбуки docs/playbooks, app/playbooks.py) и уведомления.
 Спецификация разрешает серверу отвечать на POST обычным ``application/json`` и не
 открывать SSE-поток (GET → 405), так что любой клиент Streamable HTTP с этим работает.
 """
@@ -45,6 +46,8 @@ get_clip → render.format и render.frame (9:16 — 1080×1920, 1:1 — 1080×1
 Формат выбирает владелец (set_format — только по его просьбе).
 Слои: add_layers / update_layer / remove_layers, наезды: set_camera (заменяет все ключи).
 Справка по слоям: get_motion_reference(format?); полный контракт — docs/motion/spec.md.
+Типовые заказы (нарезка стрима, промо, мемы) — плейбуки: get_playbook() — список, get_playbook(name) — шаги
+и чек-лист (то же — MCP prompts).
 Каждая правка делает снимок истории: владелец откатит её Ctrl+Z в редакторе."""
 
 
@@ -213,6 +216,27 @@ def mcp_call_tool(store: Any, name: str, arguments: dict) -> dict:
     return out
 
 
+def mcp_prompt_list() -> list[dict]:
+    """Плейбуки (docs/playbooks/*.md) как MCP prompts: тот же текст, что у get_playbook."""
+    from app import playbooks
+
+    return [{"name": p["name"], "title": p["title"], "description": p["description"]}
+            for p in playbooks.list_playbooks()]
+
+
+def mcp_get_prompt(name: str) -> dict | None:
+    from app import playbooks
+
+    try:
+        book = playbooks.get_playbook(name)
+    except KeyError:
+        return None
+    return {
+        "description": book["description"] or book["title"],
+        "messages": [{"role": "user", "content": {"type": "text", "text": book["text"]}}],
+    }
+
+
 def _rpc_error(request_id: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
@@ -235,7 +259,7 @@ def mcp_handle(store: Any, message: Any) -> dict | None:
             version = asked if asked in MCP_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSIONS[0]
             result: dict = {
                 "protocolVersion": version,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False}},
                 "serverInfo": MCP_SERVER_INFO,
                 "instructions": MCP_INSTRUCTIONS,
             }
@@ -249,8 +273,18 @@ def mcp_handle(store: Any, message: Any) -> dict | None:
                 return _rpc_error(request_id, -32602, "params.name is required")
             arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
             result = mcp_call_tool(store, name, arguments)
-        elif method in ("resources/list", "prompts/list"):
-            result = {method.split("/")[0]: []}
+        elif method == "prompts/list":
+            result = {"prompts": mcp_prompt_list()}
+        elif method == "prompts/get":
+            name = params.get("name")
+            if not isinstance(name, str) or not name:
+                return _rpc_error(request_id, -32602, "params.name is required")
+            prompt = mcp_get_prompt(name)
+            if prompt is None:
+                return _rpc_error(request_id, -32602, f"Unknown prompt: {name}")
+            result = prompt
+        elif method == "resources/list":
+            result = {"resources": []}
         else:
             return _rpc_error(request_id, -32601, f"Method not found: {method}")
     except Exception as exc:  # noqa: BLE001 - ошибка одного вызова не роняет сервер

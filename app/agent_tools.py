@@ -3110,6 +3110,20 @@ def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
 
 
+def h_get_playbook(_ctx: ToolContext, args: dict) -> dict:
+    """Плейбук — пошаговый рецепт заказа (docs/playbooks/<name>.md); без name — список."""
+    from app import playbooks
+
+    name = str(args.get("name") or "").strip()
+    items = playbooks.list_playbooks()
+    if not name:
+        return {"playbooks": items, "note": "get_playbook(name) — текст рецепта: шаги, инструменты, чек-лист"}
+    try:
+        return playbooks.get_playbook(name)
+    except KeyError as exc:
+        raise ToolError(f"плейбука «{name}» нет; есть: {', '.join(p['name'] for p in items) or '—'}") from exc
+
+
 def h_set_chroma_key(ctx: ToolContext, args: dict) -> dict:
     """Хромакей источника клипа: on — найти зелёнку (или взять color), off — убрать."""
     from app.chroma_key import detect_key, normalize_key
@@ -5096,6 +5110,16 @@ def _build_registry() -> list[Tool]:
                   "remove": {"type": "boolean"}}),
             h_set_nameplate, mutating=True,
             label=lambda a: "Снимаю плашку канала" if a.get("remove") else f"Плашка канала {a.get('handle') or ''}".strip(),
+        ),
+        Tool(
+            "get_playbook", "Читаю плейбук",
+            "Плейбук — пошаговый рецепт типового заказа по опыту реальных работ: шаги, какие инструменты, "
+            "чек-лист перед сдачей. Без name — список (stream-shorts — нарезка стрима в вертикальные шортсы, "
+            "stream-horizontal — горизонтальная нарезка стрима 10–15 мин, meme-insert — мем/вставка поверх "
+            "видео, app-promo — промо приложения). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
+            "for a typical order; no name — list.",
+            _obj({"name": {"type": "string"}}), h_get_playbook, scope="global",
+            label=lambda a: f"Плейбук {a.get('name') or ''}".strip(),
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",

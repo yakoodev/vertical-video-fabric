@@ -87,6 +87,8 @@ COPY package.json package-lock.json* /app/
 RUN npm install --omit=dev
 
 COPY app /app/app
+# Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.
+COPY docs/playbooks /app/docs/playbooks
 COPY node /app/node
 COPY tests /app/tests
 COPY pytest.ini /app/pytest.ini
