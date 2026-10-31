@@ -23,7 +23,9 @@ import { pngtuberRenderer } from "./layers/pngtuber";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
-import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, Layer, LayerType, RenderEnv, ScratchCanvas, VoiceTrack } from "./types";
+import { drawFx } from "./layers/fx";
+import type { Levels } from "./levels";
+import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, ScratchCanvas, VoiceTrack } from "./types";
 import { layerUnit, refSize } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
@@ -48,14 +50,15 @@ const NO_CHAT: ChatMessage[] = [];
 
 /**
  * Данные хоста для слоёв, которые рисуют не свои props, а данные клипа:
- * слова речи (`captions`), сообщения чата (`chat`) и состояния голоса (`pngtuber`,
- * по id слоя). Ради совместимости вместо объекта можно передать просто массив слов.
+ * слова речи (`captions`), сообщения чата (`chat`), состояния голоса (`pngtuber`,
+ * по id слоя) и огибающие громкости (`react` любого слоя). Ради совместимости вместо
+ * объекта можно передать просто массив слов.
  */
-export type FrameData = { words?: CaptionWord[]; chat?: ChatMessage[]; voice?: Record<string, VoiceTrack> };
+export type FrameData = { words?: CaptionWord[]; chat?: ChatMessage[]; voice?: Record<string, VoiceTrack>; levels?: Levels };
 
 function frameOf(t: number, data?: CaptionWord[] | FrameData): FrameInfo {
   if (Array.isArray(data)) return { t, words: data, chat: NO_CHAT };
-  return { t, words: data?.words || NO_WORDS, chat: data?.chat || NO_CHAT, voice: data?.voice };
+  return { t, words: data?.words || NO_WORDS, chat: data?.chat || NO_CHAT, voice: data?.voice, levels: data?.levels };
 }
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -112,12 +115,18 @@ export function drawFrame(
   env: RenderEnv,
   pass?: "behind" | "front",
 ): void {
-  const data: FrameData = { words: comp.words, chat: comp.chat, voice: comp.voice };
+  const data: FrameData = { words: comp.words, chat: comp.chat, voice: comp.voice, levels: comp.levels };
   const visible = visibleLayers(comp.layers || [], t);
   let cam: CameraMatrix | null | undefined;
   for (const layer of visible) {
     // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
     if (pass && !!layer.behind !== (pass === "behind")) continue;
+    if (layer.type === "fx") {
+      // Эффект кадра — во весь кадр поверх уже нарисованного, без матрицы слоя и камеры.
+      const st = resolveLayer(layer, t, refSize(env), comp.levels);
+      if (st) drawFx(ctx, layer as FxLayer, st, env);
+      continue;
+    }
     // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
     // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
     if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;
@@ -172,11 +181,18 @@ export function layerBox(
   data?: CaptionWord[] | FrameData,
   cam?: CameraMatrix | null,
 ): LayerBox | null {
+  const frame = frameOf(t, data);
+  if (layer.type === "fx") {
+    // Эффект — во весь кадр: рамка выделения по краю кадра (мышью его не выбрать, см. edit.ts).
+    return resolveLayer(layer, t, refSize(env), frame.levels)
+      ? { cx: env.width / 2, cy: env.height / 2, w: env.width, h: env.height, rotation: 0 }
+      : null;
+  }
   const r = RENDERERS[layer.type];
-  const st = resolveLayer(layer, t, refSize(env));
+  const st = resolveLayer(layer, t, refSize(env), frame.levels);
   if (!r || !st) return null;
   ctx.save();
-  const size = r.measure(ctx, layer, st, env, frameOf(t, data));
+  const size = r.measure(ctx, layer, st, env, frame);
   ctx.restore();
   const z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
   const k = layerUnit(env) * st.scale * z.scale;
@@ -258,6 +274,15 @@ function applyWipe(ctx: Ctx2D, st: LayerState, size: { w: number; h: number }): 
 
 function shadowParams(layer: Layer, st: LayerState, env: RenderEnv) {
   const sh = layer.shadow;
+  if (st.glow > 0.002) {
+    // Свечение от звука (react glow): тень цветом свечения, растёт с громкостью поверх
+    // своей тени слоя (её размытие — основа, сдвиг сохраняется).
+    const k = layerUnit(env) * st.scale;
+    const g = Math.min(2, st.glow);
+    const color = layer.react?.color || sh?.color || "#ffffff";
+    const op = Math.min(1, (sh?.opacity ?? 0.9) * Math.min(1, 0.35 + g));
+    return { color: rgba(color, op), blur: ((sh?.blur ?? 0) + 60 * g) * k, x: (sh?.x ?? 0) * k, y: (sh?.y ?? 0) * k };
+  }
   if (!sh) return null;
   const op = sh.opacity ?? 0.6;
   const blur = sh.blur ?? 0;
@@ -274,7 +299,7 @@ export function drawLayer(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, d
   const frame = frameOf(t, data);
   const r = RENDERERS[layer.type];
   if (!r) return;
-  const st = resolveLayer(layer, t, refSize(env));
+  const st = resolveLayer(layer, t, refSize(env), frame.levels);
   if (!st || st.opacity <= 0.002 || st.scale <= 0.002 || st.wipe <= 0 || st.draw <= 0) return;
 
   const blend = BLEND[layer.blend ?? "normal"] ?? "source-over";

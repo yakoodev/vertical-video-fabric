@@ -664,8 +664,9 @@ def is_backdrop_layer(layer: dict) -> bool:
 
 
 def is_content_layer(layer: dict) -> bool:
-    """Что делает кадр непустым: всё видимое, кроме фона, частиц и субтитров (их видно только на речи)."""
-    return (layer.get("type") not in ("audio", "particles", "captions") and not layer.get("hidden")
+    """Что делает кадр непустым: всё видимое, кроме фона, частиц, субтитров (их видно только на речи)
+    и эффекта кадра (зерно на пустом фоне — всё равно пустой кадр)."""
+    return (layer.get("type") not in ("audio", "particles", "captions", "fx") and not layer.get("hidden")
             and not is_backdrop_layer(layer))
 
 

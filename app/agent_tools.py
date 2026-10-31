@@ -525,7 +525,7 @@ def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
     во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
     kind = layer.get("type")
-    if kind in ("shape", "captions", "particles", "nameplate") or layer.get("behind"):
+    if kind in ("shape", "captions", "particles", "nameplate", "fx") or layer.get("behind"):
         # Плашка канала висит весь ролик маленькой подписью в углу — не «графика поверх».
         return True
     if kind in ("image", "video"):
@@ -564,7 +564,8 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     sides = fmt != "9:16"
     warnings: list[str] = []
     strip = cam_strip(layout, fmt)
-    visible = [l for l in layers if l.get("type") != "audio" and not l.get("hidden")]
+    warnings += motion.fx_crowding(layers)  # эффекты кадра: больше двух разом — каша
+    visible = [l for l in layers if l.get("type") not in ("audio", "fx") and not l.get("hidden")]
     for layer in visible:
         lid = str(layer.get("id") or "?")
         if only_ids is not None and lid not in only_ids:
@@ -759,6 +760,7 @@ def _layer_summary(layer: dict) -> str:
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
+        "fx": lambda: f"эффект кадра {props.get('kind') or 'vhs'}",
     }.get(kind, lambda: str(kind or "слой"))()
     return f"{what} на {(_num(layer.get('start'), 0.0) or 0.0):.1f} с"
 
@@ -4355,12 +4357,15 @@ def _motion_reference_text() -> str:
 type: {', '.join(enums['types'])}
 in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text; draw — shape line/arrow/ellipse)
   rise — каждое слово выезжает снизу из-под невидимой маски своей строки с проявлением, по очереди (титры промо, «дорогой» текст)
-loop: {', '.join(enums['loops'])}
+  glitch/scramble — только text (RGB-расслоение со срезами / буквы перебираются и «расшифровываются»); stomp — удар у любого слоя
+loop: {', '.join(enums['loops'])} (glitch — редкие сбои, wave — буквы волной: только text)
+react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0..1, color?}} у любого слоя — дышит громкостью клипа
+  (огибающую считает сервис; music — фоновый трек клипа). Не больше 1–2 «дышащих» слоёв на сцену
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
   text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
-        highlight {{words:[индексы слов], color, bg}},
+        highlight {{words:[индексы слов], color, bg, style plate|marker (маркер под буквами), draw (с, прорисовка слева направо), delay}},
         backdrop {{color #000000, opacity 0.55, spread px}}|true|null — мягкое затемнение-градиент ЗА текстом (scrim):
         титр читается, когда под него наездом заезжает телефон/пёстрый фон. Символы-декор {motion.DECOR_GLYPHS}
         внутри текста рисуются векторно цветом текста (в шрифтах их нет — без этого был бы квадрат)
@@ -4403,6 +4408,9 @@ props по типу:
          пиксель-арт без мыла), bounce {{amount 0..40}} (подскок в такт голосу), flipX. Состояние по кадрам считает сервис
          (comp.voice) — проще add_pngtuber(idle_asset, talk_asset, track): правый нижний угол над безопасной зоной, w ≈ 300
   image с анимированным файлом (GIF/APNG/webm с альфой) играет его по кругу с прозрачностью с начала слоя
+  fx: kind {'|'.join(motion.FX_KINDS)}, intensity 0..1, speed 0.1..4, blend (нет — свой у вида), color (flash_frame),
+         colors (light_leak), size (зерно/строки) — эффект кадра во весь кадр поверх видео и слоёв НИЖЕ по track
+         (титры выше по track — чистые); in/out только fade; ≤ {motion.FX_MAX_AT_ONCE} разом, 1–2 на ролик
   audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
          effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
          track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};

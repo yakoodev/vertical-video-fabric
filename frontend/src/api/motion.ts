@@ -73,7 +73,12 @@ export type AssetAnim = {
 /** Состояния голоса PNGtuber по кадрам (POST /api/clip-plans/{id}/voice). */
 export type VoiceTrackDto = { t0: number; fps: number; states: string; levels?: number[]; threshold_db?: number };
 
+/** Огибающие громкости клипа для react слоёв (POST /api/clip-plans/{id}/levels): v — 0..100 по кадрам. */
+export type LevelTrackDto = { t0: number; fps: number; v: number[] };
+
 export const motionApi = {
+  levels: (planId: number, sources: string[], fps = 30) =>
+    api.post<{ levels: Record<string, LevelTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/levels`, { sources, fps }),
   assetAnim: (assetId: string) => api.get<AssetAnim>(`/api/montage-assets/${encodeURIComponent(assetId)}/anim`),
   voice: (planId: number, layers: unknown[], fps = 30) =>
     api.post<{ voice: Record<string, VoiceTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/voice`, { layers, fps }),

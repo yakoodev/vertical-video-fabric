@@ -55,7 +55,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio", "pngtuber", "nameplate",
+    "chat", "audio", "pngtuber", "nameplate", "fx",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -65,14 +65,35 @@ EASINGS = (
 DEFAULT_EASING = "inOutCubic"
 ANIMATIONS = (
     "none", "fade", "pop", "zoom", "slideUp", "slideDown", "slideLeft", "slideRight",
-    "drop", "spin", "blur", "wipe", "typewriter", "words", "draw", "rise",
+    "drop", "spin", "blur", "wipe", "typewriter", "words", "draw", "rise", "glitch", "scramble", "stomp",
 )
-# rise — слова выезжают снизу из-под маски своей строки (frontend/src/motion/layers/text.ts).
-TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise")
+# rise — слова выезжают снизу из-под маски своей строки (frontend/src/motion/layers/text.ts);
+# glitch — RGB-расслоение и срезы букв, scramble — буквы перебираются и «расшифровываются».
+# stomp (удар) — у любого слоя: влетает крупным, «впечатывается» и встряхивается.
+TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise", "glitch", "scramble")
+# Похожие имена, которые пишут агенты, → наши (с пометкой).
+ANIMATION_ALIASES = {"decode": "scramble", "decrypt": "scramble", "hacker": "scramble", "slam": "stomp",
+                     "stamp": "stomp", "punch": "stomp", "impact": "stomp", "rgb": "glitch", "glitchIn": "glitch"}
 # «draw» — обводка рисуется; у формы это линия, стрелка и круг (эллипс).
 DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse")
-LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink")
+LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink", "glitch", "wave")
+# Циклы букв — только у текста; у остальных — похожий цикл движения.
+TEXT_ONLY_LOOPS = {"glitch": "shake", "wave": "float"}
+LOOP_ALIASES = {"waves": "wave", "sine": "wave", "flicker": "glitch", "breathe": "pulse"}
 BLENDS = ("normal", "multiply", "screen", "overlay", "add")
+# Эффект кадра (frontend/src/motion/layers/fx.ts): процедурно, поверх видео и слоёв ниже по дорожкам.
+FX_KINDS = ("vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain_overlay")
+FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", "lines": "scanlines",
+              "leak": "light_leak", "lightleak": "light_leak", "light-leak": "light_leak", "rgb": "chromatic",
+              "aberration": "chromatic", "chromatic_aberration": "chromatic", "flash": "flash_frame",
+              "white_flash": "flash_frame", "grain": "grain_overlay", "film_grain": "grain_overlay", "noise": "grain_overlay"}
+# Сколько эффектов кадра одновременно — уже каша (предупреждение агенту, не ошибка).
+FX_MAX_AT_ONCE = 2
+# Реакция слоя на звук (frontend/src/motion/levels.ts): огибающую считает app/audio_react.py.
+REACT_SOURCES = ("voice", "music", "mix")
+REACT_PROPS = ("scale", "glow", "opacity", "y")
+REACT_ALIASES = {"speech": "voice", "mic": "voice", "all": "mix", "audio": "mix", "sound": "mix",
+                 "brightness": "glow", "bounce": "y", "jump": "y", "size": "scale", "alpha": "opacity"}
 SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst", "star4")
 # Частицы одним слоем (frontend/src/motion/layers/particles.ts): вид, форма, предел числа.
 PARTICLE_KINDS = ("burst", "sparkle", "confetti", "rise")
@@ -92,12 +113,15 @@ NAMEPLATE_OUTROS = ("none", "collapse")
 NAMEPLATE_OUTRO_SEC = 0.6
 NAMEPLATE_SIZE = 74
 ALIGNS = ("left", "center", "right")
+# Подсветка слов текста: плашка за словом (как было) или маркер под буквами.
+HIGHLIGHT_STYLES = ("plate", "marker")
 # Анимированные субтитры: пресеты вида (CAPTION_STYLES движка) и анимации слов.
 CAPTION_STYLES = (
-    "hormozi", "mrbeast", "box", "karaoke", "neon", "minimal", "typewriter", "comic", "gradient", "outline",
+    "hormozi", "mrbeast", "box", "karaoke", "neon", "minimal", "typewriter", "comic", "gradient", "outline", "stomp",
 )
 DEFAULT_CAPTION_STYLE = "hormozi"
-CAPTION_ANIMATIONS = ("pop", "bounce", "fade", "karaoke", "typewriter", "none")
+# stomp — слово «впечатывается» в свой момент с встряской (субтитры-акценты).
+CAPTION_ANIMATIONS = ("pop", "bounce", "fade", "karaoke", "typewriter", "stomp", "none")
 # Где субтитры по умолчанию: выше интерфейса площадки (нижние ~18% кадра заняты).
 DEFAULT_CAPTIONS_Y = 0.68
 MAX_CAPTION_MARKS = 200
@@ -590,6 +614,12 @@ HIGHLIGHT = Obj(
         "words": ListOf(Num(0, 0, 999, integer=True), 100),
         "color": Color("#ffd400"),
         "bg": Color(None, nullable=True),
+        # marker — полоса маркера под словами (соседние — одной полосой) вместо плашки; draw — за
+        # сколько секунд плашка/маркер прорисовываются слева направо (у маркера по умолчанию 0.45),
+        # delay — с какой секунды слоя (нет — после входа).
+        "style": Opt(Choice("plate", HIGHLIGHT_STYLES)),
+        "draw": Opt(Num(0.45, 0, 3, 3)),
+        "delay": Opt(Num(0, 0, 60, 3)),
     },
     nullable=True,
 )
@@ -865,10 +895,31 @@ PROPS: dict[str, dict] = {
         "bounce": Opt(OnOff(Obj({"amount": Num(10, 0, 40, 1)}, nullable=True))),
         "flipX": Flag(False),
     },
+    # Эффект кадра поверх видео и слоёв ниже по дорожкам. Сила и наложение необязательны: не заданы —
+    # свои у вида (FX_DEFAULTS движка: зерно overlay, пятна света screen, вспышка add…).
+    "fx": {
+        "kind": Choice("vhs", FX_KINDS),
+        "intensity": Opt(Num(0.6, 0, 1, 3)),
+        "speed": Num(1, 0.1, 4, 3),
+        "blend": Opt(Choice("auto", ("auto", *BLENDS))),
+        "color": Opt(Color("#ffffff")),  # вспышка flash_frame
+        "colors": Opt(Colors(None, 1, 4)),  # пятна light_leak; нет — тёплые
+        "size": Opt(Num(1.6, 0.5, 12, 2)),  # зерно / шаг строк, опорн. px
+        "seed": Opt(Num(0, 0, 999999, integer=True)),
+    },
 }
 
 ANIM = {"type": Choice("none", ANIMATIONS), "duration": Num(0.3, MIN_ANIM_SEC, MAX_ANIM_SEC, 3)}
 LOOP = {"type": Choice("none", LOOPS), "speed": Num(1, 0.1, 5, 3), "amount": Num(1, 0, 3, 3)}
+# Реакция на громкость клипа: source — чья огибающая, prop — что «дышит», amount 0..3, smooth 0..1
+# (окно сглаживания до 0.5 с назад), color — цвет свечения (prop glow).
+REACT = {
+    "source": Choice("voice", REACT_SOURCES),
+    "prop": Choice("scale", REACT_PROPS),
+    "amount": Num(1, 0, 3, 3),
+    "smooth": Num(0.15, 0, 1, 3),
+    "color": Opt(Color("#ffffff")),
+}
 
 # Общие поля любого слоя (кроме id/type/start/end/keys/in/out/loop/props —
 # у них своя логика ниже).
@@ -1019,9 +1070,19 @@ def _norm_keys(raw: Any, rep: _Report, where: str, ltype: str = "") -> dict:
     return out
 
 
+def _alias(raw: Any, aliases: dict, options: tuple, rep: _Report, where: str) -> Any:
+    """Похожее имя (``decode``, ``crt``, ``speech``) → наше, с пометкой; иначе как есть."""
+    if isinstance(raw, str) and raw not in options and raw in aliases:
+        rep(where, f"{raw!r} — это {aliases[raw]!r}, заменено")
+        return aliases[raw]
+    return raw
+
+
 def _norm_anim(raw: Any, rep: _Report, where: str, layer: dict) -> dict:
     if isinstance(raw, str):  # «"in": "pop"» — прощаем краткую запись
         raw = {"type": raw}
+    if isinstance(raw, dict) and "type" in raw:
+        raw = {**raw, "type": _alias(raw.get("type"), ANIMATION_ALIASES, ANIMATIONS, rep, f"{where}.type")}
     if isinstance(raw, dict) and (raw.get("type") == "none" or (
             _finite(raw.get("duration")) is not None and _finite(raw.get("duration")) <= 0)):
         # «out: {duration: 0}» / type none — это «без анимации», а не ошибка длины.
@@ -1029,7 +1090,10 @@ def _norm_anim(raw: Any, rep: _Report, where: str, layer: dict) -> dict:
     anim = Obj(ANIM).norm(raw, rep, where) if raw is not None else Obj(ANIM).fill()
     kind = anim["type"]
     ltype = layer["type"]
-    if kind in TEXT_ONLY_ANIMATIONS and ltype != "text":
+    if ltype == "fx" and kind not in ("none", "fade"):
+        rep(f"{where}.type", f"«{kind}» — эффект кадра умеет только проявляться (fade) — заменено на fade")
+        anim["type"] = "fade"
+    elif kind in TEXT_ONLY_ANIMATIONS and ltype != "text":
         rep(f"{where}.type", f"«{kind}» бывает только у текста — заменено на fade")
         anim["type"] = "fade"
     elif kind == "draw" and not (ltype == "shape" and layer["props"].get("kind") in DRAW_SHAPE_KINDS):
@@ -1087,18 +1151,87 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
     if props_raw is not None and not isinstance(props_raw, dict):
         rep(f"{where}.props", "нужен объект")
         props_raw = None
+    if ltype == "fx" and isinstance(props_raw, dict) and "kind" in props_raw:
+        props_raw = {**props_raw, "kind": _alias(props_raw["kind"], FX_ALIASES, FX_KINDS, rep, f"{where}.props.kind")}
     layer["props"] = _norm_fields(props_raw or {}, PROPS[ltype], rep, f"{where}.props")
     _unescape_props(layer["props"], ltype)
+    _marker_text_color(layer, props_raw)
     layer["keys"] = _norm_keys(raw.get("keys"), rep, f"{where}.keys", ltype)
     layer["in"] = _norm_anim(raw.get("in"), rep, f"{where}.in", layer)
     layer["out"] = _norm_anim(raw.get("out"), rep, f"{where}.out", layer)
-    loop = raw.get("loop")
-    if isinstance(loop, str):
-        loop = {"type": loop}
-    layer["loop"] = Obj(LOOP).norm(loop, rep, f"{where}.loop") if loop is not None else Obj(LOOP).fill()
+    layer["loop"] = _norm_loop(raw.get("loop"), rep, f"{where}.loop", ltype)
+    if raw.get("react") is not None:
+        react = _norm_react(raw["react"], rep, f"{where}.react", ltype)
+        if react is not None:
+            layer["react"] = react
+    if ltype == "fx":
+        _fx_rules(layer, raw, rep, where)
     _check_required(layer, rep, where)
     _clamp_effect_volume(layer, rep, where)
     return layer
+
+
+def _norm_loop(raw: Any, rep: _Report, where: str, ltype: str) -> dict:
+    """Цикл: похожие имена — наши; циклы букв (glitch, wave) у не-текста — похожее движение."""
+    if isinstance(raw, str):
+        raw = {"type": raw}
+    if raw is None:
+        return Obj(LOOP).fill()
+    if isinstance(raw, dict) and "type" in raw:
+        raw = {**raw, "type": _alias(raw.get("type"), LOOP_ALIASES, LOOPS, rep, f"{where}.type")}
+    loop = Obj(LOOP).norm(raw, rep, where)
+    if ltype == "fx" and loop["type"] != "none":
+        rep(f"{where}.type", f"«{loop['type']}» — у эффекта кадра цикла нет (скорость — props.speed) — отброшен")
+        loop["type"] = "none"
+    elif ltype != "text" and loop["type"] in TEXT_ONLY_LOOPS:
+        other = TEXT_ONLY_LOOPS[loop["type"]]
+        rep(f"{where}.type", f"«{loop['type']}» бывает только у текста — заменено на {other}")
+        loop["type"] = other
+    return loop
+
+
+def _norm_react(raw: Any, rep: _Report, where: str, ltype: str) -> dict | None:
+    """Реакция на звук: ``true``/источник строкой — краткая запись; у звукового слоя её нет."""
+    if ltype == "audio":
+        rep(where, "звуковой слой не рисуется — реакция на звук отброшена")
+        return None
+    if raw is False:
+        return None
+    if raw is True:
+        raw = {}
+    elif isinstance(raw, str):
+        raw = {"source": raw}
+    if isinstance(raw, dict):
+        raw = dict(raw)
+        for name, options in (("source", REACT_SOURCES), ("prop", REACT_PROPS)):
+            if name in raw:
+                raw[name] = _alias(raw[name], REACT_ALIASES, options, rep, f"{where}.{name}")
+    return Obj(REACT).norm(raw, rep, where)
+
+
+def _fx_rules(layer: dict, raw: dict, rep: _Report, where: str) -> None:
+    """Эффект кадра — во весь кадр: камера, тень и наложение слоя к нему не относятся."""
+    if layer.get("followCamera"):
+        rep(f"{where}.followCamera", "эффект кадра во весь кадр — с камерой не едет, снято")
+        layer["followCamera"] = False
+    if layer.get("shadow"):
+        rep(f"{where}.shadow", "у эффекта кадра тени нет — отброшена")
+        layer["shadow"] = None
+    if layer.get("blend", "normal") != "normal":
+        if "blend" not in layer["props"]:
+            layer["props"]["blend"] = layer["blend"]
+            rep(f"{where}.blend", f"наложение эффекта — props.blend; перенесено ({layer['blend']})")
+        layer["blend"] = "normal"
+
+
+def _marker_text_color(layer: dict, props_raw: Any) -> None:
+    """Маркер без своего цвета букв: буквы остаются цветом текста (жёлтое на жёлтом не видно)."""
+    if layer["type"] != "text":
+        return
+    hl = layer["props"].get("highlight")
+    raw_hl = (props_raw or {}).get("highlight") if isinstance(props_raw, dict) else None
+    if isinstance(hl, dict) and hl.get("style") == "marker" and not (isinstance(raw_hl, dict) and "color" in raw_hl):
+        hl["color"] = layer["props"].get("color") or "#ffffff"
 
 
 def _clamp_effect_volume(layer: dict, rep: _Report, where: str) -> None:
@@ -1464,6 +1597,34 @@ def has_pngtuber(layers: Any) -> bool:
     )
 
 
+def react_sources(layers: Any) -> list[str]:
+    """Чьи огибающие громкости нужны видимым слоям с ``react`` (тогда их считает app/audio_react.py)."""
+    found = {
+        str((layer.get("react") or {}).get("source") or "voice")
+        for layer in layers or []
+        if isinstance(layer, dict) and isinstance(layer.get("react"), dict) and not layer.get("hidden")
+        and layer.get("type") != "audio"
+    }
+    return [source for source in REACT_SOURCES if source in found]
+
+
+def fx_crowding(layers: Any) -> list[str]:
+    """Предупреждения: больше ``FX_MAX_AT_ONCE`` эффектов кадра одновременно — каша (не ошибка)."""
+    spans = sorted(
+        (float(layer.get("start") or 0), float(layer.get("end") or 0), str(layer.get("id") or "fx"))
+        for layer in layers or []
+        if isinstance(layer, dict) and layer.get("type") == "fx" and not layer.get("hidden")
+    )
+    out: list[str] = []
+    for start, _end, _id in spans:
+        live = [i for s, e, i in spans if s <= start + 1e-6 < e]
+        if len(live) > FX_MAX_AT_ONCE:
+            out.append(f"эффектов кадра одновременно {len(live)} на {_fmt(round(start, 2))} с ({', '.join(live)}) — "
+                       f"больше {FX_MAX_AT_ONCE} уже каша: оставь один-два")
+            break
+    return out
+
+
 def caption_words(payload: Any) -> list[dict]:
     """Слова субтитров клипа (``{word, start, end}``) → ``comp.words`` (``{t0, t1, w}``)."""
     out: list[dict] = []
@@ -1613,6 +1774,21 @@ def schema_summary() -> dict:
             "messages": "comp.chat = [{t, user, color, text, fragments, badges}] — чат клипа "
                         "(GET /api/clip-plans/{id}/chat); подставляет сервер и редактор",
         },
+        "fx": {
+            "kinds": list(FX_KINDS),
+            "where": "поверх видео и слоёв на дорожках ниже; слои выше — чистые; x/y/rotation не действуют, "
+                     "opacity гасит эффект, scale (ключи, react) умножает intensity; in/out — только fade",
+            "deterministic": "полосы, зерно, вспышки — от id слоя (или seed) и шага времени: превью == рендер",
+            "max_at_once": FX_MAX_AT_ONCE,
+        },
+        "react": {
+            "sources": list(REACT_SOURCES),
+            "props": list(REACT_PROPS),
+            "levels": "comp.levels = {voice|music|mix: {t0, fps, v [0..100]}} — огибающая громкости клипа по "
+                      "кадрам; считает сервер (рендер и POST /api/clip-plans/{id}/levels для превью)",
+            **Obj(REACT).describe(),
+        },
+        "highlight_styles": list(HIGHLIGHT_STYLES),
         "easings": list(EASINGS),
         "custom_easing": "bezier(x1,y1,x2,y2) — CSS cubic-bezier, x 0..1, y -1..2",
         "default_easing": DEFAULT_EASING,
@@ -1620,6 +1796,7 @@ def schema_summary() -> dict:
         "text_only_animations": list(TEXT_ONLY_ANIMATIONS),
         "draw_shape_kinds": list(DRAW_SHAPE_KINDS),
         "loops": list(LOOPS),
+        "text_only_loops": dict(TEXT_ONLY_LOOPS),
         "blends": list(BLENDS),
         "animatable": {name: list(bounds) for name, bounds in ANIMATABLE.items()},
         "layer": {
@@ -1634,6 +1811,7 @@ def schema_summary() -> dict:
             "in": Obj(ANIM).describe(),
             "out": Obj(ANIM).describe(),
             "loop": Obj(LOOP).describe(),
+            "react": {**Obj(REACT, nullable=True).describe(), "optional": True},
         },
         "props": {ltype: {name: spec.describe() for name, spec in fields.items()} for ltype, fields in PROPS.items()},
         "camera": {

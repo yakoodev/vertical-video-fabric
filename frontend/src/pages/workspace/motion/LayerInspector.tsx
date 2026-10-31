@@ -16,14 +16,20 @@ import {
   type ChartDatum,
   type Easing,
   type InOutType,
+  FX_DEFAULTS,
+  FX_KINDS,
+  type FxKind,
+  type Highlight,
   type Layer,
   type LoopType,
+  type ReactProp,
+  type ReactSource,
   type TextStyle,
 } from "@/motion";
 import { motionApi, type MotionFont } from "@/api/motion";
 import { fontFamilies, reloadMotionFonts } from "@/pages/workspace/motion/runtime";
 import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
-import { LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
+import { FX_TITLES, LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -42,6 +48,9 @@ const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "words", label: "По словам" },
   { v: "rise", label: "Из-под маски" },
   { v: "draw", label: "Прорисовка" },
+  { v: "glitch", label: "Глитч (текст)" },
+  { v: "scramble", label: "Расшифровка (текст)" },
+  { v: "stomp", label: "Удар" },
 ];
 const LOOP_TYPES: { v: LoopType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -51,6 +60,21 @@ const LOOP_TYPES: { v: LoopType; label: string }[] = [
   { v: "wiggle", label: "Покачивание" },
   { v: "spin", label: "Вращение" },
   { v: "blink", label: "Мигание" },
+  { v: "glitch", label: "Глитч (текст)" },
+  { v: "wave", label: "Волна букв (текст)" },
+];
+/** У эффекта кадра — только проявление: остальное к нему не применимо. */
+const FX_IN_TYPES = IN_TYPES.filter((o) => o.v === "none" || o.v === "fade");
+const REACT_SOURCES_UI: { v: ReactSource; label: string }[] = [
+  { v: "voice", label: "Голос" },
+  { v: "music", label: "Музыка" },
+  { v: "mix", label: "Весь звук" },
+];
+const REACT_PROPS_UI: { v: ReactProp; label: string }[] = [
+  { v: "scale", label: "Масштаб" },
+  { v: "glow", label: "Свечение" },
+  { v: "opacity", label: "Прозрачность" },
+  { v: "y", label: "Подскок" },
 ];
 type Props = {
   layer: Layer;
@@ -423,6 +447,71 @@ function CaptionWords({
   );
 }
 
+/**
+ * Подсветка слов титра: клик по слову — в подсветку и обратно; вид — плашка или маркер,
+ * «Прорисовка» — за сколько секунд плашка/маркер ложатся слева направо (0 — сразу).
+ */
+function HighlightFields({ highlight, text, onChange }: { highlight: Highlight | null; text: string; onChange: (h: Highlight | null) => void }) {
+  const words = text.split(/\s+/).filter(Boolean).slice(0, 100);
+  const on = new Set(highlight?.words ?? []);
+  const marker = highlight?.style === "marker";
+  const toggle = (i: number) => {
+    const next = on.has(i) ? [...on].filter((x) => x !== i) : [...on, i].sort((a, b) => a - b);
+    onChange(next.length ? { color: "#ffd400", bg: null, ...highlight, words: next } : null);
+  };
+  return (
+    <>
+      <span className="li-cap">Подсветка слов</span>
+      <div className="li-words-list">
+        {words.map((w, i) => (
+          <button key={i} type="button" className={`li-word${on.has(i) ? " on" : ""}`} onClick={() => toggle(i)}>
+            {w}
+          </button>
+        ))}
+      </div>
+      {highlight ? (
+        <div className="li-row">
+          <div className="seg" role="radiogroup" aria-label="Вид подсветки">
+            {(["color", "plate", "marker"] as const).map((v) => {
+              const active = v === "marker" ? marker : v === "plate" ? !marker && Boolean(highlight.bg) : !marker && !highlight.bg;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  className={`seg-item${active ? " active" : ""}`}
+                  onClick={() =>
+                    onChange(
+                      v === "marker"
+                        ? { ...highlight, style: "marker", bg: highlight.bg ?? "#ffd400", color: highlight.color === "#ffd400" ? undefined : highlight.color }
+                        : v === "plate"
+                          ? { ...highlight, style: undefined, bg: highlight.bg ?? "#7c5cff" }
+                          : { ...highlight, style: undefined, bg: null, color: highlight.color ?? "#ffd400" },
+                    )
+                  }
+                >
+                  {v === "marker" ? "Маркер" : v === "plate" ? "Плашка" : "Цвет"}
+                </button>
+              );
+            })}
+          </div>
+          {highlight.bg ? <Color label={marker ? "Маркер" : "Плашка"} value={highlight.bg} onChange={(bg) => onChange({ ...highlight, bg })} /> : null}
+          <Color label="Буквы" value={highlight.color ?? "#ffffff"} onChange={(color) => onChange({ ...highlight, color })} />
+          {highlight.bg ? (
+            <Num
+              label="Прорисовка, с"
+              value={highlight.draw ?? (marker ? 0.45 : 0)}
+              min={0}
+              max={3}
+              step={0.05}
+              onChange={(draw) => onChange({ ...highlight, draw })}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function LayerInspector({ layer, words = [], fonts, now, clipDuration, onChange, onDelete, onDuplicate, onSeek, keyed = false, hasCamera = false, refWidth = 1080 }: Props) {
   // Время перечитываем несколько раз в секунду: от него зависят ◆ и значения
   // анимированных свойств, а весь редактор ради этого перерисовывать не нужно.
@@ -517,6 +606,62 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               <Num label="Поля" value={layer.props.backdrop.spread ?? Math.round((layer.props.size ?? 96) * 0.9)} min={0} max={800} step={10} onChange={(spread) => patchProps({ backdrop: { ...layer.props.backdrop, spread } })} />
             </div>
           ) : null}
+          <HighlightFields
+            highlight={layer.props.highlight ?? null}
+            text={layer.props.text}
+            onChange={(highlight) => patchProps({ highlight })}
+          />
+        </Section>
+      ) : null}
+
+      {layer.type === "fx" ? (
+        <Section title="Эффект кадра">
+          <div className="li-row">
+            <label className="li-grow">
+              <span className="li-cap">Вид</span>
+              <select
+                className="input"
+                value={layer.props.kind ?? "vhs"}
+                // Смена вида — сила и наложение «как у вида»: у зерна и вспышки они свои.
+                onChange={(e) => patchProps({ kind: e.target.value as FxKind, intensity: undefined, blend: undefined })}
+              >
+                {FX_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {FX_TITLES[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="li-cap">Наложение</span>
+              <select className="input" value={layer.props.blend ?? "auto"} onChange={(e) => patchProps({ blend: e.target.value === "auto" ? undefined : e.target.value })}>
+                <option value="auto">Как у вида</option>
+                <option value="normal">Обычное</option>
+                <option value="screen">Осветление</option>
+                <option value="multiply">Умножение</option>
+                <option value="overlay">Перекрытие</option>
+                <option value="add">Сложение</option>
+              </select>
+            </label>
+          </div>
+          <div className="li-row">
+            <Num
+              label="Сила"
+              value={layer.props.intensity ?? FX_DEFAULTS[layer.props.kind ?? "vhs"]?.intensity ?? 0.6}
+              min={0}
+              max={1}
+              step={0.05}
+              onChange={(intensity) => patchProps({ intensity })}
+            />
+            <Num label="Скорость" value={layer.props.speed ?? 1} min={0.1} max={4} step={0.1} onChange={(speed) => patchProps({ speed })} />
+            {layer.props.kind === "grain_overlay" || layer.props.kind === "scanlines" ? (
+              <Num label="Размер" value={layer.props.size ?? (layer.props.kind === "scanlines" ? 4 : 1.6)} min={0.5} max={12} step={0.1} onChange={(size) => patchProps({ size })} />
+            ) : null}
+            {layer.props.kind === "flash_frame" ? (
+              <Color label="Цвет" value={layer.props.color ?? "#ffffff"} onChange={(color) => patchProps({ color })} />
+            ) : null}
+          </div>
+          <div className="li-note muted">Ложится на видео и слои ниже по дорожкам; слои выше — чистые. Больше 1–2 эффектов на ролик — каша.</div>
         </Section>
       ) : null}
 
@@ -630,6 +775,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 <option value="fade">Проявление</option>
                 <option value="karaoke">Караоке</option>
                 <option value="typewriter">Печать</option>
+                <option value="stomp">Удар (акцент)</option>
                 <option value="none">Без анимации</option>
               </select>
             </label>
@@ -1137,7 +1283,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 value={layer.in?.type ?? "none"}
                 onChange={(e) => onChange({ ...layer, in: { type: e.target.value as InOutType, duration: layer.in?.duration ?? 0.35 } })}
               >
-                {IN_TYPES.map((o) => (
+                {(layer.type === "fx" ? FX_IN_TYPES : IN_TYPES).map((o) => (
                   <option key={o.v} value={o.v}>
                     {o.label}
                   </option>
@@ -1161,7 +1307,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 value={layer.out?.type ?? "none"}
                 onChange={(e) => onChange({ ...layer, out: { type: e.target.value as InOutType, duration: layer.out?.duration ?? 0.25 } })}
               >
-                {IN_TYPES.map((o) => (
+                {(layer.type === "fx" ? FX_IN_TYPES : IN_TYPES).map((o) => (
                   <option key={o.v} value={o.v}>
                     {o.label}
                   </option>
@@ -1177,6 +1323,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               onChange={(duration) => onChange({ ...layer, out: { type: layer.out?.type ?? "fade", duration } })}
             />
           </div>
+          {layer.type !== "fx" ? (
           <div className="li-row">
             <label className="li-grow">
               <span className="li-cap">Пока виден</span>
@@ -1199,10 +1346,49 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
               </>
             ) : null}
           </div>
+          ) : null}
+          <div className="li-row" title="Слой дышит громкостью клипа: огибающую считает сервер, превью и рендер совпадают. У эффекта кадра «Масштаб» — его сила">
+            <label className="li-grow">
+              <span className="li-cap">От звука</span>
+              <select
+                className="input"
+                value={layer.react ? layer.react.source ?? "voice" : ""}
+                onChange={(e) =>
+                  onChange({
+                    ...layer,
+                    react: e.target.value ? { prop: "scale", amount: 1, smooth: 0.15, ...layer.react, source: e.target.value as ReactSource } : null,
+                  })
+                }
+              >
+                <option value="">Нет</option>
+                {REACT_SOURCES_UI.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {layer.react ? (
+              <>
+                <label>
+                  <span className="li-cap">Что</span>
+                  <select className="input" value={layer.react.prop ?? "scale"} onChange={(e) => onChange({ ...layer, react: { ...layer.react!, prop: e.target.value as ReactProp } })}>
+                    {REACT_PROPS_UI.map((o) => (
+                      <option key={o.v} value={o.v}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Num label="Сила" value={layer.react.amount ?? 1} step={0.1} min={0} max={3} onChange={(amount) => onChange({ ...layer, react: { ...layer.react!, amount } })} />
+                <Num label="Плавность" value={layer.react.smooth ?? 0.15} step={0.05} min={0} max={1} onChange={(smooth) => onChange({ ...layer, react: { ...layer.react!, smooth } })} />
+              </>
+            ) : null}
+          </div>
         </Section>
       ) : null}
 
-      {layer.type !== "audio" ? (
+      {layer.type !== "audio" && layer.type !== "fx" ? (
         <Section title="Тень и наложение" open={false}>
           <Toggle
             label="Тень"

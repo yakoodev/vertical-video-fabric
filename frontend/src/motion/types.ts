@@ -75,11 +75,18 @@ export type InOutType =
   | "typewriter"
   | "words"
   | "draw"
-  | "rise";
+  | "rise"
+  /** Только text: RGB-расслоение, сдвиг полос-срезов и мерцание, к концу входа — чисто. */
+  | "glitch"
+  /** Только text: буквы перебираются случайными символами и «расшифровываются» слева направо. */
+  | "scramble"
+  /** Удар: слой влетает крупным, «впечатывается» и встряхивается (любой тип). */
+  | "stomp";
 
 export type InOut = { type: InOutType; duration?: number };
 
-export type LoopType = "none" | "pulse" | "float" | "shake" | "wiggle" | "spin" | "blink";
+/** glitch и wave — только text (у остальных: glitch → shake, wave → float). */
+export type LoopType = "none" | "pulse" | "float" | "shake" | "wiggle" | "spin" | "blink" | "glitch" | "wave";
 
 export type Loop = { type: LoopType; speed?: number; amount?: number };
 
@@ -101,7 +108,20 @@ export type TextBg = {
   gradient?: [string, string] | null;
 };
 
-export type Highlight = { words: number[]; color?: string; bg?: string | null };
+/**
+ * Подсветка слов: `color` — цвет букв, `bg` — плашка за словом. `style: "marker"` — вместо плашки
+ * полоса маркера под буквами (соседние слова — одной полосой); `draw` — за сколько секунд плашка
+ * или маркер прорисовываются слева направо (у маркера по умолчанию 0.45, у плашки 0 — сразу),
+ * `delay` — с какой секунды слоя (нет — после входа `in`).
+ */
+export type Highlight = {
+  words: number[];
+  color?: string;
+  bg?: string | null;
+  style?: "plate" | "marker";
+  draw?: number;
+  delay?: number;
+};
 
 /**
  * Мягкое затемнение за текстом (scrim): эллипс-градиент цвета `color` (#000000), плотность
@@ -399,13 +419,56 @@ export type PngtuberProps = {
  */
 export type VoiceTrack = { t0: number; fps: number; states: string; levels?: number[]; threshold_db?: number };
 
+/* ---------- эффект кадра ---------- */
+
+/**
+ * Эффект поверх кадра и слоёв ниже по дорожкам (layers/fx.ts), процедурный, без файлов:
+ * vhs — полосы, сдвиг, шум, RGB-расслоение; scanlines — строки развёртки; light_leak — тёплые
+ * пятна света по краям; chromatic — аберрация от центра; flash_frame — вспышка; grain_overlay —
+ * анимированное зерно.
+ */
+export type FxKind = "vhs" | "scanlines" | "light_leak" | "chromatic" | "flash_frame" | "grain_overlay";
+
+export type FxProps = {
+  kind?: FxKind;
+  /** Сила 0..1; нет — своя у вида (FX_DEFAULTS). */
+  intensity?: number;
+  /** Скорость 0.1..4. */
+  speed?: number;
+  /** Наложение; "auto" (нет) — своё у вида: зерно overlay, пятна screen, вспышка add… */
+  blend?: BlendMode | "auto";
+  /** Цвет вспышки (flash_frame), #ffffff. */
+  color?: string;
+  /** Краски пятен света (light_leak), до 4; нет — тёплые. */
+  colors?: string[];
+  /** Размер зерна / шаг строк, опорн. px. */
+  size?: number;
+  seed?: number;
+};
+
+/* ---------- реакция на звук ---------- */
+
+export type ReactSource = "voice" | "music" | "mix";
+export type ReactProp = "scale" | "glow" | "opacity" | "y";
+
+/**
+ * Слой «дышит» громкостью клипа: огибающая `comp.levels[source]` (её считает сервер,
+ * app/audio_react.py), `amount` 0..3 — сила, `smooth` 0..1 — сглаживание (окно до 0.5 с назад),
+ * `color` — цвет свечения (prop glow).
+ */
+export type LayerReact = { source?: ReactSource; prop?: ReactProp; amount?: number; smooth?: number; color?: string };
+
+/** Огибающая громкости по кадрам: кадр k — момент `t0 + k / fps` (клиповое время), `v[k]` 0..100. */
+export type LevelTrack = { t0: number; fps: number; v: number[] };
+
 /* ---------- анимированные субтитры ---------- */
 
 /** Слово речи во времени клипа (секунды) — из субтитров клипа, их подаёт хост. */
 /** Слово речи. `s` — кто говорит (A — главный, B, C… — другие голоса): свой цвет и своя страница. */
 export type CaptionWord = { t0: number; t1: number; w: string; s?: string };
 
-export type CaptionAnimation = "pop" | "bounce" | "fade" | "karaoke" | "typewriter" | "none";
+/** stomp — слово «впечатывается» на свой момент с встряской (подсвеченные — сильнее). */
+export type CaptionAnimation = "pop" | "bounce" | "fade" | "karaoke" | "typewriter" | "stomp" | "none";
 
 /**
  * Субтитры-слой. Всё, кроме `style`, необязательно: не заданное берётся из
@@ -523,6 +586,7 @@ export type LayerPropsMap = {
   chat: ChatProps;
   audio: AudioProps;
   pngtuber: PngtuberProps;
+  fx: FxProps;
 };
 
 export type LayerType = keyof LayerPropsMap;
@@ -550,6 +614,8 @@ export type LayerBase = {
   behind?: boolean;
   /** Едет и зумится вместе с видео (камера `render.camera`); нет — стоит, как раньше. */
   followCamera?: boolean;
+  /** Реакция на громкость клипа (comp.levels); нет — слой к звуку глух. */
+  react?: LayerReact | null;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */
@@ -570,6 +636,7 @@ export type CaptionsLayer = LayerOf<"captions">;
 export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
 export type PngtuberLayer = LayerOf<"pngtuber">;
+export type FxLayer = LayerOf<"fx">;
 
 export type Layer =
   | TextLayer
@@ -586,7 +653,8 @@ export type Layer =
   | CaptionsLayer
   | ChatLayer
   | AudioLayer
-  | PngtuberLayer;
+  | PngtuberLayer
+  | FxLayer;
 
 /**
  * Как ключ камеры понимает свои x/y: `"center"` (по умолчанию) — центр окна камеры
@@ -621,6 +689,8 @@ export type Composition = {
   chat?: ChatMessage[];
   /** Состояния голоса слоёв `pngtuber` по их id (app/pngtuber.py). */
   voice?: Record<string, VoiceTrack>;
+  /** Огибающие громкости клипа для `react` слоёв: voice / music / mix (app/audio_react.py). */
+  levels?: Partial<Record<ReactSource, LevelTrack>>;
   /** Хромакей основы: компоновщик вырезает фон, кладёт `background` и слои `behind`. */
   key?: ChromaKey;
   /** Фон за вырезанной основой (backgrounds.ts; старый `{color, color2}` тоже читается). */
@@ -764,4 +834,10 @@ export type RenderEnv = {
   createCanvas?(width: number, height: number): ScratchCanvas;
   /** Запасное семейство, если шрифт слоя не задан. */
   defaultFont?: string;
+  /**
+   * Что лежит ПОД холстом слоёв (превью: видео рисуется на своём холсте, слои — на прозрачном
+   * над ним). Эффекту `fx`, который двигает пиксели (vhs, chromatic), нужен весь кадр: он
+   * собирает подложку + уже нарисованное. В рендере кадр и слои на одном холсте — не задаётся.
+   */
+  underlay?: CanvasImageSource | null;
 };

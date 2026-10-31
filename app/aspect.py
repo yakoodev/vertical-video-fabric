@@ -509,7 +509,8 @@ def reframe_layers(layers: list[dict], width: int, height: int,
     plan = plan or reframe_plan(layers, int(width), int(height), sizes, camera, ref)
     out = []
     for i, layer in enumerate(layers):
-        if layer.get("type") == "audio":
+        if layer.get("type") in ("audio", "fx"):
+            # Звук не рисуется, эффект кадра — во весь кадр (масштаб — его сила): переносить нечего.
             out.append(layer)
             continue
         scene = _layer_scene(i, layer, plan)
