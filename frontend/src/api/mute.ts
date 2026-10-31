@@ -18,7 +18,7 @@ export const CENSOR_STYLES = {
   reverse: "задом наперёд",
   lowpass: "«под водой»",
   stretch: "растяжка, тон ниже",
-  duck: "тише на 25 дБ",
+  duck: "тише на 35 дБ",
 } as const;
 export type CensorStyle = keyof typeof CENSOR_STYLES;
 
