@@ -38,6 +38,8 @@ export interface Source {
   analyses_count?: number;
   clip_plans_count?: number;
   clips_count?: number;
+  /** Проект-серия/канал источника (app/projects.py); null — без проекта. */
+  project_id?: number | null;
   has_transcript?: boolean;
   transcript_segments?: number;
   focus_preset?: string;

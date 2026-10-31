@@ -4146,3 +4146,60 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .lib-upload.is-busy { cursor: wait; opacity: 0.75; }
 .lib-panel.is-drop { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 10px; }
 .brand-preview-bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ---------- Серии и каналы: проект над источниками (pages/SeriesPage.tsx) ---------- */
+.series-strip { display: grid; gap: 12px; margin-bottom: 18px; }
+.series-strip-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.series-strip-head .btn { margin-left: auto; }
+.series-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.series-card { display: grid; gap: 4px; padding: 14px 16px; color: inherit; }
+.pcard-series { margin-top: 8px; height: 32px; font-size: 13px; }
+.proj-series-filter { width: 180px; flex: none; }
+.series-head { display: grid; gap: 6px; margin-bottom: 14px; }
+.series-head h1 { margin: 0; font-family: var(--display); font-size: 30px; letter-spacing: -0.02em; }
+.series-meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.series-meta .chip { cursor: default; }
+.series-tabs { margin-bottom: 16px; }
+.series-tabs .tab { background: none; border-top: 0; border-left: 0; border-right: 0; cursor: pointer; }
+.series-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.series-col { display: grid; gap: 16px; }
+.series-panel { display: grid; gap: 10px; }
+.series-panel h3 { margin: 0; font-size: 16px; }
+.series-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.series-hint { margin: 0; font-size: 13px; }
+.series-section { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+.series-section-head { display: flex; align-items: center; justify-content: space-between; }
+.series-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.series-row .input { flex: 1 1 140px; min-width: 0; }
+.series-row .input.wide { flex: 2 1 220px; }
+.series-row .input.series-num { flex: 0 1 110px; }
+.series-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ol.series-list { list-style: decimal inside; }
+.series-list > li { padding: 8px 10px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface-2); }
+.series-li-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.series-li-main > .btn:first-of-type { margin-left: auto; }
+.series-li-sub { font-size: 12.5px; margin-top: 4px; }
+.series-li-off { opacity: 0.6; }
+.series-quote { margin: 6px 0 0; padding-left: 10px; border-left: 2px solid var(--accent); color: var(--text-dim); font-style: italic; font-size: 13.5px; }
+.series-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.series-tags .chip { padding: 2px 9px; font-size: 12px; }
+.series-tag-input { width: 120px; height: 28px; font-size: 12.5px; padding: 0 8px; }
+.series-add-source { width: auto; max-width: 260px; height: 32px; font-size: 13px; }
+.series-delete { justify-self: start; }
+.series-kind, .series-hyp { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: var(--r-pill); }
+.series-kind--do { background: var(--success-soft); color: var(--success); }
+.series-kind--dont { background: var(--danger-soft); color: var(--danger); }
+.series-kind--preference { background: var(--info-soft); color: var(--info); }
+.series-hyp--testing { background: var(--accent-soft); color: var(--accent-2); }
+.series-hyp--confirmed { background: var(--success-soft); color: var(--success); }
+.series-hyp--rejected { background: var(--danger-soft); color: var(--danger); }
+.series-hyp--inconclusive { background: var(--warn-soft); color: var(--warn); }
+.series-review { border-color: var(--warn); color: var(--warn); }
+.series-conflict { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--warn); border-radius: var(--r-sm); background: var(--warn-soft); }
+.series-conflict p { margin: 0; }
+.series-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.series-tile { display: grid; gap: 4px; padding: 14px 16px; }
+.series-tile strong { font-family: var(--display); font-size: 24px; }
+@media (max-width: 980px) {
+  .series-grid { grid-template-columns: 1fr; }
+}

@@ -185,6 +185,15 @@ def collect_stats(store: Any, *, force: bool = False, sleep: Callable[[float], N
                 continue
             summary["ok"] += 1
             store.add_publication_stats(target["id"], platform, stats)
+        # Видео, выложенные руками и добавленные в проект по ссылке (app/projects.py).
+        try:
+            from app.projects import collect_manual_stats
+
+            manual = collect_manual_stats(store, force=force, sleep=sleep, pause=pause)
+            if manual["checked"]:
+                summary["manual"] = manual
+        except Exception:  # noqa: BLE001 - ручные публикации не валят основной сбор
+            pass
     finally:
         _status.update(running=False, finished_at=_now_text(), last=summary)
         _run_lock.release()

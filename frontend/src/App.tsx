@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
+import { SeriesPage } from "@/pages/SeriesPage";
 import { ClipsPage } from "@/pages/ClipsPage";
 import { MontageAssetsPage } from "@/pages/MontageAssetsPage";
 import { AutomationPage } from "@/pages/AutomationPage";
@@ -34,6 +35,8 @@ export function App() {
         <Route index element={<Navigate to="/projects" replace />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:sourceId/*" element={<ProjectWorkspace />} />
+        {/* Проект-серия/канал (app/projects.py): несколько источников, лор, правила, гипотезы. */}
+        <Route path="series/:projectId" element={<SeriesPage />} />
         <Route path="clips" element={<ClipsPage />} />
         <Route path="assets" element={<MontageAssetsPage />} />
         <Route path="automation" element={<AutomationPage />} />
