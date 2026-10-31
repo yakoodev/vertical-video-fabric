@@ -750,6 +750,11 @@ def _rule_outcome(store: Any, approval: dict, res: dict, actor: str) -> dict:
     elif res.get("needs_confirmation"):
         payload = approval["payload"]
         conflicts = res.get("conflicts") or []
+        # Вопрос владельцу человеческими словами (у add_rule он для агента: replaces/force).
+        old = "; ".join(f"#{c['id']} «{c['text']}»" + (f" от {str(c.get('said_at'))[:10]}" if c.get("said_at") else "")
+                        for c in conflicts[:3])
+        res = {**res, "question": f"Новое правило «{payload.get('text') or approval['title']}» противоречит "
+                                  f"действующему: {old}. Заменить старое или оставить оба?"}
         card = propose_rule(
             store, project_id, payload.get("text") or approval["title"], kind=payload.get("kind") or "do",
             quote=payload.get("quote") or approval["decision_comment"], origin=payload.get("origin") or "ui",

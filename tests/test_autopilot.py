@@ -276,6 +276,7 @@ def test_contradiction_asks_owner(env):
     assert learned["action"] == "conflict_proposed"
     card = A.get_approval(store, learned["proposal_id"])
     assert [b["action"] for b in card["buttons"]] == ["approve", "both", "reject"]
+    assert "Заменить старое или оставить оба" in card["question"] and "replaces" not in card["question"]
     res = A.decide(store, card["id"], "approve")
     assert res["rule"]["created"] and res["rule"]["superseded"] == [old["id"]]
     assert P.get_rule(store, old["id"])["status"] == "superseded"
