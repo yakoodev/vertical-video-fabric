@@ -3847,7 +3847,7 @@ def h_list_projects(ctx: ToolContext, _args: dict) -> dict:
         "projects": [
             {"id": s["id"], "name": s.get("original_filename") or "", "status": s.get("status"),
              "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count"),
-             "audio_tracks": _audio_brief(s)}
+             "audio_tracks": _audio_brief(s), "channel_project_id": s.get("project_id")}
             for s in ctx.store.list_sources()
         ]
     }
@@ -5447,7 +5447,8 @@ _REGISTRY: dict[str, Tool] | None = None
 DISCOVERY_TOOLS = [
     Tool(
         "list_projects", "Проекты",
-        "Проекты (исходные видео) с числом клипов. / Projects (source videos).",
+        "Проекты (исходные видео) с числом клипов. channel_project_id — проект-серия/канал источника: "
+        "прочитай get_project_brief(source_id=id) перед нарезкой. / Projects (source videos).",
         _obj({}), h_list_projects, scope="global",
     ),
     Tool(
@@ -5511,13 +5512,21 @@ def registry() -> dict[str, Tool]:
     return _REGISTRY
 
 
+def _project_tools() -> list[Tool]:
+    """Бриф, правила, статистика и гипотезы проектов-серий (app/project_tools.py) — только MCP."""
+    from app.project_tools import tools
+
+    return tools()
+
+
 def list_tools(include_discovery: bool = False) -> list[Tool]:
     tools = list(registry().values())
-    return (DISCOVERY_TOOLS + tools) if include_discovery else tools
+    return (DISCOVERY_TOOLS + _project_tools() + tools) if include_discovery else tools
 
 
 def get_tool(name: str) -> Tool:
-    tool = registry().get(name) or next((t for t in DISCOVERY_TOOLS if t.name == name), None)
+    tool = (registry().get(name) or next((t for t in DISCOVERY_TOOLS if t.name == name), None)
+            or next((t for t in _project_tools() if t.name == name), None))
     if tool is None:
         raise KeyError(name)
     return tool
@@ -5554,6 +5563,9 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
 
 
 def _takes_project(tool: Tool) -> bool:
+    # scope="project": project_id — проект-серия, а не источник клипа (app/project_tools.py).
+    if tool.scope == "project":
+        return False
     return "project_id" in ((tool.parameters or {}).get("properties") or {})
 
 
