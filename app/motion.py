@@ -128,6 +128,16 @@ MAX_CAPTION_MARKS = 200
 # Чат стрима: вид колонки сообщений (CHAT_STYLES движка).
 CHAT_STYLES = ("twitch-dark", "bubbles", "minimal", "neon")
 MAX_CHAT_HIGHLIGHT_USERS = 50
+# Псевдо-3D: глубина слоя (опорн. px; ближе −2000 — уже за камерой: фокусное ≈ 2638), наклоны слоя
+# (переворот карточки — до двух оборотов), 3D-камера: dolly, облёт/наклон, поле зрения, глубина основы.
+Z_NEAR_LIMIT = 2000.0
+Z_FAR_LIMIT = 20000.0
+ROT3D_LIMIT = 720.0
+CAMERA_Z_LIMIT = 2400.0
+CAMERA_ROT_LIMIT = 60.0
+DEFAULT_FOV = 40.0
+FOV_RANGE = (10.0, 120.0)
+DEFAULT_BASE_Z = 1000.0
 # Анимируемые свойства и рамки значений ключевых кадров. У масштаба в ключах
 # разрешён 0 — «вырасти из точки» делают именно так.
 ANIMATABLE: dict[str, tuple[float, float]] = {
@@ -142,6 +152,10 @@ ANIMATABLE: dict[str, tuple[float, float]] = {
     "cropY": (0.0, 1.0),
     "cropW": (0.01, 1.0),
     "cropH": (0.01, 1.0),
+    # Псевдо-3D (frontend/src/motion/space3d.ts): глубина в опорных px (плюс — дальше) и наклоны.
+    "z": (-Z_NEAR_LIMIT, Z_FAR_LIMIT),
+    "rotX": (-ROT3D_LIMIT, ROT3D_LIMIT),
+    "rotY": (-ROT3D_LIMIT, ROT3D_LIMIT),
 }
 # Ключи, что бывают только у своих типов слоя (окно crop — у картинки и видео).
 _CROP_TYPES = ("image", "video")
@@ -939,6 +953,21 @@ LAYER_FIELDS: dict = {
     "behind": Flag(False),
     # Едет и зумится вместе с видео по ключам камеры; по умолчанию слой стоит, как раньше.
     "followCamera": Flag(False),
+    # Псевдо-3D: нет полей — слой плоский, как раньше (нормализация их не добавляет). Задана z (хоть
+    # 0) — слой в сцене: едет с 3D-камерой и наездом, как followCamera.
+    "z": Opt(Num(0, -Z_NEAR_LIMIT, Z_FAR_LIMIT, 1)),
+    "rotX": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
+    "rotY": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
+}
+
+# 3D-камера (space3d.ts): dolly z (опорн. px, плюс — ближе к сцене), наклон rotX и облёт rotY вокруг
+# центра плоскости кадра (°), поле зрения fov (°, 40 — покой), глубина плоскости видео-основы baseZ.
+CAMERA_3D_FIELDS: dict = {
+    "z": Num(0, -CAMERA_Z_LIMIT, CAMERA_Z_LIMIT, 1),
+    "rotX": Num(0, -CAMERA_ROT_LIMIT, CAMERA_ROT_LIMIT, 2),
+    "rotY": Num(0, -CAMERA_ROT_LIMIT, CAMERA_ROT_LIMIT, 2),
+    "fov": Num(DEFAULT_FOV, FOV_RANGE[0], FOV_RANGE[1], 2),
+    "baseZ": Num(DEFAULT_BASE_Z, 0, Z_FAR_LIMIT, 1),
 }
 
 CAMERA_FIELDS: dict = {
@@ -1373,6 +1402,10 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
             rep(f"{where}.t", "нужно число — ключ отброшен")
             continue
         key = _norm_fields(item, CAMERA_FIELDS, rep, where)
+        # 3D-поля — только если заданы: старые ключи остаются ровно прежними.
+        for name, spec in CAMERA_3D_FIELDS.items():
+            if item.get(name) is not None:
+                key[name] = spec.norm(item[name], rep, f"{where}.{name}")
         if item.get("ease") is not None:
             ease = _norm_ease(item["ease"], rep, f"{where}.ease")
             if ease:
@@ -1818,5 +1851,13 @@ def schema_summary() -> dict:
             **{name: spec.describe() for name, spec in CAMERA_FIELDS.items()},
             "ease": {"type": "enum", "options": list(EASINGS), "optional": True},
             "shake": {"type": "number", "min": 0, "max": 1, "optional": True},
+            **{name: {**spec.describe(), "optional": True} for name, spec in CAMERA_3D_FIELDS.items()},
+        },
+        "space3d": {
+            "layer": "z — глубина (опорн. px, плюс — дальше; задана — слой в сцене, едет с камерой), rotX/rotY — "
+                     "наклон с перспективой (°), анимируются ключами",
+            "camera": "z — dolly (плюс — ближе), rotX/rotY — наклон и облёт вокруг центра кадра, fov — поле зрения "
+                      f"(° по вертикали, {DEFAULT_FOV:g} — покой), baseZ — глубина видео-основы ({DEFAULT_BASE_Z:g})",
+            "presets": "POST /api/motion/camera-preset, инструмент camera_preset (app/camera3d.py)",
         },
     }
