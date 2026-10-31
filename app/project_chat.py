@@ -727,6 +727,32 @@ def _quick_decision(store: Any, project_id: int, text: str, actor: str) -> dict 
     return {"approval_id": int(row["id"]), "status": result["status"], "note": decision_note(result)}
 
 
+RULE_JUDGE = """Владелец канала написал агенту реплику. Это ПРАВИЛО на будущее для всего проекта (что делать/не делать
+всегда, оценка типа контента) или РАЗОВАЯ правка конкретного клипа? Ответь только JSON:
+{{"rule": true|false, "kind": "do"|"dont", "text": "правило коротко, по-русски"}}
+Реплика: «{text}»"""
+
+
+def rule_judge(gemini: Any) -> Callable[[str], dict | None]:
+    """Спорная реплика (без «всегда/больше не…» и без «убери этот…») → Gemini одной короткой
+    подсказкой. Не ответил или ответ не разобрать — None, решает эвристика автопилота."""
+
+    def judge(text: str) -> dict | None:
+        from app.ai.gemini import _extract_response_text
+
+        response = gemini.generate_content(settings.gemini_text_model, {
+            "contents": [{"role": "user", "parts": [{"text": RULE_JUDGE.format(text=str(text)[:600])}]}],
+            "generationConfig": {"maxOutputTokens": 200, "responseMimeType": "application/json"}})
+        raw = _extract_response_text(response).strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(match.group(0)) if match else None
+        if not isinstance(data, dict) or not isinstance(data.get("rule"), bool):
+            return None
+        return {"rule": data["rule"], "kind": data.get("kind"), "text": str(data.get("text") or "")[:300]}
+
+    return judge
+
+
 def _system(thread: dict, groups: list[str]) -> str:
     text = SYSTEM.format(groups=CT.groups_hint())
     if thread.get("project_id"):
@@ -785,15 +811,16 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
         thread = get_thread(store, int(thread))
     project_id = thread.get("project_id")
     learned = decided = None
+    gemini = _gemini(client)
     if project_id:
         cfg = A.get_config(store, project_id)
         decided = _quick_decision(store, project_id, message, actor)
         if decided is None:
             learned = A.learn_from_text(store, project_id, message, origin="chat",
                                         origin_ref=f"chat#{message_id}" if message_id else "chat",
-                                        auto_rules=cfg["auto_rules"])
+                                        auto_rules=cfg["auto_rules"],
+                                        judge=rule_judge(gemini) if gemini is not None else None)
     note = _service_note(learned, decided)
-    gemini = _gemini(client)
     if gemini is None:
         text = ("ИИ-агент сейчас недоступен: в сервисе не настроен GEMINI_API_KEY. Сообщение сохранено. "
                 "Что сделать: добавь ключ Gemini из AI Studio в .env сервиса и перезапусти его.") \

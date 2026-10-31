@@ -319,3 +319,27 @@ def test_stream_merges_parts_keeps_signatures():
         C._merge_part(parts, part)
     assert parts == [{"text": "Привет", "thoughtSignature": "sig1"},
                      {"functionCall": {"name": "get_clip", "args": {}}, "thoughtSignature": "sig2"}]
+
+
+def test_chat_commands_are_not_rules_and_gemini_judges_disputed(env):
+    _c, store, _source, pid = env
+    from app import autopilot as A
+
+    C.send(store, pid, "Убери замирание в конце", client=Scripted([[{"text": "Убрал."}]]))
+    assert C.wait(pid, 10)
+    C.send(store, pid, "Удали этот клип", client=Scripted([[{"text": "Жду кнопку."}]]))
+    assert C.wait(pid, 10)
+    assert not A.list_approvals(store, pid, kind="rule_proposal")
+    # Спорное — одна короткая подсказка Gemini (текстовая модель), потом обычный ход.
+    verdict = '{"rule": false, "kind": "dont", "text": ""}'
+    gemini = Scripted([[{"text": verdict}], [{"text": "Ок, в этом клипе уберу."}]])
+    C.send(store, pid, "без мата", client=gemini)
+    assert C.wait(pid, 10)
+    assert "РАЗОВАЯ" in gemini.requests[0]["contents"][0]["parts"][0]["text"]
+    assert not A.list_approvals(store, pid, kind="rule_proposal")
+    assert C.list_messages(store, pid)[-1]["text"] == "Ок, в этом клипе уберу."
+    # Явное «никогда» — правило без вопроса к Gemini.
+    gemini2 = Scripted([[{"text": "Записать?"}]])
+    C.send(store, pid, "никогда не бери политику", client=gemini2)
+    assert C.wait(pid, 10)
+    assert len(gemini2.requests) == 1 and A.list_approvals(store, pid, kind="rule_proposal")
