@@ -134,6 +134,30 @@ def test_template_tracker_follows_moving_disc_without_video():
     assert worst < 1.5
 
 
+def test_template_tracker_holds_under_occlusion_and_recovers():
+    # Как на стриме: в модель «кидают» предметы — цель закрыта, ложный пик не должен утащить трек.
+    bg = _texture(360, 640)
+    rng = np.random.default_rng(9)
+    tracker = tr.TemplateTracker(_frame_at(bg, 0), 200, 150, 44, 44)
+    for k in range(1, 30):
+        img = _frame_at(bg, k)
+        if 12 <= k <= 16:  # заплатка шума поверх цели и копия цели поодаль
+            img[120:185, 170:250] = rng.integers(0, 255, size=(65, 80))
+            _disc(img, 330, 210, 20)
+        got = tracker.step(img, 0.1)
+        truth = (200 + 2.0 * k, 150.0)
+        if 12 <= k <= 16:
+            assert math.hypot(tracker.cx - truth[0], tracker.cy - truth[1]) < 15
+        elif k > 17:
+            assert got is not None and math.hypot(got[0] - truth[0], got[1] - truth[1]) < 2
+
+
+def _frame_at(bg, k):
+    img = bg.copy()
+    _disc(img, 200 + 2.0 * k, 150, 20)
+    return img
+
+
 def test_flat_point_is_refused():
     with pytest.raises(tr.TrackError, match="нет деталей"):
         tr.TemplateTracker(np.full((100, 100), 80, np.float32), 50, 50, 20, 20)

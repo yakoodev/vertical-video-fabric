@@ -69,7 +69,7 @@ POINT_BOX = 0.12  # сторона шаблона точки по умолчан
 TRACKED_PROPS = ("x", "y", "scale")
 TOLERANCE = {"x": 0.0012, "y": 0.0007, "scale": 0.006}  # ≈ 1.3 px кадра 1080×1920
 MAX_KEYS = 200  # = app.motion.MAX_KEYS_PER_PROP
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 COVER_SHARE = 0.25  # слой закрывает больше этой доли лица — предупреждение
 
 # Подсказки «куда ставить слой» (MCP track_layer preset, кнопки инспектора): отступ в размерах цели
@@ -224,7 +224,8 @@ def normalize_tracking(raw: Any) -> dict | None:
 
 
 # Доверие к сэмплу трека в сглаживании: найден — как есть, прогноз в пропуске — слабо, потерян — почти нет.
-NOISE_BY_STATUS = {"d": 1.0, "p": 25.0, "l": 400.0}
+NOISE_BY_STATUS = {"d": 1.0, "w": 8.0, "p": 25.0, "l": 400.0}
+FOUND_STATUSES = ("d", "w")
 
 
 def smooth_series(ts: list[float], vs: list[float], smooth: float, slow: float = 1.0,
@@ -356,7 +357,8 @@ class TemplateTracker:
     Шаблон медленно обновляется на уверенных кадрах (модель VTuber моргает и качается), а исходный
     шаблон страхует от «сползания» на фон: обновление — только пока исходный ещё узнаётся."""
 
-    ACCEPT = 0.5
+    ACCEPT = 0.55
+    STRONG = 0.72  # совпадение, которому верим даже далеко от прогноза
     UPDATE = 0.75
 
     def __init__(self, gray: np.ndarray, cx: float, cy: float, tw: int, th: int):
@@ -371,6 +373,7 @@ class TemplateTracker:
         self.tpl = self.tpl0.copy()
         self.cx, self.cy = float(cx), float(cy)
         self.vx = self.vy = 0.0
+        self.last_strong = True  # скорость — по паре уверенных совпадений подряд
 
     def _patch(self, gray: np.ndarray, cx: float, cy: float) -> np.ndarray | None:
         x0, y0 = int(round(cx - self.tw / 2)), int(round(cy - self.th / 2))
@@ -400,15 +403,29 @@ class TemplateTracker:
             alt = self._search(gray, px, py, radius * 1.4, self.tpl0)
             if alt is not None and (found is None or alt[2] > found[2]):
                 found = alt
+        # Цель закрыта (зрители кидают предметы в модель, рука у лица): корреляция падает до 0.5–0.65 и
+        # пик прыгает на соседнее. Слабое совпадение далеко от прогноза — не цель, а пропуск.
+        # На стыке кусков и после потери (wide) цель вправе быть далеко — там ворот нет.
+        if found is not None and not wide and found[2] < self.STRONG and math.hypot(found[0] - px, found[1] - py) > 0.35 * size:
+            found = None
         if found is None or found[2] < self.ACCEPT:
             self.cx, self.cy = px, py
             self.vx *= 0.7
             self.vy *= 0.7
+            self.last_strong = False
             return None
         nx, ny, score = found
-        if dt > 0:
-            self.vx = 0.5 * self.vx + 0.5 * (nx - self.cx) / dt
-            self.vy = 0.5 * self.vy + 0.5 * (ny - self.cy) / dt
+        strong_pair = score >= self.STRONG and self.last_strong
+        self.last_strong = score >= self.STRONG
+        if dt > 0 and strong_pair:
+            # Скорость — только по уверенным совпадениям и не быстрее 1.5 размера цели в секунду:
+            # иначе один ложный пик под помехой разгоняет прогноз, и пропуск «уезжает» на сотни px.
+            cap = 1.5 * size
+            self.vx = max(-cap, min(cap, 0.5 * self.vx + 0.5 * (nx - self.cx) / dt))
+            self.vy = max(-cap, min(cap, 0.5 * self.vy + 0.5 * (ny - self.cy) / dt))
+        else:
+            self.vx *= 0.5
+            self.vy *= 0.5
         self.cx, self.cy = nx, ny
         if score >= self.UPDATE:
             patch = self._patch(gray, nx, ny)
@@ -792,7 +809,7 @@ def compute_track(store: Any, clip_plan_id: int, start: float, end: float, targe
                   detector: Callable[[np.ndarray], list[dict]] | None = None) -> dict:
     """Трек цели на шкале clip ``start..end``: ``{samples: [{t, piece, x, y, w, h, s}], fps, frame,
     found, lost, regions, notes}`` — рамка цели в долях кадра клипа (основа до камеры), ``s`` —
-    d (найдена) / p (прогноз в пропуске) / l (потеряна, стоит). Кэш — по источнику, кадрированию,
+    d (найдена) / w (слабо: цель частично закрыта) / p (прогноз в пропуске) / l (потеряна, стоит). Кэш — по источнику, кадрированию,
     цели и диапазону. ``detector`` — подмена детектора (тесты)."""
     target = normalize_target(target)
     plan = store.get_clip_plan(clip_plan_id)
@@ -884,7 +901,7 @@ def _compute(store: Any, plan: dict, setup: dict, target: dict, start: float, en
         if abs(frames[seed_index]["t"] - t_seed) > 1.0:
             notes.append(f"в {t_seed:.2f} с цели нет — трек начат с {frames[seed_index]['t']:.2f} с")
         samples = associate(frames, seed_index, seed_box, aspect)
-    found = sum(1 for s in samples if s["s"] == "d") / max(1, len(samples))
+    found = sum(1 for s in samples if s["s"] in FOUND_STATUSES) / max(1, len(samples))
     lost = _intervals([s for s in samples], "l", 1.0 / fps)
     if found < FAIL_FOUND_SHARE:
         where = ", ".join(f"{a:.1f}–{b:.1f} с" for a, b in lost[:4]) or "почти везде"
@@ -936,7 +953,8 @@ def _track_point(store: Any, plan: dict, setup: dict, target: dict, start: float
                     tracker.vx = tracker.vy = 0.0
             else:
                 missed = 0.0
-                status = "d"
+                # Слабое совпадение (цель частично закрыта) — в треке, но сглаживание ему верит меньше.
+                status = "d" if got[2] >= tracker.STRONG else "w"
             out.append(_point_sample(frame, tracker, box_w, box_h, status, dw, dh))
             last = frame
         return out
