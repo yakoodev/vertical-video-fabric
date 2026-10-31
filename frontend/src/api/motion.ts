@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { CameraKey } from "@/motion";
 
 /** Шрифт из `vendor/fonts/fonts.json` или свой (`data/fonts`, app/user_fonts.py) — тот же файл подключает и рендер. */
 export type MotionFont = {
@@ -76,7 +77,12 @@ export type VoiceTrackDto = { t0: number; fps: number; states: string; levels?: 
 /** Огибающие громкости клипа для react слоёв (POST /api/clip-plans/{id}/levels): v — 0..100 по кадрам. */
 export type LevelTrackDto = { t0: number; fps: number; v: number[] };
 
+/** Пресет 3D-движения камеры (POST /api/motion/camera-preset): новые ключи, ничего не сохраняет. */
+export type CameraPresetResult = { preset: string; camera: CameraKey[]; layers: unknown[]; keys: unknown[]; range: [number, number]; note: string };
+
 export const motionApi = {
+  cameraPreset: (body: { preset: string; start: number; duration?: number; intensity?: number; camera: CameraKey[]; clip_duration?: number }) =>
+    api.post<CameraPresetResult>("/api/motion/camera-preset", body),
   levels: (planId: number, sources: string[], fps = 30) =>
     api.post<{ levels: Record<string, LevelTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/levels`, { sources, fps }),
   assetAnim: (assetId: string) => api.get<AssetAnim>(`/api/montage-assets/${encodeURIComponent(assetId)}/anim`),

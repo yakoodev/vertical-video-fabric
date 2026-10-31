@@ -1201,6 +1201,38 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           {transformRow("scale", "Масштаб", 100, 1, 0.05, 10, "%")}
           {transformRow("rotation", "Поворот", 1, 1, -3600, 3600, "°")}
           {transformRow("opacity", "Непрозр.", 100, 1, 0, 1, "%")}
+          {layer.type !== "fx" ? (
+            <details className="li-sec" open={layer.z !== undefined || Boolean(layer.rotX || layer.rotY)}>
+              <summary title="Псевдо-3D: глубина и наклон с перспективой. Задана глубина — слой в сцене: едет с 3D-камерой (параллакс)">3D</summary>
+              {transformRow("z", "Глубина", 1, 10, -2000, 20000, "px")}
+              {transformRow("rotX", "Наклон X", 1, 1, -720, 720, "°")}
+              {transformRow("rotY", "Наклон Y", 1, 1, -720, 720, "°")}
+              <div className="li-row">
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  title="Переворот карточки с курсора: из ребра (90°) к лицу с перелётом за 0.9 с"
+                  disabled={!inside}
+                  onClick={() => {
+                    const t0 = Math.round(localT * 1000) / 1000;
+                    const t1 = Math.round(Math.min(layer.end - layer.start, localT + 0.9) * 1000) / 1000;
+                    const kept = (layer.keys?.rotY ?? []).filter((k) => k.t < t0 - 0.001 || k.t > t1 + 0.001);
+                    onChange({
+                      ...layer,
+                      keys: { ...(layer.keys ?? {}), rotY: [...kept, { t: t0, v: 90, ease: "bezier(0.34,1.45,0.64,1)" as const }, { t: t1, v: 0 }].sort((a, b) => a.t - b.t) },
+                    });
+                  }}
+                >
+                  ⟲ Переворот карточки
+                </button>
+                {layer.z === undefined && !layer.followCamera ? (
+                  <button type="button" className="btn ghost sm" title="Слой станет частью сцены: поедет с 3D-камерой на глубине 0" onClick={() => onChange({ ...layer, z: 0 })}>
+                    В сцену
+                  </button>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
           {commonEase ? (
             <div className="li-ease">
               <span className="li-cap">Переход между ключами</span>

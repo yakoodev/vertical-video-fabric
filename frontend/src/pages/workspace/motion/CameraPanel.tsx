@@ -3,7 +3,9 @@
  * `render.camera`; здесь — готовые движения одной кнопкой и правка ключа,
  * выбранного на дорожке «Камера».
  */
-import { EASING_NAMES, type CameraKey } from "@/motion";
+import { useState } from "react";
+import { DEFAULT_FOV, EASING_NAMES, type CameraKey } from "@/motion";
+import { motionApi } from "@/api/motion";
 
 type Props = {
   /** Слова клипа (время клипа) и громкость по корзинам — для «Наездов по речи». */
@@ -18,6 +20,15 @@ type Props = {
 };
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** 3D-движения камеры (app/camera3d.py — тот же код, что у агента camera_preset). */
+const PRESETS_3D: { id: string; label: string; hint: string }[] = [
+  { id: "parallax_push", label: "Наезд с параллаксом", hint: "Dolly вперёд: ближние слои (z < 0) растут быстрее видео и дальних; держится" },
+  { id: "orbit", label: "Облёт", hint: "Лёгкий облёт ±10° с подходом и возвратом" },
+  { id: "dolly_zoom", label: "Хичкок", hint: "Камера отъезжает, фокусное растёт: план стоит, фон «наезжает»; держится" },
+  { id: "tilt_reveal", label: "Раскрытие наклоном", hint: "Из наклона 16° камера выпрямляется с лёгким перелётом" },
+  { id: "float", label: "Дыхание 3D", hint: "Медленное покачивание камеры в 3D и возврат" },
+];
 
 /** Готовые движения камеры от момента курсора. */
 const MOVES: { id: string; label: string; hint: string; build: (t: number) => CameraKey[] }[] = [
@@ -130,6 +141,18 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
     const kept = camera.filter((k) => k.t < from - 0.01 || k.t > to + 0.01);
     onChange([...kept, ...keys.map((k) => ({ ...k, t: r3(k.t) }))].sort((a, b) => a.t - b.t));
   };
+  const [preset, setPreset] = useState(PRESETS_3D[0].id);
+  const [intensity, setIntensity] = useState(1);
+  const [presetNote, setPresetNote] = useState("");
+  const addPreset = async () => {
+    try {
+      const res = await motionApi.cameraPreset({ preset, start: r3(now()), intensity, camera, clip_duration: clipDuration });
+      onChange(res.camera);
+      setPresetNote(res.note || "");
+    } catch (err) {
+      setPresetNote(`Не поставлено: ${(err as Error).message}`);
+    }
+  };
   return (
     <div className="cam-panel">
       <button
@@ -148,6 +171,26 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
           </button>
         ))}
       </div>
+      <div className="li-row" title="Псевдо-3D: видео — дальний план, слои с глубиной z двигаются по-разному (параллакс). Не чаще одного 3D-движения на 5–8 с">
+        <label className="li-grow">
+          <span className="li-cap">3D-движение</span>
+          <select className="input" value={preset} onChange={(e) => setPreset(e.target.value)}>
+            {PRESETS_3D.map((p) => (
+              <option key={p.id} value={p.id} title={p.hint}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span className="li-cap">Сила · {intensity.toFixed(1)}</span>
+          <input type="range" min={20} max={200} value={Math.round(intensity * 100)} onChange={(e) => setIntensity(Number(e.target.value) / 100)} />
+        </label>
+        <button type="button" className="btn sm" title={PRESETS_3D.find((p) => p.id === preset)?.hint} onClick={() => void addPreset()}>
+          ▶ С курсора
+        </button>
+      </div>
+      {presetNote ? <div className="muted li-note">{presetNote}</div> : null}
       <div className="li-row">
         <button
           type="button"
@@ -195,6 +238,31 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
             <span>Тряска · {Math.round((key.shake ?? 0) * 100)}%</span>
             <input type="range" min={0} max={100} value={Math.round((key.shake ?? 0) * 100)} onChange={(e) => patch({ shake: Number(e.target.value) / 100 })} />
           </label>
+          <details className="li-sec" open={Boolean(key.z || key.rotX || key.rotY || (key.fov && key.fov !== DEFAULT_FOV))}>
+            <summary>3D</summary>
+            <label className="field range" title="Dolly: камера ближе к сцене (+) или дальше (−), опорные px">
+              <span>Dolly · {Math.round(key.z ?? 0)}</span>
+              <input type="range" min={-1200} max={1200} step={10} value={Math.round(key.z ?? 0)} onChange={(e) => patch({ z: Number(e.target.value) || undefined })} />
+            </label>
+            <label className="field range" title="Наклон камеры вокруг центра кадра">
+              <span>Наклон · {(key.rotX ?? 0).toFixed(1)}°</span>
+              <input type="range" min={-300} max={300} value={Math.round((key.rotX ?? 0) * 10)} onChange={(e) => patch({ rotX: Number(e.target.value) / 10 || undefined })} />
+            </label>
+            <label className="field range" title="Облёт камеры вокруг центра кадра">
+              <span>Облёт · {(key.rotY ?? 0).toFixed(1)}°</span>
+              <input type="range" min={-300} max={300} value={Math.round((key.rotY ?? 0) * 10)} onChange={(e) => patch({ rotY: Number(e.target.value) / 10 || undefined })} />
+            </label>
+            <label className="field range" title="Поле зрения по вертикали: меньше — «телевик», глубина сжата">
+              <span>Поле зрения · {Math.round(key.fov ?? DEFAULT_FOV)}°</span>
+              <input
+                type="range"
+                min={15}
+                max={90}
+                value={Math.round(key.fov ?? DEFAULT_FOV)}
+                onChange={(e) => patch({ fov: Number(e.target.value) === DEFAULT_FOV ? undefined : Number(e.target.value) })}
+              />
+            </label>
+          </details>
           <label>
             <span className="li-cap">Переход к следующему ключу</span>
             <select className="input" value={key.ease ?? "inOutCubic"} onChange={(e) => patch({ ease: e.target.value as CameraKey["ease"] })}>
