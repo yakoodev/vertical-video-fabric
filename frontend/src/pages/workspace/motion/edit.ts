@@ -40,7 +40,8 @@ export function layerAt(
   words?: CaptionWord[],
   cam?: CameraMatrix | null,
 ): Layer | null {
-  const drawn = visibleLayers(layers, t).filter((l) => l.type !== "audio" && !l.hidden);
+  // Эффект кадра (fx) — во весь кадр: мышью не ловится, иначе закрыл бы слои под собой.
+  const drawn = visibleLayers(layers, t).filter((l) => l.type !== "audio" && l.type !== "fx" && !l.hidden);
   for (let i = drawn.length - 1; i >= 0; i--) {
     const box = layerBox(ctx, drawn[i], t, env, words, cam);
     if (box && hitLayer(box, px, py)) return drawn[i];
@@ -253,6 +254,8 @@ export function layerTitle(layer: Layer): string {
       return "Чат стрима";
     case "pngtuber":
       return "PNGtuber";
+    case "fx":
+      return FX_TITLES[layer.props.kind ?? "vhs"] ?? "Эффект";
     default:
       return "Слой";
   }
@@ -273,4 +276,15 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   chat: "🗨",
   audio: "♪",
   pngtuber: "🗣",
+  fx: "✺",
+};
+
+/** Подписи видов эффекта кадра (fx). */
+export const FX_TITLES: Record<string, string> = {
+  vhs: "VHS",
+  scanlines: "Строки развёртки",
+  light_leak: "Засветка",
+  chromatic: "Аберрация",
+  flash_frame: "Вспышка",
+  grain_overlay: "Зерно",
 };
