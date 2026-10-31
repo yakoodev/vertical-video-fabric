@@ -6,6 +6,7 @@ import { DefaultsSettings } from "@/pages/settings/DefaultsSettings";
 import { BackupSettings } from "@/pages/settings/BackupSettings";
 import { ProxySettings } from "@/pages/settings/ProxySettings";
 import { BrandsSettings } from "@/pages/settings/BrandsSettings";
+import { TelegramSettings } from "@/pages/settings/TelegramSettings";
 
 const TABS = [
   { seg: "render", label: "Пресеты рендера" },
@@ -16,6 +17,7 @@ const TABS = [
   { seg: "prompts", label: "Промпты" },
   { seg: "defaults", label: "По умолчанию" },
   { seg: "proxy", label: "Прокси" },
+  { seg: "telegram", label: "Telegram" },
   { seg: "backup", label: "Экспорт/импорт" },
 ];
 
@@ -47,6 +49,7 @@ export function SettingsPage() {
             <Route path="defaults" element={<DefaultsSettings />} />
             <Route path="backup" element={<BackupSettings />} />
             <Route path="proxy" element={<ProxySettings />} />
+            <Route path="telegram" element={<TelegramSettings />} />
             <Route path="*" element={<Navigate to="render" replace />} />
           </Routes>
         </div>

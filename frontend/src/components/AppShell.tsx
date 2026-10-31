@@ -8,12 +8,14 @@ import { useQuery } from "@tanstack/react-query";
 import { tasksApi } from "@/api/tasks";
 import { qk } from "@/api/keys";
 import { isActive } from "@/hooks/useActiveTasks";
+import { apKeys, autopilotApi } from "@/api/autopilot";
 
 // Order follows the daily loop: make → clip → publish (manual or auto) → watch.
-const NAV: { to: string; label: string; icon: string; badge?: "active" }[] = [
+const NAV: { to: string; label: string; icon: string; badge?: "active" | "approvals" }[] = [
   { to: "/projects", label: "Проекты", icon: "folder" },
   { to: "/clips", label: "Клипы", icon: "scissors" },
   { to: "/assets", label: "Файлы для монтажа", icon: "image" },
+  { to: "/approvals", label: "Одобрение", icon: "check", badge: "approvals" },
   { to: "/publications", label: "Публикации", icon: "send" },
   { to: "/automation", label: "Авто", icon: "zap" },
   { to: "/tasks", label: "Очередь", icon: "queue", badge: "active" },
@@ -55,6 +57,9 @@ export function AppShell() {
   // (completion toasts) — a second useActiveTasks() would toast everything twice.
   const tasks = useQuery({ queryKey: qk.activeTasks, queryFn: tasksApi.active, refetchInterval: 5000 });
   const activeCount = (tasks.data ?? []).filter((t) => isActive(t.status)).length;
+  // Автопилот: сколько карточек ждёт владельца (app/autopilot.py).
+  const approvals = useQuery({ queryKey: apKeys.counts, queryFn: autopilotApi.counts, refetchInterval: 30000 });
+  const pendingCount = approvals.data?.pending ?? 0;
   const openCreate = useCallback(() => setCreate(true), []);
 
   useEffect(() => {
@@ -109,7 +114,8 @@ export function AppShell() {
             >
               <Icon name={item.icon} className="ico" />
               <span>{item.label}</span>
-              {item.badge && activeCount ? <span className="nav-badge">{activeCount}</span> : null}
+              {item.badge === "active" && activeCount ? <span className="nav-badge">{activeCount}</span> : null}
+              {item.badge === "approvals" && pendingCount ? <span className="nav-badge">{pendingCount}</span> : null}
             </NavLink>
           ))}
         </nav>

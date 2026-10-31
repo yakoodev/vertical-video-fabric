@@ -4203,3 +4203,23 @@ ol.series-list { list-style: decimal inside; }
 @media (max-width: 980px) {
   .series-grid { grid-template-columns: 1fr; }
 }
+
+/* Автопилот канала: очередь одобрения, расписание, чат проекта (pages/ApprovalsPage.tsx, SeriesAutopilot.tsx). */
+.approval-list { display: grid; gap: 12px; }
+.approval-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; }
+.approval-card--focus { outline: 2px solid var(--accent); }
+.approval-preview video, .approval-preview img { width: 180px; max-height: 320px; border-radius: 10px; background: #000; object-fit: contain; display: block; }
+.approval-list--compact .approval-preview video, .approval-list--compact .approval-preview img { width: 110px; max-height: 196px; }
+.approval-body { display: grid; gap: 8px; min-width: 0; }
+.approval-title { margin: 0; font-size: 16px; }
+.approval-desc { margin: 0; white-space: pre-wrap; font-size: 13.5px; color: var(--text-dim); }
+.approval-comment { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.approval-status--pending { border-color: var(--accent); color: var(--accent-2); }
+.approval-status--approved { border-color: var(--success); color: var(--success); }
+.approval-status--rejected, .approval-status--expired { color: var(--text-dim); }
+.approval-status--changes_requested { border-color: var(--warn); color: var(--warn); }
+.approval-feed li { font-size: 13px; }
+.approval-digest { white-space: pre-wrap; font: inherit; font-size: 13px; margin: 0; }
+.project-chat { min-height: 480px; grid-template-rows: auto minmax(0, 1fr) auto; }
+.project-chat .agent-list { max-height: 60vh; }
+@media (max-width: 720px) { .approval-card { grid-template-columns: 1fr; } }

@@ -11,6 +11,7 @@ import { AccountsPage } from "@/pages/AccountsPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { HelpPage } from "@/pages/HelpPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ApprovalsPage } from "@/pages/ApprovalsPage";
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
 function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined>) => string }) {
@@ -40,6 +41,8 @@ export function App() {
         <Route path="clips" element={<ClipsPage />} />
         <Route path="assets" element={<MontageAssetsPage />} />
         <Route path="automation" element={<AutomationPage />} />
+        {/* Автопилот канала: очередь одобрения (app/autopilot.py). */}
+        <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="publications" element={<PublicationsPage />} />
         <Route path="publications/:jobId" element={<PublicationsPage />} />
         <Route path="accounts" element={<AccountsPage />} />

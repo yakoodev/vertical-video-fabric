@@ -24,18 +24,21 @@ import { ApiError } from "@/api/client";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
+import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
 
 /**
  * Проект-серия/канал (app/projects.py): лор, правила владельца, статистика и гипотезы.
  * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
  */
 
-type Tab = "brief" | "rules" | "stats" | "hyp";
+type Tab = "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
 const TABS: [Tab, string][] = [
   ["brief", "Резюме"],
   ["rules", "Правила"],
   ["stats", "Статистика"],
   ["hyp", "Гипотезы"],
+  ["autopilot", "Автопилот"],
+  ["chat", "Чат"],
 ];
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -77,6 +80,8 @@ export function SeriesPage() {
         {tab === "rules" ? <RulesTab projectId={id} /> : null}
         {tab === "stats" ? <StatsTab projectId={id} /> : null}
         {tab === "hyp" ? <HypothesesTab projectId={id} /> : null}
+        {tab === "autopilot" ? <AutopilotTab projectId={id} /> : null}
+        {tab === "chat" ? <ProjectChatTab projectId={id} /> : null}
       </div>
     </>
   );
