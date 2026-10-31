@@ -84,6 +84,9 @@ seed_music(store)
 seed_default_brand(store)
 worker = JobWorker(store)
 stats_collector = StatsCollector(store)
+from app.autopilot import AutopilotWorker  # noqa: E402 - автопилот: карточки, Telegram, сводки
+
+autopilot_worker = AutopilotWorker(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
 clip_render_service = ClipRenderService(store)
@@ -101,9 +104,11 @@ async def lifespan(app: FastAPI):
         pass
     worker.start()
     stats_collector.start()
+    autopilot_worker.start()
     try:
         yield
     finally:
+        autopilot_worker.stop()
         stats_collector.stop()
         worker.stop()
 
@@ -4131,6 +4136,11 @@ app.include_router(build_chat_router(AuthDep, lambda: store, ingestor=source_ing
 from app.projects_api import build_projects_router  # noqa: E402
 
 app.include_router(build_projects_router(AuthDep, lambda: store))
+
+# Автопилот канала: одобрение, расписание, обучение, Telegram, чат проекта (app/autopilot_api.py).
+from app.autopilot_api import build_autopilot_router  # noqa: E402
+
+app.include_router(build_autopilot_router(AuthDep, lambda: store))
 
 # Контент моушн-слоёв: шрифты, эмодзи, стикеры, звуки, мемы (app/motion_assets.py).
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402

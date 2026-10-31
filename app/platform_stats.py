@@ -194,6 +194,15 @@ def collect_stats(store: Any, *, force: bool = False, sleep: Callable[[float], N
                 summary["manual"] = manual
         except Exception:  # noqa: BLE001 - ручные публикации не валят основной сбор
             pass
+        # Петля автопилота: гипотезы проектов по свежим числам → карточки владельцу (app/autopilot.py).
+        try:
+            from app.autopilot import after_stats
+
+            loop = after_stats(store)
+            if loop["cards"]:
+                summary["autopilot_cards"] = loop["cards"]
+        except Exception:  # noqa: BLE001 - петля не валит сбор
+            pass
     finally:
         _status.update(running=False, finished_at=_now_text(), last=summary)
         _run_lock.release()

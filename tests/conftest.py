@@ -29,6 +29,8 @@ os.environ.setdefault("RENDER_LOUDNORM", "0")
 os.environ.setdefault("STATS_INTERVAL_HOURS", "0")
 # Размер загрузки yt-dlp узнаёт по сети — в тестах только явно (settings.download_size_probe).
 os.environ.setdefault("DOWNLOAD_SIZE_PROBE", "0")
+# Фон автопилота (Telegram long-polling) — в тестах не запускаем.
+os.environ.setdefault("AUTOPILOT_WORKER", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

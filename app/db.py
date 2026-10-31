@@ -481,6 +481,10 @@ class Database:
             from app.projects import ensure_projects_schema
 
             ensure_projects_schema(conn)
+            # Автопилот канала: очередь одобрения, лента, расписание, Telegram, чат проекта (app/autopilot.py).
+            from app.autopilot import ensure_autopilot_schema
+
+            ensure_autopilot_schema(conn)
             # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
             # площадки по времени — обратная связь «что заходит» для монтажа.
             # error — снимок не удался (причина для UI), числа тогда NULL.
