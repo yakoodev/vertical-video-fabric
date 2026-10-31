@@ -260,7 +260,7 @@ def test_verify_keeps_style_across_rounds_and_suggests_stronger(tmp_path, monkey
     out = censor.verify_plan(store, plan["id"], style="duck")
     assert seen == [{"duck"}] * 3  # уровень растёт, стиль тот же
     word = next(w for w in out["words"] if w["i"] == 1)
-    assert word["level"] == 3 and word["heard"] and "beep" in word["note"]
+    assert word["level"] == 3 and word["heard"] and "style silence или noise" in word["note"]
 
 
 # ------------------------------------------------------------------ рендер и listen

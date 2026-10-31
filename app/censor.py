@@ -49,8 +49,10 @@ JOB_WAIT_SEC = 45.0
 JOB_KEEP_SEC = 600.0  # итог проверки, который никто не забрал, через 10 мин уже не отдаём
 CONTEXT_NOTE = "узнаётся по контексту"
 DEFAULT_STYLE = "silence"
-# Маскируют слабее тишины: узнаётся на последнем уровне — сначала сменить стиль.
-WEAK_STYLES = ("duck", "lowpass", "stretch", "reverse")
+# Маскируют слабее тишины (сравнение на стримах, D:\vvf-offload\tmp\censor_ab\report.md): узнаётся на
+# последнем уровне — сначала сменить стиль. Писк Whisper «дописывает» по контексту («блядь» на месте
+# любого запиканного слова), duck слышен почти всегда.
+WEAK_STYLES = ("duck", "beep", "lowpass", "stretch", "reverse")
 
 
 def clamp_style(value: Any) -> str | None:
@@ -394,7 +396,7 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
                 row["note"] = f"узнаётся; круги кончились — повтори с max_rounds больше (уровень {w['level']})"
             elif w.get("style") in WEAK_STYLES:
                 row["note"] = (f"узнаётся и на уровне {MAX_LEVEL} со стилем {w['style']} — он маскирует слабее: "
-                               "повтори со style beep или noise")
+                               "повтори со style silence или noise")
             else:
                 row["note"] = CONTEXT_NOTE + " — глушением не лечится: вырежи слово apply_cuts или оставь"
         words.append(row)
