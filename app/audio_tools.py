@@ -66,12 +66,29 @@ def h_audio_map(ctx: Any, args: dict) -> Any:
             out, png = clip_audio_map(ctx.store, ctx.plan_id, from_sec=lo, to_sec=hi, want_image=image)
     except ValueError as exc:
         raise at.ToolError(f"audio_map: {exc}") from exc
+    out = _with_chat_peaks(ctx, out)
     if png:
         out = {**out, "image_note": "картинка: громкость столбиками (−60…0 дБ), зелёная полоса — речь, красные "
                                     "риски — удары, жёлтые линии — стыки кусков; засечки снизу — каждая секунда "
                                     "шкалы ответа, длинные — кратные 5 с"}
         return at.ImageResult(data=png, mime_type="image/png", info=out)
     return {"ok": True, **out}
+
+
+def _with_chat_peaks(ctx: Any, out: dict) -> dict:
+    """Пики чата Twitch (если импортирован) — в карту моментов, шкалой ответа (app/chat_signal.py)."""
+    from app import chat_signal as cs
+
+    if out.get("time") == "source":
+        peaks = cs.audio_map_peaks(ctx.store, int(out["project_id"]), out.get("from_sec"), out.get("to_sec"))
+    else:
+        plan = ctx.store.get_clip_plan(ctx.plan_id)
+        segs = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
+        if not segs:
+            return out
+        peaks = cs.audio_map_peaks(ctx.store, int(plan["source_id"]), min(a for a, _ in segs),
+                                   max(b for _, b in segs), to_out=cs.clip_time_mapper(plan))
+    return {**out, "chat_peaks": peaks, "chat_note": cs.PEAKS_NOTE} if peaks else out
 
 
 # --------------------------------------------------------------------------- #

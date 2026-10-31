@@ -189,13 +189,19 @@ def test_core_api_flow(tmp_path, monkeypatch):
     assert captured_auto["publish"]["privacy"] == "unlisted"
 
     # The pipeline itself (run synchronously here) renders the planned clips and
-    # schedules a publish job per clip on the chosen accounts.
+    # sends each one to the approval queue — it never creates publish jobs itself.
+    import app.automation as automation_module
+
     auto = main_module.automation_service
+    jobs_before = len(store.db.query_all("SELECT id FROM jobs"))
+    submitted = []
     monkeypatch.setattr(auto, "_ingest", lambda url, selection: source)
     monkeypatch.setattr(auto.analysis, "run_analysis", lambda *a, **k: {})
     monkeypatch.setattr(store, "ensure_clip_plans_for_source", lambda source_id: None)
     monkeypatch.setattr(store, "list_clip_plans", lambda source_id: [{"id": 1}, {"id": 2}])
     monkeypatch.setattr(auto.render, "render_clip_plan", lambda plan_id, **k: clip)
+    monkeypatch.setattr(automation_module.A, "submit_clip",
+                        lambda store, plan_id, **k: submitted.append((plan_id, k)) or {"status": "pending"})
     run = auto._new_run(label="auto-test", url="https://youtu.be/abc")
     auto._run(
         run,
@@ -207,7 +213,15 @@ def test_core_api_flow(tmp_path, monkeypatch):
     )
     assert run["status"] == "done", run.get("error")
     assert run["clips"] == 2
-    assert run["jobs"] == 2
+    assert run["approvals"] == 2 and run["jobs"] == 0
+    assert [p for p, _ in submitted] == [1, 2] and submitted[0][1]["platforms"] == ["youtube"]
+    assert len(store.db.query_all("SELECT id FROM jobs")) == jobs_before
+    # Source without a series → the shared «Авто — без серии» project; accounts migrated into its autopilot.
+    from app import autopilot as A
+    from app.projects import project_of_source
+
+    inbox = project_of_source(store, source["id"])
+    assert inbox and A.get_config(store, inbox)["accounts"] == {"youtube": [account["id"]]}
 
     # Background downloads: start → visible in the activity feed → cancellable.
     import threading

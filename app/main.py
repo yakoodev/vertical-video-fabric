@@ -90,8 +90,12 @@ autopilot_worker = AutopilotWorker(store)
 source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
 clip_render_service = ClipRenderService(store)
-automation_service = AutomationService(store, source_ingestor, video_analysis_service, clip_render_service)
 download_service = DownloadService(source_ingestor)
+# «Авто»: публикует только через одобрение (submit_clip), качает фоново через download_service.
+automation_service = AutomationService(store, source_ingestor, video_analysis_service, clip_render_service, download_service)
+from app.vod_watch import VodWatchWorker  # noqa: E402 - наблюдатель VOD: новый эфир → нарезка → одобрение
+
+vod_watch_worker = VodWatchWorker(store, download_service, automation_service)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 
@@ -105,9 +109,11 @@ async def lifespan(app: FastAPI):
     worker.start()
     stats_collector.start()
     autopilot_worker.start()
+    vod_watch_worker.start()
     try:
         yield
     finally:
+        vod_watch_worker.stop()
         autopilot_worker.stop()
         stats_collector.stop()
         worker.stop()
@@ -1585,9 +1591,17 @@ def ui_auto_start(
     max_clips: Annotated[int, Form()] = 0,
     ai_metadata: Annotated[bool, Form()] = False,
     ai_montage: Annotated[bool, Form()] = False,
+    project_id: Annotated[int, Form()] = 0,
 ) -> RedirectResponse:
     if not url.strip():
         raise HTTPException(status_code=400, detail="url is required")
+    if project_id:
+        try:
+            from app.projects import get_project as get_channel_project
+
+            get_channel_project(store, project_id, include_sources=False)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     defaults = _settings_panel_data()
     selected_prompt = ""
     if prompt_preset_id:
@@ -1612,6 +1626,7 @@ def ui_auto_start(
 
     automation_service.start_run(
         url=url.strip(),
+        project_id=project_id or None,  # пусто — серия источника или общий проект «Авто — без серии»
         smotvibe_selection={
             "media_url": smotvibe_media_url.strip(),
             "referer": smotvibe_referer.strip(),
@@ -4141,6 +4156,10 @@ app.include_router(build_projects_router(AuthDep, lambda: store))
 from app.autopilot_api import build_autopilot_router  # noqa: E402
 
 app.include_router(build_autopilot_router(AuthDep, lambda: store))
+# Наблюдатель VOD проекта-стрима (app/vod_watch.py).
+from app.vod_watch_api import build_vod_watch_router  # noqa: E402
+
+app.include_router(build_vod_watch_router(AuthDep, lambda: store, lambda: (download_service, automation_service)))
 
 # Контент моушн-слоёв: шрифты, эмодзи, стикеры, звуки, мемы (app/motion_assets.py).
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402

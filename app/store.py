@@ -1729,7 +1729,10 @@ class AppStore:
     def _annotate_plan_quality(self, plans: list[dict], source_id: int | None) -> None:
         """Add a heuristic ``quality`` (0..1) to each plan and flag near-duplicates
         (``duplicate_of``) so a re-run's overlapping candidates are easy to skip."""
+        from app.chat_signal import plan_score, source_signal
+
         cues_by_source: dict[int, list[dict]] = {}
+        chat_by_source: dict[int, dict | None] = {}
         spans: list[tuple[float, float]] = []  # (start, end) of best-quality plans kept
         # Score first.
         for plan in plans:
@@ -1743,7 +1746,12 @@ class AppStore:
                 except (KeyError, ValueError):
                     cues_by_source[sid] = []
             words = words_in_ranges(cues_by_source[sid], ranges)
-            plan["quality"] = clip_quality(plan.get("score", 0), total, words)
+            if sid not in chat_by_source:  # чат Twitch — мягкий вес, если импортирован (app/chat_signal.py)
+                chat_by_source[sid] = source_signal(self, int(sid)) if sid else None
+            chat = plan_score(chat_by_source[sid], plan)
+            if chat is not None:
+                plan["chat_score"] = chat
+            plan["quality"] = clip_quality(plan.get("score", 0), total, words, chat)
             plan["_span"] = (min((r[0] for r in ranges), default=0.0), max((r[1] for r in ranges), default=0.0))
         # Flag duplicates: a lower-quality plan whose span heavily overlaps a kept one.
         for plan in sorted(plans, key=lambda p: p.get("quality", 0), reverse=True):

@@ -30,11 +30,14 @@ def speech_density(word_count: int, total_sec: float) -> float:
     return _clamp(wps / 3.0)                # ~3 words/sec of speech → full marks
 
 
-def clip_quality(model_score: float, total_sec: float, word_count: int) -> float:
-    """Composite 0..1: 50% model, 25% duration fit, 25% speech density."""
+def clip_quality(model_score: float, total_sec: float, word_count: int, chat: float | None = None) -> float:
+    """Composite 0..1: 50% model, 25% duration fit, 25% speech density; a Twitch chat burst (when
+    the source has chat) is blended in with a soft weight (app/chat_signal.py), otherwise unchanged."""
+    from app.chat_signal import blend
+
     llm = _clamp(float(model_score or 0.0))
     q = 0.5 * llm + 0.25 * duration_fit(total_sec) + 0.25 * speech_density(word_count, total_sec)
-    return round(q, 4)
+    return blend(round(q, 4), chat)
 
 
 def words_in_ranges(cues: list[dict], ranges: list[tuple[float, float]]) -> int:
