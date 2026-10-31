@@ -203,7 +203,7 @@ def test_sync_publish_status(env):
 
 @pytest.mark.parametrize("text,intent,kind", [
     ("не бери политику", "rule", "dont"),
-    ("Убери мат", "rule", "dont"),
+    ("Убери мат", "command", None),
     ("круто, что субтитры крупные — так и делай", "rule", "do"),
     ("круто, так и делай", "approve", None),
     ("да", "approve", None),
@@ -219,8 +219,60 @@ def test_classify_reply(text, intent, kind):
         assert cls["kind"] == kind and cls["confidence"] >= A.CONFIDENT
 
 
+# Правило — только при признаке обобщения/будущего, оценке типа контента или «запомни»;
+# разовые команды к конкретному клипу («убери …», «удали этот …», номер, секунда) — не правило.
+@pytest.mark.parametrize("text,intent,kind", [
+    ("Убери замирание в конце", "command", None),
+    ("Удали этот клип", "command", None),
+    ("убери мат в этом клипе на 0:15", "command", None),
+    ("переделай клип #12, хук слабый", "command", None),
+    ("поставь удар на 12.5 с", "command", None),
+    ("сделай субтитры крупнее", "command", None),
+    ("тут слишком тихо, подними", "command", None),
+    ("никогда не бери политику", "rule", "dont"),
+    ("не ставь музыку поверх голоса", "rule", "dont"),
+    ("больше не режь паузы в диалогах", "rule", "dont"),
+    ("впредь без мата в хуках", "rule", "dont"),
+    ("в этом проекте не ставь эмодзи", "rule", "dont"),
+    ("такие моменты заходят — бери почаще", "rule", "do"),
+    ("мемы с котами не заходят", "rule", "dont"),
+    ("запомни: субтитры всегда жёлтые", "rule", "do"),
+])
+def test_rule_only_with_generalization(text, intent, kind):
+    cls = A.classify_reply(text)
+    if intent == "command":  # не правило: разовая команда (или вовсе без признаков правила)
+        assert cls["intent"] in ("command", "none"), cls
+    else:
+        assert cls["intent"] == "rule", cls
+        assert cls["kind"] == kind and cls["confidence"] >= A.CONFIDENT and cls["signal"] == "general"
+
+
+def test_command_does_not_make_rule_card(env):
+    _c, store, _source, pid = env
+    for text in ("Убери замирание в конце", "Удали этот клип", "переделай клип #3"):
+        assert A.learn_from_text(store, pid, text, origin="chat", auto_rules="confirm")["action"] == "none"
+    assert not A.list_approvals(store, pid, kind="rule_proposal") and not P.list_rules(store, project_id=pid)
+    # Спорное («без мата») — судья-ИИ решает; не ответил — эвристика.
+    said_no = A.learn_from_text(store, pid, "без мата", auto_rules="confirm", judge=lambda _t: {"rule": False})
+    assert said_no["action"] == "none" and said_no["ai"]
+    said_yes = A.learn_from_text(store, pid, "без мата", auto_rules="auto",
+                                 judge=lambda _t: {"rule": True, "kind": "dont", "text": "Без мата"})
+    assert said_yes["action"] == "rule_added" and said_yes["rule"]["text"] == "Без мата"
+
+    def broken(_t):
+        raise RuntimeError("Gemini недоступен")
+
+    fallback = A.learn_from_text(store, pid, "слишком длинно", auto_rules="confirm", judge=broken)
+    assert fallback["action"] == "rule_proposed"
+    # Явное правило судью не спрашивает.
+    asked = []
+    A.learn_from_text(store, pid, "никогда не бери политику", auto_rules="confirm",
+                      judge=lambda t: asked.append(t) or {"rule": False})
+    assert not asked
+
+
 def test_classify_unsure_cases():
-    one_off = A.classify_reply("убери мат в этом клипе на 0:15")
+    one_off = A.classify_reply("здесь мат — больше никогда так не делай, на 0:15")
     assert one_off["intent"] == "rule" and one_off["one_off"] and one_off["confidence"] < A.CONFIDENT
     mixed = A.classify_reply("круто что быстро, но не ставь музыку поверх голоса?")
     assert mixed["confidence"] < A.CONFIDENT
@@ -245,13 +297,16 @@ def test_changes_comment_becomes_rule_with_quote(env):
 def test_unsure_reply_becomes_rule_proposal(env):
     _c, store, source, pid = env
     card = A.submit_clip(store, _clip(store, source["id"])["id"], title="x")
-    learned = A.decide(store, card["id"], "changes", comment="убери мат в этом клипе на 0:15")["learned"]
+    command = A.decide(store, card["id"], "changes", comment="убери мат в этом клипе на 0:15")["learned"]
+    assert command["action"] == "none" and command["classified"]["intent"] == "command"  # разовая правка
+    card = A.submit_clip(store, _clip(store, source["id"], "второй")["id"], title="b")
+    learned = A.decide(store, card["id"], "changes", comment="здесь мат — больше никогда так не делай, на 0:15")["learned"]
     assert learned["action"] == "rule_proposed"
     proposal = A.get_approval(store, learned["proposal_id"])
     assert proposal["kind"] == "rule_proposal" and "на будущее" in proposal["question"]
     assert not P.list_rules(store, project_id=pid)
     res = A.decide(store, proposal["id"], "approve", actor="tg:@owner")
-    assert res["rule"]["created"] and res["rule"]["rule"]["quote"] == "убери мат в этом клипе на 0:15"
+    assert res["rule"]["created"] and res["rule"]["rule"]["quote"] == "здесь мат — больше никогда так не делай, на 0:15"
 
 
 def test_revoke_phrase_proposes_and_revokes(env):

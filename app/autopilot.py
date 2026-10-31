@@ -793,11 +793,50 @@ _DONT_RE = re.compile(
     r"слишком|не надо|не нужно|не бери|не ставь|no|don't|dont|never|avoid|stop)(?=[^\w]|$)", re.IGNORECASE)
 _DO_RE = re.compile(
     r"(круто|так и делай|так держать|так и надо|больше такого|ещё такого|еще такого|отлично|супер|класс|нравится|"
-    r"огонь|делай так|продолжай|в том же духе|всегда|обязательно|почаще|побольше|давай больше|keep doing|love)",
+    r"огонь|(?<![\w])делай так(?![\w])|продолжай|в том же духе|всегда|обязательно|почаще|побольше|давай больше|заходит|заходят|"
+    r"залетает|залетают|keep doing|love)",
     re.IGNORECASE)
 # Это про конкретный клип, а не правило на будущее.
 _ONE_OFF_RE = re.compile(r"(в этом клипе|в этом ролике|тут|здесь|на \d+[:.]\d\d|\b\d+:\d\d\b|на \d+ ?сек|в начале|"
                          r"в конце|этот кадр|эту сцену)", re.IGNORECASE)
+# Признак правила на будущее: обобщение («всегда», «больше не», «такие моменты»), оценка типа
+# контента («такое заходит»), «не бери / не ставь», явное «запомни».
+_GENERAL_RE = re.compile(
+    r"(всегда|никогда|больше не|впредь|в будущем|на будущее|каждый раз|в каждом|во всех|по умолчанию|"
+    r"в следующий раз|в этом проекте|на этом канале|у нас на канале|вообще|"
+    r"(^|[^\w])(такие|такое|таких|таким)(?=[^\w]|$)(?!\s+же)|"
+    r"(не )?заход(ит|ят)|залетает|не залетает|"
+    r"не бери|не берите|не брать|не ставь|не ставьте|не ставить|не делай так|не надо так|"
+    r"так и делай|(^|[^\w])делай так(?=[^\w]|$)|так держать|почаще|пореже|побольше|поменьше|"
+    r"запомни|запиши правило|возьми за правило|always|never|from now on|remember)", re.IGNORECASE)
+# Разовая команда: повелительный глагол про конкретный объект («убери …», «удали этот …», «сделай …»).
+_COMMAND_RE = re.compile(
+    r"(^|[.!?,;:—\-]\s*|\s(и|а|потом|ещё|еще|теперь)\s+)(убери|уберите|удали|удалите|сделай|сделайте|поставь|"
+    r"поставьте|переделай|переделайте|перемонтируй|добавь|добавьте|вставь|обрежь|обрежьте|подрежь|вырежи|вырежьте|"
+    r"сократи|замени|поменяй|сдвинь|подвинь|исправь|поправь|заглуши|запикай|приглуши|увеличь|уменьши|"
+    r"смонтируй|сгенерируй|покажи|найди|открой|опубликуй|отправь|запусти|нарежь|скачай|склей|верни|откати|"
+    r"перенеси|выкинь|выкиньте|почисти|наложи|подставь|переименуй|назови)(?=[^\w]|$)", re.IGNORECASE)
+# Указание на конкретное: этот/здесь/тут, номер клипа, секунда, таймкод.
+_DEICTIC_RE = re.compile(
+    r"((^|[^\w])(этот|эта|эту|этого|этой|этом|эти|этих|здесь|тут|вот тут|вот здесь)(?=[^\w]|$)|#\s?\d+|"
+    r"клип[а-я]*\s+\d+|\d+:\d\d|\d+(?:[.,]\d+)?\s?(с|сек|секунд[а-я]*)(?=[^\w]|$))", re.IGNORECASE)
+_NOT_LANDS_RE = re.compile(r"не\s+(заход|залета)\w*", re.IGNORECASE)
+_PROJECT_SCOPE_RE = re.compile(r"(в этом проекте|на этом канале)", re.IGNORECASE)
+
+
+def rule_signal(text: str) -> str:
+    """general — есть признак правила на будущее; command — разовая команда к конкретному
+    (повелительный глагол или «этот/здесь/тут», номер клипа, секунда) без признака обобщения;
+    neutral — ни того ни другого (спорно: «без мата», «слишком длинно»)."""
+    raw = str(text or "")
+    if _GENERAL_RE.search(raw):
+        return "general"
+    deictic = _DEICTIC_RE.search(_PROJECT_SCOPE_RE.sub(" ", raw))
+    if _COMMAND_RE.search(raw) or deictic:
+        return "command"
+    return "neutral"
+
+
 _PRAISE_FILLER_RE = re.compile(
     r"(круто|так и делай|так держать|так и надо|отлично|супер|класс|огонь|продолжай|в том же духе|"
     r"нравится|мне|пожалуйста|плиз|плз|пж|и переделай|переделай|перемонтируй|давай)", re.IGNORECASE)
@@ -851,12 +890,18 @@ def classify_reply(text: str) -> dict:
         subject = _REVOKE_RE.sub(" ", raw)
         subject = re.sub(r"\b(правило|правила|про|что|я|контент|старое|все|всё|и)\b", " ", subject, flags=re.I)
         return {"intent": "revoke", "subject": re.sub(r"\s+", " ", subject).strip(" ,.—-!:«»"), "confidence": 0.8}
-    marked = [(s, bool(_DONT_RE.search(s)), bool(_DO_RE.search(s))) for s in _sentences(raw)]
+    # «не заходит» — оценка «не делать», а не смесь похвалы и запрета.
+    marked = [(s, bool(_DONT_RE.search(s)), bool(_DO_RE.search(_NOT_LANDS_RE.sub(" ", s))))
+              for s in _sentences(raw)]
     marked = [m for m in marked if m[1] or m[2]]
     if not marked:
         return {"intent": "none", "confidence": 0.0}
     sentence, dont, do = marked[0]
     kind = "dont" if dont else "do"
+    signal = rule_signal(raw)
+    if signal == "command":
+        # «убери замирание в конце», «удали этот клип» — разовая правка, а не правило.
+        return {"intent": "command", "kind": kind, "confidence": 0.0, "signal": signal}
     rule_text = _rule_text_of(sentence, kind)
     core = P.rule_tokens(rule_text)[0]
     confidence = 0.8 if kind == "dont" else 0.75
@@ -875,15 +920,17 @@ def classify_reply(text: str) -> dict:
     if one_off:
         confidence = min(confidence, 0.5)
     return {"intent": "rule", "kind": kind, "text": rule_text or raw[:300], "confidence": round(confidence, 2),
-            "one_off": one_off}
+            "one_off": one_off, "signal": signal}
 
 
 def learn_from_text(store: Any, project_id: int, text: str, *, origin: str = "ui", origin_ref: str = "",
                     approval_id: int | None = None, said_at: Any = None, context: dict | None = None,
-                    auto_rules: str = "auto") -> dict:
+                    auto_rules: str = "auto", judge: Callable[[str], dict | None] | None = None) -> dict:
     """Слова владельца → правило проекта (уверены и auto_rules=auto), карточка «Записать
     правило?» (не уверены или auto_rules=confirm), предложение отменить старое правило.
-    Правило всегда с дословной цитатой владельца."""
+    Правило всегда с дословной цитатой владельца. Разовые команды («убери …», «удали этот
+    клип») правилом не считаются (``rule_signal``). ``judge`` — ИИ для спорных реплик
+    (без признака обобщения и без команды): text → {rule: bool, kind, text} или None (эвристика)."""
     text = P._long_text(text, 2000)
     cls = classify_reply(text)
     said = said_at or _now_text()[:16]
@@ -906,6 +953,21 @@ def learn_from_text(store: Any, project_id: int, text: str, *, origin: str = "ui
     if cls["intent"] != "rule":
         return out
     kind, rule_text, confidence = cls["kind"], cls["text"], cls["confidence"]
+    if judge is not None and cls.get("signal") == "neutral":
+        try:
+            verdict = judge(text)
+        except Exception as exc:  # noqa: BLE001 - ИИ недоступен — решает эвристика
+            _log.info("rule judge failed: %s", exc)
+            verdict = None
+        if isinstance(verdict, dict) and "rule" in verdict:
+            out["ai"] = True
+            if not verdict.get("rule"):
+                out["classified"] = {**cls, "intent": "command", "confidence": 0.0}
+                return out
+            if verdict.get("kind") in P.RULE_KINDS:
+                kind = verdict["kind"]
+            if verdict.get("text"):
+                rule_text = P._text(verdict["text"], 300)
     if confidence < CONFIDENT and _reply_classifier is not None:
         try:
             ai = _reply_classifier(text, context or {})
