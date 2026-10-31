@@ -27,8 +27,10 @@ from app.audio_edit import (
 )
 from app.audio_mute import (
     DUCK_DB,
+    DUCK_RAMP_SEC,
     MUTE_STYLES,
     VOLUME_STYLES,
+    build_source_volume_args,
     final_pass_mutes,
     is_fx_style,
     mute_volume_expr,
@@ -56,7 +58,8 @@ def test_styles_are_complete_and_split_between_volume_and_fx():
     for style in FX_STYLES:
         assert normalize_fx([{"start": 0, "end": 1, **censor_fx(style)}]), style  # эффект — из set_audio_fx
     assert censor_fx("silence") is None and censor_fx("duck") is None
-    assert span_floor({"style": "duck"}) == pytest.approx(10 ** (DUCK_DB / 20), abs=1e-4)
+    assert DUCK_DB == -35.0 and span_floor({"style": "duck"}) == pytest.approx(10 ** (DUCK_DB / 20), abs=1e-4)
+    assert censor.DEFAULT_STYLE == "reverse"
 
 
 def test_style_kept_only_on_tagged_spans_and_old_spans_are_silence():
@@ -97,6 +100,11 @@ def test_volume_styles_expression():
     assert _expr_value(expr, 1.5) == pytest.approx(0.0)
     assert _expr_value(expr, 3.5) == pytest.approx(10 ** (DUCK_DB / 20), abs=1e-4)
     assert _expr_value(expr, 2.5) == pytest.approx(1.0) and _expr_value(expr, 5.0) == pytest.approx(1.0)
+    # Края duck — DUCK_RAMP_SEC снаружи отрезка по smoothstep: в середине рампы ровно половина пути.
+    floor = VOLUME_STYLES["duck"]
+    assert _expr_value(expr, 3.0 - DUCK_RAMP_SEC / 2) == pytest.approx(floor + (1 - floor) / 2, abs=1e-4)
+    assert _expr_value(expr, 3.0 - DUCK_RAMP_SEC * 0.9) > 0.95  # плавно, не линейно
+    assert _expr_value(expr, 3.0 - DUCK_RAMP_SEC - 0.001) == pytest.approx(1.0)
     # Старые вызовы парами (a, b) — тишина, как раньше.
     assert mute_volume_expr([(1.0, 2.0)]) == "max(clip((1.000-t)/0.03,0,1),clip((t-2.000)/0.03,0,1))"
 
@@ -128,10 +136,12 @@ def test_fx_style_on_voice_track_and_duck_track_volume():
                        {"start": 2, "end": 2.3, "by": "censor", "style": "duck", "track": 1},
                        {"start": 3, "end": 3.3, "by": "censor", "track": 1}]}
     ops, _notes = source_ops(render, clock, [0, 1])
-    assert [(o["kind"], o["track"], o.get("fx"), o.get("factor")) for o in ops] == [
-        ("fx", 1, "beep", None), ("vol", 1, None, VOLUME_STYLES["duck"]), ("vol", 1, None, 0.0)]
+    assert [(o["kind"], o["track"], o.get("fx"), o.get("factor"), o.get("ramp")) for o in ops] == [
+        ("fx", 1, "beep", None, CENSOR_RAMP_SEC), ("vol", 1, None, VOLUME_STYLES["duck"], DUCK_RAMP_SEC),
+        ("vol", 1, None, 0.0, None)]
     graph = source_graph(0, [0, 1], {"ops": ops, "src0": 0.0}, "a")
     assert "[0:a:1]" in graph and "sine=frequency" in graph and "[0:a:0]anull" in graph
+    assert f"/{DUCK_RAMP_SEC:.3f}" in graph  # duck дорожки — с плавными краями
 
 
 def test_gen_fx_outside_the_stream_passes_through():
@@ -189,6 +199,35 @@ def test_style_really_sounds(tmp_path, style):
         assert abs(inside - ref) < 4
 
 
+@pytest.mark.parametrize("style", ["silence", "duck", "beep"])
+def test_edges_are_on_time_not_on_frame_grid(tmp_path, style):
+    """volume eval=frame считал множитель раз на кадр (у wav — до 85 мс): середина слова начинала
+    глушиться на кадр позже. Теперь кадры по 5 мс — с первых миллисекунд отрезка уже глушится."""
+    _require_ffmpeg()
+    src = tmp_path / "tone.wav"
+    _tone(src)
+    out = tmp_path / "o.wav"
+    a, b = 0.95, 1.6  # сразу после границы кадра wav (4096 сэмплов): раньше глушилось только с 1.024
+    if style in VOLUME_STYLES:
+        args = build_source_volume_args(src, tmp_path / "o.mp4", [(a, b, VOLUME_STYLES[style])], [])
+        graph = args[args.index("-af") + 1]
+        _apply(src, out, f"[0:a]{graph}[a]")
+    else:
+        ops = [{**censor_fx(style), "kind": "fx", "start": a, "end": b, "track": None, "ramp": CENSOR_RAMP_SEC}]
+        _apply(src, out, source_graph(0, [0], {"ops": ops, "src0": 0.0}, "a"))
+    ref = _rms(src, 0.2, 0.3)
+    head = _rms(out, a + 0.01, 0.02)  # первые миллисекунды отрезка
+    if style == "silence":
+        assert head < -60
+    elif style == "duck":
+        assert head - ref == pytest.approx(DUCK_DB, abs=2)
+    else:
+        hp = tmp_path / "hp.wav"
+        _apply(out, hp, "[0:a]highpass=f=700,highpass=f=700,highpass=f=700[a]")
+        assert _rms(hp, a + 0.01, 0.02) > _rms(hp, 0.2, 0.3) + 25  # писк уже звучит
+    assert abs(_rms(out, a - 0.1 - (DUCK_RAMP_SEC if style == "duck" else 0.03), 0.05) - ref) < 1  # до края — как было
+
+
 # ------------------------------------------------------------------ цензура: стиль сохраняется
 
 
@@ -199,8 +238,8 @@ def _styles(store, plan_id):
 
 def test_censor_style_saved_and_kept_on_rerun(tmp_path, monkeypatch):
     store, _s, plan, _p = _plan(tmp_path, monkeypatch)
-    out = censor.censor_plan(store, plan["id"])  # новый клип — стиль по умолчанию
-    assert out["style"] == censor.DEFAULT_STYLE
+    out = censor.censor_plan(store, plan["id"])  # новый клип — стиль по умолчанию (reverse)
+    assert out["style"] == censor.DEFAULT_STYLE == "reverse"
     assert [s for _a, s in _styles(store, plan["id"])] == [censor.DEFAULT_STYLE] * 2
     out = censor.censor_plan(store, plan["id"], style="beep")
     assert out["style"] == "beep" and all(w["style"] == "beep" for w in out["words"])
@@ -246,21 +285,55 @@ def test_tool_and_http_take_style(tmp_path, monkeypatch):
                        json={"verify": False, "style": "x"}).status_code == 422
 
 
-def test_verify_keeps_style_across_rounds_and_suggests_stronger(tmp_path, monkeypatch):
+def _styles_by_word(mute):
+    return [(m["start"] < 3, m.get("level"), m.get("style")) for m in mute if m.get("by") == "censor"]
+
+
+def test_verify_switches_only_the_heard_word_to_silence_then_noise(tmp_path, monkeypatch):
     from test_censor import _mock_rounds
 
     store, _s, plan, _p = _plan(tmp_path, monkeypatch)
     seen = []
 
     def hearing(n, mute):
-        seen.append({m.get("style") for m in mute if m.get("by") == "censor"})
-        return [{"word": "блять", "start": 1.35, "end": 1.65}]  # узнаётся всегда
+        seen.append(_styles_by_word(mute))
+        return [{"word": "блять", "start": 1.35, "end": 1.65}]  # «блять» узнаётся всегда, «сука» — нет
 
-    _mock_rounds(monkeypatch, store, plan, hearing)
-    out = censor.verify_plan(store, plan["id"], style="duck")
-    assert seen == [{"duck"}] * 3  # уровень растёт, стиль тот же
+    calls = _mock_rounds(monkeypatch, store, plan, hearing)
+    out = censor.verify_plan(store, plan["id"])  # новый клип — reverse по умолчанию
+    # Уровни 1→2→3 (max_rounds 3), потом сверх них — смена стиля только у «блять»: silence, noise.
+    assert seen == [[(True, 1, "reverse"), (False, 1, "reverse")], [(True, 2, "reverse"), (False, 1, "reverse")],
+                    [(True, 3, "reverse"), (False, 1, "reverse")], [(True, 3, "silence"), (False, 1, "reverse")],
+                    [(True, 3, "noise"), (False, 1, "reverse")]]
+    assert calls["render"] == 3 + censor.STYLE_FALLBACK_ROUNDS
     word = next(w for w in out["words"] if w["i"] == 1)
-    assert word["level"] == 3 and word["heard"] and "style silence или noise" in word["note"]
+    assert word["heard"] and word["style"] == "noise" and censor.CONTEXT_NOTE in word["note"]
+    assert word["style_switched"] == [{"from": "reverse", "to": "silence", "round": 4},
+                                      {"from": "silence", "to": "noise", "round": 5}]
+    assert "reverse → silence → noise" in out["note"]
+    assert "style_switched" not in next(w for w in out["words"] if w["i"] == 4)
+
+
+def test_verify_style_switch_stops_when_silence_helps(tmp_path, monkeypatch):
+    from test_censor import _mock_rounds
+
+    store, _s, plan, _p = _plan(tmp_path, monkeypatch)
+
+    def hearing(n, mute):
+        style = next(m["style"] for m in mute if m["start"] < 3)
+        return [] if style == "silence" else [{"word": "блять", "start": 1.35, "end": 1.65}]
+
+    calls = _mock_rounds(monkeypatch, store, plan, hearing)
+    out = censor.verify_plan(store, plan["id"], {"1": 3}, style="duck")
+    assert calls["render"] == 2  # уровень уже 3: duck → silence, и Whisper больше не узнаёт
+    word = next(w for w in out["words"] if w["i"] == 1)
+    assert not word["heard"] and word["style"] == "silence" and word["style_switched"][0]["from"] == "duck"
+    assert [s for _w, _l, s in _styles_by_word(store.get_clip_plan(plan["id"])["render_settings"]["mute"])] == \
+        ["silence", "duck"]  # второе слово — как было
+    # Повторный запуск без style помнит стиль каждого слова.
+    censor.censor_plan(store, plan["id"])
+    assert [s for _w, _l, s in _styles_by_word(store.get_clip_plan(plan["id"])["render_settings"]["mute"])] == \
+        ["silence", "duck"]
 
 
 # ------------------------------------------------------------------ рендер и listen
@@ -275,7 +348,7 @@ def test_render_puts_fx_style_into_piece_audio(tmp_path, monkeypatch):
     graphs = [c[c.index("-filter_complex") + 1] for c in calls if "-filter_complex" in c]
     assert any("sine=frequency=900" in g and "(t+10.000)-11.000" in g for g in graphs)  # второй кусок
     final = [c for c in calls if "-af" in c and "volume='" in c[c.index("-af") + 1]]
-    assert len(final) == 1 and "0.05623+" in final[0][final[0].index("-af") + 1]  # duck — финальным проходом
+    assert len(final) == 1 and f"{VOLUME_STYLES['duck']:.5f}+" in final[0][final[0].index("-af") + 1]  # duck — финальный проход
     assert "11.000" not in final[0][final[0].index("-af") + 1]  # писк туда не попал
 
 

@@ -5261,9 +5261,9 @@ def _build_registry() -> list[Tool]:
             "игра+микрофон со своей speech_tracks; неизвестна — весь звук), число — эту дорожку; слово, что "
             "узнаётся и так, verify заглушит целиком. style — чем заполнить середину: silence (тишина), beep "
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
-            "тон ниже), duck (−25 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
-            "— silence. Лучше всех маскируют silence и noise, хуже всех duck, писк Whisper часто дописывает как "
-            "«блядь»: узнаётся на уровне 3 со слабым стилем — повтори со style silence/noise. "
+            "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
+            "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
+            "silence, затем noise (только его; style_switched в ответе). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
             _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},

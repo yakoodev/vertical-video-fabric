@@ -3835,7 +3835,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   onChange={(e) => setCensorStyle(e.target.value as CensorStyle | "")}
                   title="Чем заполнить заглушённую середину слова. Превью глушит тишиной — как звучит, слышно в рендере"
                 >
-                  <option value="">как раньше у клипа</option>
+                  <option value="">как раньше у клипа (новый — задом наперёд)</option>
                   {(Object.keys(CENSOR_STYLES) as CensorStyle[]).map((s) => (
                     <option key={s} value={s}>{CENSOR_STYLES[s]}</option>
                   ))}

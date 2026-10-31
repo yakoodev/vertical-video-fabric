@@ -106,8 +106,8 @@ def test_censor_quick_mutes_middles_stars_and_keeps_manual(tmp_path, monkeypatch
     mute = store.get_clip_plan(plan["id"])["render_settings"]["mute"]
     assert {"start": 8.0, "end": 9.0} in mute  # ручной на месте
     ours = [m for m in mute if m.get("by") == "censor"]
-    assert ours == [{"start": 1.42, "end": 1.64, "by": "censor", "level": 1, "style": "silence"},
-                    {"start": 5.12, "end": 5.34, "by": "censor", "level": 1, "style": "silence"}]
+    assert ours == [{"start": 1.42, "end": 1.64, "by": "censor", "level": 1, "style": "reverse"},
+                    {"start": 5.12, "end": 5.34, "by": "censor", "level": 1, "style": "reverse"}]
     subs = store.get_clip_plan_subtitles(plan["id"])
     assert [w["word"] for w in subs["words"]] == ["ну", "б****", "какое", "небо", "С***,", "опять!"]
     assert [line["text"] for line in subs["lines"]] == ["ну б**** какое небо", "С***, опять!"]
@@ -194,10 +194,12 @@ def test_verify_reports_context_guess_and_stray(tmp_path, monkeypatch):
                                {"word": "пиздец", "start": 8.0, "end": 8.4}]
     calls = _mock_rounds(monkeypatch, store, plan, hearing)
     out = censor.verify_plan(store, plan["id"], {"4": 2}, max_rounds=5)
-    # «сука» на 2 → 3, на 3 всё ещё слышна — дальше тишиной не помочь: два круга, не пять.
-    assert calls["render"] == 2
+    # «сука» на 2 → 3, на 3 всё ещё слышна — reverse → silence → noise, дальше глушением не помочь:
+    # четыре круга, не пять (и не семь).
+    assert calls["render"] == 4
     suka = next(w for w in out["words"] if w["i"] == 4)
     assert suka["heard"] and suka["level"] == 3 and censor.CONTEXT_NOTE in suka["note"]
+    assert [s["to"] for s in suka["style_switched"]] == ["silence", "noise"]
     assert out["unmuted_heard"] == [{"word": "пиздец", "start": 8.0, "end": 8.4}]
 
 
