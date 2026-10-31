@@ -413,13 +413,15 @@ def save_image(image: ImageResult) -> str:
 def clip_brief(store: Any, clip_plan_id: int) -> dict | None:
     """Клип для карточки: название, источник, последний готовый рендер (мини-плеер)."""
     try:
-        plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+        plan = store.get_clip_plan(int(clip_plan_id))
     except KeyError:
         return None
+    # Куски — чтобы без рендера показать исходник на нужной секунде клипа.
+    pieces = [[float(s["start_sec"]), float(s["end_sec"])] for s in plan.get("segments") or []]
     clip = next((c for c in store.list_clips_for_plan(int(clip_plan_id)) if c.get("status") == "succeeded"), None)
     return {"clip_plan_id": int(clip_plan_id), "source_id": plan.get("source_id"), "title": plan.get("title") or "",
             "video_url": f"/media/clips/{clip['id']}" if clip else "",
-            "thumb_url": f"/media/clip-plans/{int(clip_plan_id)}/thumb"}
+            "thumb_url": f"/media/clip-plans/{int(clip_plan_id)}/thumb", "pieces": pieces}
 
 
 def _approval_brief(approval: dict) -> dict:

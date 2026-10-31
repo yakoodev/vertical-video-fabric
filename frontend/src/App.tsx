@@ -12,6 +12,7 @@ import { TasksPage } from "@/pages/TasksPage";
 import { HelpPage } from "@/pages/HelpPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ApprovalsPage } from "@/pages/ApprovalsPage";
+import { ChatPage } from "@/pages/ChatPage";
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
 function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined>) => string }) {
@@ -38,6 +39,9 @@ export function App() {
         <Route path="projects/:sourceId/*" element={<ProjectWorkspace />} />
         {/* Проект-серия/канал (app/projects.py): несколько источников, лор, правила, гипотезы. */}
         <Route path="series/:projectId" element={<SeriesPage />} />
+        {/* Чат с агентом: переписки по проектам и общие (app/project_chat.py). */}
+        <Route path="chat" element={<ChatPage />} />
+        <Route path="chat/:threadId" element={<ChatPage />} />
         <Route path="clips" element={<ClipsPage />} />
         <Route path="assets" element={<MontageAssetsPage />} />
         <Route path="automation" element={<AutomationPage />} />

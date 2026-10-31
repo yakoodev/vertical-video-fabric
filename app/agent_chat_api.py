@@ -127,6 +127,13 @@ def build_agent_chat_router(auth_dep: Any, get_store: Callable[[], Any],
     def api_revert(checkpoint_id: int, _auth: auth_dep) -> dict:
         return call(C.revert_checkpoint, checkpoint_id)
 
+    @router.get("/api/chat/clips/{clip_plan_id}", summary="Клип для плеера в чате: источник, рендер, обложка")
+    def api_clip(clip_plan_id: int, _auth: auth_dep) -> dict:
+        brief = chat_tools.clip_brief(get_store(), clip_plan_id)
+        if brief is None:
+            raise HTTPException(status_code=404, detail=f"клип #{clip_plan_id} не найден")
+        return brief
+
     @router.get("/api/chat/models", summary="Провайдер и модели чата")
     def api_models(_auth: auth_dep) -> dict:
         return C.models()

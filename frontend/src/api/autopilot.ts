@@ -155,6 +155,8 @@ export interface ChatView {
   messages: ChatMessage[];
   running: boolean;
   summary: string;
+  /** Основная переписка проекта на странице «Чат» (app/project_chat.py). */
+  thread_id: number;
   ai_available: boolean;
   auto_rules: "confirm" | "auto";
   telegram: { enabled: boolean; thread_id: number | null; root_message_id: number | null };

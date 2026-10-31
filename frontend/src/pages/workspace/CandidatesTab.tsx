@@ -2073,6 +2073,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   useLayerAudio(videoRef, motionViewRef, () =>
     inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null,
   );
+  // Таймкод из чата агента (?clip=<id>&t=<секунда клипа>): один раз встать на эту секунду.
+  const seekT = searchParams.get("t");
+  const seekedRef = useRef("");
+  useEffect(() => {
+    const v = videoRef.current;
+    const segs = activePlan?.segments ?? [];
+    const key = `${activePlan?.id}:${seekT}`;
+    if (!v || seekT == null || !segs.length || activePlan?.id !== clipParam || seekedRef.current === key) return;
+    const src = clipToSource(segs, Number(seekT));
+    if (src == null) return;
+    const apply = () => {
+      v.currentTime = src;
+      seekedRef.current = key;
+    };
+    if (v.readyState >= 1) apply();
+    else v.addEventListener("loadedmetadata", apply, { once: true });
+  });
   // Вырезанные паузы превью перепрыгивает на ходу — смотришь клип таким, каким он выйдет.
   useEffect(() => {
     let raf = 0;

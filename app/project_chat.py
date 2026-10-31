@@ -38,6 +38,7 @@ import base64
 import copy
 import json
 import logging
+import re
 import threading
 import time
 from typing import Any, Callable
@@ -261,7 +262,7 @@ def list_threads(store: Any) -> dict:
     threads = []
     for row in rows:
         item = _thread(row)
-        item["last_text"] = " ".join(str(item.get("last_text") or "").split())[:140]
+        item["last_text"] = " ".join(re.sub(r"[*`#>_]+", "", str(item.get("last_text") or "")).split())[:140]
         item["running"] = active_run(item["id"]) is not None
         item.pop("summary", None)
         threads.append(item)
@@ -369,7 +370,7 @@ def models() -> dict:
                          (settings.gemini_montage_model, "как ИИ-монтаж")):
         if model and model not in seen:
             seen[model] = label
-    items = [{"id": m, "label": f"{m} — {label}", "provider": "gemini"} for m, label in seen.items()]
+    items = [{"id": m, "label": m, "note": label, "provider": "gemini"} for m, label in seen.items()]
     return {"provider": "gemini", "default": settings.gemini_agent_model, "models": items, **ai_status()}
 
 
