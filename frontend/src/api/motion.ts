@@ -1,5 +1,32 @@
 import { api } from "./client";
-import type { CameraKey } from "@/motion";
+import type { CameraKey, Layer, LayerTracking, TrackTarget } from "@/motion";
+
+/** Отчёт трекинга слоя (app/tracking.track_layer). */
+export type TrackReport = {
+  found: number;
+  lost: [number, number][];
+  samples: number;
+  keys: Record<string, number>;
+  follow_camera: boolean;
+  cached: boolean;
+  seconds?: number;
+  notes: string[];
+  warnings: string[];
+  check_times: number[];
+};
+
+/** Фоновая задача трекинга (GET /api/track-jobs/{id}). */
+export type TrackJob = {
+  id: string;
+  state: "queued" | "running" | "done" | "error";
+  progress: number;
+  stage: string;
+  result: { layer: Layer; report: TrackReport } | null;
+  error: string | null;
+  hints: string[];
+};
+
+export type TrackPreset = { id: string; title: string; offset: NonNullable<LayerTracking["offset"]>; follow: Partial<NonNullable<LayerTracking["follow"]>> };
 
 /** Шрифт из `vendor/fonts/fonts.json` или свой (`data/fonts`, app/user_fonts.py) — тот же файл подключает и рендер. */
 export type MotionFont = {
@@ -113,7 +140,30 @@ export const motionApi = {
       "items",
     ),
   schema: () => api.get<Record<string, unknown>>("/api/motion/schema"),
+  /** Запустить трек слоя (ничего не сохраняет): ответ — id задачи, итог — новый слой. */
+  track: (
+    planId: number,
+    body: { layer: Layer; target: TrackTarget; preset?: string; follow?: { x?: boolean; y?: boolean; scale?: boolean }; smooth?: number },
+  ) => api.post<{ job_id: string }>(`/api/clip-plans/${planId}/track`, body),
+  trackJob: (jobId: string) => api.get<TrackJob>(`/api/track-jobs/${encodeURIComponent(jobId)}`),
+  trackPresets: () => api.get<{ presets: TrackPreset[]; smooth: number }>("/api/motion/track-presets"),
 };
+
+/** Снять трек: ключи, записанные трекингом, и пометку; слой остаётся там, где трек начинался. */
+export function untrackLayer(layer: Layer): Layer {
+  const marker = layer.tracking;
+  if (!marker) return layer;
+  const keys = { ...(layer.keys ?? {}) } as Record<string, { t: number; v: number }[] | undefined>;
+  const next: Record<string, unknown> = { ...layer };
+  for (const prop of marker.props ?? []) {
+    const first = keys[prop]?.[0];
+    if (first) next[prop] = first.v;
+    delete keys[prop];
+  }
+  delete next.tracking;
+  next.keys = keys;
+  return next as Layer;
+}
 
 /** URL файла пака: и для превью картинки, и для прослушивания звука. */
 export function packFileUrl(pack: string, file: string): string {

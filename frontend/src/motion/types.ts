@@ -627,6 +627,35 @@ export type LayerBase = {
   /** Наклон с перспективой, градусы: rotX — верх уходит вглубь, rotY — правый край уходит вглубь. */
   rotX?: number;
   rotY?: number;
+  /**
+   * Пометка трекинга (app/tracking.py): ключи `props` записал трек цели. Движок её не читает —
+   * ключи обычные; сервис по ней заменяет ключи при повторе и двигает их через вырезы/стоп-кадры.
+   */
+  tracking?: LayerTracking | null;
+};
+
+/** За чем следует слой: лицо, объект класса COCO или точка/область кадра. */
+export type TrackTarget = {
+  kind: "face" | "object" | "point";
+  mode?: "largest" | "near" | "index";
+  class?: string;
+  index?: number;
+  x?: number;
+  y?: number;
+  t?: number;
+  w?: number;
+  h?: number;
+};
+
+export type LayerTracking = {
+  target: TrackTarget;
+  offset?: { x: number; y: number; units: "frame" | "target"; dx?: number; dy?: number };
+  follow?: { x: boolean; y: boolean; scale: boolean };
+  smooth?: number;
+  props: ("x" | "y" | "scale")[];
+  range?: [number, number];
+  fps?: number;
+  preset?: string;
 };
 
 /** Слой с дискриминатором `type` — TypeScript сужает `props` по типу. */

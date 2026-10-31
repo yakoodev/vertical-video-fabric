@@ -64,6 +64,18 @@ class CameraPresetPayload(BaseModel):
     clip_duration: float | None = None
 
 
+class TrackPayload(BaseModel):
+    """Трекинг слоя (app/tracking.py): слой — несохранённый из редактора, ответ — новый слой."""
+
+    layer: dict
+    target: dict
+    offset: dict | None = None
+    follow: dict | None = None
+    smooth: float | None = None
+    fps: float | None = None
+    preset: str | None = None
+
+
 class MotionPayload(BaseModel):
     """Несохранённый вариант из редактора/агента; поле не прислано — берётся из клипа."""
 
@@ -96,6 +108,50 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
                                 clip_duration=payload.clip_duration)
         except PresetError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc), "hints": exc.hints}) from exc
+
+    @router.get("/api/motion/track-presets", summary="Подсказки трекинга: куда ставить слой от цели")
+    def api_track_presets(_auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        from app.tracking import DEFAULT_SMOOTH, PRESETS
+
+        return {"presets": [{"id": k, "title": v["title"], "offset": v["offset"], "follow": v.get("follow") or {}}
+                            for k, v in PRESETS.items()], "smooth": DEFAULT_SMOOTH}
+
+    @router.post("/api/clip-plans/{clip_plan_id}/track", summary="Трекинг слоя: запустить (ничего не сохраняет)")
+    def api_track_layer(clip_plan_id: int, payload: TrackPayload, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        """``{job_id}`` — трек считается в фоне (очередь тяжёлых задач); ход и итог —
+        ``GET /api/track-jobs/{job_id}``: ``{state, progress, stage, result: {layer, report}, error}``.
+        Редактор кладёт ``result.layer`` в свои слои — автосохранение и Ctrl+Z как у остальных правок."""
+        from app.tracking import TrackError, normalize_target, start_job, track_layer
+
+        store = get_store()
+        try:
+            store.get_clip_plan(clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        layer = normalize_layers([payload.layer])[0] if payload.layer else None
+        if not layer:
+            raise HTTPException(status_code=400, detail="нужен слой")
+        try:
+            normalize_target(payload.target)
+        except TrackError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc), "hints": exc.hints}) from exc
+
+        def run(progress: Callable[[float, str], None]) -> dict:
+            fresh, report = track_layer(store, clip_plan_id, layer, payload.target, offset=payload.offset,
+                                        follow=payload.follow, smooth=payload.smooth, fps=payload.fps,
+                                        preset=payload.preset, progress=progress)
+            return {"layer": normalize_layers([fresh])[0], "report": report}
+
+        return {"job_id": start_job(run)}
+
+    @router.get("/api/track-jobs/{job_id}", summary="Ход трекинга слоя")
+    def api_track_job(job_id: str, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        from app.tracking import job_status
+
+        job = job_status(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="задачи трекинга нет (сервис перезапускался?)")
+        return job
 
     @router.post(
         "/api/clip-plans/{clip_plan_id}/layers/validate",
