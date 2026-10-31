@@ -43,11 +43,13 @@ def test_layer_normalized_and_checked():
 
 def test_normalize_nameplate_defaults_and_brand_merge():
     assert normalize_nameplate(None) == {"platform": "none", "handle": "", "style": "glass", "accent": None,
-                                         "position": "auto", "size": 74.0, "fade": False}
+                                         "position": "auto", "size": 74.0, "fade": False, "anim": "subtle",
+                                         "live": False, "outro": "auto"}
     np = normalize_nameplate({"platform": "vk", "handle": "  my   shop ", "style": "x", "accent": "#F0F",
-                              "position": "middle", "size": 500, "fade": "true"})
+                              "position": "middle", "size": 500, "fade": "true", "anim": "wild", "live": 1,
+                              "outro": "spin"})
     assert np == {"platform": "none", "handle": "my shop", "style": "glass", "accent": "#ff00ff",
-                  "position": "auto", "size": 160.0, "fade": True}
+                  "position": "auto", "size": 160.0, "fade": True, "anim": "subtle", "live": True, "outro": "auto"}
     brand = normalize_brand({"name": "Мура", "nameplate": PLATE})
     assert brand["nameplate"]["handle"] == "sareamura" and brand["nameplate"]["platform"] == "twitch"
     # Правка одного поля не стирает остальные.
@@ -141,10 +143,12 @@ def test_mcp_set_nameplate_place_replace_remove(tmp_path, monkeypatch):
 
     # Повтор заменяет (один слой), fade — мягкий вход, свой угол.
     out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"handle": "mura", "platform": "youtube",
-                                                           "position": "top-right", "fade": True})
+                                                           "position": "top-right", "fade": True,
+                                                           "anim": "none"})
     assert ok, out
     plates = [l for l in _layers(store, plan).values() if l["type"] == "nameplate"]
     assert len(plates) == 1 and plates[0]["props"]["platform"] == "youtube" and plates[0]["in"]["type"] == "fade"
+    assert plates[0]["props"]["anim"] == "none"
     assert out["position"] == "top-right"
 
     # Нечего показать — ошибка; снять — слоя нет, Ctrl+Z возвращает.
@@ -193,16 +197,25 @@ def test_apply_brand_nameplate(tmp_path, monkeypatch):
     _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     caps = {"id": "auto_caps", "type": "captions", "start": 0, "end": 10, "x": 0.5, "y": 0.5, "props": {}}
     store.set_clip_plan_render_settings(plan["id"], {"layout": SPLIT, "layers": [caps]})
-    brand = store.create_brand("Мура", nameplate={**PLATE, "fade": True}, cta={"text": "Подпишись"})
+    brand = store.create_brand("Мура", nameplate={**PLATE, "live": True}, cta={"text": "Подпишись"})
 
     out, ok = run_tool(_ctx(store, plan), "apply_brand", {"brand_id": brand["id"]})
     assert ok, out
     assert any("плашка канала" in c for c in out["changes"])
     layers = _layers(store, plan)
-    plate = layers[NAMEPLATE_ID]
-    assert plate["props"]["handle"] == "sareamura" and plate["in"]["type"] == "fade"
-    # Призыв обходит плашку: их полосы по высоте не пересекаются.
-    cta = layers[CTA_ID]
+    plate, cta = layers[NAMEPLATE_ID], layers[CTA_ID]
+    # По умолчанию своя анимация subtle, без fade; outro auto — сворачивается в значок к призыву.
+    assert plate["props"]["handle"] == "sareamura" and plate["in"]["type"] == "none"
+    assert plate["props"]["anim"] == "subtle" and plate["props"]["live"] is True
+    assert plate["props"]["outro"] == "collapse"
+    assert plate["end"] == pytest.approx(cta["start"] + motion.NAMEPLATE_OUTRO_SEC, abs=1e-3)
+
+    # Плашка без свёртки остаётся до конца — призыв обходит её: полосы по высоте не пересекаются.
+    out, ok = run_tool(_ctx(store, plan), "apply_brand", {"brand_id": brand["id"], "nameplate": {"outro": "none"}})
+    assert ok, out
+    layers = _layers(store, plan)
+    plate, cta = layers[NAMEPLATE_ID], layers[CTA_ID]
+    assert plate["props"]["outro"] == "none" and plate["end"] == pytest.approx(10.0)
     half = plate["props"]["size"] / 1920 / 2
     assert abs(cta["y"] - plate["y"]) > half + 0.02
     # Повтор — без дублей.

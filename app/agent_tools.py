@@ -3128,7 +3128,7 @@ def h_apply_brand(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
 
 
-NAMEPLATE_FIELDS = ("platform", "handle", "style", "accent", "position", "size", "fade")
+NAMEPLATE_FIELDS = ("platform", "handle", "style", "accent", "position", "size", "fade", "anim", "live", "outro")
 
 
 def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
@@ -4391,7 +4391,9 @@ props по типу:
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
   nameplate (плашка канала, весь ролик): platform {'|'.join(motion.NAMEPLATE_PLATFORMS)} (свой векторный значок), handle (ник),
          style glass (тёмное стекло + обводка accent) | solid (заливка accent), accent (нет — цвет площадки), size (высота
-         пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки). Проще set_nameplate —
+         пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки), anim
+         {'|'.join(motion.NAMEPLATE_ANIMS)} (своя анимация: вход от значка, редкий блик и тик; по умолч. subtle), live (точка LIVE),
+         outro none|collapse (последние {motion.NAMEPLATE_OUTRO_SEC:g} с — свёртка в значок). Проще set_nameplate —
          сам найдёт место под разделителем раскладки / в безопасном углу
   pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
          анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
@@ -5154,8 +5156,11 @@ def _build_registry() -> list[Tool]:
             "Плашка канала на весь ролик: значок площадки (свой векторный глиф) + ник в пилюле — как на "
             "нарезках стримов. platform twitch|youtube|tiktok|telegram|kick|none, handle (ник как есть), style "
             "glass (тёмное стекло + обводка цветом площадки, по умолчанию) | solid (заливка), accent #rrggbb "
-            "(нет — цвет площадки), size (высота пилюли, px кадра 1080×1920, 74), fade (мягкое появление; по "
-            "умолчанию без анимации). position: auto (по умолчанию: в раскладке «игра + вебка» — на 72 px ниже "
+            "(нет — цвет площадки), size (высота пилюли, px кадра 1080×1920, 74). anim — своя анимация: subtle (по "
+            "умолчанию: вход от значка ~0.7 с — значок выпрыгивает, пилюля вытягивается, ник по буквам; дальше раз в "
+            "7 с блик по пилюле и тик значка), lively (ярче, тик каждые 3.5 с), none (стоит; fade — мягкое "
+            "появление). live:true — красная пульсирующая точка LIVE. outro: auto (по умолчанию — свернуться в "
+            "значок, когда выходит призыв бренда brand_cta) | collapse (свернуться в конце ролика) | none. position: auto (по умолчанию: в раскладке «игра + вебка» — на 72 px ниже "
             "разделителя и ниже субтитров, слева; иначе — безопасный верхний угол, напротив логотипа бренда) | "
             "under-split-left | under-split-center | top-left | top-right. Место считается от зон площадок "
             "(вкладки сверху, подпись снизу, кнопки TikTok справа), субтитров, хука и логотипа. brand_id — "
@@ -5169,6 +5174,9 @@ def _build_registry() -> list[Tool]:
                                                           "under-split-center"]},
                   "size": {"type": "number", "minimum": 40, "maximum": 160},
                   "fade": {"type": "boolean"},
+                  "anim": {"type": "string", "enum": ["none", "subtle", "lively"]},
+                  "live": {"type": "boolean"},
+                  "outro": {"type": "string", "enum": ["auto", "collapse", "none"]},
                   "brand_id": {"type": "integer"},
                   "remove": {"type": "boolean"}}),
             h_set_nameplate, mutating=True,

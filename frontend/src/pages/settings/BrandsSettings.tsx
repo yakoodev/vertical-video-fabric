@@ -31,7 +31,18 @@ const EMPTY: BrandInput = {
   music_track_id: null,
   backdrop: DEFAULT_BACKGROUND,
   sfx_policy: "minimal",
-  nameplate: { platform: "none", handle: "", style: "glass", accent: null, position: "auto", size: 74, fade: false },
+  nameplate: {
+    platform: "none",
+    handle: "",
+    style: "glass",
+    accent: null,
+    position: "auto",
+    size: 74,
+    fade: false,
+    anim: "subtle",
+    live: false,
+    outro: "auto",
+  },
 };
 
 const PLATFORMS: { v: BrandNameplate["platform"]; label: string }[] = [
@@ -79,6 +90,8 @@ function NameplateSketch({ np, accent, font }: { np: BrandNameplate; accent: str
         accent: np.accent || (np.platform === "none" ? accent : null),
         size: np.size,
         font,
+        anim: "none",
+        live: np.live,
         align: center ? "center" : right ? "right" : "left",
         boxWidth: 520,
       },
@@ -432,14 +445,49 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
               цвет площадки
             </button>
           ) : null}
-          <label className="check" title="Плашка мягко проявляется в начале ролика; без галочки — видна сразу">
+          <label className="field" style={{ width: 150 }}>
+            <span>Анимация</span>
+            <select
+              className="input"
+              title="Вход от значка, раз в несколько секунд — блик по пилюле и тик значка"
+              value={b.nameplate.anim}
+              onChange={(e) => set("nameplate", { ...b.nameplate, anim: e.target.value as BrandNameplate["anim"] })}
+            >
+              <option value="subtle">Мягко</option>
+              <option value="lively">Живо</option>
+              <option value="none">Без анимации</option>
+            </select>
+          </label>
+          <label className="field" style={{ width: 190 }}>
+            <span>Перед концовкой</span>
+            <select
+              className="input"
+              value={b.nameplate.outro}
+              onChange={(e) => set("nameplate", { ...b.nameplate, outro: e.target.value as BrandNameplate["outro"] })}
+            >
+              <option value="auto">Свернуться к призыву</option>
+              <option value="collapse">Свернуться в конце</option>
+              <option value="none">Оставаться</option>
+            </select>
+          </label>
+          <label className="check" title="Красная пульсирующая точка LIVE после ника">
             <input
               type="checkbox"
-              checked={b.nameplate.fade}
-              onChange={(e) => set("nameplate", { ...b.nameplate, fade: e.target.checked })}
+              checked={b.nameplate.live}
+              onChange={(e) => set("nameplate", { ...b.nameplate, live: e.target.checked })}
             />
-            <span>появление</span>
+            <span>LIVE</span>
           </label>
+          {b.nameplate.anim === "none" ? (
+            <label className="check" title="Плашка мягко проявляется в начале ролика; без галочки — видна сразу">
+              <input
+                type="checkbox"
+                checked={b.nameplate.fade}
+                onChange={(e) => set("nameplate", { ...b.nameplate, fade: e.target.checked })}
+              />
+              <span>появление</span>
+            </label>
+          ) : null}
         </div>
 
         <div style={{ display: "grid", gap: 6, maxWidth: 420 }}>

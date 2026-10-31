@@ -57,6 +57,7 @@ DEFAULT_COLORS = {"text": "#ffffff", "accent": "#ffd600", "plate": "#0b0d14"}
 NAMEPLATE_PLATFORMS = motion.NAMEPLATE_PLATFORMS
 NAMEPLATE_STYLES = motion.NAMEPLATE_STYLES
 NAMEPLATE_POSITIONS = ("auto", "top-left", "top-right", "under-split-left", "under-split-center")
+NAMEPLATE_OUTROS = ("auto", "collapse", "none")
 # Цвет площадки — акцент плашки по умолчанию (зеркало PLATFORM_COLORS в layers/nameplate.ts).
 PLATFORM_COLORS = {
     "twitch": "#9146ff", "youtube": "#ff0033", "tiktok": "#fe2c55", "telegram": "#229ed9", "kick": "#53fc18",
@@ -179,7 +180,8 @@ def normalize_nameplate(raw: Any) -> dict:
     src = raw if isinstance(raw, dict) else {}
     platform, style, position = src.get("platform"), src.get("style"), src.get("position")
     handle = _text(src.get("handle"), 40)
-    fade = src.get("fade")
+    fade, live = src.get("fade"), src.get("live")
+    anim, outro = src.get("anim"), src.get("outro")
     return {
         "platform": platform if platform in NAMEPLATE_PLATFORMS else "none",
         "handle": handle,
@@ -188,6 +190,11 @@ def normalize_nameplate(raw: Any) -> dict:
         "position": position if position in NAMEPLATE_POSITIONS else "auto",
         "size": _num(src.get("size"), float(motion.NAMEPLATE_SIZE), NAMEPLATE_SIZE_MIN, NAMEPLATE_SIZE_MAX),
         "fade": fade is True or fade in (1, "1", "true"),
+        # Своя анимация слоя: вход от значка + редкий блик/тик (subtle), ярче (lively), стоит (none).
+        "anim": anim if anim in motion.NAMEPLATE_ANIMS else "subtle",
+        "live": live is True or live in (1, "1", "true"),
+        # Свёртка в значок: auto — перед призывом бренда (если он есть), collapse — в конце ролика.
+        "outro": outro if outro in NAMEPLATE_OUTROS else "auto",
     }
 
 
@@ -678,18 +685,26 @@ def nameplate_place(
     return at(corner, corner_align, top, fits, "; ".join(notes) or "в верхнем углу, в безопасной зоне площадки")
 
 
-def build_nameplate(np: dict, place: dict, duration: float, font: str = "") -> dict:
-    """Слой плашки канала на весь ролик: по умолчанию без анимации, ``fade`` — мягкий вход."""
+def build_nameplate(np: dict, place: dict, duration: float, font: str = "", cta_start: float | None = None) -> dict:
+    """Слой плашки канала на весь ролик. Анимация — своя у слоя (``anim``: вход от значка, редкий
+    блик и тик значка); ``fade`` — мягкий вход только у неподвижной (``anim: none``).
+    Свёртка в значок (``outro``): auto — если есть призыв (``cta_start``), плашка сворачивается
+    за NAMEPLATE_OUTRO_SEC с его начала и уходит; collapse — то же в конце ролика."""
+    collapse = np["outro"] == "collapse" or (np["outro"] == "auto" and cta_start is not None)
+    end = duration
+    if collapse and cta_start is not None:
+        end = min(duration, max(cta_start, 2 * motion.NAMEPLATE_OUTRO_SEC + 0.5) + motion.NAMEPLATE_OUTRO_SEC)
     props = {
         "platform": np["platform"], "handle": np["handle"], "style": np["style"], "accent": np["accent"],
         "size": np["size"], "font": font, "weight": 800, "color": "#ffffff",
         "align": place["align"], "boxWidth": place["boxWidth"],
+        "anim": np["anim"], "live": np["live"], "outro": "collapse" if collapse else "none",
     }
     return {
-        "id": NAMEPLATE_ID, "type": "nameplate", "name": "Плашка канала", "start": 0.0, "end": round(duration, 3),
+        "id": NAMEPLATE_ID, "type": "nameplate", "name": "Плашка канала", "start": 0.0, "end": round(end, 3),
         "track": 4, "x": place["x"], "y": place["y"], "props": props,
         "shadow": dict(NAMEPLATE_SHADOW),
-        "in": {"type": "fade", "duration": 0.4} if np["fade"] else {"type": "none"},
+        "in": {"type": "fade", "duration": 0.4} if np["fade"] and np["anim"] == "none" else {"type": "none"},
         "out": {"type": "none"},
     }
 
@@ -749,7 +764,9 @@ def set_nameplate(
     fmt = settings_layers_format(render)
     corner = (brand["logo_corner"] if brand and brand.get("logo_asset_id") else None) or _logo_corner_of(layers)
     place = nameplate_place(render, layers, np, logo_corner=corner, fmt=fmt)
-    layer = build_nameplate(np, place, duration, (brand or {}).get("font") or "")
+    cta = next((l for l in layers if l.get("id") == CTA_ID and not l.get("hidden")), None)
+    cta_start = float(cta.get("start") or 0.0) if cta is not None else None
+    layer = build_nameplate(np, place, duration, (brand or {}).get("font") or "", cta_start)
     problems = motion.validate_layers([layer], duration)
     if problems:
         raise ValueError("плашка не прошла проверку: " + "; ".join(problems))
@@ -836,6 +853,7 @@ def apply_brand(
 
     # 3b. Плашка канала — весь ролик; место — до призыва, чтобы призыв её обошёл.
     added: list[dict] = []
+    plate: dict | None = None
     plate_band: tuple[float, float] | None = None
     np = dict(brand["nameplate"])
     if isinstance(nameplate, dict):
@@ -850,7 +868,9 @@ def apply_brand(
                                 fmt=fmt)
         plate = build_nameplate(np, place, duration, brand["font"])
         added.append(plate)
-        plate_band = (plate["y"] - np["size"] / ref_h / 2, plate["y"] + np["size"] / ref_h / 2)
+        # Плашка, которая сворачивается перед призывом, ему не мешает; остающаяся — призыв обходит.
+        if np["outro"] == "none" or not (brand["cta"]["text"] or brand["cta"]["url_text"]):
+            plate_band = (plate["y"] - np["size"] / ref_h / 2, plate["y"] + np["size"] / ref_h / 2)
         changes.append(f"плашка канала «{np['handle'] or np['platform']}» {place['note']}")
         if not place["fits"] or np["position"] not in ("auto", place["position"]):
             warnings.append(place["note"])
@@ -882,6 +902,10 @@ def apply_brand(
                             "при нужде подвинь brand_cta (update_layer y)")
         added += build_cta(brand, cta_start, duration, y, keyed, fmt)
         changes.append(f"призыв «{text.replace(chr(10), ' / ')}» с {cta_start:.1f} с до конца")
+        if plate is not None and np["outro"] == "auto":
+            # Плашка сворачивается в значок, когда выходит призыв.
+            added[added.index(plate)] = plate = build_nameplate(np, place, duration, brand["font"], cta_start)
+            changes.append(f"плашка канала сворачивается к призыву ({cta_start:.1f} с)")
 
     # 5. Логотип: после хука (он тоже наверху) и до призыва.
     if brand.get("logo_asset_id"):

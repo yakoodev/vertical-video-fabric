@@ -156,7 +156,8 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
     const h = num(props.size, 74);
     const icon = props.platform && props.platform !== "none" ? h * 0.82 : 0;
     const text = Array.from(String(props.handle ?? "")).length * h * 0.5 * GLYPH_W;
-    return [Math.max(num(props.boxWidth, 0), h, h * 0.84 + icon + text), h];
+    const live = props.live === true ? h * 0.48 : 0; // точка LIVE с зазором
+    return [Math.max(num(props.boxWidth, 0), h, h * 0.84 + icon + text + live), h];
   }
   if (kind === "captions") {
     const size = num(props.size, 88);
