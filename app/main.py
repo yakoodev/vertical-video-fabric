@@ -298,6 +298,8 @@ class SourceRead(BaseModel):
     analyses_count: int | None = None
     clip_plans_count: int | None = None
     clips_count: int | None = None
+    # Проект-серия/канал источника (app/projects.py); None — без проекта.
+    project_id: int | None = None
 
 
 class SourceCreateRequest(BaseModel):
@@ -4047,6 +4049,11 @@ app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат реда�
 from app.chat_api import build_chat_router  # noqa: E402
 
 app.include_router(build_chat_router(AuthDep, lambda: store, ingestor=source_ingestor))
+
+# Проекты (серии и каналы): бриф, правила владельца, статистика, гипотезы (app/projects_api.py).
+from app.projects_api import build_projects_router  # noqa: E402
+
+app.include_router(build_projects_router(AuthDep, lambda: store))
 
 # Контент моушн-слоёв: шрифты, эмодзи, стикеры, звуки, мемы (app/motion_assets.py).
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402
