@@ -84,6 +84,7 @@ import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/page
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
+import { compactAudio, jlSourceAt, type AudioEdit } from "@/api/audioEdit";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
 import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import {
@@ -1294,6 +1295,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [gain, setGain] = useState<GainSpan[]>([]);
   const gainRef = useRef<GainSpan[]>([]);
   gainRef.current = gain;
+  // 🎚 Звуковой монтаж (render.audio, app/audio_edit.py): J/L на стыках тянут на дорожке «Звук»,
+  // ключи громкости, ducking, провалы музыки и эффекты ставит агент — панель их показывает и хранит.
+  const [audioEdit, setAudioEdit] = useState<AudioEdit>({});
+  const audioEditRef = useRef<AudioEdit>({});
+  audioEditRef.current = audioEdit;
   // Формат вывода клипа (app/formats.py): 9:16, 1:1, 4:5 или 16:9 из того же монтажа.
   // Превью, холст слоёв и окно кропа — в пропорциях этого формата.
   const [aspect, setAspect] = useState<Aspect>("9:16");
@@ -1488,6 +1494,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     backdrop,
     mute,
     gain,
+    audio: audioEdit,
     format: aspect,
     layers_format: layersFmt,
     end_hold_sec: endHoldSec,
@@ -1537,6 +1544,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setCuts([]);
       setMute([]);
       setGain([]);
+      setAudioEdit({});
       setFreezes([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
@@ -1570,6 +1578,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       backdrop: normalizeBackdrop(s.backdrop),
       mute: s.mute ?? [],
       gain: s.gain ?? [],
+      audio: compactAudio(s.audio),
       format: clipFormat(s),
       layers_format: layersFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
@@ -1601,6 +1610,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setMute(s.mute ?? []);
     setFreezes(s.freezes ?? []);
     setGain(s.gain ?? []);
+    setAudioEdit(compactAudio(s.audio));
     setAspect(clipFormat(s));
     setLayersFmt(layersFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
@@ -2068,6 +2078,42 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     });
     return () => setPreviewSound(() => false);
   }, []);
+  // J/L в превью: у стыка звук картинки молчит, а второй плеер того же исходника играет звук
+  // соседнего куска (хвост прошлого — L, начало следующего — J), как склеит рендер.
+  const jlMutedRef = useRef(false);
+  useEffect(() => {
+    let raf = 0;
+    const side = new Audio();
+    side.preload = "auto";
+    const tick = () => {
+      const v = videoRef.current;
+      const joins = audioEditRef.current.joins;
+      let src: number | null = null;
+      // Свой «без звука» владельца уважаем: глушил плеер он — второй плеер тоже молчит.
+      if (v && !v.paused && inEditorRef.current && joins?.length && (!v.muted || autoMutedRef.current)) {
+        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
+        src = t == null ? null : jlSourceAt(tcSegsRef.current, joins, t);
+      }
+      if (src != null && v) {
+        if (side.src !== v.currentSrc) side.src = v.currentSrc;
+        if (Math.abs(side.currentTime - src) > 0.12) side.currentTime = src;
+        side.volume = v.volume;
+        if (side.paused) void side.play().catch(() => undefined);
+        jlMutedRef.current = true;
+      } else {
+        if (!side.paused) side.pause();
+        jlMutedRef.current = false;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      side.pause();
+      side.removeAttribute("src");
+      jlMutedRef.current = false;
+    };
+  }, []);
   useEffect(() => {
     let raf = 0;
     let ours = false;
@@ -2075,7 +2121,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       const v = videoRef.current;
       if (v) {
         const t = inEditorRef.current && muteRef.current.length ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
-        const want = t != null && isMutedAt(muteRef.current, t);
+        const want = (t != null && isMutedAt(muteRef.current, t)) || jlMutedRef.current;
         if (want && !ours && !v.muted) {
           v.muted = true;
           ours = true;
@@ -4796,6 +4842,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               onDropLayers={(payload, at, track) => dropLayersAt(payload, at, track)}
               mute={mute}
               onMuteChange={setMute}
+              audioEdit={audioEdit}
+              onAudioEditChange={setAudioEdit}
               onSubLinesChange={(next) => {
                 setSubLines(next);
                 subLinesRef.current = next;
