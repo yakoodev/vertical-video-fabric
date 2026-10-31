@@ -5195,7 +5195,8 @@ def _build_registry() -> list[Tool]:
             "Плейбук — пошаговый рецепт типового заказа по опыту реальных работ: шаги, какие инструменты, "
             "чек-лист перед сдачей. Без name — список (stream-shorts — нарезка стрима в вертикальные шортсы, "
             "stream-horizontal — горизонтальная нарезка стрима 10–15 мин, meme-insert — мем/вставка поверх "
-            "видео, app-promo — промо приложения). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
+            "видео, app-promo — промо приложения, autopilot — автопилот канала: от VOD до одобрения, расписания "
+            "и сводки). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
             "for a typical order; no name — list.",
             _obj({"name": {"type": "string"}}), h_get_playbook, scope="global",
             label=lambda a: f"Плейбук {a.get('name') or ''}".strip(),
@@ -5472,10 +5473,12 @@ def registry() -> dict[str, Tool]:
 
 
 def _project_tools() -> list[Tool]:
-    """Бриф, правила, статистика и гипотезы проектов-серий (app/project_tools.py) — только MCP."""
+    """Бриф, правила, статистика и гипотезы проектов-серий (app/project_tools.py) и автопилот
+    (одобрение, расписание — app/autopilot_tools.py) — только MCP и чат проекта."""
+    from app.autopilot_tools import tools as autopilot_tools
     from app.project_tools import tools
 
-    return tools()
+    return tools() + autopilot_tools()
 
 
 def list_tools(include_discovery: bool = False) -> list[Tool]:
