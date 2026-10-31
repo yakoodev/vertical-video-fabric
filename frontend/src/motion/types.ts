@@ -716,6 +716,8 @@ export type Composition = {
    * `at` — секунда без стоп-кадров, `d` — длина, `insert` — вставлен (ролик длиннее), `hold` — слои стоят.
    */
   freezes?: FreezeSpan[];
+  /** Концовка-баннер: размытие и затемнение основы под слоями с `start` (endscreen.ts, app/end_screen.py). */
+  endScreen?: import("./endscreen").EndScreenFx;
 };
 
 export type FreezeSpan = { at: number; d: number; insert: boolean; hold: boolean };

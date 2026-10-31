@@ -30,10 +30,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# chromium — и TikTok-подпись, и SVG → webm (app/svg_webm.py, node/svg-to-webm.mjs, headless покадрово).
+# fonts-dejavu-core — запасной шрифт Chromium (~1.5 МБ): шрифты сервиса конвертер подключает сам, а глифы
+# своих SVG вне них без системного шрифта рисовались бы квадратами.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         chromium \
+        fonts-dejavu-core \
         ffmpeg \
         git \
         libglib2.0-0 \

@@ -27,8 +27,10 @@ import {
   captionWordsFrom,
   clipAccent,
   drawFrame,
+  endScreenFor,
   frameCameraMatrix,
   holdFinalLayers,
+  paintEndScreen,
   interpolateKeys,
   layerBox,
   formatRefSize,
@@ -41,6 +43,7 @@ import {
   type CameraKey,
   type CaptionWord,
   type ChatMessage,
+  type EndScreenFx,
   type Layer,
   type PngtuberLayer,
   type VoiceTrack,
@@ -610,6 +613,8 @@ type MotionView = {
   duration?: number;
   /** Слои показаны перекомпонованными из формата разметки — мышью их не двигаем. */
   reframed?: boolean;
+  /** Концовка-баннер: размытие основы под слоями — как компоновщик рендера (motion/endscreen.ts). */
+  endScreen?: EndScreenFx | null;
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -853,6 +858,11 @@ function CropFrame({
             }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
+          // Концовка-баннер: основа (с фоном и слоями behind) в размытие и тень — та же функция, что
+          // у компоновщика рендера; слои, баннер и субтитры на overlay остаются резкими.
+          if (ctx && motion?.endScreen) {
+            paintEndScreen(ctx, cv, cv.width, cv.height, motion.endScreen, clipT, browserEnv(cv.width, cv.height).createCanvas!);
+          }
           const ov = overlayRef?.current;
           const octx = ov?.getContext("2d");
           if (ov && octx) {
@@ -1516,7 +1526,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (prev) {
       qc.setQueryData<SourceDetail>(qk.source(sourceId), {
         ...prev,
-        clip_plans: prev.clip_plans.map((p) => (p.id === planId ? { ...p, render_settings: settings } : p)),
+        // Концовку ставит агент (set_end_screen) — панель её не шлёт, сервер её хранит; в кэше тоже держим.
+        clip_plans: prev.clip_plans.map((p) =>
+          p.id === planId ? { ...p, render_settings: { end_screen: p.render_settings?.end_screen, ...settings } } : p,
+        ),
       });
     }
     return clipPlansApi
@@ -2324,6 +2337,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
   // мышью такие нельзя (сдвиг лёг бы не в те координаты) — сначала «Разметить слои в этом формате».
   const shown = reframedView ?? { layers, camera };
+  // Концовка-баннер (render.end_screen): начало — начало слоя end_banner, как в рендере.
+  const endScreen = endScreenFor(activePlan?.render_settings?.end_screen, shown.layers, viewDuration);
   if (!layerDragRef.current)
     motionViewRef.current = {
       layers: shown.layers,
@@ -2335,6 +2350,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       levels: levelTracks,
       duration: viewDuration,
       reframed: Boolean(reframedView),
+      endScreen,
     };
   else
     motionViewRef.current = {
@@ -2346,6 +2362,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       voice: voiceTracks,
       levels: levelTracks,
       duration: viewDuration,
+      endScreen,
     };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать

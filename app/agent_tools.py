@@ -506,6 +506,8 @@ def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) 
     только фон (скрин сайта во весь кадр за втубером — это и есть монтаж)."""
     out = []
     for layer in layers:
+        if layer.get("id") == "end_banner":
+            continue  # баннер концовки (app/end_screen.py) лежит на уже размытом видео
         if layer.get("behind"):
             if not keyed:
                 out.append(f"{layer.get('id') or layer.get('type')}: behind работает только у источника с хромакеем "
@@ -3151,6 +3153,44 @@ def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
 
 
+END_SCREEN_FIELDS = ("template", "svg_asset_id", "text", "handle", "platform", "accent", "days", "time", "font",
+                     "duration", "blur", "dim", "ramp", "y", "w")
+
+
+def h_set_end_screen(ctx: ToolContext, args: dict) -> dict:
+    """Концовка-баннер: размытие основы на хвосте + анимированный баннер из SVG (app/end_screen.py)."""
+    from app.end_screen import set_end_screen
+    from app.svg_webm import SvgWebmError
+
+    brand_id = args.get("brand_id")
+    if brand_id:
+        try:
+            ctx.store.get_brand(int(brand_id))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    fields = {k: args[k] for k in END_SCREEN_FIELDS if k in args}
+    try:
+        return set_end_screen(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
+                              remove=args.get("remove") is True, before_change=ctx.before_change)
+    except (ValueError, SvgWebmError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_svg_to_webm(ctx: ToolContext, args: dict) -> dict:
+    """SVG (текст или файл библиотеки) → webm с альфой в «Файлы для монтажа» (app/svg_webm.py)."""
+    from app.svg_webm import SvgWebmError, asset_svg_text, svg_to_asset
+
+    try:
+        svg = asset_svg_text(ctx.store, args["asset_id"]) if args.get("asset_id") else args.get("svg")
+        asset, info = svg_to_asset(ctx.store, svg, args, label=str(args.get("label") or "SVG-анимация"))
+    except (ValueError, SvgWebmError) as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "asset_id": asset["id"], "label": asset["label"], "cached": info["cached"],
+            "frames": info.get("frames"), "fps": info.get("fps"), "duration": info.get("duration"),
+            "width": info.get("width"), "height": info.get("height"),
+            "note": "слой image с этим asset_id играет анимацию с прозрачностью (с начала слоя, по кругу)"}
+
+
 def h_get_playbook(_ctx: ToolContext, args: dict) -> dict:
     """Плейбук — пошаговый рецепт заказа (docs/playbooks/<name>.md); без name — список."""
     from app import playbooks
@@ -5189,6 +5229,48 @@ def _build_registry() -> list[Tool]:
                   "remove": {"type": "boolean"}}),
             h_set_nameplate, mutating=True,
             label=lambda a: "Снимаю плашку канала" if a.get("remove") else f"Плашка канала {a.get('handle') or ''}".strip(),
+        ),
+        Tool(
+            "set_end_screen", "Ставлю концовку-баннер",
+            "Концовка шортса отдельным решением: на последних duration с (1.5–8, по умолчанию 3; не больше половины "
+            "ролика) видео плавно уходит в размытие (blur 0–60, 18) и темнеет (dim 0–0.8, 0.35) за ramp с (0.6), "
+            "поверх — анимированный баннер (SVG → webm с альфой, слой end_banner). template: live (стеклянная "
+            "карточка, пульсирующая точка LIVE, фраза крупно — после « — » акцентом, ник со значком площадки) | "
+            "schedule (дни недели чипами, время крупно) | neon (ник светящейся обводкой, адрес канала); или "
+            "svg_asset_id — свой SVG из библиотеки. text («Стримлю с 8 утра — заходи»), handle, platform "
+            "twitch|youtube|tiktok|telegram|kick|none, accent #rrggbb (нет — цвет площадки), days («пн–пт», "
+            "«будни»), time («8:00 МСК»), font; y — центр баннера (0.44), w — ширина (960 px кадра 1080). "
+            "brand_id — тексты, шрифт и акцент из бренда. Когда: стример — анонс расписания; реклама — призыв "
+            "бренда; НЕ на каждый мем и не поверх развязки. remove:true — снять. Повтор заменяет. Потом "
+            "view_frame на концовке. / Blurred end screen with an animated banner.",
+            _obj({"template": {"type": "string", "enum": ["live", "schedule", "neon"]},
+                  "svg_asset_id": {"type": "integer"},
+                  "text": {"type": "string"}, "handle": {"type": "string"},
+                  "platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
+                  "accent": {"type": "string"}, "days": {"type": "string"}, "time": {"type": "string"},
+                  "font": {"type": "string"},
+                  "duration": {"type": "number", "minimum": 1.5, "maximum": 8},
+                  "blur": {"type": "number", "minimum": 0, "maximum": 60},
+                  "dim": {"type": "number", "minimum": 0, "maximum": 0.8},
+                  "ramp": {"type": "number", "minimum": 0.1, "maximum": 2},
+                  "y": {"type": "number"}, "w": {"type": "number"},
+                  "brand_id": {"type": "integer"}, "remove": {"type": "boolean"}}),
+            h_set_end_screen, mutating=True,
+            label=lambda a: "Снимаю концовку" if a.get("remove") else f"Концовка {a.get('template') or ''}".strip(),
+        ),
+        Tool(
+            "svg_to_webm", "Перевожу SVG в анимацию",
+            "SVG с анимацией (CSS @keyframes / SMIL) → webm с прозрачностью в «Файлы для монтажа»: покадрово в "
+            "headless-браузере (анимации на паузе и перемотаны на время кадра — без рывков и пропусков). svg — "
+            "текст SVG или asset_id — SVG из библиотеки; duration (с; нет — по анимациям SVG), fps (30), width/"
+            "height (нет — из SVG), scale (1), strip_bg (убрать первый прямоугольник-фон). Тот же SVG — тот же "
+            "файл (кэш). Ответ asset_id: слой image играет его с альфой. / Animated SVG → alpha webm asset.",
+            _obj({"svg": {"type": "string"}, "asset_id": {"type": "integer"}, "label": {"type": "string"},
+                  "duration": {"type": "number", "minimum": 0.2, "maximum": 30},
+                  "fps": {"type": "integer", "minimum": 1, "maximum": 60},
+                  "width": {"type": "integer"}, "height": {"type": "integer"},
+                  "scale": {"type": "number", "minimum": 0.25, "maximum": 3}, "strip_bg": {"type": "boolean"}}),
+            h_svg_to_webm, scope="global", label=lambda a: "SVG → webm",
         ),
         Tool(
             "get_playbook", "Читаю плейбук",

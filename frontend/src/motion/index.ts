@@ -120,3 +120,4 @@ export {
   paintBackgroundAround,
   type BackgroundOptions,
 } from "./backgrounds";
+export { readEndScreen, endScreenAt, endScreenFor, paintEndScreen, END_SCREEN_LAYER_ID, END_SCREEN_MAX_BLUR, END_SCREEN_MAX_DIM, type EndScreenFx } from "./endscreen";

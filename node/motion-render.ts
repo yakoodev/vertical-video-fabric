@@ -28,6 +28,8 @@ import {
   normalizeBackground,
   paintBackground,
   paintBackgroundAround,
+  paintEndScreen,
+  readEndScreen,
   type AnimFrame,
   type AnimSource,
   type BackgroundZone,
@@ -151,6 +153,8 @@ function readComp(path: string): Composition {
     ...readBaseHeight(raw, height - (height % 2)),
     ...readFreezes(raw),
     ...readZones(raw, width - (width % 2), height - (height % 2)),
+    // Концовка-баннер: размытие основы под слоями с comp.endScreen.start (frontend/src/motion/endscreen.ts).
+    ...(readEndScreen(raw.endScreen) ? { endScreen: readEndScreen(raw.endScreen)! } : {}),
   };
 }
 
@@ -851,6 +855,9 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
   const bgOpts = { accent: clipAccent(comp.layers), createCanvas: env.createCanvas };
   const zones = comp.backgrounds ?? [];
   const zoneAt = (t: number) => zones.find((z) => t >= z.t0 && t < z.t1) ?? null;
+  // Концовка: всё, что уже на холсте (основа, фон, слои behind), — в размытие и тень; слои — резкие.
+  const scratch = (w: number, h: number) => createCanvas(w, h) as unknown as ReturnType<NonNullable<RenderEnv["createCanvas"]>>;
+  const endScreen = (tm: number) => paintEndScreen(ctx, canvas, W, H, comp.endScreen, tm, scratch);
 
   return {
     canvas,
@@ -876,6 +883,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
           ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
           ctx.restore();
         }
+        endScreen(tm);
         drawFrame(ctx, comp, tm, env, "front");
         return;
       }
@@ -928,6 +936,7 @@ function makePainter(comp: Composition, env: RenderEnv): Painter {
         ctx.drawImage(frameCanvas as unknown as CanvasImageSource, 0, 0, W, H, 0, 0, W, H);
         ctx.restore();
       }
+      endScreen(tm);
       drawFrame(ctx, comp, tm, env);
     },
   };

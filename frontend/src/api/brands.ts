@@ -51,7 +51,8 @@ export interface Brand {
     stroke: BrandStroke | null;
     uppercase: boolean;
   };
-  cta: { text: string; url_text: string; duration_sec: number };
+  /** style banner — концовкой-баннером (размытие + анимированный баннер, app/end_screen.py); нет — плашка. */
+  cta: { text: string; url_text: string; duration_sec: number; style?: "plate" | "banner"; template?: "live" | "schedule" | "neon"; blur?: number };
   music_track_id: number | null;
   /** Фон за персонажем и под видео meme: анимированный, цвета [] — цвета бренда (app/brand_kit.py). */
   backdrop: Background;
