@@ -1978,3 +1978,90 @@ test("плашка канала: кадр компоновщика (рендер
   assert.equal(tpl.layers[0].props.align, "left");
   near(tpl.layers[0].x * 1080 - tpl.layers[0].props.boxWidth / 2, 24, 1e-6);
 });
+
+/** Сколько пикселей кадров расходятся больше чем на 2 уровня (и сколько вообще нарисовано). */
+function frameDiff(ca, cb, w, h) {
+  const da = ca.getContext("2d").getImageData(0, 0, w, h).data;
+  const db = cb.getContext("2d").getImageData(0, 0, w, h).data;
+  let diff = 0;
+  let inked = 0;
+  for (let i = 0; i < da.length; i += 4) {
+    if (da[i + 3] > 0) inked++;
+    if (Math.abs(da[i] - db[i]) > 2 || Math.abs(da[i + 1] - db[i + 1]) > 2 || Math.abs(da[i + 2] - db[i + 2]) > 2 || Math.abs(da[i + 3] - db[i + 3]) > 2) diff++;
+  }
+  return { diff, inked };
+}
+
+test("плашка канала: анимация — вход, блик, тик, LIVE, свёртка; кадр превью = кадр рендера на каждом пресете", async () => {
+  const { GlobalFonts } = await import("@napi-rs/canvas");
+  GlobalFonts.registerFromPath(join(FONTS, "Montserrat-ExtraBold.ttf"), "Montserrat");
+  E.invalidateTextCache();
+  const P = { handle: "sareamura" };
+  // Ход входа: значок выпрыгивает раньше пилюли, ник — по буквам, к концу входа всё на месте.
+  const m = (local, props = {}, dur = 20) => E.nameplateMotion({ ...P, ...props }, local, dur, 9);
+  assert.equal(m(0).pop, 0);
+  assert.ok(m(0.2).pop > 0.8 && m(0.2).open < 0.3 && m(0.2).front === 0, JSON.stringify(m(0.2)));
+  assert.ok(m(0.28).pop > 1, "перелёт outBack");
+  assert.ok(m(0.5).front > 0 && m(0.5).front < 9);
+  assert.deepEqual([m(0.8).pop, m(0.8).open, m(0.8).front >= 9 + m(0.8).soft], [1, 1, true]);
+  // Блик и тик — редко: subtle с 6.6 с каждые 7, lively — тик чаще.
+  assert.equal(m(3).shine, null);
+  assert.ok(m(7).shine > 0 && m(7).shine < 1 && m(7).tick > 0);
+  assert.equal(m(8).shine, null);
+  assert.ok(m(13.9).shine > 0);
+  assert.ok(m(3.3, { anim: "lively" }).tick > 0 && m(3.3).tick === null);
+  // none — всё на месте с первого кадра; LIVE — фаза пульса; свёртка — вход назад в конце.
+  assert.deepEqual([m(0, { anim: "none" }).pop, m(0, { anim: "none" }).open, m(7, { anim: "none" }).shine], [1, 1, null]);
+  assert.equal(m(0.8, { live: true }).live, 0.5);
+  assert.equal(m(19.99, { outro: "collapse" }).pop < 0.2, true);
+  assert.equal(m(19.6, { outro: "collapse" }).open < 1, true);
+  assert.equal(m(19.6).open, 1);
+  // Детерминированно: тот же момент — тот же кадр.
+  const env = { width: 1080, height: 1920, getImage: () => null, createCanvas: (w, h) => createCanvas(w, h) };
+  const draw = (layer, t) => {
+    const cv = createCanvas(1080, 1920);
+    E.drawFrame(cv.getContext("2d"), { layers: [layer] }, t, env);
+    return cv;
+  };
+  const lay = (anim, over = {}) => plateLayer({ end: 20, shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.45 }, ...over, props: { anim, ...(over.props || {}) } });
+  assert.equal(frameDiff(draw(lay("subtle"), 7), draw(lay("subtle"), 7), 1080, 1920).diff, 0);
+  // Блик виден: в 7 с пилюля светлее, чем в 5 с; в 0.1 с ника ещё нет.
+  const ink = (cv) => {
+    const d = cv.getContext("2d").getImageData(24, Math.round(0.6 * 1920 - 37), 400, 74).data;
+    let s = 0;
+    for (let i = 0; i < d.length; i += 4) s += (d[i] + d[i + 1] + d[i + 2]) * (d[i + 3] / 255);
+    return s;
+  };
+  assert.ok(ink(draw(lay("lively"), 7)) > ink(draw(lay("lively"), 5)) * 1.02, "блик");
+  const early = draw(lay("subtle"), 0.1).getContext("2d").getImageData(24 + 120, Math.round(0.6 * 1920 - 20), 250, 40).data;
+  assert.ok(early.every((v, i) => i % 4 !== 3 || v === 0), "в 0.1 с ника ещё нет");
+  // LIVE: красная точка справа от ника.
+  const live = draw(lay("none", { props: { live: true } }), 2);
+  const box = E.layerBox(live.getContext("2d"), lay("none", { props: { live: true, boxWidth: undefined } }), 2, env);
+  const dot = pxOf(live.getContext("2d"), 24 + box.w - 74 * 0.42 - 74 * 0.11, 0.6 * 1920);
+  assert.ok(dot[0] > 200 && dot[1] < 90, `точка LIVE ${dot}`);
+
+  // Кадр компоновщика = кадр движка: каждый пресет в 0.1 / 0.4 / 0.8 / 7 с.
+  for (const anim of ["none", "subtle", "lively"]) {
+    const layers = [
+      lay(anim, { props: { live: anim === "lively" } }),
+      lay(anim, { id: "np2", x: 1 - (24 + 260) / 1080, y: 0.13, props: { platform: "youtube", handle: "shop", style: "solid", align: "right" } }),
+      lay(anim, { id: "np3", y: 0.3, props: { platform: "telegram", handle: "vtubika_store", outro: "collapse" }, end: 7.3 }),
+    ];
+    writeFileSync(join(tmp, `npa-${anim}.json`), JSON.stringify({ width: 1080, height: 1920, fps: 30, duration: 20, layers }));
+    writeFileSync(join(tmp, "npa.assets.json"), "{}");
+    for (const t of [0.1, 0.4, 0.8, 7]) {
+      const png = join(tmp, `npa-${anim}-${t}.png`);
+      const r = run(["--comp", join(tmp, `npa-${anim}.json`), "--assets", join(tmp, "npa.assets.json"), "--frame", String(t), "--png", png]);
+      assert.equal(r.status, 0, r.stderr);
+      const img = await loadImage(readFileSync(png));
+      const a = createCanvas(1080, 1920);
+      a.getContext("2d").drawImage(img, 0, 0);
+      const b = createCanvas(1080, 1920);
+      E.drawFrame(b.getContext("2d"), { layers }, t, env);
+      const { diff, inked } = frameDiff(a, b, 1080, 1920);
+      assert.ok(inked > 300, `${anim} ${t}: пусто`);
+      assert.ok(diff <= inked * 0.002, `${anim} ${t}: расхождение рендера и превью ${diff} из ${inked}`);
+    }
+  }
+});

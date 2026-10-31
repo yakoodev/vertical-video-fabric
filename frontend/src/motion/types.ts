@@ -342,6 +342,12 @@ export type NameplateProps = {
   align?: "left" | "center" | "right";
   /** Ширина рамки слоя, опорн. px; нет или меньше пилюли — рамка по пилюле. */
   boxWidth?: number;
+  /** Своя анимация (layers/nameplate.ts): none — стоит; subtle (по умолчанию) — вход + редкий блик и тик значка; lively — ярче. */
+  anim?: "none" | "subtle" | "lively";
+  /** Красная пульсирующая точка LIVE после ника. */
+  live?: boolean;
+  /** collapse — в последние 0.6 с слоя свернуться в значок и уйти (перед призывом/концовкой). */
+  outro?: "none" | "collapse";
 };
 
 export type AudioProps = {
