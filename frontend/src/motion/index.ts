@@ -30,7 +30,24 @@ export {
   type CameraState,
   type CameraMatrix,
 } from "./camera";
-export { drawFrame, drawLayer, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
+export {
+  DEFAULT_FOV,
+  FOV_MIN,
+  FOV_MAX,
+  BASE_Z,
+  has3dCamera,
+  camera3dAt,
+  focal,
+  makeProjector,
+  planePoint,
+  baseCover,
+  drawBasePlane,
+  warpImage,
+  type Camera3D,
+  type Plane,
+  type Projector,
+} from "./space3d";
+export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
 export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";
