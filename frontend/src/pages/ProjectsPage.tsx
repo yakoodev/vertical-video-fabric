@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { sourcesApi, looksLikePlayerPage, QUALITY_OPTIONS } from "@/api/sources";
 import { downloadsApi } from "@/api/downloads";
+import { PROJECT_KINDS, projectsApi, type ChannelProject, type ProjectKind } from "@/api/projects";
 import { qk } from "@/api/keys";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
@@ -14,9 +15,26 @@ import { NewCanvas } from "@/components/NewCanvas";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
-function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Source) => void }) {
+function ProjectCard({
+  source,
+  onDelete,
+  series,
+}: {
+  source: Source;
+  onDelete: (s: Source) => void;
+  series: ChannelProject[];
+}) {
   const qc = useQueryClient();
   const toast = useToast();
+  // Источник — в одну серию/канал (app/projects.py) или ни в какую.
+  const setSeries = useMutation({
+    mutationFn: (projectId: number | null) => projectsApi.setSourceProject(source.id, projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.sources });
+      qc.invalidateQueries({ queryKey: qk.channelProjects });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось"),
+  });
   const name = source.original_filename || source.original_url || `Источник #${source.id}`;
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(name);
@@ -105,8 +123,88 @@ function ProjectCard({ source, onDelete }: { source: Source; onDelete: (s: Sourc
           <span>{plural(source.clip_plans_count ?? 0, "момент", "момента", "моментов")}</span>
           <span>{plural(source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
         </div>
+        {series.length ? (
+          <select
+            className="input pcard-series"
+            title="Серия или канал этого видео: общий лор, правила и статистика"
+            value={source.project_id ?? ""}
+            disabled={setSeries.isPending}
+            onChange={(e) => setSeries.mutate(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Без серии</option>
+            {series.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** «Серии и каналы»: проекты над источниками (app/projects.py) — лор, правила, статистика, гипотезы. */
+function SeriesStrip({ series }: { series: ChannelProject[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<ProjectKind>("stream_channel");
+  const create = useMutation({
+    mutationFn: () => projectsApi.create({ name: name.trim(), kind }),
+    onSuccess: (p) => {
+      qc.invalidateQueries({ queryKey: qk.channelProjects });
+      navigate(`/series/${p.id}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось создать"),
+  });
+  return (
+    <section className="series-strip">
+      <div className="series-strip-head">
+        <strong>Серии и каналы</strong>
+        <span className="muted">несколько видео одного канала или сериала: общий лор, правила владельца, статистика</span>
+        <button className="btn sm" onClick={() => setAdding((v) => !v)}>
+          ＋ Новая серия
+        </button>
+      </div>
+      {adding ? (
+        <div className="proj-add-row">
+          <input
+            className="input"
+            autoFocus
+            placeholder="Название: «Мура — стримы», «Сериал …»"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && name.trim() && create.mutate()}
+          />
+          <select className="input" style={{ width: 170, flex: "none" }} value={kind} onChange={(e) => setKind(e.target.value as ProjectKind)}>
+            {PROJECT_KINDS.map((k) => (
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+          <button className="btn primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>
+            Создать
+          </button>
+        </div>
+      ) : null}
+      {series.length ? (
+        <div className="series-cards">
+          {series.map((p) => (
+            <Link key={p.id} to={`/series/${p.id}`} className="panel series-card">
+              <strong>{p.name}</strong>
+              <span className="muted">{p.kind_label}</span>
+              <span className="muted">
+                {plural(p.sources_count ?? 0, "видео", "видео", "видео")} · {plural(p.active_rules_count ?? 0, "правило", "правила", "правил")}
+              </span>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -239,6 +337,10 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 
 export function ProjectsPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
+  const seriesQuery = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list });
+  const series = seriesQuery.data ?? [];
+  // "" — все, "none" — без серии, иначе id серии.
+  const [seriesFilter, setSeriesFilter] = useState("");
   const [pending, setPending] = useState<Source | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusGroup | "all">("all");
@@ -257,6 +359,8 @@ export function ProjectsPage() {
   const filtered = sources.filter(
     (s) =>
       (statusFilter === "all" || statusGroup(s.status) === statusFilter) &&
+      (!seriesFilter ||
+        (seriesFilter === "none" ? !s.project_id : String(s.project_id ?? "") === seriesFilter)) &&
       (!q || (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q)),
   );
 
@@ -267,6 +371,7 @@ export function ProjectsPage() {
         <p className="sub">Исходные видео для анализа, нарезки и публикации</p>
         <AddSource />
       </section>
+      <SeriesStrip series={series} />
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (
@@ -296,8 +401,24 @@ export function ProjectsPage() {
               ) : null,
             )}
             <span className="muted proj-count">
-              {q ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
+              {q || seriesFilter ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
             </span>
+            {series.length ? (
+              <select
+                className="input proj-series-filter"
+                value={seriesFilter}
+                onChange={(e) => setSeriesFilter(e.target.value)}
+                title="Показать видео одной серии"
+              >
+                <option value="">Все серии</option>
+                <option value="none">Без серии</option>
+                {series.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <div className="mo-search proj-search">
               <span aria-hidden>⌕</span>
               <input
@@ -311,7 +432,7 @@ export function ProjectsPage() {
           {filtered.length ? (
             <div className="card-grid proj-grid">
               {filtered.map((source) => (
-                <ProjectCard key={source.id} source={source} onDelete={setPending} />
+                <ProjectCard key={source.id} source={source} onDelete={setPending} series={series} />
               ))}
             </div>
           ) : (

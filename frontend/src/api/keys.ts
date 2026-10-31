@@ -27,4 +27,13 @@ export const qk = {
   subtitleProfiles: ["subtitle-profiles"] as const,
   promptPresets: ["prompt-presets"] as const,
   brands: ["brands"] as const,
+
+  // Проекты-серии/каналы (app/projects.py) — не путать с sources («проекты» в старом смысле).
+  channelProjects: ["channel-projects"] as const,
+  channelProject: (id: number | string) => ["channel-projects", String(id)] as const,
+  channelBrief: (id: number | string) => ["channel-projects", String(id), "brief"] as const,
+  channelRules: (id: number | string, status: string) => ["channel-projects", String(id), "rules", status] as const,
+  channelStats: (id: number | string) => ["channel-projects", String(id), "stats"] as const,
+  channelPublications: (id: number | string) => ["channel-projects", String(id), "publications"] as const,
+  channelHypotheses: (id: number | string) => ["channel-projects", String(id), "hypotheses"] as const,
 };
