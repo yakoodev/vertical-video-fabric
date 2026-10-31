@@ -382,6 +382,58 @@ def _remap_keys(keys: dict, start: float, new_start: float, mapper: CutMap) -> d
     return out
 
 
+TRACK_GRID_SEC = 0.05
+
+
+def _densify_tracking_keys(layer: dict, mapper: Any) -> dict:
+    """Ключи трека (app/tracking.py) — опоры Дугласа–Пекера, между ними бывает несколько секунд.
+    Перевод времени с разрывом (вырез, стоп-кадр, правка куска) между двумя опорами исказил бы
+    траекторию: опоры сошлись бы через склейку. Поэтому у краёв каждого разрыва ставятся опоры
+    с интерполированным значением — после перевода слой стоит на той же точке кадра."""
+    from app.promo_lint import key_value
+
+    keys = layer.get("keys") or {}
+    props = [p for p in (layer.get("tracking") or {}).get("props") or [] if keys.get(p)]
+    start, end = float(layer["start"]), float(layer["end"])
+    if not props or end <= start:
+        return keys
+    count = int((end - start) / TRACK_GRID_SEC)
+    grid = [start + i * TRACK_GRID_SEC for i in range(count + 1)]
+    if end - grid[-1] > 1e-6:
+        grid.append(end)
+    mapped = [mapper.clamp(t) for t in grid]
+    bad = [abs((mapped[i + 1] - mapped[i]) - (grid[i + 1] - grid[i])) > 1e-4 for i in range(len(grid) - 1)]
+    marks: set[float] = set()
+    i = 0
+    while i < len(bad):
+        if not bad[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(bad) and bad[j + 1]:
+            j += 1
+        # Опоры до разрыва (одна строго до него) и после (одна строго после).
+        for k in (i - 1, i, j + 1, j + 2):
+            if 0 <= k < len(grid):
+                marks.add(round(grid[k] - start, 3))
+        i = j + 1
+    if not marks:
+        return keys
+    out = dict(keys)
+    for prop in props:
+        points = sorted(keys[prop], key=lambda p: float(p["t"]))
+        have = {round(float(p["t"]), 3) for p in points}
+        extra = []
+        for t in sorted(marks - have):
+            before = [p for p in points if float(p["t"]) <= t]
+            point = {"t": t, "v": round(key_value(points, t, 0.0), 4)}
+            if before and before[-1].get("ease"):
+                point["ease"] = before[-1]["ease"]
+            extra.append(point)
+        out[prop] = sorted(points + extra, key=lambda p: float(p["t"]))
+    return out
+
+
 PINNED_START_SEC = 0.05
 
 
@@ -407,7 +459,11 @@ def remap_layers(layers: list[dict], mapper: CutMap, min_len: float = 0.1) -> li
         new_start, new_end = round(got[0], 3), round(got[1], 3)
         fresh = {**layer, "start": new_start, "end": new_end}
         straddles = (end - start) - (new_end - new_start) > 1e-6
-        if straddles and layer.get("keys"):
+        # Слой с трекингом (app/tracking.py): ключи привязаны к кадру, а не к началу слоя — едут
+        # вместе с ним через любой перевод времени (стоп-кадр-вставка растягивает слой, а не режет).
+        if layer.get("tracking") and layer.get("keys"):
+            fresh["keys"] = _remap_keys(_densify_tracking_keys(layer, mapper), start, new_start, mapper)
+        elif straddles and layer.get("keys"):
             fresh["keys"] = _remap_keys(layer["keys"], start, new_start, mapper)
         half = (new_end - new_start) / 2
         for side in ("in", "out"):
