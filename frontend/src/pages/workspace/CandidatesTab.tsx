@@ -90,7 +90,7 @@ import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, typ
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/pages/workspace/canvasClip";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
-import { isMutedAt, muteTotal, type MuteSpan } from "@/api/mute";
+import { CENSOR_STYLES, isMutedAt, muteTotal, type CensorStyle, type MuteSpan } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
 import { compactAudio, jlSourceAt, type AudioEdit } from "@/api/audioEdit";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
@@ -1801,21 +1801,26 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автомонтаж не удался"),
   });
-  // 🤬 Мат (app/censor.py): тишина серединой слова + звёздочки в субтитрах, без рендера.
-  // Проверку рендером и Whisper (verify) зовут агенты — это минуты, кнопке ждать незачем.
+  // 🤬 Мат (app/censor.py): середина слова глушится (стиль — тишина, писк, шум…) + звёздочки в
+  // субтитрах, без рендера. Проверку рендером и Whisper (verify) зовут агенты — это минуты.
+  // Стиль "" — прежний стиль клипа (хранится у отрезков), у нового клипа — по умолчанию сервера.
+  const [censorStyle, setCensorStyle] = useState<CensorStyle | "">("");
   const censorMat = useMutation({
     mutationFn: async (clipPlanId: number) => {
       await flushSettings();
-      return api.post<{ words: { i: number; word: string; level: number }[]; stars: number; manual_kept: number }>(
-        `/api/clip-plans/${clipPlanId}/censor`,
-        { verify: false },
-      );
+      return api.post<{
+        words: { i: number; word: string; level: number; style?: CensorStyle }[];
+        stars: number;
+        manual_kept: number;
+      }>(`/api/clip-plans/${clipPlanId}/censor`, { verify: false, ...(censorStyle ? { style: censorStyle } : {}) });
     },
     onSuccess: async (r) => {
+      const style = r.words[0]?.style;
       if (!r.words.length) toast.success("Мата в субтитрах не найдено");
       else
         toast.success(
-          `Мат: ${r.words.length} сл. заглушено серединой${r.stars ? `, в субтитрах звёздочки (${r.stars})` : ""}` +
+          `Мат: ${r.words.length} сл. заглушено серединой${style ? ` (${CENSOR_STYLES[style]})` : ""}` +
+            (r.stars ? `, в субтитрах звёздочки (${r.stars})` : "") +
             (r.manual_kept ? ` · ручные отрезки целы (${r.manual_kept})` : "") +
             " — Ctrl+Z откатит",
         );
@@ -3796,7 +3801,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
                 Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
               </div>
-              <div>
+              <div className="ed-quick-row">
                 <button
                   type="button"
                   className="btn sm"
@@ -3806,6 +3811,18 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   {censorMat.isPending ? "Ищу мат…" : "🤬 Заглушить мат"}
                 </button>
+                <select
+                  className="input"
+                  style={{ flex: "1 1 120px", minWidth: 0 }}
+                  value={censorStyle}
+                  onChange={(e) => setCensorStyle(e.target.value as CensorStyle | "")}
+                  title="Чем заполнить заглушённую середину слова. Превью глушит тишиной — как звучит, слышно в рендере"
+                >
+                  <option value="">как раньше у клипа</option>
+                  {(Object.keys(CENSOR_STYLES) as CensorStyle[]).map((s) => (
+                    <option key={s} value={s}>{CENSOR_STYLES[s]}</option>
+                  ))}
+                </select>
               </div>
               {mute.length ? (
                 <div className="ed-layer-list">
@@ -3819,7 +3836,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       }}
                       title={
                         m.by === "censor"
-                          ? `Мат, уровень ${m.level ?? 1} (кнопка «Заглушить мат» заменит). Перейти на секунду раньше`
+                          ? `Мат, уровень ${m.level ?? 1}, ${CENSOR_STYLES[m.style ?? "silence"]} (кнопка «Заглушить мат» заменит). Перейти на секунду раньше`
                           : "Перейти на секунду раньше отрезка — послушать стык"
                       }
                     >

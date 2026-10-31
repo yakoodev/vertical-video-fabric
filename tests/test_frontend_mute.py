@@ -34,6 +34,10 @@ CASES = [
     [{"start": 1, "end": 2, "track": 1}, {"start": 1.5, "end": 3, "track": 1}, {"start": 1.2, "end": 1.8},
      {"start": 1.9, "end": 2.2, "track": 0}, {"start": 1, "end": 2, "by": "censor", "level": 2, "track": 1},
      {"start": 1, "end": 2, "by": "censor", "level": 2}, {"start": 4, "end": 5, "track": 9}],
+    # Стиль мата (style) — только у помеченных, неизвестный выброшен; у ручного — снят.
+    [{"start": 1, "end": 2, "by": "censor", "level": 2, "style": "beep"},
+     {"start": 3, "end": 4, "by": "censor", "style": "boing"}, {"start": 5, "end": 6, "style": "duck"},
+     {"start": 7, "end": 8, "by": "censor", "level": 1, "style": "duck", "track": 1}],
 ]
 
 
