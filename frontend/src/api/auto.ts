@@ -28,6 +28,8 @@ export interface AutoStartInput {
   ai_metadata?: boolean;
   /** 🤖 ИИ-монтаж of every clip before rendering. */
   ai_montage?: boolean;
+  /** Серия-проект: клипы уйдут в её очередь одобрения (пусто — «Авто — без серии»). */
+  project_id?: number;
 }
 
 export const autoApi = {
@@ -62,6 +64,7 @@ export const autoApi = {
     if (input.mirror) fd.append("mirror", "true");
     if (input.ai_metadata) fd.append("ai_metadata", "true");
     if (input.ai_montage) fd.append("ai_montage", "true");
+    if (input.project_id) fd.append("project_id", String(input.project_id));
     if (input.use_music) {
       fd.append("use_music", "true");
       if (input.music_track_id) fd.append("music_track_id", String(input.music_track_id));

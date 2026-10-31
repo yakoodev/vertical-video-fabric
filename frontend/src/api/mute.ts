@@ -8,11 +8,37 @@
  */
 
 /**
- * `by: "censor"` — отрезок поставило глушение мата (app/censor.py, кнопка «Заглушить мат»),
- * `level` — его уровень 1–3. Такие не сливаются ни с чем: повторный запуск заменяет только
- * свои. Отрезок, который потянули мышью, становится ручным (метка снимается).
+ * Чем заполнена заглушённая середина слова мата (app/audio_mute.MUTE_STYLES). Нет стиля — тишина.
+ * Превью любой стиль глушит тишиной; как звучит — по рендеру.
  */
-export type MuteSpan = { start: number; end: number; by?: "censor"; level?: number; track?: number };
+export const CENSOR_STYLES = {
+  silence: "тишина",
+  beep: "тихий писк",
+  noise: "розовый шум",
+  reverse: "задом наперёд",
+  lowpass: "«под водой»",
+  stretch: "растяжка, тон ниже",
+  duck: "тише на 25 дБ",
+} as const;
+export type CensorStyle = keyof typeof CENSOR_STYLES;
+
+const isCensorStyle = (v: unknown): v is CensorStyle =>
+  typeof v === "string" && Object.prototype.hasOwnProperty.call(CENSOR_STYLES, v);
+
+/**
+ * `by: "censor"` — отрезок поставило глушение мата (app/censor.py, кнопка «Заглушить мат»),
+ * `level` — его уровень 1–3, `style` — чем заполнена середина. Такие не сливаются ни с чем:
+ * повторный запуск заменяет только свои. Отрезок, который потянули мышью, становится ручным
+ * (метка снимается).
+ */
+export type MuteSpan = {
+  start: number;
+  end: number;
+  by?: "censor";
+  level?: number;
+  style?: CensorStyle;
+  track?: number;
+};
 
 /**
  * `track` — тишина только этой звуковой дорожки записи (мат на микрофоне, игра звучит; рендер
@@ -36,10 +62,14 @@ export const MAX_MUTES = 60;
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-function muteTag(s: MuteSpan): { by?: "censor"; level?: number } {
+function muteTag(s: MuteSpan): { by?: "censor"; level?: number; style?: CensorStyle } {
   if (s.by !== "censor") return {};
   const level = Math.trunc(Number(s.level));
-  return level >= 1 && level <= 3 ? { by: "censor", level } : { by: "censor" };
+  return {
+    by: "censor",
+    ...(level >= 1 && level <= 3 ? { level } : {}),
+    ...(isCensorStyle(s.style) ? { style: s.style } : {}),
+  };
 }
 
 /** По порядку, ручные пересечения и стыки слиты, короткие выброшены, не больше MAX_MUTES. */

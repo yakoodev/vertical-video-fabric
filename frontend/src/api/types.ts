@@ -308,9 +308,15 @@ export interface AutoRun {
   message: string;
   error: string;
   source_id: number | null;
+  /** Серия, в очередь одобрения которой ушли клипы (без серии — «Авто — без серии»). */
+  project_id?: number | null;
   plans: number;
   clips: number;
+  /** Прежнее поле: «Авто» больше не создаёт заданий публикации, всегда 0. */
   jobs: number;
+  approvals?: number;
+  auto_approved?: number;
+  warnings?: string[];
 }
 
 export interface ActiveTask {

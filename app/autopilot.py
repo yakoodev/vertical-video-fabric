@@ -141,8 +141,10 @@ def ensure_autopilot_schema(conn) -> None:
     for sql in AUTOPILOT_SCHEMA_SQL:
         conn.execute(sql)
     from app.project_chat import ensure_chat_schema
+    from app.vod_watch import ensure_vod_watch_schema
 
     ensure_chat_schema(conn)
+    ensure_vod_watch_schema(conn)
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +464,17 @@ def buttons_for(approval: dict) -> list[tuple[str, str]]:
         if payload.get("action") == "review_rule":
             return [("approve", "✅ Оставить правило"), ("reject", "🗑 Отменить правило")]
         return [("approve", "✅ Сделать правилом"), ("reject", "🗑 Не надо")]
-    return [("approve", "✅ Да"), ("reject", "🗑 Нет")]
+    hook = CARD_ACTIONS.get(str(payload.get("action") or "")) if kind == "other" else None
+    return list(hook["buttons"]) if hook else [("approve", "✅ Да"), ("reject", "🗑 Нет")]
+
+
+# Карточки-вопросы других модулей (kind other, payload.action) — свои кнопки и обработчик решения
+# (app/vod_watch.py: «новый VOD — нарезать?», «мало места — повторить?»).
+CARD_ACTIONS: dict[str, dict] = {}
+
+
+def register_card_action(action: str, buttons: list[tuple[str, str]], on_decide: Callable[..., dict]) -> None:
+    CARD_ACTIONS[action] = {"buttons": buttons, "on_decide": on_decide}
 
 
 def get_approval(store: Any, approval_id: int) -> dict:
@@ -668,6 +680,9 @@ def decide(store: Any, approval_id: int, action: str, comment: str = "", actor: 
                                             context={"title": approval["title"]})
     elif status == "rejected":
         result.update(_on_rejected(store, approval, comment, actor))
+    hook = CARD_ACTIONS.get(str(approval["payload"].get("action") or "")) if approval["kind"] == "other" else None
+    if hook:
+        result.update(hook["on_decide"](store, approval, action, comment, actor) or {})
     result["approval"] = get_approval(store, approval_id)
     return result
 

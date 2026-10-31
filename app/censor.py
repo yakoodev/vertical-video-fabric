@@ -16,6 +16,12 @@ Whisper иногда угадывает мат по контексту даже 
 (уровень 3, слышна одна первая согласная): тогда ответ честно говорит «узнаётся по контексту»
 — дальше только вырез слова или правка монтажа, тишиной это не лечится.
 
+``style`` — чем заполнена заглушённая середина (app/audio_mute.MUTE_STYLES): тишина, тихий писк,
+розовый шум, реверс, «под водой», растяжка с понижением тона, приглушение −25 дБ. Хранится у
+каждого отрезка: повторный запуск без ``style`` берёт прежний стиль слова (старые отрезки без
+стиля — тишина), у клипа без прежних — ``DEFAULT_STYLE``. Проверка Whisper одинакова для всех
+стилей: рендер и распознавание того, что получилось.
+
 ``censor_job`` — проверка фоном (рендер и Whisper — минуты): вызов ждёт не дольше
 ``JOB_WAIT_SEC`` и отвечает ``status: running``; повторный вызов подключается к той же
 работе, второй не запускает (как расшифровка исходника, app/manual_clips.py).
@@ -30,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from app.audio_mute import MAX_MUTES, normalize_mute
+from app.audio_mute import MAX_MUTES, MUTE_STYLES, normalize_mute, span_style
 from app.profanity import DEFAULT_GROUPS, GROUPS, MAX_LEVEL, clamp_level, find_profanity, mute_range, star_subtitles
 
 log = logging.getLogger(__name__)
@@ -42,6 +48,21 @@ WINDOW_SEC = 0.4  # мат, распознанный ближе этого к з
 JOB_WAIT_SEC = 45.0
 JOB_KEEP_SEC = 600.0  # итог проверки, который никто не забрал, через 10 мин уже не отдаём
 CONTEXT_NOTE = "узнаётся по контексту"
+DEFAULT_STYLE = "silence"
+# Маскируют слабее тишины (сравнение на стримах, D:\vvf-offload\tmp\censor_ab\report.md): узнаётся на
+# последнем уровне — сначала сменить стиль. Писк Whisper «дописывает» по контексту («блядь» на месте
+# любого запиканного слова), duck слышен почти всегда.
+WEAK_STYLES = ("duck", "beep", "lowpass", "stretch", "reverse")
+
+
+def clamp_style(value: Any) -> str | None:
+    """``style`` цензуры: None — не задан (прежний/по умолчанию), иначе один из MUTE_STYLES."""
+    if value is None or value == "":
+        return None
+    style = str(value).strip().lower()
+    if style not in MUTE_STYLES:
+        raise ValueError(f"style — из {', '.join(MUTE_STYLES)}")
+    return style
 
 
 def _groups(soft: bool = False, groups: Any = None) -> tuple[str, ...]:
@@ -118,16 +139,19 @@ def resolve_track(store: Any, plan: dict, track: Any) -> tuple[int | None, str |
 
 def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: bool = True, soft: bool = False,
                 groups: Any = None, skip: Any = (), clear: bool = False, track: Any = None,
-                full_words: Any = ()) -> dict:
+                full_words: Any = (), style: Any = None) -> dict:
     """Мат клипа: тишина серединой слова (свои отрезки ``by: censor`` заменяются, ручные — нет)
     и звёздочки в субтитрах. Без рендера. Уровень слова: из ``levels``, иначе прежний (от
     прошлого запуска), иначе 1. ``clear`` — снять свои отрезки (звёздочки остаются: Ctrl+Z).
     ``track`` — глушить только эту дорожку (``resolve_track``: число или ``"voice"``); ``full_words``
-    — номера слов, которые всё равно глушатся целиком (голос протекает в другую дорожку)."""
+    — номера слов, которые всё равно глушатся целиком (голос протекает в другую дорожку).
+    ``style`` — чем заполнить середину (MUTE_STYLES); не задан — прежний стиль слова, иначе стиль
+    прежних отрезков клипа, иначе DEFAULT_STYLE."""
     from app.clip_settings import normalize_render_settings
 
     picked = _groups(soft, groups)
     level_all, level_by_word = _levels_arg(levels)
+    style_all = clamp_style(style)
     plan = store.get_clip_plan(clip_plan_id)
     only_track, track_note = resolve_track(store, plan, track) if not clear else (None, None)
     full = {int(i) for i in full_words or ()}
@@ -149,6 +173,8 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
     duration = clock.clip_duration
     fresh: list[dict] = []
     report: list[dict] = []
+    # Прежний стиль клипа — у первого прежнего отрезка (без стиля — тишина, как рендерился).
+    style_clip = span_style(previous[0]) if previous else DEFAULT_STYLE
     for item in found:
         parts = _word_clip_ranges(clock, item["start"], item["end"])
         if not parts:
@@ -157,14 +183,16 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
         prior = max((int(m.get("level") or 1) for m in previous if _overlaps(m["start"], m["end"], w0, w1)),
                     default=0)
         level = level_by_word.get(item["i"]) or level_all or prior or 1
+        word_style = style_all or next((span_style(m) for m in previous if _overlaps(m["start"], m["end"], w0, w1)),
+                                       style_clip)
         a, b = mute_range(item["start"], item["end"], level)
         word_track = None if item["i"] in full else only_track
         spans = [{"start": p["start"], "end": min(p["end"], duration), "by": TAG, "level": level,
-                  **({"track": word_track} if word_track is not None else {})}
+                  "style": word_style, **({"track": word_track} if word_track is not None else {})}
                  for p in clock.plain_range_to_clip(a, b) if p["start"] < duration]
         fresh.extend(spans)
         report.append({"i": item["i"], "word": item["word"], "group": item["group"],
-                       "start": round(w0, 3), "end": round(w1, 3), "level": level,
+                       "start": round(w0, 3), "end": round(w1, 3), "level": level, "style": word_style,
                        "mute": [[s["start"], s["end"]] for s in spans],
                        **({"track": word_track} if word_track is not None else {})})
     if len(manual) + len(fresh) > MAX_MUTES:
@@ -182,7 +210,9 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
             for row in report:
                 if 0 <= row["i"] < len(stored):
                     row["word"] = stored[row["i"]].get("word") or row["word"]
-    note = (f"мат: {len(report)} слов — тишина серединой слова (шкала clip), в субтитрах звёздочки"
+    styles = sorted({row["style"] for row in report})
+    filled = ", ".join(MUTE_STYLES[s] for s in styles)
+    note = (f"мат: {len(report)} слов — середина слова: {filled} (шкала clip), в субтитрах звёздочки"
             if report else "мата в словах субтитров не найдено")
     if track_note and report:
         note += "; " + track_note
@@ -195,6 +225,7 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
                      "заглушит только её, игра будет звучать")
     return {"words": report, "groups": list(picked), "manual_kept": len(manual), "stars": starred,
             "removed": len(previous), "time": "clip", "note": note,
+            **({"style": styles[0]} if len(styles) == 1 else {"styles": styles} if styles else {}),
             **({"track": only_track} if only_track is not None else {})}
 
 
@@ -307,7 +338,7 @@ def heard_profanity(heard: list[dict], windows: dict[int, Any], groups: Any) -> 
 
 def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds: int = DEFAULT_MAX_ROUNDS,
                 stars: bool = True, soft: bool = False, groups: Any = None, skip: Any = (),
-                progress: Callable[[dict], None] | None = None, track: Any = None) -> dict:
+                progress: Callable[[dict], None] | None = None, track: Any = None, style: Any = None) -> dict:
     """Глушение + круги «рендер → Whisper → шире там, где узнаётся». Итог — по последнему кругу.
 
     С ``track`` слово, которое узнаётся и на последнем уровне, глушится в следующем круге целиком
@@ -315,7 +346,8 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
     picked = _groups(soft, groups)
     rounds_max = max(1, min(MAX_ROUNDS_LIMIT, int(max_rounds or DEFAULT_MAX_ROUNDS)))
     full: set[int] = set()
-    state = censor_plan(store, clip_plan_id, levels, stars=stars, groups=picked, skip=skip, track=track)
+    state = censor_plan(store, clip_plan_id, levels, stars=stars, groups=picked, skip=skip, track=track,
+                        style=style)
     if not state["words"]:
         return {**state, "rounds": [], "render_id": None, "verified": False,
                 "note": "мата в словах субтитров не найдено — рендер не запускался"}
@@ -360,9 +392,13 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
             row["note"] = "в готовом ролике вырезано"
         elif row["heard"]:
             row["heard_as"] = near[w["i"]]
-            row["note"] = (CONTEXT_NOTE + " — тишиной не лечится: вырежи слово apply_cuts или оставь"
-                           if w["level"] >= MAX_LEVEL else
-                           f"узнаётся; круги кончились — повтори с max_rounds больше (уровень {w['level']})")
+            if w["level"] < MAX_LEVEL:
+                row["note"] = f"узнаётся; круги кончились — повтори с max_rounds больше (уровень {w['level']})"
+            elif w.get("style") in WEAK_STYLES:
+                row["note"] = (f"узнаётся и на уровне {MAX_LEVEL} со стилем {w['style']} — он маскирует слабее: "
+                               "повтори со style silence или noise")
+            else:
+                row["note"] = CONTEXT_NOTE + " — глушением не лечится: вырежи слово apply_cuts или оставь"
         words.append(row)
     still = [w for w in words if w["heard"]]
     note = (f"после {len(rounds)} кругов Whisper мат не узнаёт ни в одном из {len(words)} слов"

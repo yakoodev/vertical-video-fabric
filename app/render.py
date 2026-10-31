@@ -1314,7 +1314,7 @@ class ClipRenderService:
         if clip["status"] == "succeeded" and (audio_plan or {}).get("notes"):
             clip = self._note_clip_error(clip["id"], "; ".join(audio_plan["notes"]))
         if clip["status"] == "succeeded":
-            clip = self._apply_mute(clip, plan, cut_plan)
+            clip = self._apply_mute(clip, plan, cut_plan, audio_plan)
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion, plan)
@@ -1432,25 +1432,27 @@ class ClipRenderService:
         except (KeyError, ValueError, TypeError):
             return None
 
-    def _apply_mute(self, clip: dict, plan: dict, cut_plan=None) -> dict:
+    def _apply_mute(self, clip: dict, plan: dict, cut_plan=None, audio_plan: dict | None = None) -> dict:
         """Тишина и громкость звука исходника на отрезках (``render_settings.mute`` и ``gain``,
         app/audio_mute.py) — одним проходом.
 
         До вставок и звуков слоёв: они ложатся поверх и играют. Сбой не теряет клип."""
-        from app.audio_mute import build_source_volume_args, normalize_gain, normalize_mute
+        from app.audio_mute import build_source_volume_args, final_pass_mutes, normalize_gain, span_floor
 
         settings_ = plan.get("render_settings") or {}
-        # Отрезки одной дорожки (track) уже наложены при рендере кусков (app/audio_edit.py).
-        mutes = [m for m in normalize_mute(settings_.get("mute")) if m.get("track") is None]
+        # Отрезки одной дорожки (track) и мат со стилем-эффектом (писк, шум, реверс…) уже
+        # наложены при рендере кусков (app/audio_edit.py); не наложены (холст) — тишиной.
+        fx_rendered = any(op.get("by") == "censor" for op in (audio_plan or {}).get("ops") or [])
+        mutes = final_pass_mutes(settings_.get("mute"), fx_rendered)
         gains = [g for g in normalize_gain(settings_.get("gain")) if g.get("track") is None]
         path = Path(clip.get("output_path") or "")
         if not (mutes or gains) or not path.exists() or not _has_audio_stream(path):
             return clip
-        spans = [(m["start"], m["end"]) for m in mutes]
+        spans = [(m["start"], m["end"], span_floor(m)) for m in mutes]
         boosts = [(g["start"], g["end"], g["gain_db"]) for g in gains]
         mapper = self._final_mapper(plan, cut_plan)
         if mapper is not None:
-            spans = [r for r in (mapper.range(a, b) for a, b in spans) if r]
+            spans = [(*r, k) for r, k in ((mapper.range(a, b), k) for a, b, k in spans) if r]
             boosts = [(*r, g) for r, g in ((mapper.range(a, b), g) for a, b, g in boosts) if r]
         try:
             tmp = path.with_name(path.stem + ".mute" + path.suffix)

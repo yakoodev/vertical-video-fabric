@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { autoApi, type AutoStartInput } from "@/api/auto";
 import { accountsApi } from "@/api/accounts";
+import { projectsApi } from "@/api/projects";
 import { promptsApi } from "@/api/prompts";
 import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi } from "@/api/assets";
 import { qk } from "@/api/keys";
@@ -16,7 +17,7 @@ const STATUS_RU: Record<string, string> = {
   downloading: "скачивание",
   analyzing: "анализ",
   rendering: "рендер",
-  scheduling: "очередь",
+  scheduling: "на одобрение",
   done: "готово",
   failed: "ошибка",
 };
@@ -27,6 +28,8 @@ function StartAuto() {
   const qc = useQueryClient();
   const toast = useToast();
   const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list });
+  const series = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list });
+  const [projectId, setProjectId] = useState(0);
   const [url, setUrl] = useState("");
   const [provider, setProvider] = useState(PROVIDERS[0]);
   const [presetId, setPresetId] = useState(0);
@@ -84,6 +87,17 @@ function StartAuto() {
       <label className="field">
         <span>Ссылка на видео (mp4, YouTube, Twitch, Smotvibe и похожие плееры)</span>
         <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+      </label>
+      <label className="field">
+        <span>Серия / канал — в её очередь одобрения уйдут клипы</span>
+        <select className="input" value={projectId} onChange={(e) => setProjectId(Number(e.target.value))}>
+          <option value={0}>без серии («Авто — без серии»)</option>
+          {series.data?.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} · {p.kind_label}
+            </option>
+          ))}
+        </select>
       </label>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <label className="field" style={{ flex: 2, minWidth: 180 }}>
@@ -246,7 +260,11 @@ function StartAuto() {
       </div>
 
       <div className="panel auto-card">
-        <strong className="src-h">Публиковать в аккаунты</strong>
+        <strong className="src-h">Аккаунты — после одобрения</strong>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Сами клипы не публикуются: каждый приходит карточкой в «Одобрение» (и в Telegram). Выбранные аккаунты, приватность и
+          интервал запишутся в автопилот серии, если там их ещё нет.
+        </span>
         {accounts.isLoading ? (
           <Loading />
         ) : !accounts.data?.length ? (
@@ -296,6 +314,7 @@ function StartAuto() {
               music_track_id: trackId || undefined,
               ai_metadata: aiMeta,
               ai_montage: aiMontage,
+              project_id: projectId || undefined,
             })
           }
         >
@@ -308,7 +327,7 @@ function StartAuto() {
 
 // Pipeline stages of an auto run. The run only reports its current status, so a
 // failed run is placed by what it had produced before failing.
-const STAGES = ["скачивание", "анализ", "рендер", "публикация"];
+const STAGES = ["скачивание", "анализ", "рендер", "на одобрение"];
 const STAGE_OF: Record<string, number> = { queued: -1, downloading: 0, analyzing: 1, rendering: 2, scheduling: 3, done: 4 };
 function runStage(run: { status: string; source_id?: number | null; plans: number; clips: number }): number {
   if (run.status === "failed") return run.clips ? 3 : run.plans ? 2 : run.source_id ? 1 : 0;
@@ -340,14 +359,17 @@ export function AutomationPage() {
       <section className="auto-head">
         <div className="auto-title">
           <h1>Авто</h1>
-          <span className="muted">Конвейер: скачать → проанализировать → отрендерить → опубликовать</span>
+          <span className="muted">
+            Конвейер: скачать → проанализировать → отрендерить → на одобрение. Публикует только одобренное (
+            <Link to="/approvals">«Одобрение»</Link>) или тип с доверием «сам» в автопилоте серии.
+          </span>
         </div>
         <ol className="auto-flow" aria-hidden>
           {[
             ["⬇", "скачать"],
             ["🔍", "проанализировать"],
             ["⚙", "отрендерить"],
-            ["⬆", "опубликовать"],
+            ["✅", "на одобрение"],
           ].map(([icon, label]) => (
             <li key={label}>
               <span className="auto-flow-ico">{icon}</span>
@@ -368,7 +390,7 @@ export function AutomationPage() {
             <EmptyState
               icon="⚡"
               title="Запусков ещё не было"
-              hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт моменты, смонтирует и опубликует"
+              hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт моменты, смонтирует и пришлёт клипы на одобрение"
               actions={
                 <Link className="btn" to="/accounts">
                   Аккаунты для публикации
@@ -397,11 +419,23 @@ export function AutomationPage() {
                     <Badge status={run.status}>{STATUS_RU[run.status] ?? run.status}</Badge>
                   </div>
                   <div className="muted run-counts">
-                    планов {run.plans} · клипов {run.clips} · постов {run.jobs}
+                    планов {run.plans} · клипов {run.clips} · на одобрении {run.approvals ?? 0}
+                    {run.auto_approved ? ` · сразу в расписание ${run.auto_approved}` : ""}
                   </div>
                   <RunSteps run={run} />
                   {run.message ? <div className="muted run-msg">{run.message}</div> : null}
                   {run.error ? <div className="run-err">{run.error}</div> : null}
+                  {run.warnings?.length ? <div className="muted run-msg">⚠ {run.warnings.join(" · ")}</div> : null}
+                  {run.approvals ? (
+                    <Link className="run-link" to="/approvals">
+                      одобрение →
+                    </Link>
+                  ) : null}
+                  {run.project_id ? (
+                    <Link className="run-link" to={`/series/${run.project_id}`}>
+                      серия →
+                    </Link>
+                  ) : null}
                   {run.source_id ? (
                     <Link className="run-link" to={`/projects/${run.source_id}`}>
                       проект →

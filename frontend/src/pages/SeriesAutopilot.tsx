@@ -15,6 +15,7 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
+import { VodWatchPanel } from "@/pages/SeriesVodWatch";
 
 /**
  * Вкладки страницы серии: «Автопилот» (доверие, слоты, лимиты, ближайшие публикации,
@@ -243,6 +244,7 @@ export function AutopilotTab({ projectId }: { projectId: number }) {
         </section>
       </div>
       <div className="series-col">
+        <VodWatchPanel projectId={projectId} />
         <ScheduleList projectId={projectId} />
         <PendingList projectId={projectId} />
         <Digest projectId={projectId} />

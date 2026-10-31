@@ -11,7 +11,18 @@ export type AudioJoin = { piece: number; lead?: number; lag?: number };
 export type VolumeKey = { t: number; gain_db: number; ease?: "linear" | "smooth" | "in" | "out" | "step" };
 export type DuckSpan = { start: number; end: number; gain_db: number };
 export type MusicDip = { at: number; before: number };
-export type FxKind = "muffle" | "underwater" | "echo" | "reverb" | "phone" | "radio" | "denoise" | "speed" | "reverse";
+export type FxKind =
+  | "muffle"
+  | "underwater"
+  | "echo"
+  | "reverb"
+  | "phone"
+  | "radio"
+  | "denoise"
+  | "speed"
+  | "reverse"
+  | "beep"
+  | "noise";
 export type AudioFx = {
   start: number;
   end: number;
@@ -44,6 +55,8 @@ export const FX_LABEL: Record<FxKind, string> = {
   denoise: "🧹 Шумодав",
   speed: "⏩ Скорость",
   reverse: "⏪ Реверс",
+  beep: "📟 Писк",
+  noise: "🌫 Шум",
 };
 
 type Piece = { id: number; start_sec: number; end_sec: number };

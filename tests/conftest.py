@@ -31,6 +31,8 @@ os.environ.setdefault("STATS_INTERVAL_HOURS", "0")
 os.environ.setdefault("DOWNLOAD_SIZE_PROBE", "0")
 # Фон автопилота (Telegram long-polling) — в тестах не запускаем.
 os.environ.setdefault("AUTOPILOT_WORKER", "0")
+# Наблюдатель VOD (yt-dlp по сети) — тоже.
+os.environ.setdefault("VOD_WATCH_WORKER", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

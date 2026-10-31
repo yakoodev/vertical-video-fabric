@@ -638,28 +638,30 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
     }
 
 
-def mute_in_parts(clock: Any, mute: Any, p_lo: float, p_hi: float) -> list[tuple[float, float]]:
+def mute_in_parts(clock: Any, mute: Any, p_lo: float, p_hi: float) -> list[tuple]:
     """Отрезки ``render.mute`` (шкала clip) → секунды звука listen (части подряд от ``p_lo``).
 
     listen режет звук из исходника частями подряд (после вырезов, без наплывов); тишина
-    рендера — на шкале clip. Перевод: clip → куски подряд → части (вырезы) → от начала отрезка."""
-    from app.audio_mute import normalize_mute
+    рендера — на шкале clip. Перевод: clip → куски подряд → части (вырезы) → от начала отрезка.
+    Мат со стилем ``duck`` — ``(a, b, громкость)``; со стилем-эффектом — уже в звуке (ops)."""
+    from app.audio_mute import final_pass_mutes, span_floor
 
     out = []
-    for m in normalize_mute(mute):
-        if m.get("track") is not None:
-            continue  # тишина одной дорожки — уже в самом звуке (build_clip_audio_args ops)
+    for m in final_pass_mutes(mute):
         a, b = clock.clip_range_to_plain(m["start"], m["end"])
         if clock.cut_plan is not None:
             a, b = clock.cut_plan.mapper.clamp(a), clock.cut_plan.mapper.clamp(b)
         a, b = max(a, p_lo), min(b, p_hi)
         if b - a > 0.005:
-            out.append((round(a - p_lo, 3), round(b - p_lo, 3)))
+            floor = span_floor(m)
+            out.append((round(a - p_lo, 3), round(b - p_lo, 3), floor) if floor > 0 else
+                       (round(a - p_lo, 3), round(b - p_lo, 3)))
     return out
 
 
-def silence_wav(path: Path, spans: list[tuple[float, float]]) -> None:
-    """Обнулить звук wav (16-бит PCM) на отрезках ``spans`` (секунды от начала файла)."""
+def silence_wav(path: Path, spans: list[tuple]) -> None:
+    """Обнулить звук wav (16-бит PCM) на отрезках ``spans`` (секунды от начала файла);
+    ``(a, b, k)`` — не обнулить, а умножить на ``k`` (мат со стилем duck)."""
     import wave
 
     if not spans:
@@ -669,10 +671,19 @@ def silence_wav(path: Path, spans: list[tuple[float, float]]) -> None:
         frames = bytearray(src.readframes(src.getnframes()))
     step = params.sampwidth * params.nchannels
     total = len(frames) // step
-    for a, b in spans:
+    for span in spans:
+        a, b = span[0], span[1]
         i0 = max(0, min(total, int(round(a * params.framerate))))
         i1 = max(0, min(total, int(round(b * params.framerate))))
-        frames[i0 * step:i1 * step] = bytes((i1 - i0) * step)
+        if len(span) > 2 and float(span[2]) > 0 and params.sampwidth == 2:
+            import array
+
+            chunk = array.array("h", bytes(frames[i0 * step:i1 * step]))
+            k = float(span[2])
+            chunk = array.array("h", (int(v * k) for v in chunk))
+            frames[i0 * step:i1 * step] = chunk.tobytes()
+        else:
+            frames[i0 * step:i1 * step] = bytes((i1 - i0) * step)
     with wave.open(str(path), "wb") as dst:
         dst.setparams(params)
         dst.writeframes(bytes(frames))
