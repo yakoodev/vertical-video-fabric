@@ -193,6 +193,34 @@ class GeminiClient:
         _raise_gemini_status(response, "Gemini generateContent failed")
         return response.json()
 
+    def stream_generate_content(self, model: str, payload: dict[str, Any]):
+        """То же, что ``generate_content``, но ответ кусками по мере генерации
+        (``:streamGenerateContent?alt=sse``): генератор ответов-чанков того же вида.
+        Сетевые сбои до первого чанка — исключение (вызывающий может повторить без потока)."""
+        if not self.api_key:
+            raise RuntimeError("Gemini API key is not configured")
+        kwargs = _with_proxy({
+            "headers": {"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            "json": payload,
+            "timeout": self.timeout,
+        })
+        url = f"{self.base_url}/models/{model}:streamGenerateContent?alt=sse"
+        with httpx.stream("POST", url, **kwargs) as response:
+            if response.status_code >= 400:
+                response.read()
+                _raise_gemini_status(response, "Gemini streamGenerateContent failed")
+            for line in response.iter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    yield json.loads(data)
+                except ValueError:
+                    continue
+
     def _upload_url(self) -> str:
         parts = urlsplit(self.base_url)
         path = parts.path.rstrip("/")

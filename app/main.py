@@ -4158,6 +4158,12 @@ app.include_router(build_projects_router(AuthDep, lambda: store))
 from app.autopilot_api import build_autopilot_router  # noqa: E402
 
 app.include_router(build_autopilot_router(AuthDep, lambda: store))
+# Страница «Чат»: переписки с агентом, поток ответа, подтверждения, откат (app/agent_chat_api.py).
+from app.agent_chat_api import build_agent_chat_router  # noqa: E402
+
+app.include_router(build_agent_chat_router(AuthDep, lambda: store, {
+    "downloads": lambda: download_service, "ingestor": lambda: source_ingestor,
+    "analysis": lambda: video_analysis_service}))
 # Наблюдатель VOD проекта-стрима (app/vod_watch.py).
 from app.vod_watch_api import build_vod_watch_router  # noqa: E402
 
