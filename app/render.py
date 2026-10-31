@@ -1353,7 +1353,7 @@ class ClipRenderService:
             layers, _lost = rebind_layers(fresh.get("layers") or [], old, new, time_map=mapper)
             fresh = {**fresh, "layers": layers}
         # Слой целиком в вырезе пропал — может не остаться ничего видимого.
-        return fresh if (fresh.get("layers") or fresh.get("camera")) else None
+        return fresh if (fresh.get("layers") or fresh.get("camera") or fresh.get("end_screen")) else None
 
     def _plan_subtitles_for_clip(self, clip_id: int, fps: float | None = None):
         """Субтитры, сделанные в редакторе до рендера (если есть)."""
@@ -1495,6 +1495,7 @@ class ClipRenderService:
         основа (с баннером), а причина — в пометках для ошибки клипа.
         Возвращает пометки.
         """
+        from app.end_screen import comp_end_screen
         from app.formats import comp_ref, motion_formats
         from app.freeze import comp_freezes, freeze_zones
         from app.motion_render import (
@@ -1518,7 +1519,7 @@ class ClipRenderService:
             camera = motion.get("camera") or []
             band = motion.get("pin_band")
             drawn = video
-            if layers or camera or motion.get("key") or motion.get("backgrounds"):
+            if layers or camera or motion.get("key") or motion.get("backgrounds") or motion.get("end_screen"):
                 try:
                     meta = probe_media(video)
                     comp_w = meta.width or int(preset.get("output_width") or 1080)
@@ -1551,6 +1552,7 @@ class ClipRenderService:
                         pinned=banded_pinned((regions or {}).get("pinned"), band, comp_h),
                         base_height=comp_h + int(band["h"]) if band else None,
                         freezes=comp_freezes(preset.get("freezes")),
+                        end_screen=comp_end_screen(motion.get("end_screen"), layers, meta.duration_sec),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

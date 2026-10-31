@@ -3152,6 +3152,10 @@ def api_set_clip_plan_render_settings(
             # автосохранением: нет ключа — остаются сохранённые. [] — убрать все.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["cuts"] = current.get("cuts") or []
+        if "end_screen" not in settings_in:
+            # Концовку ставит агент/бренд (app/end_screen.py): редактор без этого поля её не стирает.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["end_screen"] = current.get("end_screen")
         if not {"format", "aspect", "layers_format"} <= set(settings_in):
             # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
             # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).
@@ -3960,6 +3964,25 @@ async def _save_banner_upload(
                 dest.unlink(missing_ok=True)
                 raise ValueError("banner exceeds MAX_UPLOAD_BYTES")
             out.write(chunk)
+    content_type = file.content_type or ""
+    if dest.suffix.lower() == ".svg":
+        # SVG-баннер с анимацией → webm с альфой (app/svg_webm.py, перенос svg-to-webm владельца):
+        # оверлей рендера читает его как обычный webm-баннер. Длительность — по анимациям SVG.
+        import asyncio
+        import shutil as _shutil
+
+        from app.svg_webm import SvgWebmError, convert
+
+        try:
+            info = await asyncio.to_thread(convert, dest.read_text("utf-8", errors="replace"), {})
+        except SvgWebmError as exc:
+            raise ValueError(str(exc)) from exc
+        finally:
+            dest.unlink(missing_ok=True)
+        dest = dest.with_suffix(".webm")
+        _shutil.copyfile(info["path"], dest)
+        safe_name = Path(safe_name).with_suffix(".webm").name
+        content_type = "video/webm"
     width = height = 0
     duration_sec = 0.0
     try:
@@ -3973,7 +3996,7 @@ async def _save_banner_upload(
         label,
         dest,
         original_filename=safe_name,
-        mime_type=file.content_type or "",
+        mime_type=content_type,
         width=width,
         height=height,
         duration_sec=duration_sec,
@@ -4072,6 +4095,11 @@ def _normalize_schedule_text(value: str | None) -> str:
 from app.motion_api import build_motion_router  # noqa: E402
 
 app.include_router(build_motion_router(AuthDep, lambda: store))
+
+# Концовка-баннер (размытие + анимированный баннер) и SVG → webm с альфой (app/end_screen_api.py).
+from app.end_screen_api import build_end_screen_router  # noqa: E402
+
+app.include_router(build_end_screen_router(AuthDep, lambda: store))
 
 # Раскладки стрима: автопоиск и сохранённая вебка источника (app/layout_api.py).
 from app.layout_api import build_layout_router  # noqa: E402

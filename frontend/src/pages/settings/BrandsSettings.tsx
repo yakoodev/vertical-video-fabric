@@ -342,6 +342,27 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
               onChange={(e) => set("cta", { ...b.cta, duration_sec: Number(e.target.value) || 3 })}
             />
           </label>
+          <label className="field" style={{ width: 210 }}>
+            <span>Вид призыва</span>
+            <select
+              className="input"
+              value={b.cta.style === "banner" ? b.cta.template || "live" : "plate"}
+              title="Концовка-баннер: видео в конце уходит в размытие, поверх — анимированный баннер с ником из плашки канала"
+              onChange={(e) =>
+                set(
+                  "cta",
+                  e.target.value === "plate"
+                    ? { text: b.cta.text, url_text: b.cta.url_text, duration_sec: b.cta.duration_sec, style: "plate" }
+                    : { ...b.cta, style: "banner", template: e.target.value as "live" | "schedule" | "neon" },
+                )
+              }
+            >
+              <option value="plate">плашка</option>
+              <option value="live">концовка: LIVE-карточка</option>
+              <option value="schedule">концовка: расписание</option>
+              <option value="neon">концовка: неон-ник</option>
+            </select>
+          </label>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>

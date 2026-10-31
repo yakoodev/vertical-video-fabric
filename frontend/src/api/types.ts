@@ -208,6 +208,11 @@ export interface RenderSettings {
   end_hold_sec?: number | null;
   /** Стоп-кадры посреди ролика (app/freeze.py, инструмент агента freeze_frame); at — шкала final. */
   freezes?: FreezeFrame[];
+  /**
+   * Концовка-баннер (app/end_screen.py, MCP set_end_screen): последние `duration` с видео уходит в
+   * размытие (`blur` px) и темнеет (`dim`), поверх — слой `end_banner`. Превью — та же функция движка.
+   */
+  end_screen?: { duration: number; blur: number; dim: number; ramp: number; template?: string | null; [k: string]: unknown } | null;
 }
 
 /** Стоп-кадр посреди ролика: кадр в `at` стоит `duration` с; звук молчит (вставка) или идёт дальше. */

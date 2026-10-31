@@ -68,6 +68,8 @@ export type AssetAnim = {
   width?: number;
   height?: number;
   sheet?: string;
+  /** webm с альфой: превью играет сам файл (<video>), а не лист кадров. */
+  video?: boolean;
 };
 
 /** Состояния голоса PNGtuber по кадрам (POST /api/clip-plans/{id}/voice). */

@@ -1482,9 +1482,13 @@ def plan_motion(render_settings: Any) -> dict | None:
     src = render_settings if isinstance(render_settings, dict) else {}
     layers = [layer for layer in normalize_layers(src.get("layers")) if not layer["hidden"]]
     camera = normalize_camera(src.get("camera"))
-    if not layers and not camera:
+    from app.end_screen import normalize_end_screen
+
+    # Концовка-баннер: размытие основы под слоями (app/end_screen.py) — тоже работа компоновщика.
+    end_screen = normalize_end_screen(src.get("end_screen"))
+    if not layers and not camera and not end_screen:
         return None
-    return {"layers": layers, "camera": camera}
+    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {})}
 
 
 def visual_motion(motion: dict | None) -> dict | None:
@@ -1497,9 +1501,10 @@ def visual_motion(motion: dict | None) -> dict | None:
         return None
     layers = [layer for layer in motion.get("layers") or [] if layer.get("type") != "audio"]
     camera = list(motion.get("camera") or [])
-    if not layers and not camera:
+    end_screen = motion.get("end_screen")
+    if not layers and not camera and not end_screen:
         return None
-    return {"layers": layers, "camera": camera}
+    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {})}
 
 
 # ---------------------------------------------------------------- описание для UI/агента

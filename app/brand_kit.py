@@ -164,13 +164,26 @@ def _normalize_hook_style(raw: Any) -> dict:
     }
 
 
+CTA_STYLES = ("plate", "banner")
+
+
 def _normalize_cta(raw: Any) -> dict:
+    """Призыв в конце. ``style: "banner"`` — концовкой-баннером (app/end_screen.py: видео в размытие,
+    анимированный баннер ``template`` live|schedule|neon, ``blur``); по умолчанию — плашка (поля нет)."""
+    from app.end_screen import BLUR_MAX, TEMPLATE_DEFAULT, TEMPLATES
+
     src = raw if isinstance(raw, dict) else {}
-    return {
+    out = {
         "text": _text(src.get("text"), 60),
         "url_text": _text(src.get("url_text"), 60),
         "duration_sec": _num(src.get("duration_sec"), CTA_SEC_DEFAULT, CTA_SEC_MIN, CTA_SEC_MAX),
     }
+    if src.get("style") == "banner":
+        template = src.get("template")
+        out["style"] = "banner"
+        out["template"] = template if template in TEMPLATES else TEMPLATE_DEFAULT
+        out["blur"] = _num(src.get("blur"), 18.0, 0.0, BLUR_MAX)
+    return out
 
 
 def normalize_nameplate(raw: Any) -> dict:
@@ -770,7 +783,7 @@ def set_nameplate(
 
 def apply_brand(
     store: Any, clip_plan_id: int, brand_id: int, *, before_change: Callable[[], None] | None = None,
-    nameplate: Any = None,
+    nameplate: Any = None, run: Callable[[list[str], float], str] | None = None,
 ) -> dict:
     """Оформить клип в стиле бренда. Повторный вызов даёт тот же результат (без дублей).
 
@@ -857,10 +870,27 @@ def apply_brand(
     elif old_plate is not None:
         layers.append(old_plate)  # у бренда плашки нет — поставленная руками/set_nameplate остаётся
 
-    # 4. Концовка-призыв на последние cta.duration_sec готового ролика.
+    # 4. Концовка-призыв на последние cta.duration_sec готового ролика: плашкой или (style banner)
+    # концовкой-баннером — видео в размытие, поверх анимированный баннер (app/end_screen.py).
     cta = brand["cta"]
     cta_start: float | None = None
-    if cta["text"] or cta["url_text"]:
+    banner_built = None
+    if cta.get("style") == "banner" and (cta["text"] or cta["url_text"] or brand["nameplate"].get("handle")):
+        from app.end_screen import END_LAYER_ID, brand_fields, build_end_screen
+        from app.svg_webm import SvgWebmError
+
+        try:
+            banner_built = build_end_screen(store, clip_plan_id, render, duration, brand_fields(brand), run=run)
+        except (SvgWebmError, ValueError) as exc:
+            warnings.append(f"концовка-баннер не собралась ({exc}) — призыв плашкой")
+        if banner_built is not None:
+            layers = [l for l in layers if l.get("id") != END_LAYER_ID]
+            added.append(banner_built["layer"])
+            render["end_screen"] = banner_built["end_screen"]
+            cta_start = banner_built["start"]
+            warnings.extend(banner_built["warnings"])
+            changes.append(f"концовка-баннер «{cta['template']}» с {cta_start:.1f} с до конца: видео уходит в размытие")
+    if banner_built is None and (cta["text"] or cta["url_text"]):
         want = min(cta["duration_sec"], max(1.0, duration * 0.4))
         cta_start = tail_start(render.get("cuts") or [], duration, want)
         blocked = [
