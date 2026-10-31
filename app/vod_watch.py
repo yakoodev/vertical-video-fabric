@@ -300,7 +300,17 @@ def queue_item(store: Any, item_id: int, cutter: str = "pipeline", actor: str = 
     if item["status"] in BUSY or item["status"] == "queued":
         return item
     cutter = P._choice(cutter, ("pipeline", "agent"), "cutter")
-    _set_item(store, item_id, status="queued", cutter=cutter, detail="в очереди загрузки", attempts=0)
+    try:  # уже скачан и файл на месте — второй раз 12 ГБ не качаем, сразу к нарезке
+        source = store.get_source(int(item["source_id"])) if item["source_id"] else None
+    except KeyError:
+        source = None
+    from pathlib import Path
+
+    if source and source.get("status") == "ready" and Path(str(source.get("local_path") or "")).is_file():
+        _set_item(store, item_id, status="downloaded", cutter=cutter, detail=f"источник #{source['id']} уже скачан",
+                  downloaded_at=A.fmt_utc(A.now()))
+    else:
+        _set_item(store, item_id, status="queued", cutter=cutter, detail="в очереди загрузки", attempts=0)
     A.log_event(store, None, item["project_id"], "vod_queued", actor, _label(item))
     return get_item(store, item_id)
 
