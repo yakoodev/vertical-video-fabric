@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PLATFORM_LABEL,
@@ -16,6 +17,7 @@ import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
 import { VodWatchPanel } from "@/pages/SeriesVodWatch";
+import { ChatConversation } from "@/pages/chat/ChatConversation";
 
 /**
  * Вкладки страницы серии: «Автопилот» (доверие, слоты, лимиты, ближайшие публикации,
@@ -373,25 +375,11 @@ function Digest({ projectId }: { projectId: number }) {
 export function ProjectChatTab({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [text, setText] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
+  // Переписка (реплики, поток, шаги) — ChatConversation; здесь — Telegram, резюме, thread_id.
   const chat = useQuery({
     queryKey: apKeys.chat(projectId),
     queryFn: () => autopilotApi.chat(projectId),
-    refetchInterval: (q) => (q.state.data?.running ? 1500 : 15000),
-  });
-  const send = useMutation({
-    mutationFn: () => autopilotApi.sendChat(projectId, text.trim()),
-    onSuccess: () => {
-      setText("");
-      qc.invalidateQueries({ queryKey: apKeys.chat(projectId) });
-    },
-    onError: (e) => toast.error(errText(e, "Не отправилось")),
-  });
-  const clear = useMutation({
-    mutationFn: () => autopilotApi.clearChat(projectId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: apKeys.chat(projectId) }),
-    onError: (e) => toast.error(errText(e, "Не очистилось")),
+    refetchInterval: 30000,
   });
   const topic = useMutation({
     mutationFn: () => autopilotApi.chatTopic(projectId),
@@ -401,63 +389,29 @@ export function ProjectChatTab({ projectId }: { projectId: number }) {
     },
     onError: (e) => toast.error(errText(e, "Не получилось")),
   });
-  const messages = chat.data?.messages ?? [];
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length, chat.data?.running]);
   const tg = chat.data?.telegram;
 
   return (
     <div className="series-grid">
       <section className="panel series-panel project-chat">
-        <div className="agent-head">
-          <span className={`agent-dot${chat.data?.running ? " on" : ""}`} />
-          <strong>Агент проекта</strong>
-          {chat.data && !chat.data.ai_available ? <span className="chip series-review">ИИ недоступен</span> : null}
-          <button className="btn ghost sm" style={{ marginLeft: "auto" }} disabled={!messages.length || clear.isPending} onClick={() => clear.mutate()}>
-            Очистить
-          </button>
-        </div>
-        <div className="agent-list" ref={listRef}>
-          {!messages.length ? (
-            <div className="agent-empty muted">
-              Обсуди с агентом проект: что резать, как называть, что не заходит. Скажешь «такое больше не бери» — предложит
-              записать правило.
-            </div>
-          ) : null}
-          {messages.map((m) => (
-            <div key={m.id} className={`agent-msg agent-msg--${m.role}`}>
-              {m.steps.length ? (
-                <ul className="agent-steps">
-                  {m.steps.map((s, i) => (
-                    <li key={i} className={s.ok === false ? "bad" : s.ok == null ? "run" : ""}>
-                      <span className="agent-step-ico">{s.ok === false ? "✗" : s.ok == null ? "…" : "✓"}</span> {s.label}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <div className="agent-text">
-                {m.text || (m.status === "running" ? "Думаю…" : "")}
-                {m.origin === "tg" ? <span className="muted"> · Telegram</span> : null}
+        {chat.data?.thread_id ? (
+          <ChatConversation
+            threadId={chat.data.thread_id}
+            compact
+            header={(view) => (
+              <div className="agent-head project-chat-head">
+                <span className={`agent-dot${view?.running ? " on" : ""}`} />
+                <strong>Агент проекта</strong>
+                {chat.data && !chat.data.ai_available ? <span className="chip series-review">ИИ недоступен</span> : null}
+                <Link className="btn ghost sm" style={{ marginLeft: "auto" }} to={`/chat/${chat.data!.thread_id}`}>
+                  Открыть в «Чате»
+                </Link>
               </div>
-            </div>
-          ))}
-        </div>
-        <div className="agent-input">
-          <textarea
-            className="input"
-            rows={2}
-            value={text}
-            placeholder="Напиши агенту проекта…"
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && text.trim()) send.mutate();
-            }}
+            )}
           />
-          <button className="btn primary" disabled={!text.trim() || send.isPending || chat.data?.running} onClick={() => send.mutate()}>
-            Отправить
-          </button>
-        </div>
+        ) : (
+          <Loading />
+        )}
       </section>
       <section className="panel series-panel">
         <h3>Как это работает</h3>

@@ -23,17 +23,35 @@ HISTORY_DEPTH = 20
 _EDITABLE = ("schema", "title", "description", "notes", "favorite", "pieces", "render")
 
 
-def snapshot(store: Any, clip_plan_id: int, label: str) -> None:
-    """Запомнить состояние клипа ПЕРЕД правкой. Ошибка снимка не ломает правку."""
+def capture(store: Any, clip_plan_id: int) -> dict:
+    """Состояние клипа целиком (клип-файл + субтитры) — то, что хранит снимок."""
+    spec = export_spec(store, clip_plan_id)
+    return {
+        "spec": {k: spec[k] for k in _EDITABLE if k in spec},
+        "subtitles": store.get_clip_plan_subtitles(clip_plan_id),
+    }
+
+
+def snapshot(store: Any, clip_plan_id: int, label: str) -> dict | None:
+    """Запомнить состояние клипа ПЕРЕД правкой. Ошибка снимка не ломает правку.
+    Возвращает снятое состояние (чат агента хранит его у себя для «Откатить»)."""
     try:
-        spec = export_spec(store, clip_plan_id)
-        state = {
-            "spec": {k: spec[k] for k in _EDITABLE if k in spec},
-            "subtitles": store.get_clip_plan_subtitles(clip_plan_id),
-        }
+        state = capture(store, clip_plan_id)
         store.push_clip_plan_history(clip_plan_id, state, label, depth=HISTORY_DEPTH)
+        return state
     except Exception:  # noqa: BLE001 - история это удобство, а не причина падать
-        return
+        return None
+
+
+def restore(store: Any, clip_plan_id: int, state: dict) -> tuple[dict, list[str]]:
+    """Вернуть клип к сохранённому состоянию (снимок истории или чата агента)."""
+    spec = dict((state or {}).get("spec") or {})
+    spec["pieces"] = _relink_pieces(store, clip_plan_id, spec.get("pieces") or [])
+    # Снимок — то, что уже было сохранено: возвращаем как есть, без придирок к слоям.
+    fresh, changes = apply_spec(store, clip_plan_id, spec, check_motion=False)
+    if "subtitles" in (state or {}):
+        store.set_clip_plan_subtitles(clip_plan_id, state["subtitles"])
+    return fresh, changes
 
 
 def undo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
@@ -41,13 +59,7 @@ def undo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
     entry = store.pop_clip_plan_history(clip_plan_id)
     if entry is None:
         raise KeyError("отменять нечего")
-    state = entry.get("state") or {}
-    spec = dict(state.get("spec") or {})
-    spec["pieces"] = _relink_pieces(store, clip_plan_id, spec.get("pieces") or [])
-    # Снимок — то, что уже было сохранено: возвращаем как есть, без придирок к слоям.
-    fresh, changes = apply_spec(store, clip_plan_id, spec, check_motion=False)
-    if "subtitles" in state:
-        store.set_clip_plan_subtitles(clip_plan_id, state["subtitles"])
+    fresh, changes = restore(store, clip_plan_id, entry.get("state") or {})
     return fresh, changes, str(entry.get("label") or "правка")
 
 

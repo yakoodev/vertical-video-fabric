@@ -13,6 +13,7 @@ import { apKeys, autopilotApi } from "@/api/autopilot";
 // Order follows the daily loop: make → clip → publish (manual or auto) → watch.
 const NAV: { to: string; label: string; icon: string; badge?: "active" | "approvals" }[] = [
   { to: "/projects", label: "Проекты", icon: "folder" },
+  { to: "/chat", label: "Чат", icon: "chat" },
   { to: "/clips", label: "Клипы", icon: "scissors" },
   { to: "/assets", label: "Файлы для монтажа", icon: "image" },
   { to: "/approvals", label: "Одобрение", icon: "check", badge: "approvals" },
