@@ -2900,9 +2900,48 @@ def h_mute_audio(ctx: ToolContext, args: dict) -> dict:
     duration = _clip_duration(ctx)
     clean = [m for m in normalize_mute(ranges) if m["start"] < duration]
     render = _current_render(ctx)
+    note = "звук исходника там заглушён; звуки слоёв и музыка играют. Проверь listen (он слышит mute)."
+    # Отрезки цензуры мата (by: censor, app/censor.py) — свои: список без помеченных их не стирает.
+    censored = [m for m in render.get("mute") or [] if m.get("by") == "censor"]
+    if censored and not any(m.get("by") for m in clean):
+        clean = normalize_mute(clean + censored)
+        note += (f" Отрезки мата ({len(censored)}, by: censor) оставлены — снять их: "
+                 "censor_profanity(clear=true).")
     fresh = _save_render(ctx, {**render, "mute": clean})
-    return {"ok": True, "mute": fresh["mute"],
-            "note": "звук исходника там заглушён; звуки слоёв и музыка играют. Проверь listen."}
+    return {"ok": True, "mute": fresh["mute"], "note": note}
+
+
+def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
+    """Мат одной командой (app/censor.py): тишина серединой слова, звёздочки в субтитрах и,
+    если verify, круги «рендер → Whisper по готовому файлу → шире, где узнаётся»."""
+    from app import censor
+
+    options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
+               "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    levels = args.get("levels")
+    if args.get("level") is not None and levels is None:
+        levels = args.get("level")
+    if censor.job_running(ctx.plan_id):
+        if args.get("verify", True) is False or args.get("clear"):
+            raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
+                            "повтори censor_profanity без verify=false")
+    try:
+        if args.get("clear"):
+            ctx.before_change()
+            return {"ok": True, **censor.censor_plan(ctx.store, ctx.plan_id, clear=True)}
+        if args.get("verify", True) is False:
+            ctx.before_change()
+            out = censor.censor_plan(ctx.store, ctx.plan_id, levels, **options)
+            out["note"] += ". Без проверки: рендер и Whisper не запускались (verify=true — проверит сам)"
+            return {"ok": True, "verified": False, **out}
+        if not censor.job_running(ctx.plan_id):
+            ctx.before_change()
+        out = censor.censor_job(ctx.store, ctx.plan_id, levels=levels,
+                                max_rounds=int(_num(args.get("max_rounds"), censor.DEFAULT_MAX_ROUNDS) or 3),
+                                **options)
+    except ValueError as exc:
+        raise ToolError(f"censor_profanity: {exc}") from exc
+    return {"ok": True, **out}
 
 
 def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
@@ -4473,7 +4512,8 @@ def _build_registry() -> list[Tool]:
             "шкала clip (до вырезов, как слои и субтитры get_clip). Распознаёт дорожку речи (speech_tracks). "
             "Слова с временем и тишина после последнего слова, громкость отрезка (level, RMS дБ). Без "
             "параметров — последние 6 с: проверь, договорена ли развязка и есть ли хвост реакции. Речи нет "
-            "(игра, музыка) — words [] и пометка. Для концовок, вырезов и «не торчит ли слово» — НЕ для "
+            "(игра, музыка) — words [] и пометка. Заглушённое (mute, в т.ч. мат censor_profanity) молчит, как в "
+            "рендере. Для концовок, вырезов и «не торчит ли слово» — НЕ для "
             "исправления распознавания: это тот же Whisper и он повторит те же ошибки (неверное слово правь "
             "по смыслу/на слух владельца через set_subtitle_words). / Transcribe the finished clip audio in a range.",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"},
@@ -4913,10 +4953,33 @@ def _build_registry() -> list[Tool]:
             "mute_audio", "Глушу звук исходника",
             "Тишина вместо звука исходника на отрезках ranges [{start, end}] (секунды клипа до вырезов), "
             "картинка остаётся — для вшитых эффектов старого монтажа, шума, мата (find_noises покажет где). "
-            "Заменяет прежний список; [] — снять. / Mute source audio in ranges.",
+            "Заменяет прежний список ручных; [] — снять их. Отрезки мата (by: censor, censor_profanity) остаются, "
+            "если в ranges нет помеченных. / Mute source audio in ranges.",
             _obj({"ranges": {"type": "array", "items": _obj({"start": {"type": "number"}, "end": {"type": "number"}},
                                                             ["start", "end"])}}, ["ranges"]),
             h_mute_audio, mutating=True, label=lambda a: f"Глушу звук ({len(a.get('ranges') or [])} отр.)",
+        ),
+        Tool(
+            "censor_profanity", "Глушу мат",
+            "Мат одной командой по словам субтитров (нужны generate_subtitles): каждое матерное слово глушится "
+            "СЕРЕДИНОЙ (mute с меткой by: censor, уровень 1 — 30–85% слова, 2 — шире, 3 — слышна только первая "
+            "согласная) — человек понимает, автосубтитры TikTok/YouTube мат не распознают; в субтитрах — первая "
+            "буква и звёздочки («б****»). Ручные mute не трогает, свои прежние отрезки заменяет; повторный "
+            "запуск идемпотентен (звёздочки находит сам). По умолчанию мат + «сука»; soft=true — ещё блин, "
+            "хрен, жопа, говно. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
+            "мат ещё узнаётся (±0.4 с), уровень +1 и новый рендер, не больше max_rounds (3) кругов; это минуты: "
+            "ответ status running — повтори тот же вызов через retry_after_sec. Итог: words [{i, word, start, "
+            "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
+            "услышал мимо субтитров. heard на уровне 3 — «узнаётся по контексту»: тишиной не лечится. "
+            "verify=false — быстро, без рендера. levels — число всем или {i: уровень}; skip [i] — не трогать "
+            "слово; clear=true — снять свои отрезки. / Mute profanity mid-word, star it in subtitles, "
+            "verify by Whisper on the render.",
+            _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
+                  "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
+                  "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
+                  "clear": {"type": "boolean"}}),
+            h_censor_profanity, mutating=True,
+            label=lambda a: "Глушу мат" + ("" if a.get("verify") is False else " и проверяю рендером"),
         ),
         Tool(
             "set_source_gain", "Громкость исходника на отрезках",
