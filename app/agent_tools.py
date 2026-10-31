@@ -448,6 +448,8 @@ def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
         height = _num(props.get("h"), 120.0) or 120.0
     elif kind == "callout":
         height = 180.0
+    elif kind == "nameplate":
+        height = _num(props.get("size"), float(motion.NAMEPLATE_SIZE)) or float(motion.NAMEPLATE_SIZE)
     elif kind == "image":
         height = _num(props.get("w"), 400.0) or 400.0
     elif kind == "video":
@@ -523,7 +525,8 @@ def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
     во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
     kind = layer.get("type")
-    if kind in ("shape", "captions", "particles") or layer.get("behind"):
+    if kind in ("shape", "captions", "particles", "nameplate") or layer.get("behind"):
+        # Плашка канала висит весь ролик маленькой подписью в углу — не «графика поверх».
         return True
     if kind in ("image", "video"):
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
@@ -752,6 +755,7 @@ def _layer_summary(layer: dict) -> str:
         "progress": lambda: "шкала",
         "chart": lambda: f"график {props.get('kind') or ''}",
         "callout": lambda: f"плашка «{_short(props.get('title'))}»",
+        "nameplate": lambda: f"плашка канала {props.get('platform') or ''} «{_short(props.get('handle'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
@@ -3075,8 +3079,33 @@ def h_apply_brand(ctx: ToolContext, args: dict) -> dict:
         ctx.store.get_brand(int(brand_id))
     except (KeyError, TypeError, ValueError) as exc:
         raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    plate = False if args.get("remove_nameplate") is True else args.get("nameplate")
+    if plate is not None and not isinstance(plate, (dict, bool)):
+        raise ToolError("nameplate — объект полей плашки канала или false (снять)")
     try:
-        return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change)
+        return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change,
+                           nameplate=None if plate is True else plate)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+NAMEPLATE_FIELDS = ("platform", "handle", "style", "accent", "position", "size", "fade")
+
+
+def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
+    """Плашка канала (значок площадки + ник) на весь ролик без остального бренда (app/brand_kit.py)."""
+    from app.brand_kit import set_nameplate
+
+    brand_id = args.get("brand_id")
+    if brand_id:
+        try:
+            ctx.store.get_brand(int(brand_id))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
+    fields = {k: args[k] for k in NAMEPLATE_FIELDS if k in args}
+    try:
+        return set_nameplate(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
+                             remove=args.get("remove") is True, before_change=ctx.before_change)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -4307,6 +4336,10 @@ props по типу:
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
+  nameplate (плашка канала, весь ролик): platform {'|'.join(motion.NAMEPLATE_PLATFORMS)} (свой векторный значок), handle (ник),
+         style glass (тёмное стекло + обводка accent) | solid (заливка accent), accent (нет — цвет площадки), size (высота
+         пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки). Проще set_nameplate —
+         сам найдёт место под разделителем раскладки / в безопасном углу
   pngtuber: states {{idle, talk, shout?}} (id картинок/GIF/APNG/webm-alpha из библиотеки: молчит / говорит / кричит;
          анимация состояния циклится по времени клипа), voice {{track (номер звуковой дорожки источника: NVIDIA/OBS
          0 — игра, 1 — микрофон) | "speech" (speech_tracks; по умолчанию) | asset_id (голос из файла), threshold_db
@@ -5021,18 +5054,48 @@ def _build_registry() -> list[Tool]:
         Tool(
             "list_brands", "Смотрю бренды",
             "Бренды владельца (повторяющиеся заказчики, например магазин): шрифт, цвета, логотип, призыв в "
-            "конце (cta), музыка, фон, политика эффектов. Создаёт и правит их только владелец. / Brand kits.",
+            "конце (cta), плашка канала (nameplate), музыка, фон, политика эффектов. Создаёт и правит их только "
+            "владелец. / Brand kits.",
             _obj({}), h_list_brands, scope="global",
         ),
         Tool(
             "apply_brand", "Оформляю в стиле бренда",
             "Ролик для бренда (реклама повторяющегося заказчика) — в его стиле одной командой: перекрашивает "
-            "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, музыку "
-            "и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа (auto_edit, хук, вырезы): повтор "
-            "ничего не дублирует (слои brand_*). Потом view_frame на концовке — призыв не на лице. "
-            "/ Apply a brand kit to the clip.",
-            _obj({"brand_id": {"type": "integer"}}, ["brand_id"]),
+            "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, плашку "
+            "канала (если она есть в бренде), музыку и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа "
+            "(auto_edit, хук, вырезы): повтор ничего не дублирует (слои brand_*). nameplate — плашка канала "
+            "на этот ролик: поля как у set_nameplate поверх плашки бренда; remove_nameplate:true — снять. "
+            "Потом view_frame на концовке — призыв не на лице. / Apply a brand kit to the clip.",
+            _obj({"brand_id": {"type": "integer"},
+                  "nameplate": {"type": "object", "description": "поля плашки канала, как у set_nameplate"},
+                  "remove_nameplate": {"type": "boolean"}},
+                 ["brand_id"]),
             h_apply_brand, mutating=True, label=lambda a: f"Бренд #{a.get('brand_id')}",
+        ),
+        Tool(
+            "set_nameplate", "Ставлю плашку канала",
+            "Плашка канала на весь ролик: значок площадки (свой векторный глиф) + ник в пилюле — как на "
+            "нарезках стримов. platform twitch|youtube|tiktok|telegram|kick|none, handle (ник как есть), style "
+            "glass (тёмное стекло + обводка цветом площадки, по умолчанию) | solid (заливка), accent #rrggbb "
+            "(нет — цвет площадки), size (высота пилюли, px кадра 1080×1920, 74), fade (мягкое появление; по "
+            "умолчанию без анимации). position: auto (по умолчанию: в раскладке «игра + вебка» — на 72 px ниже "
+            "разделителя и ниже субтитров, слева; иначе — безопасный верхний угол, напротив логотипа бренда) | "
+            "under-split-left | under-split-center | top-left | top-right. Место считается от зон площадок "
+            "(вкладки сверху, подпись снизу, кнопки TikTok справа), субтитров, хука и логотипа. brand_id — "
+            "взять плашку бренда за основу. remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
+            "Потом view_frame. / Channel nameplate (platform icon + handle) for the whole clip.",
+            _obj({"platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
+                  "handle": {"type": "string"},
+                  "style": {"type": "string", "enum": ["glass", "solid"]},
+                  "accent": {"type": "string"},
+                  "position": {"type": "string", "enum": ["auto", "top-left", "top-right", "under-split-left",
+                                                          "under-split-center"]},
+                  "size": {"type": "number", "minimum": 40, "maximum": 160},
+                  "fade": {"type": "boolean"},
+                  "brand_id": {"type": "integer"},
+                  "remove": {"type": "boolean"}}),
+            h_set_nameplate, mutating=True,
+            label=lambda a: "Снимаю плашку канала" if a.get("remove") else f"Плашка канала {a.get('handle') or ''}".strip(),
         ),
         Tool(
             "set_subtitle_words", "Задаю слова субтитров",

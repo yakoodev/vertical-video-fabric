@@ -7,6 +7,19 @@ export interface BrandStroke {
   width: number;
 }
 
+export interface BrandNameplate {
+  platform: "twitch" | "youtube" | "tiktok" | "telegram" | "kick" | "none";
+  handle: string;
+  style: "glass" | "solid";
+  /** null — цвет площадки. */
+  accent: string | null;
+  position: "auto" | "top-left" | "top-right" | "under-split-left" | "under-split-center";
+  /** Высота пилюли, px кадра 1080×1920. */
+  size: number;
+  /** Мягкое появление в начале; иначе видна сразу. */
+  fade: boolean;
+}
+
 export interface Brand {
   id: number;
   name: string;
@@ -37,6 +50,8 @@ export interface Brand {
   /** Фон за персонажем и под видео meme: анимированный, цвета [] — цвета бренда (app/brand_kit.py). */
   backdrop: Background;
   sfx_policy: "none" | "minimal";
+  /** Плашка канала (значок площадки + ник) на весь ролик; пустой ник и platform none — нет плашки. */
+  nameplate: BrandNameplate;
   created_at?: string;
   updated_at?: string;
 }

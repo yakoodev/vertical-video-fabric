@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { brandsApi, type Brand, type BrandInput } from "@/api/brands";
+import { brandsApi, type Brand, type BrandInput, type BrandNameplate } from "@/api/brands";
 import { audioTracksApi, montageAssetsApi } from "@/api/assets";
 import { motionApi } from "@/api/motion";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ErrorState, Loading } from "@/components/ui";
-import { CAPTION_STYLES, DEFAULT_BACKGROUND, paintBackground, type Background } from "@/motion";
+import {
+  CAPTION_STYLES,
+  DEFAULT_BACKGROUND,
+  PLATFORM_COLORS,
+  drawLayer,
+  paintBackground,
+  type Background,
+  type Layer,
+} from "@/motion";
 import { BackgroundPicker } from "@/pages/workspace/BackgroundPicker";
 
 // Новый бренд начинается с нейтральной формы — те же умолчания, что у normalize_brand.
@@ -23,7 +31,61 @@ const EMPTY: BrandInput = {
   music_track_id: null,
   backdrop: DEFAULT_BACKGROUND,
   sfx_policy: "minimal",
+  nameplate: { platform: "none", handle: "", style: "glass", accent: null, position: "auto", size: 74, fade: false },
 };
+
+const PLATFORMS: { v: BrandNameplate["platform"]; label: string }[] = [
+  { v: "none", label: "Без значка" },
+  { v: "twitch", label: "Twitch" },
+  { v: "youtube", label: "YouTube" },
+  { v: "tiktok", label: "TikTok" },
+  { v: "telegram", label: "Telegram" },
+  { v: "kick", label: "Kick" },
+];
+
+const PLATE_POSITIONS: { v: BrandNameplate["position"]; label: string }[] = [
+  { v: "auto", label: "Авто (под разделителем / в углу)" },
+  { v: "under-split-left", label: "Под разделителем слева" },
+  { v: "under-split-center", label: "Под разделителем по центру" },
+  { v: "top-left", label: "Слева сверху" },
+  { v: "top-right", label: "Справа сверху" },
+];
+
+/** Плашка канала на схеме кадра — тем же движком, что превью и рендер (слой nameplate). */
+function NameplateSketch({ np, accent, font }: { np: BrandNameplate; accent: string; font: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!np.handle && np.platform === "none") return;
+    const right = np.position === "top-right";
+    const center = np.position === "under-split-center";
+    const top = np.position === "top-left" || np.position === "top-right";
+    const layer = {
+      id: "brand_nameplate",
+      type: "nameplate",
+      start: 0,
+      end: 1,
+      x: center ? 0.5 : right ? 1 - (24 + 260) / 1080 : (24 + 260) / 1080,
+      y: top ? 0.13 : 0.6,
+      shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.45 },
+      props: {
+        platform: np.platform,
+        handle: np.handle,
+        style: np.style,
+        accent: np.accent || (np.platform === "none" ? accent : null),
+        size: np.size,
+        font,
+        align: center ? "center" : right ? "right" : "left",
+        boxWidth: 520,
+      },
+    } as Layer;
+    drawLayer(ctx, layer, 0.5, { width: cv.width, height: cv.height, getImage: () => null });
+  }, [np, accent, font]);
+  return <canvas ref={ref} className="brand-preview-bg" width={300} height={533} aria-hidden="true" />;
+}
 
 function toInput(b: Brand): BrandInput {
   const { id: _id, created_at: _c, updated_at: _u, ...rest } = b;
@@ -95,6 +157,7 @@ function BrandPreview({ b, logoUrl }: { b: BrandInput; logoUrl?: string }) {
       <div className="brand-preview-caps" style={{ color: b.caption_style.color || b.colors.text }}>
         слова <span style={{ color: b.caption_style.activeColor || b.colors.accent }}>субтитров</span>
       </div>
+      <NameplateSketch np={b.nameplate} accent={b.colors.accent} font={b.font} />
     </div>
   );
 }
@@ -306,6 +369,77 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
           </label>
         </div>
 
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label className="field" style={{ flex: 1, minWidth: 160 }}>
+            <span>Плашка канала: ник</span>
+            <input
+              className="input"
+              value={b.nameplate.handle}
+              maxLength={40}
+              placeholder="без плашки"
+              onChange={(e) => set("nameplate", { ...b.nameplate, handle: e.target.value })}
+            />
+          </label>
+          <label className="field" style={{ width: 130 }}>
+            <span>Площадка</span>
+            <select
+              className="input"
+              value={b.nameplate.platform}
+              onChange={(e) => set("nameplate", { ...b.nameplate, platform: e.target.value as BrandNameplate["platform"] })}
+            >
+              {PLATFORMS.map((p) => (
+                <option key={p.v} value={p.v}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field" style={{ width: 120 }}>
+            <span>Вид</span>
+            <select
+              className="input"
+              value={b.nameplate.style}
+              onChange={(e) => set("nameplate", { ...b.nameplate, style: e.target.value as BrandNameplate["style"] })}
+            >
+              <option value="glass">Стекло</option>
+              <option value="solid">Заливка</option>
+            </select>
+          </label>
+          <label className="field" style={{ width: 230 }}>
+            <span>Где</span>
+            <select
+              className="input"
+              value={b.nameplate.position}
+              onChange={(e) => set("nameplate", { ...b.nameplate, position: e.target.value as BrandNameplate["position"] })}
+            >
+              {PLATE_POSITIONS.map((p) => (
+                <option key={p.v} value={p.v}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+          <ColorField
+            label="Цвет"
+            value={b.nameplate.accent || (b.nameplate.platform !== "none" ? PLATFORM_COLORS[b.nameplate.platform] : b.colors.accent)}
+            onChange={(v) => set("nameplate", { ...b.nameplate, accent: v })}
+          />
+          {b.nameplate.accent ? (
+            <button
+              type="button"
+              className="btn ghost sm"
+              title="Цвет площадки (Twitch — фиолетовый, YouTube — красный…)"
+              onClick={() => set("nameplate", { ...b.nameplate, accent: null })}
+            >
+              цвет площадки
+            </button>
+          ) : null}
+          <label className="check" title="Плашка мягко проявляется в начале ролика; без галочки — видна сразу">
+            <input
+              type="checkbox"
+              checked={b.nameplate.fade}
+              onChange={(e) => set("nameplate", { ...b.nameplate, fade: e.target.checked })}
+            />
+            <span>появление</span>
+          </label>
+        </div>
+
         <div style={{ display: "grid", gap: 6, maxWidth: 420 }}>
           <span className="muted" style={{ fontSize: 12 }}>Фон за персонажем (зелёнка) и под видео meme</span>
           <BackgroundPicker
@@ -349,8 +483,9 @@ export function BrandsSettings() {
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <p className="muted" style={{ fontSize: 13, margin: 0, maxWidth: 680 }}>
-        Бренд — стиль роликов одного заказчика: шрифт, цвета, логотип, призыв в конце, музыка. В монтаже клипа
-        «Применить бренд» перекрасит субтитры и хук, поставит логотип и плашку-призыв на последние секунды.
+        Бренд — стиль роликов одного заказчика: шрифт, цвета, логотип, призыв в конце, плашка канала, музыка. В
+        монтаже клипа «Применить бренд» перекрасит субтитры и хук, поставит логотип, плашку канала и призыв на
+        последние секунды.
       </p>
       {editing === null ? (
         <div>
@@ -375,7 +510,7 @@ export function BrandsSettings() {
           <strong style={{ flex: 1 }}>{b.name}</strong>
           <span className="muted" style={{ fontSize: 12.5 }}>
             {[b.font || "шрифт по умолчанию", b.cta.text || b.cta.url_text ? `призыв ${b.cta.duration_sec} с` : "без призыва",
-              b.logo_asset_id ? "логотип" : ""].filter(Boolean).join(" · ")}
+              b.logo_asset_id ? "логотип" : "", b.nameplate?.handle ? `плашка ${b.nameplate.handle}` : ""].filter(Boolean).join(" · ")}
           </span>
           <button className="btn ghost sm" onClick={() => setEditing(b.id)}>Изменить</button>
           <button className="btn ghost sm" onClick={() => remove.mutate(b.id)}>🗑</button>
