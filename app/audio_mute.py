@@ -5,6 +5,11 @@
 ``render_settings.mute`` — отрезки клипа (секунды ДО вырезов, как у слоёв) с
 тишиной на месте звука исходника; звуки слоёв и музыка ложатся позже и играют.
 Края — короткие рампы, без щелчка.
+
+Отрезок может нести метку того, кто его поставил: ``{start, end, by: "censor", level: 2}``
+— глушение мата (app/censor.py). Помеченные не сливаются ни с чем (повторный запуск цензуры
+заменяет только свои, по метке), ручные — сливаются между собой, как раньше. Пересечение
+ручного с помеченным рендеру не мешает: множители громкости просто перемножаются.
 """
 
 from __future__ import annotations
@@ -13,13 +18,32 @@ import math
 from pathlib import Path
 from typing import Any
 
-MAX_MUTES = 20
+# Мат глушится пословно (app/censor.py): у клипа на минуту бывает 20–30 таких слов.
+MAX_MUTES = 60
 MIN_MUTE_SEC = 0.05
 RAMP_SEC = 0.03
+MUTE_TAGS = ("censor",)
+
+
+def _mute_tag(item: dict) -> dict:
+    """Метка отрезка (``by`` из MUTE_TAGS и ``level`` 1–3) или {} — ручной отрезок."""
+    by = item.get("by")
+    if by not in MUTE_TAGS:
+        return {}
+    tag: dict = {"by": by}
+    try:
+        level = int(item.get("level"))
+    except (TypeError, ValueError):
+        level = 0
+    if 1 <= level <= 3:
+        tag["level"] = level
+    return tag
 
 
 def normalize_mute(raw: Any) -> list[dict]:
-    """``[{start, end}]`` по порядку, слитые, каждый ≥ MIN_MUTE_SEC, не больше MAX_MUTES."""
+    """``[{start, end}]`` по порядку, ручные слиты, каждый ≥ MIN_MUTE_SEC, не больше MAX_MUTES.
+
+    Помеченные (``by``) остаются отдельными отрезками со своей меткой; точный повтор — один."""
     spans = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
@@ -32,14 +56,22 @@ def normalize_mute(raw: Any) -> list[dict]:
             continue
         a, b = max(0.0, a), max(0.0, b)
         if b - a >= MIN_MUTE_SEC:
-            spans.append((a, b))
-    merged: list[list[float]] = []
-    for a, b in sorted(spans):
-        if merged and a <= merged[-1][1] + 1e-9:
-            merged[-1][1] = max(merged[-1][1], b)
+            spans.append((a, b, _mute_tag(item)))
+    merged: list[list] = []
+    last_plain: int | None = None
+    seen: set = set()
+    for a, b, tag in sorted(spans, key=lambda s: (s[0], s[1])):
+        if tag:
+            key = (round(a, 3), round(b, 3), tag.get("by"))
+            if key not in seen:
+                seen.add(key)
+                merged.append([a, b, tag])
+        elif last_plain is not None and a <= merged[last_plain][1] + 1e-9:
+            merged[last_plain][1] = max(merged[last_plain][1], b)
         else:
-            merged.append([a, b])
-    return [{"start": round(a, 3), "end": round(b, 3)} for a, b in merged[:MAX_MUTES]]
+            merged.append([a, b, tag])
+            last_plain = len(merged) - 1
+    return [{"start": round(a, 3), "end": round(b, 3), **tag} for a, b, tag in merged[:MAX_MUTES]]
 
 
 def mute_volume_expr(spans: list[tuple[float, float]]) -> str:
