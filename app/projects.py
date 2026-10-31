@@ -1500,8 +1500,8 @@ def evaluate_hypothesis(hyp: dict, items: list[dict]) -> dict:
     label = METRIC_LABELS.get(metric, metric)
     if len(group_vals) < min_n or len(rest_vals) < min_n:
         result["status"] = "testing"
-        result["verdict"] = (f"мало данных: в группе {len(group_vals)}, в сравнении {len(rest_vals)} клипов "
-                             f"с числами, нужно хотя бы по {min_n}")
+        result["verdict"] = (f"мало данных: клипов с числами в группе {len(group_vals)}, в сравнении "
+                             f"{len(rest_vals)} — нужно хотя бы по {min_n}")
         return result
     result["enough"] = True
     lower = result["direction"] == "lower"
