@@ -34,6 +34,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `autopilot` | `publishing`, `series` |
 | `automation` | `ai_analysis` |
 | `vod_watch` | `automation`, `downloads`, `series` |
+| `ai_video` | `series` |
 
 ## Список модулей
 
@@ -47,6 +48,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `ai_montage` | ИИ-монтаж и ✨подбор | сеть | 🤖 ИИ-монтаж клипа, пакетный монтаж, ✨ выбор лучших (`/ai-montage*`, `/ai-montage-batch`, `/ai-pick`), шаг ИИ-монтажа в «Авто» пропускается с предупреждением |
 | `editor_agent` | ИИ-монтажёр в редакторе | сеть | чат 💬 в монтаже (`/api/clip-plans/{id}/agent*`), вкладка «ИИ» библиотеки |
 | `agent_chat` | Чат с агентом | сеть | страница «Чат», чат проекта (`/api/chat/*`, `/api/projects/{id}/chat`) |
+| `ai_video` | ИИ-видео (ролики с нуля) | сеть, платно | проект «ИИ-видео»: работник `aivideo-gen` (запуски по одобренным карточкам, опрос после перезапуска), `/api/ai-video/*`, `/api/projects/{id}/ai-video*`, 18 инструментов `aiv_*`, вкладка «ИИ-видео» проекта. Polza — только по карточке этапа с суммой и при `AIVIDEO_ENABLED=1` ([`guides/ai-video.md`](guides/ai-video.md)) |
 | `mcp` | MCP-сервер для внешних агентов | — | `/mcp` и `/api/agent/tools` (Claude Code, Codex) |
 
 ### Речь и субтитры
@@ -132,7 +134,7 @@ MODULES_DISABLED=all                            # всё выключить, н�
 ```
 
 Заданные так модули на странице заблокированы (значок `env`). Прежние переключатели работников тоже
-работают: `AUTOPILOT_WORKER=0`, `VOD_WATCH_WORKER=0`, `STATS_INTERVAL_HOURS=0`, `AUTO_PUBLISH_META=0`,
+работают: `AUTOPILOT_WORKER=0`, `VOD_WATCH_WORKER=0`, `AIVIDEO_WORKER=0`, `STATS_INTERVAL_HOURS=0`, `AUTO_PUBLISH_META=0`,
 `TWITCH_CHAT_AUTO_IMPORT=0`, `AUTOPILOT_TG_ENABLED=0`.
 
 ## Как добавить модуль или инструмент
