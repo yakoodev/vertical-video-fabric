@@ -1,0 +1,55 @@
+/* Объяснялки (pages/ExplainerTab.tsx): маскот, библиотека поз, ролики «тема → клип». */
+.expl .link-btn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-align: left; }
+.expl .link-btn:disabled { opacity: 0.5; cursor: default; }
+.expl .spinner.sm { width: 11px; height: 11px; border-width: 2px; display: inline-block; vertical-align: -1px; }
+.expl-note { padding: 10px 14px; font-size: 13px; color: var(--text-dim); }
+.expl-field { display: grid; gap: 2px; flex: 1 1 160px; font-size: 13px; }
+
+/* Ролики */
+.expl-videos { display: grid; gap: 10px; }
+.expl-video { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-sm); }
+.expl-video-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
+.expl-topic { font-weight: 600; min-width: 0; flex: 1 1 220px; }
+.expl-video-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.expl-status { display: inline-flex; align-items: center; gap: 6px; }
+.expl-status.ok { border-color: var(--ok, #3fb950); color: var(--ok, #3fb950); }
+.expl-status.bad { border-color: var(--bad, #f85149); color: var(--bad, #f85149); }
+.expl-status.warn { border-color: var(--warn); color: var(--warn); }
+.expl-detail { display: grid; gap: 10px; }
+.expl-script { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--text-dim); }
+.expl-notes { margin: 0; padding-left: 18px; font-size: 12.5px; }
+.expl-beats { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.expl-beat { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 12.5px; }
+.expl-beat-img { position: relative; aspect-ratio: 9 / 16; border-radius: 6px; overflow: hidden; background: var(--surface); display: grid; place-items: center; font-size: 10px; color: var(--text-dim); text-align: center; }
+.expl-beat-img img { width: 100%; height: 100%; object-fit: cover; }
+.expl-beat-text { display: grid; gap: 2px; min-width: 0; }
+
+/* Маскот */
+.expl-mascot { display: grid; grid-template-columns: minmax(200px, 320px) minmax(0, 1fr); gap: 14px; }
+.expl-sheet { display: grid; gap: 8px; align-content: start; padding: 8px; border-radius: var(--r-sm); color: #fff; font-size: 13px; }
+.expl-sheet img { width: 100%; border-radius: 8px; display: block; }
+.expl-mascot-form { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.expl-colors { align-items: center; }
+.expl-color { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.expl-color input[type="color"] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--hairline); border-radius: 6px; background: none; cursor: pointer; }
+
+/* Библиотека поз */
+.expl-filter { max-width: 220px; }
+.expl-poses { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+.expl-pose { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.expl-pose-img { position: relative; aspect-ratio: 9 / 16; border-radius: 8px; overflow: hidden; background: var(--expl-bg, var(--surface)); display: grid; place-items: center; font-size: 11px; color: #ddd; text-align: center; padding: 4px; }
+.expl-pose-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.expl-badge { position: absolute; top: 4px; left: 4px; background: #ffd447; color: #1b1030; font-weight: 800; font-size: 11px; padding: 0 6px; border-radius: var(--r-pill); }
+.expl-uses { position: absolute; top: 4px; right: 4px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 11px; padding: 0 6px; border-radius: var(--r-pill); }
+.expl-pose figcaption { display: grid; gap: 2px; font-size: 12px; min-width: 0; }
+.expl-pose figcaption b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.expl-tags { color: var(--text-dim); font-size: 11px; cursor: text; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.expl-pose-actions { display: flex; gap: 10px; }
+.expl-add summary { cursor: pointer; font-size: 13.5px; color: var(--accent); }
+.expl-add { display: grid; gap: 8px; }
+.expl-add[open] { gap: 8px; }
+
+@media (max-width: 720px) {
+  .expl-mascot { grid-template-columns: 1fr; }
+  .expl-video-actions { margin-left: 0; }
+}

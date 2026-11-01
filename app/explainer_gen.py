@@ -357,33 +357,76 @@ def _fallback_emphasis(text: str) -> list[str]:
     return [scored[0][1]] if scored and scored[0][0] > 0 else []
 
 
+def match_scores(beats: list[dict], poses: list[dict]) -> list[list[float]]:
+    """Очки «бит × поза» по тегам; поза с числом пальцев — только на начало своего пункта."""
+    numbers = {p.get("number_shown") for p in poses if p.get("number_shown")}
+    out = []
+    for beat in beats:
+        want = beat.get("point_start")
+        row = []
+        for pose in poses:
+            n = pose.get("number_shown")
+            if n:
+                row.append(10.0 if want == n else -8.0)
+            else:
+                row.append(E.score(pose, beat["text"]) - (3.0 if want in numbers else 0.0))
+        out.append(row)
+    return out
+
+
+def assign_by_tags(beats: list[dict], poses: list[dict]) -> list[int]:
+    """Позы битам по тегам: максимум суммы очков, соседние — разные (Витерби); бит без совпадений —
+    наименее занятая в ролике «нейтральная» поза (не повторять одну и ту же)."""
+    scores = match_scores(beats, poses)
+    n_p = len(poses)
+    if n_p == 1:
+        return [int(poses[0]["id"])] * len(beats)
+    dp = [scores[0][:]]
+    back: list[list[int]] = [[-1] * n_p]
+    for n in range(1, len(beats)):
+        prev = dp[-1]
+        order = sorted(range(n_p), key=lambda k: -prev[k])
+        best, second = order[0], order[1]
+        row, bk = [], []
+        for k in range(n_p):
+            q = best if best != k else second
+            row.append(scores[n][k] + prev[q])
+            bk.append(q)
+        dp.append(row)
+        back.append(bk)
+    k = max(range(n_p), key=lambda j: dp[-1][j])
+    picks = [k]
+    for n in range(len(beats) - 1, 0, -1):
+        k = back[n][k]
+        picks.append(k)
+    picks.reverse()
+    count: dict[int, int] = {}
+    for k in picks:
+        count[k] = count.get(k, 0) + 1
+    for n, k in enumerate(picks):
+        if scores[n][k] > 0:
+            continue
+        neighbors = {picks[n - 1] if n else -1, picks[n + 1] if n + 1 < len(picks) else -1}
+        pool = [j for j in range(n_p) if j not in neighbors and not poses[j].get("number_shown")]
+        if not pool:
+            continue
+        j = min(pool, key=lambda x: (count.get(x, 0), -scores[n][x], int(poses[x].get("uses") or 0), x))
+        count[k] -= 1
+        count[j] = count.get(j, 0) + 1
+        picks[n] = j
+    return [int(poses[k]["id"]) for k in picks]
+
+
 def _assign_fallback(beats: list[dict], poses: list[dict]) -> list[str]:
-    """Без Gemini: поза по тегам (лучший кандидат, не как у соседа), без новых поз."""
+    """Без Gemini: позы по тегам (``assign_by_tags``), без новых поз; чипы и ключевые слова — эвристикой."""
     ready = [p for p in poses if p["ready"]] or poses
     if not ready:
         raise E.ExplError("библиотека поз пуста, а Gemini недоступен — опиши позы сами: explainer_update_beats "
                           "(new_pose у каждого бита) или добавь позы (explainer_add_pose)")
     notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; поправь explainer_update_beats"]
-    used: dict[int, int] = {}
-    prev = None
-    for beat in beats:
-        want_n = beat.get("point_start")
-        pick = None
-        if want_n:
-            pick = next((p for p in ready if p.get("number_shown") == want_n and p["id"] != prev), None)
-        if pick is None:
-            ranked = [(p, s) for p, s in E.candidates(ready, beat["text"], len(ready)) if p["id"] != prev]
-            positive = [(p, s) for p, s in ranked if s > 0 and not p.get("number_shown")]
-            if positive:
-                pick = positive[0][0]
-            else:  # ничего по смыслу — наименее использованная «нейтральная» поза
-                pool = [p for p, _s in ranked if not p.get("number_shown")] or [p for p, _s in ranked]
-                pick = min(pool, key=lambda p: (used.get(p["id"], 0), p["id"])) if pool else ready[0]
-        used[pick["id"]] = used.get(pick["id"], 0) + 1
-        beat["pose_id"] = int(pick["id"])
-        prev = pick["id"]
-        chip = _fallback_chip(beat["text"])
-        beat["chip"] = chip
+    for beat, pose_id in zip(beats, assign_by_tags(beats, ready)):
+        beat["pose_id"] = pose_id
+        beat["chip"] = _fallback_chip(beat["text"])
         beat["emphasis"] = _fallback_emphasis(beat["text"])
     return notes
 
