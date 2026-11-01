@@ -469,7 +469,8 @@ class GatedPaid(FakePaid):
     """Подделка для гонок: считает POST по цели; ``gate`` держит первый POST выбранной цели,
     ``fail_kind`` — цель этого вида падает исключением."""
 
-    def __init__(self, hold: str = "", fail_kind: str = "", fail_exc: Exception | None = None):
+    def __init__(self, hold: str = "", fail_kind: str = "", fail_exc: Exception | None = None,
+                 fail_times: int = 10**6, money: float | None = None, charge_fail: float = 0.0):
         super().__init__()
         import threading
 
@@ -478,8 +479,16 @@ class GatedPaid(FakePaid):
         self.hold = hold
         self.fail_kind = fail_kind
         self.fail_exc = fail_exc or RuntimeError("boom")
+        self.fail_times = fail_times
+        self.money = money  # баланс; None — провайдер его не отдаёт
+        self.charge_fail = charge_fail  # сколько списать при сбое (ответ не дошёл, а деньги взяли)
         self.entered = threading.Event()
         self.gate = threading.Event()
+
+    def balance(self):
+        if self.money is None:
+            raise RuntimeError("GET /balance: 404")
+        return self.money
 
     def submit(self, params, refs):
         key = " / ".join(str(x) for x in params.get("_caption") or [])
@@ -488,7 +497,10 @@ class GatedPaid(FakePaid):
             n = self.posts
             self.by_target[key] = self.by_target.get(key, 0) + 1
             first = self.by_target[key] == 1
-        if self.fail_kind and params.get("_kind") == self.fail_kind:
+        if self.fail_kind and params.get("_kind") == self.fail_kind and self.fail_times > 0:
+            self.fail_times -= 1
+            if self.money is not None:
+                self.money -= self.charge_fail
             raise self.fail_exc
         if self.hold and self.hold in key and first:
             self.entered.set()
@@ -594,3 +606,142 @@ def test_second_done_and_late_poll_are_ignored(paid, monkeypatch):
     assert len(V.list_refs(store, pid, "location", 1, "location")) == 1 and len(G.ledger(store, pid)) == 1
     with pytest.raises(KeyError):
         store.get_montage_asset(asset["id"])
+
+
+# --------------------------------------------------------------------------- #
+# Сеть: до отправки — повтор сам; после — «под вопросом», сверка баланса, без авто-повтора
+# --------------------------------------------------------------------------- #
+
+
+def _httpx_errors():
+    import httpx
+
+    req = httpx.Request("POST", "https://polza.test/api/v1/media")
+    return (httpx.ConnectError("TLS/SSL connection has been closed (EOF)", request=req),
+            httpx.ReadTimeout("The read operation timed out", request=req))
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    monkeypatch.setattr(G, "RETRY_BACKOFF_SEC", (0.0,))
+    monkeypatch.setattr(G, "BALANCE_SETTLE_SEC", 0.0)
+
+
+def test_network_phase_classifies_httpx_errors():
+    import httpx
+
+    connect, read = _httpx_errors()
+    assert PR.network_phase(connect) == "before" and PR.network_phase(read) == "after"
+    assert PR.network_phase(httpx.RemoteProtocolError("peer closed")) == "after"
+    assert PR.network_phase(httpx.ConnectTimeout("t")) == "before"
+    assert PR.network_phase(RuntimeError("x")) is None and PR.network_phase(PR.ProviderError("4xx")) is None
+
+
+def test_connect_error_before_send_is_retried_without_new_approval(env, monkeypatch, no_wait):
+    _client_, store = env
+    connect, _read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=connect, fail_times=2)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_pending(store)
+    assert len(out["done"]) == 3 and not out["failed"]
+    assert fake.by_target["плита локации / Кухня ночью"] == 3  # две неудачи до отправки + успех
+    assert G.get_job(store, j_loc)["attempts"] == 1 and len(G.ledger(store, pid)) == 3
+    assert len(G.stage_approvals(store, pid)) == 1  # новой карточки нет
+
+
+def test_connect_error_three_times_fails_unpaid_does_not_stop_batch_and_retries(env, monkeypatch, no_wait):
+    _client_, store = env
+    connect, _read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=connect, fail_times=3)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    # Сеть — не стоп партии: остальные запуски выполнены.
+    assert [d["job_id"] for d in out["done"]] == [j_mira, j_kot] and not out["held"]
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "failed" and job["params"]["retry_free"] and "не оплачено" in job["error"]
+    assert not any(l["job_id"] == j_loc for l in G.ledger(store, pid))
+    assert G.stage_approvals(store, pid)[0]["retryable"] == 1
+    # «Повторить» одним нажатием — та же карточка, без новой.
+    res = G.retry_card(store, card, run=True)
+    assert res["retried"] == [j_loc] and [d["job_id"] for d in res["done"]] == [j_loc]
+    assert fake.by_target["плита локации / Кухня ночью"] == 4
+    with pytest.raises(V.AivError):
+        G.retry_job(store, j_loc)  # уже готово
+
+
+def test_read_timeout_is_uncertain_balance_unchanged_allows_free_retry(env, monkeypatch, no_wait):
+    _client_, store = env
+    _connect, read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=read, fail_times=1, money=100.0)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert len(out["done"]) == 2  # партия не остановлена
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "uncertain" and fake.by_target["плита локации / Кухня ночью"] == 1  # не повторял сам
+    assert job["params"]["balance_check"] == {"before": 100.0, "after": 100.0, "charged": 0.0}
+    assert job["params"]["retry_free"] and "не списано" in job["error"]
+    G.run_pending(store)  # работник «под вопросом» не трогает
+    assert fake.by_target["плита локации / Кухня ночью"] == 1
+    G.retry_job(store, j_loc)
+    G.run_pending(store)
+    assert G.get_job(store, j_loc)["status"] == "done" and fake.by_target["плита локации / Кухня ночью"] == 2
+
+
+def test_read_timeout_with_charge_or_unknown_balance_needs_new_card(env, monkeypatch, no_wait):
+    _client_, store = env
+    _connect, read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=read, fail_times=1, money=100.0, charge_fail=3.0)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, _m, _k = _three_refs(store, pid)
+    G.run_jobs(store, [j_loc])
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "uncertain" and not job["params"]["retry_free"]
+    assert job["cost_source"] == "balance" and job["cost_rub"] == pytest.approx(3.0)
+    assert [(l["job_id"], l["source"], l["amount_rub"]) for l in G.ledger(store, pid)] == [(j_loc, "balance", 3.0)]
+    with pytest.raises(G.BudgetError, match="aiv_regenerate"):
+        G.retry_job(store, j_loc)
+
+    # Баланс не узнать — «под вопросом», оценка запуска держится в сумме карточки.
+    fake.money, fake.fail_times = None, 1
+    pid2 = V.create_ai_project(store, "Второй", provider="polza")["project"]["id"]
+    V.save_location(store, pid2, "Двор", "двор днём", slug="yard")
+    V.save_location(store, pid2, "Крыша", "крыша ночью", slug="roof")
+    req = G.request_stage(store, pid2, "refs", items=["location:" + str(V.location_by_slug(store, pid2, "yard")["id"]),
+                                                      "location:" + str(V.location_by_slug(store, pid2, "roof")["id"])])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    store.db.execute("UPDATE approvals SET payload_json = json_set(payload_json, '$.amount_rub', 6.0) WHERE id = ?",
+                     (req["approval_id"],))
+    fake.fail_kind = "location"
+    out = G.run_pending(store)
+    yard, roof = sorted(j["id"] for j in G.list_jobs(store, approval_id=req["approval_id"]))
+    assert G.get_job(store, yard)["status"] == "uncertain" and "баланс не узнать" in G.get_job(store, yard)["error"]
+    # одобрено 6 ₽: 6 «под вопросом» + 6 следующего > 6 — второй держится, а не тратит сверх
+    assert G.get_job(store, roof)["status"] == "held" and out["held"] == [roof]
+
+
+def test_poll_network_error_keeps_polling_without_new_post(paid, monkeypatch):
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    _connect, read = _httpx_errors()
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs", items=["location:1"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    real_check = fake.check
+    fake.check = lambda rid: (_ for _ in ()).throw(read)
+    G.run_pending(store, poll_timeout=0)
+    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    assert job["status"] == "polling" and "сеть при опросе" in job["error"] and fake.posts == 1
+    fake.check = real_check
+    assert G.resume(store, poll_timeout=0)["finished"] == [job["id"]] and fake.posts == 1
+
+
+def test_policy_refusal_still_stops_the_batch(env, monkeypatch, no_wait):
+    _client_, store = env
+    _gated(monkeypatch, fail_kind="location", fail_exc=PR.ProviderError("Polza 400: moderation", policy=True))
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert G.get_job(store, j_loc)["status"] == "blocked_policy" and out["held"] == [j_mira, j_kot]

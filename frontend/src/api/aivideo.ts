@@ -91,6 +91,8 @@ export interface StageCard {
   spent_rub: number;
   decided_by: string;
   jobs: Record<string, number>;
+  /** Сеть: точно не оплачено — «Повторить» без новой карточки. */
+  retryable?: number;
 }
 
 export interface Shot {
@@ -226,6 +228,7 @@ export const aivApi = {
   decide: (approvalId: number, action: "approve" | "reject", comment = "") =>
     api.post(`/api/ai-video/approvals/${approvalId}/decide`, { action, comment }),
   run: (approvalId: number) => api.post(`/api/ai-video/approvals/${approvalId}/run`, { confirm: true }),
+  retryCard: (approvalId: number) => api.post<{ retried: number[] }>(`/api/ai-video/approvals/${approvalId}/retry`),
   assemble: (scriptId: number, body: { music_track_id?: number; captions_style?: string } = {}) =>
     api.post<{ clip_id: number; duration: number; editor_url: string; notes: string[] }>(
       `/api/ai-video/scripts/${scriptId}/assemble`, body),

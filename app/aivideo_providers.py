@@ -50,11 +50,30 @@ POLL_INTERVAL_SEC = 3.0
 
 
 class ProviderError(RuntimeError):
-    """Провайдер отказал (сеть, 4xx/5xx). ``policy`` — отказ контент-политики."""
+    """Провайдер отказал (4xx/5xx). ``policy`` — отказ контент-политики, ``status`` — HTTP-код."""
 
-    def __init__(self, message: str, policy: bool = False):
+    def __init__(self, message: str, policy: bool = False, status: int | None = None):
         super().__init__(message)
         self.policy = policy
+        self.status = status
+
+
+def network_phase(exc: BaseException) -> str | None:
+    """Сетевая ошибка запроса: ``before`` — тело до провайдера не дошло (соединение/TLS не
+    установлено: ``ConnectError`` «TLS/SSL connection has been closed (EOF)», ``ConnectTimeout``) —
+    повторять безопасно, денег не взяли; ``after`` — запрос мог дойти (``ReadTimeout``,
+    ``RemoteProtocolError``, обрыв чтения/записи) — возможно оплачено; ``None`` — не сеть."""
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx в зависимостях
+        return None
+    before = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError,
+              httpx.UnsupportedProtocol, httpx.LocalProtocolError)
+    if isinstance(exc, before):
+        return "before"
+    if isinstance(exc, httpx.TransportError):
+        return "after"
+    return None
 
 
 def image_price(model: str, resolution: str) -> dict:
@@ -219,7 +238,7 @@ class PolzaImages:
         if response.status_code >= 400:
             detail = _detail(response)
             raise ProviderError(f"Polza {response.status_code}: {detail}",
-                                policy=any(w in detail.lower() for w in _POLICY_WORDS))
+                                policy=any(w in detail.lower() for w in _POLICY_WORDS), status=response.status_code)
         data = response.json() if response.content else {}
         remote = data.get("requestId") or data.get("request_id") or data.get("id")
         if remote:
@@ -274,12 +293,12 @@ class PolzaImages:
         dest.write_bytes(response.content)
         return dest
 
-    def balance(self) -> float | None:
+    def balance(self, timeout: float = 10) -> float | None:
         """Баланс ₽ (если Polza отдаёт ``GET /balance``) — сверка трат; ошибка — None."""
         import httpx
 
         try:
-            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=30)
+            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=timeout)
             if response.status_code >= 400:
                 return None
             data = response.json()
@@ -340,12 +359,20 @@ def get_tts(name: str, model: str | None = None, voice: str | None = None) -> An
 
 
 def poll(provider: ImageProvider, remote_id: str, timeout: float, interval: float = POLL_INTERVAL_SEC) -> dict:
-    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже)."""
+    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже).
+    Сетевой сбой GET (обрыв TLS, таймаут) — просто «ещё не готово»: спросим снова, POST не повторяем."""
     deadline = time.monotonic() + max(0.0, timeout)
+    note = ""
     while True:
-        result = provider.check(remote_id)
+        try:
+            result = provider.check(remote_id)
+        except Exception as exc:  # noqa: BLE001 - только сеть, остальное наверх
+            if network_phase(exc) is None:
+                raise
+            note = f"сеть при опросе: {type(exc).__name__}"
+            result = {"status": "pending"}
         if result.get("status") in ("completed", "failed"):
             return result
         if time.monotonic() >= deadline:
-            return {"status": "pending"}
+            return {"status": "pending", **({"note": note} if note else {})}
         time.sleep(interval)

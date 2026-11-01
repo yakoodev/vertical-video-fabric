@@ -181,6 +181,14 @@ def h_run_approved(ctx: ToolContext, args: dict) -> dict:
     return _call(G.run_approved, ctx.store, int(args["approval_id"]), bool(args.get("confirm")))
 
 
+def h_retry(ctx: ToolContext, args: dict) -> dict:
+    if args.get("job_id"):
+        return _call(G.retry_job, ctx.store, int(args["job_id"]), bool(args.get("run")))
+    if args.get("approval_id"):
+        return _call(G.retry_card, ctx.store, int(args["approval_id"]), bool(args.get("run")))
+    raise ToolError("нужен job_id или approval_id")
+
+
 def h_jobs(ctx: ToolContext, args: dict) -> dict:
     pid = _pid(args)
     return {"jobs": G.list_jobs(ctx.store, project_id=pid, approval_id=args.get("approval_id"),
@@ -333,6 +341,14 @@ def tools() -> list[Tool]:
              "отказ. / Run jobs of an owner-approved card.",
              _obj({"approval_id": {"type": "integer"}, "confirm": {"type": "boolean"}}, ["approval_id"]),
              h_run_approved, mutating=True, scope="project"),
+        Tool("aiv_retry_job", "Повторяю после сбоя сети",
+             "Повторить запуск, который ТОЧНО не оплачен, без новой карточки (та же одобренная сумма): запрос "
+             "не ушёл из-за сети (ConnectError — сам уже повторил 3 раза) или ответ не дошёл (ReadTimeout), а "
+             "баланс Polza не изменился (статус uncertain, retry_free). job_id — один, approval_id — все такие "
+             "по карточке; run=true — сразу, иначе работник. Списано/баланс неизвестен — отказ: aiv_regenerate. "
+             "/ Retry a job that surely was not charged.",
+             _obj({"job_id": {"type": "integer"}, "approval_id": {"type": "integer"}, "run": {"type": "boolean"}}),
+             h_retry, mutating=True, scope="project"),
         Tool("aiv_job_status", "Очередь генерации",
              "Запуски генерации проекта (статус, оценка, факт, ошибка), карточки этапов и бюджет. "
              "/ Generation jobs, stage cards and budget.",

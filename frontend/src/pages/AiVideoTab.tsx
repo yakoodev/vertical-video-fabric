@@ -150,9 +150,18 @@ function StageCards({ projectId, cards }: { projectId: number; cards: StageCard[
     },
     onError: (e) => toast.error(errText(e, "Не удалось")),
   });
+  const retry = useMutation({
+    mutationFn: (id: number) => aivApi.retryCard(id),
+    onSuccess: (r) => {
+      toast.success(`Повтор: ${r.retried.length} шт. (та же карточка)`);
+      invalidate();
+    },
+    onError: (e) => toast.error(errText(e, "Не удалось")),
+  });
   const pending = cards.filter((c) => c.status === "pending");
   const held = cards.filter((c) => c.status === "approved" && (c.jobs.held ?? 0) > 0);
-  if (!pending.length && !held.length) return null;
+  const flaky = cards.filter((c) => c.status === "approved" && (c.retryable ?? 0) > 0);
+  if (!pending.length && !held.length && !flaky.length) return null;
   return (
     <div className="aiv-cards">
       {pending.map((c) => (
@@ -183,6 +192,19 @@ function StageCards({ projectId, cards }: { projectId: number; cards: StageCard[
           </div>
           <button className="btn sm" disabled={run.isPending} onClick={() => run.mutate(c.id)}>
             🔁 Продолжить
+          </button>
+        </div>
+      ))}
+      {flaky.map((c) => (
+        <div key={`r${c.id}`} className="panel aiv-card">
+          <div className="aiv-card-text">
+            <b>
+              {STAGE_LABEL[c.stage]}: сбой сети ({c.retryable} шт.) — не оплачено
+            </b>
+            <span className="muted">Запрос не ушёл или ответ не дошёл, а баланс не изменился. Повтор — в пределах этой карточки.</span>
+          </div>
+          <button className="btn sm" disabled={retry.isPending} onClick={() => retry.mutate(c.id)}>
+            🔁 Повторить
           </button>
         </div>
       ))}

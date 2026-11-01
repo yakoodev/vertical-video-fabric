@@ -55,6 +55,7 @@ from app.aivideo_providers import (
     ProviderError,
     image_price,
     model_params,
+    network_phase,
 )
 from app.settings import settings
 
@@ -69,6 +70,12 @@ CARD_ACTION = "aiv_budget"
 ACTIVE = ("approved", "submitting", "polling")
 SUBMIT_STALE_SEC = 600  # «отправляю» дольше — исполнитель другого процесса умер (POST ждёт ≤ 120 с)
 OPEN = ("awaiting",) + ACTIVE
+# Сеть до провайдера рвётся (TLS EOF, таймауты). До отправки тела — повтор сам, с паузой;
+# после — «под вопросом» (uncertain): сверка баланса, сам не повторяю.
+SUBMIT_TRIES = 3
+RETRY_BACKOFF_SEC = (2.0, 6.0)
+BALANCE_SETTLE_SEC = 3.0  # провайдер списывает не мгновенно — баланс «после» чуть позже
+STOP_HTTP = (401, 402, 403)  # ключ/деньги/доступ — дальше всё равно откажет: стоп партии
 STYLE_BASE = {
     "anime": "2D anime / toon style, clean line art, cel shading, flat colors, expressive faces",
     "photoreal": "photorealistic, cinematic lighting, natural skin texture, 35mm film still",
@@ -500,12 +507,16 @@ def stage_approvals(store: Any, project_id: int, script_id: int | None = None, s
             continue
         counts = {row["status"]: int(row["n"]) for row in store.db.query_all(
             "SELECT status, COUNT(*) AS n FROM aiv_gen_jobs WHERE approval_id = ? GROUP BY status", (card["id"],))}
+        # Сеть: точно не оплачено — «Повторить» без новой карточки (retry_card).
+        retryable = sum(1 for row in store.db.query_all(
+            "SELECT params_json FROM aiv_gen_jobs WHERE approval_id = ? AND status IN ('failed', 'uncertain') "
+            "AND remote_id = ''", (card["id"],)) if V._loads(row["params_json"], {}).get("retry_free"))
         out.append({"id": card["id"], "status": card["status"], "stage": payload.get("stage"),
                     "script_id": payload.get("script_id"), "amount_rub": payload.get("amount_rub"),
                     "count": payload.get("count"), "model": payload.get("model"), "title": card["title"],
                     "question": card["question"], "decided_by": card.get("decided_by"),
                     "decision_comment": card.get("decision_comment"), "created_at": card.get("created_at"),
-                    "spent_rub": spent_approval(store, card["id"]), "jobs": counts})
+                    "spent_rub": spent_approval(store, card["id"]), "jobs": counts, "retryable": retryable})
     return out
 
 
@@ -704,7 +715,8 @@ def input_hash(model: str, params: dict, prompt: str, refs: list[Path], variant:
 
 
 # --------------------------------------------------------------------------- #
-# Запуск
+# Запуск. Статусы: approved → submitting → polling → done | failed | blocked_policy | held |
+# uncertain (ответ не дошёл — могло быть оплачено; сам не повторяю, сверка баланса).
 # --------------------------------------------------------------------------- #
 
 
@@ -755,7 +767,10 @@ def _preflight(store: Any, job: dict) -> list[str]:
     if card["status"] != "approved":
         out.append(f"карточка #{card['id']} не одобрена ({card['status']})")
     amount = float((card.get("payload") or {}).get("amount_rub") or 0)
-    spent = spent_approval(store, card["id"])
+    # «Под вопросом» (ответ не дошёл, списание не подтверждено) — считаем потраченным по оценке.
+    spent = spent_approval(store, card["id"]) + _sum(
+        store, "SELECT COALESCE(SUM(estimate_rub), 0) FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'uncertain' "
+               "AND cost_source = '' AND id != ?", (card["id"], int(job["id"])))
     if spent + float(job["estimate_rub"]) > amount + 0.01:
         out.append(f"по карточке #{card['id']} потрачено {spent:.2f} ₽ + {job['estimate_rub']:.2f} ₽ > одобренных "
                    f"{amount:.2f} ₽ — нужна новая карточка")
@@ -792,6 +807,109 @@ def _claim(store: Any, job_id: int) -> tuple[dict | None, list[str]]:
             conn.close()
         _INFLIGHT.add(int(job_id))
     return get_job(store, job_id), []
+
+
+def _send(store: Any, job: dict, send: Any) -> Any:
+    """POST провайдеру. Сбой ДО отправки тела (соединение/TLS не встали) — повтор сам, до
+    ``SUBMIT_TRIES`` раз с паузой, без новой карточки: запрос не ушёл, денег не взяли. Любой
+    другой сбой — наверх (``run_jobs`` решает: «под вопросом» или отказ)."""
+    for attempt in range(1, SUBMIT_TRIES + 1):
+        try:
+            return send()
+        except Exception as exc:  # noqa: BLE001 - разбираем ниже
+            if network_phase(exc) != "before" or attempt >= SUBMIT_TRIES:
+                raise
+            _set_job(store, job["id"], error=f"сеть до отправки ({type(exc).__name__}) — повтор "
+                                             f"{attempt + 1}/{SUBMIT_TRIES}")
+            time.sleep(RETRY_BACKOFF_SEC[min(attempt - 1, len(RETRY_BACKOFF_SEC) - 1)])
+    raise AssertionError("unreachable")
+
+
+def _balance(provider: Any) -> float | None:
+    """Баланс провайдера (если умеет), ₽; не вышло — None (сверка — подсказка, не условие)."""
+    fn = getattr(provider, "balance", None)
+    if fn is None:
+        return None
+    try:
+        value = fn()
+    except Exception:  # noqa: BLE001
+        return None
+    return round(float(value), 2) if value is not None else None
+
+
+def _mark_not_sent(store: Any, job: dict, exc: BaseException) -> None:
+    params = {**get_job(store, job["id"])["params"], "net": "not_sent", "retry_free": True}
+    _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="failed",
+         params_json=json.dumps(params, ensure_ascii=False),
+         error=(f"сеть: запрос не ушёл ({SUBMIT_TRIES} попытки, {type(exc).__name__}: {str(exc)[:160]}) — не "
+                "оплачено; «Повторить» — без новой карточки"))
+
+
+def _mark_uncertain(store: Any, job: dict, exc: BaseException, provider: Any, before: float | None) -> None:
+    """Ответ провайдера не дошёл (запрос мог дойти): НЕ повторяем сами. Баланс до/после: не
+    изменился — повтор одним нажатием без новой карточки; списано — трата в журнал по разнице."""
+    after = None
+    if before is not None:
+        time.sleep(BALANCE_SETTLE_SEC)
+        after = _balance(provider)
+    what = f"{type(exc).__name__}: {str(exc)[:160]}"
+    check: dict[str, Any] = {"before": before, "after": after, "charged": None}
+    fields: dict[str, Any] = {}
+    if before is not None and after is not None:
+        charged = round(before - after, 2)
+        check["charged"] = max(0.0, charged)
+        if charged <= 0.009:
+            retry_free = True
+            error = (f"ответ провайдера не дошёл ({what}); баланс не изменился ({before:.2f} ₽) — не списано. "
+                     "«Повторить» — без новой карточки")
+        else:
+            retry_free = False
+            fields = {"cost_rub": charged, "cost_source": "balance"}
+            error = (f"ответ провайдера не дошёл ({what}); по балансу списано ≈{charged:.2f} ₽, результата нет — "
+                     "повтор только новой карточкой (aiv_regenerate)")
+    else:
+        retry_free = False
+        error = (f"ответ провайдера не дошёл ({what}) — могло быть оплачено, баланс не узнать: проверь баланс "
+                 "Polza; сам не повторяю (повтор — aiv_regenerate)")
+    params = {**get_job(store, job["id"])["params"], "net": "uncertain", "balance_check": check,
+              "retry_free": retry_free}
+    if _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="uncertain", error=error[:500],
+            params_json=json.dumps(params, ensure_ascii=False), **fields) and fields:
+        add_ledger(store, job, fields["cost_rub"], "balance", "ответ не дошёл — списание по разнице баланса")
+
+
+def retry_job(store: Any, job_id: int, run: bool = False) -> dict:
+    """«Повторить» без новой карточки — только запуск, который ТОЧНО не оплачен: запрос не ушёл
+    (сеть до отправки) или ответ не дошёл, а баланс не изменился. Иначе — aiv_regenerate."""
+    job = get_job(store, job_id)
+    if job["status"] not in ("failed", "uncertain") or job["remote_id"]:
+        raise V.AivError(f"запуск #{job_id} — {job['status']}: повторять нечего")
+    if not job["params"].get("retry_free"):
+        raise BudgetError(f"запуск #{job_id}: не подтверждено, что он не оплачен — повтор только новой карточкой "
+                          "(aiv_regenerate)")
+    params = {**job["params"], "retry_free": False, "retries": int(job["params"].get("retries") or 0) + 1}
+    if not _cas(store, job_id, ("failed", "uncertain"), where="remote_id = ''", status="approved", error="",
+                params_json=json.dumps(params, ensure_ascii=False)):
+        raise V.AivError(f"запуск #{job_id} уже в другом состоянии")
+    if run:
+        return {"ok": True, "status": "ran", **run_jobs(store, [int(job_id)])}
+    kick()
+    return {"ok": True, "status": "approved", "job_id": int(job_id), "note": "повтор передан работнику (та же карточка)"}
+
+
+def retry_card(store: Any, approval_id: int, run: bool = False) -> dict:
+    """«Повторить» все точно не оплаченные запуски карточки (сеть) — без новой карточки."""
+    rows = store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE approval_id = ? AND status IN ('failed', 'uncertain') "
+                              "AND remote_id = '' ORDER BY id", (int(approval_id),))
+    ids = [int(r["id"]) for r in rows if get_job(store, int(r["id"]))["params"].get("retry_free")]
+    for job_id in ids:
+        retry_job(store, job_id)
+    out: dict[str, Any] = {"ok": True, "retried": ids}
+    if run and ids:
+        out.update(run_jobs(store, ids))
+    elif not ids:
+        out["note"] = "повторять без новой карточки нечего (не подтверждено, что не оплачено — aiv_regenerate)"
+    return out
 
 
 def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: str) -> dict:
@@ -840,7 +958,7 @@ def _run_tts(store: Any, job: dict) -> dict | None:
     work.mkdir(parents=True, exist_ok=True)
     try:
         raw = work / "line.mp3"
-        speech = tts.synthesize(text, raw)
+        speech = _send(store, job, lambda: tts.synthesize(text, raw))
         cost = speech.cost_rub
         source = "provider" if cost is not None else "estimate"
         cost = float(cost) if cost is not None else float(job["estimate_rub"])
@@ -870,12 +988,7 @@ def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None)
         return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
                      own_asset=False)
     full = {**params, "_kind": job["ref_kind"], "_caption": caption}
-    try:
-        remote = provider.submit(full, refs)
-    except ProviderError as exc:
-        _cas(store, job["id"], ("submitting",), status="blocked_policy" if exc.policy else "failed",
-             error=str(exc)[:500])
-        return None
+    remote = _send(store, job, lambda: provider.submit(full, refs))  # сбой — разбирает run_jobs
     # ДО опроса: после перезапуска опрос продолжится, повторного POST (и оплаты) не будет.
     # remote_id пишется один раз (remote_id = ''), даже если запуск успели счесть «потерянным».
     cur = store.db.execute(
@@ -908,6 +1021,8 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             _set_job(store, job["id"], error=f"опрос не удался, повторю: {exc}"[:500])
             return None
         if result.get("status") == "pending":
+            if result.get("note"):
+                _set_job(store, job["id"], error=f"{result['note']} — повторю позже (POST не повторяю)"[:500])
             return None
         cost = result.get("cost_rub")
         if result.get("status") == "failed":
@@ -925,6 +1040,10 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
                                          job["params"].get("aspect"), "_kind": job["ref_kind"],
                                          "_caption": build_request(store, job)[2]})
         except Exception as exc:  # noqa: BLE001 - ссылка может истечь: оплачено, но файла нет
+            if network_phase(exc) is not None:
+                # Сеть: результат у провайдера есть — следующий опрос возьмёт ссылку заново.
+                _set_job(store, job["id"], error=f"скачивание: сеть ({type(exc).__name__}) — повторю позже"[:500])
+                return None
             if _cas(store, job["id"], ("polling",), status="failed", error=f"результат не скачан: {exc}"[:500]) \
                     and provider.paid:
                 add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
@@ -974,18 +1093,34 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
             else:
                 skipped.append(job_id)
             continue
+        paid = job["provider"] != "none"
+        stop = False
+        provider = providers.setdefault(job["provider"], get_image_provider(job["provider"])) if (
+            paid or job["kind"] != "tts") else None
+        before = _balance(provider) if paid else None
         try:
             if job["kind"] == "tts":
                 ref = _run_tts(store, job)
             else:
-                provider = providers.setdefault(job["provider"], get_image_provider(job["provider"]))
                 ref = _run_image(store, job, provider, poll_timeout)
         except Exception as exc:  # noqa: BLE001 - один запуск не валит партию
             _log.warning("aiv job %s failed: %s", job_id, exc)
-            # Есть remote_id — не трогаем: опрос дочитает resume (без нового POST).
-            hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if job["provider"] != "none" else ""
-            _cas(store, job_id, ("submitting",), where="remote_id = ''",
-                 error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}", status="failed")
+            phase = network_phase(exc)
+            if get_job(store, job_id)["remote_id"]:
+                pass  # есть remote_id — не трогаем: опрос дочитает resume (без нового POST)
+            elif isinstance(exc, ProviderError):
+                _cas(store, job_id, ("submitting",), status="blocked_policy" if exc.policy else "failed",
+                     error=str(exc)[:500])
+                stop = exc.policy or exc.status in STOP_HTTP
+            elif phase == "before":
+                _mark_not_sent(store, job, exc)
+            elif phase == "after" and paid:
+                _mark_uncertain(store, job, exc, provider, before)
+            else:
+                hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if paid else ""
+                _cas(store, job_id, ("submitting",), where="remote_id = ''",
+                     error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}", status="failed")
+                stop = phase is None
             ref = None
         finally:
             with _LOCK:
@@ -999,7 +1134,9 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         else:
             failed.append({"job_id": job_id, "label": job["label"], "status": state,
                            "error": get_job(store, job_id)["error"]})
-            if job.get("approval_id") and job["provider"] != "none":
+            # Партию останавливают только деньги/политика/ключ и непонятные сбои; сеть и отказ
+            # провайдера нарисовать один кадр — нет: остальные запуски идут дальше.
+            if job.get("approval_id") and paid and (stop or state == "blocked_policy"):
                 stop_cards.add(int(job["approval_id"]))
     return {"done": done, "failed": failed, "held": held, "polling": pending, "skipped": skipped}
 
