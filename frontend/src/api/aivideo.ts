@@ -6,7 +6,8 @@ import { api } from "@/api/client";
  * карточка владельцу с суммой → «Разрешить» → генерация → сборка в холст-клип.
  */
 
-export type Stage = "refs" | "blocking" | "keyframes" | "voice" | "video";
+/** explainer — этап объяснялок (app/explainer.py): позы маскота, лист, озвучка ролика. */
+export type Stage = "refs" | "blocking" | "keyframes" | "voice" | "video" | "explainer";
 
 export interface VideoQaIssue {
   what: string;
@@ -290,6 +291,7 @@ export const CAMERA_LABEL: Record<string, string> = {
 
 export const STAGE_LABEL: Record<Stage, string> = {
   refs: "Референсы", blocking: "Блокинг", keyframes: "Кадры", voice: "Озвучка", video: "Видео",
+  explainer: "Объяснялка",
 };
 
 /** Видеомодели (app/aivideo_providers.py VIDEO_LIMITS): "" — по режиму серии. */

@@ -51,6 +51,29 @@ class Settings:
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+        # Мастер-файл для площадок перед выкладкой (app/publish_master.py): auto — чинить только
+        # то, что не по спецификации (без лишнего перекодирования), always — всегда заново в
+        # мастер, off — отдавать файл клипа как есть (как раньше).
+        self.publish_master_mode = os.getenv("PUBLISH_MASTER", "auto").strip().lower() or "auto"
+        self.publish_master_crf = float(os.getenv("PUBLISH_MASTER_CRF", "17") or 17)
+        self.publish_master_preset = os.getenv("PUBLISH_MASTER_PRESET", "medium").strip() or "medium"
+        # Длина GOP мастера, с: YouTube советует закрытый GOP в половину частоты кадров.
+        self.publish_master_gop_sec = float(os.getenv("PUBLISH_MASTER_GOP_SEC", "0.5") or 0.5)
+        self.publish_master_audio_bitrate = os.getenv("PUBLISH_MASTER_AUDIO_BITRATE", "320k").strip() or "320k"
+        # Ниже 1080p (720×1280 у ИИ-видео) — поднять до 1080 по короткой стороне: площадки
+        # раздают 1080p-версию только тем, кто прислал хотя бы 1080p.
+        self.publish_master_upscale = _truthy(os.getenv("PUBLISH_MASTER_UPSCALE", "true"))
+        # Повторы шагов загрузки, которые безопасно повторить (до публикации поста): сеть, 429, 5xx.
+        self.publish_upload_retries = int(os.getenv("PUBLISH_UPLOAD_RETRIES", "2") or 0)
+        self.publish_upload_retry_seconds = float(os.getenv("PUBLISH_UPLOAD_RETRY_SECONDS", "5") or 0)
+        # User-Agent веб-загрузки TikTok: лучше того браузера, из которого взяты cookie аккаунта
+        # (пусто — прежний встроенный).
+        self.tiktok_user_agent = os.getenv("TIKTOK_USER_AGENT", "").strip()
+        # YouTube после загрузки: аудитория «не для детей» (false), «для детей» (true) или не трогать
+        # (unset — как раньше); категория — id YouTube (20 игры, 24 развлечения, 1 фильмы и
+        # анимация…), пусто — не трогать.
+        self.youtube_made_for_kids = os.getenv("YOUTUBE_MADE_FOR_KIDS", "false").strip().lower()
+        self.youtube_category_id = os.getenv("YOUTUBE_CATEGORY_ID", "").strip()
         # Статистика опубликованных клипов (app/platform_stats.py): раз в N часов
         # по одной ссылке с паузой — площадки не любят частых запросов. 0 — без фона.
         self.stats_interval_hours = float(os.getenv("STATS_INTERVAL_HOURS", "6") or 0)
@@ -122,6 +145,9 @@ class Settings:
         # по режиму серии: качество — bytedance/seedance-2, черновик — minimax/hailuo-3-max.
         self.aivideo_video_model = os.getenv("AIVIDEO_VIDEO_MODEL", "").strip()
         self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
+        # Объяснялки (app/explainer.py): потолок одной карточки ролика (новые позы + платная озвучка),
+        # сверх — отказ ещё при запросе. 45 с с нуля ≈ 18 поз × 3 ₽ + озвучка ≈ 57 ₽.
+        self.explainer_video_cap_rub = float(os.getenv("EXPLAINER_VIDEO_CAP_RUB", "150") or 150)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         # Бесплатная озвучка (app/dubbing.py GeminiTTS) по тому же ключу Gemini: модель и голос

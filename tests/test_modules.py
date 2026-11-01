@@ -181,7 +181,7 @@ def test_dependencies_cascade_with_confirmation(env):
 
     # Цепочка: series → autopilot и vod_watch.
     plan = modules.plan({"series": False}, store)
-    assert set(plan["also_off"]) == {"autopilot", "vod_watch", "ai_video"}
+    assert set(plan["also_off"]) == {"autopilot", "vod_watch", "ai_video", "explainer"}
     assert modules.dependents("transcription") == ["voices", "censor"]
 
 

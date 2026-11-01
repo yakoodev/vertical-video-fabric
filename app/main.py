@@ -100,6 +100,9 @@ vod_watch_worker = VodWatchWorker(store, download_service, automation_service)
 from app.aivideo_gen import AiVideoWorker  # noqa: E402 - ИИ-видео: одобренные этапы, опрос после перезапуска
 
 aivideo_worker = AiVideoWorker(store)
+from app.explainer_gen import ExplainerWorker  # noqa: E402 - объяснялки: тема → сценарий → позы → карточка → клип
+
+explainer_worker = ExplainerWorker(store)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 # Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
@@ -110,6 +113,7 @@ modules.register_worker("platform_stats", "stats-collector", lambda: stats_colle
 modules.register_worker("autopilot", "autopilot", lambda: autopilot_worker)
 modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)
 modules.register_worker("ai_video", "aivideo-gen", lambda: aivideo_worker)
+modules.register_worker("explainer", "explainer", lambda: explainer_worker)
 
 
 @asynccontextmanager
@@ -4560,6 +4564,11 @@ app.include_router(build_motion_assets_router(AuthDep, lambda: store))
 from app.aivideo_api import build_aivideo_router  # noqa: E402
 
 app.include_router(build_aivideo_router(AuthDep, lambda: store))
+
+# Объяснялки: маскот, библиотека поз, ролик «тема → клип» (app/explainer_api.py).
+from app.explainer_api import build_explainer_router  # noqa: E402
+
+app.include_router(build_explainer_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from app.cookies import CookieRecord, to_cookie_header_for_host
 from app.providers.base import Provider, ProviderResult, safe_provider_error
 from app.publish_format import is_regular_video, youtube_texts
 from app.settings import settings
+
+log = logging.getLogger(__name__)
 
 
 class YouTubeProvider(Provider):
@@ -38,7 +41,17 @@ class YouTubeProvider(Provider):
             "description": description,
             "privacy": privacy.upper(),
             "proxyUrl": proxy_url,
+            # Повторы до создания ролика (сбой выдачи адреса / передачи файла) — в помощнике.
+            "retries": max(0, int(settings.publish_upload_retries)),
+            "retrySeconds": max(0.0, float(settings.publish_upload_retry_seconds)),
         }
+        # Аудитория («для детей» YouTube требует у каждого ролика) и категория — после загрузки.
+        made_for_kids = _made_for_kids(settings.youtube_made_for_kids)
+        if made_for_kids is not None:
+            payload["madeForKids"] = made_for_kids
+        category = _category_id(settings.youtube_category_id)
+        if category:
+            payload["categoryId"] = category
         if thumbnail_path and is_regular_video(self.platform, video_format):
             payload["thumbnailPath"] = str(thumbnail_path)
         try:
@@ -79,6 +92,9 @@ class YouTubeProvider(Provider):
             error = _safe_error(result.get("error") or "")
             return ProviderResult(status=_classify_youtube_error(error), error=error, response=result)
         remote_id = result.get("videoId") or ""
+        log.info("youtube upload ok: account=%s video_id=%s attempts=%s metadata=%s%s", account_label,
+                 remote_id or "?", result.get("uploadAttempts"), result.get("metadataSet"),
+                 f" metadata_error={result['metadataError']}" if result.get("metadataError") else "")
         refreshed = result.get("refreshedCookies")
         response = {k: v for k, v in result.items() if k != "refreshedCookies"}
         if video_format != "9:16":
@@ -90,6 +106,24 @@ class YouTubeProvider(Provider):
             response=response,
             refreshed_cookies=refreshed if isinstance(refreshed, dict) else {},
         )
+
+
+def _made_for_kids(value: str) -> bool | None:
+    """YOUTUBE_MADE_FOR_KIDS: false/no/0 — «не для детей», true/yes/1 — «для детей», иное — не трогать."""
+    value = str(value or "").strip().lower()
+    if value in ("false", "no", "0", "off"):
+        return False
+    if value in ("true", "yes", "1", "on"):
+        return True
+    return None
+
+
+def _category_id(value: str) -> int:
+    try:
+        category = int(str(value or "").strip())
+    except ValueError:
+        return 0
+    return category if category > 0 else 0
 
 
 def _classify_youtube_error(message: str) -> str:

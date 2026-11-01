@@ -138,6 +138,22 @@ MODULES: list[Module] = [
         workers=("aivideo-gen",),
     ),
     Module(
+        "explainer", "Объяснялки (маскот объясняет тему)", "ai",
+        "Ролик «тема → готовый клип»: маскот в разных позах, склейка каждые 1.5–3 с под голос, крупные "
+        "субтитры, плашки #1/#2/#3, чипы, вжухи и музыка. Сценарий — Gemini, позы — из библиотеки маскота "
+        "(новые рисуются только по одобренной карточке), озвучка — Gemini TTS бесплатно или Polza.",
+        cost=("network", "paid"), cost_note="новая поза ≈ 3 ₽ (Polza, по карточке), озвучка ElevenLabs ≈ 3 ₽ за 45 с; "
+                                            "Gemini и Gemini TTS — ключ владельца",
+        depends=("ai_video",),
+        tools=("explainer_overview", "explainer_save_mascot", "explainer_generate_sheet", "explainer_add_pose",
+               "explainer_update_pose", "explainer_delete_pose", "explainer_regenerate_pose", "explainer_create",
+               "explainer_status", "explainer_set_script", "explainer_update_beats", "explainer_continue",
+               "explainer_cancel", "explainer_import_pilot"),
+        routes=("/api/explainer/*", "/api/projects/{id}/explainer*"),
+        ui=("вкладка «Объяснялки» на странице проекта вида ИИ-видео",),
+        workers=("explainer",),
+    ),
+    Module(
         "mcp", "MCP-сервер для внешних агентов", "ai",
         "Инструменты монтажа для Claude Code, Codex и любого MCP-клиента по адресу /mcp.",
         cost=(), cost_note="нагрузка — от того, что делают агенты",

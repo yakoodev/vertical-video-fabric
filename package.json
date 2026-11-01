@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build:motion": "esbuild node/motion-render.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=node/motion-render.mjs --log-level=warning",
-    "test:motion": "npm run build:motion && node --test node/motion.test.mjs node/endscreen.test.mjs"
+    "test:motion": "npm run build:motion && node --test node/motion.test.mjs node/endscreen.test.mjs",
+    "test:youtube": "node --test node/youtube-upload.test.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.10",

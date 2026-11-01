@@ -35,6 +35,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `automation` | `ai_analysis` |
 | `vod_watch` | `automation`, `downloads`, `series` |
 | `ai_video` | `series` |
+| `explainer` | `ai_video` |
 
 ## Список модулей
 
@@ -49,6 +50,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `editor_agent` | ИИ-монтажёр в редакторе | сеть | чат 💬 в монтаже (`/api/clip-plans/{id}/agent*`), вкладка «ИИ» библиотеки |
 | `agent_chat` | Чат с агентом | сеть | страница «Чат», чат проекта (`/api/chat/*`, `/api/projects/{id}/chat`) |
 | `ai_video` | ИИ-видео (ролики с нуля) | сеть, платно | проект «ИИ-видео»: работник `aivideo-gen` (запуски по одобренным карточкам, опрос после перезапуска), `/api/ai-video/*`, `/api/projects/{id}/ai-video*`, 20 инструментов `aiv_*`, вкладка «ИИ-видео» проекта. Этапы refs → keyframes → voice → video (оживление планов, сцепка последним кадром); провайдеры подключаемые (`none`, `polza`). Платное — только по карточке этапа с суммой и при `AIVIDEO_ENABLED=1` ([`guides/ai-video.md`](guides/ai-video.md)) |
+| `explainer` | Объяснялки (маскот объясняет тему) | сеть, платно | ролик «тема → клип»: работник `explainer` (сценарий → позы → карточка → сборка), `/api/explainer/*`, `/api/projects/{id}/explainer*`, 14 инструментов `explainer_*`, вкладка «Объяснялки» проекта «ИИ-видео». Новые позы и озвучка Polza — только по карточке (этап `explainer` машинерии ИИ-видео, потолок ролика `EXPLAINER_VIDEO_CAP_RUB`) ([`guides/explainer.md`](guides/explainer.md)) |
 | `mcp` | MCP-сервер для внешних агентов | — | `/mcp` и `/api/agent/tools` (Claude Code, Codex) |
 
 ### Речь и субтитры
