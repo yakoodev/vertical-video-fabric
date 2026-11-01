@@ -37,3 +37,6 @@
 @media (max-width: 720px) {
   .aiv-shot { grid-template-columns: 90px minmax(0, 1fr); }
 }
+/* Три выпадающих списка стиль-библии в ряд резали подписи («Черновик (1K, с…») — переносим. */
+.aiv .series-row { flex-wrap: wrap; }
+.aiv .series-row > select.input { flex: 1 1 200px; width: auto; min-width: 0; }

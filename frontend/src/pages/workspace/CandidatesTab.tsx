@@ -23,6 +23,7 @@ import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { useModules } from "@/hooks/useModules";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
+import { Group, InspectorTabs, MoreSection, readPref, writePref, type InspTabDef } from "@/pages/workspace/InspectorParts";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import {
   cameraMatrix,
@@ -189,7 +190,7 @@ function FocusEditor({
           title="Перезаписать фокус этого сегмента детектором (лица/движение)"
           onClick={() => detect.mutate()}
         >
-          {detect.isPending ? "Детект…" : "🎯 Детектор"}
+          {detect.isPending ? "Детект…" : "Детектор"}
         </button>
         <button className="btn sm" onClick={addAtPlayhead}>
           + Точка на текущем кадре
@@ -1281,29 +1282,10 @@ function PieceColorControl({
   );
 }
 
-function Group({
-  title,
-  badge,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  badge?: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className={`rgroup${open ? " open" : ""}`}>
-      <button className="rgroup-head" onClick={() => setOpen((v) => !v)} type="button">
-        <span className="rgroup-caret">{open ? "▾" : "▸"}</span>
-        <span className="rgroup-title">{title}</span>
-        {badge ? <span className="rgroup-badge">{badge}</span> : null}
-      </button>
-      {open ? <div className="rgroup-body">{children}</div> : null}
-    </div>
-  );
-}
+// Вкладки правой панели: всё про клип целиком, слои и мемы, выбранный кусок,
+// звук, субтитры, проверка перед сдачей. Раньше было 22 группы одной лентой.
+type InspTab = "clip" | "layers" | "piece" | "audio" | "subs" | "check";
+const INSP_TABS: InspTab[] = ["clip", "layers", "piece", "audio", "subs", "check"];
 
 // Visual picker: one thumbnail per look preset, rendered from a real source frame
 // with the preset's CSS approximation applied — pick a look by eye, not by name.
@@ -1409,6 +1391,27 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const subPosPctRef = useRef(12);
   // Что выбрано на таймлайне: кусок, строка субтитров или вставка.
   const [tlSelected, setTlSelected] = useState<Selection>(null);
+  // Вкладка правой панели — запоминается; выбор на таймлайне сам открывает нужную.
+  const [inspTab, setInspTab] = useState<InspTab>(() => {
+    const saved = readPref("vvf.ed.inspTab");
+    return INSP_TABS.includes(saved as InspTab) ? (saved as InspTab) : "clip";
+  });
+  const inspScrollRef = useRef<HTMLDivElement>(null);
+  const tlSelKey = tlSelected ? `${tlSelected.kind}:${"id" in tlSelected ? tlSelected.id : tlSelected.index}` : "";
+  useEffect(() => {
+    if (!tlSelected) return;
+    const to: Record<NonNullable<Selection>["kind"], InspTab> = {
+      layer: "layers",
+      cam: "layers",
+      insert: "layers",
+      piece: "piece",
+      mute: "audio",
+      sub: "subs",
+    };
+    setInspTab(to[tlSelected.kind]);
+    if (inspScrollRef.current) inspScrollRef.current.scrollTop = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tlSelKey]);
   const [subLines, setSubLines] = useState<SubtitleLine[]>([]);
   const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
@@ -3167,6 +3170,28 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (now < ins.at || now > ins.at + ins.duration) seekClipTime(ins.at + 0.15, false);
   };
 
+  // Холст — один немой кусок: вкладки «Кусок» у него нет.
+  const inspTabs: InspTabDef<InspTab>[] = [
+    { key: "clip", label: "Клип", hint: "Формат, быстрые действия, лук, раскладка, переходы, обложка, баннер, паузы; «Ещё…» — умный кадр, границы, экспорт" },
+    { key: "layers", label: "Слои", count: layers.length + inserts.length, hint: "Выбранный слой, все слои клипа, мемы-вставки, наезды камеры" },
+    ...(isCanvas ? [] : [{ key: "piece" as const, label: "Кусок", hint: "Скорость, цвет и фокус кадра выбранного куска" }]),
+    { key: "audio", label: "Звук", hint: "Музыка, тишина вместо звука, громкость и звуковые дорожки исходника" },
+    { key: "subs", label: "Субтитры", hint: "Субтитры: стиль, положение, распознавание, правка строк, голоса, перевод" },
+    { key: "check", label: "Проверка", hint: "Проверка перед сдачей: зоны кнопок площадок, читаемость титров, вспышки, луп" },
+  ];
+  const inspActive: InspTab = isCanvas && inspTab === "piece" ? "clip" : inspTab;
+  const pickInspTab = (key: InspTab) => {
+    setInspTab(key);
+    writePref("vvf.ed.inspTab", key);
+    if (inspScrollRef.current) inspScrollRef.current.scrollTop = 0;
+    // «Кусок» без выбранного куска пуст — берём первый, чтобы сразу было что править.
+    if (key === "piece" && !selectedSegment && activePlan?.segments.length) {
+      setSelectedSeg(activePlan.segments[0].id);
+      setTlSelected({ kind: "piece", index: 0 });
+    }
+  };
+  const selectedPieceIndex = selectedSegment && activePlan ? activePlan.segments.findIndex((s) => s.id === selectedSegment.id) : -1;
+
   subPosPctRef.current = subPosPct;
   // «По умолчанию» на панели = первый стиль в списке, как и на сервере.
   subStyleRef.current = (subs.data?.find((s) => s.id === subId) ?? subs.data?.[0] ?? null) as SubtitleStyle | null;
@@ -3507,7 +3532,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             onClick={() => openEditor()}
             title={favCount ? "Работать над избранными моментами" : "Отметьте ★ моменты, чтобы работать над ними в редакторе"}
           >
-            ✂️ Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
+            Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
           </button>
           <button
             className="btn mo-big"
@@ -4089,7 +4114,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                           onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
                           title="Пересчитать автофокус для этого клипа"
                         >
-                          🎯 Авто
+                          Авто
                         </button>
                       ) : null}
                     </div>
@@ -4100,1139 +4125,1206 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         </div>
 
         <aside className="ed-inspector">
-          <div className="ed-insp-scroll">
-            {selectedLayerId && layers.find((l) => l.id === selectedLayerId) ? (
-              <LayerInspector
-                key={selectedLayerId}
-                layer={layers.find((l) => l.id === selectedLayerId)!}
-                words={captionWords}
-                fonts={motionFonts.data ?? []}
-                now={clipNow}
-                clipDuration={clipDuration}
-                refWidth={formatRefSize(layersFmt).w}
-                onChange={(next) => setLayers((prev) => prev.map((l) => (l.id === next.id ? next : l)))}
-                onDelete={() => {
-                  setLayers((prev) => prev.filter((l) => l.id !== selectedLayerId));
-                  setTlSelected(null);
-                }}
-                onDuplicate={() => {
-                  const r = duplicateLayer(layers, selectedLayerId, clipDuration);
-                  setLayers(r.layers);
-                  if (r.id) setTlSelected({ kind: "layer", id: r.id });
-                }}
-                onSeek={(t) => seekClipTime(t, false)}
-                keyed={Boolean(source.chroma_key)}
-                hasCamera={camera.length > 0}
-                planId={activePlan?.id}
-                onPickPoint={(cb) => {
-                  pickPointRef.current = cb;
-                  setPickingPoint(Boolean(cb));
-                }}
-              />
-            ) : null}
-            <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>
-              {layers.length ? (
-                <div className="ed-layer-list">
-                  {[...layers]
-                    .sort((a, b) => a.start - b.start)
-                    .map((l) => (
-                      <div
-                        key={l.id}
-                        className={`ed-layer-row${selectedLayerId === l.id ? " on" : ""}${l.hidden ? " off" : ""}`}
-                        onClick={() => {
-                          setTlSelected({ kind: "layer", id: l.id });
-                          const now = clipTimeExact();
-                          if (now < l.start || now > l.end) seekClipTime(l.start + Math.min(0.6, (l.end - l.start) / 2), false);
-                        }}
-                      >
-                        <span className="ed-layer-ico">{LAYER_ICON[l.type]}</span>
-                        <span className="ed-layer-name">{layerTitle(l)}</span>
-                        <span className="mono muted ed-layer-time">{formatDuration(l.start)}</span>
-                        <button
-                          type="button"
-                          className="btn ghost sm"
-                          title={l.hidden ? "Показать" : "Скрыть"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLayers((prev) => prev.map((x) => (x.id === l.id ? ({ ...x, hidden: !x.hidden } as Layer) : x)));
-                          }}
-                        >
-                          {l.hidden ? "🙈" : "👁"}
-                        </button>
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="muted li-note">Слоёв пока нет — возьмите шаблон, текст или стикер в библиотеке слева, или попросите ИИ.</div>
-              )}
-            </Group>
-            <Group
-              title="Паузы и слова-паразиты"
-              badge={cuts.length ? `−${cutsTotal(cuts).toFixed(1)} с` : "нет"}
-            >
-              {activePlan && !moduleOn("jump_cuts") ? (
-                <div className="muted li-note">Модуль «Джамп-каты» выключен (Настройки → Модули).</div>
-              ) : activePlan ? (
-                <CutsPanel
-                  clipPlanId={activePlan.id}
-                  cuts={cuts}
-                  onChange={(next) => {
-                    // Панель уже сохранила вырезы; автосохранение повторит то же самое — не страшно.
-                    setCuts(next);
-                    void qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-                  }}
-                  onSeek={(t) => seekClipTime(t, false)}
-                />
-              ) : null}
-            </Group>
-            <Group title="🔎 Проверка перед сдачей">
-              {activePlan ? (
-                <LintPanel
-                  clipPlanId={activePlan.id}
-                  beforeRun={flushSettings}
-                  onSeek={(t) => seekClipTime(t, false)}
-                />
-              ) : null}
-            </Group>
-            {/* Холст: звука исходника нет — глушить, громкость и дорожки не нужны. */}
-            {isCanvas ? null : (
-            <>
-            <Group
-              title="Тишина вместо звука"
-              badge={mute.length ? `${mute.length} · ${muteTotal(mute).toFixed(1)} с` : "нет"}
-              defaultOpen={tlSelected?.kind === "mute"}
-            >
-              <div className="muted li-note">
-                Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
-                Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
-              </div>
-              <div className="ed-quick-row">
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={!activePlan || censorMat.isPending}
-                  onClick={() => activePlan && censorMat.mutate(activePlan.id)}
-                  title="По словам субтитров: каждое матерное слово глушится серединой (человек поймёт, автосубтитры площадок — нет), в субтитрах — «б****». Ручные отрезки не трогает, повторное нажатие заменяет только свои. Ctrl+Z откатит."
+          <InspectorTabs tabs={inspTabs} active={inspActive} onPick={pickInspTab} />
+          <div className="ed-insp-scroll" ref={inspScrollRef}>
+            <div className="insp-pane" hidden={inspActive !== "clip"} role="tabpanel" aria-label="Клип">
+              <Group title="Формат и концовка" badge={aspect} defaultOpen>
+                <div className="sub-options">
+                <label
+                  className="field"
+                  title="Формат готового ролика: видео кадрируется окном нужной пропорции, слои сами переносятся в кадр одним масштабом, фон — на весь кадр. Превью сразу показывает кадр этого формата"
                 >
-                  {censorMat.isPending ? "Ищу мат…" : "🤬 Заглушить мат"}
-                </button>
-                <select
-                  className="input"
-                  style={{ flex: "1 1 120px", minWidth: 0 }}
-                  value={censorStyle}
-                  onChange={(e) => setCensorStyle(e.target.value as CensorStyle | "")}
-                  title="Чем заполнить заглушённую середину слова. Превью глушит тишиной — как звучит, слышно в рендере"
-                >
-                  <option value="">как раньше у клипа (новый — задом наперёд)</option>
-                  {(Object.keys(CENSOR_STYLES) as CensorStyle[]).map((s) => (
-                    <option key={s} value={s}>{CENSOR_STYLES[s]}</option>
-                  ))}
-                </select>
-              </div>
-              {mute.length ? (
-                <div className="ed-layer-list">
-                  {mute.map((m, i) => (
-                    <div
-                      key={`${m.start}-${m.end}-${m.by ?? ""}`}
-                      className={`ed-layer-row${tlSelected?.kind === "mute" && tlSelected.index === i ? " on" : ""}`}
-                      onClick={() => {
-                        setTlSelected({ kind: "mute", index: i });
-                        seekClipTime(Math.max(0, m.start - 1), false);
-                      }}
-                      title={
-                        m.by === "censor"
-                          ? `Мат, уровень ${m.level ?? 1}, ${CENSOR_STYLES[m.style ?? "silence"]} (кнопка «Заглушить мат» заменит). Перейти на секунду раньше`
-                          : "Перейти на секунду раньше отрезка — послушать стык"
-                      }
-                    >
-                      <span className="ed-layer-ico">{m.by === "censor" ? "🤬" : "🔇"}</span>
-                      <span className="ed-layer-name mono">
-                        {formatTimecode(m.start)} – {formatTimecode(m.end)}
-                      </span>
-                      <span className="mono muted ed-layer-time">{(m.end - m.start).toFixed(1)} с</span>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        title="Вернуть звук"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMute((prev) => prev.filter((_, j) => j !== i));
-                          setTlSelected(null);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </Group>
-            <Group title="Громкость исходника" badge={gain.length ? `${gain.length} отр.` : "как есть"}>
-              <div className="muted li-note">
-                Поднять тихий кусок (голос под игрой) или приглушить громкий: звук исходника на отрезке громче/тише
-                на столько дБ, картинка та же; звуки слоёв и музыка не меняются. Тихий микрофон по всему ролику —
-                громкость дорожки в звуке проекта.
-              </div>
-              {gain.length ? (
-                <div className="ed-layer-list">
-                  {gain.map((g, i) => (
-                    <div key={`${g.start}-${g.end}`} className="ed-layer-row" title="Перейти на секунду раньше отрезка">
-                      <span className="ed-layer-ico">🔊</span>
-                      <span
-                        className="ed-layer-name mono"
-                        onClick={() => seekClipTime(Math.max(0, g.start - 1), false)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        {formatTimecode(g.start)} – {formatTimecode(g.end)}
-                      </span>
-                      <input
-                        type="number"
-                        className="input mono"
-                        style={{ width: 70 }}
-                        step={1}
-                        min={GAIN_MIN_DB}
-                        max={GAIN_MAX_DB}
-                        value={g.gain_db}
-                        title="дБ: плюс — громче, минус — тише"
-                        onChange={(e) => {
-                          const db = Number(e.target.value);
-                          if (!Number.isFinite(db)) return;
-                          const clamped = Math.round(Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, db)) * 10) / 10;
-                          setGain((prev) => prev.map((x, j) => (j === i ? { ...x, gain_db: clamped } : x)));
-                        }}
-                      />
-                      <span className="muted">дБ</span>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        title="Убрать отрезок"
-                        onClick={() => setGain((prev) => prev.filter((_, j) => j !== i))}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className="btn ghost sm"
-                title="Отрезок 3 с от курсора, +6 дБ — потом поправьте дБ"
-                onClick={() => {
-                  const v = videoRef.current;
-                  const t = v ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
-                  const at = t ?? 0;
-                  setGain((prev) => normalizeGain([...prev, { start: at, end: at + 3, gain_db: 6 }]));
-                }}
-              >
-                🔊 Громче у курсора
-              </button>
-            </Group>
-            <Group
-              title="Звуковые дорожки"
-              badge={
-                (source.audio_tracks?.length ?? 0) > 1
-                  ? `смесь ${source.audio_tracks!.map((t) => t + 1).join("+")}`
-                  : source.audio_tracks?.length
-                    ? `дорожка ${source.audio_tracks[0] + 1}`
-                    : "по умолчанию"
-              }
-            >
-              <SourceAudioPanel sourceId={source.id} />
-            </Group>
-            </>
-            )}
-            <Group
-              title={isCanvas ? "Фон холста" : "Раскладка кадра"}
-              badge={
-                isCanvas
-                  ? canvasLabel(backdrop).replace("Холст · ", "")
-                  : { single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"
-              }
-              defaultOpen={isCanvas}
-            >
-              <LayoutPanel
-                sourceId={source.id}
-                layout={layout}
-                onChange={setLayout}
-                frameAt={videoRef.current?.currentTime ?? 0}
-                chromaKey={source.chroma_key}
-                backdrop={backdrop}
-                onBackdrop={setBackdrop}
-                accent={clipAccent(layers)}
-                canvas={isCanvas}
-              />
-            </Group>
-            <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} defaultOpen={tlSelected?.kind === "cam"}>
-              <CameraPanel
-                words={(planSubs.data?.words ?? []) as SubtitleWord[]}
-                peaks={planWave.data?.peaks ?? []}
-                camera={camera}
-                selectedIndex={tlSelected?.kind === "cam" ? tlSelected.index : null}
-                now={clipNow}
-                clipDuration={clipDuration}
-                onChange={setCamera}
-                onSelect={(i) => setTlSelected(i == null ? null : { kind: "cam", index: i })}
-              />
-            </Group>
-            {/* Быстрые ИИ-действия сверху: их зовут на каждом клипе, а искать их
-                по свёрнутым группам — лишний скролл (ref2-inspector.png). */}
-            <div className="ed-quick">
-              <span className="ed-quick-title">Быстрые ИИ-действия</span>
-              <div className="ed-quick-row">
-                {moduleOn("ai_montage") ? (
-                  <button
-                    className="btn sm primary"
-                    disabled={!activePlan}
-                    onClick={async () => {
-                      await flushSettings();
-                      setAiGoal("");
-                      setAiMontageOpen(true);
-                    }}
-                    title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"
-                  >
-                    🤖 ИИ-монтаж
-                  </button>
-                ) : null}
-                <button
-                  className="btn sm"
-                  disabled={!activePlan || autoEdit.isPending}
-                  onClick={() => activePlan && autoEdit.mutate(activePlan.id)}
-                  title="Без ИИ, за секунду: хук-титр, анимированные субтитры по словам (ключевые цветом, другие голоса отдельно), наезды в героя и звуки на ударные слова. Ctrl+Z откатит."
-                >
-                  {autoEdit.isPending ? "Собираю…" : "⚡ Автомонтаж"}
-                </button>
-                <a
-                  className="btn sm"
-                  href="/assets"
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Библиотека мемов: ИИ ищет картинки в интернете и описывает файлы"
-                >
-                  🔎 Найти мемы
-                </a>
-                {isCanvas || !moduleOn("autofocus") ? null : (
-                  <button
-                    className="btn sm"
-                    disabled={!activePlan?.segments.length || autofocus.isPending}
-                    onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                    title="Пересчитать автофокус для всех кусков клипа"
-                  >
-                    {autofocus.isPending ? "Считаю…" : "🎯 Автофокус"}
-                  </button>
-                )}
-              </div>
-              {brands.data?.length ? (
-                <div className="ed-quick-row">
+                  <span>Формат</span>
                   <select
                     className="input"
-                    style={{ flex: "1 1 120px", minWidth: 0 }}
-                    value={brandPick || brands.data[0].id}
-                    onChange={(e) => setBrandPick(Number(e.target.value))}
-                    title="Бренд заказчика (Настройки → Бренды)"
+                    value={aspect}
+                    onChange={(e) => {
+                      const next = e.target.value as Aspect;
+                      setAspect(next);
+                      // Слоёв ещё нет — новые сразу размечаются в кадре нового формата.
+                      if (!layers.length && !camera.length) setLayersFmt(next);
+                    }}
                   >
-                    {brands.data.map((b) => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
+                    <option value="9:16">9:16 — вертикаль</option>
+                    <option value="1:1">1:1 — квадрат</option>
+                    <option value="4:5">4:5 — лента</option>
+                    <option value="16:9">16:9 — горизонталь</option>
                   </select>
+                </label>
+                <label className="field" title="Последний кадр стоит, пока затухает звук (музыка доигрывает на нём). Мему — «без стоп-кадра»: ролик обрывается на последнем кадре">
+                  <span>Стоп-кадр в конце</span>
+                  <select
+                    className="input"
+                    value={endHoldSec == null ? "" : String(endHoldSec)}
+                    onChange={(e) => setEndHoldSec(e.target.value === "" ? null : Number(e.target.value))}
+                  >
+                    <option value="">как у сервиса</option>
+                    <option value="0">без стоп-кадра</option>
+                    <option value="0.25">0.25 с</option>
+                    <option value="0.5">0.5 с</option>
+                    <option value="1">1 с</option>
+                    <option value="1.5">1.5 с</option>
+                  </select>
+                </label>
+                <label
+                  className="field"
+                  title="Motion blur: быстрые слои, наезды и whip камеры смазываются по пути движения (затвор — доля кадра; 50% — киношные 180°). В покое кадр не меняется. Свой у слоя — в его инспекторе, у ключа камеры — в панели камеры"
+                >
+                  <span>Motion blur · {motionBlur ? `${Math.round(motionBlur * 100)}%` : "выкл"}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={Math.round((motionBlur ?? 0) * 100)}
+                    onChange={(e) => setMotionBlur(Number(e.target.value) ? Number(e.target.value) / 100 : null)}
+                  />
+                </label>
+                </div>
+              </Group>
+              {/* Быстрые действия: «🤖 ИИ-монтаж» — в шапке редактора, автофокус клипа — «Авто»
+                  под превью (и в «Ещё… → Умный кадр»): здесь их больше не дублируем. */}
+              <div className="ed-quick">
+                <span className="ed-quick-title">Быстрые действия</span>
+                <div className="ed-quick-row">
                   <button
                     className="btn sm"
-                    disabled={!activePlan || applyBrand.isPending}
-                    onClick={() =>
-                      activePlan &&
-                      applyBrand.mutate({ clipPlanId: activePlan.id, brandId: brandPick || brands.data![0].id })
-                    }
-                    title="Субтитры и хук в цветах бренда, логотип в углу, призыв на последние секунды, музыка и фон бренда. Делай после монтажа; повтор не дублирует. Ctrl+Z откатит."
+                    disabled={!activePlan || autoEdit.isPending}
+                    onClick={() => activePlan && autoEdit.mutate(activePlan.id)}
+                    title="Без ИИ, за секунду: хук-титр, анимированные субтитры по словам (ключевые цветом, другие голоса отдельно), наезды в героя и звуки на ударные слова. Ctrl+Z откатит."
                   >
-                    {applyBrand.isPending ? "Применяю…" : "Применить бренд"}
+                    {autoEdit.isPending ? "Собираю…" : "Автомонтаж"}
                   </button>
+                  <a
+                    className="btn sm"
+                    href="/assets"
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Библиотека мемов (откроется в новой вкладке): ИИ ищет картинки в интернете и описывает файлы"
+                  >
+                    Найти мемы ↗
+                  </a>
                 </div>
-              ) : null}
-            </div>
-            <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
-              <label className="field">
-                <span>Пресет</span>
-                <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-                  <option value={0}>По умолчанию</option>
-                  {uniquePresets.map((p) => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
+                {brands.data?.length ? (
+                  <div className="ed-quick-row">
+                    <select
+                      className="input"
+                      style={{ flex: "1 1 120px", minWidth: 0 }}
+                      value={brandPick || brands.data[0].id}
+                      onChange={(e) => setBrandPick(Number(e.target.value))}
+                      title="Бренд заказчика (Настройки → Бренды)"
+                    >
+                      {brands.data.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn sm"
+                      disabled={!activePlan || applyBrand.isPending}
+                      onClick={() =>
+                        activePlan &&
+                        applyBrand.mutate({ clipPlanId: activePlan.id, brandId: brandPick || brands.data![0].id })
+                      }
+                      title="Субтитры и хук в цветах бренда, логотип в углу, призыв на последние секунды, музыка и фон бренда. Делай после монтажа; повтор не дублирует. Ctrl+Z откатит."
+                    >
+                      {applyBrand.isPending ? "Применяю…" : "Применить бренд"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
+                <label className="field">
+                  <span>Пресет</span>
+                  <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
+                    <option value={0}>По умолчанию</option>
+                    {uniquePresets.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {/* Кадры основы холста — зелёные: смотреть лук не на чем. */}
+                <LookPicker frames={isCanvas ? [] : lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
+                <label className="switch" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
+                  <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+                  <span className="switch-track" />
+                  <span>Зеркало (лево↔право)</span>
+                </label>
+              </Group>
+              <Group
+                title={isCanvas ? "Фон холста" : "Раскладка кадра"}
+                badge={
+                  isCanvas
+                    ? canvasLabel(backdrop).replace("Холст · ", "")
+                    : { single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"
+                }
+                defaultOpen={isCanvas}
+              >
+                <LayoutPanel
+                  sourceId={source.id}
+                  layout={layout}
+                  onChange={setLayout}
+                  frameAt={videoRef.current?.currentTime ?? 0}
+                  chromaKey={source.chroma_key}
+                  backdrop={backdrop}
+                  onBackdrop={setBackdrop}
+                  accent={clipAccent(layers)}
+                  canvas={isCanvas}
+                />
+              </Group>
+              <Group
+                title="Переходы"
+                badge={transitionOpts.data?.types.find((t) => t.key === transition.type)?.label ?? "встык"}
+              >
+                {(activePlan?.segments.length ?? 0) < 2 ? (
+                  <p className="muted field-hint">
+                    В этом клипе один кусок — склеивать нечего. Переход сработает, когда кусков станет больше.
+                  </p>
+                ) : null}
+                <label className="field">
+                  <span>Склейка кусков</span>
+                  <select
+                    className="input"
+                    value={transition.type}
+                    onChange={(e) => patchTransition({ type: e.target.value as TransitionSettings["type"] })}
+                  >
+                    {(transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]).map((t) => (
+                      <option key={t.key} value={t.key}>{t.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {transition.type !== "cut" ? (
+                  <label className="switch" title="Внутри одной сцены (вырезанная пауза) склейка остаётся встык — эффект тратится только на смену сцены.">
+                    <input
+                      type="checkbox"
+                      checked={transition.smart !== false}
+                      onChange={(e) => patchTransition({ smart: e.target.checked })}
+                    />
+                    <span className="switch-track" />
+                    <span>умные склейки: внутри сцены — встык</span>
+                  </label>
+                ) : null}
+                {transition.type !== "cut" && !(transitionOpts.data?.snap ?? {})[transition.type] ? (
+                  <label className="field">
+                    <span>Длительность — {transition.duration.toFixed(2)} с</span>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={1.2}
+                      step={0.05}
+                      value={transition.duration}
+                      onChange={(e) => patchTransition({ duration: Number(e.target.value) })}
+                    />
+                  </label>
+                ) : null}
+                <label className="field">
+                  <span>Звук на стыке</span>
+                  <select
+                    className="input"
+                    value={transition.audio}
+                    onChange={(e) => patchTransition({ audio: e.target.value as TransitionSettings["audio"] })}
+                    title="Плавно — звук перетекает (на резкой склейке — без щелчка). Резко — обрывается точно на стыке."
+                  >
+                    {(transitionOpts.data?.audio ?? []).map((a) => (
+                      <option key={a.key} value={a.key}>{a.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Звук-эффект на каждом стыке</span>
+                  <select
+                    className="input"
+                    value={transition.sfx}
+                    onChange={(e) => patchTransition({ sfx: e.target.value as TransitionSettings["sfx"] })}
+                  >
+                    {(transitionOpts.data?.sfx ?? []).map((a) => (
+                      <option key={a.key} value={a.key}>{a.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {transition.sfx !== "none" ? (
+                  <label className="field">
+                    <span>Громкость эффекта — {Math.round(transition.sfx_volume * 100)}%</span>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={transition.sfx_volume}
+                      onChange={(e) => patchTransition({ sfx_volume: Number(e.target.value) })}
+                    />
+                  </label>
+                ) : null}
+              </Group>
+              <Group
+                title="Обложка"
+                badge={cover.mode === "none" ? "нет" : cover.mode === "frame" ? "кадр" : "картинка"}
+              >
+                <div className="cover-compose">
+                  <span className="li-cap">Обложка с заголовком — кадр под курсором + крупный текст</span>
+                  <div className="li-row">
+                    <input
+                      className="input li-grow"
+                      placeholder={activePlan?.title ? activePlan.title.toUpperCase() : "ЗАГОЛОВОК"}
+                      value={coverTitle}
+                      onChange={(e) => setCoverTitle(e.target.value)}
+                      maxLength={80}
+                    />
+                    <select className="input" value={coverStyle} onChange={(e) => setCoverStyle(e.target.value)}>
+                      <option value="yellow">Жёлтый</option>
+                      <option value="fire">Огонь</option>
+                      <option value="white">Белый</option>
+                      <option value="plate">Плашка</option>
+                    </select>
+                  </div>
+                  {moduleOn("covers") ? (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={!activePlan || composeCover.isPending}
+                      onClick={() => composeCover.mutate()}
+                    >
+                      {composeCover.isPending ? "Рисую…" : "Сделать обложку"}
+                    </button>
+                  ) : null}
+                </div>
+                <div className="seg-toggle" role="radiogroup" aria-label="Источник обложки">
+                  {([
+                    ["none", "Нет"],
+                    ["frame", "Кадр из клипа"],
+                    ["image", "Своя картинка"],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={cover.mode === key}
+                      className={cover.mode === key ? "active" : ""}
+                      onClick={() => patchCover({ mode: key })}
+                    >
+                      {label}
+                    </button>
                   ))}
-                </select>
-              </label>
-              {/* Кадры основы холста — зелёные: смотреть лук не на чем. */}
-              <LookPicker frames={isCanvas ? [] : lookFrames} presets={uniquePresets} value={presetId} onPick={setPresetId} />
-              <label className="switch" title="Отразить видео по горизонтали (поменять лево и право) — например чтобы репост отличался от оригинала">
-                <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
-                <span className="switch-track" />
-                <span>🪞 Зеркало (лево↔право)</span>
-              </label>
-            </Group>
+                </div>
 
-            <Group title="Субтитры" badge={subsOn ? "вкл" : subLines.length ? "текст" : "выкл"} defaultOpen>
-              <label className="switch">
-                <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
-                <span className="switch-track" />
-                <span>Накладывать субтитры</span>
-              </label>
-              {subsOn ? (
-                <>
-                  <div className="sub-options">
-                    <label className="field">
-                      <span>Движок</span>
-                      <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
-                        <option value="">из стиля</option>
-                        <option value="whisper">Whisper (локально)</option>
-                        <option value="gemini">Gemini</option>
-                      </select>
+                {cover.mode === "frame" && activePlan ? (() => {
+                  const pieces = activePlan.segments;
+                  const idx = Math.min(cover.piece, Math.max(0, pieces.length - 1));
+                  const seg = pieces[idx];
+                  const len = seg ? seg.end_sec - seg.start_sec : 0;
+                  const off = Math.min(cover.offset, Math.max(0, len - 0.05));
+                  const t = seg ? seg.start_sec + off : 0;
+                  return (
+                    <>
+                      {pieces.length > 1 ? (
+                        <label className="field">
+                          <span>Кусок</span>
+                          <select
+                            className="input"
+                            value={idx}
+                            onChange={(e) => patchCover({ piece: Number(e.target.value), offset: 0 })}
+                          >
+                            {pieces.map((p, i) => (
+                              <option key={p.id} value={i}>
+                                {i + 1}. {p.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      <label className="field">
+                        <span>Момент — {off.toFixed(1)} с от начала куска</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(0.1, len - 0.05)}
+                          step={0.1}
+                          value={off}
+                          onChange={(e) => patchCover({ offset: Number(e.target.value) })}
+                        />
+                      </label>
+                      {seg ? (
+                        aspect === "9:16" ? (
+                          <img
+                            className="cover-preview"
+                            alt="Кадр для обложки"
+                            src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&x=${focusXAt(seg, off).toFixed(3)}`}
+                          />
+                        ) : (
+                          // Другой формат: полный кадр, обрезанный окном формата у той же точки фокуса.
+                          <img
+                            className="cover-preview"
+                            alt="Кадр для обложки"
+                            src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&w=640`}
+                            style={{
+                              aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}`,
+                              maxWidth: frameSize(aspect).w > frameSize(aspect).h ? 320 : undefined,
+                              objectPosition: `${(focusWindowPos(focusXAt(seg, off), source.width, source.height, aspect) * 100).toFixed(1)}% 50%`,
+                            }}
+                          />
+                        )
+                      ) : null}
+                      <p className="muted field-hint">В рендере кадр будет уже с цветом, субтитрами и баннером.</p>
+                    </>
+                  );
+                })() : null}
+
+                {cover.mode === "image" ? (
+                  <>
+                    <label className="btn cover-upload">
+                      {coverUploading ? "Загружаю…" : cover.image ? "Заменить картинку…" : "Выбрать картинку…"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        disabled={coverUploading}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = "";
+                          if (!f) return;
+                          setCoverUploading(true);
+                          try {
+                            const res = await clipPlansApi.uploadCover(f);
+                            patchCover({ image: res.image });
+                          } catch (err) {
+                            toast.error(err instanceof ApiError ? err.message : "Не удалось загрузить картинку");
+                          } finally {
+                            setCoverUploading(false);
+                          }
+                        }}
+                      />
                     </label>
+                    {cover.image ? (
+                      <img
+                        className="cover-preview"
+                        alt="Обложка"
+                        src={`/media/covers/${cover.image}`}
+                        style={aspect === "9:16" ? undefined : { aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}` }}
+                      />
+                    ) : (
+                      <p className="muted field-hint">Картинка подгонится под 1080×1920: заполнит кадр, лишнее обрежется.</p>
+                    )}
+                  </>
+                ) : null}
+
+                {cover.mode !== "none" ? (
+                  <>
+                    <label
+                      className="switch"
+                      title="Площадки, которые берут превью с первого кадра (Reels, лента TikTok), покажут обложку"
+                    >
+                      <input type="checkbox" checked={cover.burn} onChange={(e) => patchCover({ burn: e.target.checked })} />
+                      <span className="switch-track" />
+                      <span>Вшить первым кадром</span>
+                    </label>
+                    {cover.burn ? (
+                      <label className="field">
+                        <span>Сколько держать — {cover.burn_sec.toFixed(2)} с</span>
+                        <input
+                          type="range"
+                          min={0.04}
+                          max={0.5}
+                          step={0.02}
+                          value={cover.burn_sec}
+                          onChange={(e) => patchCover({ burn_sec: Number(e.target.value) })}
+                        />
+                      </label>
+                    ) : null}
+                  </>
+                ) : null}
+              </Group>
+              <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
+                <label className="switch">
+                  <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
+                  <span className="switch-track" />
+                  <span>Накладывать баннер</span>
+                </label>
+                {bannerOn ? (
+                  <>
                     <label className="field">
-                      <span>Стиль</span>
-                      <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
+                      <span>Картинка</span>
+                      <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
                         <option value={0}>по умолчанию</option>
-                        {subs.data?.map((s) => (
-                          <option key={s.id} value={s.id}>{s.label}</option>
+                        {banners.data?.map((b) => (
+                          <option key={b.id} value={b.id}>{b.label}</option>
                         ))}
                       </select>
                     </label>
-                  </div>
-                  <label className="field range">
-                    <span>Положение · {subPosPct}% снизу</span>
-                    <input
-                      type="range" min={2} max={40} value={subPosPct}
-                      onChange={(e) => setSubPosPct(Number(e.target.value))}
-                    />
-                  </label>
-                </>
-              ) : null}
-              {/* Текст речи нужен и выжженным субтитрам, и слою «Анимированные субтитры»
-                  (автомонтаж выключает первые и ставит слой) — правка и «Голоса» видны всегда. */}
-              {activePlan ? (
-                <button
-                  className="btn sm"
-                  onClick={() => setSubsWide(true)}
-                  title="Открыть строки на всё окно: широкий текст и таймкоды"
+                    <label className="field range">
+                      <span>Высота · {bannerHeightPct}%</span>
+                      <input
+                        type="range" min={6} max={30} value={bannerHeightPct}
+                        onChange={(e) => setBannerHeightPct(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="field range">
+                      <span>Положение · {bannerPosPct}% сверху</span>
+                      <input
+                        type="range" min={0} max={80} value={bannerPosPct}
+                        onChange={(e) => setBannerPosPct(Number(e.target.value))}
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </Group>
+              <Group
+                title="Паузы и слова-паразиты"
+                badge={cuts.length ? `−${cutsTotal(cuts).toFixed(1)} с` : "нет"}
+              >
+                {activePlan && !moduleOn("jump_cuts") ? (
+                  <div className="muted li-note">Модуль «Джамп-каты» выключен (Настройки → Модули).</div>
+                ) : activePlan ? (
+                  <CutsPanel
+                    clipPlanId={activePlan.id}
+                    cuts={cuts}
+                    onChange={(next) => {
+                      // Панель уже сохранила вырезы; автосохранение повторит то же самое — не страшно.
+                      setCuts(next);
+                      void qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                    }}
+                    onSeek={(t) => seekClipTime(t, false)}
+                  />
+                ) : null}
+              </Group>
+              <MoreSection id="clip" label="Ещё" hint="умный кадр, границы клипов, экспорт в монтажку">
+                {/* Холст: умный кадр не нужен — кадр 9:16 целиком. */}
+                {isCanvas ? null : (
+                <Group
+                  title="Умный кадр"
+                  badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
                 >
-                  ⛶ Править строки широко
-                </button>
-              ) : null}
-              {activePlan ? (
-                <SubtitleEditor
-                  key={activePlan.id}
-                  clipPlanId={activePlan.id}
-                  silent={isCanvas}
-                  clipTime={clipTimeNow}
-                  onSeek={seekClipTime}
-                  onLines={(lines) => {
-                    subLinesRef.current = lines;
-                    setSubLines(lines);
-                  }}
-                  onWords={(words) => {
-                    subWordsRef.current = words;
-                  }}
-                  onServerChange={async () => {
-                    await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-                    setSettingsNonce((n) => n + 1);
-                  }}
-                />
-              ) : null}
-            </Group>
-
-            <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"} defaultOpen>
-              {!assetsQuery.data?.length ? (
-                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                  Библиотека пуста — закиньте мемы и звуки в{" "}
-                  <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
-                    «Файлы для монтажа»
-                  </a>
-                  . 🤖 ИИ-монтаж вставит подходящие сам.
-                </p>
-              ) : null}
-              {inserts.map((ins, i) => {
-                const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
-                const upd = (patchIns: Partial<MontageInsert>) =>
-                  setInserts((prev) => prev.map((x, j) => (j === i ? { ...x, ...patchIns } : x)));
-                return (
-                  <div key={i} className="ins-row">
+                  <label className="field">
+                    <span>Стратегия — как ведёт себя кадр</span>
                     <select
                       className="input"
-                      value={ins.asset_id}
-                      onChange={(e) => upd({ asset_id: Number(e.target.value) })}
+                      value={source.focus_strategy || "shot"}
+                      onChange={(e) => setFocus.mutate({ focus_strategy: e.target.value })}
+                      disabled={setFocus.isPending}
                     >
-                      {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
-                      {assetsQuery.data?.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label} · {a.kind}
-                        </option>
+                      {focusOptions.data?.strategies.map((s) => (
+                        <option key={s.key} value={s.key}>{s.label}</option>
                       ))}
                     </select>
-                    <div className="ins-grid">
-                      <label className="field">
-                        <span>с, от начала клипа</span>
-                        <input
-                          className="input"
-                          type="number"
-                          min={0}
-                          step={0.1}
-                          value={ins.at}
-                          onChange={(e) => upd({ at: Number(e.target.value) })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>длит., с</span>
-                        <input
-                          className="input"
-                          type="number"
-                          min={0.3}
-                          max={8}
-                          step={0.1}
-                          value={ins.duration}
-                          onChange={(e) => upd({ duration: Number(e.target.value) })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>как</span>
-                        <select
-                          className="input"
-                          value={asset?.kind === "audio" ? "sound" : ins.mode}
-                          disabled={asset?.kind === "audio"}
-                          onChange={(e) => upd({ mode: e.target.value as MontageInsert["mode"], duck: e.target.value === "full" })}
-                        >
-                          <option value="full">на весь кадр</option>
-                          <option value="pip">окном</option>
-                          <option value="sound">только звук</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="ins-foot">
-                      <button type="button" className="btn sm" title="Поставить на текущий момент плеера" onClick={() => upd({ at: clipTimeNow() })}>
-                        ⏱ сейчас
-                      </button>
-                      <button
-                        type="button"
-                        className="btn sm"
-                        title="Проиграть клип с этого места"
-                        onClick={() => seekClipTime(ins.at)}
-                      >
-                        ▶ к месту
-                      </button>
-                      <button type="button" className="btn ghost sm" title="Убрать вставку" onClick={() => setInserts((prev) => prev.filter((_, j) => j !== i))}>
-                        ✕
-                      </button>
-                    </div>
-                    {ins.reason ? <span className="ins-why">🤖 {ins.reason}</span> : null}
-                  </div>
-                );
-              })}
-              {assetsQuery.data?.length ? (
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={inserts.length >= 6}
-                  onClick={() =>
-                    setInserts((prev) => [
-                      ...prev,
-                      {
-                        asset_id: assetsQuery.data![0].id,
-                        at: clipTimeNow(),
-                        duration: 1.5,
-                        mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
-                        volume: 1,
-                        duck: assetsQuery.data![0].kind !== "audio",
-                      },
-                    ])
-                  }
-                >
-                  + Вставка на текущий момент
-                </button>
-              ) : null}
-            </Group>
-
-            {/* Холст: фокус кадра не нужен — кадр 9:16 целиком. */}
-            {isCanvas ? null : (
-            <>
-            <Group
-              title="Скорость куска"
-              badge={selectedSegment ? speedBadge(selectedSegment) : "сегмент?"}
-            >
-              {selectedSegment && activePlan ? (
-                <SegmentSpeedControl
-                  segment={selectedSegment}
-                  index={activePlan.segments.findIndex((s) => s.id === selectedSegment.id)}
-                  busy={segmentSpeed.isPending}
-                  onChange={(body) => segmentSpeed.mutate({ planId: activePlan.id, ...body })}
-                />
-              ) : (
-                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                  Выберите кусок на таймлайне: слоу-мо, ускорение или реверс.
-                </p>
-              )}
-            </Group>
-
-            <Group title="Цвет куска" badge={selectedSegment ? colorBadge(selectedSegment) : "сегмент?"}>
-              {selectedSegment && activePlan ? (
-                <PieceColorControl
-                  segment={selectedSegment}
-                  index={activePlan.segments.findIndex((s) => s.id === selectedSegment.id)}
-                  pieces={activePlan.segments.length}
-                  busy={pieceColor.isPending || matchColors.isPending}
-                  onChange={(body) => pieceColor.mutate({ planId: activePlan.id, ...body })}
-                  onMatch={(reference) => matchColors.mutate({ planId: activePlan.id, reference })}
-                />
-              ) : (
-                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                  Выберите кусок на таймлайне: экспозиция, баланс белого, подгонка кусков друг к другу.
-                </p>
-              )}
-            </Group>
-
-            <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
-              {selectedSegment ? (
-                <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
-              ) : (
-                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                  Выберите сегмент на таймлайне, чтобы задать точки фокуса для умного кадрирования.
-                </p>
-              )}
-            </Group>
-            </>
-            )}
-
-            <Group
-              title="Переходы"
-              badge={transitionOpts.data?.types.find((t) => t.key === transition.type)?.label ?? "встык"}
-            >
-              {(activePlan?.segments.length ?? 0) < 2 ? (
-                <p className="muted field-hint">
-                  В этом клипе один кусок — склеивать нечего. Переход сработает, когда кусков станет больше.
-                </p>
-              ) : null}
-              <label className="field">
-                <span>Склейка кусков</span>
-                <select
-                  className="input"
-                  value={transition.type}
-                  onChange={(e) => patchTransition({ type: e.target.value as TransitionSettings["type"] })}
-                >
-                  {(transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]).map((t) => (
-                    <option key={t.key} value={t.key}>{t.label}</option>
-                  ))}
-                </select>
-              </label>
-              {transition.type !== "cut" ? (
-                <label className="switch" title="Внутри одной сцены (вырезанная пауза) склейка остаётся встык — эффект тратится только на смену сцены.">
-                  <input
-                    type="checkbox"
-                    checked={transition.smart !== false}
-                    onChange={(e) => patchTransition({ smart: e.target.checked })}
-                  />
-                  <span className="switch-track" />
-                  <span>умные склейки: внутри сцены — встык</span>
-                </label>
-              ) : null}
-              {transition.type !== "cut" && !(transitionOpts.data?.snap ?? {})[transition.type] ? (
-                <label className="field">
-                  <span>Длительность — {transition.duration.toFixed(2)} с</span>
-                  <input
-                    type="range"
-                    min={0.1}
-                    max={1.2}
-                    step={0.05}
-                    value={transition.duration}
-                    onChange={(e) => patchTransition({ duration: Number(e.target.value) })}
-                  />
-                </label>
-              ) : null}
-              <label className="field">
-                <span>Звук на стыке</span>
-                <select
-                  className="input"
-                  value={transition.audio}
-                  onChange={(e) => patchTransition({ audio: e.target.value as TransitionSettings["audio"] })}
-                  title="Плавно — звук перетекает (на резкой склейке — без щелчка). Резко — обрывается точно на стыке."
-                >
-                  {(transitionOpts.data?.audio ?? []).map((a) => (
-                    <option key={a.key} value={a.key}>{a.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Звук-эффект на каждом стыке</span>
-                <select
-                  className="input"
-                  value={transition.sfx}
-                  onChange={(e) => patchTransition({ sfx: e.target.value as TransitionSettings["sfx"] })}
-                >
-                  {(transitionOpts.data?.sfx ?? []).map((a) => (
-                    <option key={a.key} value={a.key}>{a.label}</option>
-                  ))}
-                </select>
-              </label>
-              {transition.sfx !== "none" ? (
-                <label className="field">
-                  <span>Громкость эффекта — {Math.round(transition.sfx_volume * 100)}%</span>
-                  <input
-                    type="range"
-                    min={0.05}
-                    max={1}
-                    step={0.05}
-                    value={transition.sfx_volume}
-                    onChange={(e) => patchTransition({ sfx_volume: Number(e.target.value) })}
-                  />
-                </label>
-              ) : null}
-            </Group>
-
-            <Group
-              title="Обложка"
-              badge={cover.mode === "none" ? "нет" : cover.mode === "frame" ? "кадр" : "картинка"}
-            >
-              <div className="cover-compose">
-                <span className="li-cap">✨ Обложка с заголовком — кадр под курсором + крупный текст</span>
-                <div className="li-row">
-                  <input
-                    className="input li-grow"
-                    placeholder={activePlan?.title ? activePlan.title.toUpperCase() : "ЗАГОЛОВОК"}
-                    value={coverTitle}
-                    onChange={(e) => setCoverTitle(e.target.value)}
-                    maxLength={80}
-                  />
-                  <select className="input" value={coverStyle} onChange={(e) => setCoverStyle(e.target.value)}>
-                    <option value="yellow">Жёлтый</option>
-                    <option value="fire">Огонь</option>
-                    <option value="white">Белый</option>
-                    <option value="plate">Плашка</option>
+                  </label>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.hint ?? ""}
+                  </span>
+                  <label className="field">
+                    <span>Пресет детекции — под тип видео</span>
+                    <select
+                      className="input"
+                      value={source.focus_preset || "balanced"}
+                      onChange={(e) => setFocus.mutate({ focus_preset: e.target.value })}
+                      disabled={setFocus.isPending}
+                    >
+                      {focusOptions.data?.presets.map((p) => (
+                        <option key={p.key} value={p.key}>{p.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label
+                    className="check"
+                    title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."
+                  >
+                    <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
+                    <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
+                  </label>
+                  {moduleOn("autofocus") ? <div className="ed-btn-row">
+                    <button
+                      className="btn primary sm"
+                      disabled={autofocus.isPending || !plans.length}
+                      title="Детектор фокуса для всех кандидатов проекта (займёт время)"
+                      onClick={() => autofocus.mutate([])}
+                    >
+                      {autofocus.isPending ? "Анализ кадров…" : "Автофокус: все клипы"}
+                    </button>
+                    <button
+                      className="btn sm"
+                      disabled={autofocus.isPending || !activePlan?.segments.length}
+                      title="Только сегменты активного плана"
+                      onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                    >
+                      Только этот план
+                    </button>
+                  </div> : <div className="muted li-note">Модуль «Автофокус» выключен (Настройки → Модули).</div>}
+                </Group>
+                )}
+                {/* Холст: границ клипов по речи нет — основа немая. */}
+                {isCanvas ? null : (
+                <Group title="Границы клипов" badge={cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.label ?? ""}>
+                  <select
+                    className="input"
+                    value={source.cut_strategy || "phrase"}
+                    onChange={(e) => refineCuts.mutate(e.target.value)}
+                    disabled={refineCuts.isPending}
+                  >
+                    {cutStrategies.data?.map((s) => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
                   </select>
-                </div>
-                {moduleOn("covers") ? (
+                  <span className="muted" style={{ fontSize: 11.5 }}>
+                    {cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.hint ??
+                      "Подгоняет начало/конец клипов к фразам речи. Нужен транскрипт."}
+                  </span>
+                  <button
+                    className="btn sm"
+                    disabled={refineCuts.isPending}
+                    onClick={() => refineCuts.mutate(source.cut_strategy || "phrase")}
+                  >
+                    {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
+                  </button>
+                </Group>
+                )}
+                <Group title="Отдать в монтажку" badge="OTIO">
+                  <span className="muted" style={{ fontSize: 11.5 }}>
+                    Куски и таймкоды уезжают в общий формат монтажа. Субтитры, мемы, кадрирование 9:16 и наши
+                    переходы туда не переносятся — они остаются здесь (в .otio лежат в метаданных).
+                  </span>
+                  <div className="ed-foot-tools">
+                    <a
+                      className="btn sm"
+                      href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "otio") : undefined}
+                      download
+                      title="OpenTimelineIO — Kdenlive 25.04+ открывает нативно"
+                    >
+                      ⬇ .otio
+                    </a>
+                    <a
+                      className="btn sm"
+                      href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "edl") : undefined}
+                      download
+                      title="CMX 3600 EDL — понимают почти все монтажки"
+                    >
+                      ⬇ .edl
+                    </a>
+                    <a
+                      className="btn sm"
+                      href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "fcpxml") : undefined}
+                      download
+                      title="FCP7 XML — DaVinci Resolve, Premiere"
+                    >
+                      ⬇ .xml
+                    </a>
+                  </div>
+                </Group>
+              </MoreSection>
+            </div>
+            <div className="insp-pane" hidden={inspActive !== "layers"} role="tabpanel" aria-label="Слои">
+              {selectedLayerId && layers.find((l) => l.id === selectedLayerId) ? (
+                <LayerInspector
+                  key={selectedLayerId}
+                  layer={layers.find((l) => l.id === selectedLayerId)!}
+                  words={captionWords}
+                  fonts={motionFonts.data ?? []}
+                  now={clipNow}
+                  clipDuration={clipDuration}
+                  refWidth={formatRefSize(layersFmt).w}
+                  onChange={(next) => setLayers((prev) => prev.map((l) => (l.id === next.id ? next : l)))}
+                  onDelete={() => {
+                    setLayers((prev) => prev.filter((l) => l.id !== selectedLayerId));
+                    setTlSelected(null);
+                  }}
+                  onDuplicate={() => {
+                    const r = duplicateLayer(layers, selectedLayerId, clipDuration);
+                    setLayers(r.layers);
+                    if (r.id) setTlSelected({ kind: "layer", id: r.id });
+                  }}
+                  onSeek={(t) => seekClipTime(t, false)}
+                  keyed={Boolean(source.chroma_key)}
+                  hasCamera={camera.length > 0}
+                  planId={activePlan?.id}
+                  onPickPoint={(cb) => {
+                    pickPointRef.current = cb;
+                    setPickingPoint(Boolean(cb));
+                  }}
+                />
+              ) : null}
+              <Group title="Слои клипа" badge={layers.length ? String(layers.length) : "нет"} defaultOpen={layers.length > 0}>
+                {layers.length ? (
+                  <div className="ed-layer-list">
+                    {[...layers]
+                      .sort((a, b) => a.start - b.start)
+                      .map((l) => (
+                        <div
+                          key={l.id}
+                          className={`ed-layer-row${selectedLayerId === l.id ? " on" : ""}${l.hidden ? " off" : ""}`}
+                          onClick={() => {
+                            setTlSelected({ kind: "layer", id: l.id });
+                            const now = clipTimeExact();
+                            if (now < l.start || now > l.end) seekClipTime(l.start + Math.min(0.6, (l.end - l.start) / 2), false);
+                          }}
+                        >
+                          <span className="ed-layer-ico">{LAYER_ICON[l.type]}</span>
+                          <span className="ed-layer-name">{layerTitle(l)}</span>
+                          <span className="mono muted ed-layer-time">{formatDuration(l.start)}</span>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            title={l.hidden ? "Показать" : "Скрыть"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLayers((prev) => prev.map((x) => (x.id === l.id ? ({ ...x, hidden: !x.hidden } as Layer) : x)));
+                            }}
+                          >
+                            {l.hidden ? "🙈" : "👁"}
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="muted li-note">Слоёв пока нет — возьмите шаблон, текст или стикер в библиотеке слева, или попросите ИИ.</div>
+                )}
+              </Group>
+              <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"} defaultOpen>
+                {!assetsQuery.data?.length ? (
+                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                    Библиотека пуста — закиньте мемы и звуки в{" "}
+                    <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
+                      «Файлы для монтажа»
+                    </a>
+                    . 🤖 ИИ-монтаж вставит подходящие сам.
+                  </p>
+                ) : null}
+                {inserts.map((ins, i) => {
+                  const asset = assetsQuery.data?.find((a) => a.id === ins.asset_id);
+                  const upd = (patchIns: Partial<MontageInsert>) =>
+                    setInserts((prev) => prev.map((x, j) => (j === i ? { ...x, ...patchIns } : x)));
+                  return (
+                    <div key={i} className="ins-row">
+                      <select
+                        className="input"
+                        value={ins.asset_id}
+                        onChange={(e) => upd({ asset_id: Number(e.target.value) })}
+                      >
+                        {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
+                        {assetsQuery.data?.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.label} · {a.kind}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="ins-grid">
+                        <label className="field">
+                          <span>с, от начала клипа</span>
+                          <input
+                            className="input"
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={ins.at}
+                            onChange={(e) => upd({ at: Number(e.target.value) })}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>длит., с</span>
+                          <input
+                            className="input"
+                            type="number"
+                            min={0.3}
+                            max={8}
+                            step={0.1}
+                            value={ins.duration}
+                            onChange={(e) => upd({ duration: Number(e.target.value) })}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>как</span>
+                          <select
+                            className="input"
+                            value={asset?.kind === "audio" ? "sound" : ins.mode}
+                            disabled={asset?.kind === "audio"}
+                            onChange={(e) => upd({ mode: e.target.value as MontageInsert["mode"], duck: e.target.value === "full" })}
+                          >
+                            <option value="full">на весь кадр</option>
+                            <option value="pip">окном</option>
+                            <option value="sound">только звук</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="ins-foot">
+                        <button type="button" className="btn sm" title="Поставить на текущий момент плеера" onClick={() => upd({ at: clipTimeNow() })}>
+                          ⏱ сейчас
+                        </button>
+                        <button
+                          type="button"
+                          className="btn sm"
+                          title="Проиграть клип с этого места"
+                          onClick={() => seekClipTime(ins.at)}
+                        >
+                          ▶ к месту
+                        </button>
+                        <button type="button" className="btn ghost sm" title="Убрать вставку" onClick={() => setInserts((prev) => prev.filter((_, j) => j !== i))}>
+                          ✕
+                        </button>
+                      </div>
+                      {ins.reason ? <span className="ins-why">🤖 {ins.reason}</span> : null}
+                    </div>
+                  );
+                })}
+                {assetsQuery.data?.length ? (
                   <button
                     type="button"
                     className="btn sm"
-                    disabled={!activePlan || composeCover.isPending}
-                    onClick={() => composeCover.mutate()}
+                    disabled={inserts.length >= 6}
+                    onClick={() =>
+                      setInserts((prev) => [
+                        ...prev,
+                        {
+                          asset_id: assetsQuery.data![0].id,
+                          at: clipTimeNow(),
+                          duration: 1.5,
+                          mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
+                          volume: 1,
+                          duck: assetsQuery.data![0].kind !== "audio",
+                        },
+                      ])
+                    }
                   >
-                    {composeCover.isPending ? "Рисую…" : "🖼 Сделать обложку"}
+                    + Вставка на текущий момент
                   </button>
                 ) : null}
+              </Group>
+              <Group title="Камера (наезды)" badge={camera.length ? `${camera.length} ключ.` : "нет"} forceOpen={tlSelected?.kind === "cam"}>
+                <CameraPanel
+                  words={(planSubs.data?.words ?? []) as SubtitleWord[]}
+                  peaks={planWave.data?.peaks ?? []}
+                  camera={camera}
+                  selectedIndex={tlSelected?.kind === "cam" ? tlSelected.index : null}
+                  now={clipNow}
+                  clipDuration={clipDuration}
+                  onChange={setCamera}
+                  onSelect={(i) => setTlSelected(i == null ? null : { kind: "cam", index: i })}
+                />
+              </Group>
+            </div>
+            {/* Холст: кусок один и без исходника — скорость, цвет и фокус не нужны. */}
+            {isCanvas ? null : (
+            <div className="insp-pane" hidden={inspActive !== "piece"} role="tabpanel" aria-label="Кусок">
+              {/* Какой кусок правим: номера кусков — быстрый выбор без таймлайна. */}
+              <div className="insp-piece-head">
+                <span className="insp-piece-title">
+                  {selectedSegment && activePlan
+                    ? `Кусок ${selectedPieceIndex + 1} из ${activePlan.segments.length}`
+                    : "Кусок не выбран"}
+                </span>
+                {activePlan && activePlan.segments.length > 1 ? (
+                  <div className="seg insp-piece-pick" role="radiogroup" aria-label="Кусок клипа">
+                    {activePlan.segments.map((s, i) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selectedSegment?.id === s.id}
+                        className={`seg-item${selectedSegment?.id === s.id ? " active" : ""}`}
+                        title={s.title || `Кусок ${i + 1}`}
+                        onClick={() => {
+                          setSelectedSeg(s.id);
+                          setTlSelected({ kind: "piece", index: i });
+                        }}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-              <div className="seg-toggle" role="radiogroup" aria-label="Источник обложки">
-                {([
-                  ["none", "Нет"],
-                  ["frame", "Кадр из клипа"],
-                  ["image", "Своя картинка"],
-                ] as const).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="radio"
-                    aria-checked={cover.mode === key}
-                    className={cover.mode === key ? "active" : ""}
-                    onClick={() => patchCover({ mode: key })}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {cover.mode === "frame" && activePlan ? (() => {
-                const pieces = activePlan.segments;
-                const idx = Math.min(cover.piece, Math.max(0, pieces.length - 1));
-                const seg = pieces[idx];
-                const len = seg ? seg.end_sec - seg.start_sec : 0;
-                const off = Math.min(cover.offset, Math.max(0, len - 0.05));
-                const t = seg ? seg.start_sec + off : 0;
-                return (
+              {selectedSegment && activePlan ? (
+                <>
+                  <Group title="Скорость куска" badge={speedBadge(selectedSegment)}>
+                    <SegmentSpeedControl
+                      segment={selectedSegment}
+                      index={selectedPieceIndex}
+                      busy={segmentSpeed.isPending}
+                      onChange={(body) => segmentSpeed.mutate({ planId: activePlan.id, ...body })}
+                    />
+                  </Group>
+                  <Group title="Цвет куска" badge={colorBadge(selectedSegment)}>
+                    <PieceColorControl
+                      segment={selectedSegment}
+                      index={selectedPieceIndex}
+                      pieces={activePlan.segments.length}
+                      busy={pieceColor.isPending || matchColors.isPending}
+                      onChange={(body) => pieceColor.mutate({ planId: activePlan.id, ...body })}
+                      onMatch={(reference) => matchColors.mutate({ planId: activePlan.id, reference })}
+                    />
+                  </Group>
+                  <Group title="Фокус кадра" badge={`${selectedSegment.focus?.length ?? 0} точ.`} defaultOpen>
+                    <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
+                  </Group>
+                </>
+              ) : (
+                <div className="insp-empty">
+                  <p>Выберите кусок на таймлайне (дорожка «Клипы»): скорость и реверс, цвет, точки фокуса кадра.</p>
+                  {activePlan?.segments.length ? (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => {
+                        setSelectedSeg(activePlan.segments[0].id);
+                        setTlSelected({ kind: "piece", index: 0 });
+                      }}
+                    >
+                      Выбрать первый кусок
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            )}
+            <div className="insp-pane" hidden={inspActive !== "audio"} role="tabpanel" aria-label="Звук">
+              <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
+                <label className="switch">
+                  <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
+                  <span className="switch-track" />
+                  <span>Фоновый трек</span>
+                </label>
+                {musicOn ? (
                   <>
-                    {pieces.length > 1 ? (
-                      <label className="field">
-                        <span>Кусок</span>
+                    <div className="lay-row">
+                      <label className="field lay-grow">
+                        <span>Трек</span>
                         <select
                           className="input"
-                          value={idx}
-                          onChange={(e) => patchCover({ piece: Number(e.target.value), offset: 0 })}
+                          value={trackId}
+                          onChange={(e) => {
+                            setTrackId(Number(e.target.value));
+                            setMusicStartSec(0);
+                          }}
                         >
-                          {pieces.map((p, i) => (
-                            <option key={p.id} value={i}>
-                              {i + 1}. {p.title}
+                          <option value={0}>по умолчанию</option>
+                          {tracks.data?.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                              {t.duration_sec ? ` · ${formatDuration(t.duration_sec)}` : ""}
                             </option>
                           ))}
                         </select>
                       </label>
-                    ) : null}
-                    <label className="field">
-                      <span>Момент — {off.toFixed(1)} с от начала куска</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max(0.1, len - 0.05)}
-                        step={0.1}
-                        value={off}
-                        onChange={(e) => patchCover({ offset: Number(e.target.value) })}
-                      />
-                    </label>
-                    {seg ? (
-                      aspect === "9:16" ? (
-                        <img
-                          className="cover-preview"
-                          alt="Кадр для обложки"
-                          src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&x=${focusXAt(seg, off).toFixed(3)}`}
-                        />
-                      ) : (
-                        // Другой формат: полный кадр, обрезанный окном формата у той же точки фокуса.
-                        <img
-                          className="cover-preview"
-                          alt="Кадр для обложки"
-                          src={`/api/sources/${source.id}/frame?t=${t.toFixed(2)}&w=640`}
-                          style={{
-                            aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}`,
-                            maxWidth: frameSize(aspect).w > frameSize(aspect).h ? 320 : undefined,
-                            objectPosition: `${(focusWindowPos(focusXAt(seg, off), source.width, source.height, aspect) * 100).toFixed(1)}% 50%`,
+                      <button
+                        type="button"
+                        className="btn ghost sm music-refresh"
+                        title="Обновить список треков"
+                        disabled={tracks.isFetching}
+                        onClick={() => void tracks.refetch()}
+                      >
+                        {tracks.isFetching ? "…" : "↻"}
+                      </button>
+                    </div>
+                    {trackId ? (
+                      <>
+                        <audio
+                          ref={musicPreviewRef}
+                          className="music-preview"
+                          src={`/media/audio-tracks/${trackId}`}
+                          controls
+                          preload="none"
+                          // Прослушка с выбранного старта: так и зазвучит на 0 с клипа.
+                          onPlay={(e) => {
+                            const a = e.currentTarget;
+                            if (musicStartSec > 0 && a.currentTime < musicStartSec - 0.25) a.currentTime = musicStartSec;
                           }}
                         />
-                      )
+                        <label className="field range">
+                          <span title="Музыка на 0 с клипа играет с этой секунды трека — пропустить тихое вступление и начать сразу с барабанов">
+                            Старт трека · {musicStartSec.toFixed(1)} с
+                          </span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={Math.max(1, Math.floor(tracks.data?.find((t) => t.id === trackId)?.duration_sec || 300))}
+                            step={0.1}
+                            value={musicStartSec}
+                            onChange={(e) => setMusicStartSec(Number(e.target.value))}
+                          />
+                        </label>
+                        <div className="lay-row">
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            title="Нашли на слух, где вступают барабаны, — поставьте плеер на паузу там и нажмите"
+                            onClick={() => setMusicStartSec(Math.round((musicPreviewRef.current?.currentTime ?? 0) * 10) / 10)}
+                          >
+                            ⏱ Старт отсюда (из плеера)
+                          </button>
+                          {musicStartSec > 0 ? (
+                            <button type="button" className="btn ghost sm" onClick={() => setMusicStartSec(0)}>
+                              С начала
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
                     ) : null}
-                    <p className="muted field-hint">В рендере кадр будет уже с цветом, субтитрами и баннером.</p>
-                  </>
-                );
-              })() : null}
-
-              {cover.mode === "image" ? (
-                <>
-                  <label className="btn cover-upload">
-                    {coverUploading ? "Загружаю…" : cover.image ? "Заменить картинку…" : "Выбрать картинку…"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      disabled={coverUploading}
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = "";
-                        if (!f) return;
-                        setCoverUploading(true);
-                        try {
-                          const res = await clipPlansApi.uploadCover(f);
-                          patchCover({ image: res.image });
-                        } catch (err) {
-                          toast.error(err instanceof ApiError ? err.message : "Не удалось загрузить картинку");
-                        } finally {
-                          setCoverUploading(false);
-                        }
-                      }}
-                    />
-                  </label>
-                  {cover.image ? (
-                    <img
-                      className="cover-preview"
-                      alt="Обложка"
-                      src={`/media/covers/${cover.image}`}
-                      style={aspect === "9:16" ? undefined : { aspectRatio: `${frameSize(aspect).w} / ${frameSize(aspect).h}` }}
-                    />
-                  ) : (
-                    <p className="muted field-hint">Картинка подгонится под 1080×1920: заполнит кадр, лишнее обрежется.</p>
-                  )}
-                </>
-              ) : null}
-
-              {cover.mode !== "none" ? (
-                <>
-                  <label
-                    className="switch"
-                    title="Площадки, которые берут превью с первого кадра (Reels, лента TikTok), покажут обложку"
-                  >
-                    <input type="checkbox" checked={cover.burn} onChange={(e) => patchCover({ burn: e.target.checked })} />
-                    <span className="switch-track" />
-                    <span>Вшить первым кадром</span>
-                  </label>
-                  {cover.burn ? (
-                    <label className="field">
-                      <span>Сколько держать — {cover.burn_sec.toFixed(2)} с</span>
+                    <div className="lay-row">
                       <input
-                        type="range"
-                        min={0.04}
-                        max={0.5}
-                        step={0.02}
-                        value={cover.burn_sec}
-                        onChange={(e) => patchCover({ burn_sec: Number(e.target.value) })}
-                      />
-                    </label>
-                  ) : null}
-                </>
-              ) : null}
-            </Group>
-
-            <Group title="Баннер" badge={bannerOn ? "вкл" : "выкл"}>
-              <label className="switch">
-                <input type="checkbox" checked={bannerOn} onChange={(e) => setBannerOn(e.target.checked)} />
-                <span className="switch-track" />
-                <span>Накладывать баннер</span>
-              </label>
-              {bannerOn ? (
-                <>
-                  <label className="field">
-                    <span>Картинка</span>
-                    <select className="input" value={bannerId} onChange={(e) => setBannerId(Number(e.target.value))}>
-                      <option value={0}>по умолчанию</option>
-                      {banners.data?.map((b) => (
-                        <option key={b.id} value={b.id}>{b.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field range">
-                    <span>Высота · {bannerHeightPct}%</span>
-                    <input
-                      type="range" min={6} max={30} value={bannerHeightPct}
-                      onChange={(e) => setBannerHeightPct(Number(e.target.value))}
-                    />
-                  </label>
-                  <label className="field range">
-                    <span>Положение · {bannerPosPct}% сверху</span>
-                    <input
-                      type="range" min={0} max={80} value={bannerPosPct}
-                      onChange={(e) => setBannerPosPct(Number(e.target.value))}
-                    />
-                  </label>
-                </>
-              ) : null}
-            </Group>
-
-            <Group title="Музыка" badge={musicOn ? "вкл" : "выкл"}>
-              <label className="switch">
-                <input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} />
-                <span className="switch-track" />
-                <span>Фоновый трек</span>
-              </label>
-              {musicOn ? (
-                <>
-                  <div className="lay-row">
-                    <label className="field lay-grow">
-                      <span>Трек</span>
-                      <select
-                        className="input"
-                        value={trackId}
+                        className="input lay-grow"
+                        type="url"
+                        placeholder="Ссылка на трек: YouTube, SoundCloud…"
+                        value={musicUrl}
+                        disabled={musicFromUrl.isPending}
                         onChange={(e) => {
-                          setTrackId(Number(e.target.value));
-                          setMusicStartSec(0);
+                          setMusicUrl(e.target.value);
+                          musicFromUrl.reset();
                         }}
-                      >
-                        <option value={0}>по умолчанию</option>
-                        {tracks.data?.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.label}
-                            {t.duration_sec ? ` · ${formatDuration(t.duration_sec)}` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="btn ghost sm music-refresh"
-                      title="Обновить список треков"
-                      disabled={tracks.isFetching}
-                      onClick={() => void tracks.refetch()}
-                    >
-                      {tracks.isFetching ? "…" : "↻"}
-                    </button>
-                  </div>
-                  {trackId ? (
-                    <>
-                      <audio
-                        ref={musicPreviewRef}
-                        className="music-preview"
-                        src={`/media/audio-tracks/${trackId}`}
-                        controls
-                        preload="none"
-                        // Прослушка с выбранного старта: так и зазвучит на 0 с клипа.
-                        onPlay={(e) => {
-                          const a = e.currentTarget;
-                          if (musicStartSec > 0 && a.currentTime < musicStartSec - 0.25) a.currentTime = musicStartSec;
-                        }}
+                        onKeyDown={(e) => e.key === "Enter" && musicUrl.trim() && musicFromUrl.mutate()}
                       />
-                      <label className="field range">
-                        <span title="Музыка на 0 с клипа играет с этой секунды трека — пропустить тихое вступление и начать сразу с барабанов">
-                          Старт трека · {musicStartSec.toFixed(1)} с
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={musicFromUrl.isPending || !/^https?:\/\//i.test(musicUrl.trim())}
+                        onClick={() => musicFromUrl.mutate()}
+                        title="Сервер скачает только звук (до 15 минут) и добавит трек в список"
+                      >
+                        {musicFromUrl.isPending ? "Скачиваю…" : "Добавить по ссылке"}
+                      </button>
+                    </div>
+                    {musicFromUrl.isPending ? (
+                      <div className="lay-note ok">Скачиваю звук — это может занять минуту-другую, окно можно не трогать.</div>
+                    ) : musicFromUrl.isError ? (
+                      <div className="lay-note warn">
+                        {musicFromUrl.error instanceof ApiError ? musicFromUrl.error.message : "Не удалось скачать трек"}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </Group>
+              {/* Холст: звука исходника нет — глушить, громкость и дорожки не нужны. */}
+              {isCanvas ? null : (
+              <>
+              <Group
+                title="Тишина вместо звука"
+                badge={mute.length ? `${mute.length} · ${muteTotal(mute).toFixed(1)} с` : "нет"}
+                forceOpen={tlSelected?.kind === "mute"}
+              >
+                <div className="muted li-note">
+                  Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
+                  Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
+                </div>
+                <div className="ed-quick-row">
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || censorMat.isPending}
+                    onClick={() => activePlan && censorMat.mutate(activePlan.id)}
+                    title="По словам субтитров: каждое матерное слово глушится серединой (человек поймёт, автосубтитры площадок — нет), в субтитрах — «б****». Ручные отрезки не трогает, повторное нажатие заменяет только свои. Ctrl+Z откатит."
+                  >
+                    {censorMat.isPending ? "Ищу мат…" : "Заглушить мат"}
+                  </button>
+                  <select
+                    className="input"
+                    style={{ flex: "1 1 120px", minWidth: 0 }}
+                    value={censorStyle}
+                    onChange={(e) => setCensorStyle(e.target.value as CensorStyle | "")}
+                    title="Чем заполнить заглушённую середину слова. Превью глушит тишиной — как звучит, слышно в рендере"
+                  >
+                    <option value="">как раньше у клипа (новый — задом наперёд)</option>
+                    {(Object.keys(CENSOR_STYLES) as CensorStyle[]).map((s) => (
+                      <option key={s} value={s}>{CENSOR_STYLES[s]}</option>
+                    ))}
+                  </select>
+                </div>
+                {mute.length ? (
+                  <div className="ed-layer-list">
+                    {mute.map((m, i) => (
+                      <div
+                        key={`${m.start}-${m.end}-${m.by ?? ""}`}
+                        className={`ed-layer-row${tlSelected?.kind === "mute" && tlSelected.index === i ? " on" : ""}`}
+                        onClick={() => {
+                          setTlSelected({ kind: "mute", index: i });
+                          seekClipTime(Math.max(0, m.start - 1), false);
+                        }}
+                        title={
+                          m.by === "censor"
+                            ? `Мат, уровень ${m.level ?? 1}, ${CENSOR_STYLES[m.style ?? "silence"]} (кнопка «Заглушить мат» заменит). Перейти на секунду раньше`
+                            : "Перейти на секунду раньше отрезка — послушать стык"
+                        }
+                      >
+                        <span className="ed-layer-ico">{m.by === "censor" ? "🤬" : "🔇"}</span>
+                        <span className="ed-layer-name mono">
+                          {formatTimecode(m.start)} – {formatTimecode(m.end)}
                         </span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={Math.max(1, Math.floor(tracks.data?.find((t) => t.id === trackId)?.duration_sec || 300))}
-                          step={0.1}
-                          value={musicStartSec}
-                          onChange={(e) => setMusicStartSec(Number(e.target.value))}
-                        />
-                      </label>
-                      <div className="lay-row">
+                        <span className="mono muted ed-layer-time">{(m.end - m.start).toFixed(1)} с</span>
                         <button
                           type="button"
                           className="btn ghost sm"
-                          title="Нашли на слух, где вступают барабаны, — поставьте плеер на паузу там и нажмите"
-                          onClick={() => setMusicStartSec(Math.round((musicPreviewRef.current?.currentTime ?? 0) * 10) / 10)}
+                          title="Вернуть звук"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMute((prev) => prev.filter((_, j) => j !== i));
+                            setTlSelected(null);
+                          }}
                         >
-                          ⏱ Старт отсюда (из плеера)
+                          ✕
                         </button>
-                        {musicStartSec > 0 ? (
-                          <button type="button" className="btn ghost sm" onClick={() => setMusicStartSec(0)}>
-                            С начала
-                          </button>
-                        ) : null}
                       </div>
-                    </>
-                  ) : null}
-                  <div className="lay-row">
-                    <input
-                      className="input lay-grow"
-                      type="url"
-                      placeholder="Ссылка на трек: YouTube, SoundCloud…"
-                      value={musicUrl}
-                      disabled={musicFromUrl.isPending}
-                      onChange={(e) => {
-                        setMusicUrl(e.target.value);
-                        musicFromUrl.reset();
-                      }}
-                      onKeyDown={(e) => e.key === "Enter" && musicUrl.trim() && musicFromUrl.mutate()}
-                    />
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={musicFromUrl.isPending || !/^https?:\/\//i.test(musicUrl.trim())}
-                      onClick={() => musicFromUrl.mutate()}
-                      title="Сервер скачает только звук (до 15 минут) и добавит трек в список"
-                    >
-                      {musicFromUrl.isPending ? "Скачиваю…" : "Добавить по ссылке"}
-                    </button>
+                    ))}
                   </div>
-                  {musicFromUrl.isPending ? (
-                    <div className="lay-note ok">Скачиваю звук — это может занять минуту-другую, окно можно не трогать.</div>
-                  ) : musicFromUrl.isError ? (
-                    <div className="lay-note warn">
-                      {musicFromUrl.error instanceof ApiError ? musicFromUrl.error.message : "Не удалось скачать трек"}
+                ) : null}
+              </Group>
+              <Group title="Громкость исходника" badge={gain.length ? `${gain.length} отр.` : "как есть"}>
+                <div className="muted li-note">
+                  Поднять тихий кусок (голос под игрой) или приглушить громкий: звук исходника на отрезке громче/тише
+                  на столько дБ, картинка та же; звуки слоёв и музыка не меняются. Тихий микрофон по всему ролику —
+                  громкость дорожки в звуке проекта.
+                </div>
+                {gain.length ? (
+                  <div className="ed-layer-list">
+                    {gain.map((g, i) => (
+                      <div key={`${g.start}-${g.end}`} className="ed-layer-row" title="Перейти на секунду раньше отрезка">
+                        <span className="ed-layer-ico">🔊</span>
+                        <span
+                          className="ed-layer-name mono"
+                          onClick={() => seekClipTime(Math.max(0, g.start - 1), false)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          {formatTimecode(g.start)} – {formatTimecode(g.end)}
+                        </span>
+                        <input
+                          type="number"
+                          className="input mono"
+                          style={{ width: 70 }}
+                          step={1}
+                          min={GAIN_MIN_DB}
+                          max={GAIN_MAX_DB}
+                          value={g.gain_db}
+                          title="дБ: плюс — громче, минус — тише"
+                          onChange={(e) => {
+                            const db = Number(e.target.value);
+                            if (!Number.isFinite(db)) return;
+                            const clamped = Math.round(Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, db)) * 10) / 10;
+                            setGain((prev) => prev.map((x, j) => (j === i ? { ...x, gain_db: clamped } : x)));
+                          }}
+                        />
+                        <span className="muted">дБ</span>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          title="Убрать отрезок"
+                          onClick={() => setGain((prev) => prev.filter((_, j) => j !== i))}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  title="Отрезок 3 с от курсора, +6 дБ — потом поправьте дБ"
+                  onClick={() => {
+                    const v = videoRef.current;
+                    const t = v ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
+                    const at = t ?? 0;
+                    setGain((prev) => normalizeGain([...prev, { start: at, end: at + 3, gain_db: 6 }]));
+                  }}
+                >
+                  + Громче у курсора
+                </button>
+              </Group>
+              <Group
+                title="Звуковые дорожки"
+                badge={
+                  (source.audio_tracks?.length ?? 0) > 1
+                    ? `смесь ${source.audio_tracks!.map((t) => t + 1).join("+")}`
+                    : source.audio_tracks?.length
+                      ? `дорожка ${source.audio_tracks[0] + 1}`
+                      : "по умолчанию"
+                }
+              >
+                <SourceAudioPanel sourceId={source.id} />
+              </Group>
+              </>
+              )}
+            </div>
+            <div className="insp-pane" hidden={inspActive !== "subs"} role="tabpanel" aria-label="Субтитры">
+              <Group title="Субтитры на ролике" badge={subsOn ? "вкл" : "выкл"} defaultOpen>
+                <label className="switch">
+                  <input type="checkbox" checked={subsOn} onChange={(e) => setSubsOn(e.target.checked)} />
+                  <span className="switch-track" />
+                  <span>Накладывать субтитры</span>
+                </label>
+                {subsOn ? (
+                  <>
+                    <div className="sub-options">
+                      <label className="field">
+                        <span>Движок</span>
+                        <select className="input" value={subEngine} onChange={(e) => setSubEngine(e.target.value)}>
+                          <option value="">из стиля</option>
+                          <option value="whisper">Whisper (локально)</option>
+                          <option value="gemini">Gemini</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Стиль</span>
+                        <select className="input" value={subId} onChange={(e) => setSubId(Number(e.target.value))}>
+                          <option value={0}>по умолчанию</option>
+                          {subs.data?.map((s) => (
+                            <option key={s.id} value={s.id}>{s.label}</option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
+                    <label className="field range">
+                      <span>Положение · {subPosPct}% снизу</span>
+                      <input
+                        type="range" min={2} max={40} value={subPosPct}
+                        onChange={(e) => setSubPosPct(Number(e.target.value))}
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </Group>
+              {/* Текст речи нужен и выжженным субтитрам, и слою «Анимированные субтитры»
+                  (автомонтаж выключает первые и ставит слой) — правка и «Голоса» видны всегда.
+                  Не в сворачиваемой группе: редактор строк кормит таймлайн и превью. */}
+              <section className="insp-section">
+                <div className="insp-section-head">
+                  <span className="insp-section-title">Строки и речь</span>
+                  {activePlan ? (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => setSubsWide(true)}
+                      title="Открыть строки на всё окно: широкий текст и таймкоды"
+                    >
+                      ⛶ Править строки широко
+                    </button>
                   ) : null}
-                </>
-              ) : null}
-            </Group>
-
-            {/* Холст: умный кадр не нужен — кадр 9:16 целиком. */}
-            {isCanvas ? null : (
-            <Group
-              title="Умный кадр"
-              badge={focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.label ?? ""}
-            >
-              <label className="field">
-                <span>Стратегия — как ведёт себя кадр</span>
-                <select
-                  className="input"
-                  value={source.focus_strategy || "shot"}
-                  onChange={(e) => setFocus.mutate({ focus_strategy: e.target.value })}
-                  disabled={setFocus.isPending}
-                >
-                  {focusOptions.data?.strategies.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
-                  ))}
-                </select>
-              </label>
-              <span className="muted" style={{ fontSize: 11 }}>
-                {focusOptions.data?.strategies.find((s) => s.key === (source.focus_strategy || "shot"))?.hint ?? ""}
-              </span>
-              <label className="field">
-                <span>Пресет детекции — под тип видео</span>
-                <select
-                  className="input"
-                  value={source.focus_preset || "balanced"}
-                  onChange={(e) => setFocus.mutate({ focus_preset: e.target.value })}
-                  disabled={setFocus.isPending}
-                >
-                  {focusOptions.data?.presets.map((p) => (
-                    <option key={p.key} value={p.key}>{p.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label
-                className="check"
-                title="Детектор находит границы планов, а Gemini по одному кадру каждого плана решает, где главный объект. Точнее на сложном контенте, но тратит токены."
-              >
-                <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
-                <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
-              </label>
-              {moduleOn("autofocus") ? <div className="ed-btn-row">
-                <button
-                  className="btn primary sm"
-                  disabled={autofocus.isPending || !plans.length}
-                  title="Детектор фокуса для всех кандидатов проекта (займёт время)"
-                  onClick={() => autofocus.mutate([])}
-                >
-                  {autofocus.isPending ? "Анализ кадров…" : "🎯 Авто-фокус: все клипы"}
-                </button>
-                <button
-                  className="btn sm"
-                  disabled={autofocus.isPending || !activePlan?.segments.length}
-                  title="Только сегменты активного плана"
-                  onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                >
-                  Только этот план
-                </button>
-              </div> : <div className="muted li-note">Модуль «Автофокус» выключен (Настройки → Модули).</div>}
-            </Group>
-            )}
-
-            {/* Холст: границ клипов по речи нет — основа немая. */}
-            {isCanvas ? null : (
-            <Group title="Границы клипов" badge={cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.label ?? ""}>
-              <select
-                className="input"
-                value={source.cut_strategy || "phrase"}
-                onChange={(e) => refineCuts.mutate(e.target.value)}
-                disabled={refineCuts.isPending}
-              >
-                {cutStrategies.data?.map((s) => (
-                  <option key={s.key} value={s.key}>{s.label}</option>
-                ))}
-              </select>
-              <span className="muted" style={{ fontSize: 11.5 }}>
-                {cutStrategies.data?.find((s) => s.key === (source.cut_strategy || "phrase"))?.hint ??
-                  "Подгоняет начало/конец клипов к фразам речи. Нужен транскрипт."}
-              </span>
-              <button
-                className="btn sm"
-                disabled={refineCuts.isPending}
-                onClick={() => refineCuts.mutate(source.cut_strategy || "phrase")}
-              >
-                {refineCuts.isPending ? "Считаю…" : "Пересчитать"}
-              </button>
-            </Group>
-            )}
-
-            <Group title="Отдать в монтажку" badge="OTIO">
-              <span className="muted" style={{ fontSize: 11.5 }}>
-                Куски и таймкоды уезжают в общий формат монтажа. Субтитры, мемы, кадрирование 9:16 и наши
-                переходы туда не переносятся — они остаются здесь (в .otio лежат в метаданных).
-              </span>
-              <div className="ed-foot-tools">
-                <a
-                  className="btn sm"
-                  href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "otio") : undefined}
-                  download
-                  title="OpenTimelineIO — Kdenlive 25.04+ открывает нативно"
-                >
-                  ⬇ .otio
-                </a>
-                <a
-                  className="btn sm"
-                  href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "edl") : undefined}
-                  download
-                  title="CMX 3600 EDL — понимают почти все монтажки"
-                >
-                  ⬇ .edl
-                </a>
-                <a
-                  className="btn sm"
-                  href={activePlan ? clipPlansApi.timelineUrl(activePlan.id, "fcpxml") : undefined}
-                  download
-                  title="FCP7 XML — DaVinci Resolve, Premiere"
-                >
-                  ⬇ .xml
-                </a>
-              </div>
-            </Group>
+                </div>
+                {activePlan ? (
+                  <SubtitleEditor
+                    key={activePlan.id}
+                    clipPlanId={activePlan.id}
+                    silent={isCanvas}
+                    clipTime={clipTimeNow}
+                    onSeek={seekClipTime}
+                    onLines={(lines) => {
+                      subLinesRef.current = lines;
+                      setSubLines(lines);
+                    }}
+                    onWords={(words) => {
+                      subWordsRef.current = words;
+                    }}
+                    onServerChange={async () => {
+                      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                      setSettingsNonce((n) => n + 1);
+                    }}
+                  />
+                ) : null}
+              </section>
+            </div>
+            <div className="insp-pane" hidden={inspActive !== "check"} role="tabpanel" aria-label="Проверка">
+              <section className="insp-section">
+                <div className="insp-section-head">
+                  <span className="insp-section-title">Проверка перед сдачей</span>
+                </div>
+                {activePlan ? (
+                  <LintPanel
+                    clipPlanId={activePlan.id}
+                    beforeRun={flushSettings}
+                    onSeek={(t) => seekClipTime(t, false)}
+                  />
+                ) : null}
+              </section>
+            </div>
           </div>
 
           <div className="ed-insp-foot">
@@ -5276,54 +5368,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 Ко всем ★
               </button>
             </div>
-            <label
-              className="ed-aspect"
-              title="Формат готового ролика: видео кадрируется окном нужной пропорции, слои сами переносятся в кадр одним масштабом, фон — на весь кадр. Превью сразу показывает кадр этого формата"
-            >
-              <span>Формат</span>
-              <select
-                value={aspect}
-                onChange={(e) => {
-                  const next = e.target.value as Aspect;
-                  setAspect(next);
-                  // Слоёв ещё нет — новые сразу размечаются в кадре нового формата.
-                  if (!layers.length && !camera.length) setLayersFmt(next);
-                }}
-              >
-                <option value="9:16">9:16 — вертикаль</option>
-                <option value="1:1">1:1 — квадрат</option>
-                <option value="4:5">4:5 — лента</option>
-                <option value="16:9">16:9 — горизонталь</option>
-              </select>
-            </label>
-            <label className="ed-aspect" title="Последний кадр стоит, пока затухает звук (музыка доигрывает на нём). Мему — «без стоп-кадра»: ролик обрывается на последнем кадре">
-              <span>Стоп-кадр в конце</span>
-              <select
-                value={endHoldSec == null ? "" : String(endHoldSec)}
-                onChange={(e) => setEndHoldSec(e.target.value === "" ? null : Number(e.target.value))}
-              >
-                <option value="">как у сервиса</option>
-                <option value="0">без стоп-кадра</option>
-                <option value="0.25">0.25 с</option>
-                <option value="0.5">0.5 с</option>
-                <option value="1">1 с</option>
-                <option value="1.5">1.5 с</option>
-              </select>
-            </label>
-            <label
-              className="ed-aspect"
-              title="Motion blur: быстрые слои, наезды и whip камеры смазываются по пути движения (затвор — доля кадра; 50% — киношные 180°). В покое кадр не меняется. Свой у слоя — в его инспекторе, у ключа камеры — в панели камеры"
-            >
-              <span>Motion blur · {motionBlur ? `${Math.round(motionBlur * 100)}%` : "выкл"}</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={5}
-                value={Math.round((motionBlur ?? 0) * 100)}
-                onChange={(e) => setMotionBlur(Number(e.target.value) ? Number(e.target.value) / 100 : null)}
-              />
-            </label>
             <div className="ed-render-btns">
               <button
                 className="btn primary"
