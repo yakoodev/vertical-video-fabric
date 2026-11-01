@@ -5,13 +5,14 @@ import { api, request } from "@/api/client";
  * сериала или промо. Не путать с «проектом» = источником (/projects/:sourceId):
  * в интерфейсе эта сущность называется «Серии и каналы» (/series/:id).
  */
-export type ProjectKind = "stream_channel" | "series" | "promo" | "ai_video" | "other";
+export type ProjectKind = "stream_channel" | "series" | "promo" | "ai_video" | "explainer" | "other";
 
 export const PROJECT_KINDS: { value: ProjectKind; label: string }[] = [
   { value: "stream_channel", label: "Стрим-канал" },
   { value: "series", label: "Сериал / аниме" },
   { value: "promo", label: "Промо" },
   { value: "ai_video", label: "ИИ-видео (с нуля)" },
+  { value: "explainer", label: "Канал объяснялок (маскот)" },
   { value: "other", label: "Другое" },
 ];
 

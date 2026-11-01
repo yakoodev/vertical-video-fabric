@@ -1445,6 +1445,15 @@ def tick(store: Any) -> dict:
     from app import notify_tg
 
     out: dict = {"expired": expire_old(store), "changed": sync_publish_status(store)}
+    try:  # каналы объяснялок (app/explainer_channel.py): темы, ролики к слотам, ролики на одобрение
+        from app import explainer_channel, modules
+
+        if modules.is_enabled("explainer", store):
+            channels = explainer_channel.tick(store)
+            if channels["channels"]:
+                out["explainer_channels"] = channels
+    except Exception as exc:  # noqa: BLE001 - канал не валит автопилот
+        _log.warning("explainer channels tick failed: %s", exc)
     if notify_tg.is_enabled(store):
         for change in out["changed"]:
             if change["status"] in ("published", "failed"):

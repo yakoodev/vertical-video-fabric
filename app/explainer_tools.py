@@ -300,17 +300,163 @@ def tools() -> list[Tool]:
     ]
 
 
+# --- канал объяснялок (app/explainer_channel.py) ----------------------------- #
+
+_SCHEDULE = _obj({"times": {"type": "array", "items": {"type": "string"}, "description": "часы слотов «ЧЧ:ММ»"},
+                  "days": {"type": "array", "items": {"type": "integer"}, "description": "0=пн … 6=вс; пусто — все"},
+                  "per_day": {"type": "integer", "description": "не больше N в день на площадку"},
+                  "timezone": {"type": "string"},
+                  "platforms": {"type": "array", "items": {"type": "string",
+                                                           "enum": ["youtube", "tiktok", "instagram"]}},
+                  "accounts": {"type": "object", "description": "{youtube: [account_id]} — если аккаунтов несколько"}})
+_CHANNEL_SETTINGS = _obj({"lead_days": {"type": "integer"}, "max_parallel": {"type": "integer"},
+                          "backlog_min": {"type": "integer"}, "propose_count": {"type": "integer"},
+                          "propose_every_hours": {"type": "number"}, "auto_approve_topics": {"type": "boolean"},
+                          "duration": {"type": "number"}, "tone": {"type": "string"},
+                          "max_attempts": {"type": "integer"}})
+
+
+def _channel_brief(view: dict) -> dict:
+    topics = [{k: t.get(k) for k in ("id", "topic", "angle", "status", "status_label", "origin", "attempts",
+                                     "feedback", "reason", "video_id", "approval_id") if t.get(k) not in (None, "")}
+              for t in view["topics"]]
+    return {"channel": view["channel"], "project": view["project"], "mascot": view["mascot"],
+            "counts": view["counts"], "capacity": view["capacity"], "schedule": view["schedule"],
+            "warnings": view["warnings"], "topics": topics}
+
+
+def h_channel_setup(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    view = _call(C.setup_channel, ctx.store, args.get("project_id"), args.get("mascot_id"),
+                 name=str(args.get("name") or ""), niche=args.get("niche"), enabled=args.get("enabled"),
+                 config=args.get("settings"), schedule=args.get("schedule"), description=args.get("description"))
+    out = {"ok": True, **_channel_brief(view)}
+    if view["warnings"]:
+        out["note"] = "поправь до включения: " + "; ".join(view["warnings"])
+    return out
+
+
+def h_channel_status(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    return _channel_brief(_call(C.channel_view, ctx.store, _need(args, "project_id", "канал объяснялок")))
+
+
+def h_channel_add_topics(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    pid = _need(args, "project_id", "канал объяснялок")
+    owner = bool(args.get("owner_said")) and bool(str(args.get("quote") or "").strip())
+    res = _call(C.add_topics, ctx.store, pid, args.get("topics") or [], origin="owner" if owner else "agent",
+                actor="agent")
+    note = ("темы владельца — сразу в очередь" if owner else
+            "темы агента ждут владельца (proposed): одобрит в сервисе или скажет тебе — тогда owner_said+quote")
+    return {"ok": True, "added": [{k: t[k] for k in ("id", "topic", "status")} for t in res["added"]],
+            "duplicates": res["duplicates"], "note": note}
+
+
+def h_channel_propose(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    res = _call(C.propose_topics, ctx.store, _need(args, "project_id", "канал объяснялок"), args.get("count"),
+                actor="agent")
+    return {"ok": True, "proposed": [{k: t[k] for k in ("id", "topic", "angle", "status")} for t in res["proposed"]],
+            "duplicates": res["duplicates"], "card_id": res.get("card_id"),
+            "note": "владелец решит карточкой «Взять все» или по одной в сервисе"}
+
+
+def h_channel_topic(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    tid = _need(args, "topic_id", "explainer_channel_status")
+    action = str(args.get("action") or "").strip().lower()
+    if action in ("approve", "reject"):
+        if not str(args.get("quote") or "").strip():
+            raise ToolError("решить тему за владельца можно только его словами: quote — что он сказал дословно")
+        return _call(C.decide_topic, ctx.store, tid, action, str(args.get("comment") or args.get("quote") or ""),
+                     "agent")
+    if action == "retry":
+        return _call(C.decide_topic, ctx.store, tid, "retry", "", "agent")
+    if action == "edit":
+        return {"ok": True, "topic": _call(C.update_topic, ctx.store, tid, args.get("topic"), args.get("angle"),
+                                           args.get("priority"))}
+    if action == "delete":
+        return _call(C.delete_topic, ctx.store, tid)
+    raise ToolError("action: approve | reject | retry | edit | delete")
+
+
+def h_channel_run(ctx: ToolContext, args: dict) -> dict:
+    from app import explainer_channel as C
+
+    return _call(C.tick_channel, ctx.store, _need(args, "project_id", "канал объяснялок"))
+
+
+def channel_tools() -> list[Tool]:
+    return [
+        Tool("explainer_channel_setup", "Канал объяснялок",
+             "Режим канала объяснялок у проекта: mascot_id — маскот (голос, позы, цвета; explainer_overview); "
+             "project_id — проект канала (нет — проект маскота, или новый с name); niche — о чём канал; "
+             "enabled — автопилот (темы → ролики к слотам → карточки одобрения); schedule {times [\"19:00\"], "
+             "days [0..6], per_day, timezone, platforms, accounts} — пишется в расписание автопилота; settings "
+             "{lead_days (на сколько дней вперёд готовить), max_parallel, backlog_min, propose_count, "
+             "auto_approve_topics, duration, tone, max_attempts}. Публикуется только одобренное владельцем. "
+             "/ Set up an explainer channel (mascot, niche, schedule, autopilot).",
+             _obj({"project_id": {"type": "integer"}, "mascot_id": {"type": "integer"}, "name": {"type": "string"},
+                   "description": {"type": "string"}, "niche": {"type": "string"}, "enabled": {"type": "boolean"},
+                   "schedule": _SCHEDULE, "settings": _CHANNEL_SETTINGS}),
+             h_channel_setup, mutating=True, scope="project"),
+        Tool("explainer_channel_status", "Канал объяснялок: что в работе",
+             "Канал: маскот, ниша, расписание, очередь тем (proposed — ждёт владельца, approved — в очереди, "
+             "producing — ролик делается, review — на одобрении, scheduled, published, rejected, failed, dropped), "
+             "сколько роликов нужно к слотам (capacity) и что мешает (warnings). / Explainer channel status.",
+             _obj({"project_id": {"type": "integer"}}, ["project_id"]), h_channel_status, scope="project"),
+        Tool("explainer_channel_add_topics", "Добавляю темы канала",
+             "Темы в очередь канала: topics [строка | {topic, angle}]. Дубли сделанного и очереди отсеиваются. "
+             "Твои темы ждут владельца (proposed); если темы назвал сам владелец — owner_said=true и quote (его "
+             "слова) — сразу в очередь. / Add topics to the channel backlog.",
+             _obj({"project_id": {"type": "integer"},
+                   "topics": {"type": "array", "items": {"anyOf": [
+                       {"type": "string"}, _obj({"topic": {"type": "string"}, "angle": {"type": "string"}},
+                                                ["topic"])]}},
+                   "owner_said": {"type": "boolean"}, "quote": {"type": "string"}}, ["project_id", "topics"]),
+             h_channel_add_topics, mutating=True, scope="project"),
+        Tool("explainer_channel_propose_topics", "Gemini предлагает темы",
+             "Новые темы от Gemini по нише, брифу, правилам владельца, цифрам (что зашло/нет) и гипотезам — без "
+             "повторов; пачка — одной карточкой владельцу. count — сколько (по умолчанию из настроек). "
+             "/ Propose new channel topics with Gemini.",
+             _obj({"project_id": {"type": "integer"}, "count": {"type": "integer"}}, ["project_id"]),
+             h_channel_propose, mutating=True, scope="project"),
+        Tool("explainer_channel_topic", "Тема канала",
+             "Тема (topic_id): action approve|reject — ТОЛЬКО словами владельца (quote, дословно; причина отказа "
+             "станет правилом), retry — ролик не вышел, ещё раз; edit (topic, angle, priority — выше раньше); "
+             "delete. / Decide, retry, edit or delete a channel topic.",
+             _obj({"topic_id": {"type": "integer"}, "action": {"type": "string", "enum": ["approve", "reject", "retry",
+                                                                                          "edit", "delete"]},
+                   "quote": {"type": "string"}, "comment": {"type": "string"}, "topic": {"type": "string"},
+                   "angle": {"type": "string"}, "priority": {"type": "integer"}}, ["topic_id", "action"]),
+             h_channel_topic, mutating=True, scope="project"),
+        Tool("explainer_channel_run", "Прогоняю канал",
+             "Проход канала сейчас (обычно сам, каждые ~20 с): синхронизировать темы с роликами и карточками, "
+             "попросить темы, если мало, запустить ролики под свободные слоты. / Run one channel pass now.",
+             _obj({"project_id": {"type": "integer"}}, ["project_id"]), h_channel_run, mutating=True,
+             scope="project"),
+    ]
+
+
 _TOOLS: list[Tool] | None = None
 
 
 def all_tools() -> list[Tool]:
     global _TOOLS
     if _TOOLS is None:
-        _TOOLS = tools()
+        _TOOLS = tools() + channel_tools()
     return _TOOLS
 
 
 TOOL_NAMES = ("explainer_overview", "explainer_save_mascot", "explainer_generate_sheet", "explainer_add_pose",
               "explainer_update_pose", "explainer_delete_pose", "explainer_regenerate_pose", "explainer_create",
               "explainer_status", "explainer_set_script", "explainer_update_beats", "explainer_continue",
-              "explainer_cancel", "explainer_import_pilot")
+              "explainer_cancel", "explainer_import_pilot", "explainer_channel_setup", "explainer_channel_status",
+              "explainer_channel_add_topics", "explainer_channel_propose_topics", "explainer_channel_topic",
+              "explainer_channel_run")

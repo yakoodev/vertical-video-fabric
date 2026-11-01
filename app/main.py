@@ -4578,6 +4578,10 @@ app.include_router(build_aivideo_router(AuthDep, lambda: store))
 from app.explainer_api import build_explainer_router  # noqa: E402
 
 app.include_router(build_explainer_router(AuthDep, lambda: store))
+# Канал объяснялок: маскот, очередь тем, ролики к слотам, карточки одобрения (app/explainer_channel_api.py).
+from app.explainer_channel_api import build_explainer_channel_router  # noqa: E402
+
+app.include_router(build_explainer_channel_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))

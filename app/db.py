@@ -494,6 +494,10 @@ class Database:
             from app.explainer import ensure_explainer_schema
 
             ensure_explainer_schema(conn)
+            # Канал объяснялок: маскот, очередь тем, производство к слотам (app/explainer_channel.py).
+            from app.explainer_channel import ensure_channel_schema
+
+            ensure_channel_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

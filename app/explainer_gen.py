@@ -115,7 +115,9 @@ SCRIPT_RULES = """\
 Объём всего текста — примерно duration_sec × 15 символов (±10%). Числа и время пиши словами
 («в семь», «до двух часов дня») — так их правильно прочитает озвучка. Ничего не выдумывай про
 здоровье и деньги без меры: только общеизвестные безопасные советы, без обещаний сумм и дозировок.
-Соблюдай правила владельца (owner_rules) и тон (tone). title — название ролика до 60 символов.
+Соблюдай правила владельца (owner_rules) и тон (tone). Есть niche — держись ниши канала; angle — подход
+к теме; owner_feedback — что владелец просил переделать в прошлой версии ролика: исправь именно это.
+title — название ролика до 60 символов.
 Верни ТОЛЬКО JSON по схеме.
 """
 
@@ -132,15 +134,33 @@ def script_schema() -> dict:
 def script_context(store: Any, video: dict) -> dict:
     mascot = E.get_mascot(store, int(video["mascot_id"]))
     project_id = int(video["project_id"])
+    options = video.get("options") or {}
     rules = [{"kind": r["kind"], "text": r["text"]} for r in P.list_rules(store, project_id=project_id)]
     project = P.get_project(store, project_id, include_sources=False)
+    # Ролик канала объяснялок (app/explainer_channel.py): канал может быть другим проектом, чем
+    # библиотека маскота — его правила (уроки из ответов владельца) и описание тоже в промпт.
+    channel_id = options.get("channel_project_id")
+    if channel_id and int(channel_id) != project_id:
+        try:
+            channel = P.get_project(store, int(channel_id), include_sources=False)
+            seen = {(r["kind"], r["text"]) for r in rules}
+            rules += [{"kind": r["kind"], "text": r["text"]}
+                      for r in P.list_rules(store, project_id=int(channel_id), include_global=False)
+                      if (r["kind"], r["text"]) not in seen]
+            project = channel
+        except KeyError:
+            pass
     previous = [v["topic"] for v in E.list_videos(store, project_id, int(mascot["id"]), limit=12)
                 if int(v["id"]) != int(video["id"])]
-    return {"channel": project["name"], "channel_about": project.get("description") or "",
-            "mascot": {"name": mascot["name"], "persona": mascot["persona"]},
-            "topic": video["topic"], "duration_sec": video["duration_target"], "tone": video["tone"],
-            "target_chars": int(video["duration_target"] * CPS), "owner_rules": rules,
-            "previous_topics": previous}
+    out = {"channel": project["name"], "channel_about": project.get("description") or "",
+           "mascot": {"name": mascot["name"], "persona": mascot["persona"]},
+           "topic": video["topic"], "duration_sec": video["duration_target"], "tone": video["tone"],
+           "target_chars": int(video["duration_target"] * CPS), "owner_rules": rules,
+           "previous_topics": previous}
+    for key in ("niche", "angle", "owner_feedback"):
+        if options.get(key):
+            out[key] = options[key]
+    return out
 
 
 def _sentence(text: Any) -> str:
@@ -1020,6 +1040,12 @@ def assemble(store: Any, video_id: int) -> dict:
                               (video.get("title") or video["topic"])[:100],
                               f"Объяснялка ({mascot['name']}): {video['topic']}"[:500])
     clip_id = int(clip["id"])
+    channel_id = (video.get("options") or {}).get("channel_project_id")
+    if channel_id:  # канал объяснялок: клип-холст — в проект канала (одобрение, расписание, статистика)
+        try:
+            P.assign_plan_project(store, clip_id, int(channel_id))
+        except KeyError:
+            notes.append(f"канал #{channel_id} не найден — клип без проекта")
     ctx = T.ToolContext(store=store, clip_plan_id=clip_id,
                         on_first_change=lambda: snapshot(store, clip_id, "объяснялка: сборка"))
     layers = build_layers(store, mascot, placed, words, int(ref["asset_id"]), total, notes)
@@ -1042,13 +1068,15 @@ def assemble(store: Any, video_id: int) -> dict:
                                                   "variant")} for p in placed],
                 "emphasis_words": len(marks), "layers": len(layers), "music_track_id": track,
                 **({"mix": mixed} if mixed else {})}
-    E.set_status(store, video_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
-                 notes=notes, error="")
+    E.update_video(store, video_id, clip_id=clip_id, words=words, timeline=timeline, notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(layers),
            "editor_url": timeline["editor_url"], "notes": notes}
     options = video.get("options") or {}
     if options.get("render"):
+        # «done» — только когда рендер, обложки и заголовок уже сделаны: канал объяснялок
+        # (app/explainer_channel.py) сразу отправляет готовое на одобрение.
         out["publish"] = finish_publish(store, video_id, clip_id, cover=options.get("cover", True))
+    E.set_status(store, video_id, "done", ("assembling",))
     return out
 
 

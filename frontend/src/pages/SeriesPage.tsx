@@ -27,6 +27,7 @@ import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/compo
 import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
 import { AiVideoTab } from "@/pages/AiVideoTab";
 import { ExplainerTab } from "@/pages/ExplainerTab";
+import { ExplainerChannelTab } from "@/pages/ExplainerChannelTab";
 import { useModules } from "@/hooks/useModules";
 
 /**
@@ -34,12 +35,14 @@ import { useModules } from "@/hooks/useModules";
  * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
  */
 
-type Tab = "aiv" | "expl" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
+type Tab = "aiv" | "channel" | "expl" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
 // Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
 const TABS: [Tab, string, string?][] = [
   // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
   ["aiv", "ИИ-видео", "ai_video"],
-  // Объяснялки (app/explainer.py): маскот объясняет тему — тоже только у «ИИ-видео».
+  // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал — темы, расписание, автопилот.
+  ["channel", "Канал", "explainer"],
+  // Объяснялки (app/explainer.py): маскот объясняет тему — у «ИИ-видео» и «канала объяснялок».
   ["expl", "Объяснялки", "explainer"],
   ["brief", "Резюме"],
   ["rules", "Правила"],
@@ -60,8 +63,15 @@ export function SeriesPage() {
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
   const { on } = useModules();
   const isAiv = project.data?.kind === "ai_video";
-  const tabs = TABS.filter(([key, , mod]) => (!mod || on(mod)) && ((key !== "aiv" && key !== "expl") || isAiv));
-  const fallback: Tab = isAiv && tabs.some(([key]) => key === "aiv") ? "aiv" : "brief";
+  const isChannel = project.data?.kind === "explainer";
+  const tabs = TABS.filter(
+    ([key, , mod]) =>
+      (!mod || on(mod)) &&
+      (key === "aiv" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
+  );
+  const fallback: Tab = isChannel && tabs.some(([key]) => key === "channel")
+    ? "channel"
+    : isAiv && tabs.some(([key]) => key === "aiv") ? "aiv" : "brief";
   const shown: Tab = tab && tabs.some(([key]) => key === tab) ? tab : fallback;
 
   if (project.isLoading) return <Loading />;
@@ -90,6 +100,7 @@ export function SeriesPage() {
       </nav>
       <div className="series-body">
         {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
+        {shown === "channel" ? <ExplainerChannelTab projectId={id} /> : null}
         {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
