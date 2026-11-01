@@ -227,7 +227,9 @@ def test_estimate_only_without_confirm_never_synthesizes(monkeypatch):
     est = out["estimate"]
     chars = len("Что тут происходит") + len("Да ладно, бро")
     assert est["chars"] == chars
-    assert est["rub"] == pytest.approx(round(chars * 2278.816 / 1e6, 2))
+    # eleven-v4 — по замеру настоящего прогона: 0.4193 ₽ за 90 символов.
+    assert est["rub"] == pytest.approx(round(chars * 0.4193 / 90, 2))
+    assert est["price_rub_per_char"] > 2278.816 / 1e6  # не дешевле прайса /models
     assert est["budget_rub"] == 200 and not est["over_budget"] and est["paid"]
 
 

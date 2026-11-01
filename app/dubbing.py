@@ -43,20 +43,28 @@ from app.settings import settings
 DEFAULT_PROVIDER = "polza"
 PROVIDERS = ("polza", "none")
 DEFAULT_BUDGET_RUB = 200.0
-# Цена TTS Polza, ₽ за символ = tts_per_million_characters / 1e6 из GET /api/v1/models
-# (top_provider.pricing). ПРОВЕРЕНО 2026-11-01 — цены меняются: перед крупной озвучкой
-# перепроверь (GET /models бесплатен) и поправь здесь. Модели нет в таблице — берём
-# FALLBACK_PRICE (самую дорогую из известных: оценка не должна занижать).
+# Цена TTS Polza, ₽ за символ. ПРОВЕРЕНО 2026-11-01 — цены меняются: перед крупной озвучкой
+# перепроверь и поправь здесь (оценка не должна занижать).
+#
+# * Прайс: GET /api/v1/models → top_provider.pricing.tts_per_million_characters (бесплатно).
+#   eleven-v4 там 2 278.8 ₽ / 1 млн символов.
+# * ЗАМЕР: настоящий прогон 2026-11-01 (3 фразы, 90 символов кириллицы, eleven-v4, голос brian)
+#   стоил 0.4193 ₽ (usage.cost_rub в ответе = списание с баланса) — 4 659 ₽ / 1 млн символов,
+#   в ~2.04 раза дороже прайса. Поэтому eleven-v4 — по замеру, остальные модели — прайс ×
+#   PRICE_MARKUP (не мерили; запас, чтобы не занизить). Фактическая цена каждого запуска
+#   пишется из usage.cost_rub провайдера в отчёт (dub.cost_rub, cost_source: provider).
 PRICE_CHECKED = "2026-11-01"
+PRICE_MARKUP = 2.05
 PRICES_RUB_PER_CHAR: dict[str, float] = {
-    "elevenlabs/eleven-v4": 2278.816 / 1e6,
-    "openai/tts-1": 1745.22 / 1e6,
-    "openai/tts-1-hd": 3490.44 / 1e6,
-    "microsoft/mai-voice-2": 2506.70 / 1e6,
-    "google/gemini-3.8-flash-tts": 2443.308 / 1e6,
-    "minimax/speech-2.8-hd": 11394.08 / 1e6,
+    "elevenlabs/eleven-v4": 0.4193 / 90,  # замер
+    "openai/tts-1": 1745.22 / 1e6 * PRICE_MARKUP,
+    "openai/tts-1-hd": 3490.44 / 1e6 * PRICE_MARKUP,
+    "microsoft/mai-voice-2": 2506.70 / 1e6 * PRICE_MARKUP,
+    "google/gemini-3.8-flash-tts": 2443.308 / 1e6 * PRICE_MARKUP,
+    "minimax/speech-2.8-hd": 11394.08 / 1e6 * PRICE_MARKUP,
 }
-FALLBACK_PRICE_RUB_PER_CHAR = 11394.08 / 1e6
+MEASURED_MODELS = ("elevenlabs/eleven-v4",)
+FALLBACK_PRICE_RUB_PER_CHAR = 11394.08 / 1e6 * PRICE_MARKUP
 MAX_PHRASE_CHARS = 5000  # предел input у /audio/speech
 
 TEMPO_MIN = 0.8
@@ -230,6 +238,8 @@ def estimate_cost(phrases: list[dict], provider: TTSProvider, budget_rub: float 
     }
     if provider.paid and provider.model not in PRICES_RUB_PER_CHAR:
         out["note"] = "цены модели нет в таблице — оценка по самой дорогой известной; проверь GET /models"
+    elif provider.paid and provider.model not in MEASURED_MODELS:
+        out["note"] = f"цена модели не замерена — прайс ×{PRICE_MARKUP:g} (запас)"
     return out
 
 
