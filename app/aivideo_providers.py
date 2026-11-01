@@ -14,14 +14,17 @@
 
 * ``DryRunImages`` / ``DryRunVideo`` (``none``, 0 ₽) — заглушки ffmpeg. Никакой сети.
 * ``PolzaImages`` / ``PolzaVideo`` (``polza``, ПЛАТНО) — ``POST /media`` ``{model, input: {...,
-  images: [{type: base64, data}]}}`` → ``{id}``; ``GET /media/<id>`` → ``completed`` →
-  ``data[0].url`` / ``data.url`` (ссылка живёт 7 дней — скачиваем сразу). У видео POST всегда
-  отвечает 504 через ~60 с, а работа идёт и списывается: id восстанавливает ``recover``.
+  images: [{type: base64, data}]}}`` → ``{id}`` (или сразу ``data.url``); ``GET /media/<id>`` →
+  ``completed`` → ``data[0].url`` / ``data.url`` (ссылка живёт 7 дней — скачиваем сразу). Сеть до
+  отправки (соединение/TLS) — исключение httpx как есть (``aivideo_gen`` повторит сам, 1.1). Запрос
+  ушёл без ответа (504/502/503, обрыв чтения) — ``SubmitUncertain``: у видео POST отвечает 504
+  ВСЕГДА через ~60 с, а работа идёт и списывается — id находит ``recover`` в ``/history/generations``.
 
 Цены Polza — прайс каталога ``GET /models`` (снимок ``D:\\vvf-offload\\tmp\\videogen\\polza_models.json``,
-2026-11-01). Замеренные (списание = прайс): nano-banana 2K 4.5 ₽, seedance-2-fast 720p 22.275 ₽/с,
-grok-imagine-video 720p 3.0375 ₽/с. Не замеренное — прайс × ``PRICE_MARKUP`` (замер TTS показал
-×2.04). После первого настоящего запуска модели — внести факт в ``measured_*`` её каталога.
+2026-11-01). Замеренные (списание = прайс): nano-banana 1K 3 ₽ и 2K 4.5 ₽, seedance-2-fast 720p
+22.275 ₽/с, grok-imagine-video 720p 3.0375 ₽/с (``input.duration`` строкой). Не замеренное — прайс ×
+``PRICE_MARKUP`` (замер TTS показал ×2.04). После первого настоящего запуска модели — внести факт в
+``measured_*`` её каталога.
 """
 
 from __future__ import annotations
@@ -55,8 +58,11 @@ IMAGE_PRICES: dict[str, dict[str, float]] = {
     "qwen/image-2.1": {"1K": 3.0, "2K": 6.0},
     "black-forest-labs/flux.2-pro": {"1K": 5.0, "2K": 7.0},
 }
-# Замеренные: ₽ за картинку как есть, без запаса (только эти разрешения; остальные — прайс × запас).
-MEASURED_IMAGE_PRICES: dict[str, dict[str, float]] = {"google/gemini-nano-banana-2.1": {"2K": 4.5}}
+# Замеренные: ₽ за картинку как есть, без запаса (разрешения, которых нет, — прайс с запасом).
+MEASURED_IMAGE_PRICES: dict[str, dict[str, float]] = {
+    # первые прогоны 2026-11-01: 1K 3 ₽, 2K 4.5 ₽ = прайс ×1
+    "google/gemini-nano-banana-2.1": {"1K": 3.0, "2K": 4.5},
+}
 MAX_REFS = {"google/gemini-nano-banana-2.1": 10, "bytedance/seedream-4.5": 14, "openai/gpt-image-2.5-flare": 16,
             "qwen/image-2.1": 10, "black-forest-labs/flux.2-pro": 8}
 # Видео: прайс ₽ за СЕКУНДУ по разрешению (каталог, unitParam=duration).
@@ -80,11 +86,30 @@ VIDEO_LABELS = {"bytedance/seedance-2-fast": "Seedance 2 fast (со звуком
 
 
 class ProviderError(RuntimeError):
-    """Провайдер отказал (сеть, 4xx/5xx). ``policy`` — отказ контент-политики."""
+    """Провайдер отказал (4xx/5xx). ``policy`` — отказ контент-политики, ``status`` — HTTP-код."""
 
-    def __init__(self, message: str, policy: bool = False):
+    def __init__(self, message: str, policy: bool = False, status: int | None = None):
         super().__init__(message)
         self.policy = policy
+        self.status = status
+
+
+def network_phase(exc: BaseException) -> str | None:
+    """Сетевая ошибка запроса: ``before`` — тело до провайдера не дошло (соединение/TLS не
+    установлено: ``ConnectError`` «TLS/SSL connection has been closed (EOF)», ``ConnectTimeout``) —
+    повторять безопасно, денег не взяли; ``after`` — запрос мог дойти (``ReadTimeout``,
+    ``RemoteProtocolError``, обрыв чтения/записи) — возможно оплачено; ``None`` — не сеть."""
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx в зависимостях
+        return None
+    before = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError,
+              httpx.UnsupportedProtocol, httpx.LocalProtocolError)
+    if isinstance(exc, before):
+        return "before"
+    if isinstance(exc, httpx.TransportError):
+        return "after"
+    return None
 
 
 class SubmitUncertain(ProviderError):
@@ -129,13 +154,37 @@ class ProviderCatalog:
     video_adapter: Callable[[], Any]
     image_params: Callable[..., dict]
     video_params: Callable[..., dict]
-    image_prices: dict[str, dict[str, float]] = field(default_factory=dict)
-    measured_image: dict[str, dict[str, float]] = field(default_factory=dict)
-    max_refs: dict[str, int] = field(default_factory=dict)
-    video_prices: dict[str, dict[str, float]] = field(default_factory=dict)
-    measured_video: dict[str, dict[str, float]] = field(default_factory=dict)
-    video_limits: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Таблицы: {image_prices, measured_image, max_refs, video_prices, measured_video, video_limits}.
+    # Функция, а не словарь: таблицы читаются при каждом расчёте (их правят замеры и тесты).
+    tables: Callable[[], dict[str, dict]] = field(default=lambda: {})
     markup: float = PRICE_MARKUP
+
+    def _table(self, name: str) -> dict:
+        return self.tables().get(name) or {}
+
+    @property
+    def image_prices(self) -> dict[str, dict[str, float]]:
+        return self._table("image_prices")
+
+    @property
+    def measured_image(self) -> dict[str, dict[str, float]]:
+        return self._table("measured_image")
+
+    @property
+    def max_refs(self) -> dict[str, int]:
+        return self._table("max_refs")
+
+    @property
+    def video_prices(self) -> dict[str, dict[str, float]]:
+        return self._table("video_prices")
+
+    @property
+    def measured_video(self) -> dict[str, dict[str, float]]:
+        return self._table("measured_video")
+
+    @property
+    def video_limits(self) -> dict[str, dict[str, Any]]:
+        return self._table("video_limits")
 
     def image_models(self) -> list[str]:
         """Модели картинок; у сухого прогона — модели всех платных (он их изображает)."""
@@ -416,6 +465,7 @@ def start_frame_data_url(path: Path) -> str:
 
 _POLICY_WORDS = ("moderat", "policy", "nsfw", "safety", "content_filter", "prohibited", "blocked")
 HISTORY_SLACK_SEC = 5  # часы Polza и наши могут разойтись — ищем с запасом
+GATEWAY_STATUSES = (502, 503, 504)  # шлюз не дождался провайдера — запрос мог уйти в работу
 HISTORY_LIMIT = 20
 
 
@@ -442,13 +492,15 @@ def parse_utc(value: Any) -> Any:
 class PolzaImages:
     """ПЛАТНО. Вызывать только из ``aivideo_gen`` после всех проверок бюджета и одобрения.
 
-    Сеть: не соединились — ``ProviderError`` (запрос не ушёл, не списано); запрос ушёл, а ответа нет
-    (5xx, обрыв/таймаут чтения) — ``SubmitUncertain``: работа у Polza, скорее всего, идёт и оплачена,
-    id ищем ``recover`` в ``GET /history/generations``, POST не повторяем."""
+    Сеть: исключение httpx как есть (``network_phase``: до отправки — повтор, после — запрос мог
+    уйти). Шлюз ответил 502/503/504 — ``SubmitUncertain``. В обоих «ушло без ответа» случаях
+    работа у Polza, скорее всего, идёт и оплачена: id ищем ``recover`` в ``GET /history/generations``
+    (не нашли за ``recover_deadline_sec`` — «под вопросом»), POST не повторяем."""
 
     name = "polza"
     paid = True
     request_type = "images"
+    recover_deadline_sec = 5 * 60  # картинка готова за минуту-две: дольше не видно — значит не ушла
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, timeout: float = 120) -> None:
         self.api_key = (api_key if api_key is not None else settings.polza_api_key).strip()
@@ -472,27 +524,23 @@ class PolzaImages:
         if refs:
             fields["images"] = [{"type": "base64", "data": self._encode(p)} for p in refs]
         body = {"model": params.get("model"), "input": fields}
-        headers = self._headers()
-        try:
-            response = httpx.post(f"{self.base_url}/media", headers=headers, json=body, timeout=self.timeout)
-        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            raise ProviderError(f"сеть: запрос не ушёл ({type(exc).__name__}) — не списано") from exc
-        except httpx.HTTPError as exc:  # ушёл, ответа нет: таймаут/обрыв чтения
-            raise SubmitUncertain(f"Polza не ответила ({type(exc).__name__}) — запрос мог уйти в работу") from exc
-        if response.status_code >= 500:
+        # Сетевые ошибки httpx — как есть: до отправки (соединение/TLS) aivideo_gen повторит сам,
+        # после (обрыв/таймаут чтения) — запрос мог уйти: ищем его ``recover``, POST не повторяем.
+        response = httpx.post(f"{self.base_url}/media", headers=self._headers(), json=body, timeout=self.timeout)
+        if response.status_code in GATEWAY_STATUSES:
             raise SubmitUncertain(f"Polza {response.status_code}: {_detail(response)} — запрос мог уйти в работу "
-                                  "(у видео 504 приходит всегда)")
+                                  "(у видео 504 приходит всегда)", status=response.status_code)
         if response.status_code >= 400:
             detail = _detail(response)
             raise ProviderError(f"Polza {response.status_code}: {detail}",
-                                policy=any(w in detail.lower() for w in _POLICY_WORDS))
+                                policy=any(w in detail.lower() for w in _POLICY_WORDS), status=response.status_code)
         data = response.json() if response.content else {}
         remote = data.get("requestId") or data.get("request_id") or data.get("id")
         if remote:
             return str(remote)
-        items = data.get("data") if isinstance(data.get("data"), list) else []
-        if items and isinstance(items[0], dict) and items[0].get("url"):
-            return "url:" + str(items[0]["url"])  # синхронный ответ — ссылка сразу
+        url = _result_url(data)  # синхронный ответ (data[0].url / data.url) — ссылка сразу
+        if url:
+            return "url:" + url
         raise ProviderError("Polza: в ответе нет requestId")
 
     def check(self, remote_id: str) -> dict:
@@ -540,12 +588,12 @@ class PolzaImages:
         dest.write_bytes(response.content)
         return dest
 
-    def balance(self) -> float | None:
+    def balance(self, timeout: float = 10) -> float | None:
         """Баланс ₽ (если Polza отдаёт ``GET /balance``) — сверка трат; ошибка — None."""
         import httpx
 
         try:
-            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=30)
+            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=timeout)
             if response.status_code >= 400:
                 return None
             data = response.json()
@@ -605,6 +653,7 @@ class PolzaVideo(PolzaImages):
     ``/history/generations?requestType=video``. Ссылка на результат живёт 7 дней — качаем сразу."""
 
     request_type = "video"
+    recover_deadline_sec = 20 * 60  # видео делается минуты; в истории появляется не сразу
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, timeout: float = 180) -> None:
         super().__init__(api_key, base_url, timeout)
@@ -663,8 +712,9 @@ CATALOGS["none"] = ProviderCatalog(
 CATALOGS["polza"] = ProviderCatalog(
     id="polza", label="Polza (платно)", paid=True, image_adapter=PolzaImages, video_adapter=PolzaVideo,
     image_params=polza_image_params, video_params=polza_video_params,
-    image_prices=IMAGE_PRICES, measured_image=MEASURED_IMAGE_PRICES, max_refs=MAX_REFS,
-    video_prices=VIDEO_PRICES, measured_video=MEASURED_VIDEO_PRICES, video_limits=VIDEO_LIMITS)
+    tables=lambda: {"image_prices": IMAGE_PRICES, "measured_image": MEASURED_IMAGE_PRICES, "max_refs": MAX_REFS,
+                    "video_prices": VIDEO_PRICES, "measured_video": MEASURED_VIDEO_PRICES,
+                    "video_limits": VIDEO_LIMITS})
 
 
 def get_image_provider(name: str) -> ImageProvider:
@@ -687,12 +737,20 @@ def get_tts(name: str, model: str | None = None, voice: str | None = None) -> An
 
 
 def poll(provider: ImageProvider, remote_id: str, timeout: float, interval: float = POLL_INTERVAL_SEC) -> dict:
-    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже)."""
+    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже).
+    Сетевой сбой GET (обрыв TLS, таймаут) — просто «ещё не готово»: спросим снова, POST не повторяем."""
     deadline = time.monotonic() + max(0.0, timeout)
+    note = ""
     while True:
-        result = provider.check(remote_id)
+        try:
+            result = provider.check(remote_id)
+        except Exception as exc:  # noqa: BLE001 - только сеть, остальное наверх
+            if network_phase(exc) is None:
+                raise
+            note = f"сеть при опросе: {type(exc).__name__}"
+            result = {"status": "pending"}
         if result.get("status") in ("completed", "failed"):
             return result
         if time.monotonic() >= deadline:
-            return {"status": "pending"}
+            return {"status": "pending", **({"note": note} if note else {})}
         time.sleep(interval)

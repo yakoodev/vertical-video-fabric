@@ -42,6 +42,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "aivideo_max_budget_rub", 2500.0)
     monkeypatch.setattr(settings, "gemini_api_key", "")
     monkeypatch.setattr(settings, "polza_api_key", "")
+    # Деньги в тестах — по прайсу ×2 (6 ₽ за кадр nano-banana), независимо от замеров.
+    monkeypatch.setattr(PR, "MEASURED_IMAGE_PRICES", {})
     client, store = _client(tmp_path, monkeypatch)
     return client, store
 
@@ -461,6 +463,525 @@ def test_polza_images_uses_media_endpoint_with_input(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Гонка исполнителей: запуск отправляется ОДИН раз (первый настоящий прогон: план 2 ушёл дважды)
+# --------------------------------------------------------------------------- #
+
+
+class GatedPaid(FakePaid):
+    """Подделка для гонок: считает POST по цели; ``gate`` держит первый POST выбранной цели,
+    ``fail_kind`` — цель этого вида падает исключением."""
+
+    def __init__(self, hold: str = "", fail_kind: str = "", fail_exc: Exception | None = None,
+                 fail_times: int = 10**6, money: float | None = None, charge_fail: float = 0.0):
+        super().__init__()
+        import threading
+
+        self.lock = threading.Lock()
+        self.by_target: dict[str, int] = {}
+        self.hold = hold
+        self.fail_kind = fail_kind
+        self.fail_exc = fail_exc or RuntimeError("boom")
+        self.fail_times = fail_times
+        self.money = money  # баланс; None — провайдер его не отдаёт
+        self.charge_fail = charge_fail  # сколько списать при сбое (ответ не дошёл, а деньги взяли)
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+
+    def balance(self):
+        if self.money is None:
+            raise RuntimeError("GET /balance: 404")
+        return self.money
+
+    def submit(self, params, refs):
+        key = " / ".join(str(x) for x in params.get("_caption") or [])
+        with self.lock:
+            self.posts += 1
+            n = self.posts
+            self.by_target[key] = self.by_target.get(key, 0) + 1
+            first = self.by_target[key] == 1
+        if self.fail_kind and params.get("_kind") == self.fail_kind and self.fail_times > 0:
+            self.fail_times -= 1
+            if self.money is not None:
+                self.money -= self.charge_fail
+            raise self.fail_exc
+        if self.hold and self.hold in key and first:
+            self.entered.set()
+            assert self.gate.wait(10), "тест: ворота не открылись"
+        return f"req-{n}"
+
+
+def _gated(monkeypatch, **kw):
+    fake = GatedPaid(**kw)
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: fake if name == "polza" else PR.DryRunImages())
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    return fake
+
+
+def test_concurrent_runners_submit_each_job_once(env, monkeypatch):
+    import threading
+
+    _client_, store = env
+    fake = _gated(monkeypatch)
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    errors = []
+
+    def runner(fn):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=runner, args=(lambda: G.run_pending(store),)) for _ in range(3)]
+    threads.append(threading.Thread(target=runner, args=(lambda: G.run_approved(store, req["approval_id"], True),)))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert not errors, errors
+    assert fake.posts == 9 and set(fake.by_target.values()) == {1}
+    jobs = G.list_jobs(store, approval_id=req["approval_id"])
+    assert {j["status"] for j in jobs} == {"done"} and all(j["worker_id"] for j in jobs)
+    assert len(G.ledger(store, pid)) == 9
+    for ref in V.list_refs(store, pid):
+        assert ref["version"] == 1, ref
+
+
+def _three_refs(store, pid):
+    mira, kot = V.character_by_slug(store, pid, "mira"), V.character_by_slug(store, pid, "kot")
+    loc = V.list_locations(store, pid)[0]
+    req = G.request_stage(store, pid, "refs", items=[f"location:{loc['id']}", f"character:{mira['id']}:turnaround",
+                                                     f"character:{kot['id']}:turnaround"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    jobs = {j["label"]: j["id"] for j in G.list_jobs(store, approval_id=req["approval_id"])}
+    return req["approval_id"], jobs["локация «Кухня ночью»"], jobs["Мира: разворот"], jobs["Кот: разворот"]
+
+
+def test_run_approved_while_worker_holds_a_job_does_not_resubmit_it(env, monkeypatch):
+    """Сценарий первого прогона: работник ещё отправляет план, его же партия упала на другом
+    запуске (стоп карточки), владелец/агент жмёт aiv_run_approved — план не уходит второй раз."""
+    import threading
+
+    _client_, store = env
+    fake = _gated(monkeypatch, hold="Мира", fail_kind="location")
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+
+    worker = threading.Thread(target=G.run_jobs, args=(store, [j_mira]))
+    worker.start()
+    assert fake.entered.wait(10)
+    # Вторая партия: локация падает → карточка остановлена; «Мира» в работе — её НЕ трогаем.
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert j_mira not in out["held"] and out["held"] == [j_kot]
+    assert G.get_job(store, j_mira)["status"] == "submitting"
+    ran = G.run_approved(store, card, confirm=True)
+    assert [d["job_id"] for d in ran["done"]] == [j_kot]
+    assert [p["job_id"] for p in ran["in_progress"]] == [j_mira] and ran["in_progress"][0]["worker_id"]
+    fake.gate.set()
+    worker.join(30)
+    assert fake.by_target == {"плита локации / Кухня ночью": 1, "разворот / Мира": 1, "разворот / Кот": 1}
+    assert G.get_job(store, j_mira)["status"] == "done"
+    mira = V.character_by_slug(store, pid, "mira")
+    assert [r["version"] for r in V.list_refs(store, pid, "character", mira["id"], "turnaround")] == [1]
+    assert sorted(l["job_id"] for l in G.ledger(store, pid)) == sorted([j_mira, j_kot])
+
+
+def test_second_done_and_late_poll_are_ignored(paid, monkeypatch):
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs", items=["location:1"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    job = G.get_job(store, job["id"])
+    assert job["status"] == "done" and len(G.ledger(store, pid)) == 1
+    # Опрос по устаревшему снимку (статус уже done) не опрашивает и не пишет версию.
+    checks = fake.checks
+    assert G._finish(store, {**job, "status": "polling"}, fake, 0) is None and fake.checks == checks
+    # Второй «готово» того же запуска: ни версии, ни траты; свой файл удалён.
+    tmp = settings.tmp_dir / "dup.jpg"
+    PR.DryRunImages().fetch({}, tmp, {"_kind": "location"})
+    asset = G._save_asset(store, job, tmp, "image", "image/jpeg", "dup")
+    assert G._done(store, {**job, "status": "polling"}, asset["id"], "p", 6.0, "provider") is None
+    assert len(V.list_refs(store, pid, "location", 1, "location")) == 1 and len(G.ledger(store, pid)) == 1
+    with pytest.raises(KeyError):
+        store.get_montage_asset(asset["id"])
+
+
+# --------------------------------------------------------------------------- #
+# Сеть: до отправки — повтор сам; после — «под вопросом», сверка баланса, без авто-повтора
+# --------------------------------------------------------------------------- #
+
+
+def _httpx_errors():
+    import httpx
+
+    req = httpx.Request("POST", "https://polza.test/api/v1/media")
+    return (httpx.ConnectError("TLS/SSL connection has been closed (EOF)", request=req),
+            httpx.ReadTimeout("The read operation timed out", request=req))
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    monkeypatch.setattr(G, "RETRY_BACKOFF_SEC", (0.0,))
+    monkeypatch.setattr(G, "BALANCE_SETTLE_SEC", 0.0)
+
+
+def test_network_phase_classifies_httpx_errors():
+    import httpx
+
+    connect, read = _httpx_errors()
+    assert PR.network_phase(connect) == "before" and PR.network_phase(read) == "after"
+    assert PR.network_phase(httpx.RemoteProtocolError("peer closed")) == "after"
+    assert PR.network_phase(httpx.ConnectTimeout("t")) == "before"
+    assert PR.network_phase(RuntimeError("x")) is None and PR.network_phase(PR.ProviderError("4xx")) is None
+
+
+def test_connect_error_before_send_is_retried_without_new_approval(env, monkeypatch, no_wait):
+    _client_, store = env
+    connect, _read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=connect, fail_times=2)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_pending(store)
+    assert len(out["done"]) == 3 and not out["failed"]
+    assert fake.by_target["плита локации / Кухня ночью"] == 3  # две неудачи до отправки + успех
+    assert G.get_job(store, j_loc)["attempts"] == 1 and len(G.ledger(store, pid)) == 3
+    assert len(G.stage_approvals(store, pid)) == 1  # новой карточки нет
+
+
+def test_connect_error_three_times_fails_unpaid_does_not_stop_batch_and_retries(env, monkeypatch, no_wait):
+    _client_, store = env
+    connect, _read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=connect, fail_times=3)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    # Сеть — не стоп партии: остальные запуски выполнены.
+    assert [d["job_id"] for d in out["done"]] == [j_mira, j_kot] and not out["held"]
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "failed" and job["params"]["retry_free"] and "не оплачено" in job["error"]
+    assert not any(l["job_id"] == j_loc for l in G.ledger(store, pid))
+    assert G.stage_approvals(store, pid)[0]["retryable"] == 1
+    # «Повторить» одним нажатием — та же карточка, без новой.
+    res = G.retry_card(store, card, run=True)
+    assert res["retried"] == [j_loc] and [d["job_id"] for d in res["done"]] == [j_loc]
+    assert fake.by_target["плита локации / Кухня ночью"] == 4
+    with pytest.raises(V.AivError):
+        G.retry_job(store, j_loc)  # уже готово
+
+
+def test_read_timeout_is_uncertain_balance_unchanged_allows_free_retry(env, monkeypatch, no_wait):
+    _client_, store = env
+    _connect, read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=read, fail_times=1, money=100.0)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert len(out["done"]) == 2  # партия не остановлена
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "uncertain" and fake.by_target["плита локации / Кухня ночью"] == 1  # не повторял сам
+    assert job["params"]["balance_check"] == {"before": 100.0, "after": 100.0, "charged": 0.0}
+    assert job["params"]["retry_free"] and "не списано" in job["error"]
+    G.run_pending(store)  # работник «под вопросом» не трогает
+    assert fake.by_target["плита локации / Кухня ночью"] == 1
+    G.retry_job(store, j_loc)
+    G.run_pending(store)
+    assert G.get_job(store, j_loc)["status"] == "done" and fake.by_target["плита локации / Кухня ночью"] == 2
+
+
+def test_read_timeout_with_charge_or_unknown_balance_needs_new_card(env, monkeypatch, no_wait):
+    _client_, store = env
+    _connect, read = _httpx_errors()
+    fake = _gated(monkeypatch, fail_kind="location", fail_exc=read, fail_times=1, money=100.0, charge_fail=3.0)
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, _m, _k = _three_refs(store, pid)
+    G.run_jobs(store, [j_loc])
+    job = G.get_job(store, j_loc)
+    assert job["status"] == "uncertain" and not job["params"]["retry_free"]
+    assert job["cost_source"] == "balance" and job["cost_rub"] == pytest.approx(3.0)
+    assert [(l["job_id"], l["source"], l["amount_rub"]) for l in G.ledger(store, pid)] == [(j_loc, "balance", 3.0)]
+    with pytest.raises(G.BudgetError, match="aiv_regenerate"):
+        G.retry_job(store, j_loc)
+
+    # Баланс не узнать — «под вопросом», оценка запуска держится в сумме карточки.
+    fake.money, fake.fail_times = None, 1
+    pid2 = V.create_ai_project(store, "Второй", provider="polza")["project"]["id"]
+    V.save_location(store, pid2, "Двор", "двор днём", slug="yard")
+    V.save_location(store, pid2, "Крыша", "крыша ночью", slug="roof")
+    req = G.request_stage(store, pid2, "refs", items=["location:" + str(V.location_by_slug(store, pid2, "yard")["id"]),
+                                                      "location:" + str(V.location_by_slug(store, pid2, "roof")["id"])])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    store.db.execute("UPDATE approvals SET payload_json = json_set(payload_json, '$.amount_rub', 6.0) WHERE id = ?",
+                     (req["approval_id"],))
+    fake.fail_kind = "location"
+    out = G.run_pending(store)
+    yard, roof = sorted(j["id"] for j in G.list_jobs(store, approval_id=req["approval_id"]))
+    assert G.get_job(store, yard)["status"] == "uncertain" and "баланс не узнать" in G.get_job(store, yard)["error"]
+    # одобрено 6 ₽: 6 «под вопросом» + 6 следующего > 6 — второй держится, а не тратит сверх
+    assert G.get_job(store, roof)["status"] == "held" and out["held"] == [roof]
+
+
+def test_poll_network_error_keeps_polling_without_new_post(paid, monkeypatch):
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    _connect, read = _httpx_errors()
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs", items=["location:1"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    real_check = fake.check
+    fake.check = lambda rid: (_ for _ in ()).throw(read)
+    G.run_pending(store, poll_timeout=0)
+    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    assert job["status"] == "polling" and "сеть при опросе" in job["error"] and fake.posts == 1
+    fake.check = real_check
+    assert G.resume(store, poll_timeout=0)["finished"] == [job["id"]] and fake.posts == 1
+
+
+def test_policy_refusal_still_stops_the_batch(env, monkeypatch, no_wait):
+    _client_, store = env
+    _gated(monkeypatch, fail_kind="location", fail_exc=PR.ProviderError("Polza 400: moderation", policy=True))
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert G.get_job(store, j_loc)["status"] == "blocked_policy" and out["held"] == [j_mira, j_kot]
+
+
+def test_measured_price_and_sync_media_url(monkeypatch):
+    """Замер nano-banana 1K — 3 ₽, 2K — 4.5 ₽ (прайс ×1); не мерили (4K) — прайс ×2. Синхронный ответ
+    POST /media с data.url (так часто отвечает видео-модель) — ссылка сразу, без requestId."""
+    import httpx
+
+    assert PR.image_price("google/gemini-nano-banana-2.1", "1K") == {"rub": 3.0, "list_rub": 3.0, "measured": True,
+                                                                    "note": "замер"}
+    assert PR.image_price("google/gemini-nano-banana-2.1", "2K")["rub"] == pytest.approx(4.5)
+    assert PR.image_price("google/gemini-nano-banana-2.1", "4K")["rub"] == pytest.approx(13.5)
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"status": "completed", "data": {"url": "https://s3/v.mp4"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    provider = PR.PolzaImages(api_key="k", base_url="https://polza.test/api/v1")
+    assert provider.submit({"model": "grok-imagine-video-1-5", "prompt": "x"}, []) == "url:https://s3/v.mp4"
+    assert provider.check("url:https://s3/v.mp4") == {"status": "completed", "url": "https://s3/v.mp4"}
+
+
+# --------------------------------------------------------------------------- #
+# Персонаж, который не говорит: speech sfx (звуки пака по эмоции) / none (молчит)
+# --------------------------------------------------------------------------- #
+
+
+def _sfx_pack(tmp_path, monkeypatch):
+    """Пак freesound для теста (в рабочей копии паков нет — их ставит Docker): короткие файлы-заглушки."""
+    import json
+    import subprocess
+
+    packs = tmp_path / "packs"
+    (packs / "freesound").mkdir(parents=True)
+    files = ["pop-soft.ogg", "pop.ogg", "sad-trombone.ogg", "whip.ogg"]
+    for f in files:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.3",
+                        str(packs / "freesound" / f)], check=True, capture_output=True)
+    (packs / "packs.json").write_text(json.dumps({"version": 1, "packs": [
+        {"id": "freesound", "kind": "sfx", "items": [{"file": f, "name": f, "tags": []} for f in files]}]}),
+        encoding="utf-8")
+    monkeypatch.setattr(settings, "motion_packs_dir", packs, raising=False)
+
+
+def test_sfx_character_beeps_instead_of_tts_and_silent_one_has_no_lines(env, tmp_path, monkeypatch):
+    _client_, store = env
+    _sfx_pack(tmp_path, monkeypatch)
+    pid, sid = _project(store)
+    bip = V.save_character(store, pid, "Бип", "робот-пылесос, круглый, белый, синий глаз-диод", slug="bip",
+                           notes="не говорит, только пищит", speech="sfx")
+    assert bip["speech"] == "sfx" and bip["speech_captions"] is True
+    V.save_character(store, pid, "Тихоня", "серая мышь", slug="tihonya", speech="none")
+    with pytest.raises(V.AivError, match="speech"):
+        V.save_character(store, pid, speech="mumble", character_id=bip["id"])
+    with pytest.raises(V.AivError, match="voice.sfx"):
+        V.save_character(store, pid, voice={"sfx": "https://example.com/beep.mp3"}, character_id=bip["id"])
+    out = V.update_script(store, sid, {"shots": [
+        {"duration": 3, "location": "kitchen", "characters": ["mira", "bip"], "camera": {"move": "static"},
+         "dialogue": [{"who": "mira", "text": "Ты где?"}, {"who": "bip", "text": "Бип-бип?..", "emotion": "curious"}]},
+        {"duration": 3, "location": "kitchen", "characters": ["bip", "tihonya"], "camera": {"move": "static"},
+         "dialogue": [{"who": "bip", "text": "Бип!", "emotion": "радостно"},
+                      {"who": "tihonya", "text": "Привет"}]}]})
+    assert any("tihonya молчит" in w for w in out["warnings"])
+    assert [d["who"] for d in out["shots"][1]["dialogue"]] == ["bip"]
+
+    est = G.estimate(store, pid, "voice", sid)
+    kinds = {(i["kind"], i.get("voice")) for i in est["items"]}
+    assert ("sfx", "sfx:freesound/pop-soft.ogg") in kinds and ("sfx", "sfx:freesound/pop.ogg") in kinds
+    assert all(i["estimate_rub"] == 0 for i in est["items"] if i["kind"] == "sfx")
+    assert sum(1 for i in est["items"] if i["kind"] == "tts") == 1  # говорит только Мира
+
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    from app.aivideo_assemble import assemble
+
+    res = assemble(store, sid)
+    assert res["lines"] == 3
+    sfx_jobs = [j for j in G.list_jobs(store, script_id=sid) if j["kind"] == "sfx"]
+    assert {j["status"] for j in sfx_jobs} == {"done"} and all(j["provider"] == "none" for j in sfx_jobs)
+    asset = store.get_montage_asset(V.get_ref(store, sfx_jobs[0]["result_ref_id"])["asset_id"])
+    assert asset["original_filename"].startswith("freesound/")  # запись пака, не синтез
+    texts = [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]]
+    assert texts == ["Ты где?", "Бип-бип?..", "Бип!"]
+
+    # Подписи к звукам выключены — в субтитрах только речь.
+    V.save_character(store, pid, speech_captions=False, character_id=bip["id"])
+    res = assemble(store, sid)
+    assert [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]] == ["Ты где?"]
+    assert res["lines"] == 3
+
+
+def test_script_writer_knows_who_does_not_speak(env):
+    import json
+
+    _client_, store = env
+    pid, sid = _project(store)
+    V.save_character(store, pid, "Бип", "робот-пылесос", slug="bip", notes="не говорит, только пищит",
+                     speech="sfx")
+    V.save_character(store, pid, "Тихоня", "серая мышь", slug="tihonya", speech="none")
+    from app.aivideo_script import RULES, script_context, write_script
+
+    ctx = {c["id"]: c for c in script_context(store, sid)["characters"]}
+    assert ctx["bip"]["speech"] == "sfx" and ctx["bip"]["notes"] == "не говорит, только пищит"
+    assert ctx["tihonya"]["speech"] == "none" and "sfx — НЕ говорит" in RULES
+    seen = {}
+
+    class Fake:
+        def generate_content(self, model, payload):
+            seen["payload"] = payload
+            text = json.dumps({"title": "t", "logline": "l", "shots": [
+                {"duration": 3, "characters": [{"id": "bip"}, {"id": "tihonya"}], "camera": {"move": "static"},
+                 "action": "робот кружит", "dialogue": [{"who": "bip", "text": "Бип?", "emotion": "curious"},
+                                                       {"who": "tihonya", "text": "Пи"}]}]}, ensure_ascii=False)
+            return {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+
+    out = write_script(store, sid, brief="робот", client=Fake())
+    assert [d["who"] for d in out["shots"][0]["dialogue"]] == ["bip"]
+    assert '"speech": "sfx"' in seen["payload"]["contents"][0]["parts"][1]["text"]
+
+
+def test_define_character_tool_sets_speech(env):
+    _client_, store = env
+    from app.agent_tools import ToolContext, run_tool
+
+    pid, _sid = _project(store)
+    out, ok = run_tool(ToolContext(store=store), "aiv_define_character", {
+        "project_id": pid, "name": "Бип", "identity_card": "робот", "speech": "sfx", "speech_captions": False,
+        "voice": {"sfx": "sfx:freesound/pop-soft.ogg"}})
+    assert ok, out
+    c = out["character"]
+    assert c["speech"] == "sfx" and c["speech_captions"] is False and c["voice"]["sfx"] == "sfx:freesound/pop-soft.ogg"
+    assert G.sfx_for(c, "angry") == "sfx:freesound/pop-soft.ogg"  # свой звук важнее эмоции
+    assert G.sfx_for({}, "очень зла") == "sfx:freesound/impact-low.ogg"
+    assert G.sfx_for(None, "") == G.SFX_DEFAULT
+
+
+# --------------------------------------------------------------------------- #
+# Постоянство персонажей: все листы в референсах кадра, авто-проверка, «проверь» без авто-оплаты
+# --------------------------------------------------------------------------- #
+
+
+def test_keyframe_gets_all_character_sheets_and_plate_logged_in_params(env, monkeypatch):
+    _client_, store = env
+    pid, sid = _project(store)
+    G.request_stage(store, pid, "refs")
+    kf = G.request_stage(store, pid, "keyframes", sid)
+    job = G.get_job(store, kf["run"]["done"][1]["job_id"])  # план 2: Мира в пижаме + Кот на кухне
+    roles = job["params"]["ref_roles"]
+    # v2: первым — кадр прошлого плана (постоянство склейки), дальше листы персонажей, плита, стиль.
+    assert roles == ["план 1: кадр", "mira: разворот", "mira: эмоции", "mira: облик pajamas", "kot: разворот",
+                     "kot: эмоции", "плита локации «Кухня ночью»", "стиль"]
+    assert len(job["params"]["refs"]) == len(roles) and job["params"]["missing_refs"] == []
+    assert ("Reference images in order: 1 — keyframe of the previous shot 1 (continuity); 2 — Мира — turnaround "
+            "model sheet; 3 — Мира — expression sheet") in job["prompt"]
+
+    # Лимит модели: режем с конца по важности — листы персонажей остаются, недостающее — в журнал.
+    monkeypatch.setitem(PR.MAX_REFS, settings.aivideo_image_model, 4)
+    shot2 = V.get_script(store, sid)["shots"][1]
+    _p, refs, _c, info = G.build_request(store, {**job, "target_id": shot2["id"]})
+    assert len(refs) == 4 and info["roles"] == roles[:4]
+    assert "не влезло в лимит 4: kot: эмоции" in info["missing"]
+
+
+class FakeVision:
+    """Gemini-зрение: оценка персонажей кадра (scores {slug: score}) или сбой."""
+
+    def __init__(self, scores=None, error=None):
+        self.scores = scores or {}
+        self.error = error
+        self.calls = 0
+
+    def generate_content(self, model, payload):
+        import json
+
+        self.calls += 1
+        if self.error:
+            raise self.error
+        chars = [{"id": k, "score": v, "differences": "другая модель пылесоса" if v < 6 else ""}
+                 for k, v in self.scores.items()]
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps({"characters": chars},
+                                                                          ensure_ascii=False)}]}}]}
+
+
+def _paid_keyframes(store, monkeypatch, vision):
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(G, "_vision_client", lambda: vision)
+    pid, sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    assert vision.calls == 0  # листы и плиты не проверяются — только кадры с персонажами
+    req = G.request_stage(store, pid, "keyframes", sid)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    return pid, sid
+
+
+def test_keyframe_auto_consistency_check_marks_needs_review_without_paid_regeneration(paid, monkeypatch):
+    (_client_, store), fake = paid
+    vision = FakeVision({"mira": 8, "kot": 4})
+    pid, sid = _paid_keyframes(store, monkeypatch, vision)
+    assert vision.calls == 3 and fake.posts == 9 + 3  # проверка бесплатна, перерисовки сама не было
+    view = V.script_view(store, sid)
+    flags = {s["idx"]: s["needs_review"] for s in view["shots"]}
+    assert flags == {1: False, 2: True, 3: True}  # кот 4/10 в планах 2 и 3
+    assert [r["idx"] for r in view["needs_review"]] == [2, 3]
+    assert "kot 4/10: другая модель пылесоса" in view["needs_review"][0]["note"]
+    sel = next(k for k in view["shots"][1]["keyframes"] if k["selected"])
+    assert sel["needs_review"] and sel["score"]["min"] == 4
+    assert G.list_jobs(store, script_id=sid)[0]["status"] == "done"
+    # aiv_get_script отдаёт то же
+    from app.agent_tools import ToolContext, run_tool
+
+    out, ok = run_tool(ToolContext(store=store), "aiv_get_script", {"script_id": sid})
+    assert ok and [r["idx"] for r in out["needs_review"]] == [2, 3]
+    # Ручная перепроверка (кадр поправили/владелец доволен) снимает отметку.
+    G.check_consistency(store, sel["id"], client=FakeVision({"mira": 9, "kot": 7}))
+    assert not V.get_ref(store, sel["id"])["needs_review"]
+
+
+def test_auto_check_failure_does_not_fail_the_job(paid, monkeypatch):
+    (_client_, store), fake = paid
+    vision = FakeVision(error=RuntimeError("User location is not supported"))
+    pid, sid = _paid_keyframes(store, monkeypatch, vision)
+    shots = V.script_view(store, sid)["shots"]
+    assert all(s["keyframes"] and not s["needs_review"] for s in shots)
+    assert "User location" in shots[0]["keyframes"][0]["score"]["error"]
+    assert {j["status"] for j in G.list_jobs(store, script_id=sid)} == {"done"}
+
+
+# --------------------------------------------------------------------------- #
 # v2: видео планов, 504 → восстановление id из истории, без второго POST
 # --------------------------------------------------------------------------- #
 
@@ -571,7 +1092,7 @@ def test_video_price_measured_and_project_setting(env):
     assert style["video_model"] == "bytedance/seedance-2-fast" and style["video_provider"] == "polza"
     assert PR.video_price("bytedance/seedance-2-fast", "720p", 4)["rub"] == pytest.approx(89.1)
     assert PR.video_price("grok-imagine-video-1-5", "720p", 4)["rub"] == pytest.approx(12.15)
-    assert PR.image_price("google/gemini-nano-banana-2.1", "2K")["rub"] == pytest.approx(4.5)
+    assert PR.video_price("bytedance/seedance-2-fast", "480p", 4)["rub"] == pytest.approx(83.7)  # не замерено: ×2
     shot = V.get_script(store, sid)["shots"][0]
     # Длинные реплики → видео длиннее (до 8 с); короче 4 с не бывает.
     assert G.video_seconds({**shot, "duration": 2}, "bytedance/seedance-2-fast") == 4
@@ -631,17 +1152,26 @@ def test_video_recovery_survives_restart_and_never_resubmits(paid_video, monkeyp
     jobs = sorted(G.list_jobs(store, approval_id=req["approval_id"]), key=lambda j: j["id"])
     # Каждому запуску — свой id (ранний запрос — раннему запуску), оба готовы.
     assert [(j["status"], j["remote_id"]) for j in jobs] == [("done", "vid-1"), ("done", "vid-2")]
-    # Запрос так и не появился у провайдера — после срока failed, без нового POST.
+    # Запрос так и не появился у провайдера — после срока «под вопросом» (1.1 uncertain), без нового POST;
+    # повтор без новой карточки нельзя (не подтверждено, что не оплачено).
     store.db.execute("UPDATE aiv_gen_jobs SET status = 'recovering', remote_id = '', submitted_at = ? WHERE id = ?",
                      ("2020-01-01T00:00:00", jobs[0]["id"]))
     fresh.history = []
     G.resume(store)
     lost = G.get_job(store, jobs[0]["id"])
-    assert lost["status"] == "failed" and "не появился" in lost["error"] and fresh.posts == 0
-    # Сбой ДО отправки (время не записано) — запуск снова approved (не оплачено).
+    assert lost["status"] == "uncertain" and "не появился" in lost["error"] and fresh.posts == 0
+    with pytest.raises(G.BudgetError):
+        G.retry_job(store, jobs[0]["id"])
+    # Исполнитель умер после записи времени отправки — ищем у провайдера (recovering), POST не повторяем.
+    fresh.hidden = 10**6
+    store.db.execute("UPDATE aiv_gen_jobs SET status = 'submitting', remote_id = '', submitted_at = ? WHERE id = ?",
+                     (G._utc_now(), jobs[1]["id"]))
+    G.resume(store)
+    assert G.get_job(store, jobs[1]["id"])["status"] == "recovering" and fresh.posts == 0
+    # Время не записано — как в 1.1: сам не повторяю, «проверь баланс».
     store.db.execute("UPDATE aiv_gen_jobs SET status = 'submitting', remote_id = '', submitted_at = '' WHERE id = ?",
                      (jobs[1]["id"],))
-    assert G.resume(store)["requeued"] == [jobs[1]["id"]]
+    assert G.resume(store)["lost"] == [jobs[1]["id"]]
 
 
 def test_polza_video_adapter_504_and_history_lookup(monkeypatch, tmp_path):
@@ -678,9 +1208,9 @@ def test_polza_video_adapter_504_and_history_lookup(monkeypatch, tmp_path):
         raise httpx.ConnectError("refused")
 
     monkeypatch.setattr(httpx, "post", post_down)
-    with pytest.raises(PR.ProviderError) as info:
+    with pytest.raises(httpx.ConnectError) as info:
         adapter.submit(params, [start])
-    assert not isinstance(info.value, PR.SubmitUncertain)  # не ушло — не списано
+    assert PR.network_phase(info.value) == "before"  # не ушло — не списано: aivideo_gen повторит сам (1.1)
 
     items = [
         {"id": "new2", "model": "bytedance/seedance-2-fast", "status": "pending", "createdAt": "2026-11-01T12:00:40.5Z"},
@@ -959,3 +1489,88 @@ def test_v2_tools_and_rest_continuity(env):
     assert ok and res["style"]["video_model"] == "grok-imagine-video-1-5"
     resp = client.post(f"/api/ai-video/scripts/{sid}/continuity")
     assert resp.status_code == 200 and resp.json()["skipped"]
+
+
+# --------------------------------------------------------------------------- #
+# Слияние 1.1 + v2: немые персонажи в сборке с видео, сеть видео/картинок
+# --------------------------------------------------------------------------- #
+
+
+def test_assembly_v2_with_sfx_character_and_video(env, tmp_path, monkeypatch):
+    _client_, store = env
+    _sfx_pack(tmp_path, monkeypatch)
+    pid, sid = _project(store)
+    V.save_character(store, pid, "Бип", "робот-пылесос, круглый, белый, синий глаз-диод", slug="bip", speech="sfx")
+    V.save_character(store, pid, "Тихоня", "серая мышь", slug="tihonya", speech="none")
+    V.update_script(store, sid, {"shots": [
+        {"duration": 4, "location": "kitchen", "needs_motion": True, "characters": ["mira", "bip"],
+         "camera": {"move": "static"}, "action": "Бип выезжает из-под стола",
+         "dialogue": [{"who": "mira", "text": "Ты где?"}, {"who": "bip", "text": "Бип-бип?..", "emotion": "curious"}]},
+        {"duration": 4, "location": "kitchen", "needs_motion": True, "characters": ["bip", "tihonya"],
+         "camera": {"move": "push_in"}, "action": "Бип кружит",
+         "dialogue": [{"who": "bip", "text": "Бип!", "emotion": "радостно"}, {"who": "tihonya", "text": "Привет"}]}]})
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    vid = G.request_stage(store, pid, "video", sid)
+    assert [d["label"] for d in vid["run"]["done"]] == [
+        "план 1: видео 4 с", "план 2: старт — последний кадр видео плана 1", "план 2: видео 4 с"]
+    # Промпт видео: говорит голосом только Мира; звуки Бипа и молчание Тихони — не «рот».
+    v2 = G.get_job(store, vid["run"]["done"][2]["job_id"])
+    assert "talks" not in v2["prompt"]
+    from app.aivideo_assemble import SFX_MIN_SEC, assemble
+
+    res = assemble(store, sid)
+    assert res["video_shots"] == 2 and res["lines"] == 3
+    layers = store.get_clip_plan(res["clip_id"])["render_settings"]["layers"]
+    lines = [l for l in layers if l["id"].startswith("aiv_line_")]
+    assert [l["id"] for l in lines] == ["aiv_line_1_1", "aiv_line_1_2", "aiv_line_2_1"]
+    sfx_assets = {store.get_montage_asset(l["props"]["asset_id"])["original_filename"] for l in lines[1:]}
+    assert all(name.startswith("freesound/") for name in sfx_assets)  # звуки пака, не TTS
+    assert lines[2]["end"] - lines[2]["start"] >= SFX_MIN_SEC  # окно подписи к звуку
+    subs = [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]]
+    assert subs == ["Ты где?", "Бип-бип?..", "Бип!"]
+    V.save_character(store, pid, speech_captions=False, character_id=V.character_by_slug(store, pid, "bip")["id"])
+    res = assemble(store, sid)
+    assert [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]] == ["Ты где?"]
+
+
+class RawTimeoutVideo(FakeVideo):
+    """Адаптер с поиском, POST которого рвётся на чтении (httpx.ReadTimeout — как есть, 1.1)."""
+
+    def submit(self, params, refs):
+        import httpx
+
+        self.posts += 1
+        self.history.append({"id": f"vid-{self.posts}", "model": params["model"], "createdAt": G._utc_now()})
+        raise httpx.ReadTimeout("The read operation timed out")
+
+
+def test_video_read_timeout_recovers_via_history_and_recoverless_is_uncertain(paid_video, monkeypatch):
+    (_client_, store), img, _vid = paid_video
+    raw = RawTimeoutVideo()
+    monkeypatch.setattr(PR, "get_video_provider", lambda name: raw)
+    pid, sid = _project(store, provider="polza")
+    for stage, kw in (("refs", {}), ("keyframes", {"script_id": sid})):
+        req = G.request_stage(store, pid, stage, **kw)
+        A.decide(store, req["approval_id"], "approve", actor="ui")
+        G.run_pending(store)
+    _motion(store, sid, 1)
+    req = G.request_stage(store, pid, "video", sid)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    [job] = [j for j in G.list_jobs(store, approval_id=req["approval_id"]) if j["kind"] == "video"]
+    # Обрыв после отправки у адаптера с поиском: id из истории, без второго POST и без «под вопросом».
+    assert job["status"] == "done" and job["remote_id"] == "vid-1" and raw.posts == 1
+
+    # Тот же обрыв у адаптера без поиска — 1.1: «под вопросом» со сверкой баланса, сам не повторяет.
+    class NoRecover(RawTimeoutVideo):
+        recover = None
+
+    plain = NoRecover()
+    monkeypatch.setattr(PR, "get_video_provider", lambda name: plain)
+    shot1 = V.get_script(store, sid)["shots"][0]
+    again = G.regenerate(store, target=f"shot:{shot1['id']}:shot_video")
+    A.decide(store, again["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    [job] = [j for j in G.list_jobs(store, approval_id=again["approval_id"]) if j["kind"] == "video"]
+    assert job["status"] == "uncertain" and plain.posts == 1

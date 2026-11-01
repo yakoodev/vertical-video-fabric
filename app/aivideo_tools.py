@@ -105,7 +105,8 @@ def h_define_character(ctx: ToolContext, args: dict) -> dict:
     character = _call(V.save_character, ctx.store, _pid(args), name=str(args.get("name") or ""),
                       identity_card=args.get("identity_card"), slug=str(args.get("slug") or ""),
                       origin=args.get("origin"), voice=args.get("voice"), notes=args.get("notes"),
-                      character_id=args.get("character_id"))
+                      character_id=args.get("character_id"), speech=args.get("speech"),
+                      speech_captions=args.get("speech_captions"))
     return {"ok": True, "character": character}
 
 
@@ -203,6 +204,14 @@ def h_run_approved(ctx: ToolContext, args: dict) -> dict:
     return _call(G.run_approved, ctx.store, int(args["approval_id"]), bool(args.get("confirm")))
 
 
+def h_retry(ctx: ToolContext, args: dict) -> dict:
+    if args.get("job_id"):
+        return _call(G.retry_job, ctx.store, int(args["job_id"]), bool(args.get("run")))
+    if args.get("approval_id"):
+        return _call(G.retry_card, ctx.store, int(args["approval_id"]), bool(args.get("run")))
+    raise ToolError("нужен job_id или approval_id")
+
+
 def h_jobs(ctx: ToolContext, args: dict) -> dict:
     pid = _pid(args)
     return {"jobs": G.list_jobs(ctx.store, project_id=pid, approval_id=args.get("approval_id"),
@@ -277,12 +286,17 @@ def tools() -> list[Tool]:
              "глаза, рост и пропорции, 2–3 цвета hex, отличительная деталь (идёт в промпт ДОСЛОВНО; правка "
              "помечает его картинки и кадры «устарело»), origin invented|owner (витубер владельца — его "
              "картинки он загружает в проект; фото людей из интернета не бери), voice {provider polza|none, "
-             "model, voice} — TTS как в dub_clip. slug — id в сценарии. / Define a character.",
+             "model, voice} — TTS как в dub_clip. speech: voice (говорит) | sfx (НЕ говорит — робот, зверёк: "
+             "реплика = звук-запись пака по emotion реплики, свой звук — voice.sfx «sfx:freesound/<файл>»; "
+             "speech_captions — текст его реплик субтитрами, по умолчанию да) | none (молчит, реплики "
+             "убираются). Пишешь «не говорит» в notes — ставь speech. slug — id в сценарии. / Define a character.",
              _obj({**_PID, "character_id": {"type": "integer"}, "name": {"type": "string"},
                    "identity_card": {"type": "string"}, "slug": {"type": "string"},
                    "origin": {"type": "string", "enum": list(V.ORIGINS)},
                    "voice": _obj({"provider": {"type": "string"}, "model": {"type": "string"},
-                                  "voice": {"type": "string"}}), "notes": {"type": "string"}}, ["project_id"]),
+                                  "voice": {"type": "string"}, "sfx": {"type": "string"}}),
+                   "notes": {"type": "string"}, "speech": {"type": "string", "enum": list(V.SPEECH_MODES)},
+                   "speech_captions": {"type": "boolean"}}, ["project_id"]),
              h_define_character, mutating=True, scope="project"),
         Tool("aiv_add_look", "Облик персонажа",
              "Облик персонажа на отрезке сюжета («в пижаме», «промокла»): name, outfit_text (меняется ТОЛЬКО "
@@ -340,7 +354,9 @@ def tools() -> list[Tool]:
         Tool("aiv_get_script", "Раскадровка серии",
              "Серия: планы с версиями кадров (url, выбран, устарел, оценка постоянства; prompt «chain:N» — кадр "
              "вынут из видео прошлого плана), видео (videos), озвучки, continuity — итог проверки склейки, "
-             "сколько ₽ на каждый план, бюджет серии и карточки этапов. / Episode storyboard.",
+             "сколько ₽ на каждый план, бюджет серии и карточки этапов; needs_review — планы, где персонаж не "
+             "похож на канон (авто-проверка < 6): покажи владельцу, перерисовка — только его решением. "
+             "/ Episode storyboard.",
              _obj({"script_id": {"type": "integer"}}, ["script_id"]), h_get_script, scope="project"),
         Tool("aiv_estimate", "Считаю стоимость этапа",
              "Оценка этапа БЕСПЛАТНО, ничего не запускает: stage refs (стиль, локации, листы персонажей) | "
@@ -377,6 +393,14 @@ def tools() -> list[Tool]:
              "отказ. / Run jobs of an owner-approved card.",
              _obj({"approval_id": {"type": "integer"}, "confirm": {"type": "boolean"}}, ["approval_id"]),
              h_run_approved, mutating=True, scope="project"),
+        Tool("aiv_retry_job", "Повторяю после сбоя сети",
+             "Повторить запуск, который ТОЧНО не оплачен, без новой карточки (та же одобренная сумма): запрос "
+             "не ушёл из-за сети (ConnectError — сам уже повторил 3 раза) или ответ не дошёл (ReadTimeout), а "
+             "баланс Polza не изменился (статус uncertain, retry_free). job_id — один, approval_id — все такие "
+             "по карточке; run=true — сразу, иначе работник. Списано/баланс неизвестен — отказ: aiv_regenerate. "
+             "/ Retry a job that surely was not charged.",
+             _obj({"job_id": {"type": "integer"}, "approval_id": {"type": "integer"}, "run": {"type": "boolean"}}),
+             h_retry, mutating=True, scope="project"),
         Tool("aiv_job_status", "Очередь генерации",
              "Запуски генерации проекта (статус, оценка, факт, ошибка), карточки этапов и бюджет. recovering — "
              "запрос ушёл без ответа (у видео Polza 504 всегда): работник ищет его id у провайдера, повторно НЕ "
@@ -388,8 +412,10 @@ def tools() -> list[Tool]:
              "Выбрать версию картинки/озвучки (ref_id) — она пойдёт в референсы и сборку. / Select a version.",
              _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_select, mutating=True, scope="project"),
         Tool("aiv_check_consistency", "Проверяю постоянство",
-             "Gemini-зрение (бесплатно): кадр плана против канона персонажей — оценка 0–10 и что отличается; ниже "
-             "6 — перегенерируй кадр. Gemini не настроен — skipped. / Check character consistency of a keyframe.",
+             "Gemini-зрение (бесплатно): кадр плана против канона персонажей (разворот, эмоции, картинки "
+             "владельца) — оценка 0–10 и что отличается; ниже 6 — версия needs_review. Платные кадры с "
+             "персонажами проверяются сами после генерации; это — перепроверка. Gemini не настроен — skipped. "
+             "/ Check character consistency of a keyframe.",
              _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_check, scope="project"),
         Tool("aiv_check_continuity", "Проверяю склейки",
              "Gemini-зрение (бесплатно): стартовый кадр каждого плана против последнего кадра (или кадра) прошлого "

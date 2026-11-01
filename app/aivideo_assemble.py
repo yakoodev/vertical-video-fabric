@@ -13,10 +13,12 @@
   (``app/camera3d.py``) на отрезке плана; на склейке камера возвращается в покой.
 
 Реплики: озвучка этапа ``voice`` (голос персонажа, TTS из ``app/dubbing.py``) — каждая своим слоем
-``audio`` на своём времени в плане (правится в редакторе по одной). Субтитры клипа — из тех же
-реплик с их окнами (слой ``captions``, стиль субтитров проекта). Музыка — трек проекта (паки,
-бесплатно), под репликами приглушена (``music_duck``). Результат — обычный клип: правится в
-редакторе, рендерится и публикуется как всё остальное. Каждая сборка — новый клип.
+``audio`` на своём времени в плане (правится в редакторе по одной). Персонаж ``speech sfx`` вместо
+голоса «говорит» записью пака (окно не короче ``SFX_MIN_SEC``, подпись — если ``speech_captions``),
+``speech none`` молчит. Субтитры клипа — из тех же реплик с их окнами (слой ``captions``, стиль
+субтитров проекта). Музыка — трек проекта (паки, бесплатно), под репликами приглушена
+(``music_duck``). Результат — обычный клип: правится в редакторе, рендерится и публикуется как всё
+остальное. Каждая сборка — новый клип.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ LEAD_SEC = 0.35  # от начала плана до первой реплики
 GAP_SEC = 0.2  # между репликами
 TAIL_SEC = 0.45  # после последней реплики
 FADE_SEC = 0.3
+SFX_MIN_SEC = 1.0  # реплика-звук персонажа, который не говорит (speech sfx): окно подписи
 OVERSCAN = 1.08  # запас кадра: камера/наезд не показывают края
 PAN_SCALE = 1.18
 PAN_SHIFT = 0.065
@@ -64,7 +67,7 @@ def _keys(move: str, length: float) -> tuple[float, dict]:
 
 
 def _line_ref(store: Any, project_id: int, shot: dict, i: int, line: dict) -> dict | None:
-    voice = G._voice_of(store, project_id, line["who"])
+    voice = G._voice_of(store, project_id, line["who"], line.get("emotion") or "")
     ref = V.selected_ref(store, project_id, "line", int(shot["id"]), "line_audio", str(i))
     if not G._fresh(ref) or ref["prompt"] != G._line_key(voice, line["text"]):
         return None
@@ -112,19 +115,28 @@ def timeline(store: Any, script: dict) -> dict:
     for shot in script["shots"]:
         placed = []
         for i, line in enumerate(shot["dialogue"]):
+            character, speech = G.speech_of(store, project_id, line["who"])
+            if speech == "none":
+                continue
             ref = _line_ref(store, project_id, shot, i, line)
             if ref is None:
                 raise V.AivError(f"план {shot['idx']}: нет озвучки реплики {i + 1} — этап voice")
-            path = G._asset_path(store, ref)
-            placed.append((line, ref, max(0.2, probe_duration(path))))
-        need = (LEAD_SEC + sum(d for _l, _r, d in placed) + GAP_SEC * (len(placed) - 1) + TAIL_SEC) if placed else 0
+            d = max(0.2, probe_duration(G._asset_path(store, ref)))
+            caption = True
+            if speech == "sfx":
+                # Звук короткий — окно реплики не короче SFX_MIN_SEC (успеть прочитать подпись).
+                d = max(d, SFX_MIN_SEC)
+                caption = bool((character or {}).get("speech_captions", True))
+            placed.append((line, ref, d, caption))
+        need = (LEAD_SEC + sum(p[2] for p in placed) + GAP_SEC * (len(placed) - 1) + TAIL_SEC) if placed else 0
         video = _video_of(store, project_id, shot)
         base = video["window"] if video else float(shot["duration"])
         length = round(max(base, need), 3)
         cursor = t + LEAD_SEC
-        for i, (line, ref, d) in enumerate(placed):
+        for i, (line, ref, d, caption) in enumerate(placed):
             lines.append({"shot": shot["idx"], "n": i + 1, "who": line["who"], "text": line["text"],
-                          "start": round(cursor, 3), "end": round(cursor + d, 3), "asset_id": int(ref["asset_id"])})
+                          "start": round(cursor, 3), "end": round(cursor + d, 3), "asset_id": int(ref["asset_id"]),
+                          "caption": caption})
             cursor += d + GAP_SEC
         shots.append({"shot": shot, "start": round(t, 3), "end": round(t + length, 3), "video": video,
                       "stretched": round(length - base, 2)})
@@ -256,8 +268,10 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
                        "end": round(min(total, line["end"] + 0.05), 3),
                        "props": {"asset_id": line["asset_id"], "mode": "track", "volume": 1.0, "fadeIn": 0.02,
                                  "fadeOut": 0.05}})
-    if plan["lines"]:
-        save_lines(store, plan_id, [{"start": l["start"], "end": l["end"], "text": l["text"]} for l in plan["lines"]])
+    # Субтитры — реплики голосом и (если у персонажа включено) подписи к его звукам.
+    captions = [{"start": l["start"], "end": l["end"], "text": l["text"]} for l in plan["lines"] if l["caption"]]
+    if captions:
+        save_lines(store, plan_id, captions)
         layers.append({"id": f"{LAYER_PREFIX}captions", "type": "captions", "name": "Субтитры", "start": 0.0,
                        "end": round(total, 3), "track": 6, "x": 0.5, "y": 0.72,
                        "props": {"style": captions_style or style.get("captions_style") or "hormozi"}})

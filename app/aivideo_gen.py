@@ -23,7 +23,10 @@
 
 Провайдер ``none`` (сухой прогон) — 0 ₽: карточка не нужна, весь конвейер идёт сразу.
 
-Двойной оплаты нет: ``remote_id`` пишется в БД ДО опроса, после перезапуска опрос продолжается
+Двойной оплаты нет: запуск берёт ровно один исполнитель (работник, ``aiv_run_approved``, другой
+процесс) — проверка денег и ``approved → submitting`` одной транзакцией ``BEGIN IMMEDIATE``, все
+дальнейшие смены статуса — «сравнить-и-записать», второй «готово» не пишет ни версию, ни трату;
+``remote_id`` пишется в БД ДО опроса, после перезапуска опрос продолжается
 (``resume``) без нового POST; запуск, оборванный между «отправляю» и ответом провайдера, не
 повторяется сам (``failed``: «проверь баланс»). Одинаковый запрос (``input_hash``) берёт готовый
 результат. Каждое списание — строка ``aiv_ledger`` (факт провайдера, разница баланса или оценка).
@@ -34,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import threading
 import time
@@ -55,6 +59,7 @@ from app.aivideo_providers import (
     video_params,
     video_price,
     video_seconds_range,
+    network_phase,
 )
 from app.settings import settings
 
@@ -66,16 +71,26 @@ STAGE_LABELS = {"refs": "референсы (стиль, локации, лис�
 EPISODE_CAP_RUB = {"draft": 350.0, "quality": 2500.0}
 STYLE_REF_COUNT = 3
 CARD_ACTION = "aiv_budget"
-# recovering — POST ушёл без ответа (504/обрыв): id ищем в истории Polza, POST не повторяем.
+# recovering — POST ушёл без ответа (504/обрыв), адаптер умеет искать запрос у провайдера
+# (``recover``): id ищем, POST не повторяем. uncertain (1.1) — ответ не дошёл, искать нечем:
+# сверка баланса, повтор — только если точно не оплачено.
 ACTIVE = ("approved", "submitting", "polling", "recovering")
+SUBMIT_STALE_SEC = 600  # «отправляю» дольше — исполнитель другого процесса умер (POST ждёт ≤ 120 с)
 VIDEO_MIN_SEC = 4  # план-видео 4–8 с (у seedance меньше 4 не бывает)
 VIDEO_MAX_SEC = 8
-# Поиск id в истории после 504: сразу RECOVER_ATTEMPTS раз через RECOVER_INTERVAL_SEC, дальше —
-# каждым проходом работника; не нашли за RECOVER_DEADLINE_SEC — failed (скорее всего не списано).
+# Поиск запроса у провайдера после обрыва ответа: сразу RECOVER_ATTEMPTS раз через
+# RECOVER_INTERVAL_SEC, дальше — каждым проходом работника; не нашли за срок адаптера
+# (``recover_deadline_sec``, по умолчанию RECOVER_DEADLINE_SEC) — «под вопросом» (uncertain).
 RECOVER_ATTEMPTS = 6
 RECOVER_INTERVAL_SEC = 10.0
 RECOVER_DEADLINE_SEC = 20 * 60
 OPEN = ("awaiting",) + ACTIVE
+# Сеть до провайдера рвётся (TLS EOF, таймауты). До отправки тела — повтор сам, с паузой;
+# после — «под вопросом» (uncertain): сверка баланса, сам не повторяю.
+SUBMIT_TRIES = 3
+RETRY_BACKOFF_SEC = (2.0, 6.0)
+BALANCE_SETTLE_SEC = 3.0  # провайдер списывает не мгновенно — баланс «после» чуть позже
+STOP_HTTP = (401, 402, 403)  # ключ/деньги/доступ — дальше всё равно откажет: стоп партии
 STYLE_BASE = {
     "anime": "2D anime / toon style, clean line art, cel shading, flat colors, expressive faces",
     "photoreal": "photorealistic, cinematic lighting, natural skin texture, 35mm film still",
@@ -257,9 +272,41 @@ def _image_item(stage: str, target_type: str, target_id: int, ref_kind: str, lab
             "price_note": price["note"]}
 
 
-def _voice_of(store: Any, project_id: int, who: str) -> dict:
-    style = V._style_row(store, project_id)
+# Персонаж не говорит (speech sfx): реплика — звук из пака freesound (ТОЛЬКО настоящие записи,
+# никакой синтетики) по эмоции реплики. Свой звук персонажа — voice.sfx («sfx:freesound/<файл>»).
+SFX_DEFAULT = "sfx:freesound/pop-soft.ogg"
+SFX_BY_EMOTION: list[tuple[tuple[str, ...], str]] = [
+    (("sad", "груст", "печал", "tired", "устал", "disappoint", "разочар", "fail", "провал"),
+     "sfx:freesound/sad-trombone.ogg"),
+    (("angry", "зл", "раздраж", "annoy", "furious", "ярост", "возмущ"), "sfx:freesound/impact-low.ogg"),
+    (("scared", "fear", "испуг", "страх", "нерв", "тревог", "panic", "паник"), "sfx:freesound/sting.ogg"),
+    (("surpris", "удив", "shock", "шок", "изумл"), "sfx:freesound/whip.ogg"),
+    (("happy", "рад", "joy", "весел", "excit", "восторг", "laugh", "смех", "смеш"), "sfx:freesound/pop.ogg"),
+]
+
+
+def sfx_for(character: dict | None, emotion: str = "") -> str:
+    """Звук реплики персонажа-«пищалки»: его собственный (voice.sfx) или по эмоции, иначе мягкий поп."""
+    own = ((character or {}).get("voice") or {}).get("sfx")
+    if own:
+        return str(own)
+    text = str(emotion or "").casefold().replace("ё", "е")
+    for words, ref in SFX_BY_EMOTION:
+        if any(w in text for w in words):
+            return ref
+    return SFX_DEFAULT
+
+
+def speech_of(store: Any, project_id: int, who: str) -> tuple[dict | None, str]:
     character = V.character_by_slug(store, project_id, who) if who and who != "narrator" else None
+    return character, (character or {}).get("speech") or "voice"
+
+
+def _voice_of(store: Any, project_id: int, who: str, emotion: str = "") -> dict:
+    style = V._style_row(store, project_id)
+    character, speech = speech_of(store, project_id, who)
+    if speech == "sfx":
+        return {"provider": "none", "model": "sfx", "voice": sfx_for(character, emotion)}
     voice = dict((character or {}).get("voice") or {})
     provider = "none" if style["provider"] == "none" else (voice.get("provider") or "polza")
     return {"provider": provider, "model": voice.get("model") or settings.polza_tts_model,
@@ -379,11 +426,20 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
     else:  # voice
         for shot in script["shots"]:
             for i, line in enumerate(shot["dialogue"]):
-                voice = _voice_of(store, project_id, line["who"])
+                if speech_of(store, project_id, line["who"])[1] == "none":
+                    continue  # молчит — реплики нет (normalize_shot их уже убирает)
+                voice = _voice_of(store, project_id, line["who"], line.get("emotion") or "")
                 ref = V.selected_ref(store, project_id, "line", shot["id"], "line_audio", str(i))
                 current = _fresh(ref) and ref["prompt"] == _line_key(voice, line["text"])
                 hit = want("line", shot["id"], "line_audio", str(i))
                 if hit is False or (hit is None and current and not regenerate):
+                    continue
+                if voice["model"] == "sfx":
+                    out.append({"stage": stage, "kind": "sfx", "target_type": "line", "target_id": int(shot["id"]),
+                                "ref_kind": "line_audio", "slot": str(i), "script_id": int(script_id),
+                                "label": f"план {shot['idx']}, звук {i + 1} ({line['who']})", "provider": "none",
+                                "model": "sfx", "voice": voice["voice"], "text": line["text"], "chars": 0,
+                                "estimate_rub": 0.0, "price_note": "звук пака (запись), 0 ₽"})
                     continue
                 tts = get_tts(voice["provider"], voice["model"], voice["voice"])
                 price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
@@ -481,10 +537,10 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
         provider, model = style["provider"], style["image_model"]
     if stage == "voice":
         model = "TTS"
-    measured = all(i.get("price_note", "").startswith(("замер", "0 ₽", "сухой")) for i in planned)
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
-            + ((f" ({model}, цены от {PRICE_CHECKED}" + (", замер)" if measured else ", ×2 к прайсу — не замерено)"))
-               if paid else " — сухой прогон, 0 ₽"))
+            + (f" ({model}, цены от {PRICE_CHECKED}: "
+               + ", ".join(sorted({i['price_note'] for i in planned if i['provider'] != 'none'})) + ")" if paid else
+               " — сухой прогон, 0 ₽"))
     if stage == "video" and paid and any("потолка серии" in p for p in problems):
         problems.append(f"подсказка: серия-черновик ≤ {EPISODE_CAP_RUB['draft']:.0f} ₽ — для видео переключи серию "
                         "в quality (aiv_update_script quality) или возьми дешёвую модель (video_model "
@@ -641,12 +697,16 @@ def stage_approvals(store: Any, project_id: int, script_id: int | None = None, s
             continue
         counts = {row["status"]: int(row["n"]) for row in store.db.query_all(
             "SELECT status, COUNT(*) AS n FROM aiv_gen_jobs WHERE approval_id = ? GROUP BY status", (card["id"],))}
+        # Сеть: точно не оплачено — «Повторить» без новой карточки (retry_card).
+        retryable = sum(1 for row in store.db.query_all(
+            "SELECT params_json FROM aiv_gen_jobs WHERE approval_id = ? AND status IN ('failed', 'uncertain') "
+            "AND remote_id = ''", (card["id"],)) if V._loads(row["params_json"], {}).get("retry_free"))
         out.append({"id": card["id"], "status": card["status"], "stage": payload.get("stage"),
                     "script_id": payload.get("script_id"), "amount_rub": payload.get("amount_rub"),
                     "count": payload.get("count"), "model": payload.get("model"), "title": card["title"],
                     "question": card["question"], "decided_by": card.get("decided_by"),
                     "decision_comment": card.get("decision_comment"), "created_at": card.get("created_at"),
-                    "spent_rub": spent_approval(store, card["id"]), "jobs": counts})
+                    "spent_rub": spent_approval(store, card["id"]), "jobs": counts, "retryable": retryable})
     return out
 
 
@@ -705,18 +765,6 @@ def _canon_refs(store: Any, project_id: int, character: dict) -> list[Path]:
     return paths
 
 
-def _sheet_refs(store: Any, project_id: int, character: dict) -> list[Path]:
-    """Листы персонажа для кадра: разворот + эмоции (+ последняя картинка владельца)."""
-    paths = []
-    for kind in ("turnaround", "expressions"):
-        p = _asset_path(store, V.selected_ref(store, project_id, "character", character["id"], kind))
-        if p:
-            paths.append(p)
-    uploads = [p for p in (_asset_path(store, r) for r in
-                           V.list_refs(store, project_id, "character", character["id"], "upload")) if p]
-    return paths + uploads[-1:]
-
-
 def video_last_frame(store: Any, ref: dict | None) -> Path | None:
     """Последний кадр видео-версии (кэш рядом с файлом видео)."""
     from app.aivideo_providers import last_frame
@@ -758,14 +806,17 @@ def _identity(character: dict) -> str:
     return f"«{character['name']}» — identity card (verbatim, do not alter): {character['identity_card']}"
 
 
-def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
-    """(промпт, файлы-референсы, подпись заглушки) запуска. Карта личности — дословно."""
+def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str], dict]:
+    """(промпт, файлы-референсы, подпись заглушки, {roles — что за референс по порядку, missing —
+    чего не хватило}) запуска. Карта личности — дословно."""
     project_id = int(job["project_id"])
     style = V.get_style(store, project_id)
     st = _style_text(style)
     neg = f" Avoid: {style['negative_text']}." if style.get("negative_text") else ""
     kind, target_id = job["ref_kind"], int(job["target_id"])
     refs: list[Path] = []
+    roles: list[str] | None = None
+    missing: list[str] = []
     caption = [REF_LABELS.get(kind, kind)]
     if kind == "style":
         project = P.get_project(store, project_id, include_sources=False)
@@ -824,32 +875,71 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
                                         f"{cam['angle']} angle" if cam.get("angle") else "",
                                         f"{cam['lens']}mm lens" if cam.get("lens") else "") if x)
         parts.append(f"Camera: {framing}.")
+        # Референсы по важности (лимит модели — режем с конца): 0 — ВСЕ листы персонажей в кадре
+        # (разворот + эмоции) и облик, 1 — плита локации, 2 — картинки владельца, 3 — стиль.
+        ranked: list[tuple[int, Path, str, str]] = []  # (важность, файл, роль для журнала, роль для модели)
+        if prev_frame is not None:  # −1: сцепка с прошлым планом важнее всего
+            what = "последний кадр видео" if prev_kind == "last frame" else "кадр"
+            ranked.append((-1, prev_frame, f"план {prev['idx']}: {what}",
+                           f"{prev_kind} of the previous shot {prev['idx']} (continuity)"))
         loc = V.location_by_slug(store, project_id, shot["location"]) if shot["location"] else None
-        plate_path = None
         if loc:
             parts.append(f"Location «{loc['name']}»: {loc['description']} (match the location reference).")
-            plate_path = _asset_path(store, V.selected_ref(store, project_id, "location", loc["id"], "location"))
+            p = _asset_path(store, V.selected_ref(store, project_id, "location", loc["id"], "location"))
+            if p:
+                ranked.append((1, p, f"плита локации «{loc['name']}»", f"background plate of «{loc['name']}»"))
+            else:
+                missing.append(f"плита локации «{loc['name']}»")
             caption.append(loc["name"])
         names = []
-        char_refs: list[Path] = []
         for member in shot["cast"]:
             c = V.character_by_slug(store, project_id, member["id"])
             if not c:
                 continue
             names.append(c["name"])
             text = _identity(c)
+            for sheet, label, role in (("turnaround", "разворот", "turnaround model sheet"),
+                                       ("expressions", "эмоции", "expression sheet")):
+                p = _asset_path(store, V.selected_ref(store, project_id, "character", c["id"], sheet))
+                if p:
+                    ranked.append((0, p, f"{c['slug']}: {label}", f"{c['name']} — {role}"))
+                else:
+                    missing.append(f"{c['slug']}: {label}")
             look = next((l for l in c["looks"] if l["slug"] == member.get("look")), None)
-            char_refs += _sheet_refs(store, project_id, c)
             if look:
                 text += f"; outfit/state: {look['outfit_text']}"
                 lp = _asset_path(store, V.selected_ref(store, project_id, "look", look["id"], "look"))
                 if lp:
-                    char_refs.append(lp)
+                    ranked.append((0, lp, f"{c['slug']}: облик {look['slug']}", f"{c['name']} — outfit «{look['name']}»"))
+                else:
+                    missing.append(f"{c['slug']}: облик {look['slug']}")
+            for up in [r for r in V.list_refs(store, project_id, "character", c["id"], "upload")][-2:]:
+                p = _asset_path(store, up)
+                if p:
+                    ranked.append((2, p, f"{c['slug']}: картинка владельца", f"{c['name']} — owner's reference"))
             if member.get("action"):
                 text += f"; doing: {member['action']}"
             parts.append(text + ".")
-        # Порядок важен (лишнее срезается с конца): прошлый кадр → листы персонажей → плита → стиль.
-        refs = ([prev_frame] if prev_frame is not None else []) + char_refs + ([plate_path] if plate_path else [])
+        for p in _style_paths(store, project_id, 1):
+            ranked.append((3, p, "стиль", "style reference"))
+        ranked.sort(key=lambda r: r[0])  # устойчиво: порядок персонажей в кадре сохраняется
+        seen_kf: set[str] = set()
+        chosen = []
+        for item in ranked:
+            if str(item[1]) not in seen_kf:
+                seen_kf.add(str(item[1]))
+                chosen.append(item)
+        limit = max_refs(job["model"], job["provider"])
+        dropped = [r[2] for r in chosen[limit:]]
+        chosen = chosen[:limit]
+        refs = [r[1] for r in chosen]
+        roles = [r[2] for r in chosen]
+        if chosen:
+            parts.append("Reference images in order: " + "; ".join(f"{n} — {r[3]}" for n, r in enumerate(chosen, 1))
+                         + ". Draw every character EXACTLY as in their sheets: same face, body, shape, colors and "
+                           "details — not a different model or design.")
+        if dropped:
+            missing += [f"не влезло в лимит {limit}: {d}" for d in dropped]
         emotions = ", ".join(d["emotion"] for d in shot["dialogue"] if d.get("emotion"))
         if shot["action"]:
             parts.append(f"Action: {shot['action']}.")
@@ -862,7 +952,6 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
                      if count else "No people in frame. ")
         parts.append(NO_TEXT + neg)
         prompt = " ".join(parts)
-        refs += _style_paths(store, project_id, 1)
         caption = [f"план {shot['idx']}", *(names or ["без персонажей"]), *(caption[1:])]
     else:
         raise V.AivError(f"неизвестный вид картинки {kind}")
@@ -873,7 +962,10 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
         if key not in seen:
             seen.add(key)
             uniq.append(p)
-    return prompt, uniq[:max_refs(job["model"], job["provider"])], caption
+    uniq = uniq[:max_refs(job["model"], job["provider"])]
+    if roles is None:
+        roles = [p.name for p in uniq]
+    return prompt, uniq, caption, {"roles": roles, "missing": missing}
 
 
 def _file_digest(path: Path) -> str:
@@ -896,7 +988,8 @@ def input_hash(model: str, params: dict, prompt: str, refs: list[Path], variant:
 
 
 # --------------------------------------------------------------------------- #
-# Запуск
+# Запуск. Статусы: approved → submitting → polling → done | failed | blocked_policy | held |
+# uncertain (ответ не дошёл — могло быть оплачено; сам не повторяю, сверка баланса).
 # --------------------------------------------------------------------------- #
 
 
@@ -915,6 +1008,22 @@ def _set_job(store: Any, job_id: int, **fields: Any) -> None:
                      (*fields.values(), int(job_id)))
 
 
+def _cas(store: Any, job_id: int, expect: tuple[str, ...], where: str = "", where_args: tuple = (),
+         **fields: Any) -> bool:
+    """Сменить поля запуска, только если его статус — один из ``expect`` (сравнить-и-записать одним
+    UPDATE). False — запуск уже у другого исполнителя/в другом состоянии: ничего не записано."""
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    marks = ", ".join("?" for _ in expect)
+    cur = store.db.execute(
+        f"UPDATE aiv_gen_jobs SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ({marks})"
+        + (f" AND {where}" if where else ""), (*fields.values(), int(job_id), *expect, *where_args))
+    return bool(cur.rowcount)
+
+
+def _runner_id() -> str:
+    return f"{threading.current_thread().name}@{os.getpid()}"
+
+
 def _preflight(store: Any, job: dict) -> list[str]:
     """Можно ли платить за этот запуск прямо сейчас (под замком)."""
     if job["provider"] == "none":
@@ -931,7 +1040,10 @@ def _preflight(store: Any, job: dict) -> list[str]:
     if card["status"] != "approved":
         out.append(f"карточка #{card['id']} не одобрена ({card['status']})")
     amount = float((card.get("payload") or {}).get("amount_rub") or 0)
-    spent = spent_approval(store, card["id"])
+    # «Под вопросом» (ответ не дошёл, списание не подтверждено) — считаем потраченным по оценке.
+    spent = spent_approval(store, card["id"]) + _sum(
+        store, "SELECT COALESCE(SUM(estimate_rub), 0) FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'uncertain' "
+               "AND cost_source = '' AND id != ?", (card["id"], int(job["id"])))
     if spent + float(job["estimate_rub"]) > amount + 0.01:
         out.append(f"по карточке #{card['id']} потрачено {spent:.2f} ₽ + {job['estimate_rub']:.2f} ₽ > одобренных "
                    f"{amount:.2f} ₽ — нужна новая карточка")
@@ -941,20 +1053,136 @@ def _preflight(store: Any, job: dict) -> list[str]:
 
 
 def _claim(store: Any, job_id: int) -> tuple[dict | None, list[str]]:
-    with _LOCK:
-        job = get_job(store, job_id)
-        if job["status"] != "approved":
-            return None, []
-        problems = _preflight(store, job)
-        if problems:
-            _set_job(store, job_id, status="held", error="; ".join(problems)[:500])
-            return None, problems
-        cur = store.db.execute("UPDATE aiv_gen_jobs SET status = 'submitting', attempts = attempts + 1, "
-                               "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (int(job_id),))
-        if not cur.rowcount:
-            return None, []
+    """Взять запуск в работу: проверка денег и ``approved → submitting`` в ОДНОЙ записи-транзакции
+    (BEGIN IMMEDIATE). Сколько бы исполнителей ни было (работник, aiv_run_approved, второй процесс),
+    запуск отправляется один раз: кто не успел — получает ``None``."""
+    with _LOCK, store.db._lock:
+        conn = store.db.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM aiv_gen_jobs WHERE id = ?", (int(job_id),)).fetchone()
+            if not row or row["status"] != "approved":
+                conn.rollback()
+                return None, []
+            problems = _preflight(store, get_job(store, job_id))
+            if problems:
+                conn.execute("UPDATE aiv_gen_jobs SET status = 'held', error = ?, updated_at = CURRENT_TIMESTAMP "
+                             "WHERE id = ? AND status = 'approved'", ("; ".join(problems)[:500], int(job_id)))
+                conn.commit()
+                return None, problems
+            cur = conn.execute(
+                "UPDATE aiv_gen_jobs SET status = 'submitting', worker_id = ?, attempts = attempts + 1, error = '', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (_runner_id(), int(job_id)))
+            conn.commit()
+            if not cur.rowcount:
+                return None, []
+        finally:
+            conn.close()
         _INFLIGHT.add(int(job_id))
-        return get_job(store, job_id), []
+    return get_job(store, job_id), []
+
+
+def _send(store: Any, job: dict, send: Any) -> Any:
+    """POST провайдеру. Сбой ДО отправки тела (соединение/TLS не встали) — повтор сам, до
+    ``SUBMIT_TRIES`` раз с паузой, без новой карточки: запрос не ушёл, денег не взяли. Любой
+    другой сбой — наверх (``run_jobs`` решает: «под вопросом» или отказ)."""
+    for attempt in range(1, SUBMIT_TRIES + 1):
+        try:
+            return send()
+        except Exception as exc:  # noqa: BLE001 - разбираем ниже
+            if network_phase(exc) != "before" or attempt >= SUBMIT_TRIES:
+                raise
+            _set_job(store, job["id"], error=f"сеть до отправки ({type(exc).__name__}) — повтор "
+                                             f"{attempt + 1}/{SUBMIT_TRIES}")
+            time.sleep(RETRY_BACKOFF_SEC[min(attempt - 1, len(RETRY_BACKOFF_SEC) - 1)])
+    raise AssertionError("unreachable")
+
+
+def _balance(provider: Any) -> float | None:
+    """Баланс провайдера (если умеет), ₽; не вышло — None (сверка — подсказка, не условие)."""
+    fn = getattr(provider, "balance", None)
+    if fn is None:
+        return None
+    try:
+        value = fn()
+    except Exception:  # noqa: BLE001
+        return None
+    return round(float(value), 2) if value is not None else None
+
+
+def _mark_not_sent(store: Any, job: dict, exc: BaseException) -> None:
+    params = {**get_job(store, job["id"])["params"], "net": "not_sent", "retry_free": True}
+    _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="failed",
+         params_json=json.dumps(params, ensure_ascii=False),
+         error=(f"сеть: запрос не ушёл ({SUBMIT_TRIES} попытки, {type(exc).__name__}: {str(exc)[:160]}) — не "
+                "оплачено; «Повторить» — без новой карточки"))
+
+
+def _mark_uncertain(store: Any, job: dict, exc: BaseException, provider: Any, before: float | None) -> None:
+    """Ответ провайдера не дошёл (запрос мог дойти): НЕ повторяем сами. Баланс до/после: не
+    изменился — повтор одним нажатием без новой карточки; списано — трата в журнал по разнице."""
+    after = None
+    if before is not None:
+        time.sleep(BALANCE_SETTLE_SEC)
+        after = _balance(provider)
+    what = f"{type(exc).__name__}: {str(exc)[:160]}"
+    check: dict[str, Any] = {"before": before, "after": after, "charged": None}
+    fields: dict[str, Any] = {}
+    if before is not None and after is not None:
+        charged = round(before - after, 2)
+        check["charged"] = max(0.0, charged)
+        if charged <= 0.009:
+            retry_free = True
+            error = (f"ответ провайдера не дошёл ({what}); баланс не изменился ({before:.2f} ₽) — не списано. "
+                     "«Повторить» — без новой карточки")
+        else:
+            retry_free = False
+            fields = {"cost_rub": charged, "cost_source": "balance"}
+            error = (f"ответ провайдера не дошёл ({what}); по балансу списано ≈{charged:.2f} ₽, результата нет — "
+                     "повтор только новой карточкой (aiv_regenerate)")
+    else:
+        retry_free = False
+        error = (f"ответ провайдера не дошёл ({what}) — могло быть оплачено, баланс не узнать: проверь баланс "
+                 "Polza; сам не повторяю (повтор — aiv_regenerate)")
+    params = {**get_job(store, job["id"])["params"], "net": "uncertain", "balance_check": check,
+              "retry_free": retry_free}
+    if _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="uncertain", error=error[:500],
+            params_json=json.dumps(params, ensure_ascii=False), **fields) and fields:
+        add_ledger(store, job, fields["cost_rub"], "balance", "ответ не дошёл — списание по разнице баланса")
+
+
+def retry_job(store: Any, job_id: int, run: bool = False) -> dict:
+    """«Повторить» без новой карточки — только запуск, который ТОЧНО не оплачен: запрос не ушёл
+    (сеть до отправки) или ответ не дошёл, а баланс не изменился. Иначе — aiv_regenerate."""
+    job = get_job(store, job_id)
+    if job["status"] not in ("failed", "uncertain") or job["remote_id"]:
+        raise V.AivError(f"запуск #{job_id} — {job['status']}: повторять нечего")
+    if not job["params"].get("retry_free"):
+        raise BudgetError(f"запуск #{job_id}: не подтверждено, что он не оплачен — повтор только новой карточкой "
+                          "(aiv_regenerate)")
+    params = {**job["params"], "retry_free": False, "retries": int(job["params"].get("retries") or 0) + 1}
+    if not _cas(store, job_id, ("failed", "uncertain"), where="remote_id = ''", status="approved", error="",
+                params_json=json.dumps(params, ensure_ascii=False)):
+        raise V.AivError(f"запуск #{job_id} уже в другом состоянии")
+    if run:
+        return {"ok": True, "status": "ran", **run_jobs(store, [int(job_id)])}
+    kick()
+    return {"ok": True, "status": "approved", "job_id": int(job_id), "note": "повтор передан работнику (та же карточка)"}
+
+
+def retry_card(store: Any, approval_id: int, run: bool = False) -> dict:
+    """«Повторить» все точно не оплаченные запуски карточки (сеть) — без новой карточки."""
+    rows = store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE approval_id = ? AND status IN ('failed', 'uncertain') "
+                              "AND remote_id = '' ORDER BY id", (int(approval_id),))
+    ids = [int(r["id"]) for r in rows if get_job(store, int(r["id"]))["params"].get("retry_free")]
+    for job_id in ids:
+        retry_job(store, job_id)
+    out: dict[str, Any] = {"ok": True, "retried": ids}
+    if run and ids:
+        out.update(run_jobs(store, ids))
+    elif not ids:
+        out["note"] = "повторять без новой карточки нечего (не подтверждено, что не оплачено — aiv_regenerate)"
+    return out
 
 
 def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: str) -> dict:
@@ -971,17 +1199,30 @@ def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: 
         size_bytes=dest.stat().st_size, **meta)
 
 
-def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "") -> dict:
-    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
-                    int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
+def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "",
+          own_asset: bool = True) -> dict | None:
+    """Готово: версия + трата. Записывает только ПЕРВЫЙ «готово» (сравнить-и-записать статуса):
+    второй опрос того же запуска (другой поток/процесс) не плодит версию и не пишет вторую трату."""
+    if not _cas(store, job["id"], ("submitting", "polling"), status="done", cost_rub=round(cost, 4),
+                cost_source=source, error=""):
+        _log.warning("aiv job %s: повторное «готово» пропущено (уже %s)", job["id"], get_job(store, job["id"])["status"])
+        if own_asset:
+            try:
+                store.delete_montage_asset(int(asset_id))
+            except KeyError:
+                pass
+        return None
     if job["provider"] != "none" and cost > 0:
         add_ledger(store, job, cost, source, note)
-    _set_job(store, job["id"], status="done", cost_rub=round(cost, 4), cost_source=source, result_ref_id=ref["id"],
-             error="")
+    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
+                    int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
+    _set_job(store, job["id"], result_ref_id=ref["id"])
+    if auto_check(store, job, ref) is not None:
+        ref = V.get_ref(store, int(ref["id"]))
     return ref
 
 
-def _run_tts(store: Any, job: dict) -> dict:
+def _run_tts(store: Any, job: dict) -> dict | None:
     from app.aivideo_providers import get_tts
 
     params = job["params"]
@@ -992,7 +1233,7 @@ def _run_tts(store: Any, job: dict) -> dict:
     work.mkdir(parents=True, exist_ok=True)
     try:
         raw = work / "line.mp3"
-        speech = tts.synthesize(text, raw)
+        speech = _send(store, job, lambda: tts.synthesize(text, raw))
         cost = speech.cost_rub
         source = "provider" if cost is not None else "estimate"
         cost = float(cost) if cost is not None else float(job["estimate_rub"])
@@ -1022,22 +1263,62 @@ def _variant(store: Any, job: dict) -> int:
                            job.get("slot") or "")) + 1
 
 
+def _run_sfx(store: Any, job: dict) -> dict | None:
+    """Реплика персонажа-«пищалки»: запись пака (в «Файлы для монтажа» — тот же файл переиспользуется)."""
+    from app.motion_assets import _parse_ref, import_to_montage_library, resolve_pack_ref
+
+    ref = str(job["params"].get("voice") or SFX_DEFAULT)
+    path = resolve_pack_ref(ref)
+    if path is None:
+        raise V.AivError(f"звука {ref} нет в паке (пак freesound не установлен? tools/fetch_sfx.py) — "
+                         "синтетику не подставляю")
+    _kind, pack_id, _file = _parse_ref(ref)
+    asset = import_to_montage_library(store, pack_id, path.name)
+    key = _line_key({"provider": "none", "model": "sfx", "voice": ref}, str(job["params"].get("text") or ""))
+    return _done(store, job, int(asset["id"]), key, 0.0, "free", own_asset=False)
+
+
+# --------------------------------------------------------------------------- #
+# Отправка: 1.1 (сеть до отправки — повтор, после — «под вопросом» со сверкой баланса) +
+# восстановление запроса у провайдера, если адаптер это умеет (Polza: 504 → /history)
+# --------------------------------------------------------------------------- #
+
+
+def _can_recover(provider: Any) -> bool:
+    return callable(getattr(provider, "recover", None))
+
+
+def _write_remote(store: Any, job: dict, remote: Any, expect: tuple[str, ...] = ("submitting", "failed")) -> bool:
+    """remote_id пишется один раз (remote_id = ''), даже если запуск успели счесть «потерянным»."""
+    marks = ", ".join("?" for _ in expect)
+    cur = store.db.execute(
+        "UPDATE aiv_gen_jobs SET status = 'polling', remote_id = ?, updated_at = CURRENT_TIMESTAMP "
+        f"WHERE id = ? AND remote_id = '' AND status IN ({marks})", (str(remote), int(job["id"]), *expect))
+    if not cur.rowcount:
+        _log.warning("aiv job %s: remote_id %s не записан — запуск уже в другом состоянии", job["id"], remote)
+        return False
+    return True
+
+
 def _submit(store: Any, job: dict, provider: Any, full: dict, refs: list[Path],
             poll_timeout: float | None) -> dict | None:
-    """POST провайдеру. Время отправки пишется ДО запроса: ответа нет (``SubmitUncertain``: 504,
-    обрыв) — запуск ``recovering``, id ищет адаптер (``recover``), POST не повторяется никогда."""
+    """POST провайдеру. Время отправки пишется ДО запроса. Сбой до отправки тела — повтор сам
+    (``_send``, 1.1). Запрос ушёл, ответа нет (``SubmitUncertain``: 504/обрыв чтения) и адаптер
+    умеет искать (``recover``) — запуск ``recovering``, POST не повторяется никогда. Иначе сбой
+    наверх: ``run_jobs`` ставит «под вопросом» со сверкой баланса (1.1) или отказ."""
     _set_job(store, job["id"], submitted_at=_utc_now())
     try:
-        remote = provider.submit(full, refs)
-    except SubmitUncertain as exc:
-        _set_job(store, job["id"], status="recovering",
-                 error=f"{exc} — ищу запрос у провайдера, повторно не отправляю"[:500])
-        return _recover(store, get_job(store, job["id"]), provider, poll_timeout, RECOVER_ATTEMPTS)
-    except ProviderError as exc:
-        _set_job(store, job["id"], status="blocked_policy" if exc.policy else "failed", error=str(exc)[:500])
-        return None
+        remote = _send(store, job, lambda: provider.submit(full, refs))
+    except Exception as exc:  # noqa: BLE001 - разбор ниже / в run_jobs
+        if _can_recover(provider) and (isinstance(exc, SubmitUncertain) or network_phase(exc) == "after"):
+            if not _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="recovering",
+                        error=f"{str(exc)[:300]} — ищу запрос у провайдера, повторно не отправляю"[:500]):
+                return None
+            return _recover(store, get_job(store, job["id"]), provider, poll_timeout, RECOVER_ATTEMPTS)
+        raise
     # ДО опроса: после перезапуска опрос продолжится, повторного POST (и оплаты) не будет.
-    _set_job(store, job["id"], status="polling", remote_id=str(remote))
+    if not _write_remote(store, job, remote):
+        return None
     return _finish(store, get_job(store, job["id"]), provider, poll_timeout)
 
 
@@ -1047,55 +1328,59 @@ def _claimed_remote_ids(store: Any, job_id: int) -> set[str]:
 
 
 def _recover(store: Any, job: dict, provider: Any, poll_timeout: float | None, attempts: int = 1) -> dict | None:
-    """Найти у провайдера запрос, ушедший без ответа. Нашли — опрос как обычно; нет и срок вышел —
-    failed (вероятно, не списано); пока ищем — ``recovering`` (работник спросит ещё)."""
+    """Найти у провайдера запрос, ушедший без ответа. Нашли — опрос как обычно; не нашли за срок
+    адаптера — «под вопросом» (uncertain, 1.1): повтор только новой карточкой; пока ищем —
+    ``recovering`` (работник спросит ещё)."""
+    from datetime import datetime, timezone
+
     from app.aivideo_providers import parse_utc
 
-    recover = getattr(provider, "recover", None)
-    if recover is None:
-        _set_job(store, job["id"], status="failed",
-                 error="запрос ушёл без ответа, провайдер не умеет найти его — могло быть оплачено; проверь баланс, "
-                       "повтор только вручную (перегенерация)")
+    if not _can_recover(provider):
+        _cas(store, job["id"], ("recovering",), status="uncertain",
+             error="запрос ушёл без ответа, провайдер не умеет найти его — могло быть оплачено; проверь баланс, "
+                   "повтор только новой карточкой (aiv_regenerate)")
         return None
     for attempt in range(max(1, attempts)):
         found = None
         try:
-            found = recover(job["model"], job.get("submitted_at") or "", _claimed_remote_ids(store, job["id"]))
+            found = provider.recover(job["model"], job.get("submitted_at") or "",
+                                     _claimed_remote_ids(store, job["id"]))
         except Exception as exc:  # noqa: BLE001 - сеть: спросим следующим проходом
             _log.warning("aiv recover %s: %s", job["id"], exc)
         if found and found.get("id"):
             with _LOCK:
-                if str(found["id"]) in _claimed_remote_ids(store, job["id"]):
-                    found = None
-                else:
-                    _set_job(store, job["id"], status="polling", remote_id=str(found["id"]),
-                             error=f"id {found['id']} найден у провайдера после обрыва ответа — POST не повторял")
-            if found:
+                ok = str(found["id"]) not in _claimed_remote_ids(store, job["id"]) and _cas(
+                    store, job["id"], ("recovering",), where="remote_id = ''", status="polling",
+                    remote_id=str(found["id"]),
+                    error=f"id {found['id']} найден у провайдера после обрыва ответа — POST не повторял")
+            if ok:
                 return _finish(store, get_job(store, job["id"]), provider, poll_timeout)
         if attempt + 1 < attempts and RECOVER_INTERVAL_SEC > 0:
             time.sleep(RECOVER_INTERVAL_SEC)
     sent = parse_utc(job.get("submitted_at"))
-    if sent is not None:
-        from datetime import datetime, timezone
-
-        if (datetime.now(timezone.utc) - sent).total_seconds() > RECOVER_DEADLINE_SEC:
-            _set_job(store, job["id"], status="failed",
-                     error=f"за {RECOVER_DEADLINE_SEC // 60} мин запрос у провайдера не появился — скорее всего не "
-                           "списано (проверь баланс); повтор только вручную (перегенерация)")
+    deadline = float(getattr(provider, "recover_deadline_sec", RECOVER_DEADLINE_SEC))
+    if sent is not None and (datetime.now(timezone.utc) - sent).total_seconds() > deadline:
+        params = {**get_job(store, job["id"])["params"], "net": "uncertain", "retry_free": False}
+        _cas(store, job["id"], ("recovering",), where="remote_id = ''", status="uncertain",
+             params_json=json.dumps(params, ensure_ascii=False),
+             error=f"за {int(deadline // 60)} мин запрос у провайдера не появился — скорее всего не списано "
+                   "(проверь баланс); повтор только новой карточкой (aiv_regenerate)")
     return None
 
 
 def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
-    prompt, refs, caption = build_request(store, job)
+    prompt, refs, caption, ref_info = build_request(store, job)
     params = model_params(job["model"], prompt, job["params"].get("aspect") or "9:16",
                           job["params"].get("resolution") or "1K", job["provider"])
     digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, refs, _variant(store, job))
     cached = _cached(store, digest)
     _set_job(store, job["id"], prompt=prompt, input_hash=digest,
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
-                                     "refs": [p.name for p in refs]}, ensure_ascii=False))
+                                     "refs": [p.name for p in refs], "ref_roles": ref_info["roles"],
+                                     "missing_refs": ref_info["missing"]}, ensure_ascii=False))
     if cached:
-        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
+        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
+                     own_asset=False)
     full = {**params, "_kind": job["ref_kind"], "_caption": caption}
     return _submit(store, job, provider, full, refs, poll_timeout)
 
@@ -1148,8 +1433,9 @@ def build_video_prompt(store: Any, job: dict, shot: dict | None = None) -> str:
         end_state = V.state_text(store, project_id, nxt.get("state") or {})
         if end_state:
             parts.append(f"By the last frame (the next shot continues from it): {end_state}.")
-    emotions = ", ".join(d["emotion"] for d in shot.get("dialogue") or [] if d.get("emotion"))
-    if shot.get("dialogue"):
+    talkers = [d for d in shot.get("dialogue") or [] if speech_of(store, project_id, d["who"])[1] == "voice"]
+    if talkers:
+        emotions = ", ".join(d["emotion"] for d in talkers if d.get("emotion"))
         parts.append("The character talks" + (f" ({emotions})" if emotions else "") + ", natural mouth movement.")
     sound = shot.get("sound") or ""
     parts.append((f"Sound: {sound}. " if sound else "Sound: natural ambient room tone and effects of the action. ")
@@ -1164,7 +1450,8 @@ def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None)
     kf = V.selected_ref(store, int(job["project_id"]), "shot", int(shot["id"]), "keyframe")
     start = _asset_path(store, kf)
     if start is None:
-        _set_job(store, job["id"], status="failed", error="нет стартового кадра плана — этап keyframes или сцепка")
+        _cas(store, job["id"], ("submitting",), status="failed",
+             error="нет стартового кадра плана — этап keyframes или сцепка")
         return None
     prompt = build_video_prompt(store, job, shot)
     seconds = int(job["params"].get("seconds") or video_seconds(shot, job["model"]))
@@ -1176,7 +1463,8 @@ def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None)
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
                                      "start_ref_id": kf["id"], "refs": [start.name]}, ensure_ascii=False))
     if cached:
-        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
+        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
+                     own_asset=False)
     full = {**params, "_kind": "shot_video", "_start": str(start)}
     return _submit(store, job, provider, full, [start], poll_timeout)
 
@@ -1186,13 +1474,12 @@ WAIT = object()  # сцепка ждёт видео прошлого плана 
 
 def _run_chain(store: Any, job: dict) -> Any:
     """Старт плана = последний кадр видео прошлого плана (0 ₽). Видео прошлого ещё делается — WAIT."""
-    from app.aivideo_providers import ProviderError as _PE
     from app.aivideo_providers import last_frame
 
     shot = V.get_shot(store, int(job["target_id"]))
     prev, _nxt = _neighbors(store, shot)
     if prev is None:
-        _set_job(store, job["id"], status="failed", error="у первого плана нет прошлого — сцепка невозможна")
+        _cas(store, job["id"], ("submitting",), status="failed", error="у первого плана нет прошлого — сцепка невозможна")
         return None
     busy = store.db.query_one(
         "SELECT id FROM aiv_gen_jobs WHERE kind = 'video' AND target_type = 'shot' AND target_id = ? "
@@ -1201,29 +1488,29 @@ def _run_chain(store: Any, job: dict) -> Any:
         return WAIT
     project_id = int(job["project_id"])
     vref = _fresh_video(store, project_id, prev)
+    current = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
     if vref is None:
-        own = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
-        if own and own.get("asset_id"):
-            _set_job(store, job["id"], status="done", result_ref_id=own["id"], cost_rub=0.0, cost_source="free",
-                     error=f"видео плана {prev['idx']} нет — старт остаётся свой кадр плана")
-            return own
-        _set_job(store, job["id"], status="failed", error=f"видео плана {prev['idx']} нет, своего кадра тоже")
+        if current and current.get("asset_id"):
+            _cas(store, job["id"], ("submitting",), status="done", result_ref_id=current["id"], cost_rub=0.0,
+                 cost_source="free", error=f"видео плана {prev['idx']} нет — старт остаётся свой кадр плана")
+            return current
+        _cas(store, job["id"], ("submitting",), status="failed",
+             error=f"видео плана {prev['idx']} нет, своего кадра тоже")
         return None
     marker = f"chain:{vref['id']}"
-    current = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
     if current and current.get("prompt") == marker and current.get("asset_id"):
-        _set_job(store, job["id"], status="done", result_ref_id=current["id"], cost_rub=0.0, cost_source="free",
-                 error="")
+        _cas(store, job["id"], ("submitting",), status="done", result_ref_id=current["id"], cost_rub=0.0,
+             cost_source="free", error="")
         return current
     src = _asset_path(store, vref)
     if src is None:
-        _set_job(store, job["id"], status="failed", error=f"файла видео плана {prev['idx']} нет")
+        _cas(store, job["id"], ("submitting",), status="failed", error=f"файла видео плана {prev['idx']} нет")
         return None
     tmp = settings.tmp_dir / f"aiv-last-{uuid4().hex}.jpg"
     try:
         last_frame(src, tmp)
-    except _PE as exc:
-        _set_job(store, job["id"], status="failed", error=str(exc)[:500])
+    except ProviderError as exc:
+        _cas(store, job["id"], ("submitting",), status="failed", error=str(exc)[:500])
         return None
     asset = _save_asset(store, job, tmp, "image", "image/jpeg",
                         f"ИИ-видео: план {shot['idx']} — последний кадр плана {prev['idx']}")
@@ -1245,6 +1532,9 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
     with _LOCK:
         if job["id"] in _ACTIVE_JOBS:
             return None
+        job = get_job(store, job["id"])  # свежий статус: уже готов/упал — второй раз не опрашиваем
+        if job["status"] != "polling" or not job["remote_id"]:
+            return None
         _ACTIVE_JOBS.add(job["id"])
     try:
         timeout = settings.aivideo_poll_timeout_sec if poll_timeout is None else poll_timeout
@@ -1257,23 +1547,28 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             _set_job(store, job["id"], error=f"опрос не удался, повторю: {exc}"[:500])
             return None
         if result.get("status") == "pending":
+            if result.get("note"):
+                _set_job(store, job["id"], error=f"{result['note']} — повторю позже (POST не повторяю)"[:500])
             return None
         cost = result.get("cost_rub")
         if result.get("status") == "failed":
             charged = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
-            if provider.paid and charged > 0:
+            if _cas(store, job["id"], ("polling",), status="blocked_policy" if result.get("policy") else "failed",
+                    error=str(result.get("error") or "отказ")[:500], cost_rub=charged) and provider.paid and charged > 0:
                 add_ledger(store, job, charged, "provider" if cost is not None else "estimate",
                            "отказ провайдера — списание по " + ("ответу" if cost is not None else
                                                               "оценке (проверь баланс)"))
-            _set_job(store, job["id"], status="blocked_policy" if result.get("policy") else "failed",
-                     error=str(result.get("error") or "отказ")[:500], cost_rub=charged)
             return None
         video = job["kind"] == "video"
         tmp = settings.tmp_dir / f"aiv-{uuid4().hex}{'.mp4' if video else '.jpg'}"
         tmp.parent.mkdir(parents=True, exist_ok=True)
         if video:
-            start = _asset_path(store, V.get_ref(store, int(job["params"]["start_ref_id"]))) \
-                if job["params"].get("start_ref_id") else None
+            start = None
+            if job["params"].get("start_ref_id"):
+                try:
+                    start = _asset_path(store, V.get_ref(store, int(job["params"]["start_ref_id"])))
+                except KeyError:
+                    start = None
             fetch_params = {**job["params"].get("request", {}), "_kind": "shot_video",
                             "_start": str(start) if start else ""}
         else:
@@ -1282,8 +1577,12 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
         try:
             provider.fetch(result, tmp, fetch_params)
         except Exception as exc:  # noqa: BLE001 - ссылка может истечь: оплачено, но файла нет
-            _set_job(store, job["id"], status="failed", error=f"результат не скачан: {exc}"[:500])
-            if provider.paid:
+            if network_phase(exc) is not None:
+                # Сеть: результат у провайдера есть — следующий опрос возьмёт ссылку заново.
+                _set_job(store, job["id"], error=f"скачивание: сеть ({type(exc).__name__}) — повторю позже"[:500])
+                return None
+            if _cas(store, job["id"], ("polling",), status="failed", error=f"результат не скачан: {exc}"[:500]) \
+                    and provider.paid:
                 add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
                            "provider" if cost is not None else "estimate", "оплачено, файл не скачан")
             return None
@@ -1296,8 +1595,8 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             asset = _save_asset(store, job, tmp, "image", mime, f"ИИ-видео: {job['label']}")
         source = "provider" if cost is not None else ("estimate" if provider.paid else "free")
         amount = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
-        ref = _done(store, get_job(store, job["id"]), asset["id"], job["prompt"], amount, source)
-        if video:
+        ref = _done(store, job, asset["id"], job["prompt"], amount, source)
+        if video and ref is not None:
             _after_video(store, job)
         return ref
     finally:
@@ -1305,21 +1604,28 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             _ACTIVE_JOBS.discard(job["id"])
 
 
-def _provider_for(job: dict, cache: dict) -> Any:
+def _adapter(kind: str, provider: str) -> Any:
+    """Адаптер провайдера для запуска: видео — видео-адаптер, остальное — картинки."""
     from app.aivideo_providers import get_image_provider, get_video_provider
 
-    key = (job["kind"], job["provider"])
-    if key not in cache:
-        cache[key] = (get_video_provider if job["kind"] == "video" else get_image_provider)(job["provider"])
-    return cache[key]
+    return (get_video_provider if kind == "video" else get_image_provider)(provider)
+
+
+def _result_ref(store: Any, job_id: int) -> dict | None:
+    rid = get_job(store, job_id).get("result_ref_id")
+    try:
+        return V.get_ref(store, int(rid)) if rid else None
+    except KeyError:
+        return None
 
 
 def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) -> dict:
     """Выполнить запуски по порядку. Упёрлись в потолок — остальные этой карточки ждут (held).
+    Запуск, который уже взял другой исполнитель, пропускается (``skipped``) — не отправляется второй раз.
     Сцепка ждёт видео прошлого плана — она и остальные запуски её карточки остаются ``approved``
-    до следующего прохода работника (видео прошлого плана дочитает ``resume``)."""
-    done, failed, held, pending, waiting = [], [], [], [], []
-    providers: dict[Any, Any] = {}
+    (``waiting``) до следующего прохода работника (видео прошлого плана дочитает ``resume``)."""
+    done, failed, held, pending, skipped, waiting = [], [], [], [], [], []
+    providers: dict[tuple[str, str], Any] = {}
     stop_cards: set[int] = set()
     deferred: set[int] = set()
     for job_id in job_ids:
@@ -1329,8 +1635,9 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
             waiting.append(job_id)
             continue
         if job0.get("approval_id") in stop_cards:
-            _set_job(store, job_id, status="held", error="партия остановлена: упёрлись в потолок или ошибку")
-            held.append(job_id)
+            if _cas(store, job_id, ("approved",), status="held",
+                    error="партия остановлена: упёрлись в потолок или ошибку"):
+                held.append(job_id)
             continue
         job, problems = _claim(store, job_id)
         if job is None:
@@ -1338,34 +1645,64 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
                 held.append(job_id)
                 if job0.get("approval_id"):
                     stop_cards.add(int(job0["approval_id"]))
+            else:
+                skipped.append(job_id)
             continue
+        paid = job["provider"] != "none"
+        stop = False
+        provider = None
+        if paid or job["kind"] in ("image", "video"):
+            key = (job["kind"] if job["kind"] == "video" else "image", job["provider"])
+            provider = providers.setdefault(key, _adapter(key[0], job["provider"]))
+        before = _balance(provider) if paid else None
         try:
-            if job["kind"] == "tts":
+            if job["kind"] == "sfx":
+                ref = _run_sfx(store, job)
+            elif job["kind"] == "tts":
                 ref = _run_tts(store, job)
             elif job["kind"] == "chain":
                 ref = _run_chain(store, job)
                 if ref is WAIT:
-                    _set_job(store, job_id, status="approved", attempts=max(0, int(job["attempts"]) - 1),
-                             error="жду видео прошлого плана")
+                    _cas(store, job_id, ("submitting",), status="approved", worker_id="",
+                         attempts=max(0, int(job["attempts"]) - 1), error="жду видео прошлого плана")
                     deferred.add(card)
                     waiting.append(job_id)
                     continue
             elif job["kind"] == "video":
-                ref = _run_video(store, job, _provider_for(job, providers), poll_timeout)
+                ref = _run_video(store, job, provider, poll_timeout)
             else:
-                ref = _run_image(store, job, _provider_for(job, providers), poll_timeout)
+                ref = _run_image(store, job, provider, poll_timeout)
         except Exception as exc:  # noqa: BLE001 - один запуск не валит партию
             _log.warning("aiv job %s failed: %s", job_id, exc)
-            # Есть remote_id — не трогаем: опрос дочитает resume (без нового POST).
+            phase = network_phase(exc)
             current = get_job(store, job_id)
-            if not current["remote_id"] and current["status"] != "recovering":
-                hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if job["provider"] != "none" else ""
-                _set_job(store, job_id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}")
+            if current["remote_id"] or current["status"] == "recovering":
+                pass  # есть remote_id / ищем у провайдера — не трогаем: дочитает resume (без нового POST)
+            elif isinstance(exc, SubmitUncertain):
+                # Ушло без ответа, а искать адаптер не умеет: 1.1 — «под вопросом» со сверкой баланса.
+                if paid:
+                    _mark_uncertain(store, job, exc, provider, before)
+                else:
+                    _cas(store, job_id, ("submitting",), status="failed", error=str(exc)[:500])
+            elif isinstance(exc, ProviderError):
+                _cas(store, job_id, ("submitting",), status="blocked_policy" if exc.policy else "failed",
+                     error=str(exc)[:500])
+                stop = exc.policy or exc.status in STOP_HTTP
+            elif phase == "before":
+                _mark_not_sent(store, job, exc)
+            elif phase == "after" and paid:
+                _mark_uncertain(store, job, exc, provider, before)
+            else:
+                hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if paid else ""
+                _cas(store, job_id, ("submitting",), where="remote_id = ''",
+                     error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}", status="failed")
+                stop = phase is None
             ref = None
         finally:
             with _LOCK:
                 _INFLIGHT.discard(int(job_id))
         state = get_job(store, job_id)["status"]
+        ref = ref or (_result_ref(store, job_id) if state == "done" else None)
         if ref is not None:
             done.append({"job_id": job_id, "ref_id": ref["id"], "label": job["label"], "url": ref["url"]})
         elif state in ("polling", "recovering"):
@@ -1373,14 +1710,17 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         else:
             failed.append({"job_id": job_id, "label": job["label"], "status": state,
                            "error": get_job(store, job_id)["error"]})
-            if job.get("approval_id") and job["provider"] != "none":
+            # Партию останавливают только деньги/политика/ключ и непонятные сбои; сеть и отказ
+            # провайдера нарисовать один кадр — нет: остальные запуски идут дальше.
+            if job.get("approval_id") and paid and (stop or state == "blocked_policy"):
                 stop_cards.add(int(job["approval_id"]))
-    return {"done": done, "failed": failed, "held": held, "polling": pending, "waiting": waiting}
+    return {"done": done, "failed": failed, "held": held, "polling": pending, "skipped": skipped,
+            "waiting": waiting}
 
 
 def run_pending(store: Any, approval_id: int | None = None, project_id: int | None = None,
                 poll_timeout: float | None = None) -> dict:
-    """Работник: дочитать опрос (без нового POST) и выполнить одобренные запуски."""
+    """Работник: дочитать опрос и поиск (без нового POST) и выполнить одобренные запуски."""
     resumed = resume(store, poll_timeout=poll_timeout)
     sql = "SELECT id FROM aiv_gen_jobs WHERE status = 'approved'"
     params: list[Any] = []
@@ -1392,14 +1732,17 @@ def run_pending(store: Any, approval_id: int | None = None, project_id: int | No
         params.append(int(project_id))
     ids = [int(r["id"]) for r in store.db.query_all(sql + " ORDER BY id", params)]
     out = run_jobs(store, ids, poll_timeout) if ids else {"done": [], "failed": [], "held": [], "polling": [],
-                                                          "waiting": []}
+                                                          "skipped": [], "waiting": []}
     out["resumed"] = resumed
     return out
 
 
 def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
     """Агент/REST: выполнить или продолжить запуски ОДОБРЕННОЙ владельцем карточки (обычно это делает
-    работник сам сразу после «Разрешить»). Без ``confirm`` — только что будет запущено."""
+    работник сам сразу после «Разрешить»). Без ``confirm`` — только что будет запущено.
+
+    Безопасно вызывать, пока работник занят той же карточкой: запуск берётся атомарно
+    (``approved → submitting``), уже взятые работником только показываются (``in_progress``)."""
     card = A.get_approval(store, approval_id)
     if (card.get("payload") or {}).get("action") != CARD_ACTION:
         raise V.AivError(f"карточка #{approval_id} — не этап ИИ-видео")
@@ -1411,9 +1754,35 @@ def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
         return {"ok": True, "status": "preview", "jobs": todo,
                 "note": "confirm=true — запустить/продолжить (одобрено владельцем на "
                         f"{card['payload'].get('amount_rub')} ₽)"}
-    store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', error = '' WHERE approval_id = ? AND status = 'held'",
-                     (int(approval_id),))
-    return {"ok": True, "status": "ran", **run_pending(store, approval_id=approval_id)}
+    store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', error = '', updated_at = CURRENT_TIMESTAMP "
+                     "WHERE approval_id = ? AND status = 'held'", (int(approval_id),))
+    ids = [int(r["id"]) for r in store.db.query_all(
+        "SELECT id FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'approved' ORDER BY id", (int(approval_id),))]
+    out = run_jobs(store, ids)
+    # Опрос/поиск этой карточки, брошенный после перезапуска (не идёт ни в одном потоке процесса) — дочитать.
+    resumed = []
+    with _LOCK:
+        busy = set(_ACTIVE_JOBS) | set(_INFLIGHT)
+    for row in store.db.query_all("SELECT id, kind, provider, status FROM aiv_gen_jobs WHERE approval_id = ? AND "
+                                  "((status = 'polling' AND remote_id != '') OR status = 'recovering') ORDER BY id",
+                                  (int(approval_id),)):
+        if int(row["id"]) in busy or int(row["id"]) in out["polling"]:
+            continue
+        job = get_job(store, int(row["id"]))
+        adapter = _adapter(row["kind"], row["provider"])
+        ref = (_recover(store, job, adapter, None) if row["status"] == "recovering"
+               else _finish(store, job, adapter, None))
+        if ref is not None:
+            resumed.append(int(row["id"]))
+    progress = [{"job_id": j["id"], "label": j["label"], "status": j["status"], "worker_id": j.get("worker_id") or ""}
+                for j in list_jobs(store, approval_id=approval_id)
+                if j["status"] in ("submitting", "polling", "recovering")]
+    note = "запуски карточки выполнены"
+    if progress:
+        note = (f"{len(progress)} шт. уже в работе (работник, опрос или поиск у провайдера) — повторно не отправляю; "
+                "статус — aiv_job_status")
+    return {"ok": True, "status": "ran", **out, "resumed": {"finished": resumed, "lost": []},
+            "in_progress": progress, "note": note}
 
 
 def resume(store: Any, poll_timeout: float | None = None) -> dict:
@@ -1421,52 +1790,50 @@ def resume(store: Any, poll_timeout: float | None = None) -> dict:
 
     * ``polling`` — опрашиваем дальше (POST не повторяем);
     * ``recovering`` — ответа на POST не было: спрашиваем адаптер (``recover``), нашёлся ли запрос;
-    * ``submitting`` без remote_id: время отправки записано — запрос мог уйти → ищем как
-      ``recovering``; не записано — POST не начинался → снова ``approved``; у озвучки (синхронный
-      платный вызов) — НЕ повторяем сами (могли уже заплатить)."""
-    from app.aivideo_providers import get_image_provider, get_video_provider
-
-    with _LOCK:
-        busy = set(_ACTIVE_JOBS) | set(_INFLIGHT)
-    lost, requeued = [], []
+    * ``submitting`` без remote_id у мёртвого исполнителя (свой процесс и поток не в работе, без
+      worker_id, или «отправляю» дольше ``SUBMIT_STALE_SEC``): время отправки записано и адаптер
+      умеет искать → ``recovering``; сцепка (бесплатно, без POST) → снова ``approved``; иначе —
+      НЕ повторяем сами (могли уже заплатить): ``failed`` «проверь баланс»."""
+    lost, requeued, recovered, finished = [], [], [], []
+    stale_where = "remote_id = '' AND (worker_id = '' OR worker_id LIKE ? OR updated_at < datetime('now', ?))"
+    stale_args = (f"%@{os.getpid()}", f"-{int(SUBMIT_STALE_SEC)} seconds")
     for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'submitting' AND remote_id = ''"):
-        if int(row["id"]) in busy:
-            continue  # отправляется прямо сейчас в другом потоке этого процесса
+        with _LOCK:
+            if int(row["id"]) in _ACTIVE_JOBS or int(row["id"]) in _INFLIGHT:
+                continue  # отправляется прямо сейчас в другом потоке этого процесса
+            job = get_job(store, int(row["id"]))
+            if job["kind"] == "chain":
+                if _cas(store, job["id"], ("submitting",), where=stale_where, where_args=stale_args,
+                        status="approved", worker_id="", error="прервано — сцепка бесплатна, запущу снова"):
+                    requeued.append(job["id"])
+            elif (job["kind"] in ("image", "video") and job.get("submitted_at")
+                  and _can_recover(_adapter(job["kind"], job["provider"]))):
+                _cas(store, job["id"], ("submitting",), where=stale_where, where_args=stale_args,
+                     status="recovering", error="прервано после отправки — ищу запрос у провайдера, повторно не "
+                                                "отправляю")
+            elif _cas(store, job["id"], ("submitting",), where=stale_where, where_args=stale_args, status="failed",
+                      error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
+                            "(перегенерация)"):
+                lost.append(job["id"])
+    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'recovering' ORDER BY submitted_at, id"):
+        with _LOCK:
+            if int(row["id"]) in _ACTIVE_JOBS or int(row["id"]) in _INFLIGHT:
+                continue
         job = get_job(store, int(row["id"]))
-        if job["kind"] in ("image", "video") and job.get("submitted_at"):
-            _set_job(store, job["id"], status="recovering",
-                     error="прервано после отправки — ищу запрос у провайдера, повторно не отправляю")
-        elif job["kind"] in ("image", "video", "chain"):
-            _set_job(store, job["id"], status="approved", error="прервано до отправки — запущу снова (не оплачено)")
-            requeued.append(job["id"])
-        else:
-            _set_job(store, job["id"], status="failed",
-                     error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
-                           "(перегенерация)")
-            lost.append(job["id"])
-
-    def adapter(job: dict) -> Any:
-        return (get_video_provider if job["kind"] == "video" else get_image_provider)(job["provider"])
-
-    finished, recovered = [], []
-    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'recovering' "
-                                  "ORDER BY submitted_at, id"):
-        if int(row["id"]) in busy:
-            continue
-        job = get_job(store, int(row["id"]))
-        ref = _recover(store, job, adapter(job), poll_timeout, attempts=1)
+        ref = _recover(store, job, _adapter(job["kind"], job["provider"]), poll_timeout, attempts=1)
         state = get_job(store, job["id"])
-        if state["status"] == "failed" and "не умеет" in state["error"]:
-            lost.append(job["id"])
         if state["remote_id"]:
             recovered.append(job["id"])
         if ref is not None:
             finished.append(job["id"])
     for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'polling' AND remote_id != '' ORDER BY id"):
-        if int(row["id"]) in busy or int(row["id"]) in finished or int(row["id"]) in recovered:
+        with _LOCK:
+            if int(row["id"]) in _ACTIVE_JOBS or int(row["id"]) in _INFLIGHT:
+                continue
+        if int(row["id"]) in finished or int(row["id"]) in recovered:
             continue
         job = get_job(store, int(row["id"]))
-        ref = _finish(store, job, adapter(job), poll_timeout)
+        ref = _finish(store, job, _adapter(job["kind"], job["provider"]), poll_timeout)
         if ref is not None:
             finished.append(job["id"])
     return {"finished": finished, "lost": lost, "recovered": recovered, "requeued": requeued}
@@ -1511,6 +1878,33 @@ def cancel_jobs(store: Any, project_id: int, approval_id: int | None = None) -> 
 # Проверка постоянства (Gemini-зрение, бесплатно; нет ключа — пропуск)
 # --------------------------------------------------------------------------- #
 
+REVIEW_MIN_SCORE = 6.0  # ниже — версия «проверь» (needs_review); перерисовка — только по решению владельца
+AUTO_CHECK = True  # проверять кадр с персонажами сразу после генерации (Gemini, бесплатно)
+
+
+def _vision_client() -> Any:
+    from app.ai.gemini import GeminiClient
+
+    return GeminiClient(timeout=90)
+
+
+def auto_check(store: Any, job: dict, ref: dict) -> dict | None:
+    """После платного кадра плана с персонажами — проверка постоянства (бесплатно). Не похоже
+    (< 6) — версия ``needs_review``; ничего платного само не запускается. Gemini недоступен —
+    отметка в оценке версии, запуск не падает."""
+    if not AUTO_CHECK or job.get("ref_kind") != "keyframe" or job.get("provider") == "none":
+        return None
+    if not V.get_shot(store, int(job["target_id"]))["cast"]:
+        return None
+    try:
+        return check_consistency(store, int(ref["id"]))
+    except Exception as exc:  # noqa: BLE001 - проверка — подсказка, не условие
+        _log.warning("aiv auto consistency check of ref %s failed: %s", ref["id"], exc)
+        V.set_ref_score(store, int(ref["id"]), {"error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                                                "checked_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        return None
+
+
 CONSISTENCY_PROMPT = """\
 Ты проверяешь постоянство персонажей в мультсериале. Первая картинка — КАДР. Дальше по каждому
 персонажу — его канон (лист разворота или картинка владельца) и карта личности текстом.
@@ -1528,6 +1922,7 @@ def check_consistency(store: Any, ref_id: int, client: Any = None) -> dict:
         raise V.AivError("проверка постоянства — для кадра плана (kind keyframe)")
     if client is None and not settings.gemini_api_key:
         return {"ok": True, "skipped": True, "note": "Gemini не настроен — проверка пропущена (сравни сам глазами)"}
+    client = client or _vision_client()
     shot = V.get_shot(store, ref["target_id"])
     frame = _asset_path(store, ref)
     if frame is None:
@@ -1543,36 +1938,41 @@ def check_consistency(store: Any, ref_id: int, client: Any = None) -> dict:
         c = V.character_by_slug(store, ref["project_id"], member["id"])
         if not c:
             continue
-        canon = _canon_refs(store, ref["project_id"], c)
+        canon = _canon_refs(store, ref["project_id"], c)[-2:]
+        sheet = _asset_path(store, V.selected_ref(store, ref["project_id"], "character", c["id"], "expressions"))
+        if sheet:
+            canon.append(sheet)
         if not canon:
             continue
         cast.append(c["slug"])
         parts.append({"text": f"Персонаж id={c['slug']} «{c['name']}». Карта: {c['identity_card']}. Канон:"})
-        parts.extend(inline(p) for p in canon[-2:])
+        parts.extend(inline(p) for p in canon)
     if not cast:
         return {"ok": True, "skipped": True, "note": "в плане нет персонажей с каноном — сравнивать не с чем"}
     schema = {"type": "object", "properties": {"characters": {"type": "array", "items": {
         "type": "object", "properties": {"id": {"type": "string"}, "score": {"type": "number"},
                                          "differences": {"type": "string"}},
         "required": ["id", "score", "differences"]}}}, "required": ["characters"]}
-    from app.ai.gemini import GeminiClient, _extract_response_text
+    from app.ai.gemini import _extract_response_text
 
     payload = {"contents": [{"role": "user", "parts": parts}],
                "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json",
                                     "responseSchema": schema}}
-    response = (client or GeminiClient()).generate_content(settings.gemini_text_model, payload)
+    response = client.generate_content(settings.gemini_text_model, payload)
     try:
         data = json.loads(_extract_response_text(response))
     except json.JSONDecodeError as exc:
         raise V.AivError("Gemini вернул не-JSON") from exc
     chars = [{"id": str(c.get("id") or ""), "score": max(0.0, min(10.0, float(c.get("score") or 0))),
-              "differences": P._text(c.get("differences"), 300)} for c in data.get("characters") or []]
+              "differences": P._text(c.get("differences"), 300)} for c in data.get("characters") or []
+             if str(c.get("id") or "") in cast]  # оценки только тех, кто в кадре
     score = {"characters": chars, "min": min((c["score"] for c in chars), default=None),
              "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"), "model": settings.gemini_text_model}
-    V.set_ref_score(store, ref_id, score)
-    low = [c for c in chars if c["score"] < 6]
-    return {"ok": True, "score": score,
-            "note": ("ниже 6 — перегенерируй кадр (aiv_regenerate, дёшево): " + "; ".join(
+    low = [c for c in chars if c["score"] < REVIEW_MIN_SCORE]
+    V.set_ref_score(store, ref_id, score, needs_review=bool(low))
+    return {"ok": True, "score": score, "needs_review": bool(low),
+            "note": ("ниже 6 — кадр помечен «проверь» (needs_review); перерисовать — решение владельца "
+                     "(aiv_regenerate, своя карточка): " + "; ".join(
                 f"{c['id']}: {c['differences']}" for c in low)) if low else "персонажи похожи на канон"}
 
 

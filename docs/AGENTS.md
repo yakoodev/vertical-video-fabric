@@ -1215,7 +1215,7 @@ px слоёв: у всех форматов 1080 — те же px, что в в�
 | `aiv_write_script`, `aiv_update_script`, `aiv_update_shot`, `aiv_get_script` | сценарий Gemini или свой шот-лист (с `state` и `continues_from_prev` для склеек); раскадровка с версиями кадров и видео |
 | `aiv_estimate` | оценка этапа `refs` / `keyframes` / `voice` / `video` — бесплатно |
 | `aiv_request_approval`, `aiv_regenerate` | **платное только так**: карточка владельцу с суммой; запуск — после его «Разрешить» |
-| `aiv_run_approved`, `aiv_job_status`, `aiv_select_version`, `aiv_check_consistency`, `aiv_check_continuity` | продолжить одобренное, очередь и бюджет, выбор версии, Gemini-проверка постоянства персонажей и склеек |
+| `aiv_run_approved`, `aiv_retry_job`, `aiv_job_status`, `aiv_select_version`, `aiv_check_consistency`, `aiv_check_continuity` | продолжить одобренное, повтор точно не оплаченного (сеть), очередь и бюджет, выбор версии, Gemini-проверка постоянства персонажей и склеек |
 | `aiv_assemble` | серия → новый холст-клип (`clip_id`), дальше обычные инструменты клипа |
 
 Одобрять сам не можешь (инструмента нет); потолки — серия 350 / 2 500 ₽, месяц проекта и всех ИИ-видео,

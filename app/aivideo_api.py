@@ -13,7 +13,9 @@
   script_id?, items?, regenerate?}; ``POST /api/ai-video/scripts/{sid}/continuity`` — проверка склеек
 * ``POST /api/ai-video/refs/{id}/select`` / ``…/regenerate`` / ``…/check``
 * ``POST /api/ai-video/approvals/{aid}/decide`` {action approve|reject, comment} — решение владельца
-  с баннера проекта (то же, что «Одобрение»); ``POST /api/ai-video/approvals/{aid}/run`` {confirm}
+  с баннера проекта (то же, что «Одобрение»); ``POST /api/ai-video/approvals/{aid}/run`` {confirm};
+  ``POST /api/ai-video/approvals/{aid}/retry`` / ``POST /api/ai-video/jobs/{id}/retry`` — «Повторить»
+  точно не оплаченное (сеть) без новой карточки
 * ``GET /api/projects/{id}/ai-video/jobs``, ``…/ledger``, ``POST /api/projects/{id}/ai-video/cancel``
 * ``POST /api/ai-video/scripts/{sid}/assemble`` {music_track_id?, captions_style?}
 
@@ -68,14 +70,16 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     def api_add_character(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         return call(V.save_character, project_id, name=str(payload.get("name") or ""),
                     identity_card=payload.get("identity_card"), slug=str(payload.get("slug") or ""),
-                    origin=payload.get("origin"), voice=payload.get("voice"), notes=payload.get("notes"))
+                    origin=payload.get("origin"), voice=payload.get("voice"), notes=payload.get("notes"),
+                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"))
 
     @router.patch("/api/ai-video/characters/{character_id}", summary="Правка персонажа")
     def api_edit_character(character_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         current = call(V.get_character, character_id)
         return call(V.save_character, current["project_id"], name=str(payload.get("name") or ""),
                     identity_card=payload.get("identity_card"), origin=payload.get("origin"),
-                    voice=payload.get("voice"), notes=payload.get("notes"), character_id=character_id)
+                    voice=payload.get("voice"), notes=payload.get("notes"), character_id=character_id,
+                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"))
 
     @router.delete("/api/ai-video/characters/{character_id}", summary="Удалить персонажа")
     def api_del_character(character_id: int, _auth: auth_dep) -> dict:
@@ -216,6 +220,14 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/ai-video/approvals/{approval_id}/run", summary="Выполнить одобренные запуски")
     def api_run(approval_id: int, _auth: auth_dep, payload: dict = Body(default={})) -> dict:
         return call(G.run_approved, approval_id, bool(payload.get("confirm")))
+
+    @router.post("/api/ai-video/approvals/{approval_id}/retry", summary="Повторить не оплаченные (сеть) запуски")
+    def api_retry_card(approval_id: int, _auth: auth_dep) -> dict:
+        return call(G.retry_card, approval_id)
+
+    @router.post("/api/ai-video/jobs/{job_id}/retry", summary="Повторить запуск без новой карточки")
+    def api_retry_job(job_id: int, _auth: auth_dep) -> dict:
+        return call(G.retry_job, job_id)
 
     @router.get("/api/projects/{project_id}/ai-video/jobs", summary="Запуски генерации")
     def api_jobs(project_id: int, _auth: auth_dep, script_id: int | None = None) -> dict:

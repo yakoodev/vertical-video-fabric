@@ -31,6 +31,7 @@
 .aiv-shot-img img, .aiv-shot-img video { width: 100%; height: 100%; object-fit: cover; }
 .aiv-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .aiv-badge { position: absolute; top: 6px; left: 6px; background: var(--warn); color: #000; font-size: 11px; padding: 1px 6px; border-radius: var(--r-pill); }
+.aiv-badge.review { top: auto; bottom: 6px; }
 .aiv-shot-meta { display: grid; gap: 6px; align-content: start; font-size: 13px; min-width: 0; }
 .aiv-line { color: var(--text-dim); }
 .aiv-ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
