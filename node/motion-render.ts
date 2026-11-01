@@ -52,6 +52,8 @@ import {
   videoFileTime,
   voiceStateAt,
   pngtuberStateRef,
+  renderScene,
+  validateScene,
 } from "../frontend/src/motion/index";
 
 type Args = {
@@ -1107,7 +1109,49 @@ async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos
   log(`готово: ${total} кадров за ${sec.toFixed(1)} с (${(total / Math.max(sec, 0.001)).toFixed(1)} кадр/с)`);
 }
 
+/**
+ * Проверка сцены слоя scene для агента (app/scene_engine.py): `--validate-scene in.json`, где
+ * in.json — {scene, w?, h?, t?, dur?}. Печатает в stdout JSON: ok, errors, warnings, stats
+ * (узлы и оценка граней + сколько граней в кадре t и за сколько мс он рисуется).
+ */
+function validateSceneMode(argv: string[]): void {
+  const at = argv.indexOf("--validate-scene");
+  const path = argv[at + 1];
+  if (!path) throw new UsageError("--validate-scene: нужен путь к JSON {scene, w?, h?, t?, dur?}");
+  const fontsAt = argv.indexOf("--fonts-dir");
+  if (fontsAt >= 0) registerFonts(argv[fontsAt + 1]);
+  const raw = JSON.parse(readFileSync(path, "utf8")) as { scene?: unknown; w?: number; h?: number; t?: number; dur?: number };
+  const scene = raw && typeof raw === "object" && "scene" in raw ? raw.scene : raw;
+  const check = validateScene(scene);
+  const w = Math.max(16, Math.min(4000, Number(raw.w) || 1080));
+  const h = Math.max(16, Math.min(4000, Number(raw.h) || 1920));
+  const env: RenderEnv = { width: w, height: h, getImage: () => null, createCanvas: (a: number, b: number) => createCanvas(a, b) as never };
+  const canvas = createCanvas(w, h);
+  const ctx = canvas.getContext("2d") as unknown as Ctx2D;
+  ctx.translate(w / 2, h / 2);
+  const t0 = performance.now();
+  let stats: Record<string, number> = {};
+  let crash: string | null = null;
+  try {
+    stats = renderScene(ctx, scene, { w, h, t: Math.max(0, Number(raw.t) || 0), dur: Math.max(0.1, Number(raw.dur) || 3), env });
+  } catch (err) {
+    crash = (err as Error)?.message || String(err);
+  }
+  const ms = performance.now() - t0;
+  const out = {
+    ok: check.ok && !crash,
+    errors: [...check.errors, ...(crash ? [{ path: "scene", message: `рендер упал: ${crash}` }] : [])],
+    warnings: check.warnings,
+    stats: { ...check.stats, frame_faces: stats.faces ?? 0, frame_drawn: stats.drawn ?? 0, frame_ms: Math.round(ms * 10) / 10 },
+  };
+  process.stdout.write(JSON.stringify(out));
+}
+
 async function main(): Promise<void> {
+  if (process.argv.includes("--validate-scene")) {
+    validateSceneMode(process.argv.slice(2));
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   const comp = readComp(args.comp);
   if (args.input && !existsSync(args.input)) throw new Error(`нет файла основы: ${args.input}`);

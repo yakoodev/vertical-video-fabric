@@ -2451,3 +2451,296 @@ test("CLI: 3D-камера двигает основу и слои по-разн
   };
   assert.ok(Math.abs(magenta(orbit) - magenta(still)) > 3, "ближний слой уехал при облёте");
 });
+
+/* ---------- сцена: программный 3D/2D-рендер (frontend/src/motion/scene) ---------- */
+
+const sceneEnv = (w = 1080, h = 1920) => ({ width: w, height: h, getImage: () => null, createCanvas: (a, b) => createCanvas(a, b) });
+/** Сцена слоем во весь кадр: drawFrame — как превью и рендер. */
+const sceneFrame = (scene, t = 0, { w = 1080, h = 1920, id = "sc", end = 4 } = {}) => {
+  const cv = createCanvas(w, h);
+  const ctx = cv.getContext("2d");
+  const layer = { id, type: "scene", start: 0, end, x: 0.5, y: 0.5, props: { scene } };
+  E.drawFrame(ctx, { layers: [layer] }, t, sceneEnv(w, h));
+  return { ctx, data: ctx.getImageData(0, 0, w, h).data };
+};
+const rgbAt = (ctx, x, y) => [...ctx.getImageData(x, y, 1, 1).data].slice(0, 3);
+const SROOT = { t: 0, T: 0, dur: 1, i: 0, n: 1, seed: 0 };
+
+test("сцена: перспектива по умолчанию — 1 единица = 1 px на z=0, вдвое дальше — вдвое меньше; ортография — zoom", () => {
+  const h = 1920;
+  const cam = E.evalCamera({}, SROOT, h);
+  const D = E.focalFor(h, 40);
+  near(cam.eye[2], D, 1e-6);
+  const p = (x, y, z) => {
+    const c = E.apply(cam.view, x, y, z);
+    return E.projectCam(cam, c[0], c[1], c[2]);
+  };
+  const a = p(100, 50, 0);
+  near(a[0], 100, 1e-6);
+  near(a[1], -50, 1e-6); // y вверх в сцене → вниз на экране
+  near(p(100, 0, -D)[0], 50, 1e-6);
+  assert.equal(p(0, 0, D + 10), null, "за камерой — не проецируется");
+  const ortho = E.evalCamera({ type: "orthographic", zoom: 2 }, SROOT, h);
+  const c = E.apply(ortho.view, 100, 50, -5000);
+  assert.deepEqual(E.projectCam(ortho, c[0], c[1], c[2]).map((v) => Math.round(v * 1e6) / 1e6), [200, -100]);
+  // Облёт на 90°: камера на +x, мировая +z уходит влево экрана.
+  const side = E.evalCamera({ orbit: { azimuth: 90, distance: 1000 } }, SROOT, h);
+  near(side.eye[0], 1000, 1e-6);
+  const s = E.apply(side.view, 0, 0, 100);
+  assert.ok(E.projectCam(side, s[0], s[1], s[2])[0] < 0);
+  // Поворот узла: X, потом Y, потом Z (внешние оси) — M = Rz·Ry·Rx.
+  const m = E.compose([0, 0, 0], [90, 90, 0], [1, 1, 1]);
+  const v = E.apply(m, 0, 1, 0); // Rx(90): y → z; Ry(90): z → x
+  assert.deepEqual(v.map((x) => Math.round(x * 1e9) / 1e9), [1, 0, 0]);
+});
+
+test("сцена: у всех примитивов нормали граней смотрят наружу, у замкнутых тел у каждого ребра две грани", () => {
+  const meshes = {
+    box: E.boxMesh(200, 100, 50),
+    sphere: E.sphereMesh(100, 16, 10),
+    ico: E.icosphereMesh(100, 2),
+    cylinder: E.cylinderMesh(80, 80, 200, 20, true),
+    cone: E.cylinderMesh(0, 80, 200, 20, true),
+    torus: E.torusMesh(150, 40, 24, 10),
+    lathe: E.latheMesh([[0, -100], [80, -60], [60, 60], [0, 100]], 18),
+    extrude: E.extrudeMesh(E.presetShape("star", { radius: 100, spikes: 5 }), 40),
+  };
+  for (const [name, m] of Object.entries(meshes)) {
+    assert.ok(m.faces.length > 0, name);
+    const nv = m.pos.length / 3;
+    m.faces.forEach((f, fi) => {
+      let x = 0, y = 0, z = 0;
+      for (const v of f) { x += m.pos[v * 3] / f.length; y += m.pos[v * 3 + 1] / f.length; z += m.pos[v * 3 + 2] / f.length; }
+      if (name === "torus") {
+        // У тора «наружу» — от осевой окружности трубки.
+        const r = Math.hypot(x, y);
+        x -= (x / r) * 150;
+        y -= (y / r) * 150;
+      } else if (name === "extrude" && Math.abs(m.normals[fi * 3 + 2]) < 0.5) {
+        return; // бока звезды вогнуты у внутренних вершин — центр тела не годится
+      }
+      const d = x * m.normals[fi * 3] + y * m.normals[fi * 3 + 1] + z * m.normals[fi * 3 + 2];
+      assert.ok(d > 0, `${name}: грань ${fi} смотрит внутрь`);
+    });
+    const open = [];
+    for (let e = 0; e < m.edges.length / 4; e++) if (m.edges[e * 4 + 3] < 0) open.push(e);
+    assert.equal(open.length, 0, `${name}: рёбра без соседней грани (${nv} вершин)`);
+  }
+  assert.equal(E.boxMesh(1, 1, 1).faces.length, 6);
+  assert.equal(E.triangulate(E.presetShape("star", { spikes: 5 })).length, 8, "звезда из 10 вершин — 8 треугольников");
+});
+
+test("сцена: порядок художника — ближняя грань поверх дальней, облёт меняет порядок, order сильнее глубины", () => {
+  const scene = (az, order) => ({
+    background: "#000000",
+    camera: { orbit: { azimuth: az } },
+    style: { shading: "flat", seams: false },
+    nodes: [
+      { type: "box", size: 300, position: [0, 0, 200], color: "#ff0000", ...(order !== undefined ? { order } : {}) },
+      { type: "box", size: 300, position: [0, 0, -200], color: "#0000ff" },
+    ],
+  });
+  assert.deepEqual(rgbAt(sceneFrame(scene(0)).ctx, 540, 960), [255, 0, 0], "спереди красный");
+  assert.deepEqual(rgbAt(sceneFrame(scene(180)).ctx, 540, 960), [0, 0, 255], "облетели — спереди синий");
+  assert.deepEqual(rgbAt(sceneFrame(scene(0, -1)).ctx, 540, 960), [0, 0, 255], "order −1 — красный рисуется раньше, синий сверху");
+});
+
+test("сцена: кадр = f(t) — тот же t даёт те же пиксели, история перемотки не влияет; зерно слоя меняет частицы", () => {
+  const scene = {
+    background: { gradient: ["#101020", "#302060"] },
+    camera: { orbit: { azimuth: { keys: [[0, -30], [4, 30]] }, elevation: 20 }, shake: { amount: 8 } },
+    style: { shading: "toon", outline: { width: 5 } },
+    nodes: [
+      { type: "sphere", radius: 200, color: "#ffd400", position: [0, { wiggle: 40 }, 0], material: { rim: true, specular: true } },
+      { type: "particles", kind: "confetti", count: 60, area: [900, 1500, 400] },
+      { type: "repeat", count: 5, layout: "circle", radius: 420, stagger: 0.1, child: { type: "box", size: 90, rotation: [0, "=t*90 + i*20", 0], enter: { from: { scale: 0 }, duration: 0.5, ease: "outBack" } } },
+    ],
+  };
+  const a = sceneFrame(scene, 1.3).data;
+  sceneFrame(scene, 3.7);
+  const b = sceneFrame(scene, 1.3).data;
+  assert.ok(same(a, b), "тот же t — те же пиксели");
+  assert.ok(!same(a, sceneFrame(scene, 1.4).data), "время идёт — кадр меняется");
+  assert.ok(!same(a, sceneFrame(scene, 1.3, { id: "другой" }).data), "у копии слоя своё зерно");
+});
+
+test("сцена: эталон — ортография, красный квадрат 200×200 по центру на чёрном; toon-коробка: верх светлее бока", () => {
+  const { ctx } = sceneFrame(
+    { background: "#000000", camera: { type: "orthographic" }, nodes: [{ type: "rect", size: [200, 200], fill: "#ff0000" }] },
+    0,
+    { w: 540, h: 960 },
+  );
+  // Слой в кадре 540×960: опорные px × 0.5 — квадрат 100×100 вокруг (270, 480).
+  assert.deepEqual(rgbAt(ctx, 270, 480), [255, 0, 0]);
+  assert.deepEqual(rgbAt(ctx, 270 + 45, 480 - 45), [255, 0, 0]);
+  assert.deepEqual(rgbAt(ctx, 270 + 56, 480), [0, 0, 0]);
+  assert.deepEqual(rgbAt(ctx, 270, 480 + 56), [0, 0, 0]);
+  const toon = sceneFrame({
+    background: "#000000",
+    camera: { orbit: { azimuth: 30, elevation: 30 } },
+    lights: [{ type: "ambient", intensity: 0.3 }, { type: "directional", direction: [0, 1, 0.2], intensity: 1 }],
+    nodes: [{ type: "box", size: 500, color: "#3080ff", material: { shading: "toon", bands: 2 } }],
+  }).ctx;
+  const top = rgbAt(toon, 540, 960 - 320);
+  const side = rgbAt(toon, 540 - 120, 960 + 120);
+  assert.ok(top[2] > side[2] + 40, `верх ${top} светлее бока ${side}`);
+});
+
+test("сцена: ближняя плоскость — пол сквозь камеру отсекается, кадр рисуется", () => {
+  const { ctx } = sceneFrame({
+    background: "#000000",
+    camera: { position: [0, 50, 600], target: [0, 0, -400] },
+    nodes: [{ type: "plane", size: [6000, 6000], rotation: [-90, 0, 0], segments: 4, color: "#00ff00", material: { shading: "flat", seams: false } }],
+  });
+  assert.deepEqual(rgbAt(ctx, 540, 1900), [0, 255, 0], "пол под камерой виден до нижнего края");
+  assert.deepEqual(rgbAt(ctx, 540, 20), [0, 0, 0], "небо пустое");
+});
+
+test("сцена: анимации — ключи, переход с пружиной, выражение, wiggle детерминирован, enter/stagger", () => {
+  const c = (t, i = 0) => ({ ...SROOT, t, i, n: 3 });
+  near(E.evalNum({ keys: [[0, 0], [2, 100, "linear"]] }, 0, c(1)), 50, 1e-9);
+  near(E.evalNum({ keys: [[0, 0, "linear"], [1, 10]], loop: 1 }, 0, c(1.5)), 5, 1e-9);
+  near(E.evalNum({ from: 0, to: 1, at: 0, duration: 1, ease: "linear" }, 0, c(0.25)), 0.25, 1e-9);
+  near(E.evalNum({ from: 0, to: 1, spring: true }, 0, c(10)), 1, 1e-3);
+  assert.ok(E.evalNum({ from: 0, to: 1, spring: { damping: 8 } }, 0, c(0.3)) > 1, "пружина перелетает");
+  near(E.evalNum("=sin(pi/2)*10 + i", 0, c(0, 2)), 12, 1e-9);
+  near(E.evalNum({ base: 5, rate: 2 }, 0, c(3)), 11, 1e-9);
+  const w1 = E.evalNum({ wiggle: { amp: 20, seed: 4 } }, 0, c(0.77));
+  assert.equal(E.evalNum({ wiggle: { amp: 20, seed: 4 } }, 0, c(0.77)), w1);
+  assert.ok(Math.abs(w1) <= 20);
+  assert.deepEqual(E.evalVec({ keys: [[0, [0, 0, 0]], [1, [10, 20, 30], "linear"]] }, [0, 0, 0], c(0.5)), [5, 10, 15]);
+  assert.deepEqual(E.evalVec(2, [1, 1, 1], c(0), true), [2, 2, 2]);
+  assert.deepEqual(E.parseColor("#ff000080"), [255, 0, 0, 128 / 255]);
+  // enter со stagger: в момент 0 копии ещё «в позе from» (scale 0) — пусто; к 2 с — на месте.
+  const scene = {
+    background: "#000000",
+    camera: { type: "orthographic" },
+    style: { shading: "flat" },
+    nodes: [{ type: "repeat", count: 3, spacing: [300, 0, 0], stagger: 0.3, child: { type: "rect", size: [200, 200], fill: "#ffffff", enter: { from: { scale: 0 }, duration: 0.4 } } }],
+  };
+  const at = (t) => sceneFrame(scene, t, { w: 540, h: 960 }).ctx;
+  assert.deepEqual(rgbAt(at(0), 270, 480), [0, 0, 0]);
+  const mid = at(0.5);
+  assert.deepEqual(rgbAt(mid, 270 - 150, 480), [255, 255, 255], "первая копия уже вошла");
+  assert.deepEqual(rgbAt(mid, 270 + 150, 480), [0, 0, 0], "третья ещё нет");
+  assert.deepEqual(rgbAt(at(2), 270 + 150, 480), [255, 255, 255]);
+});
+
+test("сцена: выражения безопасны — только числа, белый список функций и переменных", () => {
+  for (const bad of ["constructor", "this", "process.exit(1)", "globalThis", "a=1", "Math.random()", "'x'", "[1]", "x => 1", "require('fs')", "eval(1)"]) {
+    assert.ok(E.exprError(bad), `должно быть отклонено: ${bad}`);
+  }
+  assert.equal(E.exprError("clamp(t*2, 0, 1) * (i % 2 == 0 ? 1 : -1) + rand(i) + noise(t, 3)"), null);
+  assert.equal(E.compileExpr("1/0")(SROOT), 0, "деление на 0 — 0, не Infinity");
+  assert.equal(E.compileExpr("2^-1")(SROOT), 0.5);
+  assert.equal(E.compileExpr("-2^2")(SROOT), -4);
+  assert.ok(E.exprError("x".repeat(700)), "длинное — отказ");
+});
+
+test("сцена: проверка — понятные ошибки и подсказки для агента", () => {
+  const ok = E.validateScene({ camera: { orbit: { azimuth: { keys: [[0, 0], [3, 90]] } } }, nodes: [{ type: "box", size: 200, material: { shading: "toon", outline: true } }] });
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  assert.deepEqual(ok.warnings, []);
+  const bad = E.validateScene({
+    nodes: [
+      { type: "cube", size: 10 },
+      { type: "sphere", colour: "#ff0000", radius: 100 },
+      { type: "box", position: [0, "=sin(", 0] },
+      { type: "box", material: { shading: "toonish" } },
+      { type: "text", size: 100 },
+      { type: "box", rotation: [0, { keys: [[0, 0, "outBak"], [1, 90]] }, 0] },
+    ],
+  });
+  assert.equal(bad.ok, false);
+  const all = [...bad.errors, ...bad.warnings].map((p) => `${p.path}: ${p.message}`).join("\n");
+  assert.match(all, /nodes\[0\]\.type.*box/s, "cube → подсказка box");
+  assert.match(all, /nodes\[1\]\.colour.*color/);
+  assert.match(all, /nodes\[2\]\.position\[1\].*выражение/);
+  assert.match(all, /nodes\[3\]\.material\.shading.*toon/);
+  assert.match(all, /nodes\[4\]\.text/);
+  assert.match(all, /outBak/);
+  assert.ok(E.validateScene({ nodes: [{ type: "repeat", count: 400, child: { type: "sphere", segments: 32 } }] }).warnings.some((w) => /граней/.test(w.message)), "бюджет граней");
+  assert.equal(E.validateScene("x").ok, false);
+});
+
+test("сцена: картинки сцены попадают в список загрузки рендера", () => {
+  const layer = { id: "s", type: "scene", start: 0, end: 1, props: { scene: { nodes: [{ type: "group", children: [{ type: "image", src: "7" }, { type: "image", src: "emoji:1f525" }] }] } } };
+  assert.deepEqual(E.collectImageRefs([layer]).sort(), ["7", "emoji:1f525"]);
+});
+
+test("сцена: ~2000 граней в кадре 1080×1920 — быстро (замер)", () => {
+  const scene = {
+    background: { gradient: ["#0b1020", "#1d2b64"] },
+    camera: { orbit: { azimuth: 25, elevation: 20 } },
+    lights: [{ type: "hemisphere", intensity: 0.5 }, { type: "directional", direction: [-0.5, 0.8, 0.6], intensity: 0.9 }],
+    style: { shading: "toon", bands: 3, outline: { color: "#0b0b14", width: 4 } },
+    nodes: [
+      { type: "repeat", count: 25, layout: "grid", cols: 5, spacing: [190, 300, 0], colors: ["#ff3b6b", "#ffd400", "#22d3ee", "#a3e635"], child: { type: "sphere", radius: 80, segments: 12, rings: 7, rotation: [0, "=t*40+i*10", 0] } },
+      { type: "plane", size: [1400, 1400], rotation: [-90, 0, 0], position: [0, -800, 0], segments: 6, color: "#283050" },
+    ],
+  };
+  const env = sceneEnv();
+  const cv = createCanvas(1080, 1920);
+  const ctx = cv.getContext("2d");
+  const layer = { id: "perf", type: "scene", start: 0, end: 10, x: 0.5, y: 0.5, props: { scene } };
+  let stats;
+  for (let i = 0; i < 3; i++) E.drawFrame(ctx, { layers: [layer] }, i * 0.1, env); // прогрев кэшей
+  const N = 10;
+  const t0 = performance.now();
+  for (let i = 0; i < N; i++) {
+    ctx.clearRect(0, 0, 1080, 1920);
+    stats = E.renderScene(ctx, scene, { w: 1080, h: 1920, t: 1 + i * 0.033, dur: 10, env });
+  }
+  const ms = (performance.now() - t0) / N;
+  console.log(`# сцена: ${stats.faces} граней (${stats.drawn} нарисовано), ${ms.toFixed(1)} мс/кадр 1080×1920`);
+  assert.ok(stats.faces >= 1900, `граней ${stats.faces}`);
+  assert.ok(ms < 150, `кадр ${ms.toFixed(1)} мс — слишком медленно`);
+});
+
+test("CLI: слой scene в кадре компоновщика = кадр движка (превью) пиксель в пиксель", async () => {
+  const { GlobalFonts } = await import("@napi-rs/canvas");
+  GlobalFonts.registerFromPath(join(FONTS, "Montserrat-ExtraBold.ttf"), "Montserrat");
+  const scene = {
+    background: "#14102a",
+    camera: { orbit: { azimuth: 20, elevation: 15 } },
+    style: { shading: "toon", outline: { width: 5 } },
+    nodes: [
+      { type: "torus", radius: 260, tube: 70, rotation: [60, 0, "=t*45"], color: "#22d3ee" },
+      { type: "box", size: 220, rotation: [20, "=t*60", 0], color: "#ff3b6b", material: { shading: "halftone" } },
+    ],
+  };
+  const layer = { id: "scn", type: "scene", start: 0, end: 2, x: 0.5, y: 0.5, props: { scene } };
+  writeFileSync(join(tmp, "scn.json"), JSON.stringify({ width: 540, height: 960, fps: 30, duration: 2, layers: [layer] }));
+  const png = join(tmp, "scn.png");
+  const r = run(["--comp", join(tmp, "scn.json"), "--frame", "0.7", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  const img = await loadImage(readFileSync(png));
+  const cv = createCanvas(img.width, img.height);
+  cv.getContext("2d").drawImage(img, 0, 0);
+  const cli = cv.getContext("2d").getImageData(0, 0, 540, 960).data;
+  const eng = sceneFrame(scene, 0.7, { w: 540, h: 960, id: "scn", end: 2 }).data;
+  let diff = 0;
+  for (let i = 0; i < cli.length; i++) diff = Math.max(diff, Math.abs(cli[i] - eng[i]));
+  assert.ok(diff <= 2, `рендер ≠ превью: макс. разница ${diff}`);
+});
+
+test("сцена: шаблоны галереи — один слой scene, сцена без ошибок и предупреждений, кадр рисуется", () => {
+  const ids = E.TEMPLATES.filter((t) => t.id.startsWith("scene-")).map((t) => t.id);
+  assert.ok(ids.length >= 8, `шаблонов сцен ${ids.length}`);
+  for (const id of ids) {
+    const res = E.buildTemplate(id, {}, 1);
+    assert.equal(res.layers.length, 1, id);
+    const layer = res.layers[0];
+    assert.equal(layer.type, "scene", id);
+    const check = E.validateScene(layer.props.scene);
+    assert.ok(check.ok, `${id}: ${JSON.stringify(check.errors)}`);
+    assert.deepEqual(check.warnings, [], `${id}: ${JSON.stringify(check.warnings)}`);
+    const cv = createCanvas(270, 480);
+    const ctx = cv.getContext("2d");
+    E.drawFrame(ctx, { layers: res.layers }, 1 + (layer.end - layer.start) / 2, sceneEnv(270, 480));
+    const d = ctx.getImageData(0, 0, 270, 480).data;
+    let painted = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) painted++;
+    assert.ok(painted > 2000, `${id}: кадр почти пуст (${painted} px)`);
+  }
+});

@@ -28,6 +28,8 @@ import secrets
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from app.scene_engine import SceneSpec, scene_image_refs
+
 # ---------------------------------------------------------------- пределы
 
 # Промо приложения целиком в сервисе (клип 574) требовало 113 слоёв — 60 молча резали хвост.
@@ -55,7 +57,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio", "pngtuber", "nameplate", "fx",
+    "chat", "audio", "pngtuber", "nameplate", "fx", "scene",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -926,6 +928,15 @@ PROPS: dict[str, dict] = {
     },
 }
 
+# Кодовая 3D/2D-сцена (frontend/src/motion/scene, docs/motion/scene-engine.md): вьюпорт w×h опорных px
+# (нет — весь опорный кадр), clip — обрезать по вьюпорту, scene — JSON-сцена (app/scene_engine.SceneSpec).
+PROPS["scene"] = {
+    "w": Opt(Num(1080, 16, 4000, 1)),
+    "h": Opt(Num(1920, 16, 4000, 1)),
+    "clip": Opt(Flag(True)),
+    "scene": SceneSpec(),
+}
+
 ANIM = {"type": Choice("none", ANIMATIONS), "duration": Num(0.3, MIN_ANIM_SEC, MAX_ANIM_SEC, 3)}
 LOOP = {"type": Choice("none", LOOPS), "speed": Num(1, 0.1, 5, 3), "amount": Num(1, 0, 3, 3)}
 # Реакция на громкость клипа: source — чья огибающая, prop — что «дышит», amount 0..3, smooth 0..1
@@ -1372,6 +1383,8 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.data", "у графика нет данных")
     elif ltype == "callout" and not props["title"].strip() and not props["subtitle"].strip():
         rep(f"{where}.props", "у плашки пустые title и subtitle")
+    elif ltype == "scene" and not props["scene"].get("nodes"):
+        rep(f"{where}.props.scene.nodes", "пустая сцена — слой ничего не покажет (get_scene_reference)")
     elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":
         rep(f"{where}.props.handle", "у плашки канала нет ни ника (handle), ни площадки — слой ничего не покажет")
 
@@ -1556,6 +1569,9 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         ref = emoji_ref(props["icon"])
         if ref:
             refs.append(ref)
+    elif ltype == "scene":
+        # Узлы image сцены: файлы для монтажа и emoji:/sticker: из паков.
+        refs.extend(scene_image_refs(props.get("scene")))
     elif ltype == "captions":
         # Эмодзи над субтитрами — тоже Twemoji; без файла рисуется символом, слой не пропадает.
         for mark in props.get("emoji") or []:

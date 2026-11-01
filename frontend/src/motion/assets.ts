@@ -5,6 +5,7 @@
  */
 import { emojiRef, graphemes, isEmoji } from "./fonts";
 import { decorGlyph } from "./glyphs";
+import { sceneImageRefs } from "./scene/render";
 import type { Layer, VideoLayer } from "./types";
 
 const PNGTUBER_STATES = ["idle", "talk", "shout"] as const;
@@ -42,6 +43,10 @@ export function collectImageRefs(layers: Layer[]): string[] {
         break;
       case "text":
         emojiIn(layer.props.text, out);
+        break;
+      case "scene":
+        // Узлы image сцены (asset_id файла, emoji:…, sticker:…).
+        sceneImageRefs(layer.props?.scene, out);
         break;
       case "counter":
         emojiIn(`${layer.props.prefix ?? ""} ${layer.props.suffix ?? ""}`, out);

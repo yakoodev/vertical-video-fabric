@@ -578,6 +578,18 @@ export type ChatProps = {
   ttl?: number;
 };
 
+/**
+ * Кодовая 3D/2D-сцена (frontend/src/motion/scene, docs/motion/scene-engine.md): вьюпорт `w × h`
+ * опорных px (нет — весь опорный кадр), `clip` — обрезать по вьюпорту (по умолчанию да),
+ * `scene` — JSON-сцена: камера, свет, туман, фон, узлы (сетки, плоские фигуры, текст, картинки…).
+ */
+export type SceneProps = {
+  w?: number;
+  h?: number;
+  clip?: boolean;
+  scene: Record<string, unknown>;
+};
+
 export type LayerPropsMap = {
   text: TextProps;
   shape: ShapeProps;
@@ -595,6 +607,7 @@ export type LayerPropsMap = {
   audio: AudioProps;
   pngtuber: PngtuberProps;
   fx: FxProps;
+  scene: SceneProps;
 };
 
 export type LayerType = keyof LayerPropsMap;
@@ -682,6 +695,7 @@ export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
 export type PngtuberLayer = LayerOf<"pngtuber">;
 export type FxLayer = LayerOf<"fx">;
+export type SceneLayer = LayerOf<"scene">;
 
 export type Layer =
   | TextLayer
@@ -699,7 +713,8 @@ export type Layer =
   | ChatLayer
   | AudioLayer
   | PngtuberLayer
-  | FxLayer;
+  | FxLayer
+  | SceneLayer;
 
 /**
  * Как ключ камеры понимает свои x/y: `"center"` (по умолчанию) — центр окна камеры

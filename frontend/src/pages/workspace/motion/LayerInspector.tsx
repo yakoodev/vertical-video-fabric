@@ -32,6 +32,7 @@ import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
 import { FX_TITLES, LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
 import { TrackPanel, type PickedPoint } from "@/pages/workspace/motion/TrackPanel";
 import { ModuleOnly } from "@/components/RequireModule";
+import { SceneInspector } from "@/pages/workspace/motion/SceneInspector";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -996,6 +997,12 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             <Color label="Дорожка" value={layer.props.track ?? "#ffffff"} onChange={(track) => patchProps({ track })} />
             <Toggle label="Подпись %" checked={layer.props.label ?? true} onChange={(label) => patchProps({ label })} />
           </div>
+        </Section>
+      ) : null}
+
+      {layer.type === "scene" ? (
+        <Section title="3D-сцена">
+          <SceneInspector layer={layer} onChange={onChange} />
         </Section>
       ) : null}
 

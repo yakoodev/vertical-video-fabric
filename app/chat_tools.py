@@ -48,7 +48,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "auto_edit", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera", "camera_preset",
         "add_insert", "remove_insert", "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
-        "choose_cover", "track_layer", "untrack_layer", "snap_to_beats")),
+        "choose_cover", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
+        "preview_scene_frame")),
     "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
         "list_subtitle_styles", "translate_subtitles", "dub_clip", "emphasize_words")),
@@ -75,7 +76,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк",
-                "в такт", "долям", "доли", "в бит", "битам"),
+                "в такт", "долям", "доли", "в бит", "битам", "3d", "3д", "сцен", "анимац"),
     "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч", "ключев", "эмфаз"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",

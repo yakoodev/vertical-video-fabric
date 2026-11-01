@@ -363,7 +363,7 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "get_clip", "get_transcript", "view_frame", "contact_sheet", "source_contact_sheet", "source_loudness",
     "find_noises", "get_playbook", "list_modules", "lint_clip",
     # слои, камера, библиотека
-    "get_motion_reference", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera",
+    "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera",
     "camera_preset", "list_fonts", "upload_font", "search_emoji", "list_packs", "search_pack", "list_assets",
     "upload_image", "upload_video", "add_video_from_source", "freeze_frame", "set_backdrop", "add_insert",
     "remove_insert", "auto_edit", "set_transition", "list_brands", "apply_brand", "set_nameplate",

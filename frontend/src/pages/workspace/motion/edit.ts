@@ -258,6 +258,8 @@ export function layerTitle(layer: Layer): string {
       return "PNGtuber";
     case "fx":
       return FX_TITLES[layer.props.kind ?? "vhs"] ?? "Эффект";
+    case "scene":
+      return "3D-сцена";
     default:
       return "Слой";
   }
@@ -280,6 +282,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   audio: "♪",
   pngtuber: "🗣",
   fx: "✺",
+  scene: "🧊",
 };
 
 /** Подписи видов эффекта кадра (fx). */

@@ -51,6 +51,8 @@ export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLay
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
 export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";
+export * from "./scene/index";
+export { sceneRenderer, sceneViewport } from "./layers/scene";
 export { pngtuberRenderer, pngtuberStateRef, pngtuberSize, PIXEL_ART_MAX, PNGTUBER_DEFAULT_W } from "./layers/pngtuber";
 export {
   invalidateTextCache,

@@ -204,6 +204,12 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return w, (w * natural[1] / natural[0] if natural and natural[0] > 0 and natural[1] > 0 else w)
     if kind in ("shape", "progress", "chart"):
         return _num(props.get("w"), 400), _num(props.get("h"), 400 if kind != "progress" else 40)
+    if kind == "scene":
+        # Сцена: вьюпорт w×h; без них — весь кадр любого формата (движок берёт опорный кадр
+        # формата), переносить нечего — как reframe.ts layerSize.
+        if not props.get("w") and not props.get("h"):
+            return None
+        return _num(props.get("w"), 1080), _num(props.get("h"), 1920)
     if kind == "callout":
         return _num(props.get("w"), 900), 240.0 if props.get("subtitle") else 170.0
     if kind == "nameplate":
