@@ -97,6 +97,9 @@ automation_service = AutomationService(store, source_ingestor, video_analysis_se
 from app.vod_watch import VodWatchWorker  # noqa: E402 - наблюдатель VOD: новый эфир → нарезка → одобрение
 
 vod_watch_worker = VodWatchWorker(store, download_service, automation_service)
+from app.aivideo_gen import AiVideoWorker  # noqa: E402 - ИИ-видео: одобренные этапы, опрос после перезапуска
+
+aivideo_worker = AiVideoWorker(store)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 # Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
@@ -106,6 +109,7 @@ modules.register_worker("publishing", "job-worker", lambda: worker)
 modules.register_worker("platform_stats", "stats-collector", lambda: stats_collector)
 modules.register_worker("autopilot", "autopilot", lambda: autopilot_worker)
 modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)
+modules.register_worker("ai_video", "aivideo-gen", lambda: aivideo_worker)
 
 
 @asynccontextmanager
@@ -4512,6 +4516,11 @@ app.include_router(build_vod_watch_router(AuthDep, lambda: store, lambda: (downl
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402
 
 app.include_router(build_motion_assets_router(AuthDep, lambda: store))
+
+# ИИ-видео: проект, где ролик рисуется с нуля — этапы с оценкой и одобрением (app/aivideo_api.py).
+from app.aivideo_api import build_aivideo_router  # noqa: E402
+
+app.include_router(build_aivideo_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))

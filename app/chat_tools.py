@@ -71,6 +71,12 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "sources": ("исходники: расшифровка, склейки планов, лист кадров, чат Twitch, новый клип, компиляция", (
         "get_source_transcript", "get_shots", "source_contact_sheet", "chat_activity", "get_chat", "create_clip",
         "make_compilation")),
+    # Проектные, но не в базе: 18 объявлений в каждом ходе чата — дорого, подгружаются по словам.
+    "ai_video": ("ИИ-видео с нуля: сценарий, персонажи, локации, этапы с оценкой и карточкой, сборка серии", (
+        "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
+        "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
+        "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_job_status",
+        "aiv_select_version", "aiv_check_consistency", "aiv_assemble")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
@@ -84,6 +90,7 @@ _PRELOAD = {
     "screens": ("плашк", "концовк", "end screen", "промо", "холст"),
     "assets": ("картинк", "библиотек", "шрифт"),
     "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц"),
+    "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
 }
 
 # Опасное — только через карточку подтверждения в чате: что владелец увидит на кнопке.
@@ -265,7 +272,8 @@ def _project_tool_names() -> list[str]:
 
 
 def base_names() -> list[str]:
-    names = [*_project_tool_names(), *BASE, *[t.name for t in _chat_tools()]]
+    grouped = _grouped()
+    names = [*(n for n in _project_tool_names() if n not in grouped), *BASE, *[t.name for t in _chat_tools()]]
     known = all_tools()
     return list(dict.fromkeys(n for n in names if n in known))
 

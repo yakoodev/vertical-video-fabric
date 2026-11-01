@@ -109,6 +109,16 @@ class Settings:
         self.dubbing_enabled = _truthy(os.getenv("DUBBING_ENABLED", "0"))
         # Потолок одного запуска, ₽: больше не разрешит никакой budget_rub из запроса.
         self.dubbing_max_budget_rub = float(os.getenv("DUBBING_MAX_BUDGET_RUB", "200") or 200)
+        # ИИ-видео (app/aivideo.py): ПЛАТНАЯ генерация картинок/озвучки через Polza — по умолчанию
+        # выключена (сухой прогон работает всегда). Даже включённая — только по одобренной
+        # владельцем карточке этапа и в пределах потолков: запуск, серия (черновик/качество),
+        # месяц проекта и месяц всех ИИ-видео проектов вместе.
+        self.aivideo_enabled = _truthy(os.getenv("AIVIDEO_ENABLED", "0"))
+        self.aivideo_max_budget_rub = float(os.getenv("AIVIDEO_MAX_BUDGET_RUB", "2500") or 2500)
+        self.aivideo_month_cap_rub = float(os.getenv("AIVIDEO_MONTH_CAP_RUB", "3000") or 3000)
+        self.aivideo_image_model = (os.getenv("AIVIDEO_IMAGE_MODEL", "google/gemini-nano-banana-2.1").strip()
+                                    or "google/gemini-nano-banana-2.1")
+        self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()

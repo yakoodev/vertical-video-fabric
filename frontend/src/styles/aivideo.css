@@ -1,0 +1,39 @@
+/* ИИ-видео (pages/AiVideoTab.tsx): бюджет, карточки этапов, версии картинок, раскадровка. */
+.aiv { display: grid; gap: 14px; }
+.aiv-subtabs { margin-bottom: 0; }
+.aiv-budget { display: grid; gap: 10px; padding: 14px 16px; }
+.aiv-meter { display: grid; gap: 4px; }
+.aiv-meter-label { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; flex-wrap: wrap; }
+.aiv-meter-bar { position: relative; height: 8px; border-radius: var(--r-pill); background: var(--hairline); overflow: hidden; }
+.aiv-meter-spent, .aiv-meter-res { position: absolute; top: 0; bottom: 0; left: 0; }
+.aiv-meter-spent { background: var(--accent-grad); }
+.aiv-meter-res { background: var(--warn-soft); border-left: 1px solid var(--warn); }
+.aiv-warn { color: var(--warn); font-size: 13px; }
+.aiv-cards { display: grid; gap: 10px; }
+.aiv-card { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 14px 16px; border-color: var(--warn); }
+.aiv-card-text { display: grid; gap: 6px; min-width: 0; flex: 1 1 320px; }
+.aiv-q { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; color: var(--text-dim); }
+.aiv-stage { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.aiv-est { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.aiv-versions { display: flex; gap: 8px; flex-wrap: wrap; }
+.aiv-thumb { margin: 0; width: 108px; display: grid; gap: 4px; border: 2px solid transparent; border-radius: var(--r-sm); padding: 3px; }
+.aiv-thumb.sel { border-color: var(--accent); }
+.aiv-thumb.stale { opacity: 0.6; }
+.aiv-thumb img { width: 100%; aspect-ratio: 9 / 16; object-fit: contain; border-radius: 8px; background: var(--surface); display: block; }
+.aiv-thumb figcaption { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--text-dim); }
+.aiv-thumb figcaption span { flex: 1; min-width: 0; }
+.aiv-look { display: grid; gap: 6px; font-size: 13.5px; }
+.aiv-num { width: 80px; flex: none; }
+.aiv-shot-edit { padding: 12px 14px; }
+.aiv-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.aiv-shot { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; padding: 12px; }
+.aiv-shot-img { position: relative; aspect-ratio: 9 / 16; border-radius: 10px; overflow: hidden; background: var(--surface); display: grid; place-items: center; font-size: 12px; }
+.aiv-shot-img img { width: 100%; height: 100%; object-fit: cover; }
+.aiv-badge { position: absolute; top: 6px; left: 6px; background: var(--warn); color: #000; font-size: 11px; padding: 1px 6px; border-radius: var(--r-pill); }
+.aiv-shot-meta { display: grid; gap: 6px; align-content: start; font-size: 13px; min-width: 0; }
+.aiv-line { color: var(--text-dim); }
+.aiv-ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
+.aiv-ledger td { padding: 4px 6px; border-top: 1px solid var(--hairline); }
+@media (max-width: 720px) {
+  .aiv-shot { grid-template-columns: 90px minmax(0, 1fr); }
+}

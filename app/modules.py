@@ -122,6 +122,21 @@ MODULES: list[Module] = [
         ui=("пункт меню «Чат»",),
     ),
     Module(
+        "ai_video", "ИИ-видео (ролики с нуля)", "ai",
+        "Проект «ИИ-видео»: сценарий и шот-лист (Gemini), стиль-библия, персонажи с обликами, локации, кадр на "
+        "план и сборка в холст-клип с камерой, озвучкой и субтитрами. Картинки и голос — Polza, платно и только "
+        "по одобренной владельцем карточке этапа в пределах потолков; сухой прогон бесплатный.",
+        cost=("network", "paid"), cost_note="Polza (картинки, TTS) — только по карточке с суммой; Gemini — ключ владельца",
+        depends=("series",),
+        tools=("aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
+               "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
+               "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_job_status",
+               "aiv_select_version", "aiv_check_consistency", "aiv_assemble"),
+        routes=("/api/ai-video/*", "/api/projects/{id}/ai-video*"),
+        ui=("вкладка «ИИ-видео» на странице проекта вида ИИ-видео", "тип проекта «ИИ-видео»"),
+        workers=("aivideo-gen",),
+    ),
+    Module(
         "mcp", "MCP-сервер для внешних агентов", "ai",
         "Инструменты монтажа для Claude Code, Codex и любого MCP-клиента по адресу /mcp.",
         cost=(), cost_note="нагрузка — от того, что делают агенты",

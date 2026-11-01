@@ -169,8 +169,9 @@ def ensure_projects_schema(conn) -> None:
 # Общее
 # --------------------------------------------------------------------------- #
 
-PROJECT_KINDS = ("stream_channel", "series", "promo", "other")
-PROJECT_KIND_LABELS = {"stream_channel": "стрим-канал", "series": "сериал / аниме", "promo": "промо", "other": "другое"}
+PROJECT_KINDS = ("stream_channel", "series", "promo", "ai_video", "other")
+PROJECT_KIND_LABELS = {"stream_channel": "стрим-канал", "series": "сериал / аниме", "promo": "промо",
+                       "ai_video": "ИИ-видео", "other": "другое"}
 RULE_KINDS = ("do", "dont", "preference")
 RULE_SCOPES = ("project", "global")
 RULE_STATUSES = ("active", "revoked", "superseded")

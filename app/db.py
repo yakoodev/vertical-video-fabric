@@ -485,6 +485,11 @@ class Database:
             from app.autopilot import ensure_autopilot_schema
 
             ensure_autopilot_schema(conn)
+            # ИИ-видео: стиль-библия, персонажи, серии и планы, версии картинок, запуски
+            # генерации и журнал трат (app/aivideo.py).
+            from app.aivideo import ensure_aiv_schema
+
+            ensure_aiv_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 
