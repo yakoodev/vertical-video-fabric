@@ -78,6 +78,11 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
         "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_retry_job", "aiv_job_status",
         "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_assemble", "tts_preview")),
+    "explainer": ("объяснялки: маскот, библиотека поз, ролик «тема → клип», карточка на новые позы", (
+        "explainer_overview", "explainer_save_mascot", "explainer_generate_sheet", "explainer_add_pose",
+        "explainer_update_pose", "explainer_delete_pose", "explainer_regenerate_pose", "explainer_create",
+        "explainer_status", "explainer_set_script", "explainer_update_beats", "explainer_continue",
+        "explainer_cancel", "explainer_import_pilot", "tts_preview")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
@@ -92,6 +97,7 @@ _PRELOAD = {
     "assets": ("картинк", "библиотек", "шрифт"),
     "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц"),
     "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
+    "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота"),
 }
 
 # Опасное — только через карточку подтверждения в чате: что владелец увидит на кнопке.

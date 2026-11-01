@@ -6755,10 +6755,12 @@ def _project_tools() -> list[Tool]:
     (одобрение, расписание — app/autopilot_tools.py) — только MCP и чат проекта."""
     from app.aivideo_tools import all_tools as aivideo_tools
     from app.autopilot_tools import tools as autopilot_tools
+    from app.explainer_tools import all_tools as explainer_tools
     from app.project_tools import tools
 
-    # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный.
-    return tools() + autopilot_tools() + aivideo_tools()
+    # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный;
+    # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег.
+    return tools() + autopilot_tools() + aivideo_tools() + explainer_tools()
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:

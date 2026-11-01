@@ -112,6 +112,34 @@ class BudgetError(V.AivError):
 
 
 # --------------------------------------------------------------------------- #
+# Расширения: свой этап со своими целями на той же машинерии денег и запусков
+# (объяснялки app/explainer.py: позы маскота, лист маскота, озвучка ролика). Расширение —
+# объект с полями ``stage``, ``label``, ``target_types``, ``ref_kinds`` (вид → подпись), ``card_cap_rub``
+# и методами ``plan(store, project_id, items, regenerate) → [item]``, ``build(store, job) → (prompt,
+# refs, caption, info)`` (как ``build_request``), ``project_of(store, target_type, target_id) → id``;
+# необязательно ``card_line(store, project_id, est) → str`` — первая строка карточки владельцу.
+# Карточка, одобрение, потолки месяца, атомарный захват, восстановление после 504 и журнал трат —
+# общие: расширение их не трогает.
+# --------------------------------------------------------------------------- #
+
+EXTENSIONS: dict[str, Any] = {}
+
+
+def register_extension(ext: Any) -> None:
+    EXTENSIONS[ext.stage] = ext
+    STAGE_LABELS[ext.stage] = ext.label
+    REF_LABELS.update(ext.ref_kinds)
+
+
+def _ext_of_target(target_type: str) -> Any:
+    return next((e for e in EXTENSIONS.values() if target_type in e.target_types), None)
+
+
+def _ext_of_kind(ref_kind: str) -> Any:
+    return next((e for e in EXTENSIONS.values() if ref_kind in e.ref_kinds), None)
+
+
+# --------------------------------------------------------------------------- #
 # Деньги: траты, потолки
 # --------------------------------------------------------------------------- #
 
@@ -212,6 +240,11 @@ def cap_problems(store: Any, project_id: int, script_id: int | None, amount: flo
         eused = spent_script(store, script_id) + res("script_id = ?", (int(script_id),))
         if eused + amount > ecap + 1e-6:
             out.append(f"серия: {eused:.2f} ₽ + {amount:.2f} ₽ > потолка серии {ecap:.0f} ₽")
+    elif stage in EXTENSIONS:
+        ecap = float(getattr(EXTENSIONS[stage], "card_cap_rub", 0) or 0)
+        if ecap and amount > ecap + 1e-6:
+            out.append(f"{STAGE_LABELS[stage]}: {amount:.2f} ₽ > потолка одного ролика {ecap:.0f} ₽ — меньше новых "
+                       "поз (переиспользуй библиотеку) или раздели (items)")
     elif stage == "refs":
         quality = V._style_row(store, project_id)["quality"]
         ecap = EPISODE_CAP_RUB.get(quality, EPISODE_CAP_RUB["draft"])
@@ -365,6 +398,14 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
     что устарело; с ``items`` — только они (перегенерация — новая версия)."""
     from app.aivideo_providers import get_tts
 
+    ext = EXTENSIONS.get(str(stage or ""))
+    if ext is not None:
+        V.require_project(store, project_id)
+        planned = ext.plan(store, project_id, list(items or []), regenerate)
+        for item in planned:
+            item.setdefault("script_id", None)
+            item["regenerate"] = bool(regenerate or item.get("regenerate"))
+        return planned
     stage = P._choice(stage, STAGES, "stage")
     style = V.get_style(store, project_id)
     provider, model = style["provider"], style["image_model"]
@@ -552,8 +593,10 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
         provider, model = style["video_provider"], style["video_model"]
     else:
         provider, model = style["provider"], style["image_model"]
-    if stage == "voice":
+    if stage == "voice" or (planned and all(i["kind"] == "tts" for i in planned)):
         model = "TTS"
+    elif stage in EXTENSIONS and any(i["kind"] == "tts" for i in planned):
+        model = f"{model} + TTS"
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
             + (f" ({model}, цены от {PRICE_CHECKED}: "
                + ", ".join(sorted({i['price_note'] for i in planned if _paid(i['provider'], i['kind'])})) + ")"
@@ -579,7 +622,7 @@ def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_i
     params = {"resolution": item.get("resolution"), "aspect": item.get("aspect"), "voice": item.get("voice"),
               "text": item.get("text"), "style": item.get("style"), "regenerate": item.get("regenerate", False),
               "seconds": item.get("seconds"),
-              "start": item.get("start")}
+              "start": item.get("start"), "group": item.get("group")}
     cur = store.db.execute(
         "INSERT INTO aiv_gen_jobs (project_id, script_id, approval_id, stage, kind, target_type, target_id, ref_kind, "
         "slot, label, provider, model, params_json, estimate_rub, status, requested_by) "
@@ -593,9 +636,12 @@ def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_i
 
 def _card_question(store: Any, project: dict, est: dict, script: dict | None) -> str:
     bud = est["budget"]
-    lines = [f"ИИ-видео «{project['name']}»" + (f", серия {script['episode_no']} «{script['title']}»" if script else "")
-             + f": {est['stage_label']} — {est['count']} шт. ≈ {est['total_rub']:.2f} ₽ "
-             f"({est['model'] if est['stage'] != 'voice' else 'TTS'})."]
+    ext = EXTENSIONS.get(est["stage"])
+    head = ext.card_line(store, project["id"], est) if ext is not None and hasattr(ext, "card_line") else ""
+    lines = [head or (f"ИИ-видео «{project['name']}»"
+                      + (f", серия {script['episode_no']} «{script['title']}»" if script else "")
+                      + f": {est['stage_label']} — {est['count']} шт. ≈ {est['total_rub']:.2f} ₽ "
+                      f"({est['model'] if est['stage'] != 'voice' else 'TTS'}).")]
     month = bud["month"]
     lines.append(f"Месяц проекта: потрачено {month['spent_rub']:.0f} из {month['cap_rub']:.0f} ₽"
                  + (f"; серия: {bud['episode']['spent_rub']:.0f} из {bud['episode']['cap_rub']:.0f} ₽"
@@ -641,17 +687,23 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
     if hard:
         raise BudgetError("этап не запрошен: " + "; ".join(hard))
     script = V.get_script(store, script_id, with_shots=False) if script_id is not None else None
+    # Группа карточки (расширения: один ролик-объяснялка) — заменяется только карточка той же группы.
+    group = est["items"][0].get("group")
     # Прежняя ждущая карточка того же этапа — устарела: новая заменяет её.
     for old in stage_approvals(store, project_id, script_id, status="pending"):
-        if old["stage"] == stage and old.get("script_id") == script_id and not est["items"][0]["regenerate"]:
+        if (old["stage"] == stage and old.get("script_id") == script_id and old.get("group") == group
+                and not est["items"][0]["regenerate"]):
             A._update(store, old["id"], status="expired", decision_comment="заменена новой карточкой этапа")
             store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'карточка заменена' "
                              "WHERE approval_id = ? AND status = 'awaiting'", (old["id"],))
     payload = {"action": CARD_ACTION, "stage": stage, "project_id": int(project_id), "script_id": script_id,
                "amount_rub": est["total_rub"], "count": est["count"], "model": est["model"],
                "provider": est["provider"], "note": P._text(note, 300)}
+    if group:
+        payload["group"] = group
+    prefix = "Объяснялка" if stage in EXTENSIONS else "ИИ-видео"
     card = A.submit_card(store, project_id, "other", _card_question(store, project, est, script), payload,
-                         title=f"ИИ-видео: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
+                         title=f"{prefix}: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
                          submitted_by=requested_by)
     job_ids = [_insert_job(store, project_id, item, "awaiting", card["id"], requested_by) for item in est["items"]]
     store.db.execute("UPDATE approvals SET payload_json = ? WHERE id = ?",
@@ -680,6 +732,9 @@ def regenerate(store: Any, ref_id: int | None = None, target: Any = None, reques
 
 
 def _project_of_target(store: Any, target_type: str, target_id: int) -> int:
+    ext = _ext_of_target(target_type)
+    if ext is not None:
+        return int(ext.project_of(store, target_type, target_id))
     if target_type == "character":
         return int(V.get_character(store, target_id)["project_id"])
     if target_type == "look":
@@ -692,6 +747,9 @@ def _project_of_target(store: Any, target_type: str, target_id: int) -> int:
 
 
 def _stage_of(store: Any, target_type: str, target_id: int, kind: str) -> tuple[str, int | None]:
+    ext = _ext_of_target(target_type)
+    if ext is not None:
+        return ext.stage, None
     if target_type == "shot":
         return ("video" if kind == "shot_video" else "keyframes"), int(V.get_shot(store, target_id)["script_id"])
     if target_type == "line":
@@ -720,6 +778,7 @@ def stage_approvals(store: Any, project_id: int, script_id: int | None = None, s
             "SELECT params_json FROM aiv_gen_jobs WHERE approval_id = ? AND status IN ('failed', 'uncertain') "
             "AND remote_id = ''", (card["id"],)) if V._loads(row["params_json"], {}).get("retry_free"))
         out.append({"id": card["id"], "status": card["status"], "stage": payload.get("stage"),
+                    "group": payload.get("group"),
                     "script_id": payload.get("script_id"), "amount_rub": payload.get("amount_rub"),
                     "count": payload.get("count"), "model": payload.get("model"), "title": card["title"],
                     "question": card["question"], "decided_by": card.get("decided_by"),
@@ -827,6 +886,9 @@ def _identity(character: dict) -> str:
 def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str], dict]:
     """(промпт, файлы-референсы, подпись заглушки, {roles — что за референс по порядку, missing —
     чего не хватило}) запуска. Карта личности — дословно."""
+    ext = _ext_of_kind(job["ref_kind"])
+    if ext is not None:
+        return ext.build(store, job)
     project_id = int(job["project_id"])
     style = V.get_style(store, project_id)
     st = _style_text(style)
