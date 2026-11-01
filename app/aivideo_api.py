@@ -71,7 +71,8 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         return call(V.save_character, project_id, name=str(payload.get("name") or ""),
                     identity_card=payload.get("identity_card"), slug=str(payload.get("slug") or ""),
                     origin=payload.get("origin"), voice=payload.get("voice"), notes=payload.get("notes"),
-                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"))
+                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"),
+                    constraints=payload.get("constraints"), stand_in=payload.get("stand_in"))
 
     @router.patch("/api/ai-video/characters/{character_id}", summary="Правка персонажа")
     def api_edit_character(character_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
@@ -79,7 +80,8 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         return call(V.save_character, current["project_id"], name=str(payload.get("name") or ""),
                     identity_card=payload.get("identity_card"), origin=payload.get("origin"),
                     voice=payload.get("voice"), notes=payload.get("notes"), character_id=character_id,
-                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"))
+                    speech=payload.get("speech"), speech_captions=payload.get("speech_captions"),
+                    constraints=payload.get("constraints"), stand_in=payload.get("stand_in"))
 
     @router.delete("/api/ai-video/characters/{character_id}", summary="Удалить персонажа")
     def api_del_character(character_id: int, _auth: auth_dep) -> dict:
@@ -206,6 +208,46 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/ai-video/scripts/{script_id}/continuity", summary="Проверка склеек планов (Gemini)")
     def api_continuity(script_id: int, _auth: auth_dep) -> dict:
         return call(G.check_continuity, script_id)
+
+    @router.post("/api/ai-video/refs/{ref_id}/check-video", summary="Проверка готового видео плана (Gemini)")
+    def api_check_video(ref_id: int, _auth: auth_dep) -> dict:
+        return call(G.check_video, ref_id)
+
+    # --- блокинг (3D-макет плана, 0 ₽) ------------------------------------- #
+
+    @router.get("/api/ai-video/shots/{shot_id}/blocking", summary="Блокинг плана: раскладка, сцены, скриншоты")
+    def api_blocking(shot_id: int, _auth: auth_dep, scenes: bool = False) -> dict:
+        from app import aivideo_blocking as B
+
+        def view(store: Any) -> dict:
+            shot = V.get_shot(store, shot_id)
+            out = B.view(store, shot)
+            if scenes:
+                out["scenes"] = B.scenes_of(store, shot)
+            return out
+
+        return call(view)
+
+    @router.patch("/api/ai-video/shots/{shot_id}/blocking", summary="Своя раскладка/сцена плана и рендер")
+    def api_set_blocking(shot_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        from app import aivideo_blocking as B
+
+        def apply(store: Any) -> dict:
+            if payload.get("rewrite"):
+                shot = V.get_shot(store, shot_id)
+                store.db.execute("UPDATE aiv_shots SET blocking_json = '' WHERE id = ?", (shot_id,))
+                B.write_blocking(store, int(shot["script_id"]), only={shot_id})
+            if payload.get("spec") is not None or payload.get("scenes") is not None:
+                B.set_blocking(store, shot_id, spec=payload.get("spec"), scenes=payload.get("scenes"), source="owner")
+            shot = V.get_shot(store, shot_id)
+            try:
+                for which in B.scenes_of(store, shot):
+                    B.render(store, shot_id, which)
+            except RuntimeError as exc:
+                raise V.AivError(f"блокинг не отрисован: {exc}") from exc
+            return B.view(store, V.get_shot(store, shot_id))
+
+        return call(apply)
 
     @router.post("/api/ai-video/approvals/{approval_id}/decide", summary="Решение владельца по карточке этапа")
     def api_decide(approval_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:

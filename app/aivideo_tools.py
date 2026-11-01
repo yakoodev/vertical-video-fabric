@@ -22,13 +22,15 @@ _STATE_SCHEMA = _obj({
         "facing": {"type": "string", "description": "camera|left|right|away"},
         "position": {"type": "string", "description": "left|center|right, foreground|background"},
         "holding": {"type": "string"}, "clothing": {"type": "string"}}, ["id"])},
-    "props": {"type": "array", "items": _obj({"name": {"type": "string"}, "state": {"type": "string"}}, ["name"])},
+    "props": {"type": "array", "items": _obj({"name": {"type": "string"}, "state": {"type": "string"},
+                                              "count": {"type": "integer", "description": "сколько штук (1)"}},
+                                             ["name"])},
 })
 _STATE_SCHEMA["description"] = ("состояние на НАЧАЛО плана (постоянство склеек): поза, взгляд, место, что в руках, "
                                 "одежда; реквизит («носок — в руке»). Следующий план = этот, изменённый только "
                                 "действием плана")
 _SHOT_SCHEMA = _obj({
-    "duration": {"type": "number", "description": "секунды, 2–8 (видео-план 4–8)"},
+    "duration": {"type": "number", "description": "секунды, 2–8 (видео-план 3–5: одно действие)"},
     "location": {"type": "string", "description": "id (slug) локации"},
     "characters": {"type": "array", "items": _obj({"id": {"type": "string"}, "look": {"type": "string"},
                                                    "action": {"type": "string"}}, ["id"])},
@@ -42,9 +44,11 @@ _SHOT_SCHEMA = _obj({
     "needs_motion": {"type": "boolean", "description": "true — план оживляется видеомоделью (этап video)"},
     "sound": {"type": "string", "description": "фоновый звук и шумы действия для видео (без музыки и речи)"},
     "state": _STATE_SCHEMA,
+    "end_state": {**_STATE_SCHEMA, "description": "состояние на КОНЕЦ плана — результат его ОДНОГО действия (рисуется "
+                                                  "конечным кадром); у продолжения следующий state = этот"},
     "continues_from_prev": {"type": "boolean",
-                            "description": "та же сцена без скачка: видео начнётся с последнего кадра прошлого "
-                                           "плана (0 ₽ за кадр); по умолчанию да в той же локации"},
+                            "description": "та же сцена без скачка: старт плана = конечный кадр прошлого плана "
+                                           "(один общий кадр, 0 ₽); по умолчанию да в той же локации"},
     "video_in": {"type": "number", "description": "сборка: с какой секунды видео плана брать"},
     "video_out": {"type": "number", "description": "сборка: до какой секунды видео плана"},
     "lipsync": {"type": "boolean"},
@@ -106,7 +110,8 @@ def h_define_character(ctx: ToolContext, args: dict) -> dict:
                       identity_card=args.get("identity_card"), slug=str(args.get("slug") or ""),
                       origin=args.get("origin"), voice=args.get("voice"), notes=args.get("notes"),
                       character_id=args.get("character_id"), speech=args.get("speech"),
-                      speech_captions=args.get("speech_captions"))
+                      speech_captions=args.get("speech_captions"), constraints=args.get("constraints"),
+                      stand_in=args.get("stand_in"))
     return {"ok": True, "character": character}
 
 
@@ -238,6 +243,47 @@ def h_check_continuity(ctx: ToolContext, args: dict) -> dict:
     return _call(G.check_continuity, ctx.store, int(args["script_id"]))
 
 
+def h_check_video(ctx: ToolContext, args: dict) -> dict:
+    if not args.get("ref_id"):
+        raise ToolError("нужен ref_id видео плана (aiv_get_script → videos)")
+    return _call(G.check_video, ctx.store, int(args["ref_id"]))
+
+
+def h_block_shot(ctx: ToolContext, args: dict) -> dict:
+    """Блокинг плана: посмотреть, задать свою раскладку/сцену, пересоздать (Gemini/по state), отрисовать."""
+    from app import aivideo_blocking as B
+
+    if args.get("script_id") and not args.get("shot_id"):
+        out = _call(B.write_blocking, ctx.store, int(args["script_id"])) if args.get("rewrite") else {}
+        script = V.get_script(ctx.store, int(args["script_id"]))
+        res = _call(G.request_stage, ctx.store, int(script["project_id"]), "blocking", int(args["script_id"]),
+                    None, bool(args.get("rewrite")), "agent")
+        return {"ok": True, "written": out, "run": res.get("run"), "status": res.get("status"),
+                "shots": [B.view(ctx.store, s) for s in V.list_shots(ctx.store, int(args["script_id"]))]}
+    if not args.get("shot_id"):
+        raise ToolError("нужен shot_id (или script_id — вся серия)")
+    shot_id = int(args["shot_id"])
+    if args.get("rewrite"):
+        shot = V.get_shot(ctx.store, shot_id)
+        ctx.store.db.execute("UPDATE aiv_shots SET blocking_json = '' WHERE id = ?", (shot_id,))
+        _call(B.write_blocking, ctx.store, int(shot["script_id"]), only={shot_id})
+    if args.get("spec") is not None or args.get("scenes") is not None:
+        _call(B.set_blocking, ctx.store, shot_id, spec=args.get("spec"), scenes=args.get("scenes"))
+    shot = V.get_shot(ctx.store, shot_id)
+    rendered = []
+    if args.get("render", True):
+        try:
+            for which in B.scenes_of(ctx.store, shot):
+                rendered.append(_call(B.render, ctx.store, shot_id, which)["url"])
+        except RuntimeError as exc:  # компоновщик не собран / кадр не вышел
+            raise ToolError(f"блокинг не отрисован: {exc}") from exc
+    out = B.view(ctx.store, V.get_shot(ctx.store, shot_id))
+    out["rendered"] = rendered
+    if args.get("with_scenes"):
+        out["scenes"] = B.scenes_of(ctx.store, V.get_shot(ctx.store, shot_id))
+    return out
+
+
 def h_assemble(ctx: ToolContext, args: dict) -> dict:
     from app.aivideo_assemble import assemble
 
@@ -268,8 +314,10 @@ def tools() -> list[Tool]:
         Tool("aiv_update_style", "Меняю стиль-библию",
              "Стиль-библия и настройки: style_kind, passport_text, palette, negative_text, image_model (одна на "
              "проект, иначе стиль плывёт), provider none|polza (картинки), video_provider (пусто — как provider), "
-             "video_model (bytedance/seedance-2-fast 22.3 ₽/с со звуком | grok-imagine-video-1-5 3 ₽/с без "
-             "звука), video_resolution 480p|720p, quality draft|quality, captions_style, music_track_id. Смена "
+             "video_model (пусто — по режиму серии: качество bytedance/seedance-2 27.7 ₽/с, черновик "
+             "minimax/hailuo-3-max 9.1 ₽/с; ещё bytedance/seedance-2-5 42.5 ₽/с, bytedance/seedance-2-fast 22.3 ₽/с, "
+             "grok-imagine-video-1-5 3 ₽/с без звука и без конечного кадра), video_resolution 480p|720p|1080p (у "
+             "модели — ближайшее своё), quality draft|quality, captions_style, music_track_id. Смена "
              "стиля помечает картинки «устарело». Потолки денег меняет только владелец. / Update the style bible.",
              _obj({**_PID, "style_kind": {"type": "string", "enum": list(V.STYLE_KINDS)},
                    "passport_text": {"type": "string"}, "palette": {"type": "array", "items": {"type": "string"}},
@@ -291,7 +339,9 @@ def tools() -> list[Tool]:
              "платно (по карточке), none — сухой прогон. speech: voice (говорит) | sfx (НЕ говорит — робот, зверёк: "
              "реплика = звук-запись пака по emotion реплики, свой звук — voice.sfx «sfx:freesound/<файл>»; "
              "speech_captions — текст его реплик субтитрами, по умолчанию да) | none (молчит, реплики "
-             "убираются). Пишешь «не говорит» в notes — ставь speech. slug — id в сценарии. / Define a character.",
+             "убираются). Пишешь «не говорит» в notes — ставь speech. constraints — физика персонажа (робот-пылесос: "
+             "«плоский диск, всегда на полу, без рук и ног») — дословно в каждый кадр, видео и проверку видео; "
+             "stand_in — манекен блокинга human|disc|quadruped|small. slug — id в сценарии. / Define a character.",
              _obj({**_PID, "character_id": {"type": "integer"}, "name": {"type": "string"},
                    "identity_card": {"type": "string"}, "slug": {"type": "string"},
                    "origin": {"type": "string", "enum": list(V.ORIGINS)},
@@ -299,7 +349,12 @@ def tools() -> list[Tool]:
                                   "model": {"type": "string"}, "voice": {"type": "string"},
                                   "style": {"type": "string"}, "sfx": {"type": "string"}}),
                    "notes": {"type": "string"}, "speech": {"type": "string", "enum": list(V.SPEECH_MODES)},
-                   "speech_captions": {"type": "boolean"}}, ["project_id"]),
+                   "speech_captions": {"type": "boolean"},
+                   "constraints": {"type": "string", "description": "физические ограничения дословно в промпты и "
+                                   "проверку видео: «плоский диск на полу, без рук/ног/лица, кроме глаз-экрана; "
+                                   "ровно один»"},
+                   "stand_in": {"type": "string", "enum": ["", *V.STAND_INS],
+                                "description": "манекен в блокинге (пусто — по карте)"}}, ["project_id"]),
              h_define_character, mutating=True, scope="project"),
         Tool("aiv_add_look", "Облик персонажа",
              "Облик персонажа на отрезке сюжета («в пижаме», «промокла»): name, outfit_text (меняется ТОЛЬКО "
@@ -333,7 +388,8 @@ def tools() -> list[Tool]:
              "[{who, text, emotion?}], state {characters [{id, pose, facing, position, holding, clothing}], props "
              "[{name, state}]}, continues_from_prev, needs_motion, motion_prompt, sound, image_prompt?, "
              "transition_in cut|fade, video_in?/video_out?}]; new_characters / new_locations — завести вместе со "
-             "сценарием; title, logline, brief, duration_target, quality, status. / Create or rewrite an episode.",
+             "сценарием; end_state — состояние на КОНЕЦ плана (конечный кадр), props[].count — счёт реквизита; "
+             "title, logline, brief, duration_target, quality, status. / Create or rewrite an episode.",
              _obj({**_PID, "script_id": {"type": "integer"}, "title": {"type": "string"},
                    "logline": {"type": "string"}, "brief": {"type": "string"}, "duration_target": {"type": "number"},
                    "quality": {"type": "string", "enum": list(V.QUALITIES)},
@@ -355,19 +411,23 @@ def tools() -> list[Tool]:
                   ["shot_id"]),
              h_update_shot, mutating=True, scope="project"),
         Tool("aiv_get_script", "Раскадровка серии",
-             "Серия: планы с версиями кадров (url, выбран, устарел, оценка постоянства; prompt «chain:N» — кадр "
-             "вынут из видео прошлого плана), видео (videos), озвучки, continuity — итог проверки склейки, "
+             "Серия: планы с парой ключевых кадров (keyframes — старт, endframes — конец; start_frame — "
+             "действующий старт, start_shared_from — idx плана, чей это конец), blocking_frames (3D-макет), видео "
+             "(videos; video_qa — проверка Gemini: count/design/floating/cut/end_state; video_review — что "
+             "перегенерировать), озвучки, continuity — итог проверки склеек и пар кадров, "
              "сколько ₽ на каждый план, бюджет серии и карточки этапов; needs_review — планы, где персонаж не "
              "похож на канон (авто-проверка < 6): покажи владельцу, перерисовка — только его решением. "
              "/ Episode storyboard.",
              _obj({"script_id": {"type": "integer"}}, ["script_id"]), h_get_script, scope="project"),
         Tool("aiv_estimate", "Считаю стоимость этапа",
              "Оценка этапа БЕСПЛАТНО, ничего не запускает: stage refs (стиль, локации, листы персонажей) | "
-             "keyframes (кадр на план по порядку, script_id; сцепленные с видео планы не рисуются — notes) | "
-             "voice (реплики, script_id) | video (планы с needs_motion, 4–8 с; сцепка последним кадром — 0 ₽; "
-             "нет кадра — blocked); items — только эти; regenerate — новые версии. Ответ: что, сколько ₽ "
-             "(замеры: seedance-2-fast 720p 22.275 ₽/с, grok 3.0375 ₽/с, nano-banana 2K 4.5 ₽; остальное ×2 к "
-             "прайсу), потолки, problems, continuity (флаги склеек). / Estimate a stage.",
+             "blocking (3D-макет каждого плана: старт и конец — 0 ₽, наш движок; раскладку пишет Gemini) | "
+             "keyframes (пары кадров по порядку: старт + конец плана с видео; конец плана = старт сцепленного "
+             "следующего — N+1 кадров на цепочку из N планов; блокинг — первым референсом) | voice (реплики) | "
+             "video (планы с needs_motion: модель интерполирует старт → конец, режим first_last; нет кадра — "
+             "blocked); items — только эти; regenerate — новые версии. Ответ: что, сколько ₽ (замеры: "
+             "seedance-2-fast 720p 22.275 ₽/с, grok 3.0375 ₽/с, nano-banana 2K 4.5 ₽; видео без замера ×1.25, "
+             "картинки ×2 к прайсу), modes, потолки, problems, continuity, video_qa. / Estimate a stage.",
              _obj({**_PID, "stage": {"type": "string", "enum": list(G.STAGES)}, "script_id": {"type": "integer"},
                    "items": _ITEMS, "regenerate": {"type": "boolean"}}, ["project_id", "stage"]),
              h_estimate, scope="project"),
@@ -383,10 +443,11 @@ def tools() -> list[Tool]:
                   ["project_id", "stage"]),
              h_request, mutating=True, scope="project"),
         Tool("aiv_regenerate", "Прошу перерисовать",
-             "Новая версия одной картинки/видео/реплики: ref_id версии (или target «shot:ID» — кадр, "
-             "«shot:ID:shot_video» — видео плана, «character:ID:turnaround», «location:ID», «look:ID», "
+             "Новая версия одной картинки/видео/реплики: ref_id версии (или target «shot:ID» — пара кадров, "
+             "«shot:ID:keyframe» / «shot:ID:endframe» — старт / конец, «shot:ID:shot_video» — видео плана "
+             "(флаг проверки видео — сюда), «character:ID:turnaround», «location:ID», «look:ID», "
              "«line:SHOT_ID:line_audio:N»), note — что поправить. Своя маленькая оценка и своя карточка владельцу "
-             "(провайдер none — сразу, 0 ₽). Новое видео делает сцепленный следующий план «устарело». "
+             "(провайдер none — сразу, 0 ₽). Новый конечный кадр делает видео плана и сцепленного следующего «устарело». "
              "/ Request a regeneration of one item.",
              _obj({"ref_id": {"type": "integer"}, "target": {"type": "string"}, "note": {"type": "string"}}),
              h_regenerate, mutating=True, scope="project"),
@@ -427,6 +488,29 @@ def tools() -> list[Tool]:
              "поправь state/действие. Сам ничего платного не запускает. Gemini не настроен — skipped. "
              "/ Check shot-to-shot continuity.",
              _obj({"script_id": {"type": "integer"}}, ["script_id"]), h_check_continuity, scope="project"),
+        Tool("aiv_check_video", "Проверяю видео плана",
+             "Gemini-зрение (бесплатно): 4–6 кадров готового видео плана против его start/end state, карт "
+             "персонажей и constraints (дизайн, ровно один, на полу), счёта реквизита, склеек внутри плана. "
+             "Проблемы — флаг на раскадровке (video_qa) и в карточке; перегенерация — aiv_regenerate "
+             "shot:ID:shot_video (своя карточка, решает владелец). Платные видео проверяются сами. "
+             "/ Check a generated shot video.",
+             _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_check_video, scope="project"),
+        Tool("aiv_block_shot", "Блокинг плана",
+             "3D-блокинг (бесплатно, наш движок сцен): простые манекены (капсула с головой и «носом» — человек, "
+             "плоский диск — робот-пылесос, коробки — мебель, мелкие фигуры — реквизит) в комнате, камера плана; "
+             "скриншоты старта и конца плана (9:16) идут ПЕРВЫМ референсом ключевых кадров (композиция, позы, "
+             "места). shot_id — один план: spec — своя раскладка {room {width, depth, height}, objects [{id, kind "
+             "box|cylinder|disc|sphere, size [w,h,d] см, pos [x,z], rot}], camera? {pos, target, fov}, start/end "
+             "{actors [{id, pos [x,z], facing град (0 — в камеру, 90 — вправо, -90 — влево, 180 — спиной), pose "
+             "standing|walking|sitting|kneeling|lying, y?}], props [{id, kind, size, count, pos [x,y,z] | "
+             "holder}]}} (x вправо, z к камере, пол y=0); scenes {start?, end?} — своя JSON-сцена движка поверх "
+             "(get_scene_reference); rewrite — пересоздать раскладку (Gemini или по state); render (да) — "
+             "отрисовать; with_scenes — вернуть JSON-сцены (посмотреть preview_scene_frame). script_id без shot_id "
+             "— вся серия (как этап blocking). / Block a shot in 3D (free).",
+             _obj({"shot_id": {"type": "integer"}, "script_id": {"type": "integer"}, "spec": {"type": "object"},
+                   "scenes": {"type": "object"}, "rewrite": {"type": "boolean"}, "render": {"type": "boolean"},
+                   "with_scenes": {"type": "boolean"}}),
+             h_block_shot, mutating=True, scope="project"),
         Tool("aiv_assemble", "Собираю серию в клип",
              "Серия → НОВЫЙ холст-клип: план с видео — слой video со звуком модели (тише голосов), склейки по "
              "настоящей длительности видео (окно video_in/video_out плана); план без видео — слой image с Ken "

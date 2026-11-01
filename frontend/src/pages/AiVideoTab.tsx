@@ -27,16 +27,17 @@ import { EmptyState, ErrorState, Loading } from "@/components/ui";
 import "@/styles/aivideo.css";
 
 /**
- * Проект «ИИ-видео» (app/aivideo*.py): Сценарий / Персонажи / Локации / Раскадровка / Сборка.
+ * Проект «ИИ-видео» (app/aivideo*.py): Сценарий / Персонажи / Локации / Блокинг / Раскадровка / Сборка.
  * Платное — по этапам: «Оценить» (бесплатно) → «Запросить» → карточка с суммой (тут же сверху,
  * в «Одобрении» и Telegram) → «Разрешить» → генерация. Сухой прогон (провайдер none) — сразу, 0 ₽.
  */
 
-type Sub = "script" | "characters" | "locations" | "board" | "assemble";
+type Sub = "script" | "characters" | "locations" | "blocking" | "board" | "assemble";
 const SUBS: [Sub, string][] = [
   ["script", "Сценарий"],
   ["characters", "Персонажи"],
   ["locations", "Локации"],
+  ["blocking", "Блокинг"],
   ["board", "Раскадровка"],
   ["assemble", "Сборка"],
 ];
@@ -82,6 +83,7 @@ export function AiVideoTab({ projectId }: { projectId: number }) {
       {sub === "script" ? <ScriptSub o={o} /> : null}
       {sub === "characters" ? <CharactersSub o={o} /> : null}
       {sub === "locations" ? <LocationsSub o={o} /> : null}
+      {sub === "blocking" ? <BlockingSub o={o} /> : null}
       {sub === "board" ? <BoardSub o={o} /> : null}
       {sub === "assemble" ? <AssembleSub o={o} /> : null}
     </div>
@@ -120,7 +122,7 @@ function BudgetBar({ budget, episode }: { budget: Budget; episode?: boolean }) {
         {budget.paid && !budget.enabled ? (
           <span className="aiv-warn">AIVIDEO_ENABLED=0: одобренное не запустится, пока владелец не включит</span>
         ) : null}
-        <span className="muted">цены от {budget.price_checked}: замер — как есть, остальное ×2 к прайсу</span>
+        <span className="muted">цены от {budget.price_checked}: замер — как есть; без замера: видео ×1,25, картинки ×2 к прайсу</span>
       </div>
       <Meter label="Месяц проекта" spent={budget.month.spent_rub} reserved={budget.month.reserved_rub} cap={budget.month.cap_rub} />
       {episode && budget.episode ? (
@@ -321,7 +323,10 @@ function Versions({ refs, projectId, onPick }: { refs: AivRef[]; projectId: numb
             <span>
               {r.kind === "upload" ? "владелец" : r.kind} v{r.version}
               {r.stale ? " · устарело" : ""}
-              {r.score?.min != null ? ` · ${r.score.min}/10` : ""}
+              {r.score && "min" in r.score && r.score.min != null ? ` · ${r.score.min}/10` : ""}
+              {r.score && "kind" in r.score && r.score.kind === "video_qa" && r.score.score != null
+                ? ` · ${r.score.ok ? "ок" : "проверь"} ${r.score.score}/10`
+                : ""}
             </span>
             {!r.selected ? (
               <button className="btn ghost sm" onClick={() => select.mutate(r.id)} title="Выбрать эту версию">
@@ -355,7 +360,7 @@ function StylePanel({ o }: { o: Overview }) {
     quality: s.quality,
     provider: s.provider,
     image_model: s.image_model,
-    video_model: s.video_model,
+    video_model: s.video_model_set === false ? "" : s.video_model,
     video_resolution: s.video_resolution,
     month_cap_rub: s.month_cap_rub == null ? "" : String(s.month_cap_rub),
     captions_style: s.captions_style,
@@ -409,7 +414,8 @@ function StylePanel({ o }: { o: Overview }) {
           ))}
         </select>
         <select className="input" value={draft.video_resolution} onChange={(e) => setDraft({ ...draft, video_resolution: e.target.value as never })}>
-          <option value="720p">видео 720p</option>
+          <option value="720p">видео 720p (H3 — 768p)</option>
+          <option value="1080p">видео 1080p (Seedance 2.0)</option>
           <option value="480p">видео 480p</option>
         </select>
       </div>
@@ -536,14 +542,17 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
     motion_prompt: shot.motion_prompt ?? "",
     sound: shot.sound ?? "",
     state: JSON.stringify(shot.state ?? {}),
+    end_state: JSON.stringify(shot.end_state ?? {}),
   });
   const save = useMutation({
     mutationFn: () => {
       let state: unknown;
+      let endState: unknown;
       try {
         state = d.state.trim() ? JSON.parse(d.state) : {};
+        endState = d.end_state.trim() ? JSON.parse(d.end_state) : {};
       } catch {
-        throw new Error("state — JSON: {\"characters\": [{\"id\", \"pose\", \"facing\", \"holding\", \"clothing\"}], \"props\": [{\"name\", \"state\"}]}");
+        throw new Error("state / end_state — JSON: {\"characters\": [{\"id\", \"pose\", \"facing\", \"holding\", \"clothing\"}], \"props\": [{\"name\", \"state\", \"count\"}]}");
       }
       return aivApi.editShot(shot.id, {
         needs_motion: d.needs_motion,
@@ -551,6 +560,7 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
         motion_prompt: d.motion_prompt,
         sound: d.sound,
         state,
+        end_state: endState,
         duration: d.duration,
         camera: { ...shot.camera, move: d.move },
         location: d.location,
@@ -613,7 +623,7 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
         <label className="aiv-check">
           <input type="checkbox" checked={d.needs_motion} onChange={(e) => setD({ ...d, needs_motion: e.target.checked })} /> видео (оживить план)
         </label>
-        <label className="aiv-check" title="Та же сцена: видео начнётся с последнего кадра прошлого плана (0 ₽ за кадр)">
+        <label className="aiv-check" title="Та же сцена: старт плана = конечный кадр прошлого плана (один общий кадр)">
           <input
             type="checkbox"
             checked={d.continues_from_prev}
@@ -630,9 +640,15 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
         </div>
       ) : null}
       <label className="field">
-        <span>Состояние на начало плана (JSON: поза, взгляд, руки, одежда; реквизит)</span>
+        <span>Состояние на начало плана (JSON: поза, взгляд, руки, одежда; реквизит со счётом count)</span>
         <textarea className="input mono" rows={2} value={d.state} onChange={(e) => setD({ ...d, state: e.target.value })} />
       </label>
+      {d.needs_motion ? (
+        <label className="field">
+          <span>Состояние на конец плана — результат одного действия (конечный кадр; у продолжения — его старт)</span>
+          <textarea className="input mono" rows={2} value={d.end_state} onChange={(e) => setD({ ...d, end_state: e.target.value })} />
+        </label>
+      ) : null}
     </section>
   );
 }
@@ -691,6 +707,7 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
   const [card, setCard] = useState(c.identity_card);
+  const [physics, setPhysics] = useState({ constraints: c.constraints ?? "", stand_in: c.stand_in ?? "" });
   const [voice, setVoice] = useState<TtsVoiceValue & { sfx?: string }>({
     ...c.voice,
     model: c.voice.model ?? "",
@@ -700,7 +717,7 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
   const [speech, setSpeech] = useState({ speech: c.speech ?? "voice", speech_captions: c.speech_captions ?? true });
   const [look, setLook] = useState({ name: "", outfit_text: "", beat: "" });
   const save = useMutation({
-    mutationFn: () => aivApi.editCharacter(c.id, { identity_card: card, voice, ...speech } as never),
+    mutationFn: () => aivApi.editCharacter(c.id, { identity_card: card, voice, ...speech, ...physics } as never),
     onSuccess: () => {
       toast.success("Сохранено (зависимые кадры — «устарело»)");
       invalidate();
@@ -730,6 +747,21 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
         <StageButton projectId={projectId} stage="refs" items={items} label="Листы персонажа: оценить" />
       </div>
       <textarea className="input" rows={2} value={card} onChange={(e) => setCard(e.target.value)} />
+      <div className="series-row">
+        <input
+          className="input wide"
+          placeholder="физика: «плоский диск на полу, без рук и ног, ровно один» — дословно в кадры, видео и проверку"
+          value={physics.constraints}
+          onChange={(e) => setPhysics({ ...physics, constraints: e.target.value })}
+        />
+        <select className="input" value={physics.stand_in} title="Манекен в блокинге" onChange={(e) => setPhysics({ ...physics, stand_in: e.target.value })}>
+          <option value="">манекен: по карте</option>
+          <option value="human">человек (капсула)</option>
+          <option value="disc">плоский диск (пылесос)</option>
+          <option value="quadruped">зверь на четырёх лапах</option>
+          <option value="small">маленький (шар)</option>
+        </select>
+      </div>
       <div className="series-row">
         <select
           className="input"
@@ -850,6 +882,19 @@ function LocationCard({ l, projectId }: { l: AivLocation; projectId: number }) {
 // Раскадровка
 // --------------------------------------------------------------------------- //
 
+function Frame({ ref_, label, empty, badge }: { ref_?: AivRef | null; label: string; empty: string; badge?: string }) {
+  return (
+    <figure className="aiv-frame">
+      <div className="aiv-shot-img">
+        {ref_?.url ? <img src={ref_.url} alt={label} loading="lazy" /> : <span className="muted">{empty}</span>}
+        {ref_?.stale ? <span className="aiv-badge">устарело</span> : null}
+        {badge ? <span className="aiv-badge review">{badge}</span> : null}
+      </div>
+      <figcaption>{label}</figcaption>
+    </figure>
+  );
+}
+
 function BoardSub({ o }: { o: Overview }) {
   const ep = useEpisode(o);
   const toast = useToast();
@@ -860,9 +905,9 @@ function BoardSub({ o }: { o: Overview }) {
   });
   const invalidate = useInvalidate(o.project.id);
   const make = useMutation({
-    mutationFn: (shotId: number) => aivApi.regenerateTarget(`shot:${shotId}`),
+    mutationFn: (target: string) => aivApi.regenerateTarget(target),
     onSuccess: (r) => {
-      toast.success(r.status === "awaiting_approval" ? `Кадр ≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Кадр готов");
+      toast.success(r.status === "awaiting_approval" ? `≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Готово");
       invalidate();
     },
     onError: (e) => toast.error(errText(e, "Не запрошено")),
@@ -873,15 +918,15 @@ function BoardSub({ o }: { o: Overview }) {
       (r.flagged?.length ? toast.error : toast.success)(r.note);
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, "Проверка склеек не удалась")),
+    onError: (e) => toast.error(errText(e, "Проверка кадров не удалась")),
   });
-  const makeVideo = useMutation({
-    mutationFn: (shotId: number) => aivApi.regenerateTarget(`shot:${shotId}:shot_video`),
+  const checkVideo = useMutation({
+    mutationFn: (refId: number) => aivApi.checkVideo(refId),
     onSuccess: (r) => {
-      toast.success(r.status === "awaiting_approval" ? `Видео ≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Видео готово");
+      (r.needs_review ? toast.error : toast.success)(r.note);
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, "Не запрошено")),
+    onError: (e) => toast.error(errText(e, "Проверка видео не удалась")),
   });
   const s = ep.script;
   return (
@@ -889,39 +934,53 @@ function BoardSub({ o }: { o: Overview }) {
       <section className="panel series-panel">
         <div className="series-row">
           <EpisodePicker o={o} id={ep.id} setId={ep.setId} />
-          {s ? <StageButton projectId={o.project.id} stage="keyframes" scriptId={s.id} label="Кадры серии: оценить" /> : null}
+          {s ? <StageButton projectId={o.project.id} stage="blocking" scriptId={s.id} label="Блокинг (0 ₽): оценить" /> : null}
+          {s ? <StageButton projectId={o.project.id} stage="keyframes" scriptId={s.id} label="Пары кадров: оценить" /> : null}
           {s ? (
             <button className="btn ghost sm" disabled={continuity.isPending} onClick={() => continuity.mutate(s.id)}
-                    title="Gemini сравнит стартовый кадр каждого плана с концом прошлого и заявленным состоянием (бесплатно)">
-              👁 Склейки
+                    title="Gemini сравнит склейки (старт плана с концом прошлого) и пары кадров (старт → конец) — бесплатно">
+              👁 Кадры
             </button>
           ) : null}
           {s ? <StageButton projectId={o.project.id} stage="video" scriptId={s.id} label="Видео планов: оценить" /> : null}
         </div>
+        <span className="muted">
+          Видео: {o.style.video_caps?.label ?? o.style.video_model}. План с видео — пара кадров (старт → конец), модель
+          только переводит один в другой; конец плана — он же старт следующего, если тот продолжает сцену.
+        </span>
         {s?.budget ? <BudgetBar budget={s.budget} episode /> : null}
+        {s?.video_review?.length ? (
+          <span className="aiv-warn">
+            Видео с проблемами (Gemini): {s.video_review.map((r) => `план ${r.idx}`).join(", ")} — перегенерация кнопкой «↻ Видео» у плана
+            (своя карточка).
+          </span>
+        ) : null}
       </section>
       {s ? (
         <div className="aiv-board">
           {s.shots?.map((shot) => {
-            const sel = shot.keyframes?.find((k) => k.selected) ?? shot.keyframes?.[shot.keyframes.length - 1];
+            const start = shot.start_frame ?? shot.keyframes?.find((k) => k.selected) ?? null;
+            const end = shot.end_frame ?? shot.endframes?.find((k) => k.selected) ?? null;
             const vid = shot.videos?.find((v) => v.selected) ?? shot.videos?.[shot.videos.length - 1];
             const cont = shot.continuity;
-            const chained = sel?.prompt?.startsWith("chain:");
+            const qa = shot.video_qa;
+            const shared = shot.start_shared_from;
             return (
-              <article key={shot.id} className="panel aiv-shot">
-                <div className="aiv-shot-img">
+              <article key={shot.id} className="panel aiv-shot aiv-shot-wide">
+                <div className="aiv-frames">
+                  <Frame ref_={start} label={shared ? `старт = конец плана ${shared}` : "старт"}
+                         empty={shared ? `ждёт конец плана ${shared}` : "кадра нет"}
+                         badge={shot.needs_review ? "проверь: не похож" : undefined} />
+                  {shot.needs_motion ? <Frame ref_={end} label="конец" empty="конца нет" /> : null}
                   {vid?.url ? (
-                    <video src={vid.url} poster={sel?.url ?? undefined} controls muted loop playsInline preload="metadata" />
-                  ) : sel?.url ? (
-                    <img src={sel.url} alt={`план ${shot.idx}`} />
-                  ) : (
-                    <span className="muted">{shot.continues_from_prev && shot.idx > 1 ? "кадр — из видео прошлого плана" : "кадра нет"}</span>
-                  )}
-                  {(vid ?? sel)?.stale ? <span className="aiv-badge">устарело</span> : null}
-                  {shot.needs_review ? (
-                    <span className="aiv-badge review" title={shot.review_note || "персонаж не похож на канон"}>
-                      проверь: не похож
-                    </span>
+                    <figure className="aiv-frame">
+                      <div className="aiv-shot-img">
+                        <video src={vid.url} poster={start?.url ?? undefined} controls muted loop playsInline preload="metadata" />
+                        {vid.stale ? <span className="aiv-badge">устарело</span> : null}
+                        {qa && !qa.ok ? <span className="aiv-badge review">проверь видео</span> : null}
+                      </div>
+                      <figcaption>видео</figcaption>
+                    </figure>
                   ) : null}
                 </div>
                 <div className="aiv-shot-meta">
@@ -935,14 +994,22 @@ function BoardSub({ o }: { o: Overview }) {
                   <span className="muted">
                     {shot.needs_motion ? "🎬 видео" : "стоп-кадр"}
                     {shot.continues_from_prev && shot.idx > 1 ? " · продолжает прошлый" : ""}
-                    {chained ? " · старт из видео прошлого плана" : ""}
+                    {shot.action ? ` · ${shot.action}` : ""}
                   </span>
                   {cont && !cont.ok ? (
                     <span className="aiv-warn">
-                      Склейка: {(cont.mismatches ?? []).map((m) => m.detail).join("; ") || `оценка ${cont.score}`}
+                      Кадры: {(cont.mismatches ?? []).map((m) => (m.check === "pair" ? "пара: " : "склейка: ") + m.detail).join("; ") ||
+                        `оценка ${cont.score}`}
                     </span>
                   ) : cont?.ok && !cont.chain ? (
-                    <span className="muted">склейка ок{cont.score != null ? ` · ${cont.score}/10` : ""}</span>
+                    <span className="muted">кадры ок{cont.score != null ? ` · ${cont.score}/10` : ""}</span>
+                  ) : null}
+                  {qa && !qa.ok ? (
+                    <span className="aiv-warn">
+                      Видео ({qa.score}/10): {qa.issues.map((i) => `${i.what}: ${i.detail}${i.at != null ? ` (${i.at} с)` : ""}`).join("; ")}
+                    </span>
+                  ) : qa?.ok ? (
+                    <span className="muted">видео ок · {qa.score}/10</span>
                   ) : null}
                   {shot.dialogue.map((l, i) => (
                     <span key={i} className="aiv-line">
@@ -950,23 +1017,39 @@ function BoardSub({ o }: { o: Overview }) {
                     </span>
                   ))}
                   <div className="series-row">
-                    <button className="btn sm" disabled={make.isPending} onClick={() => make.mutate(shot.id)}
-                            title="Своя маленькая оценка и карточка (сухой прогон — сразу)">
-                      {sel ? "↻ Перерисовать" : "Кадр"}
-                    </button>
-                    {sel && shot.cast.length ? (
-                      <button className="btn ghost sm" disabled={check.isPending} onClick={() => check.mutate(sel.id)} title="Gemini сравнит с каноном">
+                    {!shared ? (
+                      <button className="btn sm" disabled={make.isPending} onClick={() => make.mutate(`shot:${shot.id}:keyframe`)}
+                              title="Стартовый кадр: своя маленькая оценка и карточка (сухой прогон — сразу)">
+                        {start ? "↻ Старт" : "Старт"}
+                      </button>
+                    ) : null}
+                    {shot.needs_motion ? (
+                      <button className="btn sm" disabled={make.isPending} onClick={() => make.mutate(`shot:${shot.id}:endframe`)}
+                              title="Конечный кадр (он же старт следующего плана, если тот продолжает сцену)">
+                        {end ? "↻ Конец" : "Конец"}
+                      </button>
+                    ) : null}
+                    {start && shot.cast.length ? (
+                      <button className="btn ghost sm" disabled={check.isPending} onClick={() => check.mutate(start.id)} title="Gemini сравнит с каноном">
                         👁 Постоянство
                       </button>
                     ) : null}
-                    {shot.needs_motion && (sel || shot.continues_from_prev) ? (
-                      <button className="btn sm" disabled={makeVideo.isPending} onClick={() => makeVideo.mutate(shot.id)}
-                              title="Видео этого плана: своя оценка и карточка (сухой прогон — сразу)">
+                    {shot.needs_motion && start ? (
+                      <button className={`btn sm${qa && !qa.ok ? " primary" : ""}`} disabled={make.isPending}
+                              onClick={() => make.mutate(`shot:${shot.id}:shot_video`)}
+                              title="Видео этого плана: своя оценка и карточка — платное только после «Разрешить»">
                         {vid ? "↻ Видео" : "🎬 Видео"}
+                      </button>
+                    ) : null}
+                    {vid ? (
+                      <button className="btn ghost sm" disabled={checkVideo.isPending} onClick={() => checkVideo.mutate(vid.id)}
+                              title="Gemini посмотрит 4–6 кадров видео: счёт предметов, дизайн, опора, склейки, конец (бесплатно)">
+                        👁 Видео
                       </button>
                     ) : null}
                   </div>
                   {shot.keyframes && shot.keyframes.length > 1 ? <Versions refs={shot.keyframes} projectId={o.project.id} /> : null}
+                  {shot.endframes && shot.endframes.length > 1 ? <Versions refs={shot.endframes} projectId={o.project.id} /> : null}
                   {shot.videos && shot.videos.length > 1 ? <Versions refs={shot.videos} projectId={o.project.id} /> : null}
                 </div>
               </article>
@@ -975,6 +1058,107 @@ function BoardSub({ o }: { o: Overview }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Блокинг: 3D-макет плана в нашем движке сцен (0 ₽) — композиция для ключевых кадров
+// --------------------------------------------------------------------------- //
+
+function BlockingSub({ o }: { o: Overview }) {
+  const ep = useEpisode(o);
+  const s = ep.script;
+  return (
+    <div className="series-col">
+      <section className="panel series-panel">
+        <div className="series-row">
+          <EpisodePicker o={o} id={ep.id} setId={ep.setId} />
+          {s ? <StageButton projectId={o.project.id} stage="blocking" scriptId={s.id} label="Блокинг серии (0 ₽): оценить" /> : null}
+        </div>
+        <span className="muted">
+          Gemini раскладывает планы простыми манекенами (капсула с «носом» — человек, плоский диск — робот-пылесос, коробки —
+          мебель), движок рисует старт и конец плана. Скриншот идёт первым референсом кадра: композиция, позы, места, ракурс.
+        </span>
+      </section>
+      {s ? (
+        <div className="series-col">
+          {s.shots?.map((shot) => <BlockingShot key={shot.id} shot={shot} projectId={o.project.id} />)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BlockingShot({ shot, projectId }: { shot: Shot; projectId: number }) {
+  const toast = useToast();
+  const invalidate = useInvalidate(projectId);
+  const qc = useQueryClient();
+  const key = ["ai-video", "blocking", String(shot.id)];
+  const q = useQuery({ queryKey: key, queryFn: () => aivApi.blocking(shot.id) });
+  const [text, setText] = useState<string | null>(null);
+  const done = (msg: string) => {
+    toast.success(msg);
+    setText(null);
+    qc.invalidateQueries({ queryKey: key });
+    invalidate();
+  };
+  const save = useMutation({
+    mutationFn: () => {
+      let spec: unknown;
+      try {
+        spec = JSON.parse(text ?? "{}");
+      } catch {
+        throw new Error("раскладка — JSON: {room, objects, start: {actors, props}, end: {…}}");
+      }
+      return aivApi.setBlocking(shot.id, { spec });
+    },
+    onSuccess: () => done(`План ${shot.idx}: блокинг отрисован (0 ₽)`),
+    onError: (e) => toast.error(e instanceof Error && !(e instanceof ApiError) ? e.message : errText(e, "Не сохранено")),
+  });
+  const rewrite = useMutation({
+    mutationFn: () => aivApi.setBlocking(shot.id, { rewrite: true }),
+    onSuccess: () => done(`План ${shot.idx}: раскладка пересоздана`),
+    onError: (e) => toast.error(errText(e, "Не пересоздано")),
+  });
+  const b = q.data;
+  const startKf = shot.start_frame ?? null;
+  const endKf = shot.end_frame ?? null;
+  return (
+    <section className="panel series-panel">
+      <div className="series-panel-head">
+        <b>
+          План {shot.idx} · {shot.action || "—"}
+        </b>
+        <span className="muted">
+          {b ? `раскладка: ${b.source}${b.outdated ? " (устарела — state поменялся)" : ""}` : ""}
+          {b?.legend ? ` · ${b.legend}` : ""}
+        </span>
+      </div>
+      <div className="aiv-frames">
+        <Frame ref_={b?.frames.start ?? shot.blocking_frames?.start} label="блокинг: старт" empty="не отрисован" />
+        <Frame ref_={startKf} label="кадр: старт" empty="кадра нет" />
+        {shot.needs_motion ? (
+          <>
+            <Frame ref_={b?.frames.end ?? shot.blocking_frames?.end} label="блокинг: конец" empty="не отрисован" />
+            <Frame ref_={endKf} label="кадр: конец" empty="кадра нет" />
+          </>
+        ) : null}
+      </div>
+      <label className="field">
+        <span>Раскладка (JSON, сантиметры: x вправо, z к камере; facing 0 — в камеру, 90 — вправо)</span>
+        <textarea className="input mono" rows={6} value={text ?? (b ? JSON.stringify(b.spec, null, 1) : "")}
+                  onChange={(e) => setText(e.target.value)} />
+      </label>
+      <div className="series-row">
+        <button className="btn sm" disabled={save.isPending || text == null} onClick={() => save.mutate()}>
+          Сохранить и отрисовать
+        </button>
+        <button className="btn ghost sm" disabled={rewrite.isPending} onClick={() => rewrite.mutate()}
+                title="Gemini заново разложит план по state и концу плана (без ключа — по state)">
+          ↻ Пересоздать раскладку
+        </button>
+      </div>
+    </section>
   );
 }
 

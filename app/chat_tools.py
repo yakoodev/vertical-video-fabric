@@ -77,7 +77,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
         "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
         "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_retry_job", "aiv_job_status",
-        "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_assemble", "tts_preview")),
+        "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_check_video", "aiv_block_shot",
+        "aiv_assemble", "tts_preview")),
     "explainer": ("объяснялки: маскот, библиотека поз, ролик «тема → клип», карточка на новые позы", (
         "explainer_overview", "explainer_save_mascot", "explainer_generate_sheet", "explainer_add_pose",
         "explainer_update_pose", "explainer_delete_pose", "explainer_regenerate_pose", "explainer_create",

@@ -229,6 +229,17 @@ AIV_COLUMNS = [
     # Время отправки POST (UTC ISO), пишется ДО запроса: по нему адаптер ищет запрос, ушедший без
     # ответа (у Polza — /history/generations), в том числе после перезапуска.
     ("aiv_gen_jobs", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
+    # v3 (пары ключевых кадров, блокинг). Состояние на КОНЕЦ плана — его рисует конечный кадр
+    # (kind endframe); у сцепленного следующего плана оно же — его старт.
+    ("aiv_shots", "end_state_json", "TEXT NOT NULL DEFAULT '{}'"),
+    # Блокинг плана: {spec — простая 3D-раскладка (комната, мебель, манекены, камера, start/end),
+    # source gemini|auto|agent, scenes {start?, end?} — ручная JSON-сцена движка поверх spec}.
+    ("aiv_shots", "blocking_json", "TEXT NOT NULL DEFAULT ''"),
+    # Физические ограничения персонажа (дословно в промпты кадров и видео и в проверку видео):
+    # «плоский диск, без рук/ног/лица, кроме глаз-экрана, всегда на полу, ровно один».
+    ("aiv_characters", "constraints", "TEXT NOT NULL DEFAULT ''"),
+    # Манекен блокинга: human | disc | quadruped | small (пусто — по карте личности).
+    ("aiv_characters", "stand_in", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -321,7 +332,8 @@ def _now_sql() -> str:
 
 STYLE_FIELDS = ("style_kind", "passport_text", "palette", "negative_text", "image_model", "provider", "quality",
                 "captions_style", "music_track_id", "video_provider", "video_model", "video_resolution")
-VIDEO_RESOLUTIONS = ("480p", "720p")
+VIDEO_RESOLUTIONS = ("480p", "720p", "1080p")  # у модели — ближайшее своё (H3: 768p)
+STAND_INS = ("human", "disc", "quadruped", "small")
 # Потолок месяца — только владелец (REST с cookie), не агент.
 OWNER_FIELDS = ("month_cap_rub",)
 
@@ -351,7 +363,12 @@ def get_style(store: Any, project_id: int) -> dict:
     data = _style_row(store, project_id)
     data["image_model"] = data.get("image_model") or settings.aivideo_image_model
     data["video_provider"] = data.get("video_provider") or data["provider"]
-    data["video_model"] = data.get("video_model") or settings.aivideo_video_model
+    from app.aivideo_providers import default_video_model, video_capabilities
+
+    data["video_model_set"] = bool(data.get("video_model"))
+    data["video_model"] = data.get("video_model") or settings.aivideo_video_model or default_video_model(
+        data.get("quality"))
+    data["video_caps"] = video_capabilities(data["video_model"], data["video_provider"])
     data["video_resolution"] = data.get("video_resolution") or "720p"
     data["style_label"] = STYLE_LABELS.get(data["style_kind"], data["style_kind"])
     data["quality_label"] = QUALITY_LABELS.get(data["quality"], data["quality"])
@@ -473,6 +490,13 @@ def _speech(value: Any) -> str:
         raise AivError(f"{exc} (voice — говорит, sfx — звуки вместо слов, none — молчит)") from exc
 
 
+def _stand_in(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text and text not in STAND_INS:
+        raise AivError(f"stand_in: {' | '.join(STAND_INS)} (манекен в блокинге; пусто — по карте личности)")
+    return text
+
+
 def _unique_slug(store: Any, table: str, scope_col: str, scope_id: int, wanted: str, own_id: int | None) -> str:
     slug, n = wanted, 2
     while True:
@@ -490,6 +514,8 @@ def get_character(store: Any, character_id: int) -> dict:
     data["voice"] = _loads(data.pop("voice_json", "{}"), {})
     data["speech"] = data.get("speech") or "voice"
     data["speech_captions"] = bool(data.get("speech_captions", 1))
+    data["constraints"] = data.get("constraints") or ""
+    data["stand_in"] = data.get("stand_in") or ""
     data["looks"] = [dict(r) for r in store.db.query_all(
         "SELECT * FROM aiv_looks WHERE character_id = ? ORDER BY id", (int(character_id),))]
     return data
@@ -509,7 +535,8 @@ def list_characters(store: Any, project_id: int) -> list[dict]:
 def save_character(store: Any, project_id: int, name: str = "", identity_card: Any = None, slug: str = "",
                    origin: str | None = None, voice: Any = None, notes: Any = None,
                    character_id: int | None = None, speech: str | None = None,
-                   speech_captions: bool | None = None) -> dict:
+                   speech_captions: bool | None = None, constraints: Any = None,
+                   stand_in: str | None = None) -> dict:
     """Новый персонаж или правка. Смена карты личности помечает его картинки и кадры с ним «устарело».
     ``speech``: voice (TTS) | sfx (не говорит — звуки пака по эмоции реплики) | none (молчит)."""
     require_project(store, project_id)
@@ -532,13 +559,17 @@ def save_character(store: Any, project_id: int, name: str = "", identity_card: A
             sets["speech"] = _speech(speech)
         if speech_captions is not None:
             sets["speech_captions"] = int(bool(speech_captions))
+        if constraints is not None and P._long_text(constraints, 600) != current["constraints"]:
+            sets["constraints"] = P._long_text(constraints, 600)
+        if stand_in is not None:
+            sets["stand_in"] = _stand_in(stand_in)
         if slug and slugify(slug) != current["slug"]:
             raise AivError("slug персонажа не меняется (на него ссылаются планы) — заведи нового")
         if sets:
             cols = ", ".join(f"{k} = ?" for k in sets)
             store.db.execute(f"UPDATE aiv_characters SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                              (*sets.values(), int(character_id)))
-            if "identity_card" in sets:
+            if "identity_card" in sets or "constraints" in sets:
                 mark_stale(store, project_id, "character", int(character_id))
         return get_character(store, character_id)
     name = P._text(name, 80)
@@ -551,10 +582,11 @@ def save_character(store: Any, project_id: int, name: str = "", identity_card: A
     slug = _unique_slug(store, "aiv_characters", "project_id", int(project_id), slugify(slug or name, "hero"), None)
     cur = store.db.execute(
         "INSERT INTO aiv_characters (project_id, slug, name, origin, identity_card, voice_json, notes, speech, "
-        "speech_captions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "speech_captions, constraints, stand_in) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (int(project_id), slug, name, P._choice(origin or "invented", ORIGINS, "origin"), card,
          _json(_voice(voice)), P._long_text(notes, 1000), _speech(speech),
-         int(bool(True if speech_captions is None else speech_captions))))
+         int(bool(True if speech_captions is None else speech_captions)), P._long_text(constraints, 600),
+         _stand_in(stand_in)))
     return get_character(store, int(cur.lastrowid))
 
 
@@ -728,6 +760,8 @@ def _shot_from_row(row: Any) -> dict:
     data["locked"] = bool(data.get("locked"))
     data["continuity"] = _loads(data.pop("continuity_json", ""), {}) or None
     data["state"] = _loads(data.pop("state_json", "{}"), {})
+    data["end_state"] = _loads(data.pop("end_state_json", "{}"), {})
+    data["blocking"] = _loads(data.pop("blocking_json", ""), {}) or None
     data["continues_from_prev"] = bool(data.get("continues_from_prev"))
     return data
 
@@ -780,7 +814,14 @@ def normalize_state(raw: Any, cast_ids: list[str], idx: int, warnings: list[str]
             continue
         name = P._text(item.get("name") or item.get("prop"), 60)
         if name:
-            props.append({"name": name, "state": P._text(item.get("state"), 120)})
+            prop = {"name": name, "state": P._text(item.get("state"), 120)}
+            try:
+                count = int(item.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if count > 0:
+                prop["count"] = min(9, count)
+            props.append(prop)
     out: dict = {}
     if chars:
         out["characters"] = chars
@@ -798,10 +839,21 @@ def state_text(store: Any, project_id: int, state: dict) -> str:
         bits = [f"{key} {item[key]}" for key in STATE_FIELDS if item.get(key)]
         if bits:
             parts.append(f"{name}: " + ", ".join(bits))
-    props = [f"{p['name']} — {p['state']}" if p.get("state") else p["name"] for p in (state or {}).get("props") or []]
+    props = [(f"exactly {p.get('count') or 1} × {p['name']}") + (f" — {p['state']}" if p.get("state") else "")
+             for p in (state or {}).get("props") or []]
     if props:
         parts.append("props: " + "; ".join(props))
     return "; ".join(parts)
+
+
+def prop_counts(state: dict) -> str:
+    """«exactly one cookie; exactly 2 × socks» — счёт реквизита для промпта и проверки видео."""
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+    out = []
+    for p in (state or {}).get("props") or []:
+        n = int(p.get("count") or 1)
+        out.append(f"exactly {words.get(n, n)} {p['name']}")
+    return "; ".join(out)
 
 
 def continuity_warnings(shots: list[dict]) -> list[str]:
@@ -825,7 +877,23 @@ def continuity_warnings(shots: list[dict]) -> list[str]:
             old = props_before.get(p["name"].lower())
             if old is not None and old and p.get("state") and old.lower() != p["state"].lower():
                 out.append(f"план {shot['idx']}: {p['name']} «{old}» → «{p['state']}» — покажи это в плане {prev['idx']}")
+        # Конец прошлого плана (end_state) — это старт этого: расхождение = скачок на склейке.
+        ends = {c["id"]: c for c in (prev.get("end_state") or {}).get("characters") or []}
+        for c in (shot.get("state") or {}).get("characters") or []:
+            end = ends.get(c["id"])
+            for key in STATE_WATCH if end else ():
+                if end.get(key) and c.get(key) and end[key].strip().lower() != c[key].strip().lower():
+                    out.append(f"план {shot['idx']}: {c['id']} {STATE_LABELS[key]} на старте «{c[key]}», а конец "
+                               f"плана {prev['idx']} — «{end[key]}»: старт продолжения = конец прошлого (общий кадр)")
     return out
+
+
+def end_state_of(shot: dict, nxt: dict | None) -> dict:
+    """Состояние на КОНЕЦ плана: у сцепленного следующего плана его старт и есть этот конец
+    (общий ключевой кадр); иначе — свой ``end_state``, нет и его — старт плана."""
+    if nxt and nxt.get("continues_from_prev") and (nxt.get("state") or {}):
+        return nxt["state"]
+    return shot.get("end_state") or shot.get("state") or {}
 
 
 def get_shot(store: Any, shot_id: int) -> dict:
@@ -926,6 +994,7 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         "transition_in": transition if transition in TRANSITIONS else "cut",
         "sound": P._text(raw.get("sound"), 300), "video_in": video_in, "video_out": video_out,
         "state_json": _json(normalize_state(raw.get("state"), [c["id"] for c in cast], idx, warnings)),
+        "end_state_json": _json(normalize_state(raw.get("end_state"), [c["id"] for c in cast], idx, warnings)),
         # None — не задано: решает replace_shots (по умолчанию да, если локация та же).
         "continues_from_prev": None if raw.get("continues_from_prev") is None else int(bool(raw["continues_from_prev"])),
     }
@@ -1021,6 +1090,7 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
         "needs_motion": shot["needs_motion"], "lipsync": shot["lipsync"], "transition_in": shot["transition_in"],
         "sound": shot.get("sound") or "", "video_in": shot.get("video_in"), "video_out": shot.get("video_out"),
         "state": shot.get("state") or {}, "continues_from_prev": shot.get("continues_from_prev", False),
+        "end_state": shot.get("end_state") or {},
     }
     for key, value in (patch or {}).items():
         if key == "cast":
@@ -1045,11 +1115,22 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
     store.db.execute(f"UPDATE aiv_shots SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                      (*row.values(), int(shot_id)))
     motion = any(row[k] != (shot.get(k) or "") for k in ("motion_prompt", "sound"))
+    end_changed = row["end_state_json"] != _json(shot.get("end_state") or {})
     if visual:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ?", (int(shot_id),))
+    elif end_changed:  # конец плана другой — его конечный кадр, блокинг и видео
+        store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
+                         "AND kind IN ('endframe', 'blocking_end', 'shot_video')", (int(shot_id),))
     elif motion:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
                          "AND kind = 'shot_video'", (int(shot_id),))
+    if row["state_json"] != _json(shot.get("state") or {}) and row["continues_from_prev"]:
+        # Старт сцепленного плана = конец прошлого: его конечный кадр и видео устарели.
+        prev = store.db.query_one("SELECT id FROM aiv_shots WHERE script_id = ? AND idx < ? ORDER BY idx DESC LIMIT 1",
+                                  (int(shot["script_id"]), int(shot["idx"])))
+        if prev:
+            store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
+                             "AND kind IN ('endframe', 'blocking_end', 'shot_video')", (int(prev["id"]),))
     out = get_shot(store, shot_id)
     out["warnings"] = warnings
     return out
@@ -1237,9 +1318,27 @@ def script_view(store: Any, script_id: int) -> dict:
 
     script = get_script(store, script_id)
     review = []
-    for shot in script["shots"]:
+    video_review = []
+    shots = script["shots"]
+    for n, shot in enumerate(shots):
         shot["keyframes"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "keyframe")
+        shot["endframes"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "endframe")
         shot["videos"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "shot_video")
+        # Пара ключевых кадров плана: старт (свой или общий — конец прошлого плана) и конец.
+        start, shared = G.start_frame_ref(store, int(script["project_id"]), shots, n)
+        shot["start_frame"] = start
+        shot["start_shared_from"] = shared
+        shot["end_frame"] = G.end_frame_ref(store, int(script["project_id"]), shot)
+        shot["end_state_effective"] = end_state_of(shot, shots[n + 1] if n + 1 < len(shots) else None)
+        shot["blocking_frames"] = {w: selected_ref(store, script["project_id"], "shot", int(shot["id"]),
+                                                   f"blocking_{w}") for w in ("start", "end")}
+        vid = next((v for v in shot["videos"] if v["selected"]), None)
+        qa = (vid or {}).get("score") or None
+        shot["video_qa"] = qa if qa and qa.get("kind") == "video_qa" else None
+        if vid and vid["needs_review"] and shot["video_qa"]:
+            video_review.append({"shot_id": shot["id"], "idx": shot["idx"], "ref_id": vid["id"],
+                                 "issues": shot["video_qa"].get("issues") or [],
+                                 "note": shot["video_qa"].get("note") or ""})
         sel = next((k for k in shot["keyframes"] if k["selected"]), shot["keyframes"][-1] if shot["keyframes"] else None)
         # Выбранный кадр не похож на канон (проверка постоянства < 6): владелец решает, перерисовать ли.
         shot["needs_review"] = bool(sel and sel["needs_review"])
@@ -1256,4 +1355,5 @@ def script_view(store: Any, script_id: int) -> dict:
     script["budget"] = G.budget_view(store, script["project_id"], script_id)
     script["approvals"] = G.stage_approvals(store, script["project_id"], script_id)
     script["needs_review"] = review
+    script["video_review"] = video_review
     return script

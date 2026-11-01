@@ -141,9 +141,9 @@ class Settings:
         self.aivideo_month_cap_rub = float(os.getenv("AIVIDEO_MONTH_CAP_RUB", "3000") or 3000)
         self.aivideo_image_model = (os.getenv("AIVIDEO_IMAGE_MODEL", "google/gemini-nano-banana-2.1").strip()
                                     or "google/gemini-nano-banana-2.1")
-        # Видео планов (этап video): модель по умолчанию; проект выбирает свою (video_model).
-        self.aivideo_video_model = (os.getenv("AIVIDEO_VIDEO_MODEL", "bytedance/seedance-2-fast").strip()
-                                    or "bytedance/seedance-2-fast")
+        # Видео планов (этап video): модель по умолчанию; проект выбирает свою (video_model). Пусто —
+        # по режиму серии: качество — bytedance/seedance-2, черновик — minimax/hailuo-3-max.
+        self.aivideo_video_model = os.getenv("AIVIDEO_VIDEO_MODEL", "").strip()
         self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
         # Объяснялки (app/explainer.py): потолок одной карточки ролика (новые позы + платная озвучка),
         # сверх — отказ ещё при запросе. 45 с с нуля ≈ 18 поз × 3 ₽ + озвучка ≈ 57 ₽.
