@@ -78,7 +78,7 @@ MEASURED_VIDEO_PRICES: dict[str, dict[str, float]] = {
 # Длительность (с), сколько картинок на вход, есть ли звук. kling/v3 сам режет план на склейки —
 # для сцепки планов не годится, поэтому его здесь нет.
 VIDEO_LIMITS: dict[str, dict[str, Any]] = {
-    "bytedance/seedance-2-fast": {"min": 4, "max": 15, "images": 2, "audio": True},
+    "bytedance/seedance-2-fast": {"min": 4, "max": 15, "images": 2, "audio": True, "ref_images": 9},
     "grok-imagine-video-1-5": {"min": 1, "max": 15, "images": 7, "audio": False},
 }
 VIDEO_LABELS = {"bytedance/seedance-2-fast": "Seedance 2 fast (со звуком, основная)",
@@ -523,6 +523,9 @@ class PolzaImages:
         fields = {k: v for k, v in params.items() if not k.startswith("_") and k != "model"}
         if refs:
             fields["images"] = [{"type": "base64", "data": self._encode(p)} for p in refs]
+        sheets = [Path(p) for p in params.get("_reference_images") or []]
+        if sheets:
+            fields["reference_images"] = [{"type": "base64", "data": self._encode(p)} for p in sheets]
         body = {"model": params.get("model"), "input": fields}
         # Сетевые ошибки httpx — как есть: до отправки (соединение/TLS) aivideo_gen повторит сам,
         # после (обрыв/таймаут чтения) — запрос мог уйти: ищем его ``recover``, POST не повторяем.

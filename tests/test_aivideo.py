@@ -1574,3 +1574,37 @@ def test_video_read_timeout_recovers_via_history_and_recoverless_is_uncertain(pa
     G.run_pending(store)
     [job] = [j for j in G.list_jobs(store, approval_id=again["approval_id"]) if j["kind"] == "video"]
     assert job["status"] == "uncertain" and plain.posts == 1
+
+
+def test_polza_video_sends_character_sheets_as_reference_images(monkeypatch, tmp_path):
+    """Серия 2: без листов персонажей seedance «переизобрёл» робота-пылесоса — листы уходят в
+    input.reference_images рядом со стартовым кадром в input.images."""
+    import httpx
+
+    from app.aivideo_providers import PolzaImages, video_params
+
+    start, sheet = tmp_path / "start.jpg", tmp_path / "sheet.jpg"
+    for p in (start, sheet):
+        p.write_bytes(b"\xff\xd8\xff\xd9")
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"id": "gen_v", "status": "pending"}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["body"] = json
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("app.aivideo_providers.ref_data_url", lambda p: f"data:image/jpeg;base64,{p.stem}")
+    params = video_params("bytedance/seedance-2-fast", "кадр", 4, "720p")
+    PolzaImages(api_key="k", base_url="https://polza.test/api/v1").submit(
+        {**params, "_reference_images": [str(sheet)]}, [start])
+    fields = seen["body"]["input"]
+    assert fields["images"] == [{"type": "base64", "data": "data:image/jpeg;base64,start"}]
+    assert fields["reference_images"] == [{"type": "base64", "data": "data:image/jpeg;base64,sheet"}]
+    assert "_reference_images" not in fields

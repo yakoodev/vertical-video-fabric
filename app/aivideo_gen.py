@@ -1473,19 +1473,49 @@ def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None)
              error="нет стартового кадра плана — этап keyframes или сцепка")
         return None
     prompt = build_video_prompt(store, job, shot)
+    # Без листов модель «оживляет» персонажа по-своему (серия 2: пылесос Бип стал человечком на
+    # колёсах): листы всех персонажей плана — в reference_images, если модель их берёт (seedance).
+    sheets = _cast_sheets(store, int(job["project_id"]), shot) if _video_takes_refs(job["model"]) else []
+    if sheets:
+        prompt = (prompt + " " + _SHEETS_HINT)[:4000]
     seconds = int(job["params"].get("seconds") or video_seconds(shot, job["model"]))
     params = video_params(job["model"], prompt, seconds, job["params"].get("resolution") or "720p",
                           job["params"].get("aspect") or "9:16", job["provider"])
-    digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, [start], _variant(store, job))
+    digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, [start, *sheets], _variant(store, job))
     cached = _cached(store, digest)
     _set_job(store, job["id"], prompt=prompt, input_hash=digest,
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
-                                     "start_ref_id": kf["id"], "refs": [start.name]}, ensure_ascii=False))
+                                     "start_ref_id": kf["id"], "refs": [start.name],
+                                     "reference_sheets": [p.name for p in sheets]}, ensure_ascii=False))
     if cached:
         return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
                      own_asset=False)
-    full = {**params, "_kind": "shot_video", "_start": str(start)}
+    full = {**params, "_kind": "shot_video", "_start": str(start), "_reference_images": [str(p) for p in sheets]}
     return _submit(store, job, provider, full, [start], poll_timeout)
+
+
+_SHEETS_HINT = ("The characters must look exactly like in the reference character sheets (same design, shape, "
+                "proportions and colours); never redesign them.")
+
+
+def _video_takes_refs(model: str) -> bool:
+    from app.aivideo_providers import VIDEO_LIMITS
+
+    return bool((VIDEO_LIMITS.get(model) or {}).get("ref_images"))
+
+
+def _cast_sheets(store: Any, project_id: int, shot: dict, limit: int = 8) -> list[Path]:
+    """Листы (разворот, эмоции) персонажей плана — референсы видео, чтобы модель их не выдумывала."""
+    out: list[Path] = []
+    for member in shot.get("cast") or []:
+        c = V.character_by_slug(store, project_id, member["id"])
+        if not c:
+            continue
+        for sheet in ("turnaround", "expressions"):
+            p = _asset_path(store, V.selected_ref(store, project_id, "character", c["id"], sheet))
+            if p and p not in out:
+                out.append(p)
+    return out[:limit]
 
 
 WAIT = object()  # сцепка ждёт видео прошлого плана (оно ещё делается)
