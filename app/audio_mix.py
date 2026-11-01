@@ -58,6 +58,7 @@ SFX_OVER_VOICE_DB = 2.0
 SPEECH_BELOW_LEVEL_LU = 12.0
 SPEECH_FLOOR_LUFS = -50.0
 SPEECH_MERGE_SEC = 0.35
+SPEECH_CORE_LU = 6.0
 SILENCE_LUFS = -50.0
 SILENCE_MIN_SEC = 1.0
 MAX_RANGES = 6
@@ -224,7 +225,7 @@ def ebur128(path: str | Path, pre: list[str] | None = None, af: str = "") -> dic
     chain = (af + "," if af else "") + "ebur128=peak=true"
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", *(pre or []), "-i", str(path), "-vn", "-af", chain, "-f", "null", "-"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60 * 10,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=60 * 10,
     )
     return parse_ebur128(proc.stderr)
 
@@ -253,7 +254,7 @@ def power_sum(*series: list[float]) -> list[float]:
 
 
 def _run(args: list[str], timeout: int = 60 * 10) -> None:
-    proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or "ffmpeg failed").strip()[-600:])
 
@@ -442,7 +443,7 @@ def item_peak_lufs(item: dict) -> float:
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", *audio_item_inputs(item), "-filter_complex",
          f"{chain},apad=pad_dur=0.4,ebur128=peak=true[o]", "-map", "[o]", "-f", "null", "-"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=120,
     )
     got = parse_ebur128(proc.stderr)
     value = max(got["m"]) if got["m"] else SILENT
@@ -619,7 +620,8 @@ def _timeline(short: list[float], duration: float) -> dict:
 def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None = None,
             final_measure: dict | None = None) -> dict:
     """Замеры стемов → цифры и вердикты (см. вверху)."""
-    from app.render import linear_gain_db
+    from app.render import LOUDNESS_PEAK_DB as LOUDNESS_PEAK
+    from app.render import loudness_plan
 
     duration = float(model["duration"])
     n = max(1, int(round(duration / FRAME_SEC)))
@@ -636,6 +638,9 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
     speech_frames = [i for i, on in enumerate(mask) if on]
     speech_sec = round(len(speech_frames) * FRAME_SEC, 1)
     speech_level = power_mean([dialog[i] for i in speech_frames]) if speech_frames else SILENT
+    # «Ядро» речи — кадры, где голос в полную силу: на краях фраз окно 400 мс наполовину тишина, и
+    # покадровое сравнение там врёт (музыка «громче» голоса на его же атаке).
+    core_frames = [i for i in speech_frames if dialog[i] >= speech_level - SPEECH_CORE_LU]
 
     stems_out = {}
     for kind in STEMS:
@@ -653,10 +658,16 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
     mix_meas = ebur128(mix_wavs(list(stems.values()), mix_path, duration)) if mix_path else \
         {"m": [], "s": [], "i": SILENT, "tp": SILENT, "lra": 0.0}
     mix_frames = _frames(mix_meas, n)
-    gain = linear_gain_db({"input_i": mix_meas["i"]}, target) if mix_meas["i"] > SILENT + 1 else 0.0
-    limiter_db = max(0.0, mix_meas["tp"] + gain - (-2.0)) if mix_meas["tp"] > SILENT + 1 else 0.0
-    predicted = {"integrated": _r(mix_meas["i"] + gain if mix_meas["i"] > SILENT + 1 else SILENT),
-                 "true_peak": _r(min(mix_meas["tp"] + gain, -1.5)) if mix_meas["tp"] > SILENT + 1 else None,
+    gain, limiter_db, aim = 0.0, 0.0, SILENT
+    if mix_meas["i"] > SILENT + 1:
+        # Тот же план, что у финального прохода (render.loudness_plan): линейная поправка, сверх потолка
+        # +20 дБ — в пределах запаса пиков; что выше потолка пика — срежет лимитер (≤ 3 дБ без потерь).
+        lp = loudness_plan({"input_i": mix_meas["i"], "input_tp": mix_meas["tp"]}, target)
+        gain = float(lp["gain_db"])
+        limiter_db = max(0.0, float(lp.get("overshoot_db") or 0.0))
+        aim = float(lp.get("aim_lufs", mix_meas["i"] + gain))
+    predicted = {"integrated": _r(aim),
+                 "true_peak": _r(min(mix_meas["tp"] + gain, LOUDNESS_PEAK)) if mix_meas["tp"] > SILENT + 1 else None,
                  "final_gain_db": round(gain, 2), "limiter_db": round(limiter_db, 1),
                  "lra": round(mix_meas["lra"], 1)}
     final = None
@@ -691,7 +702,7 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
     if speech_frames and "music" in frames:
         music_under = power_mean([frames["music"][i] for i in speech_frames])
         diff = speech_level - music_under
-        per = [(i, dialog[i] - frames["music"][i]) for i in speech_frames]
+        per = [(i, dialog[i] - frames["music"][i]) for i in core_frames]
         worst = _percentile([d for _i, d in per], 0.1)
         bad_mask = [False] * n
         for i, d in per:
@@ -770,7 +781,7 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
     if speech_frames and "sfx" in frames:
         masking = [False] * n
         per = []
-        for i in speech_frames:
+        for i in core_frames:
             d = dialog[i] - frames["sfx"][i]
             if frames["sfx"][i] > SILENCE_LUFS and d < SFX_MASK_DB:
                 masking[i] = True
@@ -923,8 +934,13 @@ def mix_report(store: Any, plan_id: int, render_id: Any = None, use_render: bool
                 str(plan.get("updated_at") or "") > str(clip.get("finished_at") or clip.get("created_at") or ""):
             stale = "клип правили после рендера — итог ролика взят из прогноза, рендер старый"
             path = None
-    key = (int(plan_id), str(plan.get("updated_at") or ""), int(clip["id"]) if clip and path else 0,
-           repr(overrides) if overrides else "")
+    # updated_at — с точностью до секунды: две правки за секунду дали бы старый отчёт.
+    import hashlib
+    import json
+
+    digest = hashlib.sha1(json.dumps([plan.get("render_settings"), plan.get("segments"), overrides],
+                                     sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    key = (int(plan_id), digest, int(clip["id"]) if clip and path else 0)
     with _REPORT_LOCK:
         if key in _REPORT_CACHE:
             return copy.deepcopy(_REPORT_CACHE[key])
@@ -958,4 +974,204 @@ def lint_findings(report: dict) -> list[dict]:
         if v.get("t") is not None:
             item["t"] = float(v["t"])
         out.append(item)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Автосведение
+# --------------------------------------------------------------------------- #
+
+AUTO_DUCK_DB = -10.0
+AUTO_ATTACK_SEC = 0.12
+AUTO_RELEASE_SEC = 0.3
+AUTO_DUCK_MERGE_SEC = 0.5
+# Ducking почти на весь ролик (речь без пауз) — это просто громкость: глубина уходит в громкость трека.
+AUTO_DUCK_FULL_SHARE = 0.85
+# Звук слоя (пик momentary) — на столько ниже речи там, где говорят; в паузе — чуть громче.
+AUTO_SFX_UNDER_VOICE_DB = -6.0
+AUTO_SFX_GAP_BONUS_DB = 4.0
+# Звук тише цели больше чем на столько — поднимаем (не больше AUTO_SFX_MAX_BOOST_DB).
+AUTO_SFX_QUIET_DB = 12.0
+AUTO_SFX_MAX_BOOST_DB = 6.0
+AUTO_VIDEO_UNDER_VOICE_DB = -12.0
+
+
+def duck_spans(mask: list[bool], duration: float, depth_db: float, attack: float = AUTO_ATTACK_SEC,
+               release: float = AUTO_RELEASE_SEC, limit: int | None = None) -> list[dict]:
+    """Отрезки ducking музыки под речью (шкала clip): речь + attack до и release после, близкие
+    слиты; больше ``limit`` — сливаются самые близкие."""
+    from app.audio_edit import MAX_DUCKS
+
+    limit = limit or MAX_DUCKS
+    spans: list[list[float]] = []
+    for a, b in _ranges(mask, merge=SPEECH_MERGE_SEC, shift=FRAME_SHIFT):
+        a, b = max(0.0, a - attack), min(duration, b + release)
+        if spans and a - spans[-1][1] < AUTO_DUCK_MERGE_SEC:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    while len(spans) > limit:
+        k = min(range(len(spans) - 1), key=lambda i: spans[i + 1][0] - spans[i][1])
+        spans[k][1] = spans[k + 1][1]
+        del spans[k + 1]
+    return [{"start": round(a, 3), "end": round(b, 3), "gain_db": round(depth_db, 1)} for a, b in spans if b - a >= 0.1]
+
+
+def plan_auto_mix(model: dict, target_lufs: float = TARGET_LUFS, music_under_voice_db: float = -MUSIC_UNDER_TARGET_DB,
+                  duck_db: float = AUTO_DUCK_DB, sfx_under_voice_db: float = AUTO_SFX_UNDER_VOICE_DB,
+                  attack: float = AUTO_ATTACK_SEC, release: float = AUTO_RELEASE_SEC) -> dict:
+    """Что выставить по замеру «нейтральной» модели (музыка без ducking и sidechain, слои без
+    поправок): ``{mix, music_duck, changes, speech_lufs}``."""
+    duration = float(model["duration"])
+    n = max(1, int(round(duration / FRAME_SEC)))
+    stems = model["stems"]
+    frames = {kind: _frames(ebur128(path), n) for kind, path in stems.items() if kind in ("voice", "source", "music")}
+    kinds = ("voice",) if model.get("speechless") else ("voice", "source")
+    dialog_parts = [frames[k] for k in kinds if k in frames]
+    dialog = power_sum(*dialog_parts) if dialog_parts else [SILENT] * n
+    loud = [v for v in dialog if v > SPEECH_FLOOR_LUFS]
+    level = p2db(sum(db2p(v) for v in loud) / len(loud)) if loud else SILENT
+    mask = speech_mask(dialog, level) if loud else [False] * n
+    speech_frames = [i for i, on in enumerate(mask) if on]
+    speech = power_mean([dialog[i] for i in speech_frames]) if speech_frames else SILENT
+    mix: dict = {k: v for k, v in (model.get("mix") or {}).items() if k in ("voice_fx", "music_fx", "groups")}
+    mix["target_lufs"] = round(_clamp(float(target_lufs), *TARGET_RANGE), 1)
+    changes: list[str] = []
+    out: dict = {"mix": mix, "music_duck": None, "changes": changes, "speech_lufs": _r(speech)}
+    under = -abs(float(music_under_voice_db))
+    depth = -abs(float(duck_db))
+    music = model.get("music")
+    if music and "music" in frames:
+        raw = power_mean([frames["music"][i] for i in speech_frames]) if speech_frames else SILENT
+        current = float(music["volume_db"]) if music["volume_db"] > SILENT + 1 else 0.0
+        if not speech_frames:
+            changes.append("речи нет — громкость музыки оставлена, итог выровняет финальный проход")
+        elif raw <= SILENT + 1:
+            changes.append("музыка под речью не звучит (тишина в треке) — громкость не трогаю")
+        else:
+            spans = duck_spans(mask, duration, depth, attack, release)
+            share = sum(b["end"] - b["start"] for b in spans) / duration if duration else 0.0
+            eff_depth = depth if share < AUTO_DUCK_FULL_SHARE else 0.0
+            if eff_depth == 0.0:
+                spans = []
+            want = current + (speech + under) - raw - eff_depth
+            fixed = round(_clamp(want, *MIX_DB_RANGE), 1)
+            mix["music_db"] = fixed
+            mix["sidechain"] = False
+            if spans:
+                mix["duck_attack"], mix["duck_release"] = round(attack, 3), round(release, 3)
+            out["music_duck"] = spans
+            changes.append(f"музыка: {current:+.1f} → {fixed:+.1f} дБ к файлу трека — под речью на {-under:g} дБ "
+                           "тише голоса" + (f", между фразами — на {-under + eff_depth:g}" if spans else "")
+                           + (" (упёрлась в предел громкости)" if fixed != round(want, 1) else ""))
+            if spans:
+                changes.append(f"ducking музыки под речью: {len(spans)} отрезков по {depth:g} дБ (атака {attack:g} с, "
+                               f"отпускание {release:g} с); автоматический sidechain выключен — ducking по фразам")
+            else:
+                changes.append("речь почти без пауз — ducking не нужен, музыка просто тише; sidechain выключен")
+    gains: dict[str, float] = {}
+    if speech > SILENT + 1:
+        for item in model.get("items") or []:
+            if item["role"] not in ("sfx", "video"):
+                continue
+            peak = item_peak_lufs(item)
+            if peak <= SILENT + 1:
+                continue
+            i0, i1 = max(0, _frame_of(item["start"])), min(n, _frame_of(item["end"]) + 4)
+            over = [i for i in range(i0, i1) if mask[i]]
+            ref = power_mean([dialog[i] for i in over]) if over else speech
+            if item["role"] == "video":
+                if not over:
+                    continue
+                target = ref + AUTO_VIDEO_UNDER_VOICE_DB
+            else:
+                target = ref + sfx_under_voice_db if over else speech + sfx_under_voice_db + AUTO_SFX_GAP_BONUS_DB
+            if peak > target + 0.5:
+                gain = target - peak
+            elif peak < target - AUTO_SFX_QUIET_DB:
+                gain = min(AUTO_SFX_MAX_BOOST_DB, target - AUTO_SFX_QUIET_DB - peak)
+            else:
+                continue
+            gain = round(_clamp(gain, *LAYER_DB_RANGE) * 2) / 2
+            if abs(gain) >= 0.5 and item["layer_id"]:
+                gains[item["layer_id"]] = gain
+    if gains:
+        mix["layer_gains"] = gains
+        down = sum(1 for g in gains.values() if g < 0)
+        changes.append(f"звуки слоёв выровнены под голос: {down} тише, {len(gains) - down} громче (пик под речью "
+                       f"на {-sfx_under_voice_db:g} дБ ниже голоса)")
+    changes.append(f"итог ролика: {mix['target_lufs']:g} LUFS, true peak ≤ −1.5 dBTP (финальный проход: замер, линейная "
+                   "поправка, лимитер по true peak)")
+    return out
+
+
+def auto_mix(store: Any, plan_id: int, target_lufs: float | None = None,
+             music_under_voice_db: float = -MUSIC_UNDER_TARGET_DB, duck_db: float = AUTO_DUCK_DB,
+             sfx_under_voice_db: float = AUTO_SFX_UNDER_VOICE_DB, apply: bool = True, save: Any = None,
+             compare: bool = True) -> dict:
+    """Автосведение по замеру: громкость музыки и ducking под речью, звуки слоёв под голос, цель LUFS.
+
+    ``save(render_settings)`` — как записать (инструмент — через историю правок); None — прямо в
+    хранилище. ``apply`` false — только прогноз (dry run); ``compare`` false — без замера «до»
+    (конвейеры: на один прогон модели меньше). Повторный вызов считает заново от
+    «нейтрального» звука: прежние поправки auto_mix не накапливаются."""
+    from datetime import datetime, timezone
+
+    from app.audio_edit import normalize_audio
+    from app.clip_settings import normalize_render_settings
+
+    plan = store.get_clip_plan(int(plan_id))
+    raw_rs = plan.get("render_settings") or {}
+    audio = normalize_audio(normalize_render_settings(raw_rs).get("audio"))
+    current_mix = normalize_mix(raw_rs.get("mix"))
+    target = float(target_lufs) if target_lufs is not None else mix_target(current_mix)
+    before = mix_report(store, plan_id, use_render=False) if compare else {}
+    neutral_mix = {k: v for k, v in current_mix.items() if k in ("voice_fx", "music_fx", "groups")}
+    neutral_mix["sidechain"] = False
+    work = _workdir()
+    try:
+        model = build_model(store, plan_id, work, {"mix": neutral_mix, "audio": {**audio, "music_duck": []}})
+        model["mix"] = current_mix
+        planned = plan_auto_mix(model, target, music_under_voice_db, duck_db, sfx_under_voice_db)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    new_mix = dict(planned["mix"])
+    new_mix["auto"] = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                       "music_under_voice_db": -abs(float(music_under_voice_db)), "duck_db": -abs(float(duck_db)),
+                       "sfx_under_voice_db": float(sfx_under_voice_db),
+                       **({"speech_lufs": planned["speech_lufs"]} if planned["speech_lufs"] is not None else {})}
+    new_mix = normalize_mix(new_mix)
+    new_audio = dict(audio)
+    if planned["music_duck"] is not None:
+        new_audio["music_duck"] = planned["music_duck"]
+    new_audio = normalize_audio(new_audio)
+    after = mix_report(store, plan_id, use_render=False, overrides={"mix": new_mix, "audio": new_audio})
+    got = (after.get("voice_vs_music") or {}).get("diff_db")
+    want = abs(float(music_under_voice_db))
+    if got is not None and new_mix.get("music_db") is not None and abs(got - want) > 1.0:
+        # Рампы ducking и края фраз сдвигают итог на 1–3 дБ — одна поправка по прогнозу.
+        new_mix["music_db"] = round(_clamp(float(new_mix["music_db"]) + (got - want), *MIX_DB_RANGE), 1)
+        new_mix = normalize_mix(new_mix)
+        after = mix_report(store, plan_id, use_render=False, overrides={"mix": new_mix, "audio": new_audio})
+
+    def brief(rep: dict) -> dict:
+        pred = rep.get("predicted") or {}
+        return {"voice_vs_music_db": (rep.get("voice_vs_music") or {}).get("diff_db"),
+                "sfx_masking": len((rep.get("voice_vs_sfx") or {}).get("masking_at") or []),
+                "lufs": pred.get("integrated"), "true_peak": pred.get("true_peak"),
+                "warnings": [v["message"] for v in rep.get("verdicts") or [] if v["severity"] == "warn"][:6]}
+
+    out = {"ok": True, "clip_id": int(plan_id), "applied": bool(apply), "changes": planned["changes"],
+           "mix": new_mix, "music_duck": new_audio.get("music_duck") or [],
+           "before": brief(before), "after": brief(after), "after_summary": after.get("summary")}
+    if apply:
+        fresh = {**raw_rs, "mix": new_mix, "audio": new_audio}
+        if save is not None:
+            save(fresh)
+        else:
+            store.set_clip_plan_render_settings(int(plan_id), fresh)
+        out["note"] = ("сведение записано (render_settings.mix и audio.music_duck) — перерендерь; after — прогноз "
+                       "по той же модели, после рендера проверь audio_mix_report")
+    else:
+        out["note"] = "dry run: ничего не записано; apply=true — записать"
     return out

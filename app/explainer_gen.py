@@ -886,7 +886,7 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
             if sfx[ref]:
                 layers.append({"id": f"wh{n:02d}", "type": "audio", "start": round(max(0.0, item["start"] - 0.05), 3),
                                "end": round(min(total, item["start"] + 0.6), 3),
-                               "props": {"asset_id": ref, "mode": "track", "volume": WHOOSH_VOLUME}})
+                               "props": {"asset_id": ref, "mode": "track", "volume": WHOOSH_VOLUME, "role": "sfx"}})
     badge_n = 0
     chip_n = 0
     badge_spans: list[tuple[float, float]] = []
@@ -901,7 +901,7 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
                        "in": {"type": "pop", "duration": 0.2}})
         if sfx[BADGE_SFX]:
             layers.append({"id": f"ding{badge_n}", "type": "audio", "start": s, "end": round(min(total, s + 1.0), 3),
-                           "props": {"asset_id": BADGE_SFX, "mode": "track", "volume": DING_VOLUME}})
+                           "props": {"asset_id": BADGE_SFX, "mode": "track", "volume": DING_VOLUME, "role": "sfx"}})
         badge_spans.append((s, e))
         badge_n += 1
     for item in placed:
@@ -921,10 +921,10 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
                        "in": {"type": "pop", "duration": POP_SEC}})
         if sfx[CHIP_SFX]:
             layers.append({"id": f"pop{chip_n}", "type": "audio", "start": s, "end": round(min(total, s + 0.6), 3),
-                           "props": {"asset_id": CHIP_SFX, "mode": "track", "volume": POP_VOLUME}})
+                           "props": {"asset_id": CHIP_SFX, "mode": "track", "volume": POP_VOLUME, "role": "sfx"}})
         chip_n += 1
     layers.append({"id": "narr", "type": "audio", "name": "Озвучка", "start": 0.0, "end": round(total, 3),
-                   "props": {"asset_id": str(narration_asset), "mode": "track", "volume": 1.0}})
+                   "props": {"asset_id": str(narration_asset), "mode": "track", "volume": 1.0, "role": "voice"}})
     layers.append({"id": "caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": round(total, 3),
                    "x": 0.5, "y": 0.84,
                    "props": {"style": mascot.get("captions_style") or "hormozi", "size": 92, "activeColor": accent,
@@ -968,6 +968,22 @@ def _tool(ctx: Any, name: str, args: dict, notes: list[str] | None = None) -> di
     if notes is not None and isinstance(result, dict) and result.get("skipped"):
         notes += [f"{name}: пропущено — {s}"[:240] for s in result["skipped"]]
     return result
+
+
+def auto_mix_clip(ctx: Any, notes: list[str]) -> dict | None:
+    """Автосведение собранного клипа (app/audio_mix.auto_mix, настройка AUTO_MIX): музыка под голосом
+    на 18 дБ тише, ducking по фразам, звуки под голос, −14 LUFS. Не вышло — заметка, клип остаётся."""
+    from app import agent_tools as T
+
+    if not settings.auto_mix:
+        return None
+    result, ok = T.run_tool(ctx, "auto_mix", {"compare": False})
+    if not ok:
+        notes.append(f"автосведение не вышло ({str((result or {}).get('error') or result)[:160]}) — "
+                     "звук как собран; audio_mix_report покажет, что поправить")
+        return None
+    return {"voice_vs_music_db": (result.get("after") or {}).get("voice_vs_music_db"),
+            "music_db": (result.get("mix") or {}).get("music_db"), "changes": result.get("changes")}
 
 
 def assemble(store: Any, video_id: int) -> dict:
@@ -1017,13 +1033,15 @@ def assemble(store: Any, video_id: int) -> dict:
         _tool(ctx, "set_music_duck", {"duck": _speech_spans(words)})
     else:
         notes.append("музыка не выбрана (маскот без трека) — set_music по list_music")
+    mixed = auto_mix_clip(ctx, notes)
     E.mark_used(store, [int(p["pose_id"]) for p in placed])
     fresh = store.get_clip_plan(clip_id)
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
                 "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "pose_id", "pose_title", "badge", "chip",
                                                   "variant")} for p in placed],
-                "emphasis_words": len(marks), "layers": len(layers), "music_track_id": track}
+                "emphasis_words": len(marks), "layers": len(layers), "music_track_id": track,
+                **({"mix": mixed} if mixed else {})}
     E.set_status(store, video_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
                  notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(layers),

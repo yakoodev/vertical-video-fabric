@@ -3493,6 +3493,10 @@ def api_set_clip_plan_render_settings(
             # Звуковой монтаж (J/L, ключи, эффекты — app/audio_edit.py) — так же: нет ключа — остаётся.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["audio"] = current.get("audio") or {}
+        if "mix" not in settings_in:
+            # Сведение (app/audio_mix.py: auto_mix / set_mix) — редактор без этого поля его не стирает.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["mix"] = current.get("mix") or {}
         if "speed" not in settings_in:
             # Скорость/реверс кусков (app/piece_speed.py) ставит инструмент или инспектор куска:
             # автосохранение без поля её не сбрасывает.

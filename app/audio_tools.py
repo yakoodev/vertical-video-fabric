@@ -337,6 +337,71 @@ def h_audio_mix_report(ctx: Any, args: dict) -> dict:
     return out
 
 
+def h_auto_mix(ctx: Any, args: dict) -> dict:
+    from app.audio_mix import AUTO_DUCK_DB, AUTO_SFX_UNDER_VOICE_DB, MUSIC_UNDER_TARGET_DB, auto_mix
+
+    at = _at()
+
+    def num(name: str, default: float | None, lo: float, hi: float) -> float | None:
+        value = at._num(args.get(name))
+        if value is None:
+            return default
+        if not lo <= value <= hi:
+            raise at.ToolError(f"{name}: {lo:g}..{hi:g}")
+        return value
+
+    apply = not (args.get("dry_run") is True or args.get("apply") is False)
+    try:
+        return auto_mix(
+            ctx.store, ctx.plan_id, target_lufs=num("target_lufs", None, -24, -9),
+            music_under_voice_db=num("music_under_voice_db", -MUSIC_UNDER_TARGET_DB, -30, -6),
+            duck_db=num("duck_db", AUTO_DUCK_DB, -24, 0),
+            sfx_under_voice_db=num("sfx_under_voice_db", AUTO_SFX_UNDER_VOICE_DB, -20, 3),
+            apply=apply, save=lambda render: at._save_render(ctx, render), compare=args.get("compare") is not False)
+    except (ValueError, KeyError) as exc:
+        raise at.ToolError(f"auto_mix: {exc}") from exc
+
+
+def h_set_mix(ctx: Any, args: dict) -> dict:
+    from app.audio_mix import normalize_mix
+
+    at = _at()
+    render = at._current_render(ctx)
+    mix = {} if args.get("reset") else dict(render.get("mix") or {})
+    for key in ("target_lufs", "music_db", "duck_attack", "duck_release"):
+        if key in args:
+            if args[key] is None:
+                mix.pop(key, None)
+            else:
+                mix[key] = args[key]
+    if "sidechain" in args:
+        if args["sidechain"] is False:
+            mix["sidechain"] = False
+        else:
+            mix.pop("sidechain", None)
+    for key in ("groups", "layer_gains"):
+        if isinstance(args.get(key), dict):
+            merged = dict(mix.get(key) or {})
+            for name, value in args[key].items():
+                if value is None:
+                    merged.pop(str(name), None)
+                else:
+                    merged[str(name)] = value
+            mix[key] = merged
+    mix.pop("auto", None)  # руками правили — это уже не чистый auto_mix
+    fresh = at._save_render(ctx, {**render, "mix": normalize_mix(mix)})
+    out = {"ok": True, "mix": fresh.get("mix") or {},
+           "note": ("music_db — громкость трека в дБ к файлу (без подгонки под голос); sidechain false — без "
+                    "автоматического ducking (тогда set_music_duck); groups {voice, sfx, music, video} и layer_gains "
+                    "{id слоя: дБ} — поправки поверх громкости слоёв; target_lufs — громкость ролика. Проверь "
+                    "audio_mix_report.")}
+    unknown = [lid for lid in (args.get("layer_gains") or {}) if lid not in
+               {str(layer.get("id")) for layer in render.get("layers") or []}]
+    if unknown:
+        out["warnings"] = [f"слоёв {', '.join(map(str, unknown[:8]))} нет в клипе — их поправки ничего не делают"]
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Реестр
 # --------------------------------------------------------------------------- #
@@ -441,5 +506,37 @@ def tools() -> list:
             obj({"render_id": {"type": "integer"}, "use_render": {"type": "boolean"},
                  "timeline": {"type": "boolean", "description": "числа short-term LUFS по времени"}}),
             h_audio_mix_report, label=lambda a: "Слушаю сведение",
+        ),
+        Tool(
+            "auto_mix", "Свожу звук",
+            "АВТОСВЕДЕНИЕ по замеру стемов (как audio_mix_report): громкость музыки так, чтобы под речью она была на "
+            "music_under_voice_db тише голоса (−18 по умолчанию; −12 — смелее, −22 — тише), ducking музыки на каждую "
+            "фразу (duck_db −10, атака 0.12 с, отпускание 0.3 с; sidechain выключается), каждый звук слоя (вжухи, "
+            "удары) — под голос (пик на sfx_under_voice_db −6 ниже речи там, где говорят; в паузе чуть громче), "
+            "звук видео-слоёв — фоном, цель ролика target_lufs (−14 TikTok/Reels/Shorts) с true peak ≤ −1 dBTP в "
+            "финальном проходе. Считает заново от исходной громкости (повтор не накапливает). dry_run=true — только "
+            "прогноз. Ответ: changes, before/after (голос над музыкой, LUFS, пик, предупреждения). Потом — рендер и "
+            "audio_mix_report. / Auto-mix: music level + per-phrase ducking, sfx under voice, loudness target.",
+            obj({"target_lufs": {"type": "number"}, "music_under_voice_db": {"type": "number"},
+                 "duck_db": {"type": "number"}, "sfx_under_voice_db": {"type": "number"},
+                 "dry_run": {"type": "boolean"}}),
+            h_auto_mix, mutating=True,
+            label=lambda a: "Прикидываю сведение" if a.get("dry_run") else "Свожу звук",
+        ),
+        Tool(
+            "set_mix", "Ручки сведения",
+            "Ручное сведение (то же, что выставляет auto_mix): music_db — громкость фонового трека в дБ к файлу "
+            "(−40..+12, null — снова подгонка под голос), sidechain false/true — автоматический ducking музыки под "
+            "речью, duck_attack/duck_release — рампы ручного ducking (с), groups {voice, sfx, music, video: дБ} и "
+            "layer_gains {id слоя: дБ} — поправки поверх громкости слоёв (null — снять), target_lufs — громкость "
+            "ролика (−24..−9), reset=true — сначала всё снять. Переданные поля меняются, остальные остаются. "
+            "Проверь audio_mix_report. / Manual mix knobs.",
+            obj({"music_db": {"type": ["number", "null"]}, "target_lufs": {"type": ["number", "null"]},
+                 "sidechain": {"type": "boolean"}, "duck_attack": {"type": ["number", "null"]},
+                 "duck_release": {"type": ["number", "null"]},
+                 "groups": {"type": "object", "additionalProperties": {"type": ["number", "null"]}},
+                 "layer_gains": {"type": "object", "additionalProperties": {"type": ["number", "null"]}},
+                 "reset": {"type": "boolean"}}),
+            h_set_mix, mutating=True, label=lambda a: "Кручу ручки сведения",
         ),
     ]

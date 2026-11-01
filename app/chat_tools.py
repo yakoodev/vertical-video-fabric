@@ -57,7 +57,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
-        "set_audio_keys", "set_audio_joins", "set_source_audio", "source_loudness", "audio_mix_report")),
+        "set_audio_keys", "set_audio_joins", "set_source_audio", "source_loudness", "audio_mix_report", "auto_mix", "set_mix")),
     "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, цвет куска, фокус, раскладка, хромакей, формат", (
         "suggest_cuts", "apply_cuts", "trim_piece", "set_segment_speed", "set_piece_color", "match_piece_colors",
         "set_end_hold", "set_focus", "auto_focus",

@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from app import aivideo as V
+from app.settings import settings
 from app import aivideo_gen as G
 
 LEAD_SEC = 0.35  # от начала плана до первой реплики
@@ -127,16 +128,16 @@ def timeline(store: Any, script: dict) -> dict:
                 # Звук короткий — окно реплики не короче SFX_MIN_SEC (успеть прочитать подпись).
                 d = max(d, SFX_MIN_SEC)
                 caption = bool((character or {}).get("speech_captions", True))
-            placed.append((line, ref, d, caption))
+            placed.append((line, ref, d, caption, speech))
         need = (LEAD_SEC + sum(p[2] for p in placed) + GAP_SEC * (len(placed) - 1) + TAIL_SEC) if placed else 0
         video = _video_of(store, project_id, shot)
         base = video["window"] if video else float(shot["duration"])
         length = round(max(base, need), 3)
         cursor = t + LEAD_SEC
-        for i, (line, ref, d, caption) in enumerate(placed):
+        for i, (line, ref, d, caption, speech) in enumerate(placed):
             lines.append({"shot": shot["idx"], "n": i + 1, "who": line["who"], "text": line["text"],
                           "start": round(cursor, 3), "end": round(cursor + d, 3), "asset_id": int(ref["asset_id"]),
-                          "caption": caption})
+                          "caption": caption, "speech": speech})
             cursor += d + GAP_SEC
         shots.append({"shot": shot, "start": round(t, 3), "end": round(t + length, 3), "video": video,
                       "stretched": round(length - base, 2)})
@@ -215,7 +216,7 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
             layer = {"id": layer_id, "type": "video", "name": name, "start": round(t0, 3), "end": round(end, 3),
                      "track": 1, "x": 0.5, "y": 0.5, "z": 0, "scale": 1.0,
                      "props": {"asset_id": video["asset_id"], "w": 1080, "from": video["from"], "freeze": True,
-                               "audio": True, "gain_db": VIDEO_GAIN_DB}}
+                               "audio": True, "gain_db": VIDEO_GAIN_DB, "role": "ambience"}}
             if fade_in:
                 layer["in"] = {"type": "fade", "duration": FADE_SEC}
             layers.append(layer)
@@ -267,7 +268,7 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
                        "name": f"Реплика {line['shot']}.{line['n']} ({line['who']})", "start": line["start"],
                        "end": round(min(total, line["end"] + 0.05), 3),
                        "props": {"asset_id": line["asset_id"], "mode": "track", "volume": 1.0, "fadeIn": 0.02,
-                                 "fadeOut": 0.05}})
+                                 "fadeOut": 0.05, "role": "sfx" if line.get("speech") == "sfx" else "voice"}})
     # Субтитры — реплики голосом и (если у персонажа включено) подписи к его звукам.
     captions = [{"start": l["start"], "end": l["end"], "text": l["text"]} for l in plan["lines"] if l["caption"]]
     if captions:
@@ -290,6 +291,17 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         except (KeyError, TypeError, ValueError):
             notes.append(f"музыка: нет трека {track_id} — без музыки")
     store.set_clip_plan_render_settings(plan_id, render)
+    mix = None
+    if settings.auto_mix and plan["lines"]:
+        # Автосведение (app/audio_mix.auto_mix): реплики над музыкой на 18 дБ, ducking по фразам, звук
+        # видео-планов фоном, −14 LUFS. Не вышло — клип как собран (заметка).
+        try:
+            from app.audio_mix import auto_mix
+
+            done = auto_mix(store, plan_id, compare=False)
+            mix = {"voice_vs_music_db": done["after"]["voice_vs_music_db"], "changes": done["changes"]}
+        except Exception as exc:  # noqa: BLE001 - сведение — надстройка, клип важнее
+            notes.append(f"автосведение не вышло ({type(exc).__name__}: {str(exc)[:140]}) — audio_mix_report")
     store.db.execute("UPDATE aiv_scripts SET clip_plan_id = ?, status = 'assembled', updated_at = CURRENT_TIMESTAMP "
                      "WHERE id = ?", (plan_id, int(script_id)))
     fresh = store.get_clip_plan(plan_id)
@@ -301,4 +313,5 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
             "timeline": [{"shot": s["shot"]["idx"], "start": s["start"], "end": s["end"],
                           "kind": "video" if s["video"] else "still"} for s in plan["shots"]],
             "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={plan_id}", "notes": notes,
+            **({"mix": mix} if mix else {}),
             "note": ("обычный холст-клип: правь в редакторе (слои aiv_*), рендер и публикация — как у любого клипа")}
