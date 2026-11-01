@@ -157,6 +157,23 @@ MODULES: list[Module] = [
         workers=("explainer",),
     ),
     Module(
+        "stories", "Истории (рассказчик и сцена на каждую фразу)", "ai",
+        "Озвученный сюжетный шортс «завязка → готовый клип»: рассказчик за кадром, на каждую фразу — новая сцена в "
+        "одном стиле (3D-игрушки) с мягкой камерой, звуки действий из паков, субтитры по одному слову. Сценарий — "
+        "Gemini; актёры, локации и сцены — библиотека мира (новые рисуются только по одобренной карточке эпизода); "
+        "озвучка — Gemini TTS бесплатно или Polza.",
+        cost=("network", "paid"), cost_note="первый эпизод 50 с ≈ 25–30 картинок × 3–4.5 ₽ ≈ 80–130 ₽ (Polza, по "
+                                            "карточке), дальше дешевле за счёт библиотеки сцен; потолок "
+                                            "STORIES_EPISODE_CAP_RUB",
+        depends=("ai_video",),
+        tools=("story_overview", "story_save_world", "story_save_character", "story_save_location", "story_add_scene",
+               "story_generate_image", "story_delete", "story_sfx", "story_create", "story_status", "story_set_script",
+               "story_update_beats", "story_continue", "story_cancel"),
+        routes=("/api/stories/*", "/api/projects/{id}/stories*"),
+        ui=("вкладка «Истории» на странице проекта вида ИИ-видео",),
+        workers=("stories",),
+    ),
+    Module(
         "mcp", "MCP-сервер для внешних агентов", "ai",
         "Инструменты монтажа для Claude Code, Codex и любого MCP-клиента по адресу /mcp.",
         cost=(), cost_note="нагрузка — от того, что делают агенты",

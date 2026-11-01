@@ -129,11 +129,14 @@ class BudgetError(V.AivError):
 
 # --------------------------------------------------------------------------- #
 # Расширения: свой этап со своими целями на той же машинерии денег и запусков
-# (объяснялки app/explainer.py: позы маскота, лист маскота, озвучка ролика). Расширение —
+# (объяснялки app/explainer.py: позы маскота, лист, озвучка; истории app/stories.py: сцены, листы актёров,
+# плиты локаций, кадр стиля, озвучка). Расширение —
 # объект с полями ``stage``, ``label``, ``target_types``, ``ref_kinds`` (вид → подпись), ``card_cap_rub``
 # и методами ``plan(store, project_id, items, regenerate) → [item]``, ``build(store, job) → (prompt,
 # refs, caption, info)`` (как ``build_request``), ``project_of(store, target_type, target_id) → id``;
-# необязательно ``card_line(store, project_id, est) → str`` — первая строка карточки владельцу.
+# необязательно ``card_line(store, project_id, est) → str`` — первая строка карточки владельцу,
+# ``deps(store, job) → [(target_id, "тип:вид")]`` — что в той же партии должно быть готово раньше,
+# ``card_prefix`` (заголовок карточки) и ``cap_hint`` (подсказка, когда сумма выше потолка ролика).
 # Карточка, одобрение, потолки месяца, атомарный захват, восстановление после 504 и журнал трат —
 # общие: расширение их не трогает.
 # --------------------------------------------------------------------------- #
@@ -259,8 +262,9 @@ def cap_problems(store: Any, project_id: int, script_id: int | None, amount: flo
     elif stage in EXTENSIONS:
         ecap = float(getattr(EXTENSIONS[stage], "card_cap_rub", 0) or 0)
         if ecap and amount > ecap + 1e-6:
-            out.append(f"{STAGE_LABELS[stage]}: {amount:.2f} ₽ > потолка одного ролика {ecap:.0f} ₽ — меньше новых "
-                       "поз (переиспользуй библиотеку) или раздели (items)")
+            hint = getattr(EXTENSIONS[stage], "cap_hint", "меньше новых поз (переиспользуй библиотеку) или раздели "
+                                                          "(items)")
+            out.append(f"{STAGE_LABELS[stage]}: {amount:.2f} ₽ > потолка одного ролика {ecap:.0f} ₽ — {hint}")
     elif stage == "refs":
         quality = V._style_row(store, project_id)["quality"]
         ecap = EPISODE_CAP_RUB.get(quality, EPISODE_CAP_RUB["draft"])
@@ -815,7 +819,7 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
                "provider": est["provider"], "note": P._text(note, 300)}
     if group:
         payload["group"] = group
-    prefix = "Объяснялка" if stage in EXTENSIONS else "ИИ-видео"
+    prefix = getattr(EXTENSIONS[stage], "card_prefix", "Объяснялка") if stage in EXTENSIONS else "ИИ-видео"
     card = A.submit_card(store, project_id, "other", _card_question(store, project, est, script), payload,
                          title=f"{prefix}: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
                          submitted_by=requested_by)
@@ -1822,6 +1826,10 @@ def _frame_deps(store: Any, job: dict) -> list[tuple[int, str]]:
     kind = job.get("ref_kind")
     if job.get("kind") != "image":
         return []
+    ext = _ext_of_kind(str(kind or ""))
+    if ext is not None:
+        # Расширение (истории: сцена ждёт листы актёров и плиту) — свои зависимости или никаких.
+        return list(ext.deps(store, job)) if hasattr(ext, "deps") else []
     if kind in ("look", "expressions"):
         cid = int(job["target_id"]) if kind == "expressions" else int(V.get_look(store, int(job["target_id"]))[
             "character_id"])

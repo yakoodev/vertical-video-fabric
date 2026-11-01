@@ -103,6 +103,9 @@ aivideo_worker = AiVideoWorker(store)
 from app.explainer_gen import ExplainerWorker  # noqa: E402 - объяснялки: тема → сценарий → позы → карточка → клип
 
 explainer_worker = ExplainerWorker(store)
+from app.stories_gen import StoriesWorker  # noqa: E402 - истории: завязка → сценарий → сцены → карточка → клип
+
+stories_worker = StoriesWorker(store)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 # Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
@@ -114,6 +117,7 @@ modules.register_worker("autopilot", "autopilot", lambda: autopilot_worker)
 modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)
 modules.register_worker("ai_video", "aivideo-gen", lambda: aivideo_worker)
 modules.register_worker("explainer", "explainer", lambda: explainer_worker)
+modules.register_worker("stories", "stories", lambda: stories_worker)
 
 
 @asynccontextmanager
@@ -4605,6 +4609,11 @@ app.include_router(build_explainer_router(AuthDep, lambda: store))
 from app.explainer_channel_api import build_explainer_channel_router  # noqa: E402
 
 app.include_router(build_explainer_channel_router(AuthDep, lambda: store))
+
+# Истории: мир, актёры, локации, библиотека сцен, эпизод «завязка → клип» (app/stories_api.py).
+from app.stories_api import build_stories_router  # noqa: E402
+
+app.include_router(build_stories_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))

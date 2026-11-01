@@ -502,6 +502,10 @@ class Database:
             from app.zero_views import ensure_schema as ensure_zero_views_schema
 
             ensure_zero_views_schema(conn)
+            # Истории: мир (стиль, рассказчик), актёры, локации, библиотека сцен, эпизоды (app/stories.py).
+            from app.stories import ensure_stories_schema
+
+            ensure_stories_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

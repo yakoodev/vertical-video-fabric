@@ -67,6 +67,31 @@ def _keys(move: str, length: float) -> tuple[float, dict]:
     return 1.0, {"scale": [{"t": 0, "v": OVERSCAN, "ease": SOFT}, {"t": end, "v": OVERSCAN + 0.035}]}
 
 
+def preset_camera(move: str, t0: float, t1: float, total: float, camera: list[dict], layers: list[dict],
+                  has_next: bool) -> list[dict]:
+    """Наша 3D-камера (``app/camera3d.py``) на стоп-кадре [t0, t1]; на склейке — возврат в покой.
+    Общая для ИИ-видео и историй (app/stories_gen.py). Не встала — ``camera3d.PresetError``."""
+    from app.camera3d import apply_preset
+    from app.motion import DEFAULT_FOV, normalize_camera
+
+    length = min(12.0, max(0.3, t1 - t0))
+    res = apply_preset(move, t0, length, PRESET_INTENSITY.get(move, 1.0), camera=camera, layers=layers,
+                       clip_duration=total)
+    camera = res["camera"]
+    if move == "parallax_push":
+        # Плоский кадр: лёгкий наклон пресета ничего не даёт, а перспективный перенос
+        # крупной (×1.35) плоскости при наезде срезал край. Чистый dolly — аффинно.
+        camera = [{**k, "rotX": 0.0} if t0 - 1e-3 <= k["t"] <= t1 + 1e-3 and "rotX" in k else k for k in camera]
+        res["keys"] = [{**k, "rotX": 0.0} if "rotX" in k else k for k in res["keys"]]
+    last = res["keys"][-1] if res["keys"] else None
+    if has_next and last is not None:
+        hold = {k: v for k, v in last.items() if k != "ease"}
+        camera = normalize_camera(camera + [
+            {**hold, "t": round(t1 - 0.02, 3), "ease": "step"},
+            {"t": round(t1, 3), "zoom": 1.0, "x": 0.5, "y": 0.5, "z": 0, "rotX": 0, "rotY": 0, "fov": DEFAULT_FOV}])
+    return camera
+
+
 def _line_ref(store: Any, project_id: int, shot: dict, i: int, line: dict) -> dict | None:
     voice = G._voice_of(store, project_id, line["who"], line.get("emotion") or "")
     ref = V.selected_ref(store, project_id, "line", int(shot["id"]), "line_audio", str(i))
@@ -162,10 +187,10 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
     """Серия → новый холст-клип. Нужно видео (этап video) или кадр (этап keyframes) у каждого плана;
     озвучка — этап voice (сухой прогон делается тут же бесплатно)."""
     from app.audio_edit import normalize_audio
-    from app.camera3d import PresetError, apply_preset
+    from app.camera3d import PresetError
     from app.canvas import MIN_DURATION_SEC, base_seconds, create_canvas_clip
     from app.clip_subtitles import save_lines
-    from app.motion import DEFAULT_FOV, normalize_camera, normalize_layers
+    from app.motion import normalize_camera, normalize_layers
 
     script = V.get_script(store, script_id)
     project_id = int(script["project_id"])
@@ -240,24 +265,8 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         if shot.get("needs_motion"):
             notes.append(f"план {shot['idx']}: видео нет — стоп-кадр с движением камеры (этап video оживит)")
         if move in CAMERA_PRESET_MOVES:
-            length = min(12.0, max(0.3, t1 - t0))
             try:
-                res = apply_preset(move, t0, length, PRESET_INTENSITY.get(move, 1.0), camera=camera, layers=layers,
-                                   clip_duration=total)
-                camera = res["camera"]
-                if move == "parallax_push":
-                    # Плоский кадр: лёгкий наклон пресета ничего не даёт, а перспективный перенос
-                    # крупной (×1.35) плоскости при наезде срезал край. Чистый dolly — аффинно.
-                    camera = [{**k, "rotX": 0.0} if t0 - 1e-3 <= k["t"] <= t1 + 1e-3 and "rotX" in k else k
-                              for k in camera]
-                    res["keys"] = [{**k, "rotX": 0.0} if "rotX" in k else k for k in res["keys"]]
-                last = res["keys"][-1] if res["keys"] else None
-                if nxt is not None and last is not None:
-                    hold = {k: v for k, v in last.items() if k != "ease"}
-                    camera = normalize_camera(camera + [
-                        {**hold, "t": round(t1 - 0.02, 3), "ease": "step"},
-                        {"t": round(t1, 3), "zoom": 1.0, "x": 0.5, "y": 0.5, "z": 0, "rotX": 0, "rotY": 0,
-                         "fov": DEFAULT_FOV}])
+                camera = preset_camera(move, t0, t1, total, camera, layers, nxt is not None)
             except PresetError as exc:
                 notes.append(f"план {shot['idx']}: камера {move} не встала ({exc}) — остался Ken Burns")
         if item["stretched"] > 0.05:

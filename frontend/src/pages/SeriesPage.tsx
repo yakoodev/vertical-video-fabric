@@ -28,6 +28,7 @@ import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
 import { AiVideoTab } from "@/pages/AiVideoTab";
 import { ExplainerTab } from "@/pages/ExplainerTab";
 import { ExplainerChannelTab } from "@/pages/ExplainerChannelTab";
+import { StoriesTab } from "@/pages/StoriesTab";
 import { useModules } from "@/hooks/useModules";
 
 /**
@@ -35,7 +36,7 @@ import { useModules } from "@/hooks/useModules";
  * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
  */
 
-type Tab = "aiv" | "channel" | "expl" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
+type Tab = "aiv" | "channel" | "expl" | "story" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
 // Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
 const TABS: [Tab, string, string?][] = [
   // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
@@ -44,6 +45,8 @@ const TABS: [Tab, string, string?][] = [
   ["channel", "Канал", "explainer"],
   // Объяснялки (app/explainer.py): маскот объясняет тему — у «ИИ-видео» и «канала объяснялок».
   ["expl", "Объяснялки", "explainer"],
+  // Истории (app/stories.py): рассказчик и сцена на каждую фразу — тоже только у «ИИ-видео».
+  ["story", "Истории", "stories"],
   ["brief", "Резюме"],
   ["rules", "Правила"],
   ["stats", "Статистика"],
@@ -79,7 +82,7 @@ export function SeriesPage() {
   const tabs = TABS.filter(
     ([key, , mod]) =>
       (!mod || on(mod)) &&
-      (key === "aiv" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
+      (key === "aiv" || key === "story" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
   );
   const fallback: Tab = isChannel && tabs.some(([key]) => key === "channel")
     ? "channel"
@@ -114,6 +117,7 @@ export function SeriesPage() {
         {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
         {shown === "channel" ? <ExplainerChannelTab projectId={id} /> : null}
         {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
+        {shown === "story" ? <StoriesTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
         {shown === "stats" ? <StatsTab projectId={id} /> : null}
