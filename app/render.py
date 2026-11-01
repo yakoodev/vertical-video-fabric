@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import shutil
 import subprocess
@@ -1101,7 +1102,23 @@ class ClipRenderService:
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
         может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
         with heavy_slot("render", f"клип {clip_plan_id}"):
-            return self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+            clip = self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+        return self._after_render(clip)
+
+    def _after_render(self, clip: dict) -> dict:
+        """После рендера (уже вне очереди тяжёлых): заголовок, описание и хэштеги клипа, если их
+        ещё нет (app/ai/publish_meta.auto_meta_after_render). Никогда не ломает рендер."""
+        if not isinstance(clip, dict) or clip.get("status") != "succeeded":
+            return clip
+        try:
+            from app.ai.publish_meta import auto_meta_after_render
+
+            result = auto_meta_after_render(self.store, clip)
+            if result.get("status") in ("generated", "inherited"):
+                return self.store.get_clip(int(clip["id"]))
+        except Exception:  # noqa: BLE001 - метаданные — не повод сорвать рендер
+            logging.getLogger(__name__).warning("auto publish meta failed for clip %s", clip.get("id"), exc_info=True)
+        return clip
 
     def _render_clip_plan_unlocked(
         self,

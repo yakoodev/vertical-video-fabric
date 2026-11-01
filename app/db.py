@@ -485,6 +485,10 @@ class Database:
             from app.autopilot import ensure_autopilot_schema
 
             ensure_autopilot_schema(conn)
+            # Варианты обложек готовых клипов (app/cover_variants.py).
+            from app.cover_variants import ensure_cover_variants_schema
+
+            ensure_cover_variants_schema(conn)
             # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
             # площадки по времени — обратная связь «что заходит» для монтажа.
             # error — снимок не удался (причина для UI), числа тогда NULL.
@@ -516,6 +520,9 @@ class Database:
             # Cover of the rendered clip (a still) and why it failed, if it did.
             self._ensure_column(conn, "clips", "cover_path", "TEXT")
             self._ensure_column(conn, "clips", "cover_error", "TEXT")
+            # Метаданные публикации клипа (app/ai/publish_meta.py): варианты площадок,
+            # тексты обложки, откуда взялись (auto после рендера / ai / manual).
+            self._ensure_column(conn, "clips", "publish_meta_json", "TEXT")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

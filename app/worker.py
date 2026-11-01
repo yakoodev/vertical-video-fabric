@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+from app.ai.publish_meta import platform_texts
 from app.providers.registry import get_provider
 from app.publish_format import upload_extras
 from app.settings import settings
@@ -51,11 +52,14 @@ class JobWorker:
                 # Формат клипа (16:9 на YouTube — обычное видео, не Shorts; app/publish_format.py).
                 # У 9:16 и файла без клипа — пусто, вызов площадки прежний.
                 extras = upload_extras(self.store, fresh_job, target["platform"])
+                # Текст клипа без правок владельца + вариант площадки в метаданных клипа —
+                # уходит вариант (app/ai/publish_meta.platform_texts); иначе текст задания.
+                title, description = platform_texts(self.store, fresh_job, target["platform"])
                 result = provider.upload(
                     cookies=cookies,
                     file_path=Path(fresh_job["source_path"]),
-                    title=fresh_job["title"],
-                    description=fresh_job["description"],
+                    title=title,
+                    description=description,
                     privacy=fresh_job["privacy"],
                     allow_comments=fresh_job["allow_comments"],
                     account_label=account["label"],

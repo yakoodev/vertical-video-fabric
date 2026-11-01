@@ -5751,8 +5751,10 @@ def registry() -> dict[str, Tool]:
     if _REGISTRY is None:
         # Звуковой монтаж (audio_map, J/L, ключи, ducking, эффекты) — свой модуль app/audio_tools.py.
         from app.audio_tools import tools as audio_tools
+        # Варианты обложки готового рендера — app/cover_tools.py.
+        from app.cover_tools import tools as cover_tools
 
-        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools()]}
+        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools()]}
     return _REGISTRY
 
 

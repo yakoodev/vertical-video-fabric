@@ -989,6 +989,7 @@ class AppStore:
             for track in self.list_subtitle_tracks(clip["id"]):
                 if track.get("ass_path"):
                     files.append(track["ass_path"])
+            files.extend(self._clip_cover_variant_files(clip["id"]))
         self.db.execute(
             "UPDATE jobs SET clip_id = NULL WHERE clip_id IN (SELECT id FROM clips WHERE source_id = ?)",
             (source_id,),
@@ -1593,6 +1594,13 @@ class AppStore:
         self.db.execute(
             "UPDATE clips SET cover_path = ?, cover_error = ? WHERE id = ?",
             (str(path) if path else None, error, clip_id),
+        )
+
+    def set_clip_publish_meta(self, clip_id: int, meta: dict | None) -> None:
+        """Метаданные публикации клипа (app/ai/publish_meta.py); None — стереть."""
+        self.db.execute(
+            "UPDATE clips SET publish_meta_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(meta, ensure_ascii=False) if meta else None, clip_id),
         )
 
     def get_clip_cover_path(self, clip_id: int) -> str | None:
@@ -2617,8 +2625,18 @@ class AppStore:
 
     def delete_clip(self, clip_id: int) -> None:
         self.get_clip(clip_id)
+        covers = self._clip_cover_variant_files(clip_id)
         self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))
         self._delete_record("clips", clip_id)
+        # Варианты обложки (app/cover_variants.py): строки уходят каскадом, файлы — здесь.
+        _remove_files_within(covers, settings.clip_dir)
+
+    def _clip_cover_variant_files(self, clip_id: int) -> list[str]:
+        try:
+            rows = self.db.query_all("SELECT path FROM clip_covers WHERE clip_id = ?", (clip_id,))
+        except Exception:  # noqa: BLE001 - старая база без таблицы вариантов
+            return []
+        return [str(row["path"]) for row in rows if row["path"]]
 
     def create_subtitle_track(
         self,
@@ -3386,6 +3404,14 @@ def _decode_clip_qc(clip: dict) -> dict:
         if isinstance(parsed, dict):
             qc = parsed
     clip["qc"] = qc
+    meta = None
+    raw_meta = clip.pop("publish_meta_json", None)
+    if raw_meta:
+        try:
+            meta = json.loads(raw_meta)
+        except (TypeError, ValueError):
+            meta = None
+    clip["publish_meta"] = meta if isinstance(meta, dict) else None
     # The cover is served by id, never by path: the path stays on the server.
     clip["cover_url"] = f"/media/clips/{clip['id']}/cover" if clip.get("cover_path") else None
     clip.pop("cover_path", None)

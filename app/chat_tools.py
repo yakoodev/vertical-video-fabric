@@ -44,7 +44,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "montage": ("слои, камера, мемы-вставки, автомонтаж, переходы, бренд, обложка", (
         "auto_edit", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera", "camera_preset",
         "add_insert", "remove_insert", "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
-        "set_transition", "list_brands", "apply_brand", "compose_cover", "track_layer", "untrack_layer")),
+        "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
+        "choose_cover", "track_layer", "untrack_layer")),
     "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
         "list_subtitle_styles")),

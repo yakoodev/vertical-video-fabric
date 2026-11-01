@@ -68,6 +68,7 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
+  put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   // multipart helper for file uploads to /ui/* form endpoints
   form: <T>(path: string, data: FormData) => request<T>(path, { method: "POST", body: data }),

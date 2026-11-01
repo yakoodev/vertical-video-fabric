@@ -8,6 +8,7 @@ import type { Clip } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
+import { CoverVariants } from "@/components/CoverVariants";
 
 export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => void }) {
   const qc = useQueryClient();
@@ -42,6 +43,18 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сгенерировать"),
   });
 
+  // Per-platform variants written by the service (after render or ✨): one click fills the fields.
+  const meta = clip.publish_meta;
+  const variants = Object.entries(meta?.platforms ?? {}).filter(([, v]) => v && v.title) as [
+    string,
+    { title: string; description: string },
+  ][];
+  const fill = (t: string, d: string) => {
+    setTitle(t);
+    setDescription([d, (meta?.hashtags ?? []).join(" ")].filter(Boolean).join("\n\n"));
+  };
+  const PLATFORM_LABEL: Record<string, string> = { youtube: "YouTube", tiktok: "TikTok" };
+
   const toggle = (id: number) =>
     setTargets((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
@@ -71,6 +84,22 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
             </button>
             <span className="muted">заголовок · описание · хэштеги</span>
           </div>
+          {meta && variants.length ? (
+            <div className="pub-variants">
+              <span className="muted">
+                {meta.source === "auto" ? "Написано после рендера." : "Варианты площадок:"}
+              </span>
+              <button type="button" className="chip" onClick={() => fill(meta.title, meta.description)}>
+                Общий
+              </button>
+              {variants.map(([key, v]) => (
+                <button key={key} type="button" className="chip" onClick={() => fill(v.title, v.description)} title={v.title}>
+                  {PLATFORM_LABEL[key] ?? key}
+                </button>
+              ))}
+              <span className="muted pub-variants-note">Текст не правили — на YouTube и TikTok уйдут их варианты.</span>
+            </div>
+          ) : null}
           <label className="field">
             <span>Заголовок <span className="muted mono">{title.length}/100</span></span>
             <input className="input" maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -79,6 +108,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
             <span>Описание</span>
             <textarea className="input" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
+          <CoverVariants clip={clip} />
           <div className="field">
             <span>Аккаунты</span>
             {accounts.isLoading ? (
