@@ -1477,13 +1477,26 @@ class ClipRenderService:
             final = subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan,
                                        plan_joins_setting(plan))
             freezes = self._freezes(plan)
+            remap = None
             if freezes:
                 # Вставленный стоп-кадр: речь после него звучит позже (app/freeze.py).
                 from app.cuts import remap_subtitles
                 from app.freeze import FreezeMap
 
-                final = remap_subtitles(final, FreezeMap(freezes))
-            return result_from_payload(final)
+                fmap = FreezeMap(freezes)
+                final = remap_subtitles(final, fmap)
+                remap = lambda p: remap_subtitles(p, fmap)  # noqa: E731
+            result = result_from_payload(final)
+            # Перевод с оригиналом (app/translation.py): строки оригинала — вторым стилем ASS.
+            from app.translation import secondary_lines
+
+            extra = secondary_lines(payload, plan.get("segments") or [], transition, cut_plan, remap,
+                                    joins=plan_joins_setting(plan))
+            if extra:
+                from dataclasses import replace
+
+                result = replace(result, response={**result.response, "secondary_lines": extra})
+            return result
         except (KeyError, ValueError, TypeError):
             return None
 

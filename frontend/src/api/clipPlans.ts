@@ -90,6 +90,68 @@ export interface PlanSubtitles {
   model?: string;
   edited?: boolean;
   duration?: number;
+  /** Перевод на русский (app/translation.py): строки/слова выше — русские, оригинал — здесь. */
+  translation?: SubtitleTranslation;
+}
+
+export type TranslationMode = "ru" | "both" | "off";
+
+export interface SubtitleTranslation {
+  mode: "ru" | "both";
+  source_language?: string;
+  provider?: string;
+  model?: string;
+  original?: { lines: SubtitleLine[]; words?: { word: string; start: number; end: number; speaker?: string }[]; language?: string };
+  /** Озвучка RU (app/dubbing.py), если сделана. */
+  dub?: DubInfo;
+}
+
+export interface DubPhrase {
+  i: number;
+  start: number;
+  end: number;
+  text: string;
+  chars: number;
+  duration?: number;
+  tempo?: number;
+  overflow_sec?: number;
+  action?: string;
+}
+
+export interface DubEstimate {
+  provider: string;
+  model: string;
+  voice: string;
+  chars: number;
+  phrases: number;
+  price_rub_per_char: number;
+  price_checked: string;
+  rub: number;
+  budget_rub: number;
+  over_budget: boolean;
+  enabled: boolean;
+  paid: boolean;
+  note?: string;
+}
+
+export interface DubInfo {
+  provider: string;
+  model?: string;
+  voice?: string;
+  asset_id?: number;
+  layers?: string[];
+  cost_rub?: number;
+  chars?: number;
+  overflows?: number;
+  phrases?: DubPhrase[];
+}
+
+export interface DubResult {
+  ok: boolean;
+  status: "estimate" | "done" | "removed";
+  estimate: DubEstimate;
+  dub?: DubInfo;
+  note?: string;
 }
 
 export interface VoicesResult {
@@ -109,6 +171,15 @@ export const clipPlansApi = {
     `/api/clip-plans/${clipPlanId}/timeline?format=${format}`,
   /** Субтитры клипа: сделать до рендера и править как текст. */
   getSubtitles: (clipPlanId: number) => api.get<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`),
+  /** Перевод субтитров на русский: ru — только русский, both — + оригинал вторым слоем, off — оригинал. */
+  translateSubtitles: (clipPlanId: number, mode: TranslationMode, retranslate = false) =>
+    api.post<{ ok: boolean; mode: TranslationMode; lines: number; source_language?: string; layer?: string; note?: string; subtitles: PlanSubtitles }>(
+      `/api/clip-plans/${clipPlanId}/subtitles/translate`,
+      { mode, retranslate },
+    ),
+  /** Озвучка RU: без confirm — только оценка стоимости (бесплатно); confirm — синтез (платно, лимит budget_rub). */
+  dub: (clipPlanId: number, body: { provider?: string; voice?: string; confirm?: boolean; budget_rub?: number; remove?: boolean }) =>
+    api.post<DubResult>(`/api/clip-plans/${clipPlanId}/dub`, body),
   generateSubtitles: (clipPlanId: number, provider?: string) =>
     api.post<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { provider: provider || null }),
   /** Голоса: Gemini расшифровывает каждый голос отдельно (и возвращает перебитые фразы). */

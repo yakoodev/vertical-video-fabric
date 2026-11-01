@@ -363,13 +363,19 @@ def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
         text = line["text"] if len(kept) == len(inside) else " ".join(w["word"] for w in kept)
         lines.append({**line, "text": text, "start": min(w["start"] for w in kept), "end": max(w["end"] for w in kept)})
     total = round(sum((e - s) / v for s, e, _o, v in new), 3)
-    return {
+    out = {
         **payload,
         "words": sorted(words, key=lambda w: w["start"]),
         "lines": normalize_lines(lines, total),
         "duration": total,
         "pieces": [[s, e] if v == 1.0 else [s, e, v] for s, e, _o, v in new],
     }
+    tr = payload.get("translation")
+    if isinstance(tr, dict) and isinstance(tr.get("original"), dict):
+        # Оригинал переведённых субтитров (app/translation.py) едет за кусками так же.
+        moved = remap_to_pieces({**tr["original"], "pieces": None}, old_pieces, new_pieces)
+        out["translation"] = {**tr, "original": {k: moved.get(k) for k in ("lines", "words", "language")}}
+    return out
 
 
 # Дорожка похожа на голос, если между тишиной и громкими местами столько дБ (микрофон:

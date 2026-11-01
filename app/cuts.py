@@ -783,8 +783,11 @@ def cut_caption_words(store: Any, plan: dict, cut_plan: CutPlan) -> list[dict]:
     if not payload or not payload.get("words"):
         return []
     transition = (plan.get("render_settings") or {}).get("transition")
-    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan,
-                                            plan_joins_setting(plan)))
+    from app.translation import orig_comp_words
+
+    joins = plan_joins_setting(plan)
+    return (caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan, joins))
+            + orig_comp_words(payload, plan.get("segments") or [], transition, cut_plan, joins=joins))
 
 
 # ---------------------------------------------------------------- подсказки

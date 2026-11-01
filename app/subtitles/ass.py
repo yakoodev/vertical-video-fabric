@@ -81,16 +81,21 @@ def write_ass_subtitles(
         path = settings.subtitle_dir / path
     path.parent.mkdir(parents=True, exist_ok=True)
     profile, side = format_style(profile, fmt, width, height)
-    text = _ass_header(profile, width, height, side)
-    text += "\n".join(
-        _dialogue_events(result.words, profile, max_duration=float(result.duration or 0), width=width, side=side)
-    )
+    secondary = list((result.response or {}).get("secondary_lines") or [])
+    text = _ass_header(profile, width, height, side, secondary=bool(secondary))
+    events = _dialogue_events(result.words, profile, max_duration=float(result.duration or 0), width=width, side=side)
+    if secondary:
+        # Перевод с оригиналом (app/translation.py): строки оригинала стилем Original.
+        offset = float((result.usage or {}).get("subtitleTimingOffsetSec") or 0.0)
+        events += _secondary_events(secondary, offset, float(result.duration or 0))
+    text += "\n".join(events)
     text += "\n"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _ass_header(profile: dict, width: int, height: int, side: int = SUBTITLE_SIDE_MARGIN) -> str:
+def _ass_header(profile: dict, width: int, height: int, side: int = SUBTITLE_SIDE_MARGIN,
+                secondary: bool = False) -> str:
     font_family = _style_value(profile.get("font_family") or "Arial")
     font_size = int(profile.get("font_size") or 64)
     alignment = int(profile.get("alignment") or 2)
@@ -113,7 +118,10 @@ def _ass_header(profile: dict, width: int, height: int, side: int = SUBTITLE_SID
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Karaoke,{font_family},{font_size},{primary},{primary},{outline},{back},"
         f"-1,0,0,0,100,100,0,0,1,{_ass_number(outline_width)},{_ass_number(shadow)},{alignment},"
-        f"{side},{side},{margin_v},1\n\n"
+        f"{side},{side},{margin_v},1\n"
+        + (_original_style(font_family, font_size, outline, back, outline_width, shadow, alignment, side, margin_v)
+           if secondary else "")
+        + "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -156,6 +164,42 @@ def _dialogue_events(
                 f"{ass_timestamp(word.start)},{ass_timestamp(event_end)},"
                 f"Karaoke,,0,0,0,,{text}"
             )
+    return events
+
+
+# Перевод с оригиналом (app/translation.py): строка оригинала мельче, над караоке.
+ORIGINAL_SIZE_SHARE = 0.55
+ORIGINAL_COLOR = "#E5E7EB"
+
+
+def _original_style(font_family: str, font_size: int, outline: str, back: str, outline_width: float,
+                    shadow: float, alignment: int, side: int, margin_v: int) -> str:
+    """Стиль ``Original``: кегль ×0.55, светло-серый, дальше от края кадра на две строки караоке."""
+    size = max(8, round(font_size * ORIGINAL_SIZE_SHARE))
+    margin = margin_v + round(font_size * 1.15 * MAX_SUBTITLE_LINES_PER_PAGE + size * 0.4)
+    color = ass_color(ORIGINAL_COLOR)
+    return (
+        f"Style: Original,{font_family},{size},{color},{color},{outline},{back},"
+        f"0,0,0,0,100,100,0,0,1,{_ass_number(round(outline_width * 0.7, 2))},{_ass_number(shadow)},{alignment},"
+        f"{side},{side},{margin},1\n"
+    )
+
+
+def _secondary_events(lines: list[dict], offset: float = 0.0, max_duration: float = 0.0) -> list[str]:
+    """Строки оригинала целиком на время своей фразы (без караоке: это подсказка к переводу)."""
+    events = []
+    for line in lines:
+        try:
+            start, end = float(line["start"]) + offset, float(line["end"]) + offset
+        except (KeyError, TypeError, ValueError):
+            continue
+        start = max(0.0, start)
+        if max_duration > 0:
+            end = min(end, max_duration)
+        text = _ass_text(" ".join(str(line.get("text") or "").split()))
+        if end - start < 0.05 or not text:
+            continue
+        events.append(f"Dialogue: 1,{ass_timestamp(start)},{ass_timestamp(end)},Original,,0,0,0,,{text}")
     return events
 
 

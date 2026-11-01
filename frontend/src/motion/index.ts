@@ -90,6 +90,7 @@ export {
   captionPages,
   captionPageAt,
   captionWordsFrom,
+  ORIG_SPEAKER,
   speakerColor,
   type CaptionStyle,
   type CaptionPage,

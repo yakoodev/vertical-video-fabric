@@ -46,9 +46,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "add_insert", "remove_insert", "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
         "choose_cover", "track_layer", "untrack_layer")),
-    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса", (
+    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, перевод на русский, озвучка RU", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
-        "list_subtitle_styles")),
+        "list_subtitle_styles", "translate_subtitles", "dub_clip")),
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
@@ -71,7 +71,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк"),
-    "subtitles": ("субтитр", "сабы", "подпис"),
+    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
              "слоу", "замедл", "ускор", "реверс", "задом"),
@@ -87,6 +87,8 @@ DANGEROUS = {
     "clear_layers": "Снять все слои клипа",
     "revoke_rule": "Отменить правило",
 }
+# Платное: озвучка через Polza — карточка, только когда реально синтезируем (оценка бесплатна).
+PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Polza TTS)"}
 
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.
 MEDIA_SUBDIR = "chat_media"
@@ -331,6 +333,8 @@ def declarations(groups: list[str], json_schema: bool = True) -> list[dict]:
 def is_dangerous(store: Any, name: str, args: dict, project_id: int | None) -> bool:
     if name in DANGEROUS:
         return True
+    if name == "dub_clip":
+        return bool(args.get("confirm")) and str(args.get("provider") or "polza").lower() not in ("none", "dry-run")
     if name == "submit_for_approval":
         # При доверии auto карточка сразу одобряется и уходит в публикацию — это уже публикация.
         try:
@@ -350,7 +354,7 @@ def is_dangerous(store: Any, name: str, args: dict, project_id: int | None) -> b
 
 
 def danger_label(name: str) -> str:
-    return DANGEROUS.get(name) or ("Отправить на публикацию (доверие auto — опубликуется сразу)"
+    return DANGEROUS.get(name) or PAID_LABELS.get(name) or ("Отправить на публикацию (доверие auto — опубликуется сразу)"
                                    if name == "submit_for_approval" else name)
 
 

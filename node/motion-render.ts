@@ -139,7 +139,9 @@ function readComp(path: string): Composition {
       ? raw.words
           .filter((w) => w && Number.isFinite(Number(w.t0)) && Number.isFinite(Number(w.t1)) && typeof w.w === "string")
           .map((w) => ({ t0: Number(w.t0), t1: Number(w.t1), w: w.w, ...(typeof w.s === "string" && w.s ? { s: w.s } : {}) }))
-          .sort((a, b) => a.t0 - b.t0)
+          // Слова оригинала перевода (s: "orig", app/translation.py) — после остальных: номера
+          // highlightWords русских слов те же, что считал сервер.
+          .sort((a, b) => Number(a.s === "orig") - Number(b.s === "orig") || a.t0 - b.t0)
       : [],
     // Сообщения чата для слоёв chat: время — число, остальное движок проверит сам.
     chat: Array.isArray(raw.chat)
