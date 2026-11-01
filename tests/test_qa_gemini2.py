@@ -175,3 +175,55 @@ def test_hashtags_keep_only_cyrillic_latin_digits_underscore():
     assert meta["description"] == "Мура и таракан в клипе #таракан #стрим"
     assert meta["platforms"]["tiktok"]["description"] == "смотри #таракан"
     assert "皮" not in full_description(meta["description"], meta["hashtags"])
+
+
+# ------------------------------------------------------------------ 9) текст строк = слова после censor
+
+
+def _w(word, a, b, **extra):
+    return {"word": word, "start": a, "end": b, **extra}
+
+
+def test_subtitle_lines_text_follows_words_after_censor():
+    from app.clip_subtitles import sync_lines_with_words
+
+    # Как у клипа 892 (lines 10–12): слово «хуйня» замаскировано в words и ушло в строку 10, а в тексте
+    # строки 11 осталось как было; строка 12 «клипе.» — дубль с пустыми словами.
+    payload = {
+        "lines": [
+            {"start": 19.78, "end": 22.17, "text": "Я сижу, думаю, у меня какая-то огромная"},
+            {"start": 22.26, "end": 23.95, "text": "хуйня по монитору лезет, а это в"},
+            {"start": 23.48, "end": 23.95, "text": "клипе."},
+            {"start": 25.0, "end": 26.0, "text": "Строка без слов"},
+        ],
+        "words": [_w("Я", 19.78, 19.91), _w("сижу,", 20.0, 20.29), _w("думаю,", 20.44, 20.51),
+                  _w("у", 20.68, 20.73), _w("меня", 20.76, 20.81), _w("какая-то", 20.9, 21.29),
+                  _w("огромная", 21.38, 21.79), _w("х****", 21.88, 22.17), _w("по", 22.26, 22.33),
+                  _w("монитору", 22.42, 22.81), _w("лезет,", 22.9, 23.11), _w("а", 23.16, 23.21),
+                  _w("это", 23.28, 23.33), _w("в", 23.33, 23.38), _w("клипе.", 23.48, 23.95)],
+    }
+    out = sync_lines_with_words(payload)
+    texts = [line["text"] for line in out["lines"]]
+    assert texts == ["Я сижу, думаю, у меня какая-то огромная х****", "по монитору лезет, а это в клипе.",
+                     "Строка без слов"]
+    assert all("хуйня" not in t for t in texts)
+    # Совпадает со словами (с точностью до регистра и пунктуации) — текст владельца не трогаем.
+    same = {"lines": [{"start": 0, "end": 1, "text": "Привет, Мир!"}], "words": [_w("привет", 0, 0.4), _w("мир", 0.5, 1)]}
+    assert sync_lines_with_words(same) is same
+    # Два голоса поверх друг друга: слова второго голоса не уезжают в строку первого.
+    voices = {"lines": [{"start": 0, "end": 2, "text": "да ну", "speaker": "A"},
+                        {"start": 0.5, "end": 1.5, "text": "ага", "speaker": "B"}],
+              "words": [_w("да", 0, 0.4, speaker="A"), _w("ага", 0.6, 1.4, speaker="B"), _w("ну", 1.5, 2, speaker="A")]}
+    assert sync_lines_with_words(voices) is voices
+
+
+def test_store_keeps_lines_in_sync_when_subtitles_are_saved(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 0.0, "end": 1.2, "text": "ребят я живу"}, {"start": 1.3, "end": 2.5, "text": "в общаге"},
+                  {"start": 2.0, "end": 2.5, "text": "общаге"}],
+        "words": [_w("ребят", 0.0, 0.4), _w("я", 0.5, 0.6), _w("живу", 0.7, 1.0), _w("в", 1.05, 1.2),
+                  _w("общаге", 1.6, 2.4)]})
+    saved = store.get_clip_plan_subtitles(plan["id"])
+    assert [l["text"] for l in saved["lines"]] == ["ребят я живу в", "общаге"]
