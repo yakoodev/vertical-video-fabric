@@ -22,14 +22,44 @@ export interface StatsStatus {
   last: { checked: number; ok: number; failed: number; skipped: number } | null;
 }
 
+/** Тревога «0 просмотров» по публикации (app/zero_views.py). */
+export interface PostAlert {
+  views: number | null;
+  hours: number;
+  threshold: number;
+  status: "open" | "checked" | "dismissed" | "resolved";
+  approval_id: number | null;
+  created_at: string;
+}
+
+/** Значок «Статистика» клипа: сумма по публикациям и открытая тревога. */
+export interface ClipBadge {
+  views: number | null;
+  likes: number | null;
+  captured_at: string | null;
+  publications: number;
+  alert: { views: number | null; hours: number; approval_id: number | null; platform: string } | null;
+}
+
 export interface PublicationStats {
   targets: Record<string, TargetStats>;
+  alerts?: Record<string, PostAlert>;
+  clips?: Record<string, ClipBadge>;
   status: StatsStatus;
+}
+
+export interface ZeroViewsSettings {
+  enabled: boolean;
+  hours: number;
+  threshold: number;
+  max_age_hours: number;
 }
 
 export const statsApi = {
   publications: () => api.get<PublicationStats>("/api/stats/publications"),
   refresh: () => api.post<StatsStatus & { started: boolean }>("/api/stats/refresh"),
+  zeroViews: () => api.get<ZeroViewsSettings>("/api/stats/zero-views"),
+  saveZeroViews: (patch: Partial<ZeroViewsSettings>) => api.put<ZeroViewsSettings>("/api/stats/zero-views", patch),
 };
 
 /** 12345 → «12,3 тыс.»; null → «—». */

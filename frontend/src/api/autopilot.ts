@@ -4,7 +4,8 @@ import { api, request } from "@/api/client";
  * Автопилот канала (app/autopilot.py): очередь одобрения, доверие, расписание, лента,
  * Telegram-бот сервиса (app/notify_tg.py) и чат проекта (app/project_chat.py).
  */
-export type ApprovalKind = "clip_publish" | "rule_proposal" | "hypothesis_review" | "other";
+/** alert — «внимание»: тревога статистики (0 просмотров через N часов, app/zero_views.py). */
+export type ApprovalKind = "clip_publish" | "rule_proposal" | "hypothesis_review" | "other" | "alert";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "changes_requested" | "expired";
 export type ApprovalAction = "approve" | "reject" | "changes" | "both";
 

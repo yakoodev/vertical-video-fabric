@@ -84,7 +84,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "explainer_overview", "explainer_save_mascot", "explainer_generate_sheet", "explainer_add_pose",
         "explainer_update_pose", "explainer_delete_pose", "explainer_regenerate_pose", "explainer_create",
         "explainer_status", "explainer_set_script", "explainer_update_beats", "explainer_continue",
-        "explainer_cancel", "explainer_import_pilot", "tts_preview")),
+        "explainer_cancel", "explainer_import_pilot", "explainer_channel_setup", "explainer_channel_status",
+        "explainer_channel_add_topics", "explainer_channel_propose_topics", "explainer_channel_topic",
+        "explainer_channel_run", "tts_preview")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
@@ -99,7 +101,7 @@ _PRELOAD = {
     "assets": ("картинк", "библиотек", "шрифт"),
     "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц"),
     "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
-    "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота"),
+    "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота", "темы канала", "очередь тем"),
 }
 
 # Опасное — только через карточку подтверждения в чате: что владелец увидит на кнопке.

@@ -494,6 +494,14 @@ class Database:
             from app.explainer import ensure_explainer_schema
 
             ensure_explainer_schema(conn)
+            # Канал объяснялок: маскот, очередь тем, производство к слотам (app/explainer_channel.py).
+            from app.explainer_channel import ensure_channel_schema
+
+            ensure_channel_schema(conn)
+            # Тревога «0 просмотров» через N часов после публикации (app/zero_views.py).
+            from app.zero_views import ensure_schema as ensure_zero_views_schema
+
+            ensure_zero_views_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

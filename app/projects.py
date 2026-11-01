@@ -151,6 +151,16 @@ PROJECTS_SCHEMA_SQL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_project_hypotheses ON project_hypotheses(project_id, id)",
+    # Клип без источника проекта (холст-клипы объяснялок: источник — общий скрытый «Холсты»)
+    # приписан к проекту напрямую. ``project_of_plan`` и статистика проекта смотрят и сюда.
+    """
+    CREATE TABLE IF NOT EXISTS plan_projects (
+        clip_plan_id INTEGER PRIMARY KEY REFERENCES clip_plans(id) ON DELETE CASCADE,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_plan_projects ON plan_projects(project_id)",
 ]
 
 
@@ -169,9 +179,9 @@ def ensure_projects_schema(conn) -> None:
 # Общее
 # --------------------------------------------------------------------------- #
 
-PROJECT_KINDS = ("stream_channel", "series", "promo", "ai_video", "other")
+PROJECT_KINDS = ("stream_channel", "series", "promo", "ai_video", "explainer", "other")
 PROJECT_KIND_LABELS = {"stream_channel": "стрим-канал", "series": "сериал / аниме", "promo": "промо",
-                       "ai_video": "ИИ-видео", "other": "другое"}
+                       "ai_video": "ИИ-видео", "explainer": "канал объяснялок", "other": "другое"}
 RULE_KINDS = ("do", "dont", "preference")
 RULE_SCOPES = ("project", "global")
 RULE_STATUSES = ("active", "revoked", "superseded")
@@ -389,13 +399,29 @@ def project_of_source(store: Any, source_id: int) -> int | None:
 
 
 def project_of_plan(store: Any, clip_plan_id: int) -> int | None:
+    """Проект клипа: по источнику, а у клипа без проекта источника (холст) — приписка ``plan_projects``."""
     row = store.db.query_one(
-        "SELECT s.project_id FROM clip_plans cp JOIN sources s ON s.id = cp.source_id WHERE cp.id = ?",
+        "SELECT s.project_id, (SELECT pp.project_id FROM plan_projects pp WHERE pp.clip_plan_id = cp.id) AS direct "
+        "FROM clip_plans cp JOIN sources s ON s.id = cp.source_id WHERE cp.id = ?",
         (int(clip_plan_id),),
     )
     if not row:
         raise KeyError(f"clip plan not found: {clip_plan_id}")
-    return int(row["project_id"]) if row["project_id"] is not None else None
+    if row["project_id"] is not None:
+        return int(row["project_id"])
+    return int(row["direct"]) if row["direct"] is not None else None
+
+
+def assign_plan_project(store: Any, clip_plan_id: int, project_id: int | None) -> dict:
+    """Приписать клип к проекту напрямую (клип-холст объяснялки → канал). None — снять приписку."""
+    store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    if project_id is None:
+        store.db.execute("DELETE FROM plan_projects WHERE clip_plan_id = ?", (int(clip_plan_id),))
+    else:
+        get_project(store, int(project_id), include_sources=False)
+        store.db.execute("INSERT OR REPLACE INTO plan_projects (clip_plan_id, project_id) VALUES (?, ?)",
+                         (int(clip_plan_id), int(project_id)))
+    return {"clip_plan_id": int(clip_plan_id), "project_id": project_id}
 
 
 # --------------------------------------------------------------------------- #
@@ -1164,10 +1190,12 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
         JOIN clips c ON c.id = j.clip_id
         JOIN sources s ON s.id = c.source_id
         LEFT JOIN clip_plans cp ON cp.id = c.clip_plan_id
-        WHERE jt.status = 'succeeded' AND jt.remote_url != '' AND s.project_id = ?
+        WHERE jt.status = 'succeeded' AND jt.remote_url != ''
+          AND (s.project_id = ? OR (s.project_id IS NULL AND c.clip_plan_id IN
+               (SELECT pp.clip_plan_id FROM plan_projects pp WHERE pp.project_id = ?)))
         ORDER BY jt.id
         """,
-        (int(project_id),),
+        (int(project_id), int(project_id)),
     ):
         plan_id = row["clip_plan_id"]
         key = f"plan:{plan_id}" if plan_id else f"clip:{row['clip_id']}"

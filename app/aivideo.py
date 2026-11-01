@@ -340,7 +340,8 @@ OWNER_FIELDS = ("month_cap_rub",)
 
 def require_project(store: Any, project_id: int) -> dict:
     project = P.get_project(store, int(project_id), include_sources=False)
-    if project.get("kind") != PROJECT_KIND:
+    # Канал объяснялок (projects.kind = explainer) — тот же ИИ-проект: маскоты, позы, деньги.
+    if project.get("kind") not in (PROJECT_KIND, "explainer"):
         raise AivError(f"проект #{project_id} — не «ИИ-видео» (kind {project.get('kind')}); "
                        "создай aiv_create_project или смени тип проекта на ai_video")
     return project

@@ -4256,8 +4256,31 @@ def api_stats_clips(_auth: AuthDep) -> dict:
 
 @app.get("/api/stats/publications", tags=["Jobs"], summary="Latest platform stats per publication target")
 def api_stats_publications(_auth: AuthDep) -> dict:
+    from app import zero_views
+
     latest = store.latest_publication_stats()
-    return {"targets": {str(k): v for k, v in latest.items()}, "status": platform_stats.status()}
+    # alerts — тревоги «0 просмотров» по публикациям, clips — значок «Статистика» клипа (app/zero_views.py).
+    return {"targets": {str(k): v for k, v in latest.items()},
+            "alerts": {str(k): v for k, v in zero_views.alerts_by_target(store).items()},
+            "clips": {str(k): v for k, v in zero_views.clip_badges(store).items()},
+            "status": platform_stats.status()}
+
+
+@app.get("/api/stats/zero-views", tags=["Jobs"], summary="Zero-views alert settings (hours after publish, threshold)")
+def api_zero_views_settings(_auth: AuthDep) -> dict:
+    from app import zero_views
+
+    return zero_views.get_settings(store)
+
+
+@app.put("/api/stats/zero-views", tags=["Jobs"], summary="Change zero-views alert settings")
+def api_zero_views_save(_auth: AuthDep, payload: dict = Body(...)) -> dict:
+    from app import zero_views
+
+    try:
+        return zero_views.save_settings(store, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/stats/publications/{target_id}", tags=["Jobs"], summary="Stats snapshots of one publication target")
@@ -4578,6 +4601,10 @@ app.include_router(build_aivideo_router(AuthDep, lambda: store))
 from app.explainer_api import build_explainer_router  # noqa: E402
 
 app.include_router(build_explainer_router(AuthDep, lambda: store))
+# Канал объяснялок: маскот, очередь тем, ролики к слотам, карточки одобрения (app/explainer_channel_api.py).
+from app.explainer_channel_api import build_explainer_channel_router  # noqa: E402
+
+app.include_router(build_explainer_channel_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))

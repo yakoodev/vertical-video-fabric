@@ -6,6 +6,7 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Badge, formatDuration } from "@/components/ui";
+import { StatsBadge } from "@/components/StatsBadge";
 
 export function ClipCard({
   clip,
@@ -101,6 +102,7 @@ export function ClipCard({
       <div className="muted mono" style={{ fontSize: 12, display: "flex", gap: 6 }}>
         <span>{formatDuration(clip.duration_sec)}</span>
         {clip.width ? <span>· {clip.width}×{clip.height}</span> : null}
+        {clip.published_targets_count ? <StatsBadge clipId={clip.id} /> : null}
       </div>
       {clip.qc ? (
         <div

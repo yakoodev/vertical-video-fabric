@@ -137,7 +137,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
 
   return (
     <article className={`panel approval-card${highlighted ? " approval-card--focus" : ""}`}>
-      {a.kind === "clip_publish" ? (
+      {a.kind === "clip_publish" || (a.kind === "alert" && a.thumb_url) ? (
         <div className="approval-preview">
           {a.media_url ? (
             <video src={a.media_url} poster={a.cover_url ?? a.thumb_url ?? undefined} controls preload="none" />
@@ -150,7 +150,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
         <div className="series-li-main muted" style={{ fontSize: 12.5 }}>
           <span>#{a.id}</span>
           {a.project_id ? <Link to={`/series/${a.project_id}`}>{a.project_name}</Link> : null}
-          <span className="chip">{a.kind_label}</span>
+          <span className={`chip${a.kind === "alert" ? " approval-kind--alert" : ""}`}>{a.kind_label}</span>
           {a.content_type ? <span className="chip">{a.content_type}</span> : null}
           <span className={`chip approval-status approval-status--${a.status}`}>{APPROVAL_STATUS_LABEL[a.status]}</span>
           {a.decided_by === "auto" ? <span className="chip">доверие auto</span> : null}
@@ -171,6 +171,18 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
               {a.publish_status ? ` · ${PUBLISH_STATUS_LABEL[a.publish_status] ?? a.publish_status}` : ""}
             </div>
             {a.publish_error ? <div style={{ color: "var(--danger)", fontSize: 13 }}>{a.publish_error}</div> : null}
+          </>
+        ) : a.kind === "alert" ? (
+          <>
+            <h3 className="approval-title">{a.title}</h3>
+            <p className="approval-desc" style={{ whiteSpace: "pre-wrap" }}>
+              {a.question}
+            </p>
+            {typeof a.payload?.url === "string" && a.payload.url ? (
+              <a href={a.payload.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontSize: 13 }}>
+                открыть пост ↗
+              </a>
+            ) : null}
           </>
         ) : (
           <>
@@ -262,6 +274,14 @@ const EVENT_LABEL: Record<string, string> = {
   rule_kept: "правило оставлено",
   comment: "комментарий",
   card_sent: "карточка в Telegram",
+  alert_resolved: "тревога прошла",
+  topics_added: "темы",
+  topic_approve: "тема взята",
+  topic_reject: "тема отклонена",
+  topic_retry: "тема заново",
+  video_started: "ролик начат",
+  video_ready: "ролик готов",
+  video_failed: "ролик не вышел",
   digest: "сводка",
   config: "настройки",
 };
