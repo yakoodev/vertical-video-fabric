@@ -140,7 +140,9 @@ def h_set_audio_joins(ctx: Any, args: dict) -> dict:
     view = [{"piece": ids.index(j["piece"]), **{k: v for k, v in j.items() if k != "piece"}}
             for j in saved.get("joins") or [] if j["piece"] in ids]
     shifts = part_shifts(segments, segments, saved.get("joins"))
-    lengths = [float(s["end_sec"]) - float(s["start_sec"]) for s in segments]
+    from app.piece_speed import seg_length
+
+    lengths = [seg_length(s) for s in segments]
     plan = plan_jl(lengths, part_overlaps(segments, render.get("transition")), shifts)
     for k, (want, got) in enumerate(zip(shifts, plan["shift"])):
         if abs(want - got) > 0.01:

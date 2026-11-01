@@ -34,6 +34,7 @@ from app.stream_layout import (
 from app.transitions import build_join_args, is_plain_concat, normalize_transition, part_overlaps, plan_joins
 from app.backgrounds import background_zones, fill_color, needs_zones
 from app.video_crop import build_reframe_x_expr
+from app.piece_speed import seg_length
 
 
 # Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
@@ -738,6 +739,9 @@ class ClipRenderService:
                 edit = part_edit(audio_edit, index, float(segment["start_sec"]), float(segment["end_sec"]))
                 if edit:
                     piece_preset = {**piece_preset, "audio_edit": edit}
+                retime = _piece_retime(segment, source)
+                if retime:
+                    piece_preset = {**piece_preset, "piece_retime": retime}
                 _run_ffmpeg(
                     build_ffmpeg_render_args(
                         source_path=Path(source["local_path"]),
@@ -806,7 +810,7 @@ class ClipRenderService:
             temp_paths.extend(post_temps)
             self._apply_cover(
                 clip["id"], render_id, final_output_path, preset, cover,
-                [float(seg["end_sec"]) - float(seg["start_sec"]) for seg in parts], join,
+                [seg_length(seg) for seg in parts], join,
                 gaps=_source_gaps(parts),
                 jump_joins=jumps,
             )
@@ -1227,7 +1231,40 @@ class ClipRenderService:
             visual = visual or {"layers": [], "camera": []}
         # Звуковой монтаж (app/audio_edit.py): дорожки, эффекты, J/L, ключи — None, если его нет.
         audio_plan = self._audio_plan(plan, cut_plan)
-        if cut_plan is not None:
+        from app.piece_speed import is_retimed
+
+        # Кусок со скоростью/реверсом (app/piece_speed.py) — путь монтажа: части несут скорость.
+        retimed_parts = list(segments) if cut_plan is None and any(is_retimed(s) for s in segments) else None
+        if retimed_parts is not None:
+            clip = self.render_montage(
+                segment_ids,
+                ffmpeg_preset_id=ffmpeg_preset_id,
+                subtitle_profile_id=subtitle_profile_id,
+                banner_id=banner_id,
+                clip_plan_id=clip_plan_id,
+                title=plan["title"],
+                description=plan["description"],
+                music_track_id=music_track_id,
+                music_volume=music_volume,
+                music_start_sec=music_start_sec,
+                subtitle_offset_sec=subtitle_offset_sec,
+                subtitle_provider=subtitle_provider,
+                banner_height_frac=banner_height_frac,
+                banner_y_frac=banner_y_frac,
+                subtitle_margin_v=subtitle_margin_v,
+                mirror=mirror,
+                transition=transition,
+                cover=cover,
+                motion=visual,
+                layout=layout,
+                cut_parts=retimed_parts,
+                aspect=aspect,
+                end_hold_sec=end_hold,
+                layers_format=layers_format,
+                freezes=freezes,
+                **({"audio_edit": audio_plan} if audio_plan else {}),
+            )
+        elif cut_plan is not None:
             # Куски делятся на части в обход вырезов — это всегда путь монтажа.
             clip = self.render_montage(
                 segment_ids,
@@ -2116,6 +2153,9 @@ def build_ffmpeg_render_args(
     height = int(preset.get("output_height") or 1920)
     fps = float(preset.get("fps") or 30)
     duration = end_sec - start_sec
+    retime = preset.get("piece_retime")
+    # Кусок со скоростью: читаем секунды исходника, кадров — по длине на шкале клипа.
+    out_duration = duration / float(retime["speed"]) if retime else duration
     args = [
         "ffmpeg",
         "-y",
@@ -2134,7 +2174,8 @@ def build_ffmpeg_render_args(
     args.extend(
         [
             "-filter_complex",
-            _filter_complex(width, height, fps, preset, banner, source_crop, reframe_x),
+            _retimed(_filter_complex(width, height, fps, preset, banner, source_crop, reframe_x), preset, fps)
+            if retime else _filter_complex(width, height, fps, preset, banner, source_crop, reframe_x),
             "-map",
             "[vout]",
             "-c:v",
@@ -2148,7 +2189,7 @@ def build_ffmpeg_render_args(
             # Ровно столько кадров, сколько в куске: иначе fps-фильтр добавляет кадр
             # на каждый кусок, и при 18 вырезах картинка уезжала от звука на 0.57 с.
             "-frames:v",
-            str(max(1, int(duration * fps + 0.5))),
+            str(max(1, int(out_duration * fps + 0.5))),
             "-shortest",
             "-movflags",
             "+faststart",
@@ -3066,6 +3107,41 @@ def _audio_filter(preset: dict) -> str:
     return ""
 
 
+def _piece_retime(segment: dict, source: dict) -> dict | None:
+    """Скорость/реверс части для build_ffmpeg_render_args (app/piece_speed.py); None — как всегда."""
+    from app.piece_speed import is_retimed, seg_speed
+    from app.source_audio import _streams_from_metadata
+
+    if not is_retimed(segment):
+        return None
+    # Дорожек в метаданных не видно — верим, что звук есть (как render_plan).
+    streams = _streams_from_metadata(source.get("metadata_json") or source.get("metadata"))
+    has_audio = streams is None or any(s.get("codec_type") == "audio" for s in streams)
+    return {"speed": seg_speed(segment), "has_audio": has_audio, "segment": segment}
+
+
+def _retimed(graph: str, preset: dict, fps: float) -> str:
+    """Граф куска + скорость/реверс: хвост картинки после кадрирования и лука (кадр уже в
+    размере выхода — reverse держит в памяти меньше), хвост звука после смешивания дорожек."""
+    from app.piece_speed import audio_chain, video_chain
+
+    retime = preset.get("piece_retime") or {}
+    segment = retime.get("segment") or {}
+    head, sep, tail = graph.rpartition("[vout]")
+    if not sep:
+        return graph
+    video = video_chain(segment, fps) or "null"
+    graph = f"{head}[vretime_in]{tail};[vretime_in]{video}[vout]"
+    if not retime.get("has_audio"):
+        return graph
+    chain = audio_chain(segment) or "anull"
+    if "[aout]" in graph:
+        a_head, _sep, a_tail = graph.rpartition("[aout]")
+        return f"{a_head}[aretime_in]{a_tail};[aretime_in]{chain}[aout]"
+    stream = _stream_index(preset.get("audio_primary_stream"), 0)
+    return f"{graph};[0:a:{stream}]aresample=48000,{chain}[aout]"
+
+
 def _video_duration(meta: Any) -> float:
     """Длина видеодорожки куска (контейнер берёт самую длинную дорожку)."""
     for stream in (getattr(meta, "raw", None) or {}).get("streams") or []:
@@ -3082,6 +3158,8 @@ def _video_duration(meta: Any) -> float:
 def _audio_map(preset: dict) -> str:
     if preset.get("source_audio_tracks") or _source_edit(preset):
         return "[aout]"
+    if (preset.get("piece_retime") or {}).get("has_audio"):
+        return "[aout]"  # скорость/реверс куска — звук всегда через граф (_retimed)
     mode = str(preset.get("audio_mix_mode") or "primary").strip().lower()
     primary_stream = _stream_index(preset.get("audio_primary_stream"), 0)
     primary_volume = _volume(preset.get("audio_primary_volume"), 1)

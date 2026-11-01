@@ -495,6 +495,8 @@ def source_graph(input_index: int, tracks: Any, edit: dict, out_label: str) -> s
 
 def clip_span_to_source(clock: Any, a: float, b: float) -> list[tuple[float, float]]:
     """Отрезок шкалы clip → отрезки исходника (через стык кусков — по куску на часть)."""
+    from app.piece_speed import to_source
+
     pa, pb = clock.clip_range_to_plain(float(a), float(b))
     out = []
     for index, seg in enumerate(clock.segments):
@@ -502,8 +504,8 @@ def clip_span_to_source(clock: Any, a: float, b: float) -> list[tuple[float, flo
         p1 = p0 + clock.lengths[index]
         lo, hi = max(pa, p0), min(pb, p1)
         if hi - lo > 1e-4:
-            start = float(seg["start_sec"])
-            out.append((round(start + lo - p0, 3), round(start + hi - p0, 3)))
+            x, y = to_source(seg, lo - p0), to_source(seg, hi - p0)  # скорость/реверс куска
+            out.append((round(min(x, y), 3), round(max(x, y), 3)))
     return out
 
 
@@ -570,6 +572,8 @@ def part_shifts(parts: list[dict], segments: list[dict], joins: Any) -> list[flo
 
     Только на стыке разных кусков (последняя часть куска i → первая часть куска i+1); джамп-каты
     внутри куска — без J/L. ``lag`` куска A и ``lead`` куска B на одном стыке вычитаются."""
+    from app.piece_speed import is_reversed
+
     cfg = {j["piece"]: j for j in normalize_joins(joins)}
     if not cfg or len(parts) < 2:
         return [0.0] * max(0, len(parts) - 1)
@@ -578,7 +582,8 @@ def part_shifts(parts: list[dict], segments: list[dict], joins: Any) -> list[flo
     for k, (left, right) in enumerate(zip(parts, parts[1:])):
         li = left.get("piece", k) if "piece" in left else k
         ri = right.get("piece", k + 1) if "piece" in right else k + 1
-        if li == ri or li >= len(ids) or ri >= len(ids):
+        if li == ri or li >= len(ids) or ri >= len(ids) or is_reversed(left) or is_reversed(right):
+            # Развёрнутый кусок: звук «за краем» исходника к нему не относится — без J/L.
             out.append(0.0)
             continue
         lag = float((cfg.get(ids[li]) or {}).get("lag") or 0.0)
@@ -741,8 +746,10 @@ MAX_HANDLE_WORDS = 400
 
 
 def piece_length(seg: dict) -> float:
-    """Длина куска на шкале клипа, с."""
-    return max(0.0, float(seg["end_sec"]) - float(seg["start_sec"]))
+    """Длина куска на шкале клипа, с (со скоростью куска — app/piece_speed.py)."""
+    from app.piece_speed import seg_length
+
+    return seg_length(seg)
 
 
 def normalize_handle_words(raw: Any) -> list[dict]:
@@ -907,7 +914,7 @@ def split_handle_words(payload: dict, ext_pieces: list[tuple[float, float]], seg
     plain_starts, acc = [], 0.0
     for seg in segments:
         plain_starts.append(acc)
-        acc += piece_length(seg)
+        acc += max(0.0, float(seg["end_sec"]) - float(seg["start_sec"]))  # распознано без скорости
 
     def classify(item: dict) -> tuple[bool, dict] | None:
         a, b = _num(item.get("start")), _num(item.get("end"))

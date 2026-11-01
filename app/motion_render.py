@@ -1163,7 +1163,9 @@ def _render_frame_png(
     segments = plan.get("segments") or []
     if not segments:
         raise ValueError("в клипе нет кусков")
-    starts, total = clip_timeline([(float(s["start_sec"]), float(s["end_sec"])) for s in segments], rs["transition"])
+    from app.piece_speed import spans as speed_spans
+
+    starts, total = clip_timeline(speed_spans(segments), rs["transition"])
     t = min(max(0.0, float(t)), max(0.0, total - 0.02))
     lt = t if layer_t is None else min(max(0.0, float(layer_t)), max(0.0, total - 0.02))
     st = t if sub_t is None else min(max(0.0, float(sub_t)), max(0.0, total - 0.02))

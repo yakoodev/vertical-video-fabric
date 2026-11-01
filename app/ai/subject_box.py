@@ -74,17 +74,17 @@ def _frame_times(store: Any, plan: dict) -> list[tuple[int, float]]:
     from app.motion import clip_timeline
 
     segments = plan.get("segments") or []
-    spans = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    spans = [(float(s["start_sec"]), float(s["end_sec"]), float(s.get("speed") or 1)) for s in segments]
     starts, _total = clip_timeline(spans, normalize_render_settings(plan.get("render_settings") or {})["transition"])
     if not segments:
         return []
     per = max(1, min(3, 6 // len(segments)))
     fractions = {1: (0.5,), 2: (0.3, 0.7), 3: (0.2, 0.5, 0.8)}[per]
     out = []
-    for index, ((a, b), start) in enumerate(zip(spans, starts)):
+    for index, ((a, b, speed), start) in enumerate(zip(spans, starts)):
         if len(out) >= MAX_FRAMES:
             break
-        out.extend((index, start + (b - a) * f) for f in fractions)
+        out.extend((index, start + (b - a) / speed * f) for f in fractions)  # длина на шкале clip
     return out[:MAX_FRAMES]
 
 

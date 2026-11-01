@@ -115,6 +115,25 @@ export interface AiSegment {
   manual_focus_x?: number | null;
   /** «Кусок шире окна 9:16» (set_piece_fit): доля ширины исходника и фон; null — обычный кадр. */
   fit?: { w: number; bg: string } | null;
+  /** Скорость куска в клипе (set_segment_speed, app/piece_speed.py): нет — 1. */
+  speed?: number;
+  /** Кусок задом наперёд (в превью играет вперёд, развернёт рендер). */
+  reverse?: boolean;
+  /** Звук куска со скоростью/реверсом: tempo | pitch | mute | reverse. */
+  speed_audio?: SpeedAudio;
+}
+
+export type SpeedAudio = "tempo" | "pitch" | "mute" | "reverse";
+
+/** Длина куска на таймлайне клипа: (конец − начало исходника) / скорость. */
+export function segLen(piece: { start_sec: number; end_sec: number; speed?: number }): number {
+  const speed = piece.speed && piece.speed > 0 ? piece.speed : 1;
+  return Math.max(0, piece.end_sec - piece.start_sec) / speed;
+}
+
+/** Скорость куска (1 — как в исходнике). */
+export function segSpeed(piece: { speed?: number }): number {
+  return piece.speed && piece.speed > 0 ? piece.speed : 1;
 }
 
 export interface ClipPlan {
@@ -203,6 +222,8 @@ export interface RenderSettings {
   gain?: { start: number; end: number; gain_db: number; track?: number }[];
   /** 🎚 Звуковой монтаж: J/L, ключи громкости, ducking и провалы музыки, эффекты (app/audio_edit.py). */
   audio?: AudioEdit;
+  /** ⏩ Скорость/реверс кусков [{piece (segment id), speed?, reverse?, audio?}] (app/piece_speed.py). */
+  speed?: { piece: number; speed?: number; reverse?: boolean; audio?: SpeedAudio }[];
   /** Формат вывода (app/formats.py): 9:16 (как всегда), 1:1, 4:5 или 16:9 — у любого клипа. */
   format?: Aspect;
   /** В каком формате размечены слои (их опорный кадр, motion/formats.ts); нет — 9:16. */

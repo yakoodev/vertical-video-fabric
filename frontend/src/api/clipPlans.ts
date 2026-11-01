@@ -119,6 +119,13 @@ export const clipPlansApi = {
     api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices/assign`, { start, end, speaker }),
   saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
     request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
+  /** ⏩ Скорость/реверс куска (set_segment_speed): слои и субтитры сервер сдвигает сам. */
+  setSegmentSpeed: (
+    clipPlanId: number,
+    body: { piece: number; speed: number; reverse: boolean; audio?: "tempo" | "pitch" | "mute" | "reverse" },
+  ) =>
+    api.post<{ piece: number; speed: number; reverse: boolean; audio: string | null; length: number; length_before: number;
+      duration: number; warnings?: string[] }>(`/api/clip-plans/${clipPlanId}/segment-speed`, body),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
   undo: (clipPlanId: number) =>
     api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(

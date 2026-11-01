@@ -160,10 +160,17 @@ def clip_timeline(store: Any, clip_plan_id: int) -> dict:
     plan = store.get_clip_plan(clip_plan_id)
     segments = plan.get("segments") or []
     render = normalize_render_settings(plan.get("render_settings") or {})
-    spans = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    from app.piece_speed import describe, is_reversed, seg_length, seg_speed, spans as speed_spans
+
+    spans = speed_spans(segments)
     starts, total = motion.clip_timeline(spans, render.get("transition"))
     pieces = []
-    for index, (seg, (src_start, src_end), start) in enumerate(zip(segments, spans, starts)):
+    for index, (seg, (src_start, src_end, _speed), start) in enumerate(zip(segments, spans, starts)):
+        retimed = {}
+        if seg_speed(seg) != 1.0 or is_reversed(seg):
+            # Скорость/реверс куска (set_segment_speed): длина на шкале clip — length.
+            retimed = {"speed": seg_speed(seg), "reverse": is_reversed(seg), "speed_audio": seg.get("speed_audio"),
+                       "speed_note": describe(seg)}
         pieces.append(
             {
                 "index": index,
@@ -176,24 +183,33 @@ def clip_timeline(store: Any, clip_plan_id: int) -> dict:
                 "source_start": round(src_start, 3),
                 "source_end": round(src_end, 3),
                 "clip_start": round(start, 3),
-                "clip_end": round(start + (src_end - src_start), 3),
+                "clip_end": round(start + seg_length(seg), 3),
+                "length": round(seg_length(seg), 3),
                 "focus": seg.get("focus") or [],
                 "fit": seg.get("fit"),
+                **retimed,
             }
         )
     return {"plan": plan, "render": render, "pieces": pieces, "duration": round(total, 3),
-            "plain_duration": round(sum(e - s for s, e in spans), 3)}
+            "plain_duration": round(sum(seg_length(s) for s in segments), 3)}
 
 
 def _to_clip_time(pieces: list[dict], plain_t: float) -> float:
     """Время «куски встык» (так хранятся субтитры) → время готового клипа."""
     cursor = 0.0
     for piece in pieces:
-        length = piece["source_end"] - piece["source_start"]
+        length = _piece_len(piece)
         if plain_t < cursor + length or piece is pieces[-1]:
             return round(piece["clip_start"] + (plain_t - cursor), 3)
         cursor += length
     return round(plain_t, 3)
+
+
+def _piece_len(piece: dict) -> float:
+    """Длина куска clip_timeline на шкале клипа (со скоростью куска)."""
+    if piece.get("length") is not None:
+        return float(piece["length"])
+    return float(piece["source_end"]) - float(piece["source_start"])
 
 
 def _clip_duration(ctx: ToolContext) -> float:
@@ -821,7 +837,7 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         cues = []
     gaps, offset = [], 0.0
     for index, piece in enumerate(pieces):
-        length = float(piece["source_end"]) - float(piece["source_start"])
+        length = _piece_len(piece)
         lo, hi = offset, offset + length
         offset = hi
         if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
@@ -3698,8 +3714,8 @@ def h_auto_focus(ctx: ToolContext, args: dict) -> dict:
     done = []
     for index in indexes:
         piece = pieces[index]
-        length = float(piece["source_end"]) - float(piece["source_start"])
-        plain_start = sum(float(p["source_end"]) - float(p["source_start"]) for p in pieces[:index])
+        length = _piece_len(piece)
+        plain_start = sum(_piece_len(p) for p in pieces[:index])
         # Слова куска: Gemini видит реплику плана, а длинный план с диалогом — по кадру на реплику.
         piece_words = _piece_words(words, plain_start, length) if resolver and words else []
         kwargs = {"speech_words": piece_words} if piece_words else {}
@@ -3787,6 +3803,68 @@ def h_set_focus(ctx: ToolContext, args: dict) -> dict:
 
 
 MAX_FIT_PIECE_SEC = 12.0
+
+
+def h_set_segment_speed(ctx: ToolContext, args: dict) -> dict:
+    """Скорость и реверс куска основы (app/piece_speed.py): slow-mo, ускорение, «перемотка»."""
+    from app.audio_edit import normalize_audio
+    from app.piece_remap import remap_render
+    from app.piece_speed import (
+        AUDIO_MODES, MAX_REVERSE_SEC, MAX_SPEED, MIN_SPEED, attach, default_audio, describe, normalize_speed,
+        seg_length,
+    )
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    segments = plan.get("segments") or []
+    index = _piece_index(args, len(segments))
+    seg = segments[index]
+    speed = 1.0 if args.get("speed") in (None, "") else _num(args.get("speed"))
+    if speed is None or not MIN_SPEED <= speed <= MAX_SPEED:
+        raise ToolError(f"speed — {MIN_SPEED:g}..{MAX_SPEED:g} (0.5 — вдвое медленнее, 2 — вдвое быстрее; 1 — как есть)")
+    reverse = args.get("reverse") is True
+    audio = str(args.get("audio") or "").strip()
+    if audio and audio not in AUDIO_MODES:
+        raise ToolError(f"audio — из {', '.join(AUDIO_MODES)}")
+    if audio == "reverse" and not reverse:
+        raise ToolError("audio \"reverse\" — только с reverse: true")
+    source_len = float(seg["end_sec"]) - float(seg["start_sec"])
+    if reverse and source_len > MAX_REVERSE_SEC + 1e-6:
+        raise ToolError(f"реверс — кусок до {MAX_REVERSE_SEC:g} с исходника (этот {source_len:.1f} с): ffmpeg держит "
+                        "все кадры в памяти. Разрежь кусок (trim_piece / create_clip) и разверни короткий")
+    render = _current_render(ctx)
+    entries = [e for e in normalize_speed(render.get("speed")) if e["piece"] != seg["id"]]
+    entry = normalize_speed([{"piece": seg["id"], "speed": speed, "reverse": reverse, "audio": audio}])
+    fresh = {**render, "speed": entries + entry}
+    new_segments = attach([{k: v for k, v in s.items() if k not in ("speed", "reverse", "speed_audio")}
+                           for s in segments], fresh)
+    # Слои, камера, вставки, вырезы — за новой длиной куска (секунда исходника — та же).
+    moved, note = remap_render(fresh, segments, new_segments)
+    saved = _save_render(ctx, moved)
+    piece = clip_timeline(ctx.store, ctx.plan_id)["pieces"][index]
+    new_seg = new_segments[index]
+    out: dict = {"ok": True, "piece": index, "speed": speed, "reverse": reverse,
+                 "audio": (entry[0].get("audio") or default_audio(entry[0])) if entry else None,
+                 "length_before": round(seg_length(seg), 3), "length": round(seg_length(new_seg), 3),
+                 "clip_start": piece["clip_start"], "clip_end": piece["clip_end"],
+                 "duration": clip_timeline(ctx.store, ctx.plan_id)["duration"], "time": "clip",
+                 "speeds": saved.get("speed") or [],
+                 "note": ("кусок на шкале clip теперь длиной (конец − начало исходника)/speed; focus куска — по-прежнему "
+                          "секунды ИСХОДНИКА от его начала. Звук: tempo — та же речь без смены тона, pitch — как плёнка, "
+                          "mute — тишина, reverse — задом наперёд. Субтитры куска растянуты в 1/speed, у реверса — "
+                          "скрыты. Проверь view_frame/contact_sheet и рендер.")}
+    if note:
+        out["changes"] = [note]
+    warnings = []
+    if speed < 0.5:
+        warnings.append("медленнее 0.5 при 30 к/с — кадры повторяются, движение «ступеньками»; для слоу-мо лучше "
+                        "исходник 60 к/с")
+    if reverse and normalize_audio(render.get("audio")).get("joins"):
+        warnings.append("J/L на стыках с развёрнутым куском не работают — звук за краем к реверсу не относится")
+    if describe(new_seg) and seg_length(new_seg) > 20:
+        warnings.append(f"кусок на клипе {seg_length(new_seg):.1f} с — длинное слоу-мо утомляет; обычно 1–4 с")
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 def h_set_piece_fit(ctx: ToolContext, args: dict) -> dict:
@@ -4481,6 +4559,8 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
+    from app.piece_speed import seg_length
+
     try:
         project = int(args.get("project_id"))
     except (TypeError, ValueError) as exc:
@@ -4502,7 +4582,7 @@ def h_list_clips(ctx: ToolContext, args: dict) -> dict:
                 "favorite": bool(plan.get("favorite")),
                 "status": plan.get("status"),
                 "pieces": len(segs),
-                "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
+                "duration": round(sum(seg_length(s) for s in segs), 2),
                 "layers": len(settings.get("layers") or []) if isinstance(settings, dict) else 0,
             }
         )
@@ -5685,6 +5765,22 @@ def _build_registry() -> list[Tool]:
                       ["x"])}}, ["piece", "points"]),
             h_set_focus, mutating=True,
             label=lambda a: f"Кадрирую кусок {a.get('piece')}: {len(a.get('points') or [])} точ.",
+        ),
+        Tool(
+            "set_segment_speed", "Скорость куска",
+            "Скорость и реверс куска основы piece (номер с 0): speed 0.25..4 (0.5 — слоу-мо вдвое, 0.75, 1.5, 2 — "
+            "ускорение; 1 — как есть), reverse true — задом наперёд («перемотка», кусок ≤ 10 с исходника). Кусок на "
+            "таймлайне становится длиной (конец − начало)/speed: слои, камера, вставки и вырезы после него сдвигаются "
+            "сами, субтитры куска растягиваются в 1/speed (у реверса скрыты). audio: tempo (по умолчанию у скорости — "
+            "речь без смены тона), pitch (как плёнка: на слоу-мо ниже), mute (по умолчанию у реверса), reverse (звук "
+            "задом, только с reverse). Повтор килла в слоу-мо — отдельный кусок того же момента (create_clip/"
+            "spec) со speed 0.5. speed 1 и reverse false — снять. / Piece playback speed and reverse.",
+            _obj({"piece": {"type": "integer"}, "speed": {"type": "number", "description": "0.25..4, 1 — как есть"},
+                  "reverse": {"type": "boolean"},
+                  "audio": {"type": "string", "enum": ["tempo", "pitch", "mute", "reverse"]}}, ["piece"]),
+            h_set_segment_speed, mutating=True,
+            label=lambda a: (f"Кусок {a.get('piece')}: " + ("реверс " if a.get("reverse") else "")
+                             + (f"×{a.get('speed')}" if a.get("speed") not in (None, 1, 1.0) else "")).strip(),
         ),
         Tool(
             "set_piece_fit", "Кадр шире окна",

@@ -30,6 +30,7 @@ import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+from app.piece_speed import drop_reversed, seg_length, seg_speed, to_source
 
 LONG_PAUSE_SEC = 2.5
 MIN_CUT_SEC = 0.08
@@ -219,7 +220,7 @@ class _Joins:
         for index, part in enumerate(parts):
             self.plain_starts.append(plain)
             self.eaten.append(eaten)
-            plain += max(0.0, float(part["end_sec"]) - float(part["start_sec"]))
+            plain += seg_length(part)
             eaten += overlaps[index] if index < len(overlaps) else 0.0
         self.final_starts = [p - e for p, e in zip(self.plain_starts, self.eaten)]
 
@@ -297,7 +298,9 @@ def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut
         from app.audio_edit import heard_subtitles
 
         payload = heard_subtitles(payload, parts, list(segments or []), joins, overlaps, jumps)
-    spans = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+    # Развёрнутые куски (реверс) — без субтитров: речь задом не читается.
+    payload = drop_reversed(payload, parts)
+    spans = [(float(p["start_sec"]), float(p["end_sec"]), seg_speed(p)) for p in parts]
     return shift_for_transition(payload, spans, overlaps)
 
 
@@ -623,7 +626,7 @@ class CutPlan:
         return [(0.0, d) for d in self.piece_durations if d > 0]
 
     def part_durations(self) -> list[float]:
-        return [float(p["end_sec"]) - float(p["start_sec"]) for p in self.parts]
+        return [seg_length(p) for p in self.parts]
 
     def finished_mapper(self, segments: list[dict], transition: Any) -> "FinishedCutMap":
         """Время готового клипа без вырезов → с вырезами (с настоящими переходами)."""
@@ -681,7 +684,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
     touched = False
     for index, seg in enumerate(segments):
         src_start, src_end = float(seg["start_sec"]), float(seg["end_sec"])
-        length = max(0.0, src_end - src_start)
+        length = seg_length(seg)  # шкала клипа: у куска со скоростью — не секунды исходника
         offsets.append(offset)
         # Вырезы внутри куска — в секундах от его начала.
         local = [
@@ -719,6 +722,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
         if cursor < length - 1e-9:
             effective.append((offset + cursor, offset + length))
         for a, b in kept:
+            x, y = to_source(seg, a), to_source(seg, b)  # скорость/реверс куска (app/piece_speed.py)
             part = {
                 "id": seg.get("id"),
                 "source_id": seg.get("source_id"),
@@ -726,9 +730,12 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
                 "piece": index,
                 "local_start": round(a, 3),
                 "local_end": round(b, 3),
-                "start_sec": round(src_start + a, 3),
-                "end_sec": round(src_start + b, 3),
+                "start_sec": round(min(x, y), 3),
+                "end_sec": round(max(x, y), 3),
             }
+            for key in ("speed", "reverse", "speed_audio"):
+                if key in seg:
+                    part[key] = seg[key]
             if seg.get("focus"):
                 part["focus"] = slice_focus(seg.get("focus"), a, b)
             if seg.get("fit"):
@@ -743,7 +750,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
         raise ValueError("вырезы закрывают весь клип — нечего рендерить")
     merged = _merge(effective)
     jump_joins = [left["piece"] == right["piece"] for left, right in zip(parts, parts[1:])]
-    total_after = round(sum(float(p["end_sec"]) - float(p["start_sec"]) for p in parts), 3)
+    total_after = round(sum(seg_length(p) for p in parts), 3)
     return CutPlan(
         parts=parts,
         jump_joins=jump_joins,
@@ -987,7 +994,7 @@ def suggest_cuts(
 
 
 def plan_duration(plan: dict) -> float:
-    return round(sum(max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in plan.get("segments") or []), 3)
+    return round(sum(seg_length(s) for s in plan.get("segments") or []), 3)
 
 
 def check_cuts_for_plan(plan: dict, raw: Any, fps: float = 30.0) -> tuple[list[dict], list[str]]:

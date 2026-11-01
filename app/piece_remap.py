@@ -18,24 +18,34 @@ from typing import Any
 
 
 class Piece:
-    __slots__ = ("key", "start", "end", "offset")
+    __slots__ = ("key", "start", "end", "offset", "speed")
 
-    def __init__(self, key: Any, start: float, end: float, offset: float):
-        self.key, self.start, self.end, self.offset = key, start, end, offset
+    def __init__(self, key: Any, start: float, end: float, offset: float, speed: float = 1.0):
+        self.key, self.start, self.end, self.offset, self.speed = key, start, end, offset, speed
 
     @property
     def length(self) -> float:
-        return self.end - self.start
+        """Длина на шкале склейки: у куска со скоростью — ``(end − start)/speed``."""
+        return (self.end - self.start) / self.speed
+
+    def source(self, t: float) -> float:
+        return self.start + max(0.0, t - self.offset) * self.speed
+
+    def at(self, source: float) -> float:
+        return self.offset + (source - self.start) / self.speed
 
 
 def layout(pieces: list[dict]) -> list[Piece]:
-    """[{id, start_sec, end_sec}] → куски с местом в склейке."""
+    """[{id, start_sec, end_sec, speed?}] → куски с местом в склейке."""
+    from app.piece_speed import seg_speed
+
     out, offset = [], 0.0
     for p in pieces:
         start, end = float(p["start_sec"]), float(p["end_sec"])
         if end > start:
-            out.append(Piece(p.get("id"), start, end, offset))
-            offset += end - start
+            piece = Piece(p.get("id"), start, end, offset, seg_speed(p))
+            out.append(piece)
+            offset += piece.length
     return out
 
 
@@ -61,6 +71,7 @@ class PieceMap:
             return True
         return any(
             abs(a.start - b.start) > 1e-3 or abs(a.end - b.end) > 1e-3 or a.key != b.key
+            or abs(a.speed - b.speed) > 1e-4
             for a, b in zip(self.old, self.new)
         )
 
@@ -92,22 +103,22 @@ class PieceMap:
             return round(self.total, 3)  # «до конца клипа» (субтитры, плашка) — до нового конца
         index = self._old_index(t)
         piece = self.old[index]
-        source = piece.start + max(0.0, t - piece.offset)
+        source = piece.source(t)
         home = self._home(index, source)
         if home is not None:
-            return round(home.offset + source - home.start, 3)
+            return round(home.at(source), 3)
         target = self.match[index]
         if target is None:  # кусок удалили — к месту, где он был
             following = next((m for m in self.match[index + 1:] if m is not None), None)
             return round(following.offset if following else self.total, 3)
         inside = min(max(source, target.start), target.end)
-        return round(target.offset + inside - target.start, 3)
+        return round(target.at(inside), 3)
 
     def __call__(self, t: float) -> float | None:
         t = float(t)
         index = self._old_index(t)
         piece = self.old[index]
-        if self._home(index, piece.start + max(0.0, t - piece.offset)) is None:
+        if self._home(index, piece.source(t)) is None:
             return None
         return self.clamp(t)
 

@@ -187,7 +187,9 @@ def part_overlaps(
     вырезов, app/cuts.py) с ``start_sec``/``end_sec`` исходника: длины частей
     и дырки в исходнике между ними — те же входы, что у ``render_montage``.
     """
-    durations = [max(0.0, float(p["end_sec"]) - float(p["start_sec"])) for p in parts]
+    from app.piece_speed import seg_length
+
+    durations = [seg_length(p) for p in parts]  # шкала клипа (скорость куска)
     gaps: list[float | None] = []
     for left, right in zip(parts, parts[1:]):
         gap = float(right["start_sec"]) - float(left["end_sec"])
@@ -211,7 +213,9 @@ def speech_under_joins(segments: list[dict], transition: object, words: list[dic
     overlaps = part_overlaps(segments, transition)
     joins = []
     bound = 0.0
-    lengths = [max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in segments]
+    from app.piece_speed import seg_length
+
+    lengths = [seg_length(s) for s in segments]
     clean = []
     for w in words or []:
         try:

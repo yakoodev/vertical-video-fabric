@@ -14,7 +14,8 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, Aspect, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, TransitionSettings } from "@/api/types";
+import type { AiSegment, Aspect, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
+import { segLen, segSpeed } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
@@ -377,8 +378,8 @@ function insertBox(
 function clipTimeOf(segments: AiSegment[], cur: number): number | null {
   let t = 0;
   for (const s of segments) {
-    if (cur >= s.start_sec && cur <= s.end_sec) return t + (cur - s.start_sec);
-    t += s.end_sec - s.start_sec;
+    if (cur >= s.start_sec && cur <= s.end_sec) return t + (cur - s.start_sec) / segSpeed(s);
+    t += segLen(s);
   }
   return null;
 }
@@ -1053,6 +1054,79 @@ function lookFilterCss(preset?: FfmpegPreset): string {
 
 // Collapsible group in the render panel — the panel has a lot of knobs, so keep
 // only what you're working on open.
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+
+function speedBadge(seg: AiSegment): string {
+  const bits = [seg.reverse ? "реверс" : "", segSpeed(seg) !== 1 ? `×${segSpeed(seg)}` : ""].filter(Boolean);
+  return bits.join(" ") || "×1";
+}
+
+/** Инспектор куска: скорость, реверс и звук (POST /segment-speed = set_segment_speed агента). */
+function SegmentSpeedControl({
+  segment,
+  index,
+  busy,
+  onChange,
+}: {
+  segment: AiSegment;
+  index: number;
+  busy: boolean;
+  onChange: (body: { piece: number; speed: number; reverse: boolean; audio?: SpeedAudio }) => void;
+}) {
+  const speed = segSpeed(segment);
+  const reverse = Boolean(segment.reverse);
+  const audio: SpeedAudio = segment.speed_audio ?? (reverse ? "mute" : "tempo");
+  const sourceLen = segment.end_sec - segment.start_sec;
+  const send = (next: { speed?: number; reverse?: boolean; audio?: SpeedAudio }) => {
+    const r = next.reverse ?? reverse;
+    let a: SpeedAudio | undefined = next.audio ?? audio;
+    if (a === "reverse" && !r) a = undefined;
+    onChange({ piece: index, speed: next.speed ?? speed, reverse: r, audio: a });
+  };
+  return (
+    <div style={{ display: "grid", gap: 8, fontSize: 12.5 }}>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        Скорость
+        <select
+          value={String(speed)}
+          disabled={busy || index < 0}
+          onChange={(e) => send({ speed: Number(e.target.value) })}
+        >
+          {SPEEDS.map((v) => (
+            <option key={v} value={String(v)}>
+              {v === 1 ? "×1 (как есть)" : v < 1 ? `×${v} — слоу-мо` : `×${v} — быстрее`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }} title={sourceLen > 10 ? "Реверс — кусок до 10 с исходника" : ""}>
+        <input
+          type="checkbox"
+          checked={reverse}
+          disabled={busy || index < 0 || (!reverse && sourceLen > 10)}
+          onChange={(e) => send({ reverse: e.target.checked, audio: e.target.checked ? undefined : audio === "reverse" ? undefined : audio })}
+        />
+        Задом наперёд{sourceLen > 10 && !reverse ? " (кусок длиннее 10 с)" : ""}
+      </label>
+      {speed !== 1 || reverse ? (
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          Звук
+          <select value={audio} disabled={busy} onChange={(e) => send({ audio: e.target.value as SpeedAudio })}>
+            <option value="tempo">речь без смены тона</option>
+            <option value="pitch">как плёнка (тон меняется)</option>
+            <option value="mute">без звука</option>
+            {reverse ? <option value="reverse">задом наперёд</option> : null}
+          </select>
+        </label>
+      ) : null}
+      <p className="muted" style={{ margin: 0 }}>
+        На таймлайне {segLen(segment).toFixed(1)} с (исходника {sourceLen.toFixed(1)} с). Слои и субтитры после куска
+        сдвигаются сами; у реверса субтитры куска скрыты, превью играет его вперёд.
+      </p>
+    </div>
+  );
+}
+
 function Group({
   title,
   badge,
@@ -1212,10 +1286,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const [chosen, setChosen] = useState<Set<number> | null>(null);
   const [loop, setLoop] = useState(true);
   const [rate, setRate] = useState(1);
+  const rateRef = useRef(rate);
+  rateRef.current = rate;
   const loopRef = useRef(loop);
   loopRef.current = loop;
   // Ordered ranges to play back as one clip preview (segments stitched in time).
-  const playbackRef = useRef<{ ranges: { start: number; end: number }[]; idx: number } | null>(null);
+  const playbackRef = useRef<{ ranges: { start: number; end: number; speed?: number }[]; idx: number } | null>(null);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -1229,9 +1305,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         if (next < pb.ranges.length) {
           pb.idx = next;
           v.currentTime = pb.ranges[next].start;
+          v.playbackRate = rateRef.current * (pb.ranges[next].speed ?? 1); // скорость куска
         } else if (loopRef.current) {
           pb.idx = 0;
           v.currentTime = pb.ranges[0].start;
+          v.playbackRate = rateRef.current * (pb.ranges[0].speed ?? 1);
         } else {
           v.pause();
           playbackRef.current = null;
@@ -1276,11 +1354,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (videoRef.current) videoRef.current.playbackRate = rate;
   }, [rate, view, query.isSuccess, editorPlanId]);
 
-  const playRanges = (ranges: { start: number; end: number }[]) => {
+  const playRanges = (ranges: { start: number; end: number; speed?: number }[]) => {
     const v = videoRef.current;
     if (!v || !ranges.length) return;
     playbackRef.current = { ranges, idx: 0 };
-    v.playbackRate = rate;
+    // Кусок со скоростью (slow-mo ×0.5) превью играет с той же скоростью; реверс — вперёд.
+    v.playbackRate = Math.min(16, Math.max(0.0625, rate * (ranges[0].speed ?? 1)));
     v.currentTime = ranges[0].start;
     void v.play();
   };
@@ -1876,6 +1955,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         : toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"),
   });
 
+  // ⏩ Скорость/реверс куска — тем же инструментом, что у агента (set_segment_speed): сервер
+  // сдвигает слои, камеру и субтитры за новой длиной куска, поэтому панель перечитываем.
+  const segmentSpeed = useMutation({
+    mutationFn: async (body: { planId: number; piece: number; speed: number; reverse: boolean; audio?: SpeedAudio }) => {
+      await flushSettings();
+      const { planId, ...rest } = body;
+      return clipPlansApi.setSegmentSpeed(planId, rest);
+    },
+    onSuccess: async (r, body) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      await qc.invalidateQueries({ queryKey: ["plan-subtitles", body.planId] });
+      setSettingsNonce((n) => n + 1);
+      const what = r.reverse ? `реверс${r.speed !== 1 ? ` ×${r.speed}` : ""}` : r.speed !== 1 ? `×${r.speed}` : "как в исходнике";
+      toast.success(`Кусок ${r.piece + 1}: ${what} · ${r.length.toFixed(1)} с`);
+      for (const w of r.warnings ?? []) toast.push(w, "info");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось поменять скорость куска"),
+  });
+
   const batch = useMutation({
     // No ids = everything ticked «в рендер»; the editor passes just its clip.
     mutationFn: async (ids: number[] | undefined) => {
@@ -2346,8 +2444,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const cur = videoRef.current?.currentTime ?? 0;
     let t = 0;
     for (const s of segs) {
-      if (cur >= s.start_sec && cur <= s.end_sec) return Number((t + cur - s.start_sec).toFixed(1));
-      t += s.end_sec - s.start_sec;
+      if (cur >= s.start_sec && cur <= s.end_sec) return Number((t + (cur - s.start_sec) / segSpeed(s)).toFixed(1));
+      t += segLen(s);
     }
     return 0;
   };
@@ -2365,7 +2463,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (!v || !activePlan) return;
     v.pause();
     const now = clipTimeOf(activePlan.segments, v.currentTime) ?? 0;
-    const total = activePlan.segments.reduce((acc, s) => acc + (s.end_sec - s.start_sec), 0);
+    const total = activePlan.segments.reduce((acc, s) => acc + segLen(s), 0);
     seekClipTime(Math.min(Math.max(0, now + deltaSec), Math.max(0, total - 0.001)), false);
   };
   const togglePlay = () => {
@@ -2378,16 +2476,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     // Плей с места курсора до конца клипа (если курсор вне клипа — с начала).
     const now = clipTimeOf(activePlan.segments, v.currentTime);
     let acc = 0;
-    const ranges: { start: number; end: number }[] = [];
+    const ranges: { start: number; end: number; speed?: number }[] = [];
     for (const s of activePlan.segments) {
-      const len = s.end_sec - s.start_sec;
+      const len = segLen(s);
       if (now == null || now < acc + len - 0.05) {
-        const from = now != null && now > acc ? s.start_sec + (now - acc) : s.start_sec;
-        ranges.push({ start: from, end: s.end_sec });
+        const from = now != null && now > acc ? s.start_sec + (now - acc) * segSpeed(s) : s.start_sec;
+        ranges.push({ start: from, end: s.end_sec, speed: segSpeed(s) });
       }
       acc += len;
     }
-    playRanges(ranges.length ? ranges : activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec })));
+    playRanges(ranges.length ? ranges : activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec, speed: segSpeed(s) })));
   };
   // Preview media for the open clip's inserts (created once per file, reused).
   const insertsPreview: InsertPreview[] = inserts.map((ins) => {
@@ -2450,7 +2548,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const voiceTracks = planVoice.data?.voice;
   const levelTracks = planLevels.data?.levels;
   // Длина клипа «кусками подряд» — та же шкала, что у слоёв в превью (clipTimeOf).
-  const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
+  const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + segLen(seg), 0);
   // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
   // мышью такие нельзя (сдвиг лёг бы не в те координаты) — сначала «Разметить слои в этом формате».
   const shown = reframedView ?? { layers, camera };
@@ -2782,7 +2880,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   // Положить слои (из шаблона, библиотеки, ИИ) в клип с момента `at`: времена
   // сдвигаются целиком, дорожки — свободные. Новый верхний слой сразу выделен.
-  const clipDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + (seg.end_sec - seg.start_sec), 0);
+  const clipDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + segLen(seg), 0);
   const addLayers = (incoming: Layer[], at: number, cameraKeys?: CameraKey[], track?: number | null) => {
     if (!incoming.length && !cameraKeys?.length) return;
     // Первые слои клипа размечаются прямо в его формате (шаблоны собраны под него же).
@@ -4287,6 +4385,25 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
             {/* Холст: фокус кадра не нужен — кадр 9:16 целиком. */}
             {isCanvas ? null : (
+            <>
+            <Group
+              title="Скорость куска"
+              badge={selectedSegment ? speedBadge(selectedSegment) : "сегмент?"}
+            >
+              {selectedSegment && activePlan ? (
+                <SegmentSpeedControl
+                  segment={selectedSegment}
+                  index={activePlan.segments.findIndex((s) => s.id === selectedSegment.id)}
+                  busy={segmentSpeed.isPending}
+                  onChange={(body) => segmentSpeed.mutate({ planId: activePlan.id, ...body })}
+                />
+              ) : (
+                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+                  Выберите кусок на таймлайне: слоу-мо, ускорение или реверс.
+                </p>
+              )}
+            </Group>
+
             <Group title="Фокус кадра" badge={selectedSegment ? `${selectedSegment.focus?.length ?? 0} точ.` : "сегмент?"} defaultOpen>
               {selectedSegment ? (
                 <FocusEditor segment={selectedSegment} sourceId={sourceId} videoRef={videoRef} />
@@ -4296,6 +4413,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 </p>
               )}
             </Group>
+            </>
             )}
 
             <Group

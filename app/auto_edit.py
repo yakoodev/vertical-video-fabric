@@ -254,7 +254,9 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
     final = subtitles_to_final({"words": subs.get("words") or [], "handle_words": subs.get("handle_words")},
                                segments, transition, joins=plan_joins_setting(plan))
     words = [w for w in final.get("words") or [] if str(w.get("word", "")).strip()]
-    _starts, duration = clip_timeline([(float(s["start_sec"]), float(s["end_sec"])) for s in segments], transition)
+    from app.piece_speed import spans as speed_spans
+
+    _starts, duration = clip_timeline(speed_spans(segments), transition)
     try:
         peaks = clip_waveform(store, clip_plan_id).get("peaks") or []
     except Exception:  # noqa: BLE001 - без волны наезды встанут только по паузам
