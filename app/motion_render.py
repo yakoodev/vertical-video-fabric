@@ -1473,12 +1473,16 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
         else:
             args += ["-stream_loop", "-1", "-ss", f"{offset:.3f}", "-i", asset["file_path"]]
         if ins["mode"] == "full":
-            box_w, box_h, x, y = width, height, "(W-w)/2", "(H-h)/2"
+            # Как в рендере (montage_assets.full_insert_chain): вокруг — размытая копия, а не кадр клипа.
+            from app.montage_assets import full_insert_chain
+
+            x, y = "(W-w)/2", "(H-h)/2"
+            graph.append(f"{full_insert_chain(f'[{n}:v]', width, height, ins.get('fill'), str(n))},format=rgba[i{n}]")
         else:
             box_w = max(2, int(width * ins["scale"]) // 2 * 2)
             box_h = max(2, int(height * INSERT_MAX_HEIGHT) // 2 * 2)
             x, y = f"(W*{ins['x']:.4f})-(w/2)", f"(H*{ins['y']:.4f})-(h/2)"
-        graph.append(f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,format=rgba[i{n}]")
+            graph.append(f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,format=rgba[i{n}]")
         graph.append(f"{last}[i{n}]overlay=x={x}:y={y}[o{n}]")
         last = f"[o{n}]"
     tmp = png.with_name("frame-inserts.png")

@@ -78,3 +78,55 @@ def test_same_insert_twice_is_a_lint_warning(tmp_path, monkeypatch):
     repeat = [f for f in lint["findings"] if "одна и та же вставка" in f["message"]]
     assert len(repeat) == 1 and "дважды" in repeat[0]["message"] and repeat[0]["t"] == 6.0
     assert lint["by_check"]["montage"] == 1 and "монтаж 1" in lint["summary"]
+
+
+def _top_pixel(tmp_path, video, t):
+    import subprocess
+
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t}", "-i", str(video), "-frames:v", "1",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True, timeout=60).stdout
+    i = (int(640 * 0.05) * 360 + 180) * 3
+    return raw[i], raw[i + 1], raw[i + 2]
+
+
+def test_full_insert_of_horizontal_gif_has_blurred_fill_not_black_bars(tmp_path):
+    import subprocess
+
+    from app.montage_assets import build_inserts_args, normalize_inserts
+
+    _require_ffmpeg()
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=360x640:d=3",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    gif = tmp_path / "wide.gif"  # горизонтальная гифка 16:9
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:d=1:r=5", str(gif)],
+                   check=True)
+    assets = {1: {"kind": "gif", "file_path": str(gif), "has_audio": False}}
+    tops = {}
+    for fill in ("blur", "cover", "black"):
+        inserts = normalize_inserts([{"asset_id": 1, "at": 0.5, "duration": 2.0, "mode": "full",
+                                      **({"fill": fill} if fill != "blur" else {})}])
+        assert inserts[0].get("fill") == (None if fill == "blur" else fill)  # по умолчанию — размытие, поле не пишем
+        out = tmp_path / f"{fill}.mp4"
+        subprocess.run(build_inserts_args(clip, out, inserts, assets, 360, 640, 3.0, clip_has_audio=False),
+                       check=True, timeout=120)
+        tops[fill] = _top_pixel(tmp_path, out, 1.5)
+    assert tops["blur"][0] > 150 and tops["blur"][2] < 90   # сверху — размытая та же гифка, не поля
+    assert tops["cover"][0] > 150                            # cover — гифка во весь кадр
+    assert max(tops["black"]) < 40                           # black — прежние поля по просьбе
+
+
+def test_add_insert_warns_when_the_same_file_is_inserted_again(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    asset = store.create_montage_asset(kind="image", label="таракан", file_path=str(Path(__file__)), width=480,
+                                       height=270)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": asset["id"], "mode": "full", "at": 1, "duration": 1.5})
+    assert ok and not [w for w in out.get("warnings") or [] if "уже вставлен" in w]
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": asset["id"], "mode": "full", "at": 6, "duration": 2,
+                                           "fill": "cover"})
+    assert ok and any("уже вставлен на 1 с" in w for w in out["warnings"])
+    assert out["inserts"][1]["fill"] == "cover"

@@ -5057,13 +5057,21 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         args = {**args, "at": round(word_time(ctx, args["at_word"]) + float(args.get("word_offset") or 0), 3)}
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
-    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason") if args.get(k) is not None}
+    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
+             if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
     out: dict = {"ok": True, "inserts": fresh["inserts"]}
-    if note:
-        out["warnings"] = [note]
+    warnings = [note] if note else []
+    twice = [i for i in inserts if int(i.get("asset_id") or -1) == int(asset["id"]) and i.get("mode") != "sound"]
+    if twice and mode != "sound":
+        # QA 02.11 (клип 892): одна и та же гифка на 6.7 и 13.5 с.
+        seconds = ", ".join(f"{float(i['at']):g}" for i in twice)
+        warnings.append(f"этот файл уже вставлен на {seconds} с — повтор "
+                        "выглядит как нехватка материала: на второе место — другая картинка/гифка под смысл слов")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
@@ -7171,11 +7179,15 @@ def _build_registry() -> list[Tool]:
             "Вставка из библиотеки поверх клипа (видео-мем/картинка/звук): asset_id, at (с клипа), duration, "
             "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. Вставки "
             "видны в view_frame и contact_sheet (первые кадры гифки). Окошко само встаёт между хуком и "
-            "субтитрами. / Insert.",
+            "субтитрами. mode full другой пропорции (горизонтальная гифка) — вокруг размытая копия вставки "
+            "(fill blur, по умолчанию), cover — обрезать во весь кадр, black — чёрные поля. Один файл дважды — "
+            "предупреждение. / Insert.",
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
                   "reason": {"type": "string"},
+                  "fill": {"type": "string", "enum": ["blur", "cover", "black"],
+                           "description": "mode full: чем заполнить кадр вокруг вставки другой пропорции"},
                   "at_word": _AT_WORD_SCHEMA,
                   "word_offset": {"type": "number"}}, ["asset_id"]),
             h_add_insert, mutating=True,
