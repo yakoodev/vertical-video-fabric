@@ -79,9 +79,10 @@ def test_module_ids_groups_and_dependencies_are_sane():
 
 def test_every_module_route_matches_a_real_endpoint():
     from app import main
+    from tests.routes_util import flat_routes
 
     real = []
-    for route in main.app.routes:
+    for route in flat_routes(main.app.routes):
         path = getattr(route, "path", "")
         if not path or "{spa_path" in path:
             continue

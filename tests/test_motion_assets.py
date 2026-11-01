@@ -271,9 +271,10 @@ def test_repo_fonts_json_is_consistent():
 
 def test_main_app_registers_motion_assets_router():
     from app.main import app
+    from tests.routes_util import flat_routes
 
-    paths = {getattr(r, "path", "") for r in app.routes}
+    paths = {getattr(r, "path", "") for r in flat_routes(app.routes)}
     assert {"/api/motion/fonts", "/api/motion/emoji", "/api/motion/packs/{pack}/{file}"} <= paths
     # роутер должен стоять раньше SPA-ловушки, иначе /api/motion/* съест она
-    order = [getattr(r, "path", "") for r in app.routes]
+    order = [getattr(r, "path", "") for r in flat_routes(app.routes)]
     assert order.index("/api/motion/fonts") < order.index("/{spa_path:path}")

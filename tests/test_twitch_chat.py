@@ -278,9 +278,10 @@ def test_chat_endpoints(tmp_path, monkeypatch):
     nodes += [_node(500 + i, 300 + i * 0.1, "OMEGALUL") for i in range(30)]
 
     import app.main as app_main
+    from tests.routes_util import flat_routes
 
     router = next(
-        r for r in app_main.app.router.routes if getattr(r, "path", "") == "/api/sources/{source_id}/chat/import"
+        r for r in flat_routes(app_main.app.router.routes) if getattr(r, "path", "") == "/api/sources/{source_id}/chat/import"
     )
     assert router  # ручка зарегистрирована до SPA-ловушки
     from app.chat_api import build_chat_router
