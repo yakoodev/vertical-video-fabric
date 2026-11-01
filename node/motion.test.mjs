@@ -2059,6 +2059,24 @@ test("субтитры stomp: слово видно с момента и «вп�
   assert.ok(E.CAPTION_STYLES.some((s) => s.id === "stomp" && s.props.animation === "stomp"));
 });
 
+test("субтитры: заглушённый мат со звёздочками не подсвечивается и без эмфазы (QA 01.11)", () => {
+  assert.ok(E.isCensoredWord("п*****,") && E.isCensoredWord("Бл*ть") && E.isCensoredWord("***"));
+  assert.ok(!E.isCensoredWord("пиздец") && !E.isCensoredWord("*") && !E.isCensoredWord("5*3"));
+  const red = (d) => {
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] < 90) n++;
+    return n;
+  };
+  const caps = (w) => ({ id: "c", type: "captions", start: 0, end: 3, x: 0.5, y: 0.5,
+    props: { style: "hormozi", highlightWords: [{ i: 0, color: "#ff3b30" }] } });
+  const plain = [{ t0: 1, t1: 1.3, w: "ПИЗДЕЦ", e: 2 }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];
+  const starred = [{ t0: 1, t1: 1.3, w: "П*****", e: 2 }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];
+  assert.ok(red(pixels([caps()], 1.6, { words: plain })) > 200, "обычное слово — красная подсветка");
+  assert.equal(red(pixels([caps()], 1.6, { words: starred })), 0, "мат со звёздочками — без подсветки");
+  const ctx = createCanvas(8, 8).getContext("2d");
+  assert.equal(E.captionPages(ctx, starred, { style: "hormozi" }, 0, 3, "Montserrat")[0].words[0].e, 0);
+});
+
 test("субтитры: эмфаза слова (comp.words[i].e) — крупнее всю страницу, прыжок в момент, встряска у shake", () => {
   const ctx = createCanvas(8, 8).getContext("2d");
   const plain = [{ t0: 1, t1: 1.3, w: "ДЕНЬГИ" }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];

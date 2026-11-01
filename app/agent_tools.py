@@ -3328,6 +3328,15 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
         if args.get("verify", True) is False or args.get("clear"):
             raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
                             "повтори censor_profanity без verify=false")
+    explicit = any(args.get(k) not in (None, "", [], False) for k in
+                   ("levels", "level", "style", "groups", "soft", "skip", "track", "clear", "verify_again"))
+    if not explicit and args.get("stars", True) is not False:
+        try:
+            done = censor.already_censored(ctx.store, ctx.plan_id)
+        except Exception:  # noqa: BLE001 - не смогли сверить — делаем как обычно
+            done = None
+        if done:
+            return {"ok": True, "status": "already", "already_applied": True, **done}
     try:
         if args.get("clear"):
             ctx.before_change()
@@ -6066,9 +6075,12 @@ def _build_registry() -> list[Tool]:
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
             "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
             "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
-            "silence, затем noise (только его; style_switched в ответе). "
+            "silence, затем noise (только его; style_switched в ответе). Цензура уже стоит на весь мат — повтор "
+            "без параметров отвечает status already («уже применено», без рендера); verify_again: true — проверить "
+            "рендером заново. Слова под цензурой в субтитрах всегда со звёздочками и не подсвечиваются "
+            "(highlightWords/эмфаза на них не действуют). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
-            _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
+            _obj({"verify": {"type": "boolean"}, "verify_again": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
                   "clear": {"type": "boolean"},

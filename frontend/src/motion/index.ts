@@ -120,6 +120,7 @@ export {
   captionPages,
   captionPageAt,
   captionWordsFrom,
+  isCensoredWord,
   ORIG_SPEAKER,
   speakerColor,
   type CaptionStyle,

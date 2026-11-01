@@ -1712,6 +1712,14 @@ class AppStore:
             layout = self._plan_piece_layout(clip_plan_id)
             if layout:
                 payload = {**payload, "pieces": layout}
+        if payload and payload.get("words"):
+            # Слово под цензурой — всегда со звёздочками, кто бы ни переписал субтитры (app/censor.py).
+            try:
+                from app.censor import mask_censored_words
+
+                payload = mask_censored_words(self, clip_plan_id, payload)
+            except Exception:  # noqa: BLE001 - маска — удобство, сохранение важнее
+                pass
         self.db.execute(
             "UPDATE clip_plans SET subtitles_json = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False) if payload else "", clip_plan_id),
