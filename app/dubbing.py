@@ -342,18 +342,44 @@ def dub_groups(report: list[dict], gap: float = GROUP_GAP_SEC) -> list[tuple[flo
     return [(round(a, 3), round(b, 3)) for a, b in groups]
 
 
-def dub_layers(groups: list[tuple[float, float]], asset_id: int, clock: Any) -> list[dict]:
-    """audio-слои ``dub_ru_N``: шкала clip (с наплывами), offset — место группы в дорожке."""
+def _minus_cuts(start: float, end: float, cuts: list[dict]) -> list[tuple[float, float]]:
+    """[start, end] без вырезов клипа: слой не должен перекрывать вырез — рендер сдвинул бы его
+    целиком, и речь после выреза отстала бы на длину выреза."""
+    spans = [(start, end)]
+    for cut in sorted(cuts or [], key=lambda c: float(c.get("start", 0))):
+        try:
+            ca, cb = float(cut["start"]), float(cut["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out = []
+        for a, b in spans:
+            if cb <= a or ca >= b:
+                out.append((a, b))
+                continue
+            if ca > a:
+                out.append((a, ca))
+            if cb < b:
+                out.append((cb, b))
+        spans = out
+    return [(a, b) for a, b in spans if b - a >= 0.1]
+
+
+def dub_layers(groups: list[tuple[float, float]], asset_id: int, clock: Any, cuts: list[dict] | None = None) -> list[dict]:
+    """audio-слои ``dub_ru_N``: начало/конец — шкала clip (с наплывами), offset — место куска
+    группы в дорожке (шкала plain, как субтитры). ``cuts`` — ``render_settings.cuts`` (plain):
+    группа через вырез — двумя слоями по обе стороны выреза."""
     layers = []
-    for n, (a, b) in enumerate(groups, start=1):
-        start = clock.plain_to_clip(a)
-        end = max(start + 0.1, clock.plain_to_clip(b))
-        layers.append({
-            "id": f"{LAYER_PREFIX}_{n}", "type": "audio", "name": f"Озвучка RU {n}", "start": round(start, 3),
-            "end": round(end, 3),
-            "props": {"asset_id": int(asset_id), "mode": "track", "volume": 1.0, "offset": round(a, 3),
-                      "duck": True, "fadeIn": 0.02, "fadeOut": 0.05},
-        })
+    for a, b in groups:
+        for pa, pb in _minus_cuts(a, b, cuts or []):
+            start = clock.plain_to_clip(pa)
+            end = max(start + 0.1, clock.plain_to_clip(pb))
+            n = len(layers) + 1
+            layers.append({
+                "id": f"{LAYER_PREFIX}_{n}", "type": "audio", "name": f"Озвучка RU {n}", "start": round(start, 3),
+                "end": round(end, 3),
+                "props": {"asset_id": int(asset_id), "mode": "track", "volume": 1.0,
+                          "offset": round(pa, 3), "duck": True, "fadeIn": 0.02, "fadeOut": 0.05},
+            })
     return layers
 
 
@@ -426,8 +452,8 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-    layers = dub_layers(dub_groups(report), int(asset["id"]), clock)
     render = dict(plan.get("render_settings") or {})
+    layers = dub_layers(dub_groups(report), int(asset["id"]), clock, render.get("cuts"))
     kept = [l for l in render.get("layers") or [] if not is_dub_layer(l)]
     store.set_clip_plan_render_settings(clip_plan_id, {**render, "layers": kept + layers})
     overflows = [r for r in report if r["action"] == "trim"]

@@ -325,6 +325,16 @@ def test_groups_and_layers_survive_render_normalization():
     assert clean[1]["props"]["mode"] == "track" and str(clean[1]["props"]["asset_id"]) == "901"
 
 
+def test_dub_layer_split_around_cut_keeps_offsets():
+    class Clock:
+        def plain_to_clip(self, t):
+            return t
+
+    layers = dubbing.dub_layers([(0.0, 4.0)], 7, Clock(), cuts=[{"start": 1.5, "end": 2.0}])
+    assert [(l["start"], l["end"], l["props"]["offset"]) for l in layers] == [(0.0, 1.5, 0.0), (2.0, 4.0, 2.0)]
+    assert dubbing._minus_cuts(0.0, 1.0, [{"start": 0.0, "end": 0.95}]) == []  # хвост < 0.1 с — не слой
+
+
 class SineTTS:
     """Бесплатная «речь» нужной длины: синус ffmpeg (длина — по таблице)."""
 
