@@ -69,6 +69,11 @@ class Settings:
         # User-Agent веб-загрузки TikTok: лучше того браузера, из которого взяты cookie аккаунта
         # (пусто — прежний встроенный).
         self.tiktok_user_agent = os.getenv("TIKTOK_USER_AGENT", "").strip()
+        # YouTube после загрузки: аудитория «не для детей» (false), «для детей» (true) или не трогать
+        # (unset — как раньше); категория — id YouTube (20 игры, 24 развлечения, 1 фильмы и
+        # анимация…), пусто — не трогать.
+        self.youtube_made_for_kids = os.getenv("YOUTUBE_MADE_FOR_KIDS", "false").strip().lower()
+        self.youtube_category_id = os.getenv("YOUTUBE_CATEGORY_ID", "").strip()
         # Статистика опубликованных клипов (app/platform_stats.py): раз в N часов
         # по одной ссылке с паузой — площадки не любят частых запросов. 0 — без фона.
         self.stats_interval_hours = float(os.getenv("STATS_INTERVAL_HOURS", "6") or 0)
