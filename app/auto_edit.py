@@ -193,10 +193,12 @@ def build_auto_edit(
             # одновременная речь не мешается в одну строку и не перебивает стримера.
             # Две строки главных субтитров — ~0.1 кадра: при 0.1 строки голосов ложились на
             # них («МНЕ НУЖНО» поверх «ЧЁРТ ВОЗЬМИ» в проверочном прогоне Gemini).
-            other_y = caption_y - 0.15 if caption_y < 0.6 else caption_y + 0.11
+            from app.agent_tools import voice_caption_y
+
+            # Не ближе зазора к главным (QA 01.11: 0.15 выше главных на 0.30 зажималось у хука в 0.20).
             layers.append({
                 "id": "auto_caps_voices", "type": "captions", "name": "Субтитры: другие голоса", "start": 0.0,
-                "end": duration, "track": 0, "x": 0.5, "y": round(min(0.8, max(0.2, other_y)), 3),
+                "end": duration, "track": 0, "x": 0.5, "y": voice_caption_y(float(caption_y)),
                 "props": {"style": "hormozi", "size": 60, "maxWords": 4, "speakers": voices,
                           "stroke": {"color": "#000000", "width": 7}, "wordScale": 1.05},
             })

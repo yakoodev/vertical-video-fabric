@@ -741,9 +741,68 @@ def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = Non
                 continue
             ya, yb = _num(a.get("y"), 0.5) or 0.5, _num(b.get("y"), 0.5) or 0.5
             if abs(ya - yb) < min_gap:
+                main, other = (a, b) if not _secondary_captions(a) else (b, a)
+                y = voice_caption_y(_num(main.get("y"), 0.5) or 0.5, ref_h)
                 out.append(f"субтитры {a.get('id')} (y {ya:.2f}) и {b.get('id')} (y {yb:.2f}) ближе "
-                           f"{min_gap} по высоте — строки лягут друг на друга; разведи y")
+                           f"{min_gap} по высоте — строки лягут друг на друга; разведи y: update_layer "
+                           f"{other.get('id')} patch {{\"y\": {y}}}")
     return out
+
+
+VOICE_CAPTIONS_TOP = 0.2  # выше — зона хука
+VOICE_CAPTIONS_BOTTOM = 0.8  # ниже — подпись площадок
+VOICE_GAP_ABOVE = 0.15
+VOICE_GAP_BELOW = 0.13
+
+
+def _secondary_captions(layer: dict) -> bool:
+    """Слой «других голосов»: speakers без главного (A) — гость, донат, ролик."""
+    props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    speakers = props.get("speakers") or []
+    return bool(speakers) and "A" not in speakers
+
+
+def voice_caption_y(main_y: float, ref_h: float = 1920.0) -> float:
+    """Где поставить слой голосов при главных субтитрах на ``main_y``: на зазор выше (если над ними
+    есть место ниже хука), иначе ниже; не помещается ни там, ни там — дальше от края."""
+    k = 1.0 if ref_h == 1920.0 else 1920 / ref_h
+    # Над главными — на две их строки и сам слой (0.15), под ними — чуть больше зазора (0.13).
+    above, below = main_y - VOICE_GAP_ABOVE * k, main_y + VOICE_GAP_BELOW * k
+    fits_above, fits_below = above >= VOICE_CAPTIONS_TOP, below <= VOICE_CAPTIONS_BOTTOM
+    if main_y < 0.6:
+        pick = above if fits_above else below if fits_below else None
+    else:
+        pick = below if fits_below else above if fits_above else None
+    if pick is None:  # не помещается нигде — дальше от ближнего края
+        pick = below if main_y < 0.5 else above
+    return round(pick, 3)
+
+
+def separate_voice_captions(layers: list[dict], ref_h: float = 1920.0) -> list[str]:
+    """Развести слой «других голосов» с главными субтитрами (на месте, ``layers`` меняется):
+    ближе зазора — голоса встают на ``voice_caption_y``. QA 01.11 (клип 889): auto_edit поставил
+    голоса на 0.20 при главных на 0.30 (зажал у хука), предупреждение агент проигнорировал."""
+    min_gap = CAPTIONS_MIN_GAP if ref_h == 1920.0 else round(CAPTIONS_MIN_GAP * 1920 / ref_h, 3)
+    caps = [l for l in layers if l.get("type") == "captions" and not l.get("hidden")]
+    main = next((l for l in caps if not _secondary_captions(l)), None)
+    notes = []
+    if main is None:
+        return notes
+    main_y = _num(main.get("y"), 0.5) or 0.5
+    for index, layer in enumerate(layers):
+        if layer.get("type") != "captions" or layer.get("hidden") or not _secondary_captions(layer):
+            continue
+        y = _num(layer.get("y"), 0.5) or 0.5
+        # Ближе зазора или уехали в зону хука/подписи площадок (следом за главными) — разводим.
+        if abs(y - main_y) >= min_gap and VOICE_CAPTIONS_TOP - 1e-6 <= y <= VOICE_CAPTIONS_BOTTOM + 1e-6:
+            continue
+        new_y = voice_caption_y(main_y, ref_h)
+        if abs(new_y - y) < 1e-6:
+            continue
+        layers[index] = {**layer, "y": new_y}
+        notes.append(f"субтитры голосов {layer.get('id')} сдвинуты с y {y:.2f} на {new_y} — не лягут на главные "
+                     f"{main.get('id')} (y {main_y:.2f})")
+    return notes
 
 
 # Цвет звучащего слова у стилей субтитров (frontend/src/motion/layers/captions.ts).
@@ -1959,11 +2018,20 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
                 moved = dict(other)
                 moved["y"] = round(min(0.85, max(0.12, (_num(other.get("y"), new_y) or new_y) + new_y - old_y)), 3)
                 layers[i] = motion.normalize_layers([moved])[0]
+    voice_notes = []
+    if normalized[0].get("type") == "captions" and not _secondary_captions(normalized[0]):
+        # Следом за главными голоса могли упереться в край (зона хука) — разводим заново.
+        from app.formats import settings_layers_format
+
+        voice_notes = separate_voice_captions(layers, _ref(settings_layers_format(render))[1])
+        layers = motion.normalize_layers(layers) if voice_notes else layers
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     out = {"ok": True, "layer": saved,
            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
            + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]}
+    if voice_notes:
+        out["notes"] = voice_notes
     if saved.get("type") == "pngtuber":
         # Порог/дорожку поправили — сразу видно, какая доля клипа рот открыт (как у add_pngtuber).
         out.update(_voice_check(ctx, layer_id))
