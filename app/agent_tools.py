@@ -3543,7 +3543,9 @@ def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
     fields = {k: args[k] for k in NAMEPLATE_FIELDS if k in args}
     try:
         return set_nameplate(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
-                             remove=args.get("remove") is True, before_change=ctx.before_change)
+                             remove=args.get("remove") is True, before_change=ctx.before_change,
+                             corner=args.get("corner") or None, start=_num(args.get("start")),
+                             end=_num(args.get("end")))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -6247,7 +6249,9 @@ def _build_registry() -> list[Tool]:
             "разделителя и ниже субтитров, слева; иначе — безопасный верхний угол, напротив логотипа бренда) | "
             "under-split-left | under-split-center | top-left | top-right. Место считается от зон площадок "
             "(вкладки сверху, подпись снизу, кнопки TikTok справа), субтитров, хука и логотипа. brand_id — "
-            "взять плашку бренда за основу. remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
+            "взять плашку бренда за основу. corner: top-right|top-left — пресет «маленькая в верхнем углу» (кегль "
+            "58, угол безопасной зоны; есть хук — выходит, когда он уходит). start/end — секунды клипа, когда плашка "
+            "на экране (хук, ушедший до start, ей не мешает). remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
             "Потом view_frame. / Channel nameplate (platform icon + handle) for the whole clip.",
             _obj({"platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
                   "handle": {"type": "string"},
@@ -6255,6 +6259,9 @@ def _build_registry() -> list[Tool]:
                   "accent": {"type": "string"},
                   "position": {"type": "string", "enum": ["auto", "top-left", "top-right", "under-split-left",
                                                           "under-split-center"]},
+                  "corner": {"type": "string", "enum": ["top-right", "top-left"]},
+                  "start": {"type": "number", "minimum": 0},
+                  "end": {"type": "number", "minimum": 0},
                   "size": {"type": "number", "minimum": 40, "maximum": 160},
                   "fade": {"type": "boolean"},
                   "anim": {"type": "string", "enum": ["none", "subtle", "lively"]},
