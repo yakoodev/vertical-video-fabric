@@ -98,6 +98,7 @@ CRAFT = """\
    КАПСОМ про самое сильное в клипе (не пересказ, а крючок: «ЕЁ НАПУГАЛ СКРИМЕР», «Я ПРОДАМСЯ»).
    Хук живёт 0–2.5 с, сверху по центру, жёлтый #FFD600 с чёрной обводкой 12–16. Две строки — центр
    ниже (positions.hook.y_by_lines): верх текста не выше 10% кадра, иначе add_layers предупредит.
+   Активный плейбук задаёт хук иначе (стиль, сколько живёт, капс) — делай как в плейбуке.
 3. Найди 1–3 панчлайна в субтитрах (самая громкая реакция, мат-взрыв, неожиданный поворот, цифра):
    • крупное слово-панчлайн по центру (text, size 130–170, КАПСОМ, обводка 14, in pop 0.2–0.3,
      loop shake amount 0.3–0.5, 0.8–1.5 с) — только на 1–2 самых сильных местах;
@@ -121,7 +122,9 @@ CRAFT = """\
    Мем не должен закрывать героя (positions.subject_box). Не больше 2 мемов на клип. В диалогах
    сериала/мультфильма лицо говорящего обычно в центре кадра 9:16 — мемы там ставь, только если
    view_frame показывает свободное место; иначе без мемов. Гифки с эмодзи в подписи не бери. Картинки и плашки
-   не закрывают видео: ≤ 40 % кадра и на пустом месте (больше — инструмент откажет).
+   не закрывают видео: ≤ 40 % кадра и на пустом месте (больше — инструмент откажет). Исключение —
+   вставка-иллюстрация во весь кадр не дольше 3 с (картинка/видео-слой на ≤ 3 с или add_insert mode full,
+   duration ≤ 3): голос идёт под ней — так монтируют истории (плейбук vtuber-story).
    Гифки (add_insert) видны в view_frame/contact_sheet; окошко само встаёт между хуком и субтитрами.
    Не заменяй гифку статичной картинкой.
 5. Цифры в речи («миллион», «300 тысяч», «12 квадратов») — counter по центру y≈0.28 на слове.
@@ -256,15 +259,55 @@ build_app_promo: {"spec":{"brand":{"accent":"#FF6A1F"},"hook":["Ищешь ко�
 """
 
 
-def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True) -> str:
+def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True,
+                  playbook: str | None = None) -> str:
     """Системный промпт под формат клипа (app/formats.py). 9:16 со слоями в 9:16 (клип без
     поля format) — ровно прежний текст; другой формат — кадр W×H, опорные px разметки и
-    правила раскладки этого формата (см. ``format_craft``)."""
+    правила раскладки этого формата (см. ``format_craft``). ``playbook`` — активный плейбук
+    (``playbook_block``): его текст и правило «плейбук главнее ремесла»."""
     from app.formats import settings_format
 
     fmt, layers_format = settings_format(fmt), settings_format(layers_format)
-    return (format_craft(fmt, layers_format, has_layers=has_layers) + "\nСПРАВКА ПО СЛОЯМ\n"
-            + agent_tools.motion_reference(fmt, layers_format) + "\n\n" + EXAMPLES)
+    return (format_craft(fmt, layers_format, has_layers=has_layers) + playbook_block(playbook)
+            + "\nСПРАВКА ПО СЛОЯМ\n" + agent_tools.motion_reference(fmt, layers_format) + "\n\n" + EXAMPLES)
+
+
+PLAYBOOK_MAX_CHARS = 12000
+
+
+def playbook_block(name: str | None) -> str:
+    """Блок активного плейбука в системный промпт: правила плейбука главнее общих правил ремесла
+    (QA 01.11: CRAFT велел хук 0–2.5 с жёлтым капсом, плейбук vtuber-story — 8–12 с, белый; агент
+    метался между ними). Нет плейбука или файла — пусто."""
+    if not name:
+        return ""
+    from app import playbooks
+
+    try:
+        book = playbooks.get_playbook(name)
+    except KeyError:
+        return ""
+    return (
+        f"\nАКТИВНЫЙ ПЛЕЙБУК «{book['name']}» ({book['title']})\n"
+        "Владелец заказал монтаж по этому плейбуку. Где его правила расходятся с правилами выше (ПОРЯДОК РАБОТЫ, "
+        "СТИЛЬ, хук, субтитры, вставки, эффекты, длина) — делай КАК В ПЛЕЙБУКЕ, это не нарушение. Его чек-лист — "
+        "условие сдачи.\n"
+        "----- плейбук -----\n" + book["text"][:PLAYBOOK_MAX_CHARS].strip() + "\n----- конец плейбука -----\n"
+    )
+
+
+def active_playbook(message: str, steps: list[dict] | None = None) -> str | None:
+    """Плейбук хода: последний успешный get_playbook(name), иначе имя плейбука в запросе владельца."""
+    for step in reversed(steps or []):
+        if step.get("tool") == "get_playbook" and step.get("ok"):
+            name = str((step.get("args") or {}).get("name") or "").strip()
+            if name:
+                return name
+    from app import playbooks
+
+    text = str(message or "").lower()
+    names = sorted((p["name"] for p in playbooks.list_playbooks()), key=len, reverse=True)
+    return next((n for n in names if re.search(rf"(?<![a-z0-9-]){re.escape(n)}(?![a-z0-9-])", text)), None)
 
 
 # Правила композиции по формату — для слоёв, размеченных в этом же формате.
@@ -549,8 +592,9 @@ def run_agent(
         nonlocal use_json_schema
         # Формат читаем на каждый вызов: агент мог сменить его set_format (по просьбе владельца).
         fmt, layers_fmt, has_layers = clip_formats(store, clip_plan_id)
+        prompt = system_prompt(fmt, layers_fmt, has_layers=has_layers, playbook=active_playbook(message, steps))
         payload: dict = {
-            "systemInstruction": {"parts": [{"text": system_prompt(fmt, layers_fmt, has_layers=has_layers)}]},
+            "systemInstruction": {"parts": [{"text": prompt}]},
             "contents": contents,
             # Температуру не трогаем: Gemini 3 рассчитана на 1.0, ниже — зацикливается.
             # Потолок ответа: иногда модель «плывёт» в бесконечный повтор («- - - …»).

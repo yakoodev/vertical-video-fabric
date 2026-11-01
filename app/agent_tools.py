@@ -510,6 +510,9 @@ def video_height(props: dict) -> float:
 
 
 MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура больше 40 % кадра — «закрыли видео»
+# Короткая вставка-иллюстрация во весь кадр (картинка/видео, не плашка-фигура) — монтаж, а не «закрыли
+# видео»: голос идёт под ней, а через ≤ 3 с снова герой (плейбук vtuber-story, QA 01.11).
+FULL_INSERT_MAX_SEC = 3.0
 
 
 def cover_share(layer: dict, fmt: Any = None) -> float:
@@ -558,11 +561,21 @@ def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) 
                            "(set_chroma_key) — без него убери behind")
             continue
         share = cover_share(layer, fmt)
-        if share > MAX_COVER_SHARE:
+        if share > MAX_COVER_SHARE and not is_full_insert(layer):
             out.append(f"{layer.get('id') or layer.get('type')}: закрывает {share:.0%} кадра — видео не перекрывать, "
                        f"картинки и плашки ≤ {MAX_COVER_SHARE:.0%} кадра и на пустом месте (раскладка «Мем» даёт "
-                       "свободный фон под видео)")
+                       f"свободный фон под видео). Вставка-иллюстрация на весь кадр — можно, если короткая: "
+                       f"картинка/видео ≤ {FULL_INSERT_MAX_SEC:g} с (end − start) или add_insert(asset_id, "
+                       f"mode: full, duration ≤ {FULL_INSERT_MAX_SEC:g})")
     return out
+
+
+def is_full_insert(layer: dict) -> bool:
+    """Картинка/видео на ≤ FULL_INSERT_MAX_SEC — короткая вставка-иллюстрация, ей можно закрыть кадр."""
+    if layer.get("type") not in ("image", "video"):
+        return False
+    start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
+    return 0.0 < end - start <= FULL_INSERT_MAX_SEC + 1e-6
 
 
 def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> bool:
@@ -4623,6 +4636,9 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     mode = args.get("mode") or ("sound" if asset["kind"] == "audio" else "pip")
     if mode not in MODES:
         raise ToolError(f"mode: одно из {', '.join(MODES)}")
+    if mode == "full" and (_num(args.get("duration"), 1.5) or 1.5) > FULL_INSERT_MAX_SEC + 1e-6:
+        raise ToolError(f"вставка на весь кадр (mode full) — не дольше {FULL_INSERT_MAX_SEC:g} с: голос идёт под ней, "
+                        "а зритель ждёт героя; дольше — mode pip (окошко)")
     render = _current_render(ctx)
     inserts = list(render.get("inserts") or [])
     if len(inserts) >= MAX_INSERTS:
