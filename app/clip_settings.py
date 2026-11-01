@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from app.formats import settings_layers_format, settings_render_format
 from app.audio_edit import normalize_audio
+from app.audio_mix import normalize_mix
 from app.piece_color import normalize_color_fix
 from app.piece_speed import normalize_speed
 from app.audio_mute import normalize_gain, normalize_mute
@@ -165,6 +166,9 @@ def normalize_render_settings(raw: object) -> dict:
         # Звуковой монтаж: J/L на стыках, ключи громкости исходника и музыки, ручной ducking,
         # провалы музыки перед ударом, эффекты на отрезке (app/audio_edit.py). {} — как раньше.
         "audio": normalize_audio(src.get("audio")),
+        # Сведение (app/audio_mix.py): громкость музыки, sidechain, рампы ducking, поправки слоёв,
+        # цель LUFS, цепочки эффектов голоса/музыки — ставит auto_mix / set_mix. {} — как раньше.
+        "mix": normalize_mix(src.get("mix")),
         # Скорость и реверс кусков основы [{piece, speed?, reverse?, audio?}] (app/piece_speed.py);
         # хранилище кладёт их в куски плана. [] — все куски как в исходнике.
         "speed": normalize_speed(src.get("speed")),

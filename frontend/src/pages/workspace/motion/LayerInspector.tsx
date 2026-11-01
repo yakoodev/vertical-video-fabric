@@ -33,6 +33,7 @@ import { FX_TITLES, LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggl
 import { TrackPanel, type PickedPoint } from "@/pages/workspace/motion/TrackPanel";
 import { ModuleOnly } from "@/components/RequireModule";
 import { SceneInspector } from "@/pages/workspace/motion/SceneInspector";
+import { FxChainEditor } from "@/pages/workspace/FxChainEditor";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -1183,6 +1184,23 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             <Num label="С секунды" value={layer.props.offset ?? 0} min={0} step={0.1} onChange={(offset) => patchProps({ offset })} />
           </div>
           <Toggle label="Приглушить речь под звуком" checked={Boolean(layer.props.duck)} onChange={(duck) => patchProps({ duck })} />
+          <div className="li-row" title="Роль в сведении: по ней «Сведение» сравнивает голос с музыкой и звуками. Авто — по имени слоя и длине">
+            <label className="li-num">
+              <span>Роль</span>
+              <select
+                className="input"
+                value={layer.props.role ?? ""}
+                onChange={(e) => patchProps({ role: (e.target.value || undefined) as typeof layer.props.role })}
+              >
+                <option value="">авто</option>
+                <option value="voice">голос / озвучка</option>
+                <option value="music">музыка</option>
+                <option value="sfx">звук-эффект</option>
+                <option value="ambience">фон</option>
+              </select>
+            </label>
+          </div>
+          <FxChainEditor chain={layer.props.fx} onChange={(fx) => patchProps({ fx })} />
         </Section>
       ) : null}
 

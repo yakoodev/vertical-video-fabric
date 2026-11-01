@@ -14,7 +14,9 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, Aspect, ColorFix, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
+import type { AiSegment, Aspect, ColorFix, CoverSettings, FreezeFrame, MixSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
+import { audioMixApi } from "@/api/audioMix";
+import { FxChainEditor } from "@/pages/workspace/FxChainEditor";
 import { colorFixCss, segLen, segSpeed } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
@@ -1585,6 +1587,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // 🎚 Звуковой монтаж (render.audio, app/audio_edit.py): J/L на стыках тянут на дорожке «Звук»,
   // ключи громкости, ducking, провалы музыки и эффекты ставит агент — панель их показывает и хранит.
   const [audioEdit, setAudioEdit] = useState<AudioEdit>({});
+  // 🎚 Сведение (render_settings.mix: auto_mix / set_mix / эффекты голоса и музыки) — целиком, как пришло.
+  const [mixSettings, setMixSettings] = useState<MixSettings>({});
   const audioEditRef = useRef<AudioEdit>({});
   audioEditRef.current = audioEdit;
   // Формат вывода клипа (app/formats.py): 9:16, 1:1, 4:5 или 16:9 из того же монтажа.
@@ -1798,6 +1802,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     end_hold_sec: endHoldSec,
     motion_blur: motionBlur,
     freezes,
+    mix: mixSettings,
   });
   const settingsKey = JSON.stringify(panelSettings());
 
@@ -1859,6 +1864,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setMute([]);
       setGain([]);
       setAudioEdit({});
+      setMixSettings({});
       setFreezes([]);
       // Обложка — тоже своя у клипа: титр чужой обложки не должен вшиться сюда.
       setCover(DEFAULT_COVER);
@@ -1898,6 +1904,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       end_hold_sec: s.end_hold_sec ?? null,
       motion_blur: s.motion_blur ?? null,
       freezes: s.freezes ?? [],
+      mix: s.mix ?? {},
     };
     if (JSON.stringify(loaded) === settingsKey) return;
     loadingSettingsRef.current = true;
@@ -1926,6 +1933,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setFreezes(s.freezes ?? []);
     setGain(s.gain ?? []);
     setAudioEdit(compactAudio(s.audio));
+    setMixSettings(s.mix ?? {});
     setAspect(clipFormat(s));
     setLayersFmt(layersFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
@@ -2056,6 +2064,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       setSettingsNonce((n) => n + 1);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автомонтаж не удался"),
+  });
+  // 🎚 Сведение звука (app/audio_mix.py): замер по стемам и автосведение.
+  const mixReport = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      await flushSettings();
+      return audioMixApi.report(clipPlanId);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Сведение не измерено"),
+  });
+  const autoMix = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      await flushSettings();
+      return audioMixApi.autoMix(clipPlanId);
+    },
+    onSuccess: async (r) => {
+      const a = r.before.voice_vs_music_db;
+      const b = r.after.voice_vs_music_db;
+      toast.success(
+        a != null && b != null
+          ? `Свёл: голос над музыкой ${a.toFixed(0)} → ${b.toFixed(0)} дБ — перерендерь; Ctrl+Z откатит`
+          : "Свёл звук — перерендерь; Ctrl+Z откатит",
+      );
+      mixReport.reset();
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Автосведение не вышло"),
   });
   // 🤬 Мат (app/censor.py): середина слова глушится (стиль — тишина, писк, шум…) + звёздочки в
   // субтитрах, без рендера. Проверку рендером и Whisper (verify) зовут агенты — это минуты.
@@ -5084,6 +5119,82 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       </div>
                     ) : null}
                   </>
+                ) : null}
+              </Group>
+              <Group
+                title="Сведение и эффекты"
+                badge={mixSettings.auto ? "авто" : mixSettings.music_db != null || mixSettings.voice_fx || mixSettings.music_fx ? "своё" : "—"}
+              >
+                <div className="muted li-note">
+                  Музыка под речью должна быть на 12–18 дБ тише голоса, звуки — не закрывать слова, ролик — −14 LUFS.
+                  «Проверить» меряет по стемам (как сведёт рендер), «Автосведение» выставит громкость музыки, ducking по
+                  фразам и звуки под голос.
+                </div>
+                <div className="lay-row">
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || mixReport.isPending}
+                    onClick={() => activePlan && mixReport.mutate(activePlan.id)}
+                  >
+                    {mixReport.isPending ? "Слушаю…" : "🎧 Проверить сведение"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || autoMix.isPending}
+                    onClick={() => activePlan && autoMix.mutate(activePlan.id)}
+                    title="Громкость музыки под голосом, ducking на каждую фразу, звуки слоёв под голос, −14 LUFS"
+                  >
+                    {autoMix.isPending ? "Свожу…" : "🎚 Автосведение"}
+                  </button>
+                </div>
+                {mixReport.data ? (
+                  <div className="mix-report">
+                    <div className={mixReport.data.verdicts.some((v) => v.severity === "warn") ? "lay-note warn" : "lay-note ok"}>
+                      {mixReport.data.summary}
+                    </div>
+                    {mixReport.data.timeline?.line ? (
+                      <div className="mix-line" title={mixReport.data.timeline.line_scale}>
+                        {mixReport.data.timeline.line}
+                      </div>
+                    ) : null}
+                    {mixReport.data.verdicts.map((v, i) => (
+                      <div key={i} className={`lay-note ${v.severity === "warn" ? "warn" : ""}`}>
+                        {v.message}
+                        {v.fix ? <span className="muted"> → {v.fix}</span> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {mixSettings.music_db != null ? (
+                  <div className="lay-row">
+                    <span className="muted">
+                      Музыка: {mixSettings.music_db.toFixed(1)} дБ к треку
+                      {mixSettings.sidechain === false ? " · ducking по фразам" : ""}
+                      {mixSettings.layer_gains ? ` · поправок звуков: ${Object.keys(mixSettings.layer_gains).length}` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      title="Снять сведение: музыка снова подгоняется под голос"
+                      onClick={() => setMixSettings(({ voice_fx, music_fx }) => ({ ...(voice_fx ? { voice_fx } : {}), ...(music_fx ? { music_fx } : {}) }))}
+                    >
+                      Сбросить
+                    </button>
+                  </div>
+                ) : null}
+                <FxChainEditor
+                  title={isCanvas ? "Голос (слои-озвучка)" : "Голос (звук исходника)"}
+                  chain={mixSettings.voice_fx}
+                  onChange={(voice_fx) => setMixSettings((m) => ({ ...m, voice_fx }))}
+                />
+                {musicOn ? (
+                  <FxChainEditor
+                    title="Музыка"
+                    chain={mixSettings.music_fx}
+                    onChange={(music_fx) => setMixSettings((m) => ({ ...m, music_fx }))}
+                  />
                 ) : null}
               </Group>
               {/* Холст: звука исходника нет — глушить, громкость и дорожки не нужны. */}

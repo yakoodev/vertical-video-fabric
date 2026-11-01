@@ -235,6 +235,8 @@ export type VideoProps = PictureProps & {
   volume?: number;
   /** Усиление звука, дБ −30..+12 (с audio); вместе с volume не громче +12 дБ. */
   gain_db?: number;
+  role?: AudioRole;
+  fx?: AudioFxEffect[];
 };
 
 export type EmojiProps = { char: string; size?: number };
@@ -387,7 +389,15 @@ export type AudioProps = {
   fadeOut?: number;
   offset?: number;
   duck?: boolean;
+  /** Роль в сведении (app/audio_mix.py): нет — по имени слоя и длине. */
+  role?: AudioRole;
+  /** Цепочка звуковых эффектов (app/audio_fx.py): [{fx, …}] по порядку. */
+  fx?: AudioFxEffect[];
 };
+
+export type AudioRole = "voice" | "music" | "sfx" | "ambience";
+/** Эффект цепочки: `fx` — вид (eq, compressor, reverb…), остальное — его параметры (audio_fx_reference). */
+export type AudioFxEffect = { fx: string } & Record<string, unknown>;
 
 /* ---------- PNGtuber ---------- */
 

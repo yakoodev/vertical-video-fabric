@@ -1271,6 +1271,24 @@ class ClipRenderService:
             visual = visual or {"layers": [], "camera": []}
         # Звуковой монтаж (app/audio_edit.py): дорожки, эффекты, J/L, ключи — None, если его нет.
         audio_plan = self._audio_plan(plan, cut_plan)
+        # Сведение (app/audio_mix.py: auto_mix / set_mix) — в проходы музыки, звуков слоёв и громкости.
+        from app.audio_mix import normalize_mix
+
+        mix = normalize_mix((plan.get("render_settings") or {}).get("mix"))
+        pass_mix = dict(mix)
+        if pass_mix.get("voice_fx"):
+            # Цепочка голоса: у холста — на слоях-голосе (проход звуков слоёв), у клипа с исходником —
+            # своим проходом по звуку основы (_finalize_render, до музыки).
+            from app.canvas import is_canvas
+
+            try:
+                canvas_clip = is_canvas(self.store.get_source(int(plan["source_id"])))
+            except (KeyError, TypeError, ValueError):
+                canvas_clip = True
+            if canvas_clip:
+                pass_mix.pop("voice_fx")
+        if pass_mix:
+            audio_plan = {**(audio_plan or {"notes": []}), "mix": pass_mix}
         from app.piece_color import has_fix
         from app.piece_speed import is_retimed
 
@@ -1398,7 +1416,9 @@ class ClipRenderService:
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion, plan)
-            clip = self._normalize_loudness(clip, hold=end_hold)
+            # Цель клипа (mix.target_lufs) — только если задана: без неё вызов ровно прежний.
+            clip = self._normalize_loudness(clip, hold=end_hold, **({"target": mix["target_lufs"]}
+                                                                   if mix.get("target_lufs") is not None else {}))
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
@@ -1828,6 +1848,7 @@ class ClipRenderService:
             layers, assets, notes = resolve_layer_assets(self.store, layers)
             meta = probe_media(path)
             tmp = path.with_name(path.stem + ".sfx" + path.suffix)
+            from app.audio_mix import normalize_mix
             from app.motion_render import plan_is_speechless, speech_level_db
 
             has_audio = _has_audio_stream(path)
@@ -1838,7 +1859,7 @@ class ClipRenderService:
                 path, tmp, layers, assets, meta.duration_sec, clip_has_audio=has_audio,
                 # Уровень голоса нужен только эффектам (дорожки без автоподгонки) — без них не меряем.
                 speech_db=speech_level_db(path) if has_audio and effects else None, speechless=speechless,
-                notes=notes,
+                notes=notes, mix=normalize_mix(((plan or {}).get("render_settings") or {}).get("mix")),
             )
             if args is not None:
                 _run_ffmpeg(args, timeout=60 * 20)
@@ -1852,7 +1873,7 @@ class ClipRenderService:
         except Exception as exc:  # noqa: BLE001 - звуки слоёв — надстройка, клип важнее
             return self._note_clip_error(clip["id"], f"звуки слоёв не наложены: {str(exc)[:200]}")
 
-    def _normalize_loudness(self, clip: dict, hold: float | None = None) -> dict:
+    def _normalize_loudness(self, clip: dict, hold: float | None = None, target: float | None = None) -> dict:
         """Громкость под площадки: −14 LUFS и пик не выше −1.5 dBFS.
 
         Тихий рэп выходил на −20 LUFS, а клип со звуками — с пиком выше нуля:
@@ -1870,7 +1891,8 @@ class ClipRenderService:
         path = Path(clip.get("output_path") or "")
         if not path.exists() or not _has_audio_stream(path):
             return clip
-        target = settings.render_loudnorm_target
+        # Цель клипа (render_settings.mix.target_lufs, app/audio_mix.py) или сервиса (−14).
+        target = float(target) if target is not None else settings.render_loudnorm_target
         try:
             measured = _measure_loudness(path, target)
             if not audible(measured):
@@ -2165,6 +2187,11 @@ class ClipRenderService:
         passes: list[str] = []
         if subtitle_profile_id:
             passes.append("subtitle")
+        voice_fx = (preset.get("mix") or {}).get("voice_fx")
+        if voice_fx:
+            # Цепочка голоса клипа (mix.voice_fx, app/audio_fx.py) — по звуку основы после распознавания
+            # субтитров (оно слышит чистую речь) и до музыки (эффект не ложится на трек).
+            passes.append("voice_fx")
         if music:
             passes.append("music")
         temp_paths: list[Path] = []
@@ -2172,7 +2199,9 @@ class ClipRenderService:
         for index, name in enumerate(passes):
             is_last = index == len(passes) - 1
             dest = output_path if is_last else settings.clip_dir / f"{render_id}.{name}.mp4"
-            if name == "music":
+            if name == "voice_fx":
+                _run_ffmpeg(build_voice_fx_args(current, dest, voice_fx), timeout=60 * 20)
+            elif name == "music":
                 music_settings = dict(music)
                 music_settings["duration_sec"] = probe_media(current).duration_sec
                 # Стоп-кадр в конце: музыка доигрывает и затухает на нём, а не до него.
@@ -2380,6 +2409,16 @@ def build_ffmpeg_concat_args(concat_list_path: Path, output_path: Path) -> list[
     ]
 
 
+def build_voice_fx_args(input_path: Path, output_path: Path, chain: list[dict]) -> list[str]:
+    """Цепочка эффектов голоса (app/audio_fx.py) по звуку клипа, картинка копией."""
+    from app.audio_fx import chain_filters
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_path), "-map", "0:v:0",
+            "-map", "0:a:0", "-c:v", "copy", "-af", chain_filters(chain, "vo") + ",aresample=48000",
+            "-c:a", "aac", "-b:a", FINAL_AUDIO_BITRATE, "-ar", "48000", "-movflags", "+faststart", str(output_path)]
+
+
 def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) -> list[str]:
     """Mix a background music track over an already-rendered clip.
 
@@ -2446,6 +2485,9 @@ def music_volume_for(clip_path: Path, music: dict) -> float:
     """
     from app.motion_render import audio_levels, speech_level_db
 
+    if music.get("fixed_db") is not None:
+        # Громкость выставило сведение (auto_mix / set_mix music_db): ровно она, без подгонки.
+        return 10 ** (max(-40.0, min(12.0, float(music["fixed_db"]))) / 20)
     raw = music.get("volume")
     user = max(0.0, float(raw if raw is not None else MUSIC_NOMINAL_VOLUME))
     if user <= 0:
@@ -2469,10 +2511,51 @@ def _music_hold(music: dict) -> float:
     return hold if hold > 0 and duration > 0 and math.isfinite(hold) else 0.0
 
 
+def _music_sidechain(music: dict, music_label: str, key_label: str, out_label: str) -> str:
+    """Мягкий ducking музыки под речью (sidechain по звуку клипа): только заметная речь тянет
+    музыку вниз, под ней она остаётся слышна. ``duck_amount`` — глубина."""
+    duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
+    ratio = _ff_number(1.5 + duck_amount * 3.5)
+    return (f"[{music_label}][{key_label}]sidechaincompress=threshold=0.1:ratio={ratio}:attack=20:release=400:"
+            f"makeup=1[{out_label}]")
+
+
+def music_wants_sidechain(music: dict) -> bool:
+    """Sidechain под речью: включён в пресете (duck) и не снят сведением (mix.sidechain false)."""
+    return bool(music.get("duck")) and music.get("sidechain") is not False
+
+
+def music_stem_filter(music: dict) -> str:
+    """Только музыка — как она прозвучит в ролике (громкость, старт, ключи, ducking по звуку
+    клипа ``[0:a]``), без самого звука клипа: стем для замера сведения (app/audio_mix.py).
+    Выход ``[aout]``."""
+    _voice_chain, _voice, music_str = _music_chain({**music, "hold_sec": 0})
+    if music_wants_sidechain(music):
+        return f"{music_str};[0:a]aresample=48000[key];" + _music_sidechain(music, "music", "key", "aout")
+    return f"{music_str};[music]anull[aout]"
+
+
 def _music_filter(music: dict) -> str:
     """Граф музыки поверх клипа. ``hold_sec`` — стоп-кадр в конце: голос клипа
     затухает на своём конце (как end_fade_filter) и дотягивается тишиной, а музыка
     играет дальше и затухает к концу стоп-кадра — фейд кончается в самом конце файла."""
+    _voice_chain, voice, music_str = _music_chain(music)
+    if music_wants_sidechain(music):
+        return (
+            f"{music_str};"
+            f"{voice}asplit=2[spk][key];"
+            + _music_sidechain(music, "music", "key", "ducked") + ";"
+            "[spk][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
+        )
+    return (
+        f"{music_str};"
+        f"{voice}[music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
+    )
+
+
+def _music_chain(music: dict) -> tuple[str, str, str]:
+    """(граф голоса со стоп-кадром — или пусто, метка голоса, граф музыки до ``[music]``; граф
+    голоса уже входит в граф музыки)."""
     volume = max(0.0, float(music.get("volume") if music.get("volume") is not None else 0.25))
     fade_in = max(0.0, float(music.get("fade_in_sec") or 0))
     fade_out = max(0.0, float(music.get("fade_out_sec") or 0))
@@ -2488,11 +2571,15 @@ def _music_filter(music: dict) -> str:
         # Затухание музыки — на весь стоп-кадр (или дольше, если так задано в пресете).
         fade_out = max(fade_out, hold)
         duration = total
-    duck = bool(music.get("duck"))
-    duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
 
     start_sec = max(0.0, float(music.get("start_sec") or 0))
     music_chain = [f"volume={_ff_number(volume)}"]
+    if music.get("fx"):
+        # Цепочка эффектов музыки клипа (render_settings.mix.music_fx, app/audio_fx.py): эквалайзер
+        # (освободить место голосу), фильтр, ревёрб… — статично, на весь трек.
+        from app.audio_fx import chain_filters
+
+        music_chain.append(chain_filters(music["fx"], "mu"))
     if start_sec > 0:
         # Музыка с секунды трека start_sec: начало отрезается (с петлёй — только у первого круга).
         music_chain[:0] = [f"atrim=start={_ff_number(start_sec)}", "asetpts=PTS-STARTPTS"]
@@ -2506,22 +2593,7 @@ def _music_filter(music: dict) -> str:
     if fade_out > 0 and duration > 0:
         start = max(0.0, duration - fade_out)
         music_chain.append(f"afade=t=out:st={_ff_number(start)}:d={_ff_number(fade_out)}")
-    music_str = voice_chain + ",".join(music_chain) + "[music]"
-
-    if duck:
-        # Gentle, musical ducking: only noticeable speech pulls the music down and
-        # the music stays clearly audible underneath. duck_amount tunes the depth.
-        ratio = _ff_number(1.5 + duck_amount * 3.5)
-        return (
-            f"{music_str};"
-            f"{voice}asplit=2[spk][key];"
-            f"[music][key]sidechaincompress=threshold=0.1:ratio={ratio}:attack=20:release=400:makeup=1[ducked];"
-            "[spk][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
-        )
-    return (
-        f"{music_str};"
-        f"{voice}[music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
-    )
+    return voice_chain, voice, voice_chain + ",".join(music_chain) + "[music]"
 
 
 def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
@@ -2546,7 +2618,23 @@ def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
         "duck_amount": preset.get("music_duck_amount"),
         # Ключи, ручной ducking, провалы перед ударом (app/audio_edit.py), секунды готового ролика.
         "automation": preset.get("music_automation"),
+        **_music_mix_fields(preset.get("mix")),
     }
+
+
+def _music_mix_fields(mix: dict | None) -> dict:
+    """Сведение клипа → поля прохода музыки: ``fixed_db`` (громкость трека к файлу, без подгонки под
+    голос), ``sidechain`` false (ducking — отрезками), ``fx`` (цепочка эффектов музыки)."""
+    out: dict = {}
+    if not mix:
+        return out
+    if mix.get("music_db") is not None:
+        out["fixed_db"] = float(mix["music_db"])
+    if mix.get("sidechain") is False:
+        out["sidechain"] = False
+    if mix.get("music_fx"):
+        out["fx"] = mix["music_fx"]
+    return out
 
 
 def _filter_complex(
@@ -3119,9 +3207,13 @@ def _preset_with_source_audio(preset: dict, source: dict) -> dict:
 
 
 def _preset_with_music_automation(preset: dict, audio_edit: dict | None) -> dict:
-    """Ключи громкости, ручной ducking и провалы музыки (app/audio_edit.py) — в проход музыки."""
+    """Ключи громкости, ручной ducking и провалы музыки (app/audio_edit.py) — в проход музыки;
+    сведение клипа (``mix``: громкость трека, sidechain, эффекты голоса/музыки — app/audio_mix.py)."""
     music = (audio_edit or {}).get("music")
-    return {**preset, "music_automation": music} if music else preset
+    mix = (audio_edit or {}).get("mix")
+    if music:
+        preset = {**preset, "music_automation": music}
+    return {**preset, "mix": mix} if mix else preset
 
 
 def _source_edit(preset: dict) -> dict | None:
