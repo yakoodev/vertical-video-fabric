@@ -458,3 +458,139 @@ def test_polza_images_uses_media_endpoint_with_input(monkeypatch, tmp_path):
     assert seen["body"]["input"]["images"] == [{"type": "base64", "data": "data:image/jpeg;base64,AA=="}]
     assert _result_url({"data": [{"url": "https://s3/x.jpg"}]}) == "https://s3/x.jpg"
     assert _result_url({"output": {"url": "https://s3/y.jpg"}}) == "https://s3/y.jpg"
+
+
+# --------------------------------------------------------------------------- #
+# Гонка исполнителей: запуск отправляется ОДИН раз (первый настоящий прогон: план 2 ушёл дважды)
+# --------------------------------------------------------------------------- #
+
+
+class GatedPaid(FakePaid):
+    """Подделка для гонок: считает POST по цели; ``gate`` держит первый POST выбранной цели,
+    ``fail_kind`` — цель этого вида падает исключением."""
+
+    def __init__(self, hold: str = "", fail_kind: str = "", fail_exc: Exception | None = None):
+        super().__init__()
+        import threading
+
+        self.lock = threading.Lock()
+        self.by_target: dict[str, int] = {}
+        self.hold = hold
+        self.fail_kind = fail_kind
+        self.fail_exc = fail_exc or RuntimeError("boom")
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+
+    def submit(self, params, refs):
+        key = " / ".join(str(x) for x in params.get("_caption") or [])
+        with self.lock:
+            self.posts += 1
+            n = self.posts
+            self.by_target[key] = self.by_target.get(key, 0) + 1
+            first = self.by_target[key] == 1
+        if self.fail_kind and params.get("_kind") == self.fail_kind:
+            raise self.fail_exc
+        if self.hold and self.hold in key and first:
+            self.entered.set()
+            assert self.gate.wait(10), "тест: ворота не открылись"
+        return f"req-{n}"
+
+
+def _gated(monkeypatch, **kw):
+    fake = GatedPaid(**kw)
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: fake if name == "polza" else PR.DryRunImages())
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    return fake
+
+
+def test_concurrent_runners_submit_each_job_once(env, monkeypatch):
+    import threading
+
+    _client_, store = env
+    fake = _gated(monkeypatch)
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    errors = []
+
+    def runner(fn):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=runner, args=(lambda: G.run_pending(store),)) for _ in range(3)]
+    threads.append(threading.Thread(target=runner, args=(lambda: G.run_approved(store, req["approval_id"], True),)))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert not errors, errors
+    assert fake.posts == 9 and set(fake.by_target.values()) == {1}
+    jobs = G.list_jobs(store, approval_id=req["approval_id"])
+    assert {j["status"] for j in jobs} == {"done"} and all(j["worker_id"] for j in jobs)
+    assert len(G.ledger(store, pid)) == 9
+    for ref in V.list_refs(store, pid):
+        assert ref["version"] == 1, ref
+
+
+def _three_refs(store, pid):
+    mira, kot = V.character_by_slug(store, pid, "mira"), V.character_by_slug(store, pid, "kot")
+    loc = V.list_locations(store, pid)[0]
+    req = G.request_stage(store, pid, "refs", items=[f"location:{loc['id']}", f"character:{mira['id']}:turnaround",
+                                                     f"character:{kot['id']}:turnaround"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    jobs = {j["label"]: j["id"] for j in G.list_jobs(store, approval_id=req["approval_id"])}
+    return req["approval_id"], jobs["локация «Кухня ночью»"], jobs["Мира: разворот"], jobs["Кот: разворот"]
+
+
+def test_run_approved_while_worker_holds_a_job_does_not_resubmit_it(env, monkeypatch):
+    """Сценарий первого прогона: работник ещё отправляет план, его же партия упала на другом
+    запуске (стоп карточки), владелец/агент жмёт aiv_run_approved — план не уходит второй раз."""
+    import threading
+
+    _client_, store = env
+    fake = _gated(monkeypatch, hold="Мира", fail_kind="location")
+    pid, _sid = _project(store, provider="polza")
+    card, j_loc, j_mira, j_kot = _three_refs(store, pid)
+
+    worker = threading.Thread(target=G.run_jobs, args=(store, [j_mira]))
+    worker.start()
+    assert fake.entered.wait(10)
+    # Вторая партия: локация падает → карточка остановлена; «Мира» в работе — её НЕ трогаем.
+    out = G.run_jobs(store, [j_loc, j_mira, j_kot])
+    assert j_mira not in out["held"] and out["held"] == [j_kot]
+    assert G.get_job(store, j_mira)["status"] == "submitting"
+    ran = G.run_approved(store, card, confirm=True)
+    assert [d["job_id"] for d in ran["done"]] == [j_kot]
+    assert [p["job_id"] for p in ran["in_progress"]] == [j_mira] and ran["in_progress"][0]["worker_id"]
+    fake.gate.set()
+    worker.join(30)
+    assert fake.by_target == {"плита локации / Кухня ночью": 1, "разворот / Мира": 1, "разворот / Кот": 1}
+    assert G.get_job(store, j_mira)["status"] == "done"
+    mira = V.character_by_slug(store, pid, "mira")
+    assert [r["version"] for r in V.list_refs(store, pid, "character", mira["id"], "turnaround")] == [1]
+    assert sorted(l["job_id"] for l in G.ledger(store, pid)) == sorted([j_mira, j_kot])
+
+
+def test_second_done_and_late_poll_are_ignored(paid, monkeypatch):
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs", items=["location:1"])
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    job = G.get_job(store, job["id"])
+    assert job["status"] == "done" and len(G.ledger(store, pid)) == 1
+    # Опрос по устаревшему снимку (статус уже done) не опрашивает и не пишет версию.
+    checks = fake.checks
+    assert G._finish(store, {**job, "status": "polling"}, fake, 0) is None and fake.checks == checks
+    # Второй «готово» того же запуска: ни версии, ни траты; свой файл удалён.
+    tmp = settings.tmp_dir / "dup.jpg"
+    PR.DryRunImages().fetch({}, tmp, {"_kind": "location"})
+    asset = G._save_asset(store, job, tmp, "image", "image/jpeg", "dup")
+    assert G._done(store, {**job, "status": "polling"}, asset["id"], "p", 6.0, "provider") is None
+    assert len(V.list_refs(store, pid, "location", 1, "location")) == 1 and len(G.ledger(store, pid)) == 1
+    with pytest.raises(KeyError):
+        store.get_montage_asset(asset["id"])

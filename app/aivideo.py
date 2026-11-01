@@ -198,10 +198,20 @@ AIV_SCHEMA_SQL = [
 ]
 
 
+# Колонки, добавленные после первых запусков (старые базы получают их ALTER TABLE).
+AIV_COLUMNS = [
+    # Кто взял запуск (поток@pid): взять можно только approved → submitting одним UPDATE.
+    ("aiv_gen_jobs", "worker_id", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
 def ensure_aiv_schema(conn) -> None:
     """Таблицы ИИ-видео (из ``Database.init`` после проектов и автопилота)."""
     for sql in AIV_SCHEMA_SQL:
         conn.execute(sql)
+    for table, column, ddl in AIV_COLUMNS:
+        if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     # Карточка этапа (kind other, action aiv_budget) — свой обработчик решения владельца.
     import app.aivideo_gen  # noqa: F401
 

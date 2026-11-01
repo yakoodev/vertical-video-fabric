@@ -23,7 +23,10 @@
 
 Провайдер ``none`` (сухой прогон) — 0 ₽: карточка не нужна, весь конвейер идёт сразу.
 
-Двойной оплаты нет: ``remote_id`` пишется в БД ДО опроса, после перезапуска опрос продолжается
+Двойной оплаты нет: запуск берёт ровно один исполнитель (работник, ``aiv_run_approved``, другой
+процесс) — проверка денег и ``approved → submitting`` одной транзакцией ``BEGIN IMMEDIATE``, все
+дальнейшие смены статуса — «сравнить-и-записать», второй «готово» не пишет ни версию, ни трату;
+``remote_id`` пишется в БД ДО опроса, после перезапуска опрос продолжается
 (``resume``) без нового POST; запуск, оборванный между «отправляю» и ответом провайдера, не
 повторяется сам (``failed``: «проверь баланс»). Одинаковый запрос (``input_hash``) берёт готовый
 результат. Каждое списание — строка ``aiv_ledger`` (факт провайдера, разница баланса или оценка).
@@ -34,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import threading
 import time
@@ -63,6 +67,7 @@ EPISODE_CAP_RUB = {"draft": 350.0, "quality": 2500.0}
 STYLE_REF_COUNT = 3
 CARD_ACTION = "aiv_budget"
 ACTIVE = ("approved", "submitting", "polling")
+SUBMIT_STALE_SEC = 600  # «отправляю» дольше — исполнитель другого процесса умер (POST ждёт ≤ 120 с)
 OPEN = ("awaiting",) + ACTIVE
 STYLE_BASE = {
     "anime": "2D anime / toon style, clean line art, cel shading, flat colors, expressive faces",
@@ -718,6 +723,22 @@ def _set_job(store: Any, job_id: int, **fields: Any) -> None:
                      (*fields.values(), int(job_id)))
 
 
+def _cas(store: Any, job_id: int, expect: tuple[str, ...], where: str = "", where_args: tuple = (),
+         **fields: Any) -> bool:
+    """Сменить поля запуска, только если его статус — один из ``expect`` (сравнить-и-записать одним
+    UPDATE). False — запуск уже у другого исполнителя/в другом состоянии: ничего не записано."""
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    marks = ", ".join("?" for _ in expect)
+    cur = store.db.execute(
+        f"UPDATE aiv_gen_jobs SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ({marks})"
+        + (f" AND {where}" if where else ""), (*fields.values(), int(job_id), *expect, *where_args))
+    return bool(cur.rowcount)
+
+
+def _runner_id() -> str:
+    return f"{threading.current_thread().name}@{os.getpid()}"
+
+
 def _preflight(store: Any, job: dict) -> list[str]:
     """Можно ли платить за этот запуск прямо сейчас (под замком)."""
     if job["provider"] == "none":
@@ -744,20 +765,33 @@ def _preflight(store: Any, job: dict) -> list[str]:
 
 
 def _claim(store: Any, job_id: int) -> tuple[dict | None, list[str]]:
-    with _LOCK:
-        job = get_job(store, job_id)
-        if job["status"] != "approved":
-            return None, []
-        problems = _preflight(store, job)
-        if problems:
-            _set_job(store, job_id, status="held", error="; ".join(problems)[:500])
-            return None, problems
-        cur = store.db.execute("UPDATE aiv_gen_jobs SET status = 'submitting', attempts = attempts + 1, "
-                               "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (int(job_id),))
-        if not cur.rowcount:
-            return None, []
+    """Взять запуск в работу: проверка денег и ``approved → submitting`` в ОДНОЙ записи-транзакции
+    (BEGIN IMMEDIATE). Сколько бы исполнителей ни было (работник, aiv_run_approved, второй процесс),
+    запуск отправляется один раз: кто не успел — получает ``None``."""
+    with _LOCK, store.db._lock:
+        conn = store.db.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM aiv_gen_jobs WHERE id = ?", (int(job_id),)).fetchone()
+            if not row or row["status"] != "approved":
+                conn.rollback()
+                return None, []
+            problems = _preflight(store, get_job(store, job_id))
+            if problems:
+                conn.execute("UPDATE aiv_gen_jobs SET status = 'held', error = ?, updated_at = CURRENT_TIMESTAMP "
+                             "WHERE id = ? AND status = 'approved'", ("; ".join(problems)[:500], int(job_id)))
+                conn.commit()
+                return None, problems
+            cur = conn.execute(
+                "UPDATE aiv_gen_jobs SET status = 'submitting', worker_id = ?, attempts = attempts + 1, error = '', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (_runner_id(), int(job_id)))
+            conn.commit()
+            if not cur.rowcount:
+                return None, []
+        finally:
+            conn.close()
         _INFLIGHT.add(int(job_id))
-        return get_job(store, job_id), []
+    return get_job(store, job_id), []
 
 
 def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: str) -> dict:
@@ -774,17 +808,28 @@ def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: 
         size_bytes=dest.stat().st_size, **meta)
 
 
-def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "") -> dict:
-    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
-                    int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
+def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "",
+          own_asset: bool = True) -> dict | None:
+    """Готово: версия + трата. Записывает только ПЕРВЫЙ «готово» (сравнить-и-записать статуса):
+    второй опрос того же запуска (другой поток/процесс) не плодит версию и не пишет вторую трату."""
+    if not _cas(store, job["id"], ("submitting", "polling"), status="done", cost_rub=round(cost, 4),
+                cost_source=source, error=""):
+        _log.warning("aiv job %s: повторное «готово» пропущено (уже %s)", job["id"], get_job(store, job["id"])["status"])
+        if own_asset:
+            try:
+                store.delete_montage_asset(int(asset_id))
+            except KeyError:
+                pass
+        return None
     if job["provider"] != "none" and cost > 0:
         add_ledger(store, job, cost, source, note)
-    _set_job(store, job["id"], status="done", cost_rub=round(cost, 4), cost_source=source, result_ref_id=ref["id"],
-             error="")
+    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
+                    int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
+    _set_job(store, job["id"], result_ref_id=ref["id"])
     return ref
 
 
-def _run_tts(store: Any, job: dict) -> dict:
+def _run_tts(store: Any, job: dict) -> dict | None:
     from app.aivideo_providers import get_tts
 
     params = job["params"]
@@ -822,15 +867,23 @@ def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None)
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
                                      "refs": [p.name for p in refs]}, ensure_ascii=False))
     if cached:
-        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
+        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
+                     own_asset=False)
     full = {**params, "_kind": job["ref_kind"], "_caption": caption}
     try:
         remote = provider.submit(full, refs)
     except ProviderError as exc:
-        _set_job(store, job["id"], status="blocked_policy" if exc.policy else "failed", error=str(exc)[:500])
+        _cas(store, job["id"], ("submitting",), status="blocked_policy" if exc.policy else "failed",
+             error=str(exc)[:500])
         return None
     # ДО опроса: после перезапуска опрос продолжится, повторного POST (и оплаты) не будет.
-    _set_job(store, job["id"], status="polling", remote_id=str(remote))
+    # remote_id пишется один раз (remote_id = ''), даже если запуск успели счесть «потерянным».
+    cur = store.db.execute(
+        "UPDATE aiv_gen_jobs SET status = 'polling', remote_id = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND remote_id = '' AND status IN ('submitting', 'failed')", (str(remote), int(job["id"])))
+    if not cur.rowcount:
+        _log.warning("aiv job %s: remote_id %s не записан — запуск уже в другом состоянии", job["id"], remote)
+        return None
     return _finish(store, get_job(store, job["id"]), provider, poll_timeout)
 
 
@@ -839,6 +892,9 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
 
     with _LOCK:
         if job["id"] in _ACTIVE_JOBS:
+            return None
+        job = get_job(store, job["id"])  # свежий статус: уже готов/упал — второй раз не опрашиваем
+        if job["status"] != "polling" or not job["remote_id"]:
             return None
         _ACTIVE_JOBS.add(job["id"])
     try:
@@ -856,12 +912,11 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
         cost = result.get("cost_rub")
         if result.get("status") == "failed":
             charged = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
-            if provider.paid and charged > 0:
+            if _cas(store, job["id"], ("polling",), status="blocked_policy" if result.get("policy") else "failed",
+                    error=str(result.get("error") or "отказ")[:500], cost_rub=charged) and provider.paid and charged > 0:
                 add_ledger(store, job, charged, "provider" if cost is not None else "estimate",
                            "отказ провайдера — списание по " + ("ответу" if cost is not None else
                                                               "оценке (проверь баланс)"))
-            _set_job(store, job["id"], status="blocked_policy" if result.get("policy") else "failed",
-                     error=str(result.get("error") or "отказ")[:500], cost_rub=charged)
             return None
         tmp = settings.tmp_dir / f"aiv-{uuid4().hex}.jpg"
         tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -870,8 +925,8 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
                                          job["params"].get("aspect"), "_kind": job["ref_kind"],
                                          "_caption": build_request(store, job)[2]})
         except Exception as exc:  # noqa: BLE001 - ссылка может истечь: оплачено, но файла нет
-            _set_job(store, job["id"], status="failed", error=f"результат не скачан: {exc}"[:500])
-            if provider.paid:
+            if _cas(store, job["id"], ("polling",), status="failed", error=f"результат не скачан: {exc}"[:500]) \
+                    and provider.paid:
                 add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
                            "provider" if cost is not None else "estimate", "оплачено, файл не скачан")
             return None
@@ -881,24 +936,34 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
         asset = _save_asset(store, job, tmp, "image", mime, f"ИИ-видео: {job['label']}")
         source = "provider" if cost is not None else ("estimate" if provider.paid else "free")
         amount = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
-        return _done(store, get_job(store, job["id"]), asset["id"], job["prompt"], amount, source)
+        return _done(store, job, asset["id"], job["prompt"], amount, source)
     finally:
         with _LOCK:
             _ACTIVE_JOBS.discard(job["id"])
 
 
+def _result_ref(store: Any, job_id: int) -> dict | None:
+    rid = get_job(store, job_id).get("result_ref_id")
+    try:
+        return V.get_ref(store, int(rid)) if rid else None
+    except KeyError:
+        return None
+
+
 def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) -> dict:
-    """Выполнить запуски по порядку. Упёрлись в потолок — остальные этой карточки ждут (held)."""
+    """Выполнить запуски по порядку. Упёрлись в потолок — остальные этой карточки ждут (held).
+    Запуск, который уже взял другой исполнитель, пропускается (``skipped``) — не отправляется второй раз."""
     from app.aivideo_providers import get_image_provider
 
-    done, failed, held, pending = [], [], [], []
+    done, failed, held, pending, skipped = [], [], [], [], []
     providers: dict[str, Any] = {}
     stop_cards: set[int] = set()
     for job_id in job_ids:
         job0 = get_job(store, job_id)
         if job0.get("approval_id") in stop_cards:
-            _set_job(store, job_id, status="held", error="партия остановлена: упёрлись в потолок или ошибку")
-            held.append(job_id)
+            if _cas(store, job_id, ("approved",), status="held",
+                    error="партия остановлена: упёрлись в потолок или ошибку"):
+                held.append(job_id)
             continue
         job, problems = _claim(store, job_id)
         if job is None:
@@ -906,6 +971,8 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
                 held.append(job_id)
                 if job0.get("approval_id"):
                     stop_cards.add(int(job0["approval_id"]))
+            else:
+                skipped.append(job_id)
             continue
         try:
             if job["kind"] == "tts":
@@ -916,14 +983,15 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         except Exception as exc:  # noqa: BLE001 - один запуск не валит партию
             _log.warning("aiv job %s failed: %s", job_id, exc)
             # Есть remote_id — не трогаем: опрос дочитает resume (без нового POST).
-            if not get_job(store, job_id)["remote_id"]:
-                hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if job["provider"] != "none" else ""
-                _set_job(store, job_id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}")
+            hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if job["provider"] != "none" else ""
+            _cas(store, job_id, ("submitting",), where="remote_id = ''",
+                 error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}", status="failed")
             ref = None
         finally:
             with _LOCK:
                 _INFLIGHT.discard(int(job_id))
         state = get_job(store, job_id)["status"]
+        ref = ref or (_result_ref(store, job_id) if state == "done" else None)
         if ref is not None:
             done.append({"job_id": job_id, "ref_id": ref["id"], "label": job["label"], "url": ref["url"]})
         elif state == "polling":
@@ -933,7 +1001,7 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
                            "error": get_job(store, job_id)["error"]})
             if job.get("approval_id") and job["provider"] != "none":
                 stop_cards.add(int(job["approval_id"]))
-    return {"done": done, "failed": failed, "held": held, "polling": pending}
+    return {"done": done, "failed": failed, "held": held, "polling": pending, "skipped": skipped}
 
 
 def run_pending(store: Any, approval_id: int | None = None, project_id: int | None = None,
@@ -949,14 +1017,18 @@ def run_pending(store: Any, approval_id: int | None = None, project_id: int | No
         sql += " AND project_id = ?"
         params.append(int(project_id))
     ids = [int(r["id"]) for r in store.db.query_all(sql + " ORDER BY id", params)]
-    out = run_jobs(store, ids, poll_timeout) if ids else {"done": [], "failed": [], "held": [], "polling": []}
+    out = run_jobs(store, ids, poll_timeout) if ids else {"done": [], "failed": [], "held": [], "polling": [],
+                                                          "skipped": []}
     out["resumed"] = resumed
     return out
 
 
 def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
     """Агент/REST: выполнить или продолжить запуски ОДОБРЕННОЙ владельцем карточки (обычно это делает
-    работник сам сразу после «Разрешить»). Без ``confirm`` — только что будет запущено."""
+    работник сам сразу после «Разрешить»). Без ``confirm`` — только что будет запущено.
+
+    Безопасно вызывать, пока работник занят той же карточкой: запуск берётся атомарно
+    (``approved → submitting``), уже взятые работником только показываются (``in_progress``)."""
     card = A.get_approval(store, approval_id)
     if (card.get("payload") or {}).get("action") != CARD_ACTION:
         raise V.AivError(f"карточка #{approval_id} — не этап ИИ-видео")
@@ -968,32 +1040,57 @@ def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
         return {"ok": True, "status": "preview", "jobs": todo,
                 "note": "confirm=true — запустить/продолжить (одобрено владельцем на "
                         f"{card['payload'].get('amount_rub')} ₽)"}
-    store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', error = '' WHERE approval_id = ? AND status = 'held'",
-                     (int(approval_id),))
-    return {"ok": True, "status": "ran", **run_pending(store, approval_id=approval_id)}
+    store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', error = '', updated_at = CURRENT_TIMESTAMP "
+                     "WHERE approval_id = ? AND status = 'held'", (int(approval_id),))
+    ids = [int(r["id"]) for r in store.db.query_all(
+        "SELECT id FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'approved' ORDER BY id", (int(approval_id),))]
+    out = run_jobs(store, ids)
+    # Опрос этой карточки, брошенный после перезапуска (не идёт ни в одном потоке процесса) — дочитать.
+    resumed = []
+    with _LOCK:
+        busy = set(_ACTIVE_JOBS) | set(_INFLIGHT)
+    for row in store.db.query_all("SELECT id, provider FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'polling' "
+                                  "AND remote_id != '' ORDER BY id", (int(approval_id),)):
+        if int(row["id"]) in busy or int(row["id"]) in out["polling"]:
+            continue
+        from app.aivideo_providers import get_image_provider
+
+        if _finish(store, get_job(store, int(row["id"])), get_image_provider(row["provider"]), None) is not None:
+            resumed.append(int(row["id"]))
+    progress = [{"job_id": j["id"], "label": j["label"], "status": j["status"], "worker_id": j.get("worker_id") or ""}
+                for j in list_jobs(store, approval_id=approval_id) if j["status"] in ("submitting", "polling")]
+    note = "запуски карточки выполнены"
+    if progress:
+        note = (f"{len(progress)} шт. уже в работе (работник или опрос) — повторно не отправляю; статус — "
+                "aiv_job_status")
+    return {"ok": True, "status": "ran", **out, "resumed": {"finished": resumed, "lost": []},
+            "in_progress": progress, "note": note}
 
 
 def resume(store: Any, poll_timeout: float | None = None) -> dict:
     """После перезапуска: ``polling`` — опрашиваем дальше (POST не повторяем); ``submitting`` без
-    remote_id — оборвались в момент отправки: НЕ повторяем сами (могли уже заплатить)."""
+    remote_id — оборвались в момент отправки: НЕ повторяем сами (могли уже заплатить).
+
+    «Оборвался» — только чужой мёртвый исполнитель: свой процесс (поток не в работе), запуск без
+    worker_id (старые базы) или «отправляю» дольше ``SUBMIT_STALE_SEC`` (другой процесс)."""
     from app.aivideo_providers import get_image_provider
 
-    broken = store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'submitting' AND remote_id = ''")
-    with _LOCK:
-        busy = set(_ACTIVE_JOBS) | set(_INFLIGHT)
     lost = []
-    for row in broken:
-        if int(row["id"]) in busy:
-            continue  # отправляется прямо сейчас в другом потоке этого процесса
-        job = get_job(store, int(row["id"]))
-        _set_job(store, job["id"], status="failed",
-                 error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
-                       "(перегенерация)")
-        lost.append(job["id"])
+    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'submitting' AND remote_id = ''"):
+        with _LOCK:
+            if int(row["id"]) in _ACTIVE_JOBS or int(row["id"]) in _INFLIGHT:
+                continue  # отправляется прямо сейчас в другом потоке этого процесса
+            if _cas(store, int(row["id"]), ("submitting",),
+                    where="remote_id = '' AND (worker_id = '' OR worker_id LIKE ? OR updated_at < datetime('now', ?))",
+                    where_args=(f"%@{os.getpid()}", f"-{int(SUBMIT_STALE_SEC)} seconds"), status="failed",
+                    error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
+                          "(перегенерация)"):
+                lost.append(int(row["id"]))
     finished = []
     for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'polling' AND remote_id != '' ORDER BY id"):
-        if int(row["id"]) in busy:
-            continue
+        with _LOCK:
+            if int(row["id"]) in _ACTIVE_JOBS or int(row["id"]) in _INFLIGHT:
+                continue
         job = get_job(store, int(row["id"]))
         provider = get_image_provider(job["provider"])
         ref = _finish(store, job, provider, poll_timeout)
