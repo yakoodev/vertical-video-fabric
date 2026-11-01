@@ -2079,6 +2079,28 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось поменять скорость куска"),
   });
 
+  // ♪ К долям (snap_to_beats): сервер двигает слои/ключи/камеру/склейки — настройки перечитываем.
+  const [snapMode, setSnapMode] = useState<"beat" | "downbeat" | "joins">("beat");
+  const snapBeats = useMutation({
+    mutationFn: async (body: { planId: number; mode: "beat" | "downbeat" | "joins" }) => {
+      await flushSettings();
+      return clipPlansApi.snapBeats(body.planId, {
+        targets: body.mode === "joins" ? ["all"] : ["layers", "keys", "camera"],
+        grid: body.mode === "downbeat" ? "downbeat" : "beat",
+      });
+    },
+    onSuccess: async (r, body) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      await qc.invalidateQueries({ queryKey: ["plan-subtitles", body.planId] });
+      setSettingsNonce((n) => n + 1);
+      const bpm = r.grid.bpm ? ` · ${Math.round(r.grid.bpm)} BPM` : "";
+      if (r.moved) toast.success(`К долям: сдвинуто ${r.moved}${bpm}`);
+      else toast.push(r.note, "info");
+      for (const w of r.warnings ?? []) toast.push(w, "info");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось привязать к долям"),
+  });
+
   // 🎨 Цвет куска и подгонка кусков — инструментами агента (set_piece_color / match_piece_colors).
   const pieceColor = useMutation({
     mutationFn: async (body: { planId: number; piece: number; reset?: boolean } & ColorFix) => {
@@ -5239,6 +5261,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   {activePlan.favorite ? "★" : "☆"}
                 </button>
+              ) : null}
+              {activePlan ? (
+                <span className="ed-snap">
+                  <select
+                    className="input"
+                    value={snapMode}
+                    disabled={snapBeats.isPending}
+                    onChange={(e) => setSnapMode(e.target.value as "beat" | "downbeat" | "joins")}
+                    title="Что ставить на доли"
+                  >
+                    <option value="beat">слои, ключи, камера → доли</option>
+                    <option value="downbeat">… → сильные доли</option>
+                    <option value="joins">+ склейки кусков → доли</option>
+                  </select>
+                  <button
+                    className="btn sm"
+                    disabled={snapBeats.isPending}
+                    onClick={() => snapBeats.mutate({ planId: activePlan.id, mode: snapMode })}
+                    title="Начала слоёв, ключевые кадры и наезды камеры (и склейки — в третьем режиме) — на ближайшую долю музыки клипа, если до неё ≤ 0.15 с. Сетка — трек «Музыка», без него — доли звука клипа. Субтитры и чат не двигаются. Отмена — «↩ Шаг назад»"
+                  >
+                    {snapBeats.isPending ? "…" : "♪ К долям"}
+                  </button>
+                </span>
               ) : null}
             </div>
             <ClipTimeline

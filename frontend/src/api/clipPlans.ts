@@ -220,6 +220,23 @@ export const clipPlansApi = {
       pieces: { piece: number; summary: string; luma_gap_before: number; luma_gap_after: number }[];
       warnings?: string[];
     }>(`/api/clip-plans/${clipPlanId}/piece-color/match`, body),
+  /** ♪ К долям (snap_to_beats): начала слоёв, ключи, камера, склейки — на ближайшую долю музыки. */
+  snapBeats: (
+    clipPlanId: number,
+    body: {
+      targets: ("layers" | "keys" | "camera" | "joins" | "all")[];
+      grid?: "beat" | "downbeat" | "half";
+      tolerance?: number;
+      dry_run?: boolean;
+    },
+  ) =>
+    api.post<{
+      moved: number;
+      changes: { target: string; delta: number }[];
+      grid: { source: string; bpm?: number; grid?: string };
+      note: string;
+      warnings?: string[];
+    }>(`/api/clip-plans/${clipPlanId}/snap-beats`, body),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
   undo: (clipPlanId: number) =>
     api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(

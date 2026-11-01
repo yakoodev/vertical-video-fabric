@@ -2819,6 +2819,28 @@ def api_clip_plan_piece_color_match(clip_plan_id: int, payload: PieceColorMatchR
                           "подгонка цвета", "подгонка цвета не удалась")
 
 
+class SnapBeatsRequest(BaseModel):
+    targets: list[Literal["layers", "keys", "camera", "joins", "all"]] = Field(default_factory=lambda: ["layers"])
+    tolerance: float = Field(default=0.15, ge=0.01, le=0.5)
+    grid: Literal["beat", "downbeat", "half"] = "beat"
+    source: Literal["auto", "music", "audio"] = "auto"
+    bpm: float | None = Field(default=None, ge=40, le=240)
+    first_beat: float | None = None
+    first_downbeat: float | None = None
+    dry_run: bool = False
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/snap-beats",
+    tags=["Render"],
+    summary="♪ К долям: начала слоёв, ключи, камера и склейки — на ближайшую долю музыки",
+)
+def api_clip_plan_snap_beats(clip_plan_id: int, payload: SnapBeatsRequest, _auth: AuthDep) -> dict:
+    """Тот же инструмент, что у агентов (snap_to_beats, app/beat_snap.py)."""
+    return _run_clip_tool(clip_plan_id, "snap_to_beats", payload.model_dump(exclude_none=True), "к долям",
+                          "к долям не вышло")
+
+
 class WordEmphasisRequest(BaseModel):
     indices: list[int] | None = Field(default=None, description="номера слов в субтитрах клипа (порядок words)")
     words: list[str] | None = Field(default=None, description="тексты слов (первое вхождение)")

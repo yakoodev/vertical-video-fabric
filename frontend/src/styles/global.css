@@ -4343,3 +4343,7 @@ ol.series-list { list-style: decimal inside; }
 .project-chat { min-height: 480px; grid-template-rows: auto minmax(0, 1fr) auto; }
 .project-chat .agent-list { max-height: 60vh; }
 @media (max-width: 720px) { .approval-card { grid-template-columns: 1fr; } }
+
+/* ♪ К долям — в шапке таймлайна редактора. */
+.ed-snap { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.ed-snap .input { height: 26px; font-size: 11.5px; padding: 0 6px; max-width: 210px; }

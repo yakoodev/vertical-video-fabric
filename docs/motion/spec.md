@@ -853,3 +853,8 @@ TTF/OTF/WOFF2 ≤ 20 МБ, `family?`, `weight?`, `style?`), удаление `DE
   `problems` с префиксом `render.layers[i]…`); слой за концом клипа там не ошибка.
 * Слои меняются через `PATCH /api/clip-plans/{id}/render-settings` (весь список) или
   через файл клипа.
+* `POST /api/clip-plans/{id}/snap-beats` (MCP `snap_to_beats`, `app/beat_snap.py`) — начала слоёв
+  (`start`, длина та же), ключи слоёв (`keys[*].t` — через абсолютное время слоя, порядок ключей
+  сохраняется), ключи камеры и склейки кусков — на ближайшую долю сетки музыки клипа
+  (`audio_map.music_beats`, шкала final) с допуском `tolerance`; слои `captions`, `chat`, `pngtuber` и
+  запертые не двигаются. В редакторе — «♪ К долям» в шапке таймлайна.

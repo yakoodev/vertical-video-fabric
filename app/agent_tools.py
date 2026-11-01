@@ -3718,6 +3718,153 @@ def h_match_piece_colors(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def _beat_grid(ctx: ToolContext, args: dict, plan: dict, clock: Any) -> tuple[list[float], str, dict]:
+    """Сетка долей для snap_to_beats: (моменты, шкала "final"/"clip", описание)."""
+    from app.beat_snap import describe_grid, grid_times
+
+    kind = str(args.get("grid") or "beat")
+    if args.get("beats") is not None:
+        try:
+            beats = sorted({round(float(t), 4) for t in args["beats"]})
+        except (TypeError, ValueError) as exc:
+            raise ToolError("beats — список секунд готового ролика") from exc
+        return beats, "final", {"source": "beats", "count": len(beats), "time": "final"}
+    if args.get("bpm") is not None:
+        bpm = _num(args.get("bpm"))
+        if bpm is None or not 40 <= bpm <= 240:
+            raise ToolError("bpm — 40..240")
+        first = _num(args.get("first_beat")) or 0.0
+        down = _num(args.get("first_downbeat"))
+        grid = {"bpm": bpm, "period": 60.0 / bpm, "first_beat": first,
+                "first_downbeat": first if down is None else down, "downbeat_every": 4, "time": "final"}
+        return grid_times(grid, clock.final_duration, kind), "final", describe_grid(grid, kind, "manual")
+    source = str(args.get("source") or "auto")
+    if source in ("auto", "music"):
+        from app.audio_map import _music_beats
+
+        grid = _music_beats(ctx.store, plan.get("render_settings") or {}, clock)
+        if grid:
+            return grid_times(grid, clock.final_duration, kind), "final", describe_grid(grid, kind, "music")
+        if source == "music":
+            raise ToolError("у клипа нет музыки set_music или в ней не слышно пульса — передай bpm и first_beat "
+                            "(или beats) сам, либо source: \"audio\" — доли звука клипа")
+    from app.audio_map import clip_audio_map
+
+    try:
+        view, _png = clip_audio_map(ctx.store, ctx.plan_id)
+    except ValueError as exc:
+        raise ToolError(f"доли звука клипа: {exc}") from exc
+    grid = view.get("beats")
+    if not grid:
+        raise ToolError("в звуке клипа нет пульса (и музыки set_music нет) — передай bpm и first_beat сам")
+    return grid_times(grid, clock.clip_duration, kind), "clip", describe_grid(grid, kind, "audio")
+
+
+def h_snap_to_beats(ctx: ToolContext, args: dict) -> dict:
+    """Начала слоёв, ключи, камера и склейки — на ближайшую долю (app/beat_snap.py)."""
+    from app.beat_snap import (
+        DEFAULT_TOLERANCE, GRIDS, MAX_TOLERANCE, MIN_PIECE_SEC, TARGETS, Scale, nearest, snap_camera, snap_layers,
+    )
+    from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
+    from app.piece_speed import is_reversed, seg_speed
+    from app.timebase import ClipClock
+
+    raw_targets = args.get("targets") or ["layers"]
+    if isinstance(raw_targets, str):
+        raw_targets = [raw_targets]
+    targets = set(TARGETS) if "all" in raw_targets else {str(t) for t in raw_targets}
+    if not targets or targets - set(TARGETS):
+        raise ToolError(f"targets — из {', '.join(TARGETS)} (или all)")
+    grid_kind = str(args.get("grid") or "beat")
+    if grid_kind not in GRIDS:
+        raise ToolError(f"grid — {', '.join(GRIDS)}")
+    tolerance = _num(args.get("tolerance"))
+    tolerance = DEFAULT_TOLERANCE if tolerance is None else tolerance
+    if not 0.01 <= tolerance <= MAX_TOLERANCE:
+        raise ToolError(f"tolerance — 0.01..{MAX_TOLERANCE:g} с (дальше — это уже другой момент, не «чуть мимо»)")
+    dry = bool(args.get("dry_run"))
+    only = {str(i) for i in args.get("layer_ids") or []} or None
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    clock = ClipClock.for_plan(plan)
+    beats, scale_name, grid_info = _beat_grid(ctx, args, plan, clock)
+    if not beats:
+        raise ToolError("в сетке нет ни одной доли на длине ролика")
+    changes: list[dict] = []
+    problems: list[str] = []
+
+    if "joins" in targets and len(plan.get("segments") or []) > 1:
+        segments = plan["segments"]
+        to_grid = clock.clip_to_final if scale_name == "final" else (lambda t: float(t))
+        spec = export_spec(ctx.store, ctx.plan_id)
+        pieces = [dict(p) for p in spec["pieces"]]
+        duration = float(spec["source"].get("duration_sec") or 0) or math.inf
+        shift = 0.0
+        moved = False
+        for k in range(len(segments) - 1):
+            join = (clock.clip_starts[k + 1] + clock.clip_end(k)) / 2
+            g = to_grid(join) + shift
+            b = nearest(g, beats, tolerance)
+            if b is None or abs(b - g) < 0.004:
+                continue
+            delta = round(b - g, 3)
+            seg, piece = segments[k], pieces[k]
+            src_delta = delta * seg_speed(seg)
+            start, end = float(piece["start_sec"]), float(piece["end_sec"])
+            if is_reversed(seg):
+                start = round(start - src_delta, 3)  # конец развёрнутого куска на клипе — начало в исходнике
+            else:
+                end = round(end + src_delta, 3)
+            if start < 0 or end > duration or end - start < MIN_PIECE_SEC:
+                problems.append(f"стык {k}→{k + 1}: до доли {delta:+.2f} с — кусок вышел бы за исходник или "
+                                f"короче {MIN_PIECE_SEC:g} с, не трогаю")
+                continue
+            piece.update(start_sec=start, end_sec=end)
+            piece.pop("focus", None)
+            shift += delta
+            moved = True
+            changes.append({"target": "join", "index": k, "from": round(g - shift + delta, 3), "to": b, "delta": delta})
+        if moved and not dry:
+            try:
+                validate_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+            except SpecError as exc:
+                raise ToolError("склейки к долям не приняты", exc.problems) from exc
+            ctx.before_change()
+            apply_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+            plan = ctx.store.get_clip_plan(ctx.plan_id)
+            clock = ClipClock.for_plan(plan)
+
+    scale = Scale(clock.clip_to_final, clock.final_to_clip) if scale_name == "final" else Scale()
+    render = _current_render(ctx)
+    fresh = dict(render)
+    if targets & {"layers", "keys"}:
+        layers, moved_layers = snap_layers(_layers_of(render), beats, tolerance, scale, keys="keys" in targets,
+                                           starts="layers" in targets, only=only)
+        if moved_layers:
+            fresh["layers"] = layers
+            changes += moved_layers
+    if "camera" in targets and render.get("camera"):
+        camera, moved_cam = snap_camera(_camera_of(render), beats, tolerance, scale)
+        if moved_cam:
+            fresh["camera"] = camera
+            changes += moved_cam
+    if fresh != render and not dry:
+        _save_render(ctx, fresh)
+    out: dict = {"ok": True, "dry_run": dry, "moved": len(changes), "changes": changes[:80], "grid": grid_info,
+                 "tolerance": tolerance, "time": scale_name,
+                 "note": ("from/to — секунды шкалы сетки (final — готовый ролик, clip — до вырезов). Сдвинуто только то, "
+                          f"что было ближе {tolerance:g} с к доле; слои сдвинуты целиком (длина та же), склейки — "
+                          "подрезкой конца куска (всё после стыка едет за ним). Субтитры, чат и запертые слои не "
+                          "трогаются. Проверь contact_sheet/listen.")}
+    if dry and "joins" in targets:
+        out["note"] += " dry_run: слои посчитаны без сдвига склеек."
+    if not changes:
+        out["note"] = f"ничего не сдвинуто: ни один момент не ближе {tolerance:g} с к доле ({grid_kind})"
+    if problems:
+        out["warnings"] = problems
+    return out
+
+
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import save_lines
 
@@ -6116,6 +6263,28 @@ def _build_registry() -> list[Tool]:
                   "strength": {"type": "number", "minimum": 0, "maximum": 1}}),
             h_match_piece_colors, mutating=True,
             label=lambda a: "Подгоняю цвет кусков" + (f" к куску {a.get('reference')}" if a.get("reference") is not None else ""),
+        ),
+        Tool(
+            "snap_to_beats", "Ставлю на доли",
+            "Привязка к долям музыки одной командой: targets — layers (начала слоёв, длина та же), keys (ключевые "
+            "кадры слоёв), camera (ключи камеры), joins (склейки кусков — подрезкой конца куска, всё после стыка "
+            "едет за ним) или all; по умолчанию layers. grid: beat (каждая доля), downbeat (сильная, раз в такт), "
+            "half (восьмые). tolerance (0.15 с; до 0.5) — дальше от доли не трогаем. Сетка: музыка set_music "
+            "(audio_map.music_beats), без неё — доли звука клипа (source: audio), или своя: bpm + first_beat "
+            "(+ first_downbeat) в секундах готового ролика, или beats — список моментов. Субтитры, чат, PNGtuber "
+            "и запертые слои не двигаются; layer_ids — только эти слои. dry_run — только показать сдвиги. "
+            "/ Snap layer starts, keyframes and cut joins to the nearest music beat.",
+            _obj({"targets": {"type": "array", "items": {"type": "string",
+                                                         "enum": ["layers", "keys", "camera", "joins", "all"]}},
+                  "tolerance": {"type": "number", "minimum": 0.01, "maximum": 0.5},
+                  "grid": {"type": "string", "enum": ["beat", "downbeat", "half"]},
+                  "source": {"type": "string", "enum": ["auto", "music", "audio"]},
+                  "bpm": {"type": "number"}, "first_beat": {"type": "number"}, "first_downbeat": {"type": "number"},
+                  "beats": {"type": "array", "items": {"type": "number"}},
+                  "layer_ids": {"type": "array", "items": {"type": "string"}},
+                  "dry_run": {"type": "boolean"}}),
+            h_snap_to_beats, mutating=True,
+            label=lambda a: "Ставлю на доли: " + ", ".join(a.get("targets") or ["layers"]),
         ),
         Tool(
             "set_piece_fit", "Кадр шире окна",
