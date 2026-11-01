@@ -490,6 +490,10 @@ class Database:
             from app.aivideo import ensure_aiv_schema
 
             ensure_aiv_schema(conn)
+            # Объяснялки: маскоты, библиотека поз, ролики «тема → готовый клип» (app/explainer.py).
+            from app.explainer import ensure_explainer_schema
+
+            ensure_explainer_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

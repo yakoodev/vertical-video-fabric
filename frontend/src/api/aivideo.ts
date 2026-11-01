@@ -5,7 +5,8 @@ import { api } from "@/api/client";
  * оценка (бесплатно) → карточка владельцу с суммой → «Разрешить» → генерация → сборка в холст-клип.
  */
 
-export type Stage = "refs" | "keyframes" | "voice" | "video";
+/** explainer — этап объяснялок (app/explainer.py): позы маскота, лист, озвучка ролика. */
+export type Stage = "refs" | "keyframes" | "voice" | "video" | "explainer";
 
 export interface AivRef {
   id: number;
@@ -232,7 +233,7 @@ export const CAMERA_LABEL: Record<string, string> = {
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
-  refs: "Референсы", keyframes: "Кадры", voice: "Озвучка", video: "Видео",
+  refs: "Референсы", keyframes: "Кадры", voice: "Озвучка", video: "Видео", explainer: "Объяснялка",
 };
 
 export const VIDEO_MODELS: [string, string][] = [

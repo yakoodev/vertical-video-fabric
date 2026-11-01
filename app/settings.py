@@ -145,6 +145,9 @@ class Settings:
         self.aivideo_video_model = (os.getenv("AIVIDEO_VIDEO_MODEL", "bytedance/seedance-2-fast").strip()
                                     or "bytedance/seedance-2-fast")
         self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
+        # Объяснялки (app/explainer.py): потолок одной карточки ролика (новые позы + платная озвучка),
+        # сверх — отказ ещё при запросе. 45 с с нуля ≈ 18 поз × 3 ₽ + озвучка ≈ 57 ₽.
+        self.explainer_video_cap_rub = float(os.getenv("EXPLAINER_VIDEO_CAP_RUB", "150") or 150)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         # Бесплатная озвучка (app/dubbing.py GeminiTTS) по тому же ключу Gemini: модель и голос
