@@ -1259,8 +1259,20 @@ class ClipRenderService:
         from app.audio_mix import normalize_mix
 
         mix = normalize_mix((plan.get("render_settings") or {}).get("mix"))
-        if mix:
-            audio_plan = {**(audio_plan or {"notes": []}), "mix": mix}
+        pass_mix = dict(mix)
+        if pass_mix.get("voice_fx"):
+            # Цепочка голоса: у холста — на слоях-голосе (проход звуков слоёв), у клипа с исходником —
+            # своим проходом по звуку основы (_finalize_render, до музыки).
+            from app.canvas import is_canvas
+
+            try:
+                canvas_clip = is_canvas(self.store.get_source(int(plan["source_id"])))
+            except (KeyError, TypeError, ValueError):
+                canvas_clip = True
+            if canvas_clip:
+                pass_mix.pop("voice_fx")
+        if pass_mix:
+            audio_plan = {**(audio_plan or {"notes": []}), "mix": pass_mix}
         from app.piece_color import has_fix
         from app.piece_speed import is_retimed
 
@@ -2157,6 +2169,11 @@ class ClipRenderService:
         passes: list[str] = []
         if subtitle_profile_id:
             passes.append("subtitle")
+        voice_fx = (preset.get("mix") or {}).get("voice_fx")
+        if voice_fx:
+            # Цепочка голоса клипа (mix.voice_fx, app/audio_fx.py) — по звуку основы после распознавания
+            # субтитров (оно слышит чистую речь) и до музыки (эффект не ложится на трек).
+            passes.append("voice_fx")
         if music:
             passes.append("music")
         temp_paths: list[Path] = []
@@ -2164,7 +2181,9 @@ class ClipRenderService:
         for index, name in enumerate(passes):
             is_last = index == len(passes) - 1
             dest = output_path if is_last else settings.clip_dir / f"{render_id}.{name}.mp4"
-            if name == "music":
+            if name == "voice_fx":
+                _run_ffmpeg(build_voice_fx_args(current, dest, voice_fx), timeout=60 * 20)
+            elif name == "music":
                 music_settings = dict(music)
                 music_settings["duration_sec"] = probe_media(current).duration_sec
                 # Стоп-кадр в конце: музыка доигрывает и затухает на нём, а не до него.
@@ -2372,6 +2391,16 @@ def build_ffmpeg_concat_args(concat_list_path: Path, output_path: Path) -> list[
     ]
 
 
+def build_voice_fx_args(input_path: Path, output_path: Path, chain: list[dict]) -> list[str]:
+    """Цепочка эффектов голоса (app/audio_fx.py) по звуку клипа, картинка копией."""
+    from app.audio_fx import chain_filters
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_path), "-map", "0:v:0",
+            "-map", "0:a:0", "-c:v", "copy", "-af", chain_filters(chain, "vo") + ",aresample=48000",
+            "-c:a", "aac", "-b:a", FINAL_AUDIO_BITRATE, "-ar", "48000", "-movflags", "+faststart", str(output_path)]
+
+
 def build_ffmpeg_music_args(input_path: Path, output_path: Path, music: dict) -> list[str]:
     """Mix a background music track over an already-rendered clip.
 
@@ -2527,6 +2556,12 @@ def _music_chain(music: dict) -> tuple[str, str, str]:
 
     start_sec = max(0.0, float(music.get("start_sec") or 0))
     music_chain = [f"volume={_ff_number(volume)}"]
+    if music.get("fx"):
+        # Цепочка эффектов музыки клипа (render_settings.mix.music_fx, app/audio_fx.py): эквалайзер
+        # (освободить место голосу), фильтр, ревёрб… — статично, на весь трек.
+        from app.audio_fx import chain_filters
+
+        music_chain.append(chain_filters(music["fx"], "mu"))
     if start_sec > 0:
         # Музыка с секунды трека start_sec: начало отрезается (с петлёй — только у первого круга).
         music_chain[:0] = [f"atrim=start={_ff_number(start_sec)}", "asetpts=PTS-STARTPTS"]

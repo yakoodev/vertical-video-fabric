@@ -139,12 +139,10 @@ def normalize_mix(raw: Any) -> dict:
         out["layer_gains"] = gains
     for key in ("voice_fx", "music_fx"):
         if src.get(key):
-            try:
-                from app.audio_fx import normalize_chain
+            from app.audio_fx import TIMELESS_BANNED, normalize_chain
 
-                chain = normalize_chain(src.get(key))
-            except ImportError:  # pragma: no cover - эффекты — модуль app/audio_fx.py
-                chain = []
+            # Голос и музыка идут по шкале ролика: эффекты, меняющие длину/направление, — только у слоёв.
+            chain = [e for e in normalize_chain(src.get(key)) if e["fx"] not in TIMELESS_BANNED]
             if chain:
                 out[key] = chain
     if isinstance(src.get("auto"), dict):
@@ -490,6 +488,10 @@ def build_model(store: Any, plan_id: int, workdir: Path, overrides: dict | None 
 
     if not canvas:
         got = _source_stem(store, plan, source, duration, workdir / "source.wav", notes)
+        if got is not None and mix.get("voice_fx"):
+            from app.audio_fx import chain_filters
+
+            got = _apply_af(got, chain_filters(mix["voice_fx"], "vo"), workdir / "source.fx.wav")
         if got is not None:
             stems["source"] = got
             notes.append("звук исходника — по кускам подряд, без J/L, тишины, эффектов отрезка и переходов "

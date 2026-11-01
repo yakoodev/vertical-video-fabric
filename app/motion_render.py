@@ -955,6 +955,7 @@ def audio_layer_items(
     Эффект (audio, mode effect) сначала подгоняется под голос клипа (``speech_db``); дорожка (audio
     mode track, звук video) — нет: volume × gain_db, края с фейдом TRACK_EDGE_FADE. ``mix`` —
     ``render_settings.mix`` (app/audio_mix.normalize_mix): поправки громкости слоёв поверх всего."""
+    from app.audio_fx import chain_rate
     from app.audio_mix import layer_role, mix_layer_gain_db
     from app.motion import has_layer_sound, is_track_audio, track_gain
 
@@ -980,7 +981,8 @@ def audio_layer_items(
             if note and notes is not None:
                 notes.append(note)
             if item:
-                usable.append({**item, "layer_id": str(layer.get("id") or ""), "role": role})
+                usable.append({**item, "layer_id": str(layer.get("id") or ""), "role": role,
+                               **_layer_fx(props, role, mix)})
             continue
         start = float(layer["start"])
         end = min(float(layer["end"]), float(duration))
@@ -998,14 +1000,27 @@ def audio_layer_items(
             "volume": track_gain(props) if track
             else effect_volume(path, props.get("volume", 1), speech_db, speechless),
             "fade_in": fade_in, "fade_out": fade_out, "duck": bool(props.get("duck")), "track": track,
-            "layer_id": str(layer.get("id") or ""), "role": role,
+            "layer_id": str(layer.get("id") or ""), "role": role, **_layer_fx(props, role, mix),
         })
     for item in usable:
+        rate = chain_rate(item.get("fx"))
+        if abs(rate - 1.0) > 1e-3 and item["read"] is not None and not item["loop"]:
+            # speed/tempo в цепочке: слой той же длины читает больше/меньше файла.
+            item["read"] = item["read"] * rate
         extra = mix_layer_gain_db(mix, item["layer_id"], item["role"])
         if extra:
             item["volume"] = item["volume"] * 10 ** (extra / 20)
             item["mix_db"] = extra
     return usable
+
+
+def _layer_fx(props: dict, role: str, mix: dict | None) -> dict:
+    """Цепочка эффектов звука слоя: своя (``props.fx``), у голоса — ещё и общая голоса клипа
+    (``mix.voice_fx``) после неё. Пусто — ``{}`` (цепочка ровно прежняя)."""
+    chain = list(props.get("fx") or [])
+    if role == "voice" and mix and mix.get("voice_fx"):
+        chain += list(mix["voice_fx"])
+    return {"fx": chain} if chain else {}
 
 
 def audio_item_inputs(item: dict) -> list[str]:
@@ -1033,6 +1048,13 @@ def audio_item_chain(n: int, item: dict, delay: bool = True) -> str:
         # Ровно длина слоя в клипе (петля бесконечна, atempo округляет).
         chain += [f"atrim=0:{length:.3f}", "asetpts=PTS-STARTPTS"]
     chain.append(f"volume={item['volume']:.4f}")
+    if item.get("fx"):
+        # Цепочка эффектов слоя (app/audio_fx.py) — после громкости, до фейдов: хвост ревёрба
+        # затухает вместе со слоем; speed/tempo уже прочитали больше файла — длина ровно слоя.
+        from app.audio_fx import chain_filters
+
+        chain.append(chain_filters(item["fx"], f"l{n}_", length))
+        chain += ["apad", f"atrim=0:{length:.3f}", "asetpts=PTS-STARTPTS"]
     if item["fade_in"] > 0:
         chain.append(f"afade=t=in:st=0:d={item['fade_in']:.3f}")
     if item["fade_out"] > 0:

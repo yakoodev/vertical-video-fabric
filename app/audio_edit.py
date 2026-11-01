@@ -82,6 +82,9 @@ FX_KINDS: dict[str, str] = {
     "reverse": "задом наперёд",
     "beep": "писк (тон вместо звука)",
     "noise": "тихий розовый шум вместо звука",
+    # Любая цепочка эффектов (app/audio_fx.py) на отрезке: эквалайзер, компрессор, ревёрб, тон…
+    # кроме меняющих длину (speed/tempo/reverse — для них свои fx отрезка).
+    "chain": "цепочка эффектов (chain: [{fx, …}] или preset)",
 }
 TIME_FX = ("speed", "reverse")
 # Свой звук вместо исходного (генератор ffmpeg, а не фильтр звука): тон и шум.
@@ -217,6 +220,15 @@ def normalize_fx(raw: Any) -> list[dict]:
         amount = _num(item.get("amount"))
         if amount is not None and kind not in TIME_FX:
             entry["amount"] = round(_clamp(amount, 0.0, 1.0), 2)
+        if kind == "chain":
+            from app.audio_fx import TIMELESS_BANNED, normalize_chain
+
+            chain = [e for e in normalize_chain(item.get("chain") if item.get("chain") is not None
+                                                else item.get("preset")) if e["fx"] not in TIMELESS_BANNED]
+            if not chain:
+                continue
+            entry["chain"] = chain
+            entry.pop("amount", None)
         if kind == "speed":
             rate = _num(item.get("rate"))
             entry["rate"] = round(_clamp(rate if rate is not None else 0.75, 0.5, 2.0), 3)
@@ -416,6 +428,12 @@ def fx_graph(label: str, items: list[dict], tv: str, stream0: float, out_label: 
                        f"{ENVELOPE_FRAMES},volume='{env}':eval=frame[{p}ww]")
         elif kind in TAIL_FX:
             out.append(f"[{p}w]volume='{env}':eval=frame,{fx_chain(kind, item.get('amount', 0.5))}[{p}ww]")
+        elif kind == "chain":
+            from app.audio_fx import chain_filters
+
+            chain = chain_filters(item.get("chain"), p, b - a, offset=max(0.0, a - stream0))
+            out.append(f"[{p}w]{chain},aresample=48000,{ENVELOPE_FRAMES},"
+                       f"volume='{env}':eval=frame[{p}ww]")
         else:
             out.append(f"[{p}w]{fx_chain(kind, item.get('amount', 0.5))},{ENVELOPE_FRAMES},"
                        f"volume='{env}':eval=frame[{p}ww]")

@@ -4531,6 +4531,11 @@ from app.quality_lint_api import build_lint_router  # noqa: E402
 
 app.include_router(build_lint_router(AuthDep, lambda: store))
 
+# 🎚 Сведение звука и справочник эффектов (app/audio_mix.py, app/audio_fx.py) — вкладка «Звук» редактора.
+from app.audio_mix_api import build_audio_mix_router  # noqa: E402
+
+app.include_router(build_audio_mix_router(AuthDep, lambda: store))
+
 
 app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки
 

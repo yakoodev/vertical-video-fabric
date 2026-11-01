@@ -362,6 +362,221 @@ def h_auto_mix(ctx: Any, args: dict) -> dict:
         raise at.ToolError(f"auto_mix: {exc}") from exc
 
 
+# --------------------------------------------------------------------------- #
+# Эффекты: цепочки слоёв/голоса/музыки, справочник, авто-звуки на склейках, кроссфейд
+# --------------------------------------------------------------------------- #
+
+
+def h_audio_fx_reference(_ctx: Any, _args: dict) -> dict:
+    from app.audio_edit import FX_KINDS
+    from app.audio_fx import reference
+
+    out = reference()
+    out["span_fx"] = {"kinds": FX_KINDS,
+                      "about": "set_audio_fx — эффект на отрезке звука исходника; fx \"chain\" + chain/preset — любая "
+                               "цепочка отсюда (кроме speed/tempo/reverse — у отрезка свои)"}
+    out["auto_sfx"] = {"sounds": AUTO_SFX_SOUNDS, "about": "auto_sfx — вжухи на склейках, «поп» на плашках, "
+                                                            "райзер/удар в заданные моменты; только записи пака"}
+    return out
+
+
+def h_set_audio_chain(ctx: Any, args: dict) -> dict:
+    from app.audio_fx import describe_chain, normalize_chain
+    from app.audio_mix import normalize_mix
+
+    at = _at()
+    target = str(args.get("target") or ("layer" if args.get("layer_id") else ""))
+    if target not in ("layer", "voice", "music"):
+        raise at.ToolError('target — "layer" (с layer_id), "voice" (голос клипа) или "music" (фоновый трек)')
+    raw = args.get("chain") if args.get("chain") is not None else args.get("preset")
+    problems: list[str] = []
+    chain = normalize_chain(raw, problems)
+    if raw not in (None, "", []) and not chain:
+        raise at.ToolError("цепочка не принята", problems or ["пусто"])
+    render = at._current_render(ctx)
+    if target == "layer":
+        lid = str(args.get("layer_id") or "")
+        layers = at._layers_of(render)
+        layer = next((layer for layer in layers if str(layer.get("id")) == lid), None)
+        if layer is None:
+            raise at.ToolError(f"слоя {lid!r} нет — get_clip (layers)")
+        if layer.get("type") not in ("audio", "video"):
+            raise at.ToolError(f"слой {lid} — {layer.get('type')}: эффекты звука — у audio и video с audio:true")
+        props = dict(layer.get("props") or {})
+        if args.get("append"):
+            chain = (list(props.get("fx") or []) + chain)
+        if chain:
+            props["fx"] = chain
+        else:
+            props.pop("fx", None)
+        layer["props"] = props
+        fresh = at._save_render(ctx, {**render, "layers": layers})
+        saved = next((x for x in fresh.get("layers") or [] if str(x.get("id")) == lid), {}).get("props", {}).get("fx") or []
+    else:
+        key = "voice_fx" if target == "voice" else "music_fx"
+        mix = dict(render.get("mix") or {})
+        if args.get("append"):
+            chain = list(mix.get(key) or []) + chain
+        mix[key] = chain
+        fresh = at._save_render(ctx, {**render, "mix": normalize_mix(mix)})
+        saved = (fresh.get("mix") or {}).get(key) or []
+    out = {"ok": True, "target": target, "chain": saved, "chain_text": describe_chain(saved) or "без эффектов",
+           "note": ("цепочка по порядку; превью редактора эффекты не играет — слушай рендер; громкость после эффектов "
+                    "проверит audio_mix_report (финал всё равно −14 LUFS)")}
+    if target == "voice":
+        out["note"] += "; голос: у холста — слои-голос (озвучка, реплики), у клипа с исходником — весь его звук"
+    if problems:
+        out["warnings"] = problems
+    return out
+
+
+AUTO_SFX_SOUNDS = {
+    "cut": ("sfx:freesound/whoosh-1.ogg", "sfx:freesound/whoosh-soft.ogg"),
+    "badge": ("sfx:freesound/pop-soft.ogg",),
+    "riser": ("sfx:freesound/riser.ogg",),
+    "impact": ("sfx:freesound/impact-cinematic.ogg",),
+}
+AUTO_SFX_PREFIX = "asfx_"
+AUTO_SFX_MIN_GAP = 0.5
+AUTO_SFX_MAX = 40
+AUTO_SFX_VOLUME = {"cut": 0.6, "badge": 0.5, "riser": 0.7, "impact": 0.8}
+BADGE_LAYER_TYPES = ("text", "callout", "nameplate", "counter")
+
+
+def _sound_ok(ref: str) -> tuple[bool, float]:
+    from app.motion_assets import pack_item_info
+
+    try:
+        info = pack_item_info(ref)
+    except Exception:  # noqa: BLE001
+        info = None
+    if not info:
+        return False, 0.0
+    duration = info.get("duration") or info.get("duration_sec")
+    if not duration:
+        from pathlib import Path
+
+        from app.motion_render import _probe_sound
+
+        try:
+            duration = _probe_sound(Path(info["path"]))[0]
+        except Exception:  # noqa: BLE001
+            duration = 1.0
+    return True, float(duration or 1.0)
+
+
+def h_auto_sfx(ctx: Any, args: dict) -> dict:
+    from app.agent_tools import plan_clock
+    from app.canvas import is_canvas
+
+    at = _at()
+    kinds = args.get("on") or ["cuts", "badges"]
+    if isinstance(kinds, str):
+        kinds = [kinds]
+    allowed = {"cuts", "badges"}
+    bad = [k for k in kinds if k not in allowed]
+    if bad:
+        raise at.ToolError(f"on — из {', '.join(sorted(allowed))} (райзеры и удары — riser_at / impact_at)")
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    render = at._current_render(ctx)
+    clock = plan_clock(ctx.store, plan)
+    duration = float(clock.clip_duration)
+    layers = at._layers_of(render)
+    kept = [layer for layer in layers if not str(layer.get("id") or "").startswith(AUTO_SFX_PREFIX)]
+    existing = sorted(float(layer.get("start") or 0) for layer in kept if layer.get("type") == "audio"
+                      and (layer.get("end") or 0) - (layer.get("start") or 0) < 3.0)
+    notes: list[str] = []
+    wanted: list[tuple[float, str]] = []
+    if "cuts" in kinds:
+        points = [round(float(t), 3) for t in clock.clip_starts[1:]]
+        try:
+            canvas = is_canvas(ctx.store.get_source(int(plan["source_id"])))
+        except (KeyError, TypeError, ValueError):
+            canvas = False
+        if canvas or len(points) == 0:
+            points += [round(float(layer["start"]), 3) for layer in kept if layer.get("type") in ("image", "video")
+                       and not layer.get("hidden") and float(layer.get("start") or 0) > 0.15]
+        wanted += [(t, "cut") for t in points]
+    if "badges" in kinds:
+        wanted += [(round(float(layer["start"]), 3), "badge") for layer in kept
+                   if layer.get("type") in BADGE_LAYER_TYPES and not layer.get("hidden")]
+    for key, kind in (("riser_at", "riser"), ("impact_at", "impact")):
+        for value in args.get(key) or []:
+            t = at._num(value)
+            if t is not None and 0 <= t <= duration:
+                wanted.append((round(t, 3), kind))
+    sounds = {kind: [(ref, *_sound_ok(ref)) for ref in refs] for kind, refs in AUTO_SFX_SOUNDS.items()}
+    placed: list[dict] = []
+    taken: list[float] = list(existing)
+    count = {"cut": 0, "badge": 0, "riser": 0, "impact": 0}
+    missing: set[str] = set()
+    for t, kind in sorted(wanted):
+        ok_refs = [(ref, dur) for ref, ok, dur in sounds[kind] if ok]
+        if not ok_refs:
+            missing.add(kind)
+            continue
+        if any(abs(t - x) < (0.25 if x in existing else AUTO_SFX_MIN_GAP) for x in taken) and kind in ("cut", "badge"):
+            continue
+        ref, dur = ok_refs[count[kind] % len(ok_refs)]
+        if kind == "riser":  # райзер кончается на моменте
+            start, end = max(0.0, t - dur), t
+        elif kind == "cut":  # вжух — чуть раньше склейки, пик на ней
+            start, end = max(0.0, t - 0.05), min(duration, t + min(dur, 0.8))
+        else:
+            start, end = t, min(duration, t + min(dur, 1.5))
+        if end - start < 0.1:
+            continue
+        count[kind] += 1
+        taken.append(t)
+        placed.append({"id": f"{AUTO_SFX_PREFIX}{kind}{count[kind]:02d}", "type": "audio", "name": f"Авто-звук: {kind}",
+                       "start": round(start, 3), "end": round(end, 3),
+                       "props": {"asset_id": ref, "volume": AUTO_SFX_VOLUME[kind], "role": "sfx"}})
+        if len(placed) >= AUTO_SFX_MAX:
+            notes.append(f"не больше {AUTO_SFX_MAX} авто-звуков — остальное пропущено")
+            break
+    if missing:
+        notes.append(f"нет записей пака для: {', '.join(sorted(missing))} (tools/fetch_sfx.py) — синтетику не подставляю")
+    out = {"ok": True, "placed": [{k: x[k] for k in ("id", "start", "end")} | {"sound": x["props"]["asset_id"]}
+                                  for x in placed], "count": len(placed), "applied": not args.get("dry_run"),
+           "note": ("звуки — эффекты (громкость под голос ставит сервис), роль sfx, id asfx_* (повторный вызов "
+                    "заменит их). Потом auto_mix выровняет каждый под голос; убрать — remove_layers.")}
+    if notes:
+        out["warnings"] = notes
+    if not args.get("dry_run"):
+        at._save_render(ctx, {**render, "layers": kept + placed})
+    return out
+
+
+def h_audio_crossfade(ctx: Any, args: dict) -> dict:
+    at = _at()
+    a_id, b_id = str(args.get("from_layer") or ""), str(args.get("to_layer") or "")
+    d = at._num(args.get("duration"))
+    d = 0.5 if d is None else d
+    if not 0.02 <= d <= 5:
+        raise at.ToolError("duration — 0.02..5 с")
+    render = at._current_render(ctx)
+    layers = at._layers_of(render)
+    a = next((x for x in layers if str(x.get("id")) == a_id), None)
+    b = next((x for x in layers if str(x.get("id")) == b_id), None)
+    if a is None or b is None:
+        raise at.ToolError("from_layer и to_layer — id звуковых слоёв клипа (get_clip layers)")
+    if a.get("type") != "audio" or b.get("type") != "audio":
+        raise at.ToolError("кроссфейд — между audio-слоями")
+    changes = []
+    overlap = float(a["end"]) - float(b["start"])
+    if overlap < d - 1e-3:
+        # Слой A дотягивается под начало B (читает дальше своего файла), B остаётся на месте.
+        new_end = round(float(b["start"]) + d, 3)
+        changes.append(f"{a_id}: конец {float(a['end']):.2f} → {new_end:.2f} с (дотянут под начало {b_id})")
+        a["end"] = new_end
+    a["props"] = {**(a.get("props") or {}), "fadeOut": round(d, 3)}
+    b["props"] = {**(b.get("props") or {}), "fadeIn": round(d, 3)}
+    changes.append(f"наплыв {d:g} с: {a_id} затухает, {b_id} нарастает")
+    at._save_render(ctx, {**render, "layers": layers})
+    return {"ok": True, "changes": changes,
+            "note": "если у файла A звука на дотяжку не хватит — там тишина; проверь listen/рендер"}
+
+
 def h_set_mix(ctx: Any, args: dict) -> dict:
     from app.audio_mix import normalize_mix
 
@@ -479,13 +694,18 @@ def tools() -> list:
             "clip; или at_word + duration): muffle — «за стеной», underwater — «под водой», echo — эхо на слове, "
             "reverb — зал, phone — телефон, radio — рация, denoise — шумодав микрофона (track — дорожка "
             "микрофона), speed — замедлить/ускорить звук (rate 0.5–2, длина отрезка та же), reverse — задом "
-            "наперёд, beep — писк вместо звука, noise — розовый шум вместо звука. amount 0..1 — сила (0.5). 0–2 эффекта на ролик, на смысловом моменте. Заменяет список; [] — "
+            "наперёд, beep — писк вместо звука, noise — розовый шум вместо звука, chain — любая цепочка "
+            "эффектов (chain [{fx, …}] или preset: эквалайзер, компрессор, ревёрб, свип фильтра… — "
+            "audio_fx_reference). amount 0..1 — сила (0.5). 0–2 эффекта на ролик, на смысловом моменте. Заменяет список; [] — "
             "снять. Проверь listen. / Audio effects on ranges (lowpass, echo, reverb, phone, radio, denoise, "
             "speed, reverse).",
             obj({"fx": {"type": "array", "items": obj({
                 "start": {"type": "number"}, "end": {"type": "number"},
                 "fx": {"type": "string", "enum": ["muffle", "underwater", "echo", "reverb", "phone", "radio",
-                                                  "denoise", "speed", "reverse", "beep", "noise"]},
+                                                  "denoise", "speed", "reverse", "beep", "noise", "chain"]},
+                "chain": {"type": "array", "items": {"type": "object"},
+                          "description": "fx chain: цепочка [{fx, …}] (audio_fx_reference)"},
+                "preset": {"type": "string", "description": "fx chain: имя пресета (audio_fx_reference)"},
                 "track": {"type": "integer"}, "amount": {"type": "number"}, "rate": {"type": "number"},
                 "keep_pitch": {"type": "boolean"}, "at_word": at._AT_WORD_SCHEMA,
                 "duration": {"type": "number"}}, ["fx"])}}, ["fx"]),
@@ -538,5 +758,55 @@ def tools() -> list:
                  "layer_gains": {"type": "object", "additionalProperties": {"type": ["number", "null"]}},
                  "reset": {"type": "boolean"}}),
             h_set_mix, mutating=True, label=lambda a: "Кручу ручки сведения",
+        ),
+        Tool(
+            "audio_fx_reference", "Смотрю звуковые эффекты",
+            "Справочник звуковых эффектов: виды (eq — срез низа/верха, полки, presence, полосы; highpass/lowpass со "
+            "свипом to; compressor; deesser; gate; denoise; reverb room/hall/plate/cave; delay; pitch (полутона, "
+            "длина та же); speed (с тоном) / tempo (без тона); stereo width; distortion; bitcrush (лоу-фай); "
+            "tremolo; reverse; gain; legacy — эффекты set_audio_fx), параметры с пределами и умолчаниями, готовые "
+            "пресеты (telephone, radio, underwater, muffle, megaphone, lofi, voice_clean, voice_broadcast, "
+            "voice_warm, small_room, hall, cave, dream, echo, slapback, monster, chipmunk, robot, sweep_in, "
+            "sweep_out, thin_out, slowdown), где применять (слой / голос / музыка / отрезок) и звуки auto_sfx. "
+            "/ Audio effects reference.",
+            obj({}), h_audio_fx_reference, scope="global", label=lambda a: "Смотрю звуковые эффекты",
+        ),
+        Tool(
+            "set_audio_chain", "Эффекты звука",
+            "Цепочка эффектов: target \"layer\" + layer_id — звуковой слой (audio или video с audio:true), "
+            "\"voice\" — голос клипа (холст: слои-голос — озвучка, реплики; клип с исходником — весь его звук, "
+            "после распознавания субтитров), \"music\" — фоновый трек. chain [{fx, …}] (по порядку: eq → "
+            "compressor → deesser → reverb/delay) или preset (имя из audio_fx_reference); append=true — дописать "
+            "к текущей; [] или null — снять. Свип фильтра на переход: {fx:\"lowpass\", f:300, to:18000, "
+            "sweep_end:0.6} или preset sweep_in/sweep_out. У голоса и музыки нет speed/tempo/reverse (только у "
+            "слоя). Потом audio_mix_report. / Effects chain for a layer, the voice or the music.",
+            obj({"target": {"type": "string", "enum": ["layer", "voice", "music"]}, "layer_id": {"type": "string"},
+                 "chain": {"type": "array", "items": {"type": "object"}}, "preset": {"type": "string"},
+                 "append": {"type": "boolean"}}, ["target"]),
+            h_set_audio_chain, mutating=True,
+            label=lambda a: f"Эффекты звука: {a.get('preset') or a.get('target') or ''}".strip(),
+        ),
+        Tool(
+            "auto_sfx", "Расставляю звуки",
+            "Звуки на монтаж — ТОЛЬКО настоящие записи пака freesound (синтетику не подставляет): on [\"cuts\", "
+            "\"badges\"] — вжух на каждой склейке (стыки кусков; у холста — смены картинок/видео), «поп» на "
+            "появлении плашек/титров; riser_at [t] — райзер, кончающийся ровно на t (перед дропом/панчлайном); "
+            "impact_at [t] — удар на t. Пропускает места, где звук уже стоит, держит паузу ≥ 0.5 с. Слои asfx_* "
+            "(эффекты: громкость под голос держит сервис), повтор заменяет прежние. dry_run=true — только список. "
+            "Потом auto_mix. / Auto-place real whooshes/pops/risers/impacts.",
+            obj({"on": {"type": "array", "items": {"type": "string", "enum": ["cuts", "badges"]}},
+                 "riser_at": {"type": "array", "items": {"type": "number"}},
+                 "impact_at": {"type": "array", "items": {"type": "number"}},
+                 "dry_run": {"type": "boolean"}}),
+            h_auto_sfx, mutating=True, label=lambda a: "Расставляю звуки",
+        ),
+        Tool(
+            "audio_crossfade", "Кроссфейд звуков",
+            "Наплыв между двумя audio-слоями: from_layer затухает, to_layer нарастает за duration (0.5 с); если "
+            "слои не перекрываются — from_layer дотягивается под начало to_layer (to_layer стоит на месте). "
+            "/ Crossfade two audio layers.",
+            obj({"from_layer": {"type": "string"}, "to_layer": {"type": "string"}, "duration": {"type": "number"}},
+                ["from_layer", "to_layer"]),
+            h_audio_crossfade, mutating=True, label=lambda a: "Кроссфейд звуков",
         ),
     ]

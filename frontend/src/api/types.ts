@@ -300,6 +300,22 @@ export interface RenderSettings {
    * размытие (`blur` px) и темнеет (`dim`), поверх — слой `end_banner`. Превью — та же функция движка.
    */
   end_screen?: { duration: number; blur: number; dim: number; ramp: number; template?: string | null; [k: string]: unknown } | null;
+  /** 🎚 Сведение (app/audio_mix.py: auto_mix / set_mix): громкость музыки, sidechain, поправки слоёв, эффекты голоса/музыки. */
+  mix?: MixSettings;
+}
+
+/** render_settings.mix — ручки сведения; пустые поля сервер не хранит. */
+export interface MixSettings {
+  target_lufs?: number;
+  music_db?: number;
+  sidechain?: false;
+  duck_attack?: number;
+  duck_release?: number;
+  groups?: Partial<Record<"voice" | "sfx" | "music" | "video", number>>;
+  layer_gains?: Record<string, number>;
+  voice_fx?: { fx: string; [k: string]: unknown }[];
+  music_fx?: { fx: string; [k: string]: unknown }[];
+  auto?: Record<string, unknown>;
 }
 
 /** Стоп-кадр посреди ролика: кадр в `at` стоит `duration` с; звук молчит (вставка) или идёт дальше. */

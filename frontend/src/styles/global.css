@@ -4119,6 +4119,19 @@ body.vvf-studio .ed-viewbar { margin-bottom: 8px; }
 .lay-note { font-size: 11.5px; padding: 6px 8px; border-radius: 8px; }
 .lay-note.ok { background: var(--success-soft); color: var(--success); }
 .lay-note.warn { background: var(--warn-soft); color: var(--warn); }
+/* 🎚 Сведение и цепочки звуковых эффектов (FxChainEditor) */
+.fx-chain { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.fx-chain .li-row { flex-wrap: wrap; gap: 6px; align-items: center; }
+.fx-chain .li-row select.input { flex: 1 1 120px; min-width: 0; }
+.fx-chain-title { font-size: 11.5px; flex: 0 0 auto; }
+.fx-link { border: 1px solid var(--border, rgba(127,127,127,.25)); border-radius: 8px; padding: 2px 6px; }
+.fx-link > summary { display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-size: 12px; }
+.fx-link-actions { display: inline-flex; gap: 2px; }
+.fx-params { flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.fx-params .li-num { flex: 1 1 96px; min-width: 0; }
+.fx-params .li-num input, .fx-params .li-num select { width: 100%; }
+.mix-report { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.mix-line { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: -0.5px; overflow-x: auto; white-space: pre; }
 .lay-frame {
   position: relative; width: 100%; overflow: hidden; border-radius: var(--r-sm);
   background: var(--bg-2); border: 1px solid var(--border); touch-action: none; user-select: none;
