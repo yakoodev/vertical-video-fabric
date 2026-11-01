@@ -6,6 +6,9 @@
  * - pip_cam — обычный кадр 9:16 и вебка окошком поверх (`pip` — центр/ширина в долях выхода);
  * - meme    — горизонтальное видео целиком сверху во всю ширину (`video_y` — его верх в долях
  *             высоты), ниже фон `bg` под картинки и титры — анимированный (motion/backgrounds.ts).
+ * - avatar_full — только аватар/вебка (`cam`) на весь кадр: ширина `video_scale` ширин кадра,
+ *             центр по высоте `avatar_y`, вокруг размытый тот же аватар (`bg_blur`) или фон `bg`
+ *             (app/stream_layout.avatar_geometry).
  *
  * `cam` — прямоугольник вебки в долях ВСЕГО кадра исходника (до content-crop).
  * `gap` и `border.width` — пиксели кадра 1080×1920 (на других размерах — пропорционально).
@@ -25,7 +28,7 @@ import {
   type BackgroundOptions,
 } from "@/motion";
 
-export type LayoutMode = "single" | "split" | "pip_cam" | "meme";
+export type LayoutMode = "single" | "split" | "pip_cam" | "meme" | "avatar_full";
 
 export interface LayoutRect {
   x: number;
@@ -54,6 +57,10 @@ export interface StreamLayout {
   video_scale: number;
   /** meme: фон под видео — анимированный по умолчанию (старый "#rrggbb" — заливка). */
   bg: Background;
+  /** avatar_full: центр аватара по высоте кадра, 0.2..0.8 (0.5). */
+  avatar_y?: number;
+  /** avatar_full: фон — размытый тот же аватар (по умолчанию), false — `bg`. */
+  bg_blur?: boolean;
 }
 
 /** Прямоугольник в пикселях исходника (videoWidth × videoHeight). */
@@ -79,7 +86,7 @@ export const DEFAULT_LAYOUT: StreamLayout = {
   bg: DEFAULT_BACKGROUND,
 };
 
-const MODES: LayoutMode[] = ["single", "split", "pip_cam", "meme"];
+const MODES: LayoutMode[] = ["single", "split", "pip_cam", "meme", "avatar_full"];
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
 
 function num(v: unknown, def: number, lo: number, hi: number): number {
@@ -106,8 +113,9 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
   const s = raw ?? {};
   const pip = s.pip ?? DEFAULT_LAYOUT.pip;
   const border = s.border ?? DEFAULT_LAYOUT.border;
+  const mode: LayoutMode = MODES.includes(s.mode as LayoutMode) ? (s.mode as LayoutMode) : "single";
   return {
-    mode: MODES.includes(s.mode as LayoutMode) ? (s.mode as LayoutMode) : "single",
+    mode,
     cam: normalizeCam(s.cam),
     ratio: r4(num(s.ratio, DEFAULT_LAYOUT.ratio, 0.2, 0.6)),
     cam_pos: s.cam_pos === "bottom" ? "bottom" : "top",
@@ -124,12 +132,35 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
     video_y: r4(num(s.video_y, DEFAULT_LAYOUT.video_y, 0, 0.6)),
     video_scale: r4(num(s.video_scale, 1, 1, 4)),
     bg: normalizeBackground(s.bg),
+    ...(mode === "avatar_full" ? { avatar_y: r4(num(s.avatar_y, 0.5, 0.2, 0.8)), bg_blur: s.bg_blur !== false } : {}),
   };
 }
 
 export function layoutActive(layout: StreamLayout | null | undefined): boolean {
-  return !!layout && (layout.mode === "split" || layout.mode === "pip_cam" || layout.mode === "meme");
+  return (
+    !!layout &&
+    (layout.mode === "split" || layout.mode === "pip_cam" || layout.mode === "meme" || layout.mode === "avatar_full")
+  );
 }
+
+/**
+ * avatar_full: где аватар в px выхода `out` (как app/stream_layout.avatar_geometry и
+ * render._layout_filter: ширина even(W·video_scale), высота по пропорции cam, центр по высоте avatar_y).
+ */
+export function avatarGeometry(
+  layout: StreamLayout,
+  srcW: number,
+  srcH: number,
+  out: { w: number; h: number } = { w: 1080, h: 1920 },
+): { x: number; y: number; w: number; h: number } {
+  const cam = layout.cam;
+  const aspect = (cam.w * (srcW || 16)) / Math.max(1e-6, cam.h * (srcH || 9));
+  const vw = evenPx(out.w * (layout.video_scale || 1));
+  const vh = evenPx(vw / Math.max(1e-6, aspect));
+  return { x: Math.floor((out.w - vw) / 2), y: Math.trunc((layout.avatar_y ?? 0.5) * out.h - vh / 2), w: vw, h: vh };
+}
+
+let avatarBgCanvas: HTMLCanvasElement | null = null;
 
 const evenPx = (v: number) => Math.max(2, Math.round(v / 2) * 2);
 
@@ -216,6 +247,47 @@ export function drawLayoutFrame(
   const kx = W / out.w;
   const border = scaledPx(layout.border.width, out.h);
   const color = layout.border.color;
+
+  if (layout.mode === "avatar_full") {
+    // Как render._layout_filter: вокруг — размытый тот же аватар (cover) или фон bg; сверху аватар.
+    const cx = layout.cam.x * vw;
+    const cy = layout.cam.y * vh;
+    const cw = layout.cam.w * vw;
+    const ch = layout.cam.h * vh;
+    if (layout.bg_blur !== false && typeof document !== "undefined") {
+      const bc = (avatarBgCanvas ??= document.createElement("canvas"));
+      const sw = Math.max(8, Math.round(W / 4));
+      const sh = Math.max(8, Math.round(H / 4));
+      if (bc.width !== sw || bc.height !== sh) {
+        bc.width = sw;
+        bc.height = sh;
+      }
+      const bctx = bc.getContext("2d");
+      if (bctx) {
+        const tAR = sw / sh;
+        let [sx, sy, sWd, sHt] = [cx, cy, cw, ch];
+        if (cw / Math.max(1, ch) > tAR) {
+          sWd = ch * tAR;
+          sx += (cw - sWd) / 2;
+        } else {
+          sHt = cw / tAR;
+          sy += (ch - sHt) / 2;
+        }
+        const radius = (20 * sw) / out.w;
+        const pad = radius * 2;
+        bctx.save();
+        bctx.filter = `blur(${radius.toFixed(2)}px)`;
+        bctx.drawImage(video, sx, sy, sWd, sHt, -pad, -pad, sw + 2 * pad, sh + 2 * pad);
+        bctx.restore();
+        ctx.drawImage(bc, 0, 0, W, H);
+      }
+    } else {
+      paintBackground(ctx, layout.bg, t, W, H, bgOpts);
+    }
+    const a = avatarGeometry(layout, vw, vh, out);
+    ctx.drawImage(video, cx, cy, cw, ch, a.x * kx, a.y * k, a.w * kx, a.h * k);
+    return;
+  }
 
   if (layout.mode === "meme") {
     // Как render._layout_filter + компоновщик: фон (анимированный), видео во всю ширину с y = video_y.
@@ -343,6 +415,7 @@ export function layoutForFormat(
   if (!layoutActive(layout) || out.w <= out.h) return layout;
   const lay = normalizeLayout(layout);
   if (lay.mode === "meme") return undefined;
+  if (lay.mode === "avatar_full") return lay;
   let w: number;
   let right: boolean;
   let top: boolean;

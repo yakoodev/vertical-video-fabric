@@ -375,7 +375,8 @@ export function captionPages(
     if (r.speakers.length ? !r.speakers.includes(who) : who === ORIG_SPEAKER) return;
     const text = cleanWord(String(wd.w ?? ""), r);
     if (!text) return;
-    const e = Math.max(0, Math.min(2, Math.round(Number(wd.e) || 0)));
+    // Заглушённый мат («п*****», app/censor.py) не выделяем — ни эмфазой, ни подсветкой (QA 01.11).
+    const e = isCensoredWord(text) ? 0 : Math.max(0, Math.min(2, Math.round(Number(wd.e) || 0)));
     items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "", e, es: emphScaleOf(r, e) });
   });
   items.sort((a, b) => a.t0 - b.t0);
@@ -614,6 +615,11 @@ function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scal
   return { scale: 0.86 + 0.14 * ease("outBack", p), alpha: clamp01(p * 3) };
 }
 
+/** Слово, записанное звёздочками после цензуры мата («б****», «бл*ть», «***»): не подсвечивается. */
+export function isCensoredWord(text: string): boolean {
+  return /\*/.test(text) && (/\p{L}/u.test(text) || /\*{2,}/.test(text));
+}
+
 function wordColor(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, hl: Map<number, string>): string {
   const key = hl.get(w.i);
   if (key) return key;
@@ -657,6 +663,9 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
     if (w.t0 <= t) active = k;
   });
   const hl = new Map(r.highlightWords.map((h) => [h.i, h.color] as [number, string]));
+  words.forEach((w) => {
+    if (isCensoredWord(w.text)) hl.delete(w.i);
+  });
   const looks = words.map((w, k) => wordLook(r, words, k, active, t, hl.has(w.i)));
   // Центр строки: строка со словом-эмфазой выше (page.lineHs).
   const lineTop: number[] = [];

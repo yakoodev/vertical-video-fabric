@@ -1882,6 +1882,28 @@ const gradientBase = (ctx) => {
   for (let x = 0; x < 540; x += 60) ctx.fillRect(x, 0, 20, 960);
 };
 
+test("fx grayscale: ч/б на отрезке — насыщенность 0 при intensity 1, полуцвет при 0.5, ключи scale гасят; слои выше цветные", () => {
+  const top = { ...textLayer(), id: "top", type: "shape", track: 3, x: 0.5, y: 0.2, props: { kind: "rect", w: 300, h: 200, fill: "#00ff00" } };
+  const under = { ...textLayer(), id: "under", type: "shape", track: 0, x: 0.5, y: 0.6, props: { kind: "ellipse", w: 500, h: 500, fill: "#ff00ff" } };
+  const bw = (over = {}) => ({ ...textLayer(), id: "bw", type: "fx", track: 1, start: 10.5, end: 12, props: { kind: "grayscale", ...over } });
+  const at = (d, x, y) => [...d.slice((y * 540 + x) * 4, (y * 540 + x) * 4 + 3)];
+  const spread = (rgb) => Math.max(...rgb) - Math.min(...rgb);
+  const full = pixels([under, bw(), top], 11, {}, gradientBase);
+  assert.ok(same(full, pixels([under, bw(), top], 11, {}, gradientBase)), "превью == рендер");
+  const color = pixels([under, top], 11, {}, gradientBase);
+  assert.ok(spread(at(color, 270, 576)) > 200, "без эффекта — пурпурный");
+  assert.ok(spread(at(full, 270, 576)) <= 3, `intensity 1 — серый: ${at(full, 270, 576)}`);
+  assert.ok(spread(at(full, 40, 40)) <= 3, "фон кадра тоже ч/б");
+  const half = pixels([under, bw({ intensity: 0.5 }), top], 11, {}, gradientBase);
+  const hs = spread(at(half, 270, 576));
+  assert.ok(hs > 40 && hs < 200, `intensity 0.5 — полуцвет: ${hs}`);
+  assert.deepEqual(at(full, 270, 192), [0, 255, 0], "слой выше по дорожке — цветной");
+  const keyed = { ...bw(), keys: { scale: [{ t: 0, v: 0 }, { t: 1.5, v: 0 }] } };
+  assert.ok(same(pixels([under, keyed, top], 11, {}, gradientBase), color), "scale 0 — без эффекта");
+  assert.ok(same(pixels([under, bw(), top], 12.5, {}, gradientBase), pixels([under, top], 12.5, {}, gradientBase)), "после end цвет вернулся");
+  assert.equal(E.FX_DEFAULTS.grayscale.intensity, 1);
+});
+
 test("glitch/scramble — только у текста (у прочих fade), циклы glitch/wave — shake/float, stomp — у любого", () => {
   const shape = (over) => ({ ...textLayer(), type: "shape", props: { kind: "rect" }, ...over });
   const g = E.resolveLayer(shape({ in: { type: "glitch", duration: 1 } }), 10.5);
@@ -2035,6 +2057,24 @@ test("субтитры stomp: слово видно с момента и «вп�
   assert.ok(lit(hit) > lit(rest) * 1.2, "на ударе слово крупнее");
   assert.ok(lit(pixels([caps([{ i: 0, color: "#ff3b30" }])], 1.02, { words })) > lit(hit), "акцент бьёт сильнее");
   assert.ok(E.CAPTION_STYLES.some((s) => s.id === "stomp" && s.props.animation === "stomp"));
+});
+
+test("субтитры: заглушённый мат со звёздочками не подсвечивается и без эмфазы (QA 01.11)", () => {
+  assert.ok(E.isCensoredWord("п*****,") && E.isCensoredWord("Бл*ть") && E.isCensoredWord("***"));
+  assert.ok(!E.isCensoredWord("пиздец") && !E.isCensoredWord("*") && !E.isCensoredWord("5*3"));
+  const red = (d) => {
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] < 90) n++;
+    return n;
+  };
+  const caps = (w) => ({ id: "c", type: "captions", start: 0, end: 3, x: 0.5, y: 0.5,
+    props: { style: "hormozi", highlightWords: [{ i: 0, color: "#ff3b30" }] } });
+  const plain = [{ t0: 1, t1: 1.3, w: "ПИЗДЕЦ", e: 2 }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];
+  const starred = [{ t0: 1, t1: 1.3, w: "П*****", e: 2 }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];
+  assert.ok(red(pixels([caps()], 1.6, { words: plain })) > 200, "обычное слово — красная подсветка");
+  assert.equal(red(pixels([caps()], 1.6, { words: starred })), 0, "мат со звёздочками — без подсветки");
+  const ctx = createCanvas(8, 8).getContext("2d");
+  assert.equal(E.captionPages(ctx, starred, { style: "hormozi" }, 0, 3, "Montserrat")[0].words[0].e, 0);
 });
 
 test("субтитры: эмфаза слова (comp.words[i].e) — крупнее всю страницу, прыжок в момент, встряска у shake", () => {

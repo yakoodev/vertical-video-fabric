@@ -86,13 +86,16 @@ BLENDS = ("normal", "multiply", "screen", "overlay", "add")
 # Эффект кадра (frontend/src/motion/layers/fx.ts): процедурно, поверх видео и слоёв ниже по дорожкам.
 FX_KINDS = ("vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain_overlay",
             # Глитч на отрезке (app/glitch.py, add_glitch).
-            "rgb_split", "tear", "datamosh_lite", "pixel_sort_lite")
+            "rgb_split", "tear", "datamosh_lite", "pixel_sort_lite",
+            # Ч/б на отрезке (панчлайн): насыщенность → 0 с силой intensity, сила по времени — ключи scale.
+            "grayscale")
 FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", "lines": "scanlines",
               "leak": "light_leak", "lightleak": "light_leak", "light-leak": "light_leak", "rgb": "chromatic",
               "aberration": "chromatic", "chromatic_aberration": "chromatic", "flash": "flash_frame",
               "white_flash": "flash_frame", "grain": "grain_overlay", "film_grain": "grain_overlay", "noise": "grain_overlay",
               "rgb_shift": "rgb_split", "tearing": "tear", "datamosh": "datamosh_lite", "pixel_sort": "pixel_sort_lite",
-              "pixelsort": "pixel_sort_lite"}
+              "pixelsort": "pixel_sort_lite", "bw": "grayscale", "b/w": "grayscale", "mono": "grayscale",
+              "monochrome": "grayscale", "black_white": "grayscale", "desaturate": "grayscale"}
 # Сколько эффектов кадра одновременно — уже каша (предупреждение агенту, не ошибка).
 FX_MAX_AT_ONCE = 2
 # Реакция слоя на звук (frontend/src/motion/levels.ts): огибающую считает app/audio_react.py.

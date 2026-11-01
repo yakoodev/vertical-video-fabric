@@ -113,11 +113,45 @@ def test_censor_quick_mutes_middles_stars_and_keeps_manual(tmp_path, monkeypatch
     assert [line["text"] for line in subs["lines"]] == ["ну б**** какое небо", "С***, опять!"]
     assert [w["start"] for w in subs["words"]] == [1.0, 1.3, 1.8, 2.3, 5.0, 5.5]  # время не тронуто
 
-    # Повторный запуск: звёздочки найдены как мат, свои отрезки заменены, а не удвоены.
-    again, ok = run_tool(_ctx(store, plan["id"]), "censor_profanity", {"verify": False})
+    # Повтор без параметров — «уже применено», без перерендера (QA 01.11: три вызова подряд).
+    same, ok = run_tool(_ctx(store, plan["id"]), "censor_profanity", {})
+    assert ok and same["status"] == "already" and same["words"] == 2 and "уже применено" in same["note"]
+    # Повторный запуск явно: звёздочки найдены как мат, свои отрезки заменены, а не удвоены.
+    again, ok = run_tool(_ctx(store, plan["id"]), "censor_profanity", {"verify": False, "verify_again": True})
     assert ok and again["stars"] == 0 and len(again["words"]) == 2
     assert store.get_clip_plan(plan["id"])["render_settings"]["mute"] == mute
     assert store.get_clip_plan_subtitles(plan["id"])["words"] == subs["words"]
+
+
+def test_rewritten_subtitles_stay_masked_under_censor(tmp_path, monkeypatch):
+    """QA 01.11 (клип 889): после цензуры auto_edit переписал субтитры (разбор голосов) — мат
+    вернулся в кадр, да ещё красной подсветкой при заглушённом звуке. Слово под отрезком цензуры
+    теперь со звёздочками при любой записи субтитров; не заглушённое (skip) — как есть."""
+    store, _s, plan, _p = _plan(tmp_path, monkeypatch)
+    raw = store.get_clip_plan_subtitles(plan["id"])
+    out, ok = run_tool(_ctx(store, plan["id"]), "censor_profanity", {"verify": False, "skip": [4]})
+    assert ok and [w["i"] for w in out["words"]] == [1]
+    # Как разбор голосов: свежие слова распознавания с метками говорящих.
+    fresh = {**raw, "words": [{**w, "speaker": "A"} for w in raw["words"]], "edited": False}
+    store.set_clip_plan_subtitles(plan["id"], fresh)
+    words = [w["word"] for w in store.get_clip_plan_subtitles(plan["id"])["words"]]
+    assert words == ["ну", "б****", "какое", "небо", "Сука,", "опять!"]
+    assert store.get_clip_plan_subtitles(plan["id"])["lines"][0]["text"] == "ну б**** какое небо"
+    # Без цензуры — субтитры пишутся как есть.
+    censor.censor_plan(store, plan["id"], clear=True)
+    store.set_clip_plan_subtitles(plan["id"], fresh)
+    assert store.get_clip_plan_subtitles(plan["id"])["words"][1]["word"] == "блять"
+    assert run_tool(_ctx(store, plan["id"]), "censor_profanity", {"verify": False})[1]
+
+
+def test_already_applied_needs_every_mat_word_covered(tmp_path, monkeypatch):
+    store, _s, plan, _p = _plan(tmp_path, monkeypatch)
+    assert censor.already_censored(store, plan["id"]) is None  # цензуры ещё нет
+    censor.censor_plan(store, plan["id"], skip=[4])
+    assert censor.already_censored(store, plan["id"]) is None  # «Сука» не заглушена — есть что делать
+    censor.censor_plan(store, plan["id"])
+    done = censor.already_censored(store, plan["id"])
+    assert done and done["words"] == 2 and done["spans"] == 2
 
 
 def test_censor_levels_remembered_and_overridable(tmp_path, monkeypatch):

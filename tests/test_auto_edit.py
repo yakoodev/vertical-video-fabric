@@ -104,6 +104,44 @@ def test_other_voices_get_their_own_smaller_captions_layer():
     assert "speakers" not in single["layers"][-1]["props"] or not single["layers"][-1]["props"]["speakers"]
 
 
+def test_voice_captions_keep_gap_near_hook_zone():
+    """QA 01.11 (клип 889): главные субтитры на 0.30 (лицо внизу) — голоса зажались у хука в 0.20,
+    строки легли друг на друга. Над главными места нет — голоса встают под ними."""
+    from app.agent_tools import CAPTIONS_MIN_GAP, voice_caption_y
+
+    assert voice_caption_y(0.37) == 0.22 and voice_caption_y(0.30) == 0.43
+    assert voice_caption_y(0.72) == 0.57 and voice_caption_y(0.5) == 0.35
+    words = _words("я хочу столько денег чтобы взять ипотеку это страшно " * 2)
+    for w in words[3:6]:
+        w["speaker"] = "B"
+    result = build_auto_edit("Клип", words, [], words[-1]["end"] + 1, caption_y=0.301)
+    caps = {l["id"]: l for l in result["layers"] if l["type"] == "captions"}
+    assert abs(caps["auto_caps_voices"]["y"] - caps["auto_caps"]["y"]) >= CAPTIONS_MIN_GAP
+
+
+def test_moving_main_captions_reseparates_voices_layer(tmp_path, monkeypatch):
+    from app.agent_tools import ToolContext, run_tool
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    main = {"id": "auto_caps", "type": "captions", "start": 0, "end": 10, "x": 0.5, "y": 0.72,
+            "props": {"speakers": ["A"], "maxWords": 2}}
+    voices = {"id": "auto_caps_voices", "type": "captions", "start": 0, "end": 10, "x": 0.5, "y": 0.57,
+              "props": {"speakers": ["B"], "size": 60}}
+    store.set_clip_plan_render_settings(plan["id"], {"layers": [main, voices]})
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "update_layer", {"id": "auto_caps", "patch": {"y": 0.3}})
+    assert ok, out
+    ys = {l["id"]: l["y"] for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"]}
+    assert ys["auto_caps"] == 0.3 and ys["auto_caps_voices"] == 0.43
+    assert out["notes"] and not [w for w in out["warnings"] if "лягут друг на друга" in w]
+    # Рукой голоса на главные — предупреждение с готовой правкой.
+    out, ok = run_tool(ctx, "update_layer", {"id": "auto_caps_voices", "patch": {"y": 0.35}})
+    assert ok and any('update_layer auto_caps_voices patch {"y": 0.43}' in w for w in out["warnings"]), out["warnings"]
+
+
 def test_long_hook_gets_smaller_font():
     from app.auto_edit import hook_size
 

@@ -89,10 +89,11 @@ def test_agent_fixes_itself_after_problems(tmp_path, monkeypatch):
     fake = ScriptedGemini([
         [_call("add_layers", {"layers": [{**HOOK, "start": 3, "end": 1}]})],
         [_call("add_layers", {"layers": [HOOK]})],
+        [_call("view_frame", {"t": 1.0})],
         [{"text": "Исправил время и поставил титр."}],
     ])
     out = editor_agent.run_agent(store, plan["id"], "титр в начало", client=fake, model="m")
-    assert [s["ok"] for s in out["steps"]] == [False, True]
+    assert [s["ok"] for s in out["steps"]] == [False, True, True]
     assert out["steps"][0]["problems"]
     sent = fake.requests[1][1]["contents"][-1]["parts"][0]["functionResponse"]["response"]
     assert sent["ok"] is False and sent["problems"]
@@ -232,11 +233,12 @@ def test_empty_reply_mid_work_is_nudged_to_continue(tmp_path, monkeypatch):
         [_call("get_clip", {})],
         [],  # пустой ответ посреди работы
         [_call("add_layers", {"layers": [HOOK]})],
+        [_call("view_frame", {"t": 1.0})],
         [{"text": "Готово: хук на 0–2 с."}],
     ])
     out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
     assert out["text"] == "Готово: хук на 0–2 с."
-    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
+    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers", "view_frame"]
     assert "Ответ пустой" in fake.requests[2][1]["contents"][-1]["parts"][0]["text"]
 
 
@@ -260,11 +262,12 @@ def test_thinking_aloud_mid_work_continues(tmp_path, monkeypatch):
         [_call("get_clip", {})],
         [{"text": "Now I will trim the clip and add a hook."}],  # не отчёт, не по-русски
         [_call("add_layers", {"layers": [HOOK]})],
+        [_call("view_frame", {"t": 1.0})],
         [{"text": "Готово: хук на 0–2 с."}],
     ])
     out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
     assert out["text"] == "Готово: хук на 0–2 с."
-    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers"]
+    assert [s["tool"] for s in out["steps"]] == ["get_clip", "add_layers", "view_frame"]
     nudge = fake.requests[2][1]
     assert "tools" in nudge and "Продолжай работу инструментами" in nudge["contents"][-1]["parts"][0]["text"]
 
@@ -287,11 +290,12 @@ def test_failed_call_before_report_is_pushed_once_to_retry(tmp_path, monkeypatch
         [_call("view_frame", {"t": 1.0})],
         [{"text": "Готово: финал на 20 с."}],  # хочет закончить, а ✗ так и не исправлен
         [_call("add_layers", {"layers": [HOOK]})],
+        [_call("view_frame", {"t": 1.0})],
         [{"text": "Готово: хук на 0–2 с."}],
     ])
     out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
     assert out["text"] == "Готово: хук на 0–2 с."
-    assert [s["ok"] for s in out["steps"]] == [False, True, True]
+    assert [s["ok"] for s in out["steps"]] == [False, True, True, True]
     nudge = fake.requests[3]
     assert "tools" in nudge[1]
     assert _last_text(nudge).startswith("Последний вызов не прошёл: ") and "Исправь и повтори" in _last_text(nudge)
@@ -325,6 +329,7 @@ def test_gap_warnings_push_to_fix_before_report(tmp_path, monkeypatch):
         [_call("add_layers", {"layers": [HOOK]})],
         [{"text": "Готово: хук на 0–2 с."}],
         [_call("add_layers", {"layers": [{**HOOK, "start": 2, "end": 10}]})],
+        [_call("view_frame", {"t": 1.0})],
         [{"text": "Готово: хук и титр до конца."}],
     ])
     out = editor_agent.run_agent(store, plan["id"], "смонтируй", client=fake, model="m")
@@ -332,7 +337,7 @@ def test_gap_warnings_push_to_fix_before_report(tmp_path, monkeypatch):
     assert out["steps"][0]["warnings"] == [gap]
     nudge = _last_text(fake.requests[2])
     assert "get_clip предупреждает: " + gap in nudge and "Последний вызов" not in nudge
-    assert len(fake.requests) == 4
+    assert len(fake.requests) == 5
 
 
 def test_steps_without_report_get_one_report_request(tmp_path, monkeypatch):
@@ -369,3 +374,92 @@ def test_unresolved_failure_and_partial_batches():
     nudge = editor_agent.fix_nudge([partial, frame], [])
     assert "применено 8 из 9" in nudge and "success.ogg" in nudge
     assert editor_agent.fix_nudge([ok, frame], []) == ""
+
+
+# ------------------------------------------------- QA 01.11: проверка глазами и честный отчёт
+
+
+def test_report_without_looking_is_nudged_then_service_takes_contact_sheet(tmp_path, monkeypatch):
+    """QA 01.11 (клип 889): 36 шагов, ни одного view_frame/contact_sheet — весь ролик оказался ютуб-клипом.
+    Хочет отчитаться без взгляда — напоминание; снова без взгляда — лист кадров снимает сервис."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [HOOK]})],
+        [{"text": "Готово: хук на 0–2 с."}],
+        [{"text": "Готово: хук на 0–2 с, всё на месте."}],
+        [{"text": "Посмотрел лист кадров: хук на 0–2 с читается."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "поставь хук", client=fake, model="m")
+    assert out["text"] == "Посмотрел лист кадров: хук на 0–2 с читается."
+    assert "view_frame, ни contact_sheet" in _last_text(fake.requests[2]) and "tools" in fake.requests[2][1]
+    auto = [s for s in out["steps"] if s.get("auto")]
+    assert len(auto) == 1 and auto[0]["tool"] == "contact_sheet" and auto[0]["ok"]
+    last = fake.requests[3][1]["contents"][-1]["parts"]
+    assert "сервис снял его сам" in last[0]["text"] and last[1]["inlineData"]["mimeType"].startswith("image/")
+    assert "ПРОВЕРКА ГЛАЗАМИ" in fake.requests[0][1]["systemInstruction"]["parts"][0]["text"]
+
+
+def test_looking_after_the_change_is_enough_and_reads_do_not_count():
+    add = {"tool": "add_layers", "label": "Слои", "ok": True}
+    focus = {"tool": "set_focus", "label": "Кадр", "ok": True}
+    frame = {"tool": "view_frame", "label": "Кадр 1", "ok": True}
+    sheet = {"tool": "contact_sheet", "label": "Лист", "ok": True}
+    get = {"tool": "get_clip", "label": "Клип", "ok": True}
+    assert editor_agent.unchecked_visual([add, get]) is add
+    assert editor_agent.unchecked_visual([add, frame]) is None
+    assert editor_agent.unchecked_visual([add, sheet, focus]) is focus
+    assert editor_agent.unchecked_visual([{**add, "ok": False}, get]) is None  # не прошла — кадр не менялся
+    assert editor_agent.unchecked_visual([add, {**frame, "ok": False}]) is add
+
+
+def test_each_change_carries_fresh_clip_check(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    fake = _script()
+    editor_agent.run_agent(store, plan["id"], "сделай динамичнее", client=fake, model="m")
+    responses = [p["functionResponse"] for p in fake.requests[1][1]["contents"][-1]["parts"]]
+    assert "clip_check" not in responses[0]["response"]  # чек — у последней правки шага
+    check = responses[1]["response"]["clip_check"]
+    assert "lint_warnings" in check and "get_clip_warnings" in check and "lint пройден" in check["note"]
+    assert "ЧЕСТНЫЙ ОТЧЁТ" in fake.requests[0][1]["systemInstruction"]["parts"][0]["text"]
+
+
+def test_honest_report_corrects_lint_and_insert_claims():
+    check = {"lint_warnings": 10, "lint": ["субтитры: «что я» видна 0.28 с → короткая страница"],
+             "inserts": [{"kind": "image", "at": 2.09, "end": 4.09, "what": "слой image insert_1"},
+                         {"kind": "image", "at": 23.48, "end": 25.98, "what": "слой image insert_3"}]}
+    lie = "3. На слове «клипе» (23.48 с) — гифка с танцующим тараканом.\nПроверка `lint_clip` пройдена."
+    fixed = editor_agent.honest_report(lie, check)
+    assert fixed.startswith(lie) and "Сверка сервиса с клипом" in fixed
+    assert "предупреждений 10" in fixed and "«что я» видна 0.28 с" in fixed
+    assert "гифок в клипе нет" in fixed and "картинка 23.48–25.98 с" in fixed
+    honest = "Хук на 0–2 с. Осталось 10 предупреждений lint по темпу чтения."
+    assert editor_agent.honest_report(honest, check) == honest
+    assert editor_agent.honest_report("Ошибок нет, без предупреждений.", {**check, "lint_warnings": 0}) == \
+        "Ошибок нет, без предупреждений."
+    gif = {**check, "inserts": [{"kind": "gif", "at": 1, "end": 2, "what": "вставка pip #0"}]}
+    assert "гифок" not in editor_agent.honest_report("Гифка на 1 с.", gif)
+
+
+def test_final_report_is_checked_against_the_clip(tmp_path, monkeypatch):
+    from app import quality_lint as Q
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    real = Q.lint_clip
+
+    def lint_with_warning(*a, **k):
+        out = real(*a, **k)
+        out["findings"] = out["findings"] + [{"check": "reading", "severity": "warn", "message": "титр мелькает"}]
+        return out
+
+    monkeypatch.setattr(Q, "lint_clip", lint_with_warning)
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [HOOK]})],
+        [_call("view_frame", {"t": 1.0})],
+        [{"text": "Готово: хук на 0–2 с. lint_clip пройден, без предупреждений."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "поставь хук", client=fake, model="m")
+    assert out["text"].startswith("Готово: хук на 0–2 с.") and "Сверка сервиса с клипом" in out["text"]
+    assert "титр мелькает" in out["text"]

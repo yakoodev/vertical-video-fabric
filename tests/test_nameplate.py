@@ -160,6 +160,39 @@ def test_mcp_set_nameplate_place_replace_remove(tmp_path, monkeypatch):
     assert NAMEPLATE_ID in _layers(store, plan)
 
 
+def test_corner_preset_after_hook_stays_small_in_top_corner(tmp_path, monkeypatch):
+    """QA 01.11 (клип 889): плашка «после хука в углу» встала на x0.79 y0.40 — место считалось с хуком
+    0–10 с на y 0.158, хотя плашка выходила после него. corner: маленькая, в верхнем углу, после хука."""
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    hook = {"id": "auto_hook", "type": "text", "start": 0, "end": 4, "x": 0.5, "y": 0.158,
+            "props": {"text": "ОГРОМНЫЙ ТАРАКАН\nВ КЛИПЕ", "size": 96}}
+    caps = {"id": "auto_caps", "type": "captions", "start": 0, "end": 10, "x": 0.5, "y": 0.3,
+            "props": {"maxWords": 2}}
+    store.set_clip_plan_render_settings(plan["id"], {"layers": [hook, caps]})
+
+    out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"platform": "twitch", "handle": "sareamura",
+                                                           "corner": "top-right"})
+    assert ok, out
+    layer = _layers(store, plan)[NAMEPLATE_ID]
+    assert out["position"] == "top-right" and layer["start"] == pytest.approx(4.0)
+    assert layer["x"] > 0.6 and layer["y"] < 0.14, (layer["x"], layer["y"])
+    assert layer["props"]["size"] == brand_kit.NAMEPLATE_CORNER_SIZE and layer["props"]["align"] == "right"
+    assert not out["warnings"]
+
+    out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"platform": "twitch", "handle": "sareamura",
+                                                           "corner": "top-left", "start": 5, "end": 9, "size": 70})
+    assert ok, out
+    layer = _layers(store, plan)[NAMEPLATE_ID]
+    assert layer["x"] < 0.4 and (layer["start"], layer["end"]) == (5.0, 9.0) and layer["props"]["size"] == 70
+    # Плашка на экране вместе с хуком — уходит ниже его, как раньше.
+    out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"platform": "twitch", "handle": "sareamura",
+                                                           "corner": "top-left", "start": 0})
+    assert ok and _layers(store, plan)[NAMEPLATE_ID]["y"] > 0.18
+    out, ok = run_tool(_ctx(store, plan), "set_nameplate", {"handle": "x", "corner": "middle"})
+    assert not ok
+
+
 def test_frame_with_nameplate_through_real_compositor(tmp_path, monkeypatch):
     """Кадр агента (тот же компоновщик, что рендер): плашка на месте, обводка цветом Twitch."""
     _require_ffmpeg()

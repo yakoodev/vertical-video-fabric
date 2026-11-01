@@ -14,7 +14,16 @@
      "gap": 0,
      "video_y": 0.04,                 # meme: верх видео в долях высоты выхода
      "video_scale": 1.0,              # meme: ширина видео в ширинах кадра (>1 — крупнее, края срезаны)
-     "bg": {"kind": "aurora", ...}}   # meme: фон под видео (app/backgrounds.py), анимированный
+     "bg": {"kind": "aurora", ...},   # meme / avatar_full: фон (app/backgrounds.py), анимированный
+     "avatar_y": 0.5,                 # avatar_full: центр аватара по высоте выхода
+     "bg_blur": true}                 # avatar_full: фон — размытый тот же аватар (false — bg)
+
+«avatar_full» — история витубера «только аватар»: прямоугольник аватара/вебки ``cam`` (доли
+ВСЕГО кадра исходника, как у split) на весь кадр — шириной ``video_scale`` ширин кадра (1 —
+во всю ширину, больше — крупнее, края срезаются), центр по высоте ``avatar_y``; вокруг —
+размытый тот же аватар (``bg_blur``) или фон ``bg`` (тот же, что у set_backdrop: анимированный
+рисует компоновщик). Игры, браузера и роликов с экрана в кадре нет (QA 01.11, клип 889:
+кадрирование окном 9:16 по исходнику поймало человека из ютуба, аватара в кадре не было).
 
 «meme» — мем-формат: горизонтальное видео целиком во всю ширину сверху, ниже —
 фон под скриншоты и титры (как «Борат × сайт»): ffmpeg заливает его первым цветом,
@@ -40,7 +49,10 @@ from pathlib import Path
 
 from app.backgrounds import normalize_background
 
-LAYOUT_MODES = ("single", "split", "pip_cam", "meme")
+LAYOUT_MODES = ("single", "split", "pip_cam", "meme", "avatar_full")
+AVATAR_MODE = "avatar_full"
+AVATAR_Y_RANGE = (0.2, 0.8)
+AVATAR_MAX_AUTO_SCALE = 1.6  # авто-крупность аватара: не больше — иначе модель режется по бокам
 CAM_POSITIONS = ("top", "bottom")
 REFERENCE_HEIGHT = 1920
 
@@ -98,12 +110,37 @@ def normalize_layout(raw: object) -> dict:
         "video_scale": round(_num(src.get("video_scale"), 1.0, 1.0, 4.0), 4),
         # Фон meme (app/backgrounds.py): по умолчанию анимированный; старый "#rrggbb" — заливка.
         "bg": normalize_background(src.get("bg")),
-    }
+    } | ({"avatar_y": round(_num(src.get("avatar_y"), 0.5, *AVATAR_Y_RANGE), 4),
+          "bg_blur": src.get("bg_blur") is not False} if mode == AVATAR_MODE else {})
 
 
 def layout_active(layout: object) -> bool:
     """Раскладка что-то меняет (не single)? Только тогда рендер идёт по новому пути."""
-    return isinstance(layout, dict) and layout.get("mode") in ("split", "pip_cam", "meme")
+    return isinstance(layout, dict) and layout.get("mode") in ("split", "pip_cam", "meme", AVATAR_MODE)
+
+
+def cam_aspect(cam: dict, src_w: float | None, src_h: float | None) -> float:
+    """Ширина/высота прямоугольника ``cam`` (доли исходника) в пикселях исходника (нет размера — 16:9)."""
+    return (float(cam["w"]) * float(src_w or 16)) / max(1e-6, float(cam["h"]) * float(src_h or 9))
+
+
+def avatar_geometry(layout: dict, width: int, height: int, src_w: float | None = None,
+                    src_h: float | None = None) -> dict:
+    """avatar_full: где аватар на выходе ``width``×``height`` — ``{x, y, w, h}`` в px (может выходить
+    за кадр: края срезаются). Как ``render._layout_filter``: ширина ``even(width·video_scale)``,
+    высота по пропорции ``cam`` (чётная), по центру по ширине, центр по высоте — ``avatar_y``."""
+    layout = normalize_layout(layout)
+    vw = even_px(width * float(layout.get("video_scale") or 1.0))
+    vh = even_px(vw / max(1e-6, cam_aspect(layout["cam"], src_w, src_h)))
+    x = (width - vw) // 2
+    y = int(float(layout.get("avatar_y", 0.5)) * height - vh / 2)
+    return {"x": x, "y": y, "w": vw, "h": vh}
+
+
+def avatar_auto_scale(cam: dict, width: int, height: int, src_w: float | None, src_h: float | None) -> float:
+    """Крупность аватара по умолчанию: заполнить высоту кадра, но не шире AVATAR_MAX_AUTO_SCALE."""
+    cover = (height / width) * cam_aspect(cam, src_w, src_h)  # ширин кадра, чтобы высота = кадр
+    return round(min(AVATAR_MAX_AUTO_SCALE, max(1.0, cover)), 3)
 
 
 def even_px(value: float) -> int:
@@ -211,6 +248,8 @@ def layout_for_format(layout: object, fmt: object, source: dict | None = None) -
     lay = normalize_layout(layout)
     if lay["mode"] == "meme":
         return None
+    if lay["mode"] == AVATAR_MODE:
+        return lay  # аватар на весь кадр — геометрия от размера кадра любого формата
     width, height = frame_size(fmt)
     if lay["mode"] == "split":
         w = LANDSCAPE_PIP_W

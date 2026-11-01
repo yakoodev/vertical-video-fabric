@@ -1633,6 +1633,18 @@ class AppStore:
             raise KeyError(f"clip not found: {clip_id}")
         return row["cover_path"]
 
+    def set_clip_plan_fingerprint(self, clip_id: int, fingerprint: str | None) -> None:
+        """Отпечаток клипа (монтаж + субтитры), с которого сделан этот рендер."""
+        self.db.execute("UPDATE clips SET plan_fingerprint = ? WHERE id = ?", (fingerprint or None, clip_id))
+
+    def last_clip_plan_history_at(self, clip_plan_id: int) -> str | None:
+        """Когда сделан последний снимок истории правок клипа (перед правкой) — или None."""
+        row = self.db.query_one(
+            "SELECT created_at FROM clip_plan_history WHERE clip_plan_id = ? ORDER BY id DESC LIMIT 1",
+            (clip_plan_id,),
+        )
+        return str(row["created_at"]) if row else None
+
     def set_clip_qc(self, clip_id: int, qc: dict) -> None:
         self.db.execute(
             "UPDATE clips SET qc_json = ? WHERE id = ?", (json.dumps(qc, ensure_ascii=False), clip_id)
@@ -1700,6 +1712,14 @@ class AppStore:
             layout = self._plan_piece_layout(clip_plan_id)
             if layout:
                 payload = {**payload, "pieces": layout}
+        if payload and payload.get("words"):
+            # Слово под цензурой — всегда со звёздочками, кто бы ни переписал субтитры (app/censor.py).
+            try:
+                from app.censor import mask_censored_words
+
+                payload = mask_censored_words(self, clip_plan_id, payload)
+            except Exception:  # noqa: BLE001 - маска — удобство, сохранение важнее
+                pass
         self.db.execute(
             "UPDATE clip_plans SET subtitles_json = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False) if payload else "", clip_plan_id),

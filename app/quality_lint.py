@@ -71,6 +71,11 @@ READ_BASE_SEC = 0.5
 FAST_CPS = 25.0  # знаков в секунду: быстрее страницу субтитров не дочитать
 FLASH_PAGE_SHARE = 0.5  # страница короче половины нормы — «мелькнула»
 MAX_PAGE_FINDINGS = 10
+# Субтитры по 1–2 слова (maxWords ≤ 2) — нарочно быстрый стиль «слово за голосом»: норму чтения
+# (0.3 с/слово + 0.5 с) к ним не применяем, предупреждаем только о странице, что мелькнула короче
+# этого (её глаз не поймает) — QA 01.11: 10 warn по темпу на сабах в 1–2 слова, которые так и заказаны.
+FAST_CAPTIONS_MAX_WORDS = 2
+FAST_PAGE_MIN_SEC = 0.12
 SHORT_PAGES_WARN_SHARE = 0.4
 # Слой captions (frontend/src/motion/layers/captions.ts): пауза делит фразу, хвост страницы,
 # перекрытие короткой паузы до следующей страницы.
@@ -672,11 +677,16 @@ def title_reading_findings(layers: list[dict], clock: Any = None, duration: floa
 
 
 def page_reading_findings(pages: list[dict], label: str, clock: Any = None, duration: float | None = None,
-                          layer: str | None = None) -> list[dict]:
+                          layer: str | None = None, fast: bool = False) -> list[dict]:
     """Страницы субтитров: «мелькнула» (короче половины нормы), слишком быстрая (знаков/с) —
-    по отдельности (до ``MAX_PAGE_FINDINGS`` худших), короче нормы — одной сводкой."""
+    по отдельности (до ``MAX_PAGE_FINDINGS`` худших), короче нормы — одной сводкой.
+
+    ``fast`` — слой по 1–2 слова (``FAST_CAPTIONS_MAX_WORDS``): стиль «слово за голосом», норма чтения
+    не применяется — предупреждение только у страницы короче ``FAST_PAGE_MIN_SEC``, остальное — сводка info."""
     if not pages:
         return []
+    if fast:
+        return _fast_page_findings(pages, label, clock, layer)
     rows = []
     for page in pages:
         words = len(page["words"])
@@ -723,6 +733,26 @@ def page_reading_findings(pages: list[dict], label: str, clock: Any = None, dura
             "речь не растянуть — сократи слов на странице (maxWords 2–3), убери паузы-паразиты, а важное вынеси "
             "титром на 1.5–2 с" if share >= SHORT_PAGES_WARN_SHARE else "",
             t=first["t0"], layer=layer, pages=len(rows), short_pages=len(short)))
+    return out
+
+
+def _fast_page_findings(pages: list[dict], label: str, clock: Any = None, layer: str | None = None) -> list[dict]:
+    rows = [(page, _final_span(clock, page["t0"], page["t1"])) for page in pages]
+    rows = [(page, shown) for page, shown in rows if shown > 0.02]
+    out = []
+    flashes = sorted((r for r in rows if r[1] < FAST_PAGE_MIN_SEC), key=lambda r: r[1])
+    for page, shown in flashes[:MAX_PAGE_FINDINGS]:
+        out.append(_finding(
+            "reading", "warn",
+            f"{label}: «{_short(page['text'], 40)}» мелькает {shown:.2f} с — даже в быстрых субтитрах по 1–2 слова "
+            f"глаз не поймает (< {FAST_PAGE_MIN_SEC:g} с)",
+            "склей слово с соседним (maxWords 2) или поправь тайминг слова (set_subtitle_words)",
+            t=page["t0"], until=page["t1"], layer=layer, words=len(page["words"]), shown_sec=round(shown, 2)))
+    if rows:
+        out.append(_finding(
+            "reading", "info",
+            f"{label}: по 1–2 слова — быстрый стиль «слово за голосом», норма чтения (0.3 с/слово + 0.5 с) к нему "
+            f"не применяется ({len(rows)} страниц)", "", t=rows[0][0]["t0"], layer=layer, pages=len(rows)))
     return out
 
 
@@ -1085,6 +1115,42 @@ def _latest_render_file(store: Any, clip_plan_id: int) -> tuple[dict | None, Pat
     return None, None
 
 
+def plan_fingerprint(store: Any, clip_plan_id: int) -> str | None:
+    """Отпечаток того, что попадает в рендер: клип-файл (куски, монтаж, слои) и субтитры — без
+    названия, описания и заметок (их правит автоописание после рендера). Тот же клип — тот же
+    отпечаток; правка слоя, выреза или слова — другой."""
+    import hashlib
+    import json
+
+    try:
+        from app.clip_history import capture
+
+        state = capture(store, int(clip_plan_id))
+    except Exception:  # noqa: BLE001 - не сняли — проверка по снимкам истории
+        return None
+    spec = {k: v for k, v in (state.get("spec") or {}).items() if k not in ("title", "description", "notes", "favorite")}
+    raw = json.dumps({"spec": spec, "subtitles": state.get("subtitles")}, ensure_ascii=False, sort_keys=True,
+                     default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def render_is_stale(store: Any, clip_plan_id: int, clip: dict) -> bool:
+    """Клип правили после этого рендера? По отпечатку рендера (``clips.plan_fingerprint``), а у старых
+    рендеров без него — по снимку истории правок новее конца рендера. Статус клипа («rendered»,
+    который рендер ставит в конце) правкой не считается — раньше из-за него свежий рендер
+    сразу был «устаревшим»."""
+    stamp = clip.get("plan_fingerprint")
+    if stamp:
+        current = plan_fingerprint(store, clip_plan_id)
+        return bool(current) and current != stamp
+    try:
+        edited = store.last_clip_plan_history_at(int(clip_plan_id))
+    except Exception:  # noqa: BLE001
+        return False
+    done = str(clip.get("finished_at") or clip.get("created_at") or "")
+    return bool(edited and done and edited > done)
+
+
 def _project_platforms(store: Any, clip_plan_id: int) -> list[str]:
     try:
         from app import autopilot as A
@@ -1156,8 +1222,9 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
     if "reading" in wanted:
         findings += title_reading_findings(layers, clock, duration)
         for layer in caption_layers:
+            fast = caption_look(layer.get("props"))["maxWords"] <= FAST_CAPTIONS_MAX_WORDS
             findings += page_reading_findings(pages_by_layer.get(str(layer.get("id"))) or [], "субтитры", clock,
-                                              duration, layer=str(layer.get("id")))
+                                              duration, layer=str(layer.get("id")), fast=fast)
         if ass:
             findings += page_reading_findings(ass["pages"], "прожигаемые субтитры", clock, duration)
 
@@ -1167,7 +1234,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         clip, path = _latest_render_file(store, clip_plan_id)
         if clip is not None:
             out["render_id"] = int(clip["id"])
-            if str(plan.get("updated_at") or "") > str(clip.get("finished_at") or clip.get("created_at") or ""):
+            if render_is_stale(store, int(clip_plan_id), clip):
                 out["render_stale"] = ("клип правили после этого рендера — вспышки и луп проверены по старому файлу; "
                                        "перерендерь и проверь снова")
     no_media = ("проверка медиа выключена (media: false)" if mode == "no" else

@@ -451,7 +451,9 @@ export type FxKind =
   | "rgb_split"
   | "tear"
   | "datamosh_lite"
-  | "pixel_sort_lite";
+  | "pixel_sort_lite"
+  // Ч/б на отрезке (панчлайн): насыщенность кадра → 0 с силой intensity.
+  | "grayscale";
 
 export type FxProps = {
   kind?: FxKind;

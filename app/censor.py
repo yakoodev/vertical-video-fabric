@@ -92,6 +92,76 @@ def _overlaps(a0: float, a1: float, b0: float, b1: float) -> bool:
     return a0 < b1 and b0 < a1
 
 
+def censor_spans(plan: dict) -> list[dict]:
+    """Свои отрезки тишины цензуры клипа (``by: censor``, шкала clip)."""
+    render = plan.get("render_settings") if isinstance(plan.get("render_settings"), dict) else {}
+    return [m for m in render.get("mute") or [] if isinstance(m, dict) and m.get("by") == TAG]
+
+
+def censored_word_indices(store: Any, plan: dict, words: list[dict], spans: list[dict] | None = None) -> list[int]:
+    """Номера слов субтитров, которые глушит цензура: слово — мат (любая группа или уже со
+    звёздочками) и его отрезок на шкале clip задевает свой отрезок тишины ``by: censor``."""
+    from app.profanity import classify_token
+
+    spans = censor_spans(plan) if spans is None else spans
+    if not spans or not words:
+        return []
+    clock = _clock(store, plan)
+    out = []
+    for i, w in enumerate(words):
+        if not classify_token(w.get("word"), GROUPS):
+            continue
+        try:
+            parts = _word_clip_ranges(clock, float(w["start"]), float(w["end"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if any(_overlaps(p["start"], p["end"], float(m["start"]), float(m["end"])) for p in parts for m in spans):
+            out.append(i)
+    return out
+
+
+def mask_censored_words(store: Any, clip_plan_id: int, payload: dict | None) -> dict | None:
+    """Звёздочки в словах, которые глушит цензура, — при любой записи субтитров.
+
+    QA 01.11 (клип 889): censor_profanity поставил звёздочки, а потом auto_edit (разбор голосов)
+    переписал субтитры заново — в кадре «пиздец» красной подсветкой при заглушённом звуке. Теперь
+    store.set_clip_plan_subtitles прогоняет слова через это: слово-мат под отрезком ``by: censor`` —
+    всегда «п*****» (превью и рендер берут одни и те же слова, подсветки у таких слов нет)."""
+    if not isinstance(payload, dict) or not payload.get("words"):
+        return payload
+    plan = store.get_clip_plan(int(clip_plan_id))
+    spans = censor_spans(plan)
+    if not spans:
+        return payload
+    found = [{"i": i} for i in censored_word_indices(store, plan, payload["words"], spans)]
+    if not found:
+        return payload
+    masked, _count = star_subtitles(payload, found, GROUPS)
+    return masked
+
+
+def already_censored(store: Any, clip_plan_id: int) -> dict | None:
+    """Цензура уже стоит на весь мат клипа: ``{words, spans, note}`` — или None (есть что глушить,
+    отрезков нет, или идёт/ждёт проверка). Повторный censor_profanity без новых параметров
+    отвечает этим, а не перерендером (QA 01.11: три вызова подряд)."""
+    if job_pending(clip_plan_id):
+        return None
+    plan = store.get_clip_plan(int(clip_plan_id))
+    spans = censor_spans(plan)
+    if not spans:
+        return None
+    payload = store.get_clip_plan_subtitles(int(clip_plan_id)) or {}
+    words = payload.get("words") or []
+    found = find_profanity(words, (*DEFAULT_GROUPS, "starred"))
+    covered = set(censored_word_indices(store, plan, words, spans))
+    if not found or any(item["i"] not in covered for item in found):
+        return None
+    return {"words": len(covered), "spans": len(spans),
+            "note": (f"уже применено: заглушено слов {len(covered)} (отрезков {len(spans)}), в субтитрах звёздочки — "
+                     "повторно не нужно. Шире/другой звук — levels/style; заново проверить рендером — verify_again: true; "
+                     "снять — clear: true")}
+
+
 def _levels_arg(levels: Any) -> tuple[int | None, dict[int, int]]:
     """``levels``: число — всем словам; ``{"<i>": n}`` или ``[{i, level}]`` — отдельным словам."""
     if levels is None or levels == "":
@@ -448,6 +518,17 @@ def job_running(clip_plan_id: int) -> bool:
     with _JOBS_LOCK:
         job = _JOBS.get(int(clip_plan_id))
         return job is not None and not job["finished"].is_set()
+
+
+def job_pending(clip_plan_id: int) -> bool:
+    """Есть проверка клипа: идёт или закончилась, а итог ещё не забрали (его отдаст повторный вызов)."""
+    with _JOBS_LOCK:
+        job = _JOBS.get(int(clip_plan_id))
+        if job is None:
+            return False
+        if not job["finished"].is_set():
+            return True
+        return time.monotonic() - float(job.get("finished_at") or 0) <= JOB_KEEP_SEC
 
 
 def _run_job(store: Any, clip_plan_id: int, job: dict, options: dict) -> None:

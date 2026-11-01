@@ -4290,7 +4290,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 badge={
                   isCanvas
                     ? canvasLabel(backdrop).replace("Холст · ", "")
-                    : { single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху" }[layout.mode] ?? "обычная"
+                    : { single: "обычная", split: "вебка + игра", pip_cam: "вебка в углу", meme: "мем: видео сверху", avatar_full: "только аватар" }[layout.mode] ?? "обычная"
                 }
                 defaultOpen={isCanvas}
               >

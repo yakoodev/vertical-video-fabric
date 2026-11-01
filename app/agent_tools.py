@@ -510,6 +510,9 @@ def video_height(props: dict) -> float:
 
 
 MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура больше 40 % кадра — «закрыли видео»
+# Короткая вставка-иллюстрация во весь кадр (картинка/видео, не плашка-фигура) — монтаж, а не «закрыли
+# видео»: голос идёт под ней, а через ≤ 3 с снова герой (плейбук vtuber-story, QA 01.11).
+FULL_INSERT_MAX_SEC = 3.0
 
 
 def cover_share(layer: dict, fmt: Any = None) -> float:
@@ -558,11 +561,21 @@ def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) 
                            "(set_chroma_key) — без него убери behind")
             continue
         share = cover_share(layer, fmt)
-        if share > MAX_COVER_SHARE:
+        if share > MAX_COVER_SHARE and not is_full_insert(layer):
             out.append(f"{layer.get('id') or layer.get('type')}: закрывает {share:.0%} кадра — видео не перекрывать, "
                        f"картинки и плашки ≤ {MAX_COVER_SHARE:.0%} кадра и на пустом месте (раскладка «Мем» даёт "
-                       "свободный фон под видео)")
+                       f"свободный фон под видео). Вставка-иллюстрация на весь кадр — можно, если короткая: "
+                       f"картинка/видео ≤ {FULL_INSERT_MAX_SEC:g} с (end − start) или add_insert(asset_id, "
+                       f"mode: full, duration ≤ {FULL_INSERT_MAX_SEC:g})")
     return out
+
+
+def is_full_insert(layer: dict) -> bool:
+    """Картинка/видео на ≤ FULL_INSERT_MAX_SEC — короткая вставка-иллюстрация, ей можно закрыть кадр."""
+    if layer.get("type") not in ("image", "video"):
+        return False
+    start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
+    return 0.0 < end - start <= FULL_INSERT_MAX_SEC + 1e-6
 
 
 def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> bool:
@@ -741,9 +754,68 @@ def caption_overlap_warnings(layers: list[dict], only_ids: set[str] | None = Non
                 continue
             ya, yb = _num(a.get("y"), 0.5) or 0.5, _num(b.get("y"), 0.5) or 0.5
             if abs(ya - yb) < min_gap:
+                main, other = (a, b) if not _secondary_captions(a) else (b, a)
+                y = voice_caption_y(_num(main.get("y"), 0.5) or 0.5, ref_h)
                 out.append(f"субтитры {a.get('id')} (y {ya:.2f}) и {b.get('id')} (y {yb:.2f}) ближе "
-                           f"{min_gap} по высоте — строки лягут друг на друга; разведи y")
+                           f"{min_gap} по высоте — строки лягут друг на друга; разведи y: update_layer "
+                           f"{other.get('id')} patch {{\"y\": {y}}}")
     return out
+
+
+VOICE_CAPTIONS_TOP = 0.2  # выше — зона хука
+VOICE_CAPTIONS_BOTTOM = 0.8  # ниже — подпись площадок
+VOICE_GAP_ABOVE = 0.15
+VOICE_GAP_BELOW = 0.13
+
+
+def _secondary_captions(layer: dict) -> bool:
+    """Слой «других голосов»: speakers без главного (A) — гость, донат, ролик."""
+    props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    speakers = props.get("speakers") or []
+    return bool(speakers) and "A" not in speakers
+
+
+def voice_caption_y(main_y: float, ref_h: float = 1920.0) -> float:
+    """Где поставить слой голосов при главных субтитрах на ``main_y``: на зазор выше (если над ними
+    есть место ниже хука), иначе ниже; не помещается ни там, ни там — дальше от края."""
+    k = 1.0 if ref_h == 1920.0 else 1920 / ref_h
+    # Над главными — на две их строки и сам слой (0.15), под ними — чуть больше зазора (0.13).
+    above, below = main_y - VOICE_GAP_ABOVE * k, main_y + VOICE_GAP_BELOW * k
+    fits_above, fits_below = above >= VOICE_CAPTIONS_TOP, below <= VOICE_CAPTIONS_BOTTOM
+    if main_y < 0.6:
+        pick = above if fits_above else below if fits_below else None
+    else:
+        pick = below if fits_below else above if fits_above else None
+    if pick is None:  # не помещается нигде — дальше от ближнего края
+        pick = below if main_y < 0.5 else above
+    return round(pick, 3)
+
+
+def separate_voice_captions(layers: list[dict], ref_h: float = 1920.0) -> list[str]:
+    """Развести слой «других голосов» с главными субтитрами (на месте, ``layers`` меняется):
+    ближе зазора — голоса встают на ``voice_caption_y``. QA 01.11 (клип 889): auto_edit поставил
+    голоса на 0.20 при главных на 0.30 (зажал у хука), предупреждение агент проигнорировал."""
+    min_gap = CAPTIONS_MIN_GAP if ref_h == 1920.0 else round(CAPTIONS_MIN_GAP * 1920 / ref_h, 3)
+    caps = [l for l in layers if l.get("type") == "captions" and not l.get("hidden")]
+    main = next((l for l in caps if not _secondary_captions(l)), None)
+    notes = []
+    if main is None:
+        return notes
+    main_y = _num(main.get("y"), 0.5) or 0.5
+    for index, layer in enumerate(layers):
+        if layer.get("type") != "captions" or layer.get("hidden") or not _secondary_captions(layer):
+            continue
+        y = _num(layer.get("y"), 0.5) or 0.5
+        # Ближе зазора или уехали в зону хука/подписи площадок (следом за главными) — разводим.
+        if abs(y - main_y) >= min_gap and VOICE_CAPTIONS_TOP - 1e-6 <= y <= VOICE_CAPTIONS_BOTTOM + 1e-6:
+            continue
+        new_y = voice_caption_y(main_y, ref_h)
+        if abs(new_y - y) < 1e-6:
+            continue
+        layers[index] = {**layer, "y": new_y}
+        notes.append(f"субтитры голосов {layer.get('id')} сдвинуты с y {y:.2f} на {new_y} — не лягут на главные "
+                     f"{main.get('id')} (y {main_y:.2f})")
+    return notes
 
 
 # Цвет звучащего слова у стилей субтитров (frontend/src/motion/layers/captions.ts).
@@ -1289,9 +1361,67 @@ def _framing_view(ctx: ToolContext, source: dict, render: dict) -> dict:
     }
     if preset and not preset.get("smart_reframe"):
         out["warning"] = "у пресета выключен smart_reframe — фокус не действует, кадр по центру"
+    avatar = known_avatar(ctx, source)
+    if avatar:
+        out["avatar"] = {**avatar, "note": (
+            "аватар/вебка стримера в долях ВСЕГО кадра исходника. «Только аватар крупно» — set_layout "
+            "mode avatar_full (аватар на весь кадр, вокруг размытый фон или set_backdrop), а не set_focus окна "
+            "по исходнику: окно 9:16 ловит игру/ролик на экране")}
+    elif (render.get("layout") or {}).get("mode") != "avatar_full":
+        out["avatar_hint"] = ("стрим с аватаром/вебкой? detect_avatar найдёт его (Gemini по кадрам кусков) — потом "
+                              "set_layout avatar_full")
     if fmt != "9:16" and source_strategy(fmt, source) == "fit":
         out["fit"] = (f"исходник уже кадра {fmt}: он целиком по высоте на размытой подложке, фокус не нужен "
                       "(см. «Форматы вывода»)")
+    return out
+
+
+def known_avatar(ctx: ToolContext, source: dict | None = None) -> dict | None:
+    """Аватар клипа без вызова модели: раскладка avatar_full, найденный detect_avatar (кэш) или
+    facecam источника. ``{cam, from}`` или None."""
+    render = _current_render(ctx)
+    layout = render.get("layout") or {}
+    if layout.get("mode") == "avatar_full" and isinstance(layout.get("cam"), dict):
+        return {"cam": layout["cam"], "from": "layout avatar_full"}
+    try:
+        from app.ai.avatar_box import cached_avatar
+
+        found = cached_avatar(ctx.store, ctx.plan_id)
+    except Exception:  # noqa: BLE001
+        found = None
+    if found and found.get("cam"):
+        return {"cam": found["cam"], "from": "detect_avatar", **({"moves": True} if found.get("moves") else {})}
+    if source is None:
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        source = ctx.store.get_source(int(plan["source_id"]))
+    if source.get("facecam"):
+        return {"cam": source["facecam"], "from": "facecam источника (detect-facecam)"}
+    return None
+
+
+def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
+    """Аватар стримера (VTuber/PNGtuber/вебка) на кусках клипа — Gemini по целым кадрам исходника."""
+    from app.ai.avatar_box import detect_avatar
+
+    try:
+        found = detect_avatar(ctx.store, ctx.plan_id, refresh=bool(args.get("refresh")))
+    except ValueError as exc:
+        raise ToolError(f"detect_avatar: {exc}") from exc
+    if not found.get("cam"):
+        return {"ok": True, "cam": None, "frames": found.get("frames"),
+                "note": "аватара/вебки на кадрах клипа не нашлось — спроси владельца или задай cam руками "
+                        "(source_contact_sheet покажет кадры исходника)"}
+    out = {"ok": True, "cam": found["cam"], "box": found.get("box"), "frames": found.get("frames"),
+           "frames_with_avatar": found.get("frames_with_avatar"),
+           "next": "set_layout mode avatar_full (cam возьмётся сам) → view_frame"}
+    if found.get("moves"):
+        out["warnings"] = [f"аватар в клипе бывает в {found.get('places')} местах — взято место, где он чаще "
+                           "(view_frame по кускам; другое место — set_layout cam)"]
+    if args.get("save"):
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        ctx.before_change()
+        ctx.store.update_source(int(plan["source_id"]), facecam=found["cam"])
+        out["saved"] = "facecam источника"
     return out
 
 
@@ -1337,7 +1467,13 @@ def _recommended_positions(ctx: ToolContext, render: dict, boxes: dict | None = 
     if places["subject"]:
         out["subject_note"] = ("subject_box — объединение рамок героя по всем кускам (кадр 9:16); у каждого куска своя — "
                                "pieces[].subject_box. Внутри куска со сменой планов (get_shots) рамка тоже объединение "
-                               "и ненадёжна — смотри source_contact_sheet с x по планам")
+                               "и ненадёжна — смотри source_contact_sheet с x по планам. subject_box в долях КАДРА клипа, "
+                               "а x у set_focus — доля ширины ИСХОДНИКА: центр рамки в set_focus не подставляй")
+    if (boxes or {}).get("screen"):
+        out["screen_box"] = boxes["screen"]
+        out["screen_note"] = ("screen_box — человек/персонаж ВНУТРИ экранного контента (ролик, игра, браузер на экране "
+                              "стрима), это не герой: не кадрируй на него и не считай его стримером. Аватар/вебка "
+                              "стримера — detect_avatar → set_layout avatar_full")
     return out
 
 
@@ -1895,6 +2031,54 @@ def similar_pack_refs(ref: str, limit: int = 5) -> list[str]:
     return [_layer_ref(ref) for _score, ref in scored[:limit]]
 
 
+def clip_warnings(ctx: ToolContext) -> list[str]:
+    """Предупреждения get_clip по текущему клипу (без рамок героя — без вызова зрения)."""
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    return _clip_warnings(ctx, timeline["plan"], timeline, _layers_of(timeline["render"]))
+
+
+INSERT_KIND_WORDS = {"image": "картинка", "gif": "гифка", "video": "видео", "audio": "звук"}
+
+
+def insert_facts(ctx: ToolContext) -> list[dict]:
+    """Вставки клипа по факту — для честного отчёта (QA 01.11: агент назвал гифкой статичную картинку):
+    слои image/video и вставки add_insert с типом файла библиотеки. ``[{what, kind, at, end, id}]``,
+    время — шкала clip."""
+    render = _current_render(ctx)
+
+    def asset_kind(asset_id: Any) -> str | None:
+        try:
+            return ctx.store.get_montage_asset(int(asset_id)).get("kind")
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    out = []
+    for layer in _layers_of(render):
+        if layer.get("hidden") or layer.get("type") not in ("image", "video"):
+            continue
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        src = str(props.get("src") or "")
+        if src.startswith("emoji:"):
+            continue
+        kind = "video" if layer.get("type") == "video" else (asset_kind(props.get("asset_id")) or (
+            "gif" if src.lower().split("?")[0].endswith(".gif") else "image"))
+        out.append({"what": f"слой {layer.get('type')} {layer.get('id')}", "kind": kind,
+                    "at": round(_num(layer.get("start"), 0.0) or 0.0, 2), "end": round(_num(layer.get("end"), 0.0) or 0.0, 2),
+                    "id": str(layer.get("id") or "")})
+    for index, ins in enumerate(render.get("inserts") or []):
+        kind = asset_kind(ins.get("asset_id")) or "image"
+        at = _num(ins.get("at"), 0.0) or 0.0
+        out.append({"what": f"вставка {ins.get('mode') or 'pip'} #{index}", "kind": kind, "at": round(at, 2),
+                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}"})
+    out.sort(key=lambda f: f["at"])
+    return out
+
+
+def describe_inserts(facts: list[dict]) -> str:
+    return "; ".join(f"{INSERT_KIND_WORDS.get(f['kind'], f['kind'])} {f['at']:g}–{f['end']:g} с ({f['what']})"
+                     for f in facts)
+
+
 def scene_check(ctx: ToolContext) -> list[str]:
     """Пустой кадр / нет финала по текущему состоянию клипа (цикл агента перед отчётом)."""
     return _scene_warnings(ctx, _current_render(ctx), _clip_duration(ctx))
@@ -1959,11 +2143,20 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
                 moved = dict(other)
                 moved["y"] = round(min(0.85, max(0.12, (_num(other.get("y"), new_y) or new_y) + new_y - old_y)), 3)
                 layers[i] = motion.normalize_layers([moved])[0]
+    voice_notes = []
+    if normalized[0].get("type") == "captions" and not _secondary_captions(normalized[0]):
+        # Следом за главными голоса могли упереться в край (зона хука) — разводим заново.
+        from app.formats import settings_layers_format
+
+        voice_notes = separate_voice_captions(layers, _ref(settings_layers_format(render))[1])
+        layers = motion.normalize_layers(layers) if voice_notes else layers
     fresh = _save_render(ctx, {**render, "layers": layers})
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     out = {"ok": True, "layer": saved,
            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
            + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]}
+    if voice_notes:
+        out["notes"] = voice_notes
     if saved.get("type") == "pngtuber":
         # Порог/дорожку поправили — сразу видно, какая доля клипа рот открыт (как у add_pngtuber).
         out.update(_voice_check(ctx, layer_id))
@@ -3215,6 +3408,9 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         # Вебка, найденная/заданная у источника, — а не угол по умолчанию.
         layout_args["cam"] = source["facecam"]
         took_facecam = True
+    avatar_from = None
+    if layout_args.get("mode") == "avatar_full":
+        avatar_from = _avatar_layout_args(ctx, render, source, layout_args)
     merged = {**(render.get("layout") or {}), **layout_args}
     fresh = _save_render(ctx, {**render, "layout": normalize_layout(merged)})
     out: dict = {"ok": True, "layout": fresh["layout"]}
@@ -3224,7 +3420,12 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["focus_changes"] = _focus_all(ctx, game_x, piece)
         out["game_x"] = round(game_x, 4)
     mode = fresh["layout"]["mode"]
-    if mode == "meme":
+    if mode == "avatar_full":
+        out["cam_from"] = avatar_from or "cam из прежней раскладки"
+        out["note"] = ("в кадре только аватар: cam (доли всего исходника) шириной video_scale ширин кадра, центр по "
+                       "высоте avatar_y; вокруг — размытый тот же аватар (bg_blur) или фон bg. ОБЯЗАТЕЛЬНО view_frame: "
+                       "модель целиком и крупно, игры/браузера нет; мелко — video_scale больше, режет — меньше")
+    elif mode == "meme":
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
     elif mode in ("split", "pip_cam"):
@@ -3235,6 +3436,49 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         if warnings:
             out["warnings"] = warnings
     return out
+
+
+def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_args: dict) -> str:
+    """avatar_full: откуда cam (аргумент → прежняя раскладка → detect_avatar → facecam источника), крупность
+    и фон по умолчанию. Фон: bg/bg_blur из аргументов; иначе фон set_backdrop клипа, если он задан; иначе
+    размытый тот же аватар."""
+    from app.formats import frame_size, settings_render_format
+    from app.stream_layout import avatar_auto_scale, normalize_cam
+
+    old = render.get("layout") or {}
+    where = "cam из аргументов"
+    if "cam" not in layout_args:
+        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict):
+            layout_args["cam"], where = old["cam"], "cam из прежней раскладки avatar_full"
+        else:
+            found = None
+            try:
+                from app.ai.avatar_box import detect_avatar
+
+                found = detect_avatar(ctx.store, ctx.plan_id)
+            except Exception as exc:  # noqa: BLE001 - нет Gemini/файла — пробуем facecam
+                where = f"detect_avatar не смог: {str(exc)[:120]}"
+            if found and found.get("cam"):
+                layout_args["cam"], where = found["cam"], "аватар найден detect_avatar (Gemini по кадрам кусков)"
+            elif source.get("facecam"):
+                layout_args["cam"], where = source["facecam"], "facecam источника (detect-facecam)"
+            else:
+                raise ToolError("avatar_full: не знаю, где аватар — detect_avatar не нашёл, facecam у источника нет",
+                                ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
+                                 "(source_contact_sheet покажет кадры)"])
+    if "video_scale" not in layout_args and old.get("mode") != "avatar_full":
+        width, height = frame_size(settings_render_format(render))
+        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args["cam"]), width, height,
+                                                       source.get("width"), source.get("height"))
+    if "bg" not in layout_args and "bg_blur" not in layout_args and old.get("mode") != "avatar_full":
+        from app.chroma_key import normalize_backdrop
+
+        # Фон, заданный set_backdrop (не фон по умолчанию), — под аватар; иначе размытый аватар.
+        if render.get("backdrop") and normalize_backdrop(render["backdrop"]) != normalize_backdrop(None):
+            layout_args["bg"], layout_args["bg_blur"] = render["backdrop"], False
+    elif "bg" in layout_args and "bg_blur" not in layout_args:
+        layout_args["bg_blur"] = False
+    return where
 
 
 def h_list_music(ctx: ToolContext, _args: dict) -> dict:
@@ -3328,6 +3572,15 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
         if args.get("verify", True) is False or args.get("clear"):
             raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
                             "повтори censor_profanity без verify=false")
+    explicit = any(args.get(k) not in (None, "", [], False) for k in
+                   ("levels", "level", "style", "groups", "soft", "skip", "track", "clear", "verify_again"))
+    if not explicit and args.get("stars", True) is not False:
+        try:
+            done = censor.already_censored(ctx.store, ctx.plan_id)
+        except Exception:  # noqa: BLE001 - не смогли сверить — делаем как обычно
+            done = None
+        if done:
+            return {"ok": True, "status": "already", "already_applied": True, **done}
     try:
         if args.get("clear"):
             ctx.before_change()
@@ -3543,7 +3796,9 @@ def h_set_nameplate(ctx: ToolContext, args: dict) -> dict:
     fields = {k: args[k] for k in NAMEPLATE_FIELDS if k in args}
     try:
         return set_nameplate(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
-                             remove=args.get("remove") is True, before_change=ctx.before_change)
+                             remove=args.get("remove") is True, before_change=ctx.before_change,
+                             corner=args.get("corner") or None, start=_num(args.get("start")),
+                             end=_num(args.get("end")))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -4417,11 +4672,37 @@ def h_set_focus(ctx: ToolContext, args: dict) -> dict:
     preset = effective_preset(ctx.store, render.get("preset_id")) or {}
     if preset and not preset.get("smart_reframe"):
         warnings.append("у пресета выключен smart_reframe — фокус не действует (кадр по центру)")
+    if mode == "avatar_full":
+        warnings.append("раскладка avatar_full показывает только аватар (cam) — фокус окна в ней не виден")
+    elif points:
+        warnings.extend(_focus_avatar_warnings(ctx, points, preset))
     out = {"ok": True, "piece": index, "focus": fresh.get("focus") or [], "changes": changes,
            "note": "проверь source_contact_sheet(x=…) или view_frame на точках и сразу после cut"}
     if warnings:
         out["warnings"] = warnings
     return out
+
+
+def _focus_avatar_warnings(ctx: ToolContext, points: list[dict], preset: dict) -> list[str]:
+    """Окно 9:16 по точкам фокуса не захватывает известный аватар стримера (QA 01.11: x взят из центра
+    subject_box — человека из ролика на экране, — аватара в кадре не было)."""
+    from app.ai.avatar_box import avatar_center_in_window
+    from app.video_crop import window_share
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    source = ctx.store.get_source(int(plan["source_id"]))
+    avatar = known_avatar(ctx, source)
+    if not avatar:
+        return []
+    share = window_share(source, int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920))
+    missed = [p for p in points if not avatar_center_in_window(avatar["cam"], float(p["x"]), float(share))]
+    if not missed:
+        return []
+    cam = avatar["cam"]
+    cx = round(float(cam["x"]) + float(cam["w"]) / 2, 3)
+    return [f"окно ({share:.2f} ширины исходника) на x={missed[0]['x']} не захватывает аватар стримера (центр x={cx}, "
+            f"{avatar['from']}) — в кадре будет игра/ролик с экрана. «Только аватар» — set_layout mode avatar_full; "
+            f"окно на аватар — x={cx}"]
 
 
 MAX_FIT_PIECE_SEC = 12.0
@@ -4544,6 +4825,9 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     mode = args.get("mode") or ("sound" if asset["kind"] == "audio" else "pip")
     if mode not in MODES:
         raise ToolError(f"mode: одно из {', '.join(MODES)}")
+    if mode == "full" and (_num(args.get("duration"), 1.5) or 1.5) > FULL_INSERT_MAX_SEC + 1e-6:
+        raise ToolError(f"вставка на весь кадр (mode full) — не дольше {FULL_INSERT_MAX_SEC:g} с: голос идёт под ней, "
+                        "а зритель ждёт героя; дольше — mode pip (окошко)")
     render = _current_render(ctx)
     inserts = list(render.get("inserts") or [])
     if len(inserts) >= MAX_INSERTS:
@@ -5341,7 +5625,9 @@ props по типу:
   image с анимированным файлом (GIF/APNG/webm с альфой) играет его по кругу с прозрачностью с начала слоя
   fx: kind {'|'.join(motion.FX_KINDS)}, intensity 0..1, speed 0.1..4, blend (нет — свой у вида), color (flash_frame),
          colors (light_leak), size (зерно/строки) — эффект кадра во весь кадр поверх видео и слоёв НИЖЕ по track
-         (титры выше по track — чистые); in/out только fade; ≤ {motion.FX_MAX_AT_ONCE} разом, 1–2 на ролик
+         (титры выше по track — чистые); in/out только fade; ≤ {motion.FX_MAX_AT_ONCE} разом, 1–2 на ролик.
+         grayscale — ч/б на отрезке (панчлайн 1–2 с): intensity 1 — полностью ч/б, 0.5 — полуцвет; плавно —
+         in/out fade 0.2 или ключи scale (0→1→0); после end цвет возвращается сам
   audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
          effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
          track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};
@@ -5940,16 +6226,34 @@ def _build_registry() -> list[Tool]:
             "двигает только игру; что из игры в окне — game_x (центр окна игры 0..1 на всех кусках, или на куске "
             "piece; трек по куску — set_focus). cam не задан — берётся вебка источника (detect-facecam); ответ "
             "предупредит, если полоса режет вебку (не те пропорции — ratio) или cam великоват (захвачен чат). "
+            "avatar_full — ТОЛЬКО аватар/вебка стримера на весь кадр (истории витубера, плейбук vtuber-story): cam "
+            "не задан — найдёт detect_avatar (Gemini), иначе facecam источника; video_scale — ширина аватара в "
+            "ширинах кадра (по умолчанию — крупно, почти на всю высоту), avatar_y — центр по высоте; фон — размытый "
+            "тот же аватар (bg_blur, по умолчанию) или bg / фон set_backdrop клипа. Игры, браузера и роликов с "
+            "экрана в кадре нет. После — view_frame. "
             "/ Frame layout.",
-            _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme"]},
+            _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme", "avatar_full"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
                   "pip": {"type": "object"},
-                  "bg": {"type": ["object", "string"], "description": "meme: фон {kind, colors, speed, intensity} или имя стиля"},
+                  "bg": {"type": ["object", "string"], "description": "meme/avatar_full: фон {kind, colors, speed, intensity} или имя стиля"},
+                  "bg_blur": {"type": "boolean", "description": "avatar_full: фон — размытый тот же аватар (по умолчанию)"},
+                  "avatar_y": {"type": "number", "description": "avatar_full: центр аватара по высоте кадра 0.2..0.8"},
                   "video_y": {"type": "number"},
                   "video_scale": {"type": "number"},
                   "game_x": {"type": "number", "description": "центр окна игры, доля ширины исходника 0..1"},
                   "piece": {"type": "integer", "description": "game_x только для этого куска"}}),
             h_set_layout, mutating=True, label=lambda a: f"Раскладка: {a.get('mode') or 'правка'}",
+        ),
+        Tool(
+            "detect_avatar", "Ищу аватар стримера",
+            "Где на кадре стрима аватар стримера — VTuber/PNGtuber-модель или вебка (Gemini по целым кадрам "
+            "исходника с кусков клипа; люди внутри роликов, игры и браузера на экране — не аватар). Ответ: cam "
+            "{x, y, w, h} в долях всего кадра исходника (с запасом), frames_with_avatar; аватар переезжает — "
+            "warnings. Дальше set_layout mode avatar_full (cam возьмётся сам). save: true — запомнить как "
+            "facecam источника (для split/pip_cam других клипов). refresh — искать заново. / Find the streamer's "
+            "avatar/webcam rectangle in the source frames.",
+            _obj({"save": {"type": "boolean"}, "refresh": {"type": "boolean"}}),
+            h_detect_avatar, label=lambda a: "Ищу аватар стримера",
         ),
         Tool(
             "set_chroma_key", "Вырезаю зелёный фон",
@@ -6062,9 +6366,12 @@ def _build_registry() -> list[Tool]:
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
             "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
             "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
-            "silence, затем noise (только его; style_switched в ответе). "
+            "silence, затем noise (только его; style_switched в ответе). Цензура уже стоит на весь мат — повтор "
+            "без параметров отвечает status already («уже применено», без рендера); verify_again: true — проверить "
+            "рендером заново. Слова под цензурой в субтитрах всегда со звёздочками и не подсвечиваются "
+            "(highlightWords/эмфаза на них не действуют). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
-            _obj({"verify": {"type": "boolean"}, "max_rounds": {"type": "integer"},
+            _obj({"verify": {"type": "boolean"}, "verify_again": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
                   "clear": {"type": "boolean"},
@@ -6245,7 +6552,9 @@ def _build_registry() -> list[Tool]:
             "разделителя и ниже субтитров, слева; иначе — безопасный верхний угол, напротив логотипа бренда) | "
             "under-split-left | under-split-center | top-left | top-right. Место считается от зон площадок "
             "(вкладки сверху, подпись снизу, кнопки TikTok справа), субтитров, хука и логотипа. brand_id — "
-            "взять плашку бренда за основу. remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
+            "взять плашку бренда за основу. corner: top-right|top-left — пресет «маленькая в верхнем углу» (кегль "
+            "58, угол безопасной зоны; есть хук — выходит, когда он уходит). start/end — секунды клипа, когда плашка "
+            "на экране (хук, ушедший до start, ей не мешает). remove:true — снять. Повтор заменяет прежнюю (слой brand_nameplate). "
             "Потом view_frame. / Channel nameplate (platform icon + handle) for the whole clip.",
             _obj({"platform": {"type": "string", "enum": ["twitch", "youtube", "tiktok", "telegram", "kick", "none"]},
                   "handle": {"type": "string"},
@@ -6253,6 +6562,9 @@ def _build_registry() -> list[Tool]:
                   "accent": {"type": "string"},
                   "position": {"type": "string", "enum": ["auto", "top-left", "top-right", "under-split-left",
                                                           "under-split-center"]},
+                  "corner": {"type": "string", "enum": ["top-right", "top-left"]},
+                  "start": {"type": "number", "minimum": 0},
+                  "end": {"type": "number", "minimum": 0},
                   "size": {"type": "number", "minimum": 40, "maximum": 160},
                   "fade": {"type": "boolean"},
                   "anim": {"type": "string", "enum": ["none", "subtle", "lively"]},

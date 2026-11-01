@@ -98,6 +98,7 @@ CRAFT = """\
    КАПСОМ про самое сильное в клипе (не пересказ, а крючок: «ЕЁ НАПУГАЛ СКРИМЕР», «Я ПРОДАМСЯ»).
    Хук живёт 0–2.5 с, сверху по центру, жёлтый #FFD600 с чёрной обводкой 12–16. Две строки — центр
    ниже (positions.hook.y_by_lines): верх текста не выше 10% кадра, иначе add_layers предупредит.
+   Активный плейбук задаёт хук иначе (стиль, сколько живёт, капс) — делай как в плейбуке.
 3. Найди 1–3 панчлайна в субтитрах (самая громкая реакция, мат-взрыв, неожиданный поворот, цифра):
    • крупное слово-панчлайн по центру (text, size 130–170, КАПСОМ, обводка 14, in pop 0.2–0.3,
      loop shake amount 0.3–0.5, 0.8–1.5 с) — только на 1–2 самых сильных местах;
@@ -121,14 +122,18 @@ CRAFT = """\
    Мем не должен закрывать героя (positions.subject_box). Не больше 2 мемов на клип. В диалогах
    сериала/мультфильма лицо говорящего обычно в центре кадра 9:16 — мемы там ставь, только если
    view_frame показывает свободное место; иначе без мемов. Гифки с эмодзи в подписи не бери. Картинки и плашки
-   не закрывают видео: ≤ 40 % кадра и на пустом месте (больше — инструмент откажет).
+   не закрывают видео: ≤ 40 % кадра и на пустом месте (больше — инструмент откажет). Исключение —
+   вставка-иллюстрация во весь кадр не дольше 3 с (картинка/видео-слой на ≤ 3 с или add_insert mode full,
+   duration ≤ 3): голос идёт под ней — так монтируют истории (плейбук vtuber-story).
    Гифки (add_insert) видны в view_frame/contact_sheet; окошко само встаёт между хуком и субтитрами.
    Не заменяй гифку статичной картинкой.
 5. Цифры в речи («миллион», «300 тысяч», «12 квадратов») — counter по центру y≈0.28 на слове.
 6. Ключевые слова субтитров: update_layer на captions (id auto_caps) — props.highlightWords
    [{text: "слово", nth?, color}] (словом, а не номером: подсветка переживёт правку слов):
-   мат и эмоции — #FF3B30, главное по смыслу — #22C55E (не жёлтый: в hormozi/mrbeast/karaoke звучащее
-   слово и так жёлтое — жёлтая подсветка не видна). 1 слово на 2–3 с, не больше.
+   эмоции — #FF3B30, главное по смыслу — #22C55E (не жёлтый: в hormozi/mrbeast/karaoke звучащее
+   слово и так жёлтое — жёлтая подсветка не видна). 1 слово на 2–3 с, не больше. Заглушённый мат
+   (censor_profanity: «п*****») НЕ подсвечивай и не выделяй — он и так со звёздочками, подсветка не сработает.
+   censor_profanity — один раз; ответ status already («уже применено») — больше не вызывай.
 7. Проверь contact_sheet (весь клип одной картинкой) и 1–2 view_frame на панчлайнах: текст читается,
    по центру, не на лице, не в нижних 18% и не в верхних 8%. Плохо — поправь и проверь снова.
 7.5. ДЛИНА: готовый ролик 15–60 с. Не подрезай до голой реакции — нужна завязка (5–15 с до момента:
@@ -139,6 +144,15 @@ CRAFT = """\
    кусок до неё (+0.5–1 с реакции). Обрыв на полуслове или «ни о чём» владелец считает браком.
    Финальный удар (звук/титр) — на развязке, а не в пустоте.
 9. Отчёт: 3–6 пунктов «что сделал, на какой секунде». Без воды.
+
+ПРОВЕРКА ГЛАЗАМИ — ОБЯЗАТЕЛЬНО. После set_focus, set_layout, add_layers, add_insert — до отчёта
+contact_sheet (весь ролик) или view_frame на изменённых секундах; без этого сервис отчёт не примет и
+снимет лист кадров сам. Смотри: в кадре тот, кого просили (аватар, а не ролик на экране), текст читается,
+вставки на месте.
+ЧЕСТНЫЙ ОТЧЁТ. Ответ каждой правки несёт clip_check — свежий lint_clip (lint_warnings, lint) и
+предупреждения get_clip. Остались предупреждения — исправь или так и напиши; «lint пройден», «без
+предупреждений», «всё чисто» — только если lint_warnings 0. Вставки называй по факту (clip_check.inserts:
+картинка — не гифка, видео — не картинка). Сервис сверяет отчёт с клипом и допишет поправку, если он врёт.
 
 ИГРА БЕЗ РЕЧИ (get_clip.subtitles пусто, listen — «речи нет»): субтитров нет — auto_edit не нужен.
 Голос может быть на другой звуковой дорожке (get_clip.source.audio.tracks_total > 1) — set_source_audio
@@ -254,15 +268,55 @@ build_app_promo: {"spec":{"brand":{"accent":"#FF6A1F"},"hook":["Ищешь ко�
 """
 
 
-def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True) -> str:
+def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True,
+                  playbook: str | None = None) -> str:
     """Системный промпт под формат клипа (app/formats.py). 9:16 со слоями в 9:16 (клип без
     поля format) — ровно прежний текст; другой формат — кадр W×H, опорные px разметки и
-    правила раскладки этого формата (см. ``format_craft``)."""
+    правила раскладки этого формата (см. ``format_craft``). ``playbook`` — активный плейбук
+    (``playbook_block``): его текст и правило «плейбук главнее ремесла»."""
     from app.formats import settings_format
 
     fmt, layers_format = settings_format(fmt), settings_format(layers_format)
-    return (format_craft(fmt, layers_format, has_layers=has_layers) + "\nСПРАВКА ПО СЛОЯМ\n"
-            + agent_tools.motion_reference(fmt, layers_format) + "\n\n" + EXAMPLES)
+    return (format_craft(fmt, layers_format, has_layers=has_layers) + playbook_block(playbook)
+            + "\nСПРАВКА ПО СЛОЯМ\n" + agent_tools.motion_reference(fmt, layers_format) + "\n\n" + EXAMPLES)
+
+
+PLAYBOOK_MAX_CHARS = 12000
+
+
+def playbook_block(name: str | None) -> str:
+    """Блок активного плейбука в системный промпт: правила плейбука главнее общих правил ремесла
+    (QA 01.11: CRAFT велел хук 0–2.5 с жёлтым капсом, плейбук vtuber-story — 8–12 с, белый; агент
+    метался между ними). Нет плейбука или файла — пусто."""
+    if not name:
+        return ""
+    from app import playbooks
+
+    try:
+        book = playbooks.get_playbook(name)
+    except KeyError:
+        return ""
+    return (
+        f"\nАКТИВНЫЙ ПЛЕЙБУК «{book['name']}» ({book['title']})\n"
+        "Владелец заказал монтаж по этому плейбуку. Где его правила расходятся с правилами выше (ПОРЯДОК РАБОТЫ, "
+        "СТИЛЬ, хук, субтитры, вставки, эффекты, длина) — делай КАК В ПЛЕЙБУКЕ, это не нарушение. Его чек-лист — "
+        "условие сдачи.\n"
+        "----- плейбук -----\n" + book["text"][:PLAYBOOK_MAX_CHARS].strip() + "\n----- конец плейбука -----\n"
+    )
+
+
+def active_playbook(message: str, steps: list[dict] | None = None) -> str | None:
+    """Плейбук хода: последний успешный get_playbook(name), иначе имя плейбука в запросе владельца."""
+    for step in reversed(steps or []):
+        if step.get("tool") == "get_playbook" and step.get("ok"):
+            name = str((step.get("args") or {}).get("name") or "").strip()
+            if name:
+                return name
+    from app import playbooks
+
+    text = str(message or "").lower()
+    names = sorted((p["name"] for p in playbooks.list_playbooks()), key=len, reverse=True)
+    return next((n for n in names if re.search(rf"(?<![a-z0-9-]){re.escape(n)}(?![a-z0-9-])", text)), None)
 
 
 # Правила композиции по формату — для слоёв, размеченных в этом же формате.
@@ -547,8 +601,9 @@ def run_agent(
         nonlocal use_json_schema
         # Формат читаем на каждый вызов: агент мог сменить его set_format (по просьбе владельца).
         fmt, layers_fmt, has_layers = clip_formats(store, clip_plan_id)
+        prompt = system_prompt(fmt, layers_fmt, has_layers=has_layers, playbook=active_playbook(message, steps))
         payload: dict = {
-            "systemInstruction": {"parts": [{"text": system_prompt(fmt, layers_fmt, has_layers=has_layers)}]},
+            "systemInstruction": {"parts": [{"text": prompt}]},
             "contents": contents,
             # Температуру не трогаем: Gemini 3 рассчитана на 1.0, ниже — зацикливается.
             # Потолок ответа: иногда модель «плывёт» в бесконечный повтор («- - - …»).
@@ -568,6 +623,8 @@ def run_agent(
             raise
 
     nudged = False
+    look_nudges = 0
+    auto_looked = False
     nudged_continue = False
     nudged_report = False
     nudged_work = False
@@ -647,6 +704,19 @@ def run_agent(
                 "ключевые слова цветом, проверь contact_sheet. Потом короткий отчёт по-русски."
             )}]})
             continue
+        if not calls and tools_on and steps and idle:
+            pending = unchecked_visual(steps)
+            if pending and look_nudges < MAX_LOOK_NUDGES:
+                # Правил кадр и не посмотрел (QA 01.11: 36 шагов без единого view_frame — весь ролик
+                # оказался ютуб-клипом без аватара). Сначала просим посмотреть самого.
+                look_nudges += 1
+                contents.append({"role": "user", "parts": [{"text": look_nudge(pending)}]})
+                continue
+            if pending and not auto_looked:
+                # Не посмотрел и после напоминания — лист кадров снимает сервис и показывает модели.
+                auto_looked = True
+                contents.append(_auto_look(ctx, steps, emit))
+                continue
         if not calls or not tools_on:
             final_text = _clean_reply(_parts_text(parts))
             if degenerate(final_text):
@@ -693,6 +763,7 @@ def run_agent(
             emit()
         responses: list[dict] = []
         images: list[dict] = []
+        last_change_body: dict | None = None
         for part in calls:
             if should_cancel and should_cancel():
                 raise AgentCancelled()
@@ -712,6 +783,8 @@ def run_agent(
                 gap_warnings = [str(w) for w in result.get("warnings") or [] if str(w).startswith(GAP_MARKERS)]
             emit()
             body = _response_object(result)
+            if ok and _is_mutating(name):
+                last_change_body = body
             if isinstance(result, ImageResult):
                 data, mime = _shrink_frame(result)
                 body["note"] = "кадр приложен следующей картинкой"
@@ -721,11 +794,19 @@ def run_agent(
             if call.get("id"):
                 response_part["functionResponse"]["id"] = call["id"]
             responses.append(response_part)
+        if last_change_body is not None:
+            # Свежий lint и предупреждения get_clip после правок этого шага — модель видит их до отчёта.
+            check = clip_check(ctx)
+            if check:
+                last_change_body["clip_check"] = check
+            last_change_body = None
         contents.append({"role": "user", "parts": responses + images})
         _prune_images(contents)
 
     if not final_text:
         final_text = _fallback_summary(steps)
+    if ctx.changed:
+        final_text = honest_report(final_text, clip_check(ctx), steps)
     return {"text": final_text, "steps": steps, "changed": ctx.changed, "model": used_model, "rounds": rounds}
 
 
@@ -737,6 +818,114 @@ CRAFT_TOOLS = {"update_layer", "add_layers", "set_camera", "add_insert", "remove
 # Чьи предупреждения говорят о дыре во всём ролике (их ответы содержат линт всего клипа).
 LINT_TOOLS = {"get_clip", "add_layers", "update_layer", "remove_layers"}
 GAP_MARKERS = ("пустой кадр", "нет финала")
+
+
+# Правки, после которых до отчёта нужен взгляд на кадр, и инструменты этого взгляда.
+VISUAL_TOOLS = {"set_focus", "set_layout", "add_layers", "add_insert"}
+LOOK_TOOLS = {"view_frame", "contact_sheet"}
+MAX_LOOK_NUDGES = 1  # потом лист кадров снимает сервис
+
+
+def _is_mutating(name: str) -> bool:
+    try:
+        return bool(agent_tools.get_tool(name).mutating)
+    except KeyError:
+        return False
+
+
+def unchecked_visual(steps: list[dict]) -> dict | None:
+    """Последняя правка кадра (VISUAL_TOOLS), после которой не было ни view_frame, ни contact_sheet."""
+    pending = None
+    for step in steps:
+        if not step.get("ok"):
+            continue
+        if step.get("tool") in VISUAL_TOOLS:
+            pending = step
+        elif step.get("tool") in LOOK_TOOLS:
+            pending = None
+    return pending
+
+
+def look_nudge(pending: dict) -> str:
+    return (f"Перед отчётом посмотри результат глазами: после «{pending.get('label')}» не было ни view_frame, ни "
+            "contact_sheet. Вызови contact_sheet (весь ролик) или view_frame на изменённых секундах; что не так "
+            "(в кадре не тот герой, текст не читается, вставка не там) — исправь и проверь снова, потом отчёт.")
+
+
+def _auto_look(ctx: ToolContext, steps: list[dict], emit: Callable[[], None]) -> dict:
+    """Лист кадров от сервиса, когда модель так и не посмотрела на свои правки: шаг в журнале и
+    реплика владельца с картинкой."""
+    step = {"tool": "contact_sheet", "label": "Сервис смотрит ролик целиком (проверка перед отчётом)", "ok": None,
+            "args": {}, "auto": True}
+    steps.append(step)
+    emit()
+    result, ok = agent_tools.run_tool(ctx, "contact_sheet", {})
+    _step_from_result(step, result, ok)
+    emit()
+    if ok and isinstance(result, ImageResult):
+        data, mime = _shrink_frame(result)
+        return {"role": "user", "parts": [
+            {"text": ("Ты не посмотрел на свои правки — вот лист кадров всего ролика (сервис снял его сам). "
+                      "Проверь: в кадре тот, кого просили, текст читается, вставки на месте. Плохо — исправь "
+                      "инструментами и посмотри снова; хорошо — короткий отчёт.")},
+            {"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}}]}
+    error = str(result.get("error") if isinstance(result, dict) else result)[:200]
+    return {"role": "user", "parts": [{"text": f"Лист кадров снять не вышло ({error}) — вызови view_frame сам на "
+                                               "изменённых секундах, потом отчёт."}]}
+
+
+def clip_check(ctx: ToolContext) -> dict | None:
+    """Свежая проверка клипа для модели и для сверки отчёта: lint_clip без медиа (мгновенно),
+    предупреждения get_clip и вставки по факту. Не вышло — None (ход не роняем)."""
+    from app import quality_lint as Q
+
+    out: dict = {}
+    try:
+        lint = Q.lint_clip(ctx.store, ctx.plan_id, media=False)
+        warns = [f for f in lint.get("findings") or [] if f.get("severity") == "warn"]
+        out["lint_warnings"] = len(warns)
+        out["lint"] = [f["message"] + (f" → {f['fix']}" if f.get("fix") else "") for f in warns[:4]]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out["get_clip_warnings"] = [str(w)[:240] for w in agent_tools.clip_warnings(ctx)[:4]]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out["inserts"] = [{k: f[k] for k in ("kind", "at", "end", "what")} for f in agent_tools.insert_facts(ctx)]
+    except Exception:  # noqa: BLE001
+        pass
+    if not out:
+        return None
+    out["note"] = ("свежая проверка после правки: lint_warnings > 0 — в отчёте НЕ пиши «lint пройден»/«без "
+                   "предупреждений»; вставки называй по kind (image — картинка, gif — гифка, video — видео)")
+    return out
+
+
+_LINT_CLAIM_RE = re.compile(
+    r"(?:lint|линт)[^.\n]{0,60}?(?:пройден|прош[её]л|чист|без\s+(?:предупреждени|замечани|ошиб)|в\s+порядке"
+    r"|ок\b|ok\b|успешн)|(?:без|нет)\s+предупреждений|предупреждений\s+нет",
+    re.IGNORECASE,
+)
+_GIF_CLAIM_RE = re.compile(r"гиф|gif", re.IGNORECASE)
+
+
+def honest_report(text: str, check: dict | None, steps: list[dict] | None = None) -> str:
+    """Сверка отчёта с клипом (QA 01.11: «Проверка lint_clip пройдена» при 10 предупреждениях, «гифка» —
+    статичная картинка): врёт — дописываем поправку сервиса с фактами."""
+    if not check:
+        return text
+    notes = []
+    warn = int(check.get("lint_warnings") or 0)
+    if warn and _LINT_CLAIM_RE.search(text or ""):
+        first = "; ".join(str(m).split(" → ")[0] for m in (check.get("lint") or [])[:2])
+        notes.append(f"lint_clip: предупреждений {warn}, а не «пройдено»" + (f" (например: {first})" if first else ""))
+    facts = check.get("inserts") or []
+    if _GIF_CLAIM_RE.search(text or "") and facts and not any(f.get("kind") in ("gif", "video") for f in facts):
+        notes.append("гифок в клипе нет — вставки по факту: " + agent_tools.describe_inserts(facts))
+    if not notes:
+        return text
+    return (text.rstrip() + "\n\nСверка сервиса с клипом: " + "; ".join(notes) + ".").strip()
 
 
 def unresolved_failure(steps: list[dict]) -> dict | None:

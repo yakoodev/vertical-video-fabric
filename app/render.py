@@ -1113,8 +1113,24 @@ class ClipRenderService:
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
         может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
         with heavy_slot("render", f"клип {clip_plan_id}"):
+            stamp = self._plan_fingerprint(clip_plan_id)
             clip = self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+            if stamp and isinstance(clip, dict) and clip.get("id"):
+                # С какого состояния клипа сделан файл: lint_clip сверяет, правили ли клип после.
+                try:
+                    self.store.set_clip_plan_fingerprint(int(clip["id"]), stamp)
+                    clip = {**clip, "plan_fingerprint": stamp}
+                except Exception:  # noqa: BLE001 - отпечаток — удобство, рендер важнее
+                    pass
         return self._after_render(clip)
+
+    def _plan_fingerprint(self, clip_plan_id: int) -> str | None:
+        try:
+            from app.quality_lint import plan_fingerprint
+
+            return plan_fingerprint(self.store, clip_plan_id)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _after_render(self, clip: dict) -> dict:
         """После рендера (уже вне очереди тяжёлых): заголовок, описание и хэштеги клипа, если их
@@ -2854,6 +2870,19 @@ def _layout_filter(
             cam_chain += f",pad={width}:{cam_h + gap}:0:{0 if top else gap}:color={color}"
         order = "[lcam][lgame]" if top else "[lgame][lcam]"
         return f"{game};{cam_chain}[lcam];{order}vstack=inputs=2,{tail}"
+    if layout["mode"] == "avatar_full":
+        # Только аватар (app/stream_layout.avatar_geometry): прямоугольник cam из ВСЕГО кадра
+        # исходника шириной video_scale ширин кадра, центр по высоте avatar_y; вокруг — размытый
+        # тот же аватар (bg_blur) или первый цвет фона (анимированный рисует компоновщик).
+        video_w = even_px(width * float(layout.get("video_scale") or 1.0))
+        avatar = f"{cam_crop},scale={video_w}:-2,setsar=1[lav]"
+        if layout.get("bg_blur", True):
+            background = (f"{cam_crop},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                          f"crop={width}:{height},boxblur=24:2,setsar=1[lbg]")
+        else:
+            background = f"color=c={ff_color(fill_color(layout['bg']))}:s={width}x{height}:r={_fps(fps)}[lbg]"
+        ay = float(layout.get("avatar_y", 0.5))
+        return (f"{avatar};{background};[lbg][lav]overlay=x=(W-w)/2:y=trunc({ay:.4f}*H-h/2):shortest=1,{tail}")
     if layout["mode"] == "meme":
         # Видео целиком (после обрезки полей) во всю ширину, сверху; ниже — фон.
         prefix, (vin,) = _crop_prefix(source_crop, 1)
@@ -2949,6 +2978,9 @@ def _keyed_render(preset: dict, motion: dict | None) -> tuple[dict, dict | None]
     layout = preset.get("layout")
     if isinstance(layout, dict) and layout.get("mode") == "meme":
         base["layout"] = {**layout, "bg": key["color"]}
+    elif isinstance(layout, dict) and layout.get("mode") == "avatar_full":
+        # Аватар на зелёнке: поля — цветом ключа, вырежутся вместе с ним (сзади — backdrop клипа).
+        base["layout"] = {**layout, "bg": key["color"], "bg_blur": False}
     grade = _video_style_filter({**preset, "vignette": 0})
     return base, {**motion, "key": {**key, "grade": grade}}
 
