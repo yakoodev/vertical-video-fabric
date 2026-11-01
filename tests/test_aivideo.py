@@ -939,3 +939,23 @@ def test_assembly_requires_video_for_chained_shot_without_frame(env):
 
     with pytest.raises(V.AivError, match="сцеплен с видео плана 1"):
         assemble(store, sid)
+
+
+def test_v2_tools_and_rest_continuity(env):
+    client, store = env
+    from app import modules
+    from app.agent_tools import ToolContext, list_tools, run_tool
+
+    assert "aiv_check_continuity" in modules.MODULES_BY_ID["ai_video"].tools
+    tools = {t.name: t for t in list_tools(include_discovery=True, store=store)}
+    assert "video" in tools["aiv_request_approval"].parameters["properties"]["stage"]["enum"]
+    shot_props = tools["aiv_update_script"].parameters["properties"]["shots"]["items"]["properties"]
+    assert {"state", "continues_from_prev", "sound", "video_in", "video_out"} <= set(shot_props)
+    pid, sid, _out = _state_project(store)
+    ctx = ToolContext(store=store)
+    res, ok = run_tool(ctx, "aiv_check_continuity", {"script_id": sid})
+    assert ok and res["skipped"]
+    res, ok = run_tool(ctx, "aiv_update_style", {"project_id": pid, "video_model": "grok-imagine-video-1-5"})
+    assert ok and res["style"]["video_model"] == "grok-imagine-video-1-5"
+    resp = client.post(f"/api/ai-video/scripts/{sid}/continuity")
+    assert resp.status_code == 200 and resp.json()["skipped"]

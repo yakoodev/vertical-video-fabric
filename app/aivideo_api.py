@@ -9,7 +9,8 @@
   ``POST /api/ai-video/locations/{lid}/upload``
 * ``POST /api/projects/{id}/ai-video/scripts``, ``GET/PATCH/DELETE /api/ai-video/scripts/{sid}``,
   ``POST /api/ai-video/scripts/{sid}/write`` (Gemini), ``PATCH /api/ai-video/shots/{id}``
-* ``POST /api/projects/{id}/ai-video/estimate`` / ``…/request`` {stage, script_id?, items?, regenerate?}
+* ``POST /api/projects/{id}/ai-video/estimate`` / ``…/request`` {stage refs|keyframes|voice|video,
+  script_id?, items?, regenerate?}; ``POST /api/ai-video/scripts/{sid}/continuity`` — проверка склеек
 * ``POST /api/ai-video/refs/{id}/select`` / ``…/regenerate`` / ``…/check``
 * ``POST /api/ai-video/approvals/{aid}/decide`` {action approve|reject, comment} — решение владельца
   с баннера проекта (то же, что «Одобрение»); ``POST /api/ai-video/approvals/{aid}/run`` {confirm}
@@ -51,7 +52,7 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         return call(V.create_ai_project, str(payload.get("name") or ""), payload.get("style_kind") or "anime",
                     payload.get("passport_text") or "", payload.get("palette"), payload.get("quality") or "draft",
                     payload.get("provider") or "none", payload.get("description") or "",
-                    payload.get("image_model") or "")
+                    payload.get("image_model") or "", payload.get("video_model") or "")
 
     @router.get("/api/projects/{project_id}/ai-video", summary="Обзор проекта ИИ-видео")
     def api_overview(project_id: int, _auth: auth_dep) -> dict:
@@ -197,6 +198,10 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/ai-video/refs/{ref_id}/check", summary="Проверка постоянства (Gemini)")
     def api_check(ref_id: int, _auth: auth_dep) -> dict:
         return call(G.check_consistency, ref_id)
+
+    @router.post("/api/ai-video/scripts/{script_id}/continuity", summary="Проверка склеек планов (Gemini)")
+    def api_continuity(script_id: int, _auth: auth_dep) -> dict:
+        return call(G.check_continuity, script_id)
 
     @router.post("/api/ai-video/approvals/{approval_id}/decide", summary="Решение владельца по карточке этапа")
     def api_decide(approval_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:

@@ -1,11 +1,11 @@
 import { api } from "@/api/client";
 
 /**
- * ИИ-видео (app/aivideo*.py): проект, где ролик рисуется с нуля. Этапы refs → keyframes → voice:
+ * ИИ-видео (app/aivideo*.py): проект, где ролик рисуется с нуля. Этапы refs → keyframes → voice → video:
  * оценка (бесплатно) → карточка владельцу с суммой → «Разрешить» → генерация → сборка в холст-клип.
  */
 
-export type Stage = "refs" | "keyframes" | "voice";
+export type Stage = "refs" | "keyframes" | "voice" | "video";
 
 export interface AivRef {
   id: number;
@@ -58,7 +58,10 @@ export interface AivStyle {
   palette: string[];
   negative_text: string;
   image_model: string;
-  provider: "none" | "polza";
+  provider: string;
+  video_provider: string;
+  video_model: string;
+  video_resolution: "480p" | "720p";
   quality: "draft" | "quality";
   quality_label: string;
   month_cap_rub: number | null;
@@ -93,6 +96,30 @@ export interface StageCard {
   jobs: Record<string, number>;
 }
 
+export interface ShotState {
+  characters?: { id: string; pose?: string; facing?: string; position?: string; holding?: string; clothing?: string }[];
+  props?: { name: string; state: string }[];
+}
+
+export interface Continuity {
+  ok: boolean;
+  chain?: boolean;
+  score?: number;
+  mismatches?: { what: string; detail: string }[];
+  note?: string;
+  checked_at?: string;
+}
+
+export interface ContinuityFlag {
+  idx: number;
+  shot_id: number;
+  ok: boolean;
+  score: number | null;
+  mismatches: { what: string; detail: string }[];
+  outdated: boolean;
+  chain: boolean;
+}
+
 export interface Shot {
   id: number;
   idx: number;
@@ -106,7 +133,16 @@ export interface Shot {
   transition_in: string;
   lipsync: boolean;
   locked: boolean;
+  needs_motion: boolean;
+  motion_prompt: string;
+  sound: string;
+  state: ShotState;
+  continues_from_prev: boolean;
+  video_in: number | null;
+  video_out: number | null;
+  continuity: Continuity | null;
   keyframes?: AivRef[];
+  videos?: AivRef[];
   line_audio?: AivRef[];
   spent_rub?: number;
   warnings?: string[];
@@ -159,6 +195,9 @@ export interface Estimate {
   paid: boolean;
   items: EstimateItem[];
   problems: string[];
+  blocked?: string[];
+  notes?: string[];
+  continuity?: ContinuityFlag[];
   note: string;
 }
 
@@ -182,8 +221,13 @@ export const CAMERA_LABEL: Record<string, string> = {
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
-  refs: "Референсы", keyframes: "Кадры", voice: "Озвучка",
+  refs: "Референсы", keyframes: "Кадры", voice: "Озвучка", video: "Видео",
 };
+
+export const VIDEO_MODELS: [string, string][] = [
+  ["bytedance/seedance-2-fast", "Seedance 2 fast — со звуком, 22,3 ₽/с"],
+  ["grok-imagine-video-1-5", "Grok Imagine 1.5 — черновик, 3 ₽/с"],
+];
 
 export const aivKey = (projectId: number) => ["channel-projects", String(projectId), "ai-video"] as const;
 export const aivScriptKey = (scriptId: number) => ["ai-video", "script", String(scriptId)] as const;
@@ -222,12 +266,14 @@ export const aivApi = {
   regenerate: (refId: number, note?: string) => api.post<StageResult>(`/api/ai-video/refs/${refId}/regenerate`, { note }),
   regenerateTarget: (target: string) => api.post<StageResult>(`/api/ai-video/targets/regenerate`, { target }),
   select: (refId: number) => api.post<AivRef>(`/api/ai-video/refs/${refId}/select`),
+  checkContinuity: (scriptId: number) =>
+    api.post<{ ok: boolean; skipped?: boolean; flagged?: number[]; note: string }>(`/api/ai-video/scripts/${scriptId}/continuity`),
   check: (refId: number) => api.post<{ ok: boolean; skipped?: boolean; note: string }>(`/api/ai-video/refs/${refId}/check`),
   decide: (approvalId: number, action: "approve" | "reject", comment = "") =>
     api.post(`/api/ai-video/approvals/${approvalId}/decide`, { action, comment }),
   run: (approvalId: number) => api.post(`/api/ai-video/approvals/${approvalId}/run`, { confirm: true }),
   assemble: (scriptId: number, body: { music_track_id?: number; captions_style?: string } = {}) =>
-    api.post<{ clip_id: number; duration: number; editor_url: string; notes: string[] }>(
+    api.post<{ clip_id: number; duration: number; video_shots?: number; editor_url: string; notes: string[] }>(
       `/api/ai-video/scripts/${scriptId}/assemble`, body),
   ledger: (projectId: number) =>
     api.get<{ ledger: { id: number; created_at: string; stage: string; model: string; amount_rub: number; source: string; label: string; note: string }[]; budget: Budget }>(

@@ -77,7 +77,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
         "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
         "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_job_status",
-        "aiv_select_version", "aiv_check_consistency", "aiv_assemble")),
+        "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_assemble")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
