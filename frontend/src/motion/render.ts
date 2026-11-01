@@ -34,6 +34,7 @@ import { nameplateRenderer } from "./layers/nameplate";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { particlesRenderer } from "./layers/particles";
 import { pngtuberRenderer } from "./layers/pngtuber";
+import { sceneRenderer } from "./layers/scene";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
@@ -57,6 +58,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   captions: captionsRenderer as LayerRenderer,
   chat: chatRenderer as LayerRenderer,
   pngtuber: pngtuberRenderer as LayerRenderer,
+  scene: sceneRenderer as LayerRenderer,
 };
 
 const NO_WORDS: CaptionWord[] = [];
