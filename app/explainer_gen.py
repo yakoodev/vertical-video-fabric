@@ -50,8 +50,10 @@ REAL_SPLIT_SEC = 3.6  # после озвучки бит длиннее — де
 HOOK_MAX_CHARS = 32  # крючок — первые ~2 с
 MAX_NEW_POSES = 20
 TAIL_SEC = 0.8
-CUT_SFX = ("sfx:freesound/whoosh-1.ogg", "sfx:freesound/whoosh-2.ogg")
-BADGE_SFX = "sfx:freesound/ding.ogg"
+# Только настоящие записи пака freesound. Пилот звал whoosh-2 и ding — это алиасы пака
+# (app/motion_assets.FREESOUND_ALIASES): whoosh-soft и pop-soft; здесь — настоящие имена.
+CUT_SFX = ("sfx:freesound/whoosh-1.ogg", "sfx:freesound/whoosh-soft.ogg")
+BADGE_SFX = "sfx:freesound/pop-soft.ogg"
 CHIP_SFX = "sfx:freesound/pop.ogg"
 WHOOSH_VOLUME = 0.35
 DING_VOLUME = 0.45
