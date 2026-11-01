@@ -1040,6 +1040,47 @@ px слоёв: у всех форматов 1080 — те же px, что в в�
   записи (или окна `crop`). Тень — силуэт корпуса.
 - **Запись экрана — немой `video`** (без `audio`): музыка — `set_music`, акценты — слои `audio`.
 
+### Сведение: audio_mix_report, auto_mix, set_mix
+
+Агент не слышит ролик — **меряй сведение**. `audio_mix_report` раскладывает звук клипа на стемы так, как
+их сведёт рендер (голос-слои / звук исходника / музыка с ключами, ducking и sidechain / звуки слоёв /
+звук видео-слоёв) и меряет ffmpeg `ebur128`: LUFS и true peak каждого стема, short-term по времени, и
+главное — **голос против музыки только там, где говорят** (`voice_vs_music.diff_db`: норма ≥ 12 дБ, цель
+15–18), звуки поверх слов (`voice_vs_sfx.masking_at`, `layers[].excess_db`), итог ролика −14 LUFS /
+≤ −1 dBTP (по свежему рендеру — `final`, иначе прогноз финального прохода — `predicted`), клиппинг,
+дыры тишины. `verdicts` — по-русски, с поправкой и готовым вызовом (`suggest`). То же — проверка
+`audio_mix` в `lint_clip` (и в карточке одобрения автопилота).
+
+- `auto_mix(target_lufs −14, music_under_voice_db −18, duck_db −10, sfx_under_voice_db −6, dry_run?)` —
+  громкость трека (`mix.music_db`), ducking на каждую фразу (`audio.music_duck`, атака 0.12 / отпускание
+  0.3 с, sidechain выключается), каждый звук слоя под голос (`mix.layer_gains`), звук видео-слоёв фоном,
+  цель LUFS (`mix.target_lufs`). Считает от исходной громкости — повтор не накапливает. Ответ: `changes`,
+  `before`/`after` (голос над музыкой, LUFS, пик, предупреждения). Потом — рендер и снова отчёт.
+- `set_mix(music_db, sidechain, duck_attack, duck_release, groups {voice, sfx, music, video}, layer_gains
+  {id: дБ}, target_lufs, reset)` — те же ручки руками; null снимает поле.
+- Роль звука слоя — `props.role` (`voice` / `music` / `sfx` / `ambience`); нет — по имени («Озвучка»,
+  «Голос», «Реплика…» — голос; «Музыка», «Трек» — музыка) и длине (длинная дорожка — музыка).
+- Объяснялка и ИИ-видео зовут `auto_mix` после сборки сами (`AUTO_MIX`, по умолчанию вкл).
+- Цифры и как читать отчёт — [guides/sound-design.md](guides/sound-design.md) «Сведение».
+
+### Звуковые эффекты: цепочки, авто-звуки, кроссфейд
+
+- `audio_fx_reference` — виды эффектов с параметрами и пределами, 22 пресета, где применять.
+- `set_audio_chain(target layer|voice|music, layer_id?, chain [{fx, …}] | preset, append?)` — цепочка
+  по порядку: `eq` (low_cut, high_cut, low, presence, high, bands), `highpass`/`lowpass` (свип `to` за
+  `sweep_start..sweep_end`), `compressor`, `deesser`, `gate`, `denoise`, `reverb` (room/hall/plate/cave,
+  mix), `delay`, `pitch` (полутона, длина та же), `speed`/`tempo` (только у слоя), `stereo`, `distortion`,
+  `bitcrush`, `tremolo`, `reverse` (только у слоя), `gain`, `legacy` (эффекты `set_audio_fx`). Голос:
+  у холста — слои-голос, у клипа с исходником — весь звук исходника (после распознавания субтитров, до
+  музыки). У слоя — `props.fx` (`add_layers`/`update_layer` тоже принимают).
+- `set_audio_fx` — `fx: "chain"` + `chain`/`preset`: любая цепочка на отрезке звука исходника.
+- `auto_sfx(on [cuts, badges], riser_at [t], impact_at [t], dry_run?)` — вжухи на склейках, «поп» на плашках,
+  райзер к моменту, удар — **только записи пака freesound** (нет пака — ничего, синтетики нет); слои
+  `asfx_*`, повтор заменяет.
+- `audio_crossfade(from_layer, to_layer, duration)` — наплыв двух звуковых слоёв.
+- Превью редактора эффекты не играет — `listen` или рендер. В редакторе: инспектор звукового слоя —
+  «Роль» и «Эффекты»; вкладка «Звук» → «Сведение и эффекты».
+
 ### Звук слоёв: эффект, дорожка, звук видео
 
 - **Эффект** — слой `audio` без `mode` (или `mode: "effect"`): сервис сам ставит громкие места звука на

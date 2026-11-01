@@ -3493,6 +3493,10 @@ def api_set_clip_plan_render_settings(
             # Звуковой монтаж (J/L, ключи, эффекты — app/audio_edit.py) — так же: нет ключа — остаётся.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["audio"] = current.get("audio") or {}
+        if "mix" not in settings_in:
+            # Сведение (app/audio_mix.py: auto_mix / set_mix) — редактор без этого поля его не стирает.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["mix"] = current.get("mix") or {}
         if "speed" not in settings_in:
             # Скорость/реверс кусков (app/piece_speed.py) ставит инструмент или инспектор куска:
             # автосохранение без поля её не сбрасывает.
@@ -4526,6 +4530,11 @@ app.include_router(build_cuts_router(AuthDep, lambda: store))
 from app.quality_lint_api import build_lint_router  # noqa: E402
 
 app.include_router(build_lint_router(AuthDep, lambda: store))
+
+# 🎚 Сведение звука и справочник эффектов (app/audio_mix.py, app/audio_fx.py) — вкладка «Звук» редактора.
+from app.audio_mix_api import build_audio_mix_router  # noqa: E402
+
+app.include_router(build_audio_mix_router(AuthDep, lambda: store))
 
 
 app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки

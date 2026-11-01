@@ -412,6 +412,10 @@ CORE_TOOLS: frozenset[str] = frozenset({
     # звук
     "set_source_audio", "list_music", "mute_audio", "set_source_gain", "set_music", "audio_map",
     "set_audio_joins", "set_audio_keys", "set_music_duck", "set_audio_fx",
+    # сведение: замер по стемам (app/audio_mix.py)
+    "audio_mix_report", "auto_mix", "set_mix",
+    # эффекты звука (app/audio_fx.py) и звуки на монтаж из пака
+    "audio_fx_reference", "set_audio_chain", "auto_sfx", "audio_crossfade",
 })
 
 TOOL_MODULE: dict[str, str] = {tool: m.id for m in MODULES for tool in m.tools}

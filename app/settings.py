@@ -118,6 +118,9 @@ class Settings:
         # Финальная громкость клипа под площадки (два прохода loudnorm, видео копией).
         self.render_loudnorm = os.getenv("RENDER_LOUDNORM", "1").strip().lower() not in ("0", "false", "no")
         self.render_loudnorm_target = float(os.getenv("RENDER_LOUDNORM_TARGET", "-14"))
+        # Автосведение (app/audio_mix.auto_mix) после сборки объяснялки и ИИ-видео: музыка под голосом,
+        # ducking по фразам, звуки под голос. AUTO_MIX=0 — собирать как раньше.
+        self.auto_mix = os.getenv("AUTO_MIX", "1").strip().lower() not in ("0", "false", "no")
         # Стоп-кадр в конце клипа (с), пока затухает звук; 0 — без него.
         self.render_end_hold_sec = float(os.getenv("RENDER_END_HOLD_SEC", "0.5"))
         self.whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip() or "small"

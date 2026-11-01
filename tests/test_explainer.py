@@ -174,6 +174,9 @@ def _layers(store, clip_id):
 
 def test_dry_run_end_to_end_builds_clip_like_pilot(env, monkeypatch):
     _client_, store, tmp = env
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "auto_mix", True)  # сборка зовёт автосведение (в тестах выключено)
     # Пак freesound в тестах не скачан: считаем звуки пака на месте (рендера в этом тесте нет).
     import app.motion_render as MR
 
@@ -236,7 +239,14 @@ def test_dry_run_end_to_end_builds_clip_like_pilot(env, monkeypatch):
     assert sum(1 for w in subs["words"] if w.get("emph")) >= 5
     # Музыка маскота под голосом тише; фон холста — цвет маскота.
     assert total["music_on"] and total["track_id"] == E.get_mascot(store, ids["mascot_id"])["music_track_id"]
-    assert total["audio"]["music_duck"] and total["audio"]["music_duck"][0]["gain_db"] == X.MUSIC_DUCK_DB
+    # Сборка зовёт автосведение (AUTO_MIX): громкость музыки — по замеру голоса; озвучка здесь —
+    # сплошной тон без пауз, поэтому ducking по фразам не нужен (музыка просто тише).
+    mix = total.get("mix") or {}
+    if mix.get("auto"):
+        assert mix["music_db"] is not None and mix["sidechain"] is False and mix["target_lufs"] == -14.0
+    else:
+        assert total["audio"]["music_duck"] and total["audio"]["music_duck"][0]["gain_db"] == X.MUSIC_DUCK_DB
+    assert mix.get("auto"), "автосведение после сборки объяснялки"
     assert total["backdrop"]["colors"][0] == "#2a1b47"
     # Позы помечены «использованы».
     assert any(p["uses"] for p in E.list_poses(store, ids["mascot_id"]))

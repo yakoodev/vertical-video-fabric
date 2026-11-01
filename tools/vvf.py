@@ -31,6 +31,8 @@ the service's code or database. Standard library only.
     vvf.py frame-motion 812 --at 3.2 -o f.png  # a frame of the finished look (layers, camera)
     vvf.py contact 812 -n 8 -o sheet.jpg       # contact sheet: the whole edit at a glance
     vvf.py agent 812 "сделай динамичнее"       # the built-in AI editor; waits, prints steps
+    vvf.py mix 887                             # sound mix report: voice vs music under speech, LUFS, peaks
+    vvf.py automix 887 --dry-run               # what auto-mix would set (music level, ducking, sfx); no --dry-run — apply
 
 See docs/AGENTS.md for the workflow and the rules of the file.
 """
@@ -413,6 +415,59 @@ def cmd_agent(args) -> None:
         sys.exit(1)
 
 
+def _tool(name: str, clip: int, arguments: Optional[dict] = None) -> dict:
+    """Инструмент MCP (тот же, что у агента) по /mcp — JSON-RPC tools/call."""
+    reply = call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                  "params": {"name": name, "arguments": {"clip_id": clip, **(arguments or {})}}})
+    if reply.get("error"):
+        print(f"{name}: {reply['error'].get('message')}", file=sys.stderr)
+        sys.exit(2)
+    result = reply.get("result") or {}
+    payload = result.get("structuredContent")
+    if payload is None:
+        text = "".join(c.get("text", "") for c in result.get("content") or [] if c.get("type") == "text")
+        payload = json.loads(text) if text.startswith("{") else {"text": text}
+    if result.get("isError"):
+        print(f"{name}: {payload.get('error') or payload}", file=sys.stderr)
+        sys.exit(2)
+    return payload
+
+
+def cmd_mix(args) -> None:
+    out = _tool("audio_mix_report", args.clip, {"use_render": not args.model})
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(out.get("summary") or "")
+    vm = out.get("voice_vs_music") or {}
+    if vm.get("diff_db") is not None:
+        print(f"голос над музыкой под речью: {vm['diff_db']:+.1f} дБ (норма ≥ 12, цель 15–18)")
+    for kind, stem in (out.get("stems") or {}).items():
+        print(f"  {stem['label']:<18} {stem['lufs'] if stem['lufs'] is not None else '—':>7} LUFS"
+              f"  пик {stem['true_peak'] if stem['true_peak'] is not None else '—'} dBTP")
+    line = (out.get("timeline") or {}).get("line")
+    if line:
+        print(f"громкость по времени: {line}")
+    for v in out.get("verdicts") or []:
+        print(f"[{v['severity']}] {v['message']}")
+        if v.get("fix"):
+            print(f"        → {v['fix']}")
+
+
+def cmd_automix(args) -> None:
+    arguments: dict = {"dry_run": bool(args.dry_run)}
+    for key in ("target_lufs", "music_under_voice_db", "duck_db"):
+        if getattr(args, key) is not None:
+            arguments[key] = getattr(args, key)
+    out = _tool("auto_mix", args.clip, arguments)
+    for line in out.get("changes") or []:
+        print(f"- {line}")
+    before, after = out.get("before") or {}, out.get("after") or {}
+    print(f"голос над музыкой: {before.get('voice_vs_music_db')} → {after.get('voice_vs_music_db')} дБ; "
+          f"LUFS (прогноз): {before.get('lufs')} → {after.get('lufs')}")
+    print(out.get("note") or "")
+
+
 def cmd_schema(_args) -> None:
     print(json.dumps(call("GET", "/api/clip-spec/schema"), ensure_ascii=False, indent=2))
 
@@ -503,6 +558,18 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("message")
     p.add_argument("--timeout", type=float, default=900, help="секунд ждать (по умолчанию 900)")
     p.set_defaults(fn=cmd_agent)
+    p = sub.add_parser("mix", help="сведение звука: голос против музыки под речью, звуки, LUFS, пик")
+    p.add_argument("clip", type=int)
+    p.add_argument("--model", action="store_true", help="только модель стемов, без готового рендера")
+    p.add_argument("--json", action="store_true", help="весь отчёт JSON")
+    p.set_defaults(fn=cmd_mix)
+    p = sub.add_parser("automix", help="автосведение: громкость музыки, ducking по фразам, звуки под голос")
+    p.add_argument("clip", type=int)
+    p.add_argument("--dry-run", action="store_true", help="только прогноз, ничего не записывать")
+    p.add_argument("--target-lufs", dest="target_lufs", type=float)
+    p.add_argument("--music-under-voice-db", dest="music_under_voice_db", type=float, help="−18 по умолчанию")
+    p.add_argument("--duck-db", dest="duck_db", type=float, help="−10 по умолчанию")
+    p.set_defaults(fn=cmd_automix)
     args = parser.parse_args(argv)
     args.fn(args)
 
