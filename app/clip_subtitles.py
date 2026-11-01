@@ -185,6 +185,72 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
     return words
 
 
+_TOKEN_EDGE = re.compile(r"^[^\w*]+|[^\w*]+$", re.UNICODE)
+
+
+def _tokens(text: str) -> list[str]:
+    """Слова текста для сравнения: строчными, без пунктуации по краям (звёздочки маски — часть слова)."""
+    return [t for t in (_TOKEN_EDGE.sub("", tok).lower() for tok in str(text or "").split()) if t]
+
+
+def _line_words(lines: list[dict], words: list[dict]) -> list[list[dict]]:
+    """Слова по строкам (как ``words_by_line``), но у строк с голосом (``speaker``) — только слова того же
+    голоса: реплика второго голоса поверх первой не уезжает в чужую строку."""
+    if not any(line.get("speaker") for line in lines):
+        return words_by_line(lines, words)
+    out: list[list[dict]] = [[] for _ in lines]
+    for w in words:
+        a, b = float(w["start"]), float(w["end"])
+        voice = w.get("speaker") or "A"
+        best, best_overlap = None, 0.001
+        for index, line in enumerate(lines):
+            if line.get("speaker") and line["speaker"] != voice:
+                continue
+            overlap = min(b, float(line["end"])) - max(a, float(line["start"]))
+            if overlap > best_overlap:
+                best, best_overlap = index, overlap
+        if best is not None:
+            out[best].append(w)
+    return out
+
+
+def sync_lines_with_words(payload: Any) -> Any:
+    """Текст строк — по словам, если они разошлись (QA 02.11, клип 892).
+
+    После censor и перераспределения слов по строкам ``lines[].text`` отставал от ``words``: в тексте
+    строки остался немаскированный мат («хуйня» при «х****» в словах), а строки, чьи слова ушли в
+    соседнюю, остались дублями с пустыми словами. Текст берут SRT-экспорт и описания — он обязан
+    совпадать с тем, что в кадре. Правило: у строки со словами текст, расходящийся со словами не только
+    регистром и пунктуацией, пересобирается из слов; строка без слов, все слова которой уже есть в
+    соседних строках, — дубль, её нет. Строки без слов с другим текстом и совпадающие — как были."""
+    if not isinstance(payload, dict) or not payload.get("lines") or not payload.get("words"):
+        return payload
+    lines = [dict(line) for line in payload["lines"] if isinstance(line, dict)]
+    words = [w for w in payload["words"] if isinstance(w, dict) and str(w.get("word") or "").strip()]
+    try:
+        inside = _line_words(lines, words)
+    except (KeyError, TypeError, ValueError):
+        return payload
+    out: list[dict] = []
+    changed = False
+    for index, (line, own) in enumerate(zip(lines, inside)):
+        if not own:
+            near = [w for k in (index - 1, index + 1) if 0 <= k < len(inside) for w in inside[k]]
+            near_tokens = set(_tokens(" ".join(str(w["word"]) for w in near)))
+            tokens = _tokens(line.get("text") or "")
+            if tokens and near_tokens and all(t in near_tokens for t in tokens):
+                changed = True  # слова этой строки уже показаны соседней — дубль
+                continue
+            out.append(line)
+            continue
+        joined = " ".join(str(w["word"]).strip() for w in own)
+        if _tokens(joined) != _tokens(line.get("text") or ""):
+            line["text"] = joined[:300]
+            changed = True
+        out.append(line)
+    return {**payload, "lines": out} if changed else payload
+
+
 def normalize_lines(raw: Any, duration: float | None = None) -> list[dict]:
     out: list[dict] = []
     for item in raw if isinstance(raw, list) else []:

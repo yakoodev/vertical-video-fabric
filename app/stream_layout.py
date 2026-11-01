@@ -16,7 +16,8 @@
      "video_scale": 1.0,              # meme: ширина видео в ширинах кадра (>1 — крупнее, края срезаны)
      "bg": {"kind": "aurora", ...},   # meme / avatar_full: фон (app/backgrounds.py), анимированный
      "avatar_y": 0.5,                 # avatar_full: центр аватара по высоте выхода
-     "bg_blur": true}                 # avatar_full: фон — размытый тот же аватар (false — bg)
+     "bg_blur": true,                 # avatar_full: фон — размытый тот же аватар (false — bg)
+     "cams": [{"from", "to", "cam", "video_scale"?}]}  # avatar_full: рамки по отрезкам исходника (с)
 
 «avatar_full» — история витубера «только аватар»: прямоугольник аватара/вебки ``cam`` (доли
 ВСЕГО кадра исходника, как у split) на весь кадр — шириной ``video_scale`` ширин кадра (1 —
@@ -84,6 +85,82 @@ def normalize_cam(raw: object, default: dict | None = DEFAULT_CAM) -> dict | Non
     return {"x": round(x, 4), "y": round(y, 4), "w": round(w, 4), "h": round(h, 4)}
 
 
+MAX_AVATAR_CAMS = 8
+
+
+def normalize_avatar_cams(raw: object) -> list[dict]:
+    """avatar_full: рамки аватара по отрезкам ИСХОДНИКА — ``[{from, to, cam, video_scale?}]``.
+
+    QA 02.11 (клип 892): до 281 с исходника аватар крупно левее, потом — в углу справа; одна
+    рамка ``cam`` на весь клип дала 4 с волос и юбки без лица. Отрезок — секунды исходника
+    (не шкала клипа: переживает вырезы, подрезку и разрезание кусков); вне отрезков — ``cam``.
+    По порядку, без наложений (наложение обрезается по началу следующего), не больше 8."""
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            a, b = float(item.get("from")), float(item.get("to"))
+        except (TypeError, ValueError):
+            continue
+        if not (a == a and b == b) or b - a < 0.05:  # NaN или пустой отрезок
+            continue
+        box = item.get("cam") if isinstance(item.get("cam"), dict) else item
+        if box.get("w") is None or box.get("h") is None:
+            continue
+        cam = normalize_cam(box, None)
+        entry = {"from": round(max(0.0, a), 3), "to": round(b, 3), "cam": cam}
+        if item.get("video_scale") is not None:
+            entry["video_scale"] = round(_num(item.get("video_scale"), 1.0, 1.0, 4.0), 4)
+        out.append(entry)
+    out.sort(key=lambda e: e["from"])
+    clean: list[dict] = []
+    for entry in out:
+        if clean and entry["from"] < clean[-1]["to"]:
+            clean[-1]["to"] = entry["from"]
+            if clean[-1]["to"] - clean[-1]["from"] < 0.05:
+                clean.pop()
+        clean.append(entry)
+    return clean[:MAX_AVATAR_CAMS]
+
+
+def avatar_cam_spans(layout: dict, start: float, end: float) -> tuple[dict, list[dict]]:
+    """Рамки аватара на части исходника ``start..end`` (секунды исходника).
+
+    → (``{cam, video_scale}`` — рамка, что занимает большую часть отрезка: ею собирается основа
+    части; ``[{t0, t1, cam, video_scale}]`` — где нужна другая рамка, секунды ОТ НАЧАЛА части).
+    Без ``cams`` — рамка раскладки и пустой список (рендер ровно прежний)."""
+    base = {"cam": layout.get("cam") or dict(DEFAULT_CAM), "video_scale": float(layout.get("video_scale") or 1.0)}
+    cams = normalize_avatar_cams(layout.get("cams"))
+    if not cams or end <= start:
+        return base, []
+    pieces: list[tuple[float, float, dict]] = []  # (t0, t1, рамка) по всей части, дыры — рамкой раскладки
+    cursor = start
+    for entry in cams:
+        a, b = max(start, entry["from"]), min(end, entry["to"])
+        if b <= a:
+            continue
+        if a > cursor:
+            pieces.append((cursor, a, base))
+        pieces.append((a, b, {"cam": entry["cam"], "video_scale": float(entry.get("video_scale") or base["video_scale"])}))
+        cursor = b
+    if cursor < end:
+        pieces.append((cursor, end, base))
+    if not pieces:
+        return base, []
+    length: dict[str, float] = {}
+    for a, b, look in pieces:
+        key = repr(sorted(look["cam"].items())) + f"{look['video_scale']:.4f}"
+        length[key] = length.get(key, 0.0) + (b - a)
+    main_key = max(length, key=length.get)
+    main = next(look for _a, _b, look in pieces
+                if repr(sorted(look["cam"].items())) + f"{look['video_scale']:.4f}" == main_key)
+    spans = [{"t0": round(a - start, 3), "t1": round(b - start, 3), "cam": look["cam"], "video_scale": look["video_scale"]}
+             for a, b, look in pieces if look is not main and (look["cam"] != main["cam"]
+                                                                or look["video_scale"] != main["video_scale"])]
+    return main, spans
+
+
 def normalize_layout(raw: object) -> dict:
     """Привести что угодно к полной форме раскладки (по умолчанию — single)."""
     src = raw if isinstance(raw, dict) else {}
@@ -91,6 +168,7 @@ def normalize_layout(raw: object) -> dict:
     pip_raw = src.get("pip") if isinstance(src.get("pip"), dict) else {}
     border_raw = src.get("border") if isinstance(src.get("border"), dict) else {}
     color = border_raw.get("color")
+    cams = normalize_avatar_cams(src.get("cams")) if mode == AVATAR_MODE else []
     return {
         "mode": mode,
         "cam": normalize_cam(src.get("cam")),
@@ -111,7 +189,8 @@ def normalize_layout(raw: object) -> dict:
         # Фон meme (app/backgrounds.py): по умолчанию анимированный; старый "#rrggbb" — заливка.
         "bg": normalize_background(src.get("bg")),
     } | ({"avatar_y": round(_num(src.get("avatar_y"), 0.5, *AVATAR_Y_RANGE), 4),
-          "bg_blur": src.get("bg_blur") is not False} if mode == AVATAR_MODE else {})
+          "bg_blur": src.get("bg_blur") is not False} if mode == AVATAR_MODE else {}) | (
+        {"cams": cams} if cams else {})
 
 
 def layout_active(layout: object) -> bool:

@@ -430,6 +430,14 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     if fix:
         # Цветокоррекция куска (app/piece_color.py) — до лука пресета, в _video_style_filter.
         preset = {**preset, "piece_color": fix}
+    layout = preset.get("layout")
+    if isinstance(layout, dict) and layout.get("mode") == "avatar_full" and layout.get("cams"):
+        # Аватар в разных местах по ходу клипа (layout.cams, секунды исходника): основа части —
+        # рамкой, что занимает её большую часть, другие рамки — по своим секундам части.
+        from app.stream_layout import avatar_cam_spans
+
+        main, spans = avatar_cam_spans(layout, float(segment["start_sec"]), float(segment["end_sec"]))
+        preset = {**preset, "layout": {**layout, **main}, "avatar_spans": spans}
     fit = normalize_fit(segment.get("fit"))
     if not fit or preset.get("landscape"):
         # В горизонтальном кадре (16:9) широкий план и так виден целиком — «шире окна» не нужно.
@@ -2692,7 +2700,7 @@ def _render_filter(
     elif layout_active(layout):
         # Раскладка стрима (вебка + геймплей): своя основа, дальше — как всегда.
         base = _layout_filter(width, height, fps, mode, anchor, normalize_layout(layout), source_crop, reframe_x,
-                              game_out=bool(preset.get("pin_band")))
+                              game_out=bool(preset.get("pin_band")), avatar_spans=preset.get("avatar_spans"))
     elif mode == "blur_background":
         prefix, (bg_in, fg_in) = _crop_prefix(source_crop, 2)
         base = (
@@ -2839,10 +2847,13 @@ def _layout_filter(
     source_crop: dict | None,
     reframe_x: str | None,
     game_out: bool = False,
+    avatar_spans: list[dict] | None = None,
 ) -> str:
     """Основа ``[vbase]`` для раскладки стрима (app/stream_layout.py).
 
     ``game_out`` — у ``pip_cam`` ещё и ``[vgame]``: игра без окошка (для камеры, см. ``pin_band``).
+    ``avatar_spans`` — avatar_full: где в части другая рамка аватара (``stream_layout.avatar_cam_spans``,
+    секунды от начала части) — кадр с ней кладётся поверх основы на эти секунды.
 
     Вебка вырезается из ВСЕГО кадра исходника (``cam`` — доли исходника, до
     content-crop), геймплей идёт обычным путём (content-crop, рефрейм x(t)).
@@ -2874,15 +2885,31 @@ def _layout_filter(
         # Только аватар (app/stream_layout.avatar_geometry): прямоугольник cam из ВСЕГО кадра
         # исходника шириной video_scale ширин кадра, центр по высоте avatar_y; вокруг — размытый
         # тот же аватар (bg_blur) или первый цвет фона (анимированный рисует компоновщик).
-        video_w = even_px(width * float(layout.get("video_scale") or 1.0))
-        avatar = f"{cam_crop},scale={video_w}:-2,setsar=1[lav]"
-        if layout.get("bg_blur", True):
-            background = (f"{cam_crop},scale={width}:{height}:force_original_aspect_ratio=increase,"
-                          f"crop={width}:{height},boxblur=24:2,setsar=1[lbg]")
-        else:
-            background = f"color=c={ff_color(fill_color(layout['bg']))}:s={width}x{height}:r={_fps(fps)}[lbg]"
         ay = float(layout.get("avatar_y", 0.5))
-        return (f"{avatar};{background};[lbg][lav]overlay=x=(W-w)/2:y=trunc({ay:.4f}*H-h/2):shortest=1,{tail}")
+
+        def avatar_frame(box: dict, scale: float, tag: str) -> str:
+            crop = f"[0:v]crop=iw*{box['w']:.5f}:ih*{box['h']:.5f}:iw*{box['x']:.5f}:ih*{box['y']:.5f}"
+            video_w = even_px(width * float(scale or 1.0))
+            avatar = f"{crop},scale={video_w}:-2,setsar=1[l{tag}av]"
+            if layout.get("bg_blur", True):
+                background = (f"{crop},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                              f"crop={width}:{height},boxblur=24:2,setsar=1[l{tag}bg]")
+            else:
+                background = (f"color=c={ff_color(fill_color(layout['bg']))}:s={width}x{height}:r={_fps(fps)}"
+                              f"[l{tag}bg]")
+            return f"{avatar};{background};[l{tag}bg][l{tag}av]overlay=x=(W-w)/2:y=trunc({ay:.4f}*H-h/2):shortest=1"
+
+        if not avatar_spans:
+            return f"{avatar_frame(cam, float(layout.get('video_scale') or 1.0), '')},{tail}"
+        # Аватар переезжает внутри части: кадр каждой рамки собирается целиком, поверх основы — на свои секунды.
+        chain = [f"{avatar_frame(cam, float(layout.get('video_scale') or 1.0), '0')}[lc0]"]
+        last = "lc0"
+        for index, span in enumerate(avatar_spans, start=1):
+            chain.append(f"{avatar_frame(span['cam'], float(span.get('video_scale') or 1.0), str(index))}[lf{index}]")
+            chain.append(f"[{last}][lf{index}]overlay=x=0:y=0:shortest=1:"
+                         f"enable='between(t,{float(span['t0']):.3f},{float(span['t1']):.3f})'[lc{index}]")
+            last = f"lc{index}"
+        return ";".join(chain) + f";[{last}]{tail}"
     if layout["mode"] == "meme":
         # Видео целиком (после обрезки полей) во всю ширину, сверху; ниже — фон.
         prefix, (vin,) = _crop_prefix(source_crop, 1)

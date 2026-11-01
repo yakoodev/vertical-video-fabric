@@ -170,14 +170,35 @@ def project_context(store: Any, clip: dict) -> dict[str, Any]:
     return {k: v for k, v in out.items() if v}
 
 
+# Хэштег — только кириллица, латиница, цифры и «_». ``\w`` пропускал иероглифы: QA 02.11 (клип 892) —
+# в авто-описании «#таракан皮».
+_TAG_JUNK = re.compile(r"[^0-9a-zа-яё_]")
+_INLINE_TAG = re.compile(r"#[^\s#]+")
+
+
+def clean_tag(tag: Any) -> str:
+    """Один хэштег без «#»: строчными, без пробелов и символов вне кириллицы/латиницы/цифр/_ ("" — мусор)."""
+    t = re.sub(r"\s+", "", str(tag or "")).lstrip("#").lower()
+    return _TAG_JUNK.sub("", t)
+
+
 def _clean_hashtags(raw: Any) -> list[str]:
     out: list[str] = []
     for tag in raw if isinstance(raw, list) else []:
-        t = re.sub(r"\s+", "", str(tag or "")).lstrip("#").lower()
-        t = re.sub(r"[^\w]", "", t)
+        t = clean_tag(tag)
         if t and f"#{t}" not in out:
             out.append(f"#{t}")
     return out[:10]
+
+
+def clean_inline_hashtags(text: Any) -> str:
+    """Хэштеги внутри текста описания — тем же правилом; пустой после чистки — убран."""
+
+    def fix(match: re.Match) -> str:
+        tag = clean_tag(match.group(0))
+        return f"#{tag}" if tag else ""
+
+    return _INLINE_TAG.sub(fix, str(text or "")).strip()
 
 
 def strip_emoji(text: Any) -> str:
@@ -214,14 +235,15 @@ def _variants(data: dict) -> dict[str, dict]:
             continue
         title = " ".join(strip_emoji(raw.get("title")).split())[:MAX_TITLE].strip()
         if title:
-            out[key] = {"title": title, "description": strip_emoji(raw.get("description"))[:2000]}
+            out[key] = {"title": title,
+                        "description": clean_inline_hashtags(strip_emoji(raw.get("description")))[:2000]}
     return out
 
 
 def parse_metadata(text: str) -> dict[str, Any]:
     data = _json_body(text)
     title = " ".join(str(data.get("title") or "").split())[:MAX_TITLE].strip()
-    description = str(data.get("description") or "").strip()
+    description = clean_inline_hashtags(data.get("description"))
     if not title:
         raise RuntimeError("модель не дала заголовок")
     meta: dict[str, Any] = {"title": title, "description": description, "hashtags": _clean_hashtags(data.get("hashtags"))}

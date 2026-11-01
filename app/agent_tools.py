@@ -624,6 +624,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     warnings: list[str] = []
     strip = cam_strip(layout, fmt)
     warnings += motion.fx_crowding(layers)  # эффекты кадра: больше двух разом — каша
+    # Ч/б до конца клипа / дольше 2.5 с — цвет не вернётся (QA 02.11, клип 892).
+    warnings += motion.fx_grayscale_long([l for l in layers if only_ids is None or str(l.get("id")) in only_ids],
+                                         duration)
     visible = [l for l in layers if l.get("type") not in ("audio", "fx") and not l.get("hidden")]
     for layer in visible:
         lid = str(layer.get("id") or "?")
@@ -1399,6 +1402,91 @@ def known_avatar(ctx: ToolContext, source: dict | None = None) -> dict | None:
     return None
 
 
+def source_span_to_clip(pieces: list[dict], a: float, b: float) -> list[tuple[float, float]]:
+    """Отрезок секунд ИСХОДНИКА → отрезки шкалы clip (по кускам clip_timeline, со скоростью куска)."""
+    out = []
+    for piece in pieces:
+        s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+        lo, hi = max(a, s0), min(b, s1)
+        if hi - lo <= 1e-3:
+            continue
+        speed = float(piece.get("speed") or 1.0) or 1.0
+        c0 = float(piece["clip_start"]) + (lo - s0) / speed
+        c1 = float(piece["clip_start"]) + (hi - s0) / speed
+        out.append((round(c0, 2), round(c1, 2)))
+    return out
+
+
+def _place_view(pieces: list[dict], place: dict) -> dict | None:
+    """Место аватара (секунды исходника) → то же на шкале clip: ``{from_t, to_t, view_t}``; вне клипа — None."""
+    spans = source_span_to_clip(pieces, float(place["src_from"]), float(place["src_to"]))
+    if not spans:
+        return None
+    longest = max(spans, key=lambda s: s[1] - s[0])
+    return {"from_t": spans[0][0], "to_t": spans[-1][1], "view_t": round((longest[0] + longest[1]) / 2, 2),
+            "clip_spans": [list(s) for s in spans]}
+
+
+def avatar_places(ctx: ToolContext) -> list[dict]:
+    """Где аватар по ходу клипа, если мест больше одного: ``[{place, cam, from_t, to_t, view_t, src_from,
+    src_to}]`` (шкала clip). Из раскладки avatar_full с ``cams``, иначе из найденного detect_avatar.
+    Одно место — пустой список."""
+    from app.stream_layout import avatar_cam_spans
+
+    render = _current_render(ctx)
+    layout = render.get("layout") or {}
+    pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+    rows: list[dict] = []
+    if layout.get("mode") == "avatar_full" and layout.get("cams"):
+        for piece in pieces:
+            s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+            main, spans = avatar_cam_spans(layout, s0, s1)
+            bits = [(0.0, s1 - s0, main["cam"])]
+            for span in spans:  # перекрасить отрезки другой рамки
+                cut = []
+                for a, b, cam in bits:
+                    lo, hi = max(a, span["t0"]), min(b, span["t1"])
+                    if hi <= lo:
+                        cut.append((a, b, cam))
+                        continue
+                    cut += [x for x in ((a, lo, cam), (lo, hi, span["cam"]), (hi, b, cam)) if x[1] - x[0] > 1e-3]
+                bits = cut
+            for a, b, cam in bits:
+                if rows and rows[-1]["cam"] == cam and abs(rows[-1]["src_to"] - (s0 + a)) < 0.05:
+                    rows[-1]["src_to"] = round(s0 + b, 3)
+                else:
+                    rows.append({"cam": cam, "src_from": round(s0 + a, 3), "src_to": round(s0 + b, 3)})
+        cams = []
+        for row in rows:
+            if row["cam"] not in cams:
+                cams.append(row["cam"])
+            row["place"] = cams.index(row["cam"])
+        if len(cams) < 2:
+            return []
+    else:
+        try:
+            from app.ai.avatar_box import cached_avatar
+
+            found = cached_avatar(ctx.store, ctx.plan_id) or {}
+        except Exception:  # noqa: BLE001
+            found = {}
+        rows = [dict(p) for p in found.get("places") or [] if isinstance(p, dict) and p.get("src_from") is not None]
+        if not found.get("moves") or len(rows) < 2:
+            return []
+    out = []
+    for row in rows:
+        view = _place_view(pieces, row)
+        if view:
+            out.append({"place": row.get("place"), "cam": row["cam"], **view,
+                        "src_from": row["src_from"], "src_to": row["src_to"]})
+    return out if len({repr(p["cam"]) for p in out}) > 1 else []
+
+
+def _places_text(places: list[dict]) -> str:
+    return "; ".join(f"{p['from_t']:.1f}–{p['to_t']:.1f} с (cam x{p['cam']['x']:.2f} y{p['cam']['y']:.2f} "
+                     f"w{p['cam']['w']:.2f} h{p['cam']['h']:.2f})" for p in places)
+
+
 def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
     """Аватар стримера (VTuber/PNGtuber/вебка) на кусках клипа — Gemini по целым кадрам исходника."""
     from app.ai.avatar_box import detect_avatar
@@ -1415,8 +1503,20 @@ def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
            "frames_with_avatar": found.get("frames_with_avatar"),
            "next": "set_layout mode avatar_full (cam возьмётся сам) → view_frame"}
     if found.get("moves"):
-        out["warnings"] = [f"аватар в клипе бывает в {found.get('places')} местах — взято место, где он чаще "
-                           "(view_frame по кускам; другое место — set_layout cam)"]
+        pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+        places = []
+        for place in found.get("places") or []:
+            view = _place_view(pieces, place) if place.get("src_from") is not None else None
+            if view:
+                places.append({"place": place.get("place"), "cam": place["cam"], **view,
+                               "src_from": place["src_from"], "src_to": place["src_to"]})
+        out["places"] = places
+        looks = " ".join(f"t={p['view_t']:g}" for p in places)
+        out["warnings"] = [
+            f"аватар в клипе в {found.get('place_count')} местах (шкала clip): {_places_text(places)}. "
+            "set_layout mode avatar_full без cam сам поставит рамку по отрезкам (layout.cams) — не задавай один "
+            f"cam на весь клип. Потом view_frame в КАЖДОМ отрезке ({looks}): без этого отчёт не примут"]
+        out["next"] = f"set_layout mode avatar_full (рамки по отрезкам возьмутся сами) → view_frame {looks}"
     if args.get("save"):
         plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
         ctx.before_change()
@@ -1964,6 +2064,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "layers_limit": motion.MAX_LAYERS,
         "warnings": lint_layers(layers, duration, only_ids=new_ids, **_lint_scene(ctx, fresh))
         + _scene_warnings(ctx, fresh, duration)
+        + _image_card_warnings(ctx, fresh, layers, new_ids, duration)
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
         + _layers_room_warning(len(layers))
         + _scene_engine_problems(added)[1],
@@ -1975,6 +2076,22 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
                    note="пропущенные слои НЕ в клипе — исправь их по подсказкам и пришли снова только их "
                         "(принятые уже стоят, повторно не присылай)")
     return out
+
+
+def _image_card_warnings(ctx: ToolContext, render: dict, layers: list[dict], ids: set[str], duration: float) -> list[str]:
+    """Новая картинка под хуком или мелкая (видимая часть без прозрачных полей < 35 % ширины) — как lint montage."""
+    from app.formats import settings_layers_format
+
+    if settings_layers_format(render) != "9:16" or not any(l.get("type") == "image" for l in layers
+                                                            if str(l.get("id")) in ids):
+        return []
+    try:
+        from app.quality_lint import image_card_findings
+
+        found = image_card_findings(ctx.store, layers, duration, only_ids=ids)
+    except Exception:  # noqa: BLE001 - подсказка, не повод сорвать правку
+        return []
+    return [f"{f['message']} → {f['fix']}" for f in found]
 
 
 def _layer_problems(ctx: ToolContext, layer: dict, index: int, duration: float) -> list[str]:
@@ -2265,10 +2382,60 @@ def h_clear_layers(ctx: ToolContext, args: dict) -> dict:
     return {"ok": True, "removed": len(layers), "camera_cleared": with_camera}
 
 
+PUNCH_LEAD = 0.2      # наезд-удар: от 1.0 до пика за столько секунд до слова
+PUNCH_HOLD = 0.8      # держать пик
+PUNCH_RELEASE = 0.35  # и вернуть к 1.0 за столько
+PUNCH_ZOOM = 1.15
+SLOW_ZOOM_MIN = 1.1   # переход к такому zoom дольше SLOW_ZOOM_SEC — медленный наезд, не удар
+SLOW_ZOOM_SEC = 2.0
+
+
+def punch_keys(times: list[float], zoom: float = PUNCH_ZOOM, hold: float = PUNCH_HOLD) -> list[dict]:
+    """Ключи наезда-удара на каждый момент ``t``: 1.0 за PUNCH_LEAD до t → ``zoom`` на t (резко, outCubic) →
+    держать ``hold`` → вернуть к 1.0 за PUNCH_RELEASE (QA 02.11: «наезд на панчлайн» вышел плавным 0→28 с)."""
+    out: list[dict] = []
+    for t in sorted(times):
+        lead = max(0.0, t - PUNCH_LEAD)
+        out += [{"t": round(lead, 3), "zoom": 1.0, "ease": "outCubic"},
+                {"t": round(max(t, lead + 0.05), 3), "zoom": round(zoom, 3), "ease": "linear"},
+                {"t": round(t + hold, 3), "zoom": round(zoom, 3), "ease": "inOutCubic"},
+                {"t": round(t + hold + PUNCH_RELEASE, 3), "zoom": 1.0}]
+    return out
+
+
+def slow_zoom_warnings(camera: list[dict]) -> list[str]:
+    """Переход к zoom ≥ SLOW_ZOOM_MIN дольше SLOW_ZOOM_SEC — это медленный наезд через полролика, а не удар."""
+    out = []
+    for left, right in zip(camera, camera[1:]):
+        z0, z1 = _num(left.get("zoom"), 1.0) or 1.0, _num(right.get("zoom"), 1.0) or 1.0
+        t0, t1 = float(left.get("t") or 0.0), float(right.get("t") or 0.0)
+        if z1 >= SLOW_ZOOM_MIN and z1 - z0 >= 0.05 and t1 - t0 > SLOW_ZOOM_SEC:
+            out.append(f"наезд к {z1:g}× тянется {t1 - t0:.1f} с ({t0:g}→{t1:g} с) — это медленный наезд, удара на "
+                       f"{t1:g} с не будет. Панч: ключ zoom {z0:g} за {PUNCH_LEAD:g} с до слова, zoom {z1:g} на слове, "
+                       f"держать {PUNCH_HOLD:g} с, вернуть — или set_camera punch_at: {t1:g}")
+    return out
+
+
 def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     keys = args.get("keys")
+    punch = args.get("punch_at")
+    if punch is not None:
+        # Помощник: наезд-удар на секунды punch_at (число или список), поверх keys (их ключи в окне удара — прочь).
+        times = punch if isinstance(punch, list) else [punch]
+        if not times or any(_num(t) is None for t in times):
+            raise ToolError("punch_at — секунда шкалы clip (или список секунд), где ударить наездом")
+        zoom = _num(args.get("punch_zoom"), PUNCH_ZOOM) or PUNCH_ZOOM
+        hold = _num(args.get("punch_hold"), PUNCH_HOLD) or PUNCH_HOLD
+        if not 1.0 < zoom <= 1.6:
+            raise ToolError("punch_zoom — пик наезда 1.05..1.6 (1.15 — заметно, не мылит)")
+        times = [float(_num(t)) for t in times]
+        windows = [(t - PUNCH_LEAD - 0.01, t + hold + PUNCH_RELEASE + 0.01) for t in times]
+        base = keys if isinstance(keys, list) else _camera_of(_current_render(ctx))
+        keys = [k for k in base if not (isinstance(k, dict) and _num(k.get("t")) is not None
+                                        and any(a <= float(_num(k.get("t"))) <= b for a, b in windows))]
+        keys += punch_keys(times, zoom, max(0.2, hold))
     if not isinstance(keys, list):
-        raise ToolError("нужен список keys (пустой — убрать все наезды)")
+        raise ToolError("нужен список keys (пустой — убрать все наезды) или punch_at")
     blur = args.get("motionBlur", args.get("motion_blur"))
     if blur is not None:
         # Затвор всем ключам без своего (motion blur наезда на отрезке от ключа).
@@ -2293,7 +2460,10 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     for key in camera:
         if (_num(key.get("zoom"), 1.0) or 1.0) > 1.6:
             warnings.append(f"наезд {key.get('zoom')}× на {key.get('t')} с — сильнее 1.6× мылит картинку")
+    warnings += slow_zoom_warnings(camera)
     out = {"ok": True, "camera": camera, "dropped": len(keys) - len(camera), "warnings": warnings}
+    if punch is not None:
+        out["punch"] = {"at": times, "zoom": zoom, "check": f"view_frame на {times[0]:g} с — пик наезда"}
     mode = (fresh.get("layout") or {}).get("mode")
     if camera and mode in ("pip_cam", "split"):
         # Компоновщик зумит только окно игры (app/stream_layout.camera_regions).
@@ -3425,6 +3595,18 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["note"] = ("в кадре только аватар: cam (доли всего исходника) шириной video_scale ширин кадра, центр по "
                        "высоте avatar_y; вокруг — размытый тот же аватар (bg_blur) или фон bg. ОБЯЗАТЕЛЬНО view_frame: "
                        "модель целиком и крупно, игры/браузера нет; мелко — video_scale больше, режет — меньше")
+        places = avatar_places(ctx)
+        if places:
+            looks = " ".join(f"t={p['view_t']:g}" for p in places)
+            out["places"] = places
+            if fresh["layout"].get("cams"):
+                out["note"] += (f". Аватар переезжает — рамка по отрезкам (layout.cams): {_places_text(places)}. "
+                                f"view_frame в КАЖДОМ отрезке ({looks}) — без этого отчёт не примут")
+            else:
+                out.setdefault("warnings", []).append(
+                    f"detect_avatar видел аватар в {len({repr(p['cam']) for p in places})} местах: {_places_text(places)}, "
+                    "а cam один на весь клип — в части отрезков аватара в кадре не будет. Рамка по отрезкам: "
+                    f"set_layout mode avatar_full cams \"auto\" (или cams [{{from_t, to_t, cam}}]). view_frame: {looks}")
     elif mode == "meme":
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
@@ -3438,6 +3620,35 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def _clip_to_source_t(pieces: list[dict], t: float) -> float:
+    """Секунда шкалы clip → секунда исходника (кусок, где она лежит; за краями — край)."""
+    for piece in pieces:
+        length = _piece_len(piece)
+        if t <= float(piece["clip_start"]) + length + 1e-6 or piece is pieces[-1]:
+            local = min(max(0.0, t - float(piece["clip_start"])), length)
+            return round(float(piece["start_sec"]) + local * (float(piece.get("speed") or 1.0) or 1.0), 3)
+    return round(t, 3)
+
+
+def _clip_time_cams(ctx: ToolContext, raw: list) -> list[dict]:
+    """``cams`` из set_layout: отрезок — ``from``/``to`` (секунды исходника) или ``from_t``/``to_t``
+    (шкала clip, переводим в исходник); рамка — ``cam`` или x/y/w/h в самой записи."""
+    pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+    out = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ToolError(f"cams[{index}]: нужен объект {{from_t, to_t, cam: {{x, y, w, h}}}}")
+        entry = dict(item)
+        for key, src_key in (("from_t", "from"), ("to_t", "to")):
+            if entry.get(src_key) is None and _num(entry.get(key)) is not None:
+                entry[src_key] = _clip_to_source_t(pieces, float(_num(entry[key])))
+            entry.pop(key, None)
+        if _num(entry.get("from")) is None or _num(entry.get("to")) is None:
+            raise ToolError(f"cams[{index}]: нужен отрезок from_t/to_t (шкала clip) или from/to (секунды исходника)")
+        out.append(entry)
+    return out
+
+
 def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_args: dict) -> str:
     """avatar_full: откуда cam (аргумент → прежняя раскладка → detect_avatar → facecam источника), крупность
     и фон по умолчанию. Фон: bg/bg_blur из аргументов; иначе фон set_backdrop клипа, если он задан; иначе
@@ -3447,8 +3658,16 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
 
     old = render.get("layout") or {}
     where = "cam из аргументов"
-    if "cam" not in layout_args:
-        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict):
+    cams_auto = layout_args.get("cams") == "auto"
+    if cams_auto:
+        layout_args.pop("cams")
+    elif isinstance(layout_args.get("cams"), list):
+        layout_args["cams"] = _clip_time_cams(ctx, layout_args["cams"])
+        where = "рамки по отрезкам из аргументов (cams)"
+    elif "cam" in layout_args and old.get("cams"):
+        layout_args["cams"] = []  # один cam из аргументов — на весь клип (прежние рамки по отрезкам сняты)
+    if "cam" not in layout_args and "cams" not in layout_args:
+        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict) and not cams_auto:
             layout_args["cam"], where = old["cam"], "cam из прежней раскладки avatar_full"
         else:
             found = None
@@ -3460,16 +3679,36 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
                 where = f"detect_avatar не смог: {str(exc)[:120]}"
             if found and found.get("cam"):
                 layout_args["cam"], where = found["cam"], "аватар найден detect_avatar (Gemini по кадрам кусков)"
+                places = [p for p in found.get("places") or [] if p.get("src_from") is not None]
+                if found.get("moves") and len(places) > 1:
+                    # Аватар переезжает (QA 02.11, клип 892): рамка по отрезкам исходника, а не одна на клип.
+                    layout_args["cams"] = [{"from": p["src_from"], "to": p["src_to"], "cam": p["cam"]} for p in places]
+                    where = (f"аватар найден detect_avatar в {found.get('place_count')} местах — рамка по отрезкам "
+                             "(layout.cams)")
             elif source.get("facecam"):
                 layout_args["cam"], where = source["facecam"], "facecam источника (detect-facecam)"
             else:
                 raise ToolError("avatar_full: не знаю, где аватар — detect_avatar не нашёл, facecam у источника нет",
                                 ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
                                  "(source_contact_sheet покажет кадры)"])
+    if "cam" not in layout_args and layout_args.get("cams"):
+        first = layout_args["cams"][0]
+        layout_args["cam"] = first["cam"] if isinstance(first.get("cam"), dict) else \
+            {k: first[k] for k in ("x", "y", "w", "h") if k in first} or old.get("cam")
+    width, height = frame_size(settings_render_format(render))
     if "video_scale" not in layout_args and old.get("mode") != "avatar_full":
-        width, height = frame_size(settings_render_format(render))
-        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args["cam"]), width, height,
-                                                       source.get("width"), source.get("height"))
+        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args.get("cam") or old.get("cam")), width,
+                                                       height, source.get("width"), source.get("height"))
+        for entry in layout_args.get("cams") or []:
+            # Крупность по умолчанию — своя у каждой рамки (угол-вебка и крупный аватар разной пропорции).
+            if isinstance(entry, dict) and isinstance(entry.get("cam"), dict) and entry.get("video_scale") is None:
+                entry["video_scale"] = avatar_auto_scale(normalize_cam(entry["cam"]), width, height,
+                                                         source.get("width"), source.get("height"))
+    elif "video_scale" in layout_args:
+        # Крупность задана явно — одна на все рамки.
+        cams = layout_args.get("cams") if "cams" in layout_args else old.get("cams")
+        if cams:
+            layout_args["cams"] = [{k: v for k, v in e.items() if k != "video_scale"} for e in cams if isinstance(e, dict)]
     if "bg" not in layout_args and "bg_blur" not in layout_args and old.get("mode") != "avatar_full":
         from app.chroma_key import normalize_backdrop
 
@@ -4836,13 +5075,21 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         args = {**args, "at": round(word_time(ctx, args["at_word"]) + float(args.get("word_offset") or 0), 3)}
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
-    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason") if args.get(k) is not None}
+    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
+             if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
     out: dict = {"ok": True, "inserts": fresh["inserts"]}
-    if note:
-        out["warnings"] = [note]
+    warnings = [note] if note else []
+    twice = [i for i in inserts if int(i.get("asset_id") or -1) == int(asset["id"]) and i.get("mode") != "sound"]
+    if twice and mode != "sound":
+        # QA 02.11 (клип 892): одна и та же гифка на 6.7 и 13.5 с.
+        seconds = ", ".join(f"{float(i['at']):g}" for i in twice)
+        warnings.append(f"этот файл уже вставлен на {seconds} с — повтор "
+                        "выглядит как нехватка материала: на второе место — другая картинка/гифка под смысл слов")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
@@ -5660,6 +5907,10 @@ def _label_add_layers(args: dict) -> str:
 
 def _label_camera(args: dict) -> str:
     keys = [k for k in args.get("keys") or [] if isinstance(k, dict)]
+    punch = args.get("punch_at")
+    if punch is not None:
+        at = punch[0] if isinstance(punch, list) and punch else punch
+        return f"Наезд-удар на {(_num(at, 0.0) or 0.0):.1f} с"
     if not keys:
         return "Убираю наезды камеры"
     peak = max(keys, key=lambda k: _num(k.get("zoom"), 1.0) or 1.0)
@@ -6048,7 +6299,8 @@ def _build_registry() -> list[Tool]:
             "Между ключами значения плавно переходят; ease ключа A задаёт переход A → следующий ключ (по "
             "умолчанию inOutCubic); ease \"step\" — держать A до времени следующего ключа и прыгнуть "
             "(жёсткий кадр, без наезда). До первого ключа и после последнего — их значения. "
-            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. zoom < 1 нельзя (камера "
+            "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть — проще punch_at: t (keys не нужны); "
+            "переход к zoom ≥ 1.1 дольше 2 с — медленный наезд, ответ предупредит. zoom < 1 нельзя (камера "
             "только приближает) — шире окна: set_piece_fit. В раскладках pip_cam/split "
             "камера двигает только игру: окошко вебки/килфида и полоса вебки стоят на месте. "
             "motionBlur ключа 0..1 — motion blur основы на отрезке от этого ключа (быстрый whip/панч смазан по "
@@ -6063,7 +6315,13 @@ def _build_registry() -> list[Tool]:
                 "fov": {"type": "number"}, "baseZ": {"type": "number"},
                 "motionBlur": {"type": "number", "description": "затвор 0..1 на отрезке от ключа"}},
                 ["t", "zoom"])},
-                "motionBlur": {"type": "number", "description": "затвор 0..1 всем ключам без своего"}}, ["keys"]),
+                "motionBlur": {"type": "number", "description": "затвор 0..1 всем ключам без своего"},
+                "punch_at": {"type": ["number", "array"], "items": {"type": "number"},
+                             "description": "наезд-удар на эту секунду clip (или список): 1.0 за 0.2 с до неё → "
+                                            "punch_zoom на ней → держать punch_hold → вернуть; keys не нужны "
+                                            "(прежние ключи в окне удара заменяются)"},
+                "punch_zoom": {"type": "number", "description": "пик удара, по умолчанию 1.15"},
+                "punch_hold": {"type": "number", "description": "сколько держать пик, с (по умолчанию 0.8)"}}),
             h_set_camera, mutating=True, label=_label_camera,
         ),
         Tool(
@@ -6230,7 +6488,9 @@ def _build_registry() -> list[Tool]:
             "не задан — найдёт detect_avatar (Gemini), иначе facecam источника; video_scale — ширина аватара в "
             "ширинах кадра (по умолчанию — крупно, почти на всю высоту), avatar_y — центр по высоте; фон — размытый "
             "тот же аватар (bg_blur, по умолчанию) или bg / фон set_backdrop клипа. Игры, браузера и роликов с "
-            "экрана в кадре нет. После — view_frame. "
+            "экрана в кадре нет. Аватар в разных местах по ходу клипа (detect_avatar: places) — рамка по отрезкам cams "
+            "ставится сама; свои — cams [{from_t, to_t, cam}] (шкала clip), \"auto\" — заново по detect_avatar; один "
+            "cam — на весь клип. После — view_frame (при нескольких местах — в каждом отрезке). "
             "/ Frame layout.",
             _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme", "avatar_full"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
@@ -6238,6 +6498,9 @@ def _build_registry() -> list[Tool]:
                   "bg": {"type": ["object", "string"], "description": "meme/avatar_full: фон {kind, colors, speed, intensity} или имя стиля"},
                   "bg_blur": {"type": "boolean", "description": "avatar_full: фон — размытый тот же аватар (по умолчанию)"},
                   "avatar_y": {"type": "number", "description": "avatar_full: центр аватара по высоте кадра 0.2..0.8"},
+                  "cams": {"type": ["array", "string"], "items": {"type": "object"},
+                           "description": "avatar_full: рамки аватара по отрезкам [{from_t, to_t, cam {x,y,w,h}}] "
+                                          "(шкала clip) или \"auto\" — места из detect_avatar"},
                   "video_y": {"type": "number"},
                   "video_scale": {"type": "number"},
                   "game_x": {"type": "number", "description": "центр окна игры, доля ширины исходника 0..1"},
@@ -6249,7 +6512,8 @@ def _build_registry() -> list[Tool]:
             "Где на кадре стрима аватар стримера — VTuber/PNGtuber-модель или вебка (Gemini по целым кадрам "
             "исходника с кусков клипа; люди внутри роликов, игры и браузера на экране — не аватар). Ответ: cam "
             "{x, y, w, h} в долях всего кадра исходника (с запасом), frames_with_avatar; аватар переезжает — "
-            "warnings. Дальше set_layout mode avatar_full (cam возьмётся сам). save: true — запомнить как "
+            "places [{from_t, to_t, cam, view_t}] по шкале clip и warnings. Дальше set_layout mode avatar_full (рамки "
+            "возьмутся сами, по отрезкам). save: true — запомнить как "
             "facecam источника (для split/pip_cam других клипов). refresh — искать заново. / Find the streamer's "
             "avatar/webcam rectangle in the source frames.",
             _obj({"save": {"type": "boolean"}, "refresh": {"type": "boolean"}}),
@@ -6933,11 +7197,15 @@ def _build_registry() -> list[Tool]:
             "Вставка из библиотеки поверх клипа (видео-мем/картинка/звук): asset_id, at (с клипа), duration, "
             "mode pip|full|sound, x, y, scale, volume. Для статичных картинок лучше слой image. Вставки "
             "видны в view_frame и contact_sheet (первые кадры гифки). Окошко само встаёт между хуком и "
-            "субтитрами. / Insert.",
+            "субтитрами. mode full другой пропорции (горизонтальная гифка) — вокруг размытая копия вставки "
+            "(fill blur, по умолчанию), cover — обрезать во весь кадр, black — чёрные поля. Один файл дважды — "
+            "предупреждение. / Insert.",
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
                   "reason": {"type": "string"},
+                  "fill": {"type": "string", "enum": ["blur", "cover", "black"],
+                           "description": "mode full: чем заполнить кадр вокруг вставки другой пропорции"},
                   "at_word": _AT_WORD_SCHEMA,
                   "word_offset": {"type": "number"}}, ["asset_id"]),
             h_add_insert, mutating=True,

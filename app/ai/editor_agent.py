@@ -625,6 +625,8 @@ def run_agent(
     nudged = False
     look_nudges = 0
     auto_looked = False
+    avatar_nudges = 0
+    auto_avatar_looked = False
     nudged_continue = False
     nudged_report = False
     nudged_work = False
@@ -705,6 +707,17 @@ def run_agent(
             )}]})
             continue
         if not calls and tools_on and steps and idle:
+            missing = unviewed_avatar_places(ctx, steps)
+            if missing and avatar_nudges < MAX_LOOK_NUDGES:
+                # Аватар в нескольких местах (QA 02.11, клип 892): один лист кадров не заменяет взгляд на
+                # каждое место — агент сдал ролик с 4 с волос без лица, ни разу не вызвав view_frame.
+                avatar_nudges += 1
+                contents.append({"role": "user", "parts": [{"text": avatar_look_nudge(missing)}]})
+                continue
+            if missing and not auto_avatar_looked:
+                auto_avatar_looked = True
+                contents.append(_auto_avatar_look(ctx, steps, missing, emit))
+                continue
             pending = unchecked_visual(steps)
             if pending and look_nudges < MAX_LOOK_NUDGES:
                 # Правил кадр и не посмотрел (QA 01.11: 36 шагов без единого view_frame — весь ролик
@@ -850,6 +863,61 @@ def look_nudge(pending: dict) -> str:
     return (f"Перед отчётом посмотри результат глазами: после «{pending.get('label')}» не было ни view_frame, ни "
             "contact_sheet. Вызови contact_sheet (весь ролик) или view_frame на изменённых секундах; что не так "
             "(в кадре не тот герой, текст не читается, вставка не там) — исправь и проверь снова, потом отчёт.")
+
+
+AVATAR_TOOLS = {"set_layout", "detect_avatar"}
+MAX_AUTO_AVATAR_FRAMES = 4
+
+
+def unviewed_avatar_places(ctx: ToolContext, steps: list[dict]) -> list[dict]:
+    """Места аватара (``agent_tools.avatar_places``), где после последней раскладки/поиска аватара не было
+    ни одного view_frame. Пусто — проверять нечего: в этом ходе раскладку не трогали, раскладка не
+    avatar_full или место одно."""
+    last = max((i for i, st in enumerate(steps) if st.get("ok") and st.get("tool") in AVATAR_TOOLS), default=None)
+    if last is None:
+        return []
+    try:
+        if (agent_tools._current_render(ctx).get("layout") or {}).get("mode") != "avatar_full":
+            return []
+        places = agent_tools.avatar_places(ctx)
+    except Exception:  # noqa: BLE001 - не посчитали — ход не роняем
+        return []
+    seen = [float(st["frame_t"]) for st in steps[last + 1:]
+            if st.get("ok") and st.get("tool") == "view_frame" and st.get("frame_t") is not None]
+    return [p for p in places
+            if not any(a - 0.05 <= t <= b + 0.05 for t in seen for a, b in (p.get("clip_spans") or [[p["from_t"], p["to_t"]]]))]
+
+
+def avatar_look_nudge(missing: list[dict]) -> str:
+    where = ", ".join(f"{p['from_t']:.1f}–{p['to_t']:.1f} с → view_frame t={p['view_t']:g}" for p in missing)
+    return ("Аватар в этом клипе в разных местах, и рамка у каждого отрезка своя. Перед отчётом посмотри кадр в "
+            f"КАЖДОМ отрезке, где ещё не смотрел: {where}. В кадре должно быть лицо и модель целиком, а не волосы, "
+            "чат или игра; не так — поправь рамку set_layout avatar_full cams [{from_t, to_t, cam}] и проверь снова.")
+
+
+def _auto_avatar_look(ctx: ToolContext, steps: list[dict], missing: list[dict], emit: Callable[[], None]) -> dict:
+    """Кадры мест аватара снимает сервис, когда модель так и не посмотрела: шаги в журнале и реплика с картинками."""
+    parts: list[dict] = [{"text": ("Ты не посмотрел на все места аватара — вот кадры, сервис снял их сам. Проверь: в "
+                                   "каждом лицо и модель целиком. Плохо — исправь рамку (set_layout avatar_full cams) и "
+                                   "посмотри снова; хорошо — короткий отчёт.")}]
+    for place in missing[:MAX_AUTO_AVATAR_FRAMES]:
+        step = {"tool": "view_frame", "label": f"Сервис смотрит кадр аватара на {place['view_t']:g} с", "ok": None,
+                "args": {"t": place["view_t"]}, "auto": True}
+        steps.append(step)
+        emit()
+        result, ok = agent_tools.run_tool(ctx, "view_frame", {"t": place["view_t"]})
+        _step_from_result(step, result, ok)
+        emit()
+        if ok and isinstance(result, ImageResult):
+            data, mime = _shrink_frame(result)
+            parts.append({"text": f"Место аватара {place['from_t']:.1f}–{place['to_t']:.1f} с, кадр {place['view_t']:g} с:"})
+            parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}})
+        else:
+            # Кадра нет — эту секунду считаем просмотренной, чтобы не зациклиться; модель видит причину.
+            step["frame_t"] = place["view_t"]
+            error = str(result.get("error") if isinstance(result, dict) else result)[:160]
+            parts.append({"text": f"Кадр {place['view_t']:g} с снять не вышло ({error}) — вызови view_frame сам."})
+    return {"role": "user", "parts": parts}
 
 
 def _auto_look(ctx: ToolContext, steps: list[dict], emit: Callable[[], None]) -> dict:

@@ -7,7 +7,8 @@ timeline:
     {"asset_id": 7, "at": 3.2, "duration": 1.6, "mode": "full", "volume": 1.0,
      "duck": true, "reason": "…"}
 
-* ``full``  — the meme covers the whole 9:16 frame (letterboxed on black),
+* ``full``  — the meme covers the whole 9:16 frame (around another aspect — a blurred copy of itself;
+  ``fill``: ``cover`` crops it to the frame, ``black`` — the old letterbox),
 * ``pip``   — a smaller window in the upper part of the frame, the clip stays visible,
 * ``sound`` — audio only (a sting, a laugh track, a «bruh»).
 
@@ -45,6 +46,31 @@ MAX_INSERT_SCALE = 1.0
 # вылезет за кадр целиком.
 INSERT_MAX_HEIGHT = 0.9
 
+
+
+# Чем заполнить кадр вокруг полнокадровой вставки другой пропорции (горизонтальная гифка в 9:16):
+# blur — размытая копия самой вставки (по умолчанию), cover — вставка обрезана во весь кадр, black — поля.
+# QA 02.11 (клип 892): у гифки «LIVE MEAL CAM» ≈55 % кадра были чёрные поля.
+FULL_FILLS = ("blur", "cover", "black")
+DEFAULT_FULL_FILL = "blur"
+
+
+def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: str) -> str:
+    """Граф полнокадровой вставки ``src`` (метка входа, например ``[1:v]``) в кадр ``width``×``height`` —
+    без выходной метки (дописывает вызывающий). ``tag`` — уникальная часть внутренних меток."""
+    fill = fill if fill in FULL_FILLS else DEFAULT_FULL_FILL
+    if fill == "cover":
+        return (f"{src}scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1")
+    if fill == "black":
+        return (f"{src}scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"scale=trunc(iw/2)*2:trunc(ih/2)*2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black")
+    return (f"{src}split=2[fb{tag}][ff{tag}];"
+            f"[fb{tag}]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+            f"boxblur=24:2,setsar=1[fbb{tag}];"
+            f"[ff{tag}]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[fff{tag}];"
+            f"[fbb{tag}][fff{tag}]overlay=x=(W-w)/2:y=(H-h)/2")
 
 
 def _insert_volume(ins: dict, speech_db: float | None = None) -> float:
@@ -141,6 +167,8 @@ def normalize_inserts(raw: Any) -> list[dict]:
                 min(MAX_INSERT_SCALE, max(MIN_INSERT_SCALE, _fraction(item.get("scale"), PIP_WIDTH))), 4
             ),
         }
+        if item.get("fill") in FULL_FILLS and item.get("fill") != DEFAULT_FULL_FILL:
+            entry["fill"] = item["fill"]  # чем заполнить кадр вокруг полнокадровой вставки (по умолчанию — размытие)
         reason = item.get("reason")
         if isinstance(reason, str) and reason.strip():
             entry["reason"] = reason.strip()[:200]
@@ -202,19 +230,23 @@ def build_inserts_args(
         kind = ins["asset"]["kind"]
         if mode in ("full", "pip") and kind != "audio":
             if mode == "full":
-                box_w, box_h, x, y = width, height, "(W-w)/2", "(H-h)/2"
-                pad = f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+                # Во весь кадр: вокруг другой пропорции — размытая копия вставки (fill), не чёрные поля.
+                x, y = "(W-w)/2", "(H-h)/2"
+                graph.append(
+                    f"{full_insert_chain(f'[{n}:v]', width, height, ins.get('fill'), str(n))},format=yuva420p,"
+                    f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
+                )
             else:
                 # Вставка шириной scale от кадра, высота по пропорциям картинки;
                 # x/y — центр вставки в долях кадра (их двигают ручками в редакторе).
                 box_w = max(2, int(width * ins["scale"]) // 2 * 2)
                 box_h = max(2, int(height * INSERT_MAX_HEIGHT) // 2 * 2)
-                x, y, pad = f"(W*{ins['x']:.4f})-(w/2)", f"(H*{ins['y']:.4f})-(h/2)", ""
-            graph.append(
-                f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
-                f"scale=trunc(iw/2)*2:trunc(ih/2)*2{pad},format=yuva420p,"
-                f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
-            )
+                x, y = f"(W*{ins['x']:.4f})-(w/2)", f"(H*{ins['y']:.4f})-(h/2)"
+                graph.append(
+                    f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
+                    f"scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuva420p,"
+                    f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
+                )
             graph.append(
                 f"{v_last}[ov{n}]overlay=x={x}:y={y}:eof_action=pass:"
                 f"enable='between(t,{at:.3f},{end:.3f})'[v{n}]"
