@@ -371,7 +371,8 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
                         "отправить заранее, запуск — после включения")
     style = V.get_style(store, project_id)
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
-            + (f" ({style['image_model']}, цены от {PRICE_CHECKED}, ×2 к прайсу — не замерено)" if paid else
+            + (f" ({style['image_model']}, цены от {PRICE_CHECKED}: "
+               + ", ".join(sorted({i['price_note'] for i in planned if i['provider'] != 'none'})) + ")" if paid else
                " — сухой прогон, 0 ₽"))
     return {"stage": stage, "stage_label": STAGE_LABELS[stage], "project_id": int(project_id), "script_id": script_id,
             "items": planned, "count": len(planned), "total_rub": total, "paid": paid,

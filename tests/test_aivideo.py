@@ -42,6 +42,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "aivideo_max_budget_rub", 2500.0)
     monkeypatch.setattr(settings, "gemini_api_key", "")
     monkeypatch.setattr(settings, "polza_api_key", "")
+    # Деньги в тестах — по прайсу ×2 (6 ₽ за кадр nano-banana), независимо от замеров.
+    monkeypatch.setattr(PR, "MEASURED_IMAGE_PRICES", {})
     client, store = _client(tmp_path, monkeypatch)
     return client, store
 
@@ -745,3 +747,25 @@ def test_policy_refusal_still_stops_the_batch(env, monkeypatch, no_wait):
     card, j_loc, j_mira, j_kot = _three_refs(store, pid)
     out = G.run_jobs(store, [j_loc, j_mira, j_kot])
     assert G.get_job(store, j_loc)["status"] == "blocked_policy" and out["held"] == [j_mira, j_kot]
+
+
+def test_measured_price_and_sync_media_url(monkeypatch):
+    """Замер nano-banana 1K — 3 ₽ (прайс ×1); 2K не мерили — прайс ×2. Синхронный ответ POST /media
+    с data.url (так часто отвечает видео-модель) — ссылка сразу, без requestId."""
+    import httpx
+
+    assert PR.image_price("google/gemini-nano-banana-2.1", "1K") == {"rub": 3.0, "list_rub": 3.0, "measured": True,
+                                                                    "note": "замер"}
+    assert PR.image_price("google/gemini-nano-banana-2.1", "2K")["rub"] == pytest.approx(9.0)
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"status": "completed", "data": {"url": "https://s3/v.mp4"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    provider = PR.PolzaImages(api_key="k", base_url="https://polza.test/api/v1")
+    assert provider.submit({"model": "grok-imagine-video-1-5", "prompt": "x"}, []) == "url:https://s3/v.mp4"
+    assert provider.check("url:https://s3/v.mp4") == {"status": "completed", "url": "https://s3/v.mp4"}
