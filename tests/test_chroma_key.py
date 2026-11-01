@@ -84,7 +84,8 @@ def test_comp_carries_key_and_backdrop(tmp_path):
 
 
 def test_behind_layers_only_cover_the_backdrop():
-    big = {"id": "bg", "type": "image", "start": 0, "end": 2, "props": {"w": 1080, "h": 1920}}
+    # Дольше 3 с: короткая (≤ 3 с) картинка во весь кадр — вставка-иллюстрация, ей можно.
+    big = {"id": "bg", "type": "image", "start": 0, "end": 5, "props": {"w": 1080, "h": 1920}}
     assert covering_problems([big])  # поверх видео — закрывает
     assert covering_problems([{**big, "behind": True}], keyed=True) == []
     assert "хромакеем" in covering_problems([{**big, "behind": True}], keyed=False)[0]
