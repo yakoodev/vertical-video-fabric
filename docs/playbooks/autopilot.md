@@ -48,6 +48,9 @@
 
 - После рендера сервис сам пишет заголовок, описание и хэштеги (с правилами канала) — проверь их на
   `dont`/табу; обложка: `generate_covers` → посмотри → `choose_cover` (см. `docs/guides/covers.md`).
+- **`lint_clip`** по готовому рендеру (площадки — те, что в проекте): текст не под кнопками и подписью
+  TikTok/Reels/Shorts, титры успевают прочитать, вспышек > 3/с нет, луп (мемам). `warn` — поправь и
+  перерендерь. `submit_for_approval` прогонит линт ещё раз сам (`lint` в ответе) — но не останавливает отправку.
 - Готовый рендер → `submit_for_approval(clip_id, title, description, tags, platforms?, when?)`. Карточка
   сама берёт выбранную обложку и хэштеги клипа (если `tags` не дал), владелец видит их в «Одобрении» и Telegram.
   `when` — только если владелец просил время; иначе ближайший свободный слот.
@@ -86,11 +89,12 @@
 ## Инструменты MCP
 
 `list_channel_projects`, `get_project_brief`, `list_rules`, `list_approvals`, `get_project_stats`,
-`list_hypotheses`, `get_performance`, `get_schedule`, `get_playbook`, `tag_clip`, `submit_for_approval`,
+`list_hypotheses`, `get_performance`, `get_schedule`, `get_playbook`, `tag_clip`, `lint_clip`, `submit_for_approval`,
 `propose_rule`, `add_rule`, `revoke_rule`, `add_hypothesis`, `evaluate_hypotheses`, `update_project_brief`.
 
 ## Чек-лист перед сдачей
 
+- [ ] `lint_clip` по свежему рендеру перед каждой отправкой — нет `warn` (или оставленное осознанно и сказано).
 - [ ] Бриф и **все** активные правила прочитаны до нарезки; ни один клип не нарушает `dont` и табу.
 - [ ] Ни одной публикации без `approved` (кроме trust=auto) — только `submit_for_approval`.
 - [ ] Записи прямого эфира не делаем; VOD сам не качаешь — его ставит наблюдатель или владелец.

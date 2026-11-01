@@ -5962,8 +5962,10 @@ def registry() -> dict[str, Tool]:
         from app.audio_tools import tools as audio_tools
         # Варианты обложки готового рендера — app/cover_tools.py.
         from app.cover_tools import tools as cover_tools
+        # Линт качества перед сдачей (зоны площадок, темп чтения, вспышки, луп) — app/lint_tools.py.
+        from app.lint_tools import tools as lint_tools
 
-        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools()]}
+        _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools(), *lint_tools()]}
     return _REGISTRY
 
 

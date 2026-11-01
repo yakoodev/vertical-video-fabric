@@ -33,10 +33,12 @@
 `set_source_audio`, `get_source_transcript`, `chat_activity`, `source_loudness`, `source_contact_sheet`,
 `create_clip`, `trim_piece`, `apply_cuts`, `set_format`, `set_layout`, `set_transition`, `set_subtitles`,
 `generate_subtitles`, `set_subtitle_words`, `censor_profanity` (если есть) / `mute_audio`,
-`set_nameplate`, `contact_sheet`, `listen`, `view_frame`.
+`set_nameplate`, `contact_sheet`, `listen`, `view_frame`, `lint_clip`.
 
 ## Чек-лист перед сдачей
 
+- [ ] `lint_clip(checks: ["reading", "flashes"])` по свежему рендеру — нет `warn` (зоны кнопок TikTok/Reels/Shorts
+      у 16:9 не проверяются: края и водяной знак YouTube ловит `add_layers`).
 - [ ] Длина 10–15 мин; моменты по порядку стрима, каждый законченный.
 - [ ] `contact_sheet(n: 24)` — нет чужого контента: песен со словами, чужих видео и превью, фото
       реальных людей; нет длинных меню паузы и окон рабочего стола.

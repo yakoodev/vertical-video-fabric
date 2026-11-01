@@ -615,15 +615,33 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
         _update(store, old["id"], status="expired", decided_at=_now_text(), decided_by="system",
                 decision_comment=f"заменено новой версией #{approval_id}")
         log_event(store, old["id"], project_id, "expired", "system", f"заменено #{approval_id}")
+    lint = pre_submit_lint(store, int(clip_plan_id), platforms_list)
     log_event(store, approval_id, project_id, "submitted", submitted_by, title,
-              {"content_type": ctype, "trust": trust, "platforms": platforms_list})
+              {"content_type": ctype, "trust": trust, "platforms": platforms_list,
+               **({"lint": lint["counts"]} if lint else {})})
     if trust == "auto":
         _update(store, approval_id, status="approved", decided_by="auto", decided_at=_now_text(),
                 decision_comment=f"доверие проекта: {ctype or 'default'} = auto")
         log_event(store, approval_id, project_id, "auto_approved", "auto",
                   f"без одобрения: доверие «{ctype or 'по умолчанию'}» = auto")
         _place(store, approval_id, actor="auto")
-    return get_approval(store, approval_id)
+    out = get_approval(store, approval_id)
+    if lint:
+        out["lint"] = lint
+    return out
+
+
+def pre_submit_lint(store: Any, clip_plan_id: int, platforms: list[str]) -> dict | None:
+    """Линт качества перед сдачей (app/quality_lint.py: зоны площадок, темп чтения, вспышки и луп по
+    готовому рендеру) — только предупреждения: отправку не блокирует, ошибка линта не роняет её.
+    Коротко: ``{counts, summary, warnings}``."""
+    from app import quality_lint
+
+    try:
+        return quality_lint.brief(quality_lint.lint_clip(store, clip_plan_id, platforms=platforms or None))
+    except Exception as exc:  # noqa: BLE001 - линт — подсказка, не условие отправки
+        _log.warning("pre-submit lint for clip plan %s failed: %s", clip_plan_id, exc)
+        return None
 
 
 def submit_card(store: Any, project_id: int, kind: str, question: str, payload: dict | None = None,

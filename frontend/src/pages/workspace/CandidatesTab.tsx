@@ -90,6 +90,7 @@ import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { SourceAudioPanel } from "@/pages/workspace/SourceAudioPanel";
 import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
+import { LintPanel } from "@/pages/workspace/LintPanel";
 import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/pages/workspace/canvasClip";
 import { cutsTotal, previewSkip, type JumpCut } from "@/api/cuts";
 import { CENSOR_STYLES, isMutedAt, muteTotal, type CensorStyle, type MuteSpan } from "@/api/mute";
@@ -3950,6 +3951,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     setCuts(next);
                     void qc.invalidateQueries({ queryKey: qk.source(sourceId) });
                   }}
+                  onSeek={(t) => seekClipTime(t, false)}
+                />
+              ) : null}
+            </Group>
+            <Group title="🔎 Проверка перед сдачей">
+              {activePlan ? (
+                <LintPanel
+                  clipPlanId={activePlan.id}
+                  beforeRun={flushSettings}
                   onSeek={(t) => seekClipTime(t, false)}
                 />
               ) : null}

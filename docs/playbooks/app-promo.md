@@ -25,11 +25,13 @@
 ## Инструменты MCP
 
 `upload_video`, `upload_image`, `create_canvas_clip`, `build_app_promo`, `add_layers`, `update_layer`,
-`set_camera`, `list_music`, `set_music`, `apply_brand`, `set_format`, `contact_sheet`, `view_frame`.
+`set_camera`, `list_music`, `set_music`, `apply_brand`, `set_format`, `contact_sheet`, `view_frame`, `lint_clip`.
 
 ## Чек-лист перед сдачей
 
 - [ ] docs/AGENTS.md, «Чек-лист промо и предупреждения линта» — пройден, предупреждений линта нет.
+- [ ] `lint_clip` по свежему рендеру — нет `warn`: подписи шагов успевают прочитать (≥ 0.3 с/слово + 0.5 с),
+      ссылка и CTA финала не под кнопками и подписью площадок (9:16), вспышек на переходах > 3/с нет.
 - [ ] `contact_sheet` — нет мыла (записи HQ), телефон не обрезан, титры читаются.
 - [ ] Текст живой, без ярлыков и без цифр-обещаний.
 - [ ] Музыка с энергичной части, финал с призывом держится до конца.
