@@ -139,6 +139,8 @@ export interface DubInfo {
   provider: string;
   model?: string;
   voice?: string;
+  style?: string;
+  paid?: boolean;
   asset_id?: number;
   layers?: string[];
   cost_rub?: number;
@@ -178,8 +180,12 @@ export const clipPlansApi = {
       `/api/clip-plans/${clipPlanId}/subtitles/translate`,
       { mode, retranslate },
     ),
-  /** Озвучка RU: без confirm — только оценка стоимости (бесплатно); confirm — синтез (платно, лимит budget_rub). */
-  dub: (clipPlanId: number, body: { provider?: string; voice?: string; confirm?: boolean; budget_rub?: number; remove?: boolean }) =>
+  /** Озвучка RU: gemini — бесплатно, синтез сразу (style — как говорить); polza без confirm — только оценка
+   * стоимости, confirm — синтез (платно, лимит budget_rub); none — сухой прогон тоном. */
+  dub: (
+    clipPlanId: number,
+    body: { provider?: string; voice?: string; style?: string; confirm?: boolean; budget_rub?: number; remove?: boolean },
+  ) =>
     api.post<DubResult>(`/api/clip-plans/${clipPlanId}/dub`, body),
   generateSubtitles: (clipPlanId: number, provider?: string) =>
     api.post<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { provider: provider || null }),

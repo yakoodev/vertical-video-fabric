@@ -124,6 +124,10 @@ class Settings:
         self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
+        # Бесплатная озвучка (app/dubbing.py GeminiTTS) по тому же ключу Gemini: модель и голос
+        # по умолчанию. Список голосов — app/dubbing.py GEMINI_TTS_VOICES.
+        self.gemini_tts_model = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip() or "gemini-3.8-flash-tts"
+        self.gemini_tts_voice = os.getenv("GEMINI_TTS_VOICE", "Kore").strip() or "Kore"
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(
             "POLZA_VIDEO_MODEL", "google/gemini-2.5-pro-preview"

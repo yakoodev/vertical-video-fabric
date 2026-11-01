@@ -285,16 +285,19 @@ def tools() -> list[Tool]:
              "Новый персонаж или правка (character_id): name, identity_card — карта личности: возраст, волосы, "
              "глаза, рост и пропорции, 2–3 цвета hex, отличительная деталь (идёт в промпт ДОСЛОВНО; правка "
              "помечает его картинки и кадры «устарело»), origin invented|owner (витубер владельца — его "
-             "картинки он загружает в проект; фото людей из интернета не бери), voice {provider polza|none, "
-             "model, voice} — TTS как в dub_clip. speech: voice (говорит) | sfx (НЕ говорит — робот, зверёк: "
+             "картинки он загружает в проект; фото людей из интернета не бери), voice {provider gemini|polza|none, "
+             "model, voice, style} — TTS как в dub_clip: gemini — БЕСПЛАТНО (голоса Gemini: Kore, Puck, Charon, "
+             "Zephyr, Fenrir, Aoede…; style — как говорит: «весело, быстро»; проба — tts_preview), polza — "
+             "платно (по карточке), none — сухой прогон. speech: voice (говорит) | sfx (НЕ говорит — робот, зверёк: "
              "реплика = звук-запись пака по emotion реплики, свой звук — voice.sfx «sfx:freesound/<файл>»; "
              "speech_captions — текст его реплик субтитрами, по умолчанию да) | none (молчит, реплики "
              "убираются). Пишешь «не говорит» в notes — ставь speech. slug — id в сценарии. / Define a character.",
              _obj({**_PID, "character_id": {"type": "integer"}, "name": {"type": "string"},
                    "identity_card": {"type": "string"}, "slug": {"type": "string"},
                    "origin": {"type": "string", "enum": list(V.ORIGINS)},
-                   "voice": _obj({"provider": {"type": "string"}, "model": {"type": "string"},
-                                  "voice": {"type": "string"}, "sfx": {"type": "string"}}),
+                   "voice": _obj({"provider": {"type": "string", "enum": ["gemini", "polza", "none"]},
+                                  "model": {"type": "string"}, "voice": {"type": "string"},
+                                  "style": {"type": "string"}, "sfx": {"type": "string"}}),
                    "notes": {"type": "string"}, "speech": {"type": "string", "enum": list(V.SPEECH_MODES)},
                    "speech_captions": {"type": "boolean"}}, ["project_id"]),
              h_define_character, mutating=True, scope="project"),

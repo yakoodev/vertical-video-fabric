@@ -1191,16 +1191,28 @@ def h_translate_subtitles(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_dub_clip(ctx: ToolContext, args: dict) -> dict:
-    from app.dubbing import dub_clip
+    from app.dubbing import dub_clip, provider_paid
 
     confirm, remove = bool(args.get("confirm")), bool(args.get("remove"))
-    if confirm or remove:
+    if confirm or remove or not provider_paid(args.get("provider")):  # бесплатный синтезирует сразу
         ctx.before_change()
     try:
         return dub_clip(
             ctx.store, ctx.plan_id, provider=args.get("provider"), voice=args.get("voice"), model=args.get("model"),
             confirm=confirm, budget_rub=args.get("budget_rub"), stretch=bool(args.get("stretch")), remove=remove,
+            style=args.get("style"),
         )
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_tts_preview(ctx: ToolContext, args: dict) -> dict:
+    from app.dubbing import tts_preview
+
+    try:
+        return tts_preview(ctx.store, provider=args.get("provider") or "gemini", voice=args.get("voice"),
+                           model=args.get("model"), style=args.get("style"), text=args.get("text"),
+                           confirm=bool(args.get("confirm")))
     except (RuntimeError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
 
@@ -6380,20 +6392,23 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "dub_clip", "Озвучка RU",
-            "ПЛАТНО (Polza TTS). Озвучить русский перевод клипа (после translate_subtitles): фраза → речь → "
-            "подгонка под окно реплики (×0.8–1.25, не влезло — обрезка, в ответе overflow) → слои audio "
-            "dub_ru_* поверх оригинала, оригинал под фразами приглушён. Без confirm — ТОЛЬКО оценка ₽ "
-            "(бесплатно): покажи её владельцу. confirm=true — ТОЛЬКО по явному «да» владельца на эту сумму; "
-            "работает, лишь если владелец включил озвучку (DUBBING_ENABLED=1), и отказ, если оценка больше "
-            "budget_rub (по умолчанию 200 ₽). provider none — бесплатный сухой прогон тоном (проверить "
-            "окна). remove — снять слои озвучки. / PAID Russian dub; estimate first, confirm only with owner's yes.",
-            _obj({"provider": {"type": "string", "enum": ["polza", "none"]}, "voice": {"type": "string"},
-                  "model": {"type": "string"}, "confirm": {"type": "boolean"},
+            "Озвучить русский перевод клипа (после translate_subtitles): фраза → речь → подгонка под окно "
+            "реплики (×0.8–1.25, не влезло — обрезка, в ответе overflow) → слои audio dub_ru_* поверх "
+            "оригинала, оригинал под фразами приглушён. provider: gemini — БЕСПЛАТНО (Gemini TTS по ключу "
+            "сервиса, синтез сразу, confirm не нужен; voice — один из 30 голосов Gemini: Kore, Puck, Charon, "
+            "Zephyr, Fenrir, Aoede… — проба tts_preview; style — как говорить: «говори весело, быстро»); "
+            "polza (по умолчанию) — ПЛАТНО: без confirm ТОЛЬКО оценка ₽, покажи её владельцу; confirm=true — "
+            "ТОЛЬКО по явному «да» владельца на эту сумму, работает лишь при DUBBING_ENABLED=1 и не дороже "
+            "budget_rub (по умолчанию 200 ₽); none — сухой прогон тоном (бесплатно, проверить окна). "
+            "remove — снять слои озвучки. / Russian dub: gemini free, polza paid (estimate, confirm with owner).",
+            _obj({"provider": {"type": "string", "enum": ["gemini", "polza", "none"]}, "voice": {"type": "string"},
+                  "model": {"type": "string"}, "style": {"type": "string"}, "confirm": {"type": "boolean"},
                   "budget_rub": {"type": "number", "minimum": 0}, "stretch": {"type": "boolean"},
                   "remove": {"type": "boolean"}}),
             h_dub_clip, mutating=True,
             label=lambda a: ("Снимаю озвучку" if a.get("remove") else
-                             "Озвучиваю по-русски" if a.get("confirm") else "Считаю стоимость озвучки"),
+                             "Озвучиваю по-русски" if a.get("confirm") or str(a.get("provider") or "").lower()
+                             in ("gemini", "none") else "Считаю стоимость озвучки"),
         ),
         Tool(
             "generate_subtitles", "Распознаю речь заново",
@@ -6701,6 +6716,22 @@ DISCOVERY_TOOLS = [
         "Переключает модули ТОЛЬКО владелец в интерфейсе — у агента такого инструмента нет. "
         "/ Service modules and whether they are enabled (read-only).",
         _obj({}), h_list_modules, scope="global",
+    ),
+    Tool(
+        "tts_preview", "Проба голоса",
+        "Проба голоса TTS: короткая фраза (text; по умолчанию приветствие) → mp3 в библиотеке, в ответе url и "
+        "asset_id — дай владельцу послушать, прежде чем выбрать голос для dub_clip или персонажа ИИ-видео. "
+        "provider gemini (по умолчанию) — БЕСПЛАТНО, voice — голос Gemini (Zephyr, Puck, Charon, Kore, Fenrir, "
+        "Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, "
+        "Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, "
+        "Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat), style — как говорить («говори весело, "
+        "быстро»). provider polza — ПЛАТНО: без confirm только оценка, confirm — только по «да» владельца. "
+        "Та же фраза тем же голосом — тот же файл. / Audition a TTS voice (gemini free).",
+        _obj({"provider": {"type": "string", "enum": ["gemini", "polza", "none"]}, "voice": {"type": "string"},
+              "model": {"type": "string"}, "style": {"type": "string"}, "text": {"type": "string"},
+              "confirm": {"type": "boolean"}}),
+        h_tts_preview, scope="global", mutating=True,
+        label=lambda a: f"Пробую голос {a.get('voice') or ''}".strip(),
     ),
 ]
 

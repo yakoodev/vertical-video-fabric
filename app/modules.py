@@ -170,10 +170,10 @@ MODULES: list[Module] = [
         ui=("переключатель перевода в редакторе субтитров",),
     ),
     Module(
-        "dubbing", "Озвучка RU (Polza TTS)", "speech",
-        "Русская озвучка переведённых субтитров. Оценка стоимости бесплатна, синтез — платно и только с "
-        "подтверждением владельца в пределах бюджета.",
-        cost=("network", "paid"), cost_note="Polza TTS — платно, только с confirm",
+        "dubbing", "Озвучка RU (Gemini TTS / Polza TTS)", "speech",
+        "Русская озвучка переведённых субтитров. Gemini TTS — бесплатно по ключу Gemini; Polza — платно: "
+        "оценка бесплатна, синтез только с подтверждением владельца в пределах бюджета.",
+        cost=("network", "paid"), cost_note="Gemini TTS — бесплатно; Polza TTS — платно, только с confirm",
         depends=("translation",),
         tools=("dub_clip",),
         routes=("POST /api/clip-plans/{id}/dub",),
@@ -377,6 +377,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     # смотреть клип и источник
     "get_clip", "get_transcript", "view_frame", "contact_sheet", "source_contact_sheet", "source_loudness",
     "find_noises", "get_playbook", "list_modules", "lint_clip",
+    # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
+    "tts_preview",
     # слои, камера, библиотека
     "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera",
     "camera_preset", "add_glitch", "list_fonts", "upload_font", "search_emoji", "list_packs", "search_pack", "list_assets",

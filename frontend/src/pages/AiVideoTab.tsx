@@ -22,6 +22,7 @@ import {
 } from "@/api/aivideo";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { TtsVoicePicker, type TtsVoiceValue } from "@/components/TtsVoicePicker";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
 import "@/styles/aivideo.css";
 
@@ -690,7 +691,12 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
   const [card, setCard] = useState(c.identity_card);
-  const [voice, setVoice] = useState({ ...c.voice, model: c.voice.model ?? "", voice: c.voice.voice ?? "" });
+  const [voice, setVoice] = useState<TtsVoiceValue & { sfx?: string }>({
+    ...c.voice,
+    model: c.voice.model ?? "",
+    voice: c.voice.voice ?? "",
+    style: c.voice.style ?? "",
+  });
   const [speech, setSpeech] = useState({ speech: c.speech ?? "voice", speech_captions: c.speech_captions ?? true });
   const [look, setLook] = useState({ name: "", outfit_text: "", beat: "" });
   const save = useMutation({
@@ -745,8 +751,7 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
       <div className="series-row">
         {speech.speech === "voice" ? (
           <>
-            <input className="input" placeholder="TTS модель (elevenlabs/eleven-v4)" value={voice.model} onChange={(e) => setVoice({ ...voice, model: e.target.value })} />
-            <input className="input" placeholder="голос (brian)" value={voice.voice} onChange={(e) => setVoice({ ...voice, voice: e.target.value })} />
+            <TtsVoicePicker value={voice} emptyLabel="TTS: Polza (по умолчанию, платно)" showModel onChange={(next) => setVoice({ ...voice, ...next })} />
           </>
         ) : null}
         <button className="btn sm" disabled={save.isPending} onClick={() => save.mutate()}>

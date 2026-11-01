@@ -58,7 +58,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `transcription` | Распознавание речи (Whisper) | CPU, RAM | загрузка модели Whisper (и выгрузка уже загруженной), расшифровка источника `/api/sources/{id}/transcript`, транскрипт в анализе, инструменты `get_source_transcript`, `listen`, `generate_subtitles`. Готовые субтитры и их правка остаются |
 | `voices` | Голоса в субтитрах | сеть, CPU | разделение голосов (`/voices*`, `separate_voices`), кнопка «Голоса» и смена голоса строки |
 | `translation` | Перевод субтитров | сеть | `/subtitles/translate`, `translate_subtitles`, переключатель перевода |
-| `dubbing` | Озвучка RU (Polza TTS) | сеть, платно | `/dub`, `dub_clip`, блок «Озвучка RU» |
+| `dubbing` | Озвучка RU (Gemini TTS — бесплатно, Polza TTS — платно) | сеть, платно (Polza) | `/dub`, `dub_clip`, блок «Озвучка RU» (проба голоса `tts_preview` — в ядре) |
 | `censor` | Запикивание мата | CPU | `/censor`, `censor_profanity` |
 
 ### Монтаж

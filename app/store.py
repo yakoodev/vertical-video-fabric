@@ -3359,7 +3359,10 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
                 raise ValueError("label is required")
             values[key] = label
         elif key == "provider":
-            values[key] = _choice(str(value), VALID_SUBTITLE_PROVIDERS, key)
+            # Пусто — законное значение: «движок из настроек» (SUBTITLE_PROVIDER), так стоит у
+            # стилей по умолчанию и у старых стилей после миграции mock → "" (app/db.py).
+            text = str(value or "").strip()
+            values[key] = _choice(text, VALID_SUBTITLE_PROVIDERS, key) if text else ""
         elif key in {"model", "language", "font_family"}:
             values[key] = str(value).strip()
         elif key == "timing_offset_sec":

@@ -10,6 +10,8 @@
 ## Деньги — главное правило
 
 * Сценарий (Gemini), оценки, проверки постоянства и склеек, сборка — **бесплатно**.
+* Голоса персонажей через Gemini TTS (`voice.provider: gemini`) — **бесплатно**: этап `voice` идёт
+  сразу, без карточки.
 * Картинки, видео и голос через провайдера (сейчас Polza) — **платно**. Агент их только **просит**:
   `aiv_request_approval` (этап) или `aiv_regenerate` (одна картинка/видео) кладут владельцу карточку
   с суммой (UI «Одобрение», баннер на вкладке «ИИ-видео», Telegram). Запуск — только после его
@@ -48,8 +50,20 @@
    план на склейки). Бриф, правила и табу проекта — как у сериалов (`get_project_brief`, `add_rule`).
 2. **Персонажи.** `aiv_define_character(name, identity_card, voice?, origin?, speech?)`. Карта личности —
    возраст, волосы, глаза, рост и пропорции, 2–3 цвета hex, отличительная деталь; она вставляется в
-   промпт ДОСЛОВНО (правка помечает картинки и кадры с персонажем «устарело»). Голос —
-   `{provider: polza, model: elevenlabs/eleven-v4, voice: brian}` (TTS как в `dub_clip`).
+   промпт ДОСЛОВНО (правка помечает картинки и кадры с персонажем «устарело»). Голос (TTS как в
+   `dub_clip`):
+   - `{provider: gemini, voice: Kore, style: "устало, медленно"}` — **бесплатно** (Gemini TTS по
+     ключу сервиса; модель — `GEMINI_TTS_MODEL`, по умолчанию `gemini-3.8-flash-tts`). 30 голосов:
+     Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus,
+     Umbriel, Algieba, Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar,
+     Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat.
+     `style` — как персонаж говорит (строкой перед репликой); смена `style` или голоса — реплики
+     «устарели» и переозвучатся. Послушать до выбора — `tts_preview(voice, style, text)` (бесплатно,
+     в ответе `url`).
+   - `{provider: polza, model: elevenlabs/eleven-v4, voice: brian}` — платно, по карточке (без
+     `provider` — тоже Polza: по умолчанию ничего не поменялось).
+   - `{provider: none}` — сухой прогон тоном. Проект в сухом прогоне (`provider: none` у проекта)
+     озвучивает тоном всех, какой бы голос ни был у персонажа.
    Свои витуберы/стримеры владельца — `origin: owner`, их картинки владелец загружает на вкладке
    «Персонажи» (они идут референсом в каждый лист и кадр). **Фото реальных людей из интернета не бери.**
    Облики по сюжету — `aiv_add_look(character, name, outfit_text, beat)`: меняется только одежда
@@ -92,7 +106,9 @@
    шаг `chain`, ждёт, пока видео прошлого плана готово). Новое видео плана помечает сцепленный
    следующий план «устарело». Версии — `videos` в `aiv_get_script`, выбор — `aiv_select_version`,
    новая — `aiv_regenerate(ref_id видео или target shot:ID:shot_video)`.
-9. **Озвучка.** Провайдер `none` — делается сама при сборке. Polza — этап `voice` с карточкой
+9. **Озвучка.** Провайдер `none` — делается сама при сборке. Gemini (`voice.provider: gemini`) —
+   этап `voice` **без карточки**, сразу (`aiv_request_approval(stage="voice")` → `status: done`, 0 ₽;
+   лимиты бесплатного тарифа — сервис сам ждёт и повторяет). Polza — этап `voice` с карточкой
    (обычно копейки: ~0.005 ₽ за символ). Реплики `speech: sfx` — звуки пака, 0 ₽.
 10. **Сборка.** `aiv_assemble(script_id, music_track_id?, captions_style?)` → НОВЫЙ холст-клип
     (`clip_id`). Дальше всё как с обычным клипом: `get_clip`, `contact_sheet`, правки слоями,
