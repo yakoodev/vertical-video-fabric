@@ -182,6 +182,10 @@ def test_horizontal_clip_gets_youtube_thumbnail_and_publish_uses_it(tmp_path, mo
 
     thumb = landscape_cover(store, store.get_clip(clip["id"]))
     assert thumb and image_size(thumb) == (1280, 720)
+    # Клип удалён — файлы вариантов тоже.
+    client.delete(f"/api/clips/{clip['id']}").raise_for_status()
+    assert not Path(thumb).exists()
+    assert store.db.query_one("SELECT COUNT(*) AS n FROM clip_covers")["n"] == 0
 
 
 def test_compositor_base_keeps_only_picture_layers(tmp_path, monkeypatch):

@@ -71,6 +71,8 @@ bearer_token_env_var = "VVF_TOKEN"
 | `suggest_cuts`, `apply_cuts` | найти и вырезать паузы/слова-паразиты (длинные паузы помечены `risky` — не режь вслепую); шкала clip, `cuts` из suggest_cuts можно передать в apply_cuts как есть (`piece` — чей вырез в зоне наплыва) |
 | `auto_edit(clip_id, style?)` | автомонтаж без ИИ: хук, субтитры с эмодзи, наезды и удары по речи — основа для правки |
 | `compose_cover(clip_id, t, title, style?, final?)` | обложка: кадр (t — шкала clip, `final: true` — готовый ролик) + крупный заголовок, включается сразу |
+| `generate_covers(clip_id, count?, texts?, styles?, render_id?)` | **варианты обложки готового рендера** (1–6, по умолчанию 3): сильные кадры (лицо, резкость, цвет), хук 2–5 слов в треть без лиц, стиль бренда; 9:16 — 1080×1920, 16:9 — 1280×720. Ответ — картинка вариантов и их id; см. [`guides/covers.md`](guides/covers.md) |
+| `list_covers(clip_id, sheet?)`, `choose_cover(clip_id, cover_id, burn?)` | варианты и выбор: обложка клипа (превью, карточка одобрения, миниатюра YouTube 16:9); `burn` (да) — ещё и в настройки клипа, следующий рендер вошьёт первым кадром |
 | `make_compilation(clip_ids, title?)` | новый клип «ТОП-N» из нескольких клипов проекта |
 | `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
 | `track_layer(layer_id, target, preset?, offset?, follow?, smooth?)`, `untrack_layer(layer_id)` | **слой следует за лицом / объектом / точкой** — ключи x/y(/scale) на всё время слоя, ответ — лист 2–3 кадров проверки; см. «Трекинг: слой за целью» |
@@ -1256,7 +1258,8 @@ px слоёв: у всех форматов 1080 — те же px, что в в�
 - **Склейка разных сцен.** Встык даёт резкий перескок, `fadeblack` 0.3–0.5 с читается
   как «прошло время». Для мемного монтажа подходят `flash` или `zoom` со `sfx: whoosh`.
 - **Субтитры.** Для шортсов почти всегда включать: большинство смотрит без звука.
-- **Обложка.** Бери кадр с яркой эмоцией или самым смешным моментом, не первый попавшийся. Смотри кандидатов через `frame --x` и вшивай (`burn: true`).
+- **Обложка.** Бери кадр с яркой эмоцией или самым смешным моментом, не первый попавшийся. Смотри кандидатов через `frame --x` и вшивай (`burn: true`). Проще — варианты готового рендера: `POST /api/clips/{render_id}/covers` (`count`, `texts?`) → `POST /api/clips/{render_id}/covers/{cover_id}/choose` (MCP `generate_covers` / `choose_cover`, [`guides/covers.md`](guides/covers.md)).
+- **Заголовок и описание** сервис пишет сам после рендера (`clips[].publish_meta`: `title`, `description`, `hashtags`, варианты `platforms.youtube/tiktok`, `cover_hooks`), если их ещё нет и включена настройка `auto_publish_meta` (`PUT /api/settings/auto-publish-meta`, нужен ключ Gemini). В запрос идут правила и лор канала. Неправленый текст уходит на YouTube/TikTok их вариантами.
 
 ## Подводные камни (собрано по отзыву агента-монтажёра)
 

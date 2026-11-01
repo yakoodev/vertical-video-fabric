@@ -989,6 +989,7 @@ class AppStore:
             for track in self.list_subtitle_tracks(clip["id"]):
                 if track.get("ass_path"):
                     files.append(track["ass_path"])
+            files.extend(self._clip_cover_variant_files(clip["id"]))
         self.db.execute(
             "UPDATE jobs SET clip_id = NULL WHERE clip_id IN (SELECT id FROM clips WHERE source_id = ?)",
             (source_id,),
@@ -2624,8 +2625,18 @@ class AppStore:
 
     def delete_clip(self, clip_id: int) -> None:
         self.get_clip(clip_id)
+        covers = self._clip_cover_variant_files(clip_id)
         self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))
         self._delete_record("clips", clip_id)
+        # Варианты обложки (app/cover_variants.py): строки уходят каскадом, файлы — здесь.
+        _remove_files_within(covers, settings.clip_dir)
+
+    def _clip_cover_variant_files(self, clip_id: int) -> list[str]:
+        try:
+            rows = self.db.query_all("SELECT path FROM clip_covers WHERE clip_id = ?", (clip_id,))
+        except Exception:  # noqa: BLE001 - старая база без таблицы вариантов
+            return []
+        return [str(row["path"]) for row in rows if row["path"]]
 
     def create_subtitle_track(
         self,
