@@ -80,9 +80,41 @@ export interface Clip {
   published_targets_count?: number;
   qc?: RenderQc | null;
   cover_url?: string | null;
+  /** Title/description/hashtags written by the service (after render or ✨), with per-platform variants. */
+  publish_meta?: PublishMeta | null;
   origin?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PublishMeta {
+  title: string;
+  description: string;
+  hashtags: string[];
+  platforms?: Partial<Record<"youtube" | "tiktok", { title: string; description: string }>>;
+  cover_hooks?: string[];
+  model?: string;
+  source?: "auto" | "ai" | "manual";
+  generated_at?: string;
+}
+
+/** A cover variant of a rendered clip (app/cover_variants.py). */
+export interface CoverVariant {
+  id: number;
+  clip_id: number;
+  url: string;
+  width: number;
+  height: number;
+  format: string;
+  t: number;
+  text: string;
+  style: string;
+  text_y: number;
+  faces: number;
+  score: number;
+  renderer: string;
+  chosen: boolean;
+  created_at: string;
 }
 
 export interface AiAnalysis {

@@ -11,6 +11,10 @@ export interface AppSettings {
   global_proxy_display: string;
   banners: { id: number; label: string }[];
   subtitle_profiles: { id: number; label: string }[];
+  /** Write title/description/hashtags right after each render (needs a Gemini key). */
+  auto_publish_meta?: boolean;
+  gemini_configured?: boolean;
+  auto_publish_meta_env?: boolean;
 }
 
 export interface DefaultsInput {
@@ -36,4 +40,9 @@ export const settingsApi = {
     fd.append("next", "/settings/defaults");
     return api.form<unknown>("/ui/settings/defaults", fd);
   },
+  setAutoPublishMeta: (enabled: boolean) =>
+    api.put<Pick<AppSettings, "auto_publish_meta" | "gemini_configured" | "auto_publish_meta_env">>(
+      "/api/settings/auto-publish-meta",
+      { enabled },
+    ),
 };

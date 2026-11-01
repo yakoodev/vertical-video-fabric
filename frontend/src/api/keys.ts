@@ -10,6 +10,7 @@ export const qk = {
   clips: (sourceId?: number | string) =>
     sourceId == null ? (["clips"] as const) : (["clips", "source", String(sourceId)] as const),
   clip: (id: number | string) => ["clips", "item", String(id)] as const,
+  clipCovers: (id: number | string) => ["clips", "covers", String(id)] as const,
 
   jobs: ["jobs"] as const,
   job: (id: number | string) => ["jobs", String(id)] as const,

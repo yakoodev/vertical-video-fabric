@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { Clip, Job } from "@/api/types";
+import type { Clip, CoverVariant, Job } from "@/api/types";
 
 export interface PublishRequest {
   title?: string;
@@ -23,6 +23,17 @@ export const clipsApi = {
       `/api/clips/${id}/publish-meta`,
       {},
     ),
+  /** Cover variants: strong frames + a big hook, the chosen one becomes the clip's cover. */
+  covers: (id: number | string) => api.get<{ clip_id: number; covers: CoverVariant[] }>(`/api/clips/${id}/covers`),
+  generateCovers: (id: number | string, body: { count?: number; texts?: string[] } = {}) =>
+    api.post<{ covers: CoverVariant[]; new: number[]; texts_source: string; format: string }>(
+      `/api/clips/${id}/covers`,
+      body,
+    ),
+  chooseCover: (id: number | string, coverId: number, applyToRender = true) =>
+    api.post<{ ok: boolean; note: string }>(`/api/clips/${id}/covers/${coverId}/choose`, {
+      apply_to_render: applyToRender,
+    }),
   // Several clips at once, each under its own title, optionally spread out in time.
   publishBatch: (body: {
     clip_ids: number[];

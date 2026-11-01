@@ -47,6 +47,15 @@ export function DefaultsSettings() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
   });
 
+  const autoMeta = useMutation({
+    mutationFn: (enabled: boolean) => settingsApi.setAutoPublishMeta(enabled),
+    onSuccess: (r) => {
+      toast.success(r.auto_publish_meta ? "Заголовок и описание — сами после рендера" : "Автоматические метаданные выключены");
+      qc.invalidateQueries({ queryKey: qk.settings });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
+  });
+
   if (q.isLoading) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const set = (patch: Partial<DefaultsInput>) => setForm((f) => ({ ...f, ...patch }));
@@ -100,6 +109,24 @@ export function DefaultsSettings() {
             ))}
           </select>
         </label>
+      </div>
+      <div className="field">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={q.data?.auto_publish_meta ?? true}
+            disabled={autoMeta.isPending}
+            onChange={(e) => autoMeta.mutate(e.target.checked)}
+          />
+          <span>Заголовок, описание и хэштеги сами после рендера (Gemini, варианты для YouTube и TikTok)</span>
+        </label>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {!q.data?.gemini_configured
+            ? "Ключ Gemini не задан — пока не работает."
+            : q.data?.auto_publish_meta_env === false
+              ? "Выключено переменной AUTO_PUBLISH_META=0."
+              : "Только если у клипа ещё нет текста; повторный рендер берёт прежний. Ошибка не мешает рендеру."}
+        </span>
       </div>
       <label className="field">
         <span>Глобальный прокси для публикации {q.data?.global_proxy_configured ? "(сейчас: настроен)" : "(сейчас: прямое подключение)"}</span>
