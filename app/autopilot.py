@@ -711,8 +711,14 @@ def decide(store: Any, approval_id: int, action: str, comment: str = "", actor: 
         raise ValueError(f"карточка #{approval_id} уже решена: {approval['status']}")
     comment = P._long_text(comment, 2000)
     status = DECISION_STATUS[action]
-    _update(store, approval_id, status=status, decision_comment=comment, decided_by=str(actor or "")[:80],
-            decided_at=_now_text())
+    # Сравнить-и-записать: два одновременных решения (двойной клик, кнопка в Telegram и в UI) —
+    # выполняется одно, второе видит «уже решена» (иначе обработчик карточки сработал бы дважды).
+    cur = store.db.execute(
+        "UPDATE approvals SET status = ?, decision_comment = ?, decided_by = ?, decided_at = ?, "
+        "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+        (status, comment, str(actor or "")[:80], _now_text(), int(approval_id)))
+    if not cur.rowcount:
+        raise ValueError(f"карточка #{approval_id} уже решена: {get_approval(store, approval_id)['status']}")
     log_event(store, approval_id, approval["project_id"], status, actor, comment)
     result: dict = {"ok": True, "status": status}
     if status == "approved":

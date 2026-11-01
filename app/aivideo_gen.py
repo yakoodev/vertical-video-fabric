@@ -34,6 +34,12 @@
 (``resume``) без нового POST; запуск, оборванный между «отправляю» и ответом провайдера, не
 повторяется сам (``failed``: «проверь баланс»). Одинаковый запрос (``input_hash``) берёт готовый
 результат. Каждое списание — строка ``aiv_ledger`` (факт провайдера, разница баланса или оценка).
+Задача, упавшая у провайдера (ошибка, модерация, «все провайдеры вернули ошибку»), освобождает резерв
+и в траты не идёт, если провайдер сам не назвал списание.
+
+Повтор запроса этапа (двойной клик, повтор после ошибки клиента) второй раз не заказывает: цель с
+ждущим/идущим запуском пропускается, та же ждущая карточка возвращается как есть; повтор того же
+решения по карточке (``decide_card``) ничего не запускает. Явная перегенерация — как раньше.
 """
 
 from __future__ import annotations
@@ -184,14 +190,19 @@ def spent_approval(store: Any, approval_id: int) -> float:
                 (int(approval_id),))
 
 
-def _reserved(store: Any, where: str, params: tuple, statuses: tuple = OPEN, exclude_approval: int | None = None) -> float:
+def _reserved(store: Any, where: str, params: tuple, statuses: tuple = OPEN, exclude_approval: Any = None) -> float:
+    """Зарезервировано: оценки ждущих и идущих запусков (упавшие/отменённые/готовые — нет: у готовых
+    трата уже в журнале, у упавших денег не взяли). ``exclude_approval`` — id карточки (или их список),
+    чьи запуски не считать (карточка, которую новая заменит)."""
     marks = ", ".join("?" for _ in statuses)
     sql = (f"SELECT COALESCE(SUM(estimate_rub), 0) FROM aiv_gen_jobs WHERE status IN ({marks}) AND provider != 'none' "
            f"AND {where}")
     args = (*statuses, *params)
-    if exclude_approval is not None:
-        sql += " AND COALESCE(approval_id, 0) != ?"
-        args = (*args, int(exclude_approval))
+    excluded = ([] if exclude_approval is None else [exclude_approval] if isinstance(exclude_approval, int)
+                else list(exclude_approval))
+    if excluded:
+        sql += f" AND COALESCE(approval_id, 0) NOT IN ({', '.join('?' for _ in excluded)})"
+        args = (*args, *(int(x) for x in excluded))
     return _sum(store, sql, args)
 
 
@@ -232,7 +243,7 @@ def budget_view(store: Any, project_id: int, script_id: int | None = None) -> di
 
 
 def cap_problems(store: Any, project_id: int, script_id: int | None, amount: float, stage: str,
-                 exclude_approval: int | None = None, reserved: bool = True) -> list[str]:
+                 exclude_approval: Any = None, reserved: bool = True) -> list[str]:
     """Почему сумму ``amount`` нельзя потратить (пусто — можно). ``reserved`` — учитывать уже
     одобренное/ждущее, но не потраченное (при запросе карточки — да; при запуске по своей карточке — нет)."""
     out = []
@@ -654,9 +665,32 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
     planned = [i for i in raw if not i.get("blocked") and not i.get("skipped")]
     blocked = [i["blocked"] for i in raw if i.get("blocked")]
     notes = [i["skipped"] for i in raw if i.get("skipped")]
+    # Ждущая карточка этого же этапа, которую новая заменит (request_stage): её запуски не «в работе»
+    # и не резерв — иначе повторный запрос того же этапа упирается в потолок сам о себя.
+    replaces = (_replaceable_cards(store, project_id, stage, script_id, planned[0].get("group"))
+                if planned and not planned[0].get("regenerate") else [])
+    busy_jobs: list[dict] = []
+    if not regenerate:
+        # Повтор запроса (двойной клик, повтор после ошибки клиента): цель, у которой уже есть
+        # ждущий/идущий запуск, второй раз не заказываем — иначе кадр рисуется и оплачивается дважды.
+        # Явная перегенерация (aiv_regenerate, regenerate=true) — как раньше: новая версия.
+        busy = _busy_jobs(store, project_id, exclude_cards=replaces)
+        kept = []
+        for item in planned:
+            hit = busy.get(_target_key(item))
+            if hit is None:
+                kept.append(item)
+                continue
+            busy_jobs.append(hit)
+            notes.append(f"{item['label']}: уже в работе (запуск #{hit['id']}, {hit['status']}"
+                         + (f", карточка #{hit['approval_id']}" if hit.get("approval_id") else "")
+                         + ") — второй раз не заказываю"
+                         + ("; держится — «Продолжить» у карточки (aiv_run_approved) или отмени её запуски"
+                            if hit["status"] == "held" else ""))
+        planned = kept
     total = round(sum(i["estimate_rub"] for i in planned), 2)
     paid = any(_paid(i["provider"], i["kind"]) for i in planned)
-    problems = cap_problems(store, project_id, script_id, total, stage) if paid else []
+    problems = cap_problems(store, project_id, script_id, total, stage, exclude_approval=replaces) if paid else []
     problems += blocked
     if paid and not settings.aivideo_enabled:
         problems.append("платная генерация выключена (AIVIDEO_ENABLED=0) — включает владелец; карточку можно "
@@ -715,7 +749,7 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
     out = {"stage": stage, "stage_label": STAGE_LABELS[stage], "project_id": int(project_id), "script_id": script_id,
            "items": planned, "count": len(planned), "total_rub": total, "paid": paid, "blocked": blocked,
            "notes": notes, "continuity": continuity_flags(store, script_id) if script_id is not None else [],
-           "provider": provider, "model": model, "problems": problems,
+           "provider": provider, "model": model, "problems": problems, "busy": busy_jobs, "replaces": replaces,
            "budget": budget_view(store, project_id, script_id), "note": note, **extra}
     if stage == "video" and script_id is not None:
         out["video_qa"] = video_qa_flags(store, script_id)
@@ -725,6 +759,42 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
 # --------------------------------------------------------------------------- #
 # Запрос этапа → карточка владельцу
 # --------------------------------------------------------------------------- #
+
+
+# Запуск на цели «занят»: ждёт одобрения, одобрен/держится или идёт у провайдера.
+BUSY = ("awaiting", "held") + ACTIVE
+_REQUEST_LOCK = threading.Lock()  # два одновременных запроса этапа (двойной клик) — по очереди
+
+
+def _target_key(item: dict) -> tuple[str, int, str, str]:
+    return (str(item["target_type"]), int(item["target_id"]), str(item["ref_kind"]), str(item.get("slot") or ""))
+
+
+def _busy_jobs(store: Any, project_id: int, exclude_cards: Any = ()) -> dict[tuple, dict]:
+    """Цель → её занятый запуск (BUSY), кроме запусков карточек ``exclude_cards`` (их заменит новая)."""
+    marks = ", ".join("?" for _ in BUSY)
+    rows = store.db.query_all(
+        f"SELECT id, approval_id, status, target_type, target_id, ref_kind, slot FROM aiv_gen_jobs "
+        f"WHERE project_id = ? AND status IN ({marks}) ORDER BY id", (int(project_id), *BUSY))
+    skip = {int(x) for x in exclude_cards}
+    out: dict[tuple, dict] = {}
+    for row in rows:
+        if row["approval_id"] is not None and int(row["approval_id"]) in skip:
+            continue
+        out.setdefault(_target_key(dict(row)), dict(row))
+    return out
+
+
+def _replaceable_cards(store: Any, project_id: int, stage: str, script_id: int | None, group: Any) -> list[int]:
+    """Ждущие карточки этого этапа (та же серия и группа) — новая карточка этапа заменяет их."""
+    return [int(c["id"]) for c in stage_approvals(store, project_id, script_id, status="pending")
+            if c["stage"] == stage and c.get("script_id") == script_id and c.get("group") == group]
+
+
+def _card_keys(store: Any, approval_id: int) -> list[tuple]:
+    return sorted(_target_key(dict(r)) for r in store.db.query_all(
+        "SELECT target_type, target_id, ref_kind, slot FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'awaiting'",
+        (int(approval_id),)))
 
 
 def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_id: int | None,
@@ -788,32 +858,58 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
             continuity = check_continuity(store, int(script_id))
         except Exception as exc:  # noqa: BLE001 - Gemini недоступен: этап не блокируем
             continuity = {"ok": False, "skipped": True, "note": f"проверка склеек не удалась: {exc}"[:300]}
+    with _REQUEST_LOCK:
+        res = _request_locked(store, project, stage, script_id, items, regenerate, requested_by, note, continuity)
+    if res["status"] == "run":  # сухой прогон / бесплатное: запуски уже в базе — выполняем вне замка
+        res = {"ok": True, "status": "done", "estimate": res["estimate"], "run": run_jobs(store, res["job_ids"]),
+               "note": "сухой прогон: заглушки вместо картинок, тон вместо голоса, 0 ₽"}
+    return res
+
+
+def _request_locked(store: Any, project: dict, stage: str, script_id: int | None, items: list | None,
+                    regenerate: bool, requested_by: str, note: str, continuity: dict | None) -> dict:
+    project_id = int(project["id"])
     est = estimate(store, project_id, stage, script_id, items, regenerate)
     if continuity is not None:
         est["continuity_check"] = continuity
     if est["blocked"]:
         raise V.AivError("этап не запрошен: " + "; ".join(est["blocked"]))
     if not est["items"]:
+        if est["busy"]:
+            cards = sorted({int(j["approval_id"]) for j in est["busy"] if j.get("approval_id")})
+            out = {"ok": True, "status": "in_progress", "estimate": est,
+                   "job_ids": [int(j["id"]) for j in est["busy"]],
+                   "note": "уже заказано и ждёт решения или идёт — второй раз не заказываю"
+                           + (" (карточка #" + ", #".join(map(str, cards)) + ")" if cards else "")}
+            if len(cards) == 1:
+                out["approval_id"] = cards[0]
+            return out
         return {"ok": True, "status": "nothing", "estimate": est,
                 "note": "всё уже есть и не устарело — для новой версии укажи items (перегенерация)"}
     if not est["paid"]:
         job_ids = [_insert_job(store, project_id, item, "approved", None, requested_by) for item in est["items"]]
-        result = run_jobs(store, job_ids)
-        return {"ok": True, "status": "done", "estimate": est, "run": result,
-                "note": "сухой прогон: заглушки вместо картинок, тон вместо голоса, 0 ₽"}
+        return {"status": "run", "estimate": est, "job_ids": job_ids}
     hard = [p for p in est["problems"] if "AIVIDEO_ENABLED" not in p]
     if hard:
         raise BudgetError("этап не запрошен: " + "; ".join(hard))
     script = V.get_script(store, script_id, with_shots=False) if script_id is not None else None
     # Группа карточки (расширения: один ролик-объяснялка) — заменяется только карточка той же группы.
     group = est["items"][0].get("group")
+    # Тот же запрос второй раз (двойной клик, повтор после ошибки клиента), а ждущая карточка с теми же
+    # запусками и суммой уже есть — она и есть ответ: вторую карточку владельцу не шлём.
+    want = sorted(_target_key(i) for i in est["items"])
+    for old_id in est["replaces"]:
+        old = A.get_approval(store, old_id)
+        if (_card_keys(store, old_id) == want
+                and abs(float((old.get("payload") or {}).get("amount_rub") or 0) - est["total_rub"]) < 0.01):
+            return {"ok": True, "status": "awaiting_approval", "approval_id": old_id, "estimate": est,
+                    "duplicate": True,
+                    "note": f"карточка #{old_id} на {est['total_rub']:.2f} ₽ уже ждёт владельца — вторую не шлю"}
     # Прежняя ждущая карточка того же этапа — устарела: новая заменяет её.
-    for old in stage_approvals(store, project_id, script_id, status="pending"):
-        if (old["stage"] == stage and old.get("script_id") == script_id and old.get("group") == group
-                and not est["items"][0]["regenerate"]):
-            A._update(store, old["id"], status="expired", decision_comment="заменена новой карточкой этапа")
-            store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'карточка заменена' "
-                             "WHERE approval_id = ? AND status = 'awaiting'", (old["id"],))
+    for old_id in est["replaces"]:
+        A._update(store, old_id, status="expired", decision_comment="заменена новой карточкой этапа")
+        store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'карточка заменена' "
+                         "WHERE approval_id = ? AND status = 'awaiting'", (old_id,))
     payload = {"action": CARD_ACTION, "stage": stage, "project_id": int(project_id), "script_id": script_id,
                "amount_rub": est["total_rub"], "count": est["count"], "model": est["model"],
                "provider": est["provider"], "note": P._text(note, 300)}
@@ -908,11 +1004,28 @@ def stage_approvals(store: Any, project_id: int, script_id: int | None = None, s
 
 def _on_decide(store: Any, approval: dict, action: str, comment: str, actor: str) -> dict:
     if action in ("approve", "both"):
+        # Цель, которую уже делает другая одобренная карточка (запуск одобрен/держится/идёт), второй
+        # раз не платим: такой запуск этой карточки — «дубль» (явная перегенерация — не трогаем).
+        marks = ", ".join("?" for _ in ("held",) + ACTIVE)
+        dupes = 0
+        for row in store.db.query_all("SELECT * FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'awaiting'",
+                                      (approval["id"],)):
+            if V._loads(row["params_json"], {}).get("regenerate"):
+                continue
+            other = store.db.query_one(
+                f"SELECT id FROM aiv_gen_jobs WHERE project_id = ? AND target_type = ? AND target_id = ? AND "
+                f"ref_kind = ? AND slot = ? AND COALESCE(approval_id, 0) != ? AND status IN ({marks}) LIMIT 1",
+                (row["project_id"], row["target_type"], row["target_id"], row["ref_kind"], row["slot"],
+                 approval["id"], "held", *ACTIVE))
+            if other and _cas(store, int(row["id"]), ("awaiting",), status="cancelled",
+                              error=f"дубль: эту цель уже делает запуск #{other['id']} — второй раз не плачу"):
+                dupes += 1
         cur = store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
                                "WHERE approval_id = ? AND status = 'awaiting'", (approval["id"],))
         kick()
-        return {"aiv": {"approved_jobs": int(cur.rowcount or 0),
-                        "note": "запуски одобрены — работник ИИ-видео их выполнит"}}
+        return {"aiv": {"approved_jobs": int(cur.rowcount or 0), "duplicate_jobs": dupes,
+                        "note": "запуски одобрены — работник ИИ-видео их выполнит"
+                                + (f"; {dupes} шт. уже делает другая карточка — не повторяю" if dupes else "")}}
     cur = store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = ?, updated_at = CURRENT_TIMESTAMP "
                            "WHERE approval_id = ? AND status = 'awaiting'",
                            (f"владелец: {action}{(' — ' + comment) if comment else ''}"[:300], approval["id"]))
@@ -920,6 +1033,30 @@ def _on_decide(store: Any, approval: dict, action: str, comment: str, actor: str
 
 
 A.register_card_action(CARD_ACTION, [("approve", "✅ Разрешить"), ("reject", "🗑 Отказ")], _on_decide)
+
+
+def decide_card(store: Any, approval_id: int, action: str, comment: str = "", actor: str = "ui") -> dict:
+    """Решение владельца по карточке этапа — идемпотентно: повтор того же решения (повтор запроса
+    после ошибки клиента, двойной клик) ничего не запускает второй раз и не падает, а отдаёт
+    текущее состояние. Противоположное решение по уже решённой карточке — ошибка, как раньше."""
+    card = A.get_approval(store, approval_id)
+    if (card.get("payload") or {}).get("action") != CARD_ACTION:
+        raise V.AivError(f"карточка #{approval_id} — не этап ИИ-видео")
+    want = A.DECISION_STATUS.get(action)
+    if card["status"] == "pending":
+        try:
+            return A.decide(store, approval_id, action, comment=comment, actor=actor)
+        except ValueError:
+            card = A.get_approval(store, approval_id)  # решили параллельно — ниже: то же ли решение
+            if card["status"] == "pending":
+                raise
+    if want and card["status"] == want:
+        counts = {row["status"]: int(row["n"]) for row in store.db.query_all(
+            "SELECT status, COUNT(*) AS n FROM aiv_gen_jobs WHERE approval_id = ? GROUP BY status", (card["id"],))}
+        return {"ok": True, "status": card["status"], "already": True, "approval": card,
+                "aiv": {"jobs": counts, "note": f"карточка #{approval_id} уже {card['status']} — повторно ничего не "
+                                                "запускаю"}}
+    raise ValueError(f"карточка #{approval_id} уже решена: {card['status']}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1012,6 +1149,45 @@ def _identity(character: dict) -> str:
 
 PHYSICS = ("Physically plausible: every character and object rests on the floor or on furniture (nothing floats "
            "unless it is held), nothing is duplicated, no extra copies of any character or prop.")
+LOCATION_PLATE_HINT = ("Reference {k} is the background plate of «{name}»: this exact room in every shot — same layout, "
+                       "walls, floor, furniture and their positions, windows, lighting and colors; only the camera "
+                       "angle and framing may differ, never redesign the room.")
+LOCATION_VIDEO_HINT = "The background stays this exact location for the whole shot: the room never changes or morphs."
+
+
+def shot_location(store: Any, project_id: int, shot: dict | None) -> dict | None:
+    slug = (shot or {}).get("location") or ""
+    return V.location_by_slug(store, project_id, slug) if slug else None
+
+
+def location_text(loc: dict) -> str:
+    """Описание локации — ОДНО и то же дословно во всех планах (кадры и видео): комната не «плывёт»."""
+    return f"Location «{loc['name']}» (the same place in every shot set here, verbatim): {loc['description']}."
+
+
+def location_plate(store: Any, project_id: int, loc: dict | None) -> Path | None:
+    """Плита локации (выбранная версия) — общий референс фона всех её планов."""
+    if not loc:
+        return None
+    return _asset_path(store, V.selected_ref(store, project_id, "location", int(loc["id"]), "location"))
+
+
+def continuity_shot(shots: list[dict], n: int) -> tuple[dict | None, bool]:
+    """План, чей кадр — референс непрерывности для старта ``shots[n]``: прошлый, если он в той же
+    локации (``True`` — соседний); иначе последний раньше план этой же локации (``False`` — только
+    комната); нет такого — (None, False). Кадр из другой локации не берём: он тянет чужой фон."""
+    if n <= 0:
+        return None, False
+    here = shots[n].get("location") or ""
+    prev = shots[n - 1]
+    if (prev.get("location") or "") == here:
+        return prev, True
+    if not here:
+        return None, False
+    for k in range(n - 2, -1, -1):
+        if (shots[k].get("location") or "") == here:
+            return shots[k], False
+    return None, False
 
 
 def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[Path], list[str], dict]:
@@ -1061,15 +1237,25 @@ def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[
         if text:
             parts.append(f"Continuity state at the END of this shot (must match exactly): {text}.")
     else:
-        prev_frame, prev_kind = _prev_frame(store, project_id, prev)
-        if prev_frame is not None:
+        # Непрерывность — только кадром ТОЙ ЖЕ сцены (той же локации): кадр из другой комнаты тянет
+        # чужой фон. Прошлый план в другой локации — ищем последний план этой же локации раньше.
+        cont, adjacent = continuity_shot(shots, n)
+        prev_frame, prev_kind = _prev_frame(store, project_id, cont)
+        if prev_frame is not None and adjacent:
             what = "конечный кадр" if prev_kind == "end frame" else "кадр"
-            ranked.append((-1, prev_frame, f"план {prev['idx']}: {what}",
-                           f"{prev_kind} of the previous shot {prev['idx']} (continuity)"))
-            parts.append(f"A reference image is the {prev_kind} of the previous shot {prev['idx']}: keep the same "
-                         "characters, faces, clothing, props, lighting and color continuous with it"
+            ranked.append((-1, prev_frame, f"план {cont['idx']}: {what}",
+                           f"{prev_kind} of the previous shot {cont['idx']} (continuity)"))
+            parts.append(f"A reference image is the {prev_kind} of the previous shot {cont['idx']}: keep the same "
+                         "characters, faces, clothing, props, room, lighting and color continuous with it"
                          + (" — this shot continues the same scene." if shot.get("continues_from_prev") else
-                            " (new angle or moment, same world)."))
+                            " (new angle or moment, same scene and the same room)."))
+        elif prev_frame is not None:
+            what = "конечный кадр" if prev_kind == "end frame" else "кадр"
+            ranked.append((-1, prev_frame, f"план {cont['idx']}: {what} (та же локация)",
+                           f"{prev_kind} of the earlier shot {cont['idx']} in this same location (room continuity)"))
+            parts.append(f"A reference image is the {prev_kind} of the earlier shot {cont['idx']} in this same "
+                         "location: the room must be exactly the same — layout, walls, furniture, windows, lighting "
+                         "and colors; characters follow this shot's own state.")
         state = shot.get("state") or {}
         text = V.state_text(store, project_id, state)
         if text:
@@ -1080,13 +1266,16 @@ def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[
                                     f"{cam['angle']} angle" if cam.get("angle") else "",
                                     f"{cam['lens']}mm lens" if cam.get("lens") else "") if x)
     parts.append(f"Camera: {framing}.")
-    loc = V.location_by_slug(store, project_id, shot["location"]) if shot["location"] else None
+    loc = shot_location(store, project_id, shot)
     caption = [f"план {shot['idx']}" + (": конец" if which == "end" else "")]
+    plate = None
     if loc:
-        parts.append(f"Location «{loc['name']}»: {loc['description']} (match the location reference).")
-        p = _asset_path(store, V.selected_ref(store, project_id, "location", loc["id"], "location"))
-        if p:
-            ranked.append((1, p, f"плита локации «{loc['name']}»", f"background plate of «{loc['name']}»"))
+        # Одно и то же описание локации ДОСЛОВНО в каждом плане этой локации + её плита референсом
+        # (сразу после кадров композиции и непрерывности — в лимит модели влезает всегда).
+        parts.append(location_text(loc))
+        plate = location_plate(store, project_id, loc)
+        if plate:
+            ranked.append((-0.5, plate, f"плита локации «{loc['name']}»", f"background plate of «{loc['name']}»"))
         else:
             missing.append(f"плита локации «{loc['name']}»")
     names = []
@@ -1136,6 +1325,9 @@ def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[
                        "details — not a different model or design.")
     if dropped:
         missing += [f"не влезло в лимит {limit}: {d}" for d in dropped]
+    if plate is not None and any(r[1] == plate for r in chosen):
+        k = next(i for i, r in enumerate(chosen, 1) if r[1] == plate)
+        parts.append(f"{LOCATION_PLATE_HINT.format(k=k, name=loc['name'])}")
     props = V.prop_counts(state)
     if props:
         parts.append(f"Props: {props}.")
@@ -1680,6 +1872,9 @@ def build_video_prompt(store: Any, job: dict, shot: dict | None = None, mode: st
                      "and background.")
     if style.get("passport_text"):
         parts.append(f"Style: {style['passport_text']}.")
+    loc = shot_location(store, project_id, shot)
+    if loc:  # то же описание, что в промптах ключевых кадров этой локации — дословно
+        parts.append(f"{location_text(loc)} {LOCATION_VIDEO_HINT}")
     move = (shot.get("camera") or {}).get("move") or "static"
     parts.append(f"Camera: {GENTLE_CAMERA.get(move, 'locked-off camera')}.")
     if shot.get("action"):
@@ -1744,14 +1939,20 @@ def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None)
     end_ref = end_frame_ref(store, project_id, shot)
     end = _asset_path(store, end_ref)
     caps = video_capabilities(job["model"], job["provider"])
-    sheets = _cast_sheets(store, project_id, shot, int(caps.get("ref_images") or 0))
+    ref_limit = int(caps.get("ref_images") or 0)
+    # Плита локации — первым референсом (комната та же, что в кадрах), дальше листы персонажей; всё
+    # в лимите модели. У Seedance/H3 кадры и референсы несовместимы — там фон держат сами кадры
+    # (они нарисованы по этой же плите) и дословное описание локации в промпте.
+    plate = location_plate(store, project_id, shot_location(store, project_id, shot)) if ref_limit else None
+    sheets = ([plate] if plate else []) + [p for p in _cast_sheets(store, project_id, shot, ref_limit) if p != plate]
+    sheets = sheets[:ref_limit]
     mode = choose_video_mode(job["model"], end is not None, bool(sheets), job["provider"])
     if caps.get("exclusive", True) and mode != "refs":
         sheets = []  # кадры и листы вместе — только у моделей, где режимы совместимы (Kling 4.0)
     frames = [start, end] if mode == "first_last" else [start]
     prompt = build_video_prompt(store, job, shot, mode)
     if sheets:
-        prompt = (prompt + " " + _SHEETS_HINT)[:4000]
+        prompt = (prompt + " " + (_PLATE_HINT + " " if plate in sheets else "") + _SHEETS_HINT)[:4000]
     style = V.get_style(store, project_id)
     seconds = int(job["params"].get("seconds") or video_seconds(shot, job["model"]))
     params = video_params(job["model"], prompt, seconds, job["params"].get("resolution") or "720p",
@@ -1783,6 +1984,8 @@ GENTLE_CAMERA = {"static": "locked-off static camera", "push_in": "very slow sub
 CAMERA_TEXT = GENTLE_CAMERA  # прежнее имя
 _SHEETS_HINT = ("The characters must look exactly like in the reference character sheets (same design, shape, "
                 "proportions and colours); never redesign them.")
+_PLATE_HINT = ("The first reference image is the background plate of the location: keep exactly this room (layout, "
+               "furniture, lighting, colours).")
 
 
 def _video_takes_refs(model: str) -> bool:
@@ -1844,10 +2047,11 @@ def _frame_deps(store: Any, job: dict) -> list[tuple[int, str]]:
         if _is_chain(shot, prev):
             return [(int(prev["id"]), "shot:endframe")]
         return [(int(shot["id"]), "shot:keyframe")]
-    if prev is None:
+    cont, _adjacent = continuity_shot(shots, n)  # кадр непрерывности — та же локация (см. _frame_request)
+    if cont is None:
         return []
-    deps = [(int(prev["id"]), "shot:endframe")] if prev.get("needs_motion") else []
-    return deps + [(int(prev["id"]), "shot:keyframe")]
+    deps = [(int(cont["id"]), "shot:endframe")] if cont.get("needs_motion") else []
+    return deps + [(int(cont["id"]), "shot:keyframe")]
 
 
 def _deps_busy(store: Any, job: dict) -> bool:
@@ -1935,12 +2139,15 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             return None
         cost = result.get("cost_rub")
         if result.get("status") == "failed":
-            charged = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
+            # Отказ провайдера (ошибка, модерация, «все провайдеры вернули ошибку»): за упавшую задачу
+            # провайдер не списывает (kie, Polza) — в траты идёт только сумма, которую он САМ назвал.
+            # Не назвал — 0 ₽: резерв освобождён (failed не в OPEN), серия не упирается в потолок.
+            charged = round(max(0.0, float(cost)), 4) if cost is not None and provider.paid else 0.0
+            error = str(result.get("error") or "отказ")[:440]
+            error += f" — провайдер списал {charged:.2f} ₽" if charged > 0 else " — не списано (резерв освобождён)"
             if _cas(store, job["id"], ("polling",), status="blocked_policy" if result.get("policy") else "failed",
-                    error=str(result.get("error") or "отказ")[:500], cost_rub=charged) and provider.paid and charged > 0:
-                add_ledger(store, job, charged, "provider" if cost is not None else "estimate",
-                           "отказ провайдера — списание по " + ("ответу" if cost is not None else
-                                                              "оценке (проверь баланс)"))
+                    error=error[:500], cost_rub=charged, cost_source="provider" if cost is not None else "none")                     and charged > 0:
+                add_ledger(store, job, charged, "provider", "отказ провайдера — списание по его ответу")
             return None
         video = job["kind"] == "video"
         tmp = settings.tmp_dir / f"aiv-{uuid4().hex}{'.mp4' if video else '.jpg'}"

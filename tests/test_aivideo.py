@@ -899,16 +899,18 @@ def test_keyframe_gets_all_character_sheets_and_plate_logged_in_params(env, monk
     kf = G.request_stage(store, pid, "keyframes", sid)
     job = G.get_job(store, kf["run"]["done"][1]["job_id"])  # план 2: Мира в пижаме + Кот на кухне
     roles = job["params"]["ref_roles"]
-    # v2: первым — кадр прошлого плана (постоянство склейки), дальше листы персонажей, плита, стиль.
-    assert roles == ["план 1: кадр", "mira: разворот", "mira: эмоции", "mira: облик pajamas", "kot: разворот",
-                     "kot: эмоции", "плита локации «Кухня ночью»", "стиль"]
+    # Первым — кадр прошлого плана той же сцены (постоянство склейки), сразу за ним плита локации
+    # (комната не «плывёт» — влезает в лимит всегда), дальше листы персонажей, стиль.
+    assert roles == ["план 1: кадр", "плита локации «Кухня ночью»", "mira: разворот", "mira: эмоции",
+                     "mira: облик pajamas", "kot: разворот", "kot: эмоции", "стиль"]
     # Без этапа blocking кадр рисуется без 3D-макета — это видно в журнале запуска.
     assert len(job["params"]["refs"]) == len(roles) and job["params"]["missing_refs"] == [
         "блокинг start (этап blocking, 0 ₽)"]
-    assert ("Reference images in order: 1 — keyframe of the previous shot 1 (continuity); 2 — Мира — turnaround "
-            "model sheet; 3 — Мира — expression sheet") in job["prompt"]
+    assert ("Reference images in order: 1 — keyframe of the previous shot 1 (continuity); 2 — background plate "
+            "of «Кухня ночью»; 3 — Мира — turnaround model sheet") in job["prompt"]
+    assert "Reference 2 is the background plate of «Кухня ночью»" in job["prompt"]
 
-    # Лимит модели: режем с конца по важности — листы персонажей остаются, недостающее — в журнал.
+    # Лимит модели: режем с конца по важности — плита и листы первых персонажей остаются, недостающее — в журнал.
     monkeypatch.setitem(PR.MAX_REFS, settings.aivideo_image_model, 4)
     shot2 = V.get_script(store, sid)["shots"][1]
     _p, refs, _c, info = G.build_request(store, {**job, "target_id": shot2["id"]})
@@ -2018,3 +2020,188 @@ def test_polza_video_frames_go_as_storage_urls(monkeypatch, tmp_path):
         {"model": "minimax/hailuo-3-max", "prompt": "x", "duration": "5"}, [frame])
     media = [body for url, body in calls if url.endswith("/media")][0]
     assert media["input"]["images"] == [{"type": "url", "data": "https://s3.polza.test/start.jpg"}]
+
+
+# --------------------------------------------------------------------------- #
+# 02.11: упавшие задачи не едят бюджет; повтор запроса/одобрения не платит дважды; локация не «плывёт»
+# --------------------------------------------------------------------------- #
+
+
+class FailingPaid(FakePaid):
+    """Провайдер принял запрос, а задача упала: «все провайдеры вернули ошибку» (без суммы) или
+    отказ со своей суммой списания (``charged``)."""
+
+    def __init__(self, charged=None):
+        super().__init__()
+        self.charged = charged
+
+    def check(self, remote_id):
+        self.checks += 1
+        out = {"status": "failed", "error": "Polza: all providers failed"}
+        if self.charged is not None:
+            out["cost_rub"] = self.charged
+        return out
+
+
+def test_failed_provider_jobs_release_reserve_and_are_not_spent(paid, monkeypatch):
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    pid, sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    # Серия-черновик: потолок 350 ₽, уже потрачено 330 — кадры (3 × 6 = 18 ₽) влезают впритык.
+    store.db.execute("INSERT INTO aiv_ledger (project_id, script_id, stage, amount_rub, source) "
+                     "VALUES (?, ?, 'keyframes', 330, 'provider')", (pid, sid))
+    failing = FailingPaid()
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: failing)
+    kf = G.request_stage(store, pid, "keyframes", sid)
+    assert G.budget_view(store, pid, sid)["episode"]["reserved_rub"] == pytest.approx(18.0)
+    A.decide(store, kf["approval_id"], "approve", actor="ui")
+    out = G.run_pending(store)
+    assert failing.posts == 3 and len(out["failed"]) == 3
+    jobs = G.list_jobs(store, approval_id=kf["approval_id"])
+    assert {j["status"] for j in jobs} == {"failed"}
+    assert all(j["cost_rub"] == 0 and "не списано" in j["error"] for j in jobs)
+    # Ни трат, ни резерва: серия не упирается в потолок, тот же этап просится снова без смены режима.
+    bud = G.budget_view(store, pid, sid)
+    assert bud["episode"]["spent_rub"] == pytest.approx(330.0) and bud["episode"]["reserved_rub"] == 0
+    assert bud["month"]["reserved_rub"] == 0 and bud["all_projects_month"]["reserved_rub"] == 0
+    assert not [l for l in G.ledger(store, pid) if l["stage"] == "keyframes" and l["job_id"]]
+    again = G.request_stage(store, pid, "keyframes", sid)
+    assert again["status"] == "awaiting_approval" and again["estimate"]["total_rub"] == pytest.approx(18.0)
+    # Повторный запрос того же этапа не упирается в потолок резервом своей же ждущей карточки.
+    third = G.request_stage(store, pid, "keyframes", sid)
+    assert third["approval_id"] == again["approval_id"] and third.get("duplicate")
+    # Провайдер САМ назвал списание за отказ — оно в журнале по его ответу.
+    failing.charged = 2.5
+    A.decide(store, again["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    led = [l for l in G.ledger(store, pid) if l["approval_id"] == again["approval_id"]]
+    assert len(led) == 3 and {l["source"] for l in led} == {"provider"}
+    assert sum(l["amount_rub"] for l in led) == pytest.approx(7.5)
+    # Старые базы: отказ без суммы, записанный по оценке, снимается при старте (один раз).
+    job_id = jobs[0]["id"]
+    store.db.execute("INSERT INTO aiv_ledger (project_id, script_id, job_id, approval_id, stage, amount_rub, source, "
+                     "note) VALUES (?, ?, ?, ?, 'keyframes', 6, 'estimate', 'отказ провайдера — списание по оценке "
+                     "(проверь баланс)')", (pid, sid, job_id, kf["approval_id"]))
+    store.db.execute("UPDATE aiv_gen_jobs SET cost_rub = 6 WHERE id = ?", (job_id,))
+    assert G.spent_script(store, sid) == pytest.approx(330.0 + 7.5 + 6.0)
+    for _ in range(2):
+        conn = store.db.connect()
+        try:
+            V.ensure_aiv_schema(conn)
+            conn.commit()
+        finally:
+            conn.close()
+    assert G.spent_script(store, sid) == pytest.approx(330.0 + 7.5)
+    assert G.get_job(store, job_id)["cost_rub"] == 0
+    assert sum(1 for l in G.ledger(store, pid) if "снято 02.11" in l["note"]) == 1
+
+
+def test_repeated_request_and_approval_do_not_pay_twice(paid, monkeypatch):
+    (client, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    pid, sid = _project(store, provider="polza")
+    # Двойной клик «Запросить»: вторая карточка не уходит — та же ждущая.
+    first = G.request_stage(store, pid, "refs")
+    second = G.request_stage(store, pid, "refs")
+    assert second["status"] == "awaiting_approval" and second["approval_id"] == first["approval_id"]
+    assert second.get("duplicate") and len(G.stage_approvals(store, pid, status="pending")) == 1
+    # Повтор одобрения (повтор запроса после ошибки клиента) — тот же ответ, без второго запуска.
+    url = f"/api/ai-video/approvals/{first['approval_id']}/decide"
+    resp = client.post(url, json={"action": "approve"})
+    assert resp.status_code == 200 and resp.json()["aiv"]["approved_jobs"] == 9, resp.text
+    resp = client.post(url, json={"action": "approve"})
+    assert resp.status_code == 200 and resp.json()["already"] and resp.json()["status"] == "approved", resp.text
+    assert client.post(url, json={"action": "reject"}).status_code == 400  # противоположное — как раньше
+    with pytest.raises(ValueError, match="уже решена"):
+        A.decide(store, first["approval_id"], "approve", actor="tg")
+    # Карточка одобрена, работник ещё не взял запуски — повторный запрос этапа ничего не заказывает.
+    again = G.request_stage(store, pid, "refs")
+    assert again["status"] == "in_progress" and again["approval_id"] == first["approval_id"]
+    assert len(G.list_jobs(store, project_id=pid)) == 9
+    G.run_pending(store)
+    assert fake.posts == 9 and len(G.ledger(store, pid)) == 9
+    assert G.request_stage(store, pid, "refs")["status"] == "nothing"
+    # Кадр одним элементом (UI шлёт items без regenerate) дважды — один запуск.
+    shot1 = V.get_script(store, sid)["shots"][0]
+    one = G.request_stage(store, pid, "keyframes", sid, items=[f"shot:{shot1['id']}:keyframe"])
+    two = G.request_stage(store, pid, "keyframes", sid, items=[f"shot:{shot1['id']}:keyframe"])
+    assert one["status"] == "awaiting_approval" and two["status"] == "in_progress"
+    assert two["approval_id"] == one["approval_id"] and "уже в работе" in "; ".join(two["estimate"]["notes"])
+    # Карточка-дубль на цель, которую уже делает одобренная карточка: при одобрении запуск — «дубль».
+    A.decide(store, one["approval_id"], "approve", actor="ui")
+    item = {**G.plan_stage(store, pid, "keyframes", sid, [f"shot:{shot1['id']}:keyframe"])[0], "regenerate": False}
+    dup = A.submit_card(store, pid, "other", "дубль?", {"action": G.CARD_ACTION, "stage": "keyframes",
+                                                         "script_id": sid, "amount_rub": 6.0})
+    dup_job = G._insert_job(store, pid, item, "awaiting", dup["id"], "agent")
+    res = A.decide(store, dup["id"], "approve", actor="ui")
+    assert res["aiv"]["duplicate_jobs"] == 1 and G.get_job(store, dup_job)["status"] == "cancelled"
+    G.run_pending(store)
+    assert fake.posts == 10  # кадр плана 1 — один раз
+    # Явная перегенерация — как раньше: своя карточка, новая версия.
+    ref = V.selected_ref(store, pid, "shot", shot1["id"], "keyframe")
+    regen = G.regenerate(store, ref_id=ref["id"])
+    assert regen["status"] == "awaiting_approval" and regen["approval_id"] != one["approval_id"]
+    A.decide(store, regen["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    assert fake.posts == 11
+    assert [v["version"] for v in V.list_refs(store, pid, "shot", shot1["id"], "keyframe")] == [1, 2]
+
+
+def test_location_plate_and_verbatim_text_in_every_shot_of_the_scene(env, monkeypatch):
+    _client_, store = env
+    pid, sid = _project(store)
+    V.save_location(store, pid, "Спальня", "узкая спальня, синие обои, окно слева, кровать у стены",
+                    slug="bedroom")
+    V.update_script(store, sid, {"shots": [
+        {"duration": 4, "location": "kitchen", "needs_motion": True, "characters": [{"id": "mira"}],
+         "camera": {"move": "static"}, "action": "Мира открывает холодильник", "dialogue": []},
+        {"duration": 3, "location": "bedroom", "characters": [{"id": "mira"}], "camera": {"move": "static"},
+         "action": "Мира лежит на кровати", "dialogue": []},
+        {"duration": 3, "location": "kitchen", "characters": [{"id": "kot"}], "camera": {"shot": "wide"},
+         "action": "кот сидит у холодильника", "dialogue": []},
+    ]})
+    G.request_stage(store, pid, "refs")
+    kf = G.request_stage(store, pid, "keyframes", sid)
+    shots = V.get_script(store, sid)["shots"]
+    jobs = {(j["target_id"], j["ref_kind"]): j for j in (G.get_job(store, d["job_id"]) for d in kf["run"]["done"])}
+    kitchen = G.location_text(V.location_by_slug(store, pid, "kitchen"))
+    bedroom = G.location_text(V.location_by_slug(store, pid, "bedroom"))
+    assert "маленькая кухня, ночь, свет из холодильника" in kitchen
+    s1, e1 = jobs[(shots[0]["id"], "keyframe")], jobs[(shots[0]["id"], "endframe")]
+    s2, s3 = jobs[(shots[1]["id"], "keyframe")], jobs[(shots[2]["id"], "keyframe")]
+    plate = "плита локации «Кухня ночью»"
+    # Все планы кухни: то же описание дословно и та же плита референсом — сразу после кадров
+    # композиции/непрерывности, в лимите модели.
+    for job in (s1, e1, s3):
+        assert kitchen in job["prompt"] and bedroom not in job["prompt"]
+        assert plate in job["params"]["ref_roles"][:3], job["params"]["ref_roles"]
+        assert "background plate of «Кухня ночью»: this exact room" in job["prompt"]
+    plate_file = {job["params"]["refs"][job["params"]["ref_roles"].index(plate)] for job in (s1, e1, s3)}
+    assert len(plate_file) == 1  # один и тот же файл плиты
+    # Конец плана — по старту этого же плана, за ним плита.
+    assert e1["params"]["ref_roles"][:2] == ["план 1: старт", plate]
+    # Спальня — своя плита; кадр из кухни (другая комната) референсом непрерывности НЕ идёт.
+    assert bedroom in s2["prompt"] and kitchen not in s2["prompt"]
+    assert s2["params"]["ref_roles"][0] == "плита локации «Спальня»"
+    assert not any(r.startswith("план 1") for r in s2["params"]["ref_roles"])
+    # Снова кухня после спальни: референс непрерывности — последний кадр той же кухни (конец плана 1).
+    assert s3["params"]["ref_roles"][:2] == ["план 1: конечный кадр (та же локация)", plate]
+    assert "earlier shot 1 in this same location" in s3["prompt"]
+    assert not any("Спальня" in r for r in s3["params"]["ref_roles"])
+    # Зависимость в платной партии — тоже от кадра той же локации, не от спальни.
+    assert G._frame_deps(store, s3) == [(shots[0]["id"], "shot:endframe"), (shots[0]["id"], "shot:keyframe")]
+    # Видео: то же описание локации дословно; модели, что берут референсы вместе с кадрами, — плита первой.
+    monkeypatch.setitem(PR.VIDEO_LIMITS, "grok-imagine-video-1-5",
+                        {**PR.VIDEO_LIMITS["grok-imagine-video-1-5"], "ref_images": 3, "exclusive": False})
+    V.update_style(store, pid, {"video_model": "grok-imagine-video-1-5"})
+    vid = G.request_stage(store, pid, "video", sid)
+    [done] = vid["run"]["done"]
+    vjob = G.get_job(store, done["job_id"])
+    assert kitchen in vjob["prompt"] and "room never changes" in vjob["prompt"]
+    assert vjob["params"]["mode"] == "refs"
+    plate_name = Path(next(iter(plate_file))).name
+    assert vjob["params"]["reference_sheets"][0] == plate_name and len(vjob["params"]["reference_sheets"]) <= 3
+    assert "first reference image is the background plate" in vjob["prompt"]

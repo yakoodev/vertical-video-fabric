@@ -257,7 +257,8 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         action = str(payload.get("action") or "")
         if action not in ("approve", "reject"):
             raise HTTPException(status_code=400, detail="action: approve или reject")
-        return call(A.decide, approval_id, action, comment=str(payload.get("comment") or ""), actor="ui")
+        # Повтор того же решения (двойной клик, повтор после ошибки клиента) — тот же ответ, без второго запуска.
+        return call(G.decide_card, approval_id, action, comment=str(payload.get("comment") or ""), actor="ui")
 
     @router.post("/api/ai-video/approvals/{approval_id}/run", summary="Выполнить одобренные запуски")
     def api_run(approval_id: int, _auth: auth_dep, payload: dict = Body(default={})) -> dict:
