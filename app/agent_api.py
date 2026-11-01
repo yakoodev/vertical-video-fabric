@@ -46,6 +46,8 @@ get_clip → render.format и render.frame (9:16 — 1080×1920, 1:1 — 1080×1
 Формат выбирает владелец (set_format — только по его просьбе).
 Слои: add_layers / update_layer / remove_layers, наезды: set_camera (заменяет все ключи).
 Справка по слоям: get_motion_reference(format?); полный контракт — docs/motion/spec.md.
+3D/2D-анимация кодом — слой scene: get_scene_reference → preview_scene_frame(scene, t) → add_layers
+(docs/motion/scene-engine.md).
 Типовые заказы (нарезка стрима, промо, мемы) — плейбуки: get_playbook() — список, get_playbook(name) — шаги
 и чек-лист (то же — MCP prompts).
 Каждая правка делает снимок истории: владелец откатит её Ctrl+Z в редакторе."""
