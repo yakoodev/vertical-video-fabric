@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+from app import publish_master
 from app.ai.publish_meta import platform_texts
 from app.providers.registry import get_provider
 from app.publish_format import upload_extras
@@ -46,6 +47,17 @@ class JobWorker:
             return False
         self.store.mark_job_running(job["id"])
         fresh_job = self.store.get_job(job["id"])
+        # Мастер-файл для площадок (app/publish_master.py): один на задание, все площадки
+        # получают его; файл по спецификации уходит как есть. Сбой — исходный файл.
+        master = publish_master.prepare(Path(fresh_job["source_path"]))
+        try:
+            self._process_targets(fresh_job, master)
+        finally:
+            master.cleanup()
+        self.store.finish_job_from_targets(job["id"])
+        return True
+
+    def _process_targets(self, fresh_job: dict, master: publish_master.MasterResult) -> None:
         for target in fresh_job["targets"]:
             self.store.mark_target_running(target["id"])
             try:
@@ -61,7 +73,7 @@ class JobWorker:
                 title, description = platform_texts(self.store, fresh_job, target["platform"])
                 result = provider.upload(
                     cookies=cookies,
-                    file_path=Path(fresh_job["source_path"]),
+                    file_path=master.path,
                     title=title,
                     description=description,
                     privacy=fresh_job["privacy"],
@@ -79,6 +91,7 @@ class JobWorker:
                     except Exception:  # noqa: BLE001 - cookie refresh is best-effort
                         pass
                 payload = {k: v for k, v in result.__dict__.items() if k != "refreshed_cookies"}
+                payload["response"] = {**(payload.get("response") or {}), "master": master.summary()}
                 self.store.finish_target(target["id"], result.status, payload)
             except Exception as exc:  # noqa: BLE001 - target failures must be persisted
                 self.store.finish_target(
@@ -88,11 +101,9 @@ class JobWorker:
                         "remote_id": "",
                         "remote_url": "",
                         "error": _safe_error(exc),
-                        "response": {"error": type(exc).__name__},
+                        "response": {"error": type(exc).__name__, "master": master.summary()},
                     },
                 )
-        self.store.finish_job_from_targets(job["id"])
-        return True
 
 
 def _safe_error(exc: Exception) -> str:

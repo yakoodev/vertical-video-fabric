@@ -51,6 +51,18 @@ class Settings:
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+        # Мастер-файл для площадок перед выкладкой (app/publish_master.py): auto — чинить только
+        # то, что не по спецификации (без лишнего перекодирования), always — всегда заново в
+        # мастер, off — отдавать файл клипа как есть (как раньше).
+        self.publish_master_mode = os.getenv("PUBLISH_MASTER", "auto").strip().lower() or "auto"
+        self.publish_master_crf = float(os.getenv("PUBLISH_MASTER_CRF", "17") or 17)
+        self.publish_master_preset = os.getenv("PUBLISH_MASTER_PRESET", "medium").strip() or "medium"
+        # Длина GOP мастера, с: YouTube советует закрытый GOP в половину частоты кадров.
+        self.publish_master_gop_sec = float(os.getenv("PUBLISH_MASTER_GOP_SEC", "0.5") or 0.5)
+        self.publish_master_audio_bitrate = os.getenv("PUBLISH_MASTER_AUDIO_BITRATE", "320k").strip() or "320k"
+        # Ниже 1080p (720×1280 у ИИ-видео) — поднять до 1080 по короткой стороне: площадки
+        # раздают 1080p-версию только тем, кто прислал хотя бы 1080p.
+        self.publish_master_upscale = _truthy(os.getenv("PUBLISH_MASTER_UPSCALE", "true"))
         # Статистика опубликованных клипов (app/platform_stats.py): раз в N часов
         # по одной ссылке с паузой — площадки не любят частых запросов. 0 — без фона.
         self.stats_interval_hours = float(os.getenv("STATS_INTERVAL_HOURS", "6") or 0)
