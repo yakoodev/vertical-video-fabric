@@ -1,6 +1,6 @@
 """Линт качества клипа перед сдачей (``lint_clip``): то, что глазами проверять долго и ненадёжно.
 
-Закрывает строки 7, 8, 16, 17 docs/guides/missing.md. Четыре проверки (``CHECKS``):
+Закрывает строки 7, 8, 16, 17 docs/guides/missing.md. Пять проверок (``CHECKS``):
 
 * ``ui_zones`` — текст, субтитры (слой ``captions`` и прожигаемые ASS), плашка канала, эмодзи и
   стикеры против интерфейса площадок 9:16: колонка кнопок справа, подпись снизу (у Reels выше,
@@ -21,6 +21,8 @@
 * ``loop`` — насколько конец стыкуется с началом: разница последнего и первого кадра, уровень
   звука последних ~0.3 с против первых 0.3 с → оценка 0..1 и подсказки (``set_end_hold(0)``,
   подрезать хвост, убрать концовку-баннер). Без рендера — только подсказки по настройкам клипа.
+* `audio_mix` — сведение звука по стемам (app/audio_mix.py): музыка под речью тише голоса на 12–18 дБ,
+  звуки не закрывают слова, итог −14 LUFS и true peak ≤ −1 dBTP (по свежему рендеру или прогнозом).
 
 Только предупреждения: ничего не меняет и не блокирует. ``plan``-проверки (зоны, чтение,
 подсказки лупа) — без медиа, за доли секунды; ``flashes`` и оценка лупа — по последнему
@@ -37,11 +39,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("ui_zones", "reading", "flashes", "loop")
+CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
     "read": "reading", "reading_speed": "reading", "speed": "reading", "subtitles": "reading",
     "flash": "flashes", "strobe": "flashes", "photosensitive": "flashes", "loops": "loop",
+    "mix": "audio_mix", "audio": "audio_mix", "sound": "audio_mix", "loudness": "audio_mix", "music": "audio_mix",
 }
 MEDIA_CHECKS = ("flashes",)  # без рендера не проверить; loop без рендера — только подсказки
 
@@ -1196,6 +1199,24 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         if loop_info:
             out["loop"] = loop_info
 
+    if "audio_mix" in wanted:
+        # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
+        if mode == "no":
+            skipped["audio_mix"] = "проверка медиа выключена (media: false)"
+        else:
+            try:
+                from app.audio_mix import lint_findings, mix_report
+
+                report = mix_report(store, int(clip_plan_id))
+                findings += lint_findings(report)
+                out["audio_mix"] = {"summary": report.get("summary"),
+                                    "voice_vs_music_db": (report.get("voice_vs_music") or {}).get("diff_db"),
+                                    "lufs": ((report.get("final") or report.get("predicted") or {}).get("integrated")),
+                                    "true_peak": ((report.get("final") or report.get("predicted") or {})
+                                                  .get("true_peak"))}
+            except Exception as exc:  # noqa: BLE001 - нет файлов/ffmpeg — скажем, не упадём
+                skipped["audio_mix"] = f"сведение не измерено: {str(exc)[:200]}"
+
     for item in findings:
         if "t" in item and "final_t" not in item:
             try:
@@ -1212,7 +1233,8 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
 
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
-    labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп"}
+    labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
+              "audio_mix": "сведение звука"}
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:

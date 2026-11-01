@@ -938,29 +938,24 @@ def video_sound_item(layer: dict, path: str, duration: float, file_duration: flo
     }, None
 
 
-def build_audio_layers_args(
-    clip_path: Path,
-    output_path: Path,
+def audio_layer_items(
     layers: list[dict],
     assets: dict[str, str],
     duration: float,
-    clip_has_audio: bool = True,
     speech_db: float | None = None,
     speechless: bool = False,
     probe: Callable[[Path], tuple[float, bool]] | None = None,
     notes: list[str] | None = None,
-) -> list[str] | None:
-    """Подмешать звуки ``audio``-слоёв и звук ``video``-слоёв с ``props.audio`` (видео копией).
+    mix: dict | None = None,
+) -> list[dict]:
+    """Звуки слоёв, которые прозвучат: ``[{path, start, end, len, offset, read, loop, tempo, volume,
+    fade_in, fade_out, duck, track, layer_id, role}]`` — одна правда для рендера
+    (``build_audio_layers_args``) и замера сведения (app/audio_mix.py).
 
-    ``speechless`` — в клипе нет речи (effect_gain_db: эффект чуть ниже громких мест).
-
-    Каждый звук: с ``offset`` секунды файла, громкость, fadeIn/fadeOut, сдвиг на
-    ``start`` клипа (adelay). ``duck`` приглушает исходник на время звука. Эффект
-    (audio, mode effect) сначала подгоняется под голос клипа; дорожка (audio mode track,
-    звук video) — нет: volume × gain_db, края с фейдом TRACK_EDGE_FADE (итог всё равно
-    выравнивает финальная нормализация клипа). ``probe`` — (длина, есть ли звук) файла
-    video-слоя; ``notes`` — куда сказать, почему звук слоя не подмешан. None — нечего.
-    """
+    Эффект (audio, mode effect) сначала подгоняется под голос клипа (``speech_db``); дорожка (audio
+    mode track, звук video) — нет: volume × gain_db, края с фейдом TRACK_EDGE_FADE. ``mix`` —
+    ``render_settings.mix`` (app/audio_mix.normalize_mix): поправки громкости слоёв поверх всего."""
+    from app.audio_mix import layer_role, mix_layer_gain_db
     from app.motion import has_layer_sound, is_track_audio, track_gain
 
     probe = probe or _probe_sound
@@ -973,6 +968,7 @@ def build_audio_layers_args(
         path = assets.get(asset_key(props.get("asset_id")))
         if not path:
             continue
+        role = layer_role(layer, duration)
         if layer["type"] == "video":
             if path not in probed:
                 try:
@@ -984,7 +980,7 @@ def build_audio_layers_args(
             if note and notes is not None:
                 notes.append(note)
             if item:
-                usable.append(item)
+                usable.append({**item, "layer_id": str(layer.get("id") or ""), "role": role})
             continue
         start = float(layer["start"])
         end = min(float(layer["end"]), float(duration))
@@ -1002,42 +998,86 @@ def build_audio_layers_args(
             "volume": track_gain(props) if track
             else effect_volume(path, props.get("volume", 1), speech_db, speechless),
             "fade_in": fade_in, "fade_out": fade_out, "duck": bool(props.get("duck")), "track": track,
+            "layer_id": str(layer.get("id") or ""), "role": role,
         })
+    for item in usable:
+        extra = mix_layer_gain_db(mix, item["layer_id"], item["role"])
+        if extra:
+            item["volume"] = item["volume"] * 10 ** (extra / 20)
+            item["mix_db"] = extra
+    return usable
+
+
+def audio_item_inputs(item: dict) -> list[str]:
+    """Аргументы входа ffmpeg звука слоя: с какой секунды файла и сколько читать."""
+    args: list[str] = []
+    if item["offset"] > 0:
+        args += ["-ss", f"{item['offset']:.3f}"]
+    if item["read"] is not None:
+        args += ["-t", f"{item['read']:.3f}"]
+    return args + ["-i", item["path"]]
+
+
+def audio_item_chain(n: int, item: dict, delay: bool = True) -> str:
+    """Цепочка звука слоя со входа ``n`` (без выходной метки): громкость, фейды, сдвиг на ``start``."""
+    length = item["len"]
+    # Звуки пака — моно: без стерео на входе amix сводил ВСЁ в моно (клип 575: музыка
+    # потеряла стерео, а громкость потом мерилась уже по моно-дорожке).
+    chain = [f"[{n}:a]aresample=48000", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS"]
+    if item["loop"]:
+        # Петля видео: от from до конца файла по кругу (как loop картинки).
+        chain.append(f"aloop=loop=-1:size={max(1, int(round(item['loop'] * 48000)))}")
+    if abs(item["tempo"] - 1.0) >= 1e-3:
+        chain.append(f"atempo={item['tempo']:.4f}")
+    if item["loop"] or abs(item["tempo"] - 1.0) >= 1e-3:
+        # Ровно длина слоя в клипе (петля бесконечна, atempo округляет).
+        chain += [f"atrim=0:{length:.3f}", "asetpts=PTS-STARTPTS"]
+    chain.append(f"volume={item['volume']:.4f}")
+    if item["fade_in"] > 0:
+        chain.append(f"afade=t=in:st=0:d={item['fade_in']:.3f}")
+    if item["fade_out"] > 0:
+        chain.append(f"afade=t=out:st={max(0.0, length - item['fade_out']):.3f}:d={item['fade_out']:.3f}")
+    if delay:
+        chain.append(f"adelay=delays={int(round(item['start'] * 1000))}:all=1")
+    return ",".join(chain)
+
+
+def build_audio_layers_args(
+    clip_path: Path,
+    output_path: Path,
+    layers: list[dict],
+    assets: dict[str, str],
+    duration: float,
+    clip_has_audio: bool = True,
+    speech_db: float | None = None,
+    speechless: bool = False,
+    probe: Callable[[Path], tuple[float, bool]] | None = None,
+    notes: list[str] | None = None,
+    mix: dict | None = None,
+) -> list[str] | None:
+    """Подмешать звуки ``audio``-слоёв и звук ``video``-слоёв с ``props.audio`` (видео копией).
+
+    ``speechless`` — в клипе нет речи (effect_gain_db: эффект чуть ниже громких мест).
+
+    Каждый звук: с ``offset`` секунды файла, громкость, fadeIn/fadeOut, сдвиг на
+    ``start`` клипа (adelay). ``duck`` приглушает исходник на время звука. Что и как громко —
+    ``audio_layer_items`` (там же правило эффекта и дорожки); итог всё равно выравнивает
+    финальная нормализация клипа. ``probe`` — (длина, есть ли звук) файла video-слоя; ``notes`` —
+    куда сказать, почему звук слоя не подмешан; ``mix`` — ``render_settings.mix``. None — нечего.
+    """
+    usable = audio_layer_items(layers, assets, duration, speech_db, speechless, probe, notes, mix)
     if not usable:
         return None
 
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(clip_path)]
     for item in usable:
-        if item["offset"] > 0:
-            args += ["-ss", f"{item['offset']:.3f}"]
-        if item["read"] is not None:
-            args += ["-t", f"{item['read']:.3f}"]
-        args += ["-i", item["path"]]
+        args += audio_item_inputs(item)
 
     graph: list[str] = []
     parts: list[str] = []
     ducks: list[str] = []
     for n, item in enumerate(usable, start=1):
-        length = item["len"]
-        # Звуки пака — моно: без стерео на входе amix сводил ВСЁ в моно (клип 575: музыка
-        # потеряла стерео, а громкость потом мерилась уже по моно-дорожке).
-        chain = [f"[{n}:a]aresample=48000", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS"]
-        if item["loop"]:
-            # Петля видео: от from до конца файла по кругу (как loop картинки).
-            chain.append(f"aloop=loop=-1:size={max(1, int(round(item['loop'] * 48000)))}")
-        if abs(item["tempo"] - 1.0) >= 1e-3:
-            chain.append(f"atempo={item['tempo']:.4f}")
-        if item["loop"] or abs(item["tempo"] - 1.0) >= 1e-3:
-            # Ровно длина слоя в клипе (петля бесконечна, atempo округляет).
-            chain += [f"atrim=0:{length:.3f}", "asetpts=PTS-STARTPTS"]
-        chain.append(f"volume={item['volume']:.4f}")
-        if item["fade_in"] > 0:
-            chain.append(f"afade=t=in:st=0:d={item['fade_in']:.3f}")
-        if item["fade_out"] > 0:
-            chain.append(f"afade=t=out:st={max(0.0, length - item['fade_out']):.3f}:d={item['fade_out']:.3f}")
-        delay = int(round(item["start"] * 1000))
-        chain.append(f"adelay=delays={delay}:all=1")
-        graph.append(",".join(chain) + f"[a{n}]")
+        graph.append(audio_item_chain(n, item) + f"[a{n}]")
         parts.append(f"[a{n}]")
         if item["duck"]:
             ducks.append(f"between(t,{item['start']:.3f},{item['end']:.3f})")

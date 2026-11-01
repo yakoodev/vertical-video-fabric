@@ -310,6 +310,34 @@ def h_set_audio_fx(ctx: Any, args: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Сведение: замер и автосведение (app/audio_mix.py)
+# --------------------------------------------------------------------------- #
+
+MIX_NOTE = ("Цифры — по стемам клипа ровно так, как их сведёт рендер (голос-слои, звук исходника, музыка, звуки, "
+            "звук видео-слоёв); итог ролика — по свежему рендеру, иначе прогноз финального прохода. Главное — "
+            "voice_vs_music.diff_db: насколько речь громче музыки ТАМ, ГДЕ ГОВОРЯТ (норма ≥ 12, цель 15–18 дБ). "
+            "verdicts — что не так и как поправить (suggest — готовый вызов). Время — шкала clip.")
+
+
+def h_audio_mix_report(ctx: Any, args: dict) -> dict:
+    from app.audio_mix import mix_report
+
+    at = _at()
+    try:
+        out = mix_report(ctx.store, ctx.plan_id, render_id=args.get("render_id"),
+                         use_render=args.get("use_render", True) is not False)
+    except (ValueError, KeyError) as exc:
+        raise at.ToolError(f"audio_mix_report: {exc}") from exc
+    if not args.get("timeline"):
+        line = (out.get("timeline") or {}).get("line")
+        out["timeline"] = {"line": line, "step_sec": (out.get("timeline") or {}).get("step_sec"),
+                           "line_scale": (out.get("timeline") or {}).get("line_scale"),
+                           "note": "timeline=true — числа short-term по шагу"}
+    out["note"] = MIX_NOTE
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Реестр
 # --------------------------------------------------------------------------- #
 
@@ -397,5 +425,21 @@ def tools() -> list:
                 "keep_pitch": {"type": "boolean"}, "at_word": at._AT_WORD_SCHEMA,
                 "duration": {"type": "number"}}, ["fx"])}}, ["fx"]),
             h_set_audio_fx, mutating=True, label=lambda a: f"Звуковые эффекты ({len(a.get('fx') or [])})",
+        ),
+        Tool(
+            "audio_mix_report", "Слушаю сведение",
+            "ЗВУК ГЛАЗАМИ: громко ли музыка под голосом, не тонут ли слова под звуками, готов ли ролик по громкости. "
+            "Раскладывает звук клипа на стемы так, как их сведёт рендер (голос-слои / звук исходника / музыка / звуки "
+            "/ звук видео-слоёв) и меряет ffmpeg ebur128: integrated LUFS и true peak каждого стема, short-term по "
+            "времени, и ГЛАВНОЕ — голос против музыки только там, где говорят (voice_vs_music.diff_db: норма ≥ 12 дБ, "
+            "цель 15–18), звуки против речи (voice_vs_sfx.masking_at, layers[].excess_db), итог ролика (−14 LUFS, "
+            "true peak ≤ −1 dBTP) по свежему рендеру или прогнозом, клиппинг, дыры тишины. verdicts — по-русски, "
+            "с готовой поправкой (suggest: auto_mix или set_mix с числами). Зови после сборки звука и перед "
+            "сдачей; исправляет auto_mix. render_id — какой рендер мерить (по умолчанию свежий последний); "
+            "use_render=false — только модель; timeline=true — числа short-term. / Loudness & mix report by stems: "
+            "voice-vs-music under speech, sfx masking, LUFS, true peak.",
+            obj({"render_id": {"type": "integer"}, "use_render": {"type": "boolean"},
+                 "timeline": {"type": "boolean", "description": "числа short-term LUFS по времени"}}),
+            h_audio_mix_report, label=lambda a: "Слушаю сведение",
         ),
     ]

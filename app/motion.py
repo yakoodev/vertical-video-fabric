@@ -182,6 +182,7 @@ VIDEO_AUDIO_MAX_SPEED = 2.0
 # volume — только «тише» (≤ EFFECT_MAX_VOLUME). Дорожка (audio mode track, звук video) —
 # без автоподгонки: volume × gain_db, вместе не громче TRACK_MAX_GAIN_DB.
 AUDIO_MODES = ("effect", "track")
+AUDIO_ROLES = ("voice", "music", "sfx", "ambience")
 EFFECT_MAX_VOLUME = 1.0
 TRACK_MIN_GAIN_DB = -30.0
 TRACK_MAX_GAIN_DB = 12.0
@@ -736,6 +737,7 @@ PROPS: dict[str, dict] = {
         "audio": Opt(Flag(False)),
         "volume": Opt(Num(1, 0, 2, 3)),
         "gain_db": Opt(Num(0, TRACK_MIN_GAIN_DB, TRACK_MAX_GAIN_DB, 2)),
+        "role": Opt(Choice("ambience", AUDIO_ROLES)),
     },
     "emoji": {"char": Text("", 32), "size": Num(160, 12, 1000, 1)},
     # Частицы одним слоем; необязательные поля движок берёт по виду (burst — разлёт 1.2 с с тяжестью…).
@@ -894,6 +896,9 @@ PROPS: dict[str, dict] = {
         "fadeOut": Num(0, 0, 10, 3),
         "offset": Num(0, 0, MAX_TIME_SEC, 3),
         "duck": Flag(False),
+        # Роль звука в сведении (app/audio_mix.py): voice — голос/озвучка, music, sfx, ambience — фон.
+        # Нет поля — по имени слоя и длине (audio_mix.layer_role).
+        "role": Opt(Choice("sfx", AUDIO_ROLES)),
     },
     # Аватар владельца, который «говорит»: состояние (idle/talk/shout) по громкости голоса
     # дорожки — сервер считает его по кадрам (app/pngtuber.py) и отдаёт движку массивом

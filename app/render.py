@@ -2453,10 +2453,51 @@ def _music_hold(music: dict) -> float:
     return hold if hold > 0 and duration > 0 and math.isfinite(hold) else 0.0
 
 
+def _music_sidechain(music: dict, music_label: str, key_label: str, out_label: str) -> str:
+    """Мягкий ducking музыки под речью (sidechain по звуку клипа): только заметная речь тянет
+    музыку вниз, под ней она остаётся слышна. ``duck_amount`` — глубина."""
+    duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
+    ratio = _ff_number(1.5 + duck_amount * 3.5)
+    return (f"[{music_label}][{key_label}]sidechaincompress=threshold=0.1:ratio={ratio}:attack=20:release=400:"
+            f"makeup=1[{out_label}]")
+
+
+def music_wants_sidechain(music: dict) -> bool:
+    """Sidechain под речью: включён в пресете (duck) и не снят сведением (mix.sidechain false)."""
+    return bool(music.get("duck")) and music.get("sidechain") is not False
+
+
+def music_stem_filter(music: dict) -> str:
+    """Только музыка — как она прозвучит в ролике (громкость, старт, ключи, ducking по звуку
+    клипа ``[0:a]``), без самого звука клипа: стем для замера сведения (app/audio_mix.py).
+    Выход ``[aout]``."""
+    _voice_chain, _voice, music_str = _music_chain({**music, "hold_sec": 0})
+    if music_wants_sidechain(music):
+        return f"{music_str};[0:a]aresample=48000[key];" + _music_sidechain(music, "music", "key", "aout")
+    return f"{music_str};[music]anull[aout]"
+
+
 def _music_filter(music: dict) -> str:
     """Граф музыки поверх клипа. ``hold_sec`` — стоп-кадр в конце: голос клипа
     затухает на своём конце (как end_fade_filter) и дотягивается тишиной, а музыка
     играет дальше и затухает к концу стоп-кадра — фейд кончается в самом конце файла."""
+    _voice_chain, voice, music_str = _music_chain(music)
+    if music_wants_sidechain(music):
+        return (
+            f"{music_str};"
+            f"{voice}asplit=2[spk][key];"
+            + _music_sidechain(music, "music", "key", "ducked") + ";"
+            "[spk][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
+        )
+    return (
+        f"{music_str};"
+        f"{voice}[music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
+    )
+
+
+def _music_chain(music: dict) -> tuple[str, str, str]:
+    """(граф голоса со стоп-кадром — или пусто, метка голоса, граф музыки до ``[music]``; граф
+    голоса уже входит в граф музыки)."""
     volume = max(0.0, float(music.get("volume") if music.get("volume") is not None else 0.25))
     fade_in = max(0.0, float(music.get("fade_in_sec") or 0))
     fade_out = max(0.0, float(music.get("fade_out_sec") or 0))
@@ -2472,8 +2513,6 @@ def _music_filter(music: dict) -> str:
         # Затухание музыки — на весь стоп-кадр (или дольше, если так задано в пресете).
         fade_out = max(fade_out, hold)
         duration = total
-    duck = bool(music.get("duck"))
-    duck_amount = max(0.0, min(1.0, float(music.get("duck_amount") if music.get("duck_amount") is not None else 0.6)))
 
     start_sec = max(0.0, float(music.get("start_sec") or 0))
     music_chain = [f"volume={_ff_number(volume)}"]
@@ -2490,22 +2529,7 @@ def _music_filter(music: dict) -> str:
     if fade_out > 0 and duration > 0:
         start = max(0.0, duration - fade_out)
         music_chain.append(f"afade=t=out:st={_ff_number(start)}:d={_ff_number(fade_out)}")
-    music_str = voice_chain + ",".join(music_chain) + "[music]"
-
-    if duck:
-        # Gentle, musical ducking: only noticeable speech pulls the music down and
-        # the music stays clearly audible underneath. duck_amount tunes the depth.
-        ratio = _ff_number(1.5 + duck_amount * 3.5)
-        return (
-            f"{music_str};"
-            f"{voice}asplit=2[spk][key];"
-            f"[music][key]sidechaincompress=threshold=0.1:ratio={ratio}:attack=20:release=400:makeup=1[ducked];"
-            "[spk][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
-        )
-    return (
-        f"{music_str};"
-        f"{voice}[music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=48000[aout]"
-    )
+    return voice_chain, voice, voice_chain + ",".join(music_chain) + "[music]"
 
 
 def _resolve_music_settings(store: AppStore, preset: dict) -> dict | None:
