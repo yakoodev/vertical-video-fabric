@@ -5,6 +5,10 @@ edits are never clobbered and new pack items appear on upgrade.
 
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 # FFmpeg render presets ("looks"/filters). Fields map to create_ffmpeg_preset.
 DEFAULT_FFMPEG_PRESETS = [
     {"label": "Чистый 9:16", "scale_mode": "cover", "color_style": "none"},
@@ -92,8 +96,8 @@ def seed_music(store) -> None:
                 label, dest, original_filename=item["file"], mime_type="audio/mpeg",
                 duration_sec=float(item.get("duration") or 0), volume=0.5,
             )
-        except Exception:  # noqa: BLE001 - never let seeding break startup
-            pass
+        except Exception as exc:  # noqa: BLE001 - never let seeding break startup
+            _log.warning("default pack: music %r not seeded: %s", label, exc)
 
 
 # Пример бренда: реклама магазина VTuber-моделей. Без логотипа и трека — их владелец
@@ -127,8 +131,8 @@ def seed_default_brand(store) -> None:
             except ValueError:  # шрифта нет в паке — пример без своего шрифта
                 store.create_brand(DEFAULT_BRAND["name"], **{**spec, "font": ""})
         store.set_app_setting(BRAND_SEED_KEY, True)
-    except Exception:  # noqa: BLE001 - never let seeding break startup
-        pass
+    except Exception as exc:  # noqa: BLE001 - never let seeding break startup
+        _log.warning("default pack: brand %r not seeded: %s", DEFAULT_BRAND["name"], exc)
 
 
 def seed_default_pack(store) -> None:
@@ -139,8 +143,8 @@ def seed_default_pack(store) -> None:
             continue
         try:
             store.create_ffmpeg_preset(spec["label"], **{k: v for k, v in spec.items() if k != "label"})
-        except Exception:  # noqa: BLE001 - never let seeding break startup
-            pass
+        except Exception as exc:  # noqa: BLE001 - never let seeding break startup
+            _log.warning("default pack: render look %r not seeded: %s", spec["label"], exc)
 
     have_subs = {s.get("label") for s in store.list_subtitle_profiles()}
     for spec in DEFAULT_SUBTITLE_PROFILES:
@@ -148,5 +152,6 @@ def seed_default_pack(store) -> None:
             continue
         try:
             store.create_subtitle_profile(spec["label"], **{k: v for k, v in spec.items() if k != "label"})
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 - never let seeding break startup
+            # Раньше ошибка глоталась молча — и на чистой установке стилей не было вовсе.
+            _log.warning("default pack: subtitle style %r not seeded: %s", spec["label"], exc)
