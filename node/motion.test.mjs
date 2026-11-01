@@ -1882,6 +1882,28 @@ const gradientBase = (ctx) => {
   for (let x = 0; x < 540; x += 60) ctx.fillRect(x, 0, 20, 960);
 };
 
+test("fx grayscale: ч/б на отрезке — насыщенность 0 при intensity 1, полуцвет при 0.5, ключи scale гасят; слои выше цветные", () => {
+  const top = { ...textLayer(), id: "top", type: "shape", track: 3, x: 0.5, y: 0.2, props: { kind: "rect", w: 300, h: 200, fill: "#00ff00" } };
+  const under = { ...textLayer(), id: "under", type: "shape", track: 0, x: 0.5, y: 0.6, props: { kind: "ellipse", w: 500, h: 500, fill: "#ff00ff" } };
+  const bw = (over = {}) => ({ ...textLayer(), id: "bw", type: "fx", track: 1, start: 10.5, end: 12, props: { kind: "grayscale", ...over } });
+  const at = (d, x, y) => [...d.slice((y * 540 + x) * 4, (y * 540 + x) * 4 + 3)];
+  const spread = (rgb) => Math.max(...rgb) - Math.min(...rgb);
+  const full = pixels([under, bw(), top], 11, {}, gradientBase);
+  assert.ok(same(full, pixels([under, bw(), top], 11, {}, gradientBase)), "превью == рендер");
+  const color = pixels([under, top], 11, {}, gradientBase);
+  assert.ok(spread(at(color, 270, 576)) > 200, "без эффекта — пурпурный");
+  assert.ok(spread(at(full, 270, 576)) <= 3, `intensity 1 — серый: ${at(full, 270, 576)}`);
+  assert.ok(spread(at(full, 40, 40)) <= 3, "фон кадра тоже ч/б");
+  const half = pixels([under, bw({ intensity: 0.5 }), top], 11, {}, gradientBase);
+  const hs = spread(at(half, 270, 576));
+  assert.ok(hs > 40 && hs < 200, `intensity 0.5 — полуцвет: ${hs}`);
+  assert.deepEqual(at(full, 270, 192), [0, 255, 0], "слой выше по дорожке — цветной");
+  const keyed = { ...bw(), keys: { scale: [{ t: 0, v: 0 }, { t: 1.5, v: 0 }] } };
+  assert.ok(same(pixels([under, keyed, top], 11, {}, gradientBase), color), "scale 0 — без эффекта");
+  assert.ok(same(pixels([under, bw(), top], 12.5, {}, gradientBase), pixels([under, top], 12.5, {}, gradientBase)), "после end цвет вернулся");
+  assert.equal(E.FX_DEFAULTS.grayscale.intensity, 1);
+});
+
 test("glitch/scramble — только у текста (у прочих fade), циклы glitch/wave — shake/float, stomp — у любого", () => {
   const shape = (over) => ({ ...textLayer(), type: "shape", props: { kind: "rect" }, ...over });
   const g = E.resolveLayer(shape({ in: { type: "glitch", duration: 1 } }), 10.5);

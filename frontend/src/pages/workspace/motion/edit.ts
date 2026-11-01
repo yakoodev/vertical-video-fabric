@@ -297,4 +297,5 @@ export const FX_TITLES: Record<string, string> = {
   tear: "Глитч: разрывы строк",
   datamosh_lite: "Глитч: датамош",
   pixel_sort_lite: "Глитч: штрихи пикселей",
+  grayscale: "Ч/б",
 };

@@ -29,6 +29,7 @@ export const FX_KINDS: FxKind[] = [
   "tear",
   "datamosh_lite",
   "pixel_sort_lite",
+  "grayscale",
 ];
 
 /** Сила и наложение по умолчанию у каждого вида. */
@@ -43,6 +44,7 @@ export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }
   tear: { intensity: 0.7, blend: "normal" },
   datamosh_lite: { intensity: 0.6, blend: "normal" },
   pixel_sort_lite: { intensity: 0.6, blend: "normal" },
+  grayscale: { intensity: 1, blend: "normal" },
 };
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -331,6 +333,26 @@ function vhs({ ctx, env, fx, local, alpha, k }: FxCtx): void {
   }
 }
 
+function grayscale({ ctx, env, fx, alpha }: FxCtx): void {
+  // Ч/б на отрезке (панчлайн): копия кадра → режим «saturation» серым (насыщенность 0, яркость
+  // та же) с силой intensity → обратно по альфе исходной копии. Без getImageData и ctx.filter —
+  // одинаково в браузере и в Skia; сила по времени — ключи scale слоя (масштаб умножает силу).
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const c = b.chan.ctx;
+  reset(c, b.w, b.h);
+  c.drawImage(src(b.frame.canvas), 0, 0);
+  c.globalCompositeOperation = "saturation";
+  c.globalAlpha = clamp01(fx.intensity);
+  c.fillStyle = "#808080";
+  c.fillRect(0, 0, b.w, b.h);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = "destination-in";
+  c.drawImage(src(b.frame.canvas), 0, 0);
+  ctx.globalAlpha = clamp01(alpha);
+  ctx.drawImage(src(b.chan.canvas), 0, 0, env.width, env.height);
+}
+
 /* ---------- глитч на отрезке (add_glitch) ---------- */
 
 function rgbSplit({ ctx, env, fx, local, alpha, k }: FxCtx): void {
@@ -521,6 +543,7 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   tear,
   datamosh_lite: datamoshLite,
   pixel_sort_lite: pixelSortLite,
+  grayscale,
 };
 
 /**

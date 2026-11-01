@@ -195,3 +195,17 @@ def test_render_and_api_pass_levels(tmp_path, monkeypatch):
     assert set(body["levels"]) == {"voice"} and body["scale"] == "clip" and body["levels"]["voice"]["fps"] == 20
     saved = client.post(f"/api/clip-plans/{plan['id']}/levels", json={})
     assert set(saved.json()["levels"]) == {"voice"}  # нет sources — по react сохранённых слоёв
+
+
+def test_fx_grayscale_kind_and_aliases_for_punchline_bw():
+    """QA 01.11: «ч/б на панчлайн» нечем было сделать — агент поставил VHS до конца ролика."""
+    assert "grayscale" in motion.FX_KINDS
+    for alias in ("bw", "monochrome", "desaturate"):
+        clean = normalize_layers([{"id": "bw", "type": "fx", "start": 28, "end": 29.5,
+                                   "props": {"kind": alias, "intensity": 1}}])
+        assert clean[0]["props"]["kind"] == "grayscale" and clean[0]["props"]["intensity"] == 1
+    ok = [{"id": "bw", "type": "fx", "start": 28, "end": 29.5, "props": {"kind": "grayscale"},
+           "in": {"type": "fade", "duration": 0.2}, "out": {"type": "fade", "duration": 0.2},
+           "keys": {"scale": [{"t": 0, "v": 0}, {"t": 0.3, "v": 1}]}}]
+    assert not [p for p in validate_layers(ok) if "grayscale" in p]
+    assert normalize_layers(ok)[0]["keys"]["scale"][1]["v"] == 1
