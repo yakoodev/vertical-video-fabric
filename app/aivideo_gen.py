@@ -353,10 +353,23 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
                     out.append(_image_item(stage, "look", look["id"], "look", f"{c['name']}: облик «{look['name']}»",
                                            model, quality, provider))
     elif stage == "keyframes":
-        for shot in script["shots"]:
+        # По порядку: кадр плана N рисуется с последним кадром (или кадром) плана N−1 референсом.
+        shots = script["shots"]
+        for n, shot in enumerate(shots):
             if shot["locked"] and not explicit:
                 continue
             ref = V.selected_ref(store, project_id, "shot", shot["id"], "keyframe")
+            prev = shots[n - 1] if n else None
+            if _is_chain(shot, prev):
+                # Сцена продолжается после видео: старт — последний кадр того видео, рисовать не надо.
+                prev_video = _fresh_video(store, project_id, prev)
+                if prev_video and (not ref or ref.get("prompt") != f"chain:{prev_video['id']}" or ref["stale"]):
+                    out.append({**_chain_item(shot, prev, script["id"]), "stage": "keyframes"})
+                elif not prev_video:
+                    out.append({**_chain_item(shot, prev, script["id"]), "stage": "keyframes",
+                                "skipped": f"план {shot['idx']}: кадр возьмётся из последнего кадра видео плана "
+                                           f"{prev['idx']} на этапе video (0 ₽)"})
+                continue
             if need(ref, "shot", shot["id"], "keyframe"):
                 item = _image_item(stage, "shot", shot["id"], "keyframe", f"план {shot['idx']}", model, quality,
                                    provider)
@@ -451,8 +464,9 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
     """Оценка этапа (бесплатно, ничего не запускает)."""
     V.require_project(store, project_id)
     raw = plan_stage(store, project_id, stage, script_id, items, regenerate)
-    planned = [i for i in raw if not i.get("blocked")]
+    planned = [i for i in raw if not i.get("blocked") and not i.get("skipped")]
     blocked = [i["blocked"] for i in raw if i.get("blocked")]
+    notes = [i["skipped"] for i in raw if i.get("skipped")]
     total = round(sum(i["estimate_rub"] for i in planned), 2)
     paid = any(i["provider"] != "none" for i in planned)
     problems = cap_problems(store, project_id, script_id, total, stage) if paid else []
@@ -477,6 +491,7 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
                         "grok-imagine-video-1-5); решает владелец")
     return {"stage": stage, "stage_label": STAGE_LABELS[stage], "project_id": int(project_id), "script_id": script_id,
             "items": planned, "count": len(planned), "total_rub": total, "paid": paid, "blocked": blocked,
+            "notes": notes, "continuity": continuity_flags(store, script_id) if script_id is not None else [],
             "provider": provider, "model": model, "problems": problems,
             "budget": budget_view(store, project_id, script_id), "note": note}
 
@@ -513,6 +528,11 @@ def _card_question(store: Any, project: dict, est: dict, script: dict | None) ->
                     if bud.get("episode") else "") + ".")
     names = [i["label"] for i in est["items"][:8]]
     lines.append("Что: " + "; ".join(names) + (f" и ещё {est['count'] - 8}" if est["count"] > 8 else ""))
+    bad = [f for f in est.get("continuity") or [] if not f["ok"] and not f["outdated"]]
+    if bad:
+        lines.append("⚠ Склейки (Gemini): " + "; ".join(
+            f"план {f['idx']} — " + (", ".join(m["detail"] for m in f["mismatches"][:2]) or f"оценка {f['score']}")
+            for f in bad[:4]) + ". Можно сначала перерисовать эти кадры (дёшево).")
     if not settings.aivideo_enabled:
         lines.append("⚠ AIVIDEO_ENABLED=0 — запустится после включения владельцем.")
     lines.append("Разрешить эту сумму?")
@@ -523,7 +543,16 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
                   regenerate: bool = False, requested_by: str = "agent", note: str = "") -> dict:
     """Этап: сухой прогон — сразу (0 ₽); платно — карточка владельцу с суммой (жди решения)."""
     project = V.require_project(store, project_id)
+    continuity = None
+    if stage == "video" and script_id is not None:
+        # Бесплатная проверка склеек ДО платного видео: несоответствия — на раскадровку и в карточку.
+        try:
+            continuity = check_continuity(store, int(script_id))
+        except Exception as exc:  # noqa: BLE001 - Gemini недоступен: этап не блокируем
+            continuity = {"ok": False, "skipped": True, "note": f"проверка склеек не удалась: {exc}"[:300]}
     est = estimate(store, project_id, stage, script_id, items, regenerate)
+    if continuity is not None:
+        est["continuity_check"] = continuity
     if est["blocked"]:
         raise V.AivError("этап не запрошен: " + "; ".join(est["blocked"]))
     if not est["items"]:
@@ -676,6 +705,45 @@ def _canon_refs(store: Any, project_id: int, character: dict) -> list[Path]:
     return paths
 
 
+def _sheet_refs(store: Any, project_id: int, character: dict) -> list[Path]:
+    """Листы персонажа для кадра: разворот + эмоции (+ последняя картинка владельца)."""
+    paths = []
+    for kind in ("turnaround", "expressions"):
+        p = _asset_path(store, V.selected_ref(store, project_id, "character", character["id"], kind))
+        if p:
+            paths.append(p)
+    uploads = [p for p in (_asset_path(store, r) for r in
+                           V.list_refs(store, project_id, "character", character["id"], "upload")) if p]
+    return paths + uploads[-1:]
+
+
+def video_last_frame(store: Any, ref: dict | None) -> Path | None:
+    """Последний кадр видео-версии (кэш рядом с файлом видео)."""
+    from app.aivideo_providers import last_frame
+
+    src = _asset_path(store, ref)
+    if src is None:
+        return None
+    dest = src.with_name(f"{src.stem}.last.jpg")
+    if not dest.is_file():
+        try:
+            last_frame(src, dest)
+        except ProviderError:
+            return None
+    return dest
+
+
+def _prev_frame(store: Any, project_id: int, prev: dict | None) -> tuple[Path | None, str]:
+    """Последний кадр прошлого плана: его видео, если есть, иначе его выбранный кадр."""
+    if not prev:
+        return None, ""
+    frame = video_last_frame(store, _fresh_video(store, project_id, prev))
+    if frame is not None:
+        return frame, "last frame"
+    path = _asset_path(store, V.selected_ref(store, project_id, "shot", int(prev["id"]), "keyframe"))
+    return (path, "keyframe") if path else (None, "")
+
+
 def _style_paths(store: Any, project_id: int, limit: int = 1) -> list[Path]:
     paths = []
     for ref in V.list_refs(store, project_id, "style", 0):
@@ -741,19 +809,29 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
         shot = V.get_shot(store, target_id)
         cam = shot["camera"]
         parts = [f"{st}. Vertical 9:16 film still (keyframe) of shot {shot['idx']}."]
+        # Сцепка: первый референс — последний кадр прошлого плана (его видео) или его кадр.
+        prev, _nxt = _neighbors(store, shot)
+        prev_frame, prev_kind = _prev_frame(store, project_id, prev)
+        if prev_frame is not None:
+            parts.append(f"The FIRST reference image is the {prev_kind} of the previous shot {prev['idx']}: keep the "
+                         "same characters, faces, clothing, props, lighting and color continuous with it"
+                         + (" — this shot continues the same scene." if shot.get("continues_from_prev") else
+                            " (new angle or moment, same world).") )
+        state = V.state_text(store, project_id, shot.get("state") or {})
+        if state:
+            parts.append(f"Continuity state at the start of this shot (must match exactly): {state}.")
         framing = ", ".join(x for x in (str(cam.get("shot") or "medium").replace("_", " ") + " shot",
                                         f"{cam['angle']} angle" if cam.get("angle") else "",
                                         f"{cam['lens']}mm lens" if cam.get("lens") else "") if x)
         parts.append(f"Camera: {framing}.")
         loc = V.location_by_slug(store, project_id, shot["location"]) if shot["location"] else None
+        plate_path = None
         if loc:
             parts.append(f"Location «{loc['name']}»: {loc['description']} (match the location reference).")
-            plate = V.selected_ref(store, project_id, "location", loc["id"], "location")
-            p = _asset_path(store, plate)
-            if p:
-                refs.append(p)
+            plate_path = _asset_path(store, V.selected_ref(store, project_id, "location", loc["id"], "location"))
             caption.append(loc["name"])
         names = []
+        char_refs: list[Path] = []
         for member in shot["cast"]:
             c = V.character_by_slug(store, project_id, member["id"])
             if not c:
@@ -761,15 +839,17 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
             names.append(c["name"])
             text = _identity(c)
             look = next((l for l in c["looks"] if l["slug"] == member.get("look")), None)
+            char_refs += _sheet_refs(store, project_id, c)
             if look:
                 text += f"; outfit/state: {look['outfit_text']}"
                 lp = _asset_path(store, V.selected_ref(store, project_id, "look", look["id"], "look"))
                 if lp:
-                    refs.append(lp)
+                    char_refs.append(lp)
             if member.get("action"):
                 text += f"; doing: {member['action']}"
             parts.append(text + ".")
-            refs = _canon_refs(store, project_id, c)[-2:] + refs
+        # Порядок важен (лишнее срезается с конца): прошлый кадр → листы персонажей → плита → стиль.
+        refs = ([prev_frame] if prev_frame is not None else []) + char_refs + ([plate_path] if plate_path else [])
         emotions = ", ".join(d["emotion"] for d in shot["dialogue"] if d.get("emotion"))
         if shot["action"]:
             parts.append(f"Action: {shot['action']}.")
@@ -1061,11 +1141,11 @@ def build_video_prompt(store: Any, job: dict, shot: dict | None = None) -> str:
         parts.append(f"Action: {shot['action']}.")
     if shot.get("motion_prompt"):
         parts.append(f"Motion: {shot['motion_prompt']}.")
-    start_state = V.state_text(store, project_id, shot.get("state") or {}) if hasattr(V, "state_text") else ""
+    start_state = V.state_text(store, project_id, shot.get("state") or {})
     if start_state:
         parts.append(f"At the start: {start_state}. Keep it unless the action changes it.")
     if nxt and nxt.get("continues_from_prev"):
-        end_state = V.state_text(store, project_id, nxt.get("state") or {}) if hasattr(V, "state_text") else ""
+        end_state = V.state_text(store, project_id, nxt.get("state") or {})
         if end_state:
             parts.append(f"By the last frame (the next shot continues from it): {end_state}.")
     emotions = ", ".join(d["emotion"] for d in shot.get("dialogue") or [] if d.get("emotion"))
@@ -1494,6 +1574,132 @@ def check_consistency(store: Any, ref_id: int, client: Any = None) -> dict:
     return {"ok": True, "score": score,
             "note": ("ниже 6 — перегенерируй кадр (aiv_regenerate, дёшево): " + "; ".join(
                 f"{c['id']}: {c['differences']}" for c in low)) if low else "персонажи похожи на канон"}
+
+
+# --------------------------------------------------------------------------- #
+# Постоянство склеек (Gemini-зрение, бесплатно; перед этапом video)
+# --------------------------------------------------------------------------- #
+
+CONTINUITY_PROMPT = """\
+Ты монтажёр мультсериала и проверяешь склейки планов. Для каждого плана дано: ПРОШЛЫЙ КАДР (последний
+кадр или ключевой кадр предыдущего плана), СТАРТОВЫЙ КАДР этого плана, действие предыдущего плана
+(оно происходит МЕЖДУ этими кадрами) и заявленное состояние на старте этого плана (поза, куда смотрит,
+где в кадре, что в руках, одежда, реквизит).
+Найди несоответствия, из-за которых склейка «прыгнет»: стартовый кадр не совпадает с заявленным
+состоянием (поза, взгляд, руки, одежда, реквизит), или между кадрами без причины поменялись одежда,
+реквизит, причёска, свет, локация, лишние/пропавшие персонажи. Смену ракурса камеры ошибкой не считай.
+score 0–10 (10 — склейка чистая), ok — нет существенных несоответствий, mismatches — список
+{what: pose|facing|position|holding|clothing|props|character|lighting|location, detail — коротко по-русски}.
+Верни ТОЛЬКО JSON."""
+
+
+def _inline(path: Path) -> dict:
+    import base64
+
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return {"inline_data": {"mime_type": mime, "data": base64.b64encode(path.read_bytes()).decode("ascii")}}
+
+
+def _save_continuity(store: Any, shot_id: int, data: dict) -> None:
+    store.db.execute("UPDATE aiv_shots SET continuity_json = ? WHERE id = ?",
+                     (json.dumps(data, ensure_ascii=False), int(shot_id)))
+
+
+def check_continuity(store: Any, script_id: int, client: Any = None) -> dict:
+    """Склейки серии: стартовый кадр каждого плана против последнего кадра (или кадра) прошлого
+    и заявленного состояния. Результат — на раскадровке (``shot.continuity``); ничего платного
+    само не перегенерируется — решают агент и владелец."""
+    script = V.get_script(store, script_id)
+    project_id = int(script["project_id"])
+    if client is None and not settings.gemini_api_key:
+        return {"ok": True, "skipped": True, "shots": [],
+                "note": "Gemini не настроен — проверка склеек пропущена (сравни кадры глазами: aiv_get_script)"}
+    shots = script["shots"]
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    pairs, results = [], []
+    parts: list[dict] = [{"text": CONTINUITY_PROMPT}]
+    for n, shot in enumerate(shots[1:], 1):
+        prev = shots[n - 1]
+        kf = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
+        chained = ((kf or {}).get("prompt") or "").startswith("chain:")
+        if _is_chain(shot, prev) or chained:
+            # Старт — последний кадр видео прошлого плана: совпадает по построению.
+            data = {"ok": True, "chain": True, "checked_at": stamp,
+                    "note": f"старт — последний кадр видео плана {prev['idx']}"}
+            if chained:
+                data["start_ref_id"] = kf["id"]
+            _save_continuity(store, shot["id"], data)
+            results.append({"idx": shot["idx"], **data})
+            continue
+        start = _asset_path(store, kf)
+        prev_frame, prev_kind = _prev_frame(store, project_id, prev)
+        if start is None or prev_frame is None:
+            continue
+        pairs.append((shot, kf, prev_kind))
+        prev_state = V.state_text(store, project_id, prev.get("state") or {}) or "не задано"
+        state = V.state_text(store, project_id, shot.get("state") or {}) or "не задано"
+        parts.append({"text": f"ПЛАН idx={shot['idx']} (продолжает прошлый: "
+                              f"{'да' if shot.get('continues_from_prev') else 'нет, новый момент/ракурс'}). "
+                              f"Действие предыдущего плана: {prev.get('action') or '—'}. Состояние на старте "
+                              f"предыдущего: {prev_state}. Заявленное состояние на старте этого: {state}. "
+                              f"ПРОШЛЫЙ КАДР ({'последний кадр видео' if prev_kind == 'last frame' else 'кадр'}):"})
+        parts.append(_inline(prev_frame))
+        parts.append({"text": "СТАРТОВЫЙ КАДР:"})
+        parts.append(_inline(start))
+    if pairs:
+        schema = {"type": "object", "properties": {"shots": {"type": "array", "items": {
+            "type": "object", "properties": {
+                "idx": {"type": "integer"}, "score": {"type": "number"}, "ok": {"type": "boolean"},
+                "mismatches": {"type": "array", "items": {"type": "object", "properties": {
+                    "what": {"type": "string"}, "detail": {"type": "string"}}, "required": ["what", "detail"]}}},
+            "required": ["idx", "score", "ok", "mismatches"]}}}, "required": ["shots"]}
+        from app.ai.gemini import GeminiClient, _extract_response_text
+
+        payload = {"contents": [{"role": "user", "parts": parts}],
+                   "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json",
+                                        "responseSchema": schema}}
+        response = (client or GeminiClient()).generate_content(settings.gemini_text_model, payload)
+        try:
+            data = json.loads(_extract_response_text(response))
+        except json.JSONDecodeError as exc:
+            raise V.AivError("Gemini вернул не-JSON — повтори проверку склеек") from exc
+        by_idx = {int(item.get("idx") or 0): item for item in data.get("shots") or [] if isinstance(item, dict)}
+        for shot, kf, prev_kind in pairs:
+            item = by_idx.get(int(shot["idx"]))
+            if item is None:
+                continue
+            mism = [{"what": P._text(m.get("what"), 30), "detail": P._text(m.get("detail"), 200)}
+                    for m in item.get("mismatches") or [] if isinstance(m, dict)][:8]
+            score = max(0.0, min(10.0, float(item.get("score") or 0)))
+            entry = {"ok": bool(item.get("ok")) and score >= 6 and not mism, "score": score, "mismatches": mism,
+                     "against": prev_kind, "start_ref_id": kf["id"], "checked_at": stamp,
+                     "model": settings.gemini_text_model}
+            _save_continuity(store, shot["id"], entry)
+            results.append({"idx": shot["idx"], **entry})
+    flagged = [r["idx"] for r in results if not r.get("ok")]
+    return {"ok": True, "shots": sorted(results, key=lambda r: r["idx"]), "flagged": flagged,
+            "note": ("склейки с несоответствиями: " + ", ".join(f"план {i}" for i in flagged)
+                     + " — перерисуй кадр (aiv_regenerate shot:ID, дёшево) или поправь state/действие; "
+                       "платное само не перезапускается") if flagged else "склейки чистые"}
+
+
+def continuity_flags(store: Any, script_id: int) -> list[dict]:
+    """Сохранённые проверки склеек: план, ok, что не так, устарела ли (кадр с тех пор сменился)."""
+    try:
+        script = V.get_script(store, script_id)
+    except KeyError:
+        return []
+    out = []
+    for shot in script["shots"]:
+        data = shot.get("continuity")
+        if not data:
+            continue
+        kf = V.selected_ref(store, int(script["project_id"]), "shot", int(shot["id"]), "keyframe")
+        outdated = bool(data.get("start_ref_id")) and (not kf or int(kf["id"]) != int(data["start_ref_id"]))
+        out.append({"idx": shot["idx"], "shot_id": shot["id"], "ok": bool(data.get("ok")), "score": data.get("score"),
+                    "mismatches": data.get("mismatches") or [], "outdated": outdated,
+                    "chain": bool(data.get("chain"))})
+    return out
 
 
 # --------------------------------------------------------------------------- #

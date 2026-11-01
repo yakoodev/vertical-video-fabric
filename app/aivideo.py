@@ -689,7 +689,105 @@ def _shot_from_row(row: Any) -> dict:
     data["lipsync"] = bool(data.get("lipsync"))
     data["locked"] = bool(data.get("locked"))
     data["continuity"] = _loads(data.pop("continuity_json", ""), {}) or None
+    data["state"] = _loads(data.pop("state_json", "{}"), {})
+    data["continues_from_prev"] = bool(data.get("continues_from_prev"))
     return data
+
+
+# --------------------------------------------------------------------------- #
+# Постоянство склеек: состояние на начало плана
+# --------------------------------------------------------------------------- #
+
+STATE_FIELDS = ("pose", "facing", "position", "holding", "clothing")
+STATE_LABELS = {"pose": "поза", "facing": "смотрит", "position": "в кадре", "holding": "в руках",
+                "clothing": "одежда"}
+# Что не должно меняться между планами одной сцены, если действие этого не показывает.
+STATE_WATCH = ("pose", "facing", "holding", "clothing")
+MAX_PROPS = 6
+
+
+def normalize_state(raw: Any, cast_ids: list[str], idx: int, warnings: list[str]) -> dict:
+    """Состояние на начало плана: ``{characters: [{id, pose, facing, position, holding, clothing}],
+    props: [{name, state}]}``. Принимает и словари ``{mira: {...}}`` / ``{носок: "снят"}``."""
+    if not isinstance(raw, dict):
+        return {}
+    chars_raw = raw.get("characters") or []
+    if isinstance(chars_raw, dict):
+        chars_raw = [{"id": k, **(v if isinstance(v, dict) else {})} for k, v in chars_raw.items()]
+    chars = []
+    for item in chars_raw if isinstance(chars_raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        cid = slugify(item.get("id") or item.get("character") or "", "")
+        if not cid:
+            continue
+        if cid not in cast_ids:
+            warnings.append(f"план {idx}: в state есть {cid!r}, а в кадре его нет — убран")
+            continue
+        entry = {"id": cid}
+        for key in STATE_FIELDS:
+            text = P._text(item.get(key), 80)
+            if text:
+                entry[key] = text
+        if len(entry) > 1 and cid not in {c["id"] for c in chars}:
+            chars.append(entry)
+    props_raw = raw.get("props") or []
+    if isinstance(props_raw, dict):
+        props_raw = [{"name": k, "state": v} for k, v in props_raw.items()]
+    props = []
+    for item in props_raw if isinstance(props_raw, list) else []:
+        if isinstance(item, str):
+            item = {"name": item, "state": ""}
+        if not isinstance(item, dict):
+            continue
+        name = P._text(item.get("name") or item.get("prop"), 60)
+        if name:
+            props.append({"name": name, "state": P._text(item.get("state"), 120)})
+    out: dict = {}
+    if chars:
+        out["characters"] = chars
+    if props:
+        out["props"] = props[:MAX_PROPS]
+    return out
+
+
+def state_text(store: Any, project_id: int, state: dict) -> str:
+    """Состояние плана — строка для промпта: «Мира: поза sitting; смотрит camera…; реквизит: носок — снят»."""
+    parts = []
+    for item in (state or {}).get("characters") or []:
+        c = character_by_slug(store, project_id, item.get("id") or "")
+        name = c["name"] if c else item.get("id")
+        bits = [f"{key} {item[key]}" for key in STATE_FIELDS if item.get(key)]
+        if bits:
+            parts.append(f"{name}: " + ", ".join(bits))
+    props = [f"{p['name']} — {p['state']}" if p.get("state") else p["name"] for p in (state or {}).get("props") or []]
+    if props:
+        parts.append("props: " + "; ".join(props))
+    return "; ".join(parts)
+
+
+def continuity_warnings(shots: list[dict]) -> list[str]:
+    """Сцена продолжается, а поза/взгляд/руки/одежда/реквизит сменились — склейка прыгнет, если
+    действие прошлого плана этого не показывает. Подсказка сценаристу, не ошибка."""
+    out = []
+    for prev, shot in zip(shots, shots[1:]):
+        if not shot.get("continues_from_prev"):
+            continue
+        before = {c["id"]: c for c in (prev.get("state") or {}).get("characters") or []}
+        for c in (shot.get("state") or {}).get("characters") or []:
+            old = before.get(c["id"])
+            if not old:
+                continue
+            for key in STATE_WATCH:
+                if old.get(key) and c.get(key) and old[key].strip().lower() != c[key].strip().lower():
+                    out.append(f"план {shot['idx']}: {c['id']} {STATE_LABELS[key]} «{old[key]}» → «{c[key]}» — "
+                               f"действие плана {prev['idx']} должно это показать, иначе склейка прыгнет")
+        props_before = {p["name"].lower(): p.get("state") or "" for p in (prev.get("state") or {}).get("props") or []}
+        for p in (shot.get("state") or {}).get("props") or []:
+            old = props_before.get(p["name"].lower())
+            if old is not None and old and p.get("state") and old.lower() != p["state"].lower():
+                out.append(f"план {shot['idx']}: {p['name']} «{old}» → «{p['state']}» — покажи это в плане {prev['idx']}")
+    return out
 
 
 def get_shot(store: Any, shot_id: int) -> dict:
@@ -785,6 +883,9 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         "lipsync": int(bool(raw.get("lipsync"))),
         "transition_in": transition if transition in TRANSITIONS else "cut",
         "sound": P._text(raw.get("sound"), 300), "video_in": video_in, "video_out": video_out,
+        "state_json": _json(normalize_state(raw.get("state"), [c["id"] for c in cast], idx, warnings)),
+        # None — не задано: решает replace_shots (по умолчанию да, если локация та же).
+        "continues_from_prev": None if raw.get("continues_from_prev") is None else int(bool(raw["continues_from_prev"])),
     }
 
 
@@ -809,7 +910,12 @@ def replace_shots(store: Any, script_id: int, shots: list, title: str | None = N
         raise AivError(f"планов {len(shots)} — не больше {MAX_SHOTS}")
     warnings: list[str] = []
     rows = [normalize_shot(store, script["project_id"], raw, i + 1, warnings) for i, raw in enumerate(shots)]
-    old = [int(r["id"]) for r in store.db.query_all("SELECT id FROM aiv_shots WHERE script_id = ?", (int(script_id),))]
+    for i, row in enumerate(rows):
+        if i == 0:
+            row["continues_from_prev"] = 0  # первому плану продолжать нечего
+        elif row["continues_from_prev"] is None:
+            row["continues_from_prev"] = int(bool(row["location"]) and row["location"] == rows[i - 1]["location"])
+    old =[int(r["id"]) for r in store.db.query_all("SELECT id FROM aiv_shots WHERE script_id = ?", (int(script_id),))]
     for shot_id in old:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type IN ('shot', 'line') AND target_id = ?",
                          (shot_id,))
@@ -830,6 +936,7 @@ def replace_shots(store: Any, script_id: int, shots: list, title: str | None = N
     total = out["duration_total"]
     if abs(total - float(script["duration_target"])) > max(5.0, 0.25 * float(script["duration_target"])):
         warnings.append(f"сумма планов {total:g} с против цели {script['duration_target']:g} с")
+    warnings += continuity_warnings(out["shots"])
     out["warnings"] = warnings
     return out
 
@@ -868,6 +975,7 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
         "image_prompt": shot["image_prompt"], "motion_prompt": shot["motion_prompt"],
         "needs_motion": shot["needs_motion"], "lipsync": shot["lipsync"], "transition_in": shot["transition_in"],
         "sound": shot.get("sound") or "", "video_in": shot.get("video_in"), "video_out": shot.get("video_out"),
+        "state": shot.get("state") or {}, "continues_from_prev": shot.get("continues_from_prev", False),
     }
     for key, value in (patch or {}).items():
         if key == "cast":
@@ -877,9 +985,15 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
     warnings: list[str] = []
     row = normalize_shot(store, script["project_id"], merged, int(shot["idx"]), warnings)
     row.pop("idx")
+    if row["continues_from_prev"] is None:
+        row["continues_from_prev"] = int(bool(shot.get("continues_from_prev")))
+    if int(shot["idx"]) == 1:
+        row["continues_from_prev"] = 0
     visual = any(row[k] != old for k, old in (
         ("location", shot["location"]), ("cast_json", _json(shot["cast"])), ("action", shot["action"]),
-        ("image_prompt", shot["image_prompt"]), ("camera_json", _json(shot["camera"]))))
+        ("image_prompt", shot["image_prompt"]), ("camera_json", _json(shot["camera"])),
+        ("state_json", _json(shot.get("state") or {})),
+        ("continues_from_prev", int(bool(shot.get("continues_from_prev"))))))
     if "locked" in (patch or {}):
         row["locked"] = int(bool(patch["locked"]))
     cols = ", ".join(f"{k} = ?" for k in row)

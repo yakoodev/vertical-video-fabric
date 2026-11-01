@@ -481,6 +481,7 @@ class FakeVideo:
     def __init__(self, uncertain=True, hidden=0, cost=89.1):
         self.posts = 0
         self.checks = 0
+        self.pending_polls = 0
         self.history = []
         self.uncertain = uncertain
         self.hidden = hidden  # столько раз история ещё «не видит» запрос
@@ -506,6 +507,9 @@ class FakeVideo:
 
     def check(self, remote_id):
         self.checks += 1
+        if self.pending_polls > 0:
+            self.pending_polls -= 1
+            return {"status": "pending"}
         return {"status": "completed", "url": "https://example.invalid/v.mp4", "cost_rub": self.cost}
 
     def fetch(self, result, dest, params):
@@ -534,10 +538,12 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
         G.request_stage(store, pid, "video", sid)
     G.request_stage(store, pid, "keyframes", sid)
     est = G.estimate(store, pid, "video", sid)
-    assert [i["label"] for i in est["items"]] == ["план 1: видео 4 с", "план 3: видео 4 с"]
+    # План 2 (статичный, та же кухня) после видео плана 1 — его кадр берётся из того видео (0 ₽).
+    assert [i["label"] for i in est["items"]] == ["план 1: видео 4 с", "план 2: старт — последний кадр видео плана 1",
+                                                  "план 3: видео 4 с"]
     assert est["model"] == "bytedance/seedance-2-fast" and est["total_rub"] == 0
     out = G.request_stage(store, pid, "video", sid)
-    assert out["status"] == "done" and len(out["run"]["done"]) == 2
+    assert out["status"] == "done" and len(out["run"]["done"]) == 3
     shot1 = V.get_script(store, sid)["shots"][0]
     [video] = V.list_refs(store, pid, "shot", shot1["id"], "shot_video")
     asset = store.get_montage_asset(video["asset_id"])
@@ -591,8 +597,8 @@ def test_video_504_recovers_id_from_history_without_second_post(paid_video):
     assert req["status"] == "awaiting_approval" and req["estimate"]["total_rub"] == pytest.approx(89.1)
     A.decide(store, req["approval_id"], "approve", actor="ui")
     out = G.run_pending(store)
-    assert vid.posts == 1 and len(out["done"]) == 1, out
-    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    assert vid.posts == 1 and len(out["done"]) == 2, out  # видео плана 1 + бесплатная сцепка плана 2
+    [job] = [j for j in G.list_jobs(store, approval_id=req["approval_id"]) if j["kind"] == "video"]
     assert job["status"] == "done" and job["remote_id"] == "vid-1" and job["submitted_at"]
     led = [l for l in G.ledger(store, pid) if l["stage"] == "video"]
     assert len(led) == 1 and led[0]["amount_rub"] == pytest.approx(89.1)
@@ -607,6 +613,9 @@ def test_video_recovery_survives_restart_and_never_resubmits(paid_video, monkeyp
         A.decide(store, req["approval_id"], "approve", actor="ui")
         G.run_pending(store)
     _motion(store, sid, 1, 2)
+    shots = V.get_script(store, sid)["shots"]
+    for shot in shots[1:]:  # без сцепки: оба видео уходят подряд, каждое — из своего кадра
+        V.update_shot(store, shot["id"], {"continues_from_prev": False})
     vid.hidden = 10**6  # история ещё не показывает запрос
     req = G.request_stage(store, pid, "video", sid)
     A.decide(store, req["approval_id"], "approve", actor="ui")
@@ -691,3 +700,161 @@ def test_polza_video_adapter_504_and_history_lookup(monkeypatch, tmp_path):
     assert seen["get"][0].endswith("/history/generations") and seen["get"][1]["requestType"] == "video"
     assert adapter.recover("bytedance/seedance-2-fast", "2026-11-01T12:00:00", {"new1"})["id"] == "new2"
     assert adapter.recover("bytedance/seedance-2-fast", "2026-11-01T12:01:00", set()) is None
+
+
+# --------------------------------------------------------------------------- #
+# v2: постоянство склеек — состояние планов, сцепка последним кадром, проверка Gemini
+# --------------------------------------------------------------------------- #
+
+STATE_SHOTS = [
+    {"duration": 4, "location": "kitchen", "needs_motion": True, "characters": [{"id": "mira"}],
+     "camera": {"move": "static"}, "action": "Мира сидит на полу и стягивает левый носок",
+     "state": {"characters": [{"id": "mira", "pose": "sitting", "facing": "camera", "holding": "ничего",
+                               "clothing": "оба носка надеты"}],
+               "props": [{"name": "носок", "state": "на левой ноге"}]},
+     "dialogue": [{"who": "mira", "text": "Жарко…"}]},
+    {"duration": 4, "location": "kitchen", "needs_motion": True, "characters": [{"id": "mira"}],
+     "camera": {"move": "push_in"}, "action": "Мира держит носок и оглядывается",
+     "state": {"characters": [{"id": "mira", "pose": "standing", "facing": "camera", "holding": "носок",
+                               "clothing": "один носок снят"}],
+               "props": [{"name": "носок", "state": "в руке"}]}, "dialogue": []},
+    {"duration": 4, "location": "kitchen", "continues_from_prev": False, "characters": [{"id": "kot"}],
+     "camera": {"move": "pan_left"}, "action": "кот смотрит из-под стола",
+     "state": {"characters": [{"id": "kot", "pose": "lying", "facing": "left"}, {"id": "mira", "pose": "sitting"}]},
+     "dialogue": []},
+]
+
+
+def _state_project(store, provider="none"):
+    pid, sid = _project(store, provider=provider)
+    out = V.update_script(store, sid, {"shots": STATE_SHOTS})
+    return pid, sid, out
+
+
+def test_shot_state_defaults_and_warnings(env):
+    _client_, store = env
+    pid, sid, out = _state_project(store)
+    shots = out["shots"]
+    assert [s["continues_from_prev"] for s in shots] == [False, True, False]  # первый — никогда; 3 — явно
+    assert shots[0]["state"]["characters"][0] == {"id": "mira", "pose": "sitting", "facing": "camera",
+                                                  "holding": "ничего", "clothing": "оба носка надеты"}
+    assert shots[1]["state"]["props"] == [{"name": "носок", "state": "в руке"}]
+    # Мира в state плана 3, но не в кадре — убрана с предупреждением.
+    assert [c["id"] for c in shots[2]["state"]["characters"]] == ["kot"]
+    warnings = out["warnings"]
+    assert any("mira" in w and "в state" in w for w in warnings)
+    # Поза sitting → standing в продолжении: подсказка «покажи это действием».
+    assert any("план 2" in w and "поза «sitting» → «standing»" in w for w in warnings), warnings
+    assert any("носок «на левой ноге» → «в руке»" in w for w in warnings)
+    # Правка состояния — кадр «устарел»; первый план продолжать не может.
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    V.update_shot(store, shots[0]["id"], {"continues_from_prev": True})
+    assert V.get_shot(store, shots[0]["id"])["continues_from_prev"] is False
+    kf = V.selected_ref(store, pid, "shot", shots[2]["id"], "keyframe")
+    V.update_shot(store, shots[2]["id"], {"state": {"characters": [{"id": "kot", "pose": "sitting"}]}})
+    assert V.get_ref(store, kf["id"])["stale"]
+    from app.aivideo_script import script_schema
+
+    shot_schema = script_schema()["properties"]["shots"]["items"]
+    assert {"state", "continues_from_prev", "needs_motion"} <= set(shot_schema["required"])
+
+
+def test_continuity_chain_uses_last_frame_or_new_keyframe(env):
+    _client_, store = env
+    pid, sid, out = _state_project(store)
+    shots = out["shots"]
+    G.request_stage(store, pid, "refs")
+    # Кадры: план 2 сцеплен с видео плана 1 — не рисуется (0 ₽, заметка); 1 и 3 — рисуются.
+    est = G.estimate(store, pid, "keyframes", sid)
+    assert [i["label"] for i in est["items"]] == ["план 1", "план 3"]
+    assert any("план 2" in n and "последнего кадра видео плана 1" in n for n in est["notes"])
+    kf = G.request_stage(store, pid, "keyframes", sid)
+    jobs = {G.get_job(store, d["job_id"])["target_id"]: G.get_job(store, d["job_id"]) for d in kf["run"]["done"]}
+    # Кадр плана 3 (новый ракурс) рисуется с прошлым кадром первым референсом и состоянием в промпте.
+    job3 = jobs[shots[2]["id"]]
+    assert "previous shot 2" not in job3["prompt"]  # у плана 2 ещё нет кадра — прошлый взять неоткуда
+    assert "Continuity state at the start of this shot" in job3["prompt"] and "pose lying" in job3["prompt"]
+    # Видео: план 1 из своего кадра, план 2 — из последнего кадра видео плана 1.
+    vid = G.request_stage(store, pid, "video", sid)
+    labels = [d["label"] for d in vid["run"]["done"]]
+    assert labels == ["план 1: видео 4 с", "план 2: старт — последний кадр видео плана 1", "план 2: видео 4 с"]
+    v1 = V.selected_ref(store, pid, "shot", shots[0]["id"], "shot_video")
+    kf2 = V.selected_ref(store, pid, "shot", shots[1]["id"], "keyframe")
+    assert kf2["prompt"] == f"chain:{v1['id']}"
+    assert G.get_job(store, vid["run"]["done"][1]["job_id"])["cost_source"] == "free"
+    video2 = G.get_job(store, vid["run"]["done"][2]["job_id"])
+    assert video2["params"]["start_ref_id"] == kf2["id"]
+    # Конец плана 1 в промпте видео — состояние на старте плана 2 (продолжает).
+    video1 = G.get_job(store, vid["run"]["done"][0]["job_id"])
+    assert "By the last frame" in video1["prompt"] and "pose standing" in video1["prompt"]
+    # Перерисовка кадра плана 3 теперь берёт последний кадр видео плана 2 первым референсом.
+    again = G.regenerate(store, target=f"shot:{shots[2]['id']}")
+    job = G.get_job(store, again["run"]["done"][0]["job_id"])
+    assert job["params"]["refs"][0].endswith(".last.jpg")
+    assert "last frame of the previous shot 2" in job["prompt"]
+    # Новое видео плана 1 → сцепленный план 2 (старт и видео) «устарел».
+    G.regenerate(store, ref_id=v1["id"])
+    assert V.get_ref(store, kf2["id"])["stale"]
+    assert V.selected_ref(store, pid, "shot", shots[1]["id"], "shot_video")["stale"]
+
+
+def test_chain_waits_for_previous_video_in_paid_run(paid_video, monkeypatch):
+    (_client_, store), img, vid = paid_video
+    vid.uncertain = False
+    pid, sid, out = _state_project(store, provider="polza")
+    for stage, kw in (("refs", {}), ("keyframes", {"script_id": sid})):
+        req = G.request_stage(store, pid, stage, **kw)
+        A.decide(store, req["approval_id"], "approve", actor="ui")
+        G.run_pending(store)
+    req = G.request_stage(store, pid, "video", sid)
+    # Два видео по 89.1 ₽, сцепка — 0 ₽.
+    assert req["estimate"]["total_rub"] == pytest.approx(178.2) and req["estimate"]["count"] == 3
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    vid.pending_polls = 10**6  # видео плана 1 ещё делается
+    first = G.run_pending(store, poll_timeout=0)
+    assert vid.posts == 1 and first["polling"] and len(first["waiting"]) == 2
+    statuses = [j["status"] for j in sorted(G.list_jobs(store, approval_id=req["approval_id"]), key=lambda j: j["id"])]
+    assert statuses == ["polling", "approved", "approved"]
+    vid.pending_polls = 0
+    second = G.run_pending(store, poll_timeout=0)
+    assert vid.posts == 2 and len(second["done"]) == 2 and second["resumed"]["finished"]
+    assert vid.last_refs[0].name.endswith(".jpg")  # старт плана 2 — вынутый последний кадр
+    assert G.spent_approval(store, req["approval_id"]) == pytest.approx(178.2)
+
+
+def test_continuity_check_flags_mismatches_with_fake_gemini(env):
+    _client_, store = env
+    pid, sid, out = _state_project(store)
+    shots = out["shots"]
+    V.update_shot(store, shots[1]["id"], {"continues_from_prev": False})  # план 2 — свой кадр
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    import json
+
+    seen = {}
+
+    class Fake:
+        def generate_content(self, model, payload):
+            seen["parts"] = payload["contents"][0]["parts"]
+            text = json.dumps({"shots": [
+                {"idx": 2, "score": 4, "ok": False,
+                 "mismatches": [{"what": "pose", "detail": "Мира сидит, а заявлено стоит"}]},
+                {"idx": 3, "score": 9, "ok": True, "mismatches": []}]}, ensure_ascii=False)
+            return {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+
+    res = G.check_continuity(store, sid, client=Fake())
+    assert res["flagged"] == [2] and "план 2" in res["note"]
+    images = [p for p in seen["parts"] if "inline_data" in p]
+    assert len(images) == 4  # (прошлый кадр, стартовый кадр) × 2 склейки
+    assert any("standing" in p.get("text", "") for p in seen["parts"])
+    view = V.script_view(store, sid)
+    assert view["shots"][1]["continuity"]["mismatches"][0]["what"] == "pose"
+    flags = G.continuity_flags(store, sid)
+    assert [(f["idx"], f["ok"], f["outdated"]) for f in flags] == [(2, False, False), (3, True, False)]
+    # Перерисовали кадр плана 2 — проверка устарела; оценка видео показывает флаги.
+    G.regenerate(store, target=f"shot:{shots[1]['id']}")
+    assert G.continuity_flags(store, sid)[0]["outdated"] is True
+    assert G.estimate(store, pid, "video", sid)["continuity"][0]["idx"] == 2
+    # Без Gemini — пропуск, этап video не блокируется.
+    assert G.check_continuity(store, sid)["skipped"]
