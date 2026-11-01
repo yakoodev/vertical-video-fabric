@@ -132,8 +132,11 @@ def apply_preset(
     layers: list | None = None,
     layer_id: Any = None,
     clip_duration: float | None = None,
+    motion_blur: Any = None,
 ) -> dict:
-    """Пресет → {preset, camera, layers, keys (что поставлено), note}. Ничего не сохраняет."""
+    """Пресет → {preset, camera, layers, keys (что поставлено), note}. Ничего не сохраняет.
+    ``motion_blur`` (затвор 0..1) — у ключей движения: быстрые отрезки смазаны (motionblur.ts);
+    None — как у клипа (render.motion_blur)."""
     name = preset_name(preset)
     try:
         t0 = max(0.0, float(start))
@@ -187,6 +190,8 @@ def apply_preset(
                "y": round(_lin(cam, t, "y", 0.5), 4), **fields}
         if ease:
             key["ease"] = ease
+        if motion_blur not in (None, ""):
+            key["motionBlur"] = round(min(1.0, max(0.0, float(motion_blur))), 3)
         added.append(key)
     merged = sorted(outside + added, key=lambda k: k["t"])
     if len(merged) > MAX_CAMERA_KEYS:

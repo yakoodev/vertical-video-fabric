@@ -430,7 +430,18 @@ export type VoiceTrack = { t0: number; fps: number; states: string; levels?: num
  * пятна света по краям; chromatic — аберрация от центра; flash_frame — вспышка; grain_overlay —
  * анимированное зерно.
  */
-export type FxKind = "vhs" | "scanlines" | "light_leak" | "chromatic" | "flash_frame" | "grain_overlay";
+export type FxKind =
+  | "vhs"
+  | "scanlines"
+  | "light_leak"
+  | "chromatic"
+  | "flash_frame"
+  | "grain_overlay"
+  // Глитч на отрезке (add_glitch): RGB-расслоение рывками, разрывы строк, макроблоки, штрихи.
+  | "rgb_split"
+  | "tear"
+  | "datamosh_lite"
+  | "pixel_sort_lite";
 
 export type FxProps = {
   kind?: FxKind;
@@ -650,6 +661,11 @@ export type LayerBase = {
    * ключи обычные; сервис по ней заменяет ключи при повторе и двигает их через вырезы/стоп-кадры.
    */
   tracking?: LayerTracking | null;
+  /**
+   * Motion blur, затвор 0..1 (доля интервала кадра; 0.5 — «180°»): быстрый слой смазывается по
+   * пути движения (motionblur.ts). Нет — значение клипа `Composition.motionBlur`; 0 — резко.
+   */
+  motionBlur?: number;
 };
 
 /** За чем следует слой: лицо, объект класса COCO или точка/область кадра. */
@@ -740,6 +756,8 @@ export type CameraKey = {
   fov?: number;
   /** Глубина плоскости видео-основы, опорн. px (1000). */
   baseZ?: number;
+  /** Motion blur основы на отрезке от этого ключа (как `ease`), затвор 0..1; нет — клипа. */
+  motionBlur?: number;
 };
 
 export type Composition = {
@@ -752,6 +770,8 @@ export type Composition = {
   duration: number;
   layers: Layer[];
   camera?: CameraKey[];
+  /** Motion blur клипа по умолчанию (render.motion_blur), затвор 0..1: слоям и камере без своего. */
+  motionBlur?: number;
   /** Слова речи клипа для слоёв `captions` (клиповое время). */
   words?: CaptionWord[];
   /** Сообщения чата для слоёв `chat` (клиповое время, по возрастанию `t`). */
@@ -911,4 +931,6 @@ export type RenderEnv = {
    * собирает подложку + уже нарисованное. В рендере кадр и слои на одном холсте — не задаётся.
    */
   underlay?: CanvasImageSource | null;
+  /** Предел подкадров motion blur (превью — меньше, рендер — 12); в покое не важен. */
+  motionBlurSamples?: number;
 };

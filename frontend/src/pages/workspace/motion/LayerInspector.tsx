@@ -1220,6 +1220,29 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           {transformRow("rotation", "Поворот", 1, 1, -3600, 3600, "°")}
           {transformRow("opacity", "Непрозр.", 100, 1, 0, 1, "%")}
           {layer.type !== "fx" ? (
+            <div
+              className="li-row"
+              title="Motion blur: на быстром движении (въезд, whip, вращение, наезд камеры у слоя «с камерой») слой смазывается по пути — затвор, доля кадра (50% — киношные 180°). Медленный и стоящий слой не меняется. Не задан — как у клипа"
+            >
+              <label className="field range li-grow">
+                <span>Motion blur · {layer.motionBlur === undefined ? "как у клипа" : `${Math.round(layer.motionBlur * 100)}%`}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round((layer.motionBlur ?? 0) * 100)}
+                  onChange={(e) => onChange({ ...layer, motionBlur: Number(e.target.value) / 100 } as Layer)}
+                />
+              </label>
+              {layer.motionBlur !== undefined ? (
+                <button type="button" className="btn ghost sm" title="Как у клипа (настройка рендера)" onClick={() => onChange({ ...layer, motionBlur: undefined } as Layer)}>
+                  ↺
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {layer.type !== "fx" ? (
             <details className="li-sec" open={layer.z !== undefined || Boolean(layer.rotX || layer.rotY)}>
               <summary title="Псевдо-3D: глубина и наклон с перспективой. Задана глубина — слой в сцене: едет с 3D-камерой (параллакс)">3D</summary>
               {transformRow("z", "Глубина", 1, 10, -2000, 20000, "px")}

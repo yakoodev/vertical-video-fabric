@@ -85,8 +85,10 @@ bearer_token_env_var = "VVF_TOKEN"
 | `make_compilation(clip_ids, title?)` | новый клип «ТОП-N» из нескольких клипов проекта |
 | `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
 | `track_layer(layer_id, target, preset?, offset?, follow?, smooth?)`, `untrack_layer(layer_id)` | **слой следует за лицом / объектом / точкой** — ключи x/y(/scale) на всё время слоя, ответ — лист 2–3 кадров проверки; см. «Трекинг: слой за целью» |
-| `set_camera(keys)` | все ключи камеры разом (наезды); `zoom` 1..4 — камера только приближает, «отъехать» (zoom < 1) нельзя — шире окна делает `set_piece_fit` |
-| `camera_preset(preset, start, duration?, intensity?, layer_id?)` | **3D-движение одной командой**: `parallax_push`, `orbit`, `dolly_zoom`, `tilt_reveal`, `float`, `card_flip` (переворот слоя `layer_id`) — см. «3D: глубина и камера» |
+| `set_camera(keys, motionBlur?)` | все ключи камеры разом (наезды); `zoom` 1..4 — камера только приближает, «отъехать» (zoom < 1) нельзя — шире окна делает `set_piece_fit`; `motionBlur` 0..1 у ключа (или верхним полем — всем) — смаз whip/панча, см. «Motion blur» |
+| `camera_preset(preset, start, duration?, intensity?, layer_id?, motionBlur?)` | **3D-движение одной командой**: `parallax_push`, `orbit`, `dolly_zoom`, `tilt_reveal`, `float`, `card_flip` (переворот слоя `layer_id`) — см. «3D: глубина и камера» |
+| `add_glitch(at, duration?, style?, intensity?, sfx?, sfx_volume?, over_layers?)` | **глитч на отрезке** основы (не переход): `rgb_split`, `tear`, `vhs`, `datamosh_lite`, `pixel_sort_lite`; сила рывками, по умолчанию под слоями (титры чистые); `sfx: true` — запись из пака под стиль (удар-переход, скретч, бас-дроп, вжух) — см. «Моушн-эффекты» |
+| `set_motion_blur(value \| reset)` | **motion blur клипа** (`render.motion_blur`, затвор 0..1; 0.5 — «180°»): быстрые слои, whip камеры и whip-переход смазаны по пути, стоящий кадр не меняется; у слоя своё — `update_layer` `motionBlur` — см. «Motion blur» |
 | `get_motion_reference` | шпаргалка по слоям |
 | `get_scene_reference(example?)`, `preview_scene_frame(scene \| layer_id, t, w?, h?)` | 3D/2D-сцены кодом (слой `scene`): схема и примеры; кадр(ы) сцены тем же компоновщиком с проверкой — см. «3D-сцены кодом» |
 | `list_fonts`, `search_emoji(q)`, `list_packs`, `search_pack(pack, q)` | шрифты, эмодзи, паки стикеров/звуков/мемов |
@@ -211,6 +213,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | Волна букв | `loop: {type: "wave", amount: 0.6–1}` | весёлое, музыкальное, детское; не на длинном тексте |
 | Маркер | `props.highlight: {words: [2, 3], style: "marker", bg: "#ffd400", draw: 0.5}` | ключевая фраза в обучалке, разговоре, рекламе — вместо цвета слова |
 | Удар | `in: {type: "stomp", duration: 0.45}` у любого слоя; субтитры `style: "stomp"` (или `animation: "stomp"`) + `highlightWords` | панчлайн, «БАХ», цифра-итог; субтитры-акценты 1–2 слова; не на каждом слове ролика |
+| Глитч на отрезке | `add_glitch(at, duration 0.3–1, style, intensity 0.6–1, sfx: true)` | скример, шок, «сбой», поломка в игре: `rgb_split` — удар, `tear` — поломка, `vhs` — флешбек, `datamosh_lite` — «мозг сломался», `pixel_sort_lite` — арт; не больше пары за ролик, не в рекламе заказчика |
 | Эффект кадра | слой `{type: "fx", start, end, track, props: {kind, intensity?}}` | `vhs` — ретро, «запись с кассеты», флешбек; `grain_overlay` — кино, атмосфера; `light_leak` — тёплое, лайфстайл; `scanlines` — монитор, стрим; `chromatic` — удар, шок (0.3–1 с); `flash_frame` — склейка/удар (0.2–0.5 с) |
 | Реакция на звук | `react: {source: "voice"\|"music"\|"mix", prop: "scale"\|"glow"\|"opacity"\|"y", amount: 0.5–1.5}` | логотип/плашка «дышит» музыкой, PNGtuber-подпись под голос, CTA пульсирует в такт; 1–2 слоя на сцену |
 
@@ -227,6 +230,21 @@ bearer_token_env_var = "VVF_TOKEN"
   "weight":900,"stroke":{"color":"#000000","width":8}},"in":{"type":"glitch","duration":0.45},"loop":{"type":"glitch"}},
  {"type":"fx","start":2.0,"end":3.2,"track":2,"props":{"kind":"vhs","intensity":0.7},"in":{"type":"fade","duration":0.2}}]
 ```
+
+### Motion blur
+
+Быстрое движение смазано по пути, как с затвором камеры: въезд плашки за 0.2–0.4 с, вылет, whip-пан
+камерой (`set_camera` x 0.3 → 0.7 за 0.2–0.3 с), вращение, слой «с камерой» на наезде, сцена 3D.
+Медленный наезд, покой и стоящие слои **не меняются ни на пиксель** — включать не страшно.
+
+- `set_motion_blur(value: 0.5)` — на весь клип (слои и камера без своего); 0.3 — лёгкий, 1 — сильный.
+- Свой у слоя — `update_layer(id, {motionBlur: 0.8})` (0 — резко, null — как у клипа); у отрезка камеры —
+  `motionBlur` у ключа, с которого он идёт (`set_camera`), или у `camera_preset`.
+- Переход `whip` (и `slide`/`smooth`) при этом смазывается по горизонтали (`set_transition motion_blur`
+  — своё значение).
+- Когда: мемный и игровой монтаж с whip, промо со въездами карточек, «дорогие» титры. Разговорному
+  клипу без движения не нужен. Проверка — `view_frame` **посреди** быстрого движения (кадр агента
+  рисует смаз так же, как рендер). Цена — только на смазанных кадрах: ≈ +95 мс на кадр whip 1080×1920.
 
 ### 3D: глубина и камера
 

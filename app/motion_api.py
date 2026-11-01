@@ -62,6 +62,7 @@ class CameraPresetPayload(BaseModel):
     camera: list[Any] | None = None
     layers: list[Any] | None = None
     clip_duration: float | None = None
+    motion_blur: float | None = None
 
 
 class TrackPayload(BaseModel):
@@ -105,7 +106,7 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         try:
             return apply_preset(payload.preset, payload.start, payload.duration, payload.intensity,
                                 camera=payload.camera, layers=payload.layers, layer_id=payload.layer_id,
-                                clip_duration=payload.clip_duration)
+                                clip_duration=payload.clip_duration, motion_blur=payload.motion_blur)
         except PresetError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc), "hints": exc.hints}) from exc
 

@@ -11,6 +11,7 @@
 import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE } from "./layers/captions";
 import { CHAT_STYLES } from "./layers/chat";
 import { NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES } from "./layers/nameplate";
+import { GLITCH_SFX, GLITCH_STYLES, glitchKeys } from "./layers/fx";
 import { formatRefSize } from "./formats";
 import { isTransient, layerSize } from "./reframe";
 import { sceneTemplates } from "./scene/templates";
@@ -1146,6 +1147,39 @@ const fxTpl: MotionTemplate = {
   },
 };
 
+/**
+ * Глитч на отрезке основы (как MCP add_glitch): слой fx стиля со «сбоящей» силой (ключи scale —
+ * glitchKeys) под всеми слоями — видео сбоит, титры чистые; по желанию — настоящий звук глитча.
+ */
+const glitchRange: MotionTemplate = {
+  id: "glitch-range",
+  name: "Глитч на отрезке",
+  category: "Эффекты",
+  description: "Сбой видео на отрезке: RGB-сдвиг, разрывы строк, VHS, датамош или штрихи пикселей — рывками, титры поверх чистые",
+  duration: 0.8,
+  params: [
+    { name: "style", label: "Стиль", type: "select", default: "rgb_split", options: [...GLITCH_STYLES] },
+    { name: "intensity", label: "Сила", type: "number", default: 0.8, min: 0, max: 1 },
+    { name: "sfx", label: "Звук глитча", type: "bool", default: true },
+    durationParam(0.8),
+  ],
+  build(p, at) {
+    const style = GLITCH_STYLES.find((s) => s === str(p, "style", "rgb_split")) ?? "rgb_split";
+    const len = dur(p, 0.8);
+    const layers: Layer[] = [
+      layer(
+        "fx",
+        { start: at, end: at + len, track: 0, name: "Глитч", keys: { scale: glitchKeys(len) } },
+        { kind: style, intensity: Math.max(0, Math.min(1, num(p, "intensity", 0.8))), speed: 1 },
+      ),
+    ];
+    if (bool(p, "sfx", true)) {
+      layers.push(layer("audio", { start: at, end: at + Math.max(0.6, Math.min(1.6, len + 0.3)), name: "Звук глитча" }, { asset_id: GLITCH_SFX[style], volume: 0.7, fadeIn: 0, fadeOut: 0.15, offset: 0, duck: false }));
+    }
+    return { layers };
+  },
+};
+
 /** Глитч-титр: влетает глитчем и иногда «сбоит» — геймерские и мемные моменты. */
 const glitchTitle: MotionTemplate = {
   id: "glitch-title",
@@ -1493,6 +1527,7 @@ export const TEMPLATES: MotionTemplate[] = [
   particlesTpl,
   glitchTitle,
   fxTpl,
+  glitchRange,
   phoneSpace,
   depthTitle,
   cardFan,

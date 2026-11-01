@@ -291,6 +291,8 @@ export interface RenderSettings {
   aspect?: Aspect;
   /** Стоп-кадр в конце готового ролика, с (0..1.5); null — как у сервиса (RENDER_END_HOLD_SEC). */
   end_hold_sec?: number | null;
+  /** Motion blur клипа по умолчанию, затвор 0..1 (motion/motionblur.ts): слоям и камере без своего; null — выкл. */
+  motion_blur?: number | null;
   /** Стоп-кадры посреди ролика (app/freeze.py, инструмент агента freeze_frame); at — шкала final. */
   freezes?: FreezeFrame[];
   /**

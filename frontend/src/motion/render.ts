@@ -7,8 +7,11 @@
  * «целиком», режим наложения или blur, он сначала рисуется на промежуточный
  * холст размером со свою рамку и уже оттуда кладётся в кадр.
  */
-import { isLayerActive, resolveLayer, type LayerState } from "./animate";
+import { isLayerActive, layerDuration, resolveLayer, type LayerState } from "./animate";
 import { frameCameraMatrix, isIdentityCamera, type CameraMatrix } from "./camera";
+import { hashString } from "./keys";
+import { blurSamples, maxTravel, MOTION_BLUR_THRESHOLD, paintLayerBlur, shutterTimes, shutterValue } from "./motionblur";
+import { sceneTravel } from "./scene/render";
 import {
   affinePlaneMatrix,
   camera3dAt,
@@ -34,13 +37,13 @@ import { nameplateRenderer } from "./layers/nameplate";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { particlesRenderer } from "./layers/particles";
 import { pngtuberRenderer } from "./layers/pngtuber";
-import { sceneRenderer } from "./layers/scene";
+import { sceneRenderer, sceneViewport } from "./layers/scene";
 import { shapeRenderer } from "./layers/shape";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import { drawFx } from "./layers/fx";
 import type { Levels } from "./levels";
-import type { BlendMode, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, ScratchCanvas, VoiceTrack } from "./types";
+import type { BlendMode, CameraKey, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, SceneLayer, ScratchCanvas, VoiceTrack } from "./types";
 import { layerUnit, refSize } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
@@ -123,19 +126,25 @@ export function visibleLayers(layers: Layer[], t: number): Layer[] {
 /**
  * Нарисовать все слои композиции в момент клипового времени `t`.
  * `comp.words` — слова речи клипа для слоёв `captions` (нет — субтитры пустые).
+ * `comp.motionBlur` — затвор клипа по умолчанию (motionblur.ts), `comp.fps` — для него же.
  */
 export function drawFrame(
   ctx: Ctx2D,
-  comp: Pick<Composition, "layers"> & Partial<Pick<Composition, "camera" | "cameraBox" | "key">> & FrameData,
+  comp: Pick<Composition, "layers"> & Partial<Pick<Composition, "camera" | "cameraBox" | "key" | "fps" | "motionBlur">> & FrameData,
   t: number,
   env: RenderEnv,
   pass?: "behind" | "front",
 ): void {
   const data: FrameData = { words: comp.words, chat: comp.chat, voice: comp.voice, levels: comp.levels };
   const visible = visibleLayers(comp.layers || [], t);
-  let cam: CameraMatrix | null | undefined;
+  const box = comp.key ? null : comp.cameraBox;
   // 3D-камера (dolly, облёт, фокусное); в раскладке стрима (окно игры) — только плоский наезд.
-  const cam3 = has3dCamera(comp.camera) && (comp.key || !comp.cameraBox) ? camera3dAt(comp.camera, t) : null;
+  const use3d = has3dCamera(comp.camera) && (comp.key || !comp.cameraBox);
+  const camAt = (tt: number): CameraMatrix | null => (comp.camera?.length ? frameCameraMatrix(comp.camera, tt, env.width, env.height, box) : null);
+  const cam3At = (tt: number): Camera3D | null => (use3d ? camera3dAt(comp.camera, tt) : null);
+  let cam: CameraMatrix | null | undefined;
+  const cam3 = cam3At(t);
+  const fps = Number(comp.fps) > 0 ? Number(comp.fps) : 30;
   for (const layer of visible) {
     // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
     if (pass && !!layer.behind !== (pass === "behind")) continue;
@@ -148,27 +157,181 @@ export function drawFrame(
     // Крупное слово-панчлайн рядом с субтитрами по высоте: субтитры на это время
     // прячем — иначе два одинаковых текста друг над другом («НЕ ПОЙ БОЛЬШЕ!» дважды).
     if (layer.type === "captions" && visible.some((o) => o !== layer && isNearText(o, layer))) continue;
-    const scene = inScene(layer);
-    if (has3dFields(layer) || (scene && cam3)) {
-      // Глубина, наклоны или 3D-камера: плоскость слоя в пространстве (space3d.ts).
-      cam ??= comp.camera?.length ? frameCameraMatrix(comp.camera, t, env.width, env.height, comp.key ? null : comp.cameraBox) : null;
-      drawLayer3D(ctx, layer, t, env, data, scene ? cam3 : null, scene ? cam : null);
-      continue;
-    }
-    if (layer.followCamera && comp.camera?.length) {
-      // Слой едет и зумится вместе с видео: та же матрица, что у кадра основы
-      // (с хромакеем — во весь кадр, в раскладке стрима — внутри окна игры).
-      cam ??= frameCameraMatrix(comp.camera, t, env.width, env.height, comp.key ? null : comp.cameraBox);
-      if (!isIdentityCamera(cam)) {
-        ctx.save();
-        ctx.transform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-        drawLayer(ctx, layer, t, env, data);
-        ctx.restore();
-        continue;
+    // Motion blur: быстрый слой — подкадрами в пределах затвора; медленный и в покое — как всегда.
+    const shutter = layerShutter(layer, comp.motionBlur);
+    if (shutter > 0 && env.createCanvas) {
+      const plan = layerBlurPlan(ctx, layer, t, env, data, shutter, fps, camAt, cam3At);
+      if (plan) {
+        const flat = normalBlend(layer);
+        const ok = paintLayerBlur(
+          ctx,
+          env,
+          plan.times,
+          (target, tt) => paintScene(target, flat, tt, env, data, camAt(tt), cam3At(tt), comp.camera),
+          plan.region,
+          BLEND[layer.blend ?? "normal"] ?? "source-over",
+        );
+        if (ok) continue;
       }
     }
-    drawLayer(ctx, layer, t, env, data);
+    if (cam === undefined) cam = camAt(t);
+    paintScene(ctx, layer, t, env, data, cam, cam3, comp.camera);
   }
+}
+
+/** Один слой кадра в момент `t` со своей камерой (`cam` — плоский наезд, `cam3` — 3D). */
+function paintScene(
+  ctx: Ctx2D,
+  layer: Layer,
+  t: number,
+  env: RenderEnv,
+  data: FrameData,
+  cam: CameraMatrix | null,
+  cam3: Camera3D | null,
+  keys: CameraKey[] | undefined,
+): void {
+  const scene = inScene(layer);
+  if (has3dFields(layer) || (scene && cam3)) {
+    // Глубина, наклоны или 3D-камера: плоскость слоя в пространстве (space3d.ts).
+    drawLayer3D(ctx, layer, t, env, data, scene ? cam3 : null, scene ? cam : null);
+    return;
+  }
+  if (layer.followCamera && keys?.length && cam && !isIdentityCamera(cam)) {
+    // Слой едет и зумится вместе с видео: та же матрица, что у кадра основы
+    // (с хромакеем — во весь кадр, в раскладке стрима — внутри окна игры).
+    ctx.save();
+    ctx.transform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+    drawLayer(ctx, layer, t, env, data);
+    ctx.restore();
+    return;
+  }
+  drawLayer(ctx, layer, t, env, data);
+}
+
+/* ---------- motion blur ---------- */
+
+/** Затвор слоя: свой `motionBlur`, иначе клипа; эффекты кадра и звук — без смаза. */
+export function layerShutter(layer: Layer, clipDefault?: number | null): number {
+  if (layer.type === "fx" || layer.type === "audio") return 0;
+  return shutterValue(layer.motionBlur) ?? shutterValue(clipDefault) ?? 0;
+}
+
+const flatCache = new WeakMap<Layer, Layer>();
+
+/** Копия слоя с наложением normal (подкадры копятся normal, режим слоя — при переносе в кадр). */
+function normalBlend(layer: Layer): Layer {
+  if (!layer.blend || layer.blend === "normal") return layer;
+  let c = flatCache.get(layer);
+  if (!c) flatCache.set(layer, (c = { ...layer, blend: "normal" } as Layer));
+  return c;
+}
+
+/** Углы рамки слоя на кадре в состоянии `st` (с наездом, глубиной и 3D-камерой), px. */
+function layerCorners(layer: Layer, st: LayerState, size: { w: number; h: number }, env: RenderEnv, cam: CameraMatrix | null, cam3: Camera3D | null): number[][] {
+  const W = env.width;
+  const H = env.height;
+  const unit = layerUnit(env);
+  const k = unit * st.scale;
+  const a = (st.rotation * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const local = [
+    [-1, -1],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+  ].map(([sx, sy]) => {
+    const lx = (sx * size.w * k) / 2;
+    const ly = (sy * size.h * k) / 2;
+    return [lx * c - ly * s, lx * s + ly * c];
+  });
+  const scene = inScene(layer);
+  if (has3dFields(layer) || (scene && cam3)) {
+    const pl = layerPlane(st, env);
+    const proj = makeProjector(scene ? cam3 : null, W, H, unit, scene ? cam : null);
+    return local.map(([dx, dy]) => proj(...planePoint(pl, dx, dy, W, H)) ?? [pl.cx + dx, pl.cy + dy]);
+  }
+  const cx = st.x * W;
+  const cy = st.y * H;
+  const pts = local.map(([dx, dy]) => [cx + dx, cy + dy]);
+  if (layer.followCamera && cam) return pts.map(([x, y]) => [cam.scale * x + cam.tx, cam.scale * y + cam.ty]);
+  return pts;
+}
+
+type BlurPlan = { times: number[]; region: { x: number; y: number; w: number; h: number } | null };
+
+/**
+ * Нужен ли слою смаз в момент t: путь углов рамки за время затвора (и движение граней сцены
+ * внутри рамки у слоя scene). null — медленно или в покое (рисуется один раз, как без размытия);
+ * иначе моменты подкадров и прямоугольник кадра, куда они ложатся.
+ */
+export function layerBlurPlan(
+  ctx: Ctx2D,
+  layer: Layer,
+  t: number,
+  env: RenderEnv,
+  data: FrameData,
+  shutter: number,
+  fps: number,
+  camAt: (tt: number) => CameraMatrix | null = () => null,
+  cam3At: (tt: number) => Camera3D | null = () => null,
+): BlurPlan | null {
+  const r = RENDERERS[layer.type];
+  if (!r || !(shutter > 0) || !(fps > 0)) return null;
+  const ref = refSize(env);
+  const st = resolveLayer(layer, t, ref, data.levels);
+  if (!st || st.opacity <= 0.002 || st.scale <= 0.002) return null;
+  const frame = frameOf(t, data);
+  ctx.save();
+  const size = r.measure(ctx, layer, st, env, frame);
+  ctx.restore();
+  const lo = layer.start;
+  const hi = layer.start + layerDuration(layer) - 1e-4;
+  const half = shutter / fps / 2;
+  const t0 = Math.max(lo, t - half);
+  const t1 = Math.min(hi, t + half);
+  const cornersAt = (tt: number): number[][] | null => {
+    const s2 = resolveLayer(layer, tt, ref, data.levels);
+    return s2 ? layerCorners(layer, s2, size, env, camAt(tt), cam3At(tt)) : null;
+  };
+  const a = cornersAt(t0);
+  const b = cornersAt(t1);
+  const unit = layerUnit(env);
+  let travel = a && b ? maxTravel(a, b) / unit : 0;
+  if (layer.type === "scene" && travel < MOTION_BLUR_THRESHOLD) {
+    // Сцена крутится внутри неподвижной рамки — меряем сами грани.
+    const vp = sceneViewport(layer as SceneLayer, env);
+    const p = (layer as SceneLayer).props;
+    const opts = { w: vp.w, h: vp.h, t: 0, dur: layerDuration(layer), env, clip: p?.clip !== false, seed: hashString(layer.id || "scene") };
+    travel = Math.max(travel, sceneTravel(ctx, p?.scene, opts, t0 - layer.start, t1 - layer.start) * st.scale);
+  }
+  const n = blurSamples(travel, env.motionBlurSamples);
+  if (n <= 1) return null;
+  const times = shutterTimes(t, n, shutter, fps, lo, hi);
+  // Частицы и сцена без обрезки рисуют вне рамки — накопитель во весь кадр.
+  if (layer.type === "particles" || (layer.type === "scene" && (layer as SceneLayer).props?.clip === false)) return { times, region: null };
+  // Прямоугольник всех подкадров с полями под тень, свечение, размытие и обводку.
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const tt of times) {
+    for (const [x, y] of cornersAt(tt) ?? []) {
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+  }
+  if (!(x1 > x0 && y1 > y0)) return { times, region: null };
+  const shadow = shadowParams(layer, st, env);
+  const blurPx = st.blur > 0.05 ? st.blur * unit * st.scale : 0;
+  const pad =
+    48 * unit +
+    (shadow ? shadow.blur * 1.6 + Math.max(Math.abs(shadow.x), Math.abs(shadow.y)) : 0) +
+    blurPx * 2 +
+    0.15 * Math.max(x1 - x0, y1 - y0);
+  return { times, region: { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 } };
 }
 
 /* ---------- псевдо-3D ---------- */

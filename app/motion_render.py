@@ -269,6 +269,7 @@ def write_comp(
     base_height: int | None = None,
     freezes: list[dict] | None = None,
     end_screen: dict | None = None,
+    motion_blur: float | None = None,
 ) -> Path:
     """comp.json для компоновщика. ``camera_box``/``pinned`` — раскладка стрима
     (``camera_regions``): камера двигает только окно игры, окошко вебки стоит на месте.
@@ -298,6 +299,9 @@ def write_comp(
     if end_screen:
         # Концовка-баннер (app/end_screen.comp_end_screen): {start, ramp, blur, dim} — размытие основы под слоями.
         comp["endScreen"] = end_screen
+    if motion_blur:
+        # Motion blur клипа по умолчанию (render.motion_blur): слоям и камере без своего затвора.
+        comp["motionBlur"] = float(motion_blur)
     if words:
         comp["words"] = words
     if chat:
@@ -1271,6 +1275,7 @@ def _render_frame_png(
             backgrounds=[{"t0": 0.0, "t1": round(max(total, lt) + 60.0, 3), **zone}] if zone else None,
             ref=comp_ref(out_format), voice=voice, levels=levels,
             end_screen=comp_end_screen(rs.get("end_screen"), layers, total),
+            motion_blur=rs.get("motion_blur"),
         )
         assets_path = work / "assets.json"
         assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

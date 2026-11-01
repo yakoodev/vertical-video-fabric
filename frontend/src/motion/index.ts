@@ -47,7 +47,23 @@ export {
   type Plane,
   type Projector,
 } from "./space3d";
-export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
+export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
+export {
+  MOTION_BLUR_MIN_SAMPLES,
+  MOTION_BLUR_MAX_SAMPLES,
+  MOTION_BLUR_PREVIEW_SAMPLES,
+  MOTION_BLUR_THRESHOLD,
+  MOTION_BLUR_PX_PER_SAMPLE,
+  shutterValue,
+  blurSamples,
+  shutterTimes,
+  cameraShutterAt,
+  cameraBlurTimes,
+  maxTravel,
+  paintOpaqueBlur,
+  paintLayerBlur,
+  type CameraBlurOptions,
+} from "./motionblur";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
 export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";
@@ -66,7 +82,19 @@ export {
   MARKER_COLOR,
   type TextLayout,
 } from "./layers/text";
-export { FX_KINDS, FX_DEFAULTS, LEAK_COLORS, resolveFx, drawFx, flashEnvelope, type ResolvedFx } from "./layers/fx";
+export {
+  FX_KINDS,
+  FX_DEFAULTS,
+  LEAK_COLORS,
+  GLITCH_STYLES,
+  GLITCH_SFX,
+  glitchKeys,
+  resolveFx,
+  drawFx,
+  flashEnvelope,
+  type GlitchStyle,
+  type ResolvedFx,
+} from "./layers/fx";
 export { REACT_SOURCES, REACT_PROPS, REACT_MAX_WINDOW, levelAt, reactAt, type Levels, type ReactEffect } from "./levels";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
 export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";

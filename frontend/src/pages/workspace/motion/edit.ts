@@ -293,4 +293,8 @@ export const FX_TITLES: Record<string, string> = {
   chromatic: "Аберрация",
   flash_frame: "Вспышка",
   grain_overlay: "Зерно",
+  rgb_split: "Глитч: RGB-сдвиг",
+  tear: "Глитч: разрывы строк",
+  datamosh_lite: "Глитч: датамош",
+  pixel_sort_lite: "Глитч: штрихи пикселей",
 };

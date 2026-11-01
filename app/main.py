@@ -3446,6 +3446,10 @@ def api_set_clip_plan_render_settings(
             # Концовку ставит агент/бренд (app/end_screen.py): редактор без этого поля её не стирает.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["end_screen"] = current.get("end_screen")
+        if "motion_blur" not in settings_in:
+            # Motion blur клипа ставит агент (set_motion_blur): клиент без этого поля его не стирает.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["motion_blur"] = current.get("motion_blur")
         if "audio" not in settings_in:
             # Звуковой монтаж (J/L, ключи, эффекты — app/audio_edit.py) — так же: нет ключа — остаётся.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
