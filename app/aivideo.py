@@ -202,6 +202,10 @@ AIV_SCHEMA_SQL = [
 AIV_COLUMNS = [
     # Кто взял запуск (поток@pid): взять можно только approved → submitting одним UPDATE.
     ("aiv_gen_jobs", "worker_id", "TEXT NOT NULL DEFAULT ''"),
+    # Как персонаж «говорит»: voice — голос TTS, sfx — звуки (писк робота: записи пака по эмоции
+    # реплики), none — молчит. speech_captions — показывать текст его sfx-реплик субтитрами.
+    ("aiv_characters", "speech", "TEXT NOT NULL DEFAULT 'voice'"),
+    ("aiv_characters", "speech_captions", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 
@@ -227,6 +231,9 @@ QUALITIES = ("draft", "quality")
 QUALITY_LABELS = {"draft": "черновик", "quality": "качество"}
 PROVIDERS = ("none", "polza")
 ORIGINS = ("invented", "owner")
+SPEECH_MODES = ("voice", "sfx", "none")
+SPEECH_LABELS = {"voice": "говорит голосом", "sfx": "звуки вместо слов", "none": "молчит"}
+SFX_REF_RE = re.compile(r"^sfx:[a-z0-9][a-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 SCRIPT_STATUSES = ("draft", "approved", "producing", "assembled")
 CAMERA_MOVES = ("static", "push_in", "pull_out", "pan_left", "pan_right", "tilt_up", "tilt_down",
                 "parallax_push", "orbit", "float", "dolly_zoom", "tilt_reveal")
@@ -388,13 +395,22 @@ def _voice(value: Any) -> dict:
     if not isinstance(value, dict):
         return {}
     out = {}
-    for key in ("provider", "model", "voice"):
-        text = P._text(value.get(key), 80)
+    for key in ("provider", "model", "voice", "sfx"):
+        text = P._text(value.get(key), 200)
         if text:
             out[key] = text
     if out.get("provider") and out["provider"] not in PROVIDERS:
         raise AivError("voice.provider: polza или none")
+    if out.get("sfx") and not SFX_REF_RE.match(out["sfx"]):
+        raise AivError("voice.sfx: звук пака «sfx:freesound/<файл>.ogg» (search_pack freesound) — только записи")
     return out
+
+
+def _speech(value: Any) -> str:
+    try:
+        return P._choice(value, SPEECH_MODES, "speech", default="voice")
+    except ValueError as exc:
+        raise AivError(f"{exc} (voice — говорит, sfx — звуки вместо слов, none — молчит)") from exc
 
 
 def _unique_slug(store: Any, table: str, scope_col: str, scope_id: int, wanted: str, own_id: int | None) -> str:
@@ -412,6 +428,8 @@ def get_character(store: Any, character_id: int) -> dict:
         raise KeyError(f"нет персонажа {character_id}")
     data = dict(row)
     data["voice"] = _loads(data.pop("voice_json", "{}"), {})
+    data["speech"] = data.get("speech") or "voice"
+    data["speech_captions"] = bool(data.get("speech_captions", 1))
     data["looks"] = [dict(r) for r in store.db.query_all(
         "SELECT * FROM aiv_looks WHERE character_id = ? ORDER BY id", (int(character_id),))]
     return data
@@ -430,8 +448,10 @@ def list_characters(store: Any, project_id: int) -> list[dict]:
 
 def save_character(store: Any, project_id: int, name: str = "", identity_card: Any = None, slug: str = "",
                    origin: str | None = None, voice: Any = None, notes: Any = None,
-                   character_id: int | None = None) -> dict:
-    """Новый персонаж или правка. Смена карты личности помечает его картинки и кадры с ним «устарело»."""
+                   character_id: int | None = None, speech: str | None = None,
+                   speech_captions: bool | None = None) -> dict:
+    """Новый персонаж или правка. Смена карты личности помечает его картинки и кадры с ним «устарело».
+    ``speech``: voice (TTS) | sfx (не говорит — звуки пака по эмоции реплики) | none (молчит)."""
     require_project(store, project_id)
     if character_id:
         current = get_character(store, character_id)
@@ -448,6 +468,10 @@ def save_character(store: Any, project_id: int, name: str = "", identity_card: A
             sets["voice_json"] = _json(_voice(voice))
         if notes is not None:
             sets["notes"] = P._long_text(notes, 1000)
+        if speech:
+            sets["speech"] = _speech(speech)
+        if speech_captions is not None:
+            sets["speech_captions"] = int(bool(speech_captions))
         if slug and slugify(slug) != current["slug"]:
             raise AivError("slug персонажа не меняется (на него ссылаются планы) — заведи нового")
         if sets:
@@ -466,10 +490,11 @@ def save_character(store: Any, project_id: int, name: str = "", identity_card: A
                        "отличительная деталь — она идёт в каждый промпт дословно")
     slug = _unique_slug(store, "aiv_characters", "project_id", int(project_id), slugify(slug or name, "hero"), None)
     cur = store.db.execute(
-        "INSERT INTO aiv_characters (project_id, slug, name, origin, identity_card, voice_json, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO aiv_characters (project_id, slug, name, origin, identity_card, voice_json, notes, speech, "
+        "speech_captions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (int(project_id), slug, name, P._choice(origin or "invented", ORIGINS, "origin"), card,
-         _json(_voice(voice)), P._long_text(notes, 1000)))
+         _json(_voice(voice)), P._long_text(notes, 1000), _speech(speech),
+         int(bool(True if speech_captions is None else speech_captions))))
     return get_character(store, int(cur.lastrowid))
 
 
@@ -715,12 +740,16 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         if not text:
             continue
         who = slugify(line.get("who") or line.get("speaker") or "", "")
-        if who and who != "narrator" and not character_by_slug(store, project_id, who):
+        speaker = character_by_slug(store, project_id, who) if who and who != "narrator" else None
+        if who and who != "narrator" and not speaker:
             raise AivError(f"план {idx}: реплику говорит неизвестный {who!r}")
+        if speaker and speaker["speech"] == "none":
+            warnings.append(f"план {idx}: {who} молчит (speech none) — реплика «{text[:40]}» убрана")
+            continue
         if who and who != "narrator" and who not in speakers:
             warnings.append(f"план {idx}: {who} говорит за кадром (его нет в characters плана)")
         dialogue.append({"who": who or "narrator", "text": text, "emotion": P._text(line.get("emotion"), 40)})
-    chars = sum(len(d["text"]) for d in dialogue)
+    chars = sum(len(d["text"]) for d in dialogue if not _is_sfx(store, project_id, d["who"]))
     if chars and chars / CHARS_PER_SEC > duration + 0.5:
         warnings.append(f"план {idx}: реплик на {chars / CHARS_PER_SEC:.1f} с при плане {duration:g} с — "
                         "при сборке план удлинится под озвучку (или сократи текст)")
@@ -733,6 +762,11 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         "lipsync": int(bool(raw.get("lipsync"))),
         "transition_in": transition if transition in TRANSITIONS else "cut",
     }
+
+
+def _is_sfx(store: Any, project_id: int, who: str) -> bool:
+    c = character_by_slug(store, project_id, who) if who and who != "narrator" else None
+    return bool(c and c["speech"] == "sfx")
 
 
 def replace_shots(store: Any, script_id: int, shots: list, title: str | None = None, logline: str | None = None) -> dict:

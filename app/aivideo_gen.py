@@ -257,9 +257,41 @@ def _image_item(stage: str, target_type: str, target_id: int, ref_kind: str, lab
             "price_note": price["note"]}
 
 
-def _voice_of(store: Any, project_id: int, who: str) -> dict:
-    style = V._style_row(store, project_id)
+# Персонаж не говорит (speech sfx): реплика — звук из пака freesound (ТОЛЬКО настоящие записи,
+# никакой синтетики) по эмоции реплики. Свой звук персонажа — voice.sfx («sfx:freesound/<файл>»).
+SFX_DEFAULT = "sfx:freesound/pop-soft.ogg"
+SFX_BY_EMOTION: list[tuple[tuple[str, ...], str]] = [
+    (("sad", "груст", "печал", "tired", "устал", "disappoint", "разочар", "fail", "провал"),
+     "sfx:freesound/sad-trombone.ogg"),
+    (("angry", "зл", "раздраж", "annoy", "furious", "ярост", "возмущ"), "sfx:freesound/impact-low.ogg"),
+    (("scared", "fear", "испуг", "страх", "нерв", "тревог", "panic", "паник"), "sfx:freesound/sting.ogg"),
+    (("surpris", "удив", "shock", "шок", "изумл"), "sfx:freesound/whip.ogg"),
+    (("happy", "рад", "joy", "весел", "excit", "восторг", "laugh", "смех", "смеш"), "sfx:freesound/pop.ogg"),
+]
+
+
+def sfx_for(character: dict | None, emotion: str = "") -> str:
+    """Звук реплики персонажа-«пищалки»: его собственный (voice.sfx) или по эмоции, иначе мягкий поп."""
+    own = ((character or {}).get("voice") or {}).get("sfx")
+    if own:
+        return str(own)
+    text = str(emotion or "").casefold().replace("ё", "е")
+    for words, ref in SFX_BY_EMOTION:
+        if any(w in text for w in words):
+            return ref
+    return SFX_DEFAULT
+
+
+def speech_of(store: Any, project_id: int, who: str) -> tuple[dict | None, str]:
     character = V.character_by_slug(store, project_id, who) if who and who != "narrator" else None
+    return character, (character or {}).get("speech") or "voice"
+
+
+def _voice_of(store: Any, project_id: int, who: str, emotion: str = "") -> dict:
+    style = V._style_row(store, project_id)
+    character, speech = speech_of(store, project_id, who)
+    if speech == "sfx":
+        return {"provider": "none", "model": "sfx", "voice": sfx_for(character, emotion)}
     voice = dict((character or {}).get("voice") or {})
     provider = "none" if style["provider"] == "none" else (voice.get("provider") or "polza")
     return {"provider": provider, "model": voice.get("model") or settings.polza_tts_model,
@@ -337,11 +369,20 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
     else:  # voice
         for shot in script["shots"]:
             for i, line in enumerate(shot["dialogue"]):
-                voice = _voice_of(store, project_id, line["who"])
+                if speech_of(store, project_id, line["who"])[1] == "none":
+                    continue  # молчит — реплики нет (normalize_shot их уже убирает)
+                voice = _voice_of(store, project_id, line["who"], line.get("emotion") or "")
                 ref = V.selected_ref(store, project_id, "line", shot["id"], "line_audio", str(i))
                 current = _fresh(ref) and ref["prompt"] == _line_key(voice, line["text"])
                 hit = want("line", shot["id"], "line_audio", str(i))
                 if hit is False or (hit is None and current and not regenerate):
+                    continue
+                if voice["model"] == "sfx":
+                    out.append({"stage": stage, "kind": "sfx", "target_type": "line", "target_id": int(shot["id"]),
+                                "ref_kind": "line_audio", "slot": str(i), "script_id": int(script_id),
+                                "label": f"план {shot['idx']}, звук {i + 1} ({line['who']})", "provider": "none",
+                                "model": "sfx", "voice": voice["voice"], "text": line["text"], "chars": 0,
+                                "estimate_rub": 0.0, "price_note": "звук пака (запись), 0 ₽"})
                     continue
                 tts = get_tts(voice["provider"], voice["model"], voice["voice"])
                 price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
@@ -970,6 +1011,21 @@ def _run_tts(store: Any, job: dict) -> dict | None:
     return _done(store, job, asset["id"], key, cost, source)
 
 
+def _run_sfx(store: Any, job: dict) -> dict | None:
+    """Реплика персонажа-«пищалки»: запись пака (в «Файлы для монтажа» — тот же файл переиспользуется)."""
+    from app.motion_assets import _parse_ref, import_to_montage_library, resolve_pack_ref
+
+    ref = str(job["params"].get("voice") or SFX_DEFAULT)
+    path = resolve_pack_ref(ref)
+    if path is None:
+        raise V.AivError(f"звука {ref} нет в паке (пак freesound не установлен? tools/fetch_sfx.py) — "
+                         "синтетику не подставляю")
+    _kind, pack_id, _file = _parse_ref(ref)
+    asset = import_to_montage_library(store, pack_id, path.name)
+    key = _line_key({"provider": "none", "model": "sfx", "voice": ref}, str(job["params"].get("text") or ""))
+    return _done(store, job, int(asset["id"]), key, 0.0, "free", own_asset=False)
+
+
 def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
     prompt, refs, caption = build_request(store, job)
     params = model_params(job["model"], prompt, job["params"].get("aspect") or "9:16",
@@ -1097,10 +1153,12 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         paid = job["provider"] != "none"
         stop = False
         provider = providers.setdefault(job["provider"], get_image_provider(job["provider"])) if (
-            paid or job["kind"] != "tts") else None
+            paid or job["kind"] == "image") else None
         before = _balance(provider) if paid else None
         try:
-            if job["kind"] == "tts":
+            if job["kind"] == "sfx":
+                ref = _run_sfx(store, job)
+            elif job["kind"] == "tts":
                 ref = _run_tts(store, job)
             else:
                 ref = _run_image(store, job, provider, poll_timeout)

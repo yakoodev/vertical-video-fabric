@@ -83,7 +83,8 @@ def h_define_character(ctx: ToolContext, args: dict) -> dict:
     character = _call(V.save_character, ctx.store, _pid(args), name=str(args.get("name") or ""),
                       identity_card=args.get("identity_card"), slug=str(args.get("slug") or ""),
                       origin=args.get("origin"), voice=args.get("voice"), notes=args.get("notes"),
-                      character_id=args.get("character_id"))
+                      character_id=args.get("character_id"), speech=args.get("speech"),
+                      speech_captions=args.get("speech_captions"))
     return {"ok": True, "character": character}
 
 
@@ -252,12 +253,17 @@ def tools() -> list[Tool]:
              "глаза, рост и пропорции, 2–3 цвета hex, отличительная деталь (идёт в промпт ДОСЛОВНО; правка "
              "помечает его картинки и кадры «устарело»), origin invented|owner (витубер владельца — его "
              "картинки он загружает в проект; фото людей из интернета не бери), voice {provider polza|none, "
-             "model, voice} — TTS как в dub_clip. slug — id в сценарии. / Define a character.",
+             "model, voice} — TTS как в dub_clip. speech: voice (говорит) | sfx (НЕ говорит — робот, зверёк: "
+             "реплика = звук-запись пака по emotion реплики, свой звук — voice.sfx «sfx:freesound/<файл>»; "
+             "speech_captions — текст его реплик субтитрами, по умолчанию да) | none (молчит, реплики "
+             "убираются). Пишешь «не говорит» в notes — ставь speech. slug — id в сценарии. / Define a character.",
              _obj({**_PID, "character_id": {"type": "integer"}, "name": {"type": "string"},
                    "identity_card": {"type": "string"}, "slug": {"type": "string"},
                    "origin": {"type": "string", "enum": list(V.ORIGINS)},
                    "voice": _obj({"provider": {"type": "string"}, "model": {"type": "string"},
-                                  "voice": {"type": "string"}}), "notes": {"type": "string"}}, ["project_id"]),
+                                  "voice": {"type": "string"}, "sfx": {"type": "string"}}),
+                   "notes": {"type": "string"}, "speech": {"type": "string", "enum": list(V.SPEECH_MODES)},
+                   "speech_captions": {"type": "boolean"}}, ["project_id"]),
              h_define_character, mutating=True, scope="project"),
         Tool("aiv_add_look", "Облик персонажа",
              "Облик персонажа на отрезке сюжета («в пижаме», «промокла»): name, outfit_text (меняется ТОЛЬКО "

@@ -37,7 +37,11 @@ export interface AivCharacter {
   name: string;
   origin: "invented" | "owner";
   identity_card: string;
-  voice: { provider?: string; model?: string; voice?: string };
+  voice: { provider?: string; model?: string; voice?: string; sfx?: string };
+  /** voice — говорит (TTS), sfx — звуки пака вместо слов (по эмоции реплики), none — молчит. */
+  speech: "voice" | "sfx" | "none";
+  speech_captions: boolean;
+  notes?: string;
   looks: AivLook[];
   refs: AivRef[];
 }

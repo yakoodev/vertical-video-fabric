@@ -769,3 +769,117 @@ def test_measured_price_and_sync_media_url(monkeypatch):
     provider = PR.PolzaImages(api_key="k", base_url="https://polza.test/api/v1")
     assert provider.submit({"model": "grok-imagine-video-1-5", "prompt": "x"}, []) == "url:https://s3/v.mp4"
     assert provider.check("url:https://s3/v.mp4") == {"status": "completed", "url": "https://s3/v.mp4"}
+
+
+# --------------------------------------------------------------------------- #
+# Персонаж, который не говорит: speech sfx (звуки пака по эмоции) / none (молчит)
+# --------------------------------------------------------------------------- #
+
+
+def _sfx_pack(tmp_path, monkeypatch):
+    """Пак freesound для теста (в рабочей копии паков нет — их ставит Docker): короткие файлы-заглушки."""
+    import json
+    import subprocess
+
+    packs = tmp_path / "packs"
+    (packs / "freesound").mkdir(parents=True)
+    files = ["pop-soft.ogg", "pop.ogg", "sad-trombone.ogg", "whip.ogg"]
+    for f in files:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.3",
+                        str(packs / "freesound" / f)], check=True, capture_output=True)
+    (packs / "packs.json").write_text(json.dumps({"version": 1, "packs": [
+        {"id": "freesound", "kind": "sfx", "items": [{"file": f, "name": f, "tags": []} for f in files]}]}),
+        encoding="utf-8")
+    monkeypatch.setattr(settings, "motion_packs_dir", packs, raising=False)
+
+
+def test_sfx_character_beeps_instead_of_tts_and_silent_one_has_no_lines(env, tmp_path, monkeypatch):
+    _client_, store = env
+    _sfx_pack(tmp_path, monkeypatch)
+    pid, sid = _project(store)
+    bip = V.save_character(store, pid, "Бип", "робот-пылесос, круглый, белый, синий глаз-диод", slug="bip",
+                           notes="не говорит, только пищит", speech="sfx")
+    assert bip["speech"] == "sfx" and bip["speech_captions"] is True
+    V.save_character(store, pid, "Тихоня", "серая мышь", slug="tihonya", speech="none")
+    with pytest.raises(V.AivError, match="speech"):
+        V.save_character(store, pid, speech="mumble", character_id=bip["id"])
+    with pytest.raises(V.AivError, match="voice.sfx"):
+        V.save_character(store, pid, voice={"sfx": "https://example.com/beep.mp3"}, character_id=bip["id"])
+    out = V.update_script(store, sid, {"shots": [
+        {"duration": 3, "location": "kitchen", "characters": ["mira", "bip"], "camera": {"move": "static"},
+         "dialogue": [{"who": "mira", "text": "Ты где?"}, {"who": "bip", "text": "Бип-бип?..", "emotion": "curious"}]},
+        {"duration": 3, "location": "kitchen", "characters": ["bip", "tihonya"], "camera": {"move": "static"},
+         "dialogue": [{"who": "bip", "text": "Бип!", "emotion": "радостно"},
+                      {"who": "tihonya", "text": "Привет"}]}]})
+    assert any("tihonya молчит" in w for w in out["warnings"])
+    assert [d["who"] for d in out["shots"][1]["dialogue"]] == ["bip"]
+
+    est = G.estimate(store, pid, "voice", sid)
+    kinds = {(i["kind"], i.get("voice")) for i in est["items"]}
+    assert ("sfx", "sfx:freesound/pop-soft.ogg") in kinds and ("sfx", "sfx:freesound/pop.ogg") in kinds
+    assert all(i["estimate_rub"] == 0 for i in est["items"] if i["kind"] == "sfx")
+    assert sum(1 for i in est["items"] if i["kind"] == "tts") == 1  # говорит только Мира
+
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    from app.aivideo_assemble import assemble
+
+    res = assemble(store, sid)
+    assert res["lines"] == 3
+    sfx_jobs = [j for j in G.list_jobs(store, script_id=sid) if j["kind"] == "sfx"]
+    assert {j["status"] for j in sfx_jobs} == {"done"} and all(j["provider"] == "none" for j in sfx_jobs)
+    asset = store.get_montage_asset(V.get_ref(store, sfx_jobs[0]["result_ref_id"])["asset_id"])
+    assert asset["original_filename"].startswith("freesound/")  # запись пака, не синтез
+    texts = [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]]
+    assert texts == ["Ты где?", "Бип-бип?..", "Бип!"]
+
+    # Подписи к звукам выключены — в субтитрах только речь.
+    V.save_character(store, pid, speech_captions=False, character_id=bip["id"])
+    res = assemble(store, sid)
+    assert [l["text"] for l in store.get_clip_plan_subtitles(res["clip_id"])["lines"]] == ["Ты где?"]
+    assert res["lines"] == 3
+
+
+def test_script_writer_knows_who_does_not_speak(env):
+    import json
+
+    _client_, store = env
+    pid, sid = _project(store)
+    V.save_character(store, pid, "Бип", "робот-пылесос", slug="bip", notes="не говорит, только пищит",
+                     speech="sfx")
+    V.save_character(store, pid, "Тихоня", "серая мышь", slug="tihonya", speech="none")
+    from app.aivideo_script import RULES, script_context, write_script
+
+    ctx = {c["id"]: c for c in script_context(store, sid)["characters"]}
+    assert ctx["bip"]["speech"] == "sfx" and ctx["bip"]["notes"] == "не говорит, только пищит"
+    assert ctx["tihonya"]["speech"] == "none" and "sfx — НЕ говорит" in RULES
+    seen = {}
+
+    class Fake:
+        def generate_content(self, model, payload):
+            seen["payload"] = payload
+            text = json.dumps({"title": "t", "logline": "l", "shots": [
+                {"duration": 3, "characters": [{"id": "bip"}, {"id": "tihonya"}], "camera": {"move": "static"},
+                 "action": "робот кружит", "dialogue": [{"who": "bip", "text": "Бип?", "emotion": "curious"},
+                                                       {"who": "tihonya", "text": "Пи"}]}]}, ensure_ascii=False)
+            return {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+
+    out = write_script(store, sid, brief="робот", client=Fake())
+    assert [d["who"] for d in out["shots"][0]["dialogue"]] == ["bip"]
+    assert '"speech": "sfx"' in seen["payload"]["contents"][0]["parts"][1]["text"]
+
+
+def test_define_character_tool_sets_speech(env):
+    _client_, store = env
+    from app.agent_tools import ToolContext, run_tool
+
+    pid, _sid = _project(store)
+    out, ok = run_tool(ToolContext(store=store), "aiv_define_character", {
+        "project_id": pid, "name": "Бип", "identity_card": "робот", "speech": "sfx", "speech_captions": False,
+        "voice": {"sfx": "sfx:freesound/pop-soft.ogg"}})
+    assert ok, out
+    c = out["character"]
+    assert c["speech"] == "sfx" and c["speech_captions"] is False and c["voice"]["sfx"] == "sfx:freesound/pop-soft.ogg"
+    assert G.sfx_for(c, "angry") == "sfx:freesound/pop-soft.ogg"  # свой звук важнее эмоции
+    assert G.sfx_for({}, "очень зла") == "sfx:freesound/impact-low.ogg"
+    assert G.sfx_for(None, "") == G.SFX_DEFAULT

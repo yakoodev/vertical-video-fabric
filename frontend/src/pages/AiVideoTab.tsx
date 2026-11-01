@@ -617,10 +617,11 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
   const [card, setCard] = useState(c.identity_card);
-  const [voice, setVoice] = useState({ model: c.voice.model ?? "", voice: c.voice.voice ?? "" });
+  const [voice, setVoice] = useState({ ...c.voice, model: c.voice.model ?? "", voice: c.voice.voice ?? "" });
+  const [speech, setSpeech] = useState({ speech: c.speech ?? "voice", speech_captions: c.speech_captions ?? true });
   const [look, setLook] = useState({ name: "", outfit_text: "", beat: "" });
   const save = useMutation({
-    mutationFn: () => aivApi.editCharacter(c.id, { identity_card: card, voice } as never),
+    mutationFn: () => aivApi.editCharacter(c.id, { identity_card: card, voice, ...speech } as never),
     onSuccess: () => {
       toast.success("Сохранено (зависимые кадры — «устарело»)");
       invalidate();
@@ -651,8 +652,30 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
       </div>
       <textarea className="input" rows={2} value={card} onChange={(e) => setCard(e.target.value)} />
       <div className="series-row">
-        <input className="input" placeholder="TTS модель (elevenlabs/eleven-v4)" value={voice.model} onChange={(e) => setVoice({ ...voice, model: e.target.value })} />
-        <input className="input" placeholder="голос (brian)" value={voice.voice} onChange={(e) => setVoice({ ...voice, voice: e.target.value })} />
+        <select
+          className="input"
+          value={speech.speech}
+          title="Как персонаж «говорит» в сценарии и озвучке"
+          onChange={(e) => setSpeech({ ...speech, speech: e.target.value as AivCharacter["speech"] })}
+        >
+          <option value="voice">говорит голосом</option>
+          <option value="sfx">не говорит — звуки (писк по эмоции)</option>
+          <option value="none">молчит</option>
+        </select>
+        {speech.speech === "sfx" ? (
+          <label className="muted" title="Показывать текст его реплик («Бип-бип?..») субтитрами">
+            <input type="checkbox" checked={speech.speech_captions} onChange={(e) => setSpeech({ ...speech, speech_captions: e.target.checked })} />{" "}
+            подписи к звукам
+          </label>
+        ) : null}
+      </div>
+      <div className="series-row">
+        {speech.speech === "voice" ? (
+          <>
+            <input className="input" placeholder="TTS модель (elevenlabs/eleven-v4)" value={voice.model} onChange={(e) => setVoice({ ...voice, model: e.target.value })} />
+            <input className="input" placeholder="голос (brian)" value={voice.voice} onChange={(e) => setVoice({ ...voice, voice: e.target.value })} />
+          </>
+        ) : null}
         <button className="btn sm" disabled={save.isPending} onClick={() => save.mutate()}>
           Сохранить
         </button>
