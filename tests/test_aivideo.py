@@ -1070,9 +1070,9 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
     assert any("план 2: старт — конечный кадр плана 1" in n for n in kf["notes"])
     G.request_stage(store, pid, "keyframes", sid)
     est = G.estimate(store, pid, "video", sid)
-    # Черновая серия без своей модели — MiniMax H3 Max: от 5 с, первый+последний кадр.
+    # Черновая серия без своей модели — MiniMax H3 Max: от 5 с, только стартовый кадр (замер 02.11).
     assert [i["label"] for i in est["items"]] == ["план 1: видео 5 с", "план 3: видео 5 с"]
-    assert est["model"] == "minimax/hailuo-3-max" and est["total_rub"] == 0 and est["modes"] == ["first_last"]
+    assert est["model"] == "minimax/hailuo-3-max" and est["total_rub"] == 0 and est["modes"] == ["start"]
     out = G.request_stage(store, pid, "video", sid)
     assert out["status"] == "done" and len(out["run"]["done"]) == 2
     shot1 = V.get_script(store, sid)["shots"][0]
@@ -1082,8 +1082,7 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
     job = G.get_job(store, out["run"]["done"][0]["job_id"])
     req = job["params"]["request"]
     assert req["duration"] == "5" and req["resolution"] == "768p" and "generate_audio" not in req  # H3 звучит сам
-    assert job["params"]["mode"] == "first_last" and len(job["params"]["refs"]) == 2
-    assert job["params"]["end_ref_id"] == V.selected_ref(store, pid, "shot", shot1["id"], "endframe")["id"]
+    assert job["params"]["mode"] == "start" and len(job["params"]["refs"]) == 1
     assert "гул холодильника" in job["prompt"] and "No music, no speech" in job["prompt"]
     assert "Single continuous shot" in job["prompt"] and "Avoid: cuts" in job["prompt"]  # негатив — блоком
     assert G.estimate(store, pid, "video", sid)["count"] == 0  # всё есть
@@ -1109,7 +1108,7 @@ def test_video_price_measured_and_project_setting(env):
     style = V.get_style(store, pid)
     # Без своей модели — по режиму: черновик → MiniMax H3 Max, качество → Seedance 2.0.
     assert style["video_model"] == "minimax/hailuo-3-max" and not style["video_model_set"]
-    assert style["video_provider"] == "polza" and style["video_caps"]["first_last"]
+    assert style["video_provider"] == "polza" and not style["video_caps"]["first_last"]
     assert G.video_model_for(style, "quality") == "bytedance/seedance-2"
     assert PR.video_price("bytedance/seedance-2-fast", "720p", 4)["rub"] == pytest.approx(89.1)
     assert PR.video_price("grok-imagine-video-1-5", "720p", 4)["rub"] == pytest.approx(12.15)
@@ -1368,9 +1367,10 @@ def test_keyframe_pairs_share_end_and_start_frames(env):
     assert view["shots"][1]["start_frame"]["id"] == e1_ref["id"] and view["shots"][1]["start_shared_from"] == 1
     assert view["shots"][1]["keyframes"] == []  # своего старта у сцепленного плана нет — общий кадр
     # Видео: модель интерполирует старт → конец; старт плана 2 — тот же кадр, что конец плана 1.
+    V.update_style(store, pid, {"video_model": "bytedance/seedance-2"}, owner=True)  # H3 — только старт
     vid = G.request_stage(store, pid, "video", sid)
     labels = [d["label"] for d in vid["run"]["done"]]
-    assert labels == ["план 1: видео 5 с", "план 2: видео 5 с"]
+    assert labels == ["план 1: видео 4 с", "план 2: видео 4 с"]  # Seedance 2 — от 4 с
     v1, v2 = (G.get_job(store, d["job_id"]) for d in vid["run"]["done"])
     assert v2["params"]["start_ref_id"] == e1_ref["id"] and v2["params"]["mode"] == "first_last"
     assert v1["params"]["end_ref_id"] == e1_ref["id"]
@@ -1706,8 +1706,7 @@ def test_polza_video_never_sends_frames_together_with_reference_images(monkeypat
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("app.aivideo_providers.start_frame_data_url", lambda p: f"data:image/jpeg;base64,{p.stem}")
     adapter = PolzaVideo(api_key="k", base_url="https://polza.test/api/v1")
-    for model in ("bytedance/seedance-2", "bytedance/seedance-2-fast", "minimax/hailuo-3-max",
-                  "bytedance/seedance-2-5"):
+    for model in ("bytedance/seedance-2", "bytedance/seedance-2-fast", "bytedance/seedance-2-5"):
         params = video_params(model, "кадр", 4, "720p")
         adapter.submit({**params, "_reference_images": [str(sheet)]}, [start, end])
         fields = seen["body"]["input"]
@@ -1725,7 +1724,9 @@ def test_model_capability_routing_and_future_kling_slot(env):
     caps = {m: video_capabilities(m) for m in ("bytedance/seedance-2", "bytedance/seedance-2-5",
                                                 "minimax/hailuo-3-max", "bytedance/seedance-2-fast",
                                                 "grok-imagine-video-1-5", "kling/v4-reference")}
-    assert all(c["first_last"] for m, c in caps.items() if m != "grok-imagine-video-1-5")
+    assert all(c["first_last"] for m, c in caps.items()
+               if m not in ("grok-imagine-video-1-5", "minimax/hailuo-3-max"))
+    assert not caps["minimax/hailuo-3-max"]["first_last"] and caps["minimax/hailuo-3-max"]["images"] == 1
     assert all(c["exclusive"] for m, c in caps.items() if m != "kling/v4-reference")
     assert caps["kling/v4-reference"]["ref_images"] == 7 and not caps["kling/v4-reference"]["exclusive"]
     assert caps["minimax/hailuo-3-max"]["ref_images"] == 0 and caps["minimax/hailuo-3-max"]["min"] == 5

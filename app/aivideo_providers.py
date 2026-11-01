@@ -109,9 +109,11 @@ VIDEO_LIMITS: dict[str, dict[str, Any]] = {
         "audio": True, "audio_param": "generate_audio", "images": 2, "first_last": True, "ref_images": 30,
         "exclusive": True, "negative": None},
     "minimax/hailuo-3-max": {
-        "label": "MiniMax H3 Max (черновик: первый+последний кадр, звук, дёшево)", "min": 5, "max": 15,
+        # Замер 02.11: «This model supports a single keyframe image: send either a first_frame or a
+        # last_frame, not both» (каталог Polza пишет first/last) — только стартовый кадр.
+        "label": "MiniMax H3 Max (черновик: только стартовый кадр, звук, дёшево)", "min": 5, "max": 15,
         "durations": tuple(range(5, 16)), "resolutions": ("480p", "768p"), "audio": True, "audio_param": None,
-        "images": 2, "first_last": True, "ref_images": 0, "exclusive": True, "negative": None},
+        "images": 1, "first_last": False, "ref_images": 0, "exclusive": True, "negative": None},
     "bytedance/seedance-2-fast": {
         "label": "Seedance 2 fast (дешевле, хуже держит физику)", "min": 4, "max": 15,
         "resolutions": ("480p", "720p"), "audio": True, "audio_param": "generate_audio", "images": 2,
