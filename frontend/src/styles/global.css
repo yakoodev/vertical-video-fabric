@@ -3575,6 +3575,22 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .subed-act:hover { background: var(--surface-3); color: var(--text); }
 .subed-act + .subed-act { margin-left: 0; }
 .subed-text { font-size: 12.5px; resize: vertical; min-height: 44px; }
+/* Слова строки: клик — эмфаза (крупнее + pop → со встряской → обычное). */
+.subed-words { display: flex; flex-wrap: wrap; gap: 3px; }
+.subed-word {
+  border: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+  color: var(--text-muted, var(--text));
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.subed-word:hover { border-color: var(--accent); color: var(--text); }
+.subed-word.e1 { border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 800; }
+.subed-word.e2 { border-color: var(--accent); background: var(--accent); color: #0b0b0f; font-weight: 900; }
+.subed-word:disabled { opacity: 0.55; cursor: default; }
 .subed-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 
 /* ---------- Таймлайн клипа: дорожки, блоки, drag-n-drop ---------- */
@@ -4356,3 +4372,7 @@ ol.series-list { list-style: decimal inside; }
 .project-chat { min-height: 480px; grid-template-rows: auto minmax(0, 1fr) auto; }
 .project-chat .agent-list { max-height: 60vh; }
 @media (max-width: 720px) { .approval-card { grid-template-columns: 1fr; } }
+
+/* ♪ К долям — в шапке таймлайна редактора. */
+.ed-snap { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.ed-snap .input { height: 26px; font-size: 11.5px; padding: 0 6px; max-width: 210px; }

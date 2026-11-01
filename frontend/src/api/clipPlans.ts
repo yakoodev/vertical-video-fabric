@@ -1,5 +1,5 @@
 import { api, request } from "@/api/client";
-import type { Clip, ClipPlan, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
+import type { Clip, ClipPlan, ColorFix, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
 import type { Background } from "@/motion";
 
 export interface RenderClipPlanRequest {
@@ -79,7 +79,8 @@ export interface SubtitleLine {
 }
 export interface PlanSubtitles {
   lines: SubtitleLine[];
-  words?: { word: string; start: number; end: number; speaker?: string }[];
+  /** emph — эмфаза слова (1 pop — крупнее и прыжок, 2 shake — ещё и встряска; app/word_emphasis.py). */
+  words?: { word: string; start: number; end: number; speaker?: string; emph?: number }[];
   /** Слова так, как их слышно с J/L (только при J/L, только для превью): заменённый звук убран,
    *  звук ручек подписан. Править — words/lines. */
   heard_words?: { word: string; start: number; end: number; speaker?: string }[];
@@ -188,6 +189,15 @@ export const clipPlansApi = {
   /** Отдать слова отрезка другому голосу (поправить модель руками). */
   assignVoice: (clipPlanId: number, start: number, end: number, speaker: string) =>
     api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices/assign`, { start, end, speaker }),
+  /** Эмфаза слов субтитров (emphasize_words): indices — номера слов, style off — снять; auto — по слову на строку. */
+  emphasizeWords: (
+    clipPlanId: number,
+    body: { indices?: number[]; words?: string[]; style: "pop" | "shake" | "off"; auto?: boolean; clear?: boolean },
+  ) =>
+    api.post<{ ok: boolean; count: number; picked_by?: string; warnings?: string[]; subtitles: PlanSubtitles }>(
+      `/api/clip-plans/${clipPlanId}/subtitles/emphasis`,
+      body,
+    ),
   saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
     request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
   /** ⏩ Скорость/реверс куска (set_segment_speed): слои и субтитры сервер сдвигает сам. */
@@ -197,6 +207,36 @@ export const clipPlansApi = {
   ) =>
     api.post<{ piece: number; speed: number; reverse: boolean; audio: string | null; length: number; length_before: number;
       duration: number; warnings?: string[] }>(`/api/clip-plans/${clipPlanId}/segment-speed`, body),
+  /** 🎨 Цвет куска (set_piece_color): не переданное поле остаётся, reset — снять. */
+  setPieceColor: (clipPlanId: number, body: { piece: number; reset?: boolean } & ColorFix) =>
+    api.post<{ piece: number; color_fix: ColorFix; summary: string; warnings?: string[] }>(
+      `/api/clip-plans/${clipPlanId}/piece-color`,
+      body,
+    ),
+  /** 🎨 Подогнать цвет кусков к образцу по замеру (match_piece_colors). */
+  matchPieceColors: (clipPlanId: number, body: { reference?: number; pieces?: number[]; strength?: number }) =>
+    api.post<{
+      reference: number;
+      pieces: { piece: number; summary: string; luma_gap_before: number; luma_gap_after: number }[];
+      warnings?: string[];
+    }>(`/api/clip-plans/${clipPlanId}/piece-color/match`, body),
+  /** ♪ К долям (snap_to_beats): начала слоёв, ключи, камера, склейки — на ближайшую долю музыки. */
+  snapBeats: (
+    clipPlanId: number,
+    body: {
+      targets: ("layers" | "keys" | "camera" | "joins" | "all")[];
+      grid?: "beat" | "downbeat" | "half";
+      tolerance?: number;
+      dry_run?: boolean;
+    },
+  ) =>
+    api.post<{
+      moved: number;
+      changes: { target: string; delta: number }[];
+      grid: { source: string; bpm?: number; grid?: string };
+      note: string;
+      warnings?: string[];
+    }>(`/api/clip-plans/${clipPlanId}/snap-beats`, body),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
   undo: (clipPlanId: number) =>
     api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(

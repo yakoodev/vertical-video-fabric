@@ -10,9 +10,14 @@ class SubtitleWord:
     word: str
     start: float
     end: float
+    # Эмфаза слова (app/word_emphasis.py): 0 — нет, 1 — pop, 2 — pop со встряской.
+    emph: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"word": self.word, "start": self.start, "end": self.end}
+        out: dict[str, Any] = {"word": self.word, "start": self.start, "end": self.end}
+        if self.emph:
+            out["emph"] = self.emph
+        return out
 
 
 @dataclass(frozen=True)

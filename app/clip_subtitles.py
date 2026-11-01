@@ -28,6 +28,7 @@ from app.subtitles.registry import get_subtitle_provider, subtitle_model_for_pro
 from app.subtitles.timing import normalize_subtitle_timeline
 from app.settings import settings
 from app.source_audio import is_default_mix, mix_chain, source_mix, speech_mix
+from app.word_emphasis import level_of
 
 MAX_LINES = 400
 
@@ -175,7 +176,8 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
         if inside and _same_text(" ".join(w["word"] for w in inside), line["text"]):
             words.extend(
                 {"word": w["word"], "start": max(start, float(w["start"])), "end": min(end, float(w["end"])),
-                 **({"speaker": w["speaker"]} if w.get("speaker") else {})}
+                 **({"speaker": w["speaker"]} if w.get("speaker") else {}),
+                 **({"emph": w["emph"]} if w.get("emph") else {})}
                 for w in inside
             )
         else:
@@ -239,7 +241,8 @@ def result_from_payload(payload: dict) -> SubtitleResult:
         language=str(payload.get("language") or ""),
         duration=float(payload.get("duration") or (lines[-1]["end"] if lines else 0)),
         segments=[SubtitleSegment(start=float(l["start"]), end=float(l["end"]), text=l["text"]) for l in lines],
-        words=[SubtitleWord(word=w["word"], start=float(w["start"]), end=float(w["end"])) for w in words],
+        words=[SubtitleWord(word=w["word"], start=float(w["start"]), end=float(w["end"]), emph=level_of(w.get("emph")))
+               for w in words],
     )
 
 
@@ -516,6 +519,8 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
                 continue
             if w.get("speaker"):
                 word["speaker"] = str(w["speaker"])[:1]  # голос (A/B/C/D) — не терять при правке
+            if level_of(w.get("emph")):
+                word["emph"] = level_of(w.get("emph"))  # эмфаза слова (app/word_emphasis.py)
             clean_words.append(word)
         current = {**current, "words": clean_words}
         if not current.get("duration"):

@@ -181,6 +181,8 @@ export type ResolvedCaptions = {
   animation: CaptionAnimation;
   wordScale: number;
   tilt: number;
+  emphScale: number;
+  emphColor: string | null;
 };
 
 /** Метка слов оригинала у переведённых субтитров (app/translation.ORIG_SPEAKER). */
@@ -215,6 +217,8 @@ const BASE: ResolvedCaptions = {
   animation: "pop",
   wordScale: 1.12,
   tilt: 0,
+  emphScale: 1.25,
+  emphColor: null,
 };
 
 const resolvedCache = new WeakMap<object, ResolvedCaptions>();
@@ -233,6 +237,7 @@ export function resolveCaptions(props: CaptionsProps): ResolvedCaptions {
   r.maxWords = Math.max(1, Math.min(8, Math.round(r.maxWords)));
   r.maxLines = Math.max(1, Math.min(3, Math.round(r.maxLines)));
   r.wordScale = Math.max(1, Math.min(1.4, r.wordScale));
+  r.emphScale = Math.max(1, Math.min(2, Number(r.emphScale) || BASE.emphScale));
   r.size = Math.max(12, r.size);
   if (!r.font) r.font = BASE.font;
   resolvedCache.set(props, r);
@@ -253,6 +258,10 @@ export type CaptionPageWord = {
   w: number;
   x: number;
   line: number;
+  /** Эмфаза слова (comp.words[i].e): 0 — нет, 1 — pop, 2 — pop со встряской. */
+  e: number;
+  /** Постоянный масштаб слова на странице (эмфаза), 1 — обычное. */
+  es: number;
 };
 
 export type CaptionPage = {
@@ -263,8 +272,12 @@ export type CaptionPage = {
   t1: number;
   /** Ширины строк и размер блока (опорн. px, без масштаба активного слова). */
   lines: number[];
+  /** Высота каждой строки: строка со словом-эмфазой выше (опорн. px). */
+  lineHs: number[];
   w: number;
   h: number;
+  /** Самый крупный масштаб эмфазы на странице (1 — эмфазы нет). */
+  emph: number;
   /** Масштаб страницы ≤ 1: одно длинное слово («САКТИВИРОВАТЬ») шире строки — ужимаем, а не выпускаем за кадр. */
   fit: number;
 };
@@ -275,6 +288,12 @@ const PAUSE_SPLIT = 0.6;
 const HOLD = 0.45;
 /** Паузу короче этой между страницами не показываем пустым кадром. */
 const BRIDGE = 0.35;
+
+/** Масштаб слова с эмфазой: уровень 1 — emphScale, 2 — сильнее (×1.25 → ×1.45). */
+export function emphScaleOf(r: ResolvedCaptions, level: number | undefined): number {
+  if (!level || level < 1) return 1;
+  return level >= 2 ? 1 + (r.emphScale - 1) * 1.8 : r.emphScale;
+}
 
 const EDGE_PUNCT = /^[\s.,!?;:…«»"“”„()[\]—–-]+|[\s.,!?;:…«»"“”„()[\]—–-]+$/g;
 const SENTENCE_END = /[.!?…]["»”)]*$/;
@@ -344,7 +363,7 @@ export function captionPages(
   // Запас под увеличенное активное слово, чтобы оно не вылезало за maxWidth.
   const maxW = r.maxWidth / Math.max(1, r.wordScale * 0.97);
 
-  type Item = { i: number; text: string; raw: string; t0: number; t1: number; w: number; s: string };
+  type Item = { i: number; text: string; raw: string; t0: number; t1: number; w: number; s: string; e: number; es: number };
   const items: Item[] = [];
   words.forEach((wd, i) => {
     const t0 = Number(wd.t0);
@@ -356,7 +375,8 @@ export function captionPages(
     if (r.speakers.length ? !r.speakers.includes(who) : who === ORIG_SPEAKER) return;
     const text = cleanWord(String(wd.w ?? ""), r);
     if (!text) return;
-    items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "" });
+    const e = Math.max(0, Math.min(2, Math.round(Number(wd.e) || 0)));
+    items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "", e, es: emphScaleOf(r, e) });
   });
   items.sort((a, b) => a.t0 - b.t0);
 
@@ -378,7 +398,8 @@ export function captionPages(
 
   // 2) Фраза — на страницы поровну (4 слова при maxWords 3 → 2 + 2, а не 3 + 1:
   // одинокое слово в конце фразы выглядит обрывком), 3) широкую страницу — жадно по ширине.
-  const fits = (g: Item[]) => packLines(g.map((x) => x.w), space, maxW).lines.length <= r.maxLines;
+  // Слово с эмфазой занимает в строке столько, сколько рисуется (× свой масштаб).
+  const fits = (g: Item[]) => packLines(g.map((x) => x.w * x.es), space, maxW).lines.length <= r.maxLines;
   const groups: Item[][] = [];
   for (const ph of phrases) {
     const count = Math.ceil(ph.length / r.maxWords);
@@ -409,15 +430,21 @@ export function captionPages(
 
   const lineH = r.size * r.lineHeight;
   const pages: CaptionPage[] = groups.map((g, index) => {
-    const pk = packLines(g.map((x) => x.w), space, maxW);
+    const pk = packLines(g.map((x) => x.w * x.es), space, maxW);
+    // Строка со словом-эмфазой выше на его масштаб — крупное слово не налезает на соседнюю строку.
+    const lineHs = pk.lines.map((_w, li) => lineH * Math.max(1, ...g.filter((_x, k) => pk.line[k] === li).map((x) => x.es)));
     return {
       index,
-      words: g.map((x, k) => ({ i: x.i, text: x.text, s: x.s || undefined, t0: x.t0, t1: x.t1, w: x.w, x: pk.x[k], line: pk.line[k] })),
+      words: g.map((x, k) => ({
+        i: x.i, text: x.text, s: x.s || undefined, t0: x.t0, t1: x.t1, w: x.w, x: pk.x[k], line: pk.line[k], e: x.e, es: x.es,
+      })),
       t0: g[0].t0,
       t1: g[g.length - 1].t1 + HOLD,
       lines: pk.lines,
+      lineHs,
       w: Math.max(...pk.lines),
-      h: lineH * pk.lines.length,
+      h: lineHs.reduce((a, b) => a + b, 0),
+      emph: Math.max(1, ...g.map((x) => x.es)),
       fit: Math.min(1, maxW / Math.max(1, ...pk.lines)),
     };
   });
@@ -543,7 +570,41 @@ function wordLook(r: ResolvedCaptions, words: CaptionPageWord[], k: number, acti
       break;
   }
   look.box = isActive ? clamp01(since / 0.12) : 0;
+  if (w.e > 0) applyEmphasis(r, w, look, since);
   return look;
+}
+
+/** Прыжок слова с эмфазой: за EMPH_POP_IN растёт на EMPH_POP, к EMPH_POP_SEC — назад. */
+const EMPH_POP = 0.28;
+const EMPH_POP_IN = 0.09;
+const EMPH_POP_SEC = 0.32;
+/** Встряска уровня 2 (shake) затухает к этой секунде после начала слова. */
+const EMPH_SHAKE_SEC = 0.42;
+
+/**
+ * Эмфаза слова поверх анимации стиля: постоянный масштаб `es` (соседи раздвигаются — раскладка
+ * та же, что при разбивке страниц), в момент слова — прыжок, у уровня 2 — затухающая встряска.
+ * Шум — от номера слова: превью == рендер.
+ */
+function applyEmphasis(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, since: number): void {
+  let pop = 1;
+  if (since >= 0 && since < EMPH_POP_SEC) {
+    pop = since < EMPH_POP_IN
+      ? 1 + EMPH_POP * ease("outQuad", since / EMPH_POP_IN)
+      : 1 + EMPH_POP * (1 - ease("inOutQuad", (since - EMPH_POP_IN) / (EMPH_POP_SEC - EMPH_POP_IN)));
+  }
+  look.lay *= w.es * pop;
+  look.scale *= w.es * pop;
+  const from = EMPH_POP_IN * 0.5;
+  if (w.e >= 2 && since >= from && since < EMPH_SHAKE_SEC) {
+    const q = (since - from) / (EMPH_SHAKE_SEC - from);
+    const decay = (1 - q) * (1 - q);
+    const f = 38 * since;
+    const seed = 613 * (w.i + 1);
+    look.dx += r.size * 0.07 * decay * noise1(seed, f);
+    look.dy += r.size * 0.06 * decay * noise1(seed + 1, f);
+    look.rot += 0.08 * decay * noise1(seed + 2, f);
+  }
 }
 
 function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scale: number; alpha: number } {
@@ -556,6 +617,8 @@ function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scal
 function wordColor(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, hl: Map<number, string>): string {
   const key = hl.get(w.i);
   if (key) return key;
+  // Ключевое слово (эмфаза) — своим цветом всю страницу: оно и крупнее, и заметнее.
+  if (w.e > 0) return r.emphColor ?? r.activeColor;
   const voice = speakerColor(r, w.s);
   // Другой голос — своим цветом и пока звучит: так видно, что это не главный.
   if (voice) return voice;
@@ -583,7 +646,6 @@ function drawPage(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: number,
 }
 
 function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: number, env: RenderEnv, font: string, all: CaptionWord[]): void {
-  const lineH = r.size * r.lineHeight;
   // Шрифт ставим до замеров: высота заглавной кэшируется по строке шрифта.
   ctx.font = font;
   setLetterSpacing(ctx, r.letterSpacing);
@@ -596,7 +658,10 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
   });
   const hl = new Map(r.highlightWords.map((h) => [h.i, h.color] as [number, string]));
   const looks = words.map((w, k) => wordLook(r, words, k, active, t, hl.has(w.i)));
-  const lineY = (line: number) => -page.h / 2 + lineH * (line + 0.5);
+  // Центр строки: строка со словом-эмфазой выше (page.lineHs).
+  const lineTop: number[] = [];
+  page.lineHs.reduce((acc, h, li) => ((lineTop[li] = acc), acc + h), -page.h / 2);
+  const lineY = (line: number) => lineTop[line] + page.lineHs[line] / 2;
   // Раскладка на этот кадр: увеличенное активное слово раздвигает соседей,
   // строка остаётся по центру. centers[k] — центр слова k по горизонтали.
   const centers: number[] = new Array(words.length).fill(0);
@@ -631,8 +696,8 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
         const shownW = (lk.chars === Infinity ? last.w : partialWidth(ctx, font, r, last.text, lk.chars)) * lk.lay;
         width = centers[k] - (last.w * lk.lay) / 2 + shownW - lineLeft[li];
       }
-      const top = li === 0 ? half : Math.max(half, lineH / 2);
-      const bottom = li === page.lines.length - 1 ? half : Math.max(half, lineH / 2);
+      const top = li === 0 ? half : Math.max(half, page.lineHs[li] / 2);
+      const bottom = li === page.lines.length - 1 ? half : Math.max(half, page.lineHs[li] / 2);
       roundRectPath(ctx, lineLeft[li] - padX, lineY(li) - top, width + padX * 2, top + bottom, r.bg?.radius ?? 16);
     });
     ctx.fillStyle = rgba(r.bg.color, r.bg.opacity ?? 1);
@@ -708,7 +773,8 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
     const text = textOf(w, lk);
     if (r.animation === "karaoke") {
       // Несказанная часть — приглушённым цветом, сказанная — цветом активного.
-      const base = hl.get(w.i) ?? r.color;
+      const key = hl.get(w.i) ?? (w.e > 0 ? r.emphColor ?? r.activeColor : undefined);
+      const base = key ?? r.color;
       if (lk.fill < 1) {
         ctx.fillStyle = rgba(dim ?? base);
         ctx.fillText(text, x, baseline);
@@ -718,14 +784,14 @@ function drawPageInner(ctx: Ctx2D, r: ResolvedCaptions, page: CaptionPage, t: nu
         ctx.beginPath();
         ctx.rect(x - r.size, baseline - r.size * 1.5, r.size + w.w * lk.fill, r.size * 2.5);
         ctx.clip();
-        ctx.fillStyle = rgba(hl.get(w.i) ?? r.activeColor);
+        ctx.fillStyle = rgba(key ?? r.activeColor);
         ctx.fillText(text, x, baseline);
         ctx.restore();
       }
       return;
     }
     const color = wordColor(r, w, lk, hl);
-    ctx.fillStyle = grad && !lk.active && !hl.has(w.i) ? grad : rgba(color);
+    ctx.fillStyle = grad && !lk.active && !hl.has(w.i) && !w.e ? grad : rgba(color);
     if (r.glow && lk.active) ctx.shadowColor = rgba(r.activeColor, 0.95);
     ctx.fillText(text, x, baseline);
     if (r.glow && lk.active) ctx.shadowColor = rgba(r.glow, 0.95);
@@ -785,7 +851,10 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
     // Удар влетает крупнее страницы — запас промежуточному холсту.
     const pad = (r.stroke?.width ?? 0) * 2 + r.size * (r.animation === "stomp" ? 1.2 : 0.3);
     if (!page) return { w: r.maxWidth, h: r.size * r.lineHeight * r.maxLines };
-    return { w: page.w * r.wordScale + pad * 2, h: page.h + pad * 2 };
+    // Эмфаза: прыжок (+28%) и встряска — запас промежуточному холсту.
+    const pop = page.emph > 1 ? 1 + EMPH_POP : 1;
+    const extra = page.emph > 1 ? r.size * page.emph * 0.45 : 0;
+    return { w: page.w * r.wordScale * pop + (pad + extra) * 2, h: page.h * pop + (pad + extra) * 2 };
   },
   draw(ctx, layer, st: LayerState, env, frame) {
     const page = currentPage(ctx, layer, env, frame);
@@ -807,11 +876,14 @@ export const captionsRenderer: LayerRenderer<CaptionsLayer> = {
 };
 
 /** Слова из субтитров редактора (`{word, start, end}`) в формат `comp.words`. */
-export function captionWordsFrom(list: { word: string; start: number; end: number; speaker?: string }[]): CaptionWord[] {
+export function captionWordsFrom(
+  list: { word: string; start: number; end: number; speaker?: string; emph?: number }[],
+): CaptionWord[] {
   return (list || []).map((w) => ({
     t0: Number(w.start),
     t1: Number(w.end),
     w: String(w.word ?? ""),
     ...(w.speaker ? { s: String(w.speaker) } : {}),
+    ...(w.emph ? { e: Number(w.emph) } : {}),
   }));
 }

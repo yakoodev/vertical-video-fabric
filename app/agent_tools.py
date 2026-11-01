@@ -188,6 +188,8 @@ def clip_timeline(store: Any, clip_plan_id: int) -> dict:
                 "focus": seg.get("focus") or [],
                 "fit": seg.get("fit"),
                 **retimed,
+                # Цветокоррекция куска (set_piece_color / match_piece_colors, app/piece_color.py).
+                **({"color_fix": seg["color_fix"]} if seg.get("color_fix") else {}),
             }
         )
     return {"plan": plan, "render": render, "pieces": pieces, "duration": round(total, 3),
@@ -810,8 +812,12 @@ def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
             + ([w["speaker"]] if w.get("speaker") else [])
             for w in own
         ]
-        lines.append({"i": index, "start": round(shift(start), 2), "end": round(shift(end), 2),
-                      "text": line["text"], "words": inside})
+        entry = {"i": index, "start": round(shift(start), 2), "end": round(shift(end), 2),
+                 "text": line["text"], "words": inside}
+        emph = {j: int(w["emph"]) for j, w in enumerate(own) if w.get("emph")}
+        if emph:
+            entry["emph"] = emph  # эмфаза слов строки: {номер слова в строке: 1 pop | 2 shake}
+        lines.append(entry)
     return {"has_subtitles": bool(lines), "edited": bool(payload.get("edited")), "lines": lines}
 
 
@@ -3436,6 +3442,14 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
                 problems.append(f"words[{i}]: s — голос A, B, C или D")
                 continue
             item["speaker"] = speaker
+        if w.get("emph") not in (None, 0, False, ""):
+            from app.word_emphasis import level_of
+
+            level = level_of(w.get("emph"))
+            if not level:
+                problems.append(f"words[{i}]: emph — 1 (pop) или 2 (shake)")
+                continue
+            item["emph"] = level
         words.append(item)
     if problems:
         raise ToolError("слова не приняты", problems)
@@ -3489,6 +3503,365 @@ def words_clip_to_plain(clock: Any, words: list[dict], old_words: list[dict]) ->
         a, b = clock.clip_range_to_plain(start, end, piece)
         last = a
         out.append({**w, "start": round(a, 3), "end": round(max(b, a + 0.02), 3)})
+    return out
+
+
+def h_emphasize_words(ctx: ToolContext, args: dict) -> dict:
+    """Эмфаза слов субтитров (app/word_emphasis.py): крупнее + pop, у shake — ещё встряска."""
+    from app.word_emphasis import apply_levels, emphasized, gemini_pick, level_of, line_words, pick_heuristic
+
+    payload = ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}
+    words = payload.get("words") or []
+    if not words:
+        raise ToolError("у клипа нет слов субтитров — сначала generate_subtitles")
+    style = args.get("style", args.get("level", "pop"))
+    level = level_of(style)
+    if level == 0 and str(style).strip().lower() not in ("off", "none", "0", "false"):
+        raise ToolError("style — pop (крупнее и прыжок), shake (ещё крупнее, прыжок и встряска) или off (снять)")
+    lines = line_words(payload)
+    levels: dict[int, int] = {}
+    if args.get("clear"):
+        levels.update({i: 0 for i, w in enumerate(words) if w.get("emph")})
+    problems: list[str] = []
+    picked_by = None
+    if args.get("auto"):
+        taken = {i for i, w in enumerate(words) if w.get("emph") and not args.get("clear")}
+        todo = [line for line in lines if not any(w["i"] in taken for w in line)]
+        picked: list[int] = []
+        if str(args.get("pick") or "").lower() == "gemini":
+            try:
+                picked, picked_by = gemini_pick(todo), "gemini"
+            except Exception as exc:  # noqa: BLE001 - Gemini часто недоступен: эвристика
+                problems.append(f"Gemini не выбрал ({exc}) — взял эвристику")
+        if not picked:
+            picked, picked_by = pick_heuristic(todo), "heuristic"
+        levels.update({i: level or 1 for i in picked})
+    refs = [("indices", r) for r in args.get("indices") or []] + [("words", r) for r in args.get("words") or []]         + [("at", r) for r in args.get("at") or []]
+    for key, ref in refs:
+        if key == "indices" and isinstance(ref, str) and ref.strip().isdigit():
+            ref = int(ref)
+        index = _emph_index(words, lines, ref)
+        if index is None:
+            problems.append(f"{key}: слова {ref!r} нет в субтитрах (номер из get_clip, текст или {{line, word}})")
+            continue
+        levels[index] = level
+    if not levels:
+        raise ToolError("нечего менять: передай indices, words или at, auto: true или clear: true",
+                        problems or None)
+    ctx.before_change()
+    fresh = apply_levels(words, levels)
+    ctx.store.set_clip_plan_subtitles(ctx.plan_id, {**payload, "words": fresh})
+    marked = emphasized({"words": fresh})
+    out: dict = {"ok": True, "emphasized": marked[:200], "count": len(marked),
+                 "note": "эмфаза у слов субтитров (emph: 1 pop — ×1.25 и прыжок; 2 shake — ×1.45, прыжок и "
+                         "встряска): работает в слое captions (emphScale/emphColor слоя) и в прожигаемых субтитрах "
+                         "(там без встряски). Едет за словом при вырезах и правке строк. Больше 1 слова на строку "
+                         "и чаще раза в 2–3 с — уже шум. Проверь view_frame на моменте слова."}
+    if picked_by:
+        out["picked_by"] = picked_by
+    if problems:
+        out["warnings"] = problems
+    return out
+
+
+def _emph_index(words: list[dict], lines: list[list[dict]], ref: Any) -> int | None:
+    """Номер слова в субтитрах по ссылке агента: число, текст, {text, nth}, {line, word}, {i}."""
+    if isinstance(ref, bool):
+        return None
+    if isinstance(ref, (int, float)):
+        index = int(ref)
+        return index if 0 <= index < len(words) else None
+    if isinstance(ref, str):
+        ref = {"text": ref}
+    if not isinstance(ref, dict):
+        return None
+    if ref.get("i") is not None:
+        return _emph_index(words, lines, ref.get("i"))
+    if ref.get("line") is not None:
+        try:
+            return int(lines[int(ref["line"])][int(ref.get("word", 0))]["i"])
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+    want, nth, seen = _norm_word(ref.get("text") or ref.get("word")), int(ref.get("nth") or 1), 0
+    for index, w in enumerate(words):
+        if want and _norm_word(w.get("word")) == want:
+            seen += 1
+            if seen == nth:
+                return index
+    return None
+
+
+def _color_entries(ctx: ToolContext) -> tuple[dict, list[dict]]:
+    from app.piece_color import normalize_color_fix
+
+    render = _current_render(ctx)
+    return render, normalize_color_fix(render.get("color_fix"))
+
+
+def h_set_piece_color(ctx: ToolContext, args: dict) -> dict:
+    """Цветокоррекция куска основы (app/piece_color.py): экспозиция, контраст, насыщенность, баланс."""
+    from app.piece_color import FIELDS, describe, normalize_fix
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    segments = plan.get("segments") or []
+    index = _piece_index(args, len(segments))
+    seg = segments[index]
+    render, entries = _color_entries(ctx)
+    current = normalize_fix(seg.get("color_fix"))
+    problems = []
+    for name, (_neutral, lo, hi) in FIELDS.items():
+        value = args.get(name)
+        if value is None:
+            continue
+        number = _num(value)
+        if number is None or not lo - 1e-9 <= number <= hi + 1e-9:
+            problems.append(f"{name} — {lo:g}..{hi:g}")
+    if problems:
+        raise ToolError("цвет куска не принят", problems)
+    if args.get("reset"):
+        fix: dict = {}
+    else:
+        fix = {**current, **{k: args[k] for k in FIELDS if args.get(k) is not None}}
+    fix = normalize_fix(fix)
+    entries = [e for e in entries if e["piece"] != seg["id"]] + ([{"piece": seg["id"], **fix}] if fix else [])
+    saved = _save_render(ctx, {**render, "color_fix": entries})
+    out: dict = {"ok": True, "piece": index, "color_fix": fix, "summary": describe(fix) or "как в исходнике",
+                 "pieces_with_color": len(saved.get("color_fix") or []),
+                 "note": "поправка куска — до лука пресета; exposure в ступенях (EV), temperature + теплее / − "
+                         "холоднее, tint + пурпурнее / − зеленее. Подогнать куски друг к другу по замеру — "
+                         "match_piece_colors. Проверь view_frame на этом куске."}
+    warnings = []
+    if _source_has_key(ctx, plan):
+        warnings.append("у источника хромакей — цвет куска к основе не применяется (сорвал бы ключ)")
+    if abs(fix.get("exposure", 0.0)) > 1.2:
+        warnings.append("экспозиция больше ±1.2 EV — светлое выгорит / тёмное зашумит, проверь кадр")
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _source_has_key(ctx: ToolContext, plan: dict) -> bool:
+    try:
+        return bool(ctx.store.get_source(int(plan["source_id"])).get("chroma_key"))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def h_match_piece_colors(ctx: ToolContext, args: dict) -> dict:
+    """Подогнать цвет кусков к образцу по замеру signalstats (app/piece_color.py)."""
+    from app.heavy_queue import heavy_slot
+    from app.piece_color import describe, match_fix, measure, normalize_fix, predict
+    from app.piece_speed import seg_length
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    segments = plan.get("segments") or []
+    if len(segments) < 2:
+        raise ToolError("в клипе один кусок — подгонять не к чему (цвет куска — set_piece_color)")
+    if args.get("reference") is None:
+        reference = max(range(len(segments)), key=lambda i: seg_length(segments[i]))
+    else:
+        reference = _piece_index({"piece": args.get("reference")}, len(segments))
+    targets = args.get("pieces")
+    if targets is None:
+        targets = [i for i in range(len(segments)) if i != reference]
+    try:
+        targets = sorted({int(i) for i in targets} - {reference})
+    except (TypeError, ValueError) as exc:
+        raise ToolError("pieces — номера кусков с 0") from exc
+    if any(not 0 <= i < len(segments) for i in targets):
+        raise ToolError(f"pieces: куски 0..{len(segments) - 1}")
+    strength = _num(args.get("strength"))
+    strength = 1.0 if strength is None else min(1.0, max(0.0, strength))
+    source = ctx.store.get_source(int(plan["source_id"]))
+    path = Path(str(source.get("local_path") or ""))
+    if not path.is_file():
+        raise ToolError("исходник недоступен — замерить кадры нечем")
+    if source.get("chroma_key"):
+        raise ToolError("у источника хромакей — цвет основы не трогаем (сорвал бы ключ)")
+    crop = source.get("content_crop") or None
+    stats: dict[int, dict] = {}
+    try:
+        with heavy_slot("color_match", f"клип {ctx.plan_id}"):
+            for i in [reference, *targets]:
+                seg = segments[i]
+                stats[i] = measure(path, float(seg["start_sec"]), float(seg["end_sec"]), crop)
+    except (ValueError, OSError) as exc:
+        raise ToolError(f"замер не удался: {exc}") from exc
+    target = predict(stats[reference], segments[reference].get("color_fix"))
+    render, entries = _color_entries(ctx)
+    by_id = {e["piece"]: e for e in entries}
+    report = []
+    for i in targets:
+        seg = segments[i]
+        fix = match_fix(stats[i], target, seg.get("color_fix"), strength)
+        if fix:
+            by_id[seg["id"]] = {"piece": seg["id"], **fix}
+        else:
+            by_id.pop(seg["id"], None)
+        after = predict(stats[i], fix)
+        report.append({"piece": i, "before": stats[i], "after": after, "color_fix": fix,
+                       "summary": describe(fix) or "без поправки",
+                       "luma_gap_before": round(abs(stats[i]["y"] - target["y"]), 1),
+                       "luma_gap_after": round(abs(after["y"] - target["y"]), 1)})
+    order = {seg["id"]: k for k, seg in enumerate(segments)}
+    fresh = sorted(by_id.values(), key=lambda e: order.get(e["piece"], 10**6))
+    _save_render(ctx, {**render, "color_fix": fresh})
+    out: dict = {"ok": True, "reference": reference, "reference_stats": stats[reference], "target": target,
+                 "strength": strength, "pieces": report,
+                 "note": "средние яркость (Y), U/V и насыщенность кусков сведены к образцу по 5 кадрам каждого. "
+                         "Это выравнивание, а не лук: лук пресета ложится поверх. Ночь и день так не сравнять — "
+                         "проверь view_frame/contact_sheet; поправить руками — set_piece_color, снять — reset."}
+    clipped = [r["piece"] for r in report if r["luma_gap_after"] > 8]
+    if clipped:
+        out["warnings"] = [f"куски {clipped}: разница слишком большая (поправка упёрлась в предел ±1.5 EV / "
+                           "насыщенность 0.4..1.8) — сцены разные, подгоняй мягче (strength) или оставь"]
+    return out
+
+
+def _beat_grid(ctx: ToolContext, args: dict, plan: dict, clock: Any) -> tuple[list[float], str, dict]:
+    """Сетка долей для snap_to_beats: (моменты, шкала "final"/"clip", описание)."""
+    from app.beat_snap import describe_grid, grid_times
+
+    kind = str(args.get("grid") or "beat")
+    if args.get("beats") is not None:
+        try:
+            beats = sorted({round(float(t), 4) for t in args["beats"]})
+        except (TypeError, ValueError) as exc:
+            raise ToolError("beats — список секунд готового ролика") from exc
+        return beats, "final", {"source": "beats", "count": len(beats), "time": "final"}
+    if args.get("bpm") is not None:
+        bpm = _num(args.get("bpm"))
+        if bpm is None or not 40 <= bpm <= 240:
+            raise ToolError("bpm — 40..240")
+        first = _num(args.get("first_beat")) or 0.0
+        down = _num(args.get("first_downbeat"))
+        grid = {"bpm": bpm, "period": 60.0 / bpm, "first_beat": first,
+                "first_downbeat": first if down is None else down, "downbeat_every": 4, "time": "final"}
+        return grid_times(grid, clock.final_duration, kind), "final", describe_grid(grid, kind, "manual")
+    source = str(args.get("source") or "auto")
+    if source in ("auto", "music"):
+        from app.audio_map import _music_beats
+
+        grid = _music_beats(ctx.store, plan.get("render_settings") or {}, clock)
+        if grid:
+            return grid_times(grid, clock.final_duration, kind), "final", describe_grid(grid, kind, "music")
+        if source == "music":
+            raise ToolError("у клипа нет музыки set_music или в ней не слышно пульса — передай bpm и first_beat "
+                            "(или beats) сам, либо source: \"audio\" — доли звука клипа")
+    from app.audio_map import clip_audio_map
+
+    try:
+        view, _png = clip_audio_map(ctx.store, ctx.plan_id)
+    except ValueError as exc:
+        raise ToolError(f"доли звука клипа: {exc}") from exc
+    grid = view.get("beats")
+    if not grid:
+        raise ToolError("в звуке клипа нет пульса (и музыки set_music нет) — передай bpm и first_beat сам")
+    return grid_times(grid, clock.clip_duration, kind), "clip", describe_grid(grid, kind, "audio")
+
+
+def h_snap_to_beats(ctx: ToolContext, args: dict) -> dict:
+    """Начала слоёв, ключи, камера и склейки — на ближайшую долю (app/beat_snap.py)."""
+    from app.beat_snap import (
+        DEFAULT_TOLERANCE, GRIDS, MAX_TOLERANCE, MIN_PIECE_SEC, TARGETS, Scale, nearest, snap_camera, snap_layers,
+    )
+    from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
+    from app.piece_speed import is_reversed, seg_speed
+    from app.timebase import ClipClock
+
+    raw_targets = args.get("targets") or ["layers"]
+    if isinstance(raw_targets, str):
+        raw_targets = [raw_targets]
+    targets = set(TARGETS) if "all" in raw_targets else {str(t) for t in raw_targets}
+    if not targets or targets - set(TARGETS):
+        raise ToolError(f"targets — из {', '.join(TARGETS)} (или all)")
+    grid_kind = str(args.get("grid") or "beat")
+    if grid_kind not in GRIDS:
+        raise ToolError(f"grid — {', '.join(GRIDS)}")
+    tolerance = _num(args.get("tolerance"))
+    tolerance = DEFAULT_TOLERANCE if tolerance is None else tolerance
+    if not 0.01 <= tolerance <= MAX_TOLERANCE:
+        raise ToolError(f"tolerance — 0.01..{MAX_TOLERANCE:g} с (дальше — это уже другой момент, не «чуть мимо»)")
+    dry = bool(args.get("dry_run"))
+    only = {str(i) for i in args.get("layer_ids") or []} or None
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    clock = ClipClock.for_plan(plan)
+    beats, scale_name, grid_info = _beat_grid(ctx, args, plan, clock)
+    if not beats:
+        raise ToolError("в сетке нет ни одной доли на длине ролика")
+    changes: list[dict] = []
+    problems: list[str] = []
+
+    if "joins" in targets and len(plan.get("segments") or []) > 1:
+        segments = plan["segments"]
+        to_grid = clock.clip_to_final if scale_name == "final" else (lambda t: float(t))
+        spec = export_spec(ctx.store, ctx.plan_id)
+        pieces = [dict(p) for p in spec["pieces"]]
+        duration = float(spec["source"].get("duration_sec") or 0) or math.inf
+        shift = 0.0
+        moved = False
+        for k in range(len(segments) - 1):
+            join = (clock.clip_starts[k + 1] + clock.clip_end(k)) / 2
+            g = to_grid(join) + shift
+            b = nearest(g, beats, tolerance)
+            if b is None or abs(b - g) < 0.004:
+                continue
+            delta = round(b - g, 3)
+            seg, piece = segments[k], pieces[k]
+            src_delta = delta * seg_speed(seg)
+            start, end = float(piece["start_sec"]), float(piece["end_sec"])
+            if is_reversed(seg):
+                start = round(start - src_delta, 3)  # конец развёрнутого куска на клипе — начало в исходнике
+            else:
+                end = round(end + src_delta, 3)
+            if start < 0 or end > duration or end - start < MIN_PIECE_SEC:
+                problems.append(f"стык {k}→{k + 1}: до доли {delta:+.2f} с — кусок вышел бы за исходник или "
+                                f"короче {MIN_PIECE_SEC:g} с, не трогаю")
+                continue
+            piece.update(start_sec=start, end_sec=end)
+            piece.pop("focus", None)
+            shift += delta
+            moved = True
+            changes.append({"target": "join", "index": k, "from": round(g - shift + delta, 3), "to": b, "delta": delta})
+        if moved and not dry:
+            try:
+                validate_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+            except SpecError as exc:
+                raise ToolError("склейки к долям не приняты", exc.problems) from exc
+            ctx.before_change()
+            apply_spec(ctx.store, ctx.plan_id, {**spec, "pieces": pieces})
+            plan = ctx.store.get_clip_plan(ctx.plan_id)
+            clock = ClipClock.for_plan(plan)
+
+    scale = Scale(clock.clip_to_final, clock.final_to_clip) if scale_name == "final" else Scale()
+    render = _current_render(ctx)
+    fresh = dict(render)
+    if targets & {"layers", "keys"}:
+        layers, moved_layers = snap_layers(_layers_of(render), beats, tolerance, scale, keys="keys" in targets,
+                                           starts="layers" in targets, only=only)
+        if moved_layers:
+            fresh["layers"] = layers
+            changes += moved_layers
+    if "camera" in targets and render.get("camera"):
+        camera, moved_cam = snap_camera(_camera_of(render), beats, tolerance, scale)
+        if moved_cam:
+            fresh["camera"] = camera
+            changes += moved_cam
+    if fresh != render and not dry:
+        _save_render(ctx, fresh)
+    out: dict = {"ok": True, "dry_run": dry, "moved": len(changes), "changes": changes[:80], "grid": grid_info,
+                 "tolerance": tolerance, "time": scale_name,
+                 "note": ("from/to — секунды шкалы сетки (final — готовый ролик, clip — до вырезов). Сдвинуто только то, "
+                          f"что было ближе {tolerance:g} с к доле; слои сдвинуты целиком (длина та же), склейки — "
+                          "подрезкой конца куска (всё после стыка едет за ним). Субтитры, чат и запертые слои не "
+                          "трогаются. Проверь contact_sheet/listen.")}
+    if dry and "joins" in targets:
+        out["note"] += " dry_run: слои посчитаны без сдвига склеек."
+    if not changes:
+        out["note"] = f"ничего не сдвинуто: ни один момент не ближе {tolerance:g} с к доле ({grid_kind})"
+    if problems:
+        out["warnings"] = problems
     return out
 
 
@@ -5641,7 +6014,7 @@ def _build_registry() -> list[Tool]:
             "Заменить слова субтитров целиком: words [{word, start, end, s?}] — текст и время каждого слова "
             "(шкала clip: до вырезов, с наплывами — ровно как в get_clip, слова оттуда можно вернуть как есть), "
             "s (или speaker) — голос (A главный, B/C/D — второй голос, TTS-донат, ролик): так помечают голоса "
-            "без Gemini. Подсветка слов (highlightWords) остаётся на тех же словах. Для исправления "
+            "без Gemini; emph — эмфаза слова (1 pop, 2 shake, см. emphasize_words). Подсветка слов (highlightWords) остаётся на тех же словах. Для исправления "
             "ошибок распознавания и опоздавших слов. Строки соберутся из слов сами: новая строка на конце "
             "предложения (. ! ? …), паузе > 0.6 с, смене голоса и после 7 слов; «какой» «-то» склеится в "
             "«какой-то». Пустой список [] — убрать субтитры клипа (клип без речи). "
@@ -5649,11 +6022,35 @@ def _build_registry() -> list[Tool]:
             _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
                                                               "end": {"type": "number"},
                                                               "s": {"type": "string", "description": "голос: A, B, C, D"},
+                                                              "emph": {"type": "integer", "minimum": 0, "maximum": 2,
+                                                                       "description": "эмфаза: 1 pop, 2 shake"},
                                                               "speaker": {"type": "string",
                                                                           "description": "то же, что s"}},
                                                              ["word", "start", "end"])}},
                  ["words"]),
             h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
+        ),
+        Tool(
+            "emphasize_words", "Выделяю ключевые слова",
+            "Эмфаза слов субтитров — ключевое слово крупнее и «выпрыгивает», как у топовых каналов (не только "
+            "цветом highlightWords): indices — номера слов (порядок слов get_clip), words — тексты («миллион», первое "
+            "вхождение), at — [{line, word}] (номера из get_clip.subtitles.lines) или [{text, nth}]; style: pop — ×1.25 и "
+            "прыжок (по умолчанию), shake — ×1.45, прыжок и встряска (самый сильный удар), off — снять. auto: true — "
+            "одно ключевое слово на строку само (число, слово с «!», иначе самое длинное не служебное; pick: "
+            "\"gemini\" — выбирает Gemini, недоступен — та же эвристика), строки, где эмфаза уже есть, не трогает; "
+            "clear: true — сначала снять все. Работает в слое captions (размер emphScale и цвет emphColor слоя) и в "
+            "прожигаемых субтитрах (там без встряски); метка едет со словом при вырезах и правке строк. "
+            "/ Emphasize key subtitle words: bigger + pop (shake adds a jolt).",
+            _obj({"words": {"type": "array", "items": {"type": "string"}, "description": "тексты слов"},
+                  "indices": {"type": "array", "items": {"type": "integer"},
+                              "description": "номера слов в субтитрах (порядок слов get_clip)"},
+                  "at": {"type": "array", "items": _obj({"line": {"type": "integer"}, "word": {"type": "integer"},
+                                                          "text": {"type": "string"}, "nth": {"type": "integer"}})},
+                  "style": {"type": "string", "enum": ["pop", "shake", "off"]},
+                  "auto": {"type": "boolean"}, "pick": {"type": "string", "enum": ["heuristic", "gemini"]},
+                  "clear": {"type": "boolean"}}),
+            h_emphasize_words, mutating=True,
+            label=lambda a: "Выделяю ключевые слова" + (" (авто)" if a.get("auto") else ""),
         ),
         Tool(
             "edit_subtitle_lines", "Правлю субтитры",
@@ -5841,6 +6238,53 @@ def _build_registry() -> list[Tool]:
             h_set_segment_speed, mutating=True,
             label=lambda a: (f"Кусок {a.get('piece')}: " + ("реверс " if a.get("reverse") else "")
                              + (f"×{a.get('speed')}" if a.get("speed") not in (None, 1, 1.0) else "")).strip(),
+        ),
+        Tool(
+            "set_piece_color", "Цвет куска",
+            "Цветокоррекция куска основы piece (номер с 0) — компиляции и сериалы из разных сцен не прыгают по "
+            "цвету: exposure −2..2 (ступени EV: +1 — вдвое светлее), contrast 0.5..1.5, saturation 0..2 (0 — ч/б), "
+            "temperature −1..1 (+ теплее, − холоднее), tint −1..1 (+ пурпурнее, − зеленее). Не переданное поле "
+            "остаётся прежним; reset true — снять поправку. Поправка едет с куском (по его id), рендерится до лука "
+            "пресета. Подогнать куски друг к другу по замеру — match_piece_colors. / Per-piece colour correction.",
+            _obj({"piece": {"type": "integer"}, "exposure": {"type": "number"}, "contrast": {"type": "number"},
+                  "saturation": {"type": "number"}, "temperature": {"type": "number"}, "tint": {"type": "number"},
+                  "reset": {"type": "boolean"}}, ["piece"]),
+            h_set_piece_color, mutating=True,
+            label=lambda a: f"Цвет куска {a.get('piece')}" + (": сброс" if a.get("reset") else ""),
+        ),
+        Tool(
+            "match_piece_colors", "Подгоняю цвет кусков",
+            "Авто-подгонка цвета: по 5 кадрам каждого куска ffmpeg меряет среднюю яркость, U/V (баланс) и "
+            "насыщенность и ставит кускам pieces (нет — всем, кроме образца) поправку (exposure, saturation, "
+            "temperature, tint), чтобы они совпали с куском-образцом reference (нет — самый длинный). strength "
+            "0..1 — доля пути (1 — полностью, 0.5 — наполовину). Ответ: замеры до/после и разница яркости. "
+            "Ночь и день так не сравнять — смотри contact_sheet. / Auto-match piece colours to a reference piece.",
+            _obj({"reference": {"type": "integer"}, "pieces": {"type": "array", "items": {"type": "integer"}},
+                  "strength": {"type": "number", "minimum": 0, "maximum": 1}}),
+            h_match_piece_colors, mutating=True,
+            label=lambda a: "Подгоняю цвет кусков" + (f" к куску {a.get('reference')}" if a.get("reference") is not None else ""),
+        ),
+        Tool(
+            "snap_to_beats", "Ставлю на доли",
+            "Привязка к долям музыки одной командой: targets — layers (начала слоёв, длина та же), keys (ключевые "
+            "кадры слоёв), camera (ключи камеры), joins (склейки кусков — подрезкой конца куска, всё после стыка "
+            "едет за ним) или all; по умолчанию layers. grid: beat (каждая доля), downbeat (сильная, раз в такт), "
+            "half (восьмые). tolerance (0.15 с; до 0.5) — дальше от доли не трогаем. Сетка: музыка set_music "
+            "(audio_map.music_beats), без неё — доли звука клипа (source: audio), или своя: bpm + first_beat "
+            "(+ first_downbeat) в секундах готового ролика, или beats — список моментов. Субтитры, чат, PNGtuber "
+            "и запертые слои не двигаются; layer_ids — только эти слои. dry_run — только показать сдвиги. "
+            "/ Snap layer starts, keyframes and cut joins to the nearest music beat.",
+            _obj({"targets": {"type": "array", "items": {"type": "string",
+                                                         "enum": ["layers", "keys", "camera", "joins", "all"]}},
+                  "tolerance": {"type": "number", "minimum": 0.01, "maximum": 0.5},
+                  "grid": {"type": "string", "enum": ["beat", "downbeat", "half"]},
+                  "source": {"type": "string", "enum": ["auto", "music", "audio"]},
+                  "bpm": {"type": "number"}, "first_beat": {"type": "number"}, "first_downbeat": {"type": "number"},
+                  "beats": {"type": "array", "items": {"type": "number"}},
+                  "layer_ids": {"type": "array", "items": {"type": "string"}},
+                  "dry_run": {"type": "boolean"}}),
+            h_snap_to_beats, mutating=True,
+            label=lambda a: "Ставлю на доли: " + ", ".join(a.get("targets") or ["layers"]),
         ),
         Tool(
             "set_piece_fit", "Кадр шире окна",

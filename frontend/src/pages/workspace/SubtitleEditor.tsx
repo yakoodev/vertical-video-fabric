@@ -14,6 +14,28 @@ const voiceColor = (s: string | undefined) => speakerColor(PLAIN, s) ?? "#ffffff
 const voiceTag = (s: string | undefined) =>
   s && s !== "A" ? { background: voiceColor(s), color: "#0b0b0f" } : { background: "var(--surface-3)", color: "var(--text)" };
 
+type PlanWord = NonNullable<PlanSubtitles["words"]>[number];
+const EMPH_NEXT: ("pop" | "shake" | "off")[] = ["pop", "shake", "off"];
+const EMPH_TITLE = ["обычное", "эмфаза: крупнее и прыжок", "эмфаза: крупнее, прыжок и встряска"];
+
+/** Слова по строкам: слово — в строке, с которой больше всего пересекается (как words_by_line сервера). */
+function wordsByLine(lines: SubtitleLine[], words: PlanWord[]): { w: PlanWord; i: number }[][] {
+  const out: { w: PlanWord; i: number }[][] = lines.map(() => []);
+  words.forEach((w, i) => {
+    let best = -1;
+    let bestOverlap = 0.001;
+    lines.forEach((l, k) => {
+      const overlap = Math.min(w.end, l.end) - Math.max(w.start, l.start);
+      if (overlap > bestOverlap) {
+        best = k;
+        bestOverlap = overlap;
+      }
+    });
+    if (best >= 0) out[best].push({ w, i });
+  });
+  return out;
+}
+
 const ENGINES: [string, string][] = [
   ["", "как в стиле"],
   ["whisper", "Whisper (локально)"],
@@ -187,7 +209,27 @@ export function SubtitleEditor({
     assign.mutate({ line, speaker: VOICES[(cur + 1) % VOICES.length] });
   };
 
-  const busy = generate.isPending || save.isPending || voices.isPending || assign.isPending;
+  // Эмфаза слова (emphasize_words): клик по слову — pop → shake → снять; «Ключевые» — по слову на строку.
+  const emphasis = useMutation({
+    mutationFn: (body: { indices?: number[]; style: "pop" | "shake" | "off"; auto?: boolean }) =>
+      clipPlansApi.emphasizeWords(clipPlanId, body),
+    onSuccess: (data, body) => {
+      applyFresh(data.subtitles);
+      if (body.auto) toast.success(`Ключевых слов: ${data.count}`);
+      if (data.warnings?.length) toast.error(data.warnings.join("; "));
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось выделить слово"),
+  });
+  const toggleEmph = (index: number, level: number) => {
+    if (dirty) {
+      toast.error("Сначала сохраните правку строк");
+      return;
+    }
+    emphasis.mutate({ indices: [index], style: EMPH_NEXT[Math.max(0, Math.min(2, level))] });
+  };
+  const lineWords = dirty ? null : wordsByLine(lines, query.data?.words ?? []);
+
+  const busy = generate.isPending || save.isPending || voices.isPending || assign.isPending || emphasis.isPending;
   return (
     <div className="subed">
       <div className="subed-top">
@@ -214,6 +256,20 @@ export function SubtitleEditor({
         >
           {voices.isPending ? "Разбираю голоса…" : "Голоса"}
         </button>
+        {lines.length ? (
+          <button
+            className="btn sm"
+            disabled={busy || dirty}
+            title={
+              dirty
+                ? "Сначала сохраните правку строк"
+                : "По ключевому слову на строку (число, слово с «!», иначе самое длинное не служебное) — крупнее и с прыжком. Клик по слову под строкой — своё: прыжок → встряска → обычное"
+            }
+            onClick={() => emphasis.mutate({ auto: true, style: "pop" })}
+          >
+            {emphasis.isPending ? "…" : "✨ Ключевые"}
+          </button>
+        ) : null}
       </div>
 
       {query.data && lines.length ? (
@@ -300,6 +356,24 @@ export function SubtitleEditor({
                   maxLength={300}
                   onChange={(e) => edit(i, { text: e.target.value })}
                 />
+                {lineWords?.[i]?.length ? (
+                  <div className="subed-words">
+                    {lineWords[i].map(({ w, i: wi }) => {
+                      const level = Math.max(0, Math.min(2, Number(w.emph) || 0));
+                      return (
+                        <button
+                          key={wi}
+                          className={`subed-word${level ? ` e${level}` : ""}`}
+                          disabled={busy}
+                          title={`${EMPH_TITLE[level]}. Клик — ${EMPH_TITLE[(level + 1) % 3]}`}
+                          onClick={() => toggleEmph(wi, level)}
+                        >
+                          {w.word}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

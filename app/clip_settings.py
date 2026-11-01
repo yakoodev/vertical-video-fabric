@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from app.formats import settings_layers_format, settings_render_format
 from app.audio_edit import normalize_audio
+from app.piece_color import normalize_color_fix
 from app.piece_speed import normalize_speed
 from app.audio_mute import normalize_gain, normalize_mute
 from app.chroma_key import normalize_backdrop
@@ -167,6 +168,9 @@ def normalize_render_settings(raw: object) -> dict:
         # Скорость и реверс кусков основы [{piece, speed?, reverse?, audio?}] (app/piece_speed.py);
         # хранилище кладёт их в куски плана. [] — все куски как в исходнике.
         "speed": normalize_speed(src.get("speed")),
+        # Цветокоррекция кусков [{piece, exposure?, contrast?, saturation?, temperature?, tint?}]
+        # (app/piece_color.py); хранилище кладёт её в куски плана (color_fix). [] — как в исходнике.
+        "color_fix": normalize_color_fix(src.get("color_fix")),
         # Формат вывода (app/formats.py): 9:16 (как всегда) / 1:1 / 4:5 / 16:9 — у любого клипа.
         # Старое поле aspect (квадрат холста) читается как format; хранится одно поле format.
         # Рендер читает его прямо из настроек плана, как раскладку.

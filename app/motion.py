@@ -852,6 +852,9 @@ PROPS: dict[str, dict] = {
         "animation": Opt(Choice("pop", CAPTION_ANIMATIONS)),
         "wordScale": Opt(Num(1.12, 1, 1.4, 3)),
         "tilt": Opt(Num(0, -20, 20, 2)),
+        # Эмфаза слов (comp.words[i].e, app/word_emphasis.py): кегль уровня 1 и цвет (null — активный).
+        "emphScale": Opt(Num(1.25, 1, 2, 3)),
+        "emphColor": Opt(Color(None, nullable=True)),
     },
     # Сообщения берутся не из слоя, а из чата клипа (comp.chat) — слой задаёт вид и фильтры.
     "chat": {
@@ -1685,6 +1688,11 @@ def caption_words(payload: Any) -> list[dict]:
         speaker = str(item.get("speaker") or "").strip()[:8]
         if speaker:
             word["s"] = speaker  # кто говорит (app.ai.speakers): свой цвет и своя страница
+        from app.word_emphasis import level_of
+
+        emph = level_of(item.get("emph"))
+        if emph:
+            word["e"] = emph  # эмфаза слова: крупнее + pop (2 — со встряской), app/word_emphasis.py
         out.append(word)
     out.sort(key=lambda w: w["t0"])
     return out

@@ -468,7 +468,8 @@ export type LevelTrack = { t0: number; fps: number; v: number[] };
 
 /** Слово речи во времени клипа (секунды) — из субтитров клипа, их подаёт хост. */
 /** Слово речи. `s` — кто говорит (A — главный, B, C… — другие голоса): свой цвет и своя страница. */
-export type CaptionWord = { t0: number; t1: number; w: string; s?: string };
+/** Слово речи клипа: `s` — кто говорит, `e` — эмфаза (1 pop, 2 shake; app/word_emphasis.py). */
+export type CaptionWord = { t0: number; t1: number; w: string; s?: string; e?: number };
 
 /** stomp — слово «впечатывается» на свой момент с встряской (подсвеченные — сильнее). */
 export type CaptionAnimation = "pop" | "bounce" | "fade" | "karaoke" | "typewriter" | "stomp" | "none";
@@ -522,6 +523,10 @@ export type CaptionsProps = {
   wordScale?: number;
   /** Наклон страниц в градусах (чередуется ±) — «комикс». */
   tilt?: number;
+  /** Кегль слова с эмфазой (`comp.words[i].e`) 1..2: уровень 1 (pop) — ×emphScale, 2 (shake) — сильнее. */
+  emphScale?: number;
+  /** Цвет слов с эмфазой или null — активный цвет стиля. */
+  emphColor?: string | null;
 };
 
 /* ---------- чат стрима ---------- */
