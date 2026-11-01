@@ -40,6 +40,7 @@ const CHOICES: Choice[] = [
   { id: "split-bottom", label: "Вебка снизу", hint: "Игра сверху, лицо стримера полосой снизу", mode: "split", pos: "bottom" },
   { id: "pip", label: "Окошко", hint: "Обычный кадр 9:16 и вебка окошком поверх", mode: "pip_cam" },
   { id: "meme", label: "Мем", hint: "Горизонтальное видео целиком сверху, ниже фон под картинки и титры", mode: "meme" },
+  { id: "avatar", label: "Аватар", hint: "Только аватар/вебка стримера на весь кадр, вокруг размытый фон", mode: "avatar_full" },
 ];
 
 /** Ключ, если зелёнку не нашли, а включили руками: типичный хромакейный зелёный. */
@@ -234,6 +235,12 @@ function Thumb({ choice }: { choice: Choice }) {
         <>
           <rect x="0" y="0" width="18" height="32" rx="2" fill={game} />
           <rect x="4" y="3" width="10" height="7" rx="1.5" fill={cam} />
+        </>
+      )}
+      {choice.mode === "avatar_full" && (
+        <>
+          <rect x="0" y="0" width="18" height="32" rx="2" fill="var(--surface-2)" />
+          <rect x="1" y="7" width="16" height="18" rx="2" fill={cam} />
         </>
       )}
       {choice.mode === "meme" && (

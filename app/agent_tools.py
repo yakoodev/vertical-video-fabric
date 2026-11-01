@@ -1361,9 +1361,67 @@ def _framing_view(ctx: ToolContext, source: dict, render: dict) -> dict:
     }
     if preset and not preset.get("smart_reframe"):
         out["warning"] = "у пресета выключен smart_reframe — фокус не действует, кадр по центру"
+    avatar = known_avatar(ctx, source)
+    if avatar:
+        out["avatar"] = {**avatar, "note": (
+            "аватар/вебка стримера в долях ВСЕГО кадра исходника. «Только аватар крупно» — set_layout "
+            "mode avatar_full (аватар на весь кадр, вокруг размытый фон или set_backdrop), а не set_focus окна "
+            "по исходнику: окно 9:16 ловит игру/ролик на экране")}
+    elif (render.get("layout") or {}).get("mode") != "avatar_full":
+        out["avatar_hint"] = ("стрим с аватаром/вебкой? detect_avatar найдёт его (Gemini по кадрам кусков) — потом "
+                              "set_layout avatar_full")
     if fmt != "9:16" and source_strategy(fmt, source) == "fit":
         out["fit"] = (f"исходник уже кадра {fmt}: он целиком по высоте на размытой подложке, фокус не нужен "
                       "(см. «Форматы вывода»)")
+    return out
+
+
+def known_avatar(ctx: ToolContext, source: dict | None = None) -> dict | None:
+    """Аватар клипа без вызова модели: раскладка avatar_full, найденный detect_avatar (кэш) или
+    facecam источника. ``{cam, from}`` или None."""
+    render = _current_render(ctx)
+    layout = render.get("layout") or {}
+    if layout.get("mode") == "avatar_full" and isinstance(layout.get("cam"), dict):
+        return {"cam": layout["cam"], "from": "layout avatar_full"}
+    try:
+        from app.ai.avatar_box import cached_avatar
+
+        found = cached_avatar(ctx.store, ctx.plan_id)
+    except Exception:  # noqa: BLE001
+        found = None
+    if found and found.get("cam"):
+        return {"cam": found["cam"], "from": "detect_avatar", **({"moves": True} if found.get("moves") else {})}
+    if source is None:
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        source = ctx.store.get_source(int(plan["source_id"]))
+    if source.get("facecam"):
+        return {"cam": source["facecam"], "from": "facecam источника (detect-facecam)"}
+    return None
+
+
+def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
+    """Аватар стримера (VTuber/PNGtuber/вебка) на кусках клипа — Gemini по целым кадрам исходника."""
+    from app.ai.avatar_box import detect_avatar
+
+    try:
+        found = detect_avatar(ctx.store, ctx.plan_id, refresh=bool(args.get("refresh")))
+    except ValueError as exc:
+        raise ToolError(f"detect_avatar: {exc}") from exc
+    if not found.get("cam"):
+        return {"ok": True, "cam": None, "frames": found.get("frames"),
+                "note": "аватара/вебки на кадрах клипа не нашлось — спроси владельца или задай cam руками "
+                        "(source_contact_sheet покажет кадры исходника)"}
+    out = {"ok": True, "cam": found["cam"], "box": found.get("box"), "frames": found.get("frames"),
+           "frames_with_avatar": found.get("frames_with_avatar"),
+           "next": "set_layout mode avatar_full (cam возьмётся сам) → view_frame"}
+    if found.get("moves"):
+        out["warnings"] = [f"аватар в клипе бывает в {found.get('places')} местах — взято место, где он чаще "
+                           "(view_frame по кускам; другое место — set_layout cam)"]
+    if args.get("save"):
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        ctx.before_change()
+        ctx.store.update_source(int(plan["source_id"]), facecam=found["cam"])
+        out["saved"] = "facecam источника"
     return out
 
 
@@ -1409,7 +1467,13 @@ def _recommended_positions(ctx: ToolContext, render: dict, boxes: dict | None = 
     if places["subject"]:
         out["subject_note"] = ("subject_box — объединение рамок героя по всем кускам (кадр 9:16); у каждого куска своя — "
                                "pieces[].subject_box. Внутри куска со сменой планов (get_shots) рамка тоже объединение "
-                               "и ненадёжна — смотри source_contact_sheet с x по планам")
+                               "и ненадёжна — смотри source_contact_sheet с x по планам. subject_box в долях КАДРА клипа, "
+                               "а x у set_focus — доля ширины ИСХОДНИКА: центр рамки в set_focus не подставляй")
+    if (boxes or {}).get("screen"):
+        out["screen_box"] = boxes["screen"]
+        out["screen_note"] = ("screen_box — человек/персонаж ВНУТРИ экранного контента (ролик, игра, браузер на экране "
+                              "стрима), это не герой: не кадрируй на него и не считай его стримером. Аватар/вебка "
+                              "стримера — detect_avatar → set_layout avatar_full")
     return out
 
 
@@ -3296,6 +3360,9 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         # Вебка, найденная/заданная у источника, — а не угол по умолчанию.
         layout_args["cam"] = source["facecam"]
         took_facecam = True
+    avatar_from = None
+    if layout_args.get("mode") == "avatar_full":
+        avatar_from = _avatar_layout_args(ctx, render, source, layout_args)
     merged = {**(render.get("layout") or {}), **layout_args}
     fresh = _save_render(ctx, {**render, "layout": normalize_layout(merged)})
     out: dict = {"ok": True, "layout": fresh["layout"]}
@@ -3305,7 +3372,12 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["focus_changes"] = _focus_all(ctx, game_x, piece)
         out["game_x"] = round(game_x, 4)
     mode = fresh["layout"]["mode"]
-    if mode == "meme":
+    if mode == "avatar_full":
+        out["cam_from"] = avatar_from or "cam из прежней раскладки"
+        out["note"] = ("в кадре только аватар: cam (доли всего исходника) шириной video_scale ширин кадра, центр по "
+                       "высоте avatar_y; вокруг — размытый тот же аватар (bg_blur) или фон bg. ОБЯЗАТЕЛЬНО view_frame: "
+                       "модель целиком и крупно, игры/браузера нет; мелко — video_scale больше, режет — меньше")
+    elif mode == "meme":
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
     elif mode in ("split", "pip_cam"):
@@ -3316,6 +3388,49 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         if warnings:
             out["warnings"] = warnings
     return out
+
+
+def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_args: dict) -> str:
+    """avatar_full: откуда cam (аргумент → прежняя раскладка → detect_avatar → facecam источника), крупность
+    и фон по умолчанию. Фон: bg/bg_blur из аргументов; иначе фон set_backdrop клипа, если он задан; иначе
+    размытый тот же аватар."""
+    from app.formats import frame_size, settings_render_format
+    from app.stream_layout import avatar_auto_scale, normalize_cam
+
+    old = render.get("layout") or {}
+    where = "cam из аргументов"
+    if "cam" not in layout_args:
+        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict):
+            layout_args["cam"], where = old["cam"], "cam из прежней раскладки avatar_full"
+        else:
+            found = None
+            try:
+                from app.ai.avatar_box import detect_avatar
+
+                found = detect_avatar(ctx.store, ctx.plan_id)
+            except Exception as exc:  # noqa: BLE001 - нет Gemini/файла — пробуем facecam
+                where = f"detect_avatar не смог: {str(exc)[:120]}"
+            if found and found.get("cam"):
+                layout_args["cam"], where = found["cam"], "аватар найден detect_avatar (Gemini по кадрам кусков)"
+            elif source.get("facecam"):
+                layout_args["cam"], where = source["facecam"], "facecam источника (detect-facecam)"
+            else:
+                raise ToolError("avatar_full: не знаю, где аватар — detect_avatar не нашёл, facecam у источника нет",
+                                ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
+                                 "(source_contact_sheet покажет кадры)"])
+    if "video_scale" not in layout_args and old.get("mode") != "avatar_full":
+        width, height = frame_size(settings_render_format(render))
+        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args["cam"]), width, height,
+                                                       source.get("width"), source.get("height"))
+    if "bg" not in layout_args and "bg_blur" not in layout_args and old.get("mode") != "avatar_full":
+        from app.chroma_key import normalize_backdrop
+
+        # Фон, заданный set_backdrop (не фон по умолчанию), — под аватар; иначе размытый аватар.
+        if render.get("backdrop") and normalize_backdrop(render["backdrop"]) != normalize_backdrop(None):
+            layout_args["bg"], layout_args["bg_blur"] = render["backdrop"], False
+    elif "bg" in layout_args and "bg_blur" not in layout_args:
+        layout_args["bg_blur"] = False
+    return where
 
 
 def h_list_music(ctx: ToolContext, _args: dict) -> dict:
@@ -4509,11 +4624,37 @@ def h_set_focus(ctx: ToolContext, args: dict) -> dict:
     preset = effective_preset(ctx.store, render.get("preset_id")) or {}
     if preset and not preset.get("smart_reframe"):
         warnings.append("у пресета выключен smart_reframe — фокус не действует (кадр по центру)")
+    if mode == "avatar_full":
+        warnings.append("раскладка avatar_full показывает только аватар (cam) — фокус окна в ней не виден")
+    elif points:
+        warnings.extend(_focus_avatar_warnings(ctx, points, preset))
     out = {"ok": True, "piece": index, "focus": fresh.get("focus") or [], "changes": changes,
            "note": "проверь source_contact_sheet(x=…) или view_frame на точках и сразу после cut"}
     if warnings:
         out["warnings"] = warnings
     return out
+
+
+def _focus_avatar_warnings(ctx: ToolContext, points: list[dict], preset: dict) -> list[str]:
+    """Окно 9:16 по точкам фокуса не захватывает известный аватар стримера (QA 01.11: x взят из центра
+    subject_box — человека из ролика на экране, — аватара в кадре не было)."""
+    from app.ai.avatar_box import avatar_center_in_window
+    from app.video_crop import window_share
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+    source = ctx.store.get_source(int(plan["source_id"]))
+    avatar = known_avatar(ctx, source)
+    if not avatar:
+        return []
+    share = window_share(source, int(preset.get("output_width") or 1080), int(preset.get("output_height") or 1920))
+    missed = [p for p in points if not avatar_center_in_window(avatar["cam"], float(p["x"]), float(share))]
+    if not missed:
+        return []
+    cam = avatar["cam"]
+    cx = round(float(cam["x"]) + float(cam["w"]) / 2, 3)
+    return [f"окно ({share:.2f} ширины исходника) на x={missed[0]['x']} не захватывает аватар стримера (центр x={cx}, "
+            f"{avatar['from']}) — в кадре будет игра/ролик с экрана. «Только аватар» — set_layout mode avatar_full; "
+            f"окно на аватар — x={cx}"]
 
 
 MAX_FIT_PIECE_SEC = 12.0
@@ -6037,16 +6178,34 @@ def _build_registry() -> list[Tool]:
             "двигает только игру; что из игры в окне — game_x (центр окна игры 0..1 на всех кусках, или на куске "
             "piece; трек по куску — set_focus). cam не задан — берётся вебка источника (detect-facecam); ответ "
             "предупредит, если полоса режет вебку (не те пропорции — ratio) или cam великоват (захвачен чат). "
+            "avatar_full — ТОЛЬКО аватар/вебка стримера на весь кадр (истории витубера, плейбук vtuber-story): cam "
+            "не задан — найдёт detect_avatar (Gemini), иначе facecam источника; video_scale — ширина аватара в "
+            "ширинах кадра (по умолчанию — крупно, почти на всю высоту), avatar_y — центр по высоте; фон — размытый "
+            "тот же аватар (bg_blur, по умолчанию) или bg / фон set_backdrop клипа. Игры, браузера и роликов с "
+            "экрана в кадре нет. После — view_frame. "
             "/ Frame layout.",
-            _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme"]},
+            _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme", "avatar_full"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
                   "pip": {"type": "object"},
-                  "bg": {"type": ["object", "string"], "description": "meme: фон {kind, colors, speed, intensity} или имя стиля"},
+                  "bg": {"type": ["object", "string"], "description": "meme/avatar_full: фон {kind, colors, speed, intensity} или имя стиля"},
+                  "bg_blur": {"type": "boolean", "description": "avatar_full: фон — размытый тот же аватар (по умолчанию)"},
+                  "avatar_y": {"type": "number", "description": "avatar_full: центр аватара по высоте кадра 0.2..0.8"},
                   "video_y": {"type": "number"},
                   "video_scale": {"type": "number"},
                   "game_x": {"type": "number", "description": "центр окна игры, доля ширины исходника 0..1"},
                   "piece": {"type": "integer", "description": "game_x только для этого куска"}}),
             h_set_layout, mutating=True, label=lambda a: f"Раскладка: {a.get('mode') or 'правка'}",
+        ),
+        Tool(
+            "detect_avatar", "Ищу аватар стримера",
+            "Где на кадре стрима аватар стримера — VTuber/PNGtuber-модель или вебка (Gemini по целым кадрам "
+            "исходника с кусков клипа; люди внутри роликов, игры и браузера на экране — не аватар). Ответ: cam "
+            "{x, y, w, h} в долях всего кадра исходника (с запасом), frames_with_avatar; аватар переезжает — "
+            "warnings. Дальше set_layout mode avatar_full (cam возьмётся сам). save: true — запомнить как "
+            "facecam источника (для split/pip_cam других клипов). refresh — искать заново. / Find the streamer's "
+            "avatar/webcam rectangle in the source frames.",
+            _obj({"save": {"type": "boolean"}, "refresh": {"type": "boolean"}}),
+            h_detect_avatar, label=lambda a: "Ищу аватар стримера",
         ),
         Tool(
             "set_chroma_key", "Вырезаю зелёный фон",

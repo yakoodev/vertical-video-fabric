@@ -189,6 +189,15 @@ def meme_hole(layout: dict, source: dict | None, crop: dict | None, width: int, 
     return _hole((width - video_w) // 2, top, video_w, video_h, width, height)
 
 
+def avatar_hole(layout: dict, source: dict | None, width: int, height: int) -> dict | None:
+    """Где аватар в раскладке avatar_full (app/stream_layout.avatar_geometry)."""
+    from app.stream_layout import avatar_geometry
+
+    src = source or {}
+    g = avatar_geometry(layout, width, height, src.get("width"), src.get("height"))
+    return _hole(g["x"], g["y"], g["w"], g["h"], width, height)
+
+
 def fit_hole(fit: dict, source: dict | None, crop: dict | None, width: int, height: int) -> dict | None:
     """Где видео на куске «шире окна» — как ``render._piece_fit_filter``: полоса во всю
     ширину посередине по вертикали."""
@@ -215,6 +224,11 @@ def piece_zone(layout: dict | None, segment: dict, source: dict | None, crop: di
         if not is_animated(bg):
             return None
         hole = meme_hole(layout, source, crop, width, height)
+    elif isinstance(layout, dict) and layout.get("mode") == "avatar_full" and layout.get("bg_blur") is False:
+        bg = normalize_background(layout.get("bg"))
+        if not is_animated(bg):
+            return None
+        hole = avatar_hole(layout, source, width, height)
     else:
         return None
     if hole is None:  # видео закрывает весь кадр — фона не видно
@@ -233,6 +247,9 @@ def needs_zones(layout: Any, segments: list[dict]) -> bool:
             return True
     if isinstance(layout, dict) and layout.get("mode") == "meme":
         return is_animated(normalize_layout(layout)["bg"])
+    if isinstance(layout, dict) and layout.get("mode") == "avatar_full":
+        lay = normalize_layout(layout)
+        return not lay.get("bg_blur", True) and is_animated(lay["bg"])
     return False
 
 

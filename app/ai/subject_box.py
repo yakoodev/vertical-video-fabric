@@ -8,6 +8,12 @@
 выбирает свободную зону над или под ним.
 
 Рамки кэшируются по составу кусков, кадрированию и раскладке: модель зовём один раз.
+
+Человек ВНУТРИ экранного контента (ролик на ютубе, игра, браузер на экране стрима) — не герой:
+модель помечает такую рамку ``kind: screen``, она идёт в ``screen`` (с пометкой ``screen: true`` у
+куска, где героя иначе нет) и в объединение/места для текста не попадает. QA 01.11 (клип 889):
+рамка героя поймала человека из ютуб-клипа, агент кадрировал на него — аватара стримера в ролике
+не было (аватар — app/ai/avatar_box.py, раскладка avatar_full).
 """
 
 from __future__ import annotations
@@ -26,10 +32,13 @@ DEFAULT_CAPTION_Y = 0.72
 
 PROMPT = (
     "На {n} кадрах вертикального видео 9:16 (по порядку) найди главного героя — лицо/модель стримера "
-    "(в том числе нарисованную аниме-модель VTuber), а если его нет — главный объект; в диалоге — того, "
-    "кто в кадре крупнее. Ответь ТОЛЬКО JSON: {{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, …]}} — "
+    "(в том числе нарисованную аниме-модель VTuber/PNGtuber или вебку), а если его нет — главный объект; в "
+    "диалоге — того, кто в кадре крупнее. Человек или персонаж ВНУТРИ видео, ютуба, игры, фильма или браузера "
+    "на экране стрима — НЕ герой: если в кадре только он, дай его рамку с \"kind\": \"screen\". "
+    "Ответь ТОЛЬКО JSON: {{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…,\"kind\":…}}, …]}} — "
     "по рамке на КАЖДЫЙ кадр в том же порядке, доли кадра 0..1 (y0 — верх головы, y1 — низ видимого "
-    "тела). Кадр без героя — {{}}."
+    "тела); kind — avatar (модель/вебка стримера) | person (живой человек в кадре сам) | screen (внутри "
+    "экранного контента) | object. Кадр без героя — {{}}."
 )
 # Кадров на кусок: 3 на одном-двух кусках, 2 на трёх, дальше по одному (кадр — прогон компоновщика,
 # а рамки пересчитываются после каждой смены кадрирования); всего не больше 12.
@@ -100,12 +109,13 @@ def subject_boxes(store: Any, clip_plan_id: int, client: Any = None) -> dict:
     empty = {"union": None, "pieces": [None] * len(segments)}
     cache_dir = settings.runtime_dir / "subject-box"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache = cache_dir / f"{clip_plan_id}-{_cache_key(plan)}-v2.json"
+    cache = cache_dir / f"{clip_plan_id}-{_cache_key(plan)}-v3.json"
     if cache.exists():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
             if isinstance(data, dict) and len(data.get("pieces") or []) == len(segments):
-                return {"union": data.get("union") or None, "pieces": [b or None for b in data["pieces"]]}
+                return {"union": data.get("union") or None, "pieces": [b or None for b in data["pieces"]],
+                        "screen": data.get("screen") or None}
         except (OSError, ValueError):
             pass
     if client is None:
@@ -132,15 +142,30 @@ def subject_boxes(store: Any, clip_plan_id: int, client: Any = None) -> dict:
         p.get("text", "") for p in ((response.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
     )
     boxes = _parse_boxes(text, len(frames))
-    pieces: list[dict | None] = []
-    for index in range(len(segments)):
-        pieces.append(_union([b for (i, _t), b in zip(frames, boxes) if i == index]))
-    out = {"union": _union(boxes), "pieces": pieces}
+    out = split_screen_boxes(boxes, [i for i, _t in frames], len(segments))
     try:
         cache.write_text(json.dumps(out), encoding="utf-8")
     except OSError:
         pass
     return out
+
+
+def split_screen_boxes(boxes: list[dict | None], piece_of: list[int], pieces: int) -> dict:
+    """Рамки по кадрам → ``{union, pieces, screen}``: герой — объединение рамок НЕ из экранного
+    контента; рамки ``screen`` (человек в ролике/игре на экране) — отдельно, в ``screen``; кусок, где
+    героя нет, а есть только такая рамка, получает её с пометкой ``screen: true``."""
+    hero = [b if b and not b.get("screen") else None for b in boxes]
+    screen = [b if b and b.get("screen") else None for b in boxes]
+    out_pieces: list[dict | None] = []
+    for index in range(pieces):
+        own = _union([b for i, b in zip(piece_of, hero) if i == index])
+        if own is None:
+            seen = _union([b for i, b in zip(piece_of, screen) if i == index])
+            own = {**seen, "screen": True} if seen else None
+        out_pieces.append(own)
+    screen_union = _union(screen)
+    return {"union": _union(hero), "pieces": out_pieces,
+            "screen": {**screen_union, "screen": True} if screen_union else None}
 
 
 def _union(boxes: list[dict | None]) -> dict | None:
@@ -172,6 +197,8 @@ def _box_of(data: Any) -> dict | None:
         return None
     if box["y1"] - box["y0"] < 0.05 or box["x1"] - box["x0"] < 0.03:
         return None
+    if isinstance(data, dict) and str(data.get("kind") or "").lower() == "screen":
+        box["screen"] = True  # человек внутри ролика/игры на экране — не герой
     return box
 
 
