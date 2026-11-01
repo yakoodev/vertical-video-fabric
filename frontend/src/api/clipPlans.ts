@@ -1,5 +1,5 @@
 import { api, request } from "@/api/client";
-import type { Clip, ClipPlan, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
+import type { Clip, ClipPlan, ColorFix, RenderSettings, TransitionOptions, TransitionSettings } from "@/api/types";
 import type { Background } from "@/motion";
 
 export interface RenderClipPlanRequest {
@@ -207,6 +207,19 @@ export const clipPlansApi = {
   ) =>
     api.post<{ piece: number; speed: number; reverse: boolean; audio: string | null; length: number; length_before: number;
       duration: number; warnings?: string[] }>(`/api/clip-plans/${clipPlanId}/segment-speed`, body),
+  /** 🎨 Цвет куска (set_piece_color): не переданное поле остаётся, reset — снять. */
+  setPieceColor: (clipPlanId: number, body: { piece: number; reset?: boolean } & ColorFix) =>
+    api.post<{ piece: number; color_fix: ColorFix; summary: string; warnings?: string[] }>(
+      `/api/clip-plans/${clipPlanId}/piece-color`,
+      body,
+    ),
+  /** 🎨 Подогнать цвет кусков к образцу по замеру (match_piece_colors). */
+  matchPieceColors: (clipPlanId: number, body: { reference?: number; pieces?: number[]; strength?: number }) =>
+    api.post<{
+      reference: number;
+      pieces: { piece: number; summary: string; luma_gap_before: number; luma_gap_after: number }[];
+      warnings?: string[];
+    }>(`/api/clip-plans/${clipPlanId}/piece-color/match`, body),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
   undo: (clipPlanId: number) =>
     api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(

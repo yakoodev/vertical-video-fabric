@@ -188,6 +188,8 @@ def clip_timeline(store: Any, clip_plan_id: int) -> dict:
                 "focus": seg.get("focus") or [],
                 "fit": seg.get("fit"),
                 **retimed,
+                # Цветокоррекция куска (set_piece_color / match_piece_colors, app/piece_color.py).
+                **({"color_fix": seg["color_fix"]} if seg.get("color_fix") else {}),
             }
         )
     return {"plan": plan, "render": render, "pieces": pieces, "duration": round(total, 3),
@@ -3589,6 +3591,133 @@ def _emph_index(words: list[dict], lines: list[list[dict]], ref: Any) -> int | N
     return None
 
 
+def _color_entries(ctx: ToolContext) -> tuple[dict, list[dict]]:
+    from app.piece_color import normalize_color_fix
+
+    render = _current_render(ctx)
+    return render, normalize_color_fix(render.get("color_fix"))
+
+
+def h_set_piece_color(ctx: ToolContext, args: dict) -> dict:
+    """Цветокоррекция куска основы (app/piece_color.py): экспозиция, контраст, насыщенность, баланс."""
+    from app.piece_color import FIELDS, describe, normalize_fix
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    segments = plan.get("segments") or []
+    index = _piece_index(args, len(segments))
+    seg = segments[index]
+    render, entries = _color_entries(ctx)
+    current = normalize_fix(seg.get("color_fix"))
+    problems = []
+    for name, (_neutral, lo, hi) in FIELDS.items():
+        value = args.get(name)
+        if value is None:
+            continue
+        number = _num(value)
+        if number is None or not lo - 1e-9 <= number <= hi + 1e-9:
+            problems.append(f"{name} — {lo:g}..{hi:g}")
+    if problems:
+        raise ToolError("цвет куска не принят", problems)
+    if args.get("reset"):
+        fix: dict = {}
+    else:
+        fix = {**current, **{k: args[k] for k in FIELDS if args.get(k) is not None}}
+    fix = normalize_fix(fix)
+    entries = [e for e in entries if e["piece"] != seg["id"]] + ([{"piece": seg["id"], **fix}] if fix else [])
+    saved = _save_render(ctx, {**render, "color_fix": entries})
+    out: dict = {"ok": True, "piece": index, "color_fix": fix, "summary": describe(fix) or "как в исходнике",
+                 "pieces_with_color": len(saved.get("color_fix") or []),
+                 "note": "поправка куска — до лука пресета; exposure в ступенях (EV), temperature + теплее / − "
+                         "холоднее, tint + пурпурнее / − зеленее. Подогнать куски друг к другу по замеру — "
+                         "match_piece_colors. Проверь view_frame на этом куске."}
+    warnings = []
+    if _source_has_key(ctx, plan):
+        warnings.append("у источника хромакей — цвет куска к основе не применяется (сорвал бы ключ)")
+    if abs(fix.get("exposure", 0.0)) > 1.2:
+        warnings.append("экспозиция больше ±1.2 EV — светлое выгорит / тёмное зашумит, проверь кадр")
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _source_has_key(ctx: ToolContext, plan: dict) -> bool:
+    try:
+        return bool(ctx.store.get_source(int(plan["source_id"])).get("chroma_key"))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def h_match_piece_colors(ctx: ToolContext, args: dict) -> dict:
+    """Подогнать цвет кусков к образцу по замеру signalstats (app/piece_color.py)."""
+    from app.heavy_queue import heavy_slot
+    from app.piece_color import describe, match_fix, measure, normalize_fix, predict
+    from app.piece_speed import seg_length
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    segments = plan.get("segments") or []
+    if len(segments) < 2:
+        raise ToolError("в клипе один кусок — подгонять не к чему (цвет куска — set_piece_color)")
+    if args.get("reference") is None:
+        reference = max(range(len(segments)), key=lambda i: seg_length(segments[i]))
+    else:
+        reference = _piece_index({"piece": args.get("reference")}, len(segments))
+    targets = args.get("pieces")
+    if targets is None:
+        targets = [i for i in range(len(segments)) if i != reference]
+    try:
+        targets = sorted({int(i) for i in targets} - {reference})
+    except (TypeError, ValueError) as exc:
+        raise ToolError("pieces — номера кусков с 0") from exc
+    if any(not 0 <= i < len(segments) for i in targets):
+        raise ToolError(f"pieces: куски 0..{len(segments) - 1}")
+    strength = _num(args.get("strength"))
+    strength = 1.0 if strength is None else min(1.0, max(0.0, strength))
+    source = ctx.store.get_source(int(plan["source_id"]))
+    path = Path(str(source.get("local_path") or ""))
+    if not path.is_file():
+        raise ToolError("исходник недоступен — замерить кадры нечем")
+    if source.get("chroma_key"):
+        raise ToolError("у источника хромакей — цвет основы не трогаем (сорвал бы ключ)")
+    crop = source.get("content_crop") or None
+    stats: dict[int, dict] = {}
+    try:
+        with heavy_slot("color_match", f"клип {ctx.plan_id}"):
+            for i in [reference, *targets]:
+                seg = segments[i]
+                stats[i] = measure(path, float(seg["start_sec"]), float(seg["end_sec"]), crop)
+    except (ValueError, OSError) as exc:
+        raise ToolError(f"замер не удался: {exc}") from exc
+    target = predict(stats[reference], segments[reference].get("color_fix"))
+    render, entries = _color_entries(ctx)
+    by_id = {e["piece"]: e for e in entries}
+    report = []
+    for i in targets:
+        seg = segments[i]
+        fix = match_fix(stats[i], target, seg.get("color_fix"), strength)
+        if fix:
+            by_id[seg["id"]] = {"piece": seg["id"], **fix}
+        else:
+            by_id.pop(seg["id"], None)
+        after = predict(stats[i], fix)
+        report.append({"piece": i, "before": stats[i], "after": after, "color_fix": fix,
+                       "summary": describe(fix) or "без поправки",
+                       "luma_gap_before": round(abs(stats[i]["y"] - target["y"]), 1),
+                       "luma_gap_after": round(abs(after["y"] - target["y"]), 1)})
+    order = {seg["id"]: k for k, seg in enumerate(segments)}
+    fresh = sorted(by_id.values(), key=lambda e: order.get(e["piece"], 10**6))
+    _save_render(ctx, {**render, "color_fix": fresh})
+    out: dict = {"ok": True, "reference": reference, "reference_stats": stats[reference], "target": target,
+                 "strength": strength, "pieces": report,
+                 "note": "средние яркость (Y), U/V и насыщенность кусков сведены к образцу по 5 кадрам каждого. "
+                         "Это выравнивание, а не лук: лук пресета ложится поверх. Ночь и день так не сравнять — "
+                         "проверь view_frame/contact_sheet; поправить руками — set_piece_color, снять — reset."}
+    clipped = [r["piece"] for r in report if r["luma_gap_after"] > 8]
+    if clipped:
+        out["warnings"] = [f"куски {clipped}: разница слишком большая (поправка упёрлась в предел ±1.5 EV / "
+                           "насыщенность 0.4..1.8) — сцены разные, подгоняй мягче (strength) или оставь"]
+    return out
+
+
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
     from app.clip_subtitles import save_lines
 
@@ -5962,6 +6091,31 @@ def _build_registry() -> list[Tool]:
             h_set_segment_speed, mutating=True,
             label=lambda a: (f"Кусок {a.get('piece')}: " + ("реверс " if a.get("reverse") else "")
                              + (f"×{a.get('speed')}" if a.get("speed") not in (None, 1, 1.0) else "")).strip(),
+        ),
+        Tool(
+            "set_piece_color", "Цвет куска",
+            "Цветокоррекция куска основы piece (номер с 0) — компиляции и сериалы из разных сцен не прыгают по "
+            "цвету: exposure −2..2 (ступени EV: +1 — вдвое светлее), contrast 0.5..1.5, saturation 0..2 (0 — ч/б), "
+            "temperature −1..1 (+ теплее, − холоднее), tint −1..1 (+ пурпурнее, − зеленее). Не переданное поле "
+            "остаётся прежним; reset true — снять поправку. Поправка едет с куском (по его id), рендерится до лука "
+            "пресета. Подогнать куски друг к другу по замеру — match_piece_colors. / Per-piece colour correction.",
+            _obj({"piece": {"type": "integer"}, "exposure": {"type": "number"}, "contrast": {"type": "number"},
+                  "saturation": {"type": "number"}, "temperature": {"type": "number"}, "tint": {"type": "number"},
+                  "reset": {"type": "boolean"}}, ["piece"]),
+            h_set_piece_color, mutating=True,
+            label=lambda a: f"Цвет куска {a.get('piece')}" + (": сброс" if a.get("reset") else ""),
+        ),
+        Tool(
+            "match_piece_colors", "Подгоняю цвет кусков",
+            "Авто-подгонка цвета: по 5 кадрам каждого куска ffmpeg меряет среднюю яркость, U/V (баланс) и "
+            "насыщенность и ставит кускам pieces (нет — всем, кроме образца) поправку (exposure, saturation, "
+            "temperature, tint), чтобы они совпали с куском-образцом reference (нет — самый длинный). strength "
+            "0..1 — доля пути (1 — полностью, 0.5 — наполовину). Ответ: замеры до/после и разница яркости. "
+            "Ночь и день так не сравнять — смотри contact_sheet. / Auto-match piece colours to a reference piece.",
+            _obj({"reference": {"type": "integer"}, "pieces": {"type": "array", "items": {"type": "integer"}},
+                  "strength": {"type": "number", "minimum": 0, "maximum": 1}}),
+            h_match_piece_colors, mutating=True,
+            label=lambda a: "Подгоняю цвет кусков" + (f" к куску {a.get('reference')}" if a.get("reference") is not None else ""),
         ),
         Tool(
             "set_piece_fit", "Кадр шире окна",

@@ -733,7 +733,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
                 "start_sec": round(min(x, y), 3),
                 "end_sec": round(max(x, y), 3),
             }
-            for key in ("speed", "reverse", "speed_audio"):
+            for key in ("speed", "reverse", "speed_audio", "color_fix"):
                 if key in seg:
                     part[key] = seg[key]
             if seg.get("focus"):

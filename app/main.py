@@ -2762,6 +2762,63 @@ def api_clip_plan_segment_speed(clip_plan_id: int, payload: SegmentSpeedRequest,
     return result
 
 
+class PieceColorRequest(BaseModel):
+    piece: int = Field(ge=0, description="номер куска с 0")
+    exposure: float | None = Field(default=None, ge=-2, le=2, description="ступени EV")
+    contrast: float | None = Field(default=None, ge=0.5, le=1.5)
+    saturation: float | None = Field(default=None, ge=0, le=2)
+    temperature: float | None = Field(default=None, ge=-1, le=1, description="+ теплее, − холоднее")
+    tint: float | None = Field(default=None, ge=-1, le=1, description="+ пурпурнее, − зеленее")
+    reset: bool = False
+
+
+class PieceColorMatchRequest(BaseModel):
+    reference: int | None = Field(default=None, ge=0, description="кусок-образец; нет — самый длинный")
+    pieces: list[int] | None = None
+    strength: float = Field(default=1.0, ge=0, le=1)
+
+
+def _run_clip_tool(clip_plan_id: int, name: str, args: dict, label: str, fail: str) -> dict:
+    """Инструмент агента из редактора: тот же код, один шаг отмены (снимок перед правкой)."""
+    from app import agent_tools
+
+    try:
+        store.get_clip_plan(clip_plan_id, include_segments=False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ctx = agent_tools.ToolContext(
+        store=store, clip_plan_id=clip_plan_id, on_first_change=lambda: snapshot_clip(store, clip_plan_id, label),
+    )
+    result, ok = agent_tools.run_tool(ctx, name, args)
+    if not ok:
+        problems = result.get("problems") or []
+        raise HTTPException(status_code=400, detail=str(result.get("error") or fail)
+                            + (f": {'; '.join(map(str, problems))}" if problems else ""))
+    return result
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/piece-color",
+    tags=["Render"],
+    summary="🎨 Цветокоррекция куска: экспозиция, контраст, насыщенность, баланс белого",
+)
+def api_clip_plan_piece_color(clip_plan_id: int, payload: PieceColorRequest, _auth: AuthDep) -> dict:
+    """Тот же инструмент, что у агентов (set_piece_color, app/piece_color.py)."""
+    return _run_clip_tool(clip_plan_id, "set_piece_color", payload.model_dump(exclude_none=True), "цвет куска",
+                          "цвет куска не принят")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/piece-color/match",
+    tags=["Render"],
+    summary="🎨 Подогнать цвет кусков к образцу (замер signalstats)",
+)
+def api_clip_plan_piece_color_match(clip_plan_id: int, payload: PieceColorMatchRequest, _auth: AuthDep) -> dict:
+    """Тот же инструмент, что у агентов (match_piece_colors, app/piece_color.py)."""
+    return _run_clip_tool(clip_plan_id, "match_piece_colors", payload.model_dump(exclude_none=True),
+                          "подгонка цвета", "подгонка цвета не удалась")
+
+
 class WordEmphasisRequest(BaseModel):
     indices: list[int] | None = Field(default=None, description="номера слов в субтитрах клипа (порядок words)")
     words: list[str] | None = Field(default=None, description="тексты слов (первое вхождение)")
@@ -3361,6 +3418,10 @@ def api_set_clip_plan_render_settings(
             # автосохранение без поля её не сбрасывает.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["speed"] = current.get("speed") or []
+        if "color_fix" not in settings_in:
+            # Цветокоррекция кусков (app/piece_color.py) — так же: ставит инструмент или инспектор.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["color_fix"] = current.get("color_fix") or []
         if not {"format", "aspect", "layers_format"} <= set(settings_in):
             # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
             # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).

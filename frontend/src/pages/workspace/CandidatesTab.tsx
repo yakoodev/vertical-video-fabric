@@ -14,8 +14,8 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, Aspect, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
-import { segLen, segSpeed } from "@/api/types";
+import type { AiSegment, Aspect, ColorFix, CoverSettings, FreezeFrame, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
+import { colorFixCss, segLen, segSpeed } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
@@ -1143,6 +1143,95 @@ function SegmentSpeedControl({
   );
 }
 
+const COLOR_FIELDS: { key: keyof ColorFix; label: string; min: number; max: number; step: number; neutral: number; hint: string }[] = [
+  { key: "exposure", label: "Экспозиция", min: -2, max: 2, step: 0.05, neutral: 0, hint: "ступени EV: +1 — вдвое светлее" },
+  { key: "contrast", label: "Контраст", min: 0.5, max: 1.5, step: 0.01, neutral: 1, hint: "1 — как есть" },
+  { key: "saturation", label: "Насыщенность", min: 0, max: 2, step: 0.01, neutral: 1, hint: "0 — ч/б, 1 — как есть" },
+  { key: "temperature", label: "Температура", min: -1, max: 1, step: 0.02, neutral: 0, hint: "+ теплее, − холоднее" },
+  { key: "tint", label: "Оттенок", min: -1, max: 1, step: 0.02, neutral: 0, hint: "+ пурпурнее, − зеленее" },
+];
+
+function colorBadge(seg: AiSegment): string {
+  const n = Object.keys(seg.color_fix ?? {}).length;
+  return n ? `${n} попр.` : "как есть";
+}
+
+/**
+ * Инспектор куска: цветокоррекция (POST /piece-color = set_piece_color агента) и подгонка
+ * остальных кусков к этому (POST /piece-color/match = match_piece_colors). Ползунки шлют
+ * значение с задержкой — не запрос на каждый пиксель движения.
+ */
+function PieceColorControl({
+  segment,
+  index,
+  pieces,
+  busy,
+  onChange,
+  onMatch,
+}: {
+  segment: AiSegment;
+  index: number;
+  pieces: number;
+  busy: boolean;
+  onChange: (body: { piece: number; reset?: boolean } & ColorFix) => void;
+  onMatch: (reference: number) => void;
+}) {
+  const [draft, setDraft] = useState<ColorFix>(segment.color_fix ?? {});
+  const timer = useRef<number | null>(null);
+  useEffect(() => setDraft(segment.color_fix ?? {}), [segment.id, JSON.stringify(segment.color_fix ?? {})]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+  const set = (key: keyof ColorFix, value: number) => {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => onChange({ piece: index, [key]: value }), 350);
+  };
+  return (
+    <div style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
+      {COLOR_FIELDS.map((f) => {
+        const value = draft[f.key] ?? f.neutral;
+        return (
+          <label key={f.key} className="field" title={f.hint} style={{ margin: 0 }}>
+            <span>
+              {f.label} — {f.key === "exposure" || f.key === "temperature" || f.key === "tint" ? (value > 0 ? "+" : "") : "×"}
+              {value.toFixed(2)}
+            </span>
+            <input
+              type="range"
+              min={f.min}
+              max={f.max}
+              step={f.step}
+              value={value}
+              disabled={busy || index < 0}
+              onChange={(e) => set(f.key, Number(e.target.value))}
+              onDoubleClick={() => set(f.key, f.neutral)}
+            />
+          </label>
+        );
+      })}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button type="button" className="btn sm" disabled={busy || index < 0} onClick={() => onChange({ piece: index, reset: true })}>
+          Сбросить
+        </button>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={busy || index < 0 || pieces < 2}
+          title="Замерить кадры всех кусков и свести их яркость, баланс и насыщенность к этому куску"
+          onClick={() => onMatch(index)}
+        >
+          🎨 Подогнать остальные к этому
+        </button>
+      </div>
+      <p className="muted" style={{ margin: 0 }}>
+        Поправка рендерится до лука пресета; превью — приближённо. Двойной клик по ползунку — нейтраль.
+      </p>
+    </div>
+  );
+}
+
 function Group({
   title,
   badge,
@@ -1990,6 +2079,33 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось поменять скорость куска"),
   });
 
+  // 🎨 Цвет куска и подгонка кусков — инструментами агента (set_piece_color / match_piece_colors).
+  const pieceColor = useMutation({
+    mutationFn: async (body: { planId: number; piece: number; reset?: boolean } & ColorFix) => {
+      await flushSettings();
+      const { planId, ...rest } = body;
+      return clipPlansApi.setPieceColor(planId, rest);
+    },
+    onSuccess: async (r) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      for (const w of r.warnings ?? []) toast.push(w, "info");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось поменять цвет куска"),
+  });
+  const matchColors = useMutation({
+    mutationFn: async (body: { planId: number; reference: number }) => {
+      await flushSettings();
+      return clipPlansApi.matchPieceColors(body.planId, { reference: body.reference });
+    },
+    onSuccess: async (r) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      const gaps = r.pieces.map((p) => `${p.piece + 1}: ${p.luma_gap_before}→${p.luma_gap_after}`).join(", ");
+      toast.success(`Цвет кусков подогнан к куску ${r.reference + 1} (разница яркости ${gaps})`);
+      for (const w of r.warnings ?? []) toast.push(w, "info");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось подогнать цвет"),
+  });
+
   const batch = useMutation({
     // No ids = everything ticked «в рендер»; the editor passes just its clip.
     mutationFn: async (ids: number[] | undefined) => {
@@ -2168,7 +2284,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return a ? `Анализ #${a.id} · ${a.provider}${a.model ? ` · ${a.model}` : ""}` : `Анализ #${analysisId}`;
   };
   const selectedPreset = presets.data?.find((p) => p.id === presetId);
-  const lookCss = lookFilterCss(selectedPreset);
+  // Превью цвета куска: поправка того куска, что сейчас играет (по секунде исходника).
+  const [pieceCss, setPieceCss] = useState("");
+  useEffect(() => {
+    const v = videoRef.current;
+    const segs = activePlan?.segments ?? [];
+    if (!v || !segs.some((s) => s.color_fix)) {
+      setPieceCss("");
+      return;
+    }
+    const update = () => {
+      const t = v.currentTime;
+      const seg = segs.find((s) => t >= s.start_sec - 0.01 && t < s.end_sec + 0.01);
+      setPieceCss(colorFixCss(seg?.color_fix));
+    };
+    update();
+    v.addEventListener("timeupdate", update);
+    v.addEventListener("seeked", update);
+    return () => {
+      v.removeEventListener("timeupdate", update);
+      v.removeEventListener("seeked", update);
+    };
+  }, [activePlan?.segments, view, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lookCss = [pieceCss, lookFilterCss(selectedPreset)].filter(Boolean).join(" ");
   // A few moments spread across the video — one frame can hide what a look does.
   const lookFrames = useMemo(() => {
     const all = storyboard.data?.frames ?? [];
@@ -4422,6 +4560,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : (
                 <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
                   Выберите кусок на таймлайне: слоу-мо, ускорение или реверс.
+                </p>
+              )}
+            </Group>
+
+            <Group title="Цвет куска" badge={selectedSegment ? colorBadge(selectedSegment) : "сегмент?"}>
+              {selectedSegment && activePlan ? (
+                <PieceColorControl
+                  segment={selectedSegment}
+                  index={activePlan.segments.findIndex((s) => s.id === selectedSegment.id)}
+                  pieces={activePlan.segments.length}
+                  busy={pieceColor.isPending || matchColors.isPending}
+                  onChange={(body) => pieceColor.mutate({ planId: activePlan.id, ...body })}
+                  onMatch={(reference) => matchColors.mutate({ planId: activePlan.id, reference })}
+                />
+              ) : (
+                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+                  Выберите кусок на таймлайне: экспозиция, баланс белого, подгонка кусков друг к другу.
                 </p>
               )}
             </Group>

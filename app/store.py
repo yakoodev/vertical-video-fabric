@@ -1831,10 +1831,12 @@ class AppStore:
         return data
 
     def _plan_segments(self, clip_plan_id: int, render_settings: Any) -> list[dict]:
-        """Куски плана со скоростью/реверсом из его настроек (app/piece_speed.py)."""
+        """Куски плана со скоростью/реверсом (app/piece_speed.py) и цветокоррекцией
+        (app/piece_color.py) из его настроек."""
+        from app.piece_color import attach as attach_color
         from app.piece_speed import attach
 
-        return attach(self._segments_for_clip_plan(clip_plan_id), render_settings)
+        return attach_color(attach(self._segments_for_clip_plan(clip_plan_id), render_settings), render_settings)
 
     def update_clip_plan_status(self, clip_plan_id: int, status: str) -> dict:
         self.get_clip_plan(clip_plan_id, include_segments=False)

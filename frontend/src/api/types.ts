@@ -153,9 +153,34 @@ export interface AiSegment {
   reverse?: boolean;
   /** Звук куска со скоростью/реверсом: tempo | pitch | mute | reverse. */
   speed_audio?: SpeedAudio;
+  /** 🎨 Цветокоррекция куска (set_piece_color / match_piece_colors, app/piece_color.py). */
+  color_fix?: ColorFix;
 }
 
 export type SpeedAudio = "tempo" | "pitch" | "mute" | "reverse";
+
+/** Поправка цвета куска: нет поля — нейтрально (exposure в EV, temperature/tint −1..1). */
+export interface ColorFix {
+  exposure?: number;
+  contrast?: number;
+  saturation?: number;
+  temperature?: number;
+  tint?: number;
+}
+
+/** Превью поправки цвета CSS-фильтром (приближённо; как app/piece_color.preview_css). */
+export function colorFixCss(fix?: ColorFix | null): string {
+  if (!fix) return "";
+  const bits: string[] = [];
+  if (fix.exposure) bits.push(`brightness(${(2 ** fix.exposure).toFixed(3)})`);
+  if (fix.contrast != null && fix.contrast !== 1) bits.push(`contrast(${fix.contrast.toFixed(3)})`);
+  if (fix.saturation != null && fix.saturation !== 1) bits.push(`saturate(${fix.saturation.toFixed(3)})`);
+  const t = fix.temperature ?? 0;
+  if (t > 0) bits.push(`sepia(${(0.3 * t).toFixed(3)})`);
+  else if (t < 0) bits.push(`hue-rotate(${(12 * t).toFixed(1)}deg)`);
+  if (fix.tint) bits.push(`hue-rotate(${(-10 * fix.tint).toFixed(1)}deg)`);
+  return bits.join(" ");
+}
 
 /** Длина куска на таймлайне клипа: (конец − начало исходника) / скорость. */
 export function segLen(piece: { start_sec: number; end_sec: number; speed?: number }): number {
@@ -256,6 +281,8 @@ export interface RenderSettings {
   audio?: AudioEdit;
   /** ⏩ Скорость/реверс кусков [{piece (segment id), speed?, reverse?, audio?}] (app/piece_speed.py). */
   speed?: { piece: number; speed?: number; reverse?: boolean; audio?: SpeedAudio }[];
+  /** 🎨 Цветокоррекция кусков [{piece (segment id), exposure?, …}] (app/piece_color.py). */
+  color_fix?: ({ piece: number } & ColorFix)[];
   /** Формат вывода (app/formats.py): 9:16 (как всегда), 1:1, 4:5 или 16:9 — у любого клипа. */
   format?: Aspect;
   /** В каком формате размечены слои (их опорный кадр, motion/formats.ts); нет — 9:16. */

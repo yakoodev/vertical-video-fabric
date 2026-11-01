@@ -423,8 +423,13 @@ def _preset_for_segment(preset: dict, segment: dict) -> dict:
     """Пресет основы для одного куска: у куска с ``fit`` (двое по краям широкого плана)
     кадр «вписан шире окна» — доля ``fit.w`` ширины исходника, сверху и снизу фон.
     Раскладка клипа (split/pip/meme) на этот кусок не действует."""
+    from app.piece_color import normalize_fix
     from app.video_crop import normalize_fit
 
+    fix = normalize_fix(segment.get("color_fix"))
+    if fix:
+        # Цветокоррекция куска (app/piece_color.py) — до лука пресета, в _video_style_filter.
+        preset = {**preset, "piece_color": fix}
     fit = normalize_fit(segment.get("fit"))
     if not fit or preset.get("landscape"):
         # В горизонтальном кадре (16:9) широкий план и так виден целиком — «шире окна» не нужно.
@@ -1248,10 +1253,13 @@ class ClipRenderService:
             visual = visual or {"layers": [], "camera": []}
         # Звуковой монтаж (app/audio_edit.py): дорожки, эффекты, J/L, ключи — None, если его нет.
         audio_plan = self._audio_plan(plan, cut_plan)
+        from app.piece_color import has_fix
         from app.piece_speed import is_retimed
 
-        # Кусок со скоростью/реверсом (app/piece_speed.py) — путь монтажа: части несут скорость.
-        retimed_parts = list(segments) if cut_plan is None and any(is_retimed(s) for s in segments) else None
+        # Кусок со скоростью/реверсом (app/piece_speed.py) или своей цветокоррекцией
+        # (app/piece_color.py) — путь монтажа: части несут скорость и поправку цвета.
+        retimed_parts = (list(segments) if cut_plan is None
+                         and any(is_retimed(s) or has_fix(s) for s in segments) else None)
         if retimed_parts is not None:
             clip = self.render_montage(
                 segment_ids,
@@ -2864,6 +2872,14 @@ def _video_style_filter(preset: dict) -> str:
     """
 
     parts: list[str] = []
+    if preset.get("piece_color") and not preset.get("key_fill"):
+        # Цветокоррекция куска (app/piece_color.py): сначала свести куски друг к другу, потом лук.
+        # С хромакеем — нет: сдвиг цвета зелёнки сорвал бы ключ.
+        from app.piece_color import video_filter
+
+        chain = video_filter(preset["piece_color"])
+        if chain:
+            parts.append(chain)
     # Horizontal mirror (swap left/right) — applied after the 9:16 crop so only the
     # final frame is flipped. Handy for making reposts look different.
     if preset.get("mirror"):
