@@ -114,10 +114,10 @@ function ApprovalBanners({ o }: { o: ExplainerOverview }) {
           </div>
           <div className="series-row">
             <button className="btn primary sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: c.id, action: "approve" })}>
-              ✅ Разрешить {rub(c.amount_rub)}
+              Разрешить · {rub(c.amount_rub)}
             </button>
             <button className="btn ghost sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: c.id, action: "reject" })}>
-              🗑 Отказ
+              Отказать
             </button>
           </div>
         </div>
@@ -196,6 +196,22 @@ function Videos({ o, mascot }: { o: ExplainerOverview; mascot: Mascot }) {
   );
 }
 
+/**
+ * Ошибка ролика: первая часть — что случилось (крупно), хвост после « — » — подсказка агенту
+ * (имена инструментов вроде explainer_set_script) — мельче и приглушённо.
+ */
+function VideoError({ text, failed }: { text: string; failed: boolean }) {
+  const at = text.indexOf(" — ");
+  const main = at > 0 ? text.slice(0, at) : text;
+  const hint = at > 0 ? text.slice(at + 3) : "";
+  return (
+    <div className="expl-error">
+      <span className={failed ? "aiv-warn" : "muted"}>{main}</span>
+      {hint ? <span className="muted expl-error-hint">{hint}</span> : null}
+    </div>
+  );
+}
+
 function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: number; poses: Pose[] }) {
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
@@ -223,10 +239,10 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
         <span className={`chip expl-status ${STATUS_TONE[v.status] ?? ""}`}>
           {active ? <span className="spinner sm" /> : null} {v.status_label}
         </span>
-        <button className="link-btn expl-topic" onClick={() => setOpen(!open)} title="Сценарий и биты">
+        <b className="expl-topic" title={v.topic}>
           {v.title || v.topic}
-        </button>
-        <span className="muted">{v.duration_target.toFixed(0)} с · {v.tone}</span>
+        </b>
+        <span className="muted">{v.duration_target.toFixed(0)} с{v.tone ? ` · ${v.tone}` : ""}</span>
         {v.estimate_rub > 0 ? <span className="muted">≈ {rub(v.estimate_rub)}</span> : null}
         <span className="expl-video-actions">
           {v.clip_id && v.editor_url ? (
@@ -236,7 +252,7 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
           ) : null}
           {v.status === "failed" || v.status === "cancelled" ? (
             <button className="btn sm" disabled={act.isPending} onClick={() => act.mutate("continue")}>
-              🔁 Продолжить
+              ↻ Продолжить
             </button>
           ) : null}
           {v.status === "done" ? (
@@ -249,13 +265,17 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
               Отменить
             </button>
           ) : (
-            <button className="btn ghost sm" disabled={act.isPending} onClick={() => window.confirm("Удалить ролик? Клип останется.") && act.mutate("delete")}>
-              🗑
+            <button className="btn ghost sm" disabled={act.isPending} onClick={() => window.confirm("Удалить ролик? Клип останется.") && act.mutate("delete")} title="Удалить ролик (клип останется)">
+              Удалить
             </button>
           )}
         </span>
       </div>
-      {v.error ? <div className={v.status === "failed" ? "aiv-warn" : "muted"}>{v.error}</div> : null}
+      {v.error ? <VideoError text={v.error} failed={v.status === "failed"} /> : null}
+      {/* Раньше сценарий раскрывался кликом по названию — догадаться было нельзя; теперь явная кнопка. */}
+      <button type="button" className="expl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {open ? "▾ Скрыть сценарий" : "▸ Сценарий и биты"}
+      </button>
       {open ? (
         detail.isLoading ? (
           <Loading />
@@ -353,9 +373,11 @@ function MascotCard({ mascot, projectId }: { mascot: Mascot; projectId: number }
   return (
     <section className="panel series-panel">
       <div className="series-panel-head">
-        <h3>
-          Маскот «{mascot.name}» <span className="muted mono">{mascot.slug}</span>
-        </h3>
+        <h3 title={`id для агентов: ${mascot.slug}`}>Маскот «{mascot.name}»</h3>
+        {/* «Сохранить» — в шапке карточки (было в строке голоса, терялось среди полей). */}
+        <button className="btn sm primary" disabled={save.isPending} onClick={() => save.mutate()}>
+          Сохранить
+        </button>
       </div>
       <div className="expl-mascot">
         <div className="expl-sheet" style={{ background: mascot.bg_color }}>
@@ -366,7 +388,7 @@ function MascotCard({ mascot, projectId }: { mascot: Mascot; projectId: number }
               <input type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && sheet.mutate(e.target.files[0])} />
             </label>
             <button className="btn ghost sm" disabled={gen.isPending} onClick={() => gen.mutate()} title="Модель картинок, ≈ 3 ₽ по карточке">
-              {mascot.sheet ? "↻ Перерисовать" : "🎨 Нарисовать"}
+              {mascot.sheet ? "↻ Перерисовать" : "Нарисовать лист"}
             </button>
           </div>
         </div>
@@ -411,9 +433,6 @@ function MascotCard({ mascot, projectId }: { mascot: Mascot; projectId: number }
           </div>
           <div className="series-row">
             <TtsVoicePicker value={voice} showModel onChange={(next) => setVoice({ ...voice, ...next })} />
-            <button className="btn sm primary" disabled={save.isPending} onClick={() => save.mutate()}>
-              Сохранить
-            </button>
           </div>
           <span className="muted">Голос: Gemini — бесплатно; Polza (ElevenLabs) ≈ 3 ₽ за 45 с — в карточке ролика.</span>
         </div>
@@ -446,7 +465,7 @@ function NewMascot({ o, empty }: { o: ExplainerOverview; empty: boolean }) {
   });
   const pilotButton = o.pilot_dir_ready && !o.mascots.some((m) => m.slug === "uh") ? (
     <button className="btn sm" disabled={pilot.isPending} onClick={() => pilot.mutate()}>
-      🦉 Импортировать пилот «Ух» (18 поз)
+      Импортировать пилот «Ух» (18 поз)
     </button>
   ) : null;
   if (!open) {
@@ -502,6 +521,7 @@ function PoseLibrary({ mascot, projectId }: { mascot: Mascot; projectId: number 
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
   const [filter, setFilter] = useState("");
+  const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", tags: "" });
   const [file, setFile] = useState<File | null>(null);
   const add = useMutation({
@@ -514,6 +534,7 @@ function PoseLibrary({ mascot, projectId }: { mascot: Mascot; projectId: number 
       toast.success(file ? "Поза добавлена" : "Поза добавлена — карточка на картинку ушла владельцу");
       setForm({ title: "", description: "", tags: "" });
       setFile(null);
+      setAdding(false);
       invalidate();
     },
     onError: (e) => toast.error(errText(e, "Не добавлено")),
@@ -526,8 +547,38 @@ function PoseLibrary({ mascot, projectId }: { mascot: Mascot; projectId: number 
     <section className="panel series-panel">
       <div className="series-panel-head">
         <h3>Библиотека поз · {mascot.poses.length}</h3>
-        <input className="input expl-filter" placeholder="Найти по тегам…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <div className="series-row expl-lib-tools">
+          <input className="input expl-filter" placeholder="Найти по тегам…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          {/* «Добавить позу» было внизу, под всеми карточками, — теперь рядом с поиском. */}
+          <button className="btn sm" onClick={() => setAdding(!adding)} aria-expanded={adding}>
+            {adding ? "Скрыть" : "＋ Добавить позу"}
+          </button>
+        </div>
       </div>
+      {adding ? (
+        <div className="expl-add">
+          <div className="series-row">
+            <input className="input" placeholder="Название: «пьёт кофе»" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            <input className="input wide" placeholder="Теги через запятую: кофе, coffee, кружка" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} />
+          </div>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Поза по-английски: happily sipping from a huge steaming coffee mug held in both wings"
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+          />
+          <div className="series-row">
+            <label className="btn ghost sm">
+              {file ? `Файл: ${file.name}` : "⬆ Своя картинка (иначе нарисовать)"}
+              <input type="file" accept="image/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+            <button className="btn sm primary" disabled={!form.description.trim() || add.isPending} onClick={() => add.mutate()}>
+              {file ? "Добавить" : "Добавить и нарисовать (≈ 3 ₽)"}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {shown.length ? (
         <div className="expl-poses" style={{ ["--expl-bg" as string]: mascot.bg_color }}>
           {shown.map((p) => (
@@ -537,29 +588,6 @@ function PoseLibrary({ mascot, projectId }: { mascot: Mascot; projectId: number 
       ) : (
         <EmptyState icon="🧩" title="Поз нет" hint="Они появятся сами с первым роликом (по карточке) — или добавьте свои." />
       )}
-      <details className="expl-add">
-        <summary>＋ Добавить позу</summary>
-        <div className="series-row">
-          <input className="input" placeholder="Название: «пьёт кофе»" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          <input className="input wide" placeholder="Теги через запятую: кофе, coffee, кружка" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} />
-        </div>
-        <textarea
-          className="input"
-          rows={2}
-          placeholder="Поза по-английски: happily sipping from a huge steaming coffee mug held in both wings"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-        />
-        <div className="series-row">
-          <label className="btn ghost sm">
-            {file ? `🖼 ${file.name}` : "⬆ Своя картинка (иначе нарисовать)"}
-            <input type="file" accept="image/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label>
-          <button className="btn sm primary" disabled={!form.description.trim() || add.isPending} onClick={() => add.mutate()}>
-            {file ? "Добавить" : "Добавить и нарисовать (≈ 3 ₽)"}
-          </button>
-        </div>
-      </details>
     </section>
   );
 }
@@ -612,11 +640,11 @@ function PoseCard({ p, projectId }: { p: Pose; projectId: number }) {
           </span>
         )}
         <span className="expl-pose-actions">
-          <button className="link-btn" disabled={regen.isPending} onClick={() => regen.mutate()} title="Новая версия (≈ 3 ₽ по карточке)">
+          <button className="btn ghost sm" disabled={regen.isPending} onClick={() => regen.mutate()} title="Новая версия (≈ 3 ₽ по карточке)" aria-label="Перерисовать позу">
             ↻
           </button>
-          <button className="link-btn" disabled={del.isPending} onClick={() => window.confirm(`Убрать позу «${p.title}»?`) && del.mutate()} title="Убрать из библиотеки">
-            🗑
+          <button className="btn ghost sm" disabled={del.isPending} onClick={() => window.confirm(`Убрать позу «${p.title}»?`) && del.mutate()} title="Убрать из библиотеки" aria-label="Убрать позу">
+            ✕
           </button>
         </span>
       </figcaption>

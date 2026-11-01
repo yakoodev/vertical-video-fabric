@@ -4582,3 +4582,24 @@ select.input { padding-top: 0; padding-bottom: 0; }
 @media (max-width: 720px) {
   .topbar-search kbd { display: none; }
 }
+
+/* UI-проход 2: на телефоне шапка вылезала на 16 px (поля -32 при отступе контента 16) — горизонтальная
+   прокрутка на каждой странице; вкладки серии и ИИ-видео шли в три строки — теперь одна лента. */
+@media (max-width: 720px) {
+  .topbar { margin: -16px -16px 14px; padding: 10px 16px; }
+  .series-tabs, .aiv-subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .series-tabs::-webkit-scrollbar, .aiv-subtabs::-webkit-scrollbar { display: none; }
+  .series-tabs .tab, .aiv-subtabs .tab { flex: none; padding: 10px 12px; white-space: nowrap; }
+}
+
+/* UI-проход 2: подзаголовок внутри группы («Эффекты» в «Сведении»), «Роль» слоя-звука во всю ширину
+   (список резался до «звук-э»). */
+.rgroup-sub { margin: 10px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.li-num.li-wide { flex: 1 1 100%; }
+.li-num.li-wide select.input { width: 100%; }
+.fx-chain > .li-row:first-child .fx-chain-title { flex: 1 1 100%; color: var(--text-dim); font-weight: 600; }
+.fx-params .li-num > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

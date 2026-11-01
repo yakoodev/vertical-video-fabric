@@ -1185,8 +1185,8 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
           </div>
           <Toggle label="Приглушить речь под звуком" checked={Boolean(layer.props.duck)} onChange={(duck) => patchProps({ duck })} />
           <div className="li-row" title="Роль в сведении: по ней «Сведение» сравнивает голос с музыкой и звуками. Авто — по имени слоя и длине">
-            <label className="li-num">
-              <span>Роль</span>
+            <label className="li-num li-wide">
+              <span>Роль в сведении</span>
               <select
                 className="input"
                 value={layer.props.role ?? ""}

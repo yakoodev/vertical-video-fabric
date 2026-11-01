@@ -7,6 +7,51 @@ import { useQuery } from "@tanstack/react-query";
 import { audioMixApi, defaultEffect, type FxEffect, type FxReference } from "@/api/audioMix";
 
 const LEGACY = ["muffle", "underwater", "echo", "reverb", "phone", "radio", "denoise"];
+// Подписи по-русски: раньше показывались служебные имена (threshold_db, sweep_start, muffle…).
+const LEGACY_LABEL: Record<string, string> = {
+  muffle: "глухо (за стеной)",
+  underwater: "под водой",
+  echo: "эхо",
+  reverb: "зал",
+  phone: "телефон",
+  radio: "рация",
+  denoise: "шумодав",
+};
+const PARAM_LABEL: Record<string, string> = {
+  low_cut: "Срез низа",
+  high_cut: "Срез верха",
+  low: "Низ",
+  presence: "Разборчивость",
+  high: "Воздух",
+  f: "Частота",
+  to: "Свип до",
+  sweep_start: "Свип с, с",
+  sweep_end: "Свип по, с",
+  threshold_db: "Порог",
+  ratio: "Сжатие",
+  attack_ms: "Атака",
+  release_ms: "Отпускание",
+  makeup_db: "Подъём",
+  knee_db: "Мягкость",
+  amount: "Сила",
+  mix: "Доля",
+  ms: "Задержка",
+  feedback: "Затухание",
+  taps: "Повторов",
+  semitones: "Полутоны",
+  rate: "Скорость",
+  width: "Ширина",
+  drive: "Перегруз",
+  bits: "Бит",
+  downsample: "Прореживание",
+  depth: "Глубина",
+  db: "Громкость",
+};
+/** Единица из пояснения сервера («дБ на 3.5 кГц…» → «дБ»): короткая, без хвоста. */
+function unitOf(about?: string): string {
+  const head = (about ?? "").split(/[\s,(]/)[0];
+  return ["Гц", "дБ", "мс", "с", "×"].includes(head) ? head : "";
+}
 
 function step(min?: number, max?: number): number {
   const span = (max ?? 1) - (min ?? 0);
@@ -74,7 +119,7 @@ export function FxChainEditor({
             <summary>
               <span>
                 {i + 1}. {spec?.label ?? eff.fx}
-                {eff.fx === "legacy" ? ` (${String(eff.kind)})` : ""}
+                {eff.fx === "legacy" ? ` (${LEGACY_LABEL[String(eff.kind)] ?? String(eff.kind)})` : ""}
               </span>
               <span className="fx-link-actions">
                 {i > 0 ? (
@@ -128,18 +173,23 @@ export function FxChainEditor({
                       <select className="input" value={String(eff.kind ?? p.default)} onChange={(e) => patch(i, { kind: e.target.value })}>
                         {LEGACY.map((k) => (
                           <option key={k} value={k}>
-                            {k}
+                            {LEGACY_LABEL[k] ?? k}
                           </option>
                         ))}
                       </select>
                     </label>
                   );
                 }
+                // Не числа (полосы эквалайзера bands — список) правит агент: числовое поле их ломало.
+                if (p.default !== null && p.default !== undefined && typeof p.default !== "number") return null;
                 const raw = eff[name];
                 const value = typeof raw === "number" ? raw : typeof p.default === "number" ? p.default : "";
                 return (
                   <label key={name} className="li-num" title={p.about}>
-                    <span>{name}</span>
+                    <span>
+                      {PARAM_LABEL[name] ?? name}
+                      {unitOf(p.about) ? `, ${unitOf(p.about)}` : ""}
+                    </span>
                     <input
                       className="input"
                       type="number"

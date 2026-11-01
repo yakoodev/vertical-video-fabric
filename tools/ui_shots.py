@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -115,6 +116,100 @@ def workspace_tab(label: str):
     return run
 
 
+def series_sub(tab: str, sub: str = "", then=None):
+    """Вкладка серии (ИИ-видео / Объяснялки…) + подвкладка ИИ-видео + доп. действие."""
+
+    def run(page: Page) -> None:
+        click_text(page, ".series-tabs .tab", tab)
+        settle(page, 500)
+        if sub:
+            click_text(page, ".aiv-subtabs .tab", sub)
+            settle(page, 600)
+        if then:
+            then(page)
+
+    return run
+
+
+def expl_open_video(page: Page) -> None:
+    # До прохода 2 сценарий раскрывался кликом по названию (.expl-topic), после — кнопкой .expl-toggle.
+    loc = page.locator(".expl-toggle")
+    if not loc.count():
+        loc = page.locator(".expl-topic")
+    if loc.count():
+        loc.last.click()
+        settle(page, 800)
+
+
+def expl_add_pose(page: Page) -> None:
+    loc = page.locator(".expl-add summary")
+    if loc.count():
+        loc.first.scroll_into_view_if_needed()
+        loc.first.click()
+        page.wait_for_timeout(400)
+
+
+def scroll_to(selector: str):
+    def run(page: Page) -> None:
+        loc = page.locator(selector)
+        if loc.count():
+            loc.first.scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
+
+    return run
+
+
+def last_episode(page: Page) -> None:
+    sel = page.locator(".aiv select.input").first
+    if sel.count():
+        opts = sel.locator("option")
+        sel.select_option(index=opts.count() - 1)
+        settle(page, 500)
+
+
+def editor_mix(page: Page) -> None:
+    insp_tab(page, "Звук")
+    for g in ("Музыка", "Тишина вместо звука", "Громкость исходника"):
+        head = page.locator(".insp-pane:not([hidden]) .rgroup-head", has_text=g)
+        if head.count() and head.first.get_attribute("aria-expanded") == "true":
+            head.first.click()
+    open_group(page, "Сведение")
+    links = page.locator(".insp-pane:not([hidden]) .fx-link summary")
+    if links.count():
+        links.first.click()
+    btn = page.locator(".insp-pane:not([hidden]) button", has_text="Проверить сведение")
+    if btn.count():
+        btn.first.click()
+        page.wait_for_timeout(6000)
+    open_group(page, "Сведение")
+
+
+def editor_audio_layer(page: Page) -> None:
+    insp_tab(page, "Слои")
+    open_group(page, "Слои клипа")
+    row = page.locator(".ed-layer-row", has_text=re.compile("звук|whoosh|вжух", re.I))
+    if row.count():
+        row.first.click()
+        page.wait_for_timeout(500)
+    loc = page.locator(".insp-pane:not([hidden]) .fx-chain")
+    if loc.count():
+        loc.first.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+
+
+def editor_cover(page: Page) -> None:
+    insp_tab(page, "Клип")
+    open_group(page, "Обложка")
+
+
+def editor_lint_run(page: Page) -> None:
+    editor_lint(page)
+    btn = page.locator(".insp-pane:not([hidden]) button", has_text="Проверить")
+    if btn.count():
+        btn.first.click()
+        page.wait_for_timeout(5000)
+
+
 SCREENS: list[tuple[str, str, object]] = [
     ("projects", "/projects", None),
     ("source", "/projects/1/source", None),
@@ -146,12 +241,31 @@ SCREENS: list[tuple[str, str, object]] = [
     ("aiv-locations", "/series/2", workspace_tab("Локации")),
     ("aiv-board", "/series/2", workspace_tab("Раскадровка")),
     ("aiv-assemble", "/series/2", workspace_tab("Сборка")),
+    # Проход 2: объяснялки, ИИ-видео v3, звук (сведение, роль/эффекты слоя), обложка, проверка.
+    ("expl", "/series/3", series_sub("Объяснялки")),
+    ("expl-video", "/series/3", series_sub("Объяснялки", then=expl_open_video)),
+    ("expl-poses", "/series/3", series_sub("Объяснялки", then=scroll_to(".expl-poses"))),
+    ("expl-add-pose", "/series/3", series_sub("Объяснялки", then=expl_add_pose)),
+    ("expl-empty", "/series/2", series_sub("Объяснялки")),
+    ("aiv3-script", "/series/2", series_sub("ИИ-видео", "Сценарий", scroll_to(".aiv-shot-edit"))),
+    ("aiv3-characters", "/series/2", series_sub("ИИ-видео", "Персонажи")),
+    ("aiv3-blocking", "/series/2", series_sub("ИИ-видео", "Блокинг")),
+    ("aiv3-board", "/series/2", series_sub("ИИ-видео", "Раскадровка")),
+    ("aiv3-board-empty", "/series/2", series_sub("ИИ-видео", "Раскадровка", last_episode)),
+    ("aiv3-assemble", "/series/2", series_sub("ИИ-видео", "Сборка")),
+    ("expl-clip", "/projects/2/candidates?clip=4", None),
+    ("editor-mix", EDITOR, editor_mix),
+    ("editor-audio-layer", EDITOR, editor_audio_layer),
+    ("editor-cover", EDITOR, editor_cover),
+    ("editor-lint-run", EDITOR, editor_lint_run),
 ] + [
     (f"settings-{seg}", f"/settings/{seg}", None)
     for seg in ("render", "banners", "audio", "subtitles", "brands", "prompts", "defaults", "modules", "proxy", "telegram", "backup")
 ]
 
-MOBILE = {"projects", "moments", "editor", "editor-layer", "editor-subs", "clips", "publish", "chat", "series", "aiv-script", "settings-modules", "automation"}
+MOBILE = {"projects", "moments", "editor", "editor-layer", "editor-subs", "clips", "publish", "chat", "series", "aiv-script", "settings-modules", "automation",
+          "expl", "expl-video", "expl-poses", "aiv3-characters", "aiv3-blocking", "aiv3-board", "editor-mix",
+          "editor-audio-layer"}
 
 
 def main() -> None:
@@ -176,7 +290,7 @@ def main() -> None:
                     except Exception as e:  # noqa: BLE001
                         errors.append(f"{kind}/{name}: {e}")
                     settle(page, 500)
-                full = name == "editor-full"
+                full = name == "editor-full" or os.environ.get("VVF_FULL") == "1"
                 page.screenshot(path=str(OUT / f"{kind}-{name}.png"), full_page=full)
                 print(kind, name, flush=True)
             ctx.close()
