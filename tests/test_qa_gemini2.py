@@ -156,3 +156,22 @@ def test_silence_hint_ignores_what_is_cut(tmp_path):
     assert hole and "тишина в ролике" in hole[0]["message"]
     cut = analyze({**model, "rs": {"cuts": [{"start": 1.4, "end": 3.1}]}})
     assert not [v for v in cut["verdicts"] if v["check"] == "silence"] and "silence_gaps" not in cut
+
+
+# ------------------------------------------------------------------ 8) мусор в хэштегах
+
+
+def test_hashtags_keep_only_cyrillic_latin_digits_underscore():
+    import json
+
+    from app.ai.publish_meta import full_description, parse_metadata
+
+    meta = parse_metadata(json.dumps({
+        "title": "Таракан на мониторе",
+        "description": "Мура и таракан в клипе #таракан皮 #стрим",
+        "hashtags": ["#таракан皮", "#Shorts", "#витубер_мура", "#ёлка2", "#皮", "#🔥огонь"],
+        "tiktok": {"title": "Таракан", "description": "смотри #таракан皮"}}, ensure_ascii=False))
+    assert meta["hashtags"] == ["#таракан", "#shorts", "#витубер_мура", "#ёлка2", "#огонь"]
+    assert meta["description"] == "Мура и таракан в клипе #таракан #стрим"
+    assert meta["platforms"]["tiktok"]["description"] == "смотри #таракан"
+    assert "皮" not in full_description(meta["description"], meta["hashtags"])
