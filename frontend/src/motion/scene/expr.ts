@@ -20,6 +20,10 @@ export type ExprVars = {
   n: number;
   /** Зерно сцены (seed). */
   seed: number;
+  /** Вьюпорт сцены (единицы) и расстояние камеры по умолчанию (1 единица = 1 px на z = 0). */
+  W?: number;
+  H?: number;
+  D?: number;
 };
 
 type Fn = (v: ExprVars) => number;
@@ -70,7 +74,7 @@ const FUNCS: Record<string, { n: [number, number]; f: (...a: number[]) => number
 /** Функции, которым нужно зерно сцены: rand(k) — [0,1), noise(x[, k]) — плавный шум [−1,1]. */
 const SEEDED = new Set(["rand", "noise"]);
 
-const VARS = new Set(["t", "T", "dur", "i", "n", "u", "p", "seed", "pi", "tau", "e"]);
+const VARS = new Set(["t", "T", "dur", "i", "n", "u", "p", "seed", "W", "H", "D", "pi", "tau", "e"]);
 
 class ExprError extends Error {}
 
@@ -190,6 +194,12 @@ function variable(name: string): Fn {
       return (v) => (v.n > 1 ? v.i / (v.n - 1) : 0);
     case "seed":
       return (v) => v.seed;
+    case "W":
+      return (v) => v.W ?? 1080;
+    case "H":
+      return (v) => v.H ?? 1920;
+    case "D":
+      return (v) => v.D ?? 2637.8;
     case "pi":
       return () => Math.PI;
     case "tau":

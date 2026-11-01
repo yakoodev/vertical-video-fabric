@@ -279,6 +279,8 @@ type Frame = {
   /** Плоскость камеры для отсечения: z ≤ −near. */
   near: number;
   far: number;
+  /** Расстояние камеры по умолчанию: 1 единица = 1 px на z = 0 (переменная D выражений). */
+  D: number;
 };
 
 type Inherit = {
@@ -297,7 +299,7 @@ type Inherit = {
 };
 
 function ectx(f: Frame, inh: Inherit, t = inh.t): EvalCtx {
-  return { t, T: f.T, dur: f.dur, i: inh.i, n: inh.n, seed: f.seed };
+  return { t, T: f.T, dur: f.dur, i: inh.i, n: inh.n, seed: f.seed, W: f.w, H: f.h, D: f.D };
 }
 
 /* ---------- камера ---------- */
@@ -500,10 +502,14 @@ const RIM_CUT = 0.28;
  * Довести цвет: блик и rim (у полосатых — жёсткими пятнами по флагам, у мягких — плавно),
  * свечение, туман.
  */
-function finishColor(f: Frame, mat: Material, c: RGBA, spec: number, rim: number, depth: number): RGBA {
+function finishColor(f: Frame, mat: Material, c: RGBA, spec: number, rim: number, depth: number, hard = true): RGBA {
   if (mat.specular && spec > -1) {
-    if (banded(mat.shading) || mat.shading === "flat") {
+    if (hard && (banded(mat.shading) || mat.shading === "flat")) {
       if (spec > 1 - mat.specular.size) c = mat.specular.color;
+    } else if (!hard && banded(mat.shading)) {
+      // Плоская грань целиком: жёсткий блик залил бы её всю — мягкий слабый отблеск.
+      const k = Math.pow(Math.max(0, spec), 2 / mat.specular.size) * 0.5;
+      c = mixRGBA(c, mat.specular.color, clamp01(k));
     } else {
       const k = Math.pow(Math.max(0, spec), 2 / mat.specular.size) * 0.9;
       c = mixRGBA(c, mat.specular.color, clamp01(k));
@@ -520,7 +526,7 @@ function shadeFace(f: Frame, mat: Material, N: Vec3, P: Vec3, depth: number): { 
   if (mat.shading === "flat" && !mat.rim && !mat.specular) return { c: f.fog && mat.fog ? fogged(f, mat.color, depth) : mat.color, level: 0 };
   const lit = lightAt(f, N, P);
   const m = modelColor(mat, lit, lit.d);
-  return { c: finishColor(f, mat, m.c, mat.specular ? specDot(f, N, P, lit.key) : -1, rimTerm(f, mat, N, P), depth), level: m.level };
+  return { c: finishColor(f, mat, m.c, mat.specular ? specDot(f, N, P, lit.key) : -1, rimTerm(f, mat, N, P), depth, false), level: m.level };
 }
 
 /* ---------- разрезание грани по полосам света ---------- */
@@ -667,6 +673,32 @@ export const NODE_TYPES = [
   "particles",
 ] as const;
 
+/** Привычные имена из three.js / SVG → наши типы (рендер их понимает, проверка подсказывает). */
+export const TYPE_ALIASES: Record<string, string> = {
+  cube: "box",
+  cuboid: "box",
+  ball: "sphere",
+  donut: "torus",
+  ring: "torus",
+  pyramid: "cone",
+  tube: "cylinder",
+  label: "text",
+  title: "text",
+  square: "rect",
+  rectangle: "rect",
+  ellipse: "circle",
+  triangle: "polygon",
+  img: "image",
+  picture: "image",
+  sprite: "image",
+  container: "group",
+  object: "group",
+  array: "repeat",
+  clone: "repeat",
+  extrusion: "extrude",
+  polyline: "line",
+};
+
 export const MESH_TYPES = new Set(["box", "sphere", "icosphere", "cylinder", "cone", "plane", "torus", "lathe", "extrude"]);
 export const FLAT_TYPES = new Set(["rect", "circle", "polygon", "star", "path", "shape"]);
 
@@ -733,7 +765,8 @@ function visit(node: unknown, f: Frame, inh: Inherit): void {
   if (fin(node.start) && t < node.start) return;
   if (fin(node.end) && t >= node.end) return;
   const c = ectx(f, inh, t);
-  const type = String(node.type ?? "group");
+  const rawType = String(node.type ?? "group");
+  const type = TYPE_ALIASES[rawType] ?? rawType;
   // Текст по буквам: enter/exit играет каждая буква со своим stagger, не весь блок.
   const splitText = (type === "text" || type === "text3d") && !node.__glyph && (node.split === "letters" || node.split === "words" || node.split === "lines");
   const ee = splitText ? NO_EE : enterExit(node, f, inh, t);
@@ -1479,11 +1512,18 @@ function drawText(node: Node, type: string, f: Frame, inh: Inherit, c: EvalCtx):
     const key = `${font}|${text}|${split}|${align}|${ls}|${lineHeight}`;
     let cached = splitCache.get(node);
     if (!cached || cached.key !== key) {
-      const { split: _s, stagger: _st, children: _c, position: _p, rotation: _r, scale: _sc, pivot: _pv, follow: _f, time: _t, delay: _d, start: _a, end: _b, opacity: _o, ...rest } = node;
+      const { split: _s, stagger: _st, children: _c, position: _p, rotation: _r, scale: _sc, pivot: _pv, follow: _f, time: _t, delay: _d, start: _a, end: _b, opacity: _o, letters, ...rest } = node;
       void _s; void _st; void _c; void _p; void _r; void _sc; void _pv; void _f; void _t; void _d; void _a; void _b; void _o;
+      // Буква = группа на своём месте + сама буква: её поза letters (выражения с i — номером
+      // буквы) и enter/exit — вокруг своего центра.
+      const pose = isObj(letters) ? letters : {};
       cached = {
         key,
-        kids: lay.glyphs.map((g) => ({ ...rest, type, text: g.text, align: "center", position: [g.x, g.y, 0], __glyph: true, __pos: true })),
+        kids: lay.glyphs.map((g) => ({
+          type: "group",
+          position: [g.x, g.y, 0],
+          children: [{ ...rest, type, text: g.text, align: "center", position: pose.position, rotation: pose.rotation, scale: pose.scale, opacity: pose.opacity, __glyph: true }],
+        })),
       };
       splitCache.set(node, cached);
     }
@@ -1981,7 +2021,8 @@ export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions)
   const w = Math.max(1, opts.w);
   const h = Math.max(1, opts.h);
   const seed = ((fin(spec.seed) ? Math.floor(spec.seed) : 0) ^ (opts.seed ?? 0)) >>> 0;
-  const root: EvalCtx = { t: opts.t, T: opts.t, dur: opts.dur, i: 0, n: 1, seed };
+  const D = focalFor(h, 40);
+  const root: EvalCtx = { t: opts.t, T: opts.t, dur: opts.dur, i: 0, n: 1, seed, W: w, H: h, D };
   const cam = evalCamera(spec.camera, root, h);
   const m0 = ctx.getTransform();
   const dev = Math.hypot(m0.a, m0.b) || 1;
@@ -2013,6 +2054,7 @@ export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions)
     seq: 0,
     near: cam.near,
     far: cam.far,
+    D,
   };
   const style = isObj(spec.style) ? spec.style : null;
   const inh: Inherit = { m: identity(), opacity: 1, tint: null, mat: style, t: opts.t, i: 0, n: 1, order: 0, group: null, depth: 0 };

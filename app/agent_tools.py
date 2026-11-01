@@ -312,7 +312,22 @@ def _validate_new_layers(ctx: ToolContext, raw: list, duration: float) -> list[s
             return False
 
     problems = motion.validate_layers(raw, duration, asset_exists=asset_exists, ref_exists=_ref_checker())
-    return problems + _video_kind_problems(ctx, raw)
+    return problems + _video_kind_problems(ctx, raw) + _scene_engine_problems(raw)[0]
+
+
+def _scene_engine_problems(raw: Any) -> tuple[list[str], list[str]]:
+    """Слои scene — проверкой самого движка (поля, выражения, кривые, бюджет граней):
+    (ошибки — слой не принять, предупреждения). Нет компоновщика — проверка пропускается."""
+    from app.scene_engine import scene_layer_problems
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    for layer in raw if isinstance(raw, list) else []:
+        if isinstance(layer, dict) and layer.get("type") == "scene":
+            e, w = scene_layer_problems(layer)
+            errors += e
+            warnings += w
+    return errors, warnings
 
 
 def _video_kind_problems(ctx: ToolContext, raw: Any) -> list[str]:
@@ -474,6 +489,8 @@ def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
         height = 2 * ((_num(props.get("spread"), 360.0) or 0.0) + (_num(props.get("size"), 28.0) or 0.0))
     elif kind == "pngtuber":
         height = _num(props.get("w"), 300.0) or 300.0  # аватар обычно квадратный
+    elif kind == "scene":
+        height = _num(props.get("h"), ref_h) or ref_h  # вьюпорт сцены; нет — весь кадр
     return height * scale / ref_h / 2, 0.0
 
 
@@ -496,10 +513,19 @@ MAX_COVER_SHARE = 0.4  # непрозрачная картинка/фигура 
 def cover_share(layer: dict, fmt: Any = None) -> float:
     """Какую долю кадра непрозрачно закрывает слой-картинка/фигура (0, если прозрачный); кадр —
     опорный формата слоёв ``fmt`` (нет — 9:16, 1080×1920)."""
-    if layer.get("type") not in ("shape", "image", "video"):
+    if layer.get("type") not in ("shape", "image", "video", "scene"):
         return 0.0
     ref_w, ref_h = _ref(fmt)
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    if layer.get("type") == "scene":
+        # Сцена закрывает кадр только своим фоном: без background она прозрачна (графика поверх).
+        scene = props.get("scene") if isinstance(props.get("scene"), dict) else {}
+        if scene.get("background") in (None, "", "none", "transparent") or (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
+            return 0.0
+        scale = _num(layer.get("scale"), 1.0) or 1.0
+        w = (_num(props.get("w"), ref_w) or ref_w) * scale
+        h = (_num(props.get("h"), ref_h) or ref_h) * scale
+        return min(1.0, (w * h) / (ref_w * ref_h))
     if layer.get("type") == "video" and (_num(layer.get("opacity"), 1.0) or 0.0) >= 0.6:
         scale = _num(layer.get("scale"), 1.0) or 1.0
         w = (_num(props.get("w"), 600.0) or 600.0) * scale
@@ -779,6 +805,7 @@ def _layer_summary(layer: dict) -> str:
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
         "fx": lambda: f"эффект кадра {props.get('kind') or 'vhs'}",
+        "scene": lambda: f"3D-сцена ({len((props.get('scene') or {}).get('nodes') or [])} узл.)",
     }.get(kind, lambda: str(kind or "слой"))()
     return f"{what} на {(_num(layer.get('start'), 0.0) or 0.0):.1f} с"
 
@@ -1784,8 +1811,11 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "warnings": lint_layers(layers, duration, only_ids=new_ids, **_lint_scene(ctx, fresh))
         + _scene_warnings(ctx, fresh, duration)
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
-        + _layers_room_warning(len(layers)),
+        + _layers_room_warning(len(layers))
+        + _scene_engine_problems(added)[1],
     }
+    if any(l.get("type") == "scene" for l in added):
+        out["check"] = "сцена: посмотри кадры preview_scene_frame(layer_id, t: [0, середина, конец]) или view_frame"
     if skipped:
         out.update(partial=True, applied=f"применено {len(added)} из {len(raw)}", skipped=skipped,
                    note="пропущенные слои НЕ в клипе — исправь их по подсказкам и пришли снова только их "
@@ -1915,7 +1945,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     out = {"ok": True, "layer": saved,
            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
-           + _scene_warnings(ctx, fresh, duration)}
+           + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]}
     if saved.get("type") == "pngtuber":
         # Порог/дорожку поправили — сразу видно, какая доля клипа рот открыт (как у add_pngtuber).
         out.update(_voice_check(ctx, layer_id))
@@ -2105,6 +2135,107 @@ def _anchor_zoom_keys(ctx: ToolContext, keys: list) -> list:
                 key = {**key, **camera_center(anchor, zoom)}
         out.append(key)
     return out
+
+
+SCENE_TEMPLATES = {
+    "scene-iso-title": "изометрический 3D-титр на плите (ортокамера)",
+    "scene-logo-spin": "вращающийся выдавленный значок с toon-обводкой",
+    "scene-parallax-2d": "2D-иллюстрация слоями, пролёт камеры с параллаксом",
+    "scene-lowpoly-orbit": "low-poly остров, облёт камеры, туман",
+    "scene-kinetic-text": "кинетический 3D-текст по буквам",
+    "scene-confetti-3d": "3D-конфетти и титр",
+    "scene-card-flip": "карточка-переворот «до/после»",
+    "scene-subscribe": "концовка «Подпишись»: кнопка, колокольчик, ник",
+}
+
+
+def h_get_scene_reference(_ctx: ToolContext, args: dict) -> dict:
+    """Схема JSON-сцены слоя scene + примеры (docs/motion/scene-engine.md)."""
+    from app import scene_engine as se
+
+    examples = se.scene_examples()
+    name = str(args.get("example") or "").strip()
+    if name:
+        if name not in examples:
+            raise ToolError(f"примера «{name}» нет; есть: {', '.join(examples)}")
+        return {"example": name, **examples[name]}
+    return {
+        "reference": se.scene_reference(),
+        "examples": examples,
+        "gallery_templates": SCENE_TEMPLATES,
+        "doc": "docs/motion/scene-engine.md",
+        "next": "собери сцену → preview_scene_frame(scene, t: [0, 1, 2]) → add_layers([{type: 'scene', start, end, "
+                "props: {h?, scene}}]) → view_frame в клипе",
+    }
+
+
+def _scene_times(args: dict) -> list[float]:
+    raw = args.get("t", 0)
+    values = raw if isinstance(raw, list) else [raw]
+    times = [max(0.0, v) for v in (_num(x) for x in values) if v is not None]
+    return times[:4] or [0.0]
+
+
+def h_preview_scene_frame(ctx: ToolContext, args: dict) -> ImageResult:
+    """Кадр(ы) JSON-сцены без клипа (или слоя scene клипа по layer_id) — тем же компоновщиком, что рендер."""
+    from app import scene_engine as se
+    from app.motion_render import CompositorMissing
+
+    props: dict = {}
+    duration = _num(args.get("duration"))
+    if args.get("layer_id"):
+        layer = next((l for l in _layers_of(_current_render(ctx)) if str(l.get("id")) == str(args["layer_id"])), None)
+        if layer is None:
+            raise ToolError(f"слоя {args['layer_id']} нет в клипе")
+        if layer.get("type") != "scene":
+            raise ToolError(f"слой {args['layer_id']} — {layer.get('type')}, а нужен scene (кадр клипа — view_frame)")
+        props = layer.get("props") or {}
+        scene = props.get("scene")
+        duration = duration or max(0.1, (_num(layer.get("end"), 3.0) or 3.0) - (_num(layer.get("start"), 0.0) or 0.0))
+    else:
+        scene = args.get("scene")
+    if isinstance(scene, str):
+        try:
+            scene = json.loads(scene)
+        except ValueError as exc:
+            raise ToolError(f"scene — не JSON: {exc}") from exc
+    if not isinstance(scene, dict):
+        raise ToolError("нужен scene (объект сцены, см. get_scene_reference) или layer_id слоя scene")
+    structural: list[str] = []
+    scene = se.SceneSpec().norm(scene, motion._Report(structural), "scene")
+    w = _num(args.get("w")) or _num(props.get("w")) or 1080.0
+    h = _num(args.get("h")) or _num(props.get("h")) or 1920.0
+    w, h = min(4000.0, max(16.0, w)), min(4000.0, max(16.0, h))
+    times = _scene_times(args)
+    duration = duration or max(times) + 1.0
+    bg = args.get("background", "#202028")
+    background = None if bg in (False, None, "", "none", "transparent") else (bg if isinstance(bg, str) else "#202028")
+    width = int(_num(args.get("width"), se.PREVIEW_WIDTH) or se.PREVIEW_WIDTH)
+    check = se.check_scene(scene, w, h, times[0], duration)
+    try:
+        frames, info = se.render_scene_png(ctx.store, scene, times, w=w, h=h, dur=duration, background=background,
+                                           width=width)
+    except CompositorMissing as exc:
+        raise ToolError(str(exc)) from exc
+    except RuntimeError as exc:
+        raise ToolError(str(exc)) from exc
+    errors, warnings = se.format_problems(check)
+    info.update({"errors": structural + errors, "warnings": warnings, "stats": (check or {}).get("stats", {}),
+                 "viewport": [w, h], "time": "секунды слоя (0 = start)"})
+    if len(frames) == 1:
+        return ImageResult(data=frames[0], mime_type="image/png", info=info)
+    import tempfile
+
+    from app.motion_render import tile_frames_jpeg
+
+    with tempfile.TemporaryDirectory(prefix="vvf-scene-sheet-") as tmp:
+        paths = []
+        for k, data in enumerate(frames):
+            path = Path(tmp) / f"f{k}.png"
+            path.write_bytes(data)
+            paths.append(path)
+        sheet = tile_frames_jpeg(paths, [f"t={t:g}" for t in times], width=min(info["width"], 400), cols=len(paths))
+    return ImageResult(data=sheet, mime_type="image/jpeg", info=info)
 
 
 def h_get_motion_reference(ctx: ToolContext, args: dict) -> dict:
@@ -5001,6 +5132,34 @@ def _build_registry() -> list[Tool]:
             _obj({"format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]},
                   "layers_format": {"type": "string", "enum": ["9:16", "1:1", "4:5", "16:9"]}}),
             h_get_motion_reference, scope="global",
+        ),
+        Tool(
+            "get_scene_reference", "Справка по 3D-сценам",
+            "Схема JSON-сцены слоя scene (свой движок 3D/2D: сетки box/sphere/torus/extrude/lathe…, плоские фигуры, "
+            "объёмный текст, картинки, частицы; камеры перспектива/ортография с облётом и тряской; заливки "
+            "flat/lambert/toon/gradient/halftone/hatch, обводка, rim; анимации — ключи, пружины, wiggle, выражения "
+            "'=sin(t)', enter/exit, stagger, repeat) + готовые примеры. example — один пример целиком. Зови ДО "
+            "того, как писать сцену. / Scene-engine JSON schema and examples for the 'scene' layer.",
+            _obj({"example": {"type": "string", "description": "имя примера (toon_logo, ortho_2d_motion, …)"}}),
+            h_get_scene_reference, scope="global", label=lambda a: "Читаю справку по 3D-сценам",
+        ),
+        Tool(
+            "preview_scene_frame", "Смотрю кадр 3D-сцены",
+            "Кадр(ы) JSON-сцены тем же компоновщиком, что рендер: scene — объект сцены (без клипа) ИЛИ layer_id — "
+            "слой scene текущего клипа. t — секунды слоя (0 = его start), число или до 4 моментов списком "
+            "(лист кадров). w/h — вьюпорт в опорных px (нет — 1080×1920 или как у слоя), background — подложка "
+            "под прозрачной сценой (#202028; false — прозрачно), width — ширина картинки (540). В ответе — "
+            "ошибки и предупреждения проверки (путь поля и подсказка), граней в кадре и мс на кадр. Смотри "
+            "так каждую сцену до add_layers. / Render scene frame(s) for review.",
+            _obj({"scene": {"type": "object", "description": "JSON-сцена (get_scene_reference)"},
+                  "layer_id": {"type": "string"},
+                  "t": {"description": "секунды слоя: число или список до 4", "anyOf": [
+                      {"type": "number"}, {"type": "array", "items": {"type": "number"}, "maxItems": 4}]},
+                  "w": {"type": "number"}, "h": {"type": "number"}, "duration": {"type": "number"},
+                  "background": {"description": "#hex или false", "anyOf": [{"type": "string"}, {"type": "boolean"}]},
+                  "width": {"type": "integer", "minimum": 64, "maximum": 1080}}),
+            h_preview_scene_frame, scope="global",
+            label=lambda a: "Смотрю кадр 3D-сцены",
         ),
         Tool(
             "add_layers", "Добавляю слои",

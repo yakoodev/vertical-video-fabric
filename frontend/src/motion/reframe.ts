@@ -150,6 +150,9 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
   }
   if (kind === "shape" || kind === "progress" || kind === "chart")
     return [num(props.w, 400), num(props.h, kind !== "progress" ? 400 : 40)];
+  // Сцена: вьюпорт w×h; без них — весь кадр любого формата (движок берёт опорный кадр формата),
+  // переносить нечего — как app/aspect.layer_size.
+  if (kind === "scene") return props.w || props.h ? [num(props.w, 1080), num(props.h, 1920)] : null;
   if (kind === "callout") return [num(props.w, 900), props.subtitle ? 240.0 : 170.0];
   if (kind === "nameplate") {
     // Пилюля: поля 0.42·H с двух сторон, значок 0.56·H + зазор 0.26·H, ник кеглем 0.5·H (как layers/nameplate.ts).

@@ -7,7 +7,7 @@
 import { EASINGS } from "../easing";
 import { exprError } from "./expr";
 import { estimateFaces, PRESET_SHAPES } from "./geometry";
-import { CAMERA_TYPES, FLAT_TYPES, MESH_TYPES, NODE_TYPES, PARTICLE3D_KINDS, SCENE_LIMITS, SHADINGS } from "./render";
+import { CAMERA_TYPES, FLAT_TYPES, MESH_TYPES, NODE_TYPES, PARTICLE3D_KINDS, SCENE_LIMITS, SHADINGS, TYPE_ALIASES } from "./render";
 import { parseColor } from "./value";
 
 export type SceneProblem = { path: string; message: string };
@@ -109,6 +109,7 @@ const TEXT: Schema = {
   slices: "int",
   sideColor: "color",
   stroke: STROKE,
+  letters: POSE,
 };
 
 const BY_TYPE: Record<string, Schema> = {
@@ -433,12 +434,16 @@ class Checker {
       this.err(path, `вложенность глубже ${SCENE_LIMITS.maxDepth}`);
       return;
     }
-    const type = v.type === undefined ? "group" : v.type;
+    let type = v.type === undefined ? "group" : v.type;
+    if (typeof type === "string" && TYPE_ALIASES[type]) {
+      this.warn(`${path}.type`, `«${type}» понят как «${TYPE_ALIASES[type]}» — лучше пиши так`);
+      type = TYPE_ALIASES[type];
+    }
     if (typeof type !== "string" || !(NODE_TYPES as readonly string[]).includes(type)) {
       this.err(`${path}.type`, `неизвестный тип ${JSON.stringify(v.type)} — есть: ${NODE_TYPES.join(", ")}${typeof type === "string" ? suggest(type, [...NODE_TYPES]) : ""}`);
       return;
     }
-    const schema = { ...COMMON, ...BY_TYPE[type] };
+    const schema: Schema = { ...COMMON, ...BY_TYPE[type], type: "any" };
     this.object(path, v, schema);
     // Обязательное и бюджет.
     if ((type === "text" || type === "text3d") && (typeof v.text !== "string" || !v.text.trim())) this.err(`${path}.text`, "у текста нет text");

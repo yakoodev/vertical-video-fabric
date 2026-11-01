@@ -13,6 +13,7 @@ import { CHAT_STYLES } from "./layers/chat";
 import { NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES } from "./layers/nameplate";
 import { formatRefSize } from "./formats";
 import { isTransient, layerSize } from "./reframe";
+import { sceneTemplates } from "./scene/templates";
 import type { CameraKey, ChatStyle, KeyPoint, Layer, LayerBase, LayerPropsMap, LayerType, NameplatePlatform, Shadow } from "./types";
 import { REF_H, REF_W } from "./types";
 
@@ -1495,6 +1496,8 @@ export const TEMPLATES: MotionTemplate[] = [
   phoneSpace,
   depthTitle,
   cardFan,
+  // Движок сцен (scene/): настоящий 3D/2D одним слоем scene.
+  ...sceneTemplates(newLayerId),
 ];
 
 export function getTemplate(id: string): MotionTemplate | undefined {

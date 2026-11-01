@@ -2688,3 +2688,24 @@ test("CLI: слой scene в кадре компоновщика = кадр дв
   for (let i = 0; i < cli.length; i++) diff = Math.max(diff, Math.abs(cli[i] - eng[i]));
   assert.ok(diff <= 2, `рендер ≠ превью: макс. разница ${diff}`);
 });
+
+test("сцена: шаблоны галереи — один слой scene, сцена без ошибок и предупреждений, кадр рисуется", () => {
+  const ids = E.TEMPLATES.filter((t) => t.id.startsWith("scene-")).map((t) => t.id);
+  assert.ok(ids.length >= 8, `шаблонов сцен ${ids.length}`);
+  for (const id of ids) {
+    const res = E.buildTemplate(id, {}, 1);
+    assert.equal(res.layers.length, 1, id);
+    const layer = res.layers[0];
+    assert.equal(layer.type, "scene", id);
+    const check = E.validateScene(layer.props.scene);
+    assert.ok(check.ok, `${id}: ${JSON.stringify(check.errors)}`);
+    assert.deepEqual(check.warnings, [], `${id}: ${JSON.stringify(check.warnings)}`);
+    const cv = createCanvas(270, 480);
+    const ctx = cv.getContext("2d");
+    E.drawFrame(ctx, { layers: res.layers }, 1 + (layer.end - layer.start) / 2, sceneEnv(270, 480));
+    const d = ctx.getImageData(0, 0, 270, 480).data;
+    let painted = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) painted++;
+    assert.ok(painted > 2000, `${id}: кадр почти пуст (${painted} px)`);
+  }
+});
