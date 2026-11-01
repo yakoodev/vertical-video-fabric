@@ -836,6 +836,9 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
     quiet = [v < SILENCE_LUFS for v in mix_frames]
     gaps = [(a, b) for a, b in _ranges(quiet, merge=0.05, shift=FRAME_SHIFT)
             if b - a >= SILENCE_MIN_SEC and a > 0.3 and b < duration - 0.3]
+    # Стемы — по шкале clip ДО вырезов: тишина внутри выреза в ролик не попадёт (QA 02.11, клип 892:
+    # «тишина 18.6–19.6 с» указывала прямо в вырез 18.47–19.66 с).
+    gaps = silence_after_cuts(gaps, (model.get("rs") or {}).get("cuts") or [])
     if gaps:
         out["silence_gaps"] = [{"start": a, "end": b} for a, b in gaps[:MAX_RANGES]]
         verdict("info", "silence", "тишина в ролике: " + ", ".join(f"{a:.1f}–{b:.1f} с" for a, b in gaps[:3]),
@@ -846,6 +849,32 @@ def analyze(model: dict, target: float = TARGET_LUFS, render_path: Path | None =
         verdict("info", "speech", "речь не найдена — соотношение голос/музыка не меряю")
     out["verdicts"] = verdicts
     out["summary"] = summary(out)
+    return out
+
+
+def silence_after_cuts(gaps: list[tuple[float, float]], cuts: list[dict],
+                       min_len: float | None = None) -> list[tuple[float, float]]:
+    """Дыры тишины (шкала clip до вырезов) без того, что вырезано: от дыры остаются куски вне вырезов;
+    куски одной дыры по обе стороны выреза в ролике стоят встык — их длина складывается. Остаётся то, что
+    в готовом ролике длиннее ``min_len`` (SILENCE_MIN_SEC); время — по шкале clip, от первого куска до
+    последнего."""
+    min_len = SILENCE_MIN_SEC if min_len is None else min_len
+    spans = sorted((float(c["start"]), float(c["end"])) for c in cuts or [] if float(c["end"]) > float(c["start"]))
+    if not spans:
+        return gaps
+    out: list[tuple[float, float]] = []
+    for a, b in gaps:
+        bits, cursor = [], a
+        for c0, c1 in spans:
+            if c1 <= cursor or c0 >= b:
+                continue
+            if c0 > cursor:
+                bits.append((cursor, c0))
+            cursor = max(cursor, c1)
+        if cursor < b:
+            bits.append((cursor, b))
+        if bits and sum(y - x for x, y in bits) >= min_len - 1e-6:
+            out.append((round(bits[0][0], 2), round(bits[-1][1], 2)))
     return out
 
 

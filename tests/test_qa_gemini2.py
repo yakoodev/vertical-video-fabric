@@ -130,3 +130,29 @@ def test_add_insert_warns_when_the_same_file_is_inserted_again(tmp_path, monkeyp
                                            "fill": "cover"})
     assert ok and any("уже вставлен на 1 с" in w for w in out["warnings"])
     assert out["inserts"][1]["fill"] == "cover"
+
+
+# ------------------------------------------------------------------ 7) «тишина» внутри выреза
+
+
+def test_silence_hint_ignores_what_is_cut(tmp_path):
+    import subprocess
+
+    from app.audio_mix import analyze, silence_after_cuts
+
+    # Клип 892: тишина 18.6–19.6 с целиком в вырезе 18.47–19.66 с — подсказки быть не должно.
+    assert silence_after_cuts([(18.6, 19.6)], [{"start": 18.47, "end": 19.66}]) == []
+    # Вырез съел середину: по краям 0.3 + 0.3 с — в ролике это 0.6 с тишины встык.
+    assert silence_after_cuts([(5.0, 7.0)], [{"start": 5.3, "end": 6.7}], min_len=0.5) == [(5.0, 7.0)]
+    assert silence_after_cuts([(5.0, 7.0)], [{"start": 5.3, "end": 6.7}], min_len=0.8) == []
+    assert silence_after_cuts([(1.0, 2.0)], []) == [(1.0, 2.0)]
+
+    _require_ffmpeg()
+    wav = tmp_path / "voice.wav"  # 1.5 с звука, 1.5 с тишины, 1.5 с звука
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=4.5:sample_rate=48000",
+                    "-af", "volume=enable='between(t,1.5,3.0)':volume=0", "-ac", "2", str(wav)], check=True)
+    model = {"duration": 4.5, "stems": {"source": wav}, "items": [], "music": None, "speechless": False, "rs": {}}
+    hole = [v for v in analyze(model)["verdicts"] if v["check"] == "silence"]
+    assert hole and "тишина в ролике" in hole[0]["message"]
+    cut = analyze({**model, "rs": {"cuts": [{"start": 1.4, "end": 3.1}]}})
+    assert not [v for v in cut["verdicts"] if v["check"] == "silence"] and "silence_gaps" not in cut
