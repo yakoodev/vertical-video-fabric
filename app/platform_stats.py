@@ -5,6 +5,8 @@
 * YouTube и TikTok — метаданные публичной ссылки через yt-dlp
   (``--dump-json --skip-download``): без логина, как кривая пересмотров
   (app/youtube_heatmap.py). Напрямую не вышло — ещё раз через прокси загрузок;
+* через N часов после публикации ``app/zero_views.py`` проверяет, не ноль ли просмотров (тревога
+  «внимание» владельцу с причинами и чек-листом) — тем же фоном;
 * Instagram — без логина чисел не отдаёт: через instagrapi тем же входом по cookie
   ``sessionid``, что и загрузка (app/providers/instagram.py); нет сессии — пропуск
   с причиной.
@@ -261,6 +263,12 @@ class StatsCollector:
             try:
                 collect_stats(self.store, sleep=stop.wait)
             except Exception:  # noqa: BLE001 - фон не должен умирать
+                pass
+            try:  # тревога «0 просмотров» через N часов после публикации (app/zero_views.py)
+                from app import zero_views
+
+                zero_views.check(self.store, sleep=stop.wait)
+            except Exception:  # noqa: BLE001
                 pass
             stop.wait(CHECK_EVERY_SECONDS)
 

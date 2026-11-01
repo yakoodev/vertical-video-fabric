@@ -151,9 +151,10 @@ def ensure_autopilot_schema(conn) -> None:
 # Общее
 # --------------------------------------------------------------------------- #
 
-KINDS = ("clip_publish", "rule_proposal", "hypothesis_review", "other")
+# alert — «внимание»: тревога статистики (0 просмотров через N часов, app/zero_views.py).
+KINDS = ("clip_publish", "rule_proposal", "hypothesis_review", "other", "alert")
 KIND_LABELS = {"clip_publish": "публикация клипа", "rule_proposal": "правило", "hypothesis_review": "статистика",
-               "other": "вопрос"}
+               "other": "вопрос", "alert": "внимание"}
 STATUSES = ("pending", "approved", "rejected", "changes_requested", "expired")
 ACTIONS = ("approve", "reject", "changes", "both")
 TRUST_LEVELS = ("approve", "auto")
@@ -470,7 +471,7 @@ def buttons_for(approval: dict) -> list[tuple[str, str]]:
         if payload.get("action") == "review_rule":
             return [("approve", "✅ Оставить правило"), ("reject", "🗑 Отменить правило")]
         return [("approve", "✅ Сделать правилом"), ("reject", "🗑 Не надо")]
-    hook = CARD_ACTIONS.get(str(payload.get("action") or "")) if kind == "other" else None
+    hook = CARD_ACTIONS.get(str(payload.get("action") or "")) if kind in ("other", "alert") else None
     return list(hook["buttons"]) if hook else [("approve", "✅ Да"), ("reject", "🗑 Нет")]
 
 
@@ -644,13 +645,17 @@ def pre_submit_lint(store: Any, clip_plan_id: int, platforms: list[str]) -> dict
         return None
 
 
-def submit_card(store: Any, project_id: int, kind: str, question: str, payload: dict | None = None,
+def submit_card(store: Any, project_id: int | None, kind: str, question: str, payload: dict | None = None,
                 title: str = "", rule_id: int | None = None, hypothesis_id: int | None = None,
                 dedupe_key: str = "", submitted_by: str = "system") -> dict:
     """Карточка-вопрос владельцу (правило, статистика, что угодно). С dedupe_key — не
-    повторяем, пока владелец не ответил или уже ответил (кроме expired)."""
+    повторяем, пока владелец не ответил или уже ответил (кроме expired). Без проекта
+    (``project_id`` None) — только «внимание» (alert): публикация клипа вне серий."""
     kind = P._choice(kind, KINDS, "kind")
-    P.get_project(store, int(project_id), include_sources=False)
+    if project_id is None and kind != "alert":
+        raise ValueError("карточка без проекта — только alert")
+    if project_id is not None:
+        P.get_project(store, int(project_id), include_sources=False)
     if dedupe_key:
         row = store.db.query_one(
             "SELECT id FROM approvals WHERE dedupe_key = ? AND status != 'expired' ORDER BY id DESC LIMIT 1",
@@ -658,11 +663,13 @@ def submit_card(store: Any, project_id: int, kind: str, question: str, payload: 
         if row:
             return get_approval(store, row["id"]) | {"deduplicated": True}
     approval_id = _insert(
-        store, project_id=int(project_id), kind=kind, title=P._text(title or question, 200),
+        store, project_id=int(project_id) if project_id is not None else None, kind=kind,
+        title=P._text(title or question, 200),
         question=P._long_text(question, 2000), payload_json=_json(payload or {}), rule_id=rule_id,
         hypothesis_id=hypothesis_id, dedupe_key=dedupe_key, submitted_by=str(submitted_by or "")[:40],
     )
-    log_event(store, approval_id, int(project_id), "submitted", submitted_by, question[:300])
+    log_event(store, approval_id, int(project_id) if project_id is not None else None, "submitted", submitted_by,
+              question[:300])
     return get_approval(store, approval_id)
 
 
@@ -716,7 +723,8 @@ def decide(store: Any, approval_id: int, action: str, comment: str = "", actor: 
                                             context={"title": approval["title"]})
     elif status == "rejected":
         result.update(_on_rejected(store, approval, comment, actor))
-    hook = CARD_ACTIONS.get(str(approval["payload"].get("action") or "")) if approval["kind"] == "other" else None
+    hook = (CARD_ACTIONS.get(str(approval["payload"].get("action") or ""))
+            if approval["kind"] in ("other", "alert") else None)
     if hook:
         result.update(hook["on_decide"](store, approval, action, comment, actor) or {})
     result["approval"] = get_approval(store, approval_id)

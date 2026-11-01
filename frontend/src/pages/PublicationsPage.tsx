@@ -1,23 +1,83 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { jobsApi } from "@/api/jobs";
 import { qk } from "@/api/keys";
-import { formatCount, formatSnapshotTime, statsApi, sumKnown, type TargetStats } from "@/api/stats";
+import { formatCount, formatSnapshotTime, statsApi, sumKnown, type PostAlert, type TargetStats, type ZeroViewsSettings } from "@/api/stats";
+import { usePublicationStats } from "@/components/StatsBadge";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
-import { useModuleOn, useModules } from "@/hooks/useModules";
+import { useModuleOn } from "@/hooks/useModules";
 
-/** Числа площадок: при открытой странице, пока идёт сбор — опрашиваем чаще. */
-function usePublicationStats(enabled = true) {
-  // «Статистика площадок» — свой модуль (app/modules.py): выключен — чисел нет, запросов тоже.
-  const statsOn = useModules().ready("platform_stats");
-  return useQuery({
-    queryKey: qk.publicationStats,
-    queryFn: statsApi.publications,
-    enabled: enabled && statsOn,
-    refetchInterval: (q) => (q.state.data?.status.running ? 5000 : 60000),
+/** Значок тревоги «0 просмотров» (app/zero_views.py) — ссылка на карточку «внимание». */
+function AlertMark({ alerts }: { alerts: (PostAlert | undefined)[] }) {
+  const open = alerts.find((a) => a && a.status === "open");
+  if (!open) return null;
+  return (
+    <Link
+      to={open.approval_id ? `/approvals?id=${open.approval_id}` : "/approvals"}
+      className="chip stats-badge stats-badge--alert"
+      style={{ display: "inline-block", marginTop: 3 }}
+      title="Мало просмотров после публикации — причины и чек-лист в карточке"
+    >
+      ⚠ {formatCount(open.views)} за {open.hours} ч
+    </Link>
+  );
+}
+
+/** Настройка тревоги: через сколько часов и при скольких просмотрах. */
+function ZeroViewsPanel() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const statsOn = useModuleOn("platform_stats");
+  const q = useQuery({ queryKey: ["stats", "zero-views"], queryFn: statsApi.zeroViews, enabled: statsOn });
+  const [draft, setDraft] = useState<ZeroViewsSettings | null>(null);
+  useEffect(() => {
+    if (q.data) setDraft(q.data);
+  }, [q.data]);
+  const save = useMutation({
+    mutationFn: () => statsApi.saveZeroViews(draft!),
+    onSuccess: (cfg) => {
+      qc.setQueryData(["stats", "zero-views"], cfg);
+      toast.success("Сохранено");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не сохранилось"),
   });
+  if (!statsOn || !draft) return null;
+  return (
+    <div className="panel" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+      <label className="check">
+        <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
+        Тревога «0 просмотров»
+      </label>
+      <span className="muted">через</span>
+      <input
+        className="input series-num"
+        style={{ width: 70 }}
+        type="number"
+        min={0.25}
+        step={0.5}
+        value={draft.hours}
+        onChange={(e) => setDraft({ ...draft, hours: Number(e.target.value) })}
+      />
+      <span className="muted">ч, если просмотров не больше</span>
+      <input
+        className="input series-num"
+        style={{ width: 70 }}
+        type="number"
+        min={0}
+        value={draft.threshold}
+        onChange={(e) => setDraft({ ...draft, threshold: Number(e.target.value) })}
+      />
+      <button className="btn sm" disabled={save.isPending} onClick={() => save.mutate()}>
+        Сохранить
+      </button>
+      <span className="muted" style={{ fontSize: 12.5 }}>
+        Карточка «Внимание» в «Одобрении» и в Telegram: вероятные причины и что проверить.
+      </span>
+    </div>
+  );
 }
 
 /** Кнопка «Обновить статистику»: сбор идёт в фоне, по одной ссылке с паузой. */
@@ -49,7 +109,7 @@ function RefreshStatsButton() {
 }
 
 /** Ячейка «просмотры / лайки» с датой снимка; ошибка последней попытки — в подсказке. */
-function StatsCell({ stats }: { stats: (TargetStats | undefined)[] }) {
+function StatsCell({ stats, alerts = [] }: { stats: (TargetStats | undefined)[]; alerts?: (PostAlert | undefined)[] }) {
   const known = stats.filter((s): s is TargetStats => Boolean(s));
   const views = sumKnown(known.map((s) => s.views));
   const likes = sumKnown(known.map((s) => s.likes));
@@ -59,6 +119,7 @@ function StatsCell({ stats }: { stats: (TargetStats | undefined)[] }) {
     return (
       <span className="muted" title={errors.join("\n") || "Статистику ещё не собирали"}>
         {errors.length ? "нет данных" : "—"}
+        <AlertMark alerts={alerts} />
       </span>
     );
   }
@@ -70,6 +131,7 @@ function StatsCell({ stats }: { stats: (TargetStats | undefined)[] }) {
           на {formatSnapshotTime(captured)}
         </span>
       ) : null}
+      <AlertMark alerts={alerts} />
     </span>
   );
 }
@@ -134,7 +196,10 @@ function JobDetail({ jobId }: { jobId: string }) {
                       "—"
                     )}
                   </td>
-                  <td style={{ fontVariantNumeric: "tabular-nums" }}>{formatCount(st?.views)}</td>
+                  <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {formatCount(st?.views)}
+                    <AlertMark alerts={[stats.data?.alerts?.[String(t.id)]]} />
+                  </td>
                   <td style={{ fontVariantNumeric: "tabular-nums" }}>{formatCount(st?.likes)}</td>
                   <td style={{ fontVariantNumeric: "tabular-nums" }}>{formatCount(st?.comments)}</td>
                   <td className="muted" title={st?.error || undefined}>
@@ -165,6 +230,7 @@ export function PublicationsPage() {
         sub="Очередь задач публикации и что из опубликованного зашло"
         actions={query.data?.length ? <RefreshStatsButton /> : null}
       />
+      {query.data?.length ? <ZeroViewsPanel /> : null}
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (
@@ -213,7 +279,10 @@ export function PublicationsPage() {
                   </td>
                   <td>{job.targets?.length ?? 0}</td>
                   <td>
-                    <StatsCell stats={(job.targets ?? []).map((t) => stats.data?.targets[String(t.id)])} />
+                    <StatsCell
+                      stats={(job.targets ?? []).map((t) => stats.data?.targets[String(t.id)])}
+                      alerts={(job.targets ?? []).map((t) => stats.data?.alerts?.[String(t.id)])}
+                    />
                   </td>
                   <td>{job.scheduled_at || "—"}</td>
                   <td className="muted">{job.created_at}</td>
