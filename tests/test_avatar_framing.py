@@ -171,6 +171,27 @@ def test_place_avatar_returns_all_places_with_time_ranges():
     assert [p["place"] for p in back["places"]] == [0, 1, 0]
 
 
+def test_avatar_cam_padding_stops_at_chat_overlay():
+    # QA 02.11 (клип 892): запас PAD рамки захватил обрывки чата «SaZiann…» над аватаром в углу.
+    text = json.dumps({"frames": [
+        {**CORNER, "ui": [{"x0": 0.75, "y0": 0.30, "x1": 1.0, "y1": 0.44},     # чат над аватаром
+                          {"x0": 0.975, "y0": 0.5, "x1": 1.0, "y1": 0.9},      # полоска интерфейса справа
+                          {"x0": 0.8, "y0": 0.6, "x1": 0.9, "y1": 0.7},        # подпись на самой модели
+                          {"x0": 0.0, "y0": 0.0, "x1": 0.2, "y1": 0.2}]},      # далеко — не мешает
+        CORNER]})
+    boxes = avatar_box.parse_boxes(text, 2)
+    assert len(boxes[0]["ui"]) == 4 and "ui" not in boxes[1]
+    plain = avatar_box.place_avatar([CORNER, CORNER])["cam"]
+    cam = avatar_box.place_avatar(boxes)["cam"]
+    assert plain["y"] < 0.44 and cam["y"] == 0.44  # верх — по низу чата, а не с запасом в чат
+    assert round(cam["x"] + cam["w"], 4) == 0.975 < round(plain["x"] + plain["w"], 4)
+    assert cam["x"] == plain["x"] and cam["y"] + cam["h"] == pytest.approx(plain["y"] + plain["h"], abs=1e-4)
+    # Окно на самой модели внутрь аватара рамку не режет.
+    (_x0, y0, _x1, _y1), sides = avatar_box.trim_ui((0.7, 0.4, 1.0, 1.0), CORNER, [{"x0": 0.7, "y0": 0.4, "x1": 1.0,
+                                                                                     "y1": 0.8}])
+    assert sides == [] and y0 == 0.4
+
+
 def test_scene_cuts_in_window_are_source_seconds(tmp_path):
     _require_ffmpeg()
     from app.scene_cuts import detect_scene_cuts

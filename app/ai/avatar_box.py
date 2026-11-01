@@ -37,9 +37,10 @@ PROMPT = (
     "Это {n} кадров стрима (целиком, по порядку). Найди на каждом АВАТАР СТРИМЕРА: нарисованную "
     "VTuber/PNGtuber-модель или вебку с лицом стримера — она поверх игры/браузера, обычно сбоку или в углу, "
     "иногда крупно. Люди и персонажи ВНУТРИ видео, ютуба, игры, фильма, браузера на экране — НЕ аватар, "
-    "даже если они крупнее. Рамка — вся видимая модель (голова и тело). Ответь ТОЛЬКО JSON: "
-    "{{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, …]}} — по рамке на КАЖДЫЙ кадр в том же порядке, "
-    "доли кадра 0..1; кадр без аватара — {{}}."
+    "даже если они крупнее. Рамка — вся видимая модель (голова и тело). Ещё отметь окна ЧАТА, текста и "
+    "интерфейса стрима (оверлеи, донаты, подписи, рамки) РЯДОМ с аватаром — в ui. Ответь ТОЛЬКО JSON: "
+    "{{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, \"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
+    "по рамке на КАЖДЫЙ кадр в том же порядке, доли кадра 0..1; кадр без аватара — {{}}."
 )
 
 
@@ -108,8 +109,53 @@ def parse_boxes(text: str, n: int) -> list[dict | None]:
     frames = data.get("frames") if isinstance(data, dict) else None
     if not isinstance(frames, list):
         return [_box(data)] * n
-    boxes = [_box(item) for item in frames[:n]]
+    boxes = []
+    for item in frames[:n]:
+        box = _box(item)
+        if box is not None and isinstance(item, dict) and isinstance(item.get("ui"), list):
+            ui = [u for u in (_ui_box(x) for x in item["ui"][:8]) if u]
+            if ui:
+                box["ui"] = ui
+        boxes.append(box)
     return boxes + [None] * (n - len(boxes))
+
+
+def _ui_box(data: Any) -> dict | None:
+    """Окно чата/текста/интерфейса рядом с аватаром — строка чата бывает тонкой, порог меньше, чем у модели."""
+    try:
+        box = {k: min(1.0, max(0.0, float(data[k]))) for k in ("x0", "y0", "x1", "y1")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    return box if box["x1"] - box["x0"] >= 0.01 and box["y1"] - box["y0"] >= 0.01 else None
+
+
+EDGE_EPS = 0.01
+
+
+def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict]) -> tuple[tuple, list[str]]:
+    """Рамка с запасом ``cam`` (x0, y0, x1, y1) без окон чата/интерфейса ``ui`` (QA 02.11, клип 892: запас PAD
+    захватил обрывки чата «SaZiann…» в углу кадра). Окно по одну сторону от самого аватара (``union``) —
+    край рамки отодвигается до окна, но не внутрь аватара. → (рамка, срезанные стороны)."""
+    x0, y0, x1, y1 = cam
+    sides: list[str] = []
+    for u in ui:
+        if not (u["x0"] < x1 and x0 < u["x1"] and u["y0"] < y1 and y0 < u["y1"]):
+            continue
+        # Сторона — где центр окна вне аватара; рамка режется до окна, но не глубже края модели.
+        cx, cy = (u["x0"] + u["x1"]) / 2, (u["y0"] + u["y1"]) / 2
+        if cy < union["y0"] - EDGE_EPS:
+            y0, side = max(y0, min(u["y1"], union["y0"])), "top"
+        elif cy > union["y1"] + EDGE_EPS:
+            y1, side = min(y1, max(u["y0"], union["y1"])), "bottom"
+        elif cx < union["x0"] - EDGE_EPS:
+            x0, side = max(x0, min(u["x1"], union["x0"])), "left"
+        elif cx > union["x1"] + EDGE_EPS:
+            x1, side = min(x1, max(u["x0"], union["x1"])), "right"
+        else:
+            continue  # окно на самом аватаре — рамку внутрь модели не режем
+        if side not in sides:
+            sides.append(side)
+    return (x0, y0, x1, y1), sides
 
 
 def _iou(a: dict, b: dict) -> float:
@@ -127,6 +173,9 @@ def _cam_of(group: list[dict]) -> tuple[dict, dict]:
     w, h = union["x1"] - union["x0"], union["y1"] - union["y0"]
     x0, y0 = max(0.0, union["x0"] - w * PAD), max(0.0, union["y0"] - h * PAD)
     x1, y1 = min(1.0, union["x1"] + w * PAD), min(1.0, union["y1"] + h * PAD)
+    ui = [u for b in group for u in b.get("ui") or []]
+    if ui:
+        (x0, y0, x1, y1), _sides = trim_ui((x0, y0, x1, y1), union, ui)
     cam = {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
     return {k: round(v, 4) for k, v in union.items()}, cam
 
