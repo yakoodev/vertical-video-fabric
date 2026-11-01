@@ -400,6 +400,42 @@ def test_report_without_looking_is_nudged_then_service_takes_contact_sheet(tmp_p
     assert "ПРОВЕРКА ГЛАЗАМИ" in fake.requests[0][1]["systemInstruction"]["parts"][0]["text"]
 
 
+def test_avatar_in_several_places_needs_view_frame_in_each(tmp_path, monkeypatch):
+    """QA 02.11 (клип 892): аватар в двух местах, агент снял один contact_sheet и сдал ролик с 4 с волос без
+    лица. Отчёт принимается только после view_frame в каждом отрезке места; не посмотрел — снимает сервис."""
+    _require_ffmpeg()
+    _client, store, source, plan, a, _b = _setup(tmp_path, monkeypatch)
+    plan = store.create_clip_plan(source["id"], plan["analysis_id"], "Один кусок", segment_ids=[a["id"]])
+    left = {"x": 0.1, "y": 0.0, "w": 0.45, "h": 1.0}
+    right = {"x": 0.7, "y": 0.4, "w": 0.27, "h": 0.57}
+    rs = store.get_clip_plan(plan["id"])["render_settings"] or {}
+    store.set_clip_plan_render_settings(plan["id"], {**rs, "layout": {
+        "mode": "avatar_full", "cam": right, "cams": [{"from": 0, "to": 2, "cam": left}, {"from": 2, "to": 5, "cam": right}]}})
+    fake = ScriptedGemini([
+        [_call("set_layout", {"mode": "avatar_full", "avatar_y": 0.5})],
+        [_call("contact_sheet", {})],
+        [{"text": "Готово: аватар на весь кадр."}],
+        [_call("view_frame", {"t": 1.0})],
+        [{"text": "Готово: аватар на весь кадр, посмотрел 1 с."}],
+        [{"text": "Посмотрел оба места: аватар в кадре."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], "только аватар", client=fake, model="m")
+    assert out["text"] == "Посмотрел оба места: аватар в кадре."
+    nudge = _last_text(fake.requests[3])
+    assert "в КАЖДОМ отрезке" in nudge and "0.0–2.0 с" in nudge and "2.0–5.0 с" in nudge
+    # Посмотрел только первое место — второе снял сервис.
+    auto = [s for s in out["steps"] if s.get("auto")]
+    assert len(auto) == 1 and auto[0]["tool"] == "view_frame" and auto[0]["ok"] and 2.0 <= auto[0]["frame_t"] <= 5.0
+    last = fake.requests[5][1]["contents"][-1]["parts"]
+    assert "сервис снял их сам" in last[0]["text"] and any("inlineData" in p for p in last)
+    # Одно место — проверка не мешает.
+    single = [{"tool": "set_layout", "ok": True}]
+    store.set_clip_plan_render_settings(plan["id"], {**rs, "layout": {"mode": "avatar_full", "cam": right}})
+    from app.agent_tools import ToolContext
+
+    assert editor_agent.unviewed_avatar_places(ToolContext(store=store, clip_plan_id=plan["id"]), single) == []
+
+
 def test_looking_after_the_change_is_enough_and_reads_do_not_count():
     add = {"tool": "add_layers", "label": "Слои", "ok": True}
     focus = {"tool": "set_focus", "label": "Кадр", "ok": True}
