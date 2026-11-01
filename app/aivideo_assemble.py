@@ -34,6 +34,9 @@ PAN_SCALE = 1.18
 PAN_SHIFT = 0.065
 LAYER_PREFIX = "aiv_"
 CAMERA_PRESET_MOVES = {"parallax_push", "orbit", "float", "dolly_zoom", "tilt_reveal"}
+# Один плоский кадр — не сцена со слоями: сильный наклон/облёт показывает его край. Мягче и с запасом.
+PRESET_INTENSITY = {"parallax_push": 0.8, "orbit": 0.35, "float": 0.8, "dolly_zoom": 0.35, "tilt_reveal": 0.45}
+PRESET_OVERSCAN = 1.35
 SOFT = "inOutQuad"
 
 
@@ -51,7 +54,7 @@ def _keys(move: str, length: float) -> tuple[float, dict]:
         a, b = (0.5 - PAN_SHIFT, 0.5 + PAN_SHIFT) if move == "tilt_up" else (0.5 + PAN_SHIFT, 0.5 - PAN_SHIFT)
         return PAN_SCALE, {"y": [{"t": 0, "v": a, "ease": SOFT}, {"t": end, "v": b}]}
     if move in CAMERA_PRESET_MOVES:
-        return 1.15, {}
+        return PRESET_OVERSCAN, {}
     # static: лёгкое «дыхание», чтобы кадр не был мёртвым
     return 1.0, {"scale": [{"t": 0, "v": OVERSCAN, "ease": SOFT}, {"t": end, "v": OVERSCAN + 0.035}]}
 
@@ -165,7 +168,8 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         if move in CAMERA_PRESET_MOVES:
             length = min(12.0, max(0.3, t1 - t0))
             try:
-                res = apply_preset(move, t0, length, camera=camera, layers=layers, clip_duration=total)
+                res = apply_preset(move, t0, length, PRESET_INTENSITY.get(move, 1.0), camera=camera, layers=layers,
+                                   clip_duration=total)
                 camera = res["camera"]
                 last = res["keys"][-1] if res["keys"] else None
                 if nxt is not None and last is not None:

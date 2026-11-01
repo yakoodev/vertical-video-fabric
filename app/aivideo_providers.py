@@ -153,7 +153,8 @@ class DryRunImages:
                     f"drawtext=fontfile='{_ff_path(font)}':textfile='{_ff_path(txt)}':fontcolor=white:"
                     f"fontsize={size}:x=(w-text_w)/2:y={y0 + i * (size + 14)}:box=1:boxcolor=black@0.35:boxborderw=12")
         args = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                f"gradients=s={w}x{h}:c0={c0}:c1={c1}:n=2:speed=0.0001:d=1", "-frames:v", "1"]
+                f"gradients=s={w}x{h}:c0={c0}:c1={c1}:n=2:x0=0:y0=0:x1={w}:y1={h}:speed=0.0001:d=1",
+                "-frames:v", "1"]
         if chain:
             args += ["-vf", ",".join(chain)]
         proc = subprocess.run([*args, str(dest)], capture_output=True, text=True, timeout=60, check=False)

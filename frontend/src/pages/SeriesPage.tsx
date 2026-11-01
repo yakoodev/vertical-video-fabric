@@ -25,6 +25,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
+import { AiVideoTab } from "@/pages/AiVideoTab";
 import { useModules } from "@/hooks/useModules";
 
 /**
@@ -32,9 +33,11 @@ import { useModules } from "@/hooks/useModules";
  * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
  */
 
-type Tab = "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
+type Tab = "aiv" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
 // Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
 const TABS: [Tab, string, string?][] = [
+  // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
+  ["aiv", "ИИ-видео", "ai_video"],
   ["brief", "Резюме"],
   ["rules", "Правила"],
   ["stats", "Статистика"],
@@ -50,11 +53,13 @@ const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).
 export function SeriesPage() {
   const { projectId } = useParams();
   const id = Number(projectId);
-  const [tab, setTab] = useState<Tab>("brief");
+  const [tab, setTab] = useState<Tab | null>(null);
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
   const { on } = useModules();
-  const tabs = TABS.filter(([, , mod]) => !mod || on(mod));
-  const shown: Tab = tabs.some(([key]) => key === tab) ? tab : "brief";
+  const isAiv = project.data?.kind === "ai_video";
+  const tabs = TABS.filter(([key, , mod]) => (!mod || on(mod)) && (key !== "aiv" || isAiv));
+  const fallback: Tab = isAiv && tabs.some(([key]) => key === "aiv") ? "aiv" : "brief";
+  const shown: Tab = tab && tabs.some(([key]) => key === tab) ? tab : fallback;
 
   if (project.isLoading) return <Loading />;
   if (project.isError || !project.data) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
@@ -81,6 +86,7 @@ export function SeriesPage() {
         ))}
       </nav>
       <div className="series-body">
+        {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
         {shown === "stats" ? <StatsTab projectId={id} /> : null}
