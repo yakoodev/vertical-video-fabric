@@ -1400,7 +1400,9 @@ class ClipRenderService:
             clip = self._apply_inserts(clip, plan, cut_plan)
             if motion:
                 clip = self._apply_audio_layers(clip, motion, plan)
-            clip = self._normalize_loudness(clip, hold=end_hold, target=mix.get("target_lufs"))
+            # Цель клипа (mix.target_lufs) — только если задана: без неё вызов ровно прежний.
+            clip = self._normalize_loudness(clip, hold=end_hold, **({"target": mix["target_lufs"]}
+                                                                   if mix.get("target_lufs") is not None else {}))
         if clip["title"] != plan["title"] or clip["description"] != plan["description"]:
             clip = self.store.update_clip(
                 clip["id"],
