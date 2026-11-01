@@ -883,3 +883,97 @@ def test_define_character_tool_sets_speech(env):
     assert G.sfx_for(c, "angry") == "sfx:freesound/pop-soft.ogg"  # свой звук важнее эмоции
     assert G.sfx_for({}, "очень зла") == "sfx:freesound/impact-low.ogg"
     assert G.sfx_for(None, "") == G.SFX_DEFAULT
+
+
+# --------------------------------------------------------------------------- #
+# Постоянство персонажей: все листы в референсах кадра, авто-проверка, «проверь» без авто-оплаты
+# --------------------------------------------------------------------------- #
+
+
+def test_keyframe_gets_all_character_sheets_and_plate_logged_in_params(env, monkeypatch):
+    _client_, store = env
+    pid, sid = _project(store)
+    G.request_stage(store, pid, "refs")
+    kf = G.request_stage(store, pid, "keyframes", sid)
+    job = G.get_job(store, kf["run"]["done"][1]["job_id"])  # план 2: Мира в пижаме + Кот на кухне
+    roles = job["params"]["ref_roles"]
+    assert roles == ["mira: разворот", "mira: эмоции", "mira: облик pajamas", "kot: разворот", "kot: эмоции",
+                     "плита локации «Кухня ночью»", "стиль"]
+    assert len(job["params"]["refs"]) == len(roles) and job["params"]["missing_refs"] == []
+    assert "Reference images in order: 1 — Мира — turnaround model sheet; 2 — Мира — expression sheet" in job["prompt"]
+
+    # Лимит модели: режем с конца по важности — листы персонажей остаются, недостающее — в журнал.
+    monkeypatch.setitem(PR.MAX_REFS, settings.aivideo_image_model, 4)
+    monkeypatch.setattr(G, "MAX_REFS", PR.MAX_REFS)
+    shot2 = V.get_script(store, sid)["shots"][1]
+    _p, refs, _c, info = G.build_request(store, {**job, "target_id": shot2["id"]})
+    assert len(refs) == 4 and info["roles"] == roles[:4]
+    assert "не влезло в лимит 4: kot: эмоции" in info["missing"]
+
+
+class FakeVision:
+    """Gemini-зрение: оценка персонажей кадра (scores {slug: score}) или сбой."""
+
+    def __init__(self, scores=None, error=None):
+        self.scores = scores or {}
+        self.error = error
+        self.calls = 0
+
+    def generate_content(self, model, payload):
+        import json
+
+        self.calls += 1
+        if self.error:
+            raise self.error
+        chars = [{"id": k, "score": v, "differences": "другая модель пылесоса" if v < 6 else ""}
+                 for k, v in self.scores.items()]
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps({"characters": chars},
+                                                                          ensure_ascii=False)}]}}]}
+
+
+def _paid_keyframes(store, monkeypatch, vision):
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(G, "_vision_client", lambda: vision)
+    pid, sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    assert vision.calls == 0  # листы и плиты не проверяются — только кадры с персонажами
+    req = G.request_stage(store, pid, "keyframes", sid)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    return pid, sid
+
+
+def test_keyframe_auto_consistency_check_marks_needs_review_without_paid_regeneration(paid, monkeypatch):
+    (_client_, store), fake = paid
+    vision = FakeVision({"mira": 8, "kot": 4})
+    pid, sid = _paid_keyframes(store, monkeypatch, vision)
+    assert vision.calls == 3 and fake.posts == 9 + 3  # проверка бесплатна, перерисовки сама не было
+    view = V.script_view(store, sid)
+    flags = {s["idx"]: s["needs_review"] for s in view["shots"]}
+    assert flags == {1: False, 2: True, 3: True}  # кот 4/10 в планах 2 и 3
+    assert [r["idx"] for r in view["needs_review"]] == [2, 3]
+    assert "kot 4/10: другая модель пылесоса" in view["needs_review"][0]["note"]
+    sel = next(k for k in view["shots"][1]["keyframes"] if k["selected"])
+    assert sel["needs_review"] and sel["score"]["min"] == 4
+    assert G.list_jobs(store, script_id=sid)[0]["status"] == "done"
+    # aiv_get_script отдаёт то же
+    from app.agent_tools import ToolContext, run_tool
+
+    out, ok = run_tool(ToolContext(store=store), "aiv_get_script", {"script_id": sid})
+    assert ok and [r["idx"] for r in out["needs_review"]] == [2, 3]
+    # Ручная перепроверка (кадр поправили/владелец доволен) снимает отметку.
+    G.check_consistency(store, sel["id"], client=FakeVision({"mira": 9, "kot": 7}))
+    assert not V.get_ref(store, sel["id"])["needs_review"]
+
+
+def test_auto_check_failure_does_not_fail_the_job(paid, monkeypatch):
+    (_client_, store), fake = paid
+    vision = FakeVision(error=RuntimeError("User location is not supported"))
+    pid, sid = _paid_keyframes(store, monkeypatch, vision)
+    shots = V.script_view(store, sid)["shots"]
+    assert all(s["keyframes"] and not s["needs_review"] for s in shots)
+    assert "User location" in shots[0]["keyframes"][0]["score"]["error"]
+    assert {j["status"] for j in G.list_jobs(store, script_id=sid)} == {"done"}

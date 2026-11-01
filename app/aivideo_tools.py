@@ -315,7 +315,8 @@ def tools() -> list[Tool]:
              h_update_shot, mutating=True, scope="project"),
         Tool("aiv_get_script", "Раскадровка серии",
              "Серия: планы с версиями кадров (url, выбран, устарел, оценка постоянства) и озвучки, сколько ₽ на "
-             "каждый план, бюджет серии и карточки этапов. / Episode storyboard.",
+             "каждый план, бюджет серии и карточки этапов; needs_review — планы, где персонаж не похож на канон "
+             "(авто-проверка < 6): покажи владельцу, перерисовка — только его решением. / Episode storyboard.",
              _obj({"script_id": {"type": "integer"}}, ["script_id"]), h_get_script, scope="project"),
         Tool("aiv_estimate", "Считаю стоимость этапа",
              "Оценка этапа БЕСПЛАТНО, ничего не запускает: stage refs (стиль, локации, листы персонажей) | "
@@ -365,8 +366,10 @@ def tools() -> list[Tool]:
              "Выбрать версию картинки/озвучки (ref_id) — она пойдёт в референсы и сборку. / Select a version.",
              _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_select, mutating=True, scope="project"),
         Tool("aiv_check_consistency", "Проверяю постоянство",
-             "Gemini-зрение (бесплатно): кадр плана против канона персонажей — оценка 0–10 и что отличается; ниже "
-             "6 — перегенерируй кадр. Gemini не настроен — skipped. / Check character consistency of a keyframe.",
+             "Gemini-зрение (бесплатно): кадр плана против канона персонажей (разворот, эмоции, картинки "
+             "владельца) — оценка 0–10 и что отличается; ниже 6 — версия needs_review. Платные кадры с "
+             "персонажами проверяются сами после генерации; это — перепроверка. Gemini не настроен — skipped. "
+             "/ Check character consistency of a keyframe.",
              _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_check, scope="project"),
         Tool("aiv_assemble", "Собираю серию в клип",
              "Серия → НОВЫЙ холст-клип: план = слой image с кадром и движением камеры (Ken Burns / 3D-камера), "

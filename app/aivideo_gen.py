@@ -631,14 +631,17 @@ def _identity(character: dict) -> str:
     return f"«{character['name']}» — identity card (verbatim, do not alter): {character['identity_card']}"
 
 
-def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
-    """(промпт, файлы-референсы, подпись заглушки) запуска. Карта личности — дословно."""
+def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str], dict]:
+    """(промпт, файлы-референсы, подпись заглушки, {roles — что за референс по порядку, missing —
+    чего не хватило}) запуска. Карта личности — дословно."""
     project_id = int(job["project_id"])
     style = V.get_style(store, project_id)
     st = _style_text(style)
     neg = f" Avoid: {style['negative_text']}." if style.get("negative_text") else ""
     kind, target_id = job["ref_kind"], int(job["target_id"])
     refs: list[Path] = []
+    roles: list[str] | None = None
+    missing: list[str] = []
     caption = [REF_LABELS.get(kind, kind)]
     if kind == "style":
         project = P.get_project(store, project_id, include_sources=False)
@@ -686,13 +689,17 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
                                         f"{cam['angle']} angle" if cam.get("angle") else "",
                                         f"{cam['lens']}mm lens" if cam.get("lens") else "") if x)
         parts.append(f"Camera: {framing}.")
+        # Референсы по важности (лимит модели — режем с конца): 0 — ВСЕ листы персонажей в кадре
+        # (разворот + эмоции) и облик, 1 — плита локации, 2 — картинки владельца, 3 — стиль.
+        ranked: list[tuple[int, Path, str, str]] = []  # (важность, файл, роль для журнала, роль для модели)
         loc = V.location_by_slug(store, project_id, shot["location"]) if shot["location"] else None
         if loc:
             parts.append(f"Location «{loc['name']}»: {loc['description']} (match the location reference).")
-            plate = V.selected_ref(store, project_id, "location", loc["id"], "location")
-            p = _asset_path(store, plate)
+            p = _asset_path(store, V.selected_ref(store, project_id, "location", loc["id"], "location"))
             if p:
-                refs.append(p)
+                ranked.append((1, p, f"плита локации «{loc['name']}»", f"background plate of «{loc['name']}»"))
+            else:
+                missing.append(f"плита локации «{loc['name']}»")
             caption.append(loc["name"])
         names = []
         for member in shot["cast"]:
@@ -701,16 +708,48 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
                 continue
             names.append(c["name"])
             text = _identity(c)
+            for sheet, label, role in (("turnaround", "разворот", "turnaround model sheet"),
+                                       ("expressions", "эмоции", "expression sheet")):
+                p = _asset_path(store, V.selected_ref(store, project_id, "character", c["id"], sheet))
+                if p:
+                    ranked.append((0, p, f"{c['slug']}: {label}", f"{c['name']} — {role}"))
+                else:
+                    missing.append(f"{c['slug']}: {label}")
             look = next((l for l in c["looks"] if l["slug"] == member.get("look")), None)
             if look:
                 text += f"; outfit/state: {look['outfit_text']}"
                 lp = _asset_path(store, V.selected_ref(store, project_id, "look", look["id"], "look"))
                 if lp:
-                    refs.append(lp)
+                    ranked.append((0, lp, f"{c['slug']}: облик {look['slug']}", f"{c['name']} — outfit «{look['name']}»"))
+                else:
+                    missing.append(f"{c['slug']}: облик {look['slug']}")
+            for up in [r for r in V.list_refs(store, project_id, "character", c["id"], "upload")][-2:]:
+                p = _asset_path(store, up)
+                if p:
+                    ranked.append((2, p, f"{c['slug']}: картинка владельца", f"{c['name']} — owner's reference"))
             if member.get("action"):
                 text += f"; doing: {member['action']}"
             parts.append(text + ".")
-            refs = _canon_refs(store, project_id, c)[-2:] + refs
+        for p in _style_paths(store, project_id, 1):
+            ranked.append((3, p, "стиль", "style reference"))
+        ranked.sort(key=lambda r: r[0])  # устойчиво: порядок персонажей в кадре сохраняется
+        seen_kf: set[str] = set()
+        chosen = []
+        for item in ranked:
+            if str(item[1]) not in seen_kf:
+                seen_kf.add(str(item[1]))
+                chosen.append(item)
+        limit = MAX_REFS.get(job["model"], 10)
+        dropped = [r[2] for r in chosen[limit:]]
+        chosen = chosen[:limit]
+        refs = [r[1] for r in chosen]
+        roles = [r[2] for r in chosen]
+        if chosen:
+            parts.append("Reference images in order: " + "; ".join(f"{n} — {r[3]}" for n, r in enumerate(chosen, 1))
+                         + ". Draw every character EXACTLY as in their sheets: same face, body, shape, colors and "
+                           "details — not a different model or design.")
+        if dropped:
+            missing += [f"не влезло в лимит {limit}: {d}" for d in dropped]
         emotions = ", ".join(d["emotion"] for d in shot["dialogue"] if d.get("emotion"))
         if shot["action"]:
             parts.append(f"Action: {shot['action']}.")
@@ -723,7 +762,6 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
                      if count else "No people in frame. ")
         parts.append(NO_TEXT + neg)
         prompt = " ".join(parts)
-        refs += _style_paths(store, project_id, 1)
         caption = [f"план {shot['idx']}", *(names or ["без персонажей"]), *(caption[1:])]
     else:
         raise V.AivError(f"неизвестный вид картинки {kind}")
@@ -734,7 +772,10 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
         if key not in seen:
             seen.add(key)
             uniq.append(p)
-    return prompt, uniq[:MAX_REFS.get(job["model"], 10)], caption
+    uniq = uniq[:MAX_REFS.get(job["model"], 10)]
+    if roles is None:
+        roles = [p.name for p in uniq]
+    return prompt, uniq, caption, {"roles": roles, "missing": missing}
 
 
 def _file_digest(path: Path) -> str:
@@ -986,6 +1027,8 @@ def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source
     ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
                     int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
     _set_job(store, job["id"], result_ref_id=ref["id"])
+    if auto_check(store, job, ref) is not None:
+        ref = V.get_ref(store, int(ref["id"]))
     return ref
 
 
@@ -1027,7 +1070,7 @@ def _run_sfx(store: Any, job: dict) -> dict | None:
 
 
 def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
-    prompt, refs, caption = build_request(store, job)
+    prompt, refs, caption, ref_info = build_request(store, job)
     params = model_params(job["model"], prompt, job["params"].get("aspect") or "9:16",
                           job["params"].get("resolution") or "1K")
     variant = 0
@@ -1040,7 +1083,8 @@ def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None)
         "WHERE j.input_hash = ? AND j.status = 'done' AND r.asset_id IS NOT NULL ORDER BY j.id DESC LIMIT 1", (digest,))
     _set_job(store, job["id"], prompt=prompt, input_hash=digest,
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
-                                     "refs": [p.name for p in refs]}, ensure_ascii=False))
+                                     "refs": [p.name for p in refs], "ref_roles": ref_info["roles"],
+                                     "missing_refs": ref_info["missing"]}, ensure_ascii=False))
     if cached:
         return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
                      own_asset=False)
@@ -1334,6 +1378,33 @@ def cancel_jobs(store: Any, project_id: int, approval_id: int | None = None) -> 
 # Проверка постоянства (Gemini-зрение, бесплатно; нет ключа — пропуск)
 # --------------------------------------------------------------------------- #
 
+REVIEW_MIN_SCORE = 6.0  # ниже — версия «проверь» (needs_review); перерисовка — только по решению владельца
+AUTO_CHECK = True  # проверять кадр с персонажами сразу после генерации (Gemini, бесплатно)
+
+
+def _vision_client() -> Any:
+    from app.ai.gemini import GeminiClient
+
+    return GeminiClient(timeout=90)
+
+
+def auto_check(store: Any, job: dict, ref: dict) -> dict | None:
+    """После платного кадра плана с персонажами — проверка постоянства (бесплатно). Не похоже
+    (< 6) — версия ``needs_review``; ничего платного само не запускается. Gemini недоступен —
+    отметка в оценке версии, запуск не падает."""
+    if not AUTO_CHECK or job.get("ref_kind") != "keyframe" or job.get("provider") == "none":
+        return None
+    if not V.get_shot(store, int(job["target_id"]))["cast"]:
+        return None
+    try:
+        return check_consistency(store, int(ref["id"]))
+    except Exception as exc:  # noqa: BLE001 - проверка — подсказка, не условие
+        _log.warning("aiv auto consistency check of ref %s failed: %s", ref["id"], exc)
+        V.set_ref_score(store, int(ref["id"]), {"error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                                                "checked_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        return None
+
+
 CONSISTENCY_PROMPT = """\
 Ты проверяешь постоянство персонажей в мультсериале. Первая картинка — КАДР. Дальше по каждому
 персонажу — его канон (лист разворота или картинка владельца) и карта личности текстом.
@@ -1351,6 +1422,7 @@ def check_consistency(store: Any, ref_id: int, client: Any = None) -> dict:
         raise V.AivError("проверка постоянства — для кадра плана (kind keyframe)")
     if client is None and not settings.gemini_api_key:
         return {"ok": True, "skipped": True, "note": "Gemini не настроен — проверка пропущена (сравни сам глазами)"}
+    client = client or _vision_client()
     shot = V.get_shot(store, ref["target_id"])
     frame = _asset_path(store, ref)
     if frame is None:
@@ -1366,36 +1438,41 @@ def check_consistency(store: Any, ref_id: int, client: Any = None) -> dict:
         c = V.character_by_slug(store, ref["project_id"], member["id"])
         if not c:
             continue
-        canon = _canon_refs(store, ref["project_id"], c)
+        canon = _canon_refs(store, ref["project_id"], c)[-2:]
+        sheet = _asset_path(store, V.selected_ref(store, ref["project_id"], "character", c["id"], "expressions"))
+        if sheet:
+            canon.append(sheet)
         if not canon:
             continue
         cast.append(c["slug"])
         parts.append({"text": f"Персонаж id={c['slug']} «{c['name']}». Карта: {c['identity_card']}. Канон:"})
-        parts.extend(inline(p) for p in canon[-2:])
+        parts.extend(inline(p) for p in canon)
     if not cast:
         return {"ok": True, "skipped": True, "note": "в плане нет персонажей с каноном — сравнивать не с чем"}
     schema = {"type": "object", "properties": {"characters": {"type": "array", "items": {
         "type": "object", "properties": {"id": {"type": "string"}, "score": {"type": "number"},
                                          "differences": {"type": "string"}},
         "required": ["id", "score", "differences"]}}}, "required": ["characters"]}
-    from app.ai.gemini import GeminiClient, _extract_response_text
+    from app.ai.gemini import _extract_response_text
 
     payload = {"contents": [{"role": "user", "parts": parts}],
                "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json",
                                     "responseSchema": schema}}
-    response = (client or GeminiClient()).generate_content(settings.gemini_text_model, payload)
+    response = client.generate_content(settings.gemini_text_model, payload)
     try:
         data = json.loads(_extract_response_text(response))
     except json.JSONDecodeError as exc:
         raise V.AivError("Gemini вернул не-JSON") from exc
     chars = [{"id": str(c.get("id") or ""), "score": max(0.0, min(10.0, float(c.get("score") or 0))),
-              "differences": P._text(c.get("differences"), 300)} for c in data.get("characters") or []]
+              "differences": P._text(c.get("differences"), 300)} for c in data.get("characters") or []
+             if str(c.get("id") or "") in cast]  # оценки только тех, кто в кадре
     score = {"characters": chars, "min": min((c["score"] for c in chars), default=None),
              "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"), "model": settings.gemini_text_model}
-    V.set_ref_score(store, ref_id, score)
-    low = [c for c in chars if c["score"] < 6]
-    return {"ok": True, "score": score,
-            "note": ("ниже 6 — перегенерируй кадр (aiv_regenerate, дёшево): " + "; ".join(
+    low = [c for c in chars if c["score"] < REVIEW_MIN_SCORE]
+    V.set_ref_score(store, ref_id, score, needs_review=bool(low))
+    return {"ok": True, "score": score, "needs_review": bool(low),
+            "note": ("ниже 6 — кадр помечен «проверь» (needs_review); перерисовать — решение владельца "
+                     "(aiv_regenerate, своя карточка): " + "; ".join(
                 f"{c['id']}: {c['differences']}" for c in low)) if low else "персонажи похожи на канон"}
 
 

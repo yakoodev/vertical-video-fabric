@@ -17,6 +17,8 @@ export interface AivRef {
   asset_id: number | null;
   selected: boolean;
   stale: boolean;
+  /** Проверка постоянства < 6: персонаж не похож на канон — решить, перерисовать ли. */
+  needs_review?: boolean;
   url: string | null;
   prompt: string;
   score: { min: number | null; characters: { id: string; score: number; differences: string }[] } | null;
@@ -116,6 +118,8 @@ export interface Shot {
   line_audio?: AivRef[];
   spent_rub?: number;
   warnings?: string[];
+  needs_review?: boolean;
+  review_note?: string;
 }
 
 export interface Script {

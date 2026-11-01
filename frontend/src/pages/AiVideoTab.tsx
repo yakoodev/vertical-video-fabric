@@ -808,6 +808,11 @@ function BoardSub({ o }: { o: Overview }) {
                 <div className="aiv-shot-img">
                   {sel?.url ? <img src={sel.url} alt={`план ${shot.idx}`} /> : <span className="muted">кадра нет</span>}
                   {sel?.stale ? <span className="aiv-badge">устарело</span> : null}
+                  {shot.needs_review ? (
+                    <span className="aiv-badge review" title={shot.review_note || "персонаж не похож на канон"}>
+                      проверь: не похож
+                    </span>
+                  ) : null}
                 </div>
                 <div className="aiv-shot-meta">
                   <b>

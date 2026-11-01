@@ -206,6 +206,8 @@ AIV_COLUMNS = [
     # реплики), none — молчит. speech_captions — показывать текст его sfx-реплик субтитрами.
     ("aiv_characters", "speech", "TEXT NOT NULL DEFAULT 'voice'"),
     ("aiv_characters", "speech_captions", "INTEGER NOT NULL DEFAULT 1"),
+    # Кадр не похож на канон (проверка постоянства < 6) — показать владельцу, не перерисовывать само.
+    ("aiv_refs", "needs_review", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -878,6 +880,7 @@ def ref_view(row: Any) -> dict:
     data = dict(row)
     data["selected"] = bool(data.get("selected"))
     data["stale"] = bool(data.get("stale"))
+    data["needs_review"] = bool(data.get("needs_review"))
     data["score"] = _loads(data.pop("score_json", ""), {}) or None
     data["url"] = f"/media/montage-assets/{data['asset_id']}" if data.get("asset_id") else None
     return data
@@ -934,8 +937,12 @@ def select_ref(store: Any, ref_id: int) -> dict:
     return get_ref(store, ref_id)
 
 
-def set_ref_score(store: Any, ref_id: int, score: dict) -> dict:
-    store.db.execute("UPDATE aiv_refs SET score_json = ? WHERE id = ?", (_json(score), int(ref_id)))
+def set_ref_score(store: Any, ref_id: int, score: dict, needs_review: bool | None = None) -> dict:
+    if needs_review is None:
+        store.db.execute("UPDATE aiv_refs SET score_json = ? WHERE id = ?", (_json(score), int(ref_id)))
+    else:
+        store.db.execute("UPDATE aiv_refs SET score_json = ?, needs_review = ? WHERE id = ?",
+                         (_json(score), int(bool(needs_review)), int(ref_id)))
     return get_ref(store, ref_id)
 
 
@@ -1037,8 +1044,17 @@ def script_view(store: Any, script_id: int) -> dict:
     from app import aivideo_gen as G
 
     script = get_script(store, script_id)
+    review = []
     for shot in script["shots"]:
         shot["keyframes"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "keyframe")
+        sel = next((k for k in shot["keyframes"] if k["selected"]), shot["keyframes"][-1] if shot["keyframes"] else None)
+        # Выбранный кадр не похож на канон (проверка постоянства < 6): владелец решает, перерисовать ли.
+        shot["needs_review"] = bool(sel and sel["needs_review"])
+        if shot["needs_review"]:
+            low = [c for c in ((sel.get("score") or {}).get("characters") or []) if c.get("score", 10) < 6]
+            shot["review_note"] = "; ".join(f"{c['id']} {c['score']:g}/10: {c['differences']}" for c in low)
+            review.append({"shot_id": shot["id"], "idx": shot["idx"], "ref_id": sel["id"],
+                           "note": shot["review_note"]})
         shot["line_audio"] = list_refs(store, script["project_id"], "line", int(shot["id"]), "line_audio")
         spent = store.db.query_one(
             "SELECT COALESCE(SUM(l.amount_rub), 0) AS s FROM aiv_ledger l JOIN aiv_gen_jobs j ON j.id = l.job_id "
@@ -1046,4 +1062,5 @@ def script_view(store: Any, script_id: int) -> dict:
         shot["spent_rub"] = round(float(spent["s"] or 0), 2) if spent else 0.0
     script["budget"] = G.budget_view(store, script["project_id"], script_id)
     script["approvals"] = G.stage_approvals(store, script["project_id"], script_id)
+    script["needs_review"] = review
     return script
