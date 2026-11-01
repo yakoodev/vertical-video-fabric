@@ -151,6 +151,9 @@ class Settings:
         # Объяснялки (app/explainer.py): потолок одной карточки ролика (новые позы + платная озвучка),
         # сверх — отказ ещё при запросе. 45 с с нуля ≈ 18 поз × 3 ₽ + озвучка ≈ 57 ₽.
         self.explainer_video_cap_rub = float(os.getenv("EXPLAINER_VIDEO_CAP_RUB", "150") or 150)
+        # Истории (app/stories.py): потолок одной карточки эпизода (новые сцены, листы актёров, плиты
+        # локаций, кадр стиля, платная озвучка). Первый эпизод 50 с ≈ 25–30 картинок × 3–4.5 ₽ ≈ 80–130 ₽.
+        self.stories_episode_cap_rub = float(os.getenv("STORIES_EPISODE_CAP_RUB", "200") or 200)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         # Бесплатная озвучка (app/dubbing.py GeminiTTS) по тому же ключу Gemini: модель и голос

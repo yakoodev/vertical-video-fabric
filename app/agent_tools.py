@@ -6758,10 +6758,12 @@ def _project_tools() -> list[Tool]:
     from app.autopilot_tools import tools as autopilot_tools
     from app.explainer_tools import all_tools as explainer_tools
     from app.project_tools import tools
+    from app.stories_tools import all_tools as stories_tools
 
     # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный;
-    # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег.
-    return tools() + autopilot_tools() + aivideo_tools() + explainer_tools()
+    # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег;
+    # истории (app/stories_tools.py) — рассказчик и сцена на каждую фразу.
+    return tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools()
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:
