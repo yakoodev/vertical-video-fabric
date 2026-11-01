@@ -431,7 +431,17 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
     used_model = model or subtitle_model_for_profile(profile)
     engine = get_subtitle_provider(profile.get("provider"))
 
-    pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    plain_pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    # J/L: распознаём кусок вместе с его «ручкой» (звук исходника до начала / после конца,
+    # который слышен у стыка) — субтитры покажут и эти слова (app/audio_edit.heard_subtitles).
+    render = plan.get("render_settings") or {}
+    from app.audio_edit import handle_extents, normalize_audio, split_handle_words
+
+    joins = normalize_audio(render.get("audio")).get("joins")
+    extents = handle_extents(segments, joins, render.get("transition")) if joins else []
+    limit = float(source.get("duration_sec") or 0)
+    pieces = [(max(0.0, a - head), min(limit, b + tail) if limit > b else b)
+              for (a, b), (head, tail) in zip(plain_pieces, extents)] if any(any(e) for e in extents) else plain_pieces
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
         # Распознаём по дорожке речи (микрофон без игры — меньше выдумок), не по смеси рендера.
@@ -461,6 +471,8 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
         # Начала слов — по настоящему звуку дорожки речи, а не по распознаванию (оно спешит
         # или опаздывает). Онсеты — по микрофону, даже если распознавание шло по смеси.
         payload["snapped_words"] = snap_payload(payload, onset_pcm(source_path, pieces, source, pcm))
+        if pieces != plain_pieces:
+            payload = split_handle_words(payload, pieces, segments)
         if saved.get("lines"):
             payload["previous_lines"] = len(saved["lines"])
         store.set_clip_plan_subtitles(clip_plan_id, payload)

@@ -245,12 +245,14 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
     # Слова сохранены во времени кусков подряд, а слои и камера — во времени
     # готового клипа (после переходов): переводим той же функцией, что и
     # слой «субтитры», иначе наезды и звуки встают позже речи.
-    from app.cuts import subtitles_to_final
+    from app.cuts import plan_joins_setting, subtitles_to_final
     from app.motion import clip_timeline
 
     segments = plan.get("segments") or []
     transition = (plan.get("render_settings") or {}).get("transition")
-    final = subtitles_to_final({"words": subs.get("words") or []}, segments, transition)
+    # Слова — как их слышно (J/L): наезд и звук слоя встают на услышанное слово.
+    final = subtitles_to_final({"words": subs.get("words") or [], "handle_words": subs.get("handle_words")},
+                               segments, transition, joins=plan_joins_setting(plan))
     words = [w for w in final.get("words") or [] if str(w.get("word", "")).strip()]
     _starts, duration = clip_timeline([(float(s["start_sec"]), float(s["end_sec"])) for s in segments], transition)
     try:

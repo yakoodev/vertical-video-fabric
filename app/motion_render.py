@@ -335,7 +335,7 @@ def plan_caption_words(store: Any, plan: dict) -> list[dict]:
     (``ClipRenderService._plan_subtitles_for_clip``): анимированные субтитры
     совпадают с речью ровно так же. Нет субтитров — пусто.
     """
-    from app.cuts import subtitles_to_final
+    from app.cuts import plan_joins_setting, subtitles_to_final
 
     try:
         payload = store.get_clip_plan_subtitles(int(plan["id"]))
@@ -345,7 +345,8 @@ def plan_caption_words(store: Any, plan: dict) -> list[dict]:
         return []
     transition = (plan.get("render_settings") or {}).get("transition")
     # Настоящие overlap склеек (как спланирует рендер), а не полная длина перехода.
-    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition))
+    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition,
+                                            joins=plan_joins_setting(plan)))
 
 
 def attach_caption_words(store: Any, plan: dict, motion: dict | None) -> dict | None:
@@ -1299,7 +1300,7 @@ def frame_subtitles_ass(store: Any, plan: dict, rs: dict, preset: dict, width: i
     from app import render as _render
     from app.clip_settings import settings_to_render_kwargs
     from app.clip_subtitles import _default_profile, result_from_payload
-    from app.cuts import subtitles_to_final
+    from app.cuts import plan_joins_setting, subtitles_to_final
     from app.subtitles.ass import write_ass_subtitles
 
     if not rs.get("subs_on"):
@@ -1322,7 +1323,8 @@ def frame_subtitles_ass(store: Any, plan: dict, rs: dict, preset: dict, width: i
         profile = {**profile, "margin_v": max(0, int(margin))}
     elif preset.get("format"):
         profile = {**profile, "margin_v": round(int(profile.get("margin_v") or 160) * height / 1920)}
-    result = result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], rs.get("transition")))
+    result = result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], rs.get("transition"),
+                                                    joins=plan_joins_setting({"render_settings": rs})))
     end = max((float(w.end) for w in result.words), default=0.0) + 5.0
     result = _render._apply_subtitle_timing_offset(result, profile, end)
     return write_ass_subtitles(result, profile, path, width=width, height=height, fmt=preset.get("format"))

@@ -80,6 +80,9 @@ export interface SubtitleLine {
 export interface PlanSubtitles {
   lines: SubtitleLine[];
   words?: { word: string; start: number; end: number; speaker?: string }[];
+  /** Слова так, как их слышно с J/L (только при J/L, только для превью): заменённый звук убран,
+   *  звук ручек подписан. Править — words/lines. */
+  heard_words?: { word: string; start: number; end: number; speaker?: string }[];
   /** Голоса клипа: буква → кто это («стример», «донат»…). */
   speakers?: Record<string, string>;
   language?: string;

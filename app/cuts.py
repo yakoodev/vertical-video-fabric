@@ -275,13 +275,14 @@ class FinishedCutMap:
         return max(0.0, self.clamp(total))
 
 
-def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut_plan: "CutPlan | None" = None) -> dict:
+def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut_plan: "CutPlan | None" = None,
+                       joins: Any = None) -> dict:
     """Субтитры клипа (куски подряд, до вырезов) → время готового клипа.
 
-    Сначала вырезы, потом сдвиг на НАСТОЯЩИЕ overlap склеек — те же, что
-    спланирует рендер (``part_overlaps`` по рендерящимся частям и дыркам в
-    исходнике): наплыв урезан до 40% соседней части, «умная» склейка соседних
-    кусков исходника и джамп-каты — встык.
+    Сначала вырезы, потом J/L (``joins`` — ``render_settings.audio.joins``: субтитры идут за
+    звуком, ``app.audio_edit.heard_subtitles``), потом сдвиг на НАСТОЯЩИЕ overlap склеек — те же,
+    что спланирует рендер (``part_overlaps`` по рендерящимся частям и дыркам в исходнике): наплыв
+    урезан до 40% соседней части, «умная» склейка соседних кусков исходника и джамп-каты — встык.
     """
     from app.clip_subtitles import shift_for_transition
     from app.transitions import part_overlaps
@@ -291,8 +292,21 @@ def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut
         parts, jumps = cut_plan.parts, cut_plan.jump_joins
     else:
         parts, jumps = list(segments or []), None
+    overlaps = part_overlaps(parts, transition, jumps)
+    if joins:
+        from app.audio_edit import heard_subtitles
+
+        payload = heard_subtitles(payload, parts, list(segments or []), joins, overlaps, jumps)
     spans = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
-    return shift_for_transition(payload, spans, part_overlaps(parts, transition, jumps))
+    return shift_for_transition(payload, spans, overlaps)
+
+
+def plan_joins_setting(plan: dict | None) -> list[dict]:
+    """J/L клипа (``render_settings.audio.joins``) — для ``subtitles_to_final``."""
+    from app.audio_edit import normalize_audio
+
+    render = (plan or {}).get("render_settings") or {}
+    return normalize_audio(render.get("audio") if isinstance(render, dict) else None).get("joins") or []
 
 
 # ---------------------------------------------------------------- что сдвигается
@@ -762,7 +776,8 @@ def cut_caption_words(store: Any, plan: dict, cut_plan: CutPlan) -> list[dict]:
     if not payload or not payload.get("words"):
         return []
     transition = (plan.get("render_settings") or {}).get("transition")
-    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
+    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan,
+                                            plan_joins_setting(plan)))
 
 
 # ---------------------------------------------------------------- подсказки

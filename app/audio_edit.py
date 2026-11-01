@@ -703,14 +703,15 @@ def jl_audio_filters(n: int, durations: list[float], plan: dict, handles: dict[t
 
 
 def jl_speech_report(segments: list[dict], joins: Any, words: list[dict], transition: Any = None) -> list[dict]:
-    """Слова, чей звук J/L заменяет звуком соседнего куска (их не будет слышно, а субтитры
-    останутся), по каждому стыку с J/L. ``words`` — слова субтитров «кусками подряд»."""
+    """Слова, чей звук J/L заменяет звуком соседнего куска (их не будет слышно — и субтитры их
+    не покажут, ``heard_subtitles``), по каждому стыку с J/L. ``words`` — слова субтитров
+    «кусками подряд»."""
     from app.transitions import part_overlaps
 
     shifts = part_shifts(segments, segments, joins)
     if not any(shifts):
         return []
-    lengths = [max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in segments]
+    lengths = [piece_length(s) for s in segments]
     plan = plan_jl(lengths, part_overlaps(segments, transition), shifts)
     out = []
     bound = 0.0
@@ -728,6 +729,227 @@ def jl_speech_report(segments: list[dict], joins: Any, words: list[dict], transi
         out.append({"join": k, "shift": s, "kind": "L" if s > 0 else "J", "hidden": who,
                     "hidden_sec": round(abs(s), 3), "lost_words": [w for w in lost if w][:8]})
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Субтитры за звуком J/L
+# --------------------------------------------------------------------------- #
+
+# Сколько секунд исходника распознавать сверх ручки J/L (слово, начатое в ручке, — целиком).
+HANDLE_ASR_MARGIN_SEC = 0.3
+MAX_HANDLE_WORDS = 400
+
+
+def piece_length(seg: dict) -> float:
+    """Длина куска на шкале клипа, с."""
+    return max(0.0, float(seg["end_sec"]) - float(seg["start_sec"]))
+
+
+def normalize_handle_words(raw: Any) -> list[dict]:
+    """Слова звука «ручек» J/L: ``[{piece, word, start, end}]`` — ``piece`` id куска, время —
+    секунды ИСХОДНИКА (не clip): кусок подрезали или переставили — слова ручки остаются верны."""
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        piece, a, b = _num(item.get("piece")), _num(item.get("start")), _num(item.get("end"))
+        word = str(item.get("word") or "").strip()
+        if piece is None or piece != int(piece) or a is None or b is None or not word:
+            continue
+        entry = {"piece": int(piece), "word": word[:80], "start": round(a, 3), "end": round(max(a, b), 3)}
+        if item.get("speaker"):
+            entry["speaker"] = str(item["speaker"])[:8]
+        out.append(entry)
+    out.sort(key=lambda w: (w["piece"], w["start"]))
+    return out[:MAX_HANDLE_WORDS]
+
+
+def handle_extents(segments: list[dict], joins: Any, transition: Any = None,
+                   margin: float = HANDLE_ASR_MARGIN_SEC) -> list[tuple[float, float]]:
+    """Сколько секунд исходника до начала (J) и после конца (L) каждого куска распознать вместе
+    с ним, чтобы субтитры показали звук ручки: ``[(head, tail)]`` по кускам, 0 — без ручки."""
+    from app.transitions import part_overlaps
+
+    out = [[0.0, 0.0] for _ in segments]
+    shifts = part_shifts(segments, segments, joins)
+    if any(shifts):
+        plan = plan_jl([piece_length(s) for s in segments], part_overlaps(segments, transition), shifts)
+        for k, s in enumerate(plan["shift"]):
+            if s > 0:
+                out[k][1] = round(s + margin, 3)
+            elif s < 0:
+                out[k + 1][0] = round(-s + margin, 3)
+    return [(a, b) for a, b in out]
+
+
+def _jl_windows(parts: list[dict], segments: list[dict], joins: Any, overlaps: list[float],
+                jump_joins: list[bool] | None) -> list[dict]:
+    """Стыки с J/L на шкале «части подряд»: что скрыто и откуда взять слова ручки."""
+    shifts = part_shifts(parts, segments, joins)
+    if not any(shifts):
+        return []
+    lengths = [piece_length(p) for p in parts]
+    plan = plan_jl(lengths, overlaps, shifts, "smooth", jump_joins)
+    ids = [s.get("id") for s in segments]
+
+    def seg_id(k: int) -> Any:
+        index = int(parts[k]["piece"]) if "piece" in parts[k] else k
+        return ids[index] if 0 <= index < len(ids) else None
+
+    out = []
+    bound = 0.0
+    for k, s in enumerate(plan["shift"]):
+        bound += lengths[k]
+        if not s:
+            continue
+        o = float(overlaps[k]) if k < len(overlaps) else 0.0
+        if s > 0:  # L: дальше звучит исходник после конца A — голова B не слышна
+            end = float(parts[k]["end_sec"])
+            cut = bound + s + o / 2
+            out.append({"kind": "L", "piece": seg_id(k), "src": (end, end + s), "hidden": (bound, cut),
+                        "keep_before": cut, "offset": bound + o - end})
+        else:  # J: раньше звучит исходник перед началом B — хвост A не слышен
+            start = float(parts[k + 1]["start_sec"])
+            cut = bound + s - o / 2
+            out.append({"kind": "J", "piece": seg_id(k + 1), "src": (start + s, start), "hidden": (cut, bound),
+                        "keep_after": cut, "offset": bound - o - start})
+    return out
+
+
+def heard_subtitles(payload: dict, parts: list[dict], segments: list[dict], joins: Any,
+                    overlaps: list[float] | None = None, jump_joins: list[bool] | None = None) -> dict:
+    """Субтитры идут за ЗВУКОМ J/L (шкала «части подряд», до сдвига на переходы).
+
+    J/L решает, чей звук слышен у стыка (картинка режется как раньше): у J (lead куска B) в
+    последние ``lead`` секунд картинки A звучит исходник ПЕРЕД началом B, у L (lag куска A) в первые
+    ``lag`` секунд B — исходник ПОСЛЕ конца A. Поэтому:
+
+    * слова, чей звук заменён (хвост A у J, голова B у L), из субтитров убираются — их не слышно;
+    * слова ручки (``payload["handle_words"]``, секунды исходника — их распознаёт
+      ``generate_for_plan``) встают туда, где их слышно, тем же сдвигом, что у своего куска (звук
+      куска синхронен с его картинкой): тайминги не растягиваются, только переносятся.
+
+    Граница «чьё слово» — середина кроссфейда звука: у стыка без перехода — точка J/L, под
+    переходом длиной ``o`` — на ``o/2`` дальше. Слова ручки сразу поправлены на overlap своего
+    стыка: ``shift_for_transition`` сдвигает слово по моменту (чья часть), а слово ручки J лежит до
+    стыка, хотя живёт по часам куска B (у L — наоборот)."""
+    if not isinstance(payload, dict) or len(parts) < 2:
+        return payload
+    overlaps = list(overlaps or [])
+    overlaps += [0.0] * (len(parts) - 1 - len(overlaps))
+    windows = _jl_windows(parts, segments, joins, overlaps, jump_joins)
+    if not windows:
+        return payload
+    handle = normalize_handle_words(payload.get("handle_words"))
+    added: list[dict] = []
+    for win in windows:
+        lo, hi = win["src"]
+        for w in handle:
+            if w["piece"] != win["piece"] or not lo - 0.05 <= (w["start"] + w["end"]) / 2 <= hi + 0.05:
+                continue
+            a, b = max(w["start"], lo), min(w["end"], hi)
+            if b - a < 0.02:
+                continue
+            start, end = round(a + win["offset"], 3), round(b + win["offset"], 3)
+            mid = (start + end) / 2
+            if ("keep_before" in win and mid >= win["keep_before"]) or ("keep_after" in win and mid < win["keep_after"]):
+                continue
+            word = {"word": w["word"], "start": max(0.0, start), "end": max(0.0, start, end), "jl": win["kind"]}
+            if w.get("speaker"):
+                word["speaker"] = w["speaker"]
+            added.append(word)
+    hidden = [win["hidden"] for win in windows]
+
+    def heard(item: dict) -> bool:
+        a, b = _num(item.get("start")), _num(item.get("end"))
+        if a is None or b is None:
+            return True
+        mid = (a + b) / 2
+        return not any(lo <= mid < hi for lo, hi in hidden)
+
+    words = [w for w in payload.get("words") or [] if isinstance(w, dict) and heard(w)]
+    lines = []
+    for line in payload.get("lines") or []:
+        a, b = (_num(line.get("start")), _num(line.get("end"))) if isinstance(line, dict) else (None, None)
+        if a is None or b is None:
+            continue
+        inside = [w for w in words if a - 0.001 <= (float(w["start"]) + float(w["end"])) / 2 <= b + 0.001]
+        if inside:
+            lines.append({**line, "start": min(float(w["start"]) for w in inside),
+                          "end": max(float(w["end"]) for w in inside),
+                          "text": " ".join(str(w["word"]) for w in inside)})
+        elif not payload.get("words") and heard(line):
+            lines.append(line)
+    for run in _runs(added):
+        lines.append({"start": run[0]["start"], "end": run[-1]["end"], "text": " ".join(w["word"] for w in run)})
+    return {**payload, "words": sorted(words + added, key=lambda w: float(w["start"])),
+            "lines": sorted(lines, key=lambda line: float(line["start"]))}
+
+
+def _runs(words: list[dict], gap: float = 0.6) -> list[list[dict]]:
+    out: list[list[dict]] = []
+    for w in sorted(words, key=lambda w: w["start"]):
+        if out and w["start"] - out[-1][-1]["end"] <= gap:
+            out[-1].append(w)
+        else:
+            out.append([w])
+    return out
+
+
+def split_handle_words(payload: dict, ext_pieces: list[tuple[float, float]], segments: list[dict]) -> dict:
+    """Распознавание шло по кускам С ручками J/L (``ext_pieces`` — секунды исходника, кусок плюс
+    ручки): слова внутри кусков → шкала «куски подряд» (как всегда), слова ручек →
+    ``handle_words`` (секунды исходника, id куска). Строки — по словам внутри кусков."""
+    layout, off = [], 0.0
+    for a, b in ext_pieces:
+        layout.append((float(a), float(b), off))
+        off += float(b) - float(a)
+    plain_starts, acc = [], 0.0
+    for seg in segments:
+        plain_starts.append(acc)
+        acc += piece_length(seg)
+
+    def classify(item: dict) -> tuple[bool, dict] | None:
+        a, b = _num(item.get("start")), _num(item.get("end"))
+        if a is None or b is None or not layout:
+            return None
+        mid = (a + b) / 2
+        k = next((i for i, (x, y, o) in enumerate(layout) if mid < o + (y - x)), len(layout) - 1)
+        e0, _e1, o = layout[k]
+        sa, sb = e0 + a - o, e0 + b - o
+        s0, s1 = float(segments[k]["start_sec"]), float(segments[k]["end_sec"])
+        if not s0 <= (sa + sb) / 2 < s1:
+            return False, {**item, "piece": segments[k].get("id"), "start": round(sa, 3), "end": round(sb, 3)}
+        p = plain_starts[k]
+        return True, {**item, "start": round(p + min(max(sa, s0), s1) - s0, 3),
+                      "end": round(p + min(max(sb, s0), s1) - s0, 3)}
+
+    words, handle = [], []
+    for w in payload.get("words") or []:
+        got = classify(w) if isinstance(w, dict) else None
+        if got:
+            (words if got[0] else handle).append(got[1])
+    lines = []
+    for line in payload.get("lines") or []:
+        got = classify(line) if isinstance(line, dict) else None
+        if not got or not got[0]:
+            continue
+        line = got[1]
+        inside = [w for w in words if line["start"] - 0.001 <= (w["start"] + w["end"]) / 2 <= line["end"] + 0.001]
+        if inside:  # строка задела ручку — по своим словам внутри куска
+            line = {**line, "start": inside[0]["start"], "end": inside[-1]["end"],
+                    "text": " ".join(str(w["word"]) for w in inside)}
+        lines.append(line)
+    # Какие окна исходника распознаны (и пустые — тишина в ручке тоже ответ).
+    spans = []
+    for (a, b), seg in zip(ext_pieces, segments):
+        s0, s1 = float(seg["start_sec"]), float(seg["end_sec"])
+        if a < s0 - 1e-3:
+            spans.append({"piece": seg.get("id"), "side": "head", "start": round(a, 3), "end": round(s0, 3)})
+        if b > s1 + 1e-3:
+            spans.append({"piece": seg.get("id"), "side": "tail", "start": round(s1, 3), "end": round(b, 3)})
+    return {**payload, "words": words, "lines": lines, "handle_words": normalize_handle_words(handle),
+            "handle_spans": spans, "duration": round(acc, 3)}
 
 
 # --------------------------------------------------------------------------- #

@@ -1559,6 +1559,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   });
   const settingsKey = JSON.stringify(panelSettings());
 
+  const lastJlKeyRef = useRef<Record<number, string>>({});
   const saveSettings = (planId: number, settings: RenderSettings) => {
     const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
     if (prev) {
@@ -1570,8 +1571,19 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         ),
       });
     }
+    const jlKey = JSON.stringify(
+      ((settings as { audio?: { joins?: unknown } }).audio?.joins ?? null),
+    );
     return clipPlansApi
       .setRenderSettings(planId, settings)
+      .then((r) => {
+        // J/L поменялись — субтитры превью (heard_words) идут за звуком: перечитать.
+        if (jlKey !== lastJlKeyRef.current[planId]) {
+          lastJlKeyRef.current[planId] = jlKey;
+          void qc.invalidateQueries({ queryKey: ["plan-subtitles", planId] });
+        }
+        return r;
+      })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить настройки клипа"));
   };
 
@@ -2430,7 +2442,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   clipNowRef.current = clipTimeExact;
   const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
-  const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
+  // С J/L — слова так, как их слышно (как в рендере), иначе — сохранённые.
+  const captionWords = captionWordsOf(
+    (planSubs.data?.heard_words ?? planSubs.data?.words) as SubtitleWord[] | undefined,
+  );
   const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
   const voiceTracks = planVoice.data?.voice;
   const levelTracks = planLevels.data?.levels;

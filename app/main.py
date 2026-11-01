@@ -2536,7 +2536,19 @@ class PlanSubtitleLines(BaseModel):
 )
 def api_get_plan_subtitles(clip_plan_id: int, _auth: AuthDep) -> dict:
     try:
-        return store.get_clip_plan_subtitles(clip_plan_id) or {"lines": [], "words": []}
+        payload = store.get_clip_plan_subtitles(clip_plan_id) or {"lines": [], "words": []}
+        if payload.get("words"):
+            from app.cuts import plan_joins_setting
+
+            plan = store.get_clip_plan(clip_plan_id)
+            joins = plan_joins_setting(plan)
+            if joins:
+                # Превью субтитров редактора («куски подряд»): слова так, как их слышно с J/L.
+                from app.audio_edit import heard_subtitles
+
+                segments = plan.get("segments") or []
+                payload = {**payload, "heard_words": heard_subtitles(payload, segments, segments, joins)["words"]}
+        return payload
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

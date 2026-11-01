@@ -1405,7 +1405,7 @@ class ClipRenderService:
     def _plan_subtitles_for_clip(self, clip_id: int, fps: float | None = None):
         """Субтитры, сделанные в редакторе до рендера (если есть)."""
         from app.clip_subtitles import result_from_payload
-        from app.cuts import subtitles_to_final
+        from app.cuts import plan_joins_setting, subtitles_to_final
 
         try:
             clip = self.store.get_clip(clip_id)
@@ -1420,7 +1420,8 @@ class ClipRenderService:
             cut_plan = self._cut_plan(plan, clip.get("ffmpeg_preset_id"), fps)
             # Слова лежат в склейке кусков: сначала вырезы, потом сдвиг на
             # настоящие overlap склеек (как их спланирует рендер).
-            final = subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan)
+            final = subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan,
+                                       plan_joins_setting(plan))
             freezes = self._freezes(plan)
             if freezes:
                 # Вставленный стоп-кадр: речь после него звучит позже (app/freeze.py).
