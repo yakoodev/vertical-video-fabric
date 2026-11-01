@@ -27,6 +27,7 @@ import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/compo
 import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
 import { AiVideoTab } from "@/pages/AiVideoTab";
 import { ExplainerTab } from "@/pages/ExplainerTab";
+import { StoriesTab } from "@/pages/StoriesTab";
 import { useModules } from "@/hooks/useModules";
 
 /**
@@ -34,13 +35,15 @@ import { useModules } from "@/hooks/useModules";
  * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
  */
 
-type Tab = "aiv" | "expl" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
+type Tab = "aiv" | "expl" | "story" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
 // Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
 const TABS: [Tab, string, string?][] = [
   // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
   ["aiv", "ИИ-видео", "ai_video"],
   // Объяснялки (app/explainer.py): маскот объясняет тему — тоже только у «ИИ-видео».
   ["expl", "Объяснялки", "explainer"],
+  // Истории (app/stories.py): рассказчик и сцена на каждую фразу — тоже только у «ИИ-видео».
+  ["story", "Истории", "stories"],
   ["brief", "Резюме"],
   ["rules", "Правила"],
   ["stats", "Статистика"],
@@ -60,7 +63,7 @@ export function SeriesPage() {
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
   const { on } = useModules();
   const isAiv = project.data?.kind === "ai_video";
-  const tabs = TABS.filter(([key, , mod]) => (!mod || on(mod)) && ((key !== "aiv" && key !== "expl") || isAiv));
+  const tabs = TABS.filter(([key, , mod]) => (!mod || on(mod)) && (!["aiv", "expl", "story"].includes(key) || isAiv));
   const fallback: Tab = isAiv && tabs.some(([key]) => key === "aiv") ? "aiv" : "brief";
   const shown: Tab = tab && tabs.some(([key]) => key === tab) ? tab : fallback;
 
@@ -91,6 +94,7 @@ export function SeriesPage() {
       <div className="series-body">
         {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
         {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
+        {shown === "story" ? <StoriesTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
         {shown === "stats" ? <StatsTab projectId={id} /> : null}
