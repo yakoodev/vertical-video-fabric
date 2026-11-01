@@ -187,7 +187,7 @@ function FocusEditor({
           title="Перезаписать фокус этого сегмента детектором (лица/движение)"
           onClick={() => detect.mutate()}
         >
-          {detect.isPending ? "Детект…" : "🎯 Детектор"}
+          {detect.isPending ? "Детект…" : "Детектор"}
         </button>
         <button className="btn sm" onClick={addAtPlayhead}>
           + Точка на текущем кадре
@@ -3477,7 +3477,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             onClick={() => openEditor()}
             title={favCount ? "Работать над избранными моментами" : "Отметьте ★ моменты, чтобы работать над ними в редакторе"}
           >
-            ✂️ Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
+            Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
           </button>
           <button
             className="btn mo-big"

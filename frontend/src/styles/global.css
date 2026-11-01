@@ -4527,3 +4527,45 @@ select.input { padding-top: 0; padding-bottom: 0; }
 .ed-inspector .sub-options { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .ed-quick-row > * { min-width: 0; }
 .ed-snap .btn { white-space: nowrap; }
+
+/* Телефон: меню было столбиком на весь первый экран — теперь одна прокручиваемая лента
+   сверху (логотип, «Создать», разделы, помощь/настройки/выход), содержимое сразу под ней. */
+@media (max-width: 720px) {
+  .sidebar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 4px;
+    padding: 8px 10px;
+    scrollbar-width: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+  .sidebar::-webkit-scrollbar { display: none; }
+  .sidebar .brand { padding: 0 6px 0 2px; flex: none; }
+  .sidebar .brand .word { display: none; }
+  .sidebar .nav-create { flex: none; width: auto; padding: 8px 12px; }
+  .sidebar .nav-create kbd, .sidebar .nav-keys kbd { display: none; }
+  .sidebar .nav-section { flex-direction: row; gap: 2px; margin: 0; flex: none; }
+  .sidebar .nav-link { flex: none; padding: 8px 10px; gap: 6px; font-size: 13px; white-space: nowrap; }
+  .sidebar .nav-link.active::before { display: none; }
+  .sidebar .nav-keys { width: auto; }
+  .sidebar form { flex: none; }
+  .content { padding: 16px 16px 64px; }
+}
+
+/* «Моменты»: четыре громкие кнопки разных цветов → одна главная («Открыть редактор»),
+   остальные вторичные; две ИИ-кнопки одним стилем (✨/🤖 = ИИ, тратит токены). */
+.mo-stats .btn.mo-big:not(.primary) { height: 42px; font-size: 14px; }
+.btn.aib-btn, .btn.aib-pick {
+  background: var(--surface-2);
+  border: 1px solid rgba(123, 108, 255, 0.55);
+  color: var(--text);
+}
+.btn.aib-btn:hover:not(:disabled), .btn.aib-pick:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+
+@media (max-width: 720px) {
+  .topbar-search kbd { display: none; }
+}
