@@ -1,11 +1,29 @@
 import { api } from "@/api/client";
 
 /**
- * ИИ-видео (app/aivideo*.py): проект, где ролик рисуется с нуля. Этапы refs → keyframes → voice → video:
- * оценка (бесплатно) → карточка владельцу с суммой → «Разрешить» → генерация → сборка в холст-клип.
+ * ИИ-видео (app/aivideo*.py): проект, где ролик рисуется с нуля. Этапы refs → blocking (3D-макет, 0 ₽) →
+ * keyframes (пары: старт + конец плана) → voice → video (первый+последний кадр): оценка (бесплатно) →
+ * карточка владельцу с суммой → «Разрешить» → генерация → сборка в холст-клип.
  */
 
-export type Stage = "refs" | "keyframes" | "voice" | "video";
+export type Stage = "refs" | "blocking" | "keyframes" | "voice" | "video";
+
+export interface VideoQaIssue {
+  what: string;
+  detail: string;
+  at?: number;
+}
+
+/** Проверка готового видео плана Gemini-зрением: счёт, дизайн, опора, склейки, конечное состояние. */
+export interface VideoQa {
+  kind: "video_qa";
+  ok: boolean;
+  score: number;
+  issues: VideoQaIssue[];
+  note?: string;
+  checked_at?: string;
+  error?: string;
+}
 
 export interface AivRef {
   id: number;
@@ -21,7 +39,10 @@ export interface AivRef {
   needs_review?: boolean;
   url: string | null;
   prompt: string;
-  score: { min: number | null; characters: { id: string; score: number; differences: string }[] } | null;
+  score:
+    | { min?: number | null; characters?: { id: string; score: number; differences: string }[]; error?: string }
+    | VideoQa
+    | null;
 }
 
 export interface AivLook {
@@ -45,6 +66,10 @@ export interface AivCharacter {
   speech: "voice" | "sfx" | "none";
   speech_captions: boolean;
   notes?: string;
+  /** Физические ограничения — дословно в кадры, видео и проверку видео («плоский диск на полу»). */
+  constraints?: string;
+  /** Манекен блокинга: human | disc | quadruped | small (пусто — по карте). */
+  stand_in?: string;
   looks: AivLook[];
   refs: AivRef[];
 }
@@ -68,7 +93,10 @@ export interface AivStyle {
   provider: string;
   video_provider: string;
   video_model: string;
-  video_resolution: "480p" | "720p";
+  /** false — модель не задана: по режиму серии (качество — seedance-2, черновик — hailuo-3-max). */
+  video_model_set?: boolean;
+  video_caps?: { label?: string; first_last?: boolean; exclusive?: boolean; min?: number; max?: number };
+  video_resolution: "480p" | "720p" | "1080p";
   quality: "draft" | "quality";
   quality_label: string;
   month_cap_rub: number | null;
@@ -107,16 +135,17 @@ export interface StageCard {
 
 export interface ShotState {
   characters?: { id: string; pose?: string; facing?: string; position?: string; holding?: string; clothing?: string }[];
-  props?: { name: string; state: string }[];
+  props?: { name: string; state: string; count?: number }[];
 }
 
 export interface Continuity {
   ok: boolean;
   chain?: boolean;
   score?: number;
-  mismatches?: { what: string; detail: string }[];
+  mismatches?: { what: string; detail: string; check?: "cut" | "pair" }[];
   note?: string;
   checked_at?: string;
+  checks?: ("cut" | "pair")[];
 }
 
 export interface ContinuityFlag {
@@ -146,11 +175,22 @@ export interface Shot {
   motion_prompt: string;
   sound: string;
   state: ShotState;
+  /** Состояние на КОНЕЦ плана (конечный кадр). */
+  end_state?: ShotState;
+  end_state_effective?: ShotState;
   continues_from_prev: boolean;
   video_in: number | null;
   video_out: number | null;
   continuity: Continuity | null;
   keyframes?: AivRef[];
+  endframes?: AivRef[];
+  /** Действующий стартовый кадр: свой или конечный кадр прошлого плана (start_shared_from — его idx). */
+  start_frame?: AivRef | null;
+  start_shared_from?: number | null;
+  end_frame?: AivRef | null;
+  blocking_frames?: { start: AivRef | null; end: AivRef | null };
+  blocking?: { source?: string } | null;
+  video_qa?: VideoQa | null;
   videos?: AivRef[];
   line_audio?: AivRef[];
   spent_rub?: number;
@@ -176,6 +216,7 @@ export interface Script {
   budget?: Budget;
   approvals?: StageCard[];
   warnings?: string[];
+  video_review?: { shot_id: number; idx: number; ref_id: number; issues: VideoQaIssue[]; note: string }[];
 }
 
 export interface Overview {
@@ -209,7 +250,23 @@ export interface Estimate {
   blocked?: string[];
   notes?: string[];
   continuity?: ContinuityFlag[];
+  video_qa?: { idx: number; shot_id: number; ref_id: number; ok: boolean; score: number; issues: VideoQaIssue[] }[];
+  modes?: string[];
+  model?: string;
   note: string;
+}
+
+export interface BlockingView {
+  shot_id: number;
+  idx: number;
+  source: "gemini" | "auto" | "agent" | "owner";
+  outdated: boolean;
+  spec: Record<string, unknown>;
+  scenes_override: Record<string, unknown>;
+  legend: string;
+  cast: { id: string; name: string; stand_in: string; color: string; color_name: string }[];
+  frames: { start: AivRef | null; end: AivRef | null };
+  scenes?: { start: unknown; end?: unknown };
 }
 
 export interface StageResult {
@@ -232,12 +289,17 @@ export const CAMERA_LABEL: Record<string, string> = {
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
-  refs: "Референсы", keyframes: "Кадры", voice: "Озвучка", video: "Видео",
+  refs: "Референсы", blocking: "Блокинг", keyframes: "Кадры", voice: "Озвучка", video: "Видео",
 };
 
+/** Видеомодели (app/aivideo_providers.py VIDEO_LIMITS): "" — по режиму серии. */
 export const VIDEO_MODELS: [string, string][] = [
-  ["bytedance/seedance-2-fast", "Seedance 2 fast — со звуком, 22,3 ₽/с"],
-  ["grok-imagine-video-1-5", "Grok Imagine 1.5 — черновик, 3 ₽/с"],
+  ["", "Видео: по режиму (качество — Seedance 2.0, черновик — H3 Max)"],
+  ["bytedance/seedance-2", "Seedance 2.0 — качество, 1-й+посл. кадр, 27,7 ₽/с"],
+  ["minimax/hailuo-3-max", "MiniMax H3 Max — черновик, 1-й+посл. кадр, 9,1 ₽/с, от 5 с"],
+  ["bytedance/seedance-2-5", "Seedance 2.5 — лучшая, 42,5 ₽/с"],
+  ["bytedance/seedance-2-fast", "Seedance 2 fast — 22,3 ₽/с"],
+  ["grok-imagine-video-1-5", "Grok Imagine 1.5 — только старт, без звука, 3 ₽/с"],
 ];
 
 export const aivKey = (projectId: number) => ["channel-projects", String(projectId), "ai-video"] as const;
@@ -280,6 +342,12 @@ export const aivApi = {
   checkContinuity: (scriptId: number) =>
     api.post<{ ok: boolean; skipped?: boolean; flagged?: number[]; note: string }>(`/api/ai-video/scripts/${scriptId}/continuity`),
   check: (refId: number) => api.post<{ ok: boolean; skipped?: boolean; note: string }>(`/api/ai-video/refs/${refId}/check`),
+  checkVideo: (refId: number) =>
+    api.post<{ ok: boolean; skipped?: boolean; needs_review?: boolean; note: string }>(`/api/ai-video/refs/${refId}/check-video`),
+  blocking: (shotId: number, scenes = false) =>
+    api.get<BlockingView>(`/api/ai-video/shots/${shotId}/blocking${scenes ? "?scenes=true" : ""}`),
+  setBlocking: (shotId: number, body: { spec?: unknown; scenes?: unknown; rewrite?: boolean }) =>
+    api.patch<BlockingView>(`/api/ai-video/shots/${shotId}/blocking`, body),
   decide: (approvalId: number, action: "approve" | "reject", comment = "") =>
     api.post(`/api/ai-video/approvals/${approvalId}/decide`, { action, comment }),
   run: (approvalId: number) => api.post(`/api/ai-video/approvals/${approvalId}/run`, { confirm: true }),

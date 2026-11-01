@@ -518,7 +518,11 @@ def set_blocking(store: Any, shot_id: int, spec: Any = None, scenes: Any = None,
                 spec = json.loads(spec)
             except ValueError as exc:
                 raise V.AivError(f"spec — не JSON: {exc}") from exc
-        data["spec"] = clean_spec(spec, [c["id"] for c in shot.get("cast") or []])
+        if not isinstance(spec, dict):
+            raise V.AivError("spec — объект {room?, objects?, camera?, start?, end?}")
+        # Не названное — как было (правка одного старта не стирает конец и мебель).
+        merged = {**(data.get("spec") or {}), **spec}
+        data["spec"] = clean_spec(merged, [c["id"] for c in shot.get("cast") or []])
     if scenes is not None:
         if not isinstance(scenes, dict):
             raise V.AivError("scenes — {start?: сцена, end?: сцена} (JSON-сцены движка, get_scene_reference)")

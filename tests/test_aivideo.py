@@ -914,6 +914,9 @@ def test_keyframe_gets_all_character_sheets_and_plate_logged_in_params(env, monk
     _p, refs, _c, info = G.build_request(store, {**job, "target_id": shot2["id"]})
     assert len(refs) == 4 and info["roles"] == roles[:4]
     assert "не влезло в лимит 4: kot: эмоции" in info["missing"]
+    # Оценка кадров заранее говорит, что отрежется (блокинг + основа + листы + плита + стиль > лимита).
+    notes = G.estimate(store, pid, "keyframes", sid, regenerate=True)["notes"]
+    assert any("лимит референсов 4" in n and "план 2: не влезут" in n for n in notes), notes
 
 
 class FakeVision:

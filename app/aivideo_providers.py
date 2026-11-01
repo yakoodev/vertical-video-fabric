@@ -22,9 +22,14 @@
 
 Цены Polza — прайс каталога ``GET /models`` (снимок ``D:\\vvf-offload\\tmp\\videogen\\polza_models.json``,
 2026-11-01). Замеренные (списание = прайс): nano-banana 1K 3 ₽ и 2K 4.5 ₽, seedance-2-fast 720p
-22.275 ₽/с, grok-imagine-video 720p 3.0375 ₽/с (``input.duration`` строкой). Не замеренное — прайс ×
-``PRICE_MARKUP`` (замер TTS показал ×2.04). После первого настоящего запуска модели — внести факт в
-``measured_*`` её каталога.
+22.275 ₽/с, grok-imagine-video 720p 3.0375 ₽/с (``input.duration`` строкой). Не замеренное: картинки —
+прайс × ``PRICE_MARKUP`` (замер TTS показал ×2.04), видео — × ``VIDEO_PRICE_MARKUP`` (1.25: оба замера
+видео = прайс). После первого настоящего запуска модели — внести факт в ``measured_*`` её каталога.
+
+Видеомодели (v3): ``VIDEO_LIMITS`` — возможности (``first_last``, ``ref_images``, ``exclusive`` —
+кадры и листы персонажей взаимоисключающие, длительности, разрешения, звук); ``choose_video_mode`` —
+режим подачи; ``video_resolution_for`` / ``snap_seconds`` — к тому, что есть у модели. Слот на будущее —
+``FUTURE_CATALOGS["genapi"]`` (Kling 4.0 reference, без сети).
 """
 
 from __future__ import annotations

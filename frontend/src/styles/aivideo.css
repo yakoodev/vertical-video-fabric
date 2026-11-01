@@ -42,3 +42,12 @@
 /* Три выпадающих списка стиль-библии в ряд резали подписи («Черновик (1K, с…») — переносим. */
 .aiv .series-row { flex-wrap: wrap; }
 .aiv .series-row > select.input { flex: 1 1 200px; width: auto; min-width: 0; }
+/* v3: пара кадров плана (старт → конец) + видео, блокинг рядом с кадрами. */
+.aiv-shot-wide { grid-template-columns: minmax(0, auto) minmax(0, 1fr); }
+.aiv-frames { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; }
+.aiv-frame { margin: 0; width: 96px; display: grid; gap: 3px; }
+.aiv-frame figcaption { font-size: 11px; color: var(--text-dim); text-align: center; }
+@media (max-width: 720px) {
+  .aiv-shot-wide { grid-template-columns: minmax(0, 1fr); }
+  .aiv-frame { width: 84px; }
+}
