@@ -164,7 +164,7 @@ function logoSpin(newId: () => string): MotionTemplate {
                 depth: 90,
                 color,
                 // Пауза лицом к зрителю, оборот на 360° с перелётом — и снова (петля 2.4 с).
-                rotation: [0, { keys: [[0, 0], [1.1, 0, "inOutBack"], [2.1, 360]], loop: 2.4 }, { osc: { amp: 6, freq: 0.5 } }],
+                rotation: [12, { keys: [[0, -18], [1.1, -18, "inOutBack"], [2.1, 342]], loop: 2.4 }, { osc: { amp: 6, freq: 0.5 } }],
                 material: { rim: { color: "#ffffff", strength: 0.7 }, specular: { size: 0.05 } },
               },
             ],
