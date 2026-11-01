@@ -184,7 +184,10 @@ def main() -> int:
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROME") or None)
         ctx = browser.new_context(viewport={"width": 1440, "height": 900})
         page = ctx.new_page()
+        only = set(sys.argv[1:])  # можно перечислить экраны: python tools/ui_reach.py source editor
         for screen, (url, checks) in SCREENS.items():
+            if only and screen not in only:
+                continue
             for c in checks:
                 total += 1
                 # Каждая проверка — с чистой страницы: шаги не зависят от предыдущих.
