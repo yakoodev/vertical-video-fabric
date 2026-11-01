@@ -45,24 +45,36 @@ from app import aivideo as V
 from app import autopilot as A
 from app import projects as P
 from app.aivideo_providers import (
-    MAX_REFS,
     PRICE_CHECKED,
     RESOLUTION,
     ProviderError,
+    SubmitUncertain,
     image_price,
+    max_refs,
     model_params,
+    video_params,
+    video_price,
+    video_seconds_range,
 )
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
 
-STAGES = ("refs", "keyframes", "voice")
+STAGES = ("refs", "keyframes", "voice", "video")
 STAGE_LABELS = {"refs": "референсы (стиль, локации, листы персонажей)", "keyframes": "кадры планов",
-                "voice": "озвучка реплик"}
+                "voice": "озвучка реплик", "video": "видео планов (оживление кадров)"}
 EPISODE_CAP_RUB = {"draft": 350.0, "quality": 2500.0}
 STYLE_REF_COUNT = 3
 CARD_ACTION = "aiv_budget"
-ACTIVE = ("approved", "submitting", "polling")
+# recovering — POST ушёл без ответа (504/обрыв): id ищем в истории Polza, POST не повторяем.
+ACTIVE = ("approved", "submitting", "polling", "recovering")
+VIDEO_MIN_SEC = 4  # план-видео 4–8 с (у seedance меньше 4 не бывает)
+VIDEO_MAX_SEC = 8
+# Поиск id в истории после 504: сразу RECOVER_ATTEMPTS раз через RECOVER_INTERVAL_SEC, дальше —
+# каждым проходом работника; не нашли за RECOVER_DEADLINE_SEC — failed (скорее всего не списано).
+RECOVER_ATTEMPTS = 6
+RECOVER_INTERVAL_SEC = 10.0
+RECOVER_DEADLINE_SEC = 20 * 60
 OPEN = ("awaiting",) + ACTIVE
 STYLE_BASE = {
     "anime": "2D anime / toon style, clean line art, cel shading, flat colors, expressive faces",
@@ -72,7 +84,7 @@ NO_TEXT = "No text, no letters, no captions, no watermark, no logo."
 REF_ASPECT = {"style": "9:16", "location": "9:16", "turnaround": "16:9", "expressions": "3:2", "look": "9:16",
               "keyframe": "9:16"}
 REF_LABELS = {"style": "стиль", "location": "плита локации", "turnaround": "разворот", "expressions": "эмоции",
-              "look": "облик", "keyframe": "кадр", "line_audio": "реплика"}
+              "look": "облик", "keyframe": "кадр", "line_audio": "реплика", "shot_video": "видео плана"}
 
 _LOCK = threading.RLock()
 _ACTIVE_JOBS: set[int] = set()  # опрашиваются сейчас (не опрашивать вторым потоком)
@@ -238,7 +250,7 @@ def _parse_item(item: Any) -> tuple[str, int, str, str]:
 def _image_item(stage: str, target_type: str, target_id: int, ref_kind: str, label: str, model: str, quality: str,
                 provider: str, slot: str = "") -> dict:
     resolution = RESOLUTION.get(quality, "1K")
-    price = image_price(model, resolution) if provider != "none" else {"rub": 0.0, "note": "сухой прогон"}
+    price = image_price(model, resolution, provider)
     return {"stage": stage, "kind": "image", "target_type": target_type, "target_id": int(target_id),
             "ref_kind": ref_kind, "slot": slot, "label": label, "provider": provider, "model": model,
             "resolution": resolution, "aspect": REF_ASPECT.get(ref_kind, "9:16"), "estimate_rub": price["rub"],
@@ -258,6 +270,33 @@ def _line_key(voice: dict, text: str) -> str:
     return f"{voice['provider']}|{voice['model']}|{voice['voice']}|{text}"
 
 
+def speech_need_sec(shot: dict) -> float:
+    """Сколько секунд нужно плану под его реплики (~14 символов/с + вход/хвост)."""
+    chars = sum(len(d.get("text") or "") for d in shot.get("dialogue") or [])
+    if not chars:
+        return 0.0
+    return round(chars / V.CHARS_PER_SEC + 0.35 + 0.45 + 0.2 * (len(shot["dialogue"]) - 1), 2)
+
+
+def video_seconds(shot: dict, model: str) -> int:
+    """Длина видео плана, целые секунды 4–8: длительность плана, но не короче его реплик."""
+    import math
+
+    lo, hi = video_seconds_range(model)
+    want = max(float(shot.get("duration") or 4), speech_need_sec(shot))
+    return int(min(VIDEO_MAX_SEC, hi, max(VIDEO_MIN_SEC, lo, math.ceil(want - 0.05))))
+
+
+def _video_item(shot: dict, script_id: int, provider: str, model: str, resolution: str, start: str) -> dict:
+    seconds = video_seconds(shot, model)
+    price = video_price(model, resolution, seconds, provider)
+    return {"stage": "video", "kind": "video", "target_type": "shot", "target_id": int(shot["id"]),
+            "ref_kind": "shot_video", "slot": "", "script_id": int(script_id),
+            "label": f"план {shot['idx']}: видео {seconds} с", "provider": provider, "model": model,
+            "resolution": resolution, "aspect": "9:16", "seconds": seconds, "start": start,
+            "estimate_rub": price["rub"], "price_note": price["note"]}
+
+
 def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = None, items: list | None = None,
                regenerate: bool = False) -> list[dict]:
     """Список запусков этапа (без побочных эффектов). Без ``items`` — всё, чего ещё нет или
@@ -268,7 +307,7 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
     style = V.get_style(store, project_id)
     provider, model = style["provider"], style["image_model"]
     quality = _quality(store, project_id, script_id)
-    if stage in ("keyframes", "voice"):
+    if stage in ("keyframes", "voice", "video"):
         if script_id is None:
             raise V.AivError(f"этап {stage} — для серии: нужен script_id")
         script = V.get_script(store, script_id)
@@ -322,6 +361,8 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
                 item = _image_item(stage, "shot", shot["id"], "keyframe", f"план {shot['idx']}", model, quality,
                                    provider)
                 out.append({**item, "script_id": int(script_id)})
+    elif stage == "video":
+        out += _plan_video(store, project_id, script, style, explicit, want, need)
     else:  # voice
         for shot in script["shots"]:
             for i, line in enumerate(shot["dialogue"]):
@@ -346,24 +387,97 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
     return out
 
 
+def _is_chain(shot: dict, prev: dict | None) -> bool:
+    """План продолжает прошлый, у которого будет видео: старт — последний кадр того видео (0 ₽)."""
+    return bool(prev and shot.get("continues_from_prev") and prev.get("needs_motion"))
+
+
+def _fresh_video(store: Any, project_id: int, shot: dict | None) -> dict | None:
+    if not shot:
+        return None
+    ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "shot_video")
+    return ref if _fresh(ref) else None
+
+
+def _chain_item(shot: dict, prev: dict, script_id: int) -> dict:
+    return {"stage": "video", "kind": "chain", "target_type": "shot", "target_id": int(shot["id"]),
+            "ref_kind": "keyframe", "slot": "", "script_id": int(script_id),
+            "label": f"план {shot['idx']}: старт — последний кадр видео плана {prev['idx']}", "provider": "none",
+            "model": "", "estimate_rub": 0.0, "price_note": "0 ₽ — кадр из готового видео"}
+
+
+def _plan_video(store: Any, project_id: int, script: dict, style: dict, explicit: bool, want: Any,
+                need: Any) -> list[dict]:
+    """Видео планов с needs_motion по порядку. Сцепка: план продолжает прошлый — перед его видео
+    бесплатный запуск ``chain`` (последний кадр видео прошлого плана → кадр плана). Иначе старт —
+    выбранный кадр плана (этап keyframes); нет кадра — элемент ``blocked``."""
+    provider, model, res = style["video_provider"], style["video_model"], style["video_resolution"]
+    out: list[dict] = []
+    planned: set[int] = set()
+    shots = script["shots"]
+    for n, shot in enumerate(shots):
+        prev = shots[n - 1] if n else None
+        chain = _is_chain(shot, prev)
+        prev_video = _fresh_video(store, project_id, prev)
+        prev_new = prev is not None and int(prev["id"]) in planned
+        kf = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
+        if not shot["needs_motion"]:
+            # Статичный план после видео той же сцены: его кадр — последний кадр того видео.
+            if chain and (prev_new or (prev_video and (kf or {}).get("prompt") != f"chain:{prev_video['id']}")):
+                if want("shot", int(shot["id"]), "keyframe") is not False or prev_new:
+                    out.append(_chain_item(shot, prev, script["id"]))
+            continue
+        if shot["locked"] and not explicit:
+            continue
+        ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "shot_video")
+        if not need(ref, "shot", int(shot["id"]), "shot_video"):
+            continue
+        if chain and (prev_new or prev_video):
+            out.append(_chain_item(shot, prev, script["id"]))
+            start = "chain"
+        elif kf and kf.get("asset_id"):
+            start = "keyframe"
+        else:
+            out.append({**_video_item(shot, script["id"], provider, model, res, "keyframe"),
+                        "blocked": f"план {shot['idx']}: нет кадра — сначала этап keyframes"})
+            continue
+        out.append(_video_item(shot, script["id"], provider, model, res, start))
+        planned.add(int(shot["id"]))
+    return out
+
+
 def estimate(store: Any, project_id: int, stage: str, script_id: int | None = None, items: list | None = None,
              regenerate: bool = False) -> dict:
     """Оценка этапа (бесплатно, ничего не запускает)."""
     V.require_project(store, project_id)
-    planned = plan_stage(store, project_id, stage, script_id, items, regenerate)
+    raw = plan_stage(store, project_id, stage, script_id, items, regenerate)
+    planned = [i for i in raw if not i.get("blocked")]
+    blocked = [i["blocked"] for i in raw if i.get("blocked")]
     total = round(sum(i["estimate_rub"] for i in planned), 2)
     paid = any(i["provider"] != "none" for i in planned)
     problems = cap_problems(store, project_id, script_id, total, stage) if paid else []
+    problems += blocked
     if paid and not settings.aivideo_enabled:
         problems.append("платная генерация выключена (AIVIDEO_ENABLED=0) — включает владелец; карточку можно "
                         "отправить заранее, запуск — после включения")
     style = V.get_style(store, project_id)
+    if stage == "video":
+        provider, model = style["video_provider"], style["video_model"]
+    else:
+        provider, model = style["provider"], style["image_model"]
+    if stage == "voice":
+        model = "TTS"
+    measured = all(i.get("price_note", "").startswith(("замер", "0 ₽", "сухой")) for i in planned)
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
-            + (f" ({style['image_model']}, цены от {PRICE_CHECKED}, ×2 к прайсу — не замерено)" if paid else
-               " — сухой прогон, 0 ₽"))
+            + ((f" ({model}, цены от {PRICE_CHECKED}" + (", замер)" if measured else ", ×2 к прайсу — не замерено)"))
+               if paid else " — сухой прогон, 0 ₽"))
+    if stage == "video" and paid and any("потолка серии" in p for p in problems):
+        problems.append(f"подсказка: серия-черновик ≤ {EPISODE_CAP_RUB['draft']:.0f} ₽ — для видео переключи серию "
+                        "в quality (aiv_update_script quality) или возьми дешёвую модель (video_model "
+                        "grok-imagine-video-1-5); решает владелец")
     return {"stage": stage, "stage_label": STAGE_LABELS[stage], "project_id": int(project_id), "script_id": script_id,
-            "items": planned, "count": len(planned), "total_rub": total, "paid": paid,
-            "provider": style["provider"], "model": style["image_model"], "problems": problems,
+            "items": planned, "count": len(planned), "total_rub": total, "paid": paid, "blocked": blocked,
+            "provider": provider, "model": model, "problems": problems,
             "budget": budget_view(store, project_id, script_id), "note": note}
 
 
@@ -375,7 +489,8 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
 def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_id: int | None,
                 requested_by: str) -> int:
     params = {"resolution": item.get("resolution"), "aspect": item.get("aspect"), "voice": item.get("voice"),
-              "text": item.get("text"), "regenerate": item.get("regenerate", False)}
+              "text": item.get("text"), "regenerate": item.get("regenerate", False), "seconds": item.get("seconds"),
+              "start": item.get("start")}
     cur = store.db.execute(
         "INSERT INTO aiv_gen_jobs (project_id, script_id, approval_id, stage, kind, target_type, target_id, ref_kind, "
         "slot, label, provider, model, params_json, estimate_rub, status, requested_by) "
@@ -409,6 +524,8 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
     """Этап: сухой прогон — сразу (0 ₽); платно — карточка владельцу с суммой (жди решения)."""
     project = V.require_project(store, project_id)
     est = estimate(store, project_id, stage, script_id, items, regenerate)
+    if est["blocked"]:
+        raise V.AivError("этап не запрошен: " + "; ".join(est["blocked"]))
     if not est["items"]:
         return {"ok": True, "status": "nothing", "estimate": est,
                 "note": "всё уже есть и не устарело — для новой версии укажи items (перегенерация)"}
@@ -473,7 +590,7 @@ def _project_of_target(store: Any, target_type: str, target_id: int) -> int:
 
 def _stage_of(store: Any, target_type: str, target_id: int, kind: str) -> tuple[str, int | None]:
     if target_type == "shot":
-        return "keyframes", int(V.get_shot(store, target_id)["script_id"])
+        return ("video" if kind == "shot_video" else "keyframes"), int(V.get_shot(store, target_id)["script_id"])
     if target_type == "line":
         return "voice", int(V.get_shot(store, target_id)["script_id"])
     return "refs", None
@@ -676,7 +793,7 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str]]:
         if key not in seen:
             seen.add(key)
             uniq.append(p)
-    return prompt, uniq[:MAX_REFS.get(job["model"], 10)], caption
+    return prompt, uniq[:max_refs(job["model"], job["provider"])], caption
 
 
 def _file_digest(path: Path) -> str:
@@ -806,32 +923,240 @@ def _run_tts(store: Any, job: dict) -> dict:
     return _done(store, job, asset["id"], key, cost, source)
 
 
-def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
-    prompt, refs, caption = build_request(store, job)
-    params = model_params(job["model"], prompt, job["params"].get("aspect") or "9:16",
-                          job["params"].get("resolution") or "1K")
-    variant = 0
-    if job["params"].get("regenerate"):
-        variant = len(V.list_refs(store, job["project_id"], job["target_type"], job["target_id"], job["ref_kind"],
-                                  job.get("slot") or "")) + 1
-    digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, refs, variant)
-    cached = store.db.query_one(
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _cached(store: Any, digest: str) -> Any:
+    return store.db.query_one(
         "SELECT j.id, r.asset_id FROM aiv_gen_jobs j JOIN aiv_refs r ON r.id = j.result_ref_id "
         "WHERE j.input_hash = ? AND j.status = 'done' AND r.asset_id IS NOT NULL ORDER BY j.id DESC LIMIT 1", (digest,))
-    _set_job(store, job["id"], prompt=prompt, input_hash=digest,
-             params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
-                                     "refs": [p.name for p in refs]}, ensure_ascii=False))
-    if cached:
-        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
-    full = {**params, "_kind": job["ref_kind"], "_caption": caption}
+
+
+def _variant(store: Any, job: dict) -> int:
+    if not job["params"].get("regenerate"):
+        return 0
+    return len(V.list_refs(store, job["project_id"], job["target_type"], job["target_id"], job["ref_kind"],
+                           job.get("slot") or "")) + 1
+
+
+def _submit(store: Any, job: dict, provider: Any, full: dict, refs: list[Path],
+            poll_timeout: float | None) -> dict | None:
+    """POST провайдеру. Время отправки пишется ДО запроса: ответа нет (``SubmitUncertain``: 504,
+    обрыв) — запуск ``recovering``, id ищет адаптер (``recover``), POST не повторяется никогда."""
+    _set_job(store, job["id"], submitted_at=_utc_now())
     try:
         remote = provider.submit(full, refs)
+    except SubmitUncertain as exc:
+        _set_job(store, job["id"], status="recovering",
+                 error=f"{exc} — ищу запрос у провайдера, повторно не отправляю"[:500])
+        return _recover(store, get_job(store, job["id"]), provider, poll_timeout, RECOVER_ATTEMPTS)
     except ProviderError as exc:
         _set_job(store, job["id"], status="blocked_policy" if exc.policy else "failed", error=str(exc)[:500])
         return None
     # ДО опроса: после перезапуска опрос продолжится, повторного POST (и оплаты) не будет.
     _set_job(store, job["id"], status="polling", remote_id=str(remote))
     return _finish(store, get_job(store, job["id"]), provider, poll_timeout)
+
+
+def _claimed_remote_ids(store: Any, job_id: int) -> set[str]:
+    rows = store.db.query_all("SELECT remote_id FROM aiv_gen_jobs WHERE remote_id != '' AND id != ?", (int(job_id),))
+    return {str(r["remote_id"]) for r in rows}
+
+
+def _recover(store: Any, job: dict, provider: Any, poll_timeout: float | None, attempts: int = 1) -> dict | None:
+    """Найти у провайдера запрос, ушедший без ответа. Нашли — опрос как обычно; нет и срок вышел —
+    failed (вероятно, не списано); пока ищем — ``recovering`` (работник спросит ещё)."""
+    from app.aivideo_providers import parse_utc
+
+    recover = getattr(provider, "recover", None)
+    if recover is None:
+        _set_job(store, job["id"], status="failed",
+                 error="запрос ушёл без ответа, провайдер не умеет найти его — могло быть оплачено; проверь баланс, "
+                       "повтор только вручную (перегенерация)")
+        return None
+    for attempt in range(max(1, attempts)):
+        found = None
+        try:
+            found = recover(job["model"], job.get("submitted_at") or "", _claimed_remote_ids(store, job["id"]))
+        except Exception as exc:  # noqa: BLE001 - сеть: спросим следующим проходом
+            _log.warning("aiv recover %s: %s", job["id"], exc)
+        if found and found.get("id"):
+            with _LOCK:
+                if str(found["id"]) in _claimed_remote_ids(store, job["id"]):
+                    found = None
+                else:
+                    _set_job(store, job["id"], status="polling", remote_id=str(found["id"]),
+                             error=f"id {found['id']} найден у провайдера после обрыва ответа — POST не повторял")
+            if found:
+                return _finish(store, get_job(store, job["id"]), provider, poll_timeout)
+        if attempt + 1 < attempts and RECOVER_INTERVAL_SEC > 0:
+            time.sleep(RECOVER_INTERVAL_SEC)
+    sent = parse_utc(job.get("submitted_at"))
+    if sent is not None:
+        from datetime import datetime, timezone
+
+        if (datetime.now(timezone.utc) - sent).total_seconds() > RECOVER_DEADLINE_SEC:
+            _set_job(store, job["id"], status="failed",
+                     error=f"за {RECOVER_DEADLINE_SEC // 60} мин запрос у провайдера не появился — скорее всего не "
+                           "списано (проверь баланс); повтор только вручную (перегенерация)")
+    return None
+
+
+def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
+    prompt, refs, caption = build_request(store, job)
+    params = model_params(job["model"], prompt, job["params"].get("aspect") or "9:16",
+                          job["params"].get("resolution") or "1K", job["provider"])
+    digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, refs, _variant(store, job))
+    cached = _cached(store, digest)
+    _set_job(store, job["id"], prompt=prompt, input_hash=digest,
+             params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
+                                     "refs": [p.name for p in refs]}, ensure_ascii=False))
+    if cached:
+        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
+    full = {**params, "_kind": job["ref_kind"], "_caption": caption}
+    return _submit(store, job, provider, full, refs, poll_timeout)
+
+
+# --------------------------------------------------------------------------- #
+# Видео плана и сцепка
+# --------------------------------------------------------------------------- #
+
+CAMERA_TEXT = {"static": "locked-off camera", "push_in": "slow push-in", "pull_out": "slow pull-out",
+               "pan_left": "slow pan left", "pan_right": "slow pan right", "tilt_up": "slow tilt up",
+               "tilt_down": "slow tilt down", "parallax_push": "gentle dolly-in", "orbit": "slow orbit around",
+               "float": "subtle handheld float", "dolly_zoom": "dolly zoom", "tilt_reveal": "tilt reveal"}
+
+
+def _neighbors(store: Any, shot: dict) -> tuple[dict | None, dict | None]:
+    shots = V.list_shots(store, shot["script_id"])
+    ids = [int(s["id"]) for s in shots]
+    if int(shot["id"]) not in ids:
+        return None, None
+    i = ids.index(int(shot["id"]))
+    return (shots[i - 1] if i else None), (shots[i + 1] if i + 1 < len(shots) else None)
+
+
+def build_video_prompt(store: Any, job: dict, shot: dict | None = None) -> str:
+    """Промпт image-to-video: один непрерывный план от стартового кадра, действие, движение,
+    состояние на старте и (если следующий план продолжает этот) на конце, звук без речи."""
+    shot = shot or V.get_shot(store, int(job["target_id"]))
+    project_id = int(job["project_id"])
+    style = V.get_style(store, project_id)
+    _prev, nxt = _neighbors(store, shot)
+    parts = [f"{STYLE_BASE.get(style['style_kind'], STYLE_BASE['anime'])} animation, vertical 9:16.",
+             "One continuous shot, no cuts, no scene change, no new characters. Start exactly from the given first "
+             "frame: same characters, faces, clothing, props, lighting and background."]
+    if style.get("passport_text"):
+        parts.append(f"Style: {style['passport_text']}.")
+    move = (shot.get("camera") or {}).get("move") or "static"
+    parts.append(f"Camera: {CAMERA_TEXT.get(move, move.replace('_', ' '))}.")
+    for member in shot.get("cast") or []:
+        c = V.character_by_slug(store, project_id, member["id"])
+        if c and member.get("action"):
+            parts.append(f"{c['name']}: {member['action']}.")
+    if shot.get("action"):
+        parts.append(f"Action: {shot['action']}.")
+    if shot.get("motion_prompt"):
+        parts.append(f"Motion: {shot['motion_prompt']}.")
+    start_state = V.state_text(store, project_id, shot.get("state") or {}) if hasattr(V, "state_text") else ""
+    if start_state:
+        parts.append(f"At the start: {start_state}. Keep it unless the action changes it.")
+    if nxt and nxt.get("continues_from_prev"):
+        end_state = V.state_text(store, project_id, nxt.get("state") or {}) if hasattr(V, "state_text") else ""
+        if end_state:
+            parts.append(f"By the last frame (the next shot continues from it): {end_state}.")
+    emotions = ", ".join(d["emotion"] for d in shot.get("dialogue") or [] if d.get("emotion"))
+    if shot.get("dialogue"):
+        parts.append("The character talks" + (f" ({emotions})" if emotions else "") + ", natural mouth movement.")
+    sound = shot.get("sound") or ""
+    parts.append((f"Sound: {sound}. " if sound else "Sound: natural ambient room tone and effects of the action. ")
+                 + "No music, no speech, no voice-over.")
+    parts.append(NO_TEXT)
+    return " ".join(parts)[:4000]
+
+
+def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
+    """Видео плана из выбранного кадра (его делает этап keyframes или сцепка ``chain``)."""
+    shot = V.get_shot(store, int(job["target_id"]))
+    kf = V.selected_ref(store, int(job["project_id"]), "shot", int(shot["id"]), "keyframe")
+    start = _asset_path(store, kf)
+    if start is None:
+        _set_job(store, job["id"], status="failed", error="нет стартового кадра плана — этап keyframes или сцепка")
+        return None
+    prompt = build_video_prompt(store, job, shot)
+    seconds = int(job["params"].get("seconds") or video_seconds(shot, job["model"]))
+    params = video_params(job["model"], prompt, seconds, job["params"].get("resolution") or "720p",
+                          job["params"].get("aspect") or "9:16", job["provider"])
+    digest = input_hash(job["model"] + "|" + job["provider"], params, prompt, [start], _variant(store, job))
+    cached = _cached(store, digest)
+    _set_job(store, job["id"], prompt=prompt, input_hash=digest,
+             params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
+                                     "start_ref_id": kf["id"], "refs": [start.name]}, ensure_ascii=False))
+    if cached:
+        return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}")
+    full = {**params, "_kind": "shot_video", "_start": str(start)}
+    return _submit(store, job, provider, full, [start], poll_timeout)
+
+
+WAIT = object()  # сцепка ждёт видео прошлого плана (оно ещё делается)
+
+
+def _run_chain(store: Any, job: dict) -> Any:
+    """Старт плана = последний кадр видео прошлого плана (0 ₽). Видео прошлого ещё делается — WAIT."""
+    from app.aivideo_providers import ProviderError as _PE
+    from app.aivideo_providers import last_frame
+
+    shot = V.get_shot(store, int(job["target_id"]))
+    prev, _nxt = _neighbors(store, shot)
+    if prev is None:
+        _set_job(store, job["id"], status="failed", error="у первого плана нет прошлого — сцепка невозможна")
+        return None
+    busy = store.db.query_one(
+        "SELECT id FROM aiv_gen_jobs WHERE kind = 'video' AND target_type = 'shot' AND target_id = ? "
+        f"AND status IN ({', '.join('?' for _ in ACTIVE)}) LIMIT 1", (int(prev["id"]), *ACTIVE))
+    if busy:
+        return WAIT
+    project_id = int(job["project_id"])
+    vref = _fresh_video(store, project_id, prev)
+    if vref is None:
+        own = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
+        if own and own.get("asset_id"):
+            _set_job(store, job["id"], status="done", result_ref_id=own["id"], cost_rub=0.0, cost_source="free",
+                     error=f"видео плана {prev['idx']} нет — старт остаётся свой кадр плана")
+            return own
+        _set_job(store, job["id"], status="failed", error=f"видео плана {prev['idx']} нет, своего кадра тоже")
+        return None
+    marker = f"chain:{vref['id']}"
+    current = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
+    if current and current.get("prompt") == marker and current.get("asset_id"):
+        _set_job(store, job["id"], status="done", result_ref_id=current["id"], cost_rub=0.0, cost_source="free",
+                 error="")
+        return current
+    src = _asset_path(store, vref)
+    if src is None:
+        _set_job(store, job["id"], status="failed", error=f"файла видео плана {prev['idx']} нет")
+        return None
+    tmp = settings.tmp_dir / f"aiv-last-{uuid4().hex}.jpg"
+    try:
+        last_frame(src, tmp)
+    except _PE as exc:
+        _set_job(store, job["id"], status="failed", error=str(exc)[:500])
+        return None
+    asset = _save_asset(store, job, tmp, "image", "image/jpeg",
+                        f"ИИ-видео: план {shot['idx']} — последний кадр плана {prev['idx']}")
+    return _done(store, job, asset["id"], marker, 0.0, "free")
+
+
+def _after_video(store: Any, job: dict) -> None:
+    """Новое видео плана → сцепленный следующий план (его старт и видео) «устарел»."""
+    shot = V.get_shot(store, int(job["target_id"]))
+    _prev, nxt = _neighbors(store, shot)
+    if nxt and nxt.get("continues_from_prev"):
+        store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
+                         "AND (kind = 'shot_video' OR (kind = 'keyframe' AND prompt LIKE 'chain:%'))", (int(nxt["id"]),))
 
 
 def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) -> dict | None:
@@ -863,39 +1188,66 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             _set_job(store, job["id"], status="blocked_policy" if result.get("policy") else "failed",
                      error=str(result.get("error") or "отказ")[:500], cost_rub=charged)
             return None
-        tmp = settings.tmp_dir / f"aiv-{uuid4().hex}.jpg"
+        video = job["kind"] == "video"
+        tmp = settings.tmp_dir / f"aiv-{uuid4().hex}{'.mp4' if video else '.jpg'}"
         tmp.parent.mkdir(parents=True, exist_ok=True)
+        if video:
+            start = _asset_path(store, V.get_ref(store, int(job["params"]["start_ref_id"]))) \
+                if job["params"].get("start_ref_id") else None
+            fetch_params = {**job["params"].get("request", {}), "_kind": "shot_video",
+                            "_start": str(start) if start else ""}
+        else:
+            fetch_params = {**job["params"].get("request", {}), "aspect_ratio": job["params"].get("aspect"),
+                            "_kind": job["ref_kind"], "_caption": build_request(store, job)[2]}
         try:
-            provider.fetch(result, tmp, {**job["params"].get("request", {}), "aspect_ratio":
-                                         job["params"].get("aspect"), "_kind": job["ref_kind"],
-                                         "_caption": build_request(store, job)[2]})
+            provider.fetch(result, tmp, fetch_params)
         except Exception as exc:  # noqa: BLE001 - ссылка может истечь: оплачено, но файла нет
             _set_job(store, job["id"], status="failed", error=f"результат не скачан: {exc}"[:500])
             if provider.paid:
                 add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
                            "provider" if cost is not None else "estimate", "оплачено, файл не скачан")
             return None
-        mime = "image/png" if tmp.read_bytes()[:4] == b"\x89PNG" else "image/jpeg"
-        if mime == "image/png":
-            tmp = tmp.rename(tmp.with_suffix(".png"))
-        asset = _save_asset(store, job, tmp, "image", mime, f"ИИ-видео: {job['label']}")
+        if video:
+            asset = _save_asset(store, job, tmp, "video", "video/mp4", f"ИИ-видео: {job['label']}")
+        else:
+            mime = "image/png" if tmp.read_bytes()[:4] == b"\x89PNG" else "image/jpeg"
+            if mime == "image/png":
+                tmp = tmp.rename(tmp.with_suffix(".png"))
+            asset = _save_asset(store, job, tmp, "image", mime, f"ИИ-видео: {job['label']}")
         source = "provider" if cost is not None else ("estimate" if provider.paid else "free")
         amount = float(cost) if cost is not None else (float(job["estimate_rub"]) if provider.paid else 0.0)
-        return _done(store, get_job(store, job["id"]), asset["id"], job["prompt"], amount, source)
+        ref = _done(store, get_job(store, job["id"]), asset["id"], job["prompt"], amount, source)
+        if video:
+            _after_video(store, job)
+        return ref
     finally:
         with _LOCK:
             _ACTIVE_JOBS.discard(job["id"])
 
 
-def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) -> dict:
-    """Выполнить запуски по порядку. Упёрлись в потолок — остальные этой карточки ждут (held)."""
-    from app.aivideo_providers import get_image_provider
+def _provider_for(job: dict, cache: dict) -> Any:
+    from app.aivideo_providers import get_image_provider, get_video_provider
 
-    done, failed, held, pending = [], [], [], []
-    providers: dict[str, Any] = {}
+    key = (job["kind"], job["provider"])
+    if key not in cache:
+        cache[key] = (get_video_provider if job["kind"] == "video" else get_image_provider)(job["provider"])
+    return cache[key]
+
+
+def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) -> dict:
+    """Выполнить запуски по порядку. Упёрлись в потолок — остальные этой карточки ждут (held).
+    Сцепка ждёт видео прошлого плана — она и остальные запуски её карточки остаются ``approved``
+    до следующего прохода работника (видео прошлого плана дочитает ``resume``)."""
+    done, failed, held, pending, waiting = [], [], [], [], []
+    providers: dict[Any, Any] = {}
     stop_cards: set[int] = set()
+    deferred: set[int] = set()
     for job_id in job_ids:
         job0 = get_job(store, job_id)
+        card = int(job0.get("approval_id") or 0)
+        if card in deferred:
+            waiting.append(job_id)
+            continue
         if job0.get("approval_id") in stop_cards:
             _set_job(store, job_id, status="held", error="партия остановлена: упёрлись в потолок или ошибку")
             held.append(job_id)
@@ -910,13 +1262,23 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         try:
             if job["kind"] == "tts":
                 ref = _run_tts(store, job)
+            elif job["kind"] == "chain":
+                ref = _run_chain(store, job)
+                if ref is WAIT:
+                    _set_job(store, job_id, status="approved", attempts=max(0, int(job["attempts"]) - 1),
+                             error="жду видео прошлого плана")
+                    deferred.add(card)
+                    waiting.append(job_id)
+                    continue
+            elif job["kind"] == "video":
+                ref = _run_video(store, job, _provider_for(job, providers), poll_timeout)
             else:
-                provider = providers.setdefault(job["provider"], get_image_provider(job["provider"]))
-                ref = _run_image(store, job, provider, poll_timeout)
+                ref = _run_image(store, job, _provider_for(job, providers), poll_timeout)
         except Exception as exc:  # noqa: BLE001 - один запуск не валит партию
             _log.warning("aiv job %s failed: %s", job_id, exc)
             # Есть remote_id — не трогаем: опрос дочитает resume (без нового POST).
-            if not get_job(store, job_id)["remote_id"]:
+            current = get_job(store, job_id)
+            if not current["remote_id"] and current["status"] != "recovering":
                 hint = " (могло быть оплачено — проверь баланс; сам не повторяю)" if job["provider"] != "none" else ""
                 _set_job(store, job_id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:350]}{hint}")
             ref = None
@@ -926,14 +1288,14 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
         state = get_job(store, job_id)["status"]
         if ref is not None:
             done.append({"job_id": job_id, "ref_id": ref["id"], "label": job["label"], "url": ref["url"]})
-        elif state == "polling":
+        elif state in ("polling", "recovering"):
             pending.append(job_id)
         else:
             failed.append({"job_id": job_id, "label": job["label"], "status": state,
                            "error": get_job(store, job_id)["error"]})
             if job.get("approval_id") and job["provider"] != "none":
                 stop_cards.add(int(job["approval_id"]))
-    return {"done": done, "failed": failed, "held": held, "polling": pending}
+    return {"done": done, "failed": failed, "held": held, "polling": pending, "waiting": waiting}
 
 
 def run_pending(store: Any, approval_id: int | None = None, project_id: int | None = None,
@@ -949,7 +1311,8 @@ def run_pending(store: Any, approval_id: int | None = None, project_id: int | No
         sql += " AND project_id = ?"
         params.append(int(project_id))
     ids = [int(r["id"]) for r in store.db.query_all(sql + " ORDER BY id", params)]
-    out = run_jobs(store, ids, poll_timeout) if ids else {"done": [], "failed": [], "held": [], "polling": []}
+    out = run_jobs(store, ids, poll_timeout) if ids else {"done": [], "failed": [], "held": [], "polling": [],
+                                                          "waiting": []}
     out["resumed"] = resumed
     return out
 
@@ -964,7 +1327,7 @@ def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
         raise BudgetError(f"карточка #{approval_id} не одобрена владельцем ({card['status']}) — запускать нечего")
     jobs = list_jobs(store, approval_id=approval_id)
     if not confirm:
-        todo = [j for j in jobs if j["status"] in ("approved", "polling", "held")]
+        todo = [j for j in jobs if j["status"] in ("approved", "polling", "recovering", "held")]
         return {"ok": True, "status": "preview", "jobs": todo,
                 "note": "confirm=true — запустить/продолжить (одобрено владельцем на "
                         f"{card['payload'].get('amount_rub')} ₽)"}
@@ -974,32 +1337,59 @@ def run_approved(store: Any, approval_id: int, confirm: bool = False) -> dict:
 
 
 def resume(store: Any, poll_timeout: float | None = None) -> dict:
-    """После перезапуска: ``polling`` — опрашиваем дальше (POST не повторяем); ``submitting`` без
-    remote_id — оборвались в момент отправки: НЕ повторяем сами (могли уже заплатить)."""
-    from app.aivideo_providers import get_image_provider
+    """После перезапуска и каждым проходом работника:
 
-    broken = store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'submitting' AND remote_id = ''")
+    * ``polling`` — опрашиваем дальше (POST не повторяем);
+    * ``recovering`` — ответа на POST не было: спрашиваем адаптер (``recover``), нашёлся ли запрос;
+    * ``submitting`` без remote_id: время отправки записано — запрос мог уйти → ищем как
+      ``recovering``; не записано — POST не начинался → снова ``approved``; у озвучки (синхронный
+      платный вызов) — НЕ повторяем сами (могли уже заплатить)."""
+    from app.aivideo_providers import get_image_provider, get_video_provider
+
     with _LOCK:
         busy = set(_ACTIVE_JOBS) | set(_INFLIGHT)
-    lost = []
-    for row in broken:
+    lost, requeued = [], []
+    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'submitting' AND remote_id = ''"):
         if int(row["id"]) in busy:
             continue  # отправляется прямо сейчас в другом потоке этого процесса
         job = get_job(store, int(row["id"]))
-        _set_job(store, job["id"], status="failed",
-                 error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
-                       "(перегенерация)")
-        lost.append(job["id"])
-    finished = []
-    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'polling' AND remote_id != '' ORDER BY id"):
+        if job["kind"] in ("image", "video") and job.get("submitted_at"):
+            _set_job(store, job["id"], status="recovering",
+                     error="прервано после отправки — ищу запрос у провайдера, повторно не отправляю")
+        elif job["kind"] in ("image", "video", "chain"):
+            _set_job(store, job["id"], status="approved", error="прервано до отправки — запущу снова (не оплачено)")
+            requeued.append(job["id"])
+        else:
+            _set_job(store, job["id"], status="failed",
+                     error="прервано при отправке — могло быть оплачено; проверь баланс, повтор только вручную "
+                           "(перегенерация)")
+            lost.append(job["id"])
+
+    def adapter(job: dict) -> Any:
+        return (get_video_provider if job["kind"] == "video" else get_image_provider)(job["provider"])
+
+    finished, recovered = [], []
+    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'recovering' "
+                                  "ORDER BY submitted_at, id"):
         if int(row["id"]) in busy:
             continue
         job = get_job(store, int(row["id"]))
-        provider = get_image_provider(job["provider"])
-        ref = _finish(store, job, provider, poll_timeout)
+        ref = _recover(store, job, adapter(job), poll_timeout, attempts=1)
+        state = get_job(store, job["id"])
+        if state["status"] == "failed" and "не умеет" in state["error"]:
+            lost.append(job["id"])
+        if state["remote_id"]:
+            recovered.append(job["id"])
         if ref is not None:
             finished.append(job["id"])
-    return {"finished": finished, "lost": lost}
+    for row in store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE status = 'polling' AND remote_id != '' ORDER BY id"):
+        if int(row["id"]) in busy or int(row["id"]) in finished or int(row["id"]) in recovered:
+            continue
+        job = get_job(store, int(row["id"]))
+        ref = _finish(store, job, adapter(job), poll_timeout)
+        if ref is not None:
+            finished.append(job["id"])
+    return {"finished": finished, "lost": lost, "recovered": recovered, "requeued": requeued}
 
 
 def list_jobs(store: Any, project_id: int | None = None, approval_id: int | None = None,
@@ -1151,7 +1541,8 @@ class AiVideoWorker:
         while not stop.is_set():
             try:
                 busy = self.store.db.query_one(
-                    "SELECT 1 FROM aiv_gen_jobs WHERE status IN ('approved', 'polling', 'submitting') LIMIT 1")
+                    "SELECT 1 FROM aiv_gen_jobs WHERE status IN ('approved', 'polling', 'submitting', 'recovering') "
+                    "LIMIT 1")
                 if busy:
                     run_pending(self.store)
             except Exception as exc:  # noqa: BLE001 - фон не умирает

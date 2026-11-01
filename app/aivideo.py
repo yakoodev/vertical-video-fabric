@@ -26,6 +26,7 @@ import re
 from typing import Any
 
 from app import projects as P
+from app.aivideo_providers import provider_ids
 
 AIV_SCHEMA_SQL = [
     """
@@ -198,10 +199,38 @@ AIV_SCHEMA_SQL = [
 ]
 
 
+# v2 (видео планов и постоянство склеек): колонки поверх таблиц MVP.
+AIV_COLUMNS = [
+    # Провайдер, модель и разрешение видео планов (этап video); пусто — провайдер проекта и
+    # AIVIDEO_VIDEO_MODEL. Провайдер видео может отличаться от провайдера картинок.
+    ("aiv_projects", "video_provider", "TEXT NOT NULL DEFAULT ''"),
+    ("aiv_projects", "video_model", "TEXT NOT NULL DEFAULT ''"),
+    ("aiv_projects", "video_resolution", "TEXT NOT NULL DEFAULT '720p'"),
+    # Состояние на НАЧАЛО плана: по персонажам поза/куда смотрит/где в кадре/что в руках/одежда,
+    # плюс реквизит («один носок снят») — Gemini держит его от плана к плану.
+    ("aiv_shots", "state_json", "TEXT NOT NULL DEFAULT '{}'"),
+    # План продолжает прошлый (та же сцена): старт видео — последний кадр видео прошлого плана.
+    ("aiv_shots", "continues_from_prev", "INTEGER NOT NULL DEFAULT 0"),
+    ("aiv_shots", "sound", "TEXT NOT NULL DEFAULT ''"),
+    # Окно видео плана в сборке (секунды файла): агент обрезает начало/хвост.
+    ("aiv_shots", "video_in", "REAL"),
+    ("aiv_shots", "video_out", "REAL"),
+    # Проверка склейки Gemini-зрением: {ok, score, mismatches, checked_at}.
+    ("aiv_shots", "continuity_json", "TEXT NOT NULL DEFAULT ''"),
+    # Время отправки POST (UTC ISO), пишется ДО запроса: по нему id ищется в истории Polza после
+    # 504/обрыва и после перезапуска.
+    ("aiv_gen_jobs", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
 def ensure_aiv_schema(conn) -> None:
     """Таблицы ИИ-видео (из ``Database.init`` после проектов и автопилота)."""
     for sql in AIV_SCHEMA_SQL:
         conn.execute(sql)
+    for table, column, definition in AIV_COLUMNS:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
     # Карточка этапа (kind other, action aiv_budget) — свой обработчик решения владельца.
     import app.aivideo_gen  # noqa: F401
 
@@ -215,7 +244,7 @@ STYLE_KINDS = ("anime", "photoreal")
 STYLE_LABELS = {"anime": "аниме / 2D-toon", "photoreal": "фотореализм"}
 QUALITIES = ("draft", "quality")
 QUALITY_LABELS = {"draft": "черновик", "quality": "качество"}
-PROVIDERS = ("none", "polza")
+PROVIDERS = provider_ids()  # подключаемые: app/aivideo_providers.py CATALOGS
 ORIGINS = ("invented", "owner")
 SCRIPT_STATUSES = ("draft", "approved", "producing", "assembled")
 CAMERA_MOVES = ("static", "push_in", "pull_out", "pan_left", "pan_right", "tilt_up", "tilt_down",
@@ -280,7 +309,8 @@ def _now_sql() -> str:
 # --------------------------------------------------------------------------- #
 
 STYLE_FIELDS = ("style_kind", "passport_text", "palette", "negative_text", "image_model", "provider", "quality",
-                "captions_style", "music_track_id")
+                "captions_style", "music_track_id", "video_provider", "video_model", "video_resolution")
+VIDEO_RESOLUTIONS = ("480p", "720p")
 # Потолок месяца — только владелец (REST с cookie), не агент.
 OWNER_FIELDS = ("month_cap_rub",)
 
@@ -309,6 +339,9 @@ def get_style(store: Any, project_id: int) -> dict:
     require_project(store, project_id)
     data = _style_row(store, project_id)
     data["image_model"] = data.get("image_model") or settings.aivideo_image_model
+    data["video_provider"] = data.get("video_provider") or data["provider"]
+    data["video_model"] = data.get("video_model") or settings.aivideo_video_model
+    data["video_resolution"] = data.get("video_resolution") or "720p"
     data["style_label"] = STYLE_LABELS.get(data["style_kind"], data["style_kind"])
     data["quality_label"] = QUALITY_LABELS.get(data["quality"], data["quality"])
     return data
@@ -316,11 +349,14 @@ def get_style(store: Any, project_id: int) -> dict:
 
 def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) -> dict:
     """Стиль-библия и настройки проекта. ``owner`` — можно менять потолок месяца."""
-    from app.aivideo_providers import IMAGE_PRICES
+    from app.aivideo_providers import catalog
 
     require_project(store, project_id)
     allowed = STYLE_FIELDS + (OWNER_FIELDS if owner else ())
     sets: dict[str, Any] = {}
+    current = _style_row(store, project_id)
+    image_provider = (patch or {}).get("provider") or current["provider"]
+    video_provider = (patch or {}).get("video_provider") or current.get("video_provider") or image_provider
     for key, value in (patch or {}).items():
         if key not in allowed:
             if key in OWNER_FIELDS:
@@ -334,11 +370,23 @@ def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) 
             sets[key] = P._choice(value, QUALITIES, "quality")
         elif key == "palette":
             sets["palette_json"] = _json(_hexes(value))
+        elif key == "video_provider":
+            sets[key] = P._choice(value, PROVIDERS, "video_provider") if value else ""
         elif key == "image_model":
             model = str(value or "").strip()
-            if model and model not in IMAGE_PRICES:
-                raise AivError(f"image_model: одна из {', '.join(IMAGE_PRICES)}")
+            models = _catalog_models(catalog, image_provider, "image")
+            if model and model not in models:
+                raise AivError(f"image_model у {image_provider}: одна из {', '.join(models)}")
             sets[key] = model
+        elif key == "video_model":
+            model = str(value or "").strip()
+            models = _catalog_models(catalog, video_provider, "video")
+            if model and model not in models:
+                raise AivError(f"video_model у {video_provider}: одна из {', '.join(models)} (kling/v3 режет план "
+                               "на склейки — для сцепки планов не годится)")
+            sets[key] = model
+        elif key == "video_resolution":
+            sets[key] = P._choice(value or "720p", VIDEO_RESOLUTIONS, "video_resolution")
         elif key == "passport_text":
             sets[key] = P._long_text(value, 600)
         elif key == "negative_text":
@@ -359,13 +407,22 @@ def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) 
     return get_style(store, project_id)
 
 
+def _catalog_models(catalog: Any, provider: str, kind: str) -> list[str]:
+    try:
+        cat = catalog(provider)
+    except RuntimeError as exc:  # ProviderError: нет такого провайдера
+        raise AivError(str(exc)) from exc
+    return cat.image_models() if kind == "image" else cat.video_models()
+
+
 def create_ai_project(store: Any, name: str, style_kind: str = "anime", passport_text: str = "", palette: Any = None,
                       quality: str = "draft", provider: str = "none", description: str = "",
-                      image_model: str = "") -> dict:
+                      image_model: str = "", video_model: str = "") -> dict:
     project = P.create_project(store, name, kind=PROJECT_KIND, description=description)
     update_style(store, project["id"], {"style_kind": style_kind or "anime", "passport_text": passport_text,
                                         "palette": palette or [], "quality": quality or "draft",
-                                        "provider": provider or "none", "image_model": image_model})
+                                        "provider": provider or "none", "image_model": image_model,
+                                        "video_model": video_model})
     return overview(store, project["id"])
 
 
@@ -631,6 +688,7 @@ def _shot_from_row(row: Any) -> dict:
     data["needs_motion"] = bool(data.get("needs_motion"))
     data["lipsync"] = bool(data.get("lipsync"))
     data["locked"] = bool(data.get("locked"))
+    data["continuity"] = _loads(data.pop("continuity_json", ""), {}) or None
     return data
 
 
@@ -715,6 +773,10 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         warnings.append(f"план {idx}: реплик на {chars / CHARS_PER_SEC:.1f} с при плане {duration:g} с — "
                         "при сборке план удлинится под озвучку (или сократи текст)")
     transition = str(raw.get("transition_in") or "cut").strip().lower()
+    video_in, video_out = _window(raw.get("video_in")), _window(raw.get("video_out"))
+    if video_in is not None and video_out is not None and video_out - video_in < 0.5:
+        warnings.append(f"план {idx}: окно видео {video_in:g}–{video_out:g} с короче 0.5 с — сброшено")
+        video_in = video_out = None
     return {
         "idx": idx, "duration": round(duration, 2), "location": location,
         "cast_json": _json(cast), "camera_json": _json(camera), "dialogue_json": _json(dialogue),
@@ -722,7 +784,19 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         "motion_prompt": P._text(raw.get("motion_prompt"), 400), "needs_motion": int(bool(raw.get("needs_motion"))),
         "lipsync": int(bool(raw.get("lipsync"))),
         "transition_in": transition if transition in TRANSITIONS else "cut",
+        "sound": P._text(raw.get("sound"), 300), "video_in": video_in, "video_out": video_out,
     }
+
+
+def _window(value: Any) -> float | None:
+    """Секунда файла видео плана (окно сборки); пусто/мусор — None (всё видео)."""
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(min(30.0, max(0.0, number)), 3)
 
 
 def replace_shots(store: Any, script_id: int, shots: list, title: str | None = None, logline: str | None = None) -> dict:
@@ -793,6 +867,7 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
         "camera": shot["camera"], "dialogue": shot["dialogue"], "action": shot["action"],
         "image_prompt": shot["image_prompt"], "motion_prompt": shot["motion_prompt"],
         "needs_motion": shot["needs_motion"], "lipsync": shot["lipsync"], "transition_in": shot["transition_in"],
+        "sound": shot.get("sound") or "", "video_in": shot.get("video_in"), "video_out": shot.get("video_out"),
     }
     for key, value in (patch or {}).items():
         if key == "cast":
@@ -810,8 +885,12 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
     cols = ", ".join(f"{k} = ?" for k in row)
     store.db.execute(f"UPDATE aiv_shots SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                      (*row.values(), int(shot_id)))
+    motion = any(row[k] != (shot.get(k) or "") for k in ("motion_prompt", "sound"))
     if visual:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ?", (int(shot_id),))
+    elif motion:
+        store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
+                         "AND kind = 'shot_video'", (int(shot_id),))
     out = get_shot(store, shot_id)
     out["warnings"] = warnings
     return out
@@ -995,6 +1074,7 @@ def script_view(store: Any, script_id: int) -> dict:
     script = get_script(store, script_id)
     for shot in script["shots"]:
         shot["keyframes"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "keyframe")
+        shot["videos"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "shot_video")
         shot["line_audio"] = list_refs(store, script["project_id"], "line", int(shot["id"]), "line_audio")
         spent = store.db.query_one(
             "SELECT COALESCE(SUM(l.amount_rub), 0) AS s FROM aiv_ledger l JOIN aiv_gen_jobs j ON j.id = l.job_id "

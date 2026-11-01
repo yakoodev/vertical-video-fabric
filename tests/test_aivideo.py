@@ -458,3 +458,236 @@ def test_polza_images_uses_media_endpoint_with_input(monkeypatch, tmp_path):
     assert seen["body"]["input"]["images"] == [{"type": "base64", "data": "data:image/jpeg;base64,AA=="}]
     assert _result_url({"data": [{"url": "https://s3/x.jpg"}]}) == "https://s3/x.jpg"
     assert _result_url({"output": {"url": "https://s3/y.jpg"}}) == "https://s3/y.jpg"
+
+
+# --------------------------------------------------------------------------- #
+# v2: видео планов, 504 → восстановление id из истории, без второго POST
+# --------------------------------------------------------------------------- #
+
+
+def _motion(store, sid, *idxs):
+    for shot in V.get_script(store, sid)["shots"]:
+        if shot["idx"] in idxs:
+            V.update_shot(store, shot["id"], {"needs_motion": True, "motion_prompt": "кот медленно моргает",
+                                              "sound": "гул холодильника"})
+
+
+class FakeVideo:
+    """Платное видео-подделка как у Polza: POST «504» (запрос ушёл, ответа нет), id — в истории."""
+
+    name = "polza"
+    paid = True
+
+    def __init__(self, uncertain=True, hidden=0, cost=89.1):
+        self.posts = 0
+        self.checks = 0
+        self.history = []
+        self.uncertain = uncertain
+        self.hidden = hidden  # столько раз история ещё «не видит» запрос
+        self.cost = cost
+
+    def submit(self, params, refs):
+        self.posts += 1
+        rid = f"vid-{self.posts}"
+        self.history.append({"id": rid, "model": params["model"], "createdAt": G._utc_now()})
+        self.last_params, self.last_refs = params, refs
+        if self.uncertain:
+            raise PR.SubmitUncertain("Polza 504: Gateway Time-out")
+        return rid
+
+    def recover(self, model, since, exclude):
+        if self.hidden > 0:
+            self.hidden -= 1
+            return None
+        for item in self.history:
+            if item["model"] == model and item["id"] not in exclude:
+                return {"id": item["id"], "status": "pending", "cost": None}
+        return None
+
+    def check(self, remote_id):
+        self.checks += 1
+        return {"status": "completed", "url": "https://example.invalid/v.mp4", "cost_rub": self.cost}
+
+    def fetch(self, result, dest, params):
+        return PR.DryRunVideo().fetch(result, dest, params)
+
+
+@pytest.fixture
+def paid_video(env, monkeypatch):
+    img, vid = FakePaid(), FakeVideo()
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: img if name == "polza" else PR.DryRunImages())
+    monkeypatch.setattr(PR, "get_video_provider", lambda name: vid if name == "polza" else PR.DryRunVideo())
+    monkeypatch.setattr(G, "RECOVER_INTERVAL_SEC", 0.0)
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    return env, img, vid
+
+
+def test_video_stage_dry_run_versions_and_regenerate(env):
+    _client_, store = env
+    pid, sid = _project(store)
+    G.request_stage(store, pid, "refs")
+    _motion(store, sid, 1, 3)
+    # Без кадров видео не просим: элемент blocked, этап не запрошен.
+    est = G.estimate(store, pid, "video", sid)
+    assert est["blocked"] and any("нет кадра" in p for p in est["problems"])
+    with pytest.raises(V.AivError, match="нет кадра"):
+        G.request_stage(store, pid, "video", sid)
+    G.request_stage(store, pid, "keyframes", sid)
+    est = G.estimate(store, pid, "video", sid)
+    assert [i["label"] for i in est["items"]] == ["план 1: видео 4 с", "план 3: видео 4 с"]
+    assert est["model"] == "bytedance/seedance-2-fast" and est["total_rub"] == 0
+    out = G.request_stage(store, pid, "video", sid)
+    assert out["status"] == "done" and len(out["run"]["done"]) == 2
+    shot1 = V.get_script(store, sid)["shots"][0]
+    [video] = V.list_refs(store, pid, "shot", shot1["id"], "shot_video")
+    asset = store.get_montage_asset(video["asset_id"])
+    assert asset["kind"] == "video" and asset["duration_sec"] == pytest.approx(4.0, abs=0.3)
+    job = G.get_job(store, out["run"]["done"][0]["job_id"])
+    assert job["params"]["request"]["duration"] == "4" and job["params"]["request"]["generate_audio"] is True
+    assert "гул холодильника" in job["prompt"] and "No music, no speech" in job["prompt"]
+    assert G.estimate(store, pid, "video", sid)["count"] == 0  # всё есть
+    again = G.regenerate(store, ref_id=video["id"])
+    assert again["status"] == "done" and again["estimate"]["stage"] == "video"
+    versions = V.list_refs(store, pid, "shot", shot1["id"], "shot_video")
+    assert [v["version"] for v in versions] == [1, 2] and versions[-1]["selected"]
+    V.select_ref(store, versions[0]["id"])
+    assert V.selected_ref(store, pid, "shot", shot1["id"], "shot_video")["version"] == 1
+    # Правка движения плана — видео «устарело», кадр — нет.
+    V.update_shot(store, shot1["id"], {"motion_prompt": "кот прыгает"})
+    assert V.selected_ref(store, pid, "shot", shot1["id"], "shot_video")["stale"]
+    assert not V.selected_ref(store, pid, "shot", shot1["id"], "keyframe")["stale"]
+
+
+def test_video_price_measured_and_project_setting(env):
+    _client_, store = env
+    pid, sid = _project(store, provider="polza")
+    style = V.get_style(store, pid)
+    assert style["video_model"] == "bytedance/seedance-2-fast" and style["video_provider"] == "polza"
+    assert PR.video_price("bytedance/seedance-2-fast", "720p", 4)["rub"] == pytest.approx(89.1)
+    assert PR.video_price("grok-imagine-video-1-5", "720p", 4)["rub"] == pytest.approx(12.15)
+    assert PR.image_price("google/gemini-nano-banana-2.1", "2K")["rub"] == pytest.approx(4.5)
+    shot = V.get_script(store, sid)["shots"][0]
+    # Длинные реплики → видео длиннее (до 8 с); короче 4 с не бывает.
+    assert G.video_seconds({**shot, "duration": 2}, "bytedance/seedance-2-fast") == 4
+    assert G.video_seconds({**shot, "duration": 3, "dialogue": [{"text": "x" * 90}]},
+                           "bytedance/seedance-2-fast") == 8
+    with pytest.raises(V.AivError, match="video_model"):
+        V.update_style(store, pid, {"video_model": "kling/v3"})
+    V.update_style(store, pid, {"video_model": "grok-imagine-video-1-5", "video_resolution": "480p"})
+    assert PR.video_params("grok-imagine-video-1-5", "p", 4, "480p").get("generate_audio") is None
+    with pytest.raises(ValueError, match="video_provider"):
+        V.update_style(store, pid, {"video_provider": "kie"})  # такого адаптера нет
+
+
+def test_video_504_recovers_id_from_history_without_second_post(paid_video):
+    (_client_, store), img, vid = paid_video
+    pid, sid = _project(store, provider="polza")
+    for stage, kw in (("refs", {}), ("keyframes", {"script_id": sid})):
+        req = G.request_stage(store, pid, stage, **kw)
+        A.decide(store, req["approval_id"], "approve", actor="ui")
+        G.run_pending(store)
+    _motion(store, sid, 1)
+    req = G.request_stage(store, pid, "video", sid)
+    assert req["status"] == "awaiting_approval" and req["estimate"]["total_rub"] == pytest.approx(89.1)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    out = G.run_pending(store)
+    assert vid.posts == 1 and len(out["done"]) == 1, out
+    [job] = G.list_jobs(store, approval_id=req["approval_id"])
+    assert job["status"] == "done" and job["remote_id"] == "vid-1" and job["submitted_at"]
+    led = [l for l in G.ledger(store, pid) if l["stage"] == "video"]
+    assert len(led) == 1 and led[0]["amount_rub"] == pytest.approx(89.1)
+    assert vid.last_params["duration"] == "4" and len(vid.last_refs) == 1  # стартовый кадр
+
+
+def test_video_recovery_survives_restart_and_never_resubmits(paid_video, monkeypatch):
+    (_client_, store), img, vid = paid_video
+    pid, sid = _project(store, provider="polza")
+    for stage, kw in (("refs", {}), ("keyframes", {"script_id": sid})):
+        req = G.request_stage(store, pid, stage, **kw)
+        A.decide(store, req["approval_id"], "approve", actor="ui")
+        G.run_pending(store)
+    _motion(store, sid, 1, 2)
+    vid.hidden = 10**6  # история ещё не показывает запрос
+    req = G.request_stage(store, pid, "video", sid)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    jobs = sorted(G.list_jobs(store, approval_id=req["approval_id"]), key=lambda j: j["id"])
+    assert [j["status"] for j in jobs] == ["recovering", "recovering"] and vid.posts == 2
+    # «Перезапуск»: новый адаптер с той же историей; деньги уже зарезервированы, POST не повторяется.
+    fresh = FakeVideo()
+    fresh.history = list(vid.history)
+    monkeypatch.setattr(PR, "get_video_provider", lambda name: fresh)
+    res = G.resume(store)
+    assert sorted(res["recovered"]) == [j["id"] for j in jobs] and fresh.posts == 0
+    jobs = sorted(G.list_jobs(store, approval_id=req["approval_id"]), key=lambda j: j["id"])
+    # Каждому запуску — свой id (ранний запрос — раннему запуску), оба готовы.
+    assert [(j["status"], j["remote_id"]) for j in jobs] == [("done", "vid-1"), ("done", "vid-2")]
+    # Запрос так и не появился у провайдера — после срока failed, без нового POST.
+    store.db.execute("UPDATE aiv_gen_jobs SET status = 'recovering', remote_id = '', submitted_at = ? WHERE id = ?",
+                     ("2020-01-01T00:00:00", jobs[0]["id"]))
+    fresh.history = []
+    G.resume(store)
+    lost = G.get_job(store, jobs[0]["id"])
+    assert lost["status"] == "failed" and "не появился" in lost["error"] and fresh.posts == 0
+    # Сбой ДО отправки (время не записано) — запуск снова approved (не оплачено).
+    store.db.execute("UPDATE aiv_gen_jobs SET status = 'submitting', remote_id = '', submitted_at = '' WHERE id = ?",
+                     (jobs[1]["id"],))
+    assert G.resume(store)["requeued"] == [jobs[1]["id"]]
+
+
+def test_polza_video_adapter_504_and_history_lookup(monkeypatch, tmp_path):
+    import httpx
+
+    from app.aivideo_providers import PolzaVideo
+
+    start = tmp_path / "start.jpg"
+    start.write_bytes(b"\xff\xd8\xff\xd9")
+    monkeypatch.setattr("app.aivideo_providers.start_frame_data_url", lambda p: "data:image/jpeg;base64,AA==")
+    seen = {}
+
+    class _Resp:
+        def __init__(self, code, payload):
+            self.status_code, self._payload = code, payload
+            self.content = b"{}"
+
+        def json(self):
+            return self._payload
+
+    def post_504(url, headers=None, json=None, timeout=None):
+        seen["body"] = json
+        return _Resp(504, {"error": {"message": "Gateway Time-out"}})
+
+    monkeypatch.setattr(httpx, "post", post_504)
+    adapter = PolzaVideo(api_key="k", base_url="https://polza.test/api/v1")
+    params = PR.video_params("bytedance/seedance-2-fast", "кадр", 4, "720p")
+    with pytest.raises(PR.SubmitUncertain):
+        adapter.submit(params, [start])
+    assert seen["body"]["input"]["duration"] == "4" and seen["body"]["input"]["generate_audio"] is True
+    assert seen["body"]["input"]["images"] == [{"type": "base64", "data": "data:image/jpeg;base64,AA=="}]
+
+    def post_down(url, headers=None, json=None, timeout=None):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "post", post_down)
+    with pytest.raises(PR.ProviderError) as info:
+        adapter.submit(params, [start])
+    assert not isinstance(info.value, PR.SubmitUncertain)  # не ушло — не списано
+
+    items = [
+        {"id": "new2", "model": "bytedance/seedance-2-fast", "status": "pending", "createdAt": "2026-11-01T12:00:40.5Z"},
+        {"id": "new1", "model": "bytedance/seedance-2-fast", "status": "pending", "cost": "89.1",
+         "createdAt": "2026-11-01T12:00:03Z"},
+        {"id": "other", "model": "grok-imagine-video-1-5", "createdAt": "2026-11-01T12:00:05Z"},
+        {"id": "old", "model": "bytedance/seedance-2-fast", "createdAt": "2026-11-01T11:00:00Z"},
+    ]
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        seen["get"] = (url, params)
+        return _Resp(200, {"items": items})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    found = adapter.recover("bytedance/seedance-2-fast", "2026-11-01T12:00:00", set())
+    assert found == {"id": "new1", "status": "pending", "cost": 89.1}
+    assert seen["get"][0].endswith("/history/generations") and seen["get"][1]["requestType"] == "video"
+    assert adapter.recover("bytedance/seedance-2-fast", "2026-11-01T12:00:00", {"new1"})["id"] == "new2"
+    assert adapter.recover("bytedance/seedance-2-fast", "2026-11-01T12:01:00", set()) is None
