@@ -1,29 +1,30 @@
 """ИИ-видео: сборка серии в обычный холст-клип (docs/design/ai-video-projects.md §1.7).
 
-Каждый план — слой ``image`` с выбранным ключевым кадром на своём отрезке; движение камеры плана:
+План с готовым видео (этап ``video``) — слой ``video`` со звуком модели (``audio: true``,
+скромное усиление ``VIDEO_GAIN_DB``); склейки — по НАСТОЯЩИМ длительностям видео, агент может
+обрезать каждое окном ``video_in``/``video_out`` (секунды файла). Реплики длиннее видео — последний
+кадр стоит (``freeze``), сборка об этом пишет.
+
+План без видео — запасной путь: слой ``image`` с выбранным кадром и движением камеры:
 
 * ``static`` / ``push_in`` / ``pull_out`` / ``pan_*`` / ``tilt_up|down`` — Ken Burns ключами слоя
   (масштаб и сдвиг; кадр с запасом по краям, чтобы не показать фон);
 * ``parallax_push`` / ``orbit`` / ``float`` / ``dolly_zoom`` / ``tilt_reveal`` — наша 3D-камера
   (``app/camera3d.py``) на отрезке плана; на склейке камера возвращается в покой.
 
-Реплики: озвучка этапа ``voice`` (голос персонажа, TTS из ``app/dubbing.py``) ложится по планам
-подряд; если реплики длиннее плана — план удлиняется. Все реплики — одна дорожка (слой ``audio``),
-субтитры клипа — из тех же реплик с их окнами (слой ``captions``, стиль проекта). Музыка — трек
-проекта (паки, бесплатно). Результат — обычный клип: правится в редакторе, рендерится и
-публикуется как всё остальное. Каждая сборка — новый клип (правки прошлой сборки не теряются).
+Реплики: озвучка этапа ``voice`` (голос персонажа, TTS из ``app/dubbing.py``) — каждая своим слоем
+``audio`` на своём времени в плане (правится в редакторе по одной). Субтитры клипа — из тех же
+реплик с их окнами (слой ``captions``, стиль субтитров проекта). Музыка — трек проекта (паки,
+бесплатно), под репликами приглушена (``music_duck``). Результат — обычный клип: правится в
+редакторе, рендерится и публикуется как всё остальное. Каждая сборка — новый клип.
 """
 
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from app import aivideo as V
 from app import aivideo_gen as G
-from app.settings import settings
 
 LEAD_SEC = 0.35  # от начала плана до первой реплики
 GAP_SEC = 0.2  # между репликами
@@ -38,6 +39,9 @@ CAMERA_PRESET_MOVES = {"parallax_push", "orbit", "float", "dolly_zoom", "tilt_re
 PRESET_INTENSITY = {"parallax_push": 0.8, "orbit": 0.35, "float": 0.8, "dolly_zoom": 0.35, "tilt_reveal": 0.3}
 PRESET_OVERSCAN = 1.35
 SOFT = "inOutQuad"
+VIDEO_GAIN_DB = -4.0  # звук видеомодели (фон, шумы) — тише голосов
+MUSIC_DUCK_DB = -10.0  # музыка под репликой
+MIN_WINDOW_SEC = 0.5
 
 
 def _keys(move: str, length: float) -> tuple[float, dict]:
@@ -59,12 +63,12 @@ def _keys(move: str, length: float) -> tuple[float, dict]:
     return 1.0, {"scale": [{"t": 0, "v": OVERSCAN, "ease": SOFT}, {"t": end, "v": OVERSCAN + 0.035}]}
 
 
-def _line_audio(store: Any, project_id: int, shot: dict, i: int, line: dict) -> Path | None:
+def _line_ref(store: Any, project_id: int, shot: dict, i: int, line: dict) -> dict | None:
     voice = G._voice_of(store, project_id, line["who"])
     ref = V.selected_ref(store, project_id, "line", int(shot["id"]), "line_audio", str(i))
     if not G._fresh(ref) or ref["prompt"] != G._line_key(voice, line["text"]):
         return None
-    return G._asset_path(store, ref)
+    return ref if G._asset_path(store, ref) else None
 
 
 def ensure_voice(store: Any, script: dict) -> dict:
@@ -79,8 +83,27 @@ def ensure_voice(store: Any, script: dict) -> dict:
     return G.request_stage(store, script["project_id"], "voice", script["id"], requested_by="assemble")
 
 
+def _video_of(store: Any, project_id: int, shot: dict) -> dict | None:
+    """Выбранное видео плана с окном: {ref, asset_id, from, window, duration}."""
+    ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "shot_video")
+    if not ref or not ref.get("asset_id") or G._asset_path(store, ref) is None:
+        return None
+    try:
+        duration = float(store.get_montage_asset(int(ref["asset_id"])).get("duration_sec") or 0)
+    except KeyError:
+        return None
+    if duration <= 0:
+        return None
+    a = min(max(0.0, float(shot.get("video_in") or 0.0)), max(0.0, duration - MIN_WINDOW_SEC))
+    b = float(shot["video_out"]) if shot.get("video_out") is not None else duration
+    b = min(duration, max(a + MIN_WINDOW_SEC, b))
+    return {"ref": ref, "asset_id": int(ref["asset_id"]), "from": round(a, 3), "window": round(b - a, 3),
+            "duration": round(duration, 3)}
+
+
 def timeline(store: Any, script: dict) -> dict:
-    """Окна планов и реплик (секунды клипа)."""
+    """Окна планов и реплик (секунды клипа). План с видео — длина окна видео; без видео — длительность
+    плана; реплики длиннее — план удлиняется (у видео стоит последний кадр)."""
     from app.dubbing import probe_duration
 
     project_id = int(script["project_id"])
@@ -89,31 +112,46 @@ def timeline(store: Any, script: dict) -> dict:
     for shot in script["shots"]:
         placed = []
         for i, line in enumerate(shot["dialogue"]):
-            path = _line_audio(store, project_id, shot, i, line)
-            if path is None:
+            ref = _line_ref(store, project_id, shot, i, line)
+            if ref is None:
                 raise V.AivError(f"план {shot['idx']}: нет озвучки реплики {i + 1} — этап voice")
-            placed.append((line, path, max(0.2, probe_duration(path))))
-        need = (LEAD_SEC + sum(d for _l, _p, d in placed) + GAP_SEC * (len(placed) - 1) + TAIL_SEC) if placed else 0
-        length = round(max(float(shot["duration"]), need), 3)
+            path = G._asset_path(store, ref)
+            placed.append((line, ref, max(0.2, probe_duration(path))))
+        need = (LEAD_SEC + sum(d for _l, _r, d in placed) + GAP_SEC * (len(placed) - 1) + TAIL_SEC) if placed else 0
+        video = _video_of(store, project_id, shot)
+        base = video["window"] if video else float(shot["duration"])
+        length = round(max(base, need), 3)
         cursor = t + LEAD_SEC
-        for line, path, d in placed:
-            lines.append({"shot": shot["idx"], "who": line["who"], "text": line["text"], "start": round(cursor, 3),
-                          "end": round(cursor + d, 3), "path": path})
+        for i, (line, ref, d) in enumerate(placed):
+            lines.append({"shot": shot["idx"], "n": i + 1, "who": line["who"], "text": line["text"],
+                          "start": round(cursor, 3), "end": round(cursor + d, 3), "asset_id": int(ref["asset_id"])})
             cursor += d + GAP_SEC
-        shots.append({"shot": shot, "start": round(t, 3), "end": round(t + length, 3),
-                      "stretched": round(length - float(shot["duration"]), 2)})
+        shots.append({"shot": shot, "start": round(t, 3), "end": round(t + length, 3), "video": video,
+                      "stretched": round(length - base, 2)})
         t += length
     return {"shots": shots, "lines": lines, "total": round(t, 3)}
 
 
+def _music_duck(lines: list[dict]) -> list[dict]:
+    """Окна реплик (слитые, если между ними < 0.4 с) — музыка в них тише."""
+    spans: list[list[float]] = []
+    for line in lines:
+        a, b = max(0.0, line["start"] - 0.1), line["end"] + 0.15
+        if spans and a - spans[-1][1] < 0.4:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    return [{"start": round(a, 3), "end": round(b, 3), "gain_db": MUSIC_DUCK_DB} for a, b in spans]
+
+
 def assemble(store: Any, script_id: int, music_track_id: int | None = None, captions_style: str | None = None,
              background: Any = None, title: str | None = None) -> dict:
-    """Серия → новый холст-клип. Нужны кадры всех планов (этап keyframes); озвучка — этап voice
-    (сухой прогон делается тут же бесплатно)."""
+    """Серия → новый холст-клип. Нужно видео (этап video) или кадр (этап keyframes) у каждого плана;
+    озвучка — этап voice (сухой прогон делается тут же бесплатно)."""
+    from app.audio_edit import normalize_audio
     from app.camera3d import PresetError, apply_preset
     from app.canvas import MIN_DURATION_SEC, base_seconds, create_canvas_clip
     from app.clip_subtitles import save_lines
-    from app.dubbing import mix_args
     from app.motion import DEFAULT_FOV, normalize_camera, normalize_layers
 
     script = V.get_script(store, script_id)
@@ -123,15 +161,19 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         raise V.AivError("в серии нет планов")
     frames = {}
     missing = []
-    for shot in script["shots"]:
+    for n, shot in enumerate(script["shots"]):
+        if _video_of(store, project_id, shot):
+            continue
         ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
         if not ref or not ref.get("asset_id"):
-            missing.append(shot["idx"])
+            prev = script["shots"][n - 1] if n else None
+            missing.append(f"{shot['idx']} (сцеплен с видео плана {prev['idx']} — этап video)"
+                           if G._is_chain(shot, prev) else str(shot["idx"]))
         else:
             frames[shot["id"]] = ref
     if missing:
-        raise V.AivError(f"нет кадра у планов {', '.join(map(str, missing))} — этап keyframes "
-                         "(aiv_request_approval stage keyframes)")
+        raise V.AivError(f"нет ни видео, ни кадра у планов {', '.join(missing)} — этап keyframes / video "
+                         "(aiv_request_approval)")
     voice = ensure_voice(store, script)
     script = V.get_script(store, script_id)
     plan = timeline(store, script)
@@ -155,9 +197,26 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         fade_in = shot["transition_in"] == "fade" and n > 0
         fade_out = bool(nxt and nxt["transition_in"] == "fade")
         end = min(total, t1 + (FADE_SEC if fade_out else 0.0))
+        video = item["video"]
+        layer_id, name = f"{LAYER_PREFIX}shot_{shot['idx']}", f"План {shot['idx']}"
+        if video:
+            layer = {"id": layer_id, "type": "video", "name": name, "start": round(t0, 3), "end": round(end, 3),
+                     "track": 1, "x": 0.5, "y": 0.5, "z": 0, "scale": 1.0,
+                     "props": {"asset_id": video["asset_id"], "w": 1080, "from": video["from"], "freeze": True,
+                               "audio": True, "gain_db": VIDEO_GAIN_DB}}
+            if fade_in:
+                layer["in"] = {"type": "fade", "duration": FADE_SEC}
+            layers.append(layer)
+            if video["ref"].get("stale"):
+                notes.append(f"план {shot['idx']}: видео «устарело» (правили план или прошлое видео) — "
+                             "перегенерируй (aiv_regenerate) или оставь")
+            if item["stretched"] > 0.05:
+                notes.append(f"план {shot['idx']}: реплики длиннее видео на {item['stretched']:.1f} с — последний "
+                             "кадр стоит; перегенерируй видео длиннее или сократи реплику")
+            continue
         move = (shot["camera"] or {}).get("move") or "static"
         base, keys = _keys(move, end - t0)
-        layer = {"id": f"{LAYER_PREFIX}shot_{shot['idx']}", "type": "image", "name": f"План {shot['idx']}",
+        layer = {"id": layer_id, "type": "image", "name": name,
                  "start": round(t0, 3), "end": round(end, 3), "track": 1, "x": 0.5, "y": 0.5, "z": 0,
                  "scale": base, "props": {"asset_id": int(frames[shot["id"]]["asset_id"]), "w": 1080}}
         if keys:
@@ -165,6 +224,8 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         if fade_in:
             layer["in"] = {"type": "fade", "duration": FADE_SEC}
         layers.append(layer)
+        if shot.get("needs_motion"):
+            notes.append(f"план {shot['idx']}: видео нет — стоп-кадр с движением камеры (этап video оживит)")
         if move in CAMERA_PRESET_MOVES:
             length = min(12.0, max(0.3, t1 - t0))
             try:
@@ -189,18 +250,13 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         if item["stretched"] > 0.05:
             notes.append(f"план {shot['idx']} удлинён на {item['stretched']:.1f} с под реплики")
 
+    for line in plan["lines"]:
+        layers.append({"id": f"{LAYER_PREFIX}line_{line['shot']}_{line['n']}", "type": "audio",
+                       "name": f"Реплика {line['shot']}.{line['n']} ({line['who']})", "start": line["start"],
+                       "end": round(min(total, line["end"] + 0.05), 3),
+                       "props": {"asset_id": line["asset_id"], "mode": "track", "volume": 1.0, "fadeIn": 0.02,
+                                 "fadeOut": 0.05}})
     if plan["lines"]:
-        work = settings.tmp_dir / f"aiv-mix-{uuid4().hex}"
-        work.mkdir(parents=True, exist_ok=True)
-        try:
-            track = work / "voices.mp3"
-            _ffmpeg(mix_args([(Path(l["path"]), l["start"]) for l in plan["lines"]], total, track))
-            asset = _save_track(store, track, script)
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-        layers.append({"id": f"{LAYER_PREFIX}voices", "type": "audio", "name": "Реплики", "start": 0.0,
-                       "end": round(total, 3), "props": {"asset_id": int(asset["id"]), "mode": "track",
-                                                         "volume": 1.0, "fadeIn": 0.02, "fadeOut": 0.05}})
         save_lines(store, plan_id, [{"start": l["start"], "end": l["end"], "text": l["text"]} for l in plan["lines"]])
         layers.append({"id": f"{LAYER_PREFIX}captions", "type": "captions", "name": "Субтитры", "start": 0.0,
                        "end": round(total, 3), "track": 6, "x": 0.5, "y": 0.72,
@@ -214,33 +270,21 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
         try:
             store.get_audio_track(int(track_id))
             render.update({"music_on": True, "track_id": int(track_id), "music_start_sec": 0.0})
+            if plan["lines"]:
+                render["audio"] = normalize_audio({**(render.get("audio") or {}),
+                                                   "music_duck": _music_duck(plan["lines"])})
         except (KeyError, TypeError, ValueError):
             notes.append(f"музыка: нет трека {track_id} — без музыки")
     store.set_clip_plan_render_settings(plan_id, render)
     store.db.execute("UPDATE aiv_scripts SET clip_plan_id = ?, status = 'assembled', updated_at = CURRENT_TIMESTAMP "
                      "WHERE id = ?", (plan_id, int(script_id)))
     fresh = store.get_clip_plan(plan_id)
+    videos = sum(1 for s in plan["shots"] if s["video"])
     return {"ok": True, "clip_id": plan_id, "project_id": fresh["source_id"], "duration": round(total, 2),
-            "shots": len(plan["shots"]), "lines": len(plan["lines"]), "layers": len(render["layers"]),
+            "shots": len(plan["shots"]), "video_shots": videos, "still_shots": len(plan["shots"]) - videos,
+            "lines": len(plan["lines"]), "layers": len(render["layers"]),
             "camera_keys": len(render["camera"]), "voice": voice.get("status"),
+            "timeline": [{"shot": s["shot"]["idx"], "start": s["start"], "end": s["end"],
+                          "kind": "video" if s["video"] else "still"} for s in plan["shots"]],
             "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={plan_id}", "notes": notes,
             "note": ("обычный холст-клип: правь в редакторе (слои aiv_*), рендер и публикация — как у любого клипа")}
-
-
-def _ffmpeg(args: list[str]) -> None:
-    from app.dubbing import _run
-
-    _run(args)
-
-
-def _save_track(store: Any, track: Path, script: dict) -> dict:
-    from app.montage_assets import assets_dir, probe_asset
-
-    dest = assets_dir() / f"{uuid4().hex}-aiv-voices-{script['id']}.mp3"
-    shutil.move(str(track), dest)
-    meta = probe_asset(dest)
-    return store.create_montage_asset(
-        kind="audio", label=f"ИИ-видео: реплики серии {script['episode_no']}"[:120],
-        description=f"Озвучка серии «{script['title']}» по репликам персонажей"[:500], tags="ии-видео",
-        file_path=str(dest), original_filename=dest.name, mime_type="audio/mpeg", size_bytes=dest.stat().st_size,
-        **{**meta, "width": 0, "height": 0})

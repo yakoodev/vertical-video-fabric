@@ -858,3 +858,84 @@ def test_continuity_check_flags_mismatches_with_fake_gemini(env):
     assert G.estimate(store, pid, "video", sid)["continuity"][0]["idx"] == 2
     # Без Gemini — пропуск, этап video не блокируется.
     assert G.check_continuity(store, sid)["skipped"]
+
+
+# --------------------------------------------------------------------------- #
+# v2: сборка — видео планов слоями со звуком, склейки по длительностям, реплики, музыка
+# --------------------------------------------------------------------------- #
+
+
+def test_assembly_v2_video_layers_timing_lines_and_music(env):
+    _client_, store = env
+    tmp_path = settings.audio_dir
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    pid, sid, out = _state_project(store)
+    shots = out["shots"]
+    # План 1 — 1 реплика; план 2 — видео обрезано окном 0.5–3.0 с; план 3 — стоп-кадр (Ken Burns).
+    V.update_shot(store, shots[1]["id"], {"video_in": 0.5, "video_out": 3.0,
+                                          "dialogue": [{"who": "mira", "text": "Где второй?"}]})
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)
+    G.request_stage(store, pid, "video", sid)
+    import subprocess
+
+    music = tmp_path / "music.mp3"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=15",
+                    str(music)], check=True)
+    track = store.create_audio_track("тест", music)
+    from app.aivideo_assemble import LEAD_SEC, MUSIC_DUCK_DB, VIDEO_GAIN_DB, assemble
+
+    res = assemble(store, sid, music_track_id=track["id"])
+    assert res["video_shots"] == 2 and res["still_shots"] == 1, res
+    plan = store.get_clip_plan(res["clip_id"])
+    layers = {l["id"]: l for l in plan["render_settings"]["layers"]}
+    v1, v2, s3 = layers["aiv_shot_1"], layers["aiv_shot_2"], layers["aiv_shot_3"]
+    assert v1["type"] == "video" and v2["type"] == "video" and s3["type"] == "image"
+    assert v1["props"]["audio"] is True and v1["props"]["gain_db"] == VIDEO_GAIN_DB and v1["props"]["freeze"]
+    # Склейки по настоящим длительностям: видео 1 — 4 с целиком, видео 2 — окно 2.5 с с секунды 0.5.
+    assert v1["start"] == 0 and v1["end"] == pytest.approx(4.0, abs=0.15)
+    assert v2["props"]["from"] == pytest.approx(0.5)
+    assert v2["start"] == pytest.approx(v1["end"]) and v2["end"] - v2["start"] == pytest.approx(2.5, abs=0.05)
+    assert s3["start"] == pytest.approx(v2["end"]) and s3["end"] - s3["start"] == pytest.approx(4.0)
+    assert "scale" in s3.get("keys", {}) or "x" in s3.get("keys", {})
+    # Реплики — каждая своим слоем на своём времени плана; субтитры — те же окна.
+    lines = [l for l in plan["render_settings"]["layers"] if l["id"].startswith("aiv_line_")]
+    assert [l["id"] for l in lines] == ["aiv_line_1_1", "aiv_line_2_1"]
+    assert lines[0]["start"] == pytest.approx(LEAD_SEC) and lines[1]["start"] == pytest.approx(v2["start"] + LEAD_SEC)
+    assert all(l["props"]["mode"] == "track" for l in lines)
+    subs = store.get_clip_plan_subtitles(res["clip_id"])["lines"]
+    assert [s["text"] for s in subs] == ["Жарко…", "Где второй?"]
+    assert subs[1]["start"] == pytest.approx(lines[1]["start"])
+    assert any(l["type"] == "captions" for l in plan["render_settings"]["layers"])
+    # Музыка под репликами приглушена.
+    rs = plan["render_settings"]
+    assert rs["music_on"] and rs["track_id"] == track["id"]
+    ducks = rs["audio"]["music_duck"]
+    assert len(ducks) == 2 and all(d["gain_db"] == MUSIC_DUCK_DB for d in ducks)
+    assert ducks[0]["start"] <= lines[0]["start"] <= ducks[0]["end"]
+    assert res["duration"] == pytest.approx(s3["end"], abs=0.01)
+
+    from app.motion_render import CompositorMissing, compositor_command
+
+    try:
+        compositor_command()
+    except CompositorMissing:
+        pytest.skip("компоновщик не собран (npm run build:motion)")
+    from app.dubbing import probe_duration
+    from app.render import ClipRenderService
+
+    preset = store.create_ffmpeg_preset("aiv v2", output_width=180, output_height=320, fps=15)
+    clip = ClipRenderService(store).render_clip_plan(res["clip_id"], ffmpeg_preset_id=preset["id"])
+    assert clip["status"] == "succeeded", clip.get("error")
+    assert abs(probe_duration(Path(clip["output_path"])) - res["duration"]) < 1.0
+
+
+def test_assembly_requires_video_for_chained_shot_without_frame(env):
+    _client_, store = env
+    pid, sid, out = _state_project(store)
+    G.request_stage(store, pid, "refs")
+    G.request_stage(store, pid, "keyframes", sid)  # план 2 сцеплен — кадра нет до этапа video
+    from app.aivideo_assemble import assemble
+
+    with pytest.raises(V.AivError, match="сцеплен с видео плана 1"):
+        assemble(store, sid)
