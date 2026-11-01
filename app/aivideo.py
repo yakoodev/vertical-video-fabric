@@ -250,6 +250,15 @@ def ensure_aiv_schema(conn) -> None:
     for table, column, ddl in AIV_COLUMNS:
         if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    # До 02.11 отказ провайдера без суммы в ответе писался в траты по оценке, хотя за упавшую задачу
+    # провайдер не списывает: такие строки журнала — 0 ₽ (серия и месяц не упираются в потолок).
+    # Повторный запуск ничего не меняет (amount_rub > 0).
+    refused = ("source = 'estimate' AND amount_rub > 0 AND note LIKE 'отказ провайдера%' AND job_id IN "
+               "(SELECT id FROM aiv_gen_jobs WHERE status IN ('failed', 'blocked_policy'))")
+    conn.execute(f"UPDATE aiv_gen_jobs SET cost_rub = 0, cost_source = 'none' WHERE id IN "
+                 f"(SELECT job_id FROM aiv_ledger WHERE {refused})")
+    conn.execute(f"UPDATE aiv_ledger SET amount_rub = 0, note = substr(note || ' — снято 02.11: за отказ провайдер "
+                 f"не списывает', 1, 300) WHERE {refused}")
     # Карточка этапа (kind other, action aiv_budget) — свой обработчик решения владельца.
     import app.aivideo_gen  # noqa: F401
 
