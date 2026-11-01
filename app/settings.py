@@ -63,6 +63,12 @@ class Settings:
         # Ниже 1080p (720×1280 у ИИ-видео) — поднять до 1080 по короткой стороне: площадки
         # раздают 1080p-версию только тем, кто прислал хотя бы 1080p.
         self.publish_master_upscale = _truthy(os.getenv("PUBLISH_MASTER_UPSCALE", "true"))
+        # Повторы шагов загрузки, которые безопасно повторить (до публикации поста): сеть, 429, 5xx.
+        self.publish_upload_retries = int(os.getenv("PUBLISH_UPLOAD_RETRIES", "2") or 0)
+        self.publish_upload_retry_seconds = float(os.getenv("PUBLISH_UPLOAD_RETRY_SECONDS", "5") or 0)
+        # User-Agent веб-загрузки TikTok: лучше того браузера, из которого взяты cookie аккаунта
+        # (пусто — прежний встроенный).
+        self.tiktok_user_agent = os.getenv("TIKTOK_USER_AGENT", "").strip()
         # Статистика опубликованных клипов (app/platform_stats.py): раз в N часов
         # по одной ссылке с паузой — площадки не любят частых запросов. 0 — без фона.
         self.stats_interval_hours = float(os.getenv("STATS_INTERVAL_HOURS", "6") or 0)
