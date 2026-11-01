@@ -18,9 +18,12 @@ class JobWorker:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if self._thread and self._thread.is_alive() and not self._stop.is_set():
             return
-        self._thread = threading.Thread(target=self._run, name="job-worker", daemon=True)
+        # Модуль «Публикация» включили снова (app/modules.py): свой флаг остановки у нового
+        # потока — старый, если ещё дорабатывает выкладку, выйдет по своему.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name="job-worker", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -28,13 +31,14 @@ class JobWorker:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
+    def _run(self, stop: threading.Event | None = None) -> None:
+        stop = stop or self._stop
+        while not stop.is_set():
             try:
                 self.process_once()
             except Exception:
                 time.sleep(settings.worker_poll_seconds)
-            self._stop.wait(settings.worker_poll_seconds)
+            stop.wait(settings.worker_poll_seconds)
 
     def process_once(self) -> bool:
         job = self.store.next_queued_job()

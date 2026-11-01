@@ -8,6 +8,7 @@ import { qk } from "@/api/keys";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useDeleteMutation } from "@/hooks/useDeleteMutation";
+import { useModuleOn, useModules } from "@/hooks/useModules";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
@@ -239,6 +240,8 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
   });
   const busy = upload.isPending || ingest.isPending;
   const canPick = looksLikePlayerPage(url);
+  // «Загрузка по ссылкам» выключена в «Настройки → Модули» — только файл и холст.
+  const downloadsOn = useModuleOn("downloads");
 
   return (
     <div className="proj-add">
@@ -256,7 +259,7 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
           }}
         />
       </label>
-      <div className="proj-add-row">
+      {downloadsOn ? <div className="proj-add-row">
         <input
           className="input"
           style={{ flex: 1, minWidth: 200 }}
@@ -293,7 +296,7 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
         <button className="btn primary" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
           {ingest.isPending ? "…" : "Добавить"}
         </button>
-      </div>
+      </div> : null}
       {/* Ролик без видео: анимированный фон, картинки и титры (app/canvas.py). */}
       <NewCanvas onCreated={onStarted} disabled={busy} />
       {picking ? (
@@ -337,8 +340,9 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 
 export function ProjectsPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
-  const seriesQuery = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list });
-  const series = seriesQuery.data ?? [];
+  const seriesOn = useModules().ready("series");
+  const seriesQuery = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, enabled: seriesOn });
+  const series = seriesOn ? seriesQuery.data ?? [] : [];
   // "" — все, "none" — без серии, иначе id серии.
   const [seriesFilter, setSeriesFilter] = useState("");
   const [pending, setPending] = useState<Source | null>(null);
@@ -371,7 +375,7 @@ export function ProjectsPage() {
         <p className="sub">Исходные видео для анализа, нарезки и публикации</p>
         <AddSource />
       </section>
-      <SeriesStrip series={series} />
+      {seriesOn ? <SeriesStrip series={series} /> : null}
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (

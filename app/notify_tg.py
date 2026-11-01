@@ -87,6 +87,10 @@ def config(store: Any) -> dict:
 def is_enabled(store: Any) -> bool:
     if _env_off():
         return False
+    from app import modules
+
+    if not modules.is_enabled("telegram", store):  # «Настройки → Модули»
+        return False
     cfg = config(store)
     return bool(cfg["token"] and cfg["chat_id"] and cfg["enabled"])
 

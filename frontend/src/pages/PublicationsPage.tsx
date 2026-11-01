@@ -6,13 +6,16 @@ import { qk } from "@/api/keys";
 import { formatCount, formatSnapshotTime, statsApi, sumKnown, type TargetStats } from "@/api/stats";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
+import { useModuleOn, useModules } from "@/hooks/useModules";
 
 /** Числа площадок: при открытой странице, пока идёт сбор — опрашиваем чаще. */
 function usePublicationStats(enabled = true) {
+  // «Статистика площадок» — свой модуль (app/modules.py): выключен — чисел нет, запросов тоже.
+  const statsOn = useModules().ready("platform_stats");
   return useQuery({
     queryKey: qk.publicationStats,
     queryFn: statsApi.publications,
-    enabled,
+    enabled: enabled && statsOn,
     refetchInterval: (q) => (q.state.data?.status.running ? 5000 : 60000),
   });
 }
@@ -31,6 +34,8 @@ function RefreshStatsButton() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить сбор статистики"),
   });
+  const statsOn = useModuleOn("platform_stats");
+  if (!statsOn) return null;
   return (
     <button
       className="btn sm"

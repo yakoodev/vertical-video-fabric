@@ -4,6 +4,7 @@ import { clipPlansApi, type DubResult, type PlanSubtitles, type SubtitleLine, ty
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { formatDuration } from "@/components/ui";
+import { useModuleOn, useModules } from "@/hooks/useModules";
 import { resolveCaptions, speakerColor } from "@/motion";
 
 const VOICES = ["A", "B", "C", "D"];
@@ -76,6 +77,8 @@ export function SubtitleEditor({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  // «Голоса» и «Перевод» — модули (app/modules.py): выключены — кнопок нет.
+  const { on: moduleOn } = useModules();
   const [lines, setLines] = useState<SubtitleLine[]>([]);
   const [engine, setEngine] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -201,6 +204,10 @@ export function SubtitleEditor({
   for (const w of query.data?.words ?? []) counts[w.speaker || "A"] = (counts[w.speaker || "A"] ?? 0) + 1;
   // Клик по метке строки — следующий голос по кругу (A → B → C → D → A).
   const nextVoice = (line: SubtitleLine) => {
+    if (!moduleOn("voices")) {
+      toast.error("Модуль «Голоса в субтитрах» выключен (Настройки → Модули)");
+      return;
+    }
     if (dirty) {
       toast.error("Сначала сохраните правку строк");
       return;
@@ -248,14 +255,14 @@ export function SubtitleEditor({
         >
           {generate.isPending ? "Слушаю…" : lines.length ? "↻ Распознать заново" : "🎙 Распознать речь"}
         </button>
-        <button
+        {moduleOn("voices") ? <button
           className="btn sm"
           disabled={busy || silent}
           onClick={() => voices.mutate()}
           title={silent ? SILENT_HINT : "Gemini слушает клип и расшифровывает каждый голос отдельно: стример, гость, донат, ролик. Перебитые чужим голосом фразы возвращаются, субтитры разных людей — разным цветом и не в одной строке. Сначала речь распознаётся точной моделью — это 1–3 минуты."}
         >
           {voices.isPending ? "Разбираю голоса…" : "Голоса"}
-        </button>
+        </button> : null}
         {lines.length ? (
           <button
             className="btn sm"
@@ -272,7 +279,7 @@ export function SubtitleEditor({
         ) : null}
       </div>
 
-      {query.data && lines.length ? (
+      {query.data && lines.length && moduleOn("translation") ? (
         <TranslatePanel
           clipPlanId={clipPlanId}
           subs={query.data}
@@ -417,6 +424,7 @@ function TranslatePanel({
 }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const dubOn = useModuleOn("dubbing"); // «Озвучка RU» — свой модуль (app/modules.py)
   const tr = subs.translation;
   const source = tr?.source_language || subs.language;
   const mode: TranslationMode = tr ? tr.mode : "off";
@@ -500,7 +508,7 @@ function TranslatePanel({
           </button>
         ) : null}
       </div>
-      {tr ? (
+      {tr && dubOn ? (
         <div className="subed-dub">
           <div className="subed-tr-row">
             <b>Озвучка RU</b>

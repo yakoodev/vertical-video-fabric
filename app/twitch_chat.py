@@ -1036,6 +1036,10 @@ class ChatImportService:
             return
         if not _env_flag("TWITCH_CHAT_AUTO_IMPORT", True):
             return
+        from app import modules
+
+        if not modules.is_enabled("twitch_chat", self.get_store()):  # «Настройки → Модули»
+            return
         if not parse_twitch_vod_ref(source.get("original_url") or ""):
             return
         try:

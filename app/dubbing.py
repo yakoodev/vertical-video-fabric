@@ -398,8 +398,10 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     """Оценить или сделать озвучку RU клипа. Без ``confirm`` — ТОЛЬКО оценка (ничего не платим).
 
     ``tts`` — готовый провайдер (тесты подменяют). ``remove`` — снять слои озвучки."""
+    from app import modules
     from app.timebase import ClipClock
 
+    modules.require("dubbing", store)
     plan = store.get_clip_plan(clip_plan_id)
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
     if remove:

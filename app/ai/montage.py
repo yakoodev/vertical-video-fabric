@@ -696,6 +696,9 @@ def start_montage_job(
     render: Callable[[int], Any] | None = None,
     polish: bool = False,
 ) -> dict:
+    from app import modules
+
+    modules.require("ai_montage", store)  # «Авто» с ИИ-монтажом при выключенном модуле — понятная ошибка
     job = {
         "id": uuid.uuid4().hex[:12],
         "source_id": source_id,

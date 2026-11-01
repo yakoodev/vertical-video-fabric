@@ -66,7 +66,10 @@ def generate_asset(
 ) -> dict:
     """Draw one original image and put it in the library (described, ready to use).
     ``output_format`` — формат клипа, куда картинка пойдёт (кадр в подсказке модели)."""
-    wish = " ".join(str(prompt or "").split())[:MAX_PROMPT]
+    from app import modules
+
+    modules.require("asset_ai", store)
+    wish =" ".join(str(prompt or "").split())[:MAX_PROMPT]
     if not wish:
         raise ValueError("нужно описание картинки")
     used_model = model or settings.gemini_image_model
@@ -197,7 +200,11 @@ def obtain_assets(
         query = " ".join(str(wish.get("search_query") or "").split())[:200]
         label = str(wish.get("label") or "")
         when = str(wish.get("when") or "")
-        found = _download_first_usable(store, query, label, when, client) if query else None
+        from app import modules
+
+        # «Картинки из интернета» выключены (Настройки → Модули) — сразу рисуем.
+        found = _download_first_usable(store, query, label, when, client) \
+            if query and modules.is_enabled("web_images", store) else None
         if found:
             got.append({**found, "wish": wish})
             continue

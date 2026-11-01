@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { ClipCard } from "@/components/ClipCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
+import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
 const clipMatches = (c: Clip, f: "all" | "ready" | "published" | "error"): boolean =>
@@ -27,6 +28,7 @@ export function ClipsPage() {
   const query = useQuery({ queryKey: qk.clips(), queryFn: () => clipsApi.list() });
   const [toDelete, setToDelete] = useState<Clip | null>(null);
   const [toPublish, setToPublish] = useState<Clip | null>(null);
+  const publishingOn = useModuleOn("publishing"); // app/modules.py
   const [filter, setFilter] = useState<"all" | "ready" | "published" | "error">("all");
 
   const upload = useMutation({
@@ -112,13 +114,15 @@ export function ClipsPage() {
               clip={clip}
               actions={
                 <>
-                  <button
-                    className="btn primary sm"
-                    disabled={clip.status !== "succeeded"}
-                    onClick={() => setToPublish(clip)}
-                  >
-                    Опубликовать
-                  </button>
+                  {publishingOn ? (
+                    <button
+                      className="btn primary sm"
+                      disabled={clip.status !== "succeeded"}
+                      onClick={() => setToPublish(clip)}
+                    >
+                      Опубликовать
+                    </button>
+                  ) : null}
                   <button className="btn danger-outline sm" onClick={() => setToDelete(clip)}>
                     Удалить
                   </button>

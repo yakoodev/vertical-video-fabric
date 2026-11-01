@@ -36,6 +36,7 @@ from app.focus_presets import list_focus_presets, list_focus_strategies
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.downloads import DownloadService
 from app import memory
+from app import modules
 from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app import proxy_config
@@ -98,6 +99,14 @@ from app.vod_watch import VodWatchWorker  # noqa: E402 - наблюдатель 
 vod_watch_worker = VodWatchWorker(store, download_service, automation_service)
 AuthDep = Annotated[None, Depends(require_auth)]
 
+# Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
+# через лямбды: тесты подменяют app.main.store / worker / … на свои.
+modules.bind_store(lambda: store)
+modules.register_worker("publishing", "job-worker", lambda: worker)
+modules.register_worker("platform_stats", "stats-collector", lambda: stats_collector)
+modules.register_worker("autopilot", "autopilot", lambda: autopilot_worker)
+modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -106,17 +115,12 @@ async def lifespan(app: FastAPI):
         store.dedup_unused_ffmpeg_presets()
     except Exception:  # noqa: BLE001 - cleanup must never block startup
         pass
-    worker.start()
-    stats_collector.start()
-    autopilot_worker.start()
-    vod_watch_worker.start()
+    # Работники включённых модулей; выключенные не стартуют, включат — запустятся без перезапуска.
+    modules.start_workers(store)
     try:
         yield
     finally:
-        vod_watch_worker.stop()
-        autopilot_worker.stop()
-        stats_collector.stop()
-        worker.stop()
+        modules.stop_workers()
 
 
 app = FastAPI(
@@ -141,7 +145,12 @@ app = FastAPI(
     ],
 )
 app.add_exception_handler(AuthRequired, auth_required_handler)
-templates = Jinja2Templates(directory=settings.root_dir / "app" / "templates")
+# Выключенный модуль: его адреса — 423 (ASGI-прослойка), вызов изнутри сервиса — тоже 423.
+from app.modules_api import ModuleGate, build_modules_router, module_disabled_handler  # noqa: E402
+
+app.add_middleware(ModuleGate, get_store=lambda: store)
+app.add_exception_handler(modules.ModuleDisabled, module_disabled_handler)
+templates =Jinja2Templates(directory=settings.root_dir / "app" / "templates")
 
 PUBLISHING_METADATA_SCHEMA = {
     "type": "object",
@@ -3100,12 +3109,13 @@ async def api_upload_montage_asset(
         **meta,
     )
     # Describe it right away: the montage agent matches files by their text, so a
-    # file uploaded without «когда уместно» would never be used.
-    threading.Thread(
-        target=lambda: describe_asset(store, asset["id"]),
-        name=f"describe-asset-{asset['id']}",
-        daemon=True,
-    ).start()
+    # file uploaded without «когда уместно» would never be used. Модуль «ИИ для файлов» выключен — нет.
+    if modules.is_enabled("asset_ai", store):
+        threading.Thread(
+            target=lambda: describe_asset(store, asset["id"]),
+            name=f"describe-asset-{asset['id']}",
+            daemon=True,
+        ).start()
     # Анимированная картинка (GIF/APNG/webm с альфой): кадры и fps — для vvf.py asset и агента.
     from app.anim_frames import animation_info, brief, describe as describe_anim
 
@@ -3185,7 +3195,8 @@ def api_add_montage_asset_from_url(payload: AssetFromUrlRequest, _auth: AuthDep)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - network/remote errors
         raise HTTPException(status_code=502, detail=f"не удалось скачать: {str(exc)[:200]}") from exc
-    threading.Thread(target=lambda: describe_asset(store, asset["id"]), daemon=True).start()
+    if modules.is_enabled("asset_ai", store):
+        threading.Thread(target=lambda: describe_asset(store, asset["id"]), daemon=True).start()
     return asset
 
 
@@ -4501,6 +4512,9 @@ app.include_router(build_vod_watch_router(AuthDep, lambda: store, lambda: (downl
 from app.motion_assets import build_router as build_motion_assets_router  # noqa: E402
 
 app.include_router(build_motion_assets_router(AuthDep, lambda: store))
+
+# Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
+app.include_router(build_modules_router(AuthDep, lambda: store))
 
 
 # --------------------------------------------------------------------------- #

@@ -31,6 +31,7 @@ import { fontFamilies, reloadMotionFonts } from "@/pages/workspace/motion/runtim
 import { BezierEditor } from "@/pages/workspace/motion/BezierEditor";
 import { FX_TITLES, LAYER_ICON, baseValue, keyAt, layerTitle, setAnimated, toggleKey } from "@/pages/workspace/motion/edit";
 import { TrackPanel, type PickedPoint } from "@/pages/workspace/motion/TrackPanel";
+import { ModuleOnly } from "@/components/RequireModule";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "none", label: "Нет" },
@@ -1201,7 +1202,9 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
             </div>
           ) : null}
           {layer.type !== "fx" && layer.type !== "captions" ? (
-            <TrackPanel layer={layer} planId={planId} now={now} onChange={onChange} onPickPoint={onPickPoint} />
+            <ModuleOnly id="tracking">
+              <TrackPanel layer={layer} planId={planId} now={now} onChange={onChange} onPickPoint={onPickPoint} />
+            </ModuleOnly>
           ) : null}
           {!inside ? <div className="li-note muted">Курсор вне слоя — значения показаны на ближайшем краю.</div> : null}
           {transformRow("x", "X", 100, 0.5, -1, 2, "%")}

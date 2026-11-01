@@ -20,6 +20,7 @@ import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
+import { useModules } from "@/hooks/useModules";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
@@ -389,16 +390,17 @@ function clipTimeOf(segments: AiSegment[], cur: number): number | null {
 // Вкладки левой панели студии. Порядок — по частоте: клипы проекта, кадрирование,
 // файлы для монтажа; графика, звуки и ИИ встают сюда же по мере готовности.
 type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "media";
-const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string }[] = [
+// modules — вкладка видна, если включён хотя бы один из модулей (app/modules.py).
+const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string; modules?: string[] }[] = [
   { key: "moments", icon: "🎬", label: "Моменты", hint: "Другие клипы этого проекта" },
   { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник и рамка формата клипа: кадрирование и фокус" },
-  { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует" },
+  { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует", modules: ["editor_agent"] },
   { key: "templates", icon: "✦", label: "Шаблоны", hint: "Готовая анимированная графика: титры, плашки, инфографика, призывы" },
   { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
   { key: "stickers", icon: "✳", label: "Стикеры", hint: "Паки стикеров: искры, дым, вспышки, значки" },
   { key: "sounds", icon: "♪", label: "Звуки", hint: "Звуковые эффекты: whoosh, boom, pop, ding…" },
   { key: "memes", icon: "🐸", label: "Мемы", hint: "Шаблоны мемов и картинки из ваших файлов" },
-  { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете" },
+  { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете", modules: ["asset_ai", "web_images"] },
   { key: "media", icon: "🖼", label: "Вставки", hint: "Файлы для монтажа как вставки (видео-мемы, звуки)" },
 ];
 
@@ -1326,6 +1328,9 @@ function LookPicker({
 export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  // Модули сервиса (app/modules.py): выключенный прячет свои панели и кнопки редактора.
+  const { on: moduleOn } = useModules();
+  const libTabs = LIB_TABS.filter((t) => !t.modules || t.modules.some(moduleOn));
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
   const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
@@ -1585,7 +1590,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const planChat = useQuery({
     queryKey: ["plan-chat", editorPlanId],
     queryFn: () => api.get<ChatMessage[]>(`/api/clip-plans/${editorPlanId}/chat?limit=5000`),
-    enabled: Boolean(editorPlanId && hasChatLayer),
+    enabled: Boolean(editorPlanId && hasChatLayer && moduleOn("twitch_chat")),
     staleTime: 300_000,
   });
   // PNGtuber: состояния голоса по кадрам считает сервер (как для рендера) — по слоям аватара:
@@ -1595,7 +1600,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const planVoice = useQuery({
     queryKey: ["plan-voice", editorPlanId, voiceKey],
     queryFn: () => motionApi.voice(Number(editorPlanId), voiceLayers),
-    enabled: Boolean(editorPlanId && voiceLayers.length),
+    enabled: Boolean(editorPlanId && voiceLayers.length && moduleOn("pngtuber")),
     staleTime: 300_000,
   });
   // Реакция на звук (react): огибающие громкости клипа считает сервер один раз — по нужным
@@ -3291,18 +3296,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ↩ Откатить ИИ-монтаж
             </button>
           ) : null}
-          <button
-            className="btn ed-ai-btn"
-            disabled={!activePlan}
-            onClick={async () => {
-              await flushSettings();
-              setAiGoal("");
-              setAiMontageOpen(true);
-            }}
-            title="ИИ перемонтирует клип: хук в начало, без пауз и воды, переход, обложка — с предпросмотром «было → стало»"
-          >
-            🤖 ИИ-монтаж
-          </button>
+          {moduleOn("ai_montage") ? (
+            <button
+              className="btn ed-ai-btn"
+              disabled={!activePlan}
+              onClick={async () => {
+                await flushSettings();
+                setAiGoal("");
+                setAiMontageOpen(true);
+              }}
+              title="ИИ перемонтирует клип: хук в начало, без пауз и воды, переход, обложка — с предпросмотром «было → стало»"
+            >
+              🤖 ИИ-монтаж
+            </button>
+          ) : null}
         </div>
       ) : null}
       {subsWide && activePlan ? (
@@ -3455,7 +3462,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           >
             {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
           </button>
-          <AiBatchPanel sourceId={sourceId} favCount={favCount} />
+          {moduleOn("ai_montage") ? <AiBatchPanel sourceId={sourceId} favCount={favCount} /> : null}
           <p className="muted mo-stats-hint">
             ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть момент.
           </p>
@@ -3538,14 +3545,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           >
             {batchAuto.isPending ? `⚡ ${autoProgress}` : `⚡ Автомонтаж ★${favCount ? ` · ${favCount}` : ""}`}
           </button>
-          <button
-            className="btn sm"
-            disabled={favCount < 2 || compile.isPending}
-            onClick={() => compile.mutate(plans.filter((p) => p.favorite).map((p) => p.id))}
-            title="Склеить избранные в один клип «ТОП-N»: номера обратным отсчётом, названия, субтитры, whoosh между моментами"
-          >
-            {compile.isPending ? "Собираю…" : "🧩 Компиляция ★"}
-          </button>
+          {moduleOn("compilation") ? (
+            <button
+              className="btn sm"
+              disabled={favCount < 2 || compile.isPending}
+              onClick={() => compile.mutate(plans.filter((p) => p.favorite).map((p) => p.id))}
+              title="Склеить избранные в один клип «ТОП-N»: номера обратным отсчётом, названия, субтитры, whoosh между моментами"
+            >
+              {compile.isPending ? "Собираю…" : "🧩 Компиляция ★"}
+            </button>
+          ) : null}
           <button
             className="btn sm"
             disabled={batch.isPending || !selected.size}
@@ -3652,7 +3661,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       {view === "editor" && (
       <div className={`ed${libTab === "frame" ? " ed--wide-lib" : ""}`}>
         <nav className="ed-tabs" aria-label="Библиотека">
-          {LIB_TABS.map((tab) => (
+          {libTabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
@@ -3776,7 +3785,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </div>
             </div>
           </div>
-          {libTab === "ai" && activePlan ? (
+          {libTab === "ai" && activePlan && moduleOn("editor_agent") ? (
             <AgentPanel
               clipPlanId={activePlan.id}
               onRunningChange={(on) => {
@@ -3814,24 +3823,26 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
           {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
           {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={assetsQuery.data ?? []} /> : null}
-          {libTab === "generate" ? <GeneratePanel onAdd={addAtCursor} /> : null}
+          {libTab === "generate" && libTabs.some((t) => t.key === "generate") ? <GeneratePanel onAdd={addAtCursor} /> : null}
           {libTab === "media" ? (
             <div className="ed-lib-media">
               <div className="ed-shelf-head">
               <span className="ed-shelf-title">Полка вставок</span>
               <span className="muted ed-shelf-hint">перетащи файл на дорожку «Вставки» или кликни дважды — встанет под курсором</span>
-              <button
-                className="btn sm"
-                disabled={!activePlan}
-                onClick={async () => {
-                  await flushSettings();
-                  setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
-                  setAiMontageOpen(true);
-                }}
-                title="ИИ разложит мемы по клипу, не трогая куски"
-              >
-                ✨ ИИ подберёт мемы
-              </button>
+              {moduleOn("ai_montage") ? (
+                <button
+                  className="btn sm"
+                  disabled={!activePlan}
+                  onClick={async () => {
+                    await flushSettings();
+                    setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
+                    setAiMontageOpen(true);
+                  }}
+                  title="ИИ разложит мемы по клипу, не трогая куски"
+                >
+                  ✨ ИИ подберёт мемы
+                </button>
+              ) : null}
             </div>
             <AssetDrawer
               onAdd={(assetId) => {
@@ -4016,14 +4027,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                         title="Зафиксировать кадр 9:16 по горизонтали (или тащи рамку на превью). Пишет точки фокуса, не конфликтует с кейфреймами."
                       />
                       <span className="mono ed-fixed-val">{mx == null ? "трек" : `${Math.round(mx * 100)}%`}</span>
-                      <button
-                        className="btn sm"
-                        disabled={autofocus.isPending || !activePlan.segments.length}
-                        onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                        title="Пересчитать автофокус для этого клипа"
-                      >
-                        🎯 Авто
-                      </button>
+                      {moduleOn("autofocus") ? (
+                        <button
+                          className="btn sm"
+                          disabled={autofocus.isPending || !activePlan.segments.length}
+                          onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
+                          title="Пересчитать автофокус для этого клипа"
+                        >
+                          🎯 Авто
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })()
@@ -4102,7 +4115,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               title="Паузы и слова-паразиты"
               badge={cuts.length ? `−${cutsTotal(cuts).toFixed(1)} с` : "нет"}
             >
-              {activePlan ? (
+              {activePlan && !moduleOn("jump_cuts") ? (
+                <div className="muted li-note">Модуль «Джамп-каты» выключен (Настройки → Модули).</div>
+              ) : activePlan ? (
                 <CutsPanel
                   clipPlanId={activePlan.id}
                   cuts={cuts}
@@ -4310,18 +4325,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <div className="ed-quick">
               <span className="ed-quick-title">Быстрые ИИ-действия</span>
               <div className="ed-quick-row">
-                <button
-                  className="btn sm primary"
-                  disabled={!activePlan}
-                  onClick={async () => {
-                    await flushSettings();
-                    setAiGoal("");
-                    setAiMontageOpen(true);
-                  }}
-                  title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"
-                >
-                  🤖 ИИ-монтаж
-                </button>
+                {moduleOn("ai_montage") ? (
+                  <button
+                    className="btn sm primary"
+                    disabled={!activePlan}
+                    onClick={async () => {
+                      await flushSettings();
+                      setAiGoal("");
+                      setAiMontageOpen(true);
+                    }}
+                    title="ИИ перемонтирует клип: хук в начало, без пауз и воды, мемы по месту"
+                  >
+                    🤖 ИИ-монтаж
+                  </button>
+                ) : null}
                 <button
                   className="btn sm"
                   disabled={!activePlan || autoEdit.isPending}
@@ -4339,7 +4356,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   🔎 Найти мемы
                 </a>
-                {isCanvas ? null : (
+                {isCanvas || !moduleOn("autofocus") ? null : (
                   <button
                     className="btn sm"
                     disabled={!activePlan?.segments.length || autofocus.isPending}
@@ -4731,14 +4748,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     <option value="plate">Плашка</option>
                   </select>
                 </div>
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={!activePlan || composeCover.isPending}
-                  onClick={() => composeCover.mutate()}
-                >
-                  {composeCover.isPending ? "Рисую…" : "🖼 Сделать обложку"}
-                </button>
+                {moduleOn("covers") ? (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || composeCover.isPending}
+                    onClick={() => composeCover.mutate()}
+                  >
+                    {composeCover.isPending ? "Рисую…" : "🖼 Сделать обложку"}
+                  </button>
+                ) : null}
               </div>
               <div className="seg-toggle" role="radiogroup" aria-label="Источник обложки">
                 {([
@@ -5079,7 +5098,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <input type="checkbox" checked={useVlmFocus} onChange={(e) => setUseVlmFocus(e.target.checked)} />
                 <span>🤖 Уточнять кадр через Gemini (1 кадр на план)</span>
               </label>
-              <div className="ed-btn-row">
+              {moduleOn("autofocus") ? <div className="ed-btn-row">
                 <button
                   className="btn primary sm"
                   disabled={autofocus.isPending || !plans.length}
@@ -5096,7 +5115,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 >
                   Только этот план
                 </button>
-              </div>
+              </div> : <div className="muted li-note">Модуль «Автофокус» выключен (Настройки → Модули).</div>}
             </Group>
             )}
 

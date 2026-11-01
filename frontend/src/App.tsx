@@ -13,6 +13,7 @@ import { HelpPage } from "@/pages/HelpPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ApprovalsPage } from "@/pages/ApprovalsPage";
 import { ChatPage } from "@/pages/ChatPage";
+import { RequireModule } from "@/components/RequireModule";
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
 function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined>) => string }) {
@@ -38,18 +39,19 @@ export function App() {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:sourceId/*" element={<ProjectWorkspace />} />
         {/* Проект-серия/канал (app/projects.py): несколько источников, лор, правила, гипотезы. */}
-        <Route path="series/:projectId" element={<SeriesPage />} />
+        {/* Страницы модулей (app/modules.py): модуль выключен — подсказка, где включить. */}
+        <Route path="series/:projectId" element={<RequireModule id="series"><SeriesPage /></RequireModule>} />
         {/* Чат с агентом: переписки по проектам и общие (app/project_chat.py). */}
-        <Route path="chat" element={<ChatPage />} />
-        <Route path="chat/:threadId" element={<ChatPage />} />
+        <Route path="chat" element={<RequireModule id="agent_chat"><ChatPage /></RequireModule>} />
+        <Route path="chat/:threadId" element={<RequireModule id="agent_chat"><ChatPage /></RequireModule>} />
         <Route path="clips" element={<ClipsPage />} />
         <Route path="assets" element={<MontageAssetsPage />} />
-        <Route path="automation" element={<AutomationPage />} />
+        <Route path="automation" element={<RequireModule id="automation"><AutomationPage /></RequireModule>} />
         {/* Автопилот канала: очередь одобрения (app/autopilot.py). */}
-        <Route path="approvals" element={<ApprovalsPage />} />
-        <Route path="publications" element={<PublicationsPage />} />
-        <Route path="publications/:jobId" element={<PublicationsPage />} />
-        <Route path="accounts" element={<AccountsPage />} />
+        <Route path="approvals" element={<RequireModule id="autopilot"><ApprovalsPage /></RequireModule>} />
+        <Route path="publications" element={<RequireModule id="publishing"><PublicationsPage /></RequireModule>} />
+        <Route path="publications/:jobId" element={<RequireModule id="publishing"><PublicationsPage /></RequireModule>} />
+        <Route path="accounts" element={<RequireModule id="publishing"><AccountsPage /></RequireModule>} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="help" element={<HelpPage />} />
         <Route path="settings/*" element={<SettingsPage />} />

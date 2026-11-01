@@ -25,6 +25,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
+import { useModules } from "@/hooks/useModules";
 
 /**
  * Проект-серия/канал (app/projects.py): лор, правила владельца, статистика и гипотезы.
@@ -32,13 +33,14 @@ import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
  */
 
 type Tab = "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
-const TABS: [Tab, string][] = [
+// Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
+const TABS: [Tab, string, string?][] = [
   ["brief", "Резюме"],
   ["rules", "Правила"],
   ["stats", "Статистика"],
   ["hyp", "Гипотезы"],
-  ["autopilot", "Автопилот"],
-  ["chat", "Чат"],
+  ["autopilot", "Автопилот", "autopilot"],
+  ["chat", "Чат", "agent_chat"],
 ];
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -50,6 +52,9 @@ export function SeriesPage() {
   const id = Number(projectId);
   const [tab, setTab] = useState<Tab>("brief");
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
+  const { on } = useModules();
+  const tabs = TABS.filter(([, , mod]) => !mod || on(mod));
+  const shown: Tab = tabs.some(([key]) => key === tab) ? tab : "brief";
 
   if (project.isLoading) return <Loading />;
   if (project.isError || !project.data) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
@@ -69,19 +74,19 @@ export function SeriesPage() {
         </div>
       </div>
       <nav className="pipeline series-tabs">
-        {TABS.map(([key, label]) => (
-          <button key={key} className={`tab${tab === key ? " active" : ""}`} onClick={() => setTab(key)}>
+        {tabs.map(([key, label]) => (
+          <button key={key} className={`tab${shown === key ? " active" : ""}`} onClick={() => setTab(key)}>
             {label}
           </button>
         ))}
       </nav>
       <div className="series-body">
-        {tab === "brief" ? <BriefTab project={p} /> : null}
-        {tab === "rules" ? <RulesTab projectId={id} /> : null}
-        {tab === "stats" ? <StatsTab projectId={id} /> : null}
-        {tab === "hyp" ? <HypothesesTab projectId={id} /> : null}
-        {tab === "autopilot" ? <AutopilotTab projectId={id} /> : null}
-        {tab === "chat" ? <ProjectChatTab projectId={id} /> : null}
+        {shown === "brief" ? <BriefTab project={p} /> : null}
+        {shown === "rules" ? <RulesTab projectId={id} /> : null}
+        {shown === "stats" ? <StatsTab projectId={id} /> : null}
+        {shown === "hyp" ? <HypothesesTab projectId={id} /> : null}
+        {shown === "autopilot" ? <AutopilotTab projectId={id} /> : null}
+        {shown === "chat" ? <ProjectChatTab projectId={id} /> : null}
       </div>
     </>
   );

@@ -13,6 +13,7 @@ import { facecamApi, sourcesApi } from "@/api/sources";
 import type { SourceDetail } from "@/api/types";
 import type { Backdrop, ChromaKey, Despill } from "./chromaKey";
 import { BackgroundPicker } from "./BackgroundPicker";
+import { ModuleOnly } from "@/components/RequireModule";
 import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
 
 type Props = {
@@ -444,7 +445,9 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
       ) : null}
       {note ? <div className={`lay-note ${note.kind}`}>{note.text}</div> : null}
 
-      <ChromaKeyControls sourceId={sourceId} chromaKey={chromaKey ?? null} />
+      <ModuleOnly id="chroma_key">
+        <ChromaKeyControls sourceId={sourceId} chromaKey={chromaKey ?? null} />
+      </ModuleOnly>
       {keyed && backdrop && onBackdrop ? (
         <>
           <div className="li-cap">Зелёный фон вырезан. Фон за персонажем</div>

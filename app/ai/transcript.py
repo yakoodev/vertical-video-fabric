@@ -50,6 +50,14 @@ def transcribe_source_cues(local_path: str | None, model: str | None = None,
     path = Path(local_path)
     if not path.exists():
         return []
+    from app import modules
+
+    if not modules.is_enabled("transcription"):
+        # Модуль «Распознавание речи» выключен: без расшифровки (а строгому — понятная ошибка),
+        # звук ради неё не извлекаем.
+        if strict:
+            raise modules.ModuleDisabled("transcription")
+        return []
 
     # Импорты внутри _transcribe_piece: render импортирует AI-хелперы (цикл).
     duration = _duration_sec(path)

@@ -4959,6 +4959,19 @@ def h_build_app_promo(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
+    """Модули сервиса (app/modules.py) — только чтение."""
+    from app import modules
+
+    view = modules.describe(ctx.store)
+    keep = ("id", "name", "group", "description", "enabled", "depends", "blocked_by", "cost", "cost_note", "tools")
+    mods = [{k: m[k] for k in keep} for m in view["modules"]]
+    off = [m["id"] for m in mods if not m["enabled"]]
+    return {"ok": True, "modules": mods, "disabled": off,
+            "note": "переключает только владелец: Настройки → Модули" + (
+                f"; выключены: {', '.join(off)}" if off else "; включены все")}
+
+
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
     from app.piece_speed import seg_length
 
@@ -6396,6 +6409,15 @@ DISCOVERY_TOOLS = [
         h_create_canvas_clip, scope="global",
         label=lambda a: f"Создаю холст на {(_num(a.get('duration'), 15.0) or 15.0):g} с",
     ),
+    Tool(
+        "list_modules", "Модули сервиса",
+        "Какие модули сервиса включены (Настройки → Модули): id, название, включён ли, от чего зависит, чем "
+        "дорог (cpu/ram/network/paid) и какие инструменты даёт. Выключенный модуль прячет свои инструменты, а "
+        "вызов отвечает «модуль … выключен в настройках» — не обходи его другими инструментами, скажи владельцу. "
+        "Переключает модули ТОЛЬКО владелец в интерфейсе — у агента такого инструмента нет. "
+        "/ Service modules and whether they are enabled (read-only).",
+        _obj({}), h_list_modules, scope="global",
+    ),
 ]
 
 
@@ -6422,9 +6444,15 @@ def _project_tools() -> list[Tool]:
     return tools() + autopilot_tools()
 
 
-def list_tools(include_discovery: bool = False) -> list[Tool]:
+def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:
+    """Инструменты включённых модулей (app/modules.py): выключенный модуль прячет свои
+    из MCP tools/list, чата и ИИ-монтажёра."""
+    from app import modules
+
     tools = list(registry().values())
-    return (DISCOVERY_TOOLS + _project_tools() + tools) if include_discovery else tools
+    tools = (DISCOVERY_TOOLS + _project_tools() + tools) if include_discovery else tools
+    state = modules.enabled_map(store)
+    return [t for t in tools if state.get(modules.module_of_tool(t.name) or "", True)]
 
 
 def get_tool(name: str) -> Tool:
@@ -6442,6 +6470,10 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
         tool = get_tool(name)
     except KeyError:
         return {"ok": False, "error": f"нет инструмента {name}"}, False
+    from app import modules
+
+    if not modules.tool_enabled(name, getattr(ctx, "store", None)):
+        return modules.disabled_tool_error(name), False
     args = dict(args or {})
     if "project_id" not in args and getattr(ctx, "clip_plan_id", None) and _takes_project(tool):
         # Монтажёр работает внутри клипа: проект — источник этого клипа (Gemini спотыкался

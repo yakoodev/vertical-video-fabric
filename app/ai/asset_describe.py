@@ -106,6 +106,9 @@ def describe_asset(
     store: Any, asset_id: int, client: GeminiClient | None = None, model: str | None = None
 ) -> dict:
     """Look at the file, write label/description/tags onto it, return the asset."""
+    from app import modules
+
+    modules.require("asset_ai", store)
     asset = store.get_montage_asset(asset_id)
     parts = file_parts(asset)
     used_model = model or settings.gemini_text_model

@@ -101,8 +101,11 @@ class WhisperSubtitleProvider:
     def transcribe(self, audio_path: Path, profile: dict, model: str) -> SubtitleResult:
         """Распознать — в очереди тяжёлых задач (app/heavy_queue.py): Whisper large рядом с
         рендером и автофокусом выбивал контейнер за лимит памяти."""
+        from app import modules
         from app.heavy_queue import heavy_slot
 
+        # Модуль «Распознавание речи» выключен (app/modules.py) — модель не грузим вовсе.
+        modules.require("transcription")
         with heavy_slot("whisper", Path(str(audio_path)).name):
             try:
                 return self._transcribe(audio_path, profile, model)
@@ -254,6 +257,9 @@ class WhisperSubtitleProvider:
         log.info("whisper: модель %s выгружена, RSS %s → %s МБ", names, memory.fmt(before), memory.fmt(memory.rss_mb()))
 
     def _get_model(self, size: str) -> Any:
+        from app import modules
+
+        modules.require("transcription")
         key = (size, settings.whisper_device, settings.whisper_compute_type)
         self._cancel_unload()
         with self._lock:

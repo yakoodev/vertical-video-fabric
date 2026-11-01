@@ -132,7 +132,7 @@ def api_agent_tools() -> dict:
     return {
         "model": settings.gemini_agent_model,
         "max_steps": settings.agent_max_steps,
-        "tools": [tool.public() for tool in agent_tools.list_tools(include_discovery=True)],
+        "tools": [tool.public() for tool in agent_tools.list_tools(include_discovery=True, store=_store())],
         "mcp": {"url": "/mcp", "transport": "streamable-http", "auth": "Authorization: Bearer <token>"},
     }
 
@@ -142,9 +142,10 @@ def api_agent_tools() -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def mcp_tool_list() -> list[dict]:
+def mcp_tool_list(store: Any = None) -> list[dict]:
+    """Инструменты включённых модулей (app/modules.py); выключенные в tools/list не попадают."""
     out = []
-    for tool in agent_tools.list_tools(include_discovery=True):
+    for tool in agent_tools.list_tools(include_discovery=True, store=store):
         schema = json.loads(json.dumps(tool.parameters))
         if tool.scope == "clip":
             schema.setdefault("properties", {})
@@ -266,7 +267,7 @@ def mcp_handle(store: Any, message: Any) -> dict | None:
         elif method == "ping":
             result = {}
         elif method == "tools/list":
-            result = {"tools": mcp_tool_list()}
+            result = {"tools": mcp_tool_list(store)}
         elif method == "tools/call":
             name = params.get("name")
             if not isinstance(name, str) or not name:

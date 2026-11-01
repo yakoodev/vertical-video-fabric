@@ -326,8 +326,10 @@ def translate_subtitles(store: Any, clip_plan_id: int, mode: str = "ru", transla
     фраз или ``[{i, ru}]`` (тогда Gemini не зовём). ``force`` — переводить, даже если whisper
     считает речь русской. Уже переведено и ``retranslate`` не задан — только смена режима
     (без запроса к модели)."""
+    from app import modules
     from app.timebase import ClipClock
 
+    modules.require("translation", store)
     mode = str(mode or "ru").strip().lower()
     if mode not in MODES:
         raise ValueError(f"mode: {', '.join(MODES)}")
