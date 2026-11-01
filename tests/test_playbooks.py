@@ -74,3 +74,20 @@ def test_mcp_prompts_are_playbooks():
     missing = mcp_handle(None, {"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": {"name": "x"}})
     assert missing["error"]["code"] == -32602
     assert mcp_handle(None, {"jsonrpc": "2.0", "id": 5, "method": "resources/list"})["result"] == {"resources": []}
+
+
+def test_vtuber_story_covers_qa_fixes():
+    """QA 01.11 (клип 889): плейбук ведёт к avatar_full, крючку без спойлера, плашке в углу, ч/б на
+    отрезке, звуку на ключевое слово и проверке глазами — и всё это есть в инструментах."""
+    text = playbooks.get_playbook("vtuber-story")["text"]
+    for must in ("avatar_full", "detect_avatar", "спойлер", "Что ползёт по экрану", "corner", "grayscale",
+                 "at_word: \"обосралась\"", "contact_sheet", "уже применено", "mode: \"full\"", "- [ ]"):
+        assert must in text, must
+    known = {t.name for t in agent_tools.list_tools(include_discovery=True)}
+    named = set(re.findall(r"`([a-z_]+)`", text))
+    tools = named & {"detect_avatar", "set_layout", "set_nameplate", "censor_profanity", "emphasize_words",
+                     "add_insert", "set_camera", "lint_clip", "view_frame", "contact_sheet", "set_backdrop"}
+    assert len(tools) >= 10 and tools <= known
+    agents = (ROOT / "docs" / "AGENTS.md").read_text(encoding="utf-8")
+    assert "(playbooks/vtuber-story.md)" in agents and "avatar_full" in agents
+
