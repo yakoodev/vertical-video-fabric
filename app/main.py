@@ -1444,7 +1444,34 @@ def api_settings(_auth: AuthDep) -> dict:
         "global_proxy_display": data["global_proxy_display"],
         "banners": [{"id": b["id"], "label": b["label"]} for b in data["banners"]],
         "subtitle_profiles": [{"id": p["id"], "label": p["label"]} for p in data["subtitle_profiles"]],
+        **_auto_meta_settings(),
     }
+
+
+def _auto_meta_settings() -> dict:
+    from app.ai.publish_meta import AUTO_META_KEY
+
+    return {
+        "auto_publish_meta": bool(store.get_app_setting_value(AUTO_META_KEY, True)),
+        "gemini_configured": bool(settings.gemini_api_key),
+        "auto_publish_meta_env": bool(settings.auto_publish_meta),
+    }
+
+
+class AutoMetaPayload(BaseModel):
+    enabled: bool
+
+
+@app.put(
+    "/api/settings/auto-publish-meta",
+    tags=["Settings"],
+    summary="Write title/description/hashtags automatically after each render (needs a Gemini key)",
+)
+def api_set_auto_publish_meta(payload: AutoMetaPayload, _auth: AuthDep) -> dict:
+    from app.ai.publish_meta import AUTO_META_KEY
+
+    store.set_app_setting(AUTO_META_KEY, bool(payload.enabled))
+    return _auto_meta_settings()
 
 
 @app.post("/ui/settings/defaults", include_in_schema=False)
@@ -3377,6 +3404,71 @@ def api_clip_publish_meta(clip_id: int, _auth: AuthDep) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=f"Не удалось сгенерировать: {exc}") from exc
+
+
+class CoversPayload(BaseModel):
+    count: int = Field(default=3, ge=1, le=6, description="сколько вариантов (1–6)")
+    texts: list[str] | None = Field(default=None, description="свои тексты (2–5 слов); нет — ИИ/заголовок клипа")
+    styles: list[str] | None = Field(default=None, description="yellow | white | plate | accent по вариантам")
+
+
+class CoverChoicePayload(BaseModel):
+    apply_to_render: bool = Field(default=True, description="ещё и обложка плана: следующий рендер вошьёт её")
+
+
+@app.get("/api/clips/{clip_id}/covers", tags=["Render"], summary="Cover variants of a rendered clip")
+def api_clip_covers(clip_id: int, _auth: AuthDep) -> dict:
+    from app.cover_variants import list_covers
+
+    try:
+        store.get_clip(clip_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"clip_id": clip_id, "covers": list_covers(store, clip_id)}
+
+
+@app.post(
+    "/api/clips/{clip_id}/covers",
+    tags=["Render"],
+    summary="Generate cover variants: strong frames + big Russian hook text (app/cover_variants.py)",
+)
+def api_generate_clip_covers(clip_id: int, payload: CoversPayload, _auth: AuthDep) -> dict:
+    from app.cover_variants import generate_covers
+
+    try:
+        return generate_covers(store, clip_id, count=payload.count, texts=payload.texts, styles=payload.styles)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Обложки не получились: {exc}") from exc
+
+
+@app.post(
+    "/api/clips/{clip_id}/covers/{cover_id}/choose",
+    tags=["Render"],
+    summary="Make a cover variant the clip's cover (preview, approval card, YouTube thumbnail for 16:9)",
+)
+def api_choose_clip_cover(clip_id: int, cover_id: int, _auth: AuthDep, payload: CoverChoicePayload | None = None) -> dict:
+    from app.cover_variants import choose_cover
+
+    try:
+        return choose_cover(store, cover_id, apply_to_render=(payload or CoverChoicePayload()).apply_to_render,
+                            clip_id=clip_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/media/clips/{clip_id}/covers/{cover_id}", include_in_schema=False)
+def clip_cover_variant_media(clip_id: int, cover_id: int, _auth: AuthDep) -> FileResponse:
+    from app.cover_variants import cover_file
+
+    try:
+        path = cover_file(store, clip_id, cover_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="cover not found") from exc
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @app.get(

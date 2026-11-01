@@ -442,7 +442,13 @@ def _approval_from_row(store: Any, row: Any) -> dict:
     data["proposed_local"] = to_local(parse_utc(data.get("proposed_at")), tz_name)
     clip_id = data.get("clip_id")
     data["media_url"] = f"/media/clips/{clip_id}" if clip_id else None
-    data["cover_url"] = f"/media/clips/{clip_id}/cover" if clip_id and data.get("cover_path") else None
+    has_cover = bool(data.get("cover_path"))
+    if clip_id and not has_cover:
+        try:  # обложку могли выбрать уже после отправки (app/cover_variants.choose_cover)
+            has_cover = bool(store.get_clip_cover_path(int(clip_id)))
+        except (KeyError, AttributeError):
+            has_cover = False
+    data["cover_url"] = f"/media/clips/{clip_id}/cover" if clip_id and has_cover else None
     data["thumb_url"] = f"/media/clip-plans/{data['clip_plan_id']}/thumb" if data.get("clip_plan_id") else None
     data.pop("cover_path", None)
     data["buttons"] = [{"action": a, "label": label} for a, label in buttons_for(data)]
@@ -581,12 +587,24 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
     proposed = parse_when(when, cfg["timezone"])
     ctype = content_type_of(store, cfg, int(clip_plan_id), content_type)
     trust = trust_for(cfg, ctype)
+    # Заголовок, описание и хэштеги, что сервис написал после рендера (app/ai/publish_meta.py), и
+    # выбранная обложка (app/cover_variants.py) — в карточку, если агент своих не дал.
+    meta = clip.get("publish_meta") or {}
     title = P._text(title or clip.get("title") or plan.get("title") or f"Клип #{clip_plan_id}", 200)
     description = P._long_text(description or clip.get("description") or "", 4000)
+    if not tags and meta.get("hashtags"):
+        tags = meta["hashtags"]
+    cover_path = ""
+    getter = getattr(store, "get_clip_cover_path", None)
+    if getter:
+        try:
+            cover_path = str(getter(int(clip["id"])) or "")
+        except KeyError:
+            cover_path = ""
     approval_id = _insert(
         store, project_id=project_id, kind="clip_publish", clip_plan_id=int(clip_plan_id), clip_id=int(clip["id"]),
         content_type=ctype, trust=trust, title=title, description=description, tags_json=_json(_clean_tags(tags)),
-        cover_path=str(clip.get("cover_path") or ""), platforms_json=_json(platforms_list),
+        cover_path=cover_path, platforms_json=_json(platforms_list),
         proposed_at=fmt_utc(proposed) if proposed else "", submitted_by=str(submitted_by or "")[:40],
         tg_state="" if trust == "auto" else ("queued" if _tg_on(store) else ""),
     )

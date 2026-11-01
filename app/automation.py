@@ -240,7 +240,8 @@ class AutomationService:
                 self._update(run, message="Пишу заголовки и описания…")
                 from app.ai.publish_meta import apply_ai_metadata
 
-                apply_ai_metadata(self.store, [c["id"] for _, c in done])
+                # Уже написанное после рендера (auto_publish_meta) второй раз не генерируем.
+                apply_ai_metadata(self.store, [c["id"] for _, c in done], only_missing=True)
                 done = [(pid, self.store.get_clip(c["id"])) for pid, c in done]
 
             summary = f"Готово: клипов {len(done)}"

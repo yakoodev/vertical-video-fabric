@@ -134,6 +134,10 @@ class Settings:
         self.gemini_video_model = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3.5-flash").strip()
         # Cheap text-only model for publishing metadata (title/description/hashtags).
         self.gemini_text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash").strip()
+        # Заголовок/описание/хэштеги сами после рендера клипа (app/ai/publish_meta.auto_meta_after_render),
+        # если включено и в настройках (app_settings auto_publish_meta) и задан ключ Gemini. 0 — выключено
+        # целиком (тесты: без сети).
+        self.auto_publish_meta = os.getenv("AUTO_PUBLISH_META", "1").strip().lower() not in {"0", "false", "no", "off"}
         # 🤖 ИИ-монтаж reasons over timecodes and speech — defaults to the (smarter)
         # analysis model; a few thousand tokens per clip.
         self.gemini_montage_model = os.getenv("GEMINI_MONTAGE_MODEL", self.gemini_video_model).strip()

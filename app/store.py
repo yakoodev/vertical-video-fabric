@@ -1595,6 +1595,13 @@ class AppStore:
             (str(path) if path else None, error, clip_id),
         )
 
+    def set_clip_publish_meta(self, clip_id: int, meta: dict | None) -> None:
+        """Метаданные публикации клипа (app/ai/publish_meta.py); None — стереть."""
+        self.db.execute(
+            "UPDATE clips SET publish_meta_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(meta, ensure_ascii=False) if meta else None, clip_id),
+        )
+
     def get_clip_cover_path(self, clip_id: int) -> str | None:
         row = self.db.query_one("SELECT cover_path FROM clips WHERE id = ?", (clip_id,))
         if not row:
@@ -3386,6 +3393,14 @@ def _decode_clip_qc(clip: dict) -> dict:
         if isinstance(parsed, dict):
             qc = parsed
     clip["qc"] = qc
+    meta = None
+    raw_meta = clip.pop("publish_meta_json", None)
+    if raw_meta:
+        try:
+            meta = json.loads(raw_meta)
+        except (TypeError, ValueError):
+            meta = None
+    clip["publish_meta"] = meta if isinstance(meta, dict) else None
     # The cover is served by id, never by path: the path stays on the server.
     clip["cover_url"] = f"/media/clips/{clip['id']}/cover" if clip.get("cover_path") else None
     clip.pop("cover_path", None)

@@ -322,6 +322,10 @@ def send_card(store: Any, approval_id: int) -> dict:
                                   files={"video": (clip_path.name, fh, "video/mp4")}, timeout=300)
         else:
             photo = Path(raw["cover_path"]) if raw and raw["cover_path"] else None
+            if (not photo or not photo.is_file()) and approval.get("clip_id"):
+                # Обложку выбрали уже после отправки карточки — берём текущую обложку клипа.
+                current = store.get_clip_cover_path(int(approval["clip_id"]))
+                photo = Path(current) if current else photo
             if (not photo or not photo.is_file()) and clip_path and clip_path.is_file():
                 photo = _frame_of(clip_path)
             if photo and photo.is_file():
