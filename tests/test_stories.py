@@ -248,6 +248,12 @@ def test_title_card_and_cut_whooshes_are_optional(env):
     layers = _layers(store, ep["clip_id"])
     title = next(l for l in layers if l["type"] == "text")
     assert title["props"]["text"] == "Побег с ложкой" and title["start"] == 0 and title["end"] <= X.TITLE_SEC
+    # Название поверх сцен (дорожка выше), сцены — сам кадр, а не «пустой фон» для lint.
+    scenes = [l for l in layers if l["type"] == "image"]
+    assert scenes and title["track"] > max(l["track"] for l in scenes)
+    assert all(l["props"].get("content") for l in scenes)
+    from app.promo_lint import empty_frames
+    assert empty_frames([l for l in layers if l["id"] != title["id"]], scenes[-1]["end"]) == []
     # Без записей звуков — ни одного синтетического звука, только заметка.
     assert not [l for l in layers if l["type"] == "audio" and l["props"].get("role") == "sfx"]
     assert any("храп" in n for n in ep["notes"])

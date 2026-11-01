@@ -718,6 +718,8 @@ PICTURE: dict = {
     "border": BORDER,
     "crop": CROP,
     "flipX": Flag(False),
+    # Картинка во весь кадр — сам кадр (сцена истории), а не фон: lint не зовёт такой кадр пустым.
+    "content": Opt(Flag(True)),
     "device": Opt(Choice("phone", DEVICE_KINDS, nullable=True)),
     "deviceColor": Opt(Color(DEFAULT_DEVICE_COLOR)),
     # Нет island — движок решает сам: у картинки да, у видео только со statusBar.

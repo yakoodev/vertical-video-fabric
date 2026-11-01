@@ -655,6 +655,8 @@ def is_backdrop_layer(layer: dict) -> bool:
     if kind not in ("image", "video", "shape") or is_phone(layer):
         return False
     props = _props(layer)
+    if props.get("content"):
+        return False
     scale = _num(layer.get("scale"), 1.0)
     width = _num(props.get("w"), 600.0) * scale
     fw, fh = frame()

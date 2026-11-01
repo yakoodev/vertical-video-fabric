@@ -749,7 +749,7 @@ def build_layers(store: Any, world: dict, ep: dict, placed: list[dict], narratio
         base, keys = _keys(move, t1 - t0)
         layer = {"id": f"{LAYER_PREFIX}sc{n:02d}", "type": "image", "name": f"Сцена: {scene['title']}"[:60],
                  "start": round(t0, 3), "end": round(t1, 3), "track": 1, "x": 0.5, "y": 0.5, "z": 0,
-                 "scale": base, "props": {"asset_id": int(scene["asset_id"]), "w": 1080}}
+                 "scale": base, "props": {"asset_id": int(scene["asset_id"]), "w": 1080, "content": True}}
         if keys:
             layer["keys"] = keys
         layers.append(layer)
@@ -770,8 +770,9 @@ def build_layers(store: Any, world: dict, ep: dict, placed: list[dict], narratio
     if options.get("title_card"):
         title = P._text(ep.get("title") or ep["premise"], 60)
         end = round(min(TITLE_SEC, placed[0]["end"] if placed else TITLE_SEC, total), 3)
+        # Дорожка выше сцен (1) и ниже субтитров (6): на дорожке 0 название пряталось под картинкой.
         layers.append({"id": f"{LAYER_PREFIX}title", "type": "text", "name": "Название", "start": 0.0, "end": end,
-                       "x": 0.5, "y": 0.16, "props": {"text": title, "font": "Rubik", "weight": 900, "size": 84,
+                       "track": 5, "x": 0.5, "y": 0.16, "props": {"text": title, "font": "Rubik", "weight": 900, "size": 84,
                                                       "color": "#ffffff", "align": "center",
                                                       "stroke": {"color": world["captions"]["stroke"], "width": 10}},
                        "in": {"type": "pop", "duration": 0.2}})
