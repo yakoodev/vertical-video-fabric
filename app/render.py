@@ -798,6 +798,8 @@ class ClipRenderService:
                         crf=extra.get("crf"),
                         audio_codec=str(preset.get("audio_codec") or "aac"),
                         audio_bitrate=str(preset.get("audio_bitrate") or "").strip(),
+                        width=int(preset.get("output_width") or 1080),
+                        fps=float(preset.get("fps") or 30),
                         jump_joins=jumps,
                         jl=jl,
                     ),
@@ -1721,6 +1723,7 @@ class ClipRenderService:
                         base_height=comp_h + int(band["h"]) if band else None,
                         freezes=comp_freezes(preset.get("freezes")),
                         end_screen=comp_end_screen(motion.get("end_screen"), layers, meta.duration_sec),
+                        motion_blur=motion.get("motion_blur"),
                     )
                     assets_path = work / "assets.json"
                     assets_path.write_text(json.dumps(assets, ensure_ascii=False), encoding="utf-8")

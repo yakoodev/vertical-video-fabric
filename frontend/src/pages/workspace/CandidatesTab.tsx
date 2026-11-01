@@ -26,8 +26,11 @@ import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import {
   cameraMatrix,
+  cameraBlurTimes,
   camera3dAt,
   drawBasePlane,
+  paintLayerBlur,
+  paintOpaqueBlur,
   has3dCamera,
   layerUnit,
   captionWordsFrom,
@@ -625,6 +628,9 @@ type MotionView = {
   reframed?: boolean;
   /** Концовка-баннер: размытие основы под слоями — как компоновщик рендера (motion/endscreen.ts). */
   endScreen?: EndScreenFx | null;
+  /** Motion blur клипа по умолчанию (render.motion_blur) и fps пресета — как у компоновщика. */
+  motionBlur?: number;
+  fps?: number;
 };
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
@@ -814,6 +820,22 @@ function CropFrame({
           const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
           // 3D-камера (dolly, облёт, фокусное) — основа плоскостью на глубине, как в компоновщике.
           const cam3 = motion && has3dCamera(motion.camera) ? camera3dAt(motion.camera, clipT) : null;
+          // Motion blur наезда (motion/motionblur.ts): быстрая камера — подкадры основы, как в рендере
+          // (в превью их меньше); в покое — один кадр, ровно как раньше.
+          const blurEnv = browserEnv(cv.width, cv.height, format);
+          const camTimes = (box: { x: number; y: number; w: number; h: number } | null, threeD: boolean) =>
+            motion
+              ? cameraBlurTimes(motion.camera, clipT, {
+                  fps: motion.fps || 30,
+                  W: cv.width,
+                  H: cv.height,
+                  unit: layerUnit(blurEnv),
+                  fallback: motion.motionBlur,
+                  box,
+                  threeD,
+                  maxSamples: blurEnv.motionBlurSamples,
+                })
+              : [clipT];
           const rect = {
             x: (c.x + lc * c.w) * vw,
             y: (c.y + tc * c.h) * vh,
@@ -848,16 +870,21 @@ function CropFrame({
               if (motion?.layers.length) {
                 const env = browserEnv(cv.width, cv.height, format);
                 const behind = shownLayers.filter((l) => !l.hidden);
-                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, levels: motion.levels, camera: motion.camera }, clipT, env, "behind");
+                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, levels: motion.levels, camera: motion.camera, fps: motion.fps, motionBlur: motion.motionBlur }, clipT, env, "behind");
               }
-              if (cam3) {
-                // 3D-камера: вырезанное видео — плоскость на глубине baseZ, как в компоновщике.
-                const env3 = browserEnv(cv.width, cv.height, format);
-                drawBasePlane(ctx, env3, kc, cam3, cam, layerUnit(env3), kc.width, kc.height);
-              } else {
-                if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-                ctx.drawImage(kc, 0, 0, cv.width, cv.height);
-              }
+              // 3D-камера: вырезанное видео — плоскость на глубине baseZ, как в компоновщике.
+              const keyedAt = (target: CanvasRenderingContext2D, tt: number) => {
+                const m = motion?.camera?.length ? cameraMatrix(motion.camera, tt, cv.width, cv.height) : null;
+                if (cam3 && motion) drawBasePlane(target, blurEnv, kc, camera3dAt(motion.camera, tt), m, layerUnit(blurEnv), kc.width, kc.height);
+                else {
+                  target.save();
+                  if (m) target.transform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+                  target.drawImage(kc, 0, 0, cv.width, cv.height);
+                  target.restore();
+                }
+              };
+              const kt = camTimes(null, Boolean(cam3));
+              if (kt.length < 2 || !paintLayerBlur(ctx, blurEnv, kt, keyedAt)) keyedAt(ctx, clipT);
             }
           } else if (ctx) {
             const regions = cam && motion && !fit && !contain ? cameraRegions(lay, vw, vh, cv.width, cv.height, out) : null;
@@ -871,21 +898,25 @@ function CropFrame({
               const lctx = lc.getContext("2d");
               if (lctx) {
                 drawLayoutFrame(lctx, v, lay, rect, cv.width, cv.height, clipT, bgOpts, out);
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.drawImage(lc, 0, 0);
                 const box = regions.box;
-                const bm = cameraMatrix(motion.camera, clipT, box.w, box.h);
-                ctx.save();
-                ctx.beginPath();
-                ctx.rect(box.x, box.y, box.w, box.h);
-                ctx.clip();
-                ctx.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
-                // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
-                // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
-                if (lay?.mode === "pip_cam") ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
-                else ctx.drawImage(lc, 0, 0);
-                ctx.restore();
-                for (const p of regions.pinned) ctx.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+                const regionAt = (target: CanvasRenderingContext2D, tt: number) => {
+                  target.setTransform(1, 0, 0, 1, 0, 0);
+                  target.drawImage(lc, 0, 0);
+                  const bm = cameraMatrix(motion.camera, tt, box.w, box.h);
+                  target.save();
+                  target.beginPath();
+                  target.rect(box.x, box.y, box.w, box.h);
+                  target.clip();
+                  target.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
+                  // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
+                  // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
+                  if (lay?.mode === "pip_cam") target.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
+                  else target.drawImage(lc, 0, 0);
+                  target.restore();
+                  for (const p of regions.pinned) target.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
+                };
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                paintOpaqueBlur(ctx, blurEnv, camTimes(box, false), regionAt);
               }
             } else if (cam3 && !regions) {
               // 3D-камера: кадр основы на свой холст, потом плоскостью на глубине baseZ (space3d.ts).
@@ -895,18 +926,31 @@ function CropFrame({
                 bc.height = cv.height;
               }
               const bctx = bc.getContext("2d");
-              if (bctx) {
+              if (bctx && motion) {
                 bctx.setTransform(1, 0, 0, 1, 0, 0);
                 drawBase(bctx, lay, cv.width, cv.height);
-                const env3 = browserEnv(cv.width, cv.height, format);
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.fillStyle = "#000000";
-                ctx.fillRect(0, 0, cv.width, cv.height);
-                drawBasePlane(ctx, env3, bc, cam3, cam, layerUnit(env3));
+                paintOpaqueBlur(ctx, blurEnv, camTimes(null, true), (target, tt) => {
+                  target.fillStyle = "#000000";
+                  target.fillRect(0, 0, cv.width, cv.height);
+                  const m = cameraMatrix(motion.camera, tt, cv.width, cv.height);
+                  drawBasePlane(target, blurEnv, bc, camera3dAt(motion.camera, tt), m, layerUnit(blurEnv));
+                });
               }
             } else {
-              if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-              drawBase(ctx, lay, cv.width, cv.height);
+              const times = cam && motion ? camTimes(null, false) : [clipT];
+              if (times.length < 2) {
+                if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+                drawBase(ctx, lay, cv.width, cv.height);
+              } else {
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                paintOpaqueBlur(ctx, blurEnv, times, (target, tt) => {
+                  const m = cameraMatrix(motion!.camera, tt, cv.width, cv.height);
+                  target.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+                  drawBase(target, lay, cv.width, cv.height);
+                  target.setTransform(1, 0, 0, 1, 0, 0);
+                });
+              }
             }
           }
           if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -939,6 +983,8 @@ function CropFrame({
                   levels: motion.levels,
                   camera: motion.camera,
                   cameraBox: followBox ?? undefined,
+                  fps: motion.fps,
+                  motionBlur: motion.motionBlur,
                 },
                 clipT,
                 env,
@@ -1575,6 +1621,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   );
   // Стоп-кадр в конце готового ролика, с (render.end_hold_sec): null — как у сервиса, 0 — мем без «замирания».
   const [endHoldSec, setEndHoldSec] = useState<number | null>(null);
+  // Motion blur клипа по умолчанию (render.motion_blur), затвор 0..1: null — выключен.
+  const [motionBlur, setMotionBlur] = useState<number | null>(null);
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
@@ -1745,6 +1793,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     format: aspect,
     layers_format: layersFmt,
     end_hold_sec: endHoldSec,
+    motion_blur: motionBlur,
     freezes,
   });
   const settingsKey = JSON.stringify(panelSettings());
@@ -1844,6 +1893,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       format: clipFormat(s),
       layers_format: layersFormat(s),
       end_hold_sec: s.end_hold_sec ?? null,
+      motion_blur: s.motion_blur ?? null,
       freezes: s.freezes ?? [],
     };
     if (JSON.stringify(loaded) === settingsKey) return;
@@ -1876,6 +1926,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     setAspect(clipFormat(s));
     setLayersFmt(layersFormat(s));
     setEndHoldSec(s.end_hold_sec ?? null);
+    setMotionBlur(s.motion_blur ?? null);
     // Выделение — номер куска/строки/вставки: в другом клипе (или после отката)
     // он указывал бы на чужой блок, и Delete удалил бы не то.
     setTlSelected(null);
@@ -2746,6 +2797,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       duration: viewDuration,
       reframed: Boolean(reframedView),
       endScreen,
+      motionBlur: motionBlur ?? undefined,
+      fps: selectedPreset?.fps || 30,
     };
   else
     motionViewRef.current = {
@@ -2758,6 +2811,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       levels: levelTracks,
       duration: viewDuration,
       endScreen,
+      motionBlur: motionBlur ?? undefined,
+      fps: selectedPreset?.fps || 30,
     };
 
   // Слой под мышью или ручка выделенного слоя: сначала ручки (они могут торчать
@@ -5254,6 +5309,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <option value="1">1 с</option>
                 <option value="1.5">1.5 с</option>
               </select>
+            </label>
+            <label
+              className="ed-aspect"
+              title="Motion blur: быстрые слои, наезды и whip камеры смазываются по пути движения (затвор — доля кадра; 50% — киношные 180°). В покое кадр не меняется. Свой у слоя — в его инспекторе, у ключа камеры — в панели камеры"
+            >
+              <span>Motion blur · {motionBlur ? `${Math.round(motionBlur * 100)}%` : "выкл"}</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round((motionBlur ?? 0) * 100)}
+                onChange={(e) => setMotionBlur(Number(e.target.value) ? Number(e.target.value) / 100 : null)}
+              />
             </label>
             <div className="ed-render-btns">
               <button

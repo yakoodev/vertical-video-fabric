@@ -2064,6 +2064,11 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     keys = args.get("keys")
     if not isinstance(keys, list):
         raise ToolError("нужен список keys (пустой — убрать все наезды)")
+    blur = args.get("motionBlur", args.get("motion_blur"))
+    if blur is not None:
+        # Затвор всем ключам без своего (motion blur наезда на отрезке от ключа).
+        keys = [{**k, "motionBlur": blur} if isinstance(k, dict) and k.get("motionBlur") is None
+                and k.get("motion_blur") is None else k for k in keys]
     duration = _clip_duration(ctx)
     below = [k for k in keys if isinstance(k, dict) and (_num(k.get("zoom"), 1.0) or 1.0) < 1.0]
     if below:
@@ -2100,7 +2105,8 @@ def h_camera_preset(ctx: ToolContext, args: dict) -> dict:
     try:
         res = apply_preset(args.get("preset"), args.get("start"), args.get("duration"), args.get("intensity"),
                            camera=render.get("camera"), layers=render.get("layers"), layer_id=args.get("layer_id"),
-                           clip_duration=_clip_duration(ctx))
+                           clip_duration=_clip_duration(ctx),
+                           motion_blur=args.get("motionBlur", args.get("motion_blur")))
     except (PresetError, ValueError) as exc:
         raise ToolError(f"пресет не поставлен: {exc}", getattr(exc, "hints", [])) from exc
     fresh = _save_render(ctx, {**render, "camera": res["camera"], "layers": res["layers"]})
@@ -2973,6 +2979,27 @@ def h_auto_crop_layer(ctx: ToolContext, args: dict) -> dict:
         out["dropped_keys"] = dropped
     if loop_len:
         out["loop"] = f"ключи повторяются каждые {loop_len:.2f} с (loop)"
+    return out
+
+
+def h_set_motion_blur(ctx: ToolContext, args: dict) -> dict:
+    """Motion blur клипа по умолчанию (render.motion_blur): слоям и ключам камеры без своего motionBlur."""
+    raw = 0 if args.get("reset") else args.get("value", args.get("shutter", args.get("motion_blur")))
+    if raw is None:
+        raise ToolError("нужен value — затвор 0..1 (0.5 — киношные 180°; 0 — выключить)")
+    value = motion.normalize_motion_blur(raw)
+    if raw not in (0, 0.0, "0") and value is None:
+        raise ToolError("value — число 0..1 (0 — выключить)")
+    render = _current_render(ctx)
+    fresh = _save_render(ctx, {**render, "motion_blur": value})
+    layers = [l for l in _layers_of(fresh) if l.get("type") not in ("audio", "fx")]
+    own = [str(l.get("id")) for l in layers if l.get("motionBlur") is not None]
+    out = {"ok": True, "motion_blur": fresh.get("motion_blur"),
+           "note": ("motion blur выключен: слои и камера резкие (кроме своих motionBlur)" if not value else
+                    f"затвор {value:g}: смазываются только быстрые движения (въезды, whip, вращение, наезды "
+                    "камеры); стоящий кадр не меняется. Проверь view_frame посреди быстрого движения")}
+    if own:
+        out["own"] = f"свой motionBlur у слоёв: {', '.join(own[:12])} — у них остаётся свой"
     return out
 
 
@@ -4049,7 +4076,7 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
         if args["audio"] not in AUDIO_MODES:
             problems.append(f"audio: одно из {', '.join(AUDIO_MODES)}")
         transition["audio"] = args["audio"]
-    for key in ("duration", "sfx_volume"):
+    for key in ("duration", "sfx_volume", "motion_blur"):
         if args.get(key) is not None:
             transition[key] = args[key]
     if args.get("smart") is not None:
@@ -5607,7 +5634,9 @@ def _build_registry() -> list[Tool]:
             "update_layer", "Правлю слой",
             "Изменить слой по id: patch — только изменённые поля (props/in/out/loop сливаются, keys "
             "заменяются целиком). У PNGtuber ответ с voice_check (доля клипа с открытым ртом, выбранный порог). "
-            "/ Patch one layer.",
+            "motionBlur 0..1 — motion blur слоя (затвор, доля кадра; 0.5 — «180°»): быстрый въезд/вылет, "
+            "вращение, слой с камерой на whip смазаны по пути, стоящий слой не меняется; null — как у клипа "
+            "(set_motion_blur), 0 — резко. / Patch one layer.",
             _obj({"id": {"type": "string"}, "patch": {"type": "object"}}, ["id", "patch"]), h_update_layer,
             mutating=True, label=lambda a: f"Правлю слой {a.get('id')}",
         ),
@@ -5672,15 +5701,20 @@ def _build_registry() -> list[Tool]:
             "(жёсткий кадр, без наезда). До первого ключа и после последнего — их значения. "
             "Панч-ин на панчлайн: 1.0 → 1.15–1.35 за 0.15–0.3 с, держать, вернуть. zoom < 1 нельзя (камера "
             "только приближает) — шире окна: set_piece_fit. В раскладках pip_cam/split "
-            "камера двигает только игру: окошко вебки/килфида и полоса вебки стоят на месте. / Replace camera keys.",
+            "камера двигает только игру: окошко вебки/килфида и полоса вебки стоят на месте. "
+            "motionBlur ключа 0..1 — motion blur основы на отрезке от этого ключа (быстрый whip/панч смазан по "
+            "пути, медленный наезд и покой — резко); motionBlur верхнего уровня — всем ключам без своего; нет — "
+            "как у клипа (set_motion_blur). / Replace camera keys.",
             _obj({"keys": {"type": "array", "items": _obj({
                 "t": {"type": "number"}, "zoom": {"type": "number"}, "x": {"type": "number"},
                 "y": {"type": "number"}, "ease": {"type": "string", "enum": motion_enums()["easings"]},
                 "shake": {"type": "number"}, "anchor": {"type": "string", "enum": ["center", "in_place"]},
                 # 3D (camera_preset ставит их сам): dolly, наклон, облёт, поле зрения, глубина основы.
                 "z": {"type": "number"}, "rotX": {"type": "number"}, "rotY": {"type": "number"},
-                "fov": {"type": "number"}, "baseZ": {"type": "number"}},
-                ["t", "zoom"])}}, ["keys"]),
+                "fov": {"type": "number"}, "baseZ": {"type": "number"},
+                "motionBlur": {"type": "number", "description": "затвор 0..1 на отрезке от ключа"}},
+                ["t", "zoom"])},
+                "motionBlur": {"type": "number", "description": "затвор 0..1 всем ключам без своего"}}, ["keys"]),
             h_set_camera, mutating=True, label=_label_camera,
         ),
         Tool(
@@ -5690,11 +5724,14 @@ def _build_registry() -> list[Tool]:
             "наклоном) | float (дыхание камеры) | card_flip (переворот слоя layer_id); start — с, duration? (по "
             "умолчанию свой у пресета), intensity 0.2..2 (1). Ключи камеры внутри отрезка заменяются. Параллакс "
             "виден у слоёв с z (−300…600) или followCamera; без z слой стоит на экране. Не чаще одного 3D-движения "
-            "на 5–8 с, для промо, интро и ярких моментов. / Camera 3D move preset.",
+            "на 5–8 с, для промо, интро и ярких моментов. motionBlur 0..1 — motion blur ключей движения (быстрые "
+            "куски облёта/наезда смазаны); нет — как у клипа. / Camera 3D move preset.",
             _obj({"preset": {"type": "string", "enum": ["parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float",
                                                         "card_flip"]},
                   "start": {"type": "number"}, "duration": {"type": "number"}, "intensity": {"type": "number"},
-                  "layer_id": {"type": "string"}}, ["preset", "start"]),
+                  "layer_id": {"type": "string"},
+                  "motionBlur": {"type": "number", "description": "затвор 0..1 у ключей движения"}},
+                 ["preset", "start"]),
             h_camera_preset, mutating=True,
             label=lambda a: f"Ставлю 3D-движение {a.get('preset')} на {a.get('start')} с",
         ),
@@ -6043,6 +6080,19 @@ def _build_registry() -> list[Tool]:
                                                      else f"{a.get('sec')} с"),
         ),
         Tool(
+            "set_motion_blur", "Ставлю motion blur",
+            "Motion blur клипа по умолчанию: value — затвор 0..1 (доля интервала кадра; 0.5 — киношные 180°, "
+            "0.3 — лёгкий, 1 — сильный смаз), 0 или reset:true — выключить. Действует на слои и ключи камеры "
+            "без своего motionBlur (у слоя — update_layer patch.motionBlur, у камеры — set_camera/camera_preset "
+            "motionBlur). Смазываются только быстрые движения: въезд/вылет плашки, whip и панч камеры, вращение, "
+            "сцена 3D; стоящий и медленный кадр не меняется ни на пиксель. Для «дорогих» въездов и whip-монтажа; "
+            "разговорному клипу без движения не нужен. Проверь view_frame посреди быстрого движения. "
+            "/ Clip-level default motion blur (shutter 0..1).",
+            _obj({"value": {"type": "number", "minimum": 0, "maximum": 1}, "reset": {"type": "boolean"}}),
+            h_set_motion_blur, mutating=True,
+            label=lambda a: "Motion blur: " + ("выкл" if a.get("reset") or not a.get("value") else f"затвор {a.get('value')}"),
+        ),
+        Tool(
             "freeze_frame", "Ставлю стоп-кадр",
             "Стоп-кадр посреди ролика: кадр в момент at (секунды ГОТОВОГО ролика — шкала final, как "
             "contact_sheet и listen; без других стоп-кадров) замирает на duration 0.2–2.0 с (по умолчанию 1). "
@@ -6330,9 +6380,11 @@ def _build_registry() -> list[Tool]:
             "секунд куска и первые следующего: если там речь — warnings скажут, какие слова уйдут под переход "
             "(fadeblack — речь на чёрном) и как поправить; fit_speech=true — сам укоротит переход, чтобы он не "
             "заходил на речь. Наплыв сдвигает шкалу clip — слои, камера, вставки переезжают сами. "
-            "/ Transition between pieces.",
+            "motion_blur 0..1 — смаз сдвигового перехода (whip/slide/smooth) по горизонтали на окне перехода; "
+            "нет — как у клипа (set_motion_blur). / Transition between pieces.",
             _obj({"type": {"type": "string"}, "duration": {"type": "number"}, "sfx": {"type": "string"},
                   "sfx_volume": {"type": "number"}, "audio": {"type": "string"}, "smart": {"type": "boolean"},
+                  "motion_blur": {"type": "number", "description": "смаз whip/slide 0..1"},
                   "fit_speech": {"type": "boolean", "description": "укоротить переход, чтобы не задевал слова"}}),
             h_set_transition, mutating=True, label=lambda a: f"Переход {a.get('type') or ''} {a.get('sfx') or ''}".strip(),
         ),

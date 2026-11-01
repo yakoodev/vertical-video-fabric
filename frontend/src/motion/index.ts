@@ -47,7 +47,23 @@ export {
   type Plane,
   type Projector,
 } from "./space3d";
-export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, type LayerBox } from "./render";
+export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
+export {
+  MOTION_BLUR_MIN_SAMPLES,
+  MOTION_BLUR_MAX_SAMPLES,
+  MOTION_BLUR_PREVIEW_SAMPLES,
+  MOTION_BLUR_THRESHOLD,
+  MOTION_BLUR_PX_PER_SAMPLE,
+  shutterValue,
+  blurSamples,
+  shutterTimes,
+  cameraShutterAt,
+  cameraBlurTimes,
+  maxTravel,
+  paintOpaqueBlur,
+  paintLayerBlur,
+  type CameraBlurOptions,
+} from "./motionblur";
 export { DEFAULT_FONT, fontString, emojiRef, isEmoji, graphemes, assetUrl, type FontSpec } from "./fonts";
 export { collectImageRefs, collectAudioRefs, collectVideoLayers, collectAnimRefs } from "./assets";
 export { animFrameIndex, voiceStateAt, voiceLevelAt, type VoiceState } from "./anim";

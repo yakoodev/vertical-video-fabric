@@ -28,6 +28,10 @@ Settings (all optional, see ``normalize_transition``):
                   ``pop``/``boom``, synthesised by ffmpeg itself, so no asset
                   files are needed;
 * ``sfx_volume``— 0..1.
+* ``motion_blur``— 0..1, затвор: у сдвиговых переходов (``whip``, ``slide``, ``smooth``) кадр под
+                  переходом смазан по горизонтали на длину пути за затвор (gblur только на окне
+                  перехода); нет поля — резко, как раньше. Значение клипа ``render.motion_blur``
+                  подставляет ``settings_to_render_kwargs``.
 
 Pure functions only (argument builders): the caller runs ffmpeg. That keeps the
 filter graph testable without media.
@@ -117,7 +121,27 @@ def normalize_transition(raw: object) -> dict:
     except (TypeError, ValueError):
         volume = float(DEFAULT_TRANSITION["sfx_volume"])
     out["sfx_volume"] = min(1.0, max(0.0, volume))
+    try:
+        blur = float(src.get("motion_blur") or 0)
+    except (TypeError, ValueError):
+        blur = 0.0
+    if blur == blur and blur > 0:
+        # Только если задан: прежние настройки перехода остаются ровно прежними.
+        out["motion_blur"] = round(min(1.0, blur), 3)
     return out
+
+
+# Переходы-сдвиги: картинка едет по горизонтали — их и смазывает motion_blur.
+SLIDE_XFADES = ("slideleft", "smoothleft")
+
+
+def whip_blur_sigma(shutter: float, overlap: float, width: int, fps: float) -> float:
+    """Сигма горизонтального gblur под сдвиговым переходом: путь за затвор — ширина кадра за
+    overlap с, × shutter кадра; гаусс ≈ коробка длины L при σ ≈ 0.3·L."""
+    if shutter <= 0 or overlap <= 0 or width <= 0 or fps <= 0:
+        return 0.0
+    travel = width / (overlap * fps) * shutter
+    return round(min(300.0, travel * 0.3), 2)
 
 
 def is_plain_concat(transition: dict) -> bool:
@@ -333,6 +357,8 @@ def build_join_args(
     audio_bitrate: str = "",
     jump_joins: list[bool] | None = None,
     jl: dict | None = None,
+    width: int = 1080,
+    fps: float = 30.0,
 ) -> list[str]:
     """ffmpeg args joining ``parts`` with the given transition settings.
 
@@ -366,19 +392,30 @@ def build_join_args(
             filters.append(f"[{k}:v]settb=AVTB,setpts=PTS-STARTPTS[p{k}]")
         previous = "p0"
         elapsed = durations[0]
+        # Motion blur сдвигового перехода (whip): горизонтальный gblur только на окнах переходов.
+        shutter = float(transition.get("motion_blur") or 0) if xfade_name in SLIDE_XFADES else 0.0
+        windows: list[tuple[float, float, float]] = []
         for k in range(1, n):
             overlap = overlaps[k - 1]
-            label = "vout" if k == n - 1 else f"v{k}"
+            label = ("vx" if shutter > 0 else "vout") if k == n - 1 else f"v{k}"
             if overlap > 0:
                 filters.append(
                     f"[{previous}][p{k}]xfade=transition={xfade_name}:"
                     f"duration={overlap:.3f}:offset={elapsed - overlap:.3f}[{label}]"
                 )
+                windows.append((elapsed - overlap, elapsed, overlap))
                 elapsed += durations[k] - overlap
             else:
                 filters.append(f"[{previous}][p{k}]concat=n=2:v=1:a=0[{label}]")
                 elapsed += durations[k]
             previous = label
+        if shutter > 0:
+            sigma = max((whip_blur_sigma(shutter, o, width, fps) for _a, _b, o in windows), default=0.0)
+            if windows and sigma > 0.3:
+                enable = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, _o in windows)
+                filters.append(f"[vx]gblur=sigma={sigma:.2f}:sigmaV=0:steps=2:enable='{enable}'[vout]")
+            else:
+                filters.append("[vx]null[vout]")
     else:
         # Метки времени каждого куска — с нуля: после -ss кусок начинается не с 0,
         # и concat оставлял щели (10 кусков — картинка на 0.16 с длиннее звука).

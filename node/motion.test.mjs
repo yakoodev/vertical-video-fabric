@@ -2744,3 +2744,212 @@ test("сцена: шаблоны галереи — один слой scene, с�
     assert.ok(painted > 2000, `${id}: кадр почти пуст (${painted} px)`);
   }
 });
+
+/* ---------- motion blur ---------- */
+
+const blurEnv = (w = 540, h = 960, extra = {}) => ({ width: w, height: h, getImage: () => null, createCanvas: (a, b) => createCanvas(a, b), ...extra });
+/** Плашка, что въезжает слева за 0.3 с (быстро), потом стоит. */
+const blurSlide = (extra = {}) => ({
+  id: "mb",
+  type: "shape",
+  start: 0,
+  end: 3,
+  x: 0.5,
+  y: 0.5,
+  keys: { x: [{ t: 0, v: -0.3, ease: "linear" }, { t: 0.3, v: 0.5 }] },
+  props: { kind: "rect", w: 300, h: 200, fill: "#ff3366", radius: 20, stroke: { color: "#ffffff", width: 8 } },
+  ...extra,
+});
+const blurPixels = (layers, t, comp = {}, env = blurEnv()) => {
+  const cv = createCanvas(env.width, env.height);
+  const ctx = cv.getContext("2d");
+  E.drawFrame(ctx, { layers, fps: 30, ...comp }, t, env);
+  return ctx.getImageData(0, 0, env.width, env.height).data;
+};
+test("motion blur: подкадры 4..12 по пути, ниже порога — 1; затвор по центру кадра, зажат в слой", () => {
+  assert.equal(E.blurSamples(0), 1);
+  assert.equal(E.blurSamples(E.MOTION_BLUR_THRESHOLD - 0.01), 1);
+  assert.equal(E.blurSamples(E.MOTION_BLUR_THRESHOLD), 4);
+  assert.equal(E.blurSamples(10_000), 12);
+  assert.equal(E.blurSamples(10_000, 6), 6, "превью — меньше подкадров");
+  assert.equal(E.blurSamples(10_000, 2), 4, "меньше 4 не бывает");
+  const ts = E.shutterTimes(1, 5, 0.5, 30);
+  near(ts[0], 1 - 0.25 / 30);
+  near(ts[2], 1);
+  near(ts[4], 1 + 0.25 / 30);
+  assert.deepEqual(E.shutterTimes(0, 4, 1, 30, 0).slice(0, 2), [0, 0]);
+  assert.deepEqual(E.shutterTimes(2, 1, 0.5, 30), [2]);
+  assert.equal(E.layerShutter({ type: "fx" }, 1), 0);
+  assert.equal(E.layerShutter({ type: "text" }, 0.5), 0.5);
+  assert.equal(E.layerShutter({ type: "text", motionBlur: 0 }, 0.5), 0, "свой 0 сильнее клипа");
+  assert.equal(E.layerShutter({ type: "text", motionBlur: 3 }), 1);
+});
+
+test("motion blur: в покое — тождество (пиксель в пиксель), на быстром въезде — смаз", () => {
+  const sharp = [blurSlide()];
+  const blurred = [blurSlide({ motionBlur: 1 })];
+  // Стоит (после въезда) — ровно как без размытия, и с размытием клипа тоже.
+  for (const t of [0.5, 1.7, 2.9]) {
+    assert.equal(maxDiff(blurPixels(sharp, t), blurPixels(blurred, t)), 0, `t=${t}`);
+    assert.equal(maxDiff(blurPixels(sharp, t), blurPixels(sharp, t, { motionBlur: 1 })), 0, `клип, t=${t}`);
+  }
+  // Летит: смаз — на пути есть полупрозрачные пиксели, которых без размытия нет.
+  const a = blurPixels(sharp, 0.15);
+  const b = blurPixels(blurred, 0.15);
+  assert.ok(maxDiff(a, b) > 40, "смаз виден");
+  const partial = (d) => {
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 10 && d[i] < 245) n++;
+    return n;
+  };
+  assert.ok(partial(b) > partial(a) * 4 + 2000, `полупрозрачных ${partial(b)} против ${partial(a)}`);
+  // Средняя прозрачность сохраняется: смаз размазывает, а не гасит (± 3%).
+  const sum = (d) => {
+    let s = 0;
+    for (let i = 3; i < d.length; i += 4) s += d[i];
+    return s;
+  };
+  near(sum(b) / sum(a), 1, 0.03);
+  // Свой 0 у слоя сильнее клипа: резко.
+  assert.equal(maxDiff(a, blurPixels([blurSlide({ motionBlur: 0 })], 0.15, { motionBlur: 1 })), 0);
+});
+
+test("motion blur: детерминирован — тот же кадр дважды и в другом окружении; превью с меньшим числом подкадров близко", () => {
+  const layers = [blurSlide({ motionBlur: 0.7, blend: "screen", rotation: 10 })];
+  const a = blurPixels(layers, 0.12);
+  const b = blurPixels(layers, 0.12);
+  const c = blurPixels(layers, 0.12, {}, blurEnv());
+  assert.equal(maxDiff(a, b), 0);
+  assert.equal(maxDiff(a, c), 0);
+  // Превью: меньше подкадров, ширина смаза та же — среднее отличие маленькое.
+  const p = blurPixels(layers, 0.12, {}, blurEnv(540, 960, { motionBlurSamples: E.MOTION_BLUR_PREVIEW_SAMPLES }));
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - p[i]);
+  assert.ok(s / a.length < 2, `среднее отличие превью ${s / a.length}`);
+});
+
+test("motion blur: план — медленный слой без подкадров, быстрый с ними; рамка накопителя вокруг пути", () => {
+  const env = blurEnv();
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const slow = { ...blurSlide(), keys: { x: [{ t: 0, v: 0.5, ease: "linear" }, { t: 3, v: 0.501 }] } };
+  assert.equal(E.layerBlurPlan(ctx, slow, 1, env, {}, 1, 30), null);
+  const plan = E.layerBlurPlan(ctx, blurSlide(), 0.15, env, {}, 1, 30);
+  assert.ok(plan && plan.times.length >= 4 && plan.times.length <= 12, JSON.stringify(plan?.times));
+  assert.ok(plan.region && plan.region.w > 150 && plan.region.w < 540, JSON.stringify(plan.region));
+  // Слой, что едет с камерой, смазывается наездом камеры, даже если сам стоит.
+  const camera = [{ t: 0, zoom: 1, x: 0.5, y: 0.5, ease: "linear" }, { t: 0.2, zoom: 2.5, x: 0.3, y: 0.5 }];
+  const still = { ...blurSlide(), keys: {}, x: 0.5, followCamera: true };
+  const camAt = (tt) => E.frameCameraMatrix(camera, tt, 540, 960);
+  assert.ok(E.layerBlurPlan(ctx, still, 0.1, env, {}, 1, 30, camAt));
+  assert.equal(E.layerBlurPlan(ctx, { ...still, followCamera: false }, 0.1, env, {}, 1, 30, camAt), null);
+});
+
+test("motion blur: камера — whip даёт подкадры, покой и медленный наезд — один кадр; motionBlur ключа сильнее клипа", () => {
+  const o = { fps: 30, W: 540, H: 960, unit: 0.5 };
+  const whip = [
+    { t: 0, zoom: 1.3, x: 0.3, y: 0.5, ease: "inOutCubic" },
+    { t: 0.25, zoom: 1.3, x: 0.7, y: 0.5 },
+    { t: 2, zoom: 1.3, x: 0.7, y: 0.5 },
+  ];
+  assert.deepEqual(E.cameraBlurTimes(whip, 0.12, o), [0.12], "без затвора — как раньше");
+  const ts = E.cameraBlurTimes(whip, 0.12, { ...o, fallback: 0.5 });
+  assert.ok(ts.length >= 4 && ts.length <= 12, `подкадров ${ts.length}`);
+  assert.deepEqual(E.cameraBlurTimes(whip, 1.5, { ...o, fallback: 1 }), [1.5], "камера стоит");
+  const slowPush = [{ t: 0, zoom: 1 }, { t: 10, zoom: 1.05 }];
+  assert.deepEqual(E.cameraBlurTimes(slowPush, 5, { ...o, fallback: 1 }), [5], "медленный наезд");
+  // Затвор ключа (как ease — на отрезок от него) сильнее клипа.
+  const own = whip.map((k, i) => (i === 0 ? { ...k, motionBlur: 0 } : k));
+  assert.deepEqual(E.cameraBlurTimes(own, 0.12, { ...o, fallback: 1 }), [0.12]);
+  near(E.cameraShutterAt(own, 0.1, 1), 0);
+  near(E.cameraShutterAt(own, 0.3, 1), 1);
+  near(E.cameraShutterAt([{ t: 1, motionBlur: 0.4 }], 0, 0), 0.4, 1e-9);
+  // 3D-облёт тоже меряется (углы плоскости основы).
+  const orbit = [{ t: 0, zoom: 1, rotY: -12, ease: "linear" }, { t: 0.3, zoom: 1, rotY: 12 }];
+  assert.ok(E.cameraBlurTimes(orbit, 0.15, { ...o, fallback: 1, threeD: true }).length >= 4);
+});
+
+test("motion blur: основа — бегущее среднее; в покое ровно один кадр", () => {
+  const env = blurEnv(64, 64);
+  const paintAt = (target, tt) => {
+    target.fillStyle = "#000000";
+    target.fillRect(0, 0, 64, 64);
+    target.fillStyle = "#ffffff";
+    target.fillRect(Math.round(tt * 100), 0, 8, 64);
+  };
+  const cv = createCanvas(64, 64);
+  const ctx = cv.getContext("2d");
+  E.paintOpaqueBlur(ctx, env, [0.1, 0.2, 0.3, 0.4], paintAt);
+  const d = ctx.getImageData(0, 0, 64, 1).data;
+  // Полоса проехала 10 → 40 px: каждая из 4 позиций — четверть яркости, края полос — ~64.
+  near(d[(12 * 4)], 64, 3);
+  near(d[(32 * 4)], 64, 3);
+  near(d[(60 * 4)], 0, 0);
+  assert.equal(d[3], 255, "основа непрозрачна");
+  const one = createCanvas(64, 64).getContext("2d");
+  E.paintOpaqueBlur(one, env, [0.2], paintAt);
+  const ref = createCanvas(64, 64).getContext("2d");
+  paintAt(ref, 0.2);
+  assert.equal(maxDiff(one.getImageData(0, 0, 64, 64).data, ref.getImageData(0, 0, 64, 64).data), 0);
+});
+
+test("motion blur: сцена — крутится внутри рамки: меряются грани, в покое тождество", () => {
+  const spin = { nodes: [{ type: "box", size: 400, rotation: [20, "=t*720", 0], color: "#3080ff" }] };
+  const still = { nodes: [{ type: "box", size: 400, rotation: [20, 30, 0], color: "#3080ff" }] };
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const opts = { w: 1080, h: 1920, t: 0, dur: 4, env: sceneEnv(540, 960), clip: true, seed: 1 };
+  assert.ok(E.sceneTravel(ctx, spin, opts, 1, 1 + 1 / 60) > 10);
+  assert.equal(E.sceneTravel(ctx, still, opts, 1, 1 + 1 / 60), 0);
+  const layer = (scene, mb) => ({ id: "sc", type: "scene", start: 0, end: 4, x: 0.5, y: 0.5, motionBlur: mb, props: { scene } });
+  const env = sceneEnv(270, 480);
+  const px = (l) => {
+    const cv = createCanvas(270, 480);
+    const c = cv.getContext("2d");
+    E.drawFrame(c, { layers: [l], fps: 30 }, 1.2, env);
+    return c.getImageData(0, 0, 270, 480).data;
+  };
+  assert.equal(maxDiff(px(layer(still, 1)), px(layer(still, 0))), 0, "сцена стоит — тождество");
+  assert.ok(maxDiff(px(layer(spin, 1)), px(layer(spin, 0))) > 20, "крутится — смаз");
+});
+
+test("CLI: motion blur — кадр в покое = без размытия, на whip камеры и быстром слое — смаз; замер времени", () => {
+  const base = join(tmp, "mb-base.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=540x960:rate=30", "-t", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", base], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const comp = (mb) => ({
+    width: 540,
+    height: 960,
+    fps: 30,
+    duration: 2,
+    ...(mb ? { motionBlur: mb } : {}),
+    camera: [
+      { t: 0, zoom: 1.4, x: 0.35, y: 0.5, ease: "inOutCubic" },
+      { t: 0.3, zoom: 1.4, x: 0.65, y: 0.5 },
+    ],
+    layers: [{ ...blurSlide(), keys: { x: [{ t: 1, v: -0.3, ease: "linear" }, { t: 1.3, v: 0.5 }] } }],
+  });
+  const frame = async (name, mb, t) => {
+    const p = writeInputs(name, comp(mb));
+    const png = join(tmp, `${name}.png`);
+    const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--frame", String(t), "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    cv.getContext("2d").drawImage(img, 0, 0);
+    return cv.getContext("2d").getImageData(0, 0, img.width, img.height).data;
+  };
+  return (async () => {
+    assert.equal(maxDiff(await frame("mb-rest0", 0, 1.8), await frame("mb-rest1", 0.5, 1.8)), 0, "в покое — пиксель в пиксель");
+    assert.ok(maxDiff(await frame("mb-whip0", 0, 0.15), await frame("mb-whip1", 0.5, 0.15)) > 30, "whip камеры смазан");
+    assert.ok(maxDiff(await frame("mb-lay0", 0, 1.15), await frame("mb-lay1", 0.5, 1.15)) > 30, "быстрый слой смазан");
+    // Замер: 2 с видео с размытием и без (в сводку теста; в доке — docs/motion/spec.md).
+    const times = {};
+    for (const mb of [0, 0.5]) {
+      const p = writeInputs(`mb-video-${mb}`, comp(mb));
+      const t0 = Date.now();
+      const r = run(["--comp", p.comp, "--assets", p.assets, "--input", base, "--output", join(tmp, `mb-${mb}.mp4`), "--preset", "ultrafast"]);
+      assert.equal(r.status, 0, r.stderr);
+      times[mb] = (Date.now() - t0) / 1000;
+    }
+    console.log(`# motion blur: 60 кадров 540×960 без размытия ${times[0].toFixed(2)} с, с размытием ${times[0.5].toFixed(2)} с`);
+  })();
+});

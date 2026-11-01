@@ -25,7 +25,7 @@ from app.cuts import normalize_cuts
 from app.end_screen import normalize_end_screen
 from app.freeze import normalize_freezes
 from app.montage_assets import normalize_inserts
-from app.motion import normalize_camera, normalize_layers
+from app.motion import normalize_camera, normalize_layers, normalize_motion_blur
 from app.stream_layout import normalize_layout
 from app.transitions import normalize_transition
 
@@ -181,6 +181,9 @@ def normalize_render_settings(raw: object) -> dict:
         # Стоп-кадр в конце ролика, с (0..1.5); None — как у сервиса (RENDER_END_HOLD_SEC).
         # Рендер читает прямо из настроек плана (ClipRenderService._end_hold_sec).
         "end_hold_sec": normalize_end_hold(src.get("end_hold_sec")),
+        # Motion blur клипа по умолчанию, затвор 0..1 (frontend/src/motion/motionblur.ts): слоям и
+        # ключам камеры без своего motionBlur. None — выключен (рендер ровно прежний).
+        "motion_blur": normalize_motion_blur(src.get("motion_blur")),
         # Стоп-кадры посреди ролика {at, duration, audio, layers} (app/freeze.py); at — шкала final.
         "freezes": normalize_freezes(src.get("freezes")),
         # Концовка-баннер {duration, blur, dim, template|svg_asset_id, asset_id, тексты} или None
@@ -224,6 +227,8 @@ def settings_to_render_kwargs(settings: dict, default_subtitle_profile_id: int |
         "banner_y_frac": s["banner_pos_pct"] / 100 if banner else None,
         "music_track_id": s["track_id"] if s["music_on"] else None,
         "mirror": s["mirror"],
-        "transition": s["transition"],
+        # Motion blur клипа — и сдвиговым переходам (whip), если у перехода нет своего.
+        "transition": ({**s["transition"], "motion_blur": s["motion_blur"]}
+                       if s["motion_blur"] and "motion_blur" not in s["transition"] else s["transition"]),
         "cover": s["cover"],
     }

@@ -238,6 +238,20 @@ export function CameraPanel({ camera, selectedIndex, now, clipDuration, onChange
             <span>Тряска · {Math.round((key.shake ?? 0) * 100)}%</span>
             <input type="range" min={0} max={100} value={Math.round((key.shake ?? 0) * 100)} onChange={(e) => patch({ shake: Number(e.target.value) / 100 })} />
           </label>
+          <label
+            className="field range"
+            title="Motion blur наезда от этого ключа до следующего: быстрый whip/панч смазывает кадр по пути (затвор, доля кадра). Не задан — как у клипа"
+          >
+            <span>Motion blur · {key.motionBlur === undefined ? "как у клипа" : `${Math.round(key.motionBlur * 100)}%`}</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round((key.motionBlur ?? 0) * 100)}
+              onChange={(e) => patch({ motionBlur: Number(e.target.value) / 100 })}
+            />
+          </label>
           <details className="li-sec" open={Boolean(key.z || key.rotX || key.rotY || (key.fov && key.fov !== DEFAULT_FOV))}>
             <summary>3D</summary>
             <label className="field range" title="Dolly: камера ближе к сцене (+) или дальше (−), опорные px">

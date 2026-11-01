@@ -2015,9 +2015,8 @@ function drawBackground(ctx: Ctx2D, raw: unknown, w: number, h: number, c: EvalC
  * Нарисовать сцену в момент `opts.t` в текущей системе координат холста: вьюпорт w×h
  * с центром в (0, 0), единица сцены = 1 единица холста на плоскости z = 0 у камеры по умолчанию.
  */
-export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions): SceneStats {
-  const stats: SceneStats = { faces: 0, drawn: 0, items: 0, culled: 0 };
-  if (!isObj(spec)) return stats;
+/** Граф сцены в момент opts.t: элементы кадра (ещё не нарисованы), без сортировки. */
+function collectScene(ctx: Ctx2D, spec: Record<string, unknown>, opts: SceneRenderOptions, stats: SceneStats): { f: Frame; root: EvalCtx; w: number; h: number } {
   const w = Math.max(1, opts.w);
   const h = Math.max(1, opts.h);
   const seed = ((fin(spec.seed) ? Math.floor(spec.seed) : 0) ^ (opts.seed ?? 0)) >>> 0;
@@ -2060,6 +2059,13 @@ export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions)
   const inh: Inherit = { m: identity(), opacity: 1, tint: null, mat: style, t: opts.t, i: 0, n: 1, order: 0, group: null, depth: 0 };
   const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
   for (const n of nodes) visit(n, f, inh);
+  return { f, root, w, h };
+}
+
+export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions): SceneStats {
+  const stats: SceneStats = { faces: 0, drawn: 0, items: 0, culled: 0 };
+  if (!isObj(spec)) return stats;
+  const { f, root, w, h } = collectScene(ctx, spec, opts, stats);
   f.items.sort((a, b) => a.order - b.order || a.depth - b.depth || a.sub - b.sub || a.seq - b.seq);
   stats.items = f.items.length;
 
@@ -2074,7 +2080,7 @@ export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions)
   ctx.lineCap = "round";
   const base = ctx.globalAlpha;
   for (const it of f.items) {
-    if (it.k === "poly") drawPoly(ctx, it, base, dev);
+    if (it.k === "poly") drawPoly(ctx, it, base, f.dev);
     else {
       ctx.globalAlpha = base;
       it.draw(ctx);
@@ -2083,6 +2089,36 @@ export function renderScene(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions)
   ctx.globalAlpha = base;
   ctx.restore();
   return stats;
+}
+
+/**
+ * На сколько единиц вьюпорта сдвинулись грани сцены между моментами `t0` и `t1` (наибольшее
+ * смещение вершины у граней в одном порядке обхода) — для motion blur слоя scene: сцена
+ * крутится внутри неподвижной рамки, по рамке её движения не видно. Элементы-функции (текст,
+ * картинки) не меряются. Ничего не рисует.
+ */
+export function sceneTravel(ctx: Ctx2D, spec: unknown, opts: SceneRenderOptions, t0: number, t1: number): number {
+  if (!isObj(spec)) return 0;
+  const pts = (t: number): number[][] => {
+    const stats: SceneStats = { faces: 0, drawn: 0, items: 0, culled: 0 };
+    ctx.save();
+    const { f } = collectScene(ctx, spec, { ...opts, t }, stats);
+    ctx.restore();
+    const out: number[][] = [];
+    for (const it of f.items) if (it.k === "poly" && it.rings[0]?.length) out.push(it.rings[0]);
+    return out;
+  };
+  const a = pts(t0);
+  const b = pts(t1);
+  let d = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const ra = a[i];
+    const rb = b[i];
+    for (let j = 0; j + 1 < Math.min(ra.length, rb.length); j += 2) d = Math.max(d, Math.hypot(rb[j] - ra[j], rb[j + 1] - ra[j + 1]));
+  }
+  // Граней стало больше или меньше (появление, частицы) — хотя бы как сдвиг на порог.
+  if (a.length !== b.length) d = Math.max(d, 2);
+  return d;
 }
 
 /** Ссылки на картинки сцены (узлы image: src / asset_id) — рендер грузит их заранее. */

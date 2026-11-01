@@ -15,6 +15,7 @@ import {
   formatEnv,
   type AssetSizes,
   invalidateTextCache,
+  MOTION_BLUR_PREVIEW_SAMPLES,
   VIDEO_MAX_SPEED,
   VIDEO_MIN_SPEED,
   type Layer,
@@ -360,6 +361,8 @@ export function browserEnv(w: number, h: number, fmt?: unknown): RenderEnv {
       getImage: imageFor,
       getVideo: videoFor,
       getAnim: animFor,
+      // Motion blur: в превью подкадров меньше (ширина смаза та же, что в рендере).
+      motionBlurSamples: MOTION_BLUR_PREVIEW_SAMPLES,
       createCanvas: (cw, ch) => {
         const c = document.createElement("canvas");
         c.width = cw;

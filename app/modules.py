@@ -387,7 +387,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     # цвет кусков и такт музыки
     "set_piece_color", "match_piece_colors", "snap_to_beats",
     # куски и кадр
-    "trim_piece", "set_focus", "set_segment_speed", "set_piece_fit", "set_end_hold", "set_layout", "set_format",
+    "trim_piece", "set_focus", "set_segment_speed", "set_piece_fit", "set_end_hold", "set_motion_blur", "set_layout",
+    "set_format",
     "set_aspect",
     # звук
     "set_source_audio", "list_music", "mute_audio", "set_source_gain", "set_music", "audio_map",

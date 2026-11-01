@@ -972,6 +972,9 @@ LAYER_FIELDS: dict = {
     "z": Opt(Num(0, -Z_NEAR_LIMIT, Z_FAR_LIMIT, 1)),
     "rotX": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
     "rotY": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
+    # Motion blur, затвор 0..1 (доля интервала кадра; 0.5 — «180°»): быстрый слой смазан по пути
+    # (frontend/src/motion/motionblur.ts). Нет — значение клипа render.motion_blur; 0 — резко.
+    "motionBlur": Opt(Num(0, 0, 1, 3)),
 }
 
 # 3D-камера (space3d.ts): dolly z (опорн. px, плюс — ближе к сцене), наклон rotX и облёт rotY вокруг
@@ -1185,6 +1188,10 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         end = round(start + MIN_LAYER_SEC, 3)
 
     layer: dict = {"id": layer_id, "type": ltype, "start": start, "end": end}
+    if "motionBlur" not in raw and "motion_blur" in raw:
+        raw = {**raw, "motionBlur": raw["motion_blur"]}  # snake_case агента
+    if raw.get("motionBlur") is None:
+        raw = {k: v for k, v in raw.items() if k != "motionBlur"}  # null — «как у клипа»
     layer.update(_norm_fields(raw, LAYER_FIELDS, rep, where))
     if raw.get("camera") == "follow" and "followCamera" not in raw:
         layer["followCamera"] = True  # краткая запись «camera: "follow"»
@@ -1275,6 +1282,8 @@ def _fx_rules(layer: dict, raw: dict, rep: _Report, where: str) -> None:
             layer["props"]["blend"] = layer["blend"]
             rep(f"{where}.blend", f"наложение эффекта — props.blend; перенесено ({layer['blend']})")
         layer["blend"] = "normal"
+    if layer.pop("motionBlur", None) is not None:
+        rep(f"{where}.motionBlur", "эффект кадра не смазывается (motion blur — у движущихся слоёв) — снято")
 
 
 def _marker_text_color(layer: dict, props_raw: Any) -> None:
@@ -1447,6 +1456,10 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
             shake = Num(0, 0, 1, 3).norm(item["shake"], rep, f"{where}.shake")
             if shake > 0:
                 key["shake"] = shake
+        blur = item.get("motionBlur", item.get("motion_blur"))
+        if blur is not None:
+            # Motion blur основы на отрезке от этого ключа (как ease): затвор 0..1, нет — клипа.
+            key["motionBlur"] = Num(0, 0, 1, 3).norm(blur, rep, f"{where}.motionBlur")
         if key["t"] in by_t:
             rep(where, f"второй ключ на t={_fmt(key['t'])} — остаётся последний")
         by_t[key["t"]] = key
@@ -1725,7 +1738,17 @@ def plan_motion(render_settings: Any) -> dict | None:
     end_screen = normalize_end_screen(src.get("end_screen"))
     if not layers and not camera and not end_screen:
         return None
-    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {})}
+    blur = normalize_motion_blur(src.get("motion_blur"))
+    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {}),
+            **({"motion_blur": blur} if blur else {})}
+
+
+def normalize_motion_blur(value: Any) -> float | None:
+    """Motion blur клипа по умолчанию (render.motion_blur): затвор 0..1; None/0/мусор — выключен."""
+    number = _finite(value) if not isinstance(value, bool) else None
+    if number is None or number <= 0:
+        return None
+    return round(min(1.0, number), 3)
 
 
 def visual_motion(motion: dict | None) -> dict | None:
@@ -1741,7 +1764,9 @@ def visual_motion(motion: dict | None) -> dict | None:
     end_screen = motion.get("end_screen")
     if not layers and not camera and not end_screen:
         return None
-    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {})}
+    blur = motion.get("motion_blur")
+    return {"layers": layers, "camera": camera, **({"end_screen": end_screen} if end_screen else {}),
+            **({"motion_blur": blur} if blur else {})}
 
 
 # ---------------------------------------------------------------- описание для UI/агента
