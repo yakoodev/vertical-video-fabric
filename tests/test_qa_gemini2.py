@@ -227,3 +227,40 @@ def test_store_keeps_lines_in_sync_when_subtitles_are_saved(tmp_path, monkeypatc
                   _w("общаге", 1.6, 2.4)]})
     saved = store.get_clip_plan_subtitles(plan["id"])
     assert [l["text"] for l in saved["lines"]] == ["ребят я живу в", "общаге"]
+
+
+# ------------------------------------------------------------------ 6) мелкая картинка под хуком
+
+
+def test_small_image_card_under_the_hook_warns(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+
+    from app.quality_lint import lint_clip, visible_width_share
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    png = tmp_path / "bed.png"  # 400×400, видна только середина 100 px — остальное прозрачное
+    img = np.zeros((400, 400, 4), dtype=np.uint8)
+    img[:, 150:250] = (0, 0, 255, 255)
+    cv2.imwrite(str(png), img)
+    assert abs(visible_width_share(png) - 0.25) < 0.01
+    asset = store.create_montage_asset(kind="image", label="кровать", file_path=str(png), width=400, height=400)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    hook = {"id": "auto_hook", "type": "text", "start": 0, "end": 8, "x": 0.5, "y": 0.166,
+            "props": {"text": "ТАРАКАН НА МОНИТОРЕ", "size": 110, "weight": 900}}
+    out, ok = run_tool(ctx, "add_layers", {"layers": [hook]})
+    assert ok, out
+    bed = {"id": "bed", "type": "image", "start": 1.8, "end": 3.5, "x": 0.5, "y": 0.2,
+           "props": {"asset_id": asset["id"], "w": 800}}
+    out, ok = run_tool(ctx, "add_layers", {"layers": [bed]})
+    assert ok, out
+    text = " ".join(out["warnings"])
+    assert "картинка bed видна ≈200 px" in text and "под хуком auto_hook" in text
+    lint = lint_clip(store, plan["id"], checks=["montage"], media=False)
+    assert {f["layer"] for f in lint["findings"] if f["check"] == "montage"} == {"bed"}
+    # Крупная картинка ниже хука — тихо.
+    _out, ok = run_tool(ctx, "update_layer", {"id": "bed", "patch": {"y": 0.55, "props": {"w": 1700}}})
+    assert ok, _out
+    lint = lint_clip(store, plan["id"], checks=["montage"], media=False)
+    assert not [f for f in lint["findings"] if f.get("layer") == "bed"], lint["findings"]

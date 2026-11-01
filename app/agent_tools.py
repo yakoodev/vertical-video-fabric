@@ -2064,6 +2064,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         "layers_limit": motion.MAX_LAYERS,
         "warnings": lint_layers(layers, duration, only_ids=new_ids, **_lint_scene(ctx, fresh))
         + _scene_warnings(ctx, fresh, duration)
+        + _image_card_warnings(ctx, fresh, layers, new_ids, duration)
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
         + _layers_room_warning(len(layers))
         + _scene_engine_problems(added)[1],
@@ -2075,6 +2076,22 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
                    note="пропущенные слои НЕ в клипе — исправь их по подсказкам и пришли снова только их "
                         "(принятые уже стоят, повторно не присылай)")
     return out
+
+
+def _image_card_warnings(ctx: ToolContext, render: dict, layers: list[dict], ids: set[str], duration: float) -> list[str]:
+    """Новая картинка под хуком или мелкая (видимая часть без прозрачных полей < 35 % ширины) — как lint montage."""
+    from app.formats import settings_layers_format
+
+    if settings_layers_format(render) != "9:16" or not any(l.get("type") == "image" for l in layers
+                                                            if str(l.get("id")) in ids):
+        return []
+    try:
+        from app.quality_lint import image_card_findings
+
+        found = image_card_findings(ctx.store, layers, duration, only_ids=ids)
+    except Exception:  # noqa: BLE001 - подсказка, не повод сорвать правку
+        return []
+    return [f"{f['message']} → {f['fix']}" for f in found]
 
 
 def _layer_problems(ctx: ToolContext, layer: dict, index: int, duration: float) -> list[str]:

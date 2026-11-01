@@ -1270,6 +1270,8 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
     if "montage" in wanted:
         findings += montage_findings(rs, duration)
+        if layers_fmt == "9:16":
+            findings += image_card_findings(store, layers, duration)
 
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
@@ -1347,6 +1349,95 @@ def montage_findings(rs: dict, duration: float | None = None) -> list[dict]:
                                                "повтор выглядит как нехватка материала",
                             "на второе место — другая картинка/гифка под смысл слов (search_images / add_image_from_url) "
                             "или убери повтор", t=items[1][0]))
+    return out
+
+
+IMAGE_MIN_VISIBLE_SHARE = 0.35  # картинка-иллюстрация видна уже этой доли ширины кадра — не читается
+IMAGE_FULL_SHARE = 0.9          # шире — полнокадровая вставка, не карточка
+_VISIBLE_CACHE: dict[str, float] = {}
+
+
+def visible_width_share(path: str | Path) -> float:
+    """Доля ширины картинки без прозрачных полей по бокам (PNG/WebP с альфой); нет альфы/не прочитать — 1."""
+    key = str(path)
+    if key in _VISIBLE_CACHE:
+        return _VISIBLE_CACHE[key]
+    share = 1.0
+    try:
+        import cv2
+
+        img = cv2.imread(key, cv2.IMREAD_UNCHANGED)
+        if img is not None and img.ndim == 3 and img.shape[2] == 4:
+            cols = (img[:, :, 3] > 16).any(axis=0).nonzero()[0]
+            share = (int(cols[-1]) - int(cols[0]) + 1) / img.shape[1] if len(cols) else 0.0
+    except Exception:  # noqa: BLE001 - не картинка/нет cv2 — считаем без полей
+        share = 1.0
+    _VISIBLE_CACHE[key] = share
+    return share
+
+
+def _hook_layers(layers: list[dict]) -> list[dict]:
+    """Заголовок-хук: текст с ``hook`` в id или текст сверху кадра с первой секунды."""
+    return [l for l in layers if l.get("type") == "text" and (
+        "hook" in str(l.get("id") or "").lower() or (_num(l.get("start")) < 1.0 and _num(l.get("y"), 0.5) < 0.32))]
+
+
+def image_card_findings(store: Any, layers: list[dict], duration: float | None = None,
+                        only_ids: set[str] | None = None) -> list[dict]:
+    """Картинка-карточка под хуком и мелкая картинка (QA 02.11, клип 892: кровать ≈300 px под самым хуком,
+    почти не читается). Полнокадровые вставки, наклейки из паков и картинки за видео не проверяем."""
+    from app.promo_lint import layer_rect
+
+    out: list[dict] = []
+    visible = [l for l in layers if isinstance(l, dict) and not l.get("hidden")]
+    hooks = _hook_layers(visible)
+    for layer in visible:
+        if layer.get("type") != "image" or layer.get("behind") or only_ids is not None and str(layer.get("id")) not in only_ids:
+            continue
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        ref = props.get("asset_id") or props.get("src")
+        if props.get("device") or str(ref or "").startswith(("sticker:", "emoji:", "meme:")):
+            continue
+        start, end = _num(layer.get("start")), _num(layer.get("end"), duration or 0.0)
+        if end <= start:
+            continue
+        mid = (start + end) / 2
+        rect = layer_rect(layer, mid)
+        if not rect:
+            continue
+        width = rect[2] - rect[0]
+        if width >= IMAGE_FULL_SHARE * W:
+            continue
+        lid = str(layer.get("id") or "image")
+        share = 1.0
+        if store is not None and str(ref or "").isdigit():
+            try:
+                share = visible_width_share(store.get_montage_asset(int(ref))["file_path"])
+            except Exception:  # noqa: BLE001
+                share = 1.0
+        seen = width * share
+        if seen < IMAGE_MIN_VISIBLE_SHARE * W:
+            need = IMAGE_MIN_VISIBLE_SHARE * W / max(1.0, seen) * _num(layer.get("scale"), 1.0)
+            out.append(_finding("montage", "warn",
+                                f"картинка {lid} видна ≈{seen:.0f} px ({seen / W:.0%} ширины кадра"
+                                + (", без прозрачных полей" if share < 0.98 else "") + ") — мелко, не читается",
+                                f"крупнее: scale ≈{need:.2f} или props.w больше (карточка — 40–60 % ширины)",
+                                t=start, until=end, layer=lid))
+        for hook in hooks:
+            a, b = max(start, _num(hook.get("start"))), min(end, _num(hook.get("end"), duration or 0.0))
+            if b - a < 0.1:
+                continue
+            t = (a + b) / 2
+            box, hook_box = layer_rect(layer, t), layer_rect(hook, t)
+            if not box or not hook_box:
+                continue
+            if box[0] < hook_box[2] and hook_box[0] < box[2] and box[1] < hook_box[3] and hook_box[1] < box[3]:
+                out.append(_finding("montage", "warn",
+                                    f"картинка {lid} на {a:.1f}–{b:.1f} с лежит под хуком {hook.get('id')} — "
+                                    "текст на картинке не читается, картинка закрыта текстом",
+                                    f"опусти картинку ниже хука (y ≥ {(hook_box[3] + (box[3] - box[1]) / 2 + 30) / H:.2f}) "
+                                    "или поставь её после ухода хука", t=a, until=b, layer=lid))
+                break
     return out
 
 
