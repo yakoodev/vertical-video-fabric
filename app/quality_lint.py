@@ -1082,6 +1082,42 @@ def _latest_render_file(store: Any, clip_plan_id: int) -> tuple[dict | None, Pat
     return None, None
 
 
+def plan_fingerprint(store: Any, clip_plan_id: int) -> str | None:
+    """Отпечаток того, что попадает в рендер: клип-файл (куски, монтаж, слои) и субтитры — без
+    названия, описания и заметок (их правит автоописание после рендера). Тот же клип — тот же
+    отпечаток; правка слоя, выреза или слова — другой."""
+    import hashlib
+    import json
+
+    try:
+        from app.clip_history import capture
+
+        state = capture(store, int(clip_plan_id))
+    except Exception:  # noqa: BLE001 - не сняли — проверка по снимкам истории
+        return None
+    spec = {k: v for k, v in (state.get("spec") or {}).items() if k not in ("title", "description", "notes", "favorite")}
+    raw = json.dumps({"spec": spec, "subtitles": state.get("subtitles")}, ensure_ascii=False, sort_keys=True,
+                     default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def render_is_stale(store: Any, clip_plan_id: int, clip: dict) -> bool:
+    """Клип правили после этого рендера? По отпечатку рендера (``clips.plan_fingerprint``), а у старых
+    рендеров без него — по снимку истории правок новее конца рендера. Статус клипа («rendered»,
+    который рендер ставит в конце) правкой не считается — раньше из-за него свежий рендер
+    сразу был «устаревшим»."""
+    stamp = clip.get("plan_fingerprint")
+    if stamp:
+        current = plan_fingerprint(store, clip_plan_id)
+        return bool(current) and current != stamp
+    try:
+        edited = store.last_clip_plan_history_at(int(clip_plan_id))
+    except Exception:  # noqa: BLE001
+        return False
+    done = str(clip.get("finished_at") or clip.get("created_at") or "")
+    return bool(edited and done and edited > done)
+
+
 def _project_platforms(store: Any, clip_plan_id: int) -> list[str]:
     try:
         from app import autopilot as A
@@ -1164,7 +1200,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         clip, path = _latest_render_file(store, clip_plan_id)
         if clip is not None:
             out["render_id"] = int(clip["id"])
-            if str(plan.get("updated_at") or "") > str(clip.get("finished_at") or clip.get("created_at") or ""):
+            if render_is_stale(store, int(clip_plan_id), clip):
                 out["render_stale"] = ("клип правили после этого рендера — вспышки и луп проверены по старому файлу; "
                                        "перерендерь и проверь снова")
     no_media = ("проверка медиа выключена (media: false)" if mode == "no" else

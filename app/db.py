@@ -532,6 +532,9 @@ class Database:
             # Метаданные публикации клипа (app/ai/publish_meta.py): варианты площадок,
             # тексты обложки, откуда взялись (auto после рендера / ai / manual).
             self._ensure_column(conn, "clips", "publish_meta_json", "TEXT")
+            # Отпечаток состояния клипа на момент рендера (app/quality_lint.plan_fingerprint):
+            # lint_clip честно говорит «клип правили после рендера», а не по времени статуса.
+            self._ensure_column(conn, "clips", "plan_fingerprint", "TEXT")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

@@ -1113,8 +1113,24 @@ class ClipRenderService:
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
         может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
         with heavy_slot("render", f"клип {clip_plan_id}"):
+            stamp = self._plan_fingerprint(clip_plan_id)
             clip = self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+            if stamp and isinstance(clip, dict) and clip.get("id"):
+                # С какого состояния клипа сделан файл: lint_clip сверяет, правили ли клип после.
+                try:
+                    self.store.set_clip_plan_fingerprint(int(clip["id"]), stamp)
+                    clip = {**clip, "plan_fingerprint": stamp}
+                except Exception:  # noqa: BLE001 - отпечаток — удобство, рендер важнее
+                    pass
         return self._after_render(clip)
+
+    def _plan_fingerprint(self, clip_plan_id: int) -> str | None:
+        try:
+            from app.quality_lint import plan_fingerprint
+
+            return plan_fingerprint(self.store, clip_plan_id)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _after_render(self, clip: dict) -> dict:
         """После рендера (уже вне очереди тяжёлых): заголовок, описание и хэштеги клипа, если их
