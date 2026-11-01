@@ -24,12 +24,22 @@
 озвучка включена владельцем (``DUBBING_ENABLED=1``), передан ``confirm=true`` и оценка
 не больше бюджета запуска (``budget_rub``, по умолчанию 200 ₽, и не выше
 ``DUBBING_MAX_BUDGET_RUB``). Чат агента дополнительно спрашивает владельца карточкой.
+
+Бесплатно: ``gemini`` — Gemini TTS (``GEMINI_TTS_MODEL``, по умолчанию gemini-3.8-flash-tts) по
+ключу Gemini, который у сервиса уже есть (GEMINI_API_KEY; базовый адрес и прокси — как у анализа).
+На бесплатном тарифе ключа — 0 ₽, только лимиты запросов (429 → ждём и повторяем). Голоса —
+``GEMINI_TTS_VOICES``; ``style`` («говори весело, быстро») — указание к речи строкой перед текстом.
+Бесплатным провайдерам (``gemini``, ``none``) confirm, бюджет и DUBBING_ENABLED не нужны: синтез
+сразу. ``tts_preview`` — проба голоса короткой фразой (прослушать перед выбором).
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import logging
 import math
+import re
 import shutil
 import subprocess
 import time
@@ -40,8 +50,34 @@ from uuid import uuid4
 
 from app.settings import settings
 
-DEFAULT_PROVIDER = "polza"
-PROVIDERS = ("polza", "none")
+_log = logging.getLogger(__name__)
+
+DEFAULT_PROVIDER = "polza"  # владелец ещё не выбрал; бесплатный вариант — "gemini"
+PROVIDERS = ("polza", "gemini", "none")
+# Платит ли провайдер деньгами: бесплатным не нужны confirm, бюджет и DUBBING_ENABLED.
+PAID_PROVIDERS = frozenset({"polza"})
+_ALIASES = {"dry-run": "none", "dry": "none", "mock": "none", "google": "gemini", "gemini-tts": "gemini"}
+
+# Gemini TTS. ПРОВЕРЕНО 2026-11-01 по ai.google.dev (speech-generation, pricing): у
+# gemini-3.8-flash-tts и -lite-tts на бесплатном тарифе «Free of charge», русский поддерживается.
+# На ПЛАТНОМ тарифе ключа (биллинг включён) — $9 / 1 млн выходных токенов, 25 токенов на секунду
+# звука ≈ $0.0135 за минуту речи (копейки; в оценке 0 ₽). Модель по умолчанию —
+# settings.gemini_tts_model (env GEMINI_TTS_MODEL), голос — settings.gemini_tts_voice.
+GEMINI_TTS_MODELS = ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview")
+GEMINI_TTS_VOICES = (
+    "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
+    "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi",
+    "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+    "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+)
+GEMINI_TTS_RATE = 24000  # сырой PCM: s16le, моно, 24 кГц (если пришёл не WAV)
+GEMINI_TTS_TRIES = 6  # 429 (лимит бесплатного тарифа) и 5xx — повторяем с паузой
+GEMINI_TTS_BACKOFF_SEC = (4.0, 10.0, 20.0, 40.0, 60.0)
+GEMINI_TTS_MAX_WAIT_SEC = 65.0  # дольше одной паузы не ждём (минутный лимит)
+MAX_STYLE_CHARS = 300
+PREVIEW_TEXT = "Привет! Так звучит мой голос — послушай и скажи, подходит ли он."
+PREVIEW_MAX_CHARS = 300
+PREVIEW_BUDGET_RUB = 5.0  # потолок одной платной пробы голоса
 DEFAULT_BUDGET_RUB = 200.0
 # Цена TTS Polza, ₽ за символ. ПРОВЕРЕНО 2026-11-01 — цены меняются: перед крупной озвучкой
 # перепроверь и поправь здесь (оценка не должна занижать).
@@ -178,13 +214,214 @@ class PolzaTTS:
         return Speech(out_path, cost, {k: usage[k] for k in ("characters", "cost_rub", "cost") if k in usage})
 
 
-def get_tts_provider(name: str | None, model: str | None = None, voice: str | None = None) -> TTSProvider:
+class GeminiTTS:
+    """Gemini TTS: ``POST {base}/models/{model}:generateContent`` с ``responseModalities: ["AUDIO"]``
+    и ``speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName``. Ответ — base64 в
+    ``candidates[0].content.parts[].inlineData``: WAV (модели 3.8) или сырой PCM s16le 24 кГц моно
+    (``audio/L16;rate=24000``, модели постарше) → ffmpeg → mp3/wav по расширению ``out_path``.
+
+    БЕСПЛАТНО на бесплатном тарифе ключа (0 ₽), но с лимитами: 429 — ждём (``retryDelay`` из
+    ответа, иначе ``GEMINI_TTS_BACKOFF_SEC``) и повторяем; дневной лимит — понятная ошибка сразу.
+    Ключ, базовый адрес и прокси (при геоблоке) — как у остального Gemini (app/ai/gemini.py)."""
+
+    name = "gemini"
+    paid = False
+
+    def __init__(self, model: str | None = None, voice: str | None = None, style: str | None = None,
+                 api_key: str | None = None, base_url: str | None = None, timeout: float = 120,
+                 sleep: Any = None) -> None:
+        self.model = (model or settings.gemini_tts_model).strip()
+        self.voice = gemini_voice(voice or settings.gemini_tts_voice)
+        self.style = " ".join(str(style or "").split())[:MAX_STYLE_CHARS]
+        self.api_key = (api_key if api_key is not None else settings.gemini_api_key).strip()
+        self.base_url = (base_url or settings.gemini_base_url).rstrip("/")
+        self.timeout = timeout
+        self._sleep = sleep or time.sleep
+
+    def price_rub_per_char(self) -> float:
+        return 0.0
+
+    def prompt(self, text: str) -> str:
+        """Текст для модели: указание к речи («говори весело, быстро») — строкой перед репликой."""
+        text = str(text or "").strip()[:MAX_PHRASE_CHARS]
+        if not self.style:
+            return text
+        return f"{self.style.rstrip(' :.')}:\n{text}"
+
+    def payload(self, text: str) -> dict:
+        return {
+            "contents": [{"role": "user", "parts": [{"text": self.prompt(text)}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}},
+            },
+        }
+
+    def synthesize(self, text: str, out_path: Path) -> Speech:
+        if not self.api_key:
+            raise DubError("GEMINI_API_KEY не настроен — бесплатная озвучка Gemini недоступна")
+        data = self._generate(self.payload(text))
+        audio, mime = gemini_audio(data)
+        raw = out_path.with_name(out_path.stem + ".gemini-raw")
+        raw.write_bytes(audio)
+        try:
+            if audio[:4] == b"RIFF" or "wav" in mime:
+                src = ["-i", str(raw)]
+            else:
+                src = ["-f", "s16le", "-ar", str(_pcm_rate(mime)), "-ac", "1", "-i", str(raw)]
+            codec = ["-c:a", "libmp3lame", "-b:a", "128k"] if out_path.suffix == ".mp3" else []
+            _run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *src, *codec, str(out_path)])
+        finally:
+            raw.unlink(missing_ok=True)
+        usage = data.get("usageMetadata") if isinstance(data.get("usageMetadata"), dict) else {}
+        return Speech(out_path, 0.0, {k: usage[k] for k in ("promptTokenCount", "candidatesTokenCount",
+                                                            "totalTokenCount") if k in usage})
+
+    def _generate(self, payload: dict) -> dict:
+        import httpx
+
+        from app.ai import gemini as G
+
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        kwargs = {"headers": {"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                  "json": payload, "timeout": self.timeout}
+        last = ""
+        for attempt in range(GEMINI_TTS_TRIES):
+            try:
+                response = G._request_once("POST", url, kwargs)  # прокси при геоблоке — как у анализа
+            except httpx.TransportError as exc:
+                last = f"сеть: {type(exc).__name__}"
+                if attempt + 1 >= GEMINI_TTS_TRIES:
+                    break
+                self._sleep(_backoff(attempt))
+                continue
+            if response.status_code < 400:
+                return response.json()
+            detail = G._gemini_error_detail(response)
+            if response.status_code in (401, 403):
+                raise RuntimeError(f"Gemini TTS: ключ не подошёл ({response.status_code}: {detail[:200]})")
+            if response.status_code == 429 and _daily_quota(response):
+                raise DubError("Gemini TTS: дневной лимит бесплатного тарифа исчерпан — завтра снова или "
+                               "другой провайдер (polza — платно)")
+            if response.status_code not in (408, 429, 500, 502, 503, 504):
+                raise RuntimeError(f"Gemini TTS {response.status_code}: {detail[:300]}")
+            last = f"{response.status_code}: {detail[:200]}"
+            if attempt + 1 >= GEMINI_TTS_TRIES:
+                break
+            wait = _retry_wait(response, attempt)
+            _log.info("gemini tts %s, жду %.0f с (попытка %s/%s)", response.status_code, wait, attempt + 1,
+                      GEMINI_TTS_TRIES)
+            self._sleep(wait)
+        if last.startswith("429"):
+            raise DubError(f"Gemini TTS: лимит запросов бесплатного тарифа ({GEMINI_TTS_TRIES} попыток) — "
+                           "повтори через минуту")
+        raise RuntimeError(f"Gemini TTS не ответил: {last}")
+
+
+def gemini_voice(name: str | None) -> str:
+    """Голос Gemini по имени без учёта регистра; незнакомый — ошибка со списком."""
+    wanted = str(name or "").strip().lower()
+    for voice in GEMINI_TTS_VOICES:
+        if voice.lower() == wanted:
+            return voice
+    raise DubError(f"голос Gemini «{name}» не знаю; есть: {', '.join(GEMINI_TTS_VOICES)}")
+
+
+def gemini_audio(data: dict) -> tuple[bytes, str]:
+    """(байты, mime) первого звукового куска ответа generateContent."""
+    candidates = data.get("candidates") if isinstance(data, dict) else None
+    for cand in candidates or []:
+        for part in ((cand or {}).get("content") or {}).get("parts") or []:
+            inline = part.get("inlineData") or part.get("inline_data") or {}
+            if inline.get("data"):
+                mime = str(inline.get("mimeType") or inline.get("mime_type") or "").lower()
+                return base64.b64decode(inline["data"]), mime
+    reason = next((c.get("finishReason") for c in candidates or [] if isinstance(c, dict)), None)
+    block = ((data or {}).get("promptFeedback") or {}).get("blockReason") if isinstance(data, dict) else None
+    raise RuntimeError(f"Gemini TTS: в ответе нет звука ({block or reason or 'пустой ответ'})")
+
+
+def _pcm_rate(mime: str) -> int:
+    match = re.search(r"rate=(\d+)", mime or "")
+    return int(match.group(1)) if match else GEMINI_TTS_RATE
+
+
+def _backoff(attempt: int) -> float:
+    return GEMINI_TTS_BACKOFF_SEC[min(attempt, len(GEMINI_TTS_BACKOFF_SEC) - 1)]
+
+
+def _error_details(response: Any) -> list[dict]:
+    try:
+        error = (response.json() or {}).get("error") or {}
+    except ValueError:
+        return []
+    details = error.get("details") if isinstance(error, dict) else None
+    return [d for d in details or [] if isinstance(d, dict)]
+
+
+def _retry_wait(response: Any, attempt: int) -> float:
+    """Пауза перед повтором: retryDelay из RetryInfo («13s»), Retry-After или своя лесенка."""
+    for detail in _error_details(response):
+        if str(detail.get("@type", "")).endswith("RetryInfo"):
+            match = re.match(r"([\d.]+)s", str(detail.get("retryDelay") or ""))
+            if match:
+                return min(GEMINI_TTS_MAX_WAIT_SEC, float(match.group(1)) + 1.0)
+    try:
+        header = float(response.headers.get("retry-after"))
+    except (TypeError, ValueError):
+        header = None
+    if header is not None:
+        return min(GEMINI_TTS_MAX_WAIT_SEC, max(0.0, header))
+    return _backoff(attempt)
+
+
+def _daily_quota(response: Any) -> bool:
+    """429 из-за дневного лимита (quotaId …PerDay…) — ждать минуту бесполезно."""
+    for detail in _error_details(response):
+        for violation in detail.get("violations") or []:
+            if "perday" in str((violation or {}).get("quotaId") or "").lower():
+                return True
+    return False
+
+
+def provider_key(name: str | None) -> str:
     key = str(name or DEFAULT_PROVIDER).strip().lower()
-    if key in ("none", "dry-run", "dry", "mock"):
+    return _ALIASES.get(key, key)
+
+
+def provider_paid(name: str | None) -> bool:
+    """Платный ли провайдер (по имени, без создания): бесплатным не нужны confirm и бюджет."""
+    return provider_key(name) in PAID_PROVIDERS
+
+
+def get_tts_provider(name: str | None, model: str | None = None, voice: str | None = None,
+                     style: str | None = None) -> TTSProvider:
+    key = provider_key(name)
+    if key == "none":
         return DryRunTTS()
     if key == "polza":
         return PolzaTTS(model=model, voice=voice)
+    if key == "gemini":
+        return GeminiTTS(model=model, voice=voice, style=style)
     raise DubError(f"provider: {', '.join(PROVIDERS)}")
+
+
+def voice_catalog() -> dict:
+    """Что можно выбрать: провайдеры, модели и голоса (для UI и агентов)."""
+    return {
+        "default_provider": DEFAULT_PROVIDER,
+        "providers": [
+            {"id": "gemini", "label": "Gemini TTS (бесплатно)", "paid": False,
+             "model": settings.gemini_tts_model, "models": list(GEMINI_TTS_MODELS),
+             "voice": settings.gemini_tts_voice, "voices": list(GEMINI_TTS_VOICES), "style": True,
+             "configured": bool(settings.gemini_api_key)},
+            {"id": "polza", "label": "Polza TTS (платно)", "paid": True, "model": settings.polza_tts_model,
+             "models": list(PRICES_RUB_PER_CHAR), "voice": settings.polza_tts_voice, "voices": [],
+             "style": False, "configured": bool(settings.polza_api_key)},
+            {"id": "none", "label": "Сухой прогон (тон)", "paid": False, "model": "dry-run", "models": [],
+             "voice": "tone", "voices": [], "style": False, "configured": True},
+        ],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +477,9 @@ def estimate_cost(phrases: list[dict], provider: TTSProvider, budget_rub: float 
         out["note"] = "цены модели нет в таблице — оценка по самой дорогой известной; проверь GET /models"
     elif provider.paid and provider.model not in MEASURED_MODELS:
         out["note"] = f"цена модели не замерена — прайс ×{PRICE_MARKUP:g} (запас)"
+    elif provider.name == "gemini":
+        out["note"] = ("Gemini TTS — бесплатно на бесплатном тарифе ключа (лимиты запросов); на платном "
+                       "тарифе — копейки (≈ $0.0135 за минуту речи)")
     return out
 
 
@@ -394,10 +634,13 @@ def is_dub_layer(layer: Any) -> bool:
 
 def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: str | None = None,
              model: str | None = None, confirm: bool = False, budget_rub: float | None = None,
-             stretch: bool = False, remove: bool = False, tts: TTSProvider | None = None) -> dict:
-    """Оценить или сделать озвучку RU клипа. Без ``confirm`` — ТОЛЬКО оценка (ничего не платим).
+             stretch: bool = False, remove: bool = False, tts: TTSProvider | None = None,
+             style: str | None = None) -> dict:
+    """Оценить или сделать озвучку RU клипа. Платный провайдер без ``confirm`` — ТОЛЬКО оценка
+    (ничего не платим); бесплатный (``gemini``, ``none``) — синтез сразу, confirm не нужен.
 
-    ``tts`` — готовый провайдер (тесты подменяют). ``remove`` — снять слои озвучки."""
+    ``tts`` — готовый провайдер (тесты подменяют). ``remove`` — снять слои озвучки. ``style`` —
+    указание к речи для Gemini («говори весело, быстро»)."""
     from app import modules
     from app.timebase import ClipClock
 
@@ -417,9 +660,9 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
         return {"ok": True, "status": "removed", "layers_removed": removed}
 
     phrases = dub_phrases(payload)
-    tts = tts or get_tts_provider(provider, model=model, voice=voice)
+    tts = tts or get_tts_provider(provider, model=model, voice=voice, style=style)
     estimate = estimate_cost(phrases, tts, budget_rub)
-    if not confirm:
+    if not confirm and tts.paid:
         note = (f"оценка: {estimate['chars']} символов ≈ {estimate['rub']:.2f} ₽ ({tts.model}, цена от "
                 f"{PRICE_CHECKED}); синтез — confirm=true, только с согласия владельца")
         if tts.paid and not settings.dubbing_enabled:
@@ -461,6 +704,7 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     overflows = [r for r in report if r["action"] == "trim"]
     dub = {
         "provider": tts.name, "model": tts.model, "voice": tts.voice, "asset_id": int(asset["id"]),
+        **({"style": tts.style} if getattr(tts, "style", "") else {}), "paid": bool(tts.paid),
         "layers": [l["id"] for l in layers], "chars": estimate["chars"],
         "estimate_rub": estimate["rub"], "cost_rub": spent if spent is not None else estimate["rub"],
         "cost_source": "provider" if spent is not None else "estimate",
@@ -477,6 +721,63 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
                                                                           if k != "phrases"},
             "overflow_phrases": [{"i": r["i"], "text": r["text"], "overflow_sec": r["overflow_sec"]} for r in overflows],
             "note": note}
+
+
+def tts_preview(store: Any, provider: str | None = None, voice: str | None = None, model: str | None = None,
+                style: str | None = None, text: str | None = None, confirm: bool = False,
+                tts: TTSProvider | None = None) -> dict:
+    """Проба голоса: короткая фраза → mp3 в библиотеке (audio, тег «проба голоса») → ``url``,
+    чтобы владелец прослушал голос до выбора. Бесплатный провайдер (``gemini``, ``none``) — сразу;
+    платный — без ``confirm`` только оценка, с confirm — при DUBBING_ENABLED=1 и не дороже
+    ``PREVIEW_BUDGET_RUB``. Та же фраза тем же голосом — тот же файл (повторно не синтезируем)."""
+    phrase = " ".join(str(text or PREVIEW_TEXT).split())[:PREVIEW_MAX_CHARS] or PREVIEW_TEXT
+    tts = tts or get_tts_provider(provider, model=model, voice=voice, style=style)
+    style_text = str(getattr(tts, "style", "") or "")
+    rub = round(len(phrase) * tts.price_rub_per_char(), 2)
+    cap = min(PREVIEW_BUDGET_RUB, budget_cap(None))
+    info = {"provider": tts.name, "model": tts.model, "voice": tts.voice, "text": phrase, "chars": len(phrase),
+            "paid": bool(tts.paid), "estimate_rub": rub, **({"style": style_text} if style_text else {})}
+    if tts.paid:
+        if not confirm:
+            return {"ok": True, "status": "estimate", **info,
+                    "note": f"проба платная ≈ {rub:.2f} ₽ ({tts.model}); синтез — confirm=true, только с "
+                            "согласия владельца. Бесплатно — provider gemini"}
+        if not settings.dubbing_enabled:
+            raise DubError("озвучка выключена (DUBBING_ENABLED=0): платную пробу включает только владелец")
+        if rub > cap:
+            raise DubError(f"проба ≈ {rub:.2f} ₽ дороже потолка пробы {cap:.2f} ₽ — сократи фразу")
+    key = "|".join([tts.name, tts.model, tts.voice, style_text, phrase])
+    filename = f"tts-preview-{hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]}.mp3"
+    row = store.db.query_one("SELECT id FROM montage_assets WHERE original_filename = ? ORDER BY id DESC LIMIT 1",
+                             (filename,))
+    if row:
+        asset = store.get_montage_asset(int(row["id"]))
+        if Path(asset["file_path"]).is_file():
+            return {"ok": True, "status": "done", "cached": True, **info, "cost_rub": 0.0,
+                    "asset_id": int(asset["id"]), "url": asset["url"],
+                    "duration": round(float(asset.get("duration_sec") or 0), 2)}
+    from app.montage_assets import assets_dir, probe_asset
+
+    work = settings.tmp_dir / f"tts-preview-{uuid4().hex}"
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        speech = tts.synthesize(phrase, work / "preview.mp3")
+        dest = assets_dir() / f"{uuid4().hex}-{filename}"
+        shutil.move(str(speech.path), dest)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    meta = probe_asset(dest)
+    label = f"Проба голоса: {tts.name} · {tts.voice}" + (f" · {style_text}" if style_text else "")
+    asset = store.create_montage_asset(
+        kind="audio", label=label[:120], description=f"TTS {tts.name}/{tts.model}, голос {tts.voice}: {phrase}"[:500],
+        tags="проба голоса", file_path=str(dest), original_filename=filename, mime_type="audio/mpeg",
+        size_bytes=dest.stat().st_size, **{**meta, "width": 0, "height": 0},
+    )
+    cost = speech.cost_rub if speech.cost_rub is not None else rub
+    return {"ok": True, "status": "done", "cached": False, **info, "cost_rub": round(float(cost), 4),
+            "asset_id": int(asset["id"]), "url": asset["url"],
+            "duration": round(float(meta.get("duration_sec") or 0), 2),
+            "note": "прослушай по url; понравился голос — dub_clip / голос персонажа с тем же provider и voice"}
 
 
 def _run(args: list[str]) -> None:

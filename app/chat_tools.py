@@ -53,7 +53,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "preview_scene_frame")),
     "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
-        "list_subtitle_styles", "translate_subtitles", "dub_clip", "emphasize_words")),
+        "list_subtitle_styles", "translate_subtitles", "dub_clip", "tts_preview", "emphasize_words")),
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
@@ -77,14 +77,14 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
         "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
         "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_retry_job", "aiv_job_status",
-        "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_assemble")),
+        "aiv_select_version", "aiv_check_consistency", "aiv_check_continuity", "aiv_assemble", "tts_preview")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк",
                 "в такт", "долям", "доли", "в бит", "битам", "3d", "3д", "сцен", "анимац"),
-    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч", "ключев", "эмфаз"),
+    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч", "ключев", "эмфаз", "голос"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
              "слоу", "замедл", "ускор", "реверс", "задом", "цвет", "баланс", "экспоз", "светлее", "темнее"),
@@ -102,7 +102,8 @@ DANGEROUS = {
     "revoke_rule": "Отменить правило",
 }
 # Платное: озвучка через Polza — карточка, только когда реально синтезируем (оценка бесплатна).
-PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Polza TTS)"}
+PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Polza TTS)",
+               "tts_preview": "Проба голоса (платно, Polza TTS)"}
 
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.
 MEDIA_SUBDIR = "chat_media"
@@ -353,8 +354,12 @@ def declarations(groups: list[str], json_schema: bool = True) -> list[dict]:
 def is_dangerous(store: Any, name: str, args: dict, project_id: int | None) -> bool:
     if name in DANGEROUS:
         return True
-    if name == "dub_clip":
-        return bool(args.get("confirm")) and str(args.get("provider") or "polza").lower() not in ("none", "dry-run")
+    if name in ("dub_clip", "tts_preview"):
+        from app.dubbing import provider_paid
+
+        # Платно — только синтез платным провайдером; gemini и сухой прогон бесплатны (оценка — тоже).
+        default = "polza" if name == "dub_clip" else "gemini"
+        return bool(args.get("confirm")) and provider_paid(args.get("provider") or default)
     if name == "submit_for_approval":
         # При доверии auto карточка сразу одобряется и уходит в публикацию — это уже публикация.
         try:

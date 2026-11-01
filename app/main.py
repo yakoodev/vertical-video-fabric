@@ -2664,10 +2664,13 @@ def api_translate_plan_subtitles(clip_plan_id: int, _auth: AuthDep, payload: Tra
 
 
 class DubRequest(BaseModel):
-    provider: Literal["polza", "none"] = Field(default="polza", description="polza — платный TTS; none — сухой "
-                                                                             "прогон тоном (бесплатно)")
+    provider: Literal["polza", "gemini", "none"] = Field(
+        default="polza", description="polza — платный TTS (оценка, потом confirm); gemini — Gemini TTS бесплатно "
+                                     "(синтез сразу); none — сухой прогон тоном (бесплатно)")
     voice: str | None = Field(default=None, max_length=60)
     model: str | None = Field(default=None, max_length=80)
+    style: str | None = Field(default=None, max_length=300, description="gemini: как говорить («говори весело, "
+                                                                         "быстро»)")
     confirm: bool = Field(default=False, description="без него — только оценка стоимости")
     budget_rub: float | None = Field(default=None, ge=0, description="потолок этого запуска, ₽ (по умолчанию 200)")
     stretch: bool = Field(default=False, description="замедлять короткие фразы до ×0.8 вместо тишины")
@@ -2677,19 +2680,51 @@ class DubRequest(BaseModel):
 @app.post(
     "/api/clip-plans/{clip_plan_id}/dub",
     tags=["Subtitles"],
-    summary="🔊 Озвучка RU переведённого клипа: оценка (бесплатно) или синтез (платно, confirm + бюджет)",
+    summary="🔊 Озвучка RU переведённого клипа: Gemini — бесплатно сразу; Polza — оценка, синтез с confirm + бюджет",
 )
 def api_dub_clip(clip_plan_id: int, _auth: AuthDep, payload: DubRequest | None = None) -> dict:
-    from app.dubbing import DubError, dub_clip
+    from app.dubbing import DubError, dub_clip, provider_paid
 
     body = payload or DubRequest()
     try:
-        if body.confirm or body.remove:
+        if body.confirm or body.remove or not provider_paid(body.provider):
             snapshot_clip(store, clip_plan_id, "озвучка RU")
         return dub_clip(store, clip_plan_id, provider=body.provider, voice=body.voice, model=body.model,
-                        confirm=body.confirm, budget_rub=body.budget_rub, stretch=body.stretch, remove=body.remove)
+                        confirm=body.confirm, budget_rub=body.budget_rub, stretch=body.stretch, remove=body.remove,
+                        style=body.style)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DubError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/tts/voices", tags=["Subtitles"], summary="🔊 Провайдеры TTS, модели и голоса (gemini — бесплатно)")
+def api_tts_voices(_auth: AuthDep) -> dict:
+    from app.dubbing import voice_catalog
+
+    return voice_catalog()
+
+
+class TtsPreviewRequest(BaseModel):
+    provider: Literal["gemini", "polza", "none"] = Field(default="gemini", description="gemini — бесплатно")
+    voice: str | None = Field(default=None, max_length=60)
+    model: str | None = Field(default=None, max_length=80)
+    style: str | None = Field(default=None, max_length=300, description="как говорить («говори весело, быстро»)")
+    text: str | None = Field(default=None, max_length=300, description="фраза пробы (по умолчанию приветствие)")
+    confirm: bool = Field(default=False, description="платный провайдер: без него — только оценка")
+
+
+@app.post("/api/tts/preview", tags=["Subtitles"],
+          summary="🔊 Проба голоса: короткая фраза → mp3 в библиотеке (url); gemini бесплатно, платное — confirm")
+def api_tts_preview(_auth: AuthDep, payload: TtsPreviewRequest | None = None) -> dict:
+    from app.dubbing import DubError, tts_preview
+
+    body = payload or TtsPreviewRequest()
+    try:
+        return tts_preview(store, provider=body.provider, voice=body.voice, model=body.model, style=body.style,
+                           text=body.text, confirm=body.confirm)
     except DubError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ValueError, RuntimeError) as exc:

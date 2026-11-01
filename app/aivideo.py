@@ -446,12 +446,21 @@ def _voice(value: Any) -> dict:
     if not isinstance(value, dict):
         return {}
     out = {}
-    for key in ("provider", "model", "voice", "sfx"):
-        text = P._text(value.get(key), 200)
+    for key in ("provider", "model", "voice", "sfx", "style"):
+        text = P._text(value.get(key), 300 if key == "style" else 200)
         if text:
             out[key] = text
-    if out.get("provider") and out["provider"] not in PROVIDERS:
-        raise AivError("voice.provider: polza или none")
+    from app import dubbing
+
+    if out.get("provider"):
+        out["provider"] = dubbing.provider_key(out["provider"])
+        if out["provider"] not in dubbing.PROVIDERS:
+            raise AivError("voice.provider: gemini (бесплатно), polza (платно) или none (сухой прогон)")
+        if out["provider"] == "gemini" and out.get("voice"):
+            try:
+                out["voice"] = dubbing.gemini_voice(out["voice"])
+            except dubbing.DubError as exc:
+                raise AivError(str(exc)) from exc
     if out.get("sfx") and not SFX_REF_RE.match(out["sfx"]):
         raise AivError("voice.sfx: звук пака «sfx:freesound/<файл>.ogg» (search_pack freesound) — только записи")
     return out

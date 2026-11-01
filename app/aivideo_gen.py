@@ -309,12 +309,27 @@ def _voice_of(store: Any, project_id: int, who: str, emotion: str = "") -> dict:
         return {"provider": "none", "model": "sfx", "voice": sfx_for(character, emotion)}
     voice = dict((character or {}).get("voice") or {})
     provider = "none" if style["provider"] == "none" else (voice.get("provider") or "polza")
+    if provider == "gemini":  # бесплатный Gemini TTS: свои модель и голос по умолчанию
+        out = {"provider": provider, "model": voice.get("model") or settings.gemini_tts_model,
+               "voice": voice.get("voice") or settings.gemini_tts_voice}
+        return {**out, "style": voice["style"]} if voice.get("style") else out
     return {"provider": provider, "model": voice.get("model") or settings.polza_tts_model,
             "voice": voice.get("voice") or settings.polza_tts_voice}
 
 
 def _line_key(voice: dict, text: str) -> str:
-    return f"{voice['provider']}|{voice['model']}|{voice['voice']}|{text}"
+    key = f"{voice['provider']}|{voice['model']}|{voice['voice']}|{text}"
+    return f"{key}|{voice['style']}" if voice.get("style") else key  # без style — как раньше
+
+
+def _paid(provider: str, kind: str = "") -> bool:
+    """Платит ли запуск деньгами: реплики — по провайдеру TTS (gemini и none бесплатны),
+    картинки и видео — всё, кроме сухого прогона."""
+    if kind == "tts":
+        from app.aivideo_providers import tts_paid
+
+        return tts_paid(provider)
+    return provider != "none"
 
 
 def speech_need_sec(shot: dict) -> float:
@@ -441,15 +456,17 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
                                 "model": "sfx", "voice": voice["voice"], "text": line["text"], "chars": 0,
                                 "estimate_rub": 0.0, "price_note": "звук пака (запись), 0 ₽"})
                     continue
-                tts = get_tts(voice["provider"], voice["model"], voice["voice"])
+                tts = get_tts(voice["provider"], voice["model"], voice["voice"], voice.get("style"))
                 price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
+                free_note = "Gemini TTS, бесплатно" if voice["provider"] == "gemini" else "сухой прогон"
                 out.append({"stage": stage, "kind": "tts", "target_type": "line", "target_id": int(shot["id"]),
                             "ref_kind": "line_audio", "slot": str(i), "script_id": int(script_id),
                             "label": f"план {shot['idx']}, реплика {i + 1} ({line['who']})",
                             "provider": voice["provider"], "model": voice["model"], "voice": voice["voice"],
+                            **({"style": voice["style"]} if voice.get("style") else {}),
                             "text": line["text"], "chars": len(line["text"]),
                             "estimate_rub": round(len(line["text"]) * price, 2),
-                            "price_note": "сухой прогон" if not price else "цена TTS из app/dubbing.py"})
+                            "price_note": free_note if not price else "цена TTS из app/dubbing.py"})
     for item in out:
         item.setdefault("script_id", script_id)
         item["regenerate"] = bool(regenerate or explicit)
@@ -524,7 +541,7 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
     blocked = [i["blocked"] for i in raw if i.get("blocked")]
     notes = [i["skipped"] for i in raw if i.get("skipped")]
     total = round(sum(i["estimate_rub"] for i in planned), 2)
-    paid = any(i["provider"] != "none" for i in planned)
+    paid = any(_paid(i["provider"], i["kind"]) for i in planned)
     problems = cap_problems(store, project_id, script_id, total, stage) if paid else []
     problems += blocked
     if paid and not settings.aivideo_enabled:
@@ -539,8 +556,8 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
         model = "TTS"
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
             + (f" ({model}, цены от {PRICE_CHECKED}: "
-               + ", ".join(sorted({i['price_note'] for i in planned if i['provider'] != 'none'})) + ")" if paid else
-               " — сухой прогон, 0 ₽"))
+               + ", ".join(sorted({i['price_note'] for i in planned if _paid(i['provider'], i['kind'])})) + ")"
+               if paid else " — бесплатно (сухой прогон / Gemini TTS), 0 ₽"))
     if stage == "video" and paid and any("потолка серии" in p for p in problems):
         problems.append(f"подсказка: серия-черновик ≤ {EPISODE_CAP_RUB['draft']:.0f} ₽ — для видео переключи серию "
                         "в quality (aiv_update_script quality) или возьми дешёвую модель (video_model "
@@ -560,7 +577,8 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
 def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_id: int | None,
                 requested_by: str) -> int:
     params = {"resolution": item.get("resolution"), "aspect": item.get("aspect"), "voice": item.get("voice"),
-              "text": item.get("text"), "regenerate": item.get("regenerate", False), "seconds": item.get("seconds"),
+              "text": item.get("text"), "style": item.get("style"), "regenerate": item.get("regenerate", False),
+              "seconds": item.get("seconds"),
               "start": item.get("start")}
     cur = store.db.execute(
         "INSERT INTO aiv_gen_jobs (project_id, script_id, approval_id, stage, kind, target_type, target_id, ref_kind, "
@@ -1026,7 +1044,7 @@ def _runner_id() -> str:
 
 def _preflight(store: Any, job: dict) -> list[str]:
     """Можно ли платить за этот запуск прямо сейчас (под замком)."""
-    if job["provider"] == "none":
+    if not _paid(job["provider"], job["kind"]):
         return []
     out = []
     if not settings.aivideo_enabled:
@@ -1212,7 +1230,7 @@ def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source
             except KeyError:
                 pass
         return None
-    if job["provider"] != "none" and cost > 0:
+    if _paid(job["provider"], job["kind"]) and cost > 0:
         add_ledger(store, job, cost, source, note)
     ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
                     int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
@@ -1228,7 +1246,8 @@ def _run_tts(store: Any, job: dict) -> dict | None:
     params = job["params"]
     text = str(params.get("text") or "")
     voice = params.get("voice") or ""
-    tts = get_tts(job["provider"], job["model"], voice)
+    style = params.get("style") or ""
+    tts = get_tts(job["provider"], job["model"], voice, style or None)
     work = settings.tmp_dir / f"aiv-tts-{uuid4().hex}"
     work.mkdir(parents=True, exist_ok=True)
     try:
@@ -1240,7 +1259,7 @@ def _run_tts(store: Any, job: dict) -> dict | None:
         asset = _save_asset(store, job, Path(speech.path), "audio", "audio/mpeg", f"ИИ-видео: {job['label']}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    key = _line_key({"provider": job["provider"], "model": job["model"], "voice": voice}, text)
+    key = _line_key({"provider": job["provider"], "model": job["model"], "voice": voice, "style": style}, text)
     return _done(store, job, asset["id"], key, cost, source)
 
 
@@ -1648,7 +1667,7 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
             else:
                 skipped.append(job_id)
             continue
-        paid = job["provider"] != "none"
+        paid = _paid(job["provider"], job["kind"])
         stop = False
         provider = None
         if paid or job["kind"] in ("image", "video"):

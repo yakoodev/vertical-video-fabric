@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clipPlansApi, type DubResult, type PlanSubtitles, type SubtitleLine, type TranslationMode } from "@/api/clipPlans";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { TtsVoicePicker, type TtsVoiceValue } from "@/components/TtsVoicePicker";
 import { formatDuration } from "@/components/ui";
 import { useModuleOn, useModules } from "@/hooks/useModules";
 import { resolveCaptions, speakerColor } from "@/motion";
@@ -405,9 +406,10 @@ const LANG_NAMES: Record<string, string> = {
 const langName = (code?: string) => (code ? LANG_NAMES[code] || code : "не известен");
 
 /**
- * Перевод иноязычного клипа на русский (Gemini, бесплатно) и «Озвучка RU» (платно).
- * Показывается, если речь не русская или перевод уже есть. Оценка озвучки бесплатна; синтез —
- * только по кнопке с суммой и подтверждением, и только если владелец включил DUBBING_ENABLED.
+ * Перевод иноязычного клипа на русский (Gemini, бесплатно) и «Озвучка RU».
+ * Показывается, если речь не русская или перевод уже есть. Озвучка Gemini TTS — бесплатно, сразу;
+ * Polza — платно: оценка бесплатна, синтез только по кнопке с суммой и подтверждением, и только
+ * если владелец включил DUBBING_ENABLED.
  */
 function TranslatePanel({
   clipPlanId,
@@ -430,6 +432,10 @@ function TranslatePanel({
   const mode: TranslationMode = tr ? tr.mode : "off";
   const russian = !tr && ["ru", "rus", "russian"].includes(String(subs.language || "").toLowerCase());
   const [estimate, setEstimate] = useState<DubResult | null>(null);
+  // Провайдер по умолчанию на сервере — polza (владелец ещё не выбрал); gemini — бесплатный вариант.
+  const [voice, setVoice] = useState<TtsVoiceValue>({ provider: "polza" });
+  const provider = voice.provider || "polza";
+  const voiceBody = { voice: voice.voice || undefined, style: provider === "gemini" ? voice.style || undefined : undefined };
 
   const translate = useMutation({
     mutationFn: ({ next, again }: { next: TranslationMode; again?: boolean }) =>
@@ -447,7 +453,8 @@ function TranslatePanel({
   });
 
   const dub = useMutation({
-    mutationFn: (body: { provider?: string; confirm?: boolean; remove?: boolean }) => clipPlansApi.dub(clipPlanId, body),
+    mutationFn: (body: { provider?: string; voice?: string; style?: string; confirm?: boolean; remove?: boolean }) =>
+      clipPlansApi.dub(clipPlanId, body),
     onSuccess: (data, body) => {
       if (data.status === "estimate") {
         setEstimate(data);
@@ -461,7 +468,7 @@ function TranslatePanel({
       else
         toast.success(
           `${body.provider === "none" ? "Сухой прогон" : "Озвучка RU"} готова: ${data.dub?.layers?.length ?? 0} слоёв` +
-            (body.provider === "none" ? "" : ` · ≈ ${(data.dub?.cost_rub ?? 0).toFixed(2)} ₽`) +
+            (body.provider === "none" ? "" : body.provider === "gemini" ? " · бесплатно" : ` · ≈ ${(data.dub?.cost_rub ?? 0).toFixed(2)} ₽`) +
             (data.dub?.overflows ? ` · ${data.dub.overflows} фраз не влезли — сократите их` : ""),
         );
     },
@@ -478,7 +485,7 @@ function TranslatePanel({
       `Озвучка платная (Polza TTS, ${est.model}, голос ${est.voice}).\n` +
         `${est.chars} символов ≈ ${est.rub.toFixed(2)} ₽ (цена от ${est.price_checked}, потолок ${est.budget_rub.toFixed(0)} ₽).\n\nОзвучить?`,
     );
-    if (ok) dub.mutate({ provider: "polza", confirm: true });
+    if (ok) dub.mutate({ provider: "polza", ...voiceBody, confirm: true });
   };
   return (
     <div className="subed-tr">
@@ -512,22 +519,42 @@ function TranslatePanel({
         <div className="subed-dub">
           <div className="subed-tr-row">
             <b>Озвучка RU</b>
-            <button
-              className="btn sm"
+            <TtsVoicePicker
+              value={voice}
               disabled={busy}
-              onClick={() => dub.mutate({ provider: "polza" })}
-              title="Посчитать стоимость — бесплатно, ничего не синтезирует"
-            >
-              {dub.isPending && !est ? "Считаю…" : "Оценить"}
-            </button>
-            <button
-              className="btn sm"
-              disabled={busy}
-              onClick={() => dub.mutate({ provider: "none", confirm: true })}
-              title="Бесплатно: тон вместо речи — проверить окна фраз и приглушение оригинала"
-            >
-              Сухой прогон
-            </button>
+              onChange={(next) => {
+                setVoice(next);
+                setEstimate(null);
+              }}
+            />
+            {provider === "gemini" ? (
+              <button
+                className="btn primary sm"
+                disabled={busy}
+                onClick={() => dub.mutate({ provider: "gemini", ...voiceBody })}
+                title="Gemini TTS — бесплатно по ключу Gemini (лимиты запросов: длинный клип — чуть дольше)"
+              >
+                {dub.isPending ? "Озвучиваю…" : "Озвучить бесплатно"}
+              </button>
+            ) : provider === "none" ? (
+              <button
+                className="btn sm"
+                disabled={busy}
+                onClick={() => dub.mutate({ provider: "none", confirm: true })}
+                title="Бесплатно: тон вместо речи — проверить окна фраз и приглушение оригинала"
+              >
+                {dub.isPending ? "…" : "Сухой прогон"}
+              </button>
+            ) : (
+              <button
+                className="btn sm"
+                disabled={busy}
+                onClick={() => dub.mutate({ provider: "polza", ...voiceBody })}
+                title="Посчитать стоимость — бесплатно, ничего не синтезирует"
+              >
+                {dub.isPending && !est ? "Считаю…" : "Оценить"}
+              </button>
+            )}
             {done ? (
               <button className="btn sm" disabled={busy} onClick={() => dub.mutate({ remove: true })}>
                 Снять
@@ -561,7 +588,13 @@ function TranslatePanel({
           ) : null}
           {done ? (
             <p className="muted subed-tr-hint">
-              Готово: {done.provider === "none" ? "сухой прогон" : `${done.voice}, ≈ ${(done.cost_rub ?? 0).toFixed(2)} ₽`} ·
+              Готово:{" "}
+              {done.provider === "none"
+                ? "сухой прогон"
+                : done.provider === "gemini"
+                  ? `Gemini ${done.voice}, бесплатно`
+                  : `${done.voice}, ≈ ${(done.cost_rub ?? 0).toFixed(2)} ₽`}{" "}
+              ·
               слои {done.layers?.join(", ")}
               {done.overflows ? ` · не влезли: ${done.overflows}` : ""}
             </p>

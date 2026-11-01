@@ -727,13 +727,19 @@ def get_video_provider(name: str) -> Any:
     return catalog(name).video_adapter()
 
 
-def get_tts(name: str, model: str | None = None, voice: str | None = None) -> Any:
-    """Озвучка реплики — машинерия ``app/dubbing.py`` (PolzaTTS / DryRunTTS). Тесты подменяют."""
-    from app.dubbing import DryRunTTS, PolzaTTS
+def get_tts(name: str, model: str | None = None, voice: str | None = None, style: str | None = None) -> Any:
+    """Озвучка реплики — машинерия ``app/dubbing.py`` (GeminiTTS бесплатно / PolzaTTS платно /
+    DryRunTTS). Тесты подменяют."""
+    from app.dubbing import get_tts_provider
 
-    if str(name or "none").strip().lower() in ("none", "dry", "dry-run", "mock"):
-        return DryRunTTS()
-    return PolzaTTS(model=model or None, voice=voice or None)
+    return get_tts_provider(name or "none", model=model or None, voice=voice or None, style=style or None)
+
+
+def tts_paid(name: str | None) -> bool:
+    """Платный ли TTS-провайдер реплик (gemini и none — бесплатно)."""
+    from app.dubbing import provider_paid
+
+    return provider_paid(name or "none")
 
 
 def poll(provider: ImageProvider, remote_id: str, timeout: float, interval: float = POLL_INTERVAL_SEC) -> dict:
