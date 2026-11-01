@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import hashlib
 import subprocess
 import time
@@ -39,10 +40,15 @@ from typing import Any, Callable, Protocol
 
 from app.settings import settings
 
+_log = logging.getLogger(__name__)
+
 PRICE_CHECKED = "2026-11-01"
 PRICE_MARKUP = 2.0  # запас к прайсу, пока цена модели не замерена (как в dubbing)
+# Видео Polza: оба замера (seedance-2-fast, grok) — списание = прайс ×1; не замеренным видео — ×1.25
+# до первого настоящего запуска (×2 загоняло бы черновую серию H3 за потолок 350 ₽).
+VIDEO_PRICE_MARKUP = 1.25
 DEFAULT_IMAGE_MODEL = "google/gemini-nano-banana-2.1"
-DEFAULT_VIDEO_MODEL = "bytedance/seedance-2-fast"
+DEFAULT_VIDEO_MODEL = "bytedance/seedance-2"  # качество; черновик — DEFAULT_VIDEO_MODELS
 DEFAULT_VIDEO_RESOLUTION = "720p"
 RESOLUTION = {"draft": "1K", "quality": "2K"}
 REF_MAX_PX = 1024
@@ -65,8 +71,12 @@ MEASURED_IMAGE_PRICES: dict[str, dict[str, float]] = {
 }
 MAX_REFS = {"google/gemini-nano-banana-2.1": 10, "bytedance/seedream-4.5": 14, "openai/gpt-image-2.5-flare": 16,
             "qwen/image-2.1": 10, "black-forest-labs/flux.2-pro": 8}
-# Видео: прайс ₽ за СЕКУНДУ по разрешению (каталог, unitParam=duration).
+# Видео: прайс ₽ за СЕКУНДУ по разрешению (каталог, unitParam=duration; снимок 2026-11-01).
+# seedance-2 / 2-5 — тариф без видео-референса (has_video=false): мы видео на вход не даём.
 VIDEO_PRICES: dict[str, dict[str, float]] = {
+    "bytedance/seedance-2": {"480p": 12.825, "720p": 27.675, "1080p": 68.85},
+    "bytedance/seedance-2-5": {"480p": 18.9, "720p": 42.525},
+    "minimax/hailuo-3-max": {"480p": 9.115264, "768p": 9.115264},
     "bytedance/seedance-2-fast": {"480p": 10.4625, "720p": 22.275},
     "grok-imagine-video-1-5": {"480p": 1.62, "720p": 3.0375},
 }
@@ -75,14 +85,43 @@ MEASURED_VIDEO_PRICES: dict[str, dict[str, float]] = {
     "bytedance/seedance-2-fast": {"720p": 22.275},
     "grok-imagine-video-1-5": {"720p": 3.0375},
 }
-# Длительность (с), сколько картинок на вход, есть ли звук. kling/v3 сам режет план на склейки —
-# для сцепки планов не годится, поэтому его здесь нет.
+# Возможности видеомоделей (docs/design/ai-video-models-2026-11.md): длительность (с; ``durations`` —
+# только эти значения), разрешения, звук (``audio_param`` — имя флага, None — звук свой без флага),
+# режимы подачи кадров:
+# * ``first_last`` — ``images=[первый, последний]``: модель только интерполирует между ключевыми кадрами;
+# * ``ref_images`` — сколько листов персонажей берёт ``reference_images`` (0 — режима нет);
+# * ``exclusive`` — кадры и референсы ВЗАИМОИСКЛЮЧАЮЩИЕ (Seedance 2.x, MiniMax H3, Veo): запрос с обоими
+#   KIE отклоняет 400 или молча роняет одну группу — никогда не шлём оба;
+# * ``negative`` — имя поля негатива (нет — блок «Avoid: …» в конце промпта).
+# kling/v3 сам режет план на склейки — для сцепки планов не годится, поэтому его здесь нет.
 VIDEO_LIMITS: dict[str, dict[str, Any]] = {
-    "bytedance/seedance-2-fast": {"min": 4, "max": 15, "images": 2, "audio": True, "ref_images": 9},
-    "grok-imagine-video-1-5": {"min": 1, "max": 15, "images": 7, "audio": False},
+    "bytedance/seedance-2": {
+        "label": "Seedance 2.0 (качество, первый+последний кадр, звук)", "min": 4, "max": 15,
+        "resolutions": ("480p", "720p", "1080p"), "audio": True, "audio_param": "generate_audio",
+        "images": 2, "first_last": True, "ref_images": 9, "exclusive": True, "negative": None},
+    "bytedance/seedance-2-5": {
+        "label": "Seedance 2.5 (лучшая, дорого)", "min": 4, "max": 30, "resolutions": ("480p", "720p"),
+        "audio": True, "audio_param": "generate_audio", "images": 2, "first_last": True, "ref_images": 30,
+        "exclusive": True, "negative": None},
+    "minimax/hailuo-3-max": {
+        "label": "MiniMax H3 Max (черновик: первый+последний кадр, звук, дёшево)", "min": 5, "max": 15,
+        "durations": tuple(range(5, 16)), "resolutions": ("480p", "768p"), "audio": True, "audio_param": None,
+        "images": 2, "first_last": True, "ref_images": 0, "exclusive": True, "negative": None},
+    "bytedance/seedance-2-fast": {
+        "label": "Seedance 2 fast (дешевле, хуже держит физику)", "min": 4, "max": 15,
+        "resolutions": ("480p", "720p"), "audio": True, "audio_param": "generate_audio", "images": 2,
+        "first_last": True, "ref_images": 9, "exclusive": True, "negative": None},
+    "grok-imagine-video-1-5": {
+        "label": "Grok Imagine 1.5 (самый дешёвый черновик, без звука, только старт)", "min": 1, "max": 15,
+        "resolutions": ("480p", "720p"), "audio": False, "audio_param": None, "images": 7, "first_last": False,
+        "ref_images": 0, "exclusive": True, "negative": None},
 }
-VIDEO_LABELS = {"bytedance/seedance-2-fast": "Seedance 2 fast (со звуком, основная)",
-                "grok-imagine-video-1-5": "Grok Imagine 1.5 (дешёвый черновик)"}
+VIDEO_LABELS = {m: c["label"] for m, c in VIDEO_LIMITS.items()}
+# Модель по умолчанию — по режиму серии (если в проекте и AIVIDEO_VIDEO_MODEL пусто).
+DEFAULT_VIDEO_MODELS = {"quality": "bytedance/seedance-2", "draft": "minimax/hailuo-3-max"}
+VIDEO_MODES = ("first_last", "start", "refs")
+VIDEO_MODE_LABELS = {"first_last": "первый+последний кадр", "start": "только стартовый кадр",
+                     "refs": "старт + листы персонажей"}
 
 
 class ProviderError(RuntimeError):
@@ -128,14 +167,75 @@ def polza_image_params(model: str, prompt: str, aspect: str, resolution: str) ->
             "output_format": "jpeg"}
 
 
-def polza_video_params(model: str, prompt: str, seconds: int, resolution: str, aspect: str = "9:16") -> dict:
-    """Тело ``input`` image-to-video Polza. duration — СТРОКА (так принял seedance в замере);
-    generate_audio — только у моделей со звуком (seedance)."""
-    out = {"model": model, "prompt": prompt[:4000], "duration": str(int(seconds)), "aspect_ratio": aspect,
-           "resolution": resolution}
-    if (VIDEO_LIMITS.get(model) or {}).get("audio"):
-        out["generate_audio"] = True
+def polza_video_params(model: str, prompt: str, seconds: int, resolution: str, aspect: str = "9:16",
+                       negative: str = "") -> dict:
+    """Тело ``input`` image-to-video Polza. duration — СТРОКА (так принял seedance в замере), к
+    допустимой у модели; разрешение — ближайшее у модели (у H3 720p → 768p); флаг звука — только у
+    моделей с ним (seedance ``generate_audio``; H3 звучит сам). Негатив — полем, если модель его
+    берёт, иначе блоком «Avoid: …» в конце промпта."""
+    caps = video_capabilities(model)
+    if negative and not caps.get("negative"):
+        prompt = f"{prompt.rstrip()} Avoid: {negative.strip().rstrip('.')}."
+    out = {"model": model, "prompt": prompt[:4000], "duration": str(snap_seconds(model, seconds)),
+           "aspect_ratio": aspect, "resolution": video_resolution_for(model, resolution)}
+    if caps.get("audio") and caps.get("audio_param"):
+        out[caps["audio_param"]] = True
+    if negative and caps.get("negative"):
+        out[caps["negative"]] = negative[:1000]
     return out
+
+
+def video_capabilities(model: str, provider: str | None = None) -> dict:
+    """Возможности видеомодели (режимы кадров, референсы, длительности, разрешения, звук) —
+    из каталога провайдера; неизвестная — осторожно: только стартовый кадр."""
+    cats = [catalog(provider)] if provider and provider in CATALOGS else []
+    for c in [*cats, *CATALOGS.values(), *FUTURE_CATALOGS.values()]:
+        if model in c.video_limits:
+            return {"model": model, **c.video_limits[model]}
+    return {"model": model, "min": 4, "max": 15, "images": 1, "audio": False, "first_last": False, "ref_images": 0,
+            "exclusive": True, "resolutions": ("480p", "720p"), "negative": None, "label": model}
+
+
+def video_resolution_for(model: str, wanted: str) -> str:
+    """Разрешение проекта (480p/720p/1080p) → то, что есть у модели: точное, иначе ближайшее
+    по высоте (у H3 вместо 720p — 768p, у fast вместо 1080p — 720p)."""
+    options = tuple(video_capabilities(model).get("resolutions") or ())
+    if not options or wanted in options:
+        return wanted
+
+    def height(value: str) -> int:
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        return int(digits) if digits else 720
+
+    return min(options, key=lambda r: (abs(height(r) - height(wanted)), -height(r)))
+
+
+def snap_seconds(model: str, seconds: float) -> int:
+    """Секунды видео → допустимые у модели (min…max или ближайшее из ``durations``, не короче)."""
+    caps = video_capabilities(model)
+    want = int(round(float(seconds)))
+    allowed = caps.get("durations")
+    if allowed:
+        longer = [d for d in allowed if d >= want]
+        return int(min(longer) if longer else max(allowed))
+    return int(min(int(caps.get("max") or 15), max(int(caps.get("min") or 1), want)))
+
+
+def choose_video_mode(model: str, has_end: bool, has_refs: bool = False, provider: str | None = None) -> str:
+    """Режим подачи кадров в видеомодель: ``first_last`` — есть оба ключевых кадра и модель это умеет
+    (главный режим: персонаж нарисован на обоих концах); ``refs`` — старт + листы персонажей, ТОЛЬКО
+    у моделей, где это совместимо (не ``exclusive``: Kling 4.0); иначе ``start`` — один старт."""
+    caps = video_capabilities(model, provider)
+    if has_end and caps.get("first_last"):
+        return "first_last"
+    if has_refs and caps.get("ref_images") and not caps.get("exclusive"):
+        return "refs"
+    return "start"
+
+
+def default_video_model(quality: str | None) -> str:
+    """Видеомодель по умолчанию: качество — seedance-2 720p, черновик — MiniMax H3 Max."""
+    return DEFAULT_VIDEO_MODELS.get(str(quality or "draft"), DEFAULT_VIDEO_MODELS["draft"])
 
 
 # --------------------------------------------------------------------------- #
@@ -158,6 +258,7 @@ class ProviderCatalog:
     # Функция, а не словарь: таблицы читаются при каждом расчёте (их правят замеры и тесты).
     tables: Callable[[], dict[str, dict]] = field(default=lambda: {})
     markup: float = PRICE_MARKUP
+    video_markup: float | None = None  # своя наценка видео (None — как markup)
 
     def _table(self, name: str) -> dict:
         return self.tables().get(name) or {}
@@ -215,10 +316,7 @@ def catalog(provider: str | None) -> ProviderCatalog:
 
 
 def _video_limits(model: str) -> dict:
-    for c in CATALOGS.values():
-        if model in c.video_limits:
-            return c.video_limits[model]
-    return {"min": 4, "max": 15, "images": 1, "audio": False}
+    return video_capabilities(model)
 
 
 def image_price(model: str, resolution: str, provider: str = "polza") -> dict:
@@ -245,19 +343,21 @@ def video_price(model: str, resolution: str, seconds: float, provider: str = "po
     cat = catalog(provider)
     if not cat.paid:
         return {"rub": 0.0, "per_sec": 0.0, "measured": True, "note": "сухой прогон"}
+    resolution = video_resolution_for(model, resolution)
     measured = cat.measured_video.get(model) or {}
     if resolution in measured:
         per_sec = measured[resolution]
         return {"rub": round(per_sec * seconds, 2), "per_sec": per_sec, "measured": True,
                 "note": f"замер {per_sec:g} ₽/с × {seconds:g} с"}
     tiers = cat.video_prices.get(model)
+    mk = cat.markup if cat.video_markup is None else cat.video_markup
     if not tiers:
         top = max(max(t.values()) for t in cat.video_prices.values())
-        return {"rub": round(top * cat.markup * seconds, 2), "per_sec": top * cat.markup, "measured": False,
-                "note": f"модели нет в таблице — оценка по самой дорогой ×{cat.markup:g}"}
+        return {"rub": round(top * mk * seconds, 2), "per_sec": top * mk, "measured": False,
+                "note": f"модели нет в таблице — оценка по самой дорогой ×{mk:g}"}
     per_sec = tiers.get(resolution, max(tiers.values()))
-    return {"rub": round(per_sec * cat.markup * seconds, 2), "per_sec": per_sec * cat.markup, "measured": False,
-            "note": f"прайс {per_sec:g} ₽/с ×{cat.markup:g} (не замерено) × {seconds:g} с"}
+    return {"rub": round(per_sec * mk * seconds, 2), "per_sec": round(per_sec * mk, 4), "measured": False,
+            "note": f"прайс {per_sec:g} ₽/с ×{mk:g} (не замерено) × {seconds:g} с"}
 
 
 def video_seconds_range(model: str) -> tuple[int, int]:
@@ -278,9 +378,11 @@ def model_params(model: str, prompt: str, aspect: str, resolution: str, provider
 
 
 def video_params(model: str, prompt: str, seconds: int, resolution: str, aspect: str = "9:16",
-                 provider: str = "polza") -> dict:
-    """Тело запроса видео — по каталогу провайдера."""
-    return catalog(provider).video_params(model, prompt, seconds, resolution, aspect)
+                 provider: str = "polza", negative: str = "") -> dict:
+    """Тело запроса видео — по каталогу провайдера (``negative`` — полем или блоком «Avoid»)."""
+    build = catalog(provider).video_params
+    return build(model, prompt, seconds, resolution, aspect, negative=negative) if negative else \
+        build(model, prompt, seconds, resolution, aspect)
 
 
 # --------------------------------------------------------------------------- #
@@ -401,7 +503,23 @@ class DryRunVideo:
         except (TypeError, ValueError):
             seconds = 4.0
         start = params.get("_start")
+        end = params.get("_end")
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if start and Path(start).is_file() and end and Path(end).is_file():
+            # Первый+последний кадр: наплыв от старта к концу (как интерполяция модели).
+            fit = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=12,format=yuv420p,"
+                   "settb=1/12")
+            offset, fade = seconds * 0.25, seconds * 0.5
+            args = ["ffmpeg", "-v", "error", "-y", "-loop", "1", "-framerate", "12", "-t", f"{seconds:.3f}", "-i",
+                    str(start), "-loop", "1", "-framerate", "12", "-t", f"{seconds:.3f}", "-i", str(end),
+                    "-f", "lavfi", "-t", f"{seconds:.3f}", "-i", "sine=frequency=330:sample_rate=44100",
+                    "-filter_complex", f"[0:v]{fit}[a];[1:v]{fit}[b];[a][b]xfade=transition=fade:duration={fade:.3f}:"
+                                       f"offset={offset:.3f},format=yuv420p[v]",
+                    "-map", "[v]", "-map", "2:a", "-af", "volume=0.05", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-t", f"{seconds:.3f}", str(dest)]
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=120, check=False)
+            if proc.returncode == 0 and dest.is_file():
+                return dest
         if start and Path(start).is_file():
             video_in = ["-loop", "1", "-framerate", "12", "-t", f"{seconds:.3f}", "-i", str(start)]
             vf = (f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},"
@@ -664,6 +782,18 @@ class PolzaVideo(PolzaImages):
     def _encode(self, path: Path) -> str:
         return start_frame_data_url(path)
 
+    def submit(self, params: dict, refs: list[Path]) -> str:
+        """``refs`` — ключевые кадры (``images``: старт или старт+конец), ``_reference_images`` — листы.
+        У моделей с взаимоисключающими режимами (Seedance 2.x, H3) оба НИКОГДА не уходят вместе:
+        конвейер так не просит, а здесь — страховка до денег (листы отбрасываются)."""
+        caps = video_capabilities(str(params.get("model") or ""))
+        if refs and params.get("_reference_images") and caps.get("exclusive", True):
+            _log.warning("aiv video %s: кадры и reference_images вместе запрещены — листы не отправляю",
+                         params.get("model"))
+            params = {k: v for k, v in params.items() if k != "_reference_images"}
+        refs = list(refs)[:max(1, int(caps.get("images") or 1))]
+        return super().submit(params, refs)
+
     def fetch(self, result: dict, dest: Path, params: dict) -> Path:
         import httpx
 
@@ -714,10 +844,71 @@ CATALOGS["none"] = ProviderCatalog(
     image_params=polza_image_params, video_params=polza_video_params, markup=0.0)
 CATALOGS["polza"] = ProviderCatalog(
     id="polza", label="Polza (платно)", paid=True, image_adapter=PolzaImages, video_adapter=PolzaVideo,
-    image_params=polza_image_params, video_params=polza_video_params,
+    image_params=polza_image_params, video_params=polza_video_params, video_markup=VIDEO_PRICE_MARKUP,
     tables=lambda: {"image_prices": IMAGE_PRICES, "measured_image": MEASURED_IMAGE_PRICES, "max_refs": MAX_REFS,
                     "video_prices": VIDEO_PRICES, "measured_video": MEASURED_VIDEO_PRICES,
                     "video_limits": VIDEO_LIMITS})
+
+
+# --------------------------------------------------------------------------- #
+# Слот на будущее: GenAPI (gen-api.ru, рубли) / kie.ai — Kling 4.0 reference-to-video. В одном
+# запросе — старт, конец И до 7 «элементов» персонажей (режимы НЕ взаимоисключающие). Сетевых
+# вызовов нет: когда появится ключ, адаптер дописывает submit/check/fetch (асинхронно: createTask →
+# taskId или callback_url), каталог регистрируется в CATALOGS — конвейер не меняется.
+# --------------------------------------------------------------------------- #
+
+GENAPI_VIDEO_PRICES: dict[str, dict[str, float]] = {
+    # GenAPI, 2026-11-01 (docs/design/ai-video-models-2026-11.md): 5 с 720p 196 ₽, 1080p 294 ₽.
+    "kling/v4-reference": {"720p": 39.2, "1080p": 58.8},
+}
+GENAPI_VIDEO_LIMITS: dict[str, dict[str, Any]] = {
+    "kling/v4-reference": {
+        "label": "Kling 4.0 reference (старт+конец+листы вместе)", "min": 3, "max": 30,
+        "resolutions": ("720p", "1080p"), "audio": True, "audio_param": "sound", "images": 2, "first_last": True,
+        "ref_images": 7, "exclusive": False, "negative": "negative_prompt"},
+}
+
+
+def genapi_video_body(params: dict, start: Path | None, end: Path | None, sheets: list[Path]) -> dict:
+    """Тело запроса Kling 4.0 reference-to-video (GenAPI/kie): старт, конец и элементы персонажей
+    одним запросом, один план (без ``multi_prompt``, ``multi_shots=false``). Только сборка — сети нет."""
+    caps = GENAPI_VIDEO_LIMITS.get(str(params.get("model")), {})
+    body = {k: v for k, v in params.items() if not k.startswith("_")}
+    body["multi_shots"] = False
+    if start is not None:
+        body["start_image_url"] = str(start)
+    if end is not None:
+        body["end_image_url"] = str(end)
+    elements = [str(p) for p in sheets][:int(caps.get("ref_images") or 7)]
+    if elements:
+        body["elements"] = [{"image_url": url, "name": f"Element{i}"} for i, url in enumerate(elements, 1)]
+    return body
+
+
+class GenApiVideo:
+    """ПЛАТНО (когда будет): адаптер-заготовка. Пока любой submit — отказ до денег."""
+
+    name = "genapi"
+    paid = True
+    request_type = "video"
+
+    def submit(self, params: dict, refs: list[Path]) -> str:
+        raise ProviderError("провайдер genapi (Kling 4.0) ещё не подключён — нужен ключ и адаптер")
+
+    def check(self, remote_id: str) -> dict:
+        return {"status": "failed", "error": "genapi не подключён"}
+
+    def fetch(self, result: dict, dest: Path, params: dict) -> Path:
+        raise ProviderError("genapi не подключён")
+
+
+# Не зарегистрированы (выбрать нельзя), но их возможности видны конвейеру (выбор режима, тесты).
+FUTURE_CATALOGS: dict[str, ProviderCatalog] = {
+    "genapi": ProviderCatalog(
+        id="genapi", label="GenAPI (Kling 4.0, рубли) — не подключён", paid=True, image_adapter=PolzaImages,
+        video_adapter=GenApiVideo, image_params=polza_image_params, video_params=polza_video_params,
+        tables=lambda: {"video_prices": GENAPI_VIDEO_PRICES, "video_limits": GENAPI_VIDEO_LIMITS}),
+}
 
 
 def get_image_provider(name: str) -> ImageProvider:

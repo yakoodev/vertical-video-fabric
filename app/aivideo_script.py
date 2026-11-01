@@ -26,20 +26,29 @@ from app.settings import settings
 
 RULES = """\
 Ты сценарист коротких вертикальных мультсериалов (Shorts/TikTok/Reels, 9:16). Пиши по-русски.
-Серия — короткие ВИДЕОпланы: на каждый план рисуется стартовый кадр, видеомодель оживляет его
-на 4–8 секунд (needs_motion: true) со своим фоновым звуком; реплики озвучивает наш TTS поверх.
-План без движения (needs_motion: false) — стоп-кадр с движением камеры (дешевле). Поэтому:
-- план 4–8 секунд, каждая реплика укладывается в свой план (~14 символов в секунду);
+Серия — короткие ВИДЕОпланы. На каждый план с движением (needs_motion: true) рисуются ДВА ключевых
+кадра — старт (state) и конец (end_state), — а видеомодель только плавно переводит старт в конец
+(3–5 секунд, свой фоновый звук); реплики озвучивает наш TTS поверх. План без движения
+(needs_motion: false) — стоп-кадр с движением камеры (дешевле). Поэтому:
+- план 3–5 секунд (видеомодели дают 4–5 с), каждая реплика укладывается в свой план (~14 символов
+  в секунду); длинную сцену дели на несколько планов;
 - в кадре не больше двух персонажей; толпы и мелкие лица не годятся;
 - первый план — крючок: в первые 2 секунды зритель понимает конфликт;
-- в плане ОДНО простое непрерывное действие без склеек (встаёт, оборачивается, тянется к носку),
-  motion_prompt — как именно двигаются тело и камера; sound — фоновый звук и шумы действия
-  (без музыки и без речи: речь — реплики);
-- ПОСТОЯНСТВО СКЛЕЕК — главное. У каждого плана state — состояние на его НАЧАЛО: по каждому
+- в плане РОВНО ОДНО простое физическое действие без склеек (встаёт, оборачивается, берёт печенье,
+  выезжает из-под стола) — action одной фразой; два действия = два плана. motion_prompt — как именно
+  двигаются тело и камера; камера статичная или медленная (static, push_in) — резкие движения
+  камеры модель «досочиняет»; sound — фоновый звук и шумы действия (без музыки и без речи);
+- соблюдай физические ограничения персонажей (constraints) буквально: робот-пылесос — плоский диск
+  на полу, без рук и ног, не летает и не встаёт; ровно один экземпляр каждого персонажа;
+- реквизит считай: props[].count — сколько штук в кадре (одно печенье — count 1), счёт не меняется
+  без действия;
+- ПОСТОЯНСТВО СКЛЕЕК — главное. У каждого плана state — состояние на его НАЧАЛО, end_state — на
+  его КОНЕЦ (результат единственного действия): по каждому
   персонажу в кадре pose (sitting/standing/lying/kneeling/walking…), facing (camera/left/right/away),
   position (left/center/right, foreground/background), holding (что в руках или «ничего»), clothing
   (одежда и её состояние); props — ключевой реквизит и его состояние («носок — снят с левой ноги»).
-  Состояние плана N+1 = состояние плана N, изменённое ТОЛЬКО тем, что показало действие плана N.
+  end_state плана N = state плана N, изменённый ТОЛЬКО его действием. Если план N+1 продолжает
+  (continues_from_prev), его state = end_state плана N ДОСЛОВНО (это один и тот же кадр).
   Если персонаж сидел и действие не «встаёт» — в следующем плане он сидит. Не меняй одежду,
   реквизит, причёску и свет без действия;
 - continues_from_prev: true — план продолжает прошлый в той же сцене без скачка времени (видео
@@ -60,12 +69,24 @@ RULES = """\
   notes персонажа — тоже правила (например «не говорит, только пищит»);
 - конец — панчлайн или крючок на следующую серию.
 Новых персонажей и локации заводи, только если без них никак: карта личности нового персонажа —
-возраст, волосы, глаза, рост и пропорции, 2–3 цвета в hex, отличительная деталь; speech — voice | sfx | none.
+возраст, волосы, глаза, рост и пропорции, 2–3 цвета в hex, отличительная деталь; speech — voice | sfx | none;
+constraints — физические ограничения («плоский диск на полу, без рук и ног»).
+Персонаж меняет облик по сюжету (переоделся, промок) — new_looks [{character, id, name, outfit}]: облик
+рисуется правкой его листа (меняется только одежда/состояние), в плане — characters[].look.
 Верни ТОЛЬКО JSON по схеме.
 """
 
 
 def script_schema() -> dict:
+    state = {"type": "object", "properties": {
+        "characters": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "pose": {"type": "string"}, "facing": {"type": "string"},
+            "position": {"type": "string"}, "holding": {"type": "string"},
+            "clothing": {"type": "string"}}, "required": ["id", "pose", "facing"]}},
+        "props": {"type": "array", "items": {"type": "object", "properties": {
+            "name": {"type": "string"}, "state": {"type": "string"}, "count": {"type": "integer"}},
+            "required": ["name", "state"]}}},
+        "required": ["characters"]}
     shot = {
         "type": "object",
         "properties": {
@@ -85,17 +106,12 @@ def script_schema() -> dict:
             "needs_motion": {"type": "boolean"},
             "sound": {"type": "string"},
             "continues_from_prev": {"type": "boolean"},
-            "state": {"type": "object", "properties": {
-                "characters": {"type": "array", "items": {"type": "object", "properties": {
-                    "id": {"type": "string"}, "pose": {"type": "string"}, "facing": {"type": "string"},
-                    "position": {"type": "string"}, "holding": {"type": "string"},
-                    "clothing": {"type": "string"}}, "required": ["id", "pose", "facing"]}},
-                "props": {"type": "array", "items": {"type": "object", "properties": {
-                    "name": {"type": "string"}, "state": {"type": "string"}}, "required": ["name", "state"]}}},
-                "required": ["characters"]},
+            "state": state,
+            "end_state": state,
             "transition_in": {"type": "string"},
         },
-        "required": ["duration", "camera", "action", "dialogue", "state", "continues_from_prev", "needs_motion"],
+        "required": ["duration", "camera", "action", "dialogue", "state", "end_state", "continues_from_prev",
+                     "needs_motion"],
     }
     return {
         "type": "object",
@@ -104,8 +120,11 @@ def script_schema() -> dict:
             "logline": {"type": "string"},
             "new_characters": {"type": "array", "items": {"type": "object", "properties": {
                 "id": {"type": "string"}, "name": {"type": "string"}, "identity_card": {"type": "string"},
-                "speech": {"type": "string", "enum": list(V.SPEECH_MODES)}},
+                "speech": {"type": "string", "enum": list(V.SPEECH_MODES)}, "constraints": {"type": "string"}},
                 "required": ["id", "name", "identity_card"]}},
+            "new_looks": {"type": "array", "items": {"type": "object", "properties": {
+                "character": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"},
+                "outfit": {"type": "string"}}, "required": ["character", "id", "name", "outfit"]}},
             "new_locations": {"type": "array", "items": {"type": "object", "properties": {
                 "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}},
                 "required": ["id", "name", "description"]}},
@@ -130,13 +149,14 @@ def script_context(store: Any, script_id: int, brief: str | None = None) -> dict
         "characters": [{"id": c["slug"], "name": c["name"], "identity_card": c["identity_card"],
                         "speech": c["speech"], "speech_rule": V.SPEECH_LABELS[c["speech"]],
                         **({"notes": c["notes"]} if c.get("notes") else {}),
+                        **({"constraints": c["constraints"]} if c.get("constraints") else {}),
                         "looks": [{"id": l["slug"], "name": l["name"], "outfit": l["outfit_text"], "beat": l["beat"]}
                                   for l in c["looks"]]} for c in V.list_characters(store, project_id)],
         "locations": [{"id": l["slug"], "name": l["name"], "description": l["description"]}
                       for l in V.list_locations(store, project_id)],
         "episode": {"number": script["episode_no"], "brief": brief if brief is not None else script["brief"],
                     "duration_target_sec": target,
-                    "shots_hint": f"{max(4, min(15, round(target / 5)))} планов примерно по 4–6 с"},
+                    "shots_hint": f"{max(4, min(20, round(target / 4)))} планов по 3–5 с, в каждом одно действие"},
         "previous_episodes": [{"no": s["episode_no"], "title": s["title"], "logline": s["logline"]}
                               for s in V.list_scripts(store, project_id) if s["id"] != script["id"]][-5:],
     }
@@ -171,14 +191,25 @@ def apply_script(store: Any, script_id: int, data: dict, source: str = "agent") 
     """Ответ сценариста (Gemini или агент) → новые персонажи/локации + шот-лист."""
     script = V.get_script(store, script_id, with_shots=False)
     project_id = int(script["project_id"])
-    created = {"characters": [], "locations": []}
+    created = {"characters": [], "locations": [], "looks": []}
     for c in data.get("new_characters") or []:
         slug = V.slugify(c.get("id") or c.get("name"), "hero")
         if V.character_by_slug(store, project_id, slug) or not c.get("identity_card"):
             continue
         V.save_character(store, project_id, name=c.get("name") or slug, identity_card=c["identity_card"], slug=slug,
-                         speech=c.get("speech") if c.get("speech") in V.SPEECH_MODES else None)
+                         speech=c.get("speech") if c.get("speech") in V.SPEECH_MODES else None,
+                         constraints=c.get("constraints") or None)
         created["characters"].append(slug)
+    for look in data.get("new_looks") or []:
+        if not isinstance(look, dict):
+            continue
+        owner = V.character_by_slug(store, project_id, V.slugify(look.get("character") or "", ""))
+        slug = V.slugify(look.get("id") or look.get("name"), "look")
+        if not owner or slug in {l["slug"] for l in owner["looks"]} or not look.get("outfit"):
+            continue
+        V.save_look(store, owner["id"], name=look.get("name") or slug, outfit_text=look["outfit"], slug=slug,
+                    beat=f"серия {script['episode_no']}")
+        created["looks"].append(f"{owner['slug']}:{slug}")
     for loc in data.get("new_locations") or []:
         slug = V.slugify(loc.get("id") or loc.get("name"), "place")
         if V.location_by_slug(store, project_id, slug):
@@ -189,7 +220,8 @@ def apply_script(store: Any, script_id: int, data: dict, source: str = "agent") 
     out = V.replace_shots(store, script_id, data.get("shots") or [], data.get("title"), data.get("logline"))
     out["created"] = created
     out["source"] = source
-    if created["characters"] or created["locations"]:
+    if created["characters"] or created["locations"] or created["looks"]:
         out.setdefault("warnings", []).append(
-            "заведены новые персонажи/локации — проверь их карты и сделай для них референсы (этап refs)")
+            "заведены новые персонажи/локации/облики — проверь их карты и сделай для них референсы (этап refs; "
+            "облик — правка листа персонажа)")
     return out

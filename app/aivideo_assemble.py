@@ -176,11 +176,11 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
     for n, shot in enumerate(script["shots"]):
         if _video_of(store, project_id, shot):
             continue
-        ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")
-        if not ref or not ref.get("asset_id"):
-            prev = script["shots"][n - 1] if n else None
-            missing.append(f"{shot['idx']} (сцеплен с видео плана {prev['idx']} — этап video)"
-                           if G._is_chain(shot, prev) else str(shot["idx"]))
+        # Стоп-кадр плана — его стартовый кадр (свой или общий: конечный кадр прошлого плана).
+        ref, shared = G.start_frame_ref(store, project_id, script["shots"], n)
+        if not ref:
+            missing.append(f"{shot['idx']} (старт — конечный кадр плана {shared}: этап keyframes)"
+                           if shared else str(shot["idx"]))
         else:
             frames[shot["id"]] = ref
     if missing:
