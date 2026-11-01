@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import pickle
+import re
 import secrets
 import string
 import subprocess
+import time
 import uuid
 import zlib
 from pathlib import Path
@@ -17,10 +20,23 @@ from app.providers.base import Provider, ProviderResult, safe_provider_error
 from app.publish_format import publish_plan
 from app.settings import settings
 
+log = logging.getLogger(__name__)
+
 _UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+# Таймауты запросов (соединение, чтение): без них зависшее соединение держало воркер вечно.
+_TIMEOUT = (30, 120)
+_CHUNK_TIMEOUT = (30, 600)
+# Ключи id поста в ответе публикации (числовой id ролика — для ссылки и статистики).
+_ITEM_ID_KEYS = ("item_id", "itemId", "aweme_id", "awemeId", "item_id_str")
+_ITEM_ID_RE = re.compile(r"\d{10,25}")
+
+
+def _user_agent() -> str:
+    """UA веб-загрузки: ``TIKTOK_USER_AGENT`` (браузер, из которого взяты cookie) или прежний."""
+    return settings.tiktok_user_agent or _UA
 
 
 class TikTokProvider(Provider):
@@ -84,7 +100,8 @@ class TikTokProvider(Provider):
 
         session = requests.Session()
         session.verify = True
-        session.headers.update({"User-Agent": _UA, "Accept": "application/json, text/plain, */*"})
+        user_agent = _user_agent()
+        session.headers.update({"User-Agent": user_agent, "Accept": "application/json, text/plain, */*"})
         if proxy_url:
             session.proxies = {"http": proxy_url, "https": proxy_url}
         for cookie in cookies:
@@ -100,7 +117,7 @@ class TikTokProvider(Provider):
 
         creation_id = _generate_random_string(21, True)
         project_url = f"https://www.tiktok.com/api/v1/web/project/create/?creation_id={creation_id}&type=1&aid=1988"
-        response = session.post(project_url)
+        response = _retrying(session, "post", project_url)
         if not _assert_success(response):
             return _tiktok_response_failure(response, "TikTok project create failed")
         project_id = response.json()["project"]["project_id"]
@@ -112,17 +129,17 @@ class TikTokProvider(Provider):
         finish_url = f"https://{upload_host}/{store_uri}?uploadID={upload_id}&phase=finish&uploadmode=part"
         finish_headers = {"Authorization": video_auth, "Content-Type": "text/plain;charset=UTF-8"}
         finish_body = ",".join([f"{i + 1}:{crcs[i]}" for i in range(len(crcs))])
-        response = session.post(finish_url, headers=finish_headers, data=finish_body)
+        response = _retrying(session, "post", finish_url, headers=finish_headers, data=finish_body)
         if not _assert_success(response):
             return _tiktok_response_failure(response, "TikTok upload finish failed")
 
         commit_url = "https://www.tiktok.com/top/v1?Action=CommitUploadInner&Version=2020-11-19&SpaceName=tiktok"
         commit_body = '{"SessionKey":"' + session_key + '","Functions":[{"name":"GetMeta"}]}'
-        response = session.post(commit_url, auth=aws_auth, data=commit_body)
+        response = _retrying(session, "post", commit_url, auth=aws_auth, data=commit_body)
         if not _assert_success(response):
             return _tiktok_response_failure(response, "TikTok upload commit failed")
 
-        session.head("https://www.tiktok.com", headers={"user-agent": _UA})
+        _safe_head(session, user_agent)
         caption = tiktok_caption(title, description)
         markup_text, text_extra = _convert_hashtags(caption)
         visibility_type = 1 if privacy == "private" else 0
@@ -171,7 +188,7 @@ class TikTokProvider(Provider):
             "https://www.tiktok.com/api/v1/web/project/post/"
             f"?app_name=tiktok_web&channel=tiktok_web&device_platform=web&aid=1988&msToken={ms_token}"
         )
-        signatures = _run_signature_helper(self._signature_helper_path(), _UA, sig_url)
+        signatures = _run_signature_helper(self._signature_helper_path(), user_agent, sig_url)
         if not signatures:
             return ProviderResult(status="failed", error="TikTok signature generation failed")
         signature_data = json.loads(signatures)["data"]
@@ -189,7 +206,8 @@ class TikTokProvider(Provider):
             post_url,
             params=params,
             data=json.dumps(data, ensure_ascii=False),
-            headers={"content-type": "application/json", "user-agent": _UA},
+            headers={"content-type": "application/json", "user-agent": user_agent},
+            timeout=_TIMEOUT,
         )
         if response.status_code in (401, 403):
             return _tiktok_response_failure(response, "TikTok auth failed", status="needs_reauth")
@@ -201,10 +219,17 @@ class TikTokProvider(Provider):
             error = body.get("status_msg") or body.get("message") or "TikTok publish failed"
             status = _classify_tiktok_error(error)
             return ProviderResult(status=status, error=_safe_error(error), response=body)
+        # Числовой id поста — ссылка https://www.tiktok.com/@/video/<id> (её понимают TikTok и
+        # yt-dlp): без ссылки статистика TikTok-публикаций не собиралась (app/platform_stats.py).
+        item_id = _find_item_id(body)
+        log.info("tiktok post ok: account=%s item_id=%s video_id=%s creation_id=%s project_id=%s",
+                 account_label, item_id or "?", video_id, creation_id, project_id)
         return ProviderResult(
             status="succeeded",
-            remote_id=str(video_id),
-            response={"tiktok": body, "video_id": video_id, "creation_id": creation_id},
+            remote_id=item_id or str(video_id),
+            remote_url=f"https://www.tiktok.com/@/video/{item_id}" if item_id else "",
+            response={"tiktok": body, "video_id": video_id, "item_id": item_id, "creation_id": creation_id,
+                      "project_id": project_id},
         )
 
     def _write_vendor_cookie_file(self, account_label: str, cookies: list[CookieRecord]) -> None:
@@ -222,7 +247,7 @@ class TikTokProvider(Provider):
 
 def _upload_to_tiktok(file_path: Path, session: requests.Session):
     auth_url = "https://www.tiktok.com/api/v1/video/upload/auth/?aid=1988"
-    response = session.get(auth_url)
+    response = _retrying(session, "get", auth_url)
     if not _assert_success(response):
         raise RuntimeError("TikTok upload auth failed")
     token = response.json()["video_token_v5"]
@@ -239,7 +264,7 @@ def _upload_to_tiktok(file_path: Path, session: requests.Session):
         "https://www.tiktok.com/top/v1?Action=ApplyUploadInner&Version=2020-11-19"
         f"&SpaceName=tiktok&FileType=video&IsInner=1&FileSize={file_size}&s=g158iqx8434"
     )
-    response = session.get(apply_url, auth=aws_auth)
+    response = _retrying(session, "get", apply_url, auth=aws_auth)
     if not _assert_success(response):
         raise RuntimeError("TikTok apply upload failed")
     upload_node = response.json()["Result"]["InnerUploadAddress"]["UploadNodes"][0]
@@ -262,10 +287,60 @@ def _upload_to_tiktok(file_path: Path, session: requests.Session):
             "Content-Disposition": 'attachment; filename="undefined"',
             "Content-Crc32": crc,
         }
-        response = session.post(chunk_url, headers=headers, data=chunk)
+        response = _retrying(session, "post", chunk_url, headers=headers, data=chunk, timeout=_CHUNK_TIMEOUT)
         if not _assert_success(response):
             raise RuntimeError(f"TikTok chunk upload failed at part {idx}")
     return video_id, session_key, upload_id, crcs, upload_host, store_uri, video_auth, aws_auth
+
+
+def _retrying(session: requests.Session, method: str, url: str, **kwargs):
+    """Запрос шага, который безопасно повторить (до публикации поста): обрыв сети, 429 и 5xx
+    повторяются ``PUBLISH_UPLOAD_RETRIES`` раз с растущей паузой; остальное — как есть.
+    Сам пост (project/post) не повторяется никогда — повтор мог бы выложить ролик дважды."""
+    kwargs.setdefault("timeout", _TIMEOUT)
+    attempts = 1 + max(0, int(settings.publish_upload_retries))
+    for attempt in range(1, attempts + 1):
+        try:
+            response = getattr(session, method)(url, **kwargs)
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt >= attempts:
+                raise
+        else:
+            transient = response.status_code >= 500 or response.status_code == 429
+            if not transient or attempt >= attempts:
+                return response
+        log.info("tiktok %s %s: retry %d/%d", method.upper(), url.split("?", 1)[0], attempt, attempts - 1)
+        time.sleep(max(0.0, float(settings.publish_upload_retry_seconds)) * attempt)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _safe_head(session: requests.Session, user_agent: str) -> None:
+    """Прогрев перед постом, как у веб-клиента; его сбой — не повод срывать публикацию."""
+    try:
+        session.head("https://www.tiktok.com", headers={"user-agent": user_agent}, timeout=_TIMEOUT)
+    except requests.RequestException:
+        pass
+
+
+def _find_item_id(value, depth: int = 0) -> str:
+    """Числовой id опубликованного ролика в ответе project/post (форма ответа не документирована)."""
+    if depth > 8:
+        return ""
+    if isinstance(value, dict):
+        for key in _ITEM_ID_KEYS:
+            child = value.get(key)
+            if isinstance(child, (str, int)) and not isinstance(child, bool) and _ITEM_ID_RE.fullmatch(str(child)):
+                return str(child)
+        children = list(value.values())
+    elif isinstance(value, list):
+        children = value
+    else:
+        return ""
+    for child in children:
+        found = _find_item_id(child, depth + 1)
+        if found:
+            return found
+    return ""
 
 
 def _run_signature_helper(js_path: Path, user_agent: str, url: str) -> str:
