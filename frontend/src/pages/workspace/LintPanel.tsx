@@ -68,7 +68,7 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
     <div className="lint-panel">
       <div className="lint-run">
         <button type="button" className="btn primary sm" disabled={busy} onClick={() => void run()}>
-          {busy ? "Проверяю…" : result ? "Проверить снова" : "🔎 Проверить"}
+          {busy ? "Проверяю…" : result ? "Проверить снова" : "Проверить"}
         </button>
         <label
           className="lint-opt"
