@@ -17,6 +17,8 @@ export interface AivRef {
   asset_id: number | null;
   selected: boolean;
   stale: boolean;
+  /** Проверка постоянства < 6: персонаж не похож на канон — решить, перерисовать ли. */
+  needs_review?: boolean;
   url: string | null;
   prompt: string;
   score: { min: number | null; characters: { id: string; score: number; differences: string }[] } | null;
@@ -37,7 +39,11 @@ export interface AivCharacter {
   name: string;
   origin: "invented" | "owner";
   identity_card: string;
-  voice: { provider?: string; model?: string; voice?: string };
+  voice: { provider?: string; model?: string; voice?: string; sfx?: string };
+  /** voice — говорит (TTS), sfx — звуки пака вместо слов (по эмоции реплики), none — молчит. */
+  speech: "voice" | "sfx" | "none";
+  speech_captions: boolean;
+  notes?: string;
   looks: AivLook[];
   refs: AivRef[];
 }
@@ -91,6 +97,8 @@ export interface StageCard {
   spent_rub: number;
   decided_by: string;
   jobs: Record<string, number>;
+  /** Сеть: точно не оплачено — «Повторить» без новой карточки. */
+  retryable?: number;
 }
 
 export interface Shot {
@@ -110,6 +118,8 @@ export interface Shot {
   line_audio?: AivRef[];
   spent_rub?: number;
   warnings?: string[];
+  needs_review?: boolean;
+  review_note?: string;
 }
 
 export interface Script {
@@ -226,6 +236,7 @@ export const aivApi = {
   decide: (approvalId: number, action: "approve" | "reject", comment = "") =>
     api.post(`/api/ai-video/approvals/${approvalId}/decide`, { action, comment }),
   run: (approvalId: number) => api.post(`/api/ai-video/approvals/${approvalId}/run`, { confirm: true }),
+  retryCard: (approvalId: number) => api.post<{ retried: number[] }>(`/api/ai-video/approvals/${approvalId}/retry`),
   assemble: (scriptId: number, body: { music_track_id?: number; captions_style?: string } = {}) =>
     api.post<{ clip_id: number; duration: number; editor_url: string; notes: string[] }>(
       `/api/ai-video/scripts/${scriptId}/assemble`, body),

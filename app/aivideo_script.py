@@ -33,9 +33,17 @@ RULES = """\
 - characters[].id и dialogue[].who — id персонажей проекта (или new_characters); location — id локации
   (или new_locations); look — id облика персонажа, если он не в обычном виде;
 - реплики живые и разговорные, без пересказа того, что и так видно; закадровый текст — who "narrator";
+- у каждого персонажа поле speech — как он «говорит», соблюдай его СТРОГО:
+  voice — говорит словами;
+  sfx — НЕ говорит словами (робот, зверёк, малыш): его реплика станет звуком (писк, поп, тромбон),
+  поэтому text — короткое звукоподражание или ремарка («Бип-бип?..», «пищит радостно»), а emotion
+  обязательна (happy, sad, angry, surprised, scared, curious) — по ней подбирается звук; смысл,
+  который нужен зрителю, передай действием в кадре или репликой другого персонажа;
+  none — молчит: реплик ему НЕ давай вообще;
+  notes персонажа — тоже правила (например «не говорит, только пищит»);
 - конец — панчлайн или крючок на следующую серию.
 Новых персонажей и локации заводи, только если без них никак: карта личности нового персонажа —
-возраст, волосы, глаза, рост и пропорции, 2–3 цвета в hex, отличительная деталь.
+возраст, волосы, глаза, рост и пропорции, 2–3 цвета в hex, отличительная деталь; speech — voice | sfx | none.
 Верни ТОЛЬКО JSON по схеме.
 """
 
@@ -68,7 +76,8 @@ def script_schema() -> dict:
             "title": {"type": "string"},
             "logline": {"type": "string"},
             "new_characters": {"type": "array", "items": {"type": "object", "properties": {
-                "id": {"type": "string"}, "name": {"type": "string"}, "identity_card": {"type": "string"}},
+                "id": {"type": "string"}, "name": {"type": "string"}, "identity_card": {"type": "string"},
+                "speech": {"type": "string", "enum": list(V.SPEECH_MODES)}},
                 "required": ["id", "name", "identity_card"]}},
             "new_locations": {"type": "array", "items": {"type": "object", "properties": {
                 "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}},
@@ -92,6 +101,8 @@ def script_context(store: Any, script_id: int, brief: str | None = None) -> dict
         "lore": {k: lore.get(k) for k in ("summary", "people", "arcs", "jokes", "taboo") if lore.get(k)},
         "owner_rules": rules,
         "characters": [{"id": c["slug"], "name": c["name"], "identity_card": c["identity_card"],
+                        "speech": c["speech"], "speech_rule": V.SPEECH_LABELS[c["speech"]],
+                        **({"notes": c["notes"]} if c.get("notes") else {}),
                         "looks": [{"id": l["slug"], "name": l["name"], "outfit": l["outfit_text"], "beat": l["beat"]}
                                   for l in c["looks"]]} for c in V.list_characters(store, project_id)],
         "locations": [{"id": l["slug"], "name": l["name"], "description": l["description"]}
@@ -138,7 +149,8 @@ def apply_script(store: Any, script_id: int, data: dict, source: str = "agent") 
         slug = V.slugify(c.get("id") or c.get("name"), "hero")
         if V.character_by_slug(store, project_id, slug) or not c.get("identity_card"):
             continue
-        V.save_character(store, project_id, name=c.get("name") or slug, identity_card=c["identity_card"], slug=slug)
+        V.save_character(store, project_id, name=c.get("name") or slug, identity_card=c["identity_card"], slug=slug,
+                         speech=c.get("speech") if c.get("speech") in V.SPEECH_MODES else None)
         created["characters"].append(slug)
     for loc in data.get("new_locations") or []:
         slug = V.slugify(loc.get("id") or loc.get("name"), "place")

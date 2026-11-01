@@ -13,9 +13,12 @@
   поле ``images`` описано как «URL изображений»); иначе нужен публичный адрес файлов.
 
 Цены — прайс каталога Polza ``GET /models`` (снимок ``D:\\vvf-offload\\tmp\\videogen\\polza_models.json``,
-2026-11-01) × ``PRICE_MARKUP``: замер TTS показал списание в ~2.04 раза выше прайса, картинки
-ещё не мерили. ПРОВЕРИТЬ ЗАМЕРОМ: после первого настоящего запуска каждой модели поставить
-фактическую цену (``usage.cost_rub`` или разница баланса) и внести модель в ``MEASURED_IMAGE_MODELS``.
+2026-11-01) × ``PRICE_MARKUP``: замер TTS показал списание в ~2.04 раза выше прайса. Картинки:
+nano-banana 1K замерена первым прогоном — 3 ₽ (прайс ×1), она в ``MEASURED_IMAGE_PRICES``; остальное —
+ПРОВЕРИТЬ ЗАМЕРОМ (``usage.cost_rub`` или разница баланса) и внести в ``MEASURED_IMAGE_PRICES``.
+Для будущего этапа ``video`` (оживление кадра, тот же ``POST /media``): ``grok-imagine-video-1-5``
+— ``input.duration`` СТРОКОЙ ("5"), ``resolution`` "720p", часто отвечает сразу ``data.url``;
+15.19 ₽ за 5 с 720p (прайс ×1), видео 720×1280 со звуком.
 """
 
 from __future__ import annotations
@@ -40,8 +43,10 @@ IMAGE_PRICES: dict[str, dict[str, float]] = {
     "qwen/image-2.1": {"1K": 3.0, "2K": 6.0},
     "black-forest-labs/flux.2-pro": {"1K": 5.0, "2K": 7.0},
 }
-# Замеренные: ₽ за картинку как есть, без запаса. Пока пусто.
-MEASURED_IMAGE_PRICES: dict[str, dict[str, float]] = {}
+# Замеренные: ₽ за картинку как есть, без запаса (разрешения, которых нет, — прайс с запасом).
+MEASURED_IMAGE_PRICES: dict[str, dict[str, float]] = {
+    "google/gemini-nano-banana-2.1": {"1K": 3.0},  # первый прогон 2026-11-01: 3 ₽ = прайс ×1
+}
 MAX_REFS = {"google/gemini-nano-banana-2.1": 10, "bytedance/seedream-4.5": 14, "openai/gpt-image-2.5-flare": 16,
             "qwen/image-2.1": 10, "black-forest-labs/flux.2-pro": 8}
 RESOLUTION = {"draft": "1K", "quality": "2K"}
@@ -50,18 +55,37 @@ POLL_INTERVAL_SEC = 3.0
 
 
 class ProviderError(RuntimeError):
-    """Провайдер отказал (сеть, 4xx/5xx). ``policy`` — отказ контент-политики."""
+    """Провайдер отказал (4xx/5xx). ``policy`` — отказ контент-политики, ``status`` — HTTP-код."""
 
-    def __init__(self, message: str, policy: bool = False):
+    def __init__(self, message: str, policy: bool = False, status: int | None = None):
         super().__init__(message)
         self.policy = policy
+        self.status = status
+
+
+def network_phase(exc: BaseException) -> str | None:
+    """Сетевая ошибка запроса: ``before`` — тело до провайдера не дошло (соединение/TLS не
+    установлено: ``ConnectError`` «TLS/SSL connection has been closed (EOF)», ``ConnectTimeout``) —
+    повторять безопасно, денег не взяли; ``after`` — запрос мог дойти (``ReadTimeout``,
+    ``RemoteProtocolError``, обрыв чтения/записи) — возможно оплачено; ``None`` — не сеть."""
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx в зависимостях
+        return None
+    before = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError,
+              httpx.UnsupportedProtocol, httpx.LocalProtocolError)
+    if isinstance(exc, before):
+        return "before"
+    if isinstance(exc, httpx.TransportError):
+        return "after"
+    return None
 
 
 def image_price(model: str, resolution: str) -> dict:
     """Цена одной картинки, ₽: {rub, list_rub, measured, note}."""
-    if model in MEASURED_IMAGE_PRICES:
-        tiers = MEASURED_IMAGE_PRICES[model]
-        rub = tiers.get(resolution, tiers.get("*", max(tiers.values())))
+    measured = MEASURED_IMAGE_PRICES.get(model) or {}
+    rub = measured.get(resolution, measured.get("*"))
+    if rub is not None:
         return {"rub": round(rub, 2), "list_rub": rub, "measured": True, "note": "замер"}
     tiers = IMAGE_PRICES.get(model)
     if not tiers:
@@ -219,14 +243,14 @@ class PolzaImages:
         if response.status_code >= 400:
             detail = _detail(response)
             raise ProviderError(f"Polza {response.status_code}: {detail}",
-                                policy=any(w in detail.lower() for w in _POLICY_WORDS))
+                                policy=any(w in detail.lower() for w in _POLICY_WORDS), status=response.status_code)
         data = response.json() if response.content else {}
         remote = data.get("requestId") or data.get("request_id") or data.get("id")
         if remote:
             return str(remote)
-        items = data.get("data") if isinstance(data.get("data"), list) else []
-        if items and isinstance(items[0], dict) and items[0].get("url"):
-            return "url:" + str(items[0]["url"])  # синхронный ответ — ссылка сразу
+        url = _result_url(data)  # синхронный ответ (data[0].url / data.url) — ссылка сразу
+        if url:
+            return "url:" + url
         raise ProviderError("Polza: в ответе нет requestId")
 
     def check(self, remote_id: str) -> dict:
@@ -274,12 +298,12 @@ class PolzaImages:
         dest.write_bytes(response.content)
         return dest
 
-    def balance(self) -> float | None:
+    def balance(self, timeout: float = 10) -> float | None:
         """Баланс ₽ (если Polza отдаёт ``GET /balance``) — сверка трат; ошибка — None."""
         import httpx
 
         try:
-            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=30)
+            response = httpx.get(f"{self.base_url}/balance", headers=self._headers(), timeout=timeout)
             if response.status_code >= 400:
                 return None
             data = response.json()
@@ -340,12 +364,20 @@ def get_tts(name: str, model: str | None = None, voice: str | None = None) -> An
 
 
 def poll(provider: ImageProvider, remote_id: str, timeout: float, interval: float = POLL_INTERVAL_SEC) -> dict:
-    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже)."""
+    """Опрос до готовности/отказа; не дождались — ``{status: pending}`` (дочитает работник позже).
+    Сетевой сбой GET (обрыв TLS, таймаут) — просто «ещё не готово»: спросим снова, POST не повторяем."""
     deadline = time.monotonic() + max(0.0, timeout)
+    note = ""
     while True:
-        result = provider.check(remote_id)
+        try:
+            result = provider.check(remote_id)
+        except Exception as exc:  # noqa: BLE001 - только сеть, остальное наверх
+            if network_phase(exc) is None:
+                raise
+            note = f"сеть при опросе: {type(exc).__name__}"
+            result = {"status": "pending"}
         if result.get("status") in ("completed", "failed"):
             return result
         if time.monotonic() >= deadline:
-            return {"status": "pending"}
+            return {"status": "pending", **({"note": note} if note else {})}
         time.sleep(interval)

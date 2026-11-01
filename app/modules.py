@@ -130,7 +130,7 @@ MODULES: list[Module] = [
         depends=("series",),
         tools=("aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
                "aiv_define_location", "aiv_write_script", "aiv_update_script", "aiv_update_shot", "aiv_get_script",
-               "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_job_status",
+               "aiv_estimate", "aiv_request_approval", "aiv_regenerate", "aiv_run_approved", "aiv_retry_job", "aiv_job_status",
                "aiv_select_version", "aiv_check_consistency", "aiv_assemble"),
         routes=("/api/ai-video/*", "/api/projects/{id}/ai-video*"),
         ui=("вкладка «ИИ-видео» на странице проекта вида ИИ-видео", "тип проекта «ИИ-видео»"),
