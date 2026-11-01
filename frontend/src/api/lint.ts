@@ -5,7 +5,7 @@
  */
 import { api } from "@/api/client";
 
-export type LintCheck = "ui_zones" | "reading" | "flashes" | "loop";
+export type LintCheck = "ui_zones" | "reading" | "flashes" | "loop" | "audio_mix" | "montage";
 export type LintSeverity = "warn" | "info";
 
 export type LintFinding = {
@@ -45,6 +45,8 @@ export const LINT_CHECK_LABELS: Record<LintCheck, string> = {
   reading: "Темп чтения",
   flashes: "Вспышки",
   loop: "Луп",
+  audio_mix: "Сведение звука",
+  montage: "Монтаж",
 };
 
 export const lintApi = {

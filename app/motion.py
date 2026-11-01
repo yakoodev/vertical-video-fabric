@@ -1738,6 +1738,34 @@ def fx_crowding(layers: Any) -> list[str]:
     return out
 
 
+GRAYSCALE_MAX_SEC = 2.5  # ч/б панчлайна — 1–2 с; дольше — уже «ч/б ролик», цвет не вернётся вовремя
+GRAYSCALE_END_GAP = 0.3  # ч/б кончается ближе этого к концу клипа — цвет не вернётся вовсе
+
+
+def fx_grayscale_long(layers: Any, clip_duration: float | None = None) -> list[str]:
+    """Ч/б (fx grayscale) дольше GRAYSCALE_MAX_SEC или до конца клипа: цвет не возвращается (QA 02.11,
+    клип 892: ч/б 3.3 с до самого конца). Панчлайн — ``end = t + 1.5–2 с``."""
+    out: list[str] = []
+    for layer in layers or []:
+        if not (isinstance(layer, dict) and layer.get("type") == "fx" and not layer.get("hidden")):
+            continue
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        kind = str(props.get("kind") or "").strip().lower()
+        if FX_ALIASES.get(kind, kind) != "grayscale":
+            continue
+        start = float(_finite(layer.get("start")) or 0.0)
+        end = _finite(layer.get("end"))
+        end = float(clip_duration) if end is None and clip_duration else float(end or start)
+        to_end = bool(clip_duration) and end >= float(clip_duration) - GRAYSCALE_END_GAP
+        if end - start <= GRAYSCALE_MAX_SEC and not to_end:
+            continue
+        why = "до конца клипа — цвет не вернётся" if to_end else f"дольше {GRAYSCALE_MAX_SEC:g} с — это уже ч/б ролик"
+        out.append(f"{layer.get('id') or 'fx'}: ч/б {_fmt(round(start, 2))}–{_fmt(round(end, 2))} с "
+                   f"({end - start:.1f} с) {why}; на панчлайн — end = t + 1.5–2 с (start на слове), "
+                   "out fade 0.25 — потом цвет")
+    return out
+
+
 def caption_words(payload: Any) -> list[dict]:
     """Слова субтитров клипа (``{word, start, end}``) → ``comp.words`` (``{t0, t1, w}``)."""
     out: list[dict] = []

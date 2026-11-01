@@ -624,6 +624,9 @@ def lint_layers(layers: list[dict], duration: float | None = None, only_ids: set
     warnings: list[str] = []
     strip = cam_strip(layout, fmt)
     warnings += motion.fx_crowding(layers)  # эффекты кадра: больше двух разом — каша
+    # Ч/б до конца клипа / дольше 2.5 с — цвет не вернётся (QA 02.11, клип 892).
+    warnings += motion.fx_grayscale_long([l for l in layers if only_ids is None or str(l.get("id")) in only_ids],
+                                         duration)
     visible = [l for l in layers if l.get("type") not in ("audio", "fx") and not l.get("hidden")]
     for layer in visible:
         lid = str(layer.get("id") or "?")

@@ -23,6 +23,8 @@
   подрезать хвост, убрать концовку-баннер). Без рендера — только подсказки по настройкам клипа.
 * `audio_mix` — сведение звука по стемам (app/audio_mix.py): музыка под речью тише голоса на 12–18 дБ,
   звуки не закрывают слова, итог −14 LUFS и true peak ≤ −1 dBTP (по свежему рендеру или прогнозом).
+* ``montage`` — ремесло монтажа без медиа: ч/б (fx grayscale) до конца клипа или дольше 2.5 с — цвет не
+  вернётся; одна и та же вставка (asset) дважды (QA 02.11, клип 892).
 
 Только предупреждения: ничего не меняет и не блокирует. ``plan``-проверки (зоны, чтение,
 подсказки лупа) — без медиа, за доли секунды; ``flashes`` и оценка лупа — по последнему
@@ -39,7 +41,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix")
+CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
     "read": "reading", "reading_speed": "reading", "speed": "reading", "subtitles": "reading",
@@ -1266,6 +1268,9 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         if loop_info:
             out["loop"] = loop_info
 
+    if "montage" in wanted:
+        findings += montage_findings(rs, duration)
+
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
         if mode == "no":
@@ -1299,9 +1304,55 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
     return out
 
 
+# =============================================================== 6) монтаж: эффекты и вставки
+
+
+def _media_ref(layer: dict) -> Any:
+    props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    return props.get("asset_id") or props.get("src")
+
+
+def montage_findings(rs: dict, duration: float | None = None) -> list[dict]:
+    """Ремесло монтажа, которое QA 02.11 (клип 892) нашёл глазами: ч/б до конца клипа (цвет не вернулся) и
+    одна и та же вставка дважды (гифка «LIVE MEAL CAM» на 6.7 и 13.5 с)."""
+    from app.motion import fx_grayscale_long
+
+    out: list[dict] = []
+    layers = [l for l in rs.get("layers") or [] if isinstance(l, dict) and not l.get("hidden")]
+    for layer in layers:
+        found = fx_grayscale_long([layer], duration)
+        if not found:
+            continue
+        message = found[0]
+        to_end = "до конца клипа" in message
+        out.append(_finding("montage", "warn" if to_end else "info", message,
+                            "fx grayscale: end = слово панчлайна + 1.5–2 с (update_layer end), out fade 0.25",
+                            t=_num(layer.get("start")), until=_num(layer.get("end"), duration or 0.0),
+                            layer=str(layer.get("id") or "")))
+    uses: dict[str, list[tuple[float, str]]] = {}
+    for ins in rs.get("inserts") or []:
+        if isinstance(ins, dict) and ins.get("mode") != "sound" and ins.get("asset_id") is not None:
+            uses.setdefault(f"asset:{ins['asset_id']}", []).append((_num(ins.get("at")), f"вставка на {_num(ins.get('at')):g} с"))
+    for layer in layers:
+        ref = _media_ref(layer) if layer.get("type") in ("image", "video") else None
+        if ref not in (None, ""):
+            key = f"asset:{ref}" if str(ref).isdigit() else f"ref:{ref}"
+            uses.setdefault(key, []).append((_num(layer.get("start")), f"слой {layer.get('id')} на {_num(layer.get('start')):g} с"))
+    for key, items in uses.items():
+        if len(items) < 2:
+            continue
+        items.sort()
+        where = ", ".join(label for _t, label in items)
+        out.append(_finding("montage", "warn", f"одна и та же вставка ({key.split(':', 1)[1]}) {'дважды' if len(items) == 2 else f'{len(items)} раз'}: {where} — "
+                                               "повтор выглядит как нехватка материала",
+                            "на второе место — другая картинка/гифка под смысл слов (search_images / add_image_from_url) "
+                            "или убери повтор", t=items[1][0]))
+    return out
+
+
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
     labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
-              "audio_mix": "сведение звука"}
+              "audio_mix": "сведение звука", "montage": "монтаж"}
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:
