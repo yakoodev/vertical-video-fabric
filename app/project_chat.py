@@ -474,8 +474,14 @@ def general_context(store: Any) -> str:
                  "rules": p.get("active_rules_count")} for p in P.list_projects(store)]
     sources = [{"source_id": s["id"], "name": s.get("original_filename") or "", "status": s.get("status"),
                 "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count"),
-                "channel_project_id": s.get("project_id")} for s in store.list_sources()[:40]]
-    text = json.dumps({"channel_projects": projects, "sources": sources}, ensure_ascii=False, default=str)
+                "channel_project_id": s.get("project_id")} for s in store.list_sources(limit=40)]
+    counts = store.count_sources()
+    # Число — отдельно от списка: иначе на «сколько у меня источников» модель считает 40 строк.
+    text = json.dumps({"channel_projects": projects, "channel_projects_total": len(projects),
+                       "sources_total": counts["total"], "sources_by_status": counts["by_status"],
+                       "sources_note": f"ниже последние {len(sources)} из {counts['total']} источников; "
+                                       "остальные — list_projects(offset=…)",
+                       "sources": sources}, ensure_ascii=False, default=str)
     return text if len(text) <= CONTEXT_CHARS else text[:CONTEXT_CHARS] + "…(обрезано)"
 
 

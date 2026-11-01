@@ -842,9 +842,32 @@ class AppStore:
         )
         return self.get_source(cur.lastrowid)
 
-    def list_sources(self) -> list[dict]:
+    # Служебные источники (загруженный клип, холст) — не проекты: их не показываем и не считаем.
+    _HIDDEN_SOURCE_TYPES = "('clip_upload', 'canvas')"
+
+    def count_sources(self) -> dict:
+        """Сколько всего источников (без служебных) и по статусам — для ответов «сколько у меня…»,
+        чтобы число не зависело от того, сколько строк влезло в список."""
         rows = self.db.query_all(
-            """
+            f"SELECT status, COUNT(*) AS n FROM sources WHERE source_type NOT IN {self._HIDDEN_SOURCE_TYPES} "
+            "GROUP BY status"
+        )
+        by_status = {str(row["status"]): int(row["n"]) for row in rows}
+        return {"total": sum(by_status.values()), "by_status": by_status}
+
+    def list_sources(self, limit: int | None = None, offset: int = 0) -> list[dict]:
+        """Источники, новые первыми. Без ``limit`` — все (раньше молча обрезалось до 200, и чат
+        отвечал «200 источников», когда их было 244); всего — ``count_sources``."""
+        page = ""
+        params: list[Any] = []
+        if limit is not None:
+            page = "LIMIT ? OFFSET ?"
+            params = [max(0, int(limit)), max(0, int(offset))]
+        elif offset:
+            page = "LIMIT -1 OFFSET ?"
+            params = [max(0, int(offset))]
+        rows = self.db.query_all(
+            f"""
             SELECT s.*,
                    (SELECT COUNT(*) FROM ai_analyses a WHERE a.source_id = s.id) AS analyses_count,
                    (SELECT COUNT(*) FROM clip_plans cp WHERE cp.source_id = s.id) AS clip_plans_count,
@@ -859,10 +882,11 @@ class AppStore:
                        WHERE c.source_id = s.id AND jt.status = 'succeeded'
                    ) AS published_targets_count
             FROM sources s
-            WHERE s.source_type NOT IN ('clip_upload', 'canvas')
+            WHERE s.source_type NOT IN {self._HIDDEN_SOURCE_TYPES}
             ORDER BY s.id DESC
-            LIMIT 200
-            """
+            {page}
+            """,
+            params,
         )
         return [dict(row) for row in rows]
 

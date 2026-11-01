@@ -3986,14 +3986,57 @@ def h_remove_insert(ctx: ToolContext, args: dict) -> dict:
     return {"ok": True, "inserts": fresh["inserts"]}
 
 
-def h_list_projects(ctx: ToolContext, _args: dict) -> dict:
+# Страница списков для агента: по умолчанию столько строк, сколько не раздувает контекст;
+# всего — отдельным числом (total), чтобы на «сколько у меня…» не отвечать длиной страницы.
+LIST_PAGE_DEFAULT = 100
+LIST_PAGE_MAX = 500
+
+
+def _page_args(args: dict, default: int = LIST_PAGE_DEFAULT) -> tuple[int, int]:
+    def num(key: str, fallback: int) -> int:
+        try:
+            return int(args.get(key) if args.get(key) not in (None, "") else fallback)
+        except (TypeError, ValueError) as exc:
+            raise ToolError(f"{key} — целое число") from exc
+
+    return max(0, num("offset", 0)), max(1, min(num("limit", default), LIST_PAGE_MAX))
+
+
+def _page_info(total: int, offset: int, limit: int, returned: int) -> dict:
+    """total — сколько всего (с учётом фильтров), returned — сколько в этом ответе."""
+    end = offset + returned
+    info = {"total": total, "offset": offset, "limit": limit, "returned": returned, "truncated": end < total}
+    if end < total:
+        info["next_offset"] = end
+        info["note"] = (f"показаны {offset + 1 if returned else offset}–{end} из {total}; "
+                        f"остальные — тот же вызов с offset={end}. Сколько всего — total, не длина списка")
+    return info
+
+
+def h_list_projects(ctx: ToolContext, args: dict) -> dict:
+    offset, limit = _page_args(args)
+    query = str(args.get("query") or "").strip().casefold()
+    status = str(args.get("status") or "").strip()
+    counts = ctx.store.count_sources()
+    if query or status:
+        # Фильтр — по всем источникам, total — число подошедших.
+        rows = [s for s in ctx.store.list_sources()
+                if (not query or query in str(s.get("original_filename") or "").casefold()
+                    or query in str(s.get("original_url") or "").casefold())
+                and (not status or s.get("status") == status)]
+        total, rows = len(rows), rows[offset:offset + limit]
+    else:
+        total, rows = counts["total"], ctx.store.list_sources(limit=limit, offset=offset)
     return {
+        **_page_info(total, offset, limit, len(rows)),
+        "all_sources_total": counts["total"],
+        "by_status": counts["by_status"],
         "projects": [
             {"id": s["id"], "name": s.get("original_filename") or "", "status": s.get("status"),
              "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count"),
              "audio_tracks": _audio_brief(s), "channel_project_id": s.get("project_id")}
-            for s in ctx.store.list_sources()
-        ]
+            for s in rows
+        ],
     }
 
 
@@ -4443,8 +4486,9 @@ def h_list_clips(ctx: ToolContext, args: dict) -> dict:
     except (TypeError, ValueError) as exc:
         raise ToolError("нужен project_id (см. list_projects)") from exc
     favorites = bool(args.get("favorites_only"))
+    offset, limit = _page_args(args)
     out = []
-    for plan in ctx.store.list_clip_plans(source_id=project):
+    for plan in ctx.store.list_clip_plans(source_id=project, include_segments=True):
         if favorites and not plan.get("favorite"):
             continue
         if plan.get("hidden") and not favorites:
@@ -4462,7 +4506,9 @@ def h_list_clips(ctx: ToolContext, args: dict) -> dict:
                 "layers": len(settings.get("layers") or []) if isinstance(settings, dict) else 0,
             }
         )
-    return {"project_id": project, "clips": out}
+    total = len(out)
+    page = out[offset:offset + limit]
+    return {"project_id": project, **_page_info(total, offset, limit, len(page)), "clips": page}
 
 
 # --------------------------------------------------------------------------- #
@@ -5688,14 +5734,21 @@ _REGISTRY: dict[str, Tool] | None = None
 DISCOVERY_TOOLS = [
     Tool(
         "list_projects", "Проекты",
-        "Проекты (исходные видео) с числом клипов. channel_project_id — проект-серия/канал источника: "
-        "прочитай get_project_brief(source_id=id) перед нарезкой. / Projects (source videos).",
-        _obj({}), h_list_projects, scope="global",
+        "Проекты (исходные видео) с числом клипов, новые первыми. channel_project_id — проект-серия/канал "
+        "источника: прочитай get_project_brief(source_id=id) перед нарезкой. Список ПОСТРАНИЧНЫЙ (limit по "
+        "умолчанию 100, до 500; offset): СКОЛЬКО ВСЕГО — поле total (all_sources_total — без фильтров, by_status — "
+        "по статусам), не длина projects; truncated/next_offset — есть ещё. query — часть имени/ссылки, status — "
+        "фильтр. / Projects (source videos), paginated: use total for counts.",
+        _obj({"offset": {"type": "integer"}, "limit": {"type": "integer"}, "query": {"type": "string"},
+              "status": {"type": "string"}}), h_list_projects, scope="global",
     ),
     Tool(
         "list_clips", "Клипы проекта",
-        "Клипы проекта: clip_id, название, ★, длина, число слоёв. / Clips of a project.",
-        _obj({"project_id": {"type": "integer"}, "favorites_only": {"type": "boolean"}}, ["project_id"]),
+        "Клипы проекта: clip_id, название, ★, длина, число слоёв. Постранично (limit по умолчанию 100, до 500; "
+        "offset): сколько всего — total, не длина clips; truncated/next_offset — есть ещё. "
+        "/ Clips of a project, paginated: use total for counts.",
+        _obj({"project_id": {"type": "integer"}, "favorites_only": {"type": "boolean"},
+              "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["project_id"]),
         h_list_clips, scope="global",
     ),
     Tool(
