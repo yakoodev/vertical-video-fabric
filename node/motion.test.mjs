@@ -2037,6 +2037,41 @@ test("субтитры stomp: слово видно с момента и «вп�
   assert.ok(E.CAPTION_STYLES.some((s) => s.id === "stomp" && s.props.animation === "stomp"));
 });
 
+test("субтитры: эмфаза слова (comp.words[i].e) — крупнее всю страницу, прыжок в момент, встряска у shake", () => {
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const plain = [{ t0: 1, t1: 1.3, w: "ДЕНЬГИ" }, { t0: 1.4, t1: 1.8, w: "ТУТ" }];
+  const pop = [{ ...plain[0], e: 1 }, plain[1]];
+  const shake = [{ ...plain[0], e: 2 }, plain[1]];
+  const [page] = E.captionPages(ctx, pop, { style: "hormozi" }, 0, 3, "Montserrat");
+  assert.equal(page.words[0].e, 1);
+  near(page.words[0].es, 1.25);
+  near(page.emph, 1.25);
+  near(E.captionPages(ctx, shake, { style: "hormozi" }, 0, 3, "Montserrat")[0].words[0].es, 1.45);
+  near(E.captionPages(ctx, pop, { style: "hormozi", emphScale: 1.5 }, 0, 3, "Montserrat")[0].words[0].es, 1.5);
+  const [flat] = E.captionPages(ctx, plain, { style: "hormozi" }, 0, 3, "Montserrat");
+  assert.ok(page.w > flat.w && page.h > flat.h, "строка с эмфазой шире и выше");
+  assert.deepEqual(E.captionWordsFrom([{ word: "да", start: 1, end: 2, emph: 2 }]), [{ t0: 1, t1: 2, w: "да", e: 2 }]);
+
+  const caps = { id: "c", type: "captions", start: 0, end: 3, x: 0.5, y: 0.5, props: { style: "hormozi" } };
+  const lit = (d) => d.reduce((n, v, i) => n + (i % 4 === 3 && v > 0 ? 1 : 0), 0);
+  // Страница стоит (говорят «ТУТ»): ключевое слово всё равно крупнее обычного, у shake — ещё крупнее.
+  const calm = lit(pixels([caps], 1.6, { words: plain }));
+  const calmPop = lit(pixels([caps], 1.6, { words: pop }));
+  assert.ok(calmPop > calm * 1.1, `эмфаза крупнее: ${calmPop} vs ${calm}`);
+  assert.ok(lit(pixels([caps], 1.6, { words: shake })) > calmPop * 1.05);
+  // Прыжок: на пике (0.09 с от начала слова) слово крупнее, чем у того же слова без эмфазы.
+  const peak = lit(pixels([caps], 1.09, { words: pop }));
+  assert.ok(peak > lit(pixels([caps], 1.09, { words: plain })) * 1.4);
+  assert.ok(peak > lit(pixels([caps], 1.3, { words: pop })), "после прыжка слово возвращается");
+  // Встряска (shake) — тот же кадр каждый раз (превью == рендер); слово сдвинуто от покоя.
+  const jolt = pixels([caps], 1.2, { words: shake });
+  assert.ok(same(jolt, pixels([caps], 1.2, { words: shake })));
+  const still = { ...caps, props: { ...caps.props, emphScale: 1 + 0.25 * 1.8 } }; // тот же кегль, без встряски
+  const diff = (a, b) => a.reduce((n, v, i) => n + (Math.abs(v - b[i]) > 60 ? 1 : 0), 0);
+  assert.ok(diff(jolt, pixels([still], 1.2, { words: pop })) > 200, "встряска сдвигает слово");
+  assert.equal(diff(pixels([caps], 1.7, { words: shake }), pixels([still], 1.7, { words: pop })), 0, "потом затухает");
+});
+
 test("CLI: эффект кадра и огибающая громкости из comp.json", async () => {
   const comp = {
     width: 270,

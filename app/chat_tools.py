@@ -46,9 +46,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "add_insert", "remove_insert", "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
         "choose_cover", "track_layer", "untrack_layer")),
-    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, перевод на русский, озвучка RU", (
+    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
-        "list_subtitle_styles", "translate_subtitles", "dub_clip")),
+        "list_subtitle_styles", "translate_subtitles", "dub_clip", "emphasize_words")),
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
@@ -71,7 +71,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк"),
-    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч"),
+    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч", "ключев", "эмфаз"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
              "слоу", "замедл", "ускор", "реверс", "задом"),

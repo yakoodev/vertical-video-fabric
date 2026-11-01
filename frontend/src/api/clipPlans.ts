@@ -79,7 +79,8 @@ export interface SubtitleLine {
 }
 export interface PlanSubtitles {
   lines: SubtitleLine[];
-  words?: { word: string; start: number; end: number; speaker?: string }[];
+  /** emph — эмфаза слова (1 pop — крупнее и прыжок, 2 shake — ещё и встряска; app/word_emphasis.py). */
+  words?: { word: string; start: number; end: number; speaker?: string; emph?: number }[];
   /** Слова так, как их слышно с J/L (только при J/L, только для превью): заменённый звук убран,
    *  звук ручек подписан. Править — words/lines. */
   heard_words?: { word: string; start: number; end: number; speaker?: string }[];
@@ -188,6 +189,15 @@ export const clipPlansApi = {
   /** Отдать слова отрезка другому голосу (поправить модель руками). */
   assignVoice: (clipPlanId: number, start: number, end: number, speaker: string) =>
     api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices/assign`, { start, end, speaker }),
+  /** Эмфаза слов субтитров (emphasize_words): indices — номера слов, style off — снять; auto — по слову на строку. */
+  emphasizeWords: (
+    clipPlanId: number,
+    body: { indices?: number[]; words?: string[]; style: "pop" | "shake" | "off"; auto?: boolean; clear?: boolean },
+  ) =>
+    api.post<{ ok: boolean; count: number; picked_by?: string; warnings?: string[]; subtitles: PlanSubtitles }>(
+      `/api/clip-plans/${clipPlanId}/subtitles/emphasis`,
+      body,
+    ),
   saveSubtitles: (clipPlanId: number, lines: SubtitleLine[]) =>
     request<PlanSubtitles>(`/api/clip-plans/${clipPlanId}/subtitles`, { method: "PUT", body: { lines } }),
   /** ⏩ Скорость/реверс куска (set_segment_speed): слои и субтитры сервер сдвигает сам. */

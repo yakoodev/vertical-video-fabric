@@ -28,6 +28,11 @@ MAX_SUBTITLE_LINES_PER_PAGE = 2
 # Горизонтальный кадр (16:9): строка субтитров не шире этой доли ширины — строка во всю
 # ширину 1920 (40+ символов) читается хуже двух коротких, как у субтитров YouTube.
 LANDSCAPE_LINE_SHARE = 0.64
+# Эмфаза слова (app/word_emphasis.py): кегль ключевого слова на всей странице (%, раскладка
+# страницы не прыгает) и прыжок в его момент — в EMPH_POP раза больше и назад за EMPH_POP_MS.
+EMPH_SCALE = {1: 125, 2: 145}
+EMPH_POP = 1.2
+EMPH_POP_MS = (80, 240)
 
 
 def format_style(profile: dict, fmt: Any, width: int, height: int) -> tuple[dict, int]:
@@ -233,7 +238,7 @@ def _pack_lines(page: list[SubtitleWord], max_words_per_line: int, chars_per_lin
     current: list[int] = []
     used = 0
     for index, word in enumerate(page):
-        word_len = len(word.word)
+        word_len = _weighted_len(word)
         if current and (len(current) >= max_words_per_line or used + 1 + word_len > chars_per_line):
             lines.append(current)
             current, used = [], 0
@@ -244,6 +249,27 @@ def _pack_lines(page: list[SubtitleWord], max_words_per_line: int, chars_per_lin
     if current:
         lines.append(current)
     return lines
+
+
+def _weighted_len(word: SubtitleWord) -> int:
+    """Длина слова в «символах» для переноса: слово с эмфазой крупнее — и шире."""
+    scale = EMPH_SCALE.get(int(getattr(word, "emph", 0) or 0), 100)
+    return -(-len(word.word) * scale // 100)
+
+
+def _emph_tags(word: SubtitleWord, active: bool, has_emph: bool) -> str:
+    """Масштаб слова на странице с эмфазой: у ключевого — свой кегль на всю страницу и прыжок
+    в событии его слова; у остальных — явный 100% (тег масштаба действует до конца строки)."""
+    if not has_emph:
+        return ""
+    level = int(getattr(word, "emph", 0) or 0)
+    scale = EMPH_SCALE.get(level, 100)
+    tags = rf"\fscx{scale}\fscy{scale}"
+    if level and active:
+        peak = round(scale * EMPH_POP)
+        a, b = EMPH_POP_MS
+        tags += rf"\t(0,{a},\fscx{peak}\fscy{peak})\t({a},{b},\fscx{scale}\fscy{scale})"
+    return tags
 
 
 def _page_text(
@@ -263,16 +289,20 @@ def _page_text(
     """
 
     rendered_lines: list[str] = []
+    has_emph = any(getattr(w, "emph", 0) for w in page)
     for line in lines:
         parts: list[str] = []
         for local_index in line:
+            word = page[local_index]
             if local_index > active_index:
                 color, alpha = primary, "FF"
             elif local_index == active_index:
                 color, alpha = active, "00"
             else:
-                color, alpha = primary, "00"
-            parts.append(r"{\c" + color + r"\alpha&H" + alpha + "&}" + _ass_text(page[local_index].word))
+                # Ключевое слово (эмфаза) и после того, как сказано, — цветом активного.
+                color, alpha = (active if getattr(word, "emph", 0) else primary), "00"
+            tags = _emph_tags(word, local_index == active_index, has_emph)
+            parts.append(r"{\c" + color + r"\alpha&H" + alpha + "&" + tags + "}" + _ass_text(word.word))
         rendered_lines.append(" ".join(parts))
     return r"\N".join(rendered_lines)
 
@@ -307,7 +337,7 @@ def _normalized_words(words: list[SubtitleWord], uppercase: bool) -> list[Subtit
         if start < previous_end:
             start = previous_end
             end = max(end, start + 0.05)
-        normalized.append(SubtitleWord(word=text, start=start, end=end))
+        normalized.append(SubtitleWord(word=text, start=start, end=end, emph=int(getattr(word, "emph", 0) or 0)))
         previous_end = end
     return normalized
 

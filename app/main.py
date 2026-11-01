@@ -2549,6 +2549,8 @@ class PlanSubtitleWord(BaseModel):
     word: str = Field(max_length=80)
     start: float
     end: float
+    speaker: str | None = Field(default=None, max_length=1)
+    emph: int | None = Field(default=None, ge=0, le=2, description="эмфаза слова: 1 pop, 2 shake")
 
 
 class PlanSubtitleLines(BaseModel):
@@ -2758,6 +2760,38 @@ def api_clip_plan_segment_speed(clip_plan_id: int, payload: SegmentSpeedRequest,
     if not ok:
         raise HTTPException(status_code=400, detail=str(result.get("error") or "скорость не принята"))
     return result
+
+
+class WordEmphasisRequest(BaseModel):
+    indices: list[int] | None = Field(default=None, description="номера слов в субтитрах клипа (порядок words)")
+    words: list[str] | None = Field(default=None, description="тексты слов (первое вхождение)")
+    style: Literal["pop", "shake", "off"] = "pop"
+    auto: bool = Field(default=False, description="одно ключевое слово на строку само")
+    pick: Literal["heuristic", "gemini"] | None = None
+    clear: bool = False
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/subtitles/emphasis",
+    tags=["Subtitles"],
+    summary="Эмфаза слов субтитров: крупнее + pop (shake — со встряской), off — снять",
+)
+def api_clip_plan_word_emphasis(clip_plan_id: int, payload: WordEmphasisRequest, _auth: AuthDep) -> dict:
+    """Тот же инструмент, что у агентов (emphasize_words, app/word_emphasis.py); шаг отмены — один."""
+    from app import agent_tools
+
+    try:
+        store.get_clip_plan(clip_plan_id, include_segments=False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ctx = agent_tools.ToolContext(
+        store=store, clip_plan_id=clip_plan_id,
+        on_first_change=lambda: snapshot_clip(store, clip_plan_id, "эмфаза слов"),
+    )
+    result, ok = agent_tools.run_tool(ctx, "emphasize_words", payload.model_dump(exclude_none=True))
+    if not ok:
+        raise HTTPException(status_code=400, detail=str(result.get("error") or "эмфаза не принята"))
+    return {**result, "subtitles": store.get_clip_plan_subtitles(clip_plan_id)}
 
 
 class SeparateVoicesRequest(BaseModel):

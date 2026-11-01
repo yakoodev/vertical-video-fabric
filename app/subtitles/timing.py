@@ -45,6 +45,7 @@ def normalize_subtitle_timeline(
             word=word.word,
             start=word.start * scale,
             end=max(word.start * scale + MIN_WORD_DURATION_SEC, word.end * scale),
+            emph=word.emph,
         )
         for word in words
     ]
@@ -55,6 +56,7 @@ def normalize_subtitle_timeline(
             word=word.word,
             start=round(word.start, 3),
             end=round(min(word.end, target), 3),
+            emph=word.emph,
         )
         for word in scaled_words
         if word.start < target
@@ -90,7 +92,7 @@ def shift_subtitle_timeline(
         if shifted is None:
             continue
         start, end = shifted
-        words.append(SubtitleWord(word.word, start, end))
+        words.append(SubtitleWord(word.word, start, end, word.emph))
     words = _monotonic_words(words)
 
     segments: list[SubtitleSegment] = []
@@ -150,7 +152,7 @@ def _monotonic_words(words: list[SubtitleWord]) -> list[SubtitleWord]:
         if start < previous_end:
             start = previous_end
             end = max(end, start + MIN_WORD_DURATION_SEC)
-        normalized.append(SubtitleWord(text, start, end))
+        normalized.append(SubtitleWord(text, start, end, word.emph))
         previous_end = end
     return normalized
 

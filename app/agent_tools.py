@@ -810,8 +810,12 @@ def _subtitles_view(store: Any, clip_plan_id: int, pieces: list[dict]) -> dict:
             + ([w["speaker"]] if w.get("speaker") else [])
             for w in own
         ]
-        lines.append({"i": index, "start": round(shift(start), 2), "end": round(shift(end), 2),
-                      "text": line["text"], "words": inside})
+        entry = {"i": index, "start": round(shift(start), 2), "end": round(shift(end), 2),
+                 "text": line["text"], "words": inside}
+        emph = {j: int(w["emph"]) for j, w in enumerate(own) if w.get("emph")}
+        if emph:
+            entry["emph"] = emph  # эмфаза слов строки: {номер слова в строке: 1 pop | 2 shake}
+        lines.append(entry)
     return {"has_subtitles": bool(lines), "edited": bool(payload.get("edited")), "lines": lines}
 
 
@@ -3436,6 +3440,14 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
                 problems.append(f"words[{i}]: s — голос A, B, C или D")
                 continue
             item["speaker"] = speaker
+        if w.get("emph") not in (None, 0, False, ""):
+            from app.word_emphasis import level_of
+
+            level = level_of(w.get("emph"))
+            if not level:
+                problems.append(f"words[{i}]: emph — 1 (pop) или 2 (shake)")
+                continue
+            item["emph"] = level
         words.append(item)
     if problems:
         raise ToolError("слова не приняты", problems)
@@ -3490,6 +3502,91 @@ def words_clip_to_plain(clock: Any, words: list[dict], old_words: list[dict]) ->
         last = a
         out.append({**w, "start": round(a, 3), "end": round(max(b, a + 0.02), 3)})
     return out
+
+
+def h_emphasize_words(ctx: ToolContext, args: dict) -> dict:
+    """Эмфаза слов субтитров (app/word_emphasis.py): крупнее + pop, у shake — ещё встряска."""
+    from app.word_emphasis import apply_levels, emphasized, gemini_pick, level_of, line_words, pick_heuristic
+
+    payload = ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}
+    words = payload.get("words") or []
+    if not words:
+        raise ToolError("у клипа нет слов субтитров — сначала generate_subtitles")
+    style = args.get("style", args.get("level", "pop"))
+    level = level_of(style)
+    if level == 0 and str(style).strip().lower() not in ("off", "none", "0", "false"):
+        raise ToolError("style — pop (крупнее и прыжок), shake (ещё крупнее, прыжок и встряска) или off (снять)")
+    lines = line_words(payload)
+    levels: dict[int, int] = {}
+    if args.get("clear"):
+        levels.update({i: 0 for i, w in enumerate(words) if w.get("emph")})
+    problems: list[str] = []
+    picked_by = None
+    if args.get("auto"):
+        taken = {i for i, w in enumerate(words) if w.get("emph") and not args.get("clear")}
+        todo = [line for line in lines if not any(w["i"] in taken for w in line)]
+        picked: list[int] = []
+        if str(args.get("pick") or "").lower() == "gemini":
+            try:
+                picked, picked_by = gemini_pick(todo), "gemini"
+            except Exception as exc:  # noqa: BLE001 - Gemini часто недоступен: эвристика
+                problems.append(f"Gemini не выбрал ({exc}) — взял эвристику")
+        if not picked:
+            picked, picked_by = pick_heuristic(todo), "heuristic"
+        levels.update({i: level or 1 for i in picked})
+    refs = [("indices", r) for r in args.get("indices") or []] + [("words", r) for r in args.get("words") or []]         + [("at", r) for r in args.get("at") or []]
+    for key, ref in refs:
+        if key == "indices" and isinstance(ref, str) and ref.strip().isdigit():
+            ref = int(ref)
+        index = _emph_index(words, lines, ref)
+        if index is None:
+            problems.append(f"{key}: слова {ref!r} нет в субтитрах (номер из get_clip, текст или {{line, word}})")
+            continue
+        levels[index] = level
+    if not levels:
+        raise ToolError("нечего менять: передай indices, words или at, auto: true или clear: true",
+                        problems or None)
+    ctx.before_change()
+    fresh = apply_levels(words, levels)
+    ctx.store.set_clip_plan_subtitles(ctx.plan_id, {**payload, "words": fresh})
+    marked = emphasized({"words": fresh})
+    out: dict = {"ok": True, "emphasized": marked[:200], "count": len(marked),
+                 "note": "эмфаза у слов субтитров (emph: 1 pop — ×1.25 и прыжок; 2 shake — ×1.45, прыжок и "
+                         "встряска): работает в слое captions (emphScale/emphColor слоя) и в прожигаемых субтитрах "
+                         "(там без встряски). Едет за словом при вырезах и правке строк. Больше 1 слова на строку "
+                         "и чаще раза в 2–3 с — уже шум. Проверь view_frame на моменте слова."}
+    if picked_by:
+        out["picked_by"] = picked_by
+    if problems:
+        out["warnings"] = problems
+    return out
+
+
+def _emph_index(words: list[dict], lines: list[list[dict]], ref: Any) -> int | None:
+    """Номер слова в субтитрах по ссылке агента: число, текст, {text, nth}, {line, word}, {i}."""
+    if isinstance(ref, bool):
+        return None
+    if isinstance(ref, (int, float)):
+        index = int(ref)
+        return index if 0 <= index < len(words) else None
+    if isinstance(ref, str):
+        ref = {"text": ref}
+    if not isinstance(ref, dict):
+        return None
+    if ref.get("i") is not None:
+        return _emph_index(words, lines, ref.get("i"))
+    if ref.get("line") is not None:
+        try:
+            return int(lines[int(ref["line"])][int(ref.get("word", 0))]["i"])
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+    want, nth, seen = _norm_word(ref.get("text") or ref.get("word")), int(ref.get("nth") or 1), 0
+    for index, w in enumerate(words):
+        if want and _norm_word(w.get("word")) == want:
+            seen += 1
+            if seen == nth:
+                return index
+    return None
 
 
 def h_edit_subtitle_lines(ctx: ToolContext, args: dict) -> dict:
@@ -5641,7 +5738,7 @@ def _build_registry() -> list[Tool]:
             "Заменить слова субтитров целиком: words [{word, start, end, s?}] — текст и время каждого слова "
             "(шкала clip: до вырезов, с наплывами — ровно как в get_clip, слова оттуда можно вернуть как есть), "
             "s (или speaker) — голос (A главный, B/C/D — второй голос, TTS-донат, ролик): так помечают голоса "
-            "без Gemini. Подсветка слов (highlightWords) остаётся на тех же словах. Для исправления "
+            "без Gemini; emph — эмфаза слова (1 pop, 2 shake, см. emphasize_words). Подсветка слов (highlightWords) остаётся на тех же словах. Для исправления "
             "ошибок распознавания и опоздавших слов. Строки соберутся из слов сами: новая строка на конце "
             "предложения (. ! ? …), паузе > 0.6 с, смене голоса и после 7 слов; «какой» «-то» склеится в "
             "«какой-то». Пустой список [] — убрать субтитры клипа (клип без речи). "
@@ -5649,11 +5746,35 @@ def _build_registry() -> list[Tool]:
             _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
                                                               "end": {"type": "number"},
                                                               "s": {"type": "string", "description": "голос: A, B, C, D"},
+                                                              "emph": {"type": "integer", "minimum": 0, "maximum": 2,
+                                                                       "description": "эмфаза: 1 pop, 2 shake"},
                                                               "speaker": {"type": "string",
                                                                           "description": "то же, что s"}},
                                                              ["word", "start", "end"])}},
                  ["words"]),
             h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
+        ),
+        Tool(
+            "emphasize_words", "Выделяю ключевые слова",
+            "Эмфаза слов субтитров — ключевое слово крупнее и «выпрыгивает», как у топовых каналов (не только "
+            "цветом highlightWords): indices — номера слов (порядок слов get_clip), words — тексты («миллион», первое "
+            "вхождение), at — [{line, word}] (номера из get_clip.subtitles.lines) или [{text, nth}]; style: pop — ×1.25 и "
+            "прыжок (по умолчанию), shake — ×1.45, прыжок и встряска (самый сильный удар), off — снять. auto: true — "
+            "одно ключевое слово на строку само (число, слово с «!», иначе самое длинное не служебное; pick: "
+            "\"gemini\" — выбирает Gemini, недоступен — та же эвристика), строки, где эмфаза уже есть, не трогает; "
+            "clear: true — сначала снять все. Работает в слое captions (размер emphScale и цвет emphColor слоя) и в "
+            "прожигаемых субтитрах (там без встряски); метка едет со словом при вырезах и правке строк. "
+            "/ Emphasize key subtitle words: bigger + pop (shake adds a jolt).",
+            _obj({"words": {"type": "array", "items": {"type": "string"}, "description": "тексты слов"},
+                  "indices": {"type": "array", "items": {"type": "integer"},
+                              "description": "номера слов в субтитрах (порядок слов get_clip)"},
+                  "at": {"type": "array", "items": _obj({"line": {"type": "integer"}, "word": {"type": "integer"},
+                                                          "text": {"type": "string"}, "nth": {"type": "integer"}})},
+                  "style": {"type": "string", "enum": ["pop", "shake", "off"]},
+                  "auto": {"type": "boolean"}, "pick": {"type": "string", "enum": ["heuristic", "gemini"]},
+                  "clear": {"type": "boolean"}}),
+            h_emphasize_words, mutating=True,
+            label=lambda a: "Выделяю ключевые слова" + (" (авто)" if a.get("auto") else ""),
         ),
         Tool(
             "edit_subtitle_lines", "Правлю субтитры",
