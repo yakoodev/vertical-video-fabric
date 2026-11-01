@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   CAMERA_LABEL,
   CAMERA_MOVES,
@@ -42,6 +42,37 @@ const SUBS: [Sub, string][] = [
   ["assemble", "Сборка"],
 ];
 
+// Подписи версий по-русски (раньше — служебные turnaround / expressions / keyframe).
+const KIND_LABEL: Record<string, string> = {
+  upload: "владелец",
+  turnaround: "разворот",
+  expressions: "эмоции",
+  look: "облик",
+  style: "стиль",
+  plate: "плита",
+  keyframe: "старт",
+  endframe: "конец",
+  shot_video: "видео",
+  blocking_start: "блокинг: старт",
+  blocking_end: "блокинг: конец",
+};
+// Откуда раскладка блокинга (app/aivideo_blocking.py: source).
+const BLOCKING_SOURCE: Record<string, string> = { auto: "авто по состоянию", gemini: "Gemini", agent: "агент", owner: "вручную" };
+
+/** Место и состав плана по-человечески: имена вместо служебных slug (kitchen · mira → Кухня ночью · Мира). */
+function placeOf(o: Overview, shot: Shot): string {
+  return o.locations.find((l) => l.slug === shot.location)?.name ?? (shot.location || "—");
+}
+function castOf(o: Overview, shot: Shot): string {
+  return shot.cast
+    .map((c) => {
+      const ch = o.characters.find((x) => x.slug === c.id);
+      const look = c.look ? ch?.looks.find((l) => l.slug === c.look)?.name ?? c.look : "";
+      return (ch?.name ?? c.id) + (look ? ` (${look})` : "");
+    })
+    .join(", ");
+}
+
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const rub = (v: number | null | undefined) => `${(v ?? 0).toFixed(v && v < 10 ? 2 : 0).replace(".", ",")} ₽`;
 
@@ -54,7 +85,19 @@ function useInvalidate(projectId: number) {
 }
 
 export function AiVideoTab({ projectId }: { projectId: number }) {
-  const [sub, setSub] = useState<Sub>("script");
+  // Подвкладка — в адресе (?sub=board), как вкладка серии: перезагрузка не сбрасывает на «Сценарий».
+  const [params, setParams] = useSearchParams();
+  const raw = params.get("sub");
+  const sub: Sub = SUBS.some(([key]) => key === raw) ? (raw as Sub) : "script";
+  const setSub = (next: Sub) =>
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set("sub", next);
+        return p;
+      },
+      { replace: true },
+    );
   const q = useQuery({
     queryKey: aivKey(projectId),
     queryFn: () => aivApi.overview(projectId),
@@ -113,6 +156,17 @@ function Meter({ label, spent, reserved, cap }: { label: string; spent: number; 
 }
 
 function BudgetBar({ budget, episode }: { budget: Budget; episode?: boolean }) {
+  // В серии — только полоса серии: месяц проекта и цены уже наверху вкладки (раньше шли дважды).
+  if (episode) {
+    return budget.episode ? (
+      <Meter
+        label={`Серия (${budget.episode.quality === "quality" ? "качество" : "черновик"})`}
+        spent={budget.episode.spent_rub}
+        reserved={budget.episode.reserved_rub}
+        cap={budget.episode.cap_rub}
+      />
+    ) : null;
+  }
   return (
     <section className="panel aiv-budget">
       <div className="series-row">
@@ -125,14 +179,6 @@ function BudgetBar({ budget, episode }: { budget: Budget; episode?: boolean }) {
         <span className="muted">цены от {budget.price_checked}: замер — как есть; без замера: видео ×1,25, картинки ×2 к прайсу</span>
       </div>
       <Meter label="Месяц проекта" spent={budget.month.spent_rub} reserved={budget.month.reserved_rub} cap={budget.month.cap_rub} />
-      {episode && budget.episode ? (
-        <Meter
-          label={`Серия (${budget.episode.quality === "quality" ? "качество" : "черновик"})`}
-          spent={budget.episode.spent_rub}
-          reserved={budget.episode.reserved_rub}
-          cap={budget.episode.cap_rub}
-        />
-      ) : null}
     </section>
   );
 }
@@ -281,6 +327,9 @@ function StageButton({
               {est.paid ? `Запросить одобрение ≈ ${rub(est.total_rub)}` : "Сделать (0 ₽)"}
             </button>
           ) : null}
+          <button className="btn ghost sm" onClick={() => setEst(null)} title="Скрыть оценку">
+            Скрыть
+          </button>
         </div>
       ) : null}
     </div>
@@ -321,7 +370,7 @@ function Versions({ refs, projectId, onPick }: { refs: AivRef[]; projectId: numb
           ) : null}
           <figcaption>
             <span>
-              {r.kind === "upload" ? "владелец" : r.kind} v{r.version}
+              {KIND_LABEL[r.kind] ?? r.kind} v{r.version}
               {r.stale ? " · устарело" : ""}
               {r.score && "min" in r.score && r.score.min != null ? ` · ${r.score.min}/10` : ""}
               {r.score && "kind" in r.score && r.score.kind === "video_qa" && r.score.score != null
@@ -639,16 +688,20 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
           <input className="input wide" placeholder="звук: фон и шумы действия (без музыки и речи)" value={d.sound} onChange={(e) => setD({ ...d, sound: e.target.value })} />
         </div>
       ) : null}
-      <label className="field">
-        <span>Состояние на начало плана (JSON: поза, взгляд, руки, одежда; реквизит со счётом count)</span>
-        <textarea className="input mono" rows={2} value={d.state} onChange={(e) => setD({ ...d, state: e.target.value })} />
-      </label>
-      {d.needs_motion ? (
+      {/* Состояния — JSON для постоянства кадров; обычно их пишет сценарист (Gemini/агент) — свёрнуты. */}
+      <details className="aiv-more">
+        <summary>Состояние кадра (JSON){d.needs_motion ? ": начало и конец" : ": начало"}</summary>
         <label className="field">
-          <span>Состояние на конец плана — результат одного действия (конечный кадр; у продолжения — его старт)</span>
-          <textarea className="input mono" rows={2} value={d.end_state} onChange={(e) => setD({ ...d, end_state: e.target.value })} />
+          <span>Начало плана: поза, взгляд, руки, одежда; реквизит со счётом count</span>
+          <textarea className="input mono" rows={2} value={d.state} onChange={(e) => setD({ ...d, state: e.target.value })} />
         </label>
-      ) : null}
+        {d.needs_motion ? (
+          <label className="field">
+            <span>Конец плана — результат одного действия (конечный кадр; у продолжения — его старт)</span>
+            <textarea className="input mono" rows={2} value={d.end_state} onChange={(e) => setD({ ...d, end_state: e.target.value })} />
+          </label>
+        ) : null}
+      </details>
     </section>
   );
 }
@@ -744,7 +797,13 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
         <h3>
           {c.name} <span className="muted mono">{c.slug}</span> {c.origin === "owner" ? <span className="chip">свой</span> : null}
         </h3>
-        <StageButton projectId={projectId} stage="refs" items={items} label="Листы персонажа: оценить" />
+        <div className="series-row">
+          <StageButton projectId={projectId} stage="refs" items={items} label="Листы персонажа: оценить" />
+          {/* «Сохранить» — в шапке карточки, как у плана: сохраняет всё (карта, физика, речь, голос). */}
+          <button className="btn sm" disabled={save.isPending} onClick={() => save.mutate()}>
+            Сохранить
+          </button>
+        </div>
       </div>
       <textarea className="input" rows={2} value={card} onChange={(e) => setCard(e.target.value)} />
       <div className="series-row">
@@ -774,23 +833,21 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
           <option value="none">молчит</option>
         </select>
         {speech.speech === "sfx" ? (
-          <label className="muted" title="Показывать текст его реплик («Бип-бип?..») субтитрами">
+          <label className="aiv-check" title="Показывать текст его реплик («Бип-бип?..») субтитрами">
             <input type="checkbox" checked={speech.speech_captions} onChange={(e) => setSpeech({ ...speech, speech_captions: e.target.checked })} />{" "}
             подписи к звукам
           </label>
         ) : null}
       </div>
-      <div className="series-row">
-        {speech.speech === "voice" ? (
-          <>
-            <TtsVoicePicker value={voice} emptyLabel="TTS: Polza (по умолчанию, платно)" showModel onChange={(next) => setVoice({ ...voice, ...next })} />
-          </>
-        ) : null}
-        <button className="btn sm" disabled={save.isPending} onClick={() => save.mutate()}>
-          Сохранить
-        </button>
+      {speech.speech === "voice" ? (
+        <div className="series-row">
+          <TtsVoicePicker value={voice} emptyLabel="TTS: Polza (по умолчанию, платно)" showModel onChange={(next) => setVoice({ ...voice, ...next })} />
+        </div>
+      ) : null}
+      <div className="series-section-head">
+        <b>Листы и референсы</b>
         <label className="btn ghost sm">
-          ⬆ Картинка-референс
+          ⬆ Своя картинка
           <input type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && upload.mutate(e.target.files[0])} />
         </label>
       </div>
@@ -810,7 +867,7 @@ function CharacterCard({ c, projectId }: { c: AivCharacter; projectId: number })
           <input className="input wide" placeholder="одежда/состояние" value={look.outfit_text} onChange={(e) => setLook({ ...look, outfit_text: e.target.value })} />
           <input className="input" placeholder="где в сюжете" value={look.beat} onChange={(e) => setLook({ ...look, beat: e.target.value })} />
           <button className="btn sm" disabled={!look.name || !look.outfit_text || addLook.isPending} onClick={() => addLook.mutate()}>
-            ＋
+            ＋ Облик
           </button>
         </div>
       </div>
@@ -934,16 +991,19 @@ function BoardSub({ o }: { o: Overview }) {
       <section className="panel series-panel">
         <div className="series-row">
           <EpisodePicker o={o} id={ep.id} setId={ep.setId} />
-          {s ? <StageButton projectId={o.project.id} stage="blocking" scriptId={s.id} label="Блокинг (0 ₽): оценить" /> : null}
-          {s ? <StageButton projectId={o.project.id} stage="keyframes" scriptId={s.id} label="Пары кадров: оценить" /> : null}
-          {s ? (
+        </div>
+        {/* Этапы серии по порядку конвейера: блокинг → пары кадров (+ проверка) → видео. */}
+        {s ? (
+          <div className="series-row aiv-steps">
+            <StageButton projectId={o.project.id} stage="blocking" scriptId={s.id} label="1. Блокинг (0 ₽): оценить" />
+            <StageButton projectId={o.project.id} stage="keyframes" scriptId={s.id} label="2. Пары кадров: оценить" />
             <button className="btn ghost sm" disabled={continuity.isPending} onClick={() => continuity.mutate(s.id)}
                     title="Gemini сравнит склейки (старт плана с концом прошлого) и пары кадров (старт → конец) — бесплатно">
-              👁 Кадры
+              {continuity.isPending ? "Сравниваю…" : "Проверить кадры"}
             </button>
-          ) : null}
-          {s ? <StageButton projectId={o.project.id} stage="video" scriptId={s.id} label="Видео планов: оценить" /> : null}
-        </div>
+            <StageButton projectId={o.project.id} stage="video" scriptId={s.id} label="3. Видео планов: оценить" />
+          </div>
+        ) : null}
         <span className="muted">
           Видео: {o.style.video_caps?.label ?? o.style.video_model}. План с видео — пара кадров (старт → конец), модель
           только переводит один в другой; конец плана — он же старт следующего, если тот продолжает сцену.
@@ -988,11 +1048,11 @@ function BoardSub({ o }: { o: Overview }) {
                     План {shot.idx} · {shot.duration} с · {CAMERA_LABEL[shot.camera.move] ?? shot.camera.move}
                   </b>
                   <span className="muted">
-                    {shot.location || "—"} · {shot.cast.map((c) => c.id + (c.look ? `:${c.look}` : "")).join(", ") || "без персонажей"}
+                    {placeOf(o, shot)} · {castOf(o, shot) || "без персонажей"}
                     {shot.spent_rub ? ` · ${rub(shot.spent_rub)}` : ""}
                   </span>
                   <span className="muted">
-                    {shot.needs_motion ? "🎬 видео" : "стоп-кадр"}
+                    {shot.needs_motion ? "видео" : "стоп-кадр"}
                     {shot.continues_from_prev && shot.idx > 1 ? " · продолжает прошлый" : ""}
                     {shot.action ? ` · ${shot.action}` : ""}
                   </span>
@@ -1013,7 +1073,7 @@ function BoardSub({ o }: { o: Overview }) {
                   ) : null}
                   {shot.dialogue.map((l, i) => (
                     <span key={i} className="aiv-line">
-                      <b>{l.who}:</b> {l.text}
+                      <b>{o.characters.find((ch) => ch.slug === l.who)?.name ?? l.who}:</b> {l.text}
                     </span>
                   ))}
                   <div className="series-row">
@@ -1031,20 +1091,20 @@ function BoardSub({ o }: { o: Overview }) {
                     ) : null}
                     {start && shot.cast.length ? (
                       <button className="btn ghost sm" disabled={check.isPending} onClick={() => check.mutate(start.id)} title="Gemini сравнит с каноном">
-                        👁 Постоянство
+                        Проверить сходство
                       </button>
                     ) : null}
                     {shot.needs_motion && start ? (
                       <button className={`btn sm${qa && !qa.ok ? " primary" : ""}`} disabled={make.isPending}
                               onClick={() => make.mutate(`shot:${shot.id}:shot_video`)}
                               title="Видео этого плана: своя оценка и карточка — платное только после «Разрешить»">
-                        {vid ? "↻ Видео" : "🎬 Видео"}
+                        {vid ? "↻ Видео" : "Видео"}
                       </button>
                     ) : null}
                     {vid ? (
                       <button className="btn ghost sm" disabled={checkVideo.isPending} onClick={() => checkVideo.mutate(vid.id)}
                               title="Gemini посмотрит 4–6 кадров видео: счёт предметов, дизайн, опора, склейки, конец (бесплатно)">
-                        👁 Видео
+                        Проверить видео
                       </button>
                     ) : null}
                   </div>
@@ -1130,7 +1190,7 @@ function BlockingShot({ shot, projectId }: { shot: Shot; projectId: number }) {
           План {shot.idx} · {shot.action || "—"}
         </b>
         <span className="muted">
-          {b ? `раскладка: ${b.source}${b.outdated ? " (устарела — state поменялся)" : ""}` : ""}
+          {b ? `раскладка: ${BLOCKING_SOURCE[b.source] ?? b.source}${b.outdated ? " (устарела — состояние плана поменялось)" : ""}` : ""}
           {b?.legend ? ` · ${b.legend}` : ""}
         </span>
       </div>
@@ -1144,20 +1204,26 @@ function BlockingShot({ shot, projectId }: { shot: Shot; projectId: number }) {
           </>
         ) : null}
       </div>
-      <label className="field">
-        <span>Раскладка (JSON, сантиметры: x вправо, z к камере; facing 0 — в камеру, 90 — вправо)</span>
-        <textarea className="input mono" rows={6} value={text ?? (b ? JSON.stringify(b.spec, null, 1) : "")}
-                  onChange={(e) => setText(e.target.value)} />
-      </label>
       <div className="series-row">
-        <button className="btn sm" disabled={save.isPending || text == null} onClick={() => save.mutate()}>
-          Сохранить и отрисовать
-        </button>
         <button className="btn ghost sm" disabled={rewrite.isPending} onClick={() => rewrite.mutate()}
-                title="Gemini заново разложит план по state и концу плана (без ключа — по state)">
+                title="Gemini заново разложит план по состоянию и концу плана (без ключа — по состоянию)">
           ↻ Пересоздать раскладку
         </button>
       </div>
+      {/* JSON раскладки нужен редко (правка вручную) — свёрнут, чтобы три плана не были тремя простынями. */}
+      <details className="aiv-more" open={text != null}>
+        <summary>Править раскладку вручную (JSON)</summary>
+        <label className="field">
+          <span>Сантиметры: x вправо, z к камере; facing 0 — в камеру, 90 — вправо</span>
+          <textarea className="input mono" rows={6} value={text ?? (b ? JSON.stringify(b.spec, null, 1) : "")}
+                    onChange={(e) => setText(e.target.value)} />
+        </label>
+        <div className="series-row">
+          <button className="btn sm" disabled={save.isPending || text == null} onClick={() => save.mutate()}>
+            Сохранить и отрисовать
+          </button>
+        </div>
+      </details>
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   HYP_STATUS_LABEL,
   METRIC_OPTIONS,
@@ -59,7 +59,19 @@ const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).
 export function SeriesPage() {
   const { projectId } = useParams();
   const id = Number(projectId);
-  const [tab, setTab] = useState<Tab | null>(null);
+  // Вкладка — в адресе (?tab=expl): перезагрузка и ссылка открывают то же место.
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") as Tab | null;
+  const setTab = (next: Tab) =>
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set("tab", next);
+        p.delete("sub");
+        return p;
+      },
+      { replace: true },
+    );
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
   const { on } = useModules();
   const isAiv = project.data?.kind === "ai_video";

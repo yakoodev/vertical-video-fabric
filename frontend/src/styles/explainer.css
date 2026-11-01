@@ -53,3 +53,22 @@
   .expl-mascot { grid-template-columns: 1fr; }
   .expl-video-actions { margin-left: 0; }
 }
+
+/* UI-проход 2: явная кнопка «Сценарий и биты», ошибка «что случилось + подсказка агенту», ползунок в цвет
+   приложения, действия позы — кнопки, на телефоне позы в три колонки. */
+.expl-toggle { justify-self: start; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
+.expl-toggle:hover { text-decoration: underline; }
+.expl-error { display: grid; gap: 2px; font-size: 13px; }
+.expl-error-hint { font-size: 12px; overflow-wrap: anywhere; }
+.expl-field input[type="range"] { accent-color: var(--accent); width: 100%; }
+.expl-lib-tools { flex-wrap: nowrap; }
+.expl-lib-tools .btn { flex: none; }
+.expl-pose-actions .btn { padding: 0 8px; min-width: 28px; }
+.expl-add { padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface-2); }
+@media (max-width: 720px) {
+  .expl-poses { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .expl .series-panel-head { flex-wrap: wrap; }
+  .expl-lib-tools { flex: 1 1 100%; }
+  .expl-filter { max-width: none; }
+}
+.expl-mascot-form > .muted, .expl-mascot-form .series-row > .muted { font-size: 12.5px; }

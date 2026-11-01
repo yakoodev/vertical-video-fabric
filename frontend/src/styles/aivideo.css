@@ -50,3 +50,19 @@
 @media (max-width: 720px) {
   .aiv-frame { width: 76px; }
 }
+
+/* UI-проход 2 (docs/redesign/audit-2026-11.md): редкое — под «Править … (JSON)», этапы серии нумерованы. */
+.aiv-more { display: grid; gap: 8px; }
+.aiv-more > summary { cursor: pointer; font-size: 13px; color: var(--text-dim); width: fit-content; }
+.aiv-more > summary:hover { color: var(--text); }
+.aiv-more[open] > summary { color: var(--text); }
+.aiv-steps { padding-top: 2px; }
+/* Телефон: список серии (длинные названия) распирал сетку «Сценария» до 529 px — горизонтальная прокрутка. */
+@media (max-width: 980px) {
+  .aiv .series-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.aiv select.input { min-width: 0; max-width: 100%; }
+.aiv .series-panel-head { flex-wrap: wrap; }
+.aiv .series-col { grid-template-columns: minmax(0, 1fr); }
+.aiv .series-panel { min-width: 0; }
+.aiv .series-panel { grid-template-columns: minmax(0, 1fr); }

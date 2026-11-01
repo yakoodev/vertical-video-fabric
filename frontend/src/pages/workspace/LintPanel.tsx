@@ -27,6 +27,9 @@ const fmt = (t: number) => {
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 };
 
+/** «Что сделать»: хвост для агентов (« — set_end_hold(sec: 0)») — только в подсказке при наведении. */
+const humanFix = (fix: string) => fix.replace(/\s+—\s+[a-z_]+\([^)]*\)\s*$/, "");
+
 export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
   const toast = useToast();
   const [result, setResult] = useState<LintResult | null>(null);
@@ -67,7 +70,7 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
   return (
     <div className="lint-panel">
       <div className="lint-run">
-        <button type="button" className="btn primary sm" disabled={busy} onClick={() => void run()}>
+        <button type="button" className="btn sm" disabled={busy} onClick={() => void run()}>
           {busy ? "Проверяю…" : result ? "Проверить снова" : "Проверить"}
         </button>
         <label
@@ -127,7 +130,7 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
                     {f.severity === "warn" ? "⚠" : "ℹ"}
                   </span>
                   <span className="lint-msg">{f.message}</span>
-                  {f.fix ? <span className="lint-fix">→ {f.fix}</span> : null}
+                  {f.fix ? <span className="lint-fix" title={f.fix}>→ {humanFix(f.fix)}</span> : null}
                   <span className="lint-meta">
                     {typeof f.t === "number" ? (
                       <button

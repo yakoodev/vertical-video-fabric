@@ -5121,82 +5121,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </>
                 ) : null}
               </Group>
-              <Group
-                title="Сведение и эффекты"
-                badge={mixSettings.auto ? "авто" : mixSettings.music_db != null || mixSettings.voice_fx || mixSettings.music_fx ? "своё" : "—"}
-              >
-                <div className="muted li-note">
-                  Музыка под речью должна быть на 12–18 дБ тише голоса, звуки — не закрывать слова, ролик — −14 LUFS.
-                  «Проверить» меряет по стемам (как сведёт рендер), «Автосведение» выставит громкость музыки, ducking по
-                  фразам и звуки под голос.
-                </div>
-                <div className="lay-row">
-                  <button
-                    type="button"
-                    className="btn sm"
-                    disabled={!activePlan || mixReport.isPending}
-                    onClick={() => activePlan && mixReport.mutate(activePlan.id)}
-                  >
-                    {mixReport.isPending ? "Слушаю…" : "🎧 Проверить сведение"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn sm"
-                    disabled={!activePlan || autoMix.isPending}
-                    onClick={() => activePlan && autoMix.mutate(activePlan.id)}
-                    title="Громкость музыки под голосом, ducking на каждую фразу, звуки слоёв под голос, −14 LUFS"
-                  >
-                    {autoMix.isPending ? "Свожу…" : "🎚 Автосведение"}
-                  </button>
-                </div>
-                {mixReport.data ? (
-                  <div className="mix-report">
-                    <div className={mixReport.data.verdicts.some((v) => v.severity === "warn") ? "lay-note warn" : "lay-note ok"}>
-                      {mixReport.data.summary}
-                    </div>
-                    {mixReport.data.timeline?.line ? (
-                      <div className="mix-line" title={mixReport.data.timeline.line_scale}>
-                        {mixReport.data.timeline.line}
-                      </div>
-                    ) : null}
-                    {mixReport.data.verdicts.map((v, i) => (
-                      <div key={i} className={`lay-note ${v.severity === "warn" ? "warn" : ""}`}>
-                        {v.message}
-                        {v.fix ? <span className="muted"> → {v.fix}</span> : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {mixSettings.music_db != null ? (
-                  <div className="lay-row">
-                    <span className="muted">
-                      Музыка: {mixSettings.music_db.toFixed(1)} дБ к треку
-                      {mixSettings.sidechain === false ? " · ducking по фразам" : ""}
-                      {mixSettings.layer_gains ? ` · поправок звуков: ${Object.keys(mixSettings.layer_gains).length}` : ""}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn ghost sm"
-                      title="Снять сведение: музыка снова подгоняется под голос"
-                      onClick={() => setMixSettings(({ voice_fx, music_fx }) => ({ ...(voice_fx ? { voice_fx } : {}), ...(music_fx ? { music_fx } : {}) }))}
-                    >
-                      Сбросить
-                    </button>
-                  </div>
-                ) : null}
-                <FxChainEditor
-                  title={isCanvas ? "Голос (слои-озвучка)" : "Голос (звук исходника)"}
-                  chain={mixSettings.voice_fx}
-                  onChange={(voice_fx) => setMixSettings((m) => ({ ...m, voice_fx }))}
-                />
-                {musicOn ? (
-                  <FxChainEditor
-                    title="Музыка"
-                    chain={mixSettings.music_fx}
-                    onChange={(music_fx) => setMixSettings((m) => ({ ...m, music_fx }))}
-                  />
-                ) : null}
-              </Group>
               {/* Холст: звука исходника нет — глушить, громкость и дорожки не нужны. */}
               {isCanvas ? null : (
               <>
@@ -5345,6 +5269,85 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </Group>
               </>
               )}
+              {/* Сведение — последний шаг звука: после музыки, тишины, громкости и дорожек. */}
+              <Group
+                title="Сведение и эффекты"
+                badge={mixSettings.auto ? "авто" : mixSettings.music_db != null || mixSettings.voice_fx || mixSettings.music_fx ? "своё" : undefined}
+              >
+                <div
+                  className="muted li-note"
+                  title="«Проверить» меряет по стемам (как сведёт рендер); «Автосведение» выставит громкость музыки, ducking по фразам и звуки под голос"
+                >
+                  Цель: музыка под речью на 12–18 дБ тише голоса, звуки не закрывают слова, ролик −14 LUFS.
+                </div>
+                <div className="lay-row">
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || mixReport.isPending}
+                    onClick={() => activePlan && mixReport.mutate(activePlan.id)}
+                  >
+                    {mixReport.isPending ? "Слушаю…" : "Проверить сведение"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!activePlan || autoMix.isPending}
+                    onClick={() => activePlan && autoMix.mutate(activePlan.id)}
+                    title="Громкость музыки под голосом, ducking на каждую фразу, звуки слоёв под голос, −14 LUFS"
+                  >
+                    {autoMix.isPending ? "Свожу…" : "Автосведение"}
+                  </button>
+                </div>
+                {mixReport.data ? (
+                  <div className="mix-report">
+                    <div className={mixReport.data.verdicts.some((v) => v.severity === "warn") ? "lay-note warn" : "lay-note ok"}>
+                      {mixReport.data.summary}
+                    </div>
+                    {mixReport.data.timeline?.line ? (
+                      <div className="mix-line" title={mixReport.data.timeline.line_scale}>
+                        {mixReport.data.timeline.line}
+                      </div>
+                    ) : null}
+                    {mixReport.data.verdicts.map((v, i) => (
+                      <div key={i} className={`lay-note ${v.severity === "warn" ? "warn" : ""}`}>
+                        {v.message}
+                        {v.fix ? <span className="muted"> → {v.fix}</span> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {mixSettings.music_db != null ? (
+                  <div className="lay-row">
+                    <span className="muted li-note">
+                      Музыка: {mixSettings.music_db.toFixed(1)} дБ к треку
+                      {mixSettings.sidechain === false ? " · ducking по фразам" : ""}
+                      {mixSettings.layer_gains ? ` · поправок звуков: ${Object.keys(mixSettings.layer_gains).length}` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      title="Снять сведение: музыка снова подгоняется под голос"
+                      onClick={() => setMixSettings(({ voice_fx, music_fx }) => ({ ...(voice_fx ? { voice_fx } : {}), ...(music_fx ? { music_fx } : {}) }))}
+                    >
+                      Сбросить
+                    </button>
+                  </div>
+                ) : null}
+                <div className="rgroup-sub">Эффекты</div>
+                <FxChainEditor
+                  title={isCanvas ? "Голос (слои-озвучка)" : "Голос (звук исходника)"}
+                  chain={mixSettings.voice_fx}
+                  onChange={(voice_fx) => setMixSettings((m) => ({ ...m, voice_fx }))}
+                />
+                {musicOn ? (
+                  <FxChainEditor
+                    title="Музыка"
+                    chain={mixSettings.music_fx}
+                    onChange={(music_fx) => setMixSettings((m) => ({ ...m, music_fx }))}
+                  />
+                ) : null}
+              </Group>
             </div>
             <div className="insp-pane" hidden={inspActive !== "subs"} role="tabpanel" aria-label="Субтитры">
               <Group title="Субтитры на ролике" badge={subsOn ? "вкл" : "выкл"} defaultOpen>
