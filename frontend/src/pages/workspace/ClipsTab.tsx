@@ -8,6 +8,7 @@ import { ClipCard } from "@/components/ClipCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
 import { BatchPublishDialog } from "@/components/BatchPublishDialog";
+import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
 
 // Shared between the "Клипы" (rendered) and "Смонтированные" (montage) tabs.
@@ -30,6 +31,8 @@ export function ProjectClipsGrid({
   // Batch: tick finished clips, publish them in one go (each under its own title).
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
+  // «Публикация на площадки» выключена (app/modules.py) — кнопок публикации нет.
+  const publishingOn = useModuleOn("publishing");
 
   const del = useDeleteMutation<Clip>({
     listKey: qk.clips(sourceId),
@@ -70,9 +73,11 @@ export function ProjectClipsGrid({
         >
           {pickedClips.length === ready.length && ready.length ? "Снять все" : "Выбрать все готовые"}
         </button>
-        <button className="btn primary sm" disabled={!pickedClips.length} onClick={() => setBatchOpen(true)}>
-          Опубликовать выбранные ({pickedClips.length})
-        </button>
+        {publishingOn ? (
+          <button className="btn primary sm" disabled={!pickedClips.length} onClick={() => setBatchOpen(true)}>
+            Опубликовать выбранные ({pickedClips.length})
+          </button>
+        ) : null}
       </div>
       <div className="card-grid clip-grid">
         {clips.map((clip) => (
@@ -83,13 +88,15 @@ export function ProjectClipsGrid({
             onSelect={clip.status === "succeeded" ? (on) => setPick(clip.id, on) : undefined}
             actions={
               <>
-                <button
-                  className="btn primary sm"
-                  disabled={clip.status !== "succeeded"}
-                  onClick={() => setToPublish(clip)}
-                >
-                  Опубликовать
-                </button>
+                {publishingOn ? (
+                  <button
+                    className="btn primary sm"
+                    disabled={clip.status !== "succeeded"}
+                    onClick={() => setToPublish(clip)}
+                  >
+                    Опубликовать
+                  </button>
+                ) : null}
                 <button className="btn danger-outline sm" onClick={() => setToDelete(clip)}>
                   Удалить
                 </button>

@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/components/ui";
 import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
 import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
+import { useModuleOn, useModules } from "@/hooks/useModules";
 
 const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   image: "Картинка",
@@ -22,6 +23,7 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
   const [label, setLabel] = useState(asset.label);
   const [description, setDescription] = useState(asset.description);
   const [tags, setTags] = useState(asset.tags);
+  const assetAiOn = useModuleOn("asset_ai");
 
   const save = useMutation({
     mutationFn: (patch: Partial<Pick<MontageAsset, "label" | "description" | "tags">>) =>
@@ -72,14 +74,16 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
         onBlur={() => commit("label", label)}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       />
-      <button
-        className="btn sm asset-ai"
-        disabled={describe.isPending}
-        onClick={() => describe.mutate()}
-        title="ИИ посмотрит файл и напишет, что на нём и когда уместно"
-      >
-        {describe.isPending ? "✨ Смотрю…" : description.trim() ? "✨ Переписать" : "✨ Описать через ИИ"}
-      </button>
+      {assetAiOn ? (
+        <button
+          className="btn sm asset-ai"
+          disabled={describe.isPending}
+          onClick={() => describe.mutate()}
+          title="ИИ посмотрит файл и напишет, что на нём и когда уместно"
+        >
+          {describe.isPending ? "✨ Смотрю…" : description.trim() ? "✨ Переписать" : "✨ Описать через ИИ"}
+        </button>
+      ) : null}
       <textarea
         className="input asset-desc"
         rows={2}
@@ -110,6 +114,8 @@ export function MontageAssetsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const query = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list });
+  // Поиск картинок и ИИ-описание/генерация — модули (app/modules.py).
+  const { on: moduleOn } = useModules();
   const [pending, setPending] = useState<MontageAsset | null>(null);
   const [drag, setDrag] = useState(false);
   const [uploading, setUploading] = useState(0);
@@ -155,7 +161,7 @@ export function MontageAssetsPage() {
         title="Файлы для монтажа"
         sub="Мемы, реакции, стикеры и звуки — 🤖 ИИ-монтаж сам вставляет подходящие в клипы"
       />
-      {undescribed.length ? (
+      {undescribed.length && moduleOn("asset_ai") ? (
         <div className="asset-hint">
           <span>
             <b>{undescribed.length}</b> файл(ов) без описания — ИИ-монтаж их почти не использует.
@@ -180,10 +186,12 @@ export function MontageAssetsPage() {
           </button>
         </div>
       ) : null}
-      <div className="asset-ai-row">
-        <AssetSearchPanel />
-        <AssetGeneratePanel />
-      </div>
+      {moduleOn("web_images") || moduleOn("asset_ai") ? (
+        <div className="asset-ai-row">
+          {moduleOn("web_images") ? <AssetSearchPanel /> : null}
+          {moduleOn("asset_ai") ? <AssetGeneratePanel /> : null}
+        </div>
+      ) : null}
       <div
         className={`asset-drop${drag ? " on" : ""}`}
         onDragOver={(e) => {

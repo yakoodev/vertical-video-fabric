@@ -17,6 +17,7 @@ import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
 import { VodWatchPanel } from "@/pages/SeriesVodWatch";
+import { useModuleOn } from "@/hooks/useModules";
 import { ChatConversation } from "@/pages/chat/ChatConversation";
 
 /**
@@ -36,6 +37,8 @@ export function AutopilotTab({ projectId }: { projectId: number }) {
   const toast = useToast();
   const config = useQuery({ queryKey: apKeys.config(projectId), queryFn: () => autopilotApi.config(projectId) });
   const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list });
+  // Наблюдатель VOD — свой модуль (app/modules.py).
+  const vodWatchOn = useModuleOn("vod_watch");
   const [draft, setDraft] = useState<AutopilotConfig | null>(null);
   const [newType, setNewType] = useState("");
   useEffect(() => {
@@ -246,7 +249,7 @@ export function AutopilotTab({ projectId }: { projectId: number }) {
         </section>
       </div>
       <div className="series-col">
-        <VodWatchPanel projectId={projectId} />
+        {vodWatchOn ? <VodWatchPanel projectId={projectId} /> : null}
         <ScheduleList projectId={projectId} />
         <PendingList projectId={projectId} />
         <Digest projectId={projectId} />

@@ -6,6 +6,7 @@ import { promptsApi } from "@/api/prompts";
 import { qk } from "@/api/keys";
 import type { AiAnalysis, CropRect, SourceDetail } from "@/api/types";
 import { useToast } from "@/components/Toast";
+import { useModules } from "@/hooks/useModules";
 import { ApiError } from "@/api/client";
 import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
 
@@ -105,6 +106,8 @@ function AnalysisProgress({ analysis, onCancel }: { analysis: AiAnalysis; onCanc
 export function SourceTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  // «ИИ-нарезка» и «Распознавание речи» — модули (app/modules.py).
+  const { on: moduleOn } = useModules();
   const query = useQuery({
     queryKey: qk.source(sourceId),
     queryFn: () => sourcesApi.get(sourceId),
@@ -335,7 +338,11 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
         : null}
 
 
-        <div className="panel" style={{ display: "grid", gap: 10 }}>
+        {!moduleOn("ai_analysis") ? (
+          <div className="panel muted" style={{ fontSize: 13 }}>
+            Модуль «ИИ-нарезка моментов» выключен (Настройки → Модули) — клипы можно сделать вручную в «Моменты».
+          </div>
+        ) : <div className="panel" style={{ display: "grid", gap: 10 }}>
           <strong className="src-h">Запустить анализ</strong>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <label className="field" style={{ flex: 1, minWidth: 200 }}>
@@ -368,7 +375,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
-          <label className="check" title="Прогнать Whisper и отдать дословный транскрипт модели — точнее границы реза и цитаты (для Gemini)">
+          {moduleOn("transcription") ? <label className="check" title="Прогнать Whisper и отдать дословный транскрипт модели — точнее границы реза и цитаты (для Gemini)">
             <input type="checkbox" checked={useTranscript} onChange={(e) => setUseTranscript(e.target.checked)} />
             <span>Транскрипт (Whisper) в анализ</span>
             {query.data?.has_transcript ? (
@@ -376,7 +383,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                 · ✓ закэширован ({query.data.transcript_segments} сегм.)
               </span>
             ) : null}
-          </label>
+          </label> : null}
           <button
             className="btn primary"
             disabled={analyze.isPending}
@@ -390,7 +397,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
           >
             {analyze.isPending ? "Запуск…" : running ? "▶ Ещё один анализ" : "▶ Анализировать"}
           </button>
-        </div>
+        </div>}
 
       <div className="panel">
         <strong className="src-h">Анализы ({source.analyses.length})</strong>

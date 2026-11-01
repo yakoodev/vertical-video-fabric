@@ -9,11 +9,14 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { CoverVariants } from "@/components/CoverVariants";
+import { useModules } from "@/hooks/useModules";
 
 export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
+  // ✨ метаданные и обложки — свои модули (app/modules.py).
+  const { on: moduleOn } = useModules();
   const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list });
   const [title, setTitle] = useState(clip.title);
   const [description, setDescription] = useState(clip.description);
@@ -72,7 +75,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
           <video src={`/media/clips/${clip.id}`} controls preload="metadata" playsInline />
         </div>
         <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
-          <div className="pub-gen">
+          {moduleOn("publish_meta") ? <div className="pub-gen">
             <button
               type="button"
               className="btn sm pub-gen-btn"
@@ -83,7 +86,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
               {suggest.isPending ? "Генерирую…" : "✨ Сгенерировать"}
             </button>
             <span className="muted">заголовок · описание · хэштеги</span>
-          </div>
+          </div> : null}
           {meta && variants.length ? (
             <div className="pub-variants">
               <span className="muted">
@@ -108,7 +111,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
             <span>Описание</span>
             <textarea className="input" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
-          <CoverVariants clip={clip} />
+          {moduleOn("covers") ? <CoverVariants clip={clip} /> : null}
           <div className="field">
             <span>Аккаунты</span>
             {accounts.isLoading ? (

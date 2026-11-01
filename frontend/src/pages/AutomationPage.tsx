@@ -9,6 +9,7 @@ import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi } fro
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { useModules } from "@/hooks/useModules";
 import { Badge, EmptyState, ErrorState, Loading } from "@/components/ui";
 import { DEFAULT_FORMAT, frameSize } from "@/motion";
 
@@ -27,8 +28,10 @@ const PROVIDERS = ["action", "polza", "gemini", "artemox", "mock"];
 function StartAuto() {
   const qc = useQueryClient();
   const toast = useToast();
-  const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list });
-  const series = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list });
+  // Модули «Публикация» и «Проекты-серии» могут быть выключены (app/modules.py) — тогда без них.
+  const { on, ready } = useModules();
+  const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list, enabled: ready("publishing") });
+  const series = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, enabled: ready("series") });
   const [projectId, setProjectId] = useState(0);
   const [url, setUrl] = useState("");
   const [provider, setProvider] = useState(PROVIDERS[0]);
@@ -152,11 +155,13 @@ function StartAuto() {
           />
         </label>
       </div>
-      <label className="switch" title="Перед рендером ИИ перемонтирует каждый клип: хук в начало, без пауз и воды (≈30–60 с на клип, ~центы)">
-        <input type="checkbox" checked={aiMontage} onChange={(e) => setAiMontage(e.target.checked)} />
-        <span className="switch-track" />
-        <span>🤖 ИИ-монтаж каждого клипа перед рендером</span>
-      </label>
+      {on("ai_montage") ? (
+        <label className="switch" title="Перед рендером ИИ перемонтирует каждый клип: хук в начало, без пауз и воды (≈30–60 с на клип, ~центы)">
+          <input type="checkbox" checked={aiMontage} onChange={(e) => setAiMontage(e.target.checked)} />
+          <span className="switch-track" />
+          <span>🤖 ИИ-монтаж каждого клипа перед рендером</span>
+        </label>
+      ) : null}
       <label className="switch" title="Whisper-транскрипт в анализ — точнее границы и цитаты (для Gemini)">
         <input type="checkbox" checked={useTranscript} onChange={(e) => setUseTranscript(e.target.checked)} />
         <span className="switch-track" />

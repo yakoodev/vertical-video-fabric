@@ -9,18 +9,20 @@ import { tasksApi } from "@/api/tasks";
 import { qk } from "@/api/keys";
 import { isActive } from "@/hooks/useActiveTasks";
 import { apKeys, autopilotApi } from "@/api/autopilot";
+import { useModules } from "@/hooks/useModules";
 
 // Order follows the daily loop: make → clip → publish (manual or auto) → watch.
-const NAV: { to: string; label: string; icon: string; badge?: "active" | "approvals" }[] = [
+// module — пункт виден, только пока модуль включён («Настройки → Модули», app/modules.py).
+const NAV: { to: string; label: string; icon: string; badge?: "active" | "approvals"; module?: string }[] = [
   { to: "/projects", label: "Проекты", icon: "folder" },
-  { to: "/chat", label: "Чат", icon: "chat" },
+  { to: "/chat", label: "Чат", icon: "chat", module: "agent_chat" },
   { to: "/clips", label: "Клипы", icon: "scissors" },
   { to: "/assets", label: "Файлы для монтажа", icon: "image" },
-  { to: "/approvals", label: "Одобрение", icon: "check", badge: "approvals" },
-  { to: "/publications", label: "Публикации", icon: "send" },
-  { to: "/automation", label: "Авто", icon: "zap" },
+  { to: "/approvals", label: "Одобрение", icon: "check", badge: "approvals", module: "autopilot" },
+  { to: "/publications", label: "Публикации", icon: "send", module: "publishing" },
+  { to: "/automation", label: "Авто", icon: "zap", module: "automation" },
   { to: "/tasks", label: "Очередь", icon: "queue", badge: "active" },
-  { to: "/accounts", label: "Аккаунты", icon: "users" },
+  { to: "/accounts", label: "Аккаунты", icon: "users", module: "publishing" },
 ];
 
 export const SHORTCUTS: [string, string][] = [
@@ -59,7 +61,13 @@ export function AppShell() {
   const tasks = useQuery({ queryKey: qk.activeTasks, queryFn: tasksApi.active, refetchInterval: 5000 });
   const activeCount = (tasks.data ?? []).filter((t) => isActive(t.status)).length;
   // Автопилот: сколько карточек ждёт владельца (app/autopilot.py).
-  const approvals = useQuery({ queryKey: apKeys.counts, queryFn: autopilotApi.counts, refetchInterval: 30000 });
+  const { on, ready } = useModules();
+  const approvals = useQuery({
+    queryKey: apKeys.counts,
+    queryFn: autopilotApi.counts,
+    refetchInterval: 30000,
+    enabled: ready("autopilot"),
+  });
   const pendingCount = approvals.data?.pending ?? 0;
   const openCreate = useCallback(() => setCreate(true), []);
 
@@ -107,7 +115,7 @@ export function AppShell() {
           <kbd>N</kbd>
         </button>
         <nav className="nav-section">
-          {NAV.map((item) => (
+          {NAV.filter((item) => !item.module || on(item.module)).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
