@@ -218,6 +218,9 @@ def separate_voices(
     ``retranscribe`` — сначала распознать речь точной моделью (large-v3-turbo), если
     субтитры сделаны более слабой: время слов берётся у whisper, и от small под
     чужими голосами толку мало."""
+    from app import modules
+
+    modules.require("voices", store)
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
     retranscribed = False
     if retranscribe:

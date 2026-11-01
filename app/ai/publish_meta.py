@@ -379,6 +379,10 @@ def auto_meta_enabled(store: Any) -> bool:
     настройка ``auto_publish_meta`` (нет записи — да)."""
     if not settings.auto_publish_meta or not settings.gemini_api_key:
         return False
+    from app import modules
+
+    if not modules.is_enabled("publish_meta", store):  # «Настройки → Модули»
+        return False
     try:
         return bool(store.get_app_setting_value(AUTO_META_KEY, True))
     except Exception:  # noqa: BLE001 - нет настроек — по умолчанию

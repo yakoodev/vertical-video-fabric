@@ -63,6 +63,10 @@ class DownloadService:
     def start(self, url: str, *, quality: str = "", selection: dict | None = None, ingestor=None) -> dict:
         """Запустить загрузку в фоне. ``ingestor`` — свой на этот вызов (main.py отдаёт
         текущий ``source_ingestor``, его подменяют тесты); по умолчанию — сервиса."""
+        from app import modules
+
+        # «Загрузка по ссылкам» выключена (Настройки → Модули): и наблюдатель VOD, и «Авто» — тоже стоп.
+        modules.require("downloads")
         url = url.strip()
         # Fail fast on a malformed URL so the user sees it in the response instead
         # of having to open the activity panel for it.

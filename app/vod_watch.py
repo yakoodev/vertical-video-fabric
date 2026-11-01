@@ -621,9 +621,11 @@ class VodWatchWorker:
 
         if os.getenv("VOD_WATCH_WORKER", "1").strip().lower() in ("0", "false", "no", "off"):
             return
-        if self._thread and self._thread.is_alive():
+        if self._thread and self._thread.is_alive() and not self._stop.is_set():
             return
-        self._thread = threading.Thread(target=self._run, name="vod-watch", daemon=True)
+        # Перезапуск после выключения модуля (app/modules.py): новый флаг остановки.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name="vod-watch", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -631,8 +633,9 @@ class VodWatchWorker:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _run(self) -> None:
-        while not self._stop.wait(self.IDLE_SECONDS):
+    def _run(self, stop: threading.Event | None = None) -> None:
+        stop = stop or self._stop
+        while not stop.wait(self.IDLE_SECONDS):
             try:
                 tick(self.store, self.downloads, self.automation)
             except Exception as exc:  # noqa: BLE001 - фон не должен умирать

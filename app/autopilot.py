@@ -1460,9 +1460,11 @@ class AutopilotWorker:
 
         if os.getenv("AUTOPILOT_WORKER", "1").strip().lower() in ("0", "false", "no", "off"):
             return
-        if self._thread and self._thread.is_alive():
+        if self._thread and self._thread.is_alive() and not self._stop.is_set():
             return
-        self._thread = threading.Thread(target=self._run, name="autopilot", daemon=True)
+        # Перезапуск после выключения модуля (app/modules.py): новый флаг остановки.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name="autopilot", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -1470,12 +1472,13 @@ class AutopilotWorker:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _run(self) -> None:
+    def _run(self, stop: threading.Event | None = None) -> None:
         from app import notify_tg
 
-        if self._stop.wait(5):
+        stop = stop or self._stop
+        if stop.wait(5):
             return
-        while not self._stop.is_set():
+        while not stop.is_set():
             try:
                 tick(self.store)
             except Exception as exc:  # noqa: BLE001 - фон не должен умирать
@@ -1486,4 +1489,4 @@ class AutopilotWorker:
                     continue
             except Exception as exc:  # noqa: BLE001 - сеть/Telegram лёг — подождём
                 _log.info("telegram poll failed: %s", exc)
-            self._stop.wait(self.IDLE_SECONDS)
+            stop.wait(self.IDLE_SECONDS)

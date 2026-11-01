@@ -213,7 +213,11 @@ class AutomationService:
             if not plans:
                 raise RuntimeError("анализ не дал клипов")
 
-            if publish.get("ai_montage"):
+            from app import modules
+
+            if publish.get("ai_montage") and not modules.is_enabled("ai_montage", self.store):
+                self._warn(run, "ИИ-монтаж пропущен: модуль выключен в настройках")
+            elif publish.get("ai_montage"):
                 self._update(run, message=f"🤖 ИИ-монтаж клипов ({len(plans)})…")
                 from app.ai.montage import montage_many
 

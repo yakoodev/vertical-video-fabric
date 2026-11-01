@@ -241,11 +241,16 @@ def _chat_tools() -> list[Tool]:
 # --------------------------------------------------------------------------- #
 
 
-def all_tools() -> dict[str, Tool]:
-    """Всё, что умеет чат: реестр MCP целиком + инструменты чата."""
-    out = {t.name: t for t in agent_tools.list_tools(include_discovery=True)}
+def all_tools(store: Any = None) -> dict[str, Tool]:
+    """Всё, что умеет чат: реестр MCP целиком + инструменты чата — только включённых
+    модулей (app/modules.py)."""
+    from app import modules
+
+    out = {t.name: t for t in agent_tools.list_tools(include_discovery=True, store=store)}
+    state = modules.enabled_map(store)
     for tool in _chat_tools():
-        out[tool.name] = tool
+        if state.get(modules.module_of_tool(tool.name) or "", True):
+            out[tool.name] = tool
     return out
 
 
@@ -361,7 +366,11 @@ def danger_label(name: str) -> str:
 def run(store: Any, name: str, args: dict, *, project_id: int | None,
         clip_ctx: Callable[[int], ToolContext] | None = None) -> tuple[Any, bool, int | None]:
     """Выполнить инструмент чата. Возвращает (результат, ok, clip_id)."""
-    tool = all_tools().get(name)
+    from app import modules
+
+    if not modules.tool_enabled(name, store):
+        return modules.disabled_tool_error(name), False, None
+    tool = all_tools(store).get(name)
     if tool is None:
         return {"ok": False, "error": f"в чате нет инструмента {name}"}, False, None
     args = dict(args or {})

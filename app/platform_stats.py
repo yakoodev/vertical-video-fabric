@@ -240,9 +240,12 @@ class StatsCollector:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if settings.stats_interval_hours <= 0 or (self._thread and self._thread.is_alive()):
+        if settings.stats_interval_hours <= 0 or (
+                self._thread and self._thread.is_alive() and not self._stop.is_set()):
             return
-        self._thread = threading.Thread(target=self._run, name="stats-collector", daemon=True)
+        # Перезапуск после выключения модуля (app/modules.py): новый флаг остановки.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name="stats-collector", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -250,15 +253,16 @@ class StatsCollector:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _run(self) -> None:
-        if self._stop.wait(FIRST_CHECK_DELAY_SECONDS):
+    def _run(self, stop: threading.Event | None = None) -> None:
+        stop = stop or self._stop
+        if stop.wait(FIRST_CHECK_DELAY_SECONDS):
             return
-        while not self._stop.is_set():
+        while not stop.is_set():
             try:
-                collect_stats(self.store, sleep=self._stop.wait)
+                collect_stats(self.store, sleep=stop.wait)
             except Exception:  # noqa: BLE001 - фон не должен умирать
                 pass
-            self._stop.wait(CHECK_EVERY_SECONDS)
+            stop.wait(CHECK_EVERY_SECONDS)
 
 
 # --------------------------------------------------------------------------- #
