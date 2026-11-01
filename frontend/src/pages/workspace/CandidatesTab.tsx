@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
-import { clipPlansApi, type SubtitleLine } from "@/api/clipPlans";
+import { clipPlansApi, type PlanSubtitles, type SubtitleLine } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
 import {
   ffmpegPresetsApi,
@@ -29,6 +29,7 @@ import {
   has3dCamera,
   layerUnit,
   captionWordsFrom,
+  ORIG_SPEAKER,
   clipAccent,
   drawFrame,
   endScreenFor,
@@ -630,6 +631,21 @@ function captionWordsOf(words: SubtitleWord[] | undefined): CaptionWord[] {
   if (!hit) {
     hit = captionWordsFrom(words);
     captionWordsCache.set(words, hit);
+  }
+  return hit;
+}
+
+// Перевод с оригиналом (mode both): слова оригинала с меткой orig — ПОСЛЕ русских, как у
+// рендера (app/translation.orig_comp_words); их показывает только слой captions с speakers ["orig"].
+const withOriginalCache = new WeakMap<object, CaptionWord[]>();
+function captionWordsWithOriginal(subs: PlanSubtitles | undefined): CaptionWord[] {
+  const main = captionWordsOf(subs?.words as SubtitleWord[] | undefined);
+  const orig = subs?.translation?.mode === "both" ? subs.translation.original?.words : undefined;
+  if (!subs || !orig?.length) return main;
+  let hit = withOriginalCache.get(subs);
+  if (!hit) {
+    hit = [...main, ...captionWordsFrom(orig.map((w) => ({ ...w, speaker: ORIG_SPEAKER })))];
+    withOriginalCache.set(subs, hit);
   }
   return hit;
 }
@@ -2430,7 +2446,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   clipNowRef.current = clipTimeExact;
   const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
-  const captionWords = captionWordsOf(planSubs.data?.words as SubtitleWord[] | undefined);
+  const captionWords = captionWordsWithOriginal(planSubs.data);
   const chatMessages = Array.isArray(planChat.data) ? planChat.data : [];
   const voiceTracks = planVoice.data?.voice;
   const levelTracks = planLevels.data?.levels;
@@ -3038,6 +3054,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               }}
               onWords={(words) => {
                 subWordsRef.current = words;
+              }}
+              onServerChange={async () => {
+                await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                setSettingsNonce((n) => n + 1);
               }}
             />
           </div>
@@ -4155,6 +4175,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   }}
                   onWords={(words) => {
                     subWordsRef.current = words;
+                  }}
+                  onServerChange={async () => {
+                    await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+                    setSettingsNonce((n) => n + 1);
                   }}
                 />
               ) : null}

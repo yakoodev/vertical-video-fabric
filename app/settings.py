@@ -104,6 +104,13 @@ class Settings:
         # автофокусом): в памяти лежит не дольше пачки распознаваний.
         self.whisper_idle_unload_sec = float(os.getenv("WHISPER_IDLE_UNLOAD_SEC", "120") or 0)
         self.polza_api_key = os.getenv("POLZA_API_KEY", "").strip()
+        # Озвучка RU (app/dubbing.py): ПЛАТНАЯ (Polza TTS) — по умолчанию выключена. Включает
+        # владелец (DUBBING_ENABLED=1); даже тогда каждый запуск — confirm и потолок бюджета.
+        self.dubbing_enabled = _truthy(os.getenv("DUBBING_ENABLED", "0"))
+        # Потолок одного запуска, ₽: больше не разрешит никакой budget_rub из запроса.
+        self.dubbing_max_budget_rub = float(os.getenv("DUBBING_MAX_BUDGET_RUB", "200") or 200)
+        self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
+        self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(
             "POLZA_VIDEO_MODEL", "google/gemini-2.5-pro-preview"

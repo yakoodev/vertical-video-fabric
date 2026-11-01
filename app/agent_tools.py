@@ -1128,6 +1128,34 @@ def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
     return {"ok": True, **out, "note": note}
 
 
+def h_translate_subtitles(ctx: ToolContext, args: dict) -> dict:
+    from app.translation import translate_subtitles
+
+    ctx.before_change()
+    try:
+        return translate_subtitles(
+            ctx.store, ctx.plan_id, mode=str(args.get("mode") or "ru"), translations=args.get("translations"),
+            force=bool(args.get("force")), retranslate=bool(args.get("retranslate")),
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_dub_clip(ctx: ToolContext, args: dict) -> dict:
+    from app.dubbing import dub_clip
+
+    confirm, remove = bool(args.get("confirm")), bool(args.get("remove"))
+    if confirm or remove:
+        ctx.before_change()
+    try:
+        return dub_clip(
+            ctx.store, ctx.plan_id, provider=args.get("provider"), voice=args.get("voice"), model=args.get("model"),
+            confirm=confirm, budget_rub=args.get("budget_rub"), stretch=bool(args.get("stretch")), remove=remove,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def h_generate_subtitles(ctx: ToolContext, _args: dict) -> dict:
     from app.clip_subtitles import generate_for_plan
 
@@ -5516,6 +5544,38 @@ def _build_registry() -> list[Tool]:
             "auto_edit делает это сам; вызывай, если перераспознал речь после auto_edit. / Separate voices.",
             _obj({}, []),
             h_separate_voices, mutating=True, label=lambda a: "Разбираю голоса",
+        ),
+        Tool(
+            "translate_subtitles", "Перевожу субтитры на русский",
+            "Иноязычный клип (whisper: язык не ru) → русские субтитры: перевод по фразам (Gemini, бесплатно), "
+            "время фраз оригинала, русские слова разложены внутри фразы. Только НА русский. mode: ru — только "
+            "русский; both — русский + оригинал вторым слоем (слой captions speakers ['orig'] мельче над русским, "
+            "прожигаемые субтитры — строкой над караоке); off — вернуть оригинал. Уже переведено — смена режима "
+            "без модели; retranslate — перевести заново. Gemini недоступен — переведи сам: translations — "
+            "строки по порядку фраз (строк субтитров из get_clip). force — если whisper ошибся с языком. "
+            "Озвучка — dub_clip. / Translate foreign subtitles into Russian.",
+            _obj({"mode": {"type": "string", "enum": ["ru", "both", "off"]},
+                  "translations": {"type": "array", "items": {"type": "string"}},
+                  "retranslate": {"type": "boolean"}, "force": {"type": "boolean"}}),
+            h_translate_subtitles, mutating=True,
+            label=lambda a: "Снимаю перевод" if a.get("mode") == "off" else "Перевожу субтитры на русский",
+        ),
+        Tool(
+            "dub_clip", "Озвучка RU",
+            "ПЛАТНО (Polza TTS). Озвучить русский перевод клипа (после translate_subtitles): фраза → речь → "
+            "подгонка под окно реплики (×0.8–1.25, не влезло — обрезка, в ответе overflow) → слои audio "
+            "dub_ru_* поверх оригинала, оригинал под фразами приглушён. Без confirm — ТОЛЬКО оценка ₽ "
+            "(бесплатно): покажи её владельцу. confirm=true — ТОЛЬКО по явному «да» владельца на эту сумму; "
+            "работает, лишь если владелец включил озвучку (DUBBING_ENABLED=1), и отказ, если оценка больше "
+            "budget_rub (по умолчанию 200 ₽). provider none — бесплатный сухой прогон тоном (проверить "
+            "окна). remove — снять слои озвучки. / PAID Russian dub; estimate first, confirm only with owner's yes.",
+            _obj({"provider": {"type": "string", "enum": ["polza", "none"]}, "voice": {"type": "string"},
+                  "model": {"type": "string"}, "confirm": {"type": "boolean"},
+                  "budget_rub": {"type": "number", "minimum": 0}, "stretch": {"type": "boolean"},
+                  "remove": {"type": "boolean"}}),
+            h_dub_clip, mutating=True,
+            label=lambda a: ("Снимаю озвучку" if a.get("remove") else
+                             "Озвучиваю по-русски" if a.get("confirm") else "Считаю стоимость озвучки"),
         ),
         Tool(
             "generate_subtitles", "Распознаю речь заново",

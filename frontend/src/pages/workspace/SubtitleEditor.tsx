@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { clipPlansApi, type SubtitleLine } from "@/api/clipPlans";
+import { clipPlansApi, type DubResult, type PlanSubtitles, type SubtitleLine, type TranslationMode } from "@/api/clipPlans";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { formatDuration } from "@/components/ui";
@@ -39,6 +39,7 @@ export function SubtitleEditor({
   onLines,
   onWords,
   silent,
+  onServerChange,
 }: {
   clipPlanId: number;
   /** Текущая позиция плеера в секундах клипа (для подсветки строки). */
@@ -48,6 +49,8 @@ export function SubtitleEditor({
   onWords?: (words: { word: string; start: number; end: number }[]) => void;
   /** Звука для распознавания нет (пустой холст — немая основа): распознавание и «Голоса» выключены. */
   silent?: boolean;
+  /** Сервер поменял настройки клипа (слой оригинала, слои озвучки) — перечитать их в редактор. */
+  onServerChange?: () => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -213,6 +216,20 @@ export function SubtitleEditor({
         </button>
       </div>
 
+      {query.data && lines.length ? (
+        <TranslatePanel
+          clipPlanId={clipPlanId}
+          subs={query.data}
+          dirty={dirty}
+          onFresh={(data) => {
+            applyFresh(data);
+            onServerChange?.();
+          }}
+          onServerChange={onServerChange}
+        />
+      ) : null}
+
+
       {hasVoices ? (
         <div className="subed-voices">
           {VOICES.filter((v) => counts[v]).map((v) => (
@@ -296,6 +313,179 @@ export function SubtitleEditor({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+const LANG_NAMES: Record<string, string> = {
+  en: "английский", ja: "японский", ko: "корейский", zh: "китайский", de: "немецкий", fr: "французский",
+  es: "испанский", it: "итальянский", pt: "португальский", pl: "польский", uk: "украинский", tr: "турецкий",
+};
+const langName = (code?: string) => (code ? LANG_NAMES[code] || code : "не известен");
+
+/**
+ * Перевод иноязычного клипа на русский (Gemini, бесплатно) и «Озвучка RU» (платно).
+ * Показывается, если речь не русская или перевод уже есть. Оценка озвучки бесплатна; синтез —
+ * только по кнопке с суммой и подтверждением, и только если владелец включил DUBBING_ENABLED.
+ */
+function TranslatePanel({
+  clipPlanId,
+  subs,
+  dirty,
+  onFresh,
+  onServerChange,
+}: {
+  clipPlanId: number;
+  subs: PlanSubtitles;
+  dirty: boolean;
+  onFresh: (data: PlanSubtitles) => void;
+  onServerChange?: () => void;
+}) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const tr = subs.translation;
+  const source = tr?.source_language || subs.language;
+  const mode: TranslationMode = tr ? tr.mode : "off";
+  const russian = !tr && ["ru", "rus", "russian"].includes(String(subs.language || "").toLowerCase());
+  const [estimate, setEstimate] = useState<DubResult | null>(null);
+
+  const translate = useMutation({
+    mutationFn: ({ next, again }: { next: TranslationMode; again?: boolean }) =>
+      clipPlansApi.translateSubtitles(clipPlanId, next, again),
+    onSuccess: (data) => {
+      onFresh(data.subtitles);
+      setEstimate(null);
+      toast.success(
+        data.mode === "off"
+          ? "Вернул оригинал"
+          : `Перевод на русский: ${data.lines} строк${data.layer ? ` · ${data.layer}` : ""}${data.note ? ` · ${data.note}` : ""}`,
+      );
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось перевести"),
+  });
+
+  const dub = useMutation({
+    mutationFn: (body: { provider?: string; confirm?: boolean; remove?: boolean }) => clipPlansApi.dub(clipPlanId, body),
+    onSuccess: (data, body) => {
+      if (data.status === "estimate") {
+        setEstimate(data);
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["plan-subtitles", clipPlanId] });
+      qc.invalidateQueries({ queryKey: ["montage-assets"] });
+      onServerChange?.();
+      setEstimate(null);
+      if (data.status === "removed") toast.success("Озвучка снята");
+      else
+        toast.success(
+          `${body.provider === "none" ? "Сухой прогон" : "Озвучка RU"} готова: ${data.dub?.layers?.length ?? 0} слоёв` +
+            (body.provider === "none" ? "" : ` · ≈ ${(data.dub?.cost_rub ?? 0).toFixed(2)} ₽`) +
+            (data.dub?.overflows ? ` · ${data.dub.overflows} фраз не влезли — сократите их` : ""),
+        );
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Озвучка не удалась"),
+  });
+
+  if (russian) return null;
+  const busy = translate.isPending || dub.isPending;
+  const est = estimate?.estimate;
+  const done = tr?.dub;
+  const askPaid = () => {
+    if (!est) return;
+    const ok = window.confirm(
+      `Озвучка платная (Polza TTS, ${est.model}, голос ${est.voice}).\n` +
+        `${est.chars} символов ≈ ${est.rub.toFixed(2)} ₽ (цена от ${est.price_checked}, потолок ${est.budget_rub.toFixed(0)} ₽).\n\nОзвучить?`,
+    );
+    if (ok) dub.mutate({ provider: "polza", confirm: true });
+  };
+  return (
+    <div className="subed-tr">
+      <div className="subed-tr-row">
+        <span className="muted">
+          Речь: <b>{langName(source)}</b>
+        </span>
+        <select
+          className="input"
+          value={mode}
+          disabled={busy || dirty}
+          title={dirty ? "Сначала сохраните правку строк" : "Только на русский: перевод по фразам, время фраз оригинала"}
+          onChange={(e) => translate.mutate({ next: e.target.value as TranslationMode })}
+        >
+          <option value="off">Оригинал</option>
+          <option value="ru">Русский</option>
+          <option value="both">Русский + оригинал</option>
+        </select>
+        {tr ? (
+          <button
+            className="btn sm"
+            disabled={busy || dirty}
+            title="Перевести заново (Gemini). Ручные правки русских строк пропадут"
+            onClick={() => translate.mutate({ next: mode, again: true })}
+          >
+            {translate.isPending ? "Перевожу…" : "↻"}
+          </button>
+        ) : null}
+      </div>
+      {tr ? (
+        <div className="subed-dub">
+          <div className="subed-tr-row">
+            <b>Озвучка RU</b>
+            <button
+              className="btn sm"
+              disabled={busy}
+              onClick={() => dub.mutate({ provider: "polza" })}
+              title="Посчитать стоимость — бесплатно, ничего не синтезирует"
+            >
+              {dub.isPending && !est ? "Считаю…" : "Оценить"}
+            </button>
+            <button
+              className="btn sm"
+              disabled={busy}
+              onClick={() => dub.mutate({ provider: "none", confirm: true })}
+              title="Бесплатно: тон вместо речи — проверить окна фраз и приглушение оригинала"
+            >
+              Сухой прогон
+            </button>
+            {done ? (
+              <button className="btn sm" disabled={busy} onClick={() => dub.mutate({ remove: true })}>
+                Снять
+              </button>
+            ) : null}
+          </div>
+          {est ? (
+            <div className="subed-tr-row">
+              <span className="muted">
+                {est.chars} символов · {est.phrases} фраз ≈ <b>{est.rub.toFixed(2)} ₽</b> ({est.model}, цена от{" "}
+                {est.price_checked})
+              </span>
+              <button
+                className="btn primary sm"
+                disabled={busy || !est.enabled || est.over_budget}
+                title={
+                  !est.enabled
+                    ? "Озвучка выключена: владелец включает её DUBBING_ENABLED=1 в .env"
+                    : est.over_budget
+                      ? `Дороже потолка ${est.budget_rub} ₽`
+                      : "Платно: спросит подтверждение с суммой"
+                }
+                onClick={askPaid}
+              >
+                {dub.isPending ? "Озвучиваю…" : `Озвучить ≈ ${est.rub.toFixed(2)} ₽`}
+              </button>
+            </div>
+          ) : null}
+          {est && !est.enabled ? (
+            <p className="muted subed-tr-hint">Платная озвучка выключена (DUBBING_ENABLED=0) — включает владелец.</p>
+          ) : null}
+          {done ? (
+            <p className="muted subed-tr-hint">
+              Готово: {done.provider === "none" ? "сухой прогон" : `${done.voice}, ≈ ${(done.cost_rub ?? 0).toFixed(2)} ₽`} ·
+              слои {done.layers?.join(", ")}
+              {done.overflows ? ` · не влезли: ${done.overflows}` : ""}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -3477,6 +3477,11 @@ button.aib-item-title:hover { color: var(--accent-2); text-decoration-color: cur
 .subed { display: grid; gap: 8px; }
 .subed-top { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; }
 /* Голоса клипа: чипы «кто говорит» и метка голоса у строки. */
+.subed-tr { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+.subed-tr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.subed-tr-row .input { width: auto; min-width: 0; }
+.subed-dub { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
+.subed-tr-hint { margin: 0; font-size: 11px; }
 .subed-voices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
 .subed-voice {
   display: inline-flex;

@@ -345,7 +345,12 @@ def plan_caption_words(store: Any, plan: dict) -> list[dict]:
         return []
     transition = (plan.get("render_settings") or {}).get("transition")
     # Настоящие overlap склеек (как спланирует рендер), а не полная длина перехода.
-    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition))
+    from app.translation import orig_comp_words
+
+    # Перевод с оригиналом вторым слоем: слова оригинала (метка orig) — ПОСЛЕ русских,
+    # номера highlightWords русских слов не съезжают.
+    return (caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition))
+            + orig_comp_words(payload, plan.get("segments") or [], transition))
 
 
 def attach_caption_words(store: Any, plan: dict, motion: dict | None) -> dict | None:
@@ -1323,6 +1328,13 @@ def frame_subtitles_ass(store: Any, plan: dict, rs: dict, preset: dict, width: i
     elif preset.get("format"):
         profile = {**profile, "margin_v": round(int(profile.get("margin_v") or 160) * height / 1920)}
     result = result_from_payload(subtitles_to_final(payload, plan.get("segments") or [], rs.get("transition")))
+    from app.translation import secondary_lines
+
+    extra = secondary_lines(payload, plan.get("segments") or [], rs.get("transition"))
+    if extra:  # перевод с оригиналом — строки оригинала вторым стилем, как в рендере
+        from dataclasses import replace
+
+        result = replace(result, response={**result.response, "secondary_lines": extra})
     end = max((float(w.end) for w in result.words), default=0.0) + 5.0
     result = _render._apply_subtitle_timing_offset(result, profile, end)
     return write_ass_subtitles(result, profile, path, width=width, height=height, fmt=preset.get("format"))

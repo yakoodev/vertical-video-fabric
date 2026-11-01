@@ -2577,6 +2577,67 @@ def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class TranslateSubtitlesRequest(BaseModel):
+    mode: Literal["ru", "both", "off"] = Field(default="ru", description="ru — только русский, both — русский + "
+                                                                         "оригинал вторым слоем, off — вернуть оригинал")
+    retranslate: bool = Field(default=False, description="перевести заново (иначе — только смена режима)")
+    force: bool = Field(default=False, description="переводить, даже если whisper считает речь русской")
+    translations: list[str] | None = Field(default=None, description="готовый перевод по фразам (без Gemini)")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/subtitles/translate",
+    tags=["Subtitles"],
+    summary="Перевести субтитры иноязычного клипа на русский (Gemini; оригинал — вторым слоем по желанию)",
+)
+def api_translate_plan_subtitles(clip_plan_id: int, _auth: AuthDep, payload: TranslateSubtitlesRequest | None = None) -> dict:
+    from app.translation import translate_subtitles
+
+    body = payload or TranslateSubtitlesRequest()
+    try:
+        snapshot_clip(store, clip_plan_id, "перевод субтитров")
+        result = translate_subtitles(store, clip_plan_id, mode=body.mode, translations=body.translations,
+                                     force=body.force, retranslate=body.retranslate)
+        return {**result, "subtitles": store.get_clip_plan_subtitles(clip_plan_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class DubRequest(BaseModel):
+    provider: Literal["polza", "none"] = Field(default="polza", description="polza — платный TTS; none — сухой "
+                                                                             "прогон тоном (бесплатно)")
+    voice: str | None = Field(default=None, max_length=60)
+    model: str | None = Field(default=None, max_length=80)
+    confirm: bool = Field(default=False, description="без него — только оценка стоимости")
+    budget_rub: float | None = Field(default=None, ge=0, description="потолок этого запуска, ₽ (по умолчанию 200)")
+    stretch: bool = Field(default=False, description="замедлять короткие фразы до ×0.8 вместо тишины")
+    remove: bool = Field(default=False, description="снять слои озвучки")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/dub",
+    tags=["Subtitles"],
+    summary="🔊 Озвучка RU переведённого клипа: оценка (бесплатно) или синтез (платно, confirm + бюджет)",
+)
+def api_dub_clip(clip_plan_id: int, _auth: AuthDep, payload: DubRequest | None = None) -> dict:
+    from app.dubbing import DubError, dub_clip
+
+    body = payload or DubRequest()
+    try:
+        if body.confirm or body.remove:
+            snapshot_clip(store, clip_plan_id, "озвучка RU")
+        return dub_clip(store, clip_plan_id, provider=body.provider, voice=body.voice, model=body.model,
+                        confirm=body.confirm, budget_rub=body.budget_rub, stretch=body.stretch, remove=body.remove)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DubError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class CensorRequest(BaseModel):
     verify: bool = Field(default=True, description="рендер + Whisper по готовому файлу, шире там, где мат узнаётся")
     max_rounds: int | None = Field(default=None, ge=1, le=5, description="кругов рендер→Whisper (по умолчанию 3)")

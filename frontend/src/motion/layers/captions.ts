@@ -183,6 +183,9 @@ export type ResolvedCaptions = {
   tilt: number;
 };
 
+/** Метка слов оригинала у переведённых субтитров (app/translation.ORIG_SPEAKER). */
+export const ORIG_SPEAKER = "orig";
+
 /** Цвета других голосов по умолчанию: главный (A) — обычным цветом стиля. */
 const SPEAKER_PALETTE: Record<string, string> = { B: "#7DD3FC", C: "#F9A8D4", D: "#86EFAC", E: "#FDBA74" };
 
@@ -347,8 +350,10 @@ export function captionPages(
     const t0 = Number(wd.t0);
     const t1 = Math.max(t0 + 0.05, Number(wd.t1));
     if (!Number.isFinite(t0) || t0 < from - 0.05 || t0 >= to) return;
-    // Фильтр голосов: слова без метки — главного (A).
-    if (r.speakers.length && !r.speakers.includes(wd.s || "A")) return;
+    // Фильтр голосов: слова без метки — главного (A). Оригинал перевода (метка "orig",
+    // app/translation.py) показывает только слой, где он назван явно (speakers: ["orig"]).
+    const who = wd.s || "A";
+    if (r.speakers.length ? !r.speakers.includes(who) : who === ORIG_SPEAKER) return;
     const text = cleanWord(String(wd.w ?? ""), r);
     if (!text) return;
     items.push({ i, text, raw: String(wd.w ?? ""), t0, t1, w: measure(ctx, font, r.letterSpacing, text), s: wd.s || "" });
@@ -561,6 +566,8 @@ function wordColor(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, hl: 
 export function speakerColor(r: ResolvedCaptions, s: string | undefined): string | null {
   if (!s || s === "A") return null;
   const own = r.speakerColors.find((c) => c.s === s);
+  // Оригинал перевода — цветом своего слоя (color/activeColor), а не палитрой голосов.
+  if (!own && s === ORIG_SPEAKER) return null;
   return own ? own.color : SPEAKER_PALETTE[s] || SPEAKER_PALETTE.B;
 }
 

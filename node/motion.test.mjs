@@ -807,6 +807,20 @@ test("субтитры: фильтр голосов — главный слой 
   assert.deepEqual(others.flatMap((p) => p.words.map((w) => w.text)), ["ПЕРЕДАЧ"]);
 });
 
+test("субтитры: оригинал перевода (s: orig) — только в слое speakers ['orig'], своим цветом", () => {
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const words = [
+    { t0: 0.0, t1: 0.4, w: "привет" },
+    { t0: 0.4, t1: 0.8, w: "бро", s: "B" },
+    { t0: 0.0, t1: 0.8, w: "hello", s: "orig" },
+  ];
+  const all = E.captionPages(ctx, words, { style: "hormozi" }, 0, 5, "Montserrat");
+  assert.deepEqual(all.flatMap((p) => p.words.map((w) => w.text)), ["ПРИВЕТ", "БРО"]);
+  const orig = E.captionPages(ctx, words, { style: "minimal", speakers: ["orig"], uppercase: false }, 0, 5, "Montserrat");
+  assert.deepEqual(orig.flatMap((p) => p.words.map((w) => w.text)), ["hello"]);
+  assert.equal(E.speakerColor(E.resolveCaptions({ style: "minimal" }), "orig"), null);
+});
+
 /* ---------- анимированные фоны ---------- */
 
 test("фон: старый {color, color2} — заливка, не выбран — аврора, имя стиля строкой", () => {
