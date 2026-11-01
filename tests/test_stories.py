@@ -118,6 +118,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "stories_episode_cap_rub", 200.0)
     monkeypatch.setattr(settings, "gemini_api_key", "")
     monkeypatch.setattr(settings, "polza_api_key", "")
+    # Паки звуков на машине есть не всегда — тесты видят только звуки, заведённые в _setup.
+    monkeypatch.setattr(S, "SFX_PACKS", ())
     monkeypatch.setattr(PR, "MEASURED_IMAGE_PRICES", {})  # прайс ×2: 6 ₽ за картинку 1K
     # Whisper в тестах не грузим: слова — по длине текста (как сухой прогон).
     monkeypatch.setattr(X, "transcribe_words", lambda path: (_ for _ in ()).throw(RuntimeError("нет whisper")))

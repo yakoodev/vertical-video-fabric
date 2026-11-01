@@ -142,7 +142,9 @@ def script_schema() -> dict:
 
 
 def _sfx_brief(options: list[dict]) -> list[dict]:
-    return [{"tag": o["label"], "ref": o["ref"], "tags": o["tags"][:5]} for o in options[:80]]
+    # Свои звуки владельца — первыми: паков много, и лимит не должен их срезать.
+    ordered = sorted(options, key=lambda o: o.get("source") != "library")
+    return [{"tag": o["label"], "ref": o["ref"], "tags": o["tags"][:5]} for o in ordered[:80]]
 
 
 def script_context(store: Any, ep: dict) -> dict:
