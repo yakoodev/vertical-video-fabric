@@ -18,7 +18,18 @@ import type { BlendMode, Ctx2D, FxKind, FxLayer, FxProps, RenderEnv, ScratchCanv
 import { layerUnit } from "../types";
 import { rgba } from "./common";
 
-export const FX_KINDS: FxKind[] = ["vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain_overlay"];
+export const FX_KINDS: FxKind[] = [
+  "vhs",
+  "scanlines",
+  "light_leak",
+  "chromatic",
+  "flash_frame",
+  "grain_overlay",
+  "rgb_split",
+  "tear",
+  "datamosh_lite",
+  "pixel_sort_lite",
+];
 
 /** Сила и наложение по умолчанию у каждого вида. */
 export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }> = {
@@ -28,6 +39,10 @@ export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }
   chromatic: { intensity: 0.5, blend: "normal" },
   flash_frame: { intensity: 0.9, blend: "add" },
   grain_overlay: { intensity: 0.5, blend: "overlay" },
+  rgb_split: { intensity: 0.7, blend: "normal" },
+  tear: { intensity: 0.7, blend: "normal" },
+  datamosh_lite: { intensity: 0.6, blend: "normal" },
+  pixel_sort_lite: { intensity: 0.6, blend: "normal" },
 };
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -130,14 +145,14 @@ function channel(b: FxBuffers, color: string): void {
   c.drawImage(src(b.frame.canvas), 0, 0);
 }
 
-/** Сложить канал в сборку со сдвигом dx и масштабом k вокруг центра кадра. */
-function addChannel(b: FxBuffers, dx: number, k: number): void {
+/** Сложить канал в сборку со сдвигом dx (dy) и масштабом k вокруг центра кадра. */
+function addChannel(b: FxBuffers, dx: number, k: number, dy = 0): void {
   const o = b.out.ctx;
   o.save();
   o.globalCompositeOperation = "lighter";
   const w = b.w * k;
   const h = b.h * k;
-  o.drawImage(src(b.chan.canvas), (b.w - w) / 2 + dx, (b.h - h) / 2, w, h);
+  o.drawImage(src(b.chan.canvas), (b.w - w) / 2 + dx, (b.h - h) / 2 + dy, w, h);
   o.restore();
 }
 
@@ -316,6 +331,185 @@ function vhs({ ctx, env, fx, local, alpha, k }: FxCtx): void {
   }
 }
 
+/* ---------- глитч на отрезке (add_glitch) ---------- */
+
+function rgbSplit({ ctx, env, fx, local, alpha, k }: FxCtx): void {
+  // Сильное расслоение R/B: шаг 1/12 с × speed — новый сдвиг (рывками, как сбой сигнала),
+  // иногда и по вертикали; G на месте. Сила — длина сдвига.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const i = fx.intensity;
+  const tick = Math.floor(local * 12 * fx.speed);
+  const r = (n: number) => rand01(fx.seed, tick * 16 + n);
+  const shift = (8 + 46 * i) * k * (0.45 + 0.75 * r(0)) * (r(1) < 0.5 ? -1 : 1);
+  const dy = r(2) < 0.35 ? (r(3) * 2 - 1) * 14 * i * k : 0;
+  reset(b.out.ctx, b.w, b.h);
+  channel(b, "#ff0000");
+  addChannel(b, -shift, 1, -dy);
+  channel(b, "#00ff00");
+  addChannel(b, 0, 1);
+  channel(b, "#0000ff");
+  addChannel(b, shift, 1, dy);
+  ctx.globalAlpha = clamp01(alpha);
+  ctx.drawImage(src(b.out.canvas), 0, 0, env.width, env.height);
+}
+
+function tear({ ctx, env, fx, local, alpha, k }: FxCtx): void {
+  // Разрывы строк: 2–10 полос кадра сдвинуты вбок с переносом через край (15 раз в секунду
+  // × speed), в части полос — цветная кайма; тонкие светлые «швы» по краю полос.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const W = env.width;
+  const H = env.height;
+  const i = fx.intensity;
+  const tick = Math.floor(local * 15 * fx.speed);
+  const r = (n: number) => rand01(fx.seed, tick * 97 + n);
+  const f = src(b.frame.canvas);
+  ctx.globalAlpha = clamp01(alpha);
+  const bands = 3 + Math.floor(r(0) * (2 + 6 * i));
+  for (let n = 0; n < bands; n++) {
+    const h = Math.max(2, (8 + 170 * r(10 + n)) * k);
+    const y = r(20 + n) * (H - h);
+    const dx = (r(30 + n) * 2 - 1) * (24 + 300 * i) * k;
+    ctx.drawImage(f, 0, y, W, h, dx, y, W, h);
+    ctx.drawImage(f, 0, y, W, h, dx - Math.sign(dx || 1) * W, y, W, h);
+    if (r(40 + n) < 0.4) {
+      // Цветная кайма полосы: копия со сдвигом, режим screen, красная или бирюзовая.
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = clamp01(alpha * 0.55 * i);
+      ctx.fillStyle = r(50 + n) < 0.5 ? "#ff1f4b" : "#16f2ff";
+      ctx.fillRect(dx > 0 ? 0 : W + dx, y, Math.abs(dx) * 0.35 + 4 * k, h);
+      ctx.restore();
+    }
+    if (r(60 + n) < 0.5) {
+      ctx.save();
+      ctx.globalAlpha = clamp01(alpha * 0.35 * i);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, y, W, Math.max(1, 1.5 * k));
+      ctx.restore();
+    }
+  }
+}
+
+function datamoshLite({ ctx, env, fx, local, alpha, k }: FxCtx): void {
+  // «Датамош» без прошлых кадров: сетка макроблоков, часть блоков берёт пиксели со сдвигом по
+  // медленному полю «векторов движения» (блоки текут), часть — крупно пикселизована. Поле
+  // меняется плавно (noise1), набор блоков — по шагу 1/8 с × speed: блоки «залипают» и съезжают.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const W = env.width;
+  const H = env.height;
+  const i = fx.intensity;
+  const tick = Math.floor(local * 8 * fx.speed);
+  const bs = Math.max(8, Math.round((rand01(fx.seed, tick * 5) < 0.5 ? 40 : 56) * k));
+  const cols = Math.ceil(W / bs);
+  const rows = Math.ceil(H / bs);
+  const p = 0.1 + 0.5 * i;
+  const f = src(b.frame.canvas);
+  // Маленький холст под пикселизацию: блок → 1/8 → обратно без сглаживания.
+  const small = b.chan.ctx;
+  reset(small, b.w, b.h);
+  small.imageSmoothingEnabled = false;
+  ctx.globalAlpha = clamp01(alpha);
+  // Полосы поражения: датамош идёт кусками кадра, а не равномерной крошкой.
+  const bandY = rand01(fx.seed, tick * 5 + 1) * rows;
+  const bandH = (0.3 + 0.6 * i) * rows;
+  for (let row = 0; row < rows; row++) {
+    const inBand = Math.abs(row - bandY) < bandH / 2 || Math.abs(row - bandY - rows) < bandH / 2;
+    for (let col = 0; col < cols; col++) {
+      const id = row * cols + col;
+      const roll = rand01(fx.seed + 7, tick * 7919 + id);
+      if (roll > (inBand ? p : p * 0.15)) continue;
+      const x = col * bs;
+      const y = row * bs;
+      if (roll < p * 0.3) {
+        const q = Math.max(2, Math.round(bs / 8));
+        small.drawImage(f, x, y, bs, bs, 0, 0, q, q);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(src(b.chan.canvas), 0, 0, q, q, x, y, bs, bs);
+        ctx.imageSmoothingEnabled = true;
+        continue;
+      }
+      const vx = noise1(fx.seed + 11, col * 0.21 + local * 1.3 * fx.speed) * (1.2 + 3 * i) * bs;
+      const vy = noise1(fx.seed + 13, row * 0.17 + local * 1.1 * fx.speed) * (0.6 + 2 * i) * bs;
+      const sx = Math.min(W - bs, Math.max(0, x - vx));
+      const sy = Math.min(H - bs, Math.max(0, y - vy));
+      ctx.drawImage(f, sx, sy, bs, bs, x, y, bs, bs);
+    }
+  }
+}
+
+function pixelSortLite({ ctx, env, fx, local, alpha, k }: FxCtx): void {
+  // «Сортировка пикселей» штрихами: строка пикселей растянута вниз (подтёки цвета, как у
+  // pixel sort по яркости), часть — вбок. Набор штрихов — шаг 1/8 с × speed, длина растёт
+  // с силой; в полосе кадра штрихов больше (сортировка «по участку»).
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const W = env.width;
+  const H = env.height;
+  const i = fx.intensity;
+  const tick = Math.floor(local * 8 * fx.speed);
+  const r = (n: number) => rand01(fx.seed, tick * 211 + n);
+  const f = src(b.frame.canvas);
+  ctx.globalAlpha = clamp01(alpha);
+  ctx.imageSmoothingEnabled = false;
+  const zone = r(0) * H * 0.7;
+  const zoneH = H * (0.2 + 0.5 * i);
+  const n = Math.floor(10 + 70 * i);
+  for (let s = 0; s < n; s++) {
+    const w = Math.max(1, (4 + 40 * r(10 + s)) * k);
+    const x = r(20 + s) * (W - w);
+    const y = Math.min(H - 1, zone + r(30 + s) * zoneH);
+    const len = (30 + (120 + 640 * i) * r(40 + s)) * k;
+    if (r(50 + s) < 0.8) ctx.drawImage(f, x, y, w, 1, x, y, w, Math.min(len, H - y));
+    else {
+      // Горизонтальный штрих: столбец растянут вправо.
+      const hh = Math.max(1, w * 0.6);
+      ctx.drawImage(f, x, y, 1, hh, x, y, Math.min(len, W - x), hh);
+    }
+  }
+  ctx.imageSmoothingEnabled = true;
+}
+
+/** Стили глитча на отрезке (MCP add_glitch, шаблон «Глитч на отрезке») → вид fx. */
+export const GLITCH_STYLES = ["rgb_split", "tear", "vhs", "datamosh_lite", "pixel_sort_lite"] as const;
+export type GlitchStyle = (typeof GLITCH_STYLES)[number];
+
+/**
+ * Настоящие записи пака freesound v2 под стиль (синтезированных звуков нет; цифровые «глитч»-звуки
+ * владелец убрал как дешёвые): удар-переход, скретч пластинки, бас-дроп, вжух. Зеркало app/glitch.GLITCH_SFX.
+ */
+export const GLITCH_SFX: Record<GlitchStyle, string> = {
+  rgb_split: "sfx:freesound/hit-transition.ogg",
+  tear: "sfx:freesound/record-scratch.ogg",
+  vhs: "sfx:freesound/record-scratch.ogg",
+  datamosh_lite: "sfx:freesound/bass-drop.ogg",
+  pixel_sort_lite: "sfx:freesound/whoosh-4.ogg",
+};
+
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * Ключи силы глитча на отрезке длиной `d` с: резкий удар, провал, второй удар, третий и
+ * затухание — «сбоит» рывками, а не ровно. Ключи `scale` слоя fx (масштаб умножает силу).
+ * Зеркало — app/glitch.glitch_keys (тот же отрезок — те же ключи).
+ */
+export function glitchKeys(d: number): { t: number; v: number; ease?: "linear" | "step" | "outCubic" }[] {
+  const len = Math.max(0.1, d);
+  const attack = Math.min(0.05, len * 0.1);
+  if (len < 0.4) return [{ t: 0, v: 0.3, ease: "linear" }, { t: r3(attack), v: 1, ease: "linear" }, { t: r3(len), v: 0.2 }];
+  return [
+    { t: 0, v: 0.25, ease: "linear" },
+    { t: r3(attack), v: 1, ease: "linear" },
+    { t: r3(len * 0.3), v: 0.45, ease: "step" },
+    { t: r3(len * 0.42), v: 1, ease: "linear" },
+    { t: r3(len * 0.7), v: 0.6, ease: "step" },
+    { t: r3(len * 0.82), v: 0.95, ease: "outCubic" },
+    { t: r3(len), v: 0.15 },
+  ];
+}
+
 const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   vhs,
   scanlines,
@@ -323,6 +517,10 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   chromatic,
   flash_frame: flashFrame,
   grain_overlay: grainOverlay,
+  rgb_split: rgbSplit,
+  tear,
+  datamosh_lite: datamoshLite,
+  pixel_sort_lite: pixelSortLite,
 };
 
 /**

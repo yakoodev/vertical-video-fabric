@@ -2982,6 +2982,57 @@ def h_auto_crop_layer(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def h_add_glitch(ctx: ToolContext, args: dict) -> dict:
+    """Глитч на отрезке основы (app/glitch.py): слой fx стиля со «сбоящей» силой (+ звук из пака)."""
+    from app.glitch import GlitchError, build_glitch
+    from app.motion_render import resolve_pack_ref
+
+    duration = _clip_duration(ctx)
+    try:
+        res = build_glitch(args.get("at"), args.get("duration"), args.get("style"), args.get("intensity"),
+                           sfx=args.get("sfx", False), sfx_volume=args.get("sfx_volume"), speed=args.get("speed"),
+                           seed=args.get("seed"), clip_duration=duration)
+    except GlitchError as exc:
+        raise ToolError(f"глитч не поставлен: {exc}") from exc
+    render = _current_render(ctx)
+    current = _layers_of(render)
+    taken = {str(l.get("id")) for l in current}
+    fx = res["fx"]
+    fx["id"] = motion.new_layer_id(taken)
+    taken.add(fx["id"])
+    over = bool(args.get("over_layers"))
+    if over:
+        # Над всеми слоями: титры и плашки тоже сбоят.
+        fx["track"] = min(motion.MAX_TRACK, max([int(_num(l.get("track"), 0) or 0) for l in current] + [0]) + 1)
+    notes: list[str] = []
+    audio = res["audio"]
+    if audio is not None:
+        if resolve_pack_ref(audio["props"]["asset_id"]) is None:
+            notes.append(f"звука {audio['props']['asset_id']} нет в паке — глитч без звука")
+            audio = None
+        else:
+            audio["id"] = motion.new_layer_id(taken)
+    new = [fx] + ([audio] if audio else [])
+    problems = [p for i, layer in enumerate(new) for p in _layer_problems(ctx, layer, i, duration)]
+    if problems:
+        raise ToolError("глитч не поставлен", problems)
+    if len(current) + len(new) > motion.MAX_LAYERS:
+        raise ToolError(f"в клипе уже {len(current)} слоёв, предел {motion.MAX_LAYERS}")
+    added = motion.normalize_layers(new)
+    # Под слоями — первым в списке на дорожке 0: эффект берёт только видео (и фон), титры поверх чистые.
+    layers = (current + added[:1] if over else added[:1] + current) + added[1:]
+    fresh = _save_render(ctx, {**render, "layers": layers})
+    t0, t1 = res["range"]
+    out = {"ok": True, "id": fx["id"], "style": res["style"], "range": res["range"],
+           "sfx": audio["props"]["asset_id"] if audio else None, "sfx_id": audio["id"] if audio else None,
+           "over_layers": over,
+           "check": f"view_frame на {t0 + min(0.05, (t1 - t0) * 0.1) + 0.01:.2f} с (пик) и на {(t0 + t1) / 2:.2f} с",
+           "warnings": lint_layers(_layers_of(fresh), duration, only_ids={fx["id"]})}
+    if notes:
+        out["notes"] = notes
+    return out
+
+
 def h_set_motion_blur(ctx: ToolContext, args: dict) -> dict:
     """Motion blur клипа по умолчанию (render.motion_blur): слоям и ключам камеры без своего motionBlur."""
     raw = 0 if args.get("reset") else args.get("value", args.get("shutter", args.get("motion_blur")))
@@ -6078,6 +6129,28 @@ def _build_registry() -> list[Tool]:
             h_set_end_hold, mutating=True,
             label=lambda a: "Стоп-кадр в конце: " + ("как у сервиса" if a.get("sec") is None or a.get("reset")
                                                      else f"{a.get('sec')} с"),
+        ),
+        Tool(
+            "add_glitch", "Ставлю глитч",
+            "Глитч на ОТРЕЗКЕ основы (не переход): at — секунда клипа (шкала clip), duration 0.1..10 (0.8), "
+            "style rgb_split (R/B рывками в стороны — шок, «сбой сигнала») | tear (разрывы строк вбок — "
+            "скример, поломка) | vhs (кассета: расслоение, полосы, зерно — флешбек, ретро) | datamosh_lite "
+            "(макроблоки текут и пикселизуются — «мозг сломался», переход сцены внутри куска) | "
+            "pixel_sort_lite (штрихи-подтёки цвета — арт, транс), intensity 0..1 (0.8). Сила сбоит рывками "
+            "(удар, провал, второй удар — ключи scale слоя fx). По умолчанию под всеми слоями: сбоит видео, "
+            "титры чистые; over_layers: true — сбоит весь кадр. sfx: true — настоящая запись из пака под стиль "
+            "(удар-переход, скретч пластинки, бас-дроп, вжух) с at, sfx_volume 0..1 (0.7); или ссылка "
+            "sfx:<pack>/<file>. 0.3–1 с на ударный момент, не чаще пары раз за ролик; не в рекламе "
+            "заказчика. Правка потом — update_layer (props.intensity, keys.scale), снять — remove_layers. "
+            "Проверка — view_frame в момент из check. / Glitch effect on a time range.",
+            _obj({"at": {"type": "number"}, "duration": {"type": "number"},
+                  "style": {"type": "string", "enum": ["rgb_split", "tear", "vhs", "datamosh_lite", "pixel_sort_lite"]},
+                  "intensity": {"type": "number", "minimum": 0, "maximum": 1},
+                  "sfx": {"type": ["boolean", "string"], "description": "true — запись под стиль; или sfx:<pack>/<file>"},
+                  "sfx_volume": {"type": "number"}, "over_layers": {"type": "boolean"},
+                  "speed": {"type": "number"}, "seed": {"type": "integer"}}, ["at"]),
+            h_add_glitch, mutating=True,
+            label=lambda a: f"Ставлю глитч {a.get('style') or 'rgb_split'} на {a.get('at')} с",
         ),
         Tool(
             "set_motion_blur", "Ставлю motion blur",

@@ -82,7 +82,19 @@ export {
   MARKER_COLOR,
   type TextLayout,
 } from "./layers/text";
-export { FX_KINDS, FX_DEFAULTS, LEAK_COLORS, resolveFx, drawFx, flashEnvelope, type ResolvedFx } from "./layers/fx";
+export {
+  FX_KINDS,
+  FX_DEFAULTS,
+  LEAK_COLORS,
+  GLITCH_STYLES,
+  GLITCH_SFX,
+  glitchKeys,
+  resolveFx,
+  drawFx,
+  flashEnvelope,
+  type GlitchStyle,
+  type ResolvedFx,
+} from "./layers/fx";
 export { REACT_SOURCES, REACT_PROPS, REACT_MAX_WINDOW, levelAt, reactAt, type Levels, type ReactEffect } from "./levels";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
 export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";

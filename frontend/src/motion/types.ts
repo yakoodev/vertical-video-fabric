@@ -430,7 +430,18 @@ export type VoiceTrack = { t0: number; fps: number; states: string; levels?: num
  * пятна света по краям; chromatic — аберрация от центра; flash_frame — вспышка; grain_overlay —
  * анимированное зерно.
  */
-export type FxKind = "vhs" | "scanlines" | "light_leak" | "chromatic" | "flash_frame" | "grain_overlay";
+export type FxKind =
+  | "vhs"
+  | "scanlines"
+  | "light_leak"
+  | "chromatic"
+  | "flash_frame"
+  | "grain_overlay"
+  // Глитч на отрезке (add_glitch): RGB-расслоение рывками, разрывы строк, макроблоки, штрихи.
+  | "rgb_split"
+  | "tear"
+  | "datamosh_lite"
+  | "pixel_sort_lite";
 
 export type FxProps = {
   kind?: FxKind;

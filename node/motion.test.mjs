@@ -2953,3 +2953,72 @@ test("CLI: motion blur — кадр в покое = без размытия, н�
     console.log(`# motion blur: 60 кадров 540×960 без размытия ${times[0].toFixed(2)} с, с размытием ${times[0.5].toFixed(2)} с`);
   })();
 });
+
+/* ---------- глитч на отрезке ---------- */
+
+test("глитч: ключи силы — зеркало app/glitch.glitch_keys; шаблон галереи — fx под слоями + запись из пака", () => {
+  assert.deepEqual(E.glitchKeys(0.8), [
+    { t: 0, v: 0.25, ease: "linear" },
+    { t: 0.05, v: 1, ease: "linear" },
+    { t: 0.24, v: 0.45, ease: "step" },
+    { t: 0.336, v: 1, ease: "linear" },
+    { t: 0.56, v: 0.6, ease: "step" },
+    { t: 0.656, v: 0.95, ease: "outCubic" },
+    { t: 0.8, v: 0.15 },
+  ]);
+  assert.deepEqual(E.glitchKeys(0.2).map((k) => k.v), [0.3, 1, 0.2]);
+  for (const style of E.GLITCH_STYLES) {
+    assert.ok(E.FX_KINDS.includes(style), style);
+    assert.match(E.GLITCH_SFX[style], /^sfx:freesound\/(hit-transition|record-scratch|bass-drop|whoosh-4)\.ogg$/);
+    const r = E.buildTemplate("glitch-range", { style }, 2);
+    const fx = r.layers.find((l) => l.type === "fx");
+    const audio = r.layers.find((l) => l.type === "audio");
+    assert.equal(fx.props.kind, style);
+    assert.equal(fx.track, 0);
+    assert.deepEqual(fx.keys.scale, E.glitchKeys(0.8));
+    assert.equal(audio.props.asset_id, E.GLITCH_SFX[style]);
+  }
+  assert.ok(!E.buildTemplate("glitch-range", { sfx: false }, 1).layers.some((l) => l.type === "audio"));
+});
+
+test("глитч: сила по ключам scale, слабее — меньше сбой, кадр — функция времени, вне отрезка — нетронут", () => {
+  const diff = (a, b) => {
+    let s = 0;
+    for (let i = 0; i < a.length; i += 4) s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+    return s / (a.length / 4);
+  };
+  for (const style of E.GLITCH_STYLES) {
+    const fx = { id: `g_${style}`, type: "fx", track: 0, start: 10, end: 10.8, keys: { scale: E.glitchKeys(0.8) }, props: { kind: style, intensity: 1 } };
+    const base = pixels([], 10.06, {}, gradientBase);
+    const peak = pixels([fx], 10.06, {}, gradientBase);
+    assert.ok(same(peak, pixels([fx], 10.06, {}, gradientBase)), `${style}: детерминирован`);
+    assert.ok(diff(peak, base) > 0.5, `${style}: на пике кадр сбоит (${diff(peak, base)})`);
+    assert.ok(same(pixels([fx], 10.9, {}, gradientBase), pixels([], 10.9, {}, gradientBase)), `${style}: после отрезка — как было`);
+    // На провале ключи держат силу 0.45: кадр ровно как у слоя без ключей с intensity 0.45.
+    const plain = { ...fx, keys: {}, props: { ...fx.props, intensity: 0.45 } };
+    assert.ok(same(pixels([fx], 10.27, {}, gradientBase), pixels([plain], 10.27, {}, gradientBase)), `${style}: сила по ключам`);
+    // Слабее — меньше сбой (тот же момент, тот же шаг случайностей).
+    const weak = { ...plain, props: { ...fx.props, intensity: 0.2 } };
+    if (style !== "vhs") assert.ok(diff(pixels([weak], 10.06, {}, gradientBase), base) < diff(peak, base), `${style}: слабее — меньше`);
+  }
+});
+
+test("CLI: глитч в кадре компоновщика = кадр движка (превью)", async () => {
+  const under = { id: "u", type: "shape", start: 0, end: 2, x: 0.5, y: 0.5, props: { kind: "rect", w: 900, h: 1600, fill: "#2255ff", stroke: { color: "#ffcc00", width: 40 } } };
+  for (const style of E.GLITCH_STYLES) {
+    const fx = { id: `g_${style}`, type: "fx", track: 0, start: 0.5, end: 1.3, keys: { scale: E.glitchKeys(0.8) }, props: { kind: style, intensity: 1 } };
+    const layers = [fx, { ...under, track: 0 }].reverse();
+    writeFileSync(join(tmp, `gl-${style}.json`), JSON.stringify({ width: 540, height: 960, fps: 30, duration: 2, layers }));
+    const png = join(tmp, `gl-${style}.png`);
+    const r = run(["--comp", join(tmp, `gl-${style}.json`), "--frame", "0.56", "--png", png]);
+    assert.equal(r.status, 0, r.stderr);
+    const img = await loadImage(readFileSync(png));
+    const cv = createCanvas(img.width, img.height);
+    cv.getContext("2d").drawImage(img, 0, 0);
+    const cli = cv.getContext("2d").getImageData(0, 0, 540, 960).data;
+    const eng = pixels(layers, 0.56);
+    let bad = 0;
+    for (let i = 0; i < cli.length; i++) if (Math.abs(cli[i] - eng[i]) > 3) bad++;
+    assert.ok(bad < cli.length * 0.002, `${style}: рендер ≠ превью (${bad} каналов)`);
+  }
+});
