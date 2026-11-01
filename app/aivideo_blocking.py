@@ -160,11 +160,11 @@ def pose_of(value: Any) -> str:
 
 def _position(text: Any, n: int, total: int) -> list[float]:
     t = str(text or "").casefold()
-    x = (n - (total - 1) / 2) * 90.0
+    x = (n - (total - 1) / 2) * 70.0
     if any(w in t for w in ("left", "слева", "лев")):
-        x = -120.0
+        x = -70.0
     elif any(w in t for w in ("right", "справа", "прав")):
-        x = 120.0
+        x = 70.0
     elif any(w in t for w in ("center", "centre", "центр", "middle", "посередин")):
         x = 0.0
     z = 0.0
@@ -390,6 +390,11 @@ def auto_camera(shot: dict, actors: list[dict], infos: dict[str, dict]) -> dict:
         tz = sum(a["pos"][1] for a in actors) / len(actors)
     else:
         tx, tz = 0.0, 0.0
+    # Кадр 9:16 узкий (по горизонтали ≈ 23° при вертикальных 40°): отъезжаем, пока все влезают по ширине.
+    half_w = math.tan(math.radians(20.0)) * 9 / 16
+    for a in actors:
+        dx = abs(a["pos"][0] - tx) + (35.0 if infos.get(a["id"], {}).get("stand_in", "human") == "human" else 25.0)
+        dist = max(dist, dx / half_w + max(0.0, a["pos"][1] - tz))
     ty = 95.0 if humans else 20.0
     if size in ("close", "extreme_close", "medium_close") and humans:
         ty = 125.0
@@ -412,7 +417,9 @@ def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict]) -> dict
     cam = spec.get("camera") or auto_camera(shot, actors, by_id)
     w, d, h = float(room["width"]), float(room["depth"]), float(room["height"])
     nodes: list[dict] = [
-        {"type": "plane", "size": [w, d], "rotation": [-90, 0, 0], "position": [0, 0, 0], "color": room["floor"],
+        # Пол — от задней стены до камеры (иначе виден его передний край).
+        {"type": "plane", "size": [w, d * 4], "rotation": [-90, 0, 0], "position": [0, 0, d * 1.5],
+         "color": room["floor"],
          "order": -2, "material": {"shading": "lambert"}},
         {"type": "plane", "size": [w, h], "position": [0, h / 2, -d / 2], "color": room["wall"], "order": -3,
          "material": {"shading": "lambert"}},

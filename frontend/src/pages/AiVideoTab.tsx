@@ -122,7 +122,7 @@ function BudgetBar({ budget, episode }: { budget: Budget; episode?: boolean }) {
         {budget.paid && !budget.enabled ? (
           <span className="aiv-warn">AIVIDEO_ENABLED=0: одобренное не запустится, пока владелец не включит</span>
         ) : null}
-        <span className="muted">цены от {budget.price_checked}: замер — как есть, остальное ×2 к прайсу</span>
+        <span className="muted">цены от {budget.price_checked}: замер — как есть; без замера: видео ×1,25, картинки ×2 к прайсу</span>
       </div>
       <Meter label="Месяц проекта" spent={budget.month.spent_rub} reserved={budget.month.reserved_rub} cap={budget.month.cap_rub} />
       {episode && budget.episode ? (
