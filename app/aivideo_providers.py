@@ -6,8 +6,8 @@
 
 * ``DryRunImages`` (``none``, 0 ₽) — рисует заглушку ffmpeg: градиент + подпись (что за картинка,
   кто в кадре). Никакой сети.
-* ``PolzaImages`` (``polza``, ПЛАТНО) — ``POST /images/generations`` ``{model, prompt, aspect_ratio,
-  image_resolution, images: [референсы]}`` → ``{requestId}``; ``GET /media/<id>`` → ``status
+* ``PolzaImages`` (``polza``, ПЛАТНО) — ``POST /media`` ``{model, input: {prompt, aspect_ratio,
+  image_resolution, images: [{type: base64, data}]}}`` → ``{id}``; ``GET /media/<id>`` → ``status
   completed`` → ``data[0].url`` (ссылка истекает — скачиваем сразу). Референсы уходят data-URL
   (jpeg ≤ 1024 px) — ПРОВЕРИТЬ первым настоящим запуском, что Polza их принимает (в каталоге
   поле ``images`` описано как «URL изображений»); иначе нужен публичный адрес файлов.
@@ -208,10 +208,13 @@ class PolzaImages:
     def submit(self, params: dict, refs: list[Path]) -> str:
         import httpx
 
-        body = {k: v for k, v in params.items() if not k.startswith("_")}
+        # POST /media: параметры модели — внутри input (у /images/generations aspect_ratio
+        # молча игнорировался — приходил квадрат 1024×1024 вместо 9:16).
+        fields = {k: v for k, v in params.items() if not k.startswith("_") and k != "model"}
         if refs:
-            body["images"] = [ref_data_url(p) for p in refs]
-        response = httpx.post(f"{self.base_url}/images/generations", headers=self._headers(), json=body,
+            fields["images"] = [{"type": "base64", "data": ref_data_url(p)} for p in refs]
+        body = {"model": params.get("model"), "input": fields}
+        response = httpx.post(f"{self.base_url}/media", headers=self._headers(), json=body,
                               timeout=self.timeout)
         if response.status_code >= 400:
             detail = _detail(response)
@@ -247,8 +250,7 @@ class PolzaImages:
         except (TypeError, ValueError):
             cost = None
         if status in ("completed", "succeeded", "success", "done"):
-            items = data.get("data") if isinstance(data.get("data"), list) else []
-            url = items[0].get("url") if items and isinstance(items[0], dict) else None
+            url = _result_url(data)
             if not url:
                 return {"status": "failed", "error": "Polza: completed без data[0].url", "cost_rub": cost}
             return {"status": "completed", "url": url, "cost_rub": cost}
@@ -290,6 +292,19 @@ class PolzaImages:
             except (TypeError, ValueError):
                 continue
         return None
+
+
+def _result_url(data: dict) -> str | None:
+    """Ссылка на результат из ответа /media: data[0].url, data.url или output.url."""
+    for key in ("data", "output"):
+        item = data.get(key)
+        if isinstance(item, list):
+            item = item[0] if item else None
+        if isinstance(item, dict) and item.get("url"):
+            return str(item["url"])
+        if isinstance(item, str) and item.startswith(("http", "data:")):
+            return item
+    return None
 
 
 def _detail(response: Any) -> str:

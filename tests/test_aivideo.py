@@ -423,3 +423,38 @@ def test_rest_overview_and_assemble_flow(env):
     over = client.get(f"/api/projects/{pid}/ai-video").json()
     assert over["budget"]["provider"] == "none" and over["scripts"][0]["status"] == "assembled"
     assert client.get("/api/projects/999/ai-video").status_code == 404
+
+
+def test_polza_images_uses_media_endpoint_with_input(monkeypatch, tmp_path):
+    """Параметры модели (aspect_ratio, image_resolution, референсы) — внутри input у POST /media:
+    у /images/generations aspect_ratio игнорировался и приходил квадрат."""
+    import httpx
+
+    from app.aivideo_providers import PolzaImages, _result_url, model_params
+
+    ref = tmp_path / "ref.jpg"
+    ref.write_bytes(b"\xff\xd8\xff\xd9")
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"id": "gen_1", "status": "pending"}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["url"], seen["body"] = url, json
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("app.aivideo_providers.ref_data_url", lambda p: "data:image/jpeg;base64,AA==")
+    provider = PolzaImages(api_key="k", base_url="https://polza.test/api/v1")
+    rid = provider.submit(model_params("google/gemini-nano-banana-2.1", "кадр", "9:16", "1K"), [ref])
+    assert rid == "gen_1"
+    assert seen["url"].endswith("/media")
+    assert seen["body"]["model"] == "google/gemini-nano-banana-2.1"
+    assert seen["body"]["input"]["aspect_ratio"] == "9:16"
+    assert seen["body"]["input"]["images"] == [{"type": "base64", "data": "data:image/jpeg;base64,AA=="}]
+    assert _result_url({"data": [{"url": "https://s3/x.jpg"}]}) == "https://s3/x.jpg"
+    assert _result_url({"output": {"url": "https://s3/y.jpg"}}) == "https://s3/y.jpg"
