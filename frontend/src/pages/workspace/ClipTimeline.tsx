@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { MontageAsset } from "@/api/assets";
 import type { SubtitleLine } from "@/api/clipPlans";
 import type { AiSegment, MontageInsert } from "@/api/types";
+import { segLen, segSpeed } from "@/api/types";
 import { formatDuration } from "@/components/ui";
 import { addMute, normalizeMute, type MuteSpan } from "@/api/mute";
 import { FX_LABEL, joinShift, keyDbAt, maxShift, setJoinShift, type AudioEdit, type VolumeKey } from "@/api/audioEdit";
@@ -44,7 +45,7 @@ type Drag = {
 export function pieceBounds(pieces: AiSegment[]): { start: number; end: number; piece: AiSegment }[] {
   let t = 0;
   return pieces.map((piece) => {
-    const len = Math.max(0, piece.end_sec - piece.start_sec);
+    const len = segLen(piece); // со скоростью куска (set_segment_speed)
     const row = { start: t, end: t + len, piece };
     t += len;
     return row;
@@ -53,7 +54,7 @@ export function pieceBounds(pieces: AiSegment[]): { start: number; end: number; 
 
 export function clipToSource(pieces: AiSegment[], clipSec: number): number | null {
   for (const row of pieceBounds(pieces)) {
-    if (clipSec >= row.start && clipSec <= row.end) return row.piece.start_sec + (clipSec - row.start);
+    if (clipSec >= row.start && clipSec <= row.end) return row.piece.start_sec + (clipSec - row.start) * segSpeed(row.piece);
   }
   return null;
 }
@@ -61,7 +62,7 @@ export function clipToSource(pieces: AiSegment[], clipSec: number): number | nul
 export function sourceToClip(pieces: AiSegment[], sourceSec: number): number | null {
   for (const row of pieceBounds(pieces)) {
     if (sourceSec >= row.piece.start_sec && sourceSec <= row.piece.end_sec) {
-      return row.start + (sourceSec - row.piece.start_sec);
+      return row.start + (sourceSec - row.piece.start_sec) / segSpeed(row.piece);
     }
   }
   return null;

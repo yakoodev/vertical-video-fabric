@@ -620,7 +620,7 @@ def piece_spans(plan: dict, rs: dict) -> list[tuple[int, float, float]]:
     from app.motion import clip_timeline
 
     segments = plan.get("segments") or []
-    spans = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    spans = [(float(s["start_sec"]), float(s["end_sec"]), float(s.get("speed") or 1)) for s in segments]
     starts, total = clip_timeline(spans, rs.get("transition"))
     out = []
     for i, start in enumerate(starts):

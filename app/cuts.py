@@ -30,6 +30,7 @@ import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+from app.piece_speed import drop_reversed, seg_length, seg_speed, to_source
 
 LONG_PAUSE_SEC = 2.5
 MIN_CUT_SEC = 0.08
@@ -219,7 +220,7 @@ class _Joins:
         for index, part in enumerate(parts):
             self.plain_starts.append(plain)
             self.eaten.append(eaten)
-            plain += max(0.0, float(part["end_sec"]) - float(part["start_sec"]))
+            plain += seg_length(part)
             eaten += overlaps[index] if index < len(overlaps) else 0.0
         self.final_starts = [p - e for p, e in zip(self.plain_starts, self.eaten)]
 
@@ -275,13 +276,14 @@ class FinishedCutMap:
         return max(0.0, self.clamp(total))
 
 
-def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut_plan: "CutPlan | None" = None) -> dict:
+def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut_plan: "CutPlan | None" = None,
+                       joins: Any = None) -> dict:
     """Субтитры клипа (куски подряд, до вырезов) → время готового клипа.
 
-    Сначала вырезы, потом сдвиг на НАСТОЯЩИЕ overlap склеек — те же, что
-    спланирует рендер (``part_overlaps`` по рендерящимся частям и дыркам в
-    исходнике): наплыв урезан до 40% соседней части, «умная» склейка соседних
-    кусков исходника и джамп-каты — встык.
+    Сначала вырезы, потом J/L (``joins`` — ``render_settings.audio.joins``: субтитры идут за
+    звуком, ``app.audio_edit.heard_subtitles``), потом сдвиг на НАСТОЯЩИЕ overlap склеек — те же,
+    что спланирует рендер (``part_overlaps`` по рендерящимся частям и дыркам в исходнике): наплыв
+    урезан до 40% соседней части, «умная» склейка соседних кусков исходника и джамп-каты — встык.
     """
     from app.clip_subtitles import shift_for_transition
     from app.transitions import part_overlaps
@@ -291,8 +293,23 @@ def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut
         parts, jumps = cut_plan.parts, cut_plan.jump_joins
     else:
         parts, jumps = list(segments or []), None
-    spans = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
-    return shift_for_transition(payload, spans, part_overlaps(parts, transition, jumps))
+    overlaps = part_overlaps(parts, transition, jumps)
+    if joins:
+        from app.audio_edit import heard_subtitles
+
+        payload = heard_subtitles(payload, parts, list(segments or []), joins, overlaps, jumps)
+    # Развёрнутые куски (реверс) — без субтитров: речь задом не читается.
+    payload = drop_reversed(payload, parts)
+    spans = [(float(p["start_sec"]), float(p["end_sec"]), seg_speed(p)) for p in parts]
+    return shift_for_transition(payload, spans, overlaps)
+
+
+def plan_joins_setting(plan: dict | None) -> list[dict]:
+    """J/L клипа (``render_settings.audio.joins``) — для ``subtitles_to_final``."""
+    from app.audio_edit import normalize_audio
+
+    render = (plan or {}).get("render_settings") or {}
+    return normalize_audio(render.get("audio") if isinstance(render, dict) else None).get("joins") or []
 
 
 # ---------------------------------------------------------------- что сдвигается
@@ -609,7 +626,7 @@ class CutPlan:
         return [(0.0, d) for d in self.piece_durations if d > 0]
 
     def part_durations(self) -> list[float]:
-        return [float(p["end_sec"]) - float(p["start_sec"]) for p in self.parts]
+        return [seg_length(p) for p in self.parts]
 
     def finished_mapper(self, segments: list[dict], transition: Any) -> "FinishedCutMap":
         """Время готового клипа без вырезов → с вырезами (с настоящими переходами)."""
@@ -667,7 +684,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
     touched = False
     for index, seg in enumerate(segments):
         src_start, src_end = float(seg["start_sec"]), float(seg["end_sec"])
-        length = max(0.0, src_end - src_start)
+        length = seg_length(seg)  # шкала клипа: у куска со скоростью — не секунды исходника
         offsets.append(offset)
         # Вырезы внутри куска — в секундах от его начала.
         local = [
@@ -705,6 +722,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
         if cursor < length - 1e-9:
             effective.append((offset + cursor, offset + length))
         for a, b in kept:
+            x, y = to_source(seg, a), to_source(seg, b)  # скорость/реверс куска (app/piece_speed.py)
             part = {
                 "id": seg.get("id"),
                 "source_id": seg.get("source_id"),
@@ -712,9 +730,12 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
                 "piece": index,
                 "local_start": round(a, 3),
                 "local_end": round(b, 3),
-                "start_sec": round(src_start + a, 3),
-                "end_sec": round(src_start + b, 3),
+                "start_sec": round(min(x, y), 3),
+                "end_sec": round(max(x, y), 3),
             }
+            for key in ("speed", "reverse", "speed_audio"):
+                if key in seg:
+                    part[key] = seg[key]
             if seg.get("focus"):
                 part["focus"] = slice_focus(seg.get("focus"), a, b)
             if seg.get("fit"):
@@ -729,7 +750,7 @@ def plan_cuts(segments: list[dict], cuts: Any, fps: float = 30.0) -> CutPlan | N
         raise ValueError("вырезы закрывают весь клип — нечего рендерить")
     merged = _merge(effective)
     jump_joins = [left["piece"] == right["piece"] for left, right in zip(parts, parts[1:])]
-    total_after = round(sum(float(p["end_sec"]) - float(p["start_sec"]) for p in parts), 3)
+    total_after = round(sum(seg_length(p) for p in parts), 3)
     return CutPlan(
         parts=parts,
         jump_joins=jump_joins,
@@ -762,7 +783,8 @@ def cut_caption_words(store: Any, plan: dict, cut_plan: CutPlan) -> list[dict]:
     if not payload or not payload.get("words"):
         return []
     transition = (plan.get("render_settings") or {}).get("transition")
-    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan))
+    return caption_words(subtitles_to_final(payload, plan.get("segments") or [], transition, cut_plan,
+                                            plan_joins_setting(plan)))
 
 
 # ---------------------------------------------------------------- подсказки
@@ -972,7 +994,7 @@ def suggest_cuts(
 
 
 def plan_duration(plan: dict) -> float:
-    return round(sum(max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in plan.get("segments") or []), 3)
+    return round(sum(seg_length(s) for s in plan.get("segments") or []), 3)
 
 
 def check_cuts_for_plan(plan: dict, raw: Any, fps: float = 30.0) -> tuple[list[dict], list[str]]:

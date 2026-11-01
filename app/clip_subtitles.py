@@ -244,7 +244,7 @@ def result_from_payload(payload: dict) -> SubtitleResult:
 
 
 def shift_for_transition(
-    payload: dict, pieces: list[tuple[float, float]], overlap: float | list[float]
+    payload: dict, pieces: list[tuple[float, ...]], overlap: float | list[float]
 ) -> dict:
     """A real transition overlaps neighbours, so every piece after the first
     starts earlier in the rendered clip than in the plain concatenation the
@@ -263,8 +263,8 @@ def shift_for_transition(
     if joins == 0 or not any(o > 0 for o in per_join):
         return payload
     bounds, t = [], 0.0
-    for start, end in pieces:
-        t += end - start
+    for piece in pieces:
+        t += _span_length(piece)
         bounds.append(t)
     eaten = [0.0]
     for o in per_join:
@@ -281,30 +281,39 @@ def shift_for_transition(
     }
 
 
-def _layout(pieces: list) -> list[tuple[float, float, float]]:
-    """[(src_start, src_end, clip_offset)] — где каждый кусок лежит в склейке."""
+def _span_length(piece: Any) -> float:
+    """Длина куска на шкале клипа: ``(start, end)`` или ``(start, end, speed)``."""
+    start, end = float(piece[0]), float(piece[1])
+    speed = float(piece[2]) if len(piece) > 2 and float(piece[2]) > 0 else 1.0
+    return max(0.0, end - start) / speed
+
+
+def _layout(pieces: list) -> list[tuple[float, float, float, float]]:
+    """[(src_start, src_end, clip_offset, speed)] — где каждый кусок лежит в склейке
+    (у куска со скоростью секунда клипа — ``speed`` секунд исходника)."""
     out, offset = [], 0.0
-    for start, end in pieces:
-        start, end = float(start), float(end)
+    for piece in pieces:
+        start, end = float(piece[0]), float(piece[1])
+        speed = float(piece[2]) if len(piece) > 2 and float(piece[2]) > 0 else 1.0
         if end > start:
-            out.append((start, end, offset))
-            offset += end - start
+            out.append((start, end, offset, speed))
+            offset += (end - start) / speed
     return out
 
 
 def _old_index(layout: list, t: float) -> int:
-    for index, (start, end, offset) in enumerate(layout):
-        if t < offset + (end - start):
+    for index, (start, end, offset, speed) in enumerate(layout):
+        if t < offset + (end - start) / speed:
             return index
     return len(layout) - 1
 
 
 def _to_source(layout: list, t: float, index: int | None = None) -> float:
-    start, _end, offset = layout[_old_index(layout, t) if index is None else index]
-    return start + max(0.0, t - offset)
+    start, _end, offset, speed = layout[_old_index(layout, t) if index is None else index]
+    return start + max(0.0, t - offset) * speed
 
 
-def _piece_at(layout: list, x: float, prefer: int) -> tuple[float, float, float] | None:
+def _piece_at(layout: list, x: float, prefer: int) -> tuple[float, float, float, float] | None:
     """Новый кусок, где лежит момент исходника ``x``; сначала тот же по номеру
     (куски могут перекрываться — слово остаётся в своём)."""
     inside = lambda p: p[0] - 0.001 <= x < p[1] + 0.001  # noqa: E731
@@ -313,9 +322,9 @@ def _piece_at(layout: list, x: float, prefer: int) -> tuple[float, float, float]
     return next((p for p in layout if inside(p)), None)
 
 
-def _to_clip(piece: tuple[float, float, float], x: float) -> float:
-    start, end, offset = piece
-    return round(offset + min(max(x, start), end) - start, 3)
+def _to_clip(piece: tuple[float, float, float, float], x: float) -> float:
+    start, end, offset, speed = piece
+    return round(offset + (min(max(x, start), end) - start) / speed, 3)
 
 
 def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
@@ -353,13 +362,13 @@ def remap_to_pieces(payload: dict, old_pieces: list, new_pieces: list) -> dict:
             continue
         text = line["text"] if len(kept) == len(inside) else " ".join(w["word"] for w in kept)
         lines.append({**line, "text": text, "start": min(w["start"] for w in kept), "end": max(w["end"] for w in kept)})
-    total = round(sum(e - s for s, e, _o in new), 3)
+    total = round(sum((e - s) / v for s, e, _o, v in new), 3)
     return {
         **payload,
         "words": sorted(words, key=lambda w: w["start"]),
         "lines": normalize_lines(lines, total),
         "duration": total,
-        "pieces": [[s, e] for s, e, _o in new],
+        "pieces": [[s, e] if v == 1.0 else [s, e, v] for s, e, _o, v in new],
     }
 
 
@@ -431,7 +440,17 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
     used_model = model or subtitle_model_for_profile(profile)
     engine = get_subtitle_provider(profile.get("provider"))
 
-    pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    plain_pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in segments]
+    # J/L: распознаём кусок вместе с его «ручкой» (звук исходника до начала / после конца,
+    # который слышен у стыка) — субтитры покажут и эти слова (app/audio_edit.heard_subtitles).
+    render = plan.get("render_settings") or {}
+    from app.audio_edit import handle_extents, normalize_audio, split_handle_words
+
+    joins = normalize_audio(render.get("audio")).get("joins")
+    extents = handle_extents(segments, joins, render.get("transition")) if joins else []
+    limit = float(source.get("duration_sec") or 0)
+    pieces = [(max(0.0, a - head), min(limit, b + tail) if limit > b else b)
+              for (a, b), (head, tail) in zip(plain_pieces, extents)] if any(any(e) for e in extents) else plain_pieces
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
         # Распознаём по дорожке речи (микрофон без игры — меньше выдумок), не по смеси рендера.
@@ -461,6 +480,11 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
         # Начала слов — по настоящему звуку дорожки речи, а не по распознаванию (оно спешит
         # или опаздывает). Онсеты — по микрофону, даже если распознавание шло по смеси.
         payload["snapped_words"] = snap_payload(payload, onset_pcm(source_path, pieces, source, pcm))
+        if pieces != plain_pieces:
+            payload = split_handle_words(payload, pieces, segments)
+        # Распознано без скорости кусков: штамп — куски как в исходнике; чтение субтитров
+        # растянет слова кусков со скоростью (штамп текущих кусков — со speed).
+        payload["pieces"] = [[round(a, 3), round(b, 3)] for a, b in plain_pieces]
         if saved.get("lines"):
             payload["previous_lines"] = len(saved["lines"])
         store.set_clip_plan_subtitles(clip_plan_id, payload)
@@ -490,9 +514,9 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
         current = {**current, "words": clean_words}
         if not current.get("duration"):
             plan = store.get_clip_plan(clip_plan_id)
-            current["duration"] = round(
-                sum(float(seg["end_sec"]) - float(seg["start_sec"]) for seg in plan.get("segments") or []), 3
-            )
+            from app.piece_speed import seg_length
+
+            current["duration"] = round(sum(seg_length(seg) for seg in plan.get("segments") or []), 3)
     clean = normalize_lines(lines, current.get("duration"))
     if not clean:
         store.set_clip_plan_subtitles(clip_plan_id, None)

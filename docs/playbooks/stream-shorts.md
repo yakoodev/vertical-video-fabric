@@ -36,7 +36,8 @@
 
 ### 3. Клип
 
-- `create_clip(project_id, title, pieces)` — 1–3 куска на момент.
+- `create_clip(project_id, title, pieces)` — 1–3 куска на момент. Повтор килла/фейла в слоу-мо — тот же момент
+  вторым куском и `set_segment_speed(piece, speed: 0.5)` (1–3 с на клипе); «перемотка» — `reverse: true`.
 - **Длинные тёмные меню паузы** (стример отошёл, экран настроек) — сократить: `apply_cuts` по отрезку
   меню (найти глазами — `contact_sheet`/`source_contact_sheet`; `suggest_cuts` видит только тишину),
   оставить 0.5–1 с, чтобы было понятно, что была пауза.
@@ -96,7 +97,7 @@
 ## Инструменты MCP
 
 `list_projects`, `set_source_audio`, `get_source_transcript`, `chat_activity`, `get_chat`,
-`source_loudness`, `source_contact_sheet`, `create_clip`, `trim_piece`, `suggest_cuts`/`apply_cuts`,
+`source_loudness`, `source_contact_sheet`, `create_clip`, `trim_piece`, `set_segment_speed`, `suggest_cuts`/`apply_cuts`,
 `set_layout`, `set_focus`, `view_frame`, `generate_subtitles`, `get_clip`, `listen`,
 `set_subtitle_words`, `edit_subtitle_lines`, `list_subtitle_styles`, `set_subtitles`,
 `censor_profanity` (если есть) / `mute_audio`, `set_source_gain`, `set_nameplate`, `apply_brand`,

@@ -2563,7 +2563,23 @@ class PlanSubtitleLines(BaseModel):
 )
 def api_get_plan_subtitles(clip_plan_id: int, _auth: AuthDep) -> dict:
     try:
-        return store.get_clip_plan_subtitles(clip_plan_id) or {"lines": [], "words": []}
+        payload = store.get_clip_plan_subtitles(clip_plan_id) or {"lines": [], "words": []}
+        if payload.get("words"):
+            from app.cuts import plan_joins_setting
+
+            from app.piece_speed import drop_reversed, is_reversed
+
+            plan = store.get_clip_plan(clip_plan_id)
+            joins = plan_joins_setting(plan)
+            segments = plan.get("segments") or []
+            if joins or any(is_reversed(s) for s in segments):
+                # Превью субтитров редактора («куски подряд»): слова так, как их слышно — с J/L,
+                # без развёрнутых кусков (как в рендере).
+                from app.audio_edit import heard_subtitles
+
+                heard = heard_subtitles(payload, segments, segments, joins) if joins else payload
+                payload = {**payload, "heard_words": drop_reversed(heard, segments)["words"]}
+        return payload
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2649,6 +2665,37 @@ def api_clip_plan_censor(
     if result.get("status") == "running":
         response.status_code = 202
         response.headers["Retry-After"] = str(result.get("retry_after_sec") or 30)
+    return result
+
+
+class SegmentSpeedRequest(BaseModel):
+    piece: int = Field(ge=0, description="номер куска с 0")
+    speed: float = Field(default=1.0, ge=0.25, le=4.0, description="0.5 — вдвое медленнее, 2 — вдвое быстрее")
+    reverse: bool = False
+    audio: Literal["tempo", "pitch", "mute", "reverse"] | None = None
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/segment-speed",
+    tags=["Render"],
+    summary="⏩ Скорость и реверс куска основы (slow-mo, ускорение, «перемотка»)",
+)
+def api_clip_plan_segment_speed(clip_plan_id: int, payload: SegmentSpeedRequest, _auth: AuthDep) -> dict:
+    """Тот же инструмент, что у агентов (set_segment_speed, app/piece_speed.py): слои, камера,
+    вставки и субтитры едут за новой длиной куска; шаг отмены — один."""
+    from app import agent_tools
+
+    try:
+        store.get_clip_plan(clip_plan_id, include_segments=False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ctx = agent_tools.ToolContext(
+        store=store, clip_plan_id=clip_plan_id,
+        on_first_change=lambda: snapshot_clip(store, clip_plan_id, "скорость куска"),
+    )
+    result, ok = agent_tools.run_tool(ctx, "set_segment_speed", payload.model_dump(exclude_none=True))
+    if not ok:
+        raise HTTPException(status_code=400, detail=str(result.get("error") or "скорость не принята"))
     return result
 
 
@@ -3214,6 +3261,11 @@ def api_set_clip_plan_render_settings(
             # Звуковой монтаж (J/L, ключи, эффекты — app/audio_edit.py) — так же: нет ключа — остаётся.
             current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
             settings_in["audio"] = current.get("audio") or {}
+        if "speed" not in settings_in:
+            # Скорость/реверс кусков (app/piece_speed.py) ставит инструмент или инспектор куска:
+            # автосохранение без поля её не сбрасывает.
+            current = store.get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+            settings_in["speed"] = current.get("speed") or []
         if not {"format", "aspect", "layers_format"} <= set(settings_in):
             # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
             # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).

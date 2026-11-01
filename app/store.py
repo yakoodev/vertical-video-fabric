@@ -842,9 +842,32 @@ class AppStore:
         )
         return self.get_source(cur.lastrowid)
 
-    def list_sources(self) -> list[dict]:
+    # Служебные источники (загруженный клип, холст) — не проекты: их не показываем и не считаем.
+    _HIDDEN_SOURCE_TYPES = "('clip_upload', 'canvas')"
+
+    def count_sources(self) -> dict:
+        """Сколько всего источников (без служебных) и по статусам — для ответов «сколько у меня…»,
+        чтобы число не зависело от того, сколько строк влезло в список."""
         rows = self.db.query_all(
-            """
+            f"SELECT status, COUNT(*) AS n FROM sources WHERE source_type NOT IN {self._HIDDEN_SOURCE_TYPES} "
+            "GROUP BY status"
+        )
+        by_status = {str(row["status"]): int(row["n"]) for row in rows}
+        return {"total": sum(by_status.values()), "by_status": by_status}
+
+    def list_sources(self, limit: int | None = None, offset: int = 0) -> list[dict]:
+        """Источники, новые первыми. Без ``limit`` — все (раньше молча обрезалось до 200, и чат
+        отвечал «200 источников», когда их было 244); всего — ``count_sources``."""
+        page = ""
+        params: list[Any] = []
+        if limit is not None:
+            page = "LIMIT ? OFFSET ?"
+            params = [max(0, int(limit)), max(0, int(offset))]
+        elif offset:
+            page = "LIMIT -1 OFFSET ?"
+            params = [max(0, int(offset))]
+        rows = self.db.query_all(
+            f"""
             SELECT s.*,
                    (SELECT COUNT(*) FROM ai_analyses a WHERE a.source_id = s.id) AS analyses_count,
                    (SELECT COUNT(*) FROM clip_plans cp WHERE cp.source_id = s.id) AS clip_plans_count,
@@ -859,10 +882,11 @@ class AppStore:
                        WHERE c.source_id = s.id AND jt.status = 'succeeded'
                    ) AS published_targets_count
             FROM sources s
-            WHERE s.source_type NOT IN ('clip_upload', 'canvas')
+            WHERE s.source_type NOT IN {self._HIDDEN_SOURCE_TYPES}
             ORDER BY s.id DESC
-            LIMIT 200
-            """
+            {page}
+            """,
+            params,
         )
         return [dict(row) for row in rows]
 
@@ -1639,15 +1663,35 @@ class AppStore:
         return parsed
 
     def _plan_piece_layout(self, clip_plan_id: int) -> list[list[float]]:
+        """Штамп кусков для субтитров: ``[start, end]`` или ``[start, end, speed]`` у куска со
+        скоростью — сменили скорость, слова куска растягиваются за ней (remap_to_pieces)."""
+        from app.piece_speed import normalize_speed
+
         rows = self.db.query_all(
             """
-            SELECT s.start_sec, s.end_sec FROM clip_plan_segments cps
+            SELECT s.id, s.start_sec, s.end_sec FROM clip_plan_segments cps
             JOIN ai_segments s ON s.id = cps.segment_id
             WHERE cps.clip_plan_id = ? ORDER BY cps.sort_order
             """,
             (clip_plan_id,),
         )
-        return [[round(float(r["start_sec"]), 3), round(float(r["end_sec"]), 3)] for r in rows]
+        speeds: dict[int, float] = {}
+        row = self.db.query_one("SELECT render_settings_json FROM clip_plans WHERE id = ?", (clip_plan_id,))
+        if row and row["render_settings_json"]:
+            try:
+                rs = json.loads(row["render_settings_json"])
+            except (TypeError, ValueError):
+                rs = {}
+            for entry in normalize_speed(rs.get("speed") if isinstance(rs, dict) else None):
+                if entry.get("speed"):
+                    speeds[entry["piece"]] = float(entry["speed"])
+        out = []
+        for r in rows:
+            item = [round(float(r["start_sec"]), 3), round(float(r["end_sec"]), 3)]
+            if int(r["id"]) in speeds:
+                item.append(speeds[int(r["id"])])
+            out.append(item)
+        return out
 
     def set_clip_plan_subtitles(self, clip_plan_id: int, payload: dict | None) -> None:
         """Сохранить субтитры. Без штампа кусков они сняты по ТЕКУЩИМ кускам —
@@ -1730,7 +1774,7 @@ class AppStore:
         plans = [_decode_plan_settings(dict(row)) for row in self.db.query_all(sql, params)]
         if include_segments:
             for plan in plans:
-                plan["segments"] = self._segments_for_clip_plan(plan["id"])
+                plan["segments"] = self._plan_segments(plan["id"], plan.get("render_settings"))
             self._annotate_plan_quality(plans, source_id)
         return plans
 
@@ -1783,8 +1827,14 @@ class AppStore:
             raise KeyError(f"clip plan not found: {clip_plan_id}")
         data = _decode_plan_settings(dict(row))
         if include_segments:
-            data["segments"] = self._segments_for_clip_plan(clip_plan_id)
+            data["segments"] = self._plan_segments(clip_plan_id, data.get("render_settings"))
         return data
+
+    def _plan_segments(self, clip_plan_id: int, render_settings: Any) -> list[dict]:
+        """Куски плана со скоростью/реверсом из его настроек (app/piece_speed.py)."""
+        from app.piece_speed import attach
+
+        return attach(self._segments_for_clip_plan(clip_plan_id), render_settings)
 
     def update_clip_plan_status(self, clip_plan_id: int, status: str) -> dict:
         self.get_clip_plan(clip_plan_id, include_segments=False)
@@ -2950,9 +3000,13 @@ def _parse_facecam(value: Any) -> dict | None:
 
 
 def _same_layout(a: list, b: list) -> bool:
+    def speed(x: list) -> float:
+        return float(x[2]) if len(x) > 2 else 1.0
+
     try:
         return len(a) == len(b) and all(
-            abs(float(x[0]) - float(y[0])) < 0.002 and abs(float(x[1]) - float(y[1])) < 0.002 for x, y in zip(a, b)
+            abs(float(x[0]) - float(y[0])) < 0.002 and abs(float(x[1]) - float(y[1])) < 0.002
+            and abs(speed(x) - speed(y)) < 1e-4 for x, y in zip(a, b)
         )
     except (TypeError, ValueError, IndexError):
         return True  # мусорный штамп — не трогаем

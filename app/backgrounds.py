@@ -258,7 +258,9 @@ def background_zones(
 
     if not parts:
         return []
-    durations = [max(0.0, float(p["end_sec"]) - float(p["start_sec"])) for p in parts]
+    from app.piece_speed import seg_length
+
+    durations = [seg_length(p) for p in parts]
     joins = join_times(durations, list(overlaps or []))
     total = sum(durations) - sum(overlaps or [])
     bounds = [0.0, *joins, total + _TAIL_SEC]

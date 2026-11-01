@@ -47,7 +47,10 @@ class ClipClock:
         from app.cuts import _Joins, plan_cuts
 
         self.segments = list(segments or [])
-        self.lengths = [max(0.0, float(s["end_sec"]) - float(s["start_sec"])) for s in self.segments]
+        from app.piece_speed import seg_length
+
+        # Длина куска на шкале клипа: со скоростью куска (app/piece_speed.py) — не секунды исходника.
+        self.lengths = [seg_length(s) for s in self.segments]
         self.plain_total = sum(self.lengths)
         self.pre = _Joins(self.segments, transition)
         try:

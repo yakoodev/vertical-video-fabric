@@ -170,7 +170,7 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         saved = normalize_render_settings(plan.get("render_settings") or {})
         layers = payload.layers if payload and payload.layers is not None else saved["layers"]
         camera = payload.camera if payload and payload.camera is not None else saved["camera"]
-        pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
+        pieces = [(float(s["start_sec"]), float(s["end_sec"]), float(s.get("speed") or 1)) for s in plan.get("segments") or []]
         _starts, duration = clip_timeline(pieces, saved["transition"])
 
         def asset_exists(asset_id: int) -> bool:

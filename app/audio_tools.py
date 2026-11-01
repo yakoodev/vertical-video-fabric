@@ -140,27 +140,64 @@ def h_set_audio_joins(ctx: Any, args: dict) -> dict:
     view = [{"piece": ids.index(j["piece"]), **{k: v for k, v in j.items() if k != "piece"}}
             for j in saved.get("joins") or [] if j["piece"] in ids]
     shifts = part_shifts(segments, segments, saved.get("joins"))
-    lengths = [float(s["end_sec"]) - float(s["start_sec"]) for s in segments]
+    from app.piece_speed import seg_length
+
+    lengths = [seg_length(s) for s in segments]
     plan = plan_jl(lengths, part_overlaps(segments, render.get("transition")), shifts)
     for k, (want, got) in enumerate(zip(shifts, plan["shift"])):
         if abs(want - got) > 0.01:
             warnings.append(f"стык {k}→{k + 1}: сдвиг {want:+.2f} с урезан до {got:+.2f} (J/L не больше 45% "
                             "соседнего куска)")
-    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+    subs = ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}
+    words = subs.get("words") or []
     report = jl_speech_report(segments, saved.get("joins"), words, render.get("transition"))
     for row in report:
         if row["lost_words"]:
             warnings.append(f"стык {row['join']}→{row['join'] + 1} ({row['kind']} {abs(row['shift']):.2f} с): не будет "
-                            f"слышно {row['hidden']} — слова «{' '.join(row['lost_words'])}» (субтитры их покажут); "
-                            "ставь J/L на паузу (audio_map: pauses, jl) или подрежь кусок")
+                            f"слышно {row['hidden']} — слова «{' '.join(row['lost_words'])}» (субтитры их тоже не "
+                            "покажут); ставь J/L на паузу (audio_map: pauses, jl) или подрежь кусок")
+    missing = _handles_not_transcribed(segments, saved.get("joins"), render.get("transition"), subs)
+    if missing:
+        warnings.append(f"звук ручек J/L ({', '.join(missing)}) ещё не распознан — субтитры там пустые; "
+                        "generate_subtitles распознает куски вместе с ручками (правки строк — заново)")
     out = {"ok": True, "joins": view, "joins_report": report,
            "note": ("J/L: картинка режется как раньше, звук соседнего куска наезжает на стык с кроссфейдом "
                     "0.08 с (под переходом — его длиной). lead — звук куска раньше его картинки (J), lag — звук "
                     "тянется под следующую картинку (L); на одном стыке lag A и lead B вычитаются. Звук каждого "
-                    "куска остаётся синхронным со своей картинкой: субтитры не сдвигаются. Превью редактора "
+                    "куска остаётся синхронным со своей картинкой. Субтитры идут за звуком: слова заменённого звука "
+                    "убраны, слова ручки — там, где их слышно (тем же сдвигом, что у их куска). Превью редактора "
                     "играет J/L вторым плеером. Проверь listen на стыке.")}
     if warnings:
         out["warnings"] = warnings
+    return out
+
+
+def _handles_not_transcribed(segments: list[dict], joins: Any, transition: Any, subs: dict) -> list[str]:
+    """Ручки J/L, звук которых субтитры не знают (распознавали без них): «кусок 2: J» …"""
+    from app.audio_edit import handle_extents, normalize_handle_words
+
+    if not subs.get("words"):
+        return []
+    have: dict[Any, list[float]] = {}
+    for w in normalize_handle_words(subs.get("handle_words")):
+        have.setdefault(w["piece"], []).append((w["start"] + w["end"]) / 2)
+    # Распознавание с ручками отмечает, какие окна исходника уже слушали (даже без слов).
+    heard = {(int(h.get("piece", -1)), str(h.get("side"))): (float(h.get("start", 0)), float(h.get("end", 0)))
+             for h in subs.get("handle_spans") or [] if isinstance(h, dict)}
+    out = []
+    for k, (head, tail) in enumerate(handle_extents(segments, joins, transition, margin=0.0)):
+        seg = segments[k]
+        for side, length in (("head", head), ("tail", tail)):
+            if length <= 0:
+                continue
+            lo = float(seg["start_sec"]) - length if side == "head" else float(seg["end_sec"])
+            hi = float(seg["start_sec"]) if side == "head" else float(seg["end_sec"]) + length
+            span = heard.get((int(seg.get("id") or -1), side))
+            if span and span[0] <= lo + 0.05 and span[1] >= hi - 0.05:
+                continue
+            if any(lo <= m <= hi for m in have.get(seg.get("id"), [])):
+                continue
+            out.append(f"кусок {k}: {'J' if side == 'head' else 'L'}")
     return out
 
 
@@ -310,7 +347,10 @@ def tools() -> list:
             "тянется под картинку следующего. Картинка режется как раньше, звук соседнего куска — из исходника "
             "за краем, с кроссфейдом 0.08 с. Типично 0.2–0.6 с: L — договорить фразу под реакцией, J — ответ "
             "слышен раньше смены плана, удар раньше картинки. Заменяет прежний список; [] — снять. Предупредит, "
-            "какие слова не будет слышно. Советы — audio_map.jl. / J/L cuts at piece joins.",
+            "какие слова не будет слышно. Субтитры идут за звуком: заменённые слова не показываются, слова ручки "
+            "(звук из-за края куска) — показываются, когда их слышно, если распознаны: после новых J/L — "
+            "generate_subtitles (распознаёт куски вместе с ручками). Советы — audio_map.jl. / J/L cuts at piece "
+            "joins; captions follow the heard audio.",
             obj({"joins": {"type": "array", "items": obj({"piece": {"type": "integer"}, "lead": {"type": "number"},
                                                            "lag": {"type": "number"}}, ["piece"])}}, ["joins"]),
             h_set_audio_joins, mutating=True, label=lambda a: f"J/L на стыках ({len(a.get('joins') or [])})",

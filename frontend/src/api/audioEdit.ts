@@ -59,7 +59,10 @@ export const FX_LABEL: Record<FxKind, string> = {
   noise: "🌫 Шум",
 };
 
-type Piece = { id: number; start_sec: number; end_sec: number };
+type Piece = { id: number; start_sec: number; end_sec: number; speed?: number };
+
+/** Длина куска на таймлайне клипа (со скоростью куска, set_segment_speed). */
+const segLen = (p: Piece) => Math.max(0, p.end_sec - p.start_sec) / (p.speed && p.speed > 0 ? p.speed : 1);
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -72,7 +75,7 @@ export function joinShift(joins: readonly AudioJoin[] | undefined, prevId: numbe
 
 /** Самый большой сдвиг на стыке: не больше 1.5 с и 45% каждого из соседних кусков. */
 export function maxShift(prev: Piece, next: Piece): number {
-  const room = JL_MAX_SHARE * Math.min(prev.end_sec - prev.start_sec, next.end_sec - next.start_sec);
+  const room = JL_MAX_SHARE * Math.min(segLen(prev), segLen(next));
   return round3(Math.max(0, Math.min(MAX_SHIFT_SEC, room)));
 }
 
@@ -109,7 +112,7 @@ export function jlSourceAt(pieces: readonly Piece[], joins: readonly AudioJoin[]
   for (let k = 0; k < pieces.length - 1; k++) {
     const prev = pieces[k];
     const next = pieces[k + 1];
-    bound += prev.end_sec - prev.start_sec;
+    bound += segLen(prev);
     const raw = joinShift(joins, prev.id, next.id);
     const shift = Math.sign(raw) * Math.min(Math.abs(raw), maxShift(prev, next));
     if (shift > 0 && t >= bound && t < bound + shift) return prev.end_sec + (t - bound);

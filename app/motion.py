@@ -1592,20 +1592,22 @@ def asset_key(ref: Any) -> str:
 # ---------------------------------------------------------------- время клипа
 
 
-def clip_timeline(pieces: list[tuple[float, float]], transition: Any) -> tuple[list[float], float]:
+def clip_timeline(pieces: list[tuple[float, ...]], transition: Any) -> tuple[list[float], float]:
     """Где начинается каждый кусок на таймлайне готового клипа и его длина.
 
     Переходы съедают по своему overlap на каждой склейке — так же, как в рендере
-    (``plan_joins`` с теми же дырками между кусками).
+    (``plan_joins`` с теми же дырками между кусками). Кусок — ``(start, end)`` или
+    ``(start, end, speed)`` (скорость куска, app/piece_speed.spans): длина ``(end − start)/speed``.
     """
     from app.transitions import normalize_transition, plan_joins
 
-    durations = [max(0.0, float(end) - float(start)) for start, end in pieces]
+    durations = [max(0.0, float(p[1]) - float(p[0])) / (float(p[2]) if len(p) > 2 and float(p[2]) > 0 else 1.0)
+                 for p in pieces]
     if not durations:
         return [], 0.0
     gaps: list[float | None] = []
-    for (_ls, left_end), (right_start, _re) in zip(pieces, pieces[1:]):
-        gap = float(right_start) - float(left_end)
+    for left, right in zip(pieces, pieces[1:]):
+        gap = float(right[0]) - float(left[1])
         gaps.append(gap if gap >= 0 else None)
     overlaps = plan_joins(normalize_transition(transition), durations, gaps)
     starts: list[float] = []

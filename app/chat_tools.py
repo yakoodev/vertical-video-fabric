@@ -53,8 +53,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
         "set_audio_keys", "set_audio_joins", "set_source_audio", "source_loudness")),
-    "cuts": ("куски и кадр: вырезы, обрезка, фокус, раскладка, хромакей, формат", (
-        "suggest_cuts", "apply_cuts", "trim_piece", "set_end_hold", "set_focus", "auto_focus", "auto_crop_layer",
+    "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, фокус, раскладка, хромакей, формат", (
+        "suggest_cuts", "apply_cuts", "trim_piece", "set_segment_speed", "set_end_hold", "set_focus", "auto_focus",
+        "auto_crop_layer",
         "set_piece_fit", "set_layout", "set_chroma_key", "set_format", "set_aspect")),
     "screens": ("плашка с именем, концовка, промо приложения, холст", (
         "set_nameplate", "set_end_screen", "build_app_promo", "create_canvas_clip")),
@@ -72,7 +73,8 @@ _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк"),
     "subtitles": ("субтитр", "сабы", "подпис"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
-    "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк"),
+    "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
+             "слоу", "замедл", "ускор", "реверс", "задом"),
     "screens": ("плашк", "концовк", "end screen", "промо", "холст"),
     "assets": ("картинк", "библиотек", "шрифт"),
     "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц"),
