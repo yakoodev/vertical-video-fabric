@@ -638,6 +638,10 @@ class PolzaImages:
     def _encode(self, path: Path) -> str:
         return ref_data_url(path)
 
+    def _ref(self, path: Path) -> dict:
+        """Картинка в ``input.images``: base64 (картинковым моделям хватает)."""
+        return {"type": "base64", "data": self._encode(path)}
+
     def submit(self, params: dict, refs: list[Path]) -> str:
         import httpx
 
@@ -645,10 +649,10 @@ class PolzaImages:
         # молча игнорировался — приходил квадрат 1024×1024 вместо 9:16).
         fields = {k: v for k, v in params.items() if not k.startswith("_") and k != "model"}
         if refs:
-            fields["images"] = [{"type": "base64", "data": self._encode(p)} for p in refs]
+            fields["images"] = [self._ref(p) for p in refs]
         sheets = [Path(p) for p in params.get("_reference_images") or []]
         if sheets:
-            fields["reference_images"] = [{"type": "base64", "data": self._encode(p)} for p in sheets]
+            fields["reference_images"] = [self._ref(p) for p in sheets]
         body = {"model": params.get("model"), "input": fields}
         # Сетевые ошибки httpx — как есть: до отправки (соединение/TLS) aivideo_gen повторит сам,
         # после (обрыв/таймаут чтения) — запрос мог уйти: ищем его ``recover``, POST не повторяем.
@@ -786,6 +790,27 @@ class PolzaVideo(PolzaImages):
 
     def _encode(self, path: Path) -> str:
         return start_frame_data_url(path)
+
+    def _ref(self, path: Path) -> dict:
+        """Кадр видео — ссылкой из хранилища Polza (``POST /storage/upload``): Hailuo 3 Max с base64
+        отвечает «все провайдеры вернули ошибку» (замер 02.11: тот же запрос без кадров — ок).
+        Хранилище недоступно — base64, как раньше."""
+        import httpx
+
+        try:
+            with path.open("rb") as fh:
+                response = httpx.post(f"{self.base_url}/storage/upload",
+                                      headers={"Authorization": f"Bearer {self.api_key}"},
+                                      files={"file": (path.name, fh, "image/jpeg")},
+                                      data={"storagePolicy": "TEMP_UPLOAD"}, timeout=120)
+            if response.status_code < 400:
+                url = (response.json() or {}).get("url")
+                if url:
+                    return {"type": "url", "data": str(url)}
+            _log.warning("aiv video: storage/upload HTTP %s — кадр уйдёт base64", response.status_code)
+        except Exception as exc:  # noqa: BLE001 - запасной путь ниже
+            _log.warning("aiv video: storage/upload не удался (%s) — кадр уйдёт base64", exc)
+        return super()._ref(path)
 
     def submit(self, params: dict, refs: list[Path]) -> str:
         """``refs`` — ключевые кадры (``images``: старт или старт+конец), ``_reference_images`` — листы.

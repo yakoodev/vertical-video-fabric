@@ -1987,3 +1987,33 @@ def test_look_and_expressions_wait_for_turnaround_in_paid_batch(paid, monkeypatc
     G.run_pending(store, poll_timeout=0)
     G.run_pending(store, poll_timeout=0)
     assert fake.posts == 9 and {j["status"] for j in G.list_jobs(store, approval_id=req["approval_id"])} == {"done"}
+
+
+def test_polza_video_frames_go_as_storage_urls(monkeypatch, tmp_path):
+    """Hailuo 3 Max отвергает кадры base64 — кадры видео уходят ссылкой из хранилища Polza."""
+    import httpx
+
+    from app.aivideo_providers import PolzaVideo
+
+    frame = tmp_path / "start.jpg"
+    frame.write_bytes(b"\xff\xd8\xff\xd9")
+    calls = []
+
+    class _Resp:
+        def __init__(self, code, data):
+            self.status_code, self._data, self.content = code, data, b"{}"
+
+        def json(self):
+            return self._data
+
+    def fake_post(url, headers=None, json=None, files=None, data=None, timeout=None):
+        calls.append((url, json))
+        if url.endswith("/storage/upload"):
+            return _Resp(200, {"id": "file_1", "url": "https://s3.polza.test/start.jpg"})
+        return _Resp(200, {"id": "gen_v", "status": "pending"})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    PolzaVideo(api_key="k", base_url="https://polza.test/api/v1").submit(
+        {"model": "minimax/hailuo-3-max", "prompt": "x", "duration": "5"}, [frame])
+    media = [body for url, body in calls if url.endswith("/media")][0]
+    assert media["input"]["images"] == [{"type": "url", "data": "https://s3.polza.test/start.jpg"}]
