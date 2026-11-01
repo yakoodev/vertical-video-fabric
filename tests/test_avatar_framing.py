@@ -141,9 +141,156 @@ def test_place_avatar_most_common_place_with_padding():
     corner = {"x0": 0.70, "y0": 0.40, "x1": 0.95, "y1": 0.95}
     center = {"x0": 0.30, "y0": 0.10, "x1": 0.60, "y1": 0.90}
     out = avatar_box.place_avatar([corner, corner, center, None])
-    assert out["moves"] and out["places"] == 2 and out["frames_with_avatar"] == 3
+    assert out["moves"] and out["place_count"] == 2 and out["frames_with_avatar"] == 3
     assert out["cam"]["x"] < 0.70 and out["cam"]["x"] + out["cam"]["w"] <= 1.0
-    assert avatar_box.place_avatar([None])["cam"] is None
+    assert [p["place"] for p in out["places"]] == [0, 1]  # все места, по времени
+    assert avatar_box.place_avatar([None])["cam"] is None and avatar_box.place_avatar([None])["places"] == []
+    single = avatar_box.place_avatar([corner, None, corner], [1.0, 2.0, 3.0])
+    assert not single["moves"] and len(single["places"]) == 1 and single["places"][0]["src_from"] == 1.0
+
+
+# ------------------------------------------------------------------ аватар в нескольких местах (QA 02.11, клип 892)
+
+BIG = {"x0": 0.10, "y0": 0.05, "x1": 0.55, "y1": 0.98}     # до 281 с: крупно левее
+CORNER = {"x0": 0.72, "y0": 0.45, "x1": 0.97, "y1": 0.98}  # потом: в углу справа
+
+
+def test_place_avatar_returns_all_places_with_time_ranges():
+    times = [279.9, 285.2, 290.6, 295.9, 301.2, 306.6]
+    out = avatar_box.place_avatar([BIG, CORNER, CORNER, None, CORNER, CORNER], times)
+    assert out["moves"] and out["place_count"] == 2
+    assert out["cam"]["x"] > 0.6  # чаще всего — угол
+    first, second = out["places"]
+    assert first["cam"]["x"] < 0.2 and first["src_from"] == 279.9 and first["src_to"] == pytest.approx(282.55)
+    assert second["src_from"] == pytest.approx(282.55) and second["src_to"] == 306.6 and second["frames"] == 4
+    # Граница — на склейку плана между кадрами (ближайшую к середине), а не посередине.
+    fixed = avatar_box.refine_boundaries(out["places"], [100.0, 281.0, 300.0])
+    assert fixed[0]["src_to"] == 281.0 and fixed[1]["src_from"] == 281.0 and fixed[1]["from_shot_cut"]
+    # Аватар вернулся на прежнее место — три отрезка, место 0 снова.
+    back = avatar_box.place_avatar([CORNER, BIG, CORNER], [1.0, 2.0, 3.0])
+    assert [p["place"] for p in back["places"]] == [0, 1, 0]
+
+
+def test_scene_cuts_in_window_are_source_seconds(tmp_path):
+    _require_ffmpeg()
+    from app.scene_cuts import detect_scene_cuts
+
+    video = tmp_path / "cut.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=4",
+                    "-vf", "drawbox=x=0:y=0:w=160:h=90:color=white:t=fill:enable='gte(t,3)'",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", str(video)], check=True)
+    cuts = detect_scene_cuts(str(video), start=2.0, duration=1.8)
+    assert cuts and abs(cuts[0] - 3.0) < 0.1
+
+
+def test_layout_cams_normalize_and_spans_per_part():
+    left = {"x": 0.1, "y": 0.0, "w": 0.45, "h": 1.0}
+    right = {"x": 0.7, "y": 0.4, "w": 0.27, "h": 0.57}
+    lay = normalize_layout({**AVATAR, "cam": right, "video_scale": 1.5, "cams": [
+        {"from": 281, "to": 309.3, "cam": right}, {"from": 277.2, "to": 281, "cam": left, "video_scale": 1.1},
+        {"from": 5, "to": 5.01, "cam": left}, {"from": 1, "to": 2}, "мусор"]})
+    assert [c["from"] for c in lay["cams"]] == [277.2, 281]  # по порядку, пустое и без рамки — выброшены
+    assert "cams" not in normalize_layout(AVATAR) and "cams" not in normalize_layout({"mode": "split", "cams": lay["cams"]})
+    from app.stream_layout import avatar_cam_spans
+
+    # Часть 277.2–290: больше в углу — основа угловой рамкой, левая — первые 3.8 с части.
+    main, spans = avatar_cam_spans(lay, 277.2, 290.0)
+    assert main["cam"] == right and main["video_scale"] == 1.5
+    assert spans == [{"t0": 0.0, "t1": 3.8, "cam": left, "video_scale": 1.1}]
+    main, spans = avatar_cam_spans(lay, 277.5, 280.0)  # вся часть до смены сцены
+    assert main["cam"] == left and spans == []
+    assert avatar_cam_spans(normalize_layout(AVATAR), 0, 5)[1] == []
+    # Граф: одна рамка — ровно прежний; со сменой — второй кадр поверх на свои секунды.
+    from app.render import _preset_for_segment
+
+    piece = _preset_for_segment({"layout": lay}, {"start_sec": 277.2, "end_sec": 290.0})
+    graph = _layout_filter(1080, 1920, 30, "cover", "center", normalize_layout(piece["layout"]), None, None,
+                           avatar_spans=piece["avatar_spans"])
+    assert "enable='between(t,0.000,3.800)'" in graph and graph.count("boxblur") == 2 and graph.endswith("[vbase]")
+    plain = _preset_for_segment({"layout": normalize_layout(AVATAR)}, {"start_sec": 0, "end_sec": 2})
+    assert "avatar_spans" not in plain
+
+
+def _moving_avatar_source(path):
+    # 0–1 с аватар (белый) справа, 1–2 с — слева; остальное — «ютуб» (чёрный).
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x180:r=25",
+                    "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=44100", "-t", "2",
+                    "-vf", "drawbox=x=160:y=0:w=160:h=180:color=white:t=fill:enable='lt(t,1)',"
+                           "drawbox=x=0:y=0:w=160:h=180:color=white:t=fill:enable='gte(t,1)'",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", str(path)], check=True)
+
+
+def _mid_row(tmp_path, video, t):
+    frame = tmp_path / f"f{t}.raw"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", str(video), "-frames:v", "1",
+                    "-f", "rawvideo", "-pix_fmt", "gray", str(frame)], check=True)
+    pixels = frame.read_bytes()
+    return pixels[160 * 180:161 * 180]
+
+
+def test_avatar_cams_real_render_follows_avatar_inside_one_part(tmp_path):
+    _require_ffmpeg()
+    from app.render import _preset_for_segment
+
+    source = tmp_path / "moving.mp4"
+    _moving_avatar_source(source)
+    right = {"x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0}
+    left = {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0}
+    base = {"output_width": 180, "output_height": 320, "fps": 25, "scale_mode": "cover"}
+    one = normalize_layout({**AVATAR, "cam": right})
+    both = normalize_layout({**AVATAR, "cam": right, "cams": [{"from": 0, "to": 1, "cam": right},
+                                                              {"from": 1, "to": 2, "cam": left}]})
+    seg = {"start_sec": 0.5, "end_sec": 1.9}
+    for name, lay in (("one", one), ("both", both)):
+        out = tmp_path / f"{name}.mp4"
+        preset = _preset_for_segment({**base, "layout": lay}, seg)
+        subprocess.run(build_ffmpeg_render_args(source, out, 0.5, 1.9, preset), check=True)
+        assert min(_mid_row(tmp_path, out, 0.2)) > 200  # 0.7 с исходника — аватар справа, в кадре
+        late = _mid_row(tmp_path, out, 1.1)            # 1.6 с исходника — аватар уже слева
+        if name == "one":
+            assert max(late) < 40  # одна рамка на весь клип: аватара нет (брак QA 02.11)
+        else:
+            assert min(late) > 200
+
+
+def test_detect_avatar_places_go_to_layout_cams_and_named_seconds(tmp_path, monkeypatch):
+    _require_ffmpeg()
+    _client, store, source, plan, a, _b = _setup(tmp_path, monkeypatch)
+    # Один кусок 0–5 с исходника: кадры по порядку времени.
+    plan = store.create_clip_plan(source["id"], plan["analysis_id"], "Один кусок", segment_ids=[a["id"]])
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    monkeypatch.setattr(agent_tools, "_subject_boxes", lambda c: {"union": None, "pieces": [], "screen": None})
+    fake = FakeVision([BIG, BIG, CORNER, CORNER, CORNER, CORNER])
+    real = avatar_box.detect_avatar
+    monkeypatch.setattr(avatar_box, "detect_avatar", lambda store_, pid, client=None, refresh=False:
+                        real(store_, pid, client=fake, refresh=refresh))
+    out, ok = run_tool(ctx, "detect_avatar", {})
+    assert ok, out
+    assert len(out["places"]) >= 2 and out["places"][0]["cam"]["x"] < 0.2
+    warning = " ".join(out["warnings"])
+    assert "2 местах" in warning and f"{out['places'][0]['from_t']:.1f}–{out['places'][0]['to_t']:.1f} с" in warning
+    assert "view_frame" in warning and "один cam" in warning
+
+    out, ok = run_tool(ctx, "set_layout", {"mode": "avatar_full"})
+    assert ok, out
+    lay = out["layout"]
+    assert len(lay["cams"]) >= 2 and lay["cams"][0]["cam"]["x"] < 0.2 and "по отрезкам" in out["cam_from"]
+    assert all(c.get("video_scale") for c in lay["cams"])  # крупность — своя у каждой рамки
+    assert len(out["places"]) >= 2 and "view_frame в КАЖДОМ" in out["note"]
+    assert agent_tools.avatar_places(ctx)[0]["view_t"] < agent_tools.avatar_places(ctx)[-1]["view_t"]
+    frame, ok = run_tool(ctx, "view_frame", {"t": 0.5})
+    assert ok and frame.mime_type.startswith("image/")
+
+    # Один cam руками — рамки по отрезкам сняты, но сервис предупредит, что аватар переезжает.
+    out, ok = run_tool(ctx, "set_layout", {"mode": "avatar_full", "cam": {"x": 0.7, "y": 0.4, "w": 0.27, "h": 0.57}})
+    assert ok and "cams" not in out["layout"] and any("места" in w or "местах" in w for w in out["warnings"])
+    out, ok = run_tool(ctx, "set_layout", {"mode": "avatar_full", "cams": "auto"})
+    assert ok and len(out["layout"]["cams"]) >= 2
+    # Свои отрезки по шкале clip.
+    out, ok = run_tool(ctx, "set_layout", {"mode": "avatar_full", "cams": [
+        {"from_t": 0, "to_t": 1.0, "cam": {"x": 0.1, "y": 0, "w": 0.45, "h": 1}},
+        {"from_t": 1.0, "to_t": 30, "cam": {"x": 0.7, "y": 0.4, "w": 0.27, "h": 0.57}}]})
+    assert ok and out["layout"]["cams"][0]["from"] == 0.0 and out["layout"]["cams"][1]["from"] == 1.0
 
 
 def test_detect_avatar_tool_layout_and_focus_warning(tmp_path, monkeypatch):

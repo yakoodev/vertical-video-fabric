@@ -1268,8 +1268,12 @@ def _render_frame_png(
             x = _focus_x_at(segment.get("focus") or [], local)
             if x is not None:
                 framed["focus"] = [{"t": 0.0, "x": x}]
-            # Кусок «шире окна» (fit) — своя основа, как в рендере.
-            piece = _render._preset_for_segment(preset, segment)
+            # Кусок «шире окна» (fit) — своя основа, как в рендере. Кадр снимается с секунды
+            # start + local (время графа от неё) — рамка аватара по отрезкам (layout.cams) тоже от неё.
+            at_frame = {**segment, "start_sec": float(segment["start_sec"]) + local}
+            if float(at_frame["start_sec"]) >= float(segment["end_sec"]):
+                at_frame["end_sec"] = float(at_frame["start_sec"]) + 0.04
+            piece = _render._preset_for_segment(preset, at_frame)
             # Окошко раскладки при камере — полосой под кадром, как в рендере (pin_band).
             band = _render.pin_band(preset, source, {"camera": camera, "key": keyed.get("key")})
             if band:

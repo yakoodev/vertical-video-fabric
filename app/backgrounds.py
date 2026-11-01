@@ -228,6 +228,13 @@ def piece_zone(layout: dict | None, segment: dict, source: dict | None, crop: di
         bg = normalize_background(layout.get("bg"))
         if not is_animated(bg):
             return None
+        if layout.get("cams"):
+            # Рамки по отрезкам: дыра — по рамке, которой собрана основа этой части (render._preset_for_segment).
+            from app.stream_layout import avatar_cam_spans
+
+            main, _spans = avatar_cam_spans(layout, float(segment.get("start_sec") or 0),
+                                            float(segment.get("end_sec") or 0))
+            layout = {**layout, **main}
         hole = avatar_hole(layout, source, width, height)
     else:
         return None

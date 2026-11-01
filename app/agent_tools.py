@@ -1399,6 +1399,91 @@ def known_avatar(ctx: ToolContext, source: dict | None = None) -> dict | None:
     return None
 
 
+def source_span_to_clip(pieces: list[dict], a: float, b: float) -> list[tuple[float, float]]:
+    """Отрезок секунд ИСХОДНИКА → отрезки шкалы clip (по кускам clip_timeline, со скоростью куска)."""
+    out = []
+    for piece in pieces:
+        s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+        lo, hi = max(a, s0), min(b, s1)
+        if hi - lo <= 1e-3:
+            continue
+        speed = float(piece.get("speed") or 1.0) or 1.0
+        c0 = float(piece["clip_start"]) + (lo - s0) / speed
+        c1 = float(piece["clip_start"]) + (hi - s0) / speed
+        out.append((round(c0, 2), round(c1, 2)))
+    return out
+
+
+def _place_view(pieces: list[dict], place: dict) -> dict | None:
+    """Место аватара (секунды исходника) → то же на шкале clip: ``{from_t, to_t, view_t}``; вне клипа — None."""
+    spans = source_span_to_clip(pieces, float(place["src_from"]), float(place["src_to"]))
+    if not spans:
+        return None
+    longest = max(spans, key=lambda s: s[1] - s[0])
+    return {"from_t": spans[0][0], "to_t": spans[-1][1], "view_t": round((longest[0] + longest[1]) / 2, 2),
+            "clip_spans": [list(s) for s in spans]}
+
+
+def avatar_places(ctx: ToolContext) -> list[dict]:
+    """Где аватар по ходу клипа, если мест больше одного: ``[{place, cam, from_t, to_t, view_t, src_from,
+    src_to}]`` (шкала clip). Из раскладки avatar_full с ``cams``, иначе из найденного detect_avatar.
+    Одно место — пустой список."""
+    from app.stream_layout import avatar_cam_spans
+
+    render = _current_render(ctx)
+    layout = render.get("layout") or {}
+    pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+    rows: list[dict] = []
+    if layout.get("mode") == "avatar_full" and layout.get("cams"):
+        for piece in pieces:
+            s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+            main, spans = avatar_cam_spans(layout, s0, s1)
+            bits = [(0.0, s1 - s0, main["cam"])]
+            for span in spans:  # перекрасить отрезки другой рамки
+                cut = []
+                for a, b, cam in bits:
+                    lo, hi = max(a, span["t0"]), min(b, span["t1"])
+                    if hi <= lo:
+                        cut.append((a, b, cam))
+                        continue
+                    cut += [x for x in ((a, lo, cam), (lo, hi, span["cam"]), (hi, b, cam)) if x[1] - x[0] > 1e-3]
+                bits = cut
+            for a, b, cam in bits:
+                if rows and rows[-1]["cam"] == cam and abs(rows[-1]["src_to"] - (s0 + a)) < 0.05:
+                    rows[-1]["src_to"] = round(s0 + b, 3)
+                else:
+                    rows.append({"cam": cam, "src_from": round(s0 + a, 3), "src_to": round(s0 + b, 3)})
+        cams = []
+        for row in rows:
+            if row["cam"] not in cams:
+                cams.append(row["cam"])
+            row["place"] = cams.index(row["cam"])
+        if len(cams) < 2:
+            return []
+    else:
+        try:
+            from app.ai.avatar_box import cached_avatar
+
+            found = cached_avatar(ctx.store, ctx.plan_id) or {}
+        except Exception:  # noqa: BLE001
+            found = {}
+        rows = [dict(p) for p in found.get("places") or [] if isinstance(p, dict) and p.get("src_from") is not None]
+        if not found.get("moves") or len(rows) < 2:
+            return []
+    out = []
+    for row in rows:
+        view = _place_view(pieces, row)
+        if view:
+            out.append({"place": row.get("place"), "cam": row["cam"], **view,
+                        "src_from": row["src_from"], "src_to": row["src_to"]})
+    return out if len({repr(p["cam"]) for p in out}) > 1 else []
+
+
+def _places_text(places: list[dict]) -> str:
+    return "; ".join(f"{p['from_t']:.1f}–{p['to_t']:.1f} с (cam x{p['cam']['x']:.2f} y{p['cam']['y']:.2f} "
+                     f"w{p['cam']['w']:.2f} h{p['cam']['h']:.2f})" for p in places)
+
+
 def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
     """Аватар стримера (VTuber/PNGtuber/вебка) на кусках клипа — Gemini по целым кадрам исходника."""
     from app.ai.avatar_box import detect_avatar
@@ -1415,8 +1500,20 @@ def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
            "frames_with_avatar": found.get("frames_with_avatar"),
            "next": "set_layout mode avatar_full (cam возьмётся сам) → view_frame"}
     if found.get("moves"):
-        out["warnings"] = [f"аватар в клипе бывает в {found.get('places')} местах — взято место, где он чаще "
-                           "(view_frame по кускам; другое место — set_layout cam)"]
+        pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+        places = []
+        for place in found.get("places") or []:
+            view = _place_view(pieces, place) if place.get("src_from") is not None else None
+            if view:
+                places.append({"place": place.get("place"), "cam": place["cam"], **view,
+                               "src_from": place["src_from"], "src_to": place["src_to"]})
+        out["places"] = places
+        looks = " ".join(f"t={p['view_t']:g}" for p in places)
+        out["warnings"] = [
+            f"аватар в клипе в {found.get('place_count')} местах (шкала clip): {_places_text(places)}. "
+            "set_layout mode avatar_full без cam сам поставит рамку по отрезкам (layout.cams) — не задавай один "
+            f"cam на весь клип. Потом view_frame в КАЖДОМ отрезке ({looks}): без этого отчёт не примут"]
+        out["next"] = f"set_layout mode avatar_full (рамки по отрезкам возьмутся сами) → view_frame {looks}"
     if args.get("save"):
         plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
         ctx.before_change()
@@ -3425,6 +3522,18 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
         out["note"] = ("в кадре только аватар: cam (доли всего исходника) шириной video_scale ширин кадра, центр по "
                        "высоте avatar_y; вокруг — размытый тот же аватар (bg_blur) или фон bg. ОБЯЗАТЕЛЬНО view_frame: "
                        "модель целиком и крупно, игры/браузера нет; мелко — video_scale больше, режет — меньше")
+        places = avatar_places(ctx)
+        if places:
+            looks = " ".join(f"t={p['view_t']:g}" for p in places)
+            out["places"] = places
+            if fresh["layout"].get("cams"):
+                out["note"] += (f". Аватар переезжает — рамка по отрезкам (layout.cams): {_places_text(places)}. "
+                                f"view_frame в КАЖДОМ отрезке ({looks}) — без этого отчёт не примут")
+            else:
+                out.setdefault("warnings", []).append(
+                    f"detect_avatar видел аватар в {len({repr(p['cam']) for p in places})} местах: {_places_text(places)}, "
+                    "а cam один на весь клип — в части отрезков аватара в кадре не будет. Рамка по отрезкам: "
+                    f"set_layout mode avatar_full cams \"auto\" (или cams [{{from_t, to_t, cam}}]). view_frame: {looks}")
     elif mode == "meme":
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
@@ -3438,6 +3547,35 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def _clip_to_source_t(pieces: list[dict], t: float) -> float:
+    """Секунда шкалы clip → секунда исходника (кусок, где она лежит; за краями — край)."""
+    for piece in pieces:
+        length = _piece_len(piece)
+        if t <= float(piece["clip_start"]) + length + 1e-6 or piece is pieces[-1]:
+            local = min(max(0.0, t - float(piece["clip_start"])), length)
+            return round(float(piece["start_sec"]) + local * (float(piece.get("speed") or 1.0) or 1.0), 3)
+    return round(t, 3)
+
+
+def _clip_time_cams(ctx: ToolContext, raw: list) -> list[dict]:
+    """``cams`` из set_layout: отрезок — ``from``/``to`` (секунды исходника) или ``from_t``/``to_t``
+    (шкала clip, переводим в исходник); рамка — ``cam`` или x/y/w/h в самой записи."""
+    pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
+    out = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ToolError(f"cams[{index}]: нужен объект {{from_t, to_t, cam: {{x, y, w, h}}}}")
+        entry = dict(item)
+        for key, src_key in (("from_t", "from"), ("to_t", "to")):
+            if entry.get(src_key) is None and _num(entry.get(key)) is not None:
+                entry[src_key] = _clip_to_source_t(pieces, float(_num(entry[key])))
+            entry.pop(key, None)
+        if _num(entry.get("from")) is None or _num(entry.get("to")) is None:
+            raise ToolError(f"cams[{index}]: нужен отрезок from_t/to_t (шкала clip) или from/to (секунды исходника)")
+        out.append(entry)
+    return out
+
+
 def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_args: dict) -> str:
     """avatar_full: откуда cam (аргумент → прежняя раскладка → detect_avatar → facecam источника), крупность
     и фон по умолчанию. Фон: bg/bg_blur из аргументов; иначе фон set_backdrop клипа, если он задан; иначе
@@ -3447,8 +3585,16 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
 
     old = render.get("layout") or {}
     where = "cam из аргументов"
-    if "cam" not in layout_args:
-        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict):
+    cams_auto = layout_args.get("cams") == "auto"
+    if cams_auto:
+        layout_args.pop("cams")
+    elif isinstance(layout_args.get("cams"), list):
+        layout_args["cams"] = _clip_time_cams(ctx, layout_args["cams"])
+        where = "рамки по отрезкам из аргументов (cams)"
+    elif "cam" in layout_args and old.get("cams"):
+        layout_args["cams"] = []  # один cam из аргументов — на весь клип (прежние рамки по отрезкам сняты)
+    if "cam" not in layout_args and "cams" not in layout_args:
+        if old.get("mode") == "avatar_full" and isinstance(old.get("cam"), dict) and not cams_auto:
             layout_args["cam"], where = old["cam"], "cam из прежней раскладки avatar_full"
         else:
             found = None
@@ -3460,16 +3606,35 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
                 where = f"detect_avatar не смог: {str(exc)[:120]}"
             if found and found.get("cam"):
                 layout_args["cam"], where = found["cam"], "аватар найден detect_avatar (Gemini по кадрам кусков)"
+                places = [p for p in found.get("places") or [] if p.get("src_from") is not None]
+                if found.get("moves") and len(places) > 1:
+                    # Аватар переезжает (QA 02.11, клип 892): рамка по отрезкам исходника, а не одна на клип.
+                    layout_args["cams"] = [{"from": p["src_from"], "to": p["src_to"], "cam": p["cam"]} for p in places]
+                    where = (f"аватар найден detect_avatar в {found.get('place_count')} местах — рамка по отрезкам "
+                             "(layout.cams)")
             elif source.get("facecam"):
                 layout_args["cam"], where = source["facecam"], "facecam источника (detect-facecam)"
             else:
                 raise ToolError("avatar_full: не знаю, где аватар — detect_avatar не нашёл, facecam у источника нет",
                                 ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
                                  "(source_contact_sheet покажет кадры)"])
+    if "cam" not in layout_args and layout_args.get("cams"):
+        layout_args["cam"] = layout_args["cams"][0]["cam"] if isinstance(layout_args["cams"][0].get("cam"), dict) \
+            else old.get("cam")
+    width, height = frame_size(settings_render_format(render))
     if "video_scale" not in layout_args and old.get("mode") != "avatar_full":
-        width, height = frame_size(settings_render_format(render))
-        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args["cam"]), width, height,
-                                                       source.get("width"), source.get("height"))
+        layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args.get("cam") or old.get("cam")), width,
+                                                       height, source.get("width"), source.get("height"))
+        for entry in layout_args.get("cams") or []:
+            # Крупность по умолчанию — своя у каждой рамки (угол-вебка и крупный аватар разной пропорции).
+            if isinstance(entry, dict) and isinstance(entry.get("cam"), dict) and entry.get("video_scale") is None:
+                entry["video_scale"] = avatar_auto_scale(normalize_cam(entry["cam"]), width, height,
+                                                         source.get("width"), source.get("height"))
+    elif "video_scale" in layout_args:
+        # Крупность задана явно — одна на все рамки.
+        cams = layout_args.get("cams") if "cams" in layout_args else old.get("cams")
+        if cams:
+            layout_args["cams"] = [{k: v for k, v in e.items() if k != "video_scale"} for e in cams if isinstance(e, dict)]
     if "bg" not in layout_args and "bg_blur" not in layout_args and old.get("mode") != "avatar_full":
         from app.chroma_key import normalize_backdrop
 
@@ -6230,7 +6395,9 @@ def _build_registry() -> list[Tool]:
             "не задан — найдёт detect_avatar (Gemini), иначе facecam источника; video_scale — ширина аватара в "
             "ширинах кадра (по умолчанию — крупно, почти на всю высоту), avatar_y — центр по высоте; фон — размытый "
             "тот же аватар (bg_blur, по умолчанию) или bg / фон set_backdrop клипа. Игры, браузера и роликов с "
-            "экрана в кадре нет. После — view_frame. "
+            "экрана в кадре нет. Аватар в разных местах по ходу клипа (detect_avatar: places) — рамка по отрезкам cams "
+            "ставится сама; свои — cams [{from_t, to_t, cam}] (шкала clip), \"auto\" — заново по detect_avatar; один "
+            "cam — на весь клип. После — view_frame (при нескольких местах — в каждом отрезке). "
             "/ Frame layout.",
             _obj({"mode": {"type": "string", "enum": ["single", "split", "pip_cam", "meme", "avatar_full"]},
                   "cam": {"type": "object"}, "ratio": {"type": "number"}, "cam_pos": {"type": "string"},
@@ -6238,6 +6405,9 @@ def _build_registry() -> list[Tool]:
                   "bg": {"type": ["object", "string"], "description": "meme/avatar_full: фон {kind, colors, speed, intensity} или имя стиля"},
                   "bg_blur": {"type": "boolean", "description": "avatar_full: фон — размытый тот же аватар (по умолчанию)"},
                   "avatar_y": {"type": "number", "description": "avatar_full: центр аватара по высоте кадра 0.2..0.8"},
+                  "cams": {"type": ["array", "string"], "items": {"type": "object"},
+                           "description": "avatar_full: рамки аватара по отрезкам [{from_t, to_t, cam {x,y,w,h}}] "
+                                          "(шкала clip) или \"auto\" — места из detect_avatar"},
                   "video_y": {"type": "number"},
                   "video_scale": {"type": "number"},
                   "game_x": {"type": "number", "description": "центр окна игры, доля ширины исходника 0..1"},
@@ -6249,7 +6419,8 @@ def _build_registry() -> list[Tool]:
             "Где на кадре стрима аватар стримера — VTuber/PNGtuber-модель или вебка (Gemini по целым кадрам "
             "исходника с кусков клипа; люди внутри роликов, игры и браузера на экране — не аватар). Ответ: cam "
             "{x, y, w, h} в долях всего кадра исходника (с запасом), frames_with_avatar; аватар переезжает — "
-            "warnings. Дальше set_layout mode avatar_full (cam возьмётся сам). save: true — запомнить как "
+            "places [{from_t, to_t, cam, view_t}] по шкале clip и warnings. Дальше set_layout mode avatar_full (рамки "
+            "возьмутся сами, по отрезкам). save: true — запомнить как "
             "facecam источника (для split/pip_cam других клипов). refresh — искать заново. / Find the streamer's "
             "avatar/webcam rectangle in the source frames.",
             _obj({"save": {"type": "boolean"}, "refresh": {"type": "boolean"}}),
