@@ -4347,6 +4347,11 @@ from app.cuts_api import build_cuts_router  # noqa: E402
 
 app.include_router(build_cuts_router(AuthDep, lambda: store))
 
+# 🔎 Проверка клипа перед сдачей: зоны площадок, темп чтения, вспышки, луп (app/quality_lint.py).
+from app.quality_lint_api import build_lint_router  # noqa: E402
+
+app.include_router(build_lint_router(AuthDep, lambda: store))
+
 
 app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки
 

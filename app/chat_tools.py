@@ -5,7 +5,8 @@
 это ~30 тысяч токенов, поэтому инструменты идут **группами**:
 
 * ``BASE`` — всегда: проект (бриф, правила, гипотезы, одобрение, расписание), найти клип,
-  посмотреть его (``get_clip``, ``view_frame``, ``contact_sheet``), плейбуки и ``load_tools``;
+  посмотреть его (``get_clip``, ``view_frame``, ``contact_sheet``), проверить перед сдачей
+  (``lint_clip``), плейбуки и ``load_tools``;
 * ``GROUPS`` — подгружаются по запросу модели (``load_tools(["montage"])``) или по словам
   владельца (``preload_for``) и остаются у переписки, пока её не начали заново;
 * всё остальное из реестра, не попавшее ни в одну группу, — группа ``other``: новый
@@ -37,8 +38,10 @@ _log = logging.getLogger(__name__)
 LOAD_TOOLS = "load_tools"
 
 # Всегда в объявлениях (плюс все проектные инструменты и инструменты чата).
+# ``lint_clip`` (app/lint_tools.py) — проверка перед сдачей: ничего не меняет, нужна перед каждым
+# submit_for_approval, поэтому всегда под рукой, а не в группе.
 BASE = ("list_projects", "list_clips", "get_clip", "get_transcript", "view_frame", "contact_sheet",
-        "get_performance", "get_playbook")
+        "get_performance", "get_playbook", "lint_clip")
 
 GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "montage": ("слои, камера, мемы-вставки, автомонтаж, переходы, бренд, обложка", (

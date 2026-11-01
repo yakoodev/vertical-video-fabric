@@ -33,6 +33,13 @@ def h_submit_for_approval(ctx: ToolContext, args: dict) -> dict:
     else:
         out["note"] = ("Ждёт владельца (UI «Одобрение» / Telegram). НЕ публикуй сам. Проверяй list_approvals: "
                        "changes_requested — переделай по decision_comment и отправь заново.")
+    lint = approval.get("lint")
+    if lint:
+        # Линт перед сдачей (app/quality_lint.py) — предупреждения, отправку не останавливают.
+        out["lint"] = lint
+        if (lint.get("counts") or {}).get("warn"):
+            out["note"] += (f" Линт: {lint['summary']} — посмотри lint_clip; поправь, перерендерь и отправь заново, "
+                            "если это ошибка, а не замысел.")
     return out
 
 

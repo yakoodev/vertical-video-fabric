@@ -19,15 +19,19 @@
    - много места под скрины — раскладка `meme` (`set_layout(mode: "meme")`), а не панель поверх кадра
      (docs/AGENTS.md, «Видео не закрывать», «Фоны»).
 4. **Звук** — 0–2 эффекта на ролик, только настоящие записи (docs/AGENTS.md, «Подводные камни» → «Звуки»).
-5. **Проверка** — `view_frame` на вставке и `contact_sheet`.
+5. **Проверка** — `view_frame` на вставке и `contact_sheet`; после рендера — `lint_clip`: стикер не под
+   кнопками справа, подпись мема успевают прочитать, мигание не чаще 3 в секунду; мему под повторы —
+   оценка `loop` (подсказки: `set_end_hold(0)`, подрезать хвост).
 
 ## Инструменты MCP
 
 `get_clip`, `list_packs`, `search_pack`, `search_web_images`, `add_image_from_url`, `upload_image`,
-`add_video_from_url`, `add_layers` (с at_word), `add_insert`, `set_layout`, `view_frame`, `contact_sheet`.
+`add_video_from_url`, `add_layers` (с at_word), `add_insert`, `set_layout`, `view_frame`, `contact_sheet`,
+`lint_clip`.
 
 ## Чек-лист перед сдачей
 
+- [ ] `lint_clip` по свежему рендеру — нет `warn` (зоны площадок, темп чтения, вспышки).
 - [ ] Вставка ровно на слово/реакцию, держится, пока её успевают прочитать (≥ 0.6 с).
 - [ ] Закрывает ≤ 40 % кадра и не лежит на лице, субтитрах, хуке (`add_layers` откажет при большем).
 - [ ] Нет фото реальных людей и чужих видео там, где заказ это запрещает.

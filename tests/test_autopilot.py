@@ -564,6 +564,29 @@ def test_mcp_tools(env):
     assert prop["structuredContent"]["approval"]["kind"] == "rule_proposal" and not P.list_rules(store, project_id=pid)
 
 
+def test_submit_runs_quality_lint_without_blocking(env, monkeypatch):
+    _c, store, source, pid = env
+    A.update_config(store, pid, {"platforms": ["instagram"]})
+    plan = _clip(store, source["id"])
+    rs = dict(store.get_clip_plan(plan["id"])["render_settings"] or {})
+    rs["layers"] = [{"id": "low", "type": "text", "start": 0, "end": 3, "x": 0.5, "y": 0.77,
+                     "props": {"text": "ПОДПИСЬ", "size": 80}}]
+    store.set_clip_plan_render_settings(plan["id"], rs)
+    card = A.submit_clip(store, plan["id"], title="Мура")
+    # Линт — предупреждения: карточка ушла, а подпись Reels (площадка проекта) названа.
+    assert card["status"] == "pending" and card["lint"]["counts"]["warn"] >= 1
+    assert any("Instagram Reels" in w for w in card["lint"]["warnings"])
+    submitted = [e for e in A.list_events(store, pid) if e["event"] == "submitted"]
+    assert submitted
+    res = mcp_call_tool(store, "submit_for_approval", {"clip_id": plan["id"], "title": "Мура v2"})
+    content = res["structuredContent"]
+    assert not res["isError"] and content["lint"]["counts"]["warn"] >= 1 and "lint_clip" in content["note"]
+    # Линт упал — отправка всё равно проходит.
+    monkeypatch.setattr("app.quality_lint.lint_clip", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    again = A.submit_clip(store, plan["id"], title="Мура v3")
+    assert again["status"] == "pending" and "lint" not in again
+
+
 def test_autopilot_playbook():
     book = playbooks.get_playbook("autopilot")
     text = book["text"]

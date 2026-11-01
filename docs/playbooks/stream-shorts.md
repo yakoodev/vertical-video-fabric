@@ -92,6 +92,8 @@
 ### 9. Рендер и контроль
 
 - `vvf.py render <clip>` (или `POST /api/clip-plans/{id}/render`) — отчёт QC.
+- `lint_clip` — плашка, субтитры и титры не под кнопками и подписью TikTok/Reels/Shorts, титры успевают
+  прочитать, вспышек > 3/с нет. `warn` — правка и рендер снова.
 - Дальше чек-лист ниже. Что-то не так — правка и рендер снова; сдаём только с пройденным чек-листом.
 
 ## Инструменты MCP
@@ -101,10 +103,12 @@
 `set_layout`, `set_focus`, `view_frame`, `generate_subtitles`, `get_clip`, `listen`,
 `set_subtitle_words`, `edit_subtitle_lines`, `list_subtitle_styles`, `set_subtitles`,
 `censor_profanity` (если есть) / `mute_audio`, `set_source_gain`, `set_nameplate`, `apply_brand`,
-`contact_sheet`.
+`contact_sheet`, `lint_clip`.
 
 ## Чек-лист перед сдачей
 
+- [ ] **`lint_clip`** по свежему рендеру — нет `warn` (зоны площадок, темп чтения, вспышки); каждое
+      оставленное — осознанно и сказано в отчёте.
 - [ ] **Лист кадров** `contact_sheet(n: 12)`: модель в полосе целиком; нет чата, донат-оверлеев,
       чужих видео, фото реальных людей; нет длинных тёмных меню; плашка канала видна и не на субтитрах.
 - [ ] **Мат**: `listen` по каждому заглушённому месту (и по всему ролику окнами по 6–10 с) — Whisper
