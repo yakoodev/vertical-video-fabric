@@ -5,6 +5,7 @@ import {
   CAMERA_LABEL,
   CAMERA_MOVES,
   STAGE_LABEL,
+  VIDEO_MODELS,
   aivApi,
   aivKey,
   aivScriptKey,
@@ -58,7 +59,9 @@ export function AiVideoTab({ projectId }: { projectId: number }) {
     // Пока что-то генерируется или ждёт решения — освежаем.
     refetchInterval: (query) => {
       const jobs = (query.state.data as Overview | undefined)?.jobs ?? {};
-      return (jobs.approved ?? 0) + (jobs.polling ?? 0) + (jobs.submitting ?? 0) + (jobs.awaiting ?? 0) > 0 ? 4000 : false;
+      return (jobs.approved ?? 0) + (jobs.polling ?? 0) + (jobs.submitting ?? 0) + (jobs.recovering ?? 0) + (jobs.awaiting ?? 0) > 0
+        ? 4000
+        : false;
     },
   });
   if (q.isLoading) return <Loading />;
@@ -116,7 +119,7 @@ function BudgetBar({ budget, episode }: { budget: Budget; episode?: boolean }) {
         {budget.paid && !budget.enabled ? (
           <span className="aiv-warn">AIVIDEO_ENABLED=0: одобренное не запустится, пока владелец не включит</span>
         ) : null}
-        <span className="muted">цены от {budget.price_checked}, ×2 к прайсу (не замерено)</span>
+        <span className="muted">цены от {budget.price_checked}: замер — как есть, остальное ×2 к прайсу</span>
       </div>
       <Meter label="Месяц проекта" spent={budget.month.spent_rub} reserved={budget.month.reserved_rub} cap={budget.month.cap_rub} />
       {episode && budget.episode ? (
@@ -258,6 +261,18 @@ function StageButton({
               {p}
             </span>
           ))}
+          {(est.notes ?? []).map((n) => (
+            <span key={n} className="muted">
+              {n}
+            </span>
+          ))}
+          {(est.continuity ?? [])
+            .filter((f) => !f.ok && !f.outdated)
+            .map((f) => (
+              <span key={`c${f.idx}`} className="aiv-warn">
+                Склейка плана {f.idx}: {f.mismatches.map((m) => m.detail).join("; ") || `оценка ${f.score}`}
+              </span>
+            ))}
           {est.count ? (
             <button className="btn primary sm" disabled={request.isPending} onClick={() => request.mutate()}>
               {est.paid ? `Запросить одобрение ≈ ${rub(est.total_rub)}` : "Сделать (0 ₽)"}
@@ -294,7 +309,11 @@ function Versions({ refs, projectId, onPick }: { refs: AivRef[]; projectId: numb
         <figure key={r.id} className={`aiv-thumb${r.selected ? " sel" : ""}${r.stale ? " stale" : ""}`}>
           {r.url ? (
             <a href={r.url} target="_blank" rel="noreferrer">
-              <img src={r.url} alt={`${r.kind} v${r.version}`} loading="lazy" />
+              {r.kind === "shot_video" ? (
+                <video src={r.url} muted playsInline preload="metadata" />
+              ) : (
+                <img src={r.url} alt={`${r.kind} v${r.version}`} loading="lazy" />
+              )}
             </a>
           ) : null}
           <figcaption>
@@ -335,6 +354,8 @@ function StylePanel({ o }: { o: Overview }) {
     quality: s.quality,
     provider: s.provider,
     image_model: s.image_model,
+    video_model: s.video_model,
+    video_resolution: s.video_resolution,
     month_cap_rub: s.month_cap_rub == null ? "" : String(s.month_cap_rub),
     captions_style: s.captions_style,
   });
@@ -378,6 +399,17 @@ function StylePanel({ o }: { o: Overview }) {
               {m}
             </option>
           ))}
+        </select>
+        <select className="input" value={draft.video_model} onChange={(e) => setDraft({ ...draft, video_model: e.target.value })} title="Модель видео планов (этап «Видео»)">
+          {VIDEO_MODELS.map(([m, label]) => (
+            <option key={m} value={m}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select className="input" value={draft.video_resolution} onChange={(e) => setDraft({ ...draft, video_resolution: e.target.value as never })}>
+          <option value="720p">видео 720p</option>
+          <option value="480p">видео 480p</option>
         </select>
       </div>
       <label className="field">
@@ -498,10 +530,26 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
     cast: shot.cast.map((c) => (c.look ? `${c.id}:${c.look}` : c.id)).join(", "),
     action: shot.action,
     dialogue: shot.dialogue.map((l) => `${l.who}: ${l.text}`).join("\n"),
+    needs_motion: shot.needs_motion,
+    continues_from_prev: shot.continues_from_prev,
+    motion_prompt: shot.motion_prompt ?? "",
+    sound: shot.sound ?? "",
+    state: JSON.stringify(shot.state ?? {}),
   });
   const save = useMutation({
-    mutationFn: () =>
-      aivApi.editShot(shot.id, {
+    mutationFn: () => {
+      let state: unknown;
+      try {
+        state = d.state.trim() ? JSON.parse(d.state) : {};
+      } catch {
+        throw new Error("state — JSON: {\"characters\": [{\"id\", \"pose\", \"facing\", \"holding\", \"clothing\"}], \"props\": [{\"name\", \"state\"}]}");
+      }
+      return aivApi.editShot(shot.id, {
+        needs_motion: d.needs_motion,
+        continues_from_prev: d.continues_from_prev,
+        motion_prompt: d.motion_prompt,
+        sound: d.sound,
+        state,
         duration: d.duration,
         camera: { ...shot.camera, move: d.move },
         location: d.location,
@@ -522,13 +570,14 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
             const at = line.indexOf(":");
             return at > 0 ? { who: line.slice(0, at).trim(), text: line.slice(at + 1).trim() } : { who: "narrator", text: line };
           }),
-      }),
+      });
+    },
     onSuccess: (s) => {
       toast.success(`План ${shot.idx} сохранён`);
       (s.warnings ?? []).forEach((w: string) => toast.error(w));
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, "Не сохранено")),
+    onError: (e) => toast.error(e instanceof Error && !(e instanceof ApiError) ? e.message : errText(e, "Не сохранено")),
   });
   return (
     <section className="panel series-panel aiv-shot-edit">
@@ -559,6 +608,30 @@ function ShotEditor({ shot, o }: { shot: Shot; o: Overview }) {
       </div>
       <input className="input" placeholder="действие в кадре" value={d.action} onChange={(e) => setD({ ...d, action: e.target.value })} />
       <textarea className="input" rows={2} placeholder="кто: реплика (по строке)" value={d.dialogue} onChange={(e) => setD({ ...d, dialogue: e.target.value })} />
+      <div className="series-row">
+        <label className="aiv-check">
+          <input type="checkbox" checked={d.needs_motion} onChange={(e) => setD({ ...d, needs_motion: e.target.checked })} /> видео (оживить план)
+        </label>
+        <label className="aiv-check" title="Та же сцена: видео начнётся с последнего кадра прошлого плана (0 ₽ за кадр)">
+          <input
+            type="checkbox"
+            checked={d.continues_from_prev}
+            disabled={shot.idx === 1}
+            onChange={(e) => setD({ ...d, continues_from_prev: e.target.checked })}
+          />{" "}
+          продолжает прошлый план
+        </label>
+      </div>
+      {d.needs_motion ? (
+        <div className="series-row">
+          <input className="input wide" placeholder="движение: как двигаются тело и камера" value={d.motion_prompt} onChange={(e) => setD({ ...d, motion_prompt: e.target.value })} />
+          <input className="input wide" placeholder="звук: фон и шумы действия (без музыки и речи)" value={d.sound} onChange={(e) => setD({ ...d, sound: e.target.value })} />
+        </div>
+      ) : null}
+      <label className="field">
+        <span>Состояние на начало плана (JSON: поза, взгляд, руки, одежда; реквизит)</span>
+        <textarea className="input mono" rows={2} value={d.state} onChange={(e) => setD({ ...d, state: e.target.value })} />
+      </label>
     </section>
   );
 }
@@ -789,6 +862,22 @@ function BoardSub({ o }: { o: Overview }) {
     },
     onError: (e) => toast.error(errText(e, "Не запрошено")),
   });
+  const continuity = useMutation({
+    mutationFn: (scriptId: number) => aivApi.checkContinuity(scriptId),
+    onSuccess: (r) => {
+      (r.flagged?.length ? toast.error : toast.success)(r.note);
+      invalidate();
+    },
+    onError: (e) => toast.error(errText(e, "Проверка склеек не удалась")),
+  });
+  const makeVideo = useMutation({
+    mutationFn: (shotId: number) => aivApi.regenerateTarget(`shot:${shotId}:shot_video`),
+    onSuccess: (r) => {
+      toast.success(r.status === "awaiting_approval" ? `Видео ≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Видео готово");
+      invalidate();
+    },
+    onError: (e) => toast.error(errText(e, "Не запрошено")),
+  });
   const s = ep.script;
   return (
     <div className="series-col">
@@ -796,6 +885,13 @@ function BoardSub({ o }: { o: Overview }) {
         <div className="series-row">
           <EpisodePicker o={o} id={ep.id} setId={ep.setId} />
           {s ? <StageButton projectId={o.project.id} stage="keyframes" scriptId={s.id} label="Кадры серии: оценить" /> : null}
+          {s ? (
+            <button className="btn ghost sm" disabled={continuity.isPending} onClick={() => continuity.mutate(s.id)}
+                    title="Gemini сравнит стартовый кадр каждого плана с концом прошлого и заявленным состоянием (бесплатно)">
+              👁 Склейки
+            </button>
+          ) : null}
+          {s ? <StageButton projectId={o.project.id} stage="video" scriptId={s.id} label="Видео планов: оценить" /> : null}
         </div>
         {s?.budget ? <BudgetBar budget={s.budget} episode /> : null}
       </section>
@@ -803,11 +899,20 @@ function BoardSub({ o }: { o: Overview }) {
         <div className="aiv-board">
           {s.shots?.map((shot) => {
             const sel = shot.keyframes?.find((k) => k.selected) ?? shot.keyframes?.[shot.keyframes.length - 1];
+            const vid = shot.videos?.find((v) => v.selected) ?? shot.videos?.[shot.videos.length - 1];
+            const cont = shot.continuity;
+            const chained = sel?.prompt?.startsWith("chain:");
             return (
               <article key={shot.id} className="panel aiv-shot">
                 <div className="aiv-shot-img">
-                  {sel?.url ? <img src={sel.url} alt={`план ${shot.idx}`} /> : <span className="muted">кадра нет</span>}
-                  {sel?.stale ? <span className="aiv-badge">устарело</span> : null}
+                  {vid?.url ? (
+                    <video src={vid.url} poster={sel?.url ?? undefined} controls muted loop playsInline preload="metadata" />
+                  ) : sel?.url ? (
+                    <img src={sel.url} alt={`план ${shot.idx}`} />
+                  ) : (
+                    <span className="muted">{shot.continues_from_prev && shot.idx > 1 ? "кадр — из видео прошлого плана" : "кадра нет"}</span>
+                  )}
+                  {(vid ?? sel)?.stale ? <span className="aiv-badge">устарело</span> : null}
                   {shot.needs_review ? (
                     <span className="aiv-badge review" title={shot.review_note || "персонаж не похож на канон"}>
                       проверь: не похож
@@ -822,6 +927,18 @@ function BoardSub({ o }: { o: Overview }) {
                     {shot.location || "—"} · {shot.cast.map((c) => c.id + (c.look ? `:${c.look}` : "")).join(", ") || "без персонажей"}
                     {shot.spent_rub ? ` · ${rub(shot.spent_rub)}` : ""}
                   </span>
+                  <span className="muted">
+                    {shot.needs_motion ? "🎬 видео" : "стоп-кадр"}
+                    {shot.continues_from_prev && shot.idx > 1 ? " · продолжает прошлый" : ""}
+                    {chained ? " · старт из видео прошлого плана" : ""}
+                  </span>
+                  {cont && !cont.ok ? (
+                    <span className="aiv-warn">
+                      Склейка: {(cont.mismatches ?? []).map((m) => m.detail).join("; ") || `оценка ${cont.score}`}
+                    </span>
+                  ) : cont?.ok && !cont.chain ? (
+                    <span className="muted">склейка ок{cont.score != null ? ` · ${cont.score}/10` : ""}</span>
+                  ) : null}
                   {shot.dialogue.map((l, i) => (
                     <span key={i} className="aiv-line">
                       <b>{l.who}:</b> {l.text}
@@ -837,8 +954,15 @@ function BoardSub({ o }: { o: Overview }) {
                         👁 Постоянство
                       </button>
                     ) : null}
+                    {shot.needs_motion && (sel || shot.continues_from_prev) ? (
+                      <button className="btn sm" disabled={makeVideo.isPending} onClick={() => makeVideo.mutate(shot.id)}
+                              title="Видео этого плана: своя оценка и карточка (сухой прогон — сразу)">
+                        {vid ? "↻ Видео" : "🎬 Видео"}
+                      </button>
+                    ) : null}
                   </div>
                   {shot.keyframes && shot.keyframes.length > 1 ? <Versions refs={shot.keyframes} projectId={o.project.id} /> : null}
+                  {shot.videos && shot.videos.length > 1 ? <Versions refs={shot.videos} projectId={o.project.id} /> : null}
                 </div>
               </article>
             );
@@ -870,7 +994,10 @@ function AssembleSub({ o }: { o: Overview }) {
   });
   const ledger = useQuery({ queryKey: [...aivKey(o.project.id), "ledger"], queryFn: () => aivApi.ledger(o.project.id) });
   const s: Script | undefined = ep.script;
-  const missing = useMemo(() => (s?.shots ?? []).filter((x) => !x.keyframes?.length).map((x) => x.idx), [s]);
+  const missing = useMemo(
+    () => (s?.shots ?? []).filter((x) => !x.keyframes?.length && !x.videos?.length).map((x) => x.idx),
+    [s],
+  );
   return (
     <div className="series-grid">
       <div className="series-col">

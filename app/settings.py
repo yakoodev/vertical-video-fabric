@@ -118,6 +118,9 @@ class Settings:
         self.aivideo_month_cap_rub = float(os.getenv("AIVIDEO_MONTH_CAP_RUB", "3000") or 3000)
         self.aivideo_image_model = (os.getenv("AIVIDEO_IMAGE_MODEL", "google/gemini-nano-banana-2.1").strip()
                                     or "google/gemini-nano-banana-2.1")
+        # Видео планов (этап video): модель по умолчанию; проект выбирает свою (video_model).
+        self.aivideo_video_model = (os.getenv("AIVIDEO_VIDEO_MODEL", "bytedance/seedance-2-fast").strip()
+                                    or "bytedance/seedance-2-fast")
         self.aivideo_poll_timeout_sec = float(os.getenv("AIVIDEO_POLL_TIMEOUT_SEC", "240") or 240)
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"

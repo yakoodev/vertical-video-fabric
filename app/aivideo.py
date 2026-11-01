@@ -26,6 +26,7 @@ import re
 from typing import Any
 
 from app import projects as P
+from app.aivideo_providers import provider_ids
 
 AIV_SCHEMA_SQL = [
     """
@@ -208,6 +209,26 @@ AIV_COLUMNS = [
     ("aiv_characters", "speech_captions", "INTEGER NOT NULL DEFAULT 1"),
     # Кадр не похож на канон (проверка постоянства < 6) — показать владельцу, не перерисовывать само.
     ("aiv_refs", "needs_review", "INTEGER NOT NULL DEFAULT 0"),
+    # v2 (видео планов и постоянство склеек).
+    # Провайдер, модель и разрешение видео планов (этап video); пусто — провайдер проекта и
+    # AIVIDEO_VIDEO_MODEL. Провайдер видео может отличаться от провайдера картинок.
+    ("aiv_projects", "video_provider", "TEXT NOT NULL DEFAULT ''"),
+    ("aiv_projects", "video_model", "TEXT NOT NULL DEFAULT ''"),
+    ("aiv_projects", "video_resolution", "TEXT NOT NULL DEFAULT '720p'"),
+    # Состояние на НАЧАЛО плана: по персонажам поза/куда смотрит/где в кадре/что в руках/одежда,
+    # плюс реквизит («один носок снят») — Gemini держит его от плана к плану.
+    ("aiv_shots", "state_json", "TEXT NOT NULL DEFAULT '{}'"),
+    # План продолжает прошлый (та же сцена): старт видео — последний кадр видео прошлого плана.
+    ("aiv_shots", "continues_from_prev", "INTEGER NOT NULL DEFAULT 0"),
+    ("aiv_shots", "sound", "TEXT NOT NULL DEFAULT ''"),
+    # Окно видео плана в сборке (секунды файла): агент обрезает начало/хвост.
+    ("aiv_shots", "video_in", "REAL"),
+    ("aiv_shots", "video_out", "REAL"),
+    # Проверка склейки Gemini-зрением: {ok, score, mismatches, checked_at}.
+    ("aiv_shots", "continuity_json", "TEXT NOT NULL DEFAULT ''"),
+    # Время отправки POST (UTC ISO), пишется ДО запроса: по нему адаптер ищет запрос, ушедший без
+    # ответа (у Polza — /history/generations), в том числе после перезапуска.
+    ("aiv_gen_jobs", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -231,7 +252,7 @@ STYLE_KINDS = ("anime", "photoreal")
 STYLE_LABELS = {"anime": "аниме / 2D-toon", "photoreal": "фотореализм"}
 QUALITIES = ("draft", "quality")
 QUALITY_LABELS = {"draft": "черновик", "quality": "качество"}
-PROVIDERS = ("none", "polza")
+PROVIDERS = provider_ids()  # подключаемые: app/aivideo_providers.py CATALOGS
 ORIGINS = ("invented", "owner")
 SPEECH_MODES = ("voice", "sfx", "none")
 SPEECH_LABELS = {"voice": "говорит голосом", "sfx": "звуки вместо слов", "none": "молчит"}
@@ -299,7 +320,8 @@ def _now_sql() -> str:
 # --------------------------------------------------------------------------- #
 
 STYLE_FIELDS = ("style_kind", "passport_text", "palette", "negative_text", "image_model", "provider", "quality",
-                "captions_style", "music_track_id")
+                "captions_style", "music_track_id", "video_provider", "video_model", "video_resolution")
+VIDEO_RESOLUTIONS = ("480p", "720p")
 # Потолок месяца — только владелец (REST с cookie), не агент.
 OWNER_FIELDS = ("month_cap_rub",)
 
@@ -328,6 +350,9 @@ def get_style(store: Any, project_id: int) -> dict:
     require_project(store, project_id)
     data = _style_row(store, project_id)
     data["image_model"] = data.get("image_model") or settings.aivideo_image_model
+    data["video_provider"] = data.get("video_provider") or data["provider"]
+    data["video_model"] = data.get("video_model") or settings.aivideo_video_model
+    data["video_resolution"] = data.get("video_resolution") or "720p"
     data["style_label"] = STYLE_LABELS.get(data["style_kind"], data["style_kind"])
     data["quality_label"] = QUALITY_LABELS.get(data["quality"], data["quality"])
     return data
@@ -335,11 +360,14 @@ def get_style(store: Any, project_id: int) -> dict:
 
 def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) -> dict:
     """Стиль-библия и настройки проекта. ``owner`` — можно менять потолок месяца."""
-    from app.aivideo_providers import IMAGE_PRICES
+    from app.aivideo_providers import catalog
 
     require_project(store, project_id)
     allowed = STYLE_FIELDS + (OWNER_FIELDS if owner else ())
     sets: dict[str, Any] = {}
+    current = _style_row(store, project_id)
+    image_provider = (patch or {}).get("provider") or current["provider"]
+    video_provider = (patch or {}).get("video_provider") or current.get("video_provider") or image_provider
     for key, value in (patch or {}).items():
         if key not in allowed:
             if key in OWNER_FIELDS:
@@ -353,11 +381,23 @@ def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) 
             sets[key] = P._choice(value, QUALITIES, "quality")
         elif key == "palette":
             sets["palette_json"] = _json(_hexes(value))
+        elif key == "video_provider":
+            sets[key] = P._choice(value, PROVIDERS, "video_provider") if value else ""
         elif key == "image_model":
             model = str(value or "").strip()
-            if model and model not in IMAGE_PRICES:
-                raise AivError(f"image_model: одна из {', '.join(IMAGE_PRICES)}")
+            models = _catalog_models(catalog, image_provider, "image")
+            if model and model not in models:
+                raise AivError(f"image_model у {image_provider}: одна из {', '.join(models)}")
             sets[key] = model
+        elif key == "video_model":
+            model = str(value or "").strip()
+            models = _catalog_models(catalog, video_provider, "video")
+            if model and model not in models:
+                raise AivError(f"video_model у {video_provider}: одна из {', '.join(models)} (kling/v3 режет план "
+                               "на склейки — для сцепки планов не годится)")
+            sets[key] = model
+        elif key == "video_resolution":
+            sets[key] = P._choice(value or "720p", VIDEO_RESOLUTIONS, "video_resolution")
         elif key == "passport_text":
             sets[key] = P._long_text(value, 600)
         elif key == "negative_text":
@@ -378,13 +418,22 @@ def update_style(store: Any, project_id: int, patch: dict, owner: bool = False) 
     return get_style(store, project_id)
 
 
+def _catalog_models(catalog: Any, provider: str, kind: str) -> list[str]:
+    try:
+        cat = catalog(provider)
+    except RuntimeError as exc:  # ProviderError: нет такого провайдера
+        raise AivError(str(exc)) from exc
+    return cat.image_models() if kind == "image" else cat.video_models()
+
+
 def create_ai_project(store: Any, name: str, style_kind: str = "anime", passport_text: str = "", palette: Any = None,
                       quality: str = "draft", provider: str = "none", description: str = "",
-                      image_model: str = "") -> dict:
+                      image_model: str = "", video_model: str = "") -> dict:
     project = P.create_project(store, name, kind=PROJECT_KIND, description=description)
     update_style(store, project["id"], {"style_kind": style_kind or "anime", "passport_text": passport_text,
                                         "palette": palette or [], "quality": quality or "draft",
-                                        "provider": provider or "none", "image_model": image_model})
+                                        "provider": provider or "none", "image_model": image_model,
+                                        "video_model": video_model})
     return overview(store, project["id"])
 
 
@@ -668,7 +717,106 @@ def _shot_from_row(row: Any) -> dict:
     data["needs_motion"] = bool(data.get("needs_motion"))
     data["lipsync"] = bool(data.get("lipsync"))
     data["locked"] = bool(data.get("locked"))
+    data["continuity"] = _loads(data.pop("continuity_json", ""), {}) or None
+    data["state"] = _loads(data.pop("state_json", "{}"), {})
+    data["continues_from_prev"] = bool(data.get("continues_from_prev"))
     return data
+
+
+# --------------------------------------------------------------------------- #
+# Постоянство склеек: состояние на начало плана
+# --------------------------------------------------------------------------- #
+
+STATE_FIELDS = ("pose", "facing", "position", "holding", "clothing")
+STATE_LABELS = {"pose": "поза", "facing": "смотрит", "position": "в кадре", "holding": "в руках",
+                "clothing": "одежда"}
+# Что не должно меняться между планами одной сцены, если действие этого не показывает.
+STATE_WATCH = ("pose", "facing", "holding", "clothing")
+MAX_PROPS = 6
+
+
+def normalize_state(raw: Any, cast_ids: list[str], idx: int, warnings: list[str]) -> dict:
+    """Состояние на начало плана: ``{characters: [{id, pose, facing, position, holding, clothing}],
+    props: [{name, state}]}``. Принимает и словари ``{mira: {...}}`` / ``{носок: "снят"}``."""
+    if not isinstance(raw, dict):
+        return {}
+    chars_raw = raw.get("characters") or []
+    if isinstance(chars_raw, dict):
+        chars_raw = [{"id": k, **(v if isinstance(v, dict) else {})} for k, v in chars_raw.items()]
+    chars = []
+    for item in chars_raw if isinstance(chars_raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        cid = slugify(item.get("id") or item.get("character") or "", "")
+        if not cid:
+            continue
+        if cid not in cast_ids:
+            warnings.append(f"план {idx}: в state есть {cid!r}, а в кадре его нет — убран")
+            continue
+        entry = {"id": cid}
+        for key in STATE_FIELDS:
+            text = P._text(item.get(key), 80)
+            if text:
+                entry[key] = text
+        if len(entry) > 1 and cid not in {c["id"] for c in chars}:
+            chars.append(entry)
+    props_raw = raw.get("props") or []
+    if isinstance(props_raw, dict):
+        props_raw = [{"name": k, "state": v} for k, v in props_raw.items()]
+    props = []
+    for item in props_raw if isinstance(props_raw, list) else []:
+        if isinstance(item, str):
+            item = {"name": item, "state": ""}
+        if not isinstance(item, dict):
+            continue
+        name = P._text(item.get("name") or item.get("prop"), 60)
+        if name:
+            props.append({"name": name, "state": P._text(item.get("state"), 120)})
+    out: dict = {}
+    if chars:
+        out["characters"] = chars
+    if props:
+        out["props"] = props[:MAX_PROPS]
+    return out
+
+
+def state_text(store: Any, project_id: int, state: dict) -> str:
+    """Состояние плана — строка для промпта: «Мира: поза sitting; смотрит camera…; реквизит: носок — снят»."""
+    parts = []
+    for item in (state or {}).get("characters") or []:
+        c = character_by_slug(store, project_id, item.get("id") or "")
+        name = c["name"] if c else item.get("id")
+        bits = [f"{key} {item[key]}" for key in STATE_FIELDS if item.get(key)]
+        if bits:
+            parts.append(f"{name}: " + ", ".join(bits))
+    props = [f"{p['name']} — {p['state']}" if p.get("state") else p["name"] for p in (state or {}).get("props") or []]
+    if props:
+        parts.append("props: " + "; ".join(props))
+    return "; ".join(parts)
+
+
+def continuity_warnings(shots: list[dict]) -> list[str]:
+    """Сцена продолжается, а поза/взгляд/руки/одежда/реквизит сменились — склейка прыгнет, если
+    действие прошлого плана этого не показывает. Подсказка сценаристу, не ошибка."""
+    out = []
+    for prev, shot in zip(shots, shots[1:]):
+        if not shot.get("continues_from_prev"):
+            continue
+        before = {c["id"]: c for c in (prev.get("state") or {}).get("characters") or []}
+        for c in (shot.get("state") or {}).get("characters") or []:
+            old = before.get(c["id"])
+            if not old:
+                continue
+            for key in STATE_WATCH:
+                if old.get(key) and c.get(key) and old[key].strip().lower() != c[key].strip().lower():
+                    out.append(f"план {shot['idx']}: {c['id']} {STATE_LABELS[key]} «{old[key]}» → «{c[key]}» — "
+                               f"действие плана {prev['idx']} должно это показать, иначе склейка прыгнет")
+        props_before = {p["name"].lower(): p.get("state") or "" for p in (prev.get("state") or {}).get("props") or []}
+        for p in (shot.get("state") or {}).get("props") or []:
+            old = props_before.get(p["name"].lower())
+            if old is not None and old and p.get("state") and old.lower() != p["state"].lower():
+                out.append(f"план {shot['idx']}: {p['name']} «{old}» → «{p['state']}» — покажи это в плане {prev['idx']}")
+    return out
 
 
 def get_shot(store: Any, shot_id: int) -> dict:
@@ -756,6 +904,10 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         warnings.append(f"план {idx}: реплик на {chars / CHARS_PER_SEC:.1f} с при плане {duration:g} с — "
                         "при сборке план удлинится под озвучку (или сократи текст)")
     transition = str(raw.get("transition_in") or "cut").strip().lower()
+    video_in, video_out = _window(raw.get("video_in")), _window(raw.get("video_out"))
+    if video_in is not None and video_out is not None and video_out - video_in < 0.5:
+        warnings.append(f"план {idx}: окно видео {video_in:g}–{video_out:g} с короче 0.5 с — сброшено")
+        video_in = video_out = None
     return {
         "idx": idx, "duration": round(duration, 2), "location": location,
         "cast_json": _json(cast), "camera_json": _json(camera), "dialogue_json": _json(dialogue),
@@ -763,9 +915,22 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
         "motion_prompt": P._text(raw.get("motion_prompt"), 400), "needs_motion": int(bool(raw.get("needs_motion"))),
         "lipsync": int(bool(raw.get("lipsync"))),
         "transition_in": transition if transition in TRANSITIONS else "cut",
+        "sound": P._text(raw.get("sound"), 300), "video_in": video_in, "video_out": video_out,
+        "state_json": _json(normalize_state(raw.get("state"), [c["id"] for c in cast], idx, warnings)),
+        # None — не задано: решает replace_shots (по умолчанию да, если локация та же).
+        "continues_from_prev": None if raw.get("continues_from_prev") is None else int(bool(raw["continues_from_prev"])),
     }
 
 
+def _window(value: Any) -> float | None:
+    """Секунда файла видео плана (окно сборки); пусто/мусор — None (всё видео)."""
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(min(30.0, max(0.0, number)), 3)
 def _is_sfx(store: Any, project_id: int, who: str) -> bool:
     c = character_by_slug(store, project_id, who) if who and who != "narrator" else None
     return bool(c and c["speech"] == "sfx")
@@ -781,7 +946,12 @@ def replace_shots(store: Any, script_id: int, shots: list, title: str | None = N
         raise AivError(f"планов {len(shots)} — не больше {MAX_SHOTS}")
     warnings: list[str] = []
     rows = [normalize_shot(store, script["project_id"], raw, i + 1, warnings) for i, raw in enumerate(shots)]
-    old = [int(r["id"]) for r in store.db.query_all("SELECT id FROM aiv_shots WHERE script_id = ?", (int(script_id),))]
+    for i, row in enumerate(rows):
+        if i == 0:
+            row["continues_from_prev"] = 0  # первому плану продолжать нечего
+        elif row["continues_from_prev"] is None:
+            row["continues_from_prev"] = int(bool(row["location"]) and row["location"] == rows[i - 1]["location"])
+    old =[int(r["id"]) for r in store.db.query_all("SELECT id FROM aiv_shots WHERE script_id = ?", (int(script_id),))]
     for shot_id in old:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type IN ('shot', 'line') AND target_id = ?",
                          (shot_id,))
@@ -802,6 +972,7 @@ def replace_shots(store: Any, script_id: int, shots: list, title: str | None = N
     total = out["duration_total"]
     if abs(total - float(script["duration_target"])) > max(5.0, 0.25 * float(script["duration_target"])):
         warnings.append(f"сумма планов {total:g} с против цели {script['duration_target']:g} с")
+    warnings += continuity_warnings(out["shots"])
     out["warnings"] = warnings
     return out
 
@@ -839,6 +1010,8 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
         "camera": shot["camera"], "dialogue": shot["dialogue"], "action": shot["action"],
         "image_prompt": shot["image_prompt"], "motion_prompt": shot["motion_prompt"],
         "needs_motion": shot["needs_motion"], "lipsync": shot["lipsync"], "transition_in": shot["transition_in"],
+        "sound": shot.get("sound") or "", "video_in": shot.get("video_in"), "video_out": shot.get("video_out"),
+        "state": shot.get("state") or {}, "continues_from_prev": shot.get("continues_from_prev", False),
     }
     for key, value in (patch or {}).items():
         if key == "cast":
@@ -848,16 +1021,26 @@ def update_shot(store: Any, shot_id: int, patch: dict) -> dict:
     warnings: list[str] = []
     row = normalize_shot(store, script["project_id"], merged, int(shot["idx"]), warnings)
     row.pop("idx")
+    if row["continues_from_prev"] is None:
+        row["continues_from_prev"] = int(bool(shot.get("continues_from_prev")))
+    if int(shot["idx"]) == 1:
+        row["continues_from_prev"] = 0
     visual = any(row[k] != old for k, old in (
         ("location", shot["location"]), ("cast_json", _json(shot["cast"])), ("action", shot["action"]),
-        ("image_prompt", shot["image_prompt"]), ("camera_json", _json(shot["camera"]))))
+        ("image_prompt", shot["image_prompt"]), ("camera_json", _json(shot["camera"])),
+        ("state_json", _json(shot.get("state") or {})),
+        ("continues_from_prev", int(bool(shot.get("continues_from_prev"))))))
     if "locked" in (patch or {}):
         row["locked"] = int(bool(patch["locked"]))
     cols = ", ".join(f"{k} = ?" for k in row)
     store.db.execute(f"UPDATE aiv_shots SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                      (*row.values(), int(shot_id)))
+    motion = any(row[k] != (shot.get(k) or "") for k in ("motion_prompt", "sound"))
     if visual:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ?", (int(shot_id),))
+    elif motion:
+        store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? "
+                         "AND kind = 'shot_video'", (int(shot_id),))
     out = get_shot(store, shot_id)
     out["warnings"] = warnings
     return out
@@ -1047,6 +1230,7 @@ def script_view(store: Any, script_id: int) -> dict:
     review = []
     for shot in script["shots"]:
         shot["keyframes"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "keyframe")
+        shot["videos"] = list_refs(store, script["project_id"], "shot", int(shot["id"]), "shot_video")
         sel = next((k for k in shot["keyframes"] if k["selected"]), shot["keyframes"][-1] if shot["keyframes"] else None)
         # Выбранный кадр не похож на канон (проверка постоянства < 6): владелец решает, перерисовать ли.
         shot["needs_review"] = bool(sel and sel["needs_review"])
