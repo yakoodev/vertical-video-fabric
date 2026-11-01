@@ -3692,8 +3692,9 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
                                 ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
                                  "(source_contact_sheet покажет кадры)"])
     if "cam" not in layout_args and layout_args.get("cams"):
-        layout_args["cam"] = layout_args["cams"][0]["cam"] if isinstance(layout_args["cams"][0].get("cam"), dict) \
-            else old.get("cam")
+        first = layout_args["cams"][0]
+        layout_args["cam"] = first["cam"] if isinstance(first.get("cam"), dict) else \
+            {k: first[k] for k in ("x", "y", "w", "h") if k in first} or old.get("cam")
     width, height = frame_size(settings_render_format(render))
     if "video_scale" not in layout_args and old.get("mode") != "avatar_full":
         layout_args["video_scale"] = avatar_auto_scale(normalize_cam(layout_args.get("cam") or old.get("cam")), width,
