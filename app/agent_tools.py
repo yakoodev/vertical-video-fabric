@@ -6311,7 +6311,8 @@ def _build_registry() -> list[Tool]:
             "чек-лист перед сдачей. Без name — список (stream-shorts — нарезка стрима в вертикальные шортсы, "
             "stream-horizontal — горизонтальная нарезка стрима 10–15 мин, meme-insert — мем/вставка поверх "
             "видео, app-promo — промо приложения, autopilot — автопилот канала: от VOD до одобрения, расписания "
-            "и сводки). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
+            "и сводки, vtuber-story — история-«говорящая голова» витубера: только аватар крупно, заголовок, "
+            "сабы по 1–2 слова, вставки под слова). Прочитай подходящий ДО монтажа. / Step-by-step playbook "
             "for a typical order; no name — list.",
             _obj({"name": {"type": "string"}}), h_get_playbook, scope="global",
             label=lambda a: f"Плейбук {a.get('name') or ''}".strip(),
