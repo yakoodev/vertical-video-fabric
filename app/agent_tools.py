@@ -2031,6 +2031,54 @@ def similar_pack_refs(ref: str, limit: int = 5) -> list[str]:
     return [_layer_ref(ref) for _score, ref in scored[:limit]]
 
 
+def clip_warnings(ctx: ToolContext) -> list[str]:
+    """Предупреждения get_clip по текущему клипу (без рамок героя — без вызова зрения)."""
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    return _clip_warnings(ctx, timeline["plan"], timeline, _layers_of(timeline["render"]))
+
+
+INSERT_KIND_WORDS = {"image": "картинка", "gif": "гифка", "video": "видео", "audio": "звук"}
+
+
+def insert_facts(ctx: ToolContext) -> list[dict]:
+    """Вставки клипа по факту — для честного отчёта (QA 01.11: агент назвал гифкой статичную картинку):
+    слои image/video и вставки add_insert с типом файла библиотеки. ``[{what, kind, at, end, id}]``,
+    время — шкала clip."""
+    render = _current_render(ctx)
+
+    def asset_kind(asset_id: Any) -> str | None:
+        try:
+            return ctx.store.get_montage_asset(int(asset_id)).get("kind")
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    out = []
+    for layer in _layers_of(render):
+        if layer.get("hidden") or layer.get("type") not in ("image", "video"):
+            continue
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        src = str(props.get("src") or "")
+        if src.startswith("emoji:"):
+            continue
+        kind = "video" if layer.get("type") == "video" else (asset_kind(props.get("asset_id")) or (
+            "gif" if src.lower().split("?")[0].endswith(".gif") else "image"))
+        out.append({"what": f"слой {layer.get('type')} {layer.get('id')}", "kind": kind,
+                    "at": round(_num(layer.get("start"), 0.0) or 0.0, 2), "end": round(_num(layer.get("end"), 0.0) or 0.0, 2),
+                    "id": str(layer.get("id") or "")})
+    for index, ins in enumerate(render.get("inserts") or []):
+        kind = asset_kind(ins.get("asset_id")) or "image"
+        at = _num(ins.get("at"), 0.0) or 0.0
+        out.append({"what": f"вставка {ins.get('mode') or 'pip'} #{index}", "kind": kind, "at": round(at, 2),
+                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}"})
+    out.sort(key=lambda f: f["at"])
+    return out
+
+
+def describe_inserts(facts: list[dict]) -> str:
+    return "; ".join(f"{INSERT_KIND_WORDS.get(f['kind'], f['kind'])} {f['at']:g}–{f['end']:g} с ({f['what']})"
+                     for f in facts)
+
+
 def scene_check(ctx: ToolContext) -> list[str]:
     """Пустой кадр / нет финала по текущему состоянию клипа (цикл агента перед отчётом)."""
     return _scene_warnings(ctx, _current_render(ctx), _clip_duration(ctx))
