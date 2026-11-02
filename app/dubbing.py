@@ -257,10 +257,65 @@ class GeminiTTS:
             },
         }
 
+    def dialog_payload(self, lines: list[dict], voices: dict[str, str]) -> dict:
+        """Озвучка по ролям одним запросом (multiSpeakerVoiceConfig, до двух голосов): строки «Роль: текст»."""
+        names = {"narrator": "Рассказчик", "hero": "Герой"}
+        used = [k for k in ("narrator", "hero") if any(ln.get("speaker") == k for ln in lines)]
+        body = "\n".join(f"{names.get(ln.get('speaker'), 'Рассказчик')}: {str(ln.get('text') or '').strip()}"
+                         for ln in lines if str(ln.get("text") or "").strip())
+        head = (self.style.rstrip(" :.") + ". " if self.style else "") + "Озвучь по ролям, реплики героя — его голосом:"
+        return {
+            "contents": [{"role": "user", "parts": [{"text": f"{head}\n{body}"[:MAX_PHRASE_CHARS * 2]}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+                    {"speaker": names[k], "voiceConfig": {"prebuiltVoiceConfig": {
+                        "voiceName": gemini_voice(voices.get(k) or self.voice)}}} for k in used]}},
+            },
+        }
+
+    def synthesize_dialog(self, lines: list[dict], out_path: Path, voices: dict[str, str]) -> Speech:
+        """Рассказчик + реплики героя другим голосом (3D-серия: рот героя — только на его репликах). Одним запросом
+        multiSpeaker; модель не приняла (400) — по кускам своими голосами и склейка с короткими паузами."""
+        if len({ln.get("speaker") for ln in lines}) < 2:
+            return self.synthesize(" ".join(str(ln.get("text") or "") for ln in lines), out_path)
+        try:
+            return self._speak(self.dialog_payload(lines, voices), out_path)
+        except (DubError, RuntimeError) as exc:
+            if "400" not in str(exc) and "speaker" not in str(exc).lower():
+                raise
+        parts = []
+        for i, ln in enumerate(lines):
+            text = str(ln.get("text") or "").strip()
+            if not text:
+                continue
+            seg = out_path.with_name(f"{out_path.stem}.part{i}.wav")
+            tts = GeminiTTS(model=self.model, voice=voices.get(ln.get("speaker")) or self.voice, style=self.style,
+                            api_key=self.api_key, base_url=self.base_url, timeout=self.timeout, sleep=self._sleep)
+            tts.synthesize(text, seg)
+            parts.append(seg)
+        try:
+            inputs = []
+            for seg in parts:
+                inputs += ["-i", str(seg)]
+            graph = "".join(f"[{i}:a]aresample=24000,aformat=channel_layouts=mono,apad=pad_dur=0.12[a{i}];"
+                            for i in range(len(parts)))
+            graph += "".join(f"[a{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=0:a=1[out]"
+            codec = ["-c:a", "libmp3lame", "-b:a", "128k"] if out_path.suffix == ".mp3" else []
+            _run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-filter_complex", graph,
+                  "-map", "[out]", *codec, str(out_path)])
+        finally:
+            for seg in parts:
+                seg.unlink(missing_ok=True)
+        return Speech(out_path, 0.0, {"segments": len(parts)})
+
     def synthesize(self, text: str, out_path: Path) -> Speech:
+        return self._speak(self.payload(text), out_path)
+
+    def _speak(self, payload: dict, out_path: Path) -> Speech:
         if not self.api_key:
             raise DubError("GEMINI_API_KEY не настроен — бесплатная озвучка Gemini недоступна")
-        data = self._generate(self.payload(text))
+        data = self._generate(payload)
         audio, mime = gemini_audio(data)
         raw = out_path.with_name(out_path.stem + ".gemini-raw")
         raw.write_bytes(audio)
@@ -316,6 +371,12 @@ class GeminiTTS:
             raise DubError(f"Gemini TTS: лимит запросов бесплатного тарифа ({GEMINI_TTS_TRIES} попыток) — "
                            "повтори через минуту")
         raise RuntimeError(f"Gemini TTS не ответил: {last}")
+
+
+def hero_voice_for(narrator: str | None) -> str:
+    """Голос героя для его реплик — не голос рассказчика (молодой мужской Puck, если рассказчик не он)."""
+    n = str(narrator or "").strip().lower()
+    return "Fenrir" if n == "puck" else "Puck"
 
 
 def gemini_voice(name: str | None) -> str:

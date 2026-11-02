@@ -16,6 +16,8 @@ import {
   type StoryCharacter,
   type StoryEpisode,
   type StoryEngine,
+  type StoryRenderer,
+  type StoryQuality,
   type StoryFormat,
   type StoryLocation,
   type StoryScene,
@@ -152,6 +154,8 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
     title_card: fmt === "disaster",
     render: false,
     engine: "images" as StoryEngine,
+    renderer: "three" as StoryRenderer,
+    quality: "fast" as StoryQuality,
   });
   const [form, setForm] = useState(() => initial(world.format ?? "story"));
   const [lo, hi] = STORY_DURATIONS[form.format];
@@ -202,6 +206,32 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
           />{" "}
           🧊 3D-серия (движок, 0 ₽)
         </label>
+        {form.engine === "3d" ? (
+          <label
+            className="aiv-check"
+            title="Кино-качество: герой KayKit с мимикой и лип-синком, режиссура действий по фразам (Gemini), рендер Blender на компьютере владельца — сервис ставит задание в очередь, воркер tools/render_worker.py рендерит (≈ 1–2 с на кадр). Компьютер выключен — серия ждёт."
+          >
+            <input
+              type="checkbox"
+              checked={form.renderer === "blender"}
+              onChange={(e) => setForm({ ...form, renderer: e.target.checked ? "blender" : "three" })}
+            />{" "}
+            🎬 Blender (рендер на компьютере)
+          </label>
+        ) : null}
+        {form.engine === "3d" && form.renderer === "blender" ? (
+          <select
+            className="input"
+            value={form.quality}
+            onChange={(e) => setForm({ ...form, quality: e.target.value as StoryQuality })}
+            title="Пресет рендера: быстрый финал ≈ в 2–3 раза быстрее кино; черновик — проверить действия за минуты"
+          >
+            <option value="fast">финал (быстро)</option>
+            <option value="fast720">финал 720p + апскейл</option>
+            <option value="final">кино (медленно)</option>
+            <option value="draft">черновик действий</option>
+          </select>
+        ) : null}
       </div>
       <textarea
         className="input"
@@ -294,7 +324,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
           {e.title || e.premise}
         </button>
         {e.options?.format === "disaster" ? <span className="chip story-part">часть {e.options.part ?? 1}</span> : null}
-        {e.options?.engine === "3d" ? <span className="chip">3D</span> : null}
+        {e.options?.engine === "3d" ? <span className="chip">{e.options?.renderer === "blender" ? "3D · Blender" : "3D"}</span> : null}
         <span className="muted">
           {e.duration_target.toFixed(0)} с · {e.tone}
         </span>
@@ -326,6 +356,11 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
           )}
         </span>
       </div>
+      {e.render3d && e.status === "assembling" ? (
+        <div className="muted" title={e.render3d.worker ? `воркер: ${e.render3d.worker}` : undefined}>
+          <progress max={1} value={e.render3d.progress} /> {e.render3d.note || e.render3d.label}
+        </div>
+      ) : null}
       {e.error ? <div className={e.status === "failed" ? "aiv-warn" : "muted"}>{e.error}</div> : null}
       {open ? (
         detail.isLoading ? (

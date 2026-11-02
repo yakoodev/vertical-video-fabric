@@ -672,6 +672,9 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
         # Цифры на табло: «на 22 этаже», «табло показывало 23».
         for m in re.finditer(r"(\d{1,3})", low):
             tail, head = low[m.end():m.end() + 14], low[max(0, m.start() - 30):m.start()]
+            unit = re.match(r"\s*(%|процент|градус|°|минут|секунд|час|метр|см|сантиметр|:)", tail)
+            if unit or low[max(0, m.start() - 1):m.start()] == ":":
+                continue   # «14% заряда», «−12 °C», «03:33» — не этаж на табло
             if re.search(r"^\s*(-?[а-я]{0,3})?\s*этаж", tail) or re.search(r"табло|экран|показыва|цифр", head):
                 k = find_word(words, sp["w0"], sp["w1"], rf"^{m.group(1)}")
                 t = float(words[k]["start"]) if k is not None else sp["t0"]

@@ -325,8 +325,48 @@ def write_script(store: Any, episode_id: int, client: Any = None) -> dict:
         raise S.StoryError("Gemini не настроен (GEMINI_API_KEY) — напиши сценарий сам: story_set_script(episode_id, "
                            "sentences [{text, shots [{location, characters, action, camera, sfx, accent}]}])")
     fmt = S.episode_format(S.get_world(store, int(ep["world_id"])), ep)
-    data = _ask(client, script_rules(fmt), script_context(store, ep), script_schema(fmt), 0.9)
+    rules = script_rules(fmt)
+    blender = S.is_3d(ep) and S.episode_renderer(ep) == S.RENDERER_BLENDER
+    if blender:
+        from app import series3d_blender as SB
+
+        rules += ("\nМЕСТА И ВЕЩИ — ТОЛЬКО ИЗ СПИСКА (сцена покажет ровно их; другого места или вещи в кадре не будет — "
+                  "не упоминай улицу, квартиру изнутри, подвал, окна и т.п.). Надпись на стене (год, номер, слово) — можно.\n"
+                  + SB.writer_places())
+    data = _ask(client, rules, script_context(store, ep), script_schema(fmt), 0.9)
+    if blender:
+        data = fit_script_to_places(client, data)
     return set_script(store, episode_id, data, source="gemini")
+
+
+def fit_script_to_places(client: Any, data: dict) -> dict:
+    """Фразы, где сценарист назвал место/вещь вне набора локаций, — переписать (тот же смысл, место из списка)."""
+    from app import series3d_blender as SB
+
+    sentences = data.get("sentences") or []
+    bad = SB.offlist_mentions(sentences)
+    if not bad:
+        return data
+    rules = ("Перепиши указанные фразы сериала-катастрофы так, чтобы место и вещи были ТОЛЬКО из списка (смысл, цифры, "
+             "длина и роль фразы — те же):\n" + SB.writer_places())
+    ctx = {"sentences": [{"i": i, "text": sentences[i].get("text"), "problem": what} for i, what in bad]}
+    schema = {"type": "object", "properties": {"sentences": {"type": "array", "items": {
+        "type": "object", "properties": {"i": {"type": "integer"}, "text": {"type": "string"}}, "required": ["i", "text"]}}},
+        "required": ["sentences"]}
+    try:
+        fixed = _ask(client, rules, ctx, schema, 0.5)
+    except S.StoryError:
+        return data
+    for item in fixed.get("sentences") or []:
+        i = int(item.get("i", -1))
+        if 0 <= i < len(sentences) and str(item.get("text") or "").strip():
+            sentences[i] = {**sentences[i], "text": str(item["text"]).strip()}
+    data["sentences"] = sentences
+    left = SB.offlist_mentions(sentences)
+    data.setdefault("warnings", [])
+    if left:
+        data["warnings"] = list(data.get("warnings") or []) + [f"фраза {i + 1}: «{w}» — места нет в наборе" for i, w in left]
+    return data
 
 
 def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -> dict:
@@ -1050,7 +1090,8 @@ def advance(store: Any, episode_id: int, client: Any = None, max_steps: int = 8)
                     if check_generation(store, episode_id) in ("wait", "failed", "cancelled"):
                         break
                 elif status == "assembling":
-                    assemble(store, episode_id)
+                    if (assemble(store, episode_id) or {}).get("wait"):
+                        break  # 3D-серия ждёт рендер на компьютере (очередь хост-воркера)
                 else:
                     break
             except Exception as exc:  # noqa: BLE001 - шаг упал: эпизод ждёт правки

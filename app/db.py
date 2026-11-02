@@ -506,6 +506,10 @@ class Database:
             from app.stories import ensure_stories_schema
 
             ensure_stories_schema(conn)
+            # Очередь 3D-рендера для хост-воркера (Blender на компьютере с GPU, app/render_queue.py).
+            from app.render_queue import ensure_render_queue_schema
+
+            ensure_render_queue_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

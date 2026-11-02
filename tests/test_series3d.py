@@ -272,9 +272,11 @@ def test_story_episode_with_3d_engine(env, monkeypatch):  # noqa: F811
     if S3D.music_beds():
         # Тревожный фон тихо под голосом на всю серию, без заметки «музыка не вшита».
         assert music and music[0]["start"] == 0 and abs(music[-1]["end"] - tl["duration"]) < 1e-3
-        assert all(m["props"]["asset_id"].startswith("sfx:tension/bed-") for m in music)
-        assert all(m["props"]["mode"] == "track" and m["props"]["gain_db"] < 0 for m in music)
-        assert tl["music_bed"]["ref"] == music[0]["props"]["asset_id"]
+        # Фон — один готовый файл (петля трека пака, громкость от голоса, мягкий ducking, нарастание к финалу).
+        assert len(music) == 1 and music[0]["props"]["mode"] == "track"
+        assert tl["music_bed"]["ref"].startswith("sfx:tension/bed-")
+        assert str(music[0]["props"]["asset_id"]) == str(tl["music_bed"]["asset_id"])
+        assert 4.0 <= tl["music_bed"]["under_voice_db"] <= 11.0, tl["music_bed"]
         assert not any("музыка не вшита" in str(n) for n in ep.get("notes") or [])
         hum = [lay for lay in layers if lay["type"] == "audio" and lay["props"].get("role") == "ambience"]
         assert hum, "гул кабины и шахты"

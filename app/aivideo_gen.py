@@ -906,7 +906,8 @@ def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_i
     params = {"resolution": item.get("resolution"), "aspect": item.get("aspect"), "voice": item.get("voice"),
               "text": item.get("text"), "style": item.get("style"), "regenerate": item.get("regenerate", False),
               "seconds": item.get("seconds"),
-              "start": item.get("start"), "mode": item.get("mode"), "group": item.get("group")}
+              "start": item.get("start"), "mode": item.get("mode"), "group": item.get("group"),
+              **({"dialog": item["dialog"], "hero_voice": item.get("hero_voice")} if item.get("dialog") else {})}
     cur = store.db.execute(
         "INSERT INTO aiv_gen_jobs (project_id, script_id, approval_id, stage, kind, target_type, target_id, ref_kind, "
         "slot, label, provider, model, params_json, estimate_rub, status, requested_by) "
@@ -1825,7 +1826,13 @@ def _run_tts(store: Any, job: dict) -> dict | None:
     work.mkdir(parents=True, exist_ok=True)
     try:
         raw = work / "line.mp3"
-        speech = _send(store, job, lambda: tts.synthesize(text, raw))
+        dialog = params.get("dialog") or []
+        if dialog and hasattr(tts, "synthesize_dialog"):
+            # реплики героя — своим голосом (3D-серия: рот героя двигается только на них)
+            voices = {"narrator": voice, "hero": params.get("hero_voice") or ""}
+            speech = _send(store, job, lambda: tts.synthesize_dialog(dialog, raw, voices))
+        else:
+            speech = _send(store, job, lambda: tts.synthesize(text, raw))
         cost = speech.cost_rub
         source = "provider" if cost is not None else "estimate"
         cost = float(cost) if cost is not None else float(job["estimate_rub"])
