@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { faceTexture, type Face } from "./textures.ts";
+import { boxUV, surfaceMaterial } from "./surfaces.ts";
 import { rng } from "./timeline.ts";
 
 function shadowAll(o: THREE.Object3D, cast = true, receive = true) {
@@ -314,27 +315,47 @@ export function buttonPanel(opts: { rows?: number; cols?: number; size?: number[
   const rows = Math.max(1, Math.min(12, Math.round(opts.rows ?? 6))), cols = Math.max(1, Math.min(4, Math.round(opts.cols ?? 2)));
   const s = opts.size || [0.2, 0.55, 0.02];
   const grp = new THREE.Group();
-  const plate = new THREE.Mesh(new RoundedBoxGeometry(s[0], s[1], s[2], 2, 0.008), new THREE.MeshStandardMaterial({ color: opts.color || "#9aa1aa", roughness: 0.35, metalness: 0.6 }));
+  // Пластина — шлифованная сталь (PBR-поверхность), кнопки — металлические ободки с подсвеченной цифрой.
+  const plateMat = surfaceMaterial({ kind: "brushed_steel", color: opts.color || "#a7adb3", seed: 31 });
+  const plate = new THREE.Mesh(boxUV(new RoundedBoxGeometry(s[0], s[1], s[2], 2, 0.008)), plateMat);
   plate.position.y = s[1] / 2;
+  plate.userData.keepMaterial = true;
   grp.add(plate);
   const light = new THREE.Color(opts.light || "#ffd27a");
   const mats: THREE.MeshStandardMaterial[] = [];
-  const r = Math.min(s[0] / (cols * 2.6), s[1] / (rows * 2.8));
+  // Сетка кнопок — над кнопкой вызова (она внизу отдельно), без наложений.
+  const top = s[1] * 0.93, bottom = s[1] * (opts.alarm !== false ? 0.25 : 0.07);
+  const r = Math.min(s[0] / (cols * 2.6), (top - bottom) / (rows * 2.5));
+  const step = rows > 1 ? (top - bottom - 2 * r) / (rows - 1) : 0;
+  const ringMat = new THREE.MeshStandardMaterial({ color: "#d9dde2", roughness: 0.25, metalness: 1 });
+  const total = rows * cols;
   for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
-    const m = new THREE.MeshStandardMaterial({ color: opts.button || "#d9dde2", roughness: 0.3, metalness: 0.2, emissive: light, emissiveIntensity: 0 });
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.012, 16), m);
+    // Этажи снизу вверх, слева направо: нижний левый — 1.
+    const label = String((rows - 1 - i) * cols + j + 1);
+    const m = new THREE.MeshStandardMaterial({ color: opts.button || "#2a2d31", roughness: 0.35, metalness: 0.3,
+      map: digitTexture(label), emissive: light, emissiveMap: digitTexture(label, true), emissiveIntensity: 0 });
+    const x = (j - (cols - 1) / 2) * r * 2.6, y = top - r - i * step;
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.78, r * 0.78, 0.008, 24), [ringMat, m, ringMat]);
     b.rotation.x = Math.PI / 2;
-    b.position.set((j - (cols - 1) / 2) * r * 2.6, s[1] * 0.92 - r * 1.4 - i * r * 2.7, s[2] / 2 + 0.004);
+    b.position.set(x, y, s[2] / 2 + 0.004);
     grp.add(b);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 0.86, r * 0.12, 8, 28), ringMat);
+    ring.position.set(x, y, s[2] / 2 + 0.006);
+    grp.add(ring);
     mats.push(m);
   }
+  void total;
   let alarm: THREE.MeshStandardMaterial | null = null;
   if (opts.alarm !== false) {
-    alarm = new THREE.MeshStandardMaterial({ color: "#d4302a", roughness: 0.3, emissive: "#ff2a1a", emissiveIntensity: 0 });
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.25, r * 1.25, 0.016, 16), alarm);
+    alarm = new THREE.MeshStandardMaterial({ color: "#d4302a", roughness: 0.3, emissive: "#ff2a1a", emissiveIntensity: 0,
+      map: digitTexture("🔔", false, "#d4302a"), emissiveMap: digitTexture("🔔", true) });
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.05, r * 1.05, 0.01, 24), [ringMat, alarm, ringMat]);
     b.rotation.x = Math.PI / 2;
-    b.position.set(0, s[1] * 0.08 + r, s[2] / 2 + 0.005);
+    b.position.set(0, s[1] * 0.13, s[2] / 2 + 0.005);
     grp.add(b);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.12, r * 0.13, 8, 28), ringMat);
+    ring.position.set(0, s[1] * 0.13, s[2] / 2 + 0.007);
+    grp.add(ring);
   }
   shadowAll(grp, false, true);
   return {
@@ -342,8 +363,28 @@ export function buttonPanel(opts: { rows?: number; cols?: number; size?: number[
     update: (t, state) => {
       const glow = state.glow !== undefined ? Number(state.glow) : 1;
       const lit = new Set<number>(Array.isArray(state.lit) ? state.lit : []);
-      mats.forEach((m, i) => (m.emissiveIntensity = lit.has(i) ? 1.4 * glow : 0.08 * glow));
-      if (alarm) alarm.emissiveIntensity = state.alarm ? 0.9 + 0.8 * Math.max(0, Math.sin(t * 9)) : 0.15 * glow;
+      mats.forEach((m, i) => (m.emissiveIntensity = lit.has(i) ? 2.2 * glow : 0.35 * glow));
+      if (alarm) alarm.emissiveIntensity = state.alarm ? 1.2 + 1.2 * Math.max(0, Math.sin(t * 9)) : 0.2 * glow;
     },
   };
+}
+
+/** Цифра на кнопке (карта цвета — светлая цифра на тёмном; emissive — только цифра светится). */
+function digitTexture(text: string, glow = false, bg = "#2a2d31"): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = glow ? "#000000" : bg;
+  g.fillRect(0, 0, 64, 64);
+  g.fillStyle = glow ? "#ffffff" : "#e8e4da";
+  g.font = `bold ${text.length > 1 ? 30 : 38}px Arial, sans-serif`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text, 32, 34);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  // Крышка цилиндра повёрнута на 90° вокруг x — переворачиваем, чтобы цифра читалась.
+  t.center.set(0.5, 0.5);
+  t.rotation = Math.PI / 2;
+  return t;
 }

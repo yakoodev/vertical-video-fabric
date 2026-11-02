@@ -20,7 +20,9 @@ export interface MeshRigSpec {
   /** Опорные точки суставов в координатах меша: pelvis, spine_01…, neck_01, Head, top, upperarm_l…, ball_r. */
   joints: Record<string, number[]>;
   /** Глянец по цвету текстуры: яркие насыщенные (дождевик) — шероховатость gloss, остальное — matte. */
-  gloss?: { hue?: number[]; roughness?: number; matte?: number };
+  gloss?: { hue?: number[]; roughness?: number; matte?: number;
+    /** Цвет глянцевой вещи: подтянуть тон к hueTo (0..1) и насыщенность ×sat (жёлтый дождевик не уходит в оливку). */
+    hueTo?: number; sat?: number };
   /** Итерации сглаживания весов (по умолчанию 6). */
   smooth?: number;
 }
@@ -340,5 +342,40 @@ export function glossFromColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpe
   t.channel = map.channel;
   t.wrapS = map.wrapS;
   t.wrapT = map.wrapT;
+  return t;
+}
+
+/** Копия карты цвета: тона вещи из gloss.hue — к hueTo, насыщенность ×sat (остальное без изменений). */
+export function tintColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpec["gloss"]>): THREE.Texture | null {
+  if (gloss.hueTo === undefined && gloss.sat === undefined) return null;
+  const img = map.image as CanvasImageSource & { width: number; height: number };
+  if (!img || !img.width) return null;
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0);
+  const data = g.getImageData(0, 0, c.width, c.height);
+  const px = data.data;
+  const col = new THREE.Color();
+  const hsl = { h: 0, s: 0, l: 0 };
+  const [h0, h1] = gloss.hue || [0.1, 0.19];
+  for (let i = 0; i < px.length; i += 4) {
+    col.setRGB(px[i] / 255, px[i + 1] / 255, px[i + 2] / 255);
+    col.getHSL(hsl);
+    if (!(hsl.h >= h0 - 0.03 && hsl.h <= h1 && hsl.s > 0.25 && hsl.l > 0.18)) continue;
+    const h = gloss.hueTo !== undefined ? hsl.h + (gloss.hueTo - hsl.h) * 0.7 : hsl.h;
+    col.setHSL(h, Math.min(1, hsl.s * (gloss.sat ?? 1)), hsl.l);
+    px[i] = Math.round(col.r * 255);
+    px[i + 1] = Math.round(col.g * 255);
+    px[i + 2] = Math.round(col.b * 255);
+  }
+  g.putImageData(data, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.flipY = map.flipY;
+  t.channel = map.channel;
+  t.wrapS = map.wrapS;
+  t.wrapT = map.wrapT;
+  t.colorSpace = map.colorSpace;
   return t;
 }

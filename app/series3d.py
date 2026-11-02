@@ -92,7 +92,7 @@ HERO_MESH = {
         "armpit_l": [0.355, 0.1, 0.0], "hem_l": [0.36, -0.45, 0.0],
         "armpit_r": [-0.31, 0.1, 0.0], "hem_r": [-0.40, -0.45, 0.0],
     },
-    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82},
+    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82, "hueTo": 0.135, "sat": 1.25},
     "smooth": 6,
 }
 
@@ -368,7 +368,7 @@ def elevator_location() -> dict:
     ]
     lights = [
         {"type": "hemisphere", "id": "ambient", "color": "#4a6a78", "ground": "#14110f", "intensity": 0.32},
-        {"type": "spot", "id": "main", "color": "#e3f4ff", "intensity": 27, "position": [0, H + 0.55, 0.05],
+        {"type": "spot", "id": "main", "color": "#f2f7ff", "intensity": 27, "position": [0, H + 0.55, 0.05],
          "target": [0, 0, 0.1], "angle": 62, "penumbra": 0.85, "decay": 2, "castShadow": True,
          "shadow": {"size": 1024, "bias": -0.0006, "normalBias": 0.02, "radius": 5},
          "beam": {"length": 3.0, "radius": 1.0, "opacity": 0.03}},
@@ -390,7 +390,7 @@ def elevator_location() -> dict:
                  "walls": {"color": "#8f969d", "surface": {"kind": "steel_panel", "color": "#9097a0", "seed": 11}},
                  "ceiling": {"color": "#c9cdd2", "surface": {"kind": "painted_metal", "color": "#b9bdbf", "seed": 8}},
                  "baseboard": False, "hallway": False},
-        "environment": {"background": "#040507", "fog": {"color": "#06090b", "near": 2.6, "far": 10},
+        "environment": {"background": "#040507", "fog": {"color": "#07080a", "near": 2.6, "far": 10},
                         "exposure": 1.1, "envIntensity": 0.12, "style": "cinematic",
                         "reflections": {"position": [0.0, 1.3, 0.0], "size": 128, "intensity": 0.6},
                         "post": POST},

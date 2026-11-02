@@ -11,7 +11,7 @@ import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { actionStates, facingYaw, samplePath, windowWeight, type Action, type Key } from "./timeline.ts";
 import { buildToy, type ToySpec } from "./toy.ts";
-import { fitSkeleton, glossFromColor, meshToChar, skinMeshes, type MeshRigSpec } from "./meshrig.ts";
+import { fitSkeleton, glossFromColor, meshToChar, skinMeshes, tintColor, type MeshRigSpec } from "./meshrig.ts";
 
 export interface PoseSpec {
   start: number;
@@ -383,6 +383,8 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
             c.roughnessMap = r;
             c.roughness = 1;
           }
+          const tinted = tintColor(c.map, spec.mesh!.gloss);
+          if (tinted) c.map = tinted;
         }
         c.metalness = 0;
         c.side = THREE.DoubleSide; // разрезы в подмышках показывают изнанку, а не дыру
