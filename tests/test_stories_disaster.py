@@ -368,3 +368,17 @@ def test_part_card_fits_safe_width():
     # Самое длинное слово титра (≈0.6 em на букву у узкого жирного шрифта) влезает в строку.
     longest = max(len(w) for w in D.part_card_text(ep).split())
     assert longest * p["size"] * 0.6 <= p["maxWidth"]
+
+
+def test_title_readable_from_first_frame_and_hud_waits():
+    from app import stories_3d as S3D
+
+    ep = {"title": "Если блэкаут застал вас на 23 этаже", "premise": "x", "options": {"part": 2},
+          "script": {"title": "Если блэкаут застал вас на 23 этаже"}}
+    layers = D.title_layers(ep, [{"end": 3.0}], "#000000", "s_")
+    title = layers[0]
+    assert "in" not in title, "название видно сразу, без «выпрыгивания»"
+    assert title["props"]["bg"]["opacity"] >= 0.7 and layers[1]["props"].get("bg")
+    hud = {"id": "s_hud00", "type": "text", "start": 0.4, "end": 1.2, "x": 0.2, "y": 0.585, "props": {"text": "23 ЭТАЖ"}}
+    S3D.place_titles(layers + [hud], [], 0.74, "s_")
+    assert hud["start"] > title["end"] and hud["end"] - hud["start"] >= 1.0

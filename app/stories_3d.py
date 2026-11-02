@@ -579,15 +579,13 @@ def place_titles(layers: list[dict], faces: list[dict], captions_y: float, prefi
     if part is not None:
         part["y"] = round(best(part, PART_SLOTS, False), 3)
     if title is not None:
-        # HUD, который встал бы под название, появляется, когда название уходит (плашка не на титре)
-        t0, t1 = layer_box(title)
-        bottom = layer_box(part_t)[1] if part_t is not None else t1
+        # HUD появляется, когда название уходит: в первую секунду читается только название (плашка не спорит с ним)
         for lay in layers:
             if not str(lay.get("id") or "").startswith(f"{prefix}hud") or float(lay["start"]) >= float(title["end"]):
                 continue
-            h0, h1 = float(lay["y"]) - 0.025, float(lay["y"]) + 0.025
-            if _overlap(h0, h1, t0, bottom) > 0:
-                lay["start"] = round(float(title["end"]) + 0.05, 3)
+            lay["start"] = round(float(title["end"]) + 0.05, 3)
+            if float(lay["end"]) - float(lay["start"]) < 1.0:
+                lay["end"] = round(float(lay["start"]) + 1.2, 3)
     return notes
 
 

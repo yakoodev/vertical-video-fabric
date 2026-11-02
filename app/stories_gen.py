@@ -333,10 +333,49 @@ def write_script(store: Any, episode_id: int, client: Any = None) -> dict:
         rules += ("\nМЕСТА И ВЕЩИ — ТОЛЬКО ИЗ СПИСКА (сцена покажет ровно их; другого места или вещи в кадре не будет — "
                   "не упоминай улицу, квартиру изнутри, подвал, окна и т.п.). Надпись на стене (год, номер, слово) — можно.\n"
                   + SB.writer_places())
+        lo, hi = SB.SCRIPT_WORDS
+        rules += (f"\nДЛИНА — ЖЁСТКИЙ ЛИМИТ: серия {SB.SCRIPT_SEC[0]}–{SB.SCRIPT_SEC[1]} с, это {lo}–{hi} слов во всех "
+                  f"фразах вместе (не больше {hi}). Длиннее — не влезет в серию.")
     data = _ask(client, rules, script_context(store, ep), script_schema(fmt), 0.9)
     if blender:
         data = fit_script_to_places(client, data)
+        data = fit_script_length(client, data)
     return set_script(store, episode_id, data, source="gemini")
+
+
+def script_words(sentences: list[dict]) -> int:
+    return sum(len(str(s.get("text") or "").split()) for s in sentences)
+
+
+def fit_script_length(client: Any, data: dict) -> dict:
+    """3D-серия (Blender): текст длиннее лимита слов (``SCRIPT_WORDS``, 55–65 с) — сократить фразы (одна попытка:
+    та же роль, цифры и смысл, короче); не сократилось — предупреждение."""
+    from app import series3d_blender as SB
+
+    sentences = data.get("sentences") or []
+    lo, hi = SB.SCRIPT_WORDS
+    words = script_words(sentences)
+    if words <= hi or not sentences:
+        return data
+    rules = (f"Сократи фразы серии до {lo}–{hi} слов ВСЕГО (сейчас {words}). Номер i и роль фразы те же, цифры и смысл "
+             "те же, хук и финал не трогай по смыслу; можно убрать лишние детали. Верни все фразы.")
+    ctx = {"sentences": [{"i": i, "role": s.get("role") or "", "text": s.get("text")} for i, s in enumerate(sentences)]}
+    schema = {"type": "object", "properties": {"sentences": {"type": "array", "items": {
+        "type": "object", "properties": {"i": {"type": "integer"}, "text": {"type": "string"}}, "required": ["i", "text"]}}},
+        "required": ["sentences"]}
+    try:
+        fixed = _ask(client, rules, ctx, schema, 0.4)
+    except S.StoryError:
+        fixed = {}
+    for item in fixed.get("sentences") or []:
+        i = int(item.get("i", -1))
+        if 0 <= i < len(sentences) and str(item.get("text") or "").strip():
+            sentences[i] = {**sentences[i], "text": str(item["text"]).strip()}
+    data["sentences"] = sentences
+    left = script_words(sentences)
+    if left > hi:
+        data["warnings"] = list(data.get("warnings") or []) + [f"текст {left} слов — длиннее {hi} (≈ {SB.SCRIPT_SEC[1]} с)"]
+    return data
 
 
 def fit_script_to_places(client: Any, data: dict) -> dict:

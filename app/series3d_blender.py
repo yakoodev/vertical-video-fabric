@@ -130,6 +130,7 @@ SHOULDER_L = (-0.212 * S, 0.0, 1.107 * S)
 MAX_PRESS_Z = 0.83                 # выше чиби-рука не достаёт — берём кнопку ниже в том же столбце
 FACE_Z = {"stand": 1.62 * S, "sit": 1.28 * S}
 SIT_DROP = 0.17                    # насколько ниже грудь сидя (клип Sit_Floor_Idle)
+PHONE_SHOW = (-0.06, 0.27, 0.38)   # телефон экраном к камере (часы/заряд): ниже подбородка и вперёд — не прячется за голову
 
 # Длины клипов KayKit (с) и шаг — замер в Blender (сцена сверяет и пишет в отчёт расхождение).
 CLIP_LEN = {"Idle_A": 1.067, "Idle_B": 2.133, "Walking_A": 1.067, "Walking_B": 1.067, "Walking_C": 1.6,
@@ -331,6 +332,11 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
 
 
 DOOR_OPEN = {"corridor": 0.2}     # двери лифта в торце коридора — открыты (герой из них вышел), пока не схлопнутся
+# Свет вне кабины (сцена Blender): заполняющий у камеры («от фонарика/лампы», Вт при 0.8 м до героя), контровой
+# сзади-сверху (Вт) и экспозиция места — герой и место читаются в каждом кадре (проверка — лист «фраза → что в кадре»).
+FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5}
+RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0}
+EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2}
 
 
 def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
@@ -351,6 +357,10 @@ def show_items(loc: str, shot: dict) -> list[dict]:
     """Вещи и место, которые фраза называет: ``[{item, point}]`` — сцена обязана их показать (проверка в отчёте)."""
     text = _low(" ".join([shot.get("text") or "", " ".join(shot.get("props") or [])]))
     out = [{"item": f"место: {loc_of(loc)['label']}", "point": None}]
+    if shot.get("screen"):
+        out.append({"item": f"экран «{shot['screen']}»", "point": None, "screen": True})
+    if shot.get("show_none"):
+        return out            # крючок: лицо, названное — следующим куском фразы
     seen = set()
     for rx, name in SHOW_WORDS:
         if not re.search(rx, text) or name in seen:
@@ -374,6 +384,11 @@ def show_items(loc: str, shot: dict) -> list[dict]:
         out.append({"item": f"надпись «{shot['decal']}»",
                     "point": [round(c, 3) for c in loc_world(loc, t)] if t else None, **({} if t else {"missing": True})})
     return out
+
+
+# Длина серии для сценариста: 55–65 с с титром части (2 с) при ≈ 2.3 слова/с рассказчика — 120–140 слов.
+SCRIPT_SEC = (55, 65)
+SCRIPT_WORDS = (120, 140)
 
 
 def writer_places() -> str:
@@ -673,14 +688,91 @@ def gemini_choices(title: str, shots: list[dict], events_by_shot: dict[int, list
     return out
 
 
+# Часы/телефон в тексте («на часах было 03:33», «телефон показывал 14%») — герой держит телефон, на экране значение.
+SCREEN_CUE = (r"на час(ах|ы)\b|час\w* показ|телефон\w* показ|на экран|экран\w* (телефон|показ)|на телефон\w*\s+было|"
+              r"посмотрел\w* на (часы|телефон)|датчик\w* .{0,20}час")
+HOOK_FACE_SEC = 1.75     # крючок: сначала лицо героя с реакцией (под названием серии), потом названная вещь
+
+
+def screen_value(text: str) -> str:
+    """Что показать на экране телефона: время «03:33», температура «−12 °C» или процент «14%» — первое найденное."""
+    raw = str(text or "")
+    hit = re.search(r"(?<![\d:])(\d{1,2})[:.](\d{2})(?![\d:])", raw)
+    if hit and int(hit.group(1)) < 24 and int(hit.group(2)) < 60:
+        return f"{int(hit.group(1)):02d}:{hit.group(2)}"
+    hit = re.search(r"([−-]\s?)?(\d{1,3})\s*°\s*[CcСс]?", raw)
+    if hit:
+        return f"{'−' if hit.group(1) else ''}{hit.group(2)} °C"
+    hit = re.search(r"(\d{1,3})\s*%", raw)
+    if hit:
+        return f"{hit.group(1)}%"
+    return ""
+
+
+def screen_shots(shots: list[dict]) -> dict[int, str]:
+    """Планы, где фраза называет часы/экран телефона: ``{индекс: значение на экране}``. Значения нет в самом плане —
+    берём из его фразы (соседние планы той же фразы: «Датчик на часах упал | до −12 °C»)."""
+    out: dict[int, str] = {}
+    for k, s in enumerate(shots):
+        if not re.search(SCREEN_CUE, _low(s.get("text"))):
+            continue
+        value = screen_value(s.get("text"))
+        if not value:
+            sent = set(s.get("sentences") or [])
+            same = [x for x in shots if sent & set(x.get("sentences") or [])]
+            value = next((v for v in (screen_value(x.get("text")) for x in same) if v), "")
+        if value:
+            out[k] = value
+    return out
+
+
+def hook_items(s: dict) -> list[dict]:
+    """Вещи, которые названы в первой фразе (кроме места)."""
+    loc = s.get("location") if s.get("location") in LOCS else "cabin"
+    return [x for x in show_items(loc, s) if not str(x["item"]).startswith("место")]
+
+
+def split_hook(shots: list[dict]) -> list[dict]:
+    """Первый план — крупно лицо героя с реакцией (не табло). Если фраза называет вещь (табло, надпись), а план
+    длинный — второй кусок той же фразы показывает её. Повторный вызов ничего не меняет (``hook``)."""
+    if not shots or shots[0].get("hook"):
+        return shots
+    first = dict(shots[0])
+    span = float(first.get("t1") or 0.0) - float(first.get("t0") or 0.0)
+    items = hook_items(first)
+    if first["action"] in ("look_display", "wait", "approach", "phone_light", "look_ceiling", *HAND_ACTIONS):
+        first["action"] = "look_camera"
+        first["target"] = "center"
+    if first.get("emotion") in ("calm", "relieved", "determined", None):
+        first["emotion"] = "worried"
+    first["camera"] = "face"
+    first["hook"] = 1
+    if not items or span < HOOK_FACE_SEC + 1.0:
+        return [{**first, "show_none": bool(items)}, *shots[1:]]
+    cut = round(float(first["t0"]) + max(HOOK_FACE_SEC, min(span - 1.0, span * 0.55)), 3)
+    second = {**dict(shots[0]), "t0": cut, "action": "look_display", "target": "display", "camera": "detail", "hook": 2}
+    first = {**first, "t1": cut, "show_none": True}
+    out = [first, second, *shots[1:]]
+    for n_, s_ in enumerate(out):
+        out[n_] = {**s_, "n": n_}
+    return out
+
+
 def fix_sequence(shots: list[dict]) -> list[dict]:
     """Выполнимость и монтаж: сидя — сначала встать (``stand_first``), стоя «встать» — ждать; кнопка — достижимая;
-    план камеры не повторяет прошлый. Рот говорит только на прямой речи героя (``plan_shots``: ``speech``)."""
+    план камеры не повторяет прошлый. Рот говорит только на прямой речи героя (``plan_shots``: ``speech``).
+    Крючок — крупно лицо (``split_hook``); часы/экран в тексте — телефон в руке с этим значением (``screen``)."""
+    shots = split_hook([dict(s) for s in shots])
+    screens = screen_shots(shots)
     posture = "stand"
     prev_cam = ""
     out = []
-    for s in shots:
+    for k, s in enumerate(shots):
         s = dict(s)
+        if k in screens and s["action"] not in HAND_ACTIONS and not s.get("hook"):
+            s["screen"] = screens[k]
+            s["action"] = "phone_out"
+            s["camera"] = "detail"
         a = s["action"]
         s["stand_first"] = False
         if a == "stand_up" and posture == "stand":
@@ -728,6 +820,10 @@ def fix_sequence(shots: list[dict]) -> list[dict]:
             cam = "detail" if prev_cam != "detail" else "overhead"
         if cam == "detail" and a not in ("press_button", "phone_out", "phone_light", "look_display", "knock", "pry_doors"):
             cam = next(c for c in (*CAMERA_PREFS[a], "face", "overhead") if c not in ("detail", prev_cam))
+        if s.get("screen"):
+            cam = "detail"        # экран телефона со значением — только деталью (даже после детали)
+        if s.get("hook") == 1:
+            cam = "face"          # крючок — лицо героя
         s["camera"] = cam
         s["posture"] = posture
         prev_cam = cam
@@ -964,6 +1060,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     startles: list[tuple[float, float]] = []
     phone_iv: list[list] = []         # [начало, конец|None] — телефон в левой руке
     phone_mode = _Track(0.0)          # 0 — экран, 1 — фонарик
+    show_track = _Track(0.0)          # 1 — телефон вытянут экраном к камере (значение на экране)
     flash_track = _Track(0.0)         # фонарик включён
     contacts: list[dict] = []         # касания (для подгонки IK по мешу и звуков)
     shout_bursts: list[tuple[float, float]] = []
@@ -1037,6 +1134,38 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             spot, hd = spot_for("center")
         else:
             spot, hd = pos, heading
+            # фраза называет вещь за спиной (лампа, календарь, глубина коридора) — герой к ней повёрнут: за плечом
+            # видно и его, и её (иначе «через плечо» — пустой коридор, а план без героя — брак)
+            named = [x["point"] for x in show_items(loc, s) if x.get("point") and not str(x["item"]).startswith("место")]
+            if named and loc != "cabin" and a not in HAND_ACTIONS and a not in ("look_camera", "phone_out") \
+                    and posture == "stand" and not s.get("hook"):
+                p_ = named[0]
+                want_h = m.heading_of((p_[0] - pos[0], p_[1] - pos[1]))
+                if math.hypot(p_[0] - pos[0], p_[1] - pos[1]) > 0.35 and abs(_ang(want_h - heading)) > math.radians(55):
+                    # разворот склейкой: на новом плане герой уже смотрит туда
+                    head_keys.key(t0 - 1e-3, heading)
+                    head_keys.key(t0, want_h)
+                    heading = hd = want_h
+                fx_, fy_ = facing(heading)
+                if not inside_loc(loc, (pos[0] - fx_ * 1.1, pos[1] - fy_ * 1.1, 1.0), 0.05):
+                    # спиной в стену/двери — камере за плечом негде встать: склейкой на шаг-другой вперёд
+                    for k_ in (0.5, 0.75, 1.0, 1.3):
+                        p2 = (round(pos[0] + fx_ * k_, 4), round(pos[1] + fy_ * k_, 4))
+                        if inside_loc(loc, (p2[0] - fx_ * 1.1, p2[1] - fy_ * 1.1, 1.0), 0.05) and \
+                                inside_loc(loc, (p2[0], p2[1], 1.0), 0.25):
+                            pos_keys.append((t0, p2))
+                            pos = spot = p2
+                            break
+            if s.get("screen") and posture == "stand":
+                # экран телефона снимают спереди: перед героем нужно ~0.7 м места (не носом в двери/стену)
+                for dh_ in (0.0, math.pi, math.pi / 2, -math.pi / 2):
+                    fx_, fy_ = facing(heading + dh_)
+                    if inside_loc(loc, (pos[0] + fx_ * 0.75, pos[1] + fy_ * 0.75, 1.0), 0.05):
+                        if dh_:
+                            head_keys.key(t0 - 1e-3, heading)
+                            head_keys.key(t0, heading + dh_)
+                            heading = hd = heading + dh_
+                        break
         moved = math.dist(spot, pos) > 0.04
         tt = t0
         # встать с пола (на камеру) или переставить на склейке
@@ -1292,6 +1421,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             phone_mode.key(a0 + 0.1, phone_mode.keys[-1][1])
             phone_mode.key(a0 + 0.5, 1.0)
 
+        show_track.key(t0, show_track.keys[-1][1])
+        show_track.key(a0 + 0.5 if s.get("screen") else t0 + 0.35, 1.0 if s.get("screen") else 0.0)
         lean.key(t0 + 0.4, lean_v)
         roll.key(t0 + 0.4, roll_v)
         shot_out.append({**s, "a0": round(a0, 3), "spot": [round(pos[0], 4), round(pos[1], 4)], "heading": round(heading, 4),
@@ -1335,6 +1466,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if prev is None or prev[1] < w:
                 hand["r"][f] = (tuple(round(c, 5) for c in p), round(w, 4), r["id"])
     pm_c = phone_mode.curve()
+    show_c = show_track.curve()
     door_cs = {k: v.curve() for k, v in door_tracks.items()}
     door_c0 = door_cs.get("cabin") or _Track(0.0).curve()
     for h in holds:
@@ -1350,6 +1482,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 pocket = (-0.13, 0.04, 0.32 - SIT_DROP * sit)
                 mode = pm_c.at(t)
                 held = m.lerp(look, light, mode)
+                show = (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] - SIT_DROP * sit)
+                held = m.lerp(held, show, show_c.at(t))
                 loc = m.lerp(pocket, held, x)
                 w = m.smoothstep((t - h["t0"]) / 0.25)
                 hand["l"][f] = (to_world(rp, hd, loc), round(w, 4), "phone")
@@ -1421,6 +1555,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         if c["kind"] == "press" and c["button"] != "bell":
             lit_at.setdefault(c["button"], c["t"])
     door_c = door_c0
+    named_display = [(float(x_["t0"]), float(x_["t1"])) for x_ in shot_out if x_["location"] == "cabin"
+                     and any(it["item"] == "display" or str(it["item"]).startswith("надпись") for it in x_["show"])]
     for t in times:
         main = 1.0
         if blackout is not None:
@@ -1453,6 +1589,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 on_t = max(blackout + 1.0, e["t"] - 1.8)
                 if e["t"] > blackout and t >= on_t:
                     disp_on = m.smoothstep((t - on_t) / 0.25)
+            for a_, b_ in named_display:
+                if a_ <= t < b_:     # фраза называет табло — оно горит (аварийное питание), иначе в темноте не видно
+                    disp_on = max(disp_on, 0.85 * m.smoothstep((t - a_ + 0.15) / 0.25))
         shake = 0.0
         for e in events:
             amp = {"blackout": 0.006, "jolt": 0.03, "scrape": 0.01, "knock": 0.004}.get(e["kind"], 0.0)
@@ -1493,8 +1632,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     beam_raw = _beam_off_camera(perf, beam_raw)
     beam_s = m.spring_follow(beam_raw, 1.0 / fps, 0.18)
     for f, t in enumerate(times):
+        # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с)
+        sh_ = next((x_ for x_ in shot_out if x_["t0"] <= t < x_["t1"]), None)
+        scr = str(sh_.get("screen") or "") if sh_ and vis[f] and t >= float(sh_.get("a0", sh_["t0"])) + 0.5 else ""
         phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
-                      "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f])})
+                      "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
+                      **({"screen": scr} if scr else {})})
     perf["phone"] = phone
     return perf
 
@@ -1588,6 +1731,15 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         pos = (LEFT + 0.17, FRONT + 0.12, 0.84)
         pt = tuple((button_pos("1")[i] * 0.55 + face[i] * 0.45) for i in range(3))
         return out("detail", pos, pt, 0.35, 19.0, fstop=3.2, focus="point", push=0.95)
+    if kind == "detail" and subject == "phone" and shot.get("screen"):
+        # экран со значением (часы, заряд): телефон в руке экраном к камере и лицо над ним — близко, длинный фокус
+        phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0)))
+        center = tuple(phone_c[i] * 0.55 + face[i] * 0.45 for i in range(3))
+        p = around(0.62, (-20, 20, -32, 32, 0, -45, 45), 0.0, center)
+        if p:
+            # кадр ≈ 0.62 м по высоте (телефон и лицо целиком) при любом отступе камеры от стен
+            lens = max(20.0, min(40.0, 58.0 * math.dist(p, center)))
+            return out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
     if kind == "detail" and subject == "phone":
         hand_l = to_world(root, heading, (-0.04, 0.22, 0.52 - (SIT_DROP if posture == "sit" else 0.0)))
         center = tuple((hand_l[i] + face[i]) / 2 for i in range(3))
@@ -1616,12 +1768,19 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
     if kind == "detail":
         return None
     if kind == "ots":
+        # за плечом: сзади-сбоку на уровне головы — в кадре плечо и профиль героя И то, на что он смотрит; герой
+        # не в кадре (пустой коридор/стена/капюшон на полкадра) — ракурс не годится, план выберут другой
         tgt = aim_point or (root[0] + fx * 1.2, root[1] + fy * 1.2, 0.85)
-        for sh, back in ((0.40 * side, 0.85), (-0.40 * side, 0.85), (0.34 * side, 0.66), (-0.34 * side, 0.6)):
-            # вправо от взгляда: (fy, −fx); sh>0 — над правым плечом; выше головы — капюшон не на полкадра
-            p = (face[0] - fx * back + fy * sh, face[1] - fy * back - fx * sh, face[2] + 0.36)
-            if fresh(p):
-                return out("ots", p, tgt, 0.12, 20.0, fstop=3.2, focus="point", push=0.94)
+        for sh, back, dz in ((0.36 * side, 1.00, 0.22), (-0.36 * side, 1.00, 0.22), (0.30 * side, 0.86, 0.16),
+                             (-0.30 * side, 0.86, 0.16), (0.24 * side, 1.15, 0.30), (-0.24 * side, 1.15, 0.30),
+                             (0.42 * side, 0.80, 0.12), (-0.42 * side, 0.80, 0.12)):
+            # вправо от взгляда: (fy, −fx); sh>0 — над правым плечом
+            p = (face[0] - fx * back + fy * sh, face[1] - fy * back - fx * sh, face[2] + dz)
+            if not fresh(p):
+                continue
+            c_ = out("ots", p, tgt, 0.30, 20.0, fstop=5.0, focus="face", push=0.94)
+            if ots_ok(c_, face, tgt):
+                return c_
         return None
     if kind == "overhead":
         x0, x1, y0, y1, _z0, z1 = cam_bounds()
@@ -1680,6 +1839,14 @@ def cam_sees(cam: dict, face: tuple, point: tuple, margin: float = 0.9) -> bool:
     return abs(x) <= tan_h * margin and abs(y) <= tan_v * margin
 
 
+def ots_ok(cam: dict, face: tuple, target: tuple) -> bool:
+    """«Через плечо» годится, только если в кадре и голова героя (плечо+профиль), и то, на что он смотрит, а голова
+    не во весь кадр (камера не ближе 0.45 м)."""
+    if math.dist(cam["pos_a"], face) < 0.7:
+        return False
+    return cam_sees(cam, face, face, 0.72) and cam_sees(cam, face, tuple(target), 0.9)
+
+
 def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
     """Камеры всех кадров (без повтора одинакового ракурса подряд — другой бок)."""
     rnd = random.Random(seed + 11)
@@ -1705,6 +1872,10 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         kinds = list(dict.fromkeys((s["camera"], *CAMERA_PREFS.get(s["action"], ()), "face", "overhead", "ots", "detail")))
         # тот же план подряд — только последней попыткой и только если иначе названное не видно (с другого места)
         order = [(k, False) for k in kinds if k != prev] + ([(prev, True)] if items and prev else [])
+        if s.get("screen") or s.get("hook") == 1:
+            # экран телефона — деталью, крючок — лицом: этот план первым, даже если прошлый такой же
+            must = "detail" if s.get("screen") else "face"
+            order = [(must, False)] + [o for o in order if o[0] != must]
         for kind, again in order:
             if again and cam is not None and best == len(items):
                 break
@@ -1718,6 +1889,8 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
                 if c_ is None:
                     continue
                 seen = sum(cam_sees(c_, face, p) for p in items)
+                if kind == "ots" and seen < len(items):
+                    continue      # за плечом без названной вещи — пустой план
                 if seen > best:
                     cam, best = c_, seen
                 if seen == len(items):
@@ -2065,7 +2238,7 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
         c_n = c["n"]
         blob = {"v": SCENE_VERSION, "code": code, "q": rset, "fx": fx.get(c["n"]), "f": [c["f0"], c["f1"]],
                 "shot": {k: s.get(k) for k in ("action", "camera", "subject", "spot", "heading", "target", "button", "emotion",
-                                              "posture_end", "phone", "t0", "t1", "a0")},
+                                              "posture_end", "phone", "t0", "t1", "a0", "screen", "hook")},
                 "root": perf["root"][a:b], "heading": perf["heading"][a:b], "gaze": perf["gaze"][a:b],
                 "face": perf["face"][a:b], "body": perf["body"][a:b], "lights": perf["lights"][a:b],
                 "phone": perf["phone"][a:b], "hands": [perf["hands"]["r"][a:b], perf["hands"]["l"][a:b]],

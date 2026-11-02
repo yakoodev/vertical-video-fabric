@@ -48,6 +48,7 @@ NARRATOR = ("спокойный напряжённый закадровый го
 CPS = 14.0
 HOOK_MAX_SEC = 12.0
 TITLE_SEC = 1.6  # название серии поверх первого кадра (1–2 с)
+TITLE_BG = 0.72  # подложка названия: читается с первого кадра и на светлом (потолок, лампа), без «выпрыгивания»
 PART_SEC = 2.0  # титр «ЧАСТЬ N+1 — …» после последнего слова
 HUD_MIN_SEC = 1.5
 HUD_MAX_SEC = 6.0
@@ -429,12 +430,13 @@ def title_layers(ep: dict, placed: list[dict], stroke: str, prefix: str) -> list
         {"id": f"{prefix}title", "type": "text", "name": "Название серии", "start": 0.0, "end": end,
          "track": TITLE_TRACK, "x": 0.5, "y": 0.34,
          "props": {"text": title, "size": 92, "color": "#ffffff", "maxWidth": 940, "lineHeight": 1.05, **common,
-                   "bg": {"color": "#000000", "opacity": 0.35, "radius": 18, "padX": 28, "padY": 14}},
-         "in": {"type": "pop", "duration": 0.15}, "out": {"type": "fade", "duration": 0.2}},
+                   "bg": {"color": "#000000", "opacity": TITLE_BG, "radius": 18, "padX": 28, "padY": 14}},
+         "out": {"type": "fade", "duration": 0.2}},
         {"id": f"{prefix}title_part", "type": "text", "name": "Номер части", "start": 0.0, "end": end,
          "track": TITLE_TRACK, "x": 0.5, "y": part_y,
-         "props": {"text": f"ЧАСТЬ {part_of(ep)}", "size": 70, "color": COVER_YELLOW, **common},
-         "in": {"type": "pop", "duration": 0.15}, "out": {"type": "fade", "duration": 0.2}},
+         "props": {"text": f"ЧАСТЬ {part_of(ep)}", "size": 70, "color": COVER_YELLOW, **common,
+                   "bg": {"color": "#000000", "opacity": TITLE_BG, "radius": 14, "padX": 20, "padY": 8}},
+         "out": {"type": "fade", "duration": 0.2}},
     ]
 
 

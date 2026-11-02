@@ -765,3 +765,90 @@ def test_cam_sees_geometry():
     assert B.cam_sees(cam, (0.0, 1.0, 1.0), (0.0, 3.0, 1.2))
     assert not B.cam_sees(cam, (0.0, 1.0, 1.0), (0.0, -1.0, 1.0))       # за спиной
     assert not B.cam_sees(cam, (0.0, 1.0, 1.0), (2.0, 1.0, 1.0))        # далеко вбок (узкая сторона кадра)
+
+
+# --------------------------------------------------------------------------- #
+# v3: крючок — лицо, экран телефона со значением, «через плечо» только с героем, лимит слов сценариста
+# --------------------------------------------------------------------------- #
+
+def test_screen_value_time_temperature_percent():
+    assert B.screen_value("на часах было 03:33,") == "03:33"
+    assert B.screen_value("до −12 °C.") == "−12 °C"
+    assert B.screen_value("телефон показывал всего 14% заряда") == "14%"
+    assert B.screen_value("на 23 этаже") == ""
+
+
+def test_clock_phrase_gets_phone_screen_from_its_sentence():
+    shots = [{"n": 0, "t0": 0.0, "t1": 2.0, "action": "look_camera", "camera": "face", "emotion": "worried",
+              "text": "Если блэкаут застал вас,", "sentences": [0]},
+             {"n": 1, "t0": 2.0, "t1": 4.0, "action": "flinch", "camera": "face", "emotion": "scared",
+              "text": "Датчик температуры на часах мгновенно упал", "sentences": [1], "location": "corridor"},
+             {"n": 2, "t0": 4.0, "t1": 5.0, "action": "flinch", "camera": "overhead", "emotion": "scared",
+              "text": "до −12 °C.", "sentences": [1], "location": "corridor"},
+             {"n": 3, "t0": 5.0, "t1": 7.0, "action": "listen", "camera": "ots", "emotion": "scared",
+              "text": "громким треском на 00:03 секунде.", "sentences": [2], "location": "corridor"}]
+    out = B.fix_sequence(shots)
+    assert out[1]["screen"] == "−12 °C" and out[1]["action"] == "phone_out" and out[1]["camera"] == "detail"
+    assert not out[3].get("screen"), "время события («на 00:03 секунде») — не часы"
+
+
+def test_hook_is_face_and_named_display_goes_second():
+    shots = [{"n": 0, "t0": 0.0, "t1": 3.1, "action": "look_display", "camera": "ots", "emotion": "calm",
+              "text": "Если блэкаут застал вас на 23 этаже,", "props": ["табло"], "decal": "23", "location": "cabin"},
+             {"n": 1, "t0": 3.1, "t1": 5.0, "action": "wait", "camera": "overhead", "emotion": "calm",
+              "text": "ждите помощи.", "location": "cabin"}]
+    out = B.fix_sequence(shots)
+    assert [s["n"] for s in out] == [0, 1, 2]
+    assert out[0]["camera"] == "face" and out[0]["action"] == "look_camera" and out[0]["emotion"] == "worried"
+    assert out[0]["t1"] >= B.HOOK_FACE_SEC and out[0]["show_none"]
+    assert out[1]["action"] == "look_display" and out[1]["camera"] == "detail" and out[1]["t1"] == 3.1
+    assert B.fix_sequence(out) == B.fix_sequence(B.fix_sequence(out)), "повторная правка ничего не меняет"
+    assert [x["item"] for x in B.show_items("cabin", out[0])] == ["место: кабина лифта"]
+
+
+def test_ots_needs_hero_and_named_thing_in_frame():
+    face = (0.0, 0.0, 0.8)
+    target = (0.0, -3.0, 0.9)   # герой смотрит в −Y
+    behind = {"pos_a": (0.3, 1.0, 1.0), "point": target, "face_w": 0.3, "offset": (0, 0, 0), "lens": 20.0}
+    assert B.ots_ok(behind, face, target)
+    empty = {**behind, "pos_a": (0.3, -0.6, 1.0), "point": target}   # камера перед героем — героя нет в кадре
+    assert not B.ots_ok(empty, face, target)
+    hood = {**behind, "pos_a": (0.1, 0.3, 0.95)}                       # вплотную — капюшон на полкадра
+    assert not B.ots_ok(hood, face, target)
+
+
+def test_corridor_ots_shows_hero_and_phone_screen_shot_is_detail():
+    script = {"title": "Если блэкаут застал вас в лифте", "new_characters": [{"name": "Даня"}], "sentences": [
+        {"text": "Свет в кабине погас.", "role": "hook"},
+        {"text": "Даня раздвинул двери и вышел в тёмный бетонный коридор.", "role": "problem"},
+        {"text": "Под потолком коридора мигала лампа.", "role": "problem"},
+        {"text": "На часах было 03:33.", "role": "finale"}]}
+    from app.explainer_gen import proportional_words
+
+    words = proportional_words(" ".join(x["text"] for x in script["sentences"]), 11.0)
+    job = B.build_job(script, words, 12.0, gemini=False)
+    perf = B.perform(job)
+    for sh, cam in zip(perf["shots"], perf["cameras"]):
+        f = min(perf["frames"] - 1, int((sh["t0"] + sh["t1"]) / 2 * 30))
+        face = B.face_point(tuple(perf["root"][f]), perf["heading"][f], sh.get("posture_end", "stand"))
+        if cam["kind"] == "ots":
+            assert B.cam_sees(cam, face, face), f"за плечом без героя: {sh['text']}"
+    clock = next(s for s in perf["shots"] if s.get("screen"))
+    assert clock["screen"] == "03:33" and perf["cameras"][clock["n"]]["kind"] == "detail"
+    f = int((clock["t0"] + clock["t1"]) / 2 * 30)
+    assert perf["phone"][f]["on"] and perf["phone"][f].get("screen") == "03:33"
+
+
+def test_writer_word_limit_shortens_long_script():
+    class Short:
+        def generate_content(self, model, payload):
+            return {"candidates": [{"content": {"parts": [{"text": json.dumps(
+                {"sentences": [{"i": 0, "text": "Коротко."}, {"i": 1, "text": "Ещё короче."}]})}]}}]}
+
+    lo, hi = B.SCRIPT_WORDS
+    data = {"sentences": [{"text": " ".join(["слово"] * (hi - 10)), "role": "hook"},
+                          {"text": " ".join(["слово"] * 30), "role": "finale"}]}
+    out = X.fit_script_length(Short(), data)
+    assert X.script_words(out["sentences"]) <= hi
+    ok = {"sentences": [{"text": "Коротко."}]}
+    assert X.fit_script_length(None, ok) is ok
