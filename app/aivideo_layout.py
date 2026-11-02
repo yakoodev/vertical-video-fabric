@@ -25,7 +25,7 @@ import math
 import re
 from typing import Any
 
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3  # 3: разбор ответа зрения по синонимам и свободному «wall», без дублей мебели
 ROOM_DEFAULT = {"width": 440, "depth": 420, "height": 260, "floor": "#b58a62", "wall": "#e9dfd0"}
 
 # Цветовые слова описания → цвет (родная палитра плиты ближе, чем серые коробки).
@@ -448,6 +448,49 @@ def _vision_schema() -> dict:
     return {"type": "object", "properties": {"objects": {"type": "array", "items": item}}, "required": ["objects"]}
 
 
+# Мебель, которой на плите обычно одна штука: второй экземпляр того же типа рядом — дубль ответа
+# зрения. ONE_PER_ROOM — вторая такая вещь в маленькой комнате-плите — всегда дубль.
+SINGLE_TYPES = {"bed", "nightstand", "lamp", "desk", "table", "sofa", "wardrobe", "dresser", "window", "door",
+                "tv", "fridge", "stove", "counter", "bookcase", "mirror", "dock", "garland", "rug", "floor_lamp"}
+ONE_PER_ROOM = {"bed", "dock", "fridge", "stove", "tv", "garland"}
+_VISION_ALIASES = {"bedside_table": "nightstand", "night_stand": "nightstand", "nightstand_table": "nightstand",
+                   "table_lamp": "lamp", "desk_lamp": "lamp", "shelves": "shelf", "bookshelf": "bookcase",
+                   "curtains": "window", "fairy_lights": "garland", "string_lights": "garland", "carpet": "rug",
+                   "robot_dock": "dock", "charging_station": "dock", "toys": "plush", "plushies": "plush"}
+
+
+def vision_kind(it: dict) -> str | None:
+    """Тип вещи из ответа зрения: точное имя типа, синоним («bedside table»), иначе — по словам
+    словаря в type и name («тумбочка», «прикроватная лампа»)."""
+    raw = _norm(it.get("type")).strip().replace(" ", "_").replace("-", "_")
+    if raw in CATALOG:
+        return raw
+    if raw in _VISION_ALIASES:
+        return _VISION_ALIASES[raw]
+    text = f"{_norm(it.get('type')).replace('_', ' ')} {_norm(it.get('name'))}"
+    best: tuple[int, str] | None = None
+    for kind, cat in CATALOG.items():
+        for m in re.finditer(cat["words"], text):
+            if best is None or len(m.group(0)) > best[0]:
+                best = (len(m.group(0)), kind)
+    return best[1] if best else None
+
+
+def vision_wall(value: Any, on: Any = None) -> str:
+    """Где вещь по ответу зрения: back | left | right | on | floor (свободный текст «back wall»,
+    «на тумбочке», «left side» — тоже)."""
+    t = _norm(value)
+    if re.search(r"\bon\b|^на\b|on top|сверху", t) or (on and not re.search(r"floor|пол", t)):
+        return "on" if on else "floor"
+    if re.search(r"back|rear|far|задн|дальн", t):
+        return "back"
+    if re.search(r"left|лев", t):
+        return "left"
+    if re.search(r"right|прав", t):
+        return "right"
+    return "floor"
+
+
 def from_vision(items: list, description: str, extra: Any = ()) -> dict:
     """Ответ зрения → раскладка: места по плите, размеры — по словарю, цвета — с плиты. Вещи из
     описания, которых зрение не назвало, ставятся по словарю."""
@@ -457,12 +500,20 @@ def from_vision(items: list, description: str, extra: Any = ()) -> dict:
     placed: list[dict] = []
     by: dict[str, dict] = {}
     pending_on: list[tuple[dict, str]] = []
+    seen_at: dict[str, list[tuple[float, float]]] = {}
     for it in items if isinstance(items, list) else []:
         if not isinstance(it, dict):
             continue
-        kind = _norm(it.get("type")).replace(" ", "_")
-        if kind not in CATALOG:
+        kind = vision_kind(it)
+        if kind is None:
             continue
+        # Один и тот же предмет плиты зрение иногда называет дважды («тумбочка» и «bedside table»,
+        # подушка как кровать) — второй экземпляр рядом с первым не ставим: на плите одна тумбочка.
+        xy = (_num(it.get("x"), 0.5, 0.0, 1.0), _num(it.get("depth"), 0.6, 0.0, 1.0))
+        if kind in SINGLE_TYPES and seen_at.get(kind):
+            if kind in ONE_PER_ROOM or any(abs(xy[0] - a) < 0.3 and abs(xy[1] - b) < 0.3 for a, b in seen_at[kind]):
+                continue
+        seen_at.setdefault(kind, []).append(xy)
         o = _obj(kind)
         if it.get("name"):
             o["name"] = str(it["name"])[:40]
@@ -477,7 +528,11 @@ def from_vision(items: list, description: str, extra: Any = ()) -> dict:
             o["size"] = [round(v * scale, 1) for v in o["size"]]
         x = _num(it.get("x"), 0.5, 0.0, 1.0)
         depth = _num(it.get("depth"), 0.6, 0.0, 1.0)
-        wall = _norm(it.get("wall"))
+        wall = vision_wall(it.get("wall"), it.get("on"))
+        # Мебель «у стены» по словарю (кровать изголовьем, тумбочка, шкаф) в глубине кадра — у задней
+        # стены, как на плите, а не посреди комнаты.
+        if wall == "floor" and CATALOG[kind]["place"] == "back" and depth >= 0.55:
+            wall = "back"
         sw, _sh, sd = o["size"]
         if CATALOG[kind].get("wall"):
             o["y"] = float(CATALOG[kind]["wall"])
@@ -487,8 +542,11 @@ def from_vision(items: list, description: str, extra: Any = ()) -> dict:
             _place_wall(o, "right", room, d / 2 - depth * d)
         elif wall == "back":
             _place_wall(o, "back", room, (x - 0.5) * w * 0.95)
+            if kind == "bed":  # кровать изголовьем к стене — её центр на полдлины от стены
+                o["pos"][1] = -d / 2 + sd / 2 + 1
         elif wall == "on" and it.get("on"):
-            pending_on.append((o, _norm(it.get("on")).replace(" ", "_")))
+            on_kind = vision_kind({"type": it.get("on"), "name": it.get("on")}) or _norm(it.get("on")).replace(" ", "_")
+            pending_on.append((o, on_kind))
             o["pos"] = [(x - 0.5) * w * 0.9, d / 2 - depth * d]
         else:
             spread = 1.15 - 0.35 * depth  # ближе к камере кадр уже — та же доля кадра = меньше см
