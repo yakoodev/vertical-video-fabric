@@ -1,7 +1,8 @@
 """3D-серия в Blender от сценария до mp4 — тем же конвейером, что «Истории» (``engine: 3d, renderer: blender``), но
 во временной базе, без сервиса и Docker, с рендером здесь же (``SERIES3D_BLENDER_LOCAL=1``).
 
-    python tools/series3d_blender.py SCRIPT.json OUT.mp4 [--sheet SHEET.jpg] [--env ../.env] [--voice Charon]
+    python tools/series3d_blender.py SCRIPT.json|- OUT.mp4 [--sheet SHEET.jpg] [--env ../.env] [--voice Charon]
+        [--premise «завязка»: SCRIPT «-» — следующая часть мира из --data, сценарий пишет Gemini] [--max-mb 50]
         [--quality fast|fast720|final|preview|draft] [--workers N] [--lipsync speaking|all|off] [--data DIR]
         [--cache DIR] [--keep] [--reassemble]
 
@@ -49,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", help="папка временной базы (по умолчанию — временная)")
     ap.add_argument("--cache", help="кэш кадров (по умолчанию D:/vvf-offload/render3d/cache или <data>/render3d_cache)")
     ap.add_argument("--keep", action="store_true", help="не удалять временную базу")
+    ap.add_argument("--premise", default="", help="SCRIPT = «-»: сценарий пишет Gemini по завязке (следующая часть мира "
+                    "из --data: «ранее» и крючок прошлой части)")
+    ap.add_argument("--max-mb", type=float, default=50.0, help="больше — пережать (Telegram/площадки)")
     ap.add_argument("--reassemble", action="store_true",
                     help="--data с готовой серией: пересобрать (озвучка та же, перерисуются только изменённые планы)")
     args = ap.parse_args(argv)
@@ -124,8 +128,28 @@ def main(argv: list[str] | None = None) -> int:
 
     store = AppStore(Database(data / "app.sqlite"), CookieCipher(data / "secret.key"))
     store.db.init()
-    script = json.loads(Path(args.script).read_text("utf-8"))
+    script = None if args.script == "-" else json.loads(Path(args.script).read_text("utf-8"))
     started = time.time()
+    # Время по этапам (wall-clock): сценарий, озвучка, слова, режиссура, Blender, холст, финальный рендер.
+    stages: dict[str, float] = {}
+
+    def timed(module, name: str, key: str) -> None:
+        fn = getattr(module, name)
+
+        def wrap(*a, **kw):
+            t = time.time()
+            try:
+                return fn(*a, **kw)
+            finally:
+                stages[key] = round(stages.get(key, 0.0) + time.time() - t, 1)
+        setattr(module, name, wrap)
+
+    from app import stories_gen as SG
+
+    timed(X, "write_script", "script_sec")
+    timed(SG, "transcribe_words", "words_sec")
+    timed(SB, "build_job", "direction_sec")
+    timed(S3D, "assemble", "assemble_sec")
     # Та же папка данных (--data) с недоделанной серией — продолжить её: озвучка и режиссура те же, кадры из кэша.
     old = [e for e in S.list_episodes(store) if e["status"] not in ("done", "cancelled")]
     if not old and args.reassemble:
@@ -135,7 +159,19 @@ def main(argv: list[str] | None = None) -> int:
             S.update_episode(store, int(done[0]["id"]), options=opts)   # другой пресет — та же режиссура
             S.set_status(store, int(done[0]["id"]), "assembling", ("done",))
             old = [S.get_episode(store, int(done[0]["id"]))]
-    if old:
+    worlds = store.db.query_all("SELECT id, project_id FROM story_worlds ORDER BY id")
+    if not old and script is None:
+        if not worlds:
+            print(json.dumps({"ok": False, "error": "SCRIPT «-» — нужна --data с миром прошлой части"}, ensure_ascii=False))
+            return 2
+        w = worlds[0]
+        pid = int(w["project_id"])
+        options = {"engine": S.ENGINE_3D, "renderer": S.RENDERER_BLENDER, "quality": args.quality,
+                   "lipsync": args.lipsync, "format": "disaster", "title_card": True}
+        ep = X.create(store, int(w["id"]), args.premise or "продолжение", None, options=options)
+        eid = int(ep["id"])
+        print(f"новая часть {ep.get('options', {}).get('part')}: эпизод {eid}", flush=True)
+    elif old:
         ep = old[0]
         eid = int(ep["id"])
         pid = int(ep["project_id"])
@@ -154,12 +190,14 @@ def main(argv: list[str] | None = None) -> int:
                       options=options)
         eid = int(ep["id"])
     status = ""
-    for _ in range(40):
+    for _ in range(60):
         ep = X.advance(store, eid)
         status = ep["status"]
         if status in ("done", "failed", "cancelled"):
             break
-        res = G.run_pending(store, project_id=pid)
+        t_tts = time.time()
+        res = G.run_pending(store, project_id=pid)   # озвучка (Gemini TTS) — задание этапа генерации
+        stages["tts_sec"] = round(stages.get("tts_sec", 0.0) + time.time() - t_tts, 1)
         if not any(res.get(k) for k in ("done", "polling", "waiting")):
             time.sleep(1)
     if status != "done":
@@ -178,10 +216,32 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(clip["output_path"], out)
+    if out.stat().st_size > args.max_mb * 1e6:
+        # пережать под лимит: битрейт по длине, звук как есть
+        import subprocess
+
+        dur = float(ep["timeline"]["duration"])
+        kbps = int(args.max_mb * 8e3 * 0.93 / dur) - 192
+        tmp = out.with_suffix(".tmp.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(out), "-c:v", "libx264", "-preset", "slow",
+                        "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.3)}k", "-bufsize", f"{kbps * 2}k",
+                        "-c:a", "copy", "-movflags", "+faststart", str(tmp)], check=True)
+        tmp.replace(out)
+    final_sec = round(time.time() - built, 1)
+    bl = timing.get("blender_sec") or 0.0
+    st = {"script_sec": stages.get("script_sec", 0.0), "tts_sec": stages.get("tts_sec", 0.0),
+          "words_sec": stages.get("words_sec", 0.0), "direction_sec": stages.get("direction_sec", 0.0),
+          "blender_sec": bl,
+          "canvas_build_sec": round(max(0.0, stages.get("assemble_sec", 0.0) - bl - stages.get("words_sec", 0.0)
+                                        - stages.get("direction_sec", 0.0)), 1),
+          "final_render_sec": final_sec, "total_sec": round(time.time() - started, 1)}
     summary = {"ok": True, "out": str(out), "size_mb": round(out.stat().st_size / 1e6, 1),
                "duration": ep["timeline"]["duration"], "assemble_sec": round(built - started, 1),
                "final_render_sec": round(time.time() - built, 1), "total_sec": round(time.time() - started, 1),
-               "blender": timing, "notes": ep.get("notes"), "data": str(data), "cache": str(cache)}
+               "stages": st, "blender": timing, "music_bed": ep["timeline"].get("music_bed"),
+               "title": (ep.get("script") or {}).get("title"), "part": (ep.get("options") or {}).get("part"),
+               "part_title": (ep.get("script") or {}).get("part_title"),
+               "notes": ep.get("notes"), "data": str(data), "cache": str(cache)}
     if args.sheet:
         summary["sheet"] = str(contact_sheet(out, args.sheet, count=12, cols=6, width=300))
     print(json.dumps(summary, ensure_ascii=False, indent=1))

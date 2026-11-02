@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import logging
 import os
 import shutil
@@ -242,6 +243,95 @@ def music_bed_layers(world: dict, ep: dict, total: float, voice_db: float, prefi
                     "under_voice_db": BED_UNDER_VOICE_DB, "copies": len(layers)}
 
 
+# Слышимая подложка 3D-серии (владелец: «музыки не хватает»): между фразами фон на BED_OPEN_DB тише голоса, под речью
+# — мягкий ducking на BED_DUCK_DB (не до тишины), к финалу нарастание на BED_SWELL_DB. Итог по замеру: музыка
+# ≈ 6–8 дБ тише голоса (голос −14 LUFS → фон ≈ −20…−22). Огибающая одна, фон — один готовый файл (петля внахлёст).
+BED_OPEN_DB = 3.0
+BED_DUCK_DB = 5.0
+BED_SWELL_DB = 3.0
+BED_SWELL_FROM = 0.7          # доля речи, с которой фон нарастает к панчлайну
+BED_ATTACK, BED_RELEASE = 0.25, 0.7
+
+
+def speech_spans(words: list[dict], merge: float = 0.35) -> list[tuple[float, float]]:
+    spans: list[list[float]] = []
+    for w in words:
+        a_, b_ = float(w["start"]), float(w["end"])
+        if spans and a_ - spans[-1][1] < merge:
+            spans[-1][1] = max(spans[-1][1], b_)
+        else:
+            spans.append([a_, b_])
+    return [(a_, b_) for a_, b_ in spans]
+
+
+def bed_envelope_db(t: float, spans: list[tuple[float, float]], speech_end: float, total: float) -> float:
+    """Поправка фона (дБ) в момент ``t``: под речью −BED_DUCK_DB (атака/отпускание), к финалу +BED_SWELL_DB,
+    вход/выход — плавно."""
+    duck = 0.0
+    for a_, b_ in spans:
+        if a_ - BED_ATTACK <= t <= b_ + BED_RELEASE:
+            if t < a_:
+                k = (t - (a_ - BED_ATTACK)) / BED_ATTACK
+            elif t > b_:
+                k = 1.0 - (t - b_) / BED_RELEASE
+            else:
+                k = 1.0
+            duck = max(duck, k * k * (3 - 2 * k))
+    db = -BED_DUCK_DB * duck
+    s0 = speech_end * BED_SWELL_FROM
+    if t > s0:
+        x = min(1.0, (t - s0) / max(0.5, speech_end - s0))
+        db += BED_SWELL_DB * x * x * (3 - 2 * x)
+    if t < BED_FADE_IN:
+        db += 20.0 * math.log10(max(1e-3, t / BED_FADE_IN))
+    if t > total - BED_FADE_OUT:
+        db += 20.0 * math.log10(max(1e-3, (total - t) / BED_FADE_OUT))
+    return db
+
+
+def render_bed(store: Any, bed: dict, words: list[dict], total: float, voice_db: float, speech_end: float,
+               label: str) -> tuple[dict, dict] | None:
+    """Фон одним файлом: петля трека пака на всю серию, громкость от замера голоса (между фразами — на
+    BED_OPEN_DB тише), огибающая ducking/нарастания. → (ассет «Файлы для монтажа», замер)."""
+    from app.audio_mix import ebur128
+    from app.montage_assets import assets_dir, probe_asset
+    from app.motion_assets import resolve_pack_ref
+
+    src = resolve_pack_ref(bed["ref"])
+    if src is None or not Path(src).is_file():
+        return None
+    lufs = float(bed.get("lufs") or -26.0)
+    gain = (voice_db - BED_OPEN_DB) - lufs
+    spans = speech_spans(words)
+    rate = 100
+    env = [10 ** (bed_envelope_db(i / rate, spans, speech_end, total) / 20.0) for i in range(int(total * rate) + 2)]
+    work = settings.tmp_dir / f"bed-{uuid4().hex[:8]}"
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        import array
+
+        pcm = array.array("h", [int(max(0.0, min(1.0, v)) * 32767) for v in env])
+        raw = work / "env.raw"
+        raw.write_bytes(pcm.tobytes())
+        dest = assets_dir() / f"series3d-bed-{uuid4().hex[:10]}.m4a"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-i", str(src),
+                        "-f", "s16le", "-ar", str(rate), "-ac", "1", "-i", str(raw), "-filter_complex",
+                        f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=0:{total:.3f},asetpts=N/SR/TB,"
+                        f"volume={gain:.2f}dB[m];[1:a]aresample=48000,aformat=channel_layouts=stereo[e];"
+                        f"[m][e]amultiply,atrim=0:{total:.3f}[out]",
+                        "-map", "[out]", "-c:a", "aac", "-b:a", "192k", str(dest)], check=True, capture_output=True)
+        meas = ebur128(dest)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    meta = probe_asset(dest)
+    asset = store.create_montage_asset(kind="audio", label=f"Фон: {label}"[:120], description="тревожный фон 3D-серии",
+                                       tags="3d,фон", file_path=str(dest), original_filename=dest.name,
+                                       mime_type="audio/mp4", size_bytes=dest.stat().st_size, **meta)
+    return asset, {"bed_lufs": round(float(meas.get("i") or -70), 1), "voice_lufs": round(voice_db, 1),
+                   "under_voice_db": round(voice_db - float(meas.get("i") or -70), 1), "gain_db": round(gain, 1),
+                   "duck_db": -BED_DUCK_DB, "swell_db": BED_SWELL_DB, "open_db": -BED_OPEN_DB}
+
+
 def save_video(store: Any, path: Path, label: str) -> dict:
     """mp4 3D-серии → «Файлы для монтажа» (видео для слоя холста)."""
     from app.montage_assets import assets_dir, probe_asset
@@ -336,6 +426,19 @@ def assemble(store: Any, episode_id: int) -> dict:
     bed = None
     if track is None and music_mode(world, ep) != "none":
         bed_layers, bed = music_bed_layers(world, ep, total, voice_db, prefix)
+        picked = pick_bed(world, ep)
+        made = None
+        if picked is not None:
+            try:
+                made = render_bed(store, picked, words, total, voice_db, speech_end, picked.get("name") or picked["file"])
+            except Exception as exc:  # noqa: BLE001 - не собрался файл фона — петля слоями, как раньше
+                notes.append(f"3D: фон одним файлом не собрался ({type(exc).__name__}) — петля слоями")
+        if made is not None:
+            asset_bed, meas = made
+            bed_layers = [{"id": f"{prefix}bed", "type": "audio", "name": f"Музыка: {picked.get('name') or picked['file']}"[:60],
+                           "start": 0.0, "end": round(total, 3),
+                           "props": {"asset_id": str(asset_bed["id"]), "mode": "track", "volume": 1.0, "role": "music"}}]
+            bed = {**(bed or {}), "ref": picked["ref"], "asset_id": int(asset_bed["id"]), **meas, "copies": 1}
         layers += bed_layers
         if bed is None:
             notes.append(f"3D: тревожного фона нет — пак {BED_PACK} не скачан (tools/fetch_packs.py --only {BED_PACK})")
@@ -405,8 +508,8 @@ def assemble(store: Any, episode_id: int) -> dict:
     return out
 
 
-TITLE_SLOTS = (0.27, 0.22, 0.56)     # название серии (под HUD 0.145, над субтитрами)
-PART_SLOTS = (0.62, 0.56, 0.20)      # «ЧАСТЬ N+1» после речи — субтитров уже нет
+TITLE_SLOTS = (0.22, 0.27, 0.56)     # название серии (над субтитрами; HUD первой фразы — после названия)
+PART_SLOTS = (0.70, 0.62, 0.22)      # «ЧАСТЬ N+1» после речи — субтитров уже нет
 
 
 def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
@@ -466,6 +569,16 @@ def place_titles(layers: list[dict], faces: list[dict], captions_y: float, prefi
             part_t["y"] = round(y + dy, 3)
     if part is not None:
         part["y"] = round(best(part, PART_SLOTS, False), 3)
+    if title is not None:
+        # HUD, который встал бы под название, появляется, когда название уходит (плашка не на титре)
+        t0, t1 = layer_box(title)
+        bottom = layer_box(part_t)[1] if part_t is not None else t1
+        for lay in layers:
+            if not str(lay.get("id") or "").startswith(f"{prefix}hud") or float(lay["start"]) >= float(title["end"]):
+                continue
+            h0, h1 = float(lay["y"]) - 0.025, float(lay["y"]) + 0.025
+            if _overlap(h0, h1, t0, bottom) > 0:
+                lay["start"] = round(float(title["end"]) + 0.05, 3)
     return notes
 
 

@@ -622,8 +622,10 @@ def test_titles_move_off_the_face():
     part_t = {"id": "st_title_part", "type": "text", "start": 0.0, "end": 1.6, "y": 0.41, "props": {"text": "ЧАСТЬ 1", "size": 70}}
     part = {"id": "st_part", "type": "text", "start": 43.0, "end": 45.0, "y": 0.45,
             "props": {"text": "ЧАСТЬ 2 — КТО СТУЧАЛ", "size": 84, "maxWidth": 840, "lineHeight": 1.05, "bg": {"padY": 16}}}
-    layers = [title, part_t, part]
+    hud = {"id": "st_hud00", "type": "text", "start": 0.25, "end": 4.0, "y": 0.145, "props": {"text": "22 ЭТАЖ"}}
+    layers = [title, part_t, part, hud]
     notes = S3D.place_titles(layers, faces, 0.74, "st_")
+    assert S3D._overlap(*S3D.layer_box(title), 0.12, 0.17) == 0.0 or hud["start"] >= title["end"], "HUD не под названием"
     for lay in (title, part):
         a0, a1 = S3D.layer_box(lay)
         for f0, f1 in S3D.face_in(faces, lay["start"], lay["end"]):
@@ -635,3 +637,18 @@ def test_titles_move_off_the_face():
     perf = B.perform(_job())
     cams = perf["cameras"]
     assert cams[0]["face_y"] > B.TITLE_Y + 0.15 and cams[-1]["face_y"] < B.PART_Y - 0.15
+
+
+
+def test_music_bed_soft_duck_and_swell():
+    from app import stories_3d as S3D
+
+    words = [{"word": "а", "start": 2.0, "end": 4.0}, {"word": "б", "start": 6.0, "end": 9.0},
+             {"word": "в", "start": 30.0, "end": 39.0}]
+    spans = S3D.speech_spans(words)
+    env = lambda t: S3D.bed_envelope_db(t, spans, 39.0, 41.0)  # noqa: E731
+    assert abs(env(3.0) + S3D.BED_DUCK_DB) < 0.01, "под речью — мягко, не до тишины"
+    assert abs(env(5.2)) < 0.5, "между фразами фон поднимается"
+    assert -6.5 < env(3.0) < -3.5
+    assert env(38.5) > env(31.0), "к финалу — нарастание"
+    assert env(0.1) < -10 and env(40.95) < -10, "вход/выход — плавно"

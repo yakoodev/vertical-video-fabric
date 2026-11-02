@@ -1408,13 +1408,13 @@ def face_target(n: int, count: int, kind: str) -> float:
     if n == 0:
         return 0.52
     if n == count - 1:
-        return 0.33
+        return 0.30
     return 0.40 if kind in ("face", "overhead") else 0.42
 
 
 def face_bands(perf: dict) -> list[dict]:
     """Лицо в кадре по планам: ``{n, t0, t1, y, h}`` (центр и высота, доли кадра; ``y`` None — лица почти нет: за
-    плечом, табло). Высота — голова игрушки ≈ 0.30 м на расстоянии камеры и фокусном (вертикальный кадр, датчик 36)."""
+    плечом, табло). Высота — лицо с капюшоном ≈ 0.42 м на расстоянии камеры и фокусном (вертикальный кадр, датчик 36)."""
     out = []
     shots = {s["n"]: s for s in perf["shots"]}
     for c in perf["cameras"]:
@@ -1422,7 +1422,7 @@ def face_bands(perf: dict) -> list[dict]:
         fi = min(perf["frames"] - 1, int((c["t0"] + c["t1"]) / 2 * perf["fps"]))
         face = face_point(tuple(perf["root"][fi]), perf["heading"][fi], s.get("posture_end", "stand"))
         dist = max(0.2, math.dist(c["pos_a"], face))
-        h = max(0.05, min(0.6, 0.30 * c["lens"] / (36.0 * dist)))
+        h = max(0.05, min(0.75, 0.42 * c["lens"] / (36.0 * dist)))   # лоб–подбородок с капюшоном ≈ 0.42 м
         y = c.get("face_y") if c.get("face_w", 0) > 0.3 else None
         out.append({"n": c["n"], "t0": c["t0"], "t1": c["t1"], "y": y, "h": round(h, 3)})
     return out
