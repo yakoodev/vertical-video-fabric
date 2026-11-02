@@ -251,6 +251,7 @@ BED_DUCK_DB = 5.0
 BED_SWELL_DB = 3.0
 BED_SWELL_FROM = 0.7          # доля речи, с которой фон нарастает к панчлайну
 BED_ATTACK, BED_RELEASE = 0.25, 0.7
+BED_UNDER_TARGET_DB = 7.0     # итог по замеру: фон на 6–8 дБ тише голоса (голос −14 LUFS → фон ≈ −21)
 
 
 def speech_spans(words: list[dict], merge: float = 0.35) -> list[tuple[float, float]]:
@@ -303,6 +304,7 @@ def render_bed(store: Any, bed: dict, words: list[dict], total: float, voice_db:
     lufs = float(bed.get("lufs") or -26.0)
     gain = (voice_db - BED_OPEN_DB) - lufs
     spans = speech_spans(words)
+    meas: dict = {}
     rate = 100
     env = [10 ** (bed_envelope_db(i / rate, spans, speech_end, total) / 20.0) for i in range(int(total * rate) + 2)]
     work = settings.tmp_dir / f"bed-{uuid4().hex[:8]}"
@@ -314,13 +316,20 @@ def render_bed(store: Any, bed: dict, words: list[dict], total: float, voice_db:
         raw = work / "env.raw"
         raw.write_bytes(pcm.tobytes())
         dest = assets_dir() / f"series3d-bed-{uuid4().hex[:10]}.m4a"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-i", str(src),
-                        "-f", "s16le", "-ar", str(rate), "-ac", "1", "-i", str(raw), "-filter_complex",
-                        f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=0:{total:.3f},asetpts=N/SR/TB,"
-                        f"volume={gain:.2f}dB[m];[1:a]aresample=48000,aformat=channel_layouts=stereo[e];"
-                        f"[m][e]amultiply,atrim=0:{total:.3f}[out]",
-                        "-map", "[out]", "-c:a", "aac", "-b:a", "192k", str(dest)], check=True, capture_output=True)
-        meas = ebur128(dest)
+        for _ in range(3):
+            # громкость файла пака в items.json — оценка; доводим по замеру итогового фона до BED_UNDER_TARGET_DB
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-i", str(src),
+                            "-f", "s16le", "-ar", str(rate), "-ac", "1", "-i", str(raw), "-filter_complex",
+                            f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=0:{total:.3f},asetpts=N/SR/TB,"
+                            f"volume={gain:.2f}dB[m];[1:a]aresample=48000,aformat=channel_layouts=stereo[e];"
+                            f"[m][e]amultiply,atrim=0:{total:.3f}[out]",
+                            "-map", "[out]", "-c:a", "aac", "-b:a", "192k", str(dest)], check=True, capture_output=True)
+            meas = ebur128(dest)
+            got = float(meas.get("i") or -70)
+            corr = (voice_db - BED_UNDER_TARGET_DB) - got
+            if got < -69 or abs(corr) < 0.5:
+                break
+            gain += max(-12.0, min(12.0, corr))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     meta = probe_asset(dest)

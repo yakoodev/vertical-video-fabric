@@ -656,3 +656,16 @@ def test_music_bed_soft_duck_and_swell():
     assert -6.5 < env(3.0) < -3.5
     assert env(38.5) > env(31.0), "к финалу — нарастание"
     assert env(0.1) < -10 and env(40.95) < -10, "вход/выход — плавно"
+
+
+
+def test_percent_and_clock_are_not_floors():
+    from app import series3d as S3
+    from app.explainer_gen import proportional_words
+
+    sents = [{"text": "Если блэкаут застал вас на 23 этаже, не выходите.", "role": "hook"},
+             {"text": "Телефон показывал всего 14% заряда, а на часах было 03:33.", "role": "problem"},
+             {"text": "А табло показывало 23.", "role": "finale"}]
+    w = proportional_words(" ".join(x["text"] for x in sents), 10.0)
+    floors = [e["value"] for e in S3.detect_events(S3.sentence_spans(sents, w, 11.0), w) if e["kind"] == "floor"]
+    assert floors == ["23", "23"]

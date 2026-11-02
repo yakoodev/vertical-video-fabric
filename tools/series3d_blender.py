@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--premise", default="", help="SCRIPT = «-»: сценарий пишет Gemini по завязке (следующая часть мира "
                     "из --data: «ранее» и крючок прошлой части)")
     ap.add_argument("--max-mb", type=float, default=50.0, help="больше — пережать (Telegram/площадки)")
+    ap.add_argument("--episode", type=int, default=0, help="--reassemble: какой эпизод (по умолчанию последний готовый)")
     ap.add_argument("--reassemble", action="store_true",
                     help="--data с готовой серией: пересобрать (озвучка та же, перерисуются только изменённые планы)")
     args = ap.parse_args(argv)
@@ -153,7 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     # Та же папка данных (--data) с недоделанной серией — продолжить её: озвучка и режиссура те же, кадры из кэша.
     old = [e for e in S.list_episodes(store) if e["status"] not in ("done", "cancelled")]
     if not old and args.reassemble:
-        done = [e for e in S.list_episodes(store) if e["status"] == "done"]
+        done = [e for e in S.list_episodes(store) if e["status"] == "done"
+                and (not args.episode or int(e["id"]) == args.episode)]
         if done:   # пересобрать готовую: та же озвучка и режиссура, перерисуются только изменённые планы
             opts = {**(done[0].get("options") or {}), "quality": args.quality}
             S.update_episode(store, int(done[0]["id"]), options=opts)   # другой пресет — та же режиссура
