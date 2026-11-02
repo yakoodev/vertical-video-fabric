@@ -48,6 +48,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -516,13 +517,21 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
         # Пары ключевых кадров по порядку: старт плана (если он не общий с концом прошлого) и конец
         # плана с видео. Конец плана N = старт сцепленного плана N+1 — один кадр на двоих (N+1 кадров
         # на цепочку из N планов), ничего не вынимается из видео — ошибки не копятся.
+        # Видеомодель без конечного кадра (H3, Grok): конечные кадры не заказываем — видео к ним не
+        # приходит; старт продолжения — последний кадр готового видео прошлого плана (после этапа video).
         shots = script["shots"]
+        tail = tail_mode(store, project_id, script_id)
         for n, shot in enumerate(shots):
             if shot["locked"] and not explicit:
                 continue
             prev = shots[n - 1] if n else None
             pair = bool(shot["needs_motion"])
-            if _is_chain(shot, prev):
+            if _is_chain(shot, prev) and tail:
+                out.append({**_share_item(shot, prev, script["id"]),
+                            "label": f"план {shot['idx']}: старт — последний кадр видео плана {prev['idx']}",
+                            "skipped": f"план {shot['idx']}: старт — последний кадр видео плана {prev['idx']} "
+                                       "(после этапа video, 0 ₽)"})
+            elif _is_chain(shot, prev):
                 out.append({**_share_item(shot, prev, script["id"]),
                             "skipped": f"план {shot['idx']}: старт — конечный кадр плана {prev['idx']} (общий кадр, "
                                        "0 ₽)"})
@@ -533,7 +542,7 @@ def plan_stage(store: Any, project_id: int, stage: str, script_id: int | None = 
                                        f"план {shot['idx']}: старт" if pair else f"план {shot['idx']}", model,
                                        quality, provider)
                     out.append({**item, "script_id": int(script_id)})
-            if pair:
+            if pair and (not tail or want("shot", shot["id"], "endframe")):
                 ref = V.selected_ref(store, project_id, "shot", shot["id"], "endframe")
                 if need(ref, "shot", shot["id"], "endframe"):
                     item = _image_item(stage, "shot", shot["id"], "endframe", f"план {shot['idx']}: конец", model,
@@ -592,12 +601,81 @@ def _usable(ref: dict | None) -> dict | None:
     return ref if ref and ref.get("asset_id") else None
 
 
+TAIL_SOURCE = "source=video_tail"  # пометка версии keyframe: старт — последний кадр готового видео прошлого плана
+
+
+def series_video_model(store: Any, project_id: int, script_id: int | None) -> tuple[str, str]:
+    """(видеомодель, провайдер видео) серии."""
+    style = V.get_style(store, project_id)
+    quality = V.get_script(store, int(script_id), with_shots=False)["quality"] if script_id is not None else None
+    return video_model_for(style, quality), style["video_provider"]
+
+
+def tail_mode(store: Any, project_id: int, script_id: int | None) -> bool:
+    """Видеомодель серии НЕ берёт конечный кадр (H3, Grok — только старт): видео плана к нарисованному
+    концу не приходит, поэтому старт продолжения — ПОСЛЕДНИЙ кадр готового видео прошлого плана, а
+    конечные кадры не заказываются (деньги зря)."""
+    model, provider = series_video_model(store, project_id, script_id)
+    return not video_capabilities(model, provider).get("first_last")
+
+
+def _tail_marker(video_ref: dict) -> str:
+    return f"{TAIL_SOURCE}; video_ref={int(video_ref['id'])}"
+
+
+def tail_start_ref(store: Any, project_id: int, prev: dict, shot: dict) -> dict | None:
+    """Старт сцепленного плана из хвоста видео прошлого: версия keyframe с пометкой video_tail ИМЕННО
+    от выбранной сейчас версии видео прошлого плана (новое видео — старый хвост не годится)."""
+    video = _usable(V.selected_ref(store, project_id, "shot", int(prev["id"]), "shot_video"))
+    if video is None:
+        return None
+    marker = _tail_marker(video)
+    for ref in reversed(V.list_refs(store, project_id, "shot", int(shot["id"]), "keyframe")):
+        if ref.get("prompt") == marker and ref.get("asset_id") and _asset_path(store, ref) is not None:
+            if not ref["selected"]:
+                ref = V.select_ref(store, int(ref["id"]))
+            return ref
+    return None
+
+
+def make_tail_start(store: Any, project_id: int, prev: dict, shot: dict, job: dict | None = None) -> dict | None:
+    """Вынуть последний кадр готового видео прошлого плана (ffmpeg) → версия keyframe плана ``shot``
+    с пометкой ``source=video_tail``. Уже есть от этого же видео — она. Видео нет — None."""
+    have = tail_start_ref(store, project_id, prev, shot)
+    if have is not None:
+        return have
+    video = _usable(V.selected_ref(store, project_id, "shot", int(prev["id"]), "shot_video"))
+    frame = video_last_frame(store, video) if video else None
+    if frame is None:
+        return None
+    from app.montage_assets import assets_dir, probe_asset
+
+    dest = assets_dir() / f"{uuid4().hex}-aiv-keyframe-tail.jpg"
+    shutil.copyfile(frame, dest)
+    meta = probe_asset(dest)
+    asset = store.create_montage_asset(
+        kind="image", label=f"ИИ-видео: план {shot['idx']} — старт из хвоста видео плана {prev['idx']}"[:120],
+        description=(f"ИИ-видео: старт плана {shot['idx']} — последний кадр видео плана {prev['idx']} "
+                     f"({TAIL_SOURCE})")[:500],
+        tags="ии-видео", file_path=str(dest), original_filename=dest.name, mime_type="image/jpeg",
+        size_bytes=dest.stat().st_size, **meta)
+    ref = V.add_ref(store, project_id, "shot", int(shot["id"]), "keyframe", int(asset["id"]),
+                    prompt=_tail_marker(video), job_id=(job or {}).get("id"))
+    # Новый старт — видео этого плана (если было) стоит на старом старте: устарело.
+    store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE target_type = 'shot' AND target_id = ? AND kind = "
+                     "'shot_video'", (int(shot["id"]),))
+    return ref
+
+
 def start_frame_ref(store: Any, project_id: int, shots: list[dict], n: int) -> tuple[dict | None, int | None]:
     """Стартовый кадр плана ``shots[n]`` и откуда он: (версия, idx плана, чей это КОНЕЦ — или None,
-    если кадр свой). Сцепленный план берёт конечный кадр прошлого плана — тот же файл."""
+    если кадр свой). Сцепленный план берёт конечный кадр прошлого плана — тот же файл; если видеомодель
+    серии конечный кадр не берёт — последний кадр готового видео прошлого плана (``source=video_tail``)."""
     shot = shots[n]
     prev = shots[n - 1] if n else None
     if _is_chain(shot, prev):
+        if tail_mode(store, project_id, shot.get("script_id")):
+            return tail_start_ref(store, project_id, prev, shot), int(prev["idx"])
         return _usable(V.selected_ref(store, project_id, "shot", int(prev["id"]), "endframe")), int(prev["idx"])
     return _usable(V.selected_ref(store, project_id, "shot", int(shot["id"]), "keyframe")), None
 
@@ -643,8 +721,23 @@ def _plan_video(store: Any, project_id: int, script: dict, style: dict, explicit
             continue
         start, shared = start_frame_ref(store, project_id, shots, n)
         end = end_frame_ref(store, project_id, shot)
-        item = _video_item(shot, script["id"], provider, model, res, "shared" if shared else "keyframe")
+        tail = bool(shared) and not caps.get("first_last")
+        item = _video_item(shot, script["id"], provider, model, res,
+                           "video_tail" if tail else ("shared" if shared else "keyframe"))
         item["mode"] = choose_video_mode(model, end is not None, provider=provider)
+        if start is None and tail:
+            # Старт — хвост видео прошлого плана: есть видео, оно в этой же партии или уже в работе —
+            # запуск ждёт его в очереди и вынимает последний кадр сам.
+            prev = shots[n - 1]
+            ready = _usable(V.selected_ref(store, project_id, "shot", int(prev["id"]), "shot_video"))
+            planned = any(i["target_id"] == int(prev["id"]) and not i.get("blocked") for i in out)
+            if ready or planned or _video_busy(store, int(prev["id"])):
+                item["after"] = int(prev["id"])
+                out.append(item)
+            else:
+                out.append({**item, "blocked": f"план {shot['idx']}: старт — последний кадр видео плана "
+                                                f"{prev['idx']}: сначала видео плана {prev['idx']}"})
+            continue
         if start is None:
             where = f"конечного кадра плана {shared}" if shared else "стартового кадра"
             out.append({**item, "blocked": f"план {shot['idx']}: нет {where} — сначала этап keyframes"})
@@ -655,6 +748,13 @@ def _plan_video(store: Any, project_id: int, script: dict, style: dict, explicit
             continue
         out.append(item)
     return out
+
+
+def _video_busy(store: Any, shot_id: int) -> bool:
+    marks = ", ".join("?" for _ in BUSY)
+    return bool(store.db.query_one(
+        f"SELECT id FROM aiv_gen_jobs WHERE kind = 'video' AND target_type = 'shot' AND target_id = ? "
+        f"AND status IN ({marks}) LIMIT 1", (int(shot_id), *BUSY)))
 
 
 def estimate(store: Any, project_id: int, stage: str, script_id: int | None = None, items: list | None = None,
@@ -738,6 +838,10 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
         pairs = sum(1 for i in planned if i["ref_kind"] == "endframe")
         if pairs:
             notes.append(f"пары кадров: {pairs} конечных; конец плана = старт сцепленного следующего (один кадр)")
+        if tail_mode(store, pid, script_id):
+            vmodel = series_video_model(store, pid, script_id)[0]
+            notes.append(f"конечные кадры не заказываю: {vmodel} берёт только стартовый кадр — видео к нарисованному "
+                         "концу не приходит; старт продолжения — последний кадр готового видео прошлого плана")
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
             + (f" ({model}, цены от {PRICE_CHECKED}: "
                + ", ".join(sorted({i['price_note'] for i in planned if _paid(i['provider'], i['kind'])})) + ")"
@@ -1210,15 +1314,27 @@ def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[
     word = "LAST" if which == "end" else "FIRST"
     parts = [f"{st}. Vertical 9:16 film still — the {word} frame of shot {shot['idx']} (one continuous shot)."]
     block = _asset_path(store, V.selected_ref(store, project_id, "shot", int(shot["id"]), f"blocking_{which}"))
+    blocking_info: dict[str, Any] = {"used": False}
     if block is not None:
+        # Самоконтроль кадра макета: персонаж не в кадре/закрыт, вещь перед камерой на полкадра —
+        # такой макет модель скопирует (оранжевая «дверь» в кадре); тогда кадр рисуется без него.
+        check = B.frame_check(store, shot, which)
+        if not check.get("ok"):
+            reason = "; ".join(check.get("problems") or ["не прошёл самоконтроль"])[:300]
+            blocking_info = {"used": False, "rejected": reason}
+            missing.append(f"блокинг {which} отклонён самоконтролем: {reason}")
+            block = None
+    if block is not None:
+        blocking_info = {"used": True}
         ranked.append((-3, block, f"блокинг: {'конец' if which == 'end' else 'старт'}",
-                       "3D blocking mock-up of this exact moment (composition only)"))
-        parts.append("The 3D BLOCKING mock-up shows this exact moment: copy its camera angle and framing, where each "
-                     "character is, their pose and the direction they face, furniture and prop positions. Its "
-                     f"mannequins are stand-ins ({B.legend(store, project_id, shot) or 'no characters'}): replace "
-                     "each with the real character drawn exactly from their sheets; never draw mannequins, grey "
-                     "boxes or the mock-up's flat colors.")
-    else:
+                       "3D blocking mock-up of this exact moment (positions and camera only)"))
+        parts.append("The 3D BLOCKING mock-up shows this exact moment. Use it ONLY for the camera angle and framing, "
+                     "where each character is, their pose and the direction they face, and where furniture and props "
+                     "stand. Do NOT copy its look: its simple shapes, plain flat colors and materials are placeholders "
+                     "— draw the room exactly like the background plate and each character exactly from their sheets; "
+                     "never draw mannequins, plain boxes, columns or the mock-up's colors. Its stand-ins: "
+                     f"{B.legend(store, project_id, shot) or 'no characters'}.")
+    elif not blocking_info.get("rejected"):
         missing.append(f"блокинг {which} (этап blocking, 0 ₽)")
     if which == "end":
         start, shared = start_frame_ref(store, project_id, shots, n)
@@ -1341,7 +1457,31 @@ def _frame_request(store: Any, job: dict, st: str, neg: str) -> tuple[str, list[
                  if count else "No people in frame. ")
     parts.append(PHYSICS + " " + NO_TEXT + neg)
     caption = [*caption, *(names or ["без персонажей"]), *([loc["name"]] if loc else [])]
-    return " ".join(parts), [r[1] for r in chosen], caption, {"roles": [r[2] for r in chosen], "missing": missing}
+    return " ".join(parts), [r[1] for r in chosen], caption, {"roles": [r[2] for r in chosen], "missing": missing,
+                                                              "blocking": blocking_info}
+
+
+PLATE_AVOID = ("people, person, human, girl, boy, woman, man, child, animal, pet, cat, dog, bird, robot, robot vacuum, "
+               "vacuum cleaner robot, droid, mascot, character, creature, mannequin, doll, figure, silhouette, shadow of a "
+               "person, reflection of a person, face")
+
+
+def plate_prompt(store: Any, project_id: int, loc: dict, st: str, neg: str = "") -> str:
+    """Плита локации — ПУСТАЯ комната: ни людей, ни животных, ни роботов, ни персонажей проекта и
+    ничего на них похожего (иначе плита с пылесосом — и в кадрах вместо Бипа серый пылесос)."""
+    cast = []
+    for c in V.list_characters(store, project_id):
+        card = re.split(r"[;.]", str(c.get("identity_card") or ""))[0].strip()[:90]
+        cast.append(f"{c['name']} ({card})" if card else c["name"])
+    who = (f" None of the series characters is here — not {', not '.join(cast)} — and nothing that looks like "
+           "any of them." if cast else "")
+    extra = f" Avoid: {PLATE_AVOID}" + (f", {neg.strip()[len('Avoid: '):].rstrip('.')}" if neg.strip().startswith(
+        "Avoid: ") else "") + "."
+    return (f"{st}. Empty background plate of the location: the empty room only, vertical 9:16 composition. NO people, "
+            f"NO animals, NO robots, NO characters of any kind, no mannequins or figures — furniture and objects "
+            f"only.{who} If the description names a character's thing (a charging dock, a pet bed, a bowl), draw "
+            f"only that thing, empty — its owner is not in the room. Location «{loc['name']}»: {loc['description']}. "
+            f"Consistent with the style reference. {NO_TEXT}{extra}")
 
 
 def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str], dict]:
@@ -1370,8 +1510,7 @@ def build_request(store: Any, job: dict) -> tuple[str, list[Path], list[str], di
         caption += [project["name"], f"настроение {job['slot']}"]
     elif kind == "location":
         loc = V.get_location(store, target_id)
-        prompt = (f"{st}. Empty background plate, no people, vertical 9:16 composition. Location «{loc['name']}»: "
-                  f"{loc['description']}. Consistent with the style reference. {NO_TEXT}{neg}")
+        prompt = plate_prompt(store, project_id, loc, st, neg)
         refs = _style_paths(store, project_id, 2)
         refs += [p for p in (_asset_path(store, r) for r in V.list_refs(store, project_id, "location", target_id,
                                                                          "upload")) if p]
@@ -1830,7 +1969,9 @@ def _run_image(store: Any, job: dict, provider: Any, poll_timeout: float | None)
     _set_job(store, job["id"], prompt=prompt, input_hash=digest,
              params_json=json.dumps({**job["params"], "request": {k: v for k, v in params.items() if k != "prompt"},
                                      "refs": [p.name for p in refs], "ref_roles": ref_info["roles"],
-                                     "missing_refs": ref_info["missing"]}, ensure_ascii=False))
+                                     "missing_refs": ref_info["missing"],
+                                     **({"blocking": ref_info["blocking"]} if ref_info.get("blocking") else {})},
+                                    ensure_ascii=False))
     if cached:
         return _done(store, job, int(cached["asset_id"]), prompt, 0.0, "cache", f"тот же запрос, что #{cached['id']}",
                      own_asset=False)
@@ -1931,10 +2072,14 @@ def _run_video(store: Any, job: dict, provider: Any, poll_timeout: float | None)
     shots = V.list_shots(store, int(shot["script_id"]))
     n = next(i for i, s in enumerate(shots) if int(s["id"]) == int(shot["id"]))
     start_ref, shared = start_frame_ref(store, project_id, shots, n)
+    tail = bool(shared) and tail_mode(store, project_id, shot.get("script_id"))
+    if start_ref is None and tail:
+        start_ref = make_tail_start(store, project_id, shots[n - 1], shot, job)
     start = _asset_path(store, start_ref)
     if start is None:
         _cas(store, job["id"], ("submitting",), status="failed",
-             error="нет стартового кадра плана — этап keyframes" + (f" (конец плана {shared})" if shared else ""))
+             error=(f"нет старта: видео плана {shared} ещё нет — его последний кадр и есть старт" if tail else
+                    "нет стартового кадра плана — этап keyframes" + (f" (конец плана {shared})" if shared else "")))
         return None
     end_ref = end_frame_ref(store, project_id, shot)
     end = _asset_path(store, end_ref)
@@ -2054,22 +2199,52 @@ def _frame_deps(store: Any, job: dict) -> list[tuple[int, str]]:
     return deps + [(int(cont["id"]), "shot:keyframe")]
 
 
+def _video_deps(store: Any, job: dict) -> list[tuple[int, str]]:
+    """Видео сцепленного плана у модели без конечного кадра стартует с последнего кадра видео прошлого
+    плана — ждёт его готовности."""
+    if job.get("kind") != "video" or job.get("target_type") != "shot":
+        return []
+    shot = V.get_shot(store, int(job["target_id"]))
+    prev, _nxt = _neighbors(store, shot)
+    if not _is_chain(shot, prev):
+        return []
+    caps = video_capabilities(job.get("model") or "", job.get("provider"))
+    if caps.get("first_last") and (job.get("params") or {}).get("start") != "video_tail":
+        return []
+    return [(int(prev["id"]), "shot:shot_video")]
+
+
 def _deps_busy(store: Any, job: dict) -> bool:
     marks = ", ".join("?" for _ in ACTIVE)
-    for target_id, what in _frame_deps(store, job):
+    for target_id, what in _frame_deps(store, job) + _video_deps(store, job):
         target_type, ref_kind = what.split(":")
+        kind = "video" if ref_kind == "shot_video" else "image"
         row = store.db.query_one(
-            f"SELECT id FROM aiv_gen_jobs WHERE kind = 'image' AND target_type = ? AND target_id = ? AND ref_kind = ? "
-            f"AND id != ? AND status IN ({marks}) LIMIT 1", (target_type, int(target_id), ref_kind, int(job["id"]),
-                                                             *ACTIVE))
+            f"SELECT id FROM aiv_gen_jobs WHERE kind = ? AND target_type = ? AND target_id = ? AND ref_kind = ? "
+            f"AND id != ? AND status IN ({marks}) LIMIT 1", (kind, target_type, int(target_id), ref_kind,
+                                                             int(job["id"]), *ACTIVE))
         if row:
             return True
     return False
 
 
 def _after_video(store: Any, job: dict) -> None:
-    """Новое видео плана ничего не сцепляет: старт следующего — общий конечный кадр, а не кадр из
-    видео. Устаревает только его проверка (у новой версии своя)."""
+    """Новое видео плана: если видеомодель не берёт конечный кадр, а следующий план его продолжает —
+    последний кадр этого видео становится стартом следующего (``source=video_tail``), видео следующего
+    устаревает. У моделей с первым+последним кадром ничего не сцепляется (старт — общий конечный кадр)."""
+    if job.get("target_type") != "shot":
+        return None
+    shot = V.get_shot(store, int(job["target_id"]))
+    _prev, nxt = _neighbors(store, shot)
+    if not nxt or not _is_chain(nxt, shot):
+        return None
+    project_id = int(job["project_id"])
+    if not tail_mode(store, project_id, shot.get("script_id")):
+        return None
+    try:
+        make_tail_start(store, project_id, shot, nxt, job)
+    except Exception as exc:  # noqa: BLE001 - видео готово; старт следующего вынется при его запуске
+        _log.warning("aiv: хвост видео плана %s не вынут: %s", shot["idx"], exc)
     return None
 
 
@@ -2094,6 +2269,10 @@ def _run_blocking(store: Any, job: dict) -> dict | None:
     from app.motion_render import CompositorMissing
 
     shot = V.get_shot(store, int(job["target_id"]))
+    try:  # комната локации: с плиты Gemini-зрением (один раз, кэш), иначе по описанию
+        B.shot_layout(store, int(job["project_id"]), shot, vision=True)
+    except Exception as exc:  # noqa: BLE001 - раскладка по описанию всё равно есть
+        _log.warning("aiv: раскладка локации плана %s: %s", shot["idx"], exc)
     data = B.current(store, shot)
     if data.get("source") == "auto" and (not shot.get("blocking") or data.get("outdated")):
         only = None if not shot.get("blocking") else {int(shot["id"])}
@@ -2266,6 +2445,14 @@ def run_jobs(store: Any, job_ids: list[int], poll_timeout: float | None = None) 
                 _cas(store, job_id, ("submitting",), status="approved", worker_id="",
                      attempts=max(0, int(job["attempts"]) - 1), error="жду кадр-основу (делается)")
                 deferred.add(card)
+                waiting.append(job_id)
+                continue
+            elif job["kind"] == "video" and _deps_busy(store, job):
+                # Старт — последний кадр видео прошлого плана, а оно ещё делается: ждём его (без POST).
+                # Остальные видео карточки идут дальше — несвязанные не ждут.
+                _cas(store, job_id, ("submitting",), status="approved", worker_id="",
+                     attempts=max(0, int(job["attempts"]) - 1), error="жду видео прошлого плана (его последний "
+                                                                      "кадр — мой старт)")
                 waiting.append(job_id)
                 continue
             elif job["kind"] == "video":
