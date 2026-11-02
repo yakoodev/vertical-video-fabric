@@ -33,7 +33,7 @@ from typing import Any
 
 from app import aivideo_layout as L
 
-ENGINE_VERSION = "3d-1"  # меняется — кадры блокинга пересчитываются
+ENGINE_VERSION = "3d-2"  # меняется — кадры блокинга пересчитываются
 CM = 0.01
 UAL = ["quaternius-animations/UAL1_Standard.glb", "quaternius-animations/UAL2_Standard.glb"]
 FEMALE = "quaternius-characters/Superhero_Female_FullBody.gltf"
@@ -64,8 +64,9 @@ ARM_POSES: dict[str, dict[str, list[float]]] = {
 FURNITURE: dict[str, dict[str, Any]] = {
     "bed": {"model": "bedDouble.glb", "color": "wood", "accent": "carpet", "extra": {"carpetWhite": "#f6f1ea"}},
     "nightstand": {"model": "cabinetBedDrawerTable.glb", "color": "wood"},
-    "lamp": {"model": "lampRoundTable.glb", "color": "lamp", "light": 1.6},
-    "floor_lamp": {"model": "lampRoundFloor.glb", "color": "lamp", "light": 2.2},
+    # Ножка тёмная, абажур теплее стены — лампа читается на светлой стене (живой план 12: сливалась).
+    "lamp": {"model": "lampRoundTable.glb", "color": "lamp", "light": 1.6, "extra": {"metal": "#4a3f36"}},
+    "floor_lamp": {"model": "lampRoundFloor.glb", "color": "lamp", "light": 2.2, "extra": {"metal": "#4a3f36"}},
     "desk": {"model": "desk.glb", "color": "wood"},
     "table": {"model": "table.glb", "color": "wood"},
     "chair": {"model": "chairDesk.glb", "color": "carpet"},
@@ -293,7 +294,7 @@ def _furniture(o: dict, room: dict) -> list[dict]:
     mats: dict[str, Any] = dict(spec.get("extra") or {})
     if spec.get("color"):
         mats[spec["color"]] = color if kind != "lamp" and kind != "floor_lamp" else {
-            "color": color, "emissive": "#ffc477", "emissiveIntensity": 0.9}
+            "color": L._shade(color, 0.93), "emissive": "#ffb35c", "emissiveIntensity": 0.45}
     if spec.get("accent"):
         mats[spec["accent"]] = _hex(o.get("accent"), L._shade(color, 0.82) if kind == "rug" else "#c9b8e8")
     obj: dict[str, Any] = {"id": oid, "model": f"kenney-furniture/{model}", "fit": [_m(w), _m(hh), _m(d)],
