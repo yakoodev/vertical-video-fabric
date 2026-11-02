@@ -1,4 +1,4 @@
-"""Скачивает паки контента для моушн-слоёв: эмодзи, стикеры, звуки, мем-шаблоны.
+"""Скачивает паки контента для моушн-слоёв (эмодзи, стикеры, звуки, мем-шаблоны) и 3D-модели сцен.
 
     python3 tools/fetch_packs.py [TARGET]        # по умолчанию vendor/packs
     python3 tools/fetch_packs.py /app/vendor/packs --only twemoji,freesound
@@ -20,6 +20,10 @@
 версия совпадает и файлы на месте — пак пропускается. ``packs.json`` (индекс для
 API) пересобирается всегда — это быстро.
 
+3D-паки (kind ``model3d``, CC0) — для движка сцен node/scene3d: мебель Kenney (.glb), персонажи
+и анимации Quaternius (.gltf/.glb, скелет UE-манекена). Архивы — по подписанным ссылкам со страниц
+авторов (Kenney: /download-link, itch.io: бесплатная загрузка), sha256 закреплён так же.
+
 Монтажные звуки «freesound» — настоящие записи CC0 с freesound.org (закреплены
 sha256); ffmpeg режет тишину, ограничивает длину и кодирует в OGG.
 """
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.cookiejar
 import json
 import math
 import random
@@ -109,6 +114,61 @@ KENNEY_PACKS: list[dict] = [
     },
     # kenney-digital (лазеры, пауэр-апы) убран: синтетика, владелец просил её убрать.
 ]
+
+# 3D-модели для движка сцен (node/scene3d, app/scene3d.py) — kind "model3d", все CC0.
+# Kenney отдаёт архив по подписанной ссылке (kenney_signed_url), Quaternius — через itch.io
+# (бесплатная загрузка, itch_signed_url). Обе ссылки живут минуты, поэтому в коде — страница и
+# sha256 архива: подменённый архив сборку не пройдёт.
+KENNEY_3D_PACKS: list[dict] = [
+    {
+        "id": "kenney-furniture", "kind": "model3d", "name": "3D: мебель и интерьер (Kenney Furniture Kit)",
+        "slug": "furniture-kit", "file": "kenney_furniture-kit.zip",
+        "sha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0",
+        "member": re.compile(r"^Models/GLTF format/([^/]+\.glb)$"),
+        "page": "https://kenney.nl/assets/furniture-kit",
+    },
+]
+QUATERNIUS_LICENSE = {
+    "license": "CC0-1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution": "Quaternius (quaternius.com) — CC0, указывать автора не обязательно",
+}
+# Персонажи: базовые тела (скин с ригом UE-манекена) + причёски, привязанные к кости головы.
+# Берём только glTF-вариант (Godot/UE) и всё, на что он ссылается (.bin, текстуры).
+QUATERNIUS_CHARACTERS = {
+    "id": "quaternius-characters", "name": "3D: персонажи (Quaternius Universal Base Characters)",
+    "itch": ("quaternius", "universal-base-characters"), "upload": "15861669",
+    "file": "universal-base-characters-standard.zip",
+    "sha256": "fdbf1804c90dfc1ea03e992bff7da2dfd1a79318e13270a660180f9308455f40",
+    "page": "https://quaternius.com/packs/universalbasecharacters.html",
+    "gltf": re.compile(r"^[^/]+/(?:Base Characters/Godot - UE|Hairstyles/Rigged to Head Bone/glTF \(Godot -Unreal\))/([^/]+\.gltf)$"),
+    # Светлая кожа — отдельные текстуры рядом (в glTF прописана тёмная): движок меняет карту по skin: light.
+    "extra": re.compile(r"^[^/]+/Base Characters/Textures/(T_Superhero_[A-Za-z]+_Ligh(?:t_BaseColor)?\.png)$"),
+    "license_member": re.compile(r"^[^/]+/License_Standard\.txt$"),
+}
+CHARACTER_RU = {
+    "Superhero_Female_FullBody": ("Девушка (базовое тело)", "character"),
+    "Superhero_Male_FullBody": ("Парень (базовое тело)", "character"),
+    "Hair_Long": ("Причёска: длинные волосы", "hair"), "Hair_Buns": ("Причёска: два пучка", "hair"),
+    "Hair_Buzzed": ("Причёска: ёжик", "hair"), "Hair_BuzzedFemale": ("Причёска: короткая женская", "hair"),
+    "Hair_SimpleParted": ("Причёска: с пробором", "hair"), "Hair_Beard": ("Борода", "hair"),
+    "Eyebrows_Female": ("Брови женские", "hair"), "Eyebrows_Regular": ("Брови", "hair"),
+}
+# Анимации: Universal Animation Library 1 и 2 — тот же скелет (UE-манекен), без root motion.
+QUATERNIUS_ANIMATIONS = {
+    "id": "quaternius-animations", "name": "3D: анимации персонажей (Quaternius Universal Animation Library)",
+    "page": "https://quaternius.com/packs/universalanimationlibrary.html",
+    "archives": [
+        {"itch": ("quaternius", "universal-animation-library"), "upload": "17958403",
+         "file": "universal-animation-library-standard.zip",
+         "sha256": "cc73fc4e495b82958207316596317a3f40b9fa38065bde1027937452da537724",
+         "member": re.compile(r"^[^/]+/Unreal-Godot/(UAL1_Standard\.glb)$"), "name": "Анимации 1 (ходьба, сидение, взять со стола…)"},
+        {"itch": ("quaternius", "universal-animation-library-2"), "upload": "17958478",
+         "file": "universal-animation-library-2-standard.zip",
+         "sha256": "4008ea208a604773a2b2177d965f0f5d3195498b5bf838c3f5785d68e95f2a68",
+         "member": re.compile(r"^[^/]+/Unreal-Godot/(UAL2_Standard\.glb)$"), "name": "Анимации 2 (пить, кивок, руки скрестить…)"},
+    ],
+}
 
 IMGFLIP_API = "https://api.imgflip.com/get_memes"
 IMGFLIP_HOSTS = {"i.imgflip.com"}
@@ -193,6 +253,76 @@ def download(url: str, dest: Path, sha256: str | None) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     return dest
+
+
+def _session() -> urllib.request.OpenerDirector:
+    """Отдельная сессия с cookie: Kenney и itch.io выдают ссылку на архив только в своей сессии."""
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    opener.addheaders = [("User-Agent", "Mozilla/5.0 (compatible; " + USER_AGENT + ")")]
+    return opener
+
+
+def _open_json(opener: urllib.request.OpenerDirector, url: str, data: dict | None = None,
+               headers: dict | None = None) -> dict:
+    body = urllib.parse.urlencode(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, headers=headers or {})
+    with opener.open(req, timeout=60) as resp:
+        return json.loads(resp.read(1024 * 1024))
+
+
+def kenney_signed_url(slug: str) -> str:
+    """Kenney с 2026 года отдаёт архивы по подписанной ссылке со страницы пака («Continue without
+    donating»): сессия страницы → /download-link/<hex('assets/<slug>')> → {url}."""
+    opener = _session()
+    page = f"https://kenney.nl/assets/{slug}"
+    with opener.open(page, timeout=60) as resp:
+        resp.read()
+    got = _open_json(opener, f"https://kenney.nl/download-link/{f'assets/{slug}'.encode().hex()}",
+                     headers={"Referer": page})
+    if not str(got.get("url", "")).startswith("https://"):
+        raise RuntimeError(f"Kenney не дал ссылку на {slug}: {got}")
+    return got["url"]
+
+
+def itch_signed_url(user: str, game: str, upload_id: str) -> str:
+    """Бесплатная загрузка с itch.io — как кнопка «No thanks, just take me to the downloads»:
+    csrf со страницы → /download_url (страница загрузок) → /file/<upload>?source=game_download → {url}."""
+    opener = _session()
+    base = f"https://{user}.itch.io/{game}"
+    with opener.open(base, timeout=60) as resp:
+        page = resp.read().decode("utf-8", "replace")
+    token = re.findall(r'name="csrf_token" value="([^"]+)"', page) or re.findall(r'csrf_token" value="([^"]+)"', page)
+    if not token:
+        raise RuntimeError(f"itch.io: нет csrf на {base}")
+    dl_page = _open_json(opener, base + "/download_url", {"csrf_token": token[0]}).get("url", "")
+    if not dl_page.startswith(base):
+        raise RuntimeError(f"itch.io: нет страницы загрузок {base}")
+    with opener.open(dl_page, timeout=60) as resp:
+        page = resp.read().decode("utf-8", "replace")
+    if f'data-upload_id="{upload_id}"' not in page:
+        raise RuntimeError(f"itch.io: на {base} нет файла {upload_id} — автор обновил пак, поменяй upload и sha256")
+    token = re.findall(r'name="csrf_token" content="([^"]+)"', page) or token
+    got = _open_json(opener, f"{base}/file/{upload_id}?source=game_download", {"csrf_token": token[0]})
+    if not str(got.get("url", "")).startswith("https://"):
+        raise RuntimeError(f"itch.io не дал ссылку на {upload_id}: {got}")
+    return got["url"]
+
+
+def download_signed(get_url, dest: Path, sha256: str) -> Path:
+    """Как download(), но адрес архива получается вызовом get_url() — только если кэша нет."""
+    if dest.exists() and _sha256(dest.read_bytes()) == sha256:
+        return dest
+    return download(get_url(), dest, sha256)
+
+
+def download_kenney(slug: str, direct_url: str | None, dest: Path, sha256: str) -> Path:
+    """Старые прямые адреса Kenney теперь уводят на страницу пака — тогда берём подписанную ссылку."""
+    if direct_url:
+        try:
+            return download(direct_url, dest, sha256)
+        except RuntimeError as exc:
+            log(f"{slug}: прямая ссылка не сработала ({str(exc)[:80]}…), беру подписанную")
+    return download_signed(lambda: kenney_signed_url(slug), dest, sha256)
 
 
 def _sha256(data: bytes) -> str:
@@ -319,6 +449,8 @@ def describe_item(path: Path, kind: str, name: str, tags: list[str], **extra: ob
     item: dict = {"file": path.name, "name": name, "tags": tags, "size": path.stat().st_size}
     if kind == "sfx":
         item["duration"] = audio_duration(path)
+    elif kind == "model3d":
+        pass  # размер картинки не нужен; что внутри модели — в extra (clips, deps, role)
     else:
         w, h = image_size(path)
         item["width"], item["height"] = w, h
@@ -502,7 +634,7 @@ def fetch_kenney(target: Path, dl: Path, spec: dict) -> dict:
     meta_path = pack_dir / "items.json"
     if read_stamp(pack_dir) != stamp or not meta_path.exists():
         url = f"{KENNEY_BASE}/{spec['path']}"
-        archive = download(url, dl / spec["path"].rsplit("/", 1)[-1], spec["sha256"])
+        archive = download_kenney(spec["path"].split("/", 1)[0], url, dl / spec["path"].rsplit("/", 1)[-1], spec["sha256"])
         fresh_dir(pack_dir)
         items: list[dict] = []
         with zipfile.ZipFile(archive) as zf:
@@ -797,9 +929,159 @@ def fetch_freesound(target: Path, dl: Path) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# 3D-модели (kind model3d) — для движка сцен node/scene3d
+# --------------------------------------------------------------------------- #
 
-PACK_ORDER = ["twemoji", "openmoji-extras", "kenney-particles", "freesound",
-              "kenney-impact", "kenney-interface", "kenney-ui", "imgflip"]
+
+def gltf_json(data: bytes) -> dict:
+    """JSON-часть .glb (бинарный glTF) или .gltf."""
+    if data[:4] == b"glTF":
+        length = struct.unpack_from("<I", data, 12)[0]
+        return json.loads(data[20:20 + length].decode("utf-8"))
+    return json.loads(data.decode("utf-8"))
+
+
+def _model_extra(doc: dict) -> dict:
+    extra: dict = {}
+    clips = [a.get("name") for a in doc.get("animations") or [] if a.get("name")]
+    if clips:
+        extra["clips"] = clips
+    if doc.get("skins"):
+        extra["skinned"] = True
+    return extra
+
+
+def _model3d_pack(pack_id: str, name: str, source: str, version: str, items: list[dict], lic: dict) -> dict:
+    return {"id": pack_id, "name": name, "kind": "model3d", **lic, "source": source, "version": version, "items": items}
+
+
+def fetch_kenney_3d(target: Path, dl: Path, spec: dict) -> dict:
+    pack_dir = target / spec["id"]
+    stamp = f"{spec['slug']} {spec['sha256']} idx{INDEX_VERSION}"
+    meta_path = pack_dir / "items.json"
+    if read_stamp(pack_dir) != stamp or not meta_path.exists():
+        archive = download_kenney(spec["slug"], None, dl / spec["file"], spec["sha256"])
+        fresh_dir(pack_dir)
+        items: list[dict] = []
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                if info.filename == "License.txt":
+                    (pack_dir / "LICENSE.txt").write_bytes(zf.read(info))
+                    continue
+                m = spec["member"].match(info.filename)
+                if info.is_dir() or not m:
+                    continue
+                data = zf.read(info)
+                dest = pack_dir / safe_name(m.group(1))
+                dest.write_bytes(data)
+                words = [w.lower() for w in re.split(r"(?<=[a-z])(?=[A-Z0-9])", dest.stem) if w]
+                items.append(describe_item(dest, "model3d", dest.stem, words, **_model_extra(gltf_json(data))))
+        items.sort(key=lambda i: i["file"])
+        meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        write_stamp(pack_dir, stamp)
+        log(f"{spec['id']}: {len(items)} моделей")
+    items = json.loads(meta_path.read_text(encoding="utf-8"))
+    return _model3d_pack(spec["id"], spec["name"], spec["page"], spec["sha256"][:12], items, {
+        "license": "CC0-1.0", "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "attribution": "Kenney (kenney.nl) — CC0, указывать автора не обязательно",
+    })
+
+
+def fetch_quaternius_characters(target: Path, dl: Path) -> dict:
+    spec = QUATERNIUS_CHARACTERS
+    pack_dir = target / spec["id"]
+    stamp = f"{spec['upload']} {spec['sha256']} idx{INDEX_VERSION}"
+    meta_path = pack_dir / "items.json"
+    if read_stamp(pack_dir) != stamp or not meta_path.exists():
+        user, game = spec["itch"]
+        archive = download_signed(lambda: itch_signed_url(user, game, spec["upload"]), dl / spec["file"], spec["sha256"])
+        fresh_dir(pack_dir)
+        items: list[dict] = []
+        with zipfile.ZipFile(archive) as zf:
+            names = zf.namelist()
+            for member in names:
+                if spec["license_member"].match(member):
+                    (pack_dir / "LICENSE.txt").write_bytes(zf.read(member))
+                m = spec["extra"].match(member)
+                if m:
+                    (pack_dir / safe_name(m.group(1))).write_bytes(zf.read(member))
+            for member in names:
+                m = spec["gltf"].match(member)
+                if not m:
+                    continue
+                folder = member.rsplit("/", 1)[0]
+                data = zf.read(member)
+                doc = gltf_json(data)
+                deps: list[str] = []
+                for ref in [b.get("uri") for b in doc.get("buffers") or []] + [i.get("uri") for i in doc.get("images") or []]:
+                    if not ref or ref.startswith("data:"):
+                        continue
+                    ref = urllib.parse.unquote(ref)
+                    src = f"{folder}/{ref}"
+                    if src not in names and ref.endswith("_png.png"):
+                        # В паке glTF местами ссылается на «X_png.png», а лежит «X.png».
+                        src = f"{folder}/{ref[:-8]}.png"
+                    if src not in names:
+                        log(f"{spec['id']}: {m.group(1)} ссылается на отсутствующий {ref} — пропускаю")
+                        continue
+                    dest = pack_dir / safe_name(ref)
+                    if not dest.exists():
+                        dest.write_bytes(zf.read(src))
+                    deps.append(dest.name)
+                dest = pack_dir / safe_name(m.group(1))
+                dest.write_bytes(data)
+                label, role = CHARACTER_RU.get(dest.stem, (dest.stem, "model"))
+                item = describe_item(dest, "model3d", label, [role, *dest.stem.lower().split("_")],
+                                     role=role, deps=sorted(set(deps)), **_model_extra(doc))
+                item["size"] += sum((pack_dir / d).stat().st_size for d in item["deps"])
+                items.append(item)
+        items.sort(key=lambda i: i["file"])
+        meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        write_stamp(pack_dir, stamp)
+        log(f"{spec['id']}: {len(items)} моделей")
+    items = json.loads(meta_path.read_text(encoding="utf-8"))
+    return _model3d_pack(spec["id"], spec["name"], spec["page"], spec["upload"], items, QUATERNIUS_LICENSE)
+
+
+def fetch_quaternius_animations(target: Path, dl: Path) -> dict:
+    spec = QUATERNIUS_ANIMATIONS
+    pack_dir = target / spec["id"]
+    stamp = " ".join(f"{a['upload']}:{a['sha256'][:16]}" for a in spec["archives"]) + f" idx{INDEX_VERSION}"
+    meta_path = pack_dir / "items.json"
+    if read_stamp(pack_dir) != stamp or not meta_path.exists():
+        fresh_dir(pack_dir)
+        items: list[dict] = []
+        for arc in spec["archives"]:
+            user, game = arc["itch"]
+            archive = download_signed(lambda: itch_signed_url(user, game, arc["upload"]), dl / arc["file"], arc["sha256"])
+            with zipfile.ZipFile(archive) as zf:
+                for member in zf.namelist():
+                    if member.endswith("/License.txt") and not (pack_dir / "LICENSE.txt").exists():
+                        (pack_dir / "LICENSE.txt").write_bytes(zf.read(member))
+                    m = arc["member"].match(member)
+                    if not m:
+                        continue
+                    data = zf.read(member)
+                    dest = pack_dir / safe_name(m.group(1))
+                    dest.write_bytes(data)
+                    items.append(describe_item(dest, "model3d", arc["name"], ["animation", "clips"], role="animations",
+                                               **_model_extra(gltf_json(data))))
+        meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        write_stamp(pack_dir, stamp)
+        log(f"{spec['id']}: {sum(len(i.get('clips', [])) for i in items)} анимаций")
+    items = json.loads(meta_path.read_text(encoding="utf-8"))
+    return _model3d_pack(spec["id"], spec["name"], spec["page"], "+".join(a["upload"] for a in spec["archives"]),
+                         items, QUATERNIUS_LICENSE)
+
+
+# --------------------------------------------------------------------------- #
+
+PACK_ORDER =["twemoji", "openmoji-extras", "kenney-particles", "freesound",
+              "kenney-impact", "kenney-interface", "kenney-ui", "imgflip",
+              "kenney-furniture", "quaternius-characters", "quaternius-animations"]
+# Отказ этих паков сборку не роняет: imgflip — живой внешний сервис, 3D-паки берутся по
+# подписанным ссылкам (страницы Kenney / itch.io), которые авторы могут поменять.
+SOFT_PACKS = {"imgflip", "kenney-furniture", "quaternius-characters", "quaternius-animations"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -835,6 +1117,9 @@ def main(argv: list[str] | None = None) -> int:
         "freesound": lambda: fetch_freesound(target, dl),
         "imgflip": lambda: fetch_imgflip(target, dl),
         **{spec["id"]: (lambda spec=spec: fetch_kenney(target, dl, spec)) for spec in KENNEY_PACKS},
+        **{spec["id"]: (lambda spec=spec: fetch_kenney_3d(target, dl, spec)) for spec in KENNEY_3D_PACKS},
+        "quaternius-characters": lambda: fetch_quaternius_characters(target, dl),
+        "quaternius-animations": lambda: fetch_quaternius_animations(target, dl),
     }
     packs: list[dict] = []
     failed: list[str] = []
@@ -864,8 +1149,8 @@ def main(argv: list[str] | None = None) -> int:
     for p in packs:
         log(f"  {p['id']:18} {p['kind']:8} {p['count']:5} шт  {p['size'] / 1e6:6.1f} МБ")
     # sha256-несовпадение и пр. для закреплённых паков — повод уронить сборку;
-    # imgflip — внешний живой сервис, его отказ сборку не роняет.
-    hard = [f for f in failed if f != "imgflip"]
+    # мягкие паки (SOFT_PACKS) сборку не роняют.
+    hard = [f for f in failed if f not in SOFT_PACKS]
     if hard:
         log(f"не собрались: {', '.join(hard)}")
         return 1
