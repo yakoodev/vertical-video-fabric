@@ -100,7 +100,7 @@ def mix_audio(ffmpeg: str, plan: list[dict], dur: float, out: Path) -> Path | No
         f.append(f"adelay={ms}|{ms}")
         chains.append(",".join(f) + f"[a{i}]")
     graph = ";".join(chains) + ";" + "".join(f"[a{i}]" for i in range(len(plan))) + \
-        f"amix=inputs={len(plan)}:normalize=0:duration=longest,atrim=0:{dur},alimiter=limit=0.89[out]"
+        f"amix=inputs={len(plan)}:normalize=0:duration=longest,atrim=0:{dur},volume=9dB,alimiter=limit=0.7:level=0[out]"
     args += ["-filter_complex", graph, "-map", "[out]", "-c:a", "pcm_s16le", str(out)]
     subprocess.run(args, check=True)
     return out
@@ -149,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--samples", type=int, default=64)
     ap.add_argument("--duration", type=float, default=10.0)
     ap.add_argument("--reuse-frames", action="store_true", help="не рендерить заново, собрать из готовых кадров")
+    ap.add_argument("--frames", default=None, help="перерендерить только диапазон A-B (кадры 1…) в готовую папку")
     ap.add_argument("--export-gltf", default=None, help="заодно выгрузить сцену (glb) — для сравнения с three.js")
     args = ap.parse_args(argv)
 
@@ -170,10 +171,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.export_gltf:
         cfg["export_gltf"] = args.export_gltf
     t0 = time.time()
+    if args.frames:
+        a, b = (int(x) for x in args.frames.split("-"))
+        cfg["frame_range"] = [a, b]
     if not args.reuse_frames:
-        if work.exists():
+        if work.exists() and not args.frames:
             shutil.rmtree(work)
-        work.mkdir(parents=True)
+        work.mkdir(parents=True, exist_ok=True)
         cfg_path = work / "config.json"
         cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), "utf-8")
         blender = find_blender(args.blender)

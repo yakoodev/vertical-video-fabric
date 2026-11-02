@@ -583,12 +583,13 @@ def build_face_rig(arm, face, mats):
     best = None
     for v in head.data.vertices:
         p = head.matrix_world @ v.co
-        if 1.35 < p.z < 1.47 and abs(p.x) < 0.05 and (best is None or p.y < best.y):
+        if 1.20 < p.z < 1.40 and abs(p.x) < 0.05 and (best is None or p.y < best.y):
             best = p
-    lips = best or Vector((0, -0.48, 1.42))
+    lips = best or Vector((0, -0.48, 1.32))
+    log(f"рот: губы на z={lips.z:.3f} y={lips.y:.3f}")
     mouth = sphere("mouth_o", 1.0, (0, 0, 0), mouth_dark, segs=24)
     mouth.parent = root
-    mouth.matrix_world = Matrix.Translation(lips + Vector((0, 0.012, 0.0)))
+    mouth.matrix_world = Matrix.Translation(lips + Vector((0, 0.014, -0.028)))   # ниже верхней губы
     rig["mouth"] = {"obj": mouth, "base": mouth.location.copy()}
     _ = lips_y
     return rig
@@ -1046,7 +1047,7 @@ def key_face(rig, P, body, frames):
     sc = []
     for t in times:
         o = fc["mouth"].at(t)
-        sc.append((0.040 * o + 1e-4, 0.012, 0.055 * o + 1e-4))
+        sc.append((0.055 * o + 1e-4, 0.014, 0.07 * o + 1e-4))
     key_vec(mo["obj"], "scale", frames, sc)
 
 
