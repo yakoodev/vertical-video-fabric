@@ -345,3 +345,99 @@ def test_lint_notes_real_person_inserts(tmp_path, monkeypatch):
     found = people_findings(store, {"inserts": [{"asset_id": asset["id"], "at": 12.97, "mode": "full"}]})
     assert len(found) == 1 and "реальный человек (офисный работник)" in found[0]["message"]
 
+
+# ------------------------------------------------------------------ 5. прозрачная гифка во весь кадр
+
+
+def _gifs(tmp_path):
+    from PIL import Image, ImageDraw
+
+    clear = Image.new("RGBA", (80, 60), (0, 0, 0, 0))
+    ImageDraw.Draw(clear).ellipse((30, 20, 50, 40), fill=(30, 60, 220, 255))  # синий «таракан» по центру
+    transparent = tmp_path / "cockroach.gif"
+    clear.save(transparent, save_all=True, append_images=[clear.rotate(5)], duration=100, loop=0, disposal=2)
+    opaque = tmp_path / "monitor.gif"
+    Image.new("RGB", (80, 60), (240, 240, 240)).save(opaque)
+    return transparent, opaque
+
+
+def test_transparent_gif_detected_and_gets_clip_backdrop(tmp_path):
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import ALPHA_FILL, asset_has_alpha, full_insert_chain, resolve_fill
+
+    _require_ffmpeg()
+    transparent, opaque = _gifs(tmp_path)
+    assert asset_has_alpha(transparent) and not asset_has_alpha(opaque)
+    gif = {"kind": "gif", "file_path": str(transparent)}
+    assert resolve_fill({}, gif) == ALPHA_FILL == "clip"
+    assert resolve_fill({}, {"kind": "gif", "file_path": str(opaque)}) == "blur"
+    assert resolve_fill({"fill": "black"}, gif) == "black"  # явный fill — как просили
+    chain = full_insert_chain("[1:v]", 180, 320, "clip", "1")
+    assert "color=black@0" in chain and "format=rgba" in chain
+
+
+def test_transparent_full_insert_renders_over_blurred_clip_not_black(tmp_path):
+    import subprocess
+
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import build_inserts_args
+
+    _require_ffmpeg()
+    transparent, _opaque = _gifs(tmp_path)
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=180x320:r=25:d=2",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", str(clip)], check=True)
+    out = tmp_path / "out.mp4"
+    asset = {"id": 1, "kind": "gif", "file_path": str(transparent), "has_audio": False}
+    args = build_inserts_args(clip, out, [{"asset_id": 1, "at": 0.5, "duration": 1.0, "mode": "full", "volume": 1.0,
+                                           "duck": False, "x": 0.5, "y": 0.5, "scale": 0.82}],
+                              {1: asset}, 180, 320, 2.0, clip_has_audio=False)
+    graph = args[args.index("-filter_complex") + 1]
+    assert "[0:v]split=2[bm1][bs1]" in graph and "boxblur" in graph
+    subprocess.run(args, check=True, capture_output=True)
+    frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1.0", "-i", str(out), "-frames:v", "1",
+                            "-vf", "crop=8:8:4:4,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                           capture_output=True, check=True).stdout
+    r, g, b = frame[:3]
+    assert r > 150 and g < 90 and b < 90, (r, g, b)  # угол — размытый красный кадр клипа, а не чёрный
+
+
+def test_sticker_on_solid_black_is_keyed_over_blurred_clip(tmp_path):
+    """Клип 896 на деле: «dancing cockroach» — синий таракан на СПЛОШНОМ чёрном фоне (альфы нет), квадрат 220×220;
+    размытая копия чёрной гифки — тоже чёрная, и весь кадр был чёрным."""
+    import subprocess
+
+    from PIL import Image, ImageDraw
+
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import asset_matte, build_inserts_args, key_black
+
+    _require_ffmpeg()
+    flat = Image.new("RGB", (110, 110), (0, 0, 0))
+    ImageDraw.Draw(flat).ellipse((45, 35, 65, 75), fill=(40, 70, 230))
+    sticker = tmp_path / "dancing-cockroach.gif"
+    flat.save(sticker, save_all=True, append_images=[flat.rotate(8)], duration=100, loop=0)
+    photo = tmp_path / "night.png"
+    Image.new("RGB", (110, 110), (90, 90, 120)).save(photo)  # обычная картинка — не стикер
+    assert asset_matte(sticker) == "black" and asset_matte(photo) is None
+    asset = {"id": 1, "kind": "gif", "file_path": str(sticker), "has_audio": False}
+    assert key_black({}, asset) and not key_black({"fill": "blur"}, asset)
+
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=180x320:r=25:d=2",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", str(clip)], check=True)
+    out = tmp_path / "out.mp4"
+    args = build_inserts_args(clip, out, [{"asset_id": 1, "at": 0.5, "duration": 1.0, "mode": "full", "volume": 1.0,
+                                           "duck": False, "x": 0.5, "y": 0.5, "scale": 0.82}],
+                              {1: asset}, 180, 320, 2.0, clip_has_audio=False)
+    assert "colorkey" in args[args.index("-filter_complex") + 1]
+    subprocess.run(args, check=True, capture_output=True)
+    for crop in ("8:8:4:4", "8:8:10:100"):  # угол кадра и чёрный фон самого стикера (квадрат 180×180 по центру)
+        frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1.0", "-i", str(out), "-frames:v", "1",
+                                "-vf", f"crop={crop},scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                               capture_output=True, check=True).stdout
+        assert frame[0] > 150 and frame[1] < 90, (crop, tuple(frame[:3]))
+

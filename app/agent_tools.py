@@ -7502,8 +7502,9 @@ def _build_registry() -> list[Tool]:
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
                   "reason": {"type": "string"},
-                  "fill": {"type": "string", "enum": ["blur", "cover", "black"],
-                           "description": "mode full: чем заполнить кадр вокруг вставки другой пропорции"},
+                  "fill": {"type": "string", "enum": ["blur", "cover", "black", "clip"],
+                           "description": ("mode full: чем заполнить кадр вокруг вставки другой пропорции; clip — "
+                                           "размытый кадр клипа (по умолчанию у прозрачных гифок/PNG)")},
                   "at_word": _AT_WORD_SCHEMA,
                   "word_offset": {"type": "number"}}, ["asset_id"]),
             h_add_insert, mutating=True,

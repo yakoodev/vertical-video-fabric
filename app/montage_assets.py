@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -51,14 +52,90 @@ INSERT_MAX_HEIGHT = 0.9
 # Чем заполнить кадр вокруг полнокадровой вставки другой пропорции (горизонтальная гифка в 9:16):
 # blur — размытая копия самой вставки (по умолчанию), cover — вставка обрезана во весь кадр, black — поля.
 # QA 02.11 (клип 892): у гифки «LIVE MEAL CAM» ≈55 % кадра были чёрные поля.
-FULL_FILLS = ("blur", "cover", "black")
+# clip — вставка-стикер поверх РАЗМЫТОГО КАДРА КЛИПА под ней. QA 4 (клип 896): гифка «dancing cockroach» —
+# синий таракан на сплошном чёрном фоне (прозрачность «сплющена» в чёрное) — во весь кадр стояла на чёрном:
+# размытая копия чёрной гифки — тоже чёрная. Теперь у файла с прозрачностью (альфа) и у файла со сплошным
+# чёрным фоном (чёрная рамка по краю кадра — сплющенный стикер; чёрное выбивается colorkey) по умолчанию
+# подложка — размытый кадр клипа.
+FULL_FILLS = ("blur", "cover", "black", "clip")
 DEFAULT_FULL_FILL = "blur"
+ALPHA_FILL = "clip"  # по умолчанию для прозрачных вставок и стикеров на чёрном (asset_matte)
+CLIP_BLUR = "boxblur=24:2"
+ALPHA_SHARE = 0.02  # доля заметно прозрачных пикселей первого кадра, с которой файл «с прозрачностью»
+BLACK_EDGE_SHARE = 0.9  # доля почти чёрных пикселей по краю кадра — фон «сплющенного» стикера
+BLACK_ALL_SHARE = 0.5  # …и во всём кадре не меньше этой доли: тёмное фото с виньеткой не выбиваем
+BLACK_LEVEL = 24
+BLACK_KEY = "colorkey=0x000000:0.08:0.04"
 
 
-def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: str) -> str:
+def asset_matte(path: str | Path) -> str | None:
+    """Фон стикера: ``alpha`` — у файла есть прозрачность, ``black`` — сплошной чёрный фон (край кадра
+    почти весь чёрный и чёрного ≥ половины), None — обычная картинка. Первый кадр, кэш по файлу."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    return _matte(str(path), st.st_mtime_ns, st.st_size)
+
+
+def asset_has_alpha(path: str | Path) -> bool:
+    return asset_matte(path) == "alpha"
+
+
+@lru_cache(maxsize=256)
+def _matte(path: str, _mtime: int, _size: int) -> str | None:
+    side = 48
+    try:
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", path, "-frames:v", "1", "-vf", f"scale={side}:{side},format=rgba",
+             "-f", "rawvideo", "-"], capture_output=True, timeout=30, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if len(raw) < side * side * 4:
+        return None
+    alpha = raw[3::4]
+    if sum(1 for a in alpha if a < 250) / len(alpha) >= ALPHA_SHARE:
+        return "alpha"
+
+    def dark(i: int) -> bool:
+        return max(raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2]) < BLACK_LEVEL
+
+    edge = [y * side + x for y in range(side) for x in range(side) if x in (0, side - 1) or y in (0, side - 1)]
+    if (sum(dark(i) for i in edge) / len(edge) >= BLACK_EDGE_SHARE
+            and sum(dark(i) for i in range(side * side)) / (side * side) >= BLACK_ALL_SHARE):
+        return "black"
+    return None
+
+
+def resolve_fill(ins: dict, asset: dict | None) -> str:
+    """Чем заполнить кадр вокруг полнокадровой вставки: заданный ``fill``, иначе у стикера (прозрачность или
+    сплошной чёрный фон) — размытый кадр клипа (``clip``), иначе размытая копия самой вставки (``blur``)."""
+    fill = ins.get("fill")
+    if fill in FULL_FILLS:
+        return str(fill)
+    if asset and asset.get("kind") in ("image", "gif") and asset_matte(asset.get("file_path") or ""):
+        return ALPHA_FILL
+    return DEFAULT_FULL_FILL
+
+
+def key_black(ins: dict, asset: dict | None) -> bool:
+    """Выбить чёрный фон стикера (colorkey) — подложка ``clip`` и сплошной чёрный фон у файла."""
+    return (resolve_fill(ins, asset) == ALPHA_FILL and bool(asset)
+            and asset_matte(asset.get("file_path") or "") == "black")
+
+
+def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: str, key: bool = False) -> str:
     """Граф полнокадровой вставки ``src`` (метка входа, например ``[1:v]``) в кадр ``width``×``height`` —
-    без выходной метки (дописывает вызывающий). ``tag`` — уникальная часть внутренних меток."""
+    без выходной метки (дописывает вызывающий). ``tag`` — уникальная часть внутренних меток. ``clip`` —
+    вставка по центру на прозрачном поле (``key`` — чёрный фон выбит): под неё вызывающий кладёт размытый
+    кадр клипа."""
     fill = fill if fill in FULL_FILLS else DEFAULT_FULL_FILL
+    if fill == "clip":
+        return (f"{src}format=rgba,{BLACK_KEY + ',' if key else ''}"
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"scale=trunc(iw/2)*2:trunc(ih/2)*2,format=rgba,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1")
     if fill == "cover":
         return (f"{src}scale={width}:{height}:force_original_aspect_ratio=increase,"
                 f"crop={width}:{height},setsar=1")
@@ -230,12 +307,19 @@ def build_inserts_args(
         kind = ins["asset"]["kind"]
         if mode in ("full", "pip") and kind != "audio":
             if mode == "full":
-                # Во весь кадр: вокруг другой пропорции — размытая копия вставки (fill), не чёрные поля.
+                # Во весь кадр: вокруг другой пропорции — размытая копия вставки (fill), не чёрные поля;
+                # прозрачная гифка/картинка — поверх размытого кадра клипа (resolve_fill → clip).
                 x, y = "(W-w)/2", "(H-h)/2"
+                fill = resolve_fill(ins, ins["asset"])
+                chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, ins["asset"]))
                 graph.append(
-                    f"{full_insert_chain(f'[{n}:v]', width, height, ins.get('fill'), str(n))},format=yuva420p,"
+                    f"{chain},format=yuva420p,"
                     f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
                 )
+                if fill == ALPHA_FILL:
+                    graph.append(f"{v_last}split=2[bm{n}][bs{n}];[bs{n}]{CLIP_BLUR}[bb{n}];"
+                                 f"[bm{n}][bb{n}]overlay=enable='between(t,{at:.3f},{end:.3f})'[bg{n}]")
+                    v_last = f"[bg{n}]"
             else:
                 # Вставка шириной scale от кадра, высота по пропорциям картинки;
                 # x/y — центр вставки в долях кадра (их двигают ручками в редакторе).
