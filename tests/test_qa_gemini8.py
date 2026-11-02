@@ -53,3 +53,18 @@ def test_nameplate_set_before_hook_moves_after_it(tmp_path, monkeypatch):
     plate = next(l for l in layers if l["id"] == "brand_nameplate")
     assert abs(plate["start"] - 8.04) < 1e-6
     assert agent_tools.nameplate_after_hook(ctx) is False  # повтор ничего не меняет
+
+
+def test_missing_thought_signature_gets_skip_signature():
+    # QA 9 (клип 902): «Function call is missing a thought_signature» — подпись-заглушка первому вызову хода.
+    contents = [
+        {"role": "user", "parts": [{"text": "смонтируй"}]},
+        {"role": "model", "parts": [{"functionCall": {"name": "get_clip", "args": {}}},
+                                    {"functionCall": {"name": "lint_clip", "args": {}}}]},
+        {"role": "model", "parts": [{"functionCall": {"name": "view_frame", "args": {}}, "thoughtSignature": "abc"}]},
+    ]
+    assert editor_agent.patch_thought_signatures(contents) is True
+    first, second = contents[1]["parts"]
+    assert first["thoughtSignature"] == editor_agent.SKIP_SIGNATURE and "thoughtSignature" not in second
+    assert contents[2]["parts"][0]["thoughtSignature"] == "abc"
+    assert editor_agent.patch_thought_signatures(contents) is False

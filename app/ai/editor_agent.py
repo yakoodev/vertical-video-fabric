@@ -483,6 +483,24 @@ def _response_object(result: Any) -> dict:
     return json.loads(text)
 
 
+# Подпись-заглушка Gemini 3 для вызова функции без своей подписи (документирована Google для перенесённой
+# истории). QA 9 (клип 902): ход упал на 4-м шаге — «Function call is missing a thought_signature».
+SKIP_SIGNATURE = "skip_thought_signature_validator"
+
+
+def patch_thought_signatures(contents: list[dict]) -> bool:
+    """Первому вызову функции в каждом ходе модели без ``thoughtSignature`` — подпись-заглушка. → поставили ли."""
+    patched = False
+    for content in contents:
+        if content.get("role") != "model":
+            continue
+        call = next((p for p in content.get("parts") or [] if isinstance(p, dict) and "functionCall" in p), None)
+        if call is not None and not call.get("thoughtSignature"):
+            call["thoughtSignature"] = SKIP_SIGNATURE
+            patched = True
+    return patched
+
+
 def _prune_images(contents: list[dict], keep: int = KEEP_IMAGES) -> None:
     """Старые кадры выкидываем: каждый стоит токенов, а смотреть важно на свежие."""
     seen = 0
@@ -620,6 +638,8 @@ def run_agent(
             if tools_on and use_json_schema and "parametersJsonSchema" in str(exc):
                 use_json_schema = False
                 payload["tools"] = [{"functionDeclarations": function_declarations(False)}]
+                return gemini.generate_content(used_model, payload)
+            if "thought_signature" in str(exc) and patch_thought_signatures(contents):
                 return gemini.generate_content(used_model, payload)
             raise
 
