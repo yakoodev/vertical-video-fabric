@@ -33,6 +33,7 @@ Whisper иногда угадывает мат по контексту даже 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -140,7 +141,7 @@ def mask_censored_words(store: Any, clip_plan_id: int, payload: dict | None) -> 
     return masked
 
 
-def already_censored(store: Any, clip_plan_id: int) -> dict | None:
+def already_censored(store: Any, clip_plan_id: int, keep: Any = ()) -> dict | None:
     """Цензура уже стоит на весь мат клипа: ``{words, spans, note}`` — или None (есть что глушить,
     отрезков нет, или идёт/ждёт проверка). Повторный censor_profanity без новых параметров
     отвечает этим, а не перерендером (QA 01.11: три вызова подряд)."""
@@ -156,6 +157,8 @@ def already_censored(store: Any, clip_plan_id: int) -> dict | None:
     covered = set(censored_word_indices(store, plan, words, spans))
     if not found or any(item["i"] not in covered for item in found):
         return None
+    if keep and any(_kept_word(words[i].get("word"), keep) for i in covered):
+        return None  # заглушено слово владельца (панчлайн) — пусть censor_plan его вернёт
     return {"words": len(covered), "spans": len(spans),
             "note": (f"уже применено: заглушено слов {len(covered)} (отрезков {len(spans)}), в субтитрах звёздочки — "
                      "повторно не нужно. Шире/другой звук — levels/style; заново проверить рендером — verify_again: true; "
@@ -210,9 +213,117 @@ def resolve_track(store: Any, plan: dict, track: Any) -> tuple[int | None, str |
     return number, f"глушу только дорожку {number}"
 
 
+# --------------------------------------------------------------------------- #
+# Слова, которые владелец не велел глушить (QA 4, клип 896)
+# --------------------------------------------------------------------------- #
+
+# QA 4 (клип 896): заказ «панчлайн «Я обосралась» в конце», а агент пять раз звал censor_profanity с
+# soft/groups/levels — заглушил и сам панчлайн («Я о*********»), шутка ролика пропала. Слова, которые
+# владелец назвал в запросе в кавычках (панчлайн, ключевое слово), и слово под звуком-акцентом не
+# глушатся, пока агент не назовёт их номер явно (``force_words``). Настоящий мат (группа ``mat``) это
+# правило не спасает: «мат заглушить» — тоже слова владельца, площадки режут именно его.
+_QUOTED_RE = re.compile(r"«([^«»]{1,120})»|\"([^\"]{1,120})\"|“([^“”]{1,120})”|„([^„“”]{1,120})[“”]")
+_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё*]+(?:-[A-Za-zА-Яа-яЁё*]+)*")
+KEEP_MIN_LEN = 3
+# Владелец сам просит глушить и мягкую брань (блин, жопа, срать…): тогда soft можно.
+SOFT_ASK_RE = re.compile(
+    r"мягк\w*\s+(?:мат|брань|ругател)|\bsoft\b|вс[юе]\s+(?:брань|ругательства|грубость)|грубы[еx]\s+слов"
+    r"|просторечи|(?:глуши|запикай|цензур)\w*\s+(?:и|даже|ещё|еще)\s+(?:блин|жоп|говн|дерьм|хрен|херн)",
+    re.IGNORECASE,
+)
+
+
+def owner_asks_soft(request: str) -> bool:
+    """Владелец в запросе сам просил глушить мягкую брань (группа ``soft``)."""
+    return bool(SOFT_ASK_RE.search(str(request or "")))
+
+
+def _core(token: Any) -> str:
+    return re.sub(r"[^\w*]+", "", str(token or "").lower().replace("ё", "е"))
+
+
+def quoted_words(text: str) -> list[str]:
+    """Слова из кавычек запроса владельца («Я обосралась» → ["обосралась"]), без коротких."""
+    out: list[str] = []
+    for m in _QUOTED_RE.finditer(str(text or "")):
+        chunk = next(g for g in m.groups() if g)
+        for w in _WORD_RE.findall(chunk):
+            core = _core(w)
+            if len(core) >= KEEP_MIN_LEN and "*" not in core and core not in out:
+                out.append(core)
+    return out
+
+
+def keep_match(token: Any, keep: Any) -> str | None:
+    """Слово субтитров ``token`` — одно из ``keep``? Звёздочки («о*********») сравниваются по первой букве и
+    длине, обычное слово — целиком или той же основой («обосралась» ~ «обосрался»). → слово из keep."""
+    core = _core(token)
+    if not core:
+        return None
+    for want in keep or ():
+        want = _core(want)
+        if not want:
+            continue
+        if "*" in core:
+            if core[0] == want[0] and len(core) == len(want):
+                return want
+            continue
+        if core == want:
+            return want
+        common = 0
+        for a, b in zip(core, want):
+            if a != b:
+                break
+            common += 1
+        if common >= max(5, min(len(core), len(want)) - 2):
+            return want
+    return None
+
+
+def _kept_word(token: Any, keep: Any) -> str | None:
+    """Слово владельца из ``keep``, которое не мат (его цензура без force_words не глушит), — или None."""
+    from app.profanity import classify_token
+
+    want = keep_match(token, keep)
+    return want if want and classify_token(want, GROUPS) != "mat" else None
+
+
+def _restore_word(token: str, want: str) -> str:
+    """«о*********,» + «обосралась» → «обосралась,» (регистр первой буквы и пунктуация — как были)."""
+    m = re.match(r"^([^\w*]*)([\w*]+)([^\w*]*)$", str(token))
+    if not m:
+        return token
+    head, core, tail = m.groups()
+    word = want[0].upper() + want[1:] if core[:1].isupper() else want
+    return head + word + tail
+
+
+def _restore_payload(payload: dict, kept: list[dict]) -> dict:
+    """Субтитры, где у слов ``kept`` ({i, word, keep}) звёздочки заменены словом владельца (слова и строки)."""
+    words = [dict(w) for w in payload.get("words") or []]
+    lines = [dict(line) for line in payload.get("lines") or []]
+    for k in kept:
+        i = int(k["i"])
+        if not 0 <= i < len(words):
+            continue
+        old = str(words[i].get("word") or "")
+        new = _restore_word(old, k["keep"])
+        if new == old:
+            continue
+        words[i]["word"] = new
+        start = float(words[i].get("start") or 0)
+        for line in lines:
+            text = str(line.get("text") or "")
+            if old in text and float(line.get("start", 0)) - 0.05 <= start <= float(line.get("end", 0)) + 0.05:
+                line["text"] = text.replace(old, new, 1)
+                break
+    return {**payload, "words": words, "lines": lines}
+
+
 def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: bool = True, soft: bool = False,
                 groups: Any = None, skip: Any = (), clear: bool = False, track: Any = None,
-                full_words: Any = (), style: Any = None, word_styles: Any = None) -> dict:
+                full_words: Any = (), style: Any = None, word_styles: Any = None,
+                keep: Any = (), force_words: Any = ()) -> dict:
     """Мат клипа: тишина серединой слова (свои отрезки ``by: censor`` заменяются, ручные — нет)
     и звёздочки в субтитрах. Без рендера. Уровень слова: из ``levels``, иначе прежний (от
     прошлого запуска), иначе 1. ``clear`` — снять свои отрезки (звёздочки остаются: Ctrl+Z).
@@ -244,6 +355,21 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
     if not words:
         raise ValueError("у клипа нет слов субтитров — сначала generate_subtitles (мат ищется по словам)")
     found = find_profanity(words, picked, skip)
+    forced = {int(i) for i in force_words or () if str(i).lstrip("-").isdigit()}
+    kept: list[dict] = []
+    if keep:
+        from app.profanity import classify_token
+
+        rest = []
+        for item in found:
+            want = keep_match(item["word"], keep) if item["i"] not in forced else None
+            # Настоящий мат глушится и в панчлайне: группа — по самому слову (у звёздочек — по слову владельца).
+            group = item["group"] if item["group"] != "starred" else (classify_token(want, GROUPS) if want else None)
+            if want and group != "mat":
+                kept.append({"i": item["i"], "word": item["word"], "keep": want})
+            else:
+                rest.append(item)
+        found = rest
     clock = _clock(store, plan)
     duration = clock.clip_duration
     fresh: list[dict] = []
@@ -277,6 +403,12 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
     if mute != normalize_mute(old_mute):
         store.set_clip_plan_render_settings(clip_plan_id, {**render, "mute": mute})
     starred = 0
+    restored = [k for k in kept if "*" in str(k["word"])]
+    if stars and restored:
+        # Панчлайн заглушили прошлым запуском — звёздочки снимаем, слово владельца возвращается.
+        payload = _restore_payload(payload, restored)
+        store.set_clip_plan_subtitles(clip_plan_id, {**payload, "edited": True})
+        payload = store.get_clip_plan_subtitles(clip_plan_id) or payload
     if stars and found:
         new_payload, starred = star_subtitles(payload, found, picked)
         if starred:
@@ -289,6 +421,10 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
     filled = ", ".join(MUTE_STYLES[s] for s in styles)
     note = (f"мат: {len(report)} слов — середина слова: {filled} (шкала clip), в субтитрах звёздочки"
             if report else "мата в словах субтитров не найдено")
+    if kept:
+        note += ("; НЕ глушу слова владельца (панчлайн/ключевое/под звуком-акцентом): "
+                 + ", ".join(f"#{k['i']} «{k['keep']}»" for k in kept)
+                 + " — заглушить всё же надо, только если владелец просил: force_words [номер]")
     if track_note and report:
         note += "; " + track_note
     elif track is None and report:
@@ -300,6 +436,7 @@ def censor_plan(store: Any, clip_plan_id: int, levels: Any = None, *, stars: boo
                      "заглушит только её, игра будет звучать")
     return {"words": report, "groups": list(picked), "manual_kept": len(manual), "stars": starred,
             "removed": len(previous), "time": "clip", "note": note,
+            **({"kept": [{"i": k["i"], "word": k["keep"]} for k in kept]} if kept else {}),
             **({"style": styles[0]} if len(styles) == 1 else {"styles": styles} if styles else {}),
             **({"track": only_track} if only_track is not None else {})}
 
@@ -413,7 +550,8 @@ def heard_profanity(heard: list[dict], windows: dict[int, Any], groups: Any) -> 
 
 def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds: int = DEFAULT_MAX_ROUNDS,
                 stars: bool = True, soft: bool = False, groups: Any = None, skip: Any = (),
-                progress: Callable[[dict], None] | None = None, track: Any = None, style: Any = None) -> dict:
+                progress: Callable[[dict], None] | None = None, track: Any = None, style: Any = None,
+                keep: Any = (), force_words: Any = ()) -> dict:
     """Глушение + круги «рендер → Whisper → шире там, где узнаётся». Итог — по последнему кругу.
 
     С ``track`` слово, которое узнаётся и на последнем уровне, глушится в следующем круге целиком
@@ -422,10 +560,10 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
     rounds_max = max(1, min(MAX_ROUNDS_LIMIT, int(max_rounds or DEFAULT_MAX_ROUNDS)))
     full: set[int] = set()
     state = censor_plan(store, clip_plan_id, levels, stars=stars, groups=picked, skip=skip, track=track,
-                        style=style)
+                        style=style, keep=keep, force_words=force_words)
     if not state["words"]:
         return {**state, "rounds": [], "render_id": None, "verified": False,
-                "note": "мата в словах субтитров не найдено — рендер не запускался"}
+                "note": state["note"] if state.get("kept") else "мата в словах субтитров не найдено — рендер не запускался"}
     level_now = {w["i"]: w["level"] for w in state["words"]}
     style_now = {w["i"]: w["style"] for w in state["words"]}
     switched: dict[int, list[dict]] = {}  # слово → [{from, to, round}] — смены стиля verify
@@ -466,7 +604,8 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
                 switched.setdefault(i, []).append({"from": style_now[i], "to": to, "round": n + 1})
                 style_now[i] = to
             state = censor_plan(store, clip_plan_id, level_now, stars=False, groups=picked, skip=skip,
-                                track=track, full_words=full, word_styles=switch or None)
+                                track=track, full_words=full, word_styles=switch or None,
+                                keep=keep, force_words=force_words)
     finally:
         _release_whisper()
     in_final = final_windows(store, store.get_clip_plan(clip_plan_id), clip, state["words"]) if clip else {}

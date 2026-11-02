@@ -578,6 +578,7 @@ def run_agent(
         store=store,
         clip_plan_id=clip_plan_id,
         on_first_change=lambda: snapshot(store, clip_plan_id, f"ИИ: {_short_request(message, 50)}"),
+        request=str(message or ""),
     )
     clip_state, _ok = agent_tools.run_tool(ctx, "get_clip", {})
     first = (
@@ -788,6 +789,7 @@ def run_agent(
             except KeyError:
                 label = f"Неизвестный инструмент {name}"
             step = {"tool": name, "label": label, "ok": None, "args": _brief_args(args)}
+            ctx.playbook = active_playbook(message, steps)  # инструменты (auto_edit) сверяются с плейбуком
             steps.append(step)
             emit()
             result, ok = agent_tools.run_tool(ctx, name, args)

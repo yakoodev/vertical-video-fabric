@@ -77,6 +77,10 @@ class ToolContext:
     # Хук перед первой правкой: снимок истории. Вызывается не чаще раза за контекст.
     on_first_change: Callable[[], None] | None = None
     changed: bool = False
+    # Запрос владельца этого хода (ИИ-монтажёр) и активный плейбук: инструменты сверяются с ними —
+    # слова владельца в кавычках цензура не глушит, автомонтаж при плейбуке не ставит своё (QA 4).
+    request: str = ""
+    playbook: str | None = None
 
     def before_change(self) -> None:
         if not self.changed and self.on_first_change is not None:
@@ -3877,8 +3881,24 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
     если verify, круги «рендер → Whisper по готовому файлу → шире, где узнаётся»."""
     from app import censor
 
-    options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
-               "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    notes: list[str] = []
+    soft = bool(args.get("soft"))
+    groups = args.get("groups") or None
+    if ctx.request and not censor.owner_asks_soft(ctx.request):
+        # QA 4 (клип 896): soft включил агент сам — заглушил панчлайн «обосралась». Мягкая брань (блин,
+        # жопа, срать) — не мат, площадки за неё не режут; глушим её, только если владелец просил.
+        if soft or (isinstance(groups, (list, tuple)) and "soft" in groups):
+            notes.append("мягкая брань (soft: блин, жопа, срать…) — не мат; владелец её глушить не просил — не глушу")
+        soft = False
+        if isinstance(groups, (list, tuple)):
+            groups = [g for g in groups if g != "soft"] or None
+    options = {"stars": args.get("stars", True) is not False, "soft": soft,
+               "groups": groups, "skip": args.get("skip") or ()}
+    keep = censor_keep_words(ctx)
+    if keep:
+        options["keep"] = keep
+    if args.get("force_words"):
+        options["force_words"] = [int(i) for i in args.get("force_words") or () if str(i).lstrip("-").isdigit()]
     if args.get("track") not in (None, ""):
         options["track"] = args.get("track")  # только эта дорожка (число или "voice"), app/censor.py
     if args.get("style") not in (None, ""):
@@ -3893,15 +3913,23 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
         if args.get("verify", True) is False or args.get("clear"):
             raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
                             "повтори censor_profanity без verify=false")
-    explicit = any(args.get(k) not in (None, "", [], False) for k in
-                   ("levels", "level", "style", "groups", "soft", "skip", "track", "clear", "verify_again"))
-    if not explicit and args.get("stars", True) is not False:
+    # QA 4 (клип 896): 5 вызовов подряд — явные levels/style/groups обходили «уже применено». Теперь
+    # повторный вызов при стоящей цензуре — «уже применено», что бы ни передали; переделать — redo: true.
+    redo = any(args.get(k) not in (None, "", [], False) for k in ("redo", "overwrite", "clear", "verify_again",
+                                                                    "force_words"))
+    if not redo and args.get("stars", True) is not False:
         try:
-            done = censor.already_censored(ctx.store, ctx.plan_id)
+            done = censor.already_censored(ctx.store, ctx.plan_id, keep=keep)
         except Exception:  # noqa: BLE001 - не смогли сверить — делаем как обычно
             done = None
         if done:
-            return {"ok": True, "status": "already", "already_applied": True, **done}
+            explicit = [k for k in ("levels", "level", "style", "groups", "soft", "skip", "track")
+                        if args.get(k) not in (None, "", [], False)]
+            if explicit:
+                done["note"] += (f". Переданные {', '.join(explicit)} НЕ применены: цензура уже стоит — переделать "
+                                 "её можно только с redo: true (и только если владелец просил)")
+            return {"ok": True, "status": "already", "already_applied": True, **done,
+                    **({"notes": notes} if notes else {})}
     try:
         if args.get("clear"):
             ctx.before_change()
@@ -3910,7 +3938,7 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
             ctx.before_change()
             out = censor.censor_plan(ctx.store, ctx.plan_id, levels, **options)
             out["note"] += ". Без проверки: рендер и Whisper не запускались (verify=true — проверит сам)"
-            return {"ok": True, "verified": False, **out}
+            return {"ok": True, "verified": False, **out, **({"notes": notes} if notes else {})}
         if not censor.job_running(ctx.plan_id):
             ctx.before_change()
         out = censor.censor_job(ctx.store, ctx.plan_id, levels=levels,
@@ -3918,7 +3946,53 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
                                 **options)
     except ValueError as exc:
         raise ToolError(f"censor_profanity: {exc}") from exc
-    return {"ok": True, **out}
+    return {"ok": True, **out, **({"notes": notes} if notes else {})}
+
+
+def accent_words(ctx: ToolContext) -> list[dict]:
+    """Звуки-акценты клипа и слово субтитров под каждым: ``[{layer, asset, t, word, line, j}]`` (шкала clip).
+
+    Слово — то, что начинается в пределах ``ACCENT_WORD_SEC`` от начала звука (at_word ставит звук на начало
+    слова), иначе ближайшее звучащее в этот момент; нет слов рядом — word пусто. QA 4 (клип 896): агент
+    поставил drama-boom «на обосралась», а звук стоял на «это» за 2.8 с до панчлайна, и никто этого не видел."""
+    render = _current_render(ctx)
+    sounds = [l for l in render.get("layers") or [] if isinstance(l, dict) and l.get("type") == "audio"
+              and not l.get("hidden") and str((l.get("props") or {}).get("asset_id") or "").startswith("sfx:")]
+    if not sounds:
+        return []
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    lines = _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"])["lines"]
+    flat = [(li, j, w) for li, line in enumerate(lines) for j, w in enumerate(line["words"])]
+    out = []
+    for layer in sounds:
+        t = float(layer.get("start") or 0)
+        near = min(flat, key=lambda x: abs(float(x[2][1]) - t), default=None)
+        hit = near if near and abs(float(near[2][1]) - t) <= ACCENT_WORD_SEC else next(
+            (x for x in flat if float(x[2][1]) <= t < float(x[2][2]) + 0.05), None)
+        out.append({"layer": layer.get("id"), "asset": str((layer.get("props") or {}).get("asset_id")),
+                    "t": round(t, 2), "word": str(hit[2][0]) if hit else "",
+                    **({"line": hit[0], "j": hit[1]} if hit else {})})
+    return out
+
+
+ACCENT_WORD_SEC = 0.12
+
+
+def censor_keep_words(ctx: ToolContext) -> list[str]:
+    """Слова, которые цензура без явного force_words не глушит: из кавычек запроса владельца (панчлайн,
+    ключевое слово) и под звуками-акцентами (at_word)."""
+    from app.censor import quoted_words
+
+    keep = quoted_words(ctx.request) if ctx.request else []
+    try:
+        for item in accent_words(ctx):
+            core = re.sub(r"[^\w*]+", "", item["word"].lower().replace("ё", "е"))
+            # Слово под звуком уже со звёздочками — каким оно было, не знаем (мог быть и мат): не трогаем.
+            if len(core) >= 3 and "*" not in core and core not in keep:
+                keep.append(core)
+    except Exception:  # noqa: BLE001 - без слоёв — только слова владельца
+        pass
+    return keep
 
 
 def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
@@ -6700,7 +6774,10 @@ def _build_registry() -> list[Tool]:
             "согласная) — человек понимает, автосубтитры TikTok/YouTube мат не распознают; в субтитрах — первая "
             "буква и звёздочки («б****»). Ручные mute не трогает, свои прежние отрезки заменяет; повторный "
             "запуск идемпотентен (звёздочки находит сам). По умолчанию мат + «сука»; soft=true — ещё блин, "
-            "хрен, жопа, говно. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
+            "хрен, жопа, говно, срать — ТОЛЬКО если владелец сам просил глушить мягкую брань (иначе soft не "
+            "применяется: это не мат). Слова владельца в кавычках (панчлайн, ключевое слово) и слово под звуком-"
+            "акцентом не глушатся (kept в ответе), кроме настоящего мата; заглушить такое всё же — force_words [i], "
+            "только по просьбе владельца. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
             "мат ещё узнаётся (±0.4 с), уровень +1 и новый рендер, не больше max_rounds (3) кругов; это минуты: "
             "ответ status running — повтори тот же вызов через retry_after_sec. Итог: words [{i, word, start, "
             "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
@@ -6712,8 +6789,9 @@ def _build_registry() -> list[Tool]:
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
             "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
             "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
-            "silence, затем noise (только его; style_switched в ответе). Цензура уже стоит на весь мат — повтор "
-            "без параметров отвечает status already («уже применено», без рендера); verify_again: true — проверить "
+            "silence, затем noise (только его; style_switched в ответе). Вызывай ОДИН раз: цензура уже стоит на весь "
+            "мат — повтор с любыми levels/style/groups отвечает status already («уже применено», без рендера) и их "
+            "не применяет; переделать — redo: true (только если владелец просил), verify_again: true — проверить "
             "рендером заново. Слова под цензурой в субтитрах всегда со звёздочками и не подсвечиваются "
             "(highlightWords/эмфаза на них не действуют). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
@@ -6721,6 +6799,9 @@ def _build_registry() -> list[Tool]:
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
                   "clear": {"type": "boolean"},
+                  "redo": {"type": "boolean", "description": "переделать уже стоящую цензуру (иначе повтор — already)"},
+                  "force_words": {"type": "array", "items": {"type": "integer"},
+                                  "description": "номера слов владельца/под акцентом, которые всё же глушить"},
                   "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"},
                   "style": {"type": "string", "enum": ["silence", "beep", "noise", "reverse", "lowpass", "stretch",
                                                        "duck"]}}),
