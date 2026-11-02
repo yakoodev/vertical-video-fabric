@@ -1,33 +1,43 @@
 """ИИ-видео v3: блокинг планов в нашем 3D-движке сцен (слой ``scene``, docs/motion/scene-engine.md).
 
 Зачем: картинковая модель рисует ключевые кадры «по описанию» — позы, места и ракурс плывут, пылесос
-встаёт на дыбы, печенье двоится. Блокинг даёт ей КОМПОЗИЦИЮ: простые манекены в комнате, снятые
-камерой плана, на старте и на конце плана. Скриншот блокинга идёт первым референсом кадра (img2img
-по композиции), листы персонажей и плита локации — следом.
+встаёт на дыбы, печенье двоится. Блокинг даёт ей КОМПОЗИЦИЮ: подробный макет сцены — комната локации
+со всеми её вещами, манекены персонажей в позе, реквизит в руках и на местах, снятые камерой плана, на
+старте и на конце плана. Скриншот блокинга идёт первым референсом кадра (только позиции, позы и
+ракурс — цвета и формы макета модель не рисует), листы персонажей и плита локации — следом.
 
-* **spec** — простая раскладка плана (сантиметры; x вправо, y вверх, z на камеру; пол y=0, комната
-  по центру):
+* **Комната** — одна раскладка на локацию (``app/aivideo_layout.py``): все вещи из описания (и с плиты —
+  Gemini-зрением, один раз, кэш), узнаваемые пропорции и цвета, одна и та же во всех планах.
+* **spec** плана (сантиметры; x вправо, y вверх, z на камеру; пол y=0, комната по центру):
 
   .. code-block:: json
 
-     {"room": {"width": 500, "depth": 400, "height": 260, "floor": "#b9a68a", "wall": "#e9e2d4"},
-      "objects": [{"id": "bed", "kind": "box", "size": [200, 50, 90], "pos": [-120, -100], "rot": 0}],
-      "camera": {"pos": [0, 130, 320], "target": [0, 80, 0], "fov": 40},
-      "start": {"actors": [{"id": "mira", "pos": [-40, 20], "facing": "camera", "pose": "standing"}],
-                "props": [{"id": "cookie", "kind": "disc", "size": 8, "pos": [30, 0, 40], "count": 1}]},
-      "end": {"actors": [...], "props": [...]}}
+     {"start": {"actors": [{"id": "mira", "pos": [-40, 20], "facing": "camera", "pose": "standing",
+                            "arms": "holding", "on": ""}],
+                "props": [{"id": "mug", "name": "кружка", "holder": "mira"},
+                          {"id": "sock", "name": "носок", "on": "rug"}]},
+      "end": {"actors": [...], "props": [...]},
+      "objects": [], "room": {}, "camera": {"pos": [...], "target": [...], "fov": 50}}
 
-  ``camera`` можно не писать — она ставится по плану (``camera.shot``/``angle``). ``facing`` — градусы
-  (0 — в камеру, 90 — вправо кадра, −90 — влево, 180 — спиной) или camera|left|right|away. ``pose`` —
-  standing | walking | sitting | kneeling | lying. ``kind`` мебели/реквизита — box | cylinder | disc |
-  sphere. Реквизит ``holder`` — в руке персонажа.
-* **Манекены** (``stand_in`` персонажа или по карте личности): human — капсула с головой-шаром и
-  «носом» (куда смотрит), disc — плоский диск на полу (робот-пылесос), quadruped — коробка с головой,
-  small — шар. У каждого персонажа свой цвет — промпт кадра говорит, какой цвет кто.
-* **Кто пишет**: Gemini — раскладку всей серии одним запросом (бесплатно; одна комната на локацию,
-  места из state/end_state планов); нет ключа — ``auto_spec`` по state (left/center/right,
-  foreground/background, поза, взгляд). Агент и владелец правят spec (``set_blocking``) или
-  кладут свою JSON-сцену движка поверх (``scenes.start/end``).
+  ``objects``/``room`` пусто — комната локации (так и надо); своя мебель — только если агент её задал.
+  ``camera`` можно не писать — она ставится по плану (``camera.shot``/``angle``/``lens``). ``facing`` —
+  градусы (0 — в камеру, 90 — вправо кадра, −90 — влево, 180 — спиной) или camera|left|right|away.
+  ``pose`` — standing | walking | sitting | crouching | kneeling | lying; ``arms`` — down | up | forward |
+  holding | wave; ``on`` — id вещи комнаты, на которой персонаж сидит/лежит (кровать, стул…).
+  Реквизит: ``holder`` — в руке персонажа, ``on`` — на вещи комнаты, иначе ``pos`` [x, y, z].
+* **Манекены** в реальном росте: человек — голова, туловище, руки и ноги в позе (рост из карты
+  личности, по умолчанию 165 см), робот-диск — низкий диск ~33 см с экраном-глазами и антенной,
+  животное — тело, голова, лапы, хвост; у каждого персонажа свой нейтральный цвет — промпт кадра
+  говорит, какой цвет кто.
+* **Камера** по плану: крупность → сколько видно по высоте, объектив → угол поля, ракурс → высота;
+  смотрит на центр масс персонажей, все персонажи влезают; никогда не внутри вещи или стены.
+* **Самоконтроль кадра** (``frame_check``): лучи из камеры по сетке кадра — каждый персонаж в кадре и
+  не закрыт, персонажи занимают разумную долю кадра, никакая вещь перед ними не закрывает > 40 % кадра.
+  Не прошёл ни один вариант камеры — блокинг в кадр НЕ идёт (промпт без него, пометка в params).
+* **Кто пишет** места персонажей: Gemini — раскладку всей серии одним запросом (бесплатно; комната
+  дана, места из state/end_state планов); нет ключа — ``auto_spec`` по state (left/center/right,
+  foreground/background, поза, «у кровати», «на тумбочке»). Агент и владелец правят spec
+  (``set_blocking``) или кладут свою JSON-сцену движка поверх (``scenes.start/end``).
 * **Рендер** — компоновщиком (тот же, что рендер клипа), 9:16, 0 ₽: версии ``blocking_start`` /
   ``blocking_end`` плана (``prompt`` = ``blocking:<хэш сцены>``).
 """
@@ -37,22 +47,33 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from typing import Any
 
 from app import aivideo as V
+from app import aivideo_layout as L
 from app import projects as P
 
 KINDS = ("box", "cylinder", "disc", "sphere")
-POSES = ("standing", "walking", "sitting", "kneeling", "lying")
-ACTOR_COLORS = ("#e8743b", "#3b82e8", "#22a35a", "#c44fd1")
-COLOR_NAMES = {"#e8743b": "orange", "#3b82e8": "blue", "#22a35a": "green", "#c44fd1": "purple"}
-ROOM_DEFAULT = {"width": 500, "depth": 400, "height": 260, "floor": "#b9a68a", "wall": "#e9e2d4"}
-# Дистанция камеры (см) по крупности плана — вертикальное поле 40° у кадра 9:16.
-SHOT_DISTANCE = {"extreme_wide": 1100, "wide": 750, "full": 430, "medium": 270, "medium_close": 190,
-                 "close": 120, "extreme_close": 70}
+POSES = ("standing", "walking", "sitting", "crouching", "kneeling", "lying")
+ARMS = ("down", "up", "forward", "holding", "wave")
+# Нейтральные, но различимые цвета манекенов: яркий оранжевый модель перерисовывала в «дверь».
+ACTOR_COLORS = ("#8e9bb5", "#c2a98a", "#8fae95", "#b08fa8")
+COLOR_NAMES = {"#8e9bb5": "slate-blue", "#c2a98a": "sand", "#8fae95": "sage-green", "#b08fa8": "mauve"}
+ROOM_DEFAULT = L.ROOM_DEFAULT
+# Крупность → сколько видно по высоте кадра (в ростах героя) и что от каждого персонажа обязано влезть.
+FRAME_HEIGHT = {"extreme_wide": 3.6, "wide": 2.3, "full": 1.3, "medium": 0.8, "medium_close": 0.55,
+                "close": 0.36, "extreme_close": 0.2}
+MUST_SEE = {"extreme_close": 0.16, "close": 0.24, "medium_close": 0.4, "medium": 0.6}  # верхняя доля роста
+SIZES = ("extreme_close", "close", "medium_close", "medium", "full", "wide", "extreme_wide")
+MIN_SHARE = {"extreme_wide": 0.003, "wide": 0.008, "full": 0.02, "medium": 0.035, "medium_close": 0.05,
+             "close": 0.07, "extreme_close": 0.07}
+OCCLUDE_MAX = 0.40  # вещь перед персонажами закрывает больше — кадр не годится
+HIDDEN_MAX = 0.65  # персонаж закрыт больше чем на столько — не годится
 BLOCKING_W, BLOCKING_H = 1080, 1920
 RENDER_WIDTH = 540
 LIMIT = 1000.0  # см: дальше комнаты ничего не ставим
+GRID = (27, 48)  # лучей по ширине и высоте кадра в самоконтроле
 
 
 def _num(value: Any, default: float = 0.0, lo: float = -LIMIT * 2, hi: float = LIMIT * 2) -> float:
@@ -66,18 +87,15 @@ def _num(value: Any, default: float = 0.0, lo: float = -LIMIT * 2, hi: float = L
 
 
 def _color(value: Any, default: str) -> str:
-    text = str(value or "").strip()
-    if len(text) == 7 and text.startswith("#"):
-        try:
-            int(text[1:], 16)
-            return text.lower()
-        except ValueError:
-            pass
-    return default
+    return L._hex(value, default)
+
+
+def _norm(text: Any) -> str:
+    return str(text or "").casefold().replace("ё", "е")
 
 
 # --------------------------------------------------------------------------- #
-# Манекены персонажей
+# Персонажи: манекен, рост, цвет
 # --------------------------------------------------------------------------- #
 
 _DISC_WORDS = ("пылесос", "vacuum", "roomba", "диск", "disc", "шайб")
@@ -102,21 +120,51 @@ def stand_in(character: dict | None) -> str:
     return "human"
 
 
+def body_size(character: dict | None, kind: str) -> float:
+    """Реальный размер манекена, см: человек — рост, диск — диаметр, животное — длина, шар — диаметр."""
+    text = _norm(f"{(character or {}).get('identity_card') or ''} {(character or {}).get('constraints') or ''}")
+    if kind == "human":
+        m = re.search(r"рост\D{0,4}(1\d\d|2[01]\d)", text) or re.search(r"(1\d\d|2[01]\d)\s*см", text)
+        if m:
+            return float(m.group(1))
+        if re.search(r"ребен|ребён|девочк|мальчик|child|\bkid", text):
+            return 125.0
+        if re.search(r"высок|tall", text):
+            return 178.0
+        if re.search(r"низк|миниатюрн|short|petite", text):
+            return 155.0
+        return 165.0
+    if kind == "disc":
+        m = re.search(r"диаметр\D{0,4}(\d{2})", text)
+        if m:
+            return float(m.group(1))
+        if re.search(r"тарелк|plate", text):
+            return 28.0
+        return 33.0
+    if kind == "quadruped":
+        if re.search(r"собак|пес\b|пёс|dog", text):
+            return 75.0
+        if re.search(r"хомяк|мыш|hamster", text):
+            return 14.0
+        return 46.0
+    return 24.0
+
+
 def cast_info(store: Any, project_id: int, shot: dict) -> list[dict]:
-    """Персонажи плана: id, имя, манекен, цвет манекена (по порядку в кадре)."""
+    """Персонажи плана: id, имя, манекен, реальный размер, цвет манекена (по порядку в кадре)."""
     out = []
     for n, member in enumerate(shot.get("cast") or []):
         c = V.character_by_slug(store, project_id, member["id"])
         color = ACTOR_COLORS[n % len(ACTOR_COLORS)]
-        out.append({"id": member["id"], "name": (c or {}).get("name") or member["id"], "stand_in": stand_in(c),
-                    "color": color, "color_name": COLOR_NAMES[color]})
+        kind = stand_in(c)
+        out.append({"id": member["id"], "name": (c or {}).get("name") or member["id"], "stand_in": kind,
+                    "size": body_size(c, kind), "color": color, "color_name": COLOR_NAMES[color]})
     return out
 
 
 def legend(store: Any, project_id: int, shot: dict) -> str:
-    """Для промпта кадра: какой манекен — кто («orange mannequin = Мира; grey-blue flat disc = Бип»)."""
-    what = {"human": "mannequin", "disc": "flat disc", "quadruped": "box-shaped animal stand-in",
-            "small": "ball stand-in"}
+    """Для промпта кадра: какой манекен — кто («slate-blue mannequin = Мира; sand flat disc = Бип»)."""
+    what = {"human": "mannequin", "disc": "flat disc", "quadruped": "animal stand-in", "small": "ball stand-in"}
     return "; ".join(f"the {c['color_name']} {what.get(c['stand_in'], 'stand-in')} = {c['name']}"
                      for c in cast_info(store, project_id, shot))
 
@@ -126,11 +174,12 @@ def legend(store: Any, project_id: int, shot: dict) -> str:
 # --------------------------------------------------------------------------- #
 
 _FACING_WORDS = (
-    (("away", "back", "спин", "от камер"), 180.0),
+    (("away", "back", "спин", "от камер", "к окну"), 180.0),
     (("left", "влев", "налев", "слева"), -90.0),
     (("right", "вправ", "направ", "справа"), 90.0),
     (("camera", "камер", "зрител", "front", "вперёд", "вперед"), 0.0),
 )
+_NOTHING = re.compile(r"^\s*(ничего|nothing|none|нет|пусто|-|—|empty)?\s*$")
 
 
 def facing_deg(value: Any) -> float:
@@ -151,64 +200,191 @@ def pose_of(value: Any) -> str:
     if text in POSES:
         return text
     for words, pose in ((("lie", "lying", "лёж", "леж", "лёг", "лег"), "lying"),
-                        (("kneel", "колен", "присел", "присев", "squat", "корточ"), "kneeling"),
+                        (("присел", "присев", "присела", "squat", "корточ", "crouch"), "crouching"),
+                        (("kneel", "колен"), "kneeling"),
                         (("sit", "сид", "сел"), "sitting"), (("walk", "ид", "шаг"), "walking")):
         if any(w in text for w in words):
             return pose
     return "standing"
 
 
-def _position(text: Any, n: int, total: int) -> list[float]:
+def arms_of(value: Any, default: str = "down") -> str:
+    text = _norm(value)
+    if text in ARMS:
+        return text
+    if re.search(r"рук\w* (вверх|над голов)|поднима\w* рук|подня\w* рук|потяг|потянул|stretch|arms? up|hands up",
+                 text):
+        return "up"
+    if re.search(r"маш\w* рук|wave|машет", text):
+        return "wave"
+    if re.search(r"рук\w* вперед|протягива|reach|arms? forward", text):
+        return "forward"
+    return default
+
+
+def holding_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return "" if _NOTHING.match(_norm(text)) else text
+
+
+def _position(text: Any, n: int, total: int, room: dict) -> list[float]:
     t = str(text or "").casefold()
+    side = min(95.0, float(room["width"]) * 0.22)
     x = (n - (total - 1) / 2) * 70.0
     if any(w in t for w in ("left", "слева", "лев")):
-        x = -70.0
+        x = -side
     elif any(w in t for w in ("right", "справа", "прав")):
-        x = 70.0
+        x = side
     elif any(w in t for w in ("center", "centre", "центр", "middle", "посередин")):
         x = 0.0
     z = 0.0
     if any(w in t for w in ("foreground", "передн", "front", "близко", "close")):
-        z = 70.0
+        z = float(room["depth"]) * 0.2
     elif any(w in t for w in ("background", "задн", "far", "далеко", "back")):
-        z = -90.0
+        z = -float(room["depth"]) * 0.2
     return [x, z]
 
 
-def _moment(state: dict, cast: list[dict]) -> dict:
-    """state плана (или конца) → актёры и реквизит раскладки."""
+_ON_WORDS = re.compile(r"\bна\b|\bon\b|\bв кроват|\bin bed|\bлежит в|\bсидит в")
+_HOLD_WORDS = re.compile(r"в рук|держ|несет|несёт|hold|carr|in (her|his|their) hand")
+_STRETCH = re.compile(r"потяг|потянут|stretch|рук\w* (вверх|над голов)|поднима\w* рук")
+
+# Реквизит по названию: вид (форма), размер см [ш, в, г] и цвет — в реальных пропорциях.
+PROP_KINDS: list[tuple[str, str, list[float], str]] = [
+    (r"кружк|чашк|\bmug|\bcup|кофе|\bчай|coffee|\btea\b", "mug", [8.5, 9.5, 8.5], "#f3efe8"),
+    (r"носк|носок|sock", "sock", [7, 3, 18], "#f4b6c2"),
+    (r"книг|\bbook|тетрад|журнал", "book", [15, 3, 22], "#7a6ff0"),
+    (r"телефон|смартфон|phone", "phone", [7, 1, 15], "#26272b"),
+    (r"тарелк|\bplate", "plate", [22, 2, 22], "#f4f1ea"),
+    (r"печень|cookie|пирож|конфет", "cookie", [7, 1.2, 7], "#c99a5b"),
+    (r"бутыл|bottle", "bottle", [7, 24, 7], "#5f9b5a"),
+    (r"стакан|\bglass", "glass", [7, 11, 7], "#bfe0f0"),
+    (r"подушк|pillow", "pillow", [45, 12, 32], "#f6f1ea"),
+    (r"плед|одеял|blanket", "blanket", [100, 3, 80], "#c9b8e8"),
+    (r"коробк|посылк|\bbox", "box", [30, 20, 25], "#c9a26b"),
+    (r"мяч|\bball", "ball", [20, 20, 20], "#d9534f"),
+    (r"игрушк|\btoy|плюш", "toy", [18, 18, 18], "#e8c9a8"),
+    (r"сумк|рюкзак|\bbag", "bag", [30, 30, 14], "#8b5a3c"),
+    (r"письм|бумаг|\bлист|записк|letter|paper|\bnote", "paper", [21, 0.4, 29.7], "#fbfaf6"),
+    (r"ключ|\bkey", "key", [6, 0.6, 2.5], "#d8c070"),
+    (r"пульт|remote", "remote", [5, 2, 18], "#2a2b30"),
+    (r"ноутбук|laptop", "laptop", [32, 2, 22], "#8a8f96"),
+    (r"цвет(ок|ы)|букет|flower", "flower", [8, 30, 8], "#e06c8c"),
+]
+
+
+def prop_kind(name: Any) -> tuple[str, list[float], str]:
+    text = _norm(name)
+    for words, kind, size, color in PROP_KINDS:
+        if re.search(words, text):
+            return kind, list(size), color
+    return "item", [10, 10, 10], "#c98b3b"
+
+
+def _who(text: str, cast: list[dict], infos: dict[str, dict]) -> str:
+    """Чей реквизит по тексту («в руках Миры», «Mira holds…»): id персонажа или ""."""
+    t = _norm(text)
+    for c in cast:
+        name = _norm(infos.get(c["id"], {}).get("name") or c["id"])
+        stem = name[:max(3, len(name) - 1)]
+        if stem and (stem in t or _norm(c["id"]) in t):
+            return c["id"]
+    return ""
+
+
+def _moment(state: dict, cast: list[dict], infos: dict[str, dict], layout: dict, action: str = "",
+            end: bool = False) -> dict:
+    """state плана (или конца) → актёры и реквизит раскладки, привязанные к вещам комнаты."""
+    room = layout.get("room") or ROOM_DEFAULT
     by_id = {c["id"]: c for c in (state or {}).get("characters") or []}
     actors = []
+    stretch = bool(end and _STRETCH.search(_norm(action)))
     for n, member in enumerate(cast):
         st = by_id.get(member["id"], {})
-        pos = _position(st.get("position"), n, len(cast))
-        actors.append({"id": member["id"], "pos": pos, "facing": facing_deg(st.get("facing") or "camera"),
-                       "pose": pose_of(st.get("pose"))})
-    taken = [a["pos"] for a in actors]
-    for i, a in enumerate(actors):  # двое в одной точке — развести
-        for prev in taken[:i]:
-            if abs(prev[0] - a["pos"][0]) < 40 and abs(prev[1] - a["pos"][1]) < 40:
-                a["pos"] = [a["pos"][0] + 80.0, a["pos"][1]]
+        kind = infos.get(member["id"], {}).get("stand_in", "human")
+        pose = pose_of(st.get("pose"))
+        holding = holding_text(st.get("holding"))
+        arms = "holding" if holding else arms_of(f"{st.get('pose') or ''} {member.get('action') or ''}"
+                                                 if not end else f"{st.get('pose') or ''}")
+        if stretch and not holding and kind == "human" and n == 0:
+            arms = "up"
+        text = f"{st.get('position') or ''} {st.get('pose') or ''}"
+        pos = _position(st.get("position"), n, len(cast), room)
+        actor = {"id": member["id"], "pos": pos, "facing": facing_deg(st.get("facing") or "camera"), "pose": pose,
+                 "arms": arms if kind == "human" else "down"}
+        anchor = L.find(layout, text)
+        if anchor is not None and anchor.get("type") not in ("lamp", "books", "computer", "plush", "garland"):
+            on = (bool(_ON_WORDS.search(_norm(text))) or pose in ("lying", "sitting")) and \
+                anchor["type"] in ("bed", "sofa", "chair", "rug", "table", "desk")
+            if on and anchor["type"] != "rug":
+                actor["on"] = anchor["id"]
+                actor["pos"] = list(anchor["pos"])
+            else:
+                actor["pos"] = _in_front(anchor, 35.0 if kind == "human" else 25.0)
+        actors.append(actor)
     props = []
+    seen_kinds = set()
     for k, p in enumerate((state or {}).get("props") or []):
+        name = p.get("name") or f"prop{k}"
+        pk, _size, _col = prop_kind(name)
+        seen_kinds.add(pk)
+        item = {"id": V.slugify(name, f"prop{k}"), "name": name, "count": int(p.get("count") or 1)}
+        where = f"{p.get('state') or ''}"
         holder = next((c["id"] for c in (state or {}).get("characters") or []
-                       if p["name"].casefold() in str(c.get("holding") or "").casefold()), "")
-        item = {"id": V.slugify(p["name"], f"prop{k}"), "name": p["name"], "kind": "disc", "size": 10,
-                "count": int(p.get("count") or 1), "color": "#c98b3b"}
+                       if _norm(name)[:5] and _norm(name)[:5] in _norm(holding_text(c.get("holding")))), "")
+        if not holder and _HOLD_WORDS.search(_norm(where)):
+            holder = _who(where, cast, infos) or next((c["id"] for c in cast if infos.get(c["id"], {}).get(
+                "stand_in", "human") == "human"), "")
+        support = None if holder else L.find(layout, where)
         if holder:
             item["holder"] = holder
+        elif support is not None:
+            item["on"] = support["id"]
         else:
-            item["pos"] = [-30.0 + 30.0 * k, 0.0, 45.0]
+            first = actors[0]["pos"] if actors else [0.0, 0.0]
+            item["pos"] = [first[0] + 30.0 + 20.0 * k, 0.0, first[1] + 25.0]
+        props.append(item)
+    # Реквизит из действия плана, которого нет в state (кружка в «ставит кружку на тумбочку»).
+    for words, pk, _size, _col in PROP_KINDS:
+        if pk in seen_kinds or not re.search(words, _norm(action)):
+            continue
+        seen_kinds.add(pk)
+        item = {"id": pk, "name": pk, "count": 1}
+        support = L.find(layout, action) if end else None
+        holder = next((a["id"] for a in actors if a.get("arms") == "holding"), "")
+        if support is not None and support.get("type") not in ("rug",):
+            item["on"] = support["id"]
+        elif holder or not end:
+            human = holder or next((c["id"] for c in cast if infos.get(c["id"], {}).get("stand_in", "human")
+                                    == "human"), "")
+            if not human:
+                continue
+            item["holder"] = human
+            for a in actors:
+                if a["id"] == human and a["arms"] in ("down", "forward"):
+                    a["arms"] = "holding"
+        else:
+            continue
         props.append(item)
     return {"actors": actors, "props": props}
 
 
-def auto_spec(store: Any, project_id: int, shot: dict, nxt: dict | None) -> dict:
-    """Раскладка без Gemini: места/позы/взгляд из state (старт) и конца плана."""
+def _in_front(o: dict, gap: float) -> list[float]:
+    """Точка перед вещью (со стороны её лица) на расстоянии ``gap`` от края."""
+    dx, dz = _rot_y(0.0, float(o["size"][2]) / 2 + gap, float(o.get("rot") or 0.0))
+    return [float(o["pos"][0]) + dx, float(o["pos"][1]) + dz]
+
+
+def auto_spec(store: Any, project_id: int, shot: dict, nxt: dict | None, layout: dict | None = None) -> dict:
+    """Раскладка без Gemini: места/позы/взгляд/руки из state (старт) и конца плана, у вещей комнаты."""
     cast = shot.get("cast") or []
-    return {"room": dict(ROOM_DEFAULT), "objects": [],
-            "start": _moment(shot.get("state") or {}, cast),
-            "end": _moment(V.end_state_of(shot, nxt), cast)}
+    if layout is None:
+        layout = shot_layout(store, project_id, shot)
+    infos = {c["id"]: c for c in cast_info(store, project_id, shot)}
+    action = f"{shot.get('action') or ''} {shot.get('motion_prompt') or ''}"
+    return {"room": {}, "objects": [],
+            "start": _moment(shot.get("state") or {}, cast, infos, layout, action),
+            "end": _moment(V.end_state_of(shot, nxt), cast, infos, layout, action, end=True)}
 
 
 def _clean_props(items: Any, actor_ids: set[str]) -> list[dict]:
@@ -218,12 +394,18 @@ def _clean_props(items: Any, actor_ids: set[str]) -> list[dict]:
             continue
         item = {"id": V.slugify(p.get("id") or p.get("name") or "", f"prop{k}"),
                 "name": P._text(p.get("name") or p.get("id"), 60),
-                "kind": p.get("kind") if p.get("kind") in KINDS else "disc",
-                "size": _num(p.get("size"), 10, 1, 300), "count": int(_num(p.get("count"), 1, 1, 9)),
-                "color": _color(p.get("color"), "#c98b3b")}
+                "count": int(_num(p.get("count"), 1, 1, 9))}
+        if p.get("kind") in KINDS:
+            item["kind"] = p["kind"]
+        if p.get("size") not in (None, ""):
+            item["size"] = _num(p.get("size") if not isinstance(p.get("size"), list) else p["size"][0], 10, 1, 300)
+        if p.get("color"):
+            item["color"] = _color(p.get("color"), "#c98b3b")
         holder = V.slugify(p.get("holder") or "", "")
         if holder and holder in actor_ids:
             item["holder"] = holder
+        elif p.get("on"):
+            item["on"] = V.slugify(str(p["on"]), "")[:40]
         else:
             pos = p.get("pos") if isinstance(p.get("pos"), list) else [0, 0, 40]
             item["pos"] = [_num(v) for v in (list(pos) + [0, 0, 0])[:3]]
@@ -232,27 +414,20 @@ def _clean_props(items: Any, actor_ids: set[str]) -> list[dict]:
 
 
 def clean_spec(raw: Any, cast_ids: list[str]) -> dict:
-    """Чистка spec от Gemini/агента: числа в пределах, известные виды и позы, только персонажи плана."""
+    """Чистка spec от Gemini/агента: числа в пределах, известные позы, только персонажи плана.
+    Пустые ``objects`` — комната локации (одна на все планы)."""
     raw = raw if isinstance(raw, dict) else {}
     room_raw = raw.get("room") if isinstance(raw.get("room"), dict) else {}
-    room = {"width": _num(room_raw.get("width"), ROOM_DEFAULT["width"], 150, 2000),
-            "depth": _num(room_raw.get("depth"), ROOM_DEFAULT["depth"], 150, 2000),
-            "height": _num(room_raw.get("height"), ROOM_DEFAULT["height"], 150, 600),
-            "floor": _color(room_raw.get("floor"), ROOM_DEFAULT["floor"]),
-            "wall": _color(room_raw.get("wall"), ROOM_DEFAULT["wall"])}
-    objects = []
-    for k, o in enumerate(raw.get("objects") if isinstance(raw.get("objects"), list) else []):
-        if not isinstance(o, dict):
-            continue
-        size = o.get("size")
-        size = [_num(v, 60, 1, 800) for v in (list(size) + [60, 60, 60])[:3]] if isinstance(size, list) else \
-            [_num(size, 60, 1, 800)] * 3
-        pos = o.get("pos") if isinstance(o.get("pos"), list) else [0, 0]
-        objects.append({"id": V.slugify(o.get("id") or o.get("name") or "", f"obj{k}"),
-                        "kind": o.get("kind") if o.get("kind") in KINDS else "box", "size": size,
-                        "pos": [_num(v) for v in (list(pos) + [0, 0])[:2]], "y": _num(o.get("y"), 0, 0, 400),
-                        "rot": _num(o.get("rot"), 0, -360, 360), "color": _color(o.get("color"), "#8a7f72")})
-    out: dict[str, Any] = {"room": room, "objects": objects[:24]}
+    room = {}
+    if room_raw:
+        room = {"width": _num(room_raw.get("width"), ROOM_DEFAULT["width"], 150, 2000),
+                "depth": _num(room_raw.get("depth"), ROOM_DEFAULT["depth"], 150, 2000),
+                "height": _num(room_raw.get("height"), ROOM_DEFAULT["height"], 150, 600),
+                "floor": _color(room_raw.get("floor"), ROOM_DEFAULT["floor"]),
+                "wall": _color(room_raw.get("wall"), ROOM_DEFAULT["wall"])}
+    objects = [o for o in (L.clean_object(o, k) for k, o in
+                           enumerate(raw.get("objects") if isinstance(raw.get("objects"), list) else [])) if o]
+    out: dict[str, Any] = {"room": room, "objects": objects[:40]}
     cam = raw.get("camera") if isinstance(raw.get("camera"), dict) else None
     if cam and isinstance(cam.get("pos"), list) and isinstance(cam.get("target"), list):
         out["camera"] = {"pos": [_num(v) for v in (list(cam["pos"]) + [0, 0, 0])[:3]],
@@ -269,15 +444,20 @@ def clean_spec(raw: Any, cast_ids: list[str]) -> dict:
             if aid not in ids or aid in {x["id"] for x in actors}:
                 continue
             pos = a.get("pos") if isinstance(a.get("pos"), list) else [0, 0]
-            actors.append({"id": aid, "pos": [_num(v) for v in (list(pos) + [0, 0])[:2]],
-                           "facing": facing_deg(a.get("facing")), "pose": pose_of(a.get("pose")),
-                           **({"y": _num(a.get("y"), 0, 0, 300)} if a.get("y") not in (None, "") else {})})
+            item = {"id": aid, "pos": [_num(v) for v in (list(pos) + [0, 0])[:2]],
+                    "facing": facing_deg(a.get("facing")), "pose": pose_of(a.get("pose")),
+                    "arms": arms_of(a.get("arms"))}
+            if a.get("y") not in (None, ""):
+                item["y"] = _num(a.get("y"), 0, 0, 300)
+            if a.get("on"):
+                item["on"] = V.slugify(str(a["on"]), "")[:40]
+            actors.append(item)
         out[which] = {"actors": actors, "props": _clean_props(moment.get("props"), ids)}
     return out
 
 
 # --------------------------------------------------------------------------- #
-# spec → JSON-сцена движка
+# Геометрия: повороты, манекены, реквизит
 # --------------------------------------------------------------------------- #
 
 
@@ -287,173 +467,741 @@ def _rot_y(x: float, z: float, deg: float) -> tuple[float, float]:
     return x * math.cos(r) + z * math.sin(r), -x * math.sin(r) + z * math.cos(r)
 
 
-def _human(pose: str, color: str, seat: bool = True) -> list[dict]:
-    skin, dark = "#f1d3b5", "#2b2b33"
-    body: list[dict]
-    if pose == "lying":
-        body = [{"type": "cylinder", "radius": 17, "height": 140, "position": [0, 17, 0], "rotation": [0, 0, 90],
-                 "color": color},
-                {"type": "sphere", "radius": 13, "position": [82, 18, 0], "color": skin, "segments": 16},
-                {"type": "box", "size": [6, 6, 10], "position": [84, 18, 13], "color": dark}]
-        return body
+def _mat(rx: float, ry: float, rz: float) -> list[list[float]]:
+    """Матрица поворота Эйлера XYZ (как three.js: R = Rx·Ry·Rz), градусы."""
+    a, b, c = (math.radians(v) for v in (rx, ry, rz))
+    ca, sa, cb, sb, cc, sc = math.cos(a), math.sin(a), math.cos(b), math.sin(b), math.cos(c), math.sin(c)
+    mx = [[1, 0, 0], [0, ca, -sa], [0, sa, ca]]
+    my = [[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]]
+    mz = [[cc, -sc, 0], [sc, cc, 0], [0, 0, 1]]
+    return _mm(_mm(mx, my), mz)
+
+
+def _mm(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def _mv(m: list[list[float]], v: list[float]) -> list[float]:
+    return [sum(m[i][k] * v[k] for k in range(3)) for i in range(3)]
+
+
+def _r(v: float) -> float:
+    return round(float(v), 2)
+
+
+# Позы: углы суставов (Эйлер XYZ, градусы). Ноги: бедро и колено; руки: плечо и локоть.
+_LEGS = {
+    "standing": ((0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)),
+    "walking": ((22, 0, 0), (12, 0, 0), (-22, 0, 0), (6, 0, 0)),
+    "sitting": ((-90, 0, 0), (90, 0, 0), (-90, 0, 0), (90, 0, 0)),
+    "crouching": ((-80, 0, 0), (125, 0, 0), (-70, 0, 0), (115, 0, 0)),
+    "kneeling": ((0, 0, 0), (90, 0, 0), (0, 0, 0), (90, 0, 0)),
+    "lying": ((0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)),
+}
+_ARMS = {  # (левое плечо, левый локоть, правое плечо, правый локоть)
+    "down": ((0, 0, -7), (-8, 0, 0), (0, 0, 7), (-8, 0, 0)),
+    "up": ((180, 0, -14), (0, 0, 0), (180, 0, 14), (0, 0, 0)),
+    "forward": ((-78, 0, -4), (-15, 0, 0), (-78, 0, 4), (-15, 0, 0)),
+    "holding": ((0, 0, -7), (-8, 0, 0), (-28, 0, 6), (-58, 0, 0)),
+    "wave": ((0, 0, -7), (-8, 0, 0), (165, 0, 22), (-35, 0, 0)),
+}
+
+
+def _human_rig(height: float, pose: str, arms: str) -> dict:
+    """Скелет человека: размеры частей и углы суставов в позе (для узлов и для руки с предметом)."""
+    s = height / 165.0
+    hip_y = 87 * s
+    legs = _LEGS.get(pose, _LEGS["standing"])
+    arm = _ARMS.get(arms, _ARMS["down"])
+    if pose == "walking" and arms == "down":
+        arm = ((-16, 0, -6), (-10, 0, 0), (16, 0, 6), (-6, 0, 0))
     if pose == "sitting":
-        hip = 45.0
-        body = [{"type": "cylinder", "radiusTop": 17, "radiusBottom": 15, "height": 58, "position": [0, hip + 29, 0],
-                 "color": color},
-                {"type": "box", "size": [30, 14, 42], "position": [0, hip, 18], "color": color},
-                {"type": "cylinder", "radius": 7, "height": hip, "position": [0, hip / 2, 38], "color": color},
-                *([{"type": "box", "size": [38, hip - 7, 38], "position": [0, (hip - 7) / 2, 6], "color": "#8a7f72"}]
-                  if seat else [])]  # табурет, если сидит не на мебели
-        head_y = hip + 58 + 14
+        root = [0.0, 0.0, 0.0]
+        hip_h = 46 * s + 7 * s  # таз на сиденье, бедро — над ним
+        root[1] = hip_h - hip_y
+        root[2] = -12 * s  # таз сзади, колени вперёд — центр по стопам
+    elif pose == "crouching":
+        root = [0.0, 50 * s - hip_y, -8 * s]
     elif pose == "kneeling":
-        body = [{"type": "box", "size": [28, 12, 40], "position": [0, 6, -14], "color": color},
-                {"type": "cylinder", "radius": 13, "height": 40, "position": [0, 26, 0], "color": color},
-                {"type": "cylinder", "radiusTop": 17, "radiusBottom": 15, "height": 56, "position": [0, 74, 0],
-                 "color": color}]
-        head_y = 74 + 28 + 14
-    else:  # standing / walking
-        body = [{"type": "cylinder", "radiusTop": 18, "radiusBottom": 13, "height": 125, "position": [0, 62.5, 0],
-                 "color": color}]
-        if pose == "walking":
-            body.append({"type": "box", "size": [10, 50, 12], "position": [-8, 25, 14], "rotation": [-25, 0, 0],
-                         "color": color})
-        head_y = 125 + 14
-    body += [{"type": "sphere", "radius": 13, "position": [0, head_y, 0], "color": skin, "segments": 16},
-             {"type": "box", "size": [6, 6, 10], "position": [0, head_y, 13], "color": dark}]  # «нос» — куда смотрит
-    return body
+        root = [0.0, 45 * s - hip_y, 0.0]
+    elif pose == "lying":
+        root = [0.0, 14 * s, 82 * s]
+    else:
+        root = [0.0, 0.0, 0.0]
+    return {"s": s, "hip_y": hip_y, "shoulder_y": 136 * s, "shoulder_x": 19 * s, "hip_x": 9 * s,
+            "upper": 28 * s, "fore": 25 * s, "thigh": 39 * s, "shin": 36 * s, "root": root,
+            "body": [-90, 0, 0] if pose == "lying" else [0, 0, 0], "legs": legs, "arms": arm}
 
 
-def _actor_nodes(actor: dict, info: dict) -> dict:
+def _human_nodes(rig: dict, color: str) -> list[dict]:
+    s = rig["s"]
+    head = L._shade(color, 1.22)
+    dark = "#2b2b33"
+    hip_y, sh_y = rig["hip_y"], rig["shoulder_y"]
+    torso_lo, torso_hi = hip_y + 5 * s, sh_y + 4 * s
+    parts: list[dict] = [
+        {"type": "box", "size": [_r(30 * s), _r(16 * s), _r(18 * s)], "position": [0, _r(hip_y + 2 * s), 0],
+         "color": color},
+        {"type": "cylinder", "radiusTop": _r(17 * s), "radiusBottom": _r(14 * s), "height": _r(torso_hi - torso_lo),
+         "position": [0, _r((torso_lo + torso_hi) / 2), 0], "color": color, "segments": 16},
+        {"type": "cylinder", "radius": _r(5 * s), "height": _r(10 * s), "position": [0, _r(sh_y + 7 * s), 0],
+         "color": head, "segments": 10},
+        {"type": "group", "position": [0, _r(154 * s), 0], "children": [
+            {"type": "sphere", "radius": _r(11 * s), "position": [0, 0, 0], "color": head, "segments": 18},
+            {"type": "box", "size": [_r(3 * s), _r(3.5 * s), _r(5 * s)], "position": [0, _r(-1 * s), _r(11 * s)],
+             "color": dark},
+            {"type": "box", "size": [_r(8 * s), _r(1 * s), _r(1.2 * s)], "position": [0, _r(3 * s), _r(10.4 * s)],
+             "color": dark}]},  # линия глаз — видно, куда смотрит лицо
+    ]
+    (l_sh, l_el, r_sh, r_el) = rig["arms"]
+    for side, sh, el in ((-1, l_sh, l_el), (1, r_sh, r_el)):
+        parts.append({"type": "group", "position": [_r(side * rig["shoulder_x"]), _r(sh_y), 0], "rotation": list(sh),
+                      "children": [
+                          {"type": "sphere", "radius": _r(5 * s), "position": [0, 0, 0], "color": color,
+                           "segments": 10},
+                          {"type": "cylinder", "radius": _r(4.3 * s), "height": _r(rig["upper"]),
+                           "position": [0, _r(-rig["upper"] / 2), 0], "color": color, "segments": 10},
+                          {"type": "group", "position": [0, _r(-rig["upper"]), 0], "rotation": list(el), "children": [
+                              {"type": "cylinder", "radius": _r(3.8 * s), "height": _r(rig["fore"]),
+                               "position": [0, _r(-rig["fore"] / 2), 0], "color": color, "segments": 10},
+                              {"type": "sphere", "radius": _r(4.6 * s), "position": [0, _r(-rig["fore"] - 2 * s), 0],
+                               "color": head, "segments": 10}]}]})
+    (l_hip, l_knee, r_hip, r_knee) = rig["legs"]
+    for side, hp, kn in ((-1, l_hip, l_knee), (1, r_hip, r_knee)):
+        parts.append({"type": "group", "position": [_r(side * rig["hip_x"]), _r(hip_y), 0], "rotation": list(hp),
+                      "children": [
+                          {"type": "cylinder", "radiusTop": _r(7.5 * s), "radiusBottom": _r(6 * s),
+                           "height": _r(rig["thigh"]), "position": [0, _r(-rig["thigh"] / 2), 0], "color": color,
+                           "segments": 12},
+                          {"type": "group", "position": [0, _r(-rig["thigh"]), 0], "rotation": list(kn), "children": [
+                              {"type": "cylinder", "radiusTop": _r(5.8 * s), "radiusBottom": _r(4.5 * s),
+                               "height": _r(rig["shin"]), "position": [0, _r(-rig["shin"] / 2), 0], "color": color,
+                               "segments": 12},
+                              {"type": "box", "size": [_r(9 * s), _r(6 * s), _r(23 * s)],
+                               "position": [0, _r(-rig["shin"] - 3 * s), _r(6 * s)], "color": L._shade(color, 0.7)}]}]})
+    return [{"type": "group", "position": [_r(v) for v in rig["root"]], "rotation": list(rig["body"]),
+             "children": parts}]
+
+
+def _hand_local(rig: dict, side: int = 1) -> list[float]:
+    """Где рука (правая side=1) в осях манекена — туда ставится предмет в руке."""
+    sh, el = (rig["arms"][2], rig["arms"][3]) if side > 0 else (rig["arms"][0], rig["arms"][1])
+    body = _mat(*rig["body"])
+    m_sh = _mm(body, _mat(*sh))
+    m_el = _mm(m_sh, _mat(*el))
+    p = _mv(body, [side * rig["shoulder_x"], rig["shoulder_y"], 0.0])
+    p = [p[i] + v for i, v in enumerate(_mv(m_sh, [0.0, -rig["upper"], 0.0]))]
+    p = [p[i] + v for i, v in enumerate(_mv(m_el, [0.0, -rig["fore"] - 2 * rig["s"], 0.0]))]
+    return [p[i] + rig["root"][i] for i in range(3)]
+
+
+def _disc_nodes(d: float, color: str) -> tuple[list[dict], float]:
+    h = max(8.0, d * 0.27)
+    r = d / 2
+    return [
+        {"type": "cylinder", "radius": _r(r), "height": _r(h * 0.42), "position": [0, _r(h * 0.23), 0],
+         "color": L._shade(color, 0.62), "segments": 32},
+        {"type": "cylinder", "radius": _r(r - 0.6), "height": _r(h * 0.78), "position": [0, _r(h * 0.55), 0],
+         "color": color, "segments": 32},
+        {"type": "cylinder", "radius": _r(r * 0.8), "height": 0.8, "position": [0, _r(h * 0.95), 0],
+         "color": L._shade(color, 1.15), "segments": 32},
+        {"type": "box", "size": [_r(d * 0.48), _r(h * 0.46), 1.4], "position": [0, _r(h * 0.55), _r(r - 0.4)],
+         "color": "#1d2733"},
+        {"type": "sphere", "radius": _r(d * 0.05), "position": [_r(-d * 0.1), _r(h * 0.56), _r(r + 0.4)],
+         "color": "#38bdf8", "segments": 10},
+        {"type": "sphere", "radius": _r(d * 0.05), "position": [_r(d * 0.1), _r(h * 0.56), _r(r + 0.4)],
+         "color": "#38bdf8", "segments": 10},
+        {"type": "cylinder", "radius": 0.5, "height": 7, "position": [0, _r(h + 3.5), _r(-r * 0.35)],
+         "color": "#55585e", "segments": 6},
+        {"type": "sphere", "radius": 1.2, "position": [0, _r(h + 7.5), _r(-r * 0.35)], "color": "#e5484d",
+         "segments": 8},
+    ], h
+
+
+def _quad_nodes(length: float, color: str, pose: str) -> tuple[list[dict], float]:
+    s = length / 46.0
+    leg = 14 * s
+    body_y = leg + 8 * s
+    dark = L._shade(color, 0.75)
+    if pose == "lying":
+        leg, body_y = 0.0, 8 * s
+    parts = [
+        {"type": "box", "size": [_r(18 * s), _r(16 * s), _r(36 * s)], "position": [0, _r(body_y), 0], "color": color},
+        {"type": "sphere", "radius": _r(8.5 * s), "position": [0, _r(body_y + 10 * s), _r(20 * s)], "color": color,
+         "segments": 14},
+        {"type": "cone", "radius": _r(2.8 * s), "height": _r(6 * s), "position": [_r(-4.5 * s), _r(body_y + 19 * s),
+                                                                                  _r(20 * s)], "color": dark,
+         "segments": 4},
+        {"type": "cone", "radius": _r(2.8 * s), "height": _r(6 * s), "position": [_r(4.5 * s), _r(body_y + 19 * s),
+                                                                                 _r(20 * s)], "color": dark,
+         "segments": 4},
+        {"type": "box", "size": [_r(3 * s), _r(3 * s), _r(4 * s)], "position": [0, _r(body_y + 9 * s), _r(28.5 * s)],
+         "color": "#2b2b33"},
+        {"type": "cylinder", "radius": _r(1.8 * s), "height": _r(22 * s), "position": [0, _r(body_y + 8 * s),
+                                                                                        _r(-24 * s)],
+         "rotation": [-50, 0, 0], "color": dark, "segments": 8},
+    ]
+    if leg:
+        parts += [{"type": "cylinder", "radius": _r(2.6 * s), "height": _r(leg + 2 * s),
+                   "position": [_r(sx * 6 * s), _r((leg + 2 * s) / 2), _r(sz * 13 * s)], "color": dark, "segments": 8}
+                  for sx in (-1, 1) for sz in (-1, 1)]
+    return parts, body_y + 19 * s
+
+
+def _support_top(objects: dict[str, dict], oid: str) -> float:
+    o = objects.get(oid)
+    return L.top_of(o) if o else 0.0
+
+
+def _actor_parts(actor: dict, info: dict) -> tuple[list[dict], dict]:
+    """Узлы манекена (в его осях) и его коробка для самоконтроля (в осях манекена)."""
     kind, color = info.get("stand_in", "human"), info.get("color", ACTOR_COLORS[0])
+    size = float(info.get("size") or 165.0)
+    pose = actor.get("pose") or "standing"
     if kind == "disc":
-        children = [{"type": "cylinder", "radius": 17, "height": 8, "position": [0, 4, 0], "color": "#9aa6b2",
-                     "segments": 32},
-                    {"type": "cylinder", "radius": 15, "height": 1, "position": [0, 8.5, 0], "color": color,
-                     "segments": 32},
-                    {"type": "box", "size": [12, 3, 2], "position": [0, 6, 16.5], "color": "#22d3ee"}]
-    elif kind == "quadruped":
-        children = [{"type": "box", "size": [22, 18, 46], "position": [0, 24, 0], "color": color},
-                    {"type": "sphere", "radius": 11, "position": [0, 36, 28], "color": color, "segments": 16},
-                    {"type": "box", "size": [4, 4, 6], "position": [0, 36, 39], "color": "#2b2b33"}]
-        children += [{"type": "cylinder", "radius": 3.5, "height": 16, "position": [sx * 8, 8, sz * 17],
-                      "color": color, "segments": 8} for sx in (-1, 1) for sz in (-1, 1)]
-    elif kind == "small":
-        children = [{"type": "sphere", "radius": 14, "position": [0, 14, 0], "color": color, "segments": 16},
-                    {"type": "box", "size": [4, 4, 6], "position": [0, 16, 14], "color": "#2b2b33"}]
+        nodes, h = _disc_nodes(size, color)
+        return nodes, {"half": [size / 2, h / 2 + 2, size / 2], "cy": h / 2 + 2, "height": h + 8}
+    if kind == "quadruped":
+        nodes, h = _quad_nodes(size, color, pose)
+        return nodes, {"half": [10.0 * size / 46, h / 2, size / 2 + 4], "cy": h / 2, "height": h}
+    if kind == "small":
+        r = size / 2
+        return [{"type": "sphere", "radius": _r(r), "position": [0, _r(r), 0], "color": color, "segments": 16},
+                {"type": "box", "size": [3, 3, 4], "position": [0, _r(r * 1.15), _r(r * 0.95)], "color": "#2b2b33"}], \
+            {"half": [r, r, r], "cy": r, "height": 2 * r}
+    rig = _human_rig(size, pose, actor.get("arms") or "down")
+    nodes = _human_nodes(rig, color)
+    if pose == "lying":
+        box = {"half": [24 * rig["s"], 14 * rig["s"], size / 2], "cy": 14 * rig["s"], "height": 28 * rig["s"]}
+    elif pose in ("sitting", "crouching", "kneeling"):
+        top = rig["root"][1] + 165 * rig["s"]
+        box = {"half": [22 * rig["s"], top / 2, 26 * rig["s"]], "cy": top / 2, "height": top}
     else:
-        children = _human(actor.get("pose") or "standing", color, seat=not actor.get("y"))
-    x, z = actor["pos"]
-    y = float(actor.get("y") or 0.0)
-    if y and kind == "human" and actor.get("pose") == "sitting":
-        y = max(0.0, y - 45.0)  # y — высота сиденья: таз манекена на ней
-    return {"type": "group", "position": [x, y, z],
-            "rotation": [0, float(actor.get("facing") or 0.0), 0], "children": children}
+        reach = 30 * rig["s"] if actor.get("arms") in ("up", "wave") else 0.0
+        front = 45 * rig["s"] if actor.get("arms") in ("forward", "holding") else 15 * rig["s"]  # рука с предметом
+        box = {"half": [22 * rig["s"], (size + reach) / 2, front], "cy": (size + reach) / 2,
+               "height": size}
+    box["rig"] = rig
+    return nodes, box
 
 
-def _prop_nodes(prop: dict, actors: dict[str, dict]) -> list[dict]:
-    size = float(prop.get("size") or 10)
-    if prop.get("holder") and prop["holder"] in actors:
-        a = actors[prop["holder"]]
-        dx, dz = _rot_y(0.0, 26.0, float(a.get("facing") or 0.0))
-        base = [a["pos"][0] + dx, float(a.get("y") or 0.0) + (60.0 if a.get("pose") == "sitting" else 95.0),
-                a["pos"][1] + dz]
-    else:
-        base = list(prop.get("pos") or [0, 0, 40])
+def _prop_parts(kind: str, size: list[float], color: str) -> list[dict]:
+    """Предмет реквизита в его осях: низ на y=0, по центру."""
+    w, h, d = size
+    if kind == "mug":
+        r = w / 2
+        return [{"type": "cylinder", "radius": _r(r), "height": _r(h), "position": [0, _r(h / 2), 0], "color": color,
+                 "segments": 18},
+                {"type": "cylinder", "radius": _r(r * 0.85), "height": 0.4, "position": [0, _r(h - 0.6), 0],
+                 "color": "#5a3a24", "segments": 18},
+                {"type": "torus", "radius": _r(h * 0.28), "tube": 0.7, "position": [_r(r + 1.2), _r(h * 0.55), 0],
+                 "color": color, "segments": 16, "tubeSegments": 8}]
+    if kind in ("plate", "cookie"):
+        return [{"type": "cylinder", "radius": _r(w / 2), "height": _r(h), "position": [0, _r(h / 2), 0],
+                 "color": color, "segments": 20}]
+    if kind in ("bottle", "glass"):
+        parts = [{"type": "cylinder", "radius": _r(w / 2), "height": _r(h * 0.75 if kind == "bottle" else h),
+                  "position": [0, _r((h * 0.75 if kind == "bottle" else h) / 2), 0], "color": color, "segments": 14}]
+        if kind == "bottle":
+            parts.append({"type": "cylinder", "radius": _r(w / 5), "height": _r(h * 0.25),
+                          "position": [0, _r(h * 0.875), 0], "color": color, "segments": 10})
+        return parts
+    if kind in ("ball", "toy"):
+        return [{"type": "sphere", "radius": _r(w / 2), "position": [0, _r(w / 2), 0], "color": color, "segments": 14}]
+    if kind == "flower":
+        return [{"type": "cylinder", "radius": 0.6, "height": _r(h), "position": [0, _r(h / 2), 0], "color": "#4f8a4a",
+                 "segments": 6},
+                {"type": "sphere", "radius": _r(w / 2), "position": [0, _r(h), 0], "color": color, "segments": 10}]
+    return [{"type": "box", "size": [_r(w), _r(h), _r(d)], "position": [0, _r(h / 2), 0], "color": color}]
+
+
+# --------------------------------------------------------------------------- #
+# Камера по плану и самоконтроль кадра
+# --------------------------------------------------------------------------- #
+
+
+def lens_fov(lens: Any) -> float:
+    """Вертикальное поле кадра 9:16 по объективу (длинная сторона кадра 36 мм — вертикаль)."""
+    try:
+        mm = float(lens)
+    except (TypeError, ValueError):
+        mm = 35.0
+    mm = max(14.0, min(135.0, mm or 35.0))
+    return round(math.degrees(2 * math.atan(18.0 / mm)), 2)
+
+
+def _basis(pos: list[float], target: list[float]) -> tuple[list[float], list[float], list[float]]:
+    f = [target[i] - pos[i] for i in range(3)]
+    n = math.sqrt(sum(v * v for v in f)) or 1.0
+    f = [v / n for v in f]
+    up = [0.0, 1.0, 0.0]
+    r = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]]
+    rn = math.sqrt(sum(v * v for v in r)) or 1.0
+    r = [v / rn for v in r]
+    u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]]
+    return f, r, u
+
+
+def _box_corners(box: dict) -> list[list[float]]:
+    cx, cy, cz = box["center"]
+    hx, hy, hz = box["half"]
     out = []
-    for i in range(int(prop.get("count") or 1)):
-        pos = [base[0] + i * (size * 1.4), base[1], base[2]]
-        kind = prop.get("kind") or "disc"
-        if kind == "sphere":
-            out.append({"type": "sphere", "radius": size / 2, "position": [pos[0], pos[1] + size / 2, pos[2]],
-                        "color": prop.get("color"), "segments": 12})
-        elif kind == "box":
-            out.append({"type": "box", "size": size, "position": [pos[0], pos[1] + size / 2, pos[2]],
-                        "color": prop.get("color")})
-        elif kind == "cylinder":
-            out.append({"type": "cylinder", "radius": size / 3, "height": size, "position":
-                        [pos[0], pos[1] + size / 2, pos[2]], "color": prop.get("color"), "segments": 12})
-        else:
-            out.append({"type": "cylinder", "radius": size / 2, "height": max(1.0, size / 6), "position":
-                        [pos[0], pos[1] + max(1.0, size / 6) / 2, pos[2]], "color": prop.get("color"),
-                        "segments": 16})
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                dx, dz = _rot_y(sx * hx, sz * hz, box.get("rot") or 0.0)
+                out.append([cx + dx, cy + sy * hy, cz + dz])
     return out
 
 
-def auto_camera(shot: dict, actors: list[dict], infos: dict[str, dict]) -> dict:
-    """Камера плана из крупности и ракурса: смотрит на центр персонажей, стоит перед ними."""
-    cam = shot.get("camera") or {}
-    size = str(cam.get("shot") or "medium")
-    humans = [a for a in actors if infos.get(a["id"], {}).get("stand_in", "human") == "human"]
-    dist = SHOT_DISTANCE.get(size, SHOT_DISTANCE["medium"]) * (1.0 if humans or not actors else 0.45)
-    if actors:
-        tx = sum(a["pos"][0] for a in actors) / len(actors)
-        tz = sum(a["pos"][1] for a in actors) / len(actors)
-    else:
-        tx, tz = 0.0, 0.0
-    # Кадр 9:16 узкий (по горизонтали ≈ 23° при вертикальных 40°): отъезжаем, пока все влезают по ширине.
-    half_w = math.tan(math.radians(20.0)) * 9 / 16
-    for a in actors:
-        dx = abs(a["pos"][0] - tx) + (35.0 if infos.get(a["id"], {}).get("stand_in", "human") == "human" else 25.0)
-        dist = max(dist, dx / half_w + max(0.0, a["pos"][1] - tz))
-    ty = 95.0 if humans else 20.0
-    if size in ("close", "extreme_close", "medium_close") and humans:
-        ty = 125.0
-    angle = str(cam.get("angle") or "eye").casefold()
-    if "high" in angle or "top" in angle or "сверху" in angle or "bird" in angle:
-        cy = ty + dist * 0.65
-    elif "low" in angle or "снизу" in angle:
-        cy = max(15.0, ty * 0.35)
-    else:
-        cy = ty + (20.0 if humans else 25.0)
-    return {"pos": [tx, round(cy, 1), round(tz + dist, 1)], "target": [tx, ty, tz], "fov": 40.0}
+def _must_see(box: dict, size: str) -> dict:
+    """Что от персонажа обязано влезть в кадр при этой крупности (у человека — верх тела/лицо)."""
+    if box.get("kind") != "human" or box.get("pose") == "lying":
+        return box
+    share = MUST_SEE.get(size)
+    if not share:
+        return box
+    top = box["center"][1] + box["half"][1]
+    h = box["height"] * share
+    return {**box, "center": [box["center"][0], top - h / 2, box["center"][2]],
+            "half": [box["half"][0], h / 2, box["half"][2]]}
 
 
-def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict]) -> dict:
-    """spec плана → JSON-сцена движка (кадр start или end), 9:16, toon-заливка, без текста."""
-    room = spec.get("room") or ROOM_DEFAULT
+def _place_camera(actors: list[dict], size: str, shot_cam: dict, room: dict, yaw: float = 0.0,
+                  lift: float = 0.0) -> dict:
+    """Камера по крупности/ракурсу/объективу: смотрит на центр масс персонажей, все влезают."""
+    fov = lens_fov(shot_cam.get("lens"))
+    humans = [a for a in actors if a.get("kind") == "human"]
+    subj_h = max([a["height"] for a in humans], default=0.0) or max([max(45.0, a["height"] * 1.8) for a in actors],
+                                                                     default=150.0)
+    frame_h = FRAME_HEIGHT.get(size, FRAME_HEIGHT["medium"]) * subj_h
+    seen = [_must_see(a, size) for a in actors]
+    if seen:
+        tx = sum(a["center"][0] for a in seen) / len(seen)
+        tz = sum(a["center"][2] for a in seen) / len(seen)
+        lo = min(a["center"][1] - a["half"][1] for a in seen)
+        hi = max(a["center"][1] + a["half"][1] for a in seen)
+        ty = (lo + hi) / 2
+    else:
+        tx, ty, tz = 0.0, 110.0, 0.0
+    angle = _norm(shot_cam.get("angle") or "eye")
+    if re.search(r"overhead|top|bird|сверху|над", angle):
+        pitch = 60.0
+    elif re.search(r"high|высок", angle):
+        pitch = 28.0
+    elif re.search(r"low|низк|снизу", angle):
+        pitch = -18.0
+    else:
+        pitch = None  # на уровне глаз — камера на высоте глаз героя
+    eye = (0.93 * max(a["height"] for a in humans)) if humans else (max([a["height"] for a in actors], default=30)
+                                                                       + 12.0)
+    target = [tx, ty, tz]
+    w, d, rh = float(room["width"]), float(room["depth"]), float(room["height"])
+    def fit(fov_: float, back_: list[float]) -> float:
+        """Минимальная дистанция: кадр нужной крупности и всё обязательное от персонажей влезает."""
+        tv_ = math.tan(math.radians(fov_ / 2))
+        th_ = tv_ * 9 / 16
+        f = [-v for v in back_]
+        _f, r, u = _basis([target[i] + back_[i] for i in range(3)], target)
+        need = (frame_h / 2) / tv_
+        for a in seen:
+            for c in _box_corners(a):
+                q = [c[i] - target[i] for i in range(3)]
+                qa = sum(q[i] * r[i] for i in range(3))
+                qb = sum(q[i] * u[i] for i in range(3))
+                qf = sum(q[i] * f[i] for i in range(3))
+                need = max(need, abs(qa) / (th_ * 0.9) - qf, abs(qb) / (tv_ * 0.9) - qf)
+        return max(25.0, need)
+
+    pos = [tx, ty, tz + 300.0]
+    dist = 300.0
+    back = [0.0, 0.0, 1.0]
+    for _ in range(3):
+        p = pitch if pitch is not None else math.degrees(math.atan2(eye + lift - ty, max(30.0, dist)))
+        if pitch is not None and lift:
+            p += math.degrees(math.atan2(lift, max(30.0, dist)))
+        cp, sp = math.cos(math.radians(p)), math.sin(math.radians(p))
+        bx, bz = _rot_y(0.0, 1.0, yaw)
+        back = [bx * cp, sp, bz * cp]  # от цели к камере
+        dist = fit(fov, back)
+        pos = [target[i] + back[i] * dist for i in range(3)]
+    # В комнате: не за боковыми стенами и не выше потолка; спереди стены нет (открытая сторона
+    # декорации) — сначала пробуем поместиться внутрь чуть шире объективом, как в настоящей комнате;
+    # не выходит — камера за открытой стороной (там ничего нет, кадр не режет персонажей).
+    front = d / 2 - 15.0
+    if pos[2] > front and back[2] > 0.2:
+        for wider in range(int(fov) + 4, int(min(66.0, fov + 14.0)) + 1, 4):
+            d2 = fit(float(wider), back)
+            if target[2] + back[2] * d2 <= front:
+                fov, dist = float(wider), d2
+                pos = [target[i] + back[i] * dist for i in range(3)]
+                break
+    pos[0] = max(-w / 2 + 15.0, min(w / 2 - 15.0, pos[0]))
+    pos[1] = max(12.0, min(rh - 10.0, pos[1]))
+    pos[2] = max(-d / 2 + 15.0, pos[2])
+    return {"pos": [_r(v) for v in pos], "target": [_r(v) for v in target], "fov": _r(fov)}
+
+
+def _inside(box: dict, p: list[float], pad: float = 6.0) -> bool:
+    q = [p[i] - box["center"][i] for i in range(3)]
+    lx, lz = _rot_y(q[0], q[2], -(box.get("rot") or 0.0))
+    hx, hy, hz = box["half"]
+    return abs(lx) < hx + pad and abs(q[1]) < hy + pad and abs(lz) < hz + pad
+
+
+def frame_rays(camera: dict, grid: tuple[int, int] = GRID) -> tuple[list[float], Any]:
+    import numpy as np
+
+    pos, target, fov = camera["pos"], camera["target"], float(camera.get("fov") or 40)
+    f, r, u = _basis(pos, target)
+    tv = math.tan(math.radians(fov / 2))
+    th = tv * 9 / 16
+    gx, gy = grid
+    xs = (2 * (np.arange(gx) + 0.5) / gx - 1) * th
+    ys = (1 - 2 * (np.arange(gy) + 0.5) / gy) * tv
+    X, Y = np.meshgrid(xs, ys)
+    dirs = np.stack([f[i] + X * r[i] + Y * u[i] for i in range(3)], axis=-1).reshape(-1, 3)
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    return list(pos), dirs
+
+
+def _hit_box(origin: Any, dirs: Any, box: dict) -> Any:
+    import numpy as np
+
+    ang = -math.radians(box.get("rot") or 0.0)
+    c, s = math.cos(ang), math.sin(ang)
+
+    def local(v: Any) -> Any:
+        x, y, z = v[..., 0], v[..., 1], v[..., 2]
+        return np.stack([x * c + z * s, y, -x * s + z * c], axis=-1)
+
+    o = local(np.asarray([origin[i] - box["center"][i] for i in range(3)], dtype=float))
+    d = local(dirs)
+    half = np.asarray(box["half"], dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t1 = (-half - o) / d
+        t2 = (half - o) / d
+    t1 = np.nan_to_num(t1, nan=-np.inf)
+    t2 = np.nan_to_num(t2, nan=np.inf)
+    tmin = np.max(np.minimum(t1, t2), axis=1)
+    tmax = np.min(np.maximum(t1, t2), axis=1)
+    hit = (tmax >= np.maximum(tmin, 0.0))
+    t = np.where(tmin > 0, tmin, 0.0)
+    return np.where(hit, t, np.inf)
+
+
+def _hit_walls(origin: list[float], dirs: Any, room: dict) -> Any:
+    import numpy as np
+
+    w, d, h = float(room["width"]), float(room["depth"]), float(room["height"])
+    best = np.full(dirs.shape[0], np.inf)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for axis, value, lo, hi in ((2, -d / 2, (0, 1), None), (0, -w / 2, (2, 1), None), (0, w / 2, (2, 1), None),
+                                    (1, 0.0, (0, 2), None)):
+            t = (value - origin[axis]) / dirs[:, axis]
+            p = origin + dirs * t[:, None]
+            ok = t > 0
+            if axis == 2:
+                ok &= (np.abs(p[:, 0]) <= w / 2) & (p[:, 1] >= 0) & (p[:, 1] <= h)
+            elif axis == 0:
+                ok &= (np.abs(p[:, 2]) <= d / 2) & (p[:, 1] >= 0) & (p[:, 1] <= h)
+            best = np.where(ok & (t < best), t, best)
+    return best
+
+
+def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium",
+                grid: tuple[int, int] = GRID) -> dict:
+    """Самоконтроль кадра блокинга лучами по сетке кадра: камера не внутри вещи/стены; каждый
+    персонаж в кадре и не закрыт; персонажи занимают разумную долю; ничто перед ними не закрывает
+    больше ``OCCLUDE_MAX`` кадра."""
+    import numpy as np
+
+    problems: list[str] = []
+    pos = list(camera["pos"])
+    w, d = float(room["width"]), float(room["depth"])
+    if abs(pos[0]) > w / 2 - 2 or pos[2] < -d / 2 + 2 or pos[1] < 2:
+        problems.append("камера в стене или за ней")
+    for b in boxes:
+        if _inside(b, pos):
+            problems.append(f"камера внутри «{b['label']}»")
+    origin, dirs = frame_rays(camera, grid)
+    origin = np.asarray(origin, dtype=float)
+    n = dirs.shape[0]
+    hits = np.stack([_hit_box(origin, dirs, b) for b in boxes] + [_hit_walls(origin, dirs, room)], axis=1) \
+        if boxes else _hit_walls(origin, dirs, room)[:, None]
+    first = np.argmin(hits, axis=1)
+    first_t = hits[np.arange(n), first]
+    actor_idx = [i for i, b in enumerate(boxes) if b["role"] == "actor"]
+    tgt = camera["target"]
+    target_dist = math.sqrt(sum((tgt[i] - pos[i]) ** 2 for i in range(3)))
+    if actor_idx:
+        near_actor = min(math.sqrt(sum((boxes[i]["center"][k] - pos[k]) ** 2 for k in range(3))) -
+                         max(boxes[i]["half"]) for i in actor_idx)
+        near_actor = max(10.0, min(target_dist, near_actor))
+    else:
+        near_actor = target_dist
+    shares: dict[str, float] = {}
+    total = 0.0
+    for i in actor_idx:
+        b = boxes[i]
+        any_hit = int(np.isfinite(hits[:, i]).sum())
+        own = int(((first == i) & np.isfinite(first_t)).sum())
+        shares[b["id"]] = round(own / n, 4)
+        total += own / n
+        if any_hit == 0:
+            problems.append(f"«{b['label']}» не в кадре")
+        elif own / any_hit < 1 - HIDDEN_MAX:
+            problems.append(f"«{b['label']}» закрыт(а) — видно {round(100 * own / any_hit)}%")
+    # Обязательное от персонажа (у человека при этой крупности — верх тела/лицо) влезает в кадр целиком.
+    f, r, u = _basis(pos, list(camera["target"]))
+    tv = math.tan(math.radians(float(camera.get("fov") or 40) / 2))
+    th = tv * 9 / 16
+    for i in actor_idx:
+        cut = False
+        for c in _box_corners(_must_see(boxes[i], size)):
+            q = [c[k] - pos[k] for k in range(3)]
+            z = sum(q[k] * f[k] for k in range(3))
+            if z <= 1.0 or abs(sum(q[k] * r[k] for k in range(3)) / z) > th * 1.06 or \
+                    abs(sum(q[k] * u[k] for k in range(3)) / z) > tv * 1.06:
+                cut = True
+                break
+        if cut and not any(boxes[i]["label"] in p for p in problems):
+            problems.append(f"«{boxes[i]['label']}» не влезает в кадр")
+    if actor_idx and total < MIN_SHARE.get(size, 0.02):
+        problems.append(f"персонажи слишком мелкие — {round(100 * total, 1)}% кадра")
+    occluders: dict[str, float] = {}
+    for i, b in enumerate(boxes):
+        if b["role"] == "actor":
+            continue
+        front = int(((first == i) & (first_t < near_actor)).sum()) / n
+        if front > 0.02:
+            occluders[b["label"]] = round(front, 3)
+        if front > OCCLUDE_MAX:
+            problems.append(f"«{b['label']}» перекрывает {round(100 * front)}% кадра")
+    for i in actor_idx:  # персонаж почти в камере тоже загораживает остальных
+        b = boxes[i]
+        front = int(((first == i) & (first_t < 25.0)).sum()) / n
+        if front > OCCLUDE_MAX:
+            problems.append(f"«{b['label']}» вплотную к камере — {round(100 * front)}% кадра")
+    return {"ok": not problems, "problems": problems, "shares": shares, "occluders": occluders,
+            "characters_share": round(total, 4)}
+
+
+def _wider(size: str, steps: int) -> str:
+    k = SIZES.index(size) if size in SIZES else SIZES.index("medium")
+    return SIZES[min(len(SIZES) - 1, k + steps)]
+
+
+def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], room: dict) -> tuple[dict, dict]:
+    """Камера плана + самоконтроль. Не прошёл кадр по плану — пробуем чуть сместить/поднять камеру и
+    взять шире; ничего не прошло — кадр по плану с ``ok: False`` (такой блокинг в кадр не идёт)."""
+    cam_cfg = shot.get("camera") or {}
+    size = str(cam_cfg.get("shot") or "medium")
+    if size not in SIZES:
+        size = "medium"
+    first: tuple[dict, dict] | None = None
+    tries = 0
+    for steps in (0, 1, 2):
+        sz = _wider(size, steps)
+        for yaw in (0.0, 18.0, -18.0, 35.0, -35.0):
+            for lift in (0.0, 45.0):
+                cam = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift)
+                # Камера внутри вещи — отодвигаем вдоль луча к цели, пока не выйдет.
+                for _ in range(30):
+                    hit = next((b for b in all_boxes if _inside(b, cam["pos"])), None)
+                    if hit is None:
+                        break
+                    t = cam["target"]
+                    vec = [t[i] - cam["pos"][i] for i in range(3)]
+                    n = math.sqrt(sum(v * v for v in vec)) or 1.0
+                    if n < 40:
+                        break
+                    cam["pos"] = [_r(cam["pos"][i] + vec[i] / n * 10.0) for i in range(3)]
+                tries += 1
+                check = check_frame(cam, all_boxes, room, sz, grid=(14, 24) if tries > 1 else GRID)
+                if tries > 1 and check["ok"]:
+                    check = check_frame(cam, all_boxes, room, sz)
+                if first is None:
+                    first = (cam, check)
+                if check["ok"]:
+                    notes = []
+                    if steps:
+                        notes.append(f"крупность шире плана ({sz} вместо {size}) — иначе персонажи не влезали")
+                    if yaw or lift:
+                        notes.append("камера сдвинута/поднята — иначе кадр закрывала мебель")
+                    return cam, {**check, "size": sz, "notes": notes}
+    cam, check = first  # type: ignore[misc]
+    return cam, {**check, "size": size, "notes": ["ни один вариант камеры не прошёл самоконтроль"]}
+
+
+# --------------------------------------------------------------------------- #
+# spec → JSON-сцена движка
+# --------------------------------------------------------------------------- #
+
+
+def _settle_actor(actor: dict, radius: float, objects: list[dict], room: dict) -> None:
+    """Персонаж не стоит внутри мебели: выталкиваем к камере (или вбок), в пределах комнаты."""
+    if actor.get("on"):
+        return
+    w, d = float(room["width"]), float(room["depth"])
+    solid = [o for o in objects if L._on_floor(o) or o.get("type") == "door"]
+    x, z = actor["pos"]
+    x = max(-w / 2 + radius, min(w / 2 - radius, x))
+    z = max(-d / 2 + radius, min(d / 2 - radius, z))
+    for k in range(60):
+        fp = (x - radius, z - radius, x + radius, z + radius)
+        if not any(L._overlap(fp, L._footprint(o), pad=2.0) for o in solid):
+            break
+        step = 10.0 * (k // 4 + 1)
+        dx, dz = ((0, step), (step, 0), (-step, 0), (0, step))[k % 4]
+        x = max(-w / 2 + radius, min(w / 2 - radius, actor["pos"][0] + dx))
+        z = max(-d / 2 + radius, min(d / 2 - radius, actor["pos"][1] + dz))
+    actor["pos"] = [_r(x), _r(z)]
+
+
+def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | None = None) -> dict:
+    """spec плана → {scene — JSON-сцена движка (9:16, toon, без текста), check — самоконтроль кадра,
+    camera}. Комната — своя мебель spec, иначе раскладка локации (одна на все планы)."""
+    layout = layout or {"room": dict(ROOM_DEFAULT), "objects": []}
+    own = bool(spec.get("objects"))
+    room = {**ROOM_DEFAULT, **(layout.get("room") or {}), **((spec.get("room") or {}) if own else {})}
+    objects = [dict(o) for o in (spec["objects"] if own else layout.get("objects") or [])]
+    obj_by = {o["id"]: o for o in objects}
     by_id = {i["id"]: i for i in infos}
     moment = spec.get(which) or spec.get("start") or {"actors": [], "props": []}
-    actors = [a for a in moment.get("actors") or [] if a["id"] in by_id]
-    cam = spec.get("camera") or auto_camera(shot, actors, by_id)
+    actors = [dict(a) for a in moment.get("actors") or [] if a["id"] in by_id]
     w, d, h = float(room["width"]), float(room["depth"]), float(room["height"])
     nodes: list[dict] = [
         # Пол — от задней стены до камеры (иначе виден его передний край).
         {"type": "plane", "size": [w, d * 4], "rotation": [-90, 0, 0], "position": [0, 0, d * 1.5],
-         "color": room["floor"],
-         "order": -2, "material": {"shading": "lambert"}},
+         "color": room["floor"], "order": -2, "material": {"shading": "lambert"}},
         {"type": "plane", "size": [w, h], "position": [0, h / 2, -d / 2], "color": room["wall"], "order": -3,
          "material": {"shading": "lambert"}},
         {"type": "plane", "size": [d, h], "position": [-w / 2, h / 2, 0], "rotation": [0, 90, 0],
-         "color": room["wall"], "order": -3, "material": {"shading": "lambert", "doubleSided": True}},
+         "color": L._shade(room["wall"], 0.94), "order": -3, "material": {"shading": "lambert", "doubleSided": True}},
         {"type": "plane", "size": [d, h], "position": [w / 2, h / 2, 0], "rotation": [0, -90, 0],
-         "color": room["wall"], "order": -3, "material": {"shading": "lambert", "doubleSided": True}},
+         "color": L._shade(room["wall"], 0.94), "order": -3, "material": {"shading": "lambert", "doubleSided": True}},
+        {"type": "box", "size": [w, 8, 2], "position": [0, 4, -d / 2 + 1], "color": L._shade(room["wall"], 0.8)},
     ]
-    for o in spec.get("objects") or []:
-        sx, sy, sz = o["size"]
-        y0 = float(o.get("y") or 0.0)
-        if o["kind"] in ("cylinder", "disc"):
-            node = {"type": "cylinder", "radius": sx / 2, "height": sy, "segments": 24}
-        elif o["kind"] == "sphere":
-            node = {"type": "sphere", "radius": sx / 2, "segments": 16}
-        else:
-            node = {"type": "box", "size": [sx, sy, sz]}
-        node.update({"position": [o["pos"][0], y0 + sy / 2, o["pos"][1]], "rotation": [0, o.get("rot") or 0, 0],
-                     "color": o.get("color") or "#8a7f72", "sort": "object"})
-        nodes.append(node)
+    boxes: list[dict] = []
+    for o in objects:
+        if o.get("type"):
+            nodes.append(L.furniture_node(o))
+        else:  # простая фигура агента (box/cylinder/disc/sphere)
+            nodes.append(L.furniture_node({**o, "type": ""}))
+        b = L.object_box(o)
+        if b is not None:
+            boxes.append(b)
+    actor_boxes = []
+    placed: dict[str, dict] = {}
     for a in actors:
-        nodes.append({**_actor_nodes(a, by_id[a["id"]]), "sort": "object"})
-    placed = {a["id"]: a for a in actors}
-    for p in moment.get("props") or []:
-        nodes += _prop_nodes(p, placed)
-    return {
+        info = by_id[a["id"]]
+        kind = info.get("stand_in", "human")
+        support = obj_by.get(str(a.get("on") or ""))
+        if support is not None:
+            base = L.top_of(support)
+            if kind == "human" and a.get("pose") == "sitting":
+                base -= 46 * float(info.get("size") or 165) / 165  # таз на поверхности, а не стопы
+                sx, sz = support["pos"]
+                if support["type"] in ("bed", "sofa"):  # сидит на краю, ноги на полу
+                    dx, dz = _rot_y(0.0, support["size"][2] / 2 - 18, float(support.get("rot") or 0))
+                    if support["type"] == "bed":
+                        dx, dz = _rot_y(0.0, support["size"][2] * 0.15, float(support.get("rot") or 0))
+                        sx += support["size"][0] / 2 - 12
+                    a["pos"] = [sx + dx, sz + dz]
+                    base = max(0.0, base)
+            a["y"] = max(0.0, base)
+        elif a.get("y") and kind == "human" and a.get("pose") == "sitting":
+            a["y"] = max(0.0, float(a["y"]) - 46.0)  # y — высота сиденья: таз манекена на ней
+        if support is None:
+            radius = {"human": 22.0, "disc": float(info.get("size") or 33) / 2 + 3,
+                      "quadruped": float(info.get("size") or 46) / 2, "small": 14.0}.get(kind, 22.0)
+            _settle_actor(a, radius, objects, room)
+            # Двое в одной точке (оба «center foreground») — рядом, а не друг в друге.
+            for k in range(8):
+                other = next((p for p in placed.values() if not p.get("on") and
+                              math.dist(p["pos"], a["pos"]) < p["radius"] + radius + 6), None)
+                if other is None:
+                    break
+                gap = other["radius"] + radius + 10
+                side = -1 if (k % 2 == 0) == (a["pos"][0] <= other["pos"][0]) else 1
+                a["pos"] = [other["pos"][0] + side * gap, other["pos"][1]]
+                _settle_actor(a, radius, objects, room)
+        else:
+            radius = 0.0
+        parts, box = _actor_parts(a, info)
+        if kind == "human" and a.get("pose") == "sitting" and support is None and not a.get("y"):
+            parts.append({"type": "box", "size": [40, 44, 40], "position": [0, 22, -6], "color": "#8a7f72"})  # табурет
+        x, z = a["pos"]
+        y = float(a.get("y") or 0.0)
+        facing = float(a.get("facing") or 0.0)
+        nodes.append({"type": "group", "position": [_r(x), _r(y), _r(z)], "rotation": [0, facing, 0],
+                      "children": parts, "sort": "object"})
+        ab = {"id": a["id"], "role": "actor", "label": info.get("name") or a["id"], "kind": kind,
+              "pose": a.get("pose"), "center": [x, y + box["cy"], z], "half": box["half"], "rot": facing,
+              "height": box["height"]}
+        if kind == "human" and a.get("pose") == "lying":  # лёжа — длинная сторона вдоль взгляда
+            ab["half"] = [box["half"][0], box["half"][1], box["half"][2]]
+        boxes.append(ab)
+        actor_boxes.append(ab)
+        placed[a["id"]] = {**a, "rig": box.get("rig"), "kind": kind, "size": float(info.get("size") or 0), "y": y,
+                           "box": box, "radius": radius}
+    for k, p in enumerate(moment.get("props") or []):
+        nodes += _prop_nodes(p, placed, obj_by, k)
+    if spec.get("camera"):
+        cam = spec["camera"]
+        check = check_frame(cam, boxes, room, str((shot.get("camera") or {}).get("shot") or "medium"))
+        check = {**check, "size": (shot.get("camera") or {}).get("shot") or "medium", "notes": ["своя камера spec"]}
+    else:
+        cam, check = choose_camera(shot, actor_boxes, boxes, room)
+    scene = {
         "camera": {"type": "perspective", "position": list(cam["pos"]), "target": list(cam["target"]),
-                   "fov": float(cam.get("fov") or 40), "near": 5, "far": 6000},
-        "lights": [{"type": "hemisphere", "sky": "#ffffff", "ground": "#8a7f72", "intensity": 0.55},
-                   {"type": "directional", "direction": [-0.6, 1, 0.8], "intensity": 0.75}],
+                   "fov": float(cam.get("fov") or 40), "near": 3, "far": 6000},
+        "lights": [{"type": "hemisphere", "sky": "#ffffff", "ground": "#8a7f72", "intensity": 0.6},
+                   {"type": "directional", "direction": [-0.6, 1, 0.8], "intensity": 0.7}],
         "background": {"gradient": ["#cfc7bb", "#efe9df"], "angle": 90},
-        "style": {"shading": "toon", "bands": 3, "outline": {"color": "#2a2a30", "width": 3}},
+        "style": {"shading": "toon", "bands": 3, "outline": {"color": "#2a2a30", "width": 2}},
         "nodes": nodes,
     }
+    return {"scene": scene, "check": check, "camera": cam}
+
+
+def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | None = None) -> dict:
+    """spec плана → JSON-сцена движка (кадр start или end)."""
+    return build(spec, which, shot, infos, layout)["scene"]
+
+
+def _prop_nodes(prop: dict, actors: dict[str, dict], objects: dict[str, dict], k: int = 0) -> list[dict]:
+    kind, size, color = prop_kind(prop.get("name") or prop.get("id"))
+    if prop.get("size") and kind == "item":
+        size = [float(prop["size"])] * 3
+    color = prop.get("color") or color
+    holder = actors.get(str(prop.get("holder") or ""))
+    support = objects.get(str(prop.get("on") or ""))
+    if holder is not None:
+        x, z = holder["pos"]
+        facing = float(holder.get("facing") or 0.0)
+        if holder.get("kind") == "human" and holder.get("rig"):
+            hx, hy, hz = _hand_local(holder["rig"], 1)
+            dx, dz = _rot_y(hx, hz + 3.0, facing)
+            base = [x + dx, holder["y"] + hy - size[1] * 0.45, z + dz]
+        else:  # робот/зверь «держит» — на спине
+            base = [x, holder["y"] + float(holder["box"]["height"]), z]
+    elif support is not None:
+        sx, sz = support["pos"]
+        off = (0.22 + 0.12 * k) * float(support["size"][0])
+        dx, dz = _rot_y(off if support["type"] != "bed" else 0.0, 0.0, float(support.get("rot") or 0.0))
+        base = [sx + dx - 0.0, L.top_of(support), sz + dz]
+        if support["type"] in ("nightstand", "desk", "table"):
+            dx2, dz2 = _rot_y(0.0, float(support["size"][2]) * 0.15, float(support.get("rot") or 0.0))
+            base = [base[0] + dx2, base[1], base[2] + dz2]
+    else:
+        base = list(prop.get("pos") or [0, 0, 40])
+    out = []
+    for i in range(int(prop.get("count") or 1)):
+        out.append({"type": "group", "position": [_r(base[0] + i * size[0] * 1.5), _r(base[1]), _r(base[2])],
+                    "rotation": [0, 0, 0], "children": _prop_parts(kind, size, color)})
+    return out
 
 
 def scene_key(scene: dict) -> str:
@@ -482,6 +1230,12 @@ def _project_of(store: Any, shot: dict) -> int:
     return int(V.get_script(store, int(shot["script_id"]), with_shots=False)["project_id"])
 
 
+def shot_layout(store: Any, project_id: int, shot: dict, vision: bool = False, client: Any = None) -> dict:
+    """Комната плана — раскладка его локации (одна на все планы локации)."""
+    loc = V.location_by_slug(store, project_id, shot.get("location") or "") if shot.get("location") else None
+    return L.location_layout(store, project_id, loc, vision=vision, client=client)
+
+
 def _save(store: Any, shot_id: int, data: dict) -> None:
     store.db.execute("UPDATE aiv_shots SET blocking_json = ? WHERE id = ?",
                      (json.dumps(data, ensure_ascii=False), int(shot_id)))
@@ -499,17 +1253,38 @@ def current(store: Any, shot: dict) -> dict:
             "scenes": {}, "outdated": bool(data.get("spec"))}
 
 
-def scenes_of(store: Any, shot: dict) -> dict[str, dict]:
-    """Готовые JSON-сцены движка {start, end} (end — только у плана с видео)."""
+def built_of(store: Any, shot: dict) -> dict[str, dict]:
+    """Кадры блокинга плана {start, end?}: {scene, check, override}."""
     data = current(store, shot)
-    infos = cast_info(store, _project_of(store, shot), shot)
+    project_id = _project_of(store, shot)
+    infos = cast_info(store, project_id, shot)
+    layout = shot_layout(store, project_id, shot)
     spec = clean_spec(data["spec"], [c["id"] for c in shot.get("cast") or []])
     out = {}
     for which in ("start", "end") if shot.get("needs_motion") else ("start",):
         override = (data.get("scenes") or {}).get(which)
-        out[which] = override if isinstance(override, dict) and override.get("nodes") else \
-            compile_scene(spec, which, shot, infos)
+        if isinstance(override, dict) and override.get("nodes"):
+            out[which] = {"scene": override, "override": True,
+                          "check": {"ok": True, "problems": [], "notes": ["своя сцена движка — не проверяется"]}}
+        else:
+            out[which] = {**build(spec, which, shot, infos, layout), "override": False}
     return out
+
+
+def scenes_of(store: Any, shot: dict) -> dict[str, dict]:
+    """Готовые JSON-сцены движка {start, end} (end — только у плана с видео)."""
+    return {which: b["scene"] for which, b in built_of(store, shot).items()}
+
+
+def frame_check(store: Any, shot: dict, which: str) -> dict:
+    """Самоконтроль кадра блокинга ``which`` плана: ``{ok, problems, …}`` (кадра нет — ok False)."""
+    try:
+        built = built_of(store, shot).get(which)
+    except Exception as exc:  # noqa: BLE001 - проверка не валит кадр: блокинг просто не используется
+        return {"ok": False, "problems": [f"блокинг не собран: {type(exc).__name__}: {str(exc)[:160]}"]}
+    if built is None:
+        return {"ok": False, "problems": [f"блокинга «{which}» нет"]}
+    return built["check"]
 
 
 def set_blocking(store: Any, shot_id: int, spec: Any = None, scenes: Any = None, source: str = "agent") -> dict:
@@ -526,7 +1301,7 @@ def set_blocking(store: Any, shot_id: int, spec: Any = None, scenes: Any = None,
             except ValueError as exc:
                 raise V.AivError(f"spec — не JSON: {exc}") from exc
         if not isinstance(spec, dict):
-            raise V.AivError("spec — объект {room?, objects?, camera?, start?, end?}")
+            raise V.AivError("spec — объект {start?, end?, objects?, room?, camera?}")
         # Не названное — как было (правка одного старта не стирает конец и мебель).
         merged = {**(data.get("spec") or {}), **spec}
         data["spec"] = clean_spec(merged, [c["id"] for c in shot.get("cast") or []])
@@ -551,50 +1326,53 @@ def set_blocking(store: Any, shot_id: int, spec: Any = None, scenes: Any = None,
 def view(store: Any, shot: dict) -> dict:
     data = current(store, shot)
     project_id = _project_of(store, shot)
+    layout = shot_layout(store, project_id, shot)
+    try:
+        checks = {w: b["check"] for w, b in built_of(store, shot).items()}
+    except Exception as exc:  # noqa: BLE001 - просмотр не падает из-за сборки
+        checks = {"error": {"ok": False, "problems": [str(exc)[:200]]}}
     return {"shot_id": int(shot["id"]), "idx": shot["idx"], "source": data.get("source"),
             "outdated": bool(data.get("outdated")), "spec": data["spec"], "scenes_override": data.get("scenes") or {},
             "legend": legend(store, project_id, shot), "cast": cast_info(store, project_id, shot),
+            "layout": {"source": layout.get("source"), "room": layout.get("room"),
+                       "objects": [{k: o.get(k) for k in ("id", "type", "name", "pos", "y", "rot", "size", "on")}
+                                   for o in layout.get("objects") or []]},
+            "checks": checks,
             "frames": {w: V.selected_ref(store, project_id, "shot", int(shot["id"]), f"blocking_{w}")
                        for w in ("start", "end")}}
 
 
 BLOCKING_PROMPT = """\
-Ты постановщик мультсериала и раскладываешь планы серии в простой 3D-макет (блокинг) для
-картинковой модели: она перерисует скриншот макета в кадр, сохранив композицию, позы и места.
-Единицы — сантиметры. Оси: x вправо (от камеры), y вверх, z к камере; пол y=0; комната по центру
-(0,0), задняя стена z = -depth/2. Для каждой локации — комната (width, depth, height) и мебель
-простыми фигурами (kind box|cylinder|disc|sphere, size [ширина, высота, глубина], pos [x, z], rot —
-градусы вокруг вертикали): кровать, стол, диван, холодильник… Одна и та же мебель на тех же местах
-во всех планах локации. Для каждого плана — start (момент начала) и end (момент конца плана):
+Ты постановщик мультсериала и расставляешь персонажей и реквизит планов серии в подробный 3D-макет
+(блокинг) для картинковой модели: она перерисует скриншот макета в кадр, сохранив композицию, позы и
+места. Единицы — сантиметры. Оси: x вправо (от камеры), y вверх, z к камере; пол y=0; комната по
+центру (0,0), задняя стена z = -depth/2. Комнаты локаций УЖЕ расставлены (layouts: вещи с id, типом,
+pos [x, z], size [ширина, высота, глубина], y — высота низа, rot) — мебель не двигай и не придумывай,
+ставь персонажей относительно неё. Для каждого плана — start (момент начала) и end (момент конца):
 actors — каждый персонаж плана: pos [x, z], facing (градусы: 0 — лицом в камеру, 90 — вправо кадра,
--90 — влево, 180 — спиной), pose standing|walking|sitting|kneeling|lying, y — высота, если сидит/лежит
-на мебели; props — ключевой реквизит (kind, size, count — сколько штук, pos [x, y, z] или holder — у
-кого в руке). Состояния бери из state (начало) и end_state (конец) плана; конец плана, который
-продолжает следующий, = старт следующего (те же места и позы). Робот-пылесос и другие «предметные»
-персонажи — всегда на полу. Камеру не пиши — её ставит сервис по крупности плана.
-Верни ТОЛЬКО JSON по схеме."""
+-90 — влево, 180 — спиной), pose standing|walking|sitting|crouching|kneeling|lying, arms
+down|up|forward|holding|wave (holding — держит предмет правой рукой), on — id вещи комнаты, на которой
+сидит/лежит (кровать, стул, диван); props — реквизит плана из state и действия: name, count, и где он:
+holder — id персонажа, у которого в руке, или on — id вещи комнаты, на которой стоит/лежит, или
+pos [x, y, z]. Состояния бери из state (начало) и end_state (конец) плана; конец плана, который
+продолжает следующий, = старт следующего (те же места и позы). Никто не стоит внутри мебели.
+Робот-пылесос и другие «предметные» персонажи — всегда на полу. Камеру не пиши — её ставит сервис
+по крупности плана. Верни ТОЛЬКО JSON по схеме."""
 
 
 def _schema() -> dict:
     num = {"type": "number"}
     vec = {"type": "array", "items": num}
     actor = {"type": "object", "properties": {"id": {"type": "string"}, "pos": vec, "facing": num,
-                                              "pose": {"type": "string"}, "y": num},
+                                              "pose": {"type": "string"}, "arms": {"type": "string"},
+                                              "on": {"type": "string"}},
              "required": ["id", "pos", "facing", "pose"]}
-    prop = {"type": "object", "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "size": num,
+    prop = {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"},
                                              "count": {"type": "integer"}, "pos": vec, "holder": {"type": "string"},
-                                             "color": {"type": "string"}}, "required": ["id"]}
+                                             "on": {"type": "string"}}, "required": ["id"]}
     moment = {"type": "object", "properties": {"actors": {"type": "array", "items": actor},
                                                "props": {"type": "array", "items": prop}}, "required": ["actors"]}
-    obj = {"type": "object", "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "size": vec,
-                                            "pos": vec, "rot": num, "color": {"type": "string"}},
-           "required": ["id", "kind", "size", "pos"]}
-    room = {"type": "object", "properties": {"width": num, "depth": num, "height": num,
-                                             "floor": {"type": "string"}, "wall": {"type": "string"}}}
     return {"type": "object", "properties": {
-        "locations": {"type": "array", "items": {"type": "object", "properties": {
-            "id": {"type": "string"}, "room": room, "objects": {"type": "array", "items": obj}},
-            "required": ["id", "objects"]}},
         "shots": {"type": "array", "items": {"type": "object", "properties": {
             "idx": {"type": "integer"}, "start": moment, "end": moment}, "required": ["idx", "start", "end"]}}},
         "required": ["shots"]}
@@ -620,7 +1398,6 @@ def write_blocking(store: Any, script_id: int, client: Any = None, only: set[int
             source = "gemini"
         except Exception as exc:  # noqa: BLE001 - Gemini недоступен: раскладка по state
             note = f"Gemini не ответил ({type(exc).__name__}: {str(exc)[:160]}) — раскладка по state"
-    rooms = {str(l.get("id") or ""): l for l in data.get("locations") or [] if isinstance(l, dict)}
     by_idx = {int(s.get("idx") or 0): s for s in data.get("shots") or [] if isinstance(s, dict)}
     written = []
     for shot in todo:
@@ -629,13 +1406,14 @@ def write_blocking(store: Any, script_id: int, client: Any = None, only: set[int
         auto = auto_spec(store, project_id, shot, nxt)
         got = by_idx.get(int(shot["idx"]))
         if got and source == "gemini":
-            loc = rooms.get(shot.get("location") or "", {})
-            raw = {"room": loc.get("room") or auto["room"], "objects": loc.get("objects") or [],
-                   "start": got.get("start") or auto["start"], "end": got.get("end") or auto["end"]}
+            raw = {"room": {}, "objects": [], "start": got.get("start") or auto["start"],
+                   "end": got.get("end") or auto["end"]}
             spec, src = clean_spec(raw, [c["id"] for c in shot.get("cast") or []]), "gemini"
-            for which in ("start", "end"):  # Gemini забыл персонажа — ставим по state
+            for which in ("start", "end"):  # Gemini забыл персонажа или реквизит — ставим по state
                 have = {a["id"] for a in spec[which]["actors"]}
                 spec[which]["actors"] += [a for a in auto[which]["actors"] if a["id"] not in have]
+                if not spec[which]["props"]:
+                    spec[which]["props"] = auto[which]["props"]
         else:
             spec, src = auto, "auto"
         _save(store, int(shot["id"]), {"spec": spec, "source": src, "state_key": state_key(shot, nxt), "scenes": {}})
@@ -649,13 +1427,19 @@ def _ask_gemini(store: Any, script: dict, client: Any = None) -> dict:
 
     project_id = int(script["project_id"])
     shots = script["shots"]
+    layouts = []
+    for loc in V.list_locations(store, project_id):
+        lay = L.location_layout(store, project_id, loc)
+        layouts.append({"id": loc["slug"], "name": loc["name"], "room": lay.get("room"),
+                        "objects": [{k: o.get(k) for k in ("id", "type", "name", "pos", "y", "rot", "size")}
+                                    for o in lay.get("objects") or []]})
     context = {
         "characters": [{"id": c["slug"], "name": c["name"], "stand_in": stand_in(c),
+                        "size_cm": body_size(c, stand_in(c)),
                         "identity_card": c["identity_card"], **({"constraints": c["constraints"]}
                                                                   if c.get("constraints") else {})}
                        for c in V.list_characters(store, project_id)],
-        "locations": [{"id": l["slug"], "name": l["name"], "description": l["description"]}
-                      for l in V.list_locations(store, project_id)],
+        "layouts": layouts,
         "shots": [{"idx": s["idx"], "location": s["location"], "camera": s["camera"], "action": s["action"],
                    "cast": [c["id"] for c in s["cast"]], "continues_from_prev": s["continues_from_prev"],
                    "state": s.get("state") or {}, "end_state": V.end_state_of(s, shots[n + 1] if n + 1 < len(shots)

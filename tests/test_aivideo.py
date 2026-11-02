@@ -1066,10 +1066,11 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
     with pytest.raises(V.AivError, match="нет стартового кадра"):
         G.request_stage(store, pid, "video", sid)
     kf = G.estimate(store, pid, "keyframes", sid)
-    # План 1 с видео — пара (старт + конец); план 2 (статичный, та же кухня) стартует с конца плана 1 —
-    # общий кадр; план 3 продолжает статичный план 2 — свой старт и свой конец.
-    assert [i["label"] for i in kf["items"]] == ["план 1: старт", "план 1: конец", "план 3: старт", "план 3: конец"]
-    assert any("план 2: старт — конечный кадр плана 1" in n for n in kf["notes"])
+    # Черновая модель H3 берёт только старт: конечные кадры не заказываются (видео к ним не приходит);
+    # план 2 (статичный, продолжает план 1) стартует с ПОСЛЕДНЕГО кадра готового видео плана 1.
+    assert [i["label"] for i in kf["items"]] == ["план 1: старт", "план 3: старт"]
+    assert any("план 2: старт — последний кадр видео плана 1" in n for n in kf["notes"])
+    assert any("конечные кадры не заказываю" in n for n in kf["notes"])
     G.request_stage(store, pid, "keyframes", sid)
     est = G.estimate(store, pid, "video", sid)
     # Черновая серия без своей модели — MiniMax H3 Max: от 5 с, только стартовый кадр (замер 02.11).
@@ -1087,6 +1088,12 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
     assert job["params"]["mode"] == "start" and len(job["params"]["refs"]) == 1
     assert "гул холодильника" in job["prompt"] and "No music, no speech" in job["prompt"]
     assert "Single continuous shot" in job["prompt"] and "Avoid: cuts" in job["prompt"]  # негатив — блоком
+    # Старт плана 2 — последний кадр готового видео плана 1 (вынут ffmpeg'ом, помечен source=video_tail).
+    shot2 = V.get_script(store, sid)["shots"][1]
+    tail = V.selected_ref(store, pid, "shot", shot2["id"], "keyframe")
+    assert tail["prompt"] == f"source=video_tail; video_ref={video['id']}"
+    view = V.script_view(store, sid)
+    assert view["shots"][1]["start_frame"]["id"] == tail["id"] and view["shots"][1]["start_shared_from"] == 1
     assert G.estimate(store, pid, "video", sid)["count"] == 0  # всё есть
     again = G.regenerate(store, ref_id=video["id"])
     assert again["status"] == "done" and again["estimate"]["stage"] == "video"
@@ -1098,10 +1105,15 @@ def test_video_stage_dry_run_versions_and_regenerate(env):
     V.update_shot(store, shot1["id"], {"motion_prompt": "кот прыгает"})
     assert V.selected_ref(store, pid, "shot", shot1["id"], "shot_video")["stale"]
     assert not V.selected_ref(store, pid, "shot", shot1["id"], "keyframe")["stale"]
-    # Правка конца плана — конечный кадр и видео «устарели», старт — нет.
+    # Правка конца плана — видео «устарело», старт — нет (конечного кадра у H3 нет вовсе).
     V.update_shot(store, shot1["id"], {"end_state": {"characters": [{"id": "mira", "pose": "standing"}]}})
-    assert V.selected_ref(store, pid, "shot", shot1["id"], "endframe")["stale"]
+    assert V.selected_ref(store, pid, "shot", shot1["id"], "endframe") is None
     assert not V.selected_ref(store, pid, "shot", shot1["id"], "keyframe")["stale"]
+    # Старт плана 2 — хвост именно ВЫБРАННОЙ версии видео плана 1 (новая версия — свой хвост).
+    shots_now = V.get_script(store, sid)["shots"]
+    assert G.start_frame_ref(store, pid, shots_now, 1)[0]["prompt"] == f"source=video_tail; video_ref={versions[0]['id']}"
+    V.select_ref(store, versions[1]["id"])
+    assert G.start_frame_ref(store, pid, shots_now, 1)[0]["prompt"] == f"source=video_tail; video_ref={versions[1]['id']}"
 
 
 def test_video_price_measured_and_project_setting(env):
@@ -1294,6 +1306,11 @@ STATE_SHOTS = [
 ]
 
 
+def _first_last(store, pid):
+    """Пары ключевых кадров — у модели с первым+последним кадром (H3 по умолчанию — только старт)."""
+    V.update_style(store, pid, {"video_model": "bytedance/seedance-2"}, owner=True)
+
+
 def _state_project(store, provider="none"):
     pid, sid = _project(store, provider=provider)
     out = V.update_script(store, sid, {"shots": STATE_SHOTS})
@@ -1303,6 +1320,7 @@ def _state_project(store, provider="none"):
 def test_shot_state_defaults_and_warnings(env):
     _client_, store = env
     pid, sid, out = _state_project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     shots = out["shots"]
     assert [s["continues_from_prev"] for s in shots] == [False, True, False]  # первый — никогда; 3 — явно
     assert shots[0]["state"]["characters"][0] == {"id": "mira", "pose": "sitting", "facing": "camera",
@@ -1343,6 +1361,7 @@ def test_keyframe_pairs_share_end_and_start_frames(env):
     сцепленного N+1 (N+1 кадров на цепочку); ничего не вынимается из видео — ошибки не копятся."""
     _client_, store = env
     pid, sid, out = _state_project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     shots = out["shots"]
     G.request_stage(store, pid, "refs")
     est = G.estimate(store, pid, "keyframes", sid)
@@ -1389,7 +1408,9 @@ def test_keyframe_pairs_share_end_and_start_frames(env):
 
 
 def test_episode_estimate_five_shots_seedance_vs_hailuo(env, monkeypatch):
-    """Серия 5 × 4 с, все с видео, одна сцена: кадры — 6 (старт + 5 концов), видео — по модели."""
+    """Серия 5 × 4 с, все с видео, одна сцена. Черновик (H3 — только старт): кадр — один старт, конечные
+    не заказываются (видео к ним не приходит), старты продолжений — хвосты готовых видео; качество
+    (Seedance — первый+последний кадр): 6 кадров (старт + 5 концов)."""
     _client_, store = env
     pid, sid = _project(store, provider="polza")
     monkeypatch.setattr(PR, "MEASURED_IMAGE_PRICES", {"google/gemini-nano-banana-2.1": {"1K": 3.0, "2K": 4.5}})
@@ -1397,15 +1418,26 @@ def test_episode_estimate_five_shots_seedance_vs_hailuo(env, monkeypatch):
               "camera": {"move": "static"}, "action": f"действие {i}", "dialogue": []} for i in range(5)]
     V.update_script(store, sid, {"shots": shots})
     est = G.estimate(store, pid, "keyframes", sid)
-    assert est["count"] == 6 and est["total_rub"] == pytest.approx(18.0)  # черновик 1K: 6 × 3 ₽
-    for shot in V.get_script(store, sid)["shots"]:  # для оценки видео — кадры есть
+    assert est["count"] == 1 and est["total_rub"] == pytest.approx(3.0)  # черновик 1K: 1 × 3 ₽, без концов
+    assert not any(i["ref_kind"] == "endframe" for i in est["items"])
+    assert sum("последний кадр видео плана" in n for n in est["notes"]) == 4
+    first = V.get_script(store, sid)["shots"][0]
+    asset = store.create_montage_asset(kind="image", label="k", file_path=str(Path(__file__)),
+                                       original_filename="k.jpg", mime_type="image/jpeg", size_bytes=1)
+    V.add_ref(store, pid, "shot", first["id"], "keyframe", asset["id"])
+    # Видео: старт плана 1 — кадр, планов 2–5 — хвост видео прошлого плана из этой же партии (ждут его).
+    draft = G.estimate(store, pid, "video", sid)
+    assert draft["model"] == "minimax/hailuo-3-max" and draft["count"] == 5 and not draft["blocked"]
+    assert [i["start"] for i in draft["items"]] == ["keyframe"] + ["video_tail"] * 4
+    assert draft["total_rub"] == pytest.approx(5 * 56.97, abs=0.05)  # 5 с минимум × 9.115 ₽/с × 1.25
+    # Только план 3 (видео плана 2 нет и не заказано) — нечего брать стартом: blocked.
+    only3 = G.estimate(store, pid, "video", sid, items=[f"shot:{V.get_script(store, sid)['shots'][2]['id']}"])
+    assert only3["blocked"] and "сначала видео плана 2" in only3["blocked"][0]
+    for shot in V.get_script(store, sid)["shots"]:  # для оценки качества — пары кадров есть
         for kind in ("keyframe", "endframe"):
             asset = store.create_montage_asset(kind="image", label="k", file_path=str(Path(__file__)),
                                                original_filename="k.jpg", mime_type="image/jpeg", size_bytes=1)
             V.add_ref(store, pid, "shot", shot["id"], kind, asset["id"])
-    draft = G.estimate(store, pid, "video", sid)
-    assert draft["model"] == "minimax/hailuo-3-max" and draft["count"] == 5
-    assert draft["total_rub"] == pytest.approx(5 * 56.97, abs=0.05)  # 5 с минимум × 9.115 ₽/с × 1.25
     V.update_script(store, sid, {"quality": "quality"})
     quality = G.estimate(store, pid, "video", sid)
     assert quality["model"] == "bytedance/seedance-2" and quality["modes"] == ["first_last"]
@@ -1443,6 +1475,7 @@ def test_endframe_waits_for_its_start_frame_in_paid_run(paid_video, monkeypatch)
 def test_continuity_check_flags_mismatches_with_fake_gemini(env):
     _client_, store = env
     pid, sid, out = _state_project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     shots = out["shots"]
     V.update_shot(store, shots[1]["id"], {"continues_from_prev": False})  # план 2 — свой старт
     G.request_stage(store, pid, "refs")
@@ -1556,6 +1589,7 @@ def test_assembly_v2_video_layers_timing_lines_and_music(env):
 def test_assembly_uses_shared_frame_and_explains_missing_end(env):
     _client_, store = env
     pid, sid, out = _state_project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     shots = out["shots"]
     G.request_stage(store, pid, "refs")
     # Только старт плана 1: у сцепленного плана 2 старта (конца плана 1) ещё нет.
@@ -1873,7 +1907,7 @@ def test_blocking_auto_spec_compiles_stand_ins(env):
     infos = B.cast_info(store, pid, shots[0])
     scene = B.compile_scene(spec, "end", shots[0], infos)
     assert scene["camera"]["type"] == "perspective" and len(scene["nodes"]) >= 6
-    assert B.legend(store, pid, shots[0]) == "the orange mannequin = Мира"
+    assert B.legend(store, pid, shots[0]) == "the slate-blue mannequin = Мира"
     clean = B.clean_spec({"start": {"actors": [{"id": "stranger", "pos": [0, 0]}, {"id": "mira", "pos": [1e9, 0],
                                                                                    "pose": "сидит", "facing": "away"}]}},
                          ["mira"])
@@ -1889,6 +1923,7 @@ def test_blocking_stage_renders_free_and_feeds_keyframes(env):
 
     client, store = env
     pid, sid, out = _state_project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     shots = out["shots"]
     G.request_stage(store, pid, "refs")
     est = G.estimate(store, pid, "blocking", sid)
@@ -1925,7 +1960,10 @@ def test_blocking_stage_renders_free_and_feeds_keyframes(env):
     assert b1["prompt"].startswith("blocking:") and store.get_montage_asset(b1["asset_id"])["width"] == 540
     assert G.estimate(store, pid, "blocking", sid)["count"] == 0  # всё отрисовано
     view = B.view(store, V.get_shot(store, shots[0]["id"]))
-    assert view["source"] == "gemini" and view["spec"]["objects"][0]["id"] == "fridge"
+    # Комната — раскладка локации (одна на все планы), не то, что Gemini придумал в ответе по планам.
+    assert view["source"] == "gemini" and view["spec"]["objects"] == []
+    assert "fridge" in [o["id"] for o in view["layout"]["objects"]]
+    assert view["checks"]["start"]["ok"], view["checks"]
     # Кадры: блокинг — ПЕРВЫЙ референс (композиция), легенда манекенов — в промпте.
     kf = G.request_stage(store, pid, "keyframes", sid)
     jobs = [G.get_job(store, d["job_id"]) for d in kf["run"]["done"]]
@@ -1933,7 +1971,9 @@ def test_blocking_stage_renders_free_and_feeds_keyframes(env):
     e1 = next(j for j in jobs if j["ref_kind"] == "endframe" and j["target_id"] == shots[0]["id"])
     assert s1["params"]["ref_roles"][0] == "блокинг: старт" and e1["params"]["ref_roles"][:2] == [
         "блокинг: конец", "план 1: старт"]
-    assert "3D BLOCKING mock-up" in s1["prompt"] and "the orange mannequin = Мира" in s1["prompt"]
+    assert "3D BLOCKING mock-up" in s1["prompt"] and "the slate-blue mannequin = Мира" in s1["prompt"]
+    assert "ONLY for the camera angle" in s1["prompt"] and "Do NOT copy its look" in s1["prompt"]
+    assert s1["params"]["blocking"] == {"used": True}
     # Своя раскладка агента: блокинг устарел → перерисовка (0 ₽), Gemini не трогает её при правке state.
     from app.agent_tools import ToolContext, run_tool
 
@@ -2153,6 +2193,7 @@ def test_repeated_request_and_approval_do_not_pay_twice(paid, monkeypatch):
 def test_location_plate_and_verbatim_text_in_every_shot_of_the_scene(env, monkeypatch):
     _client_, store = env
     pid, sid = _project(store)
+    _first_last(store, pid)  # пары кадров: модель с первым+последним кадром
     V.save_location(store, pid, "Спальня", "узкая спальня, синие обои, окно слева, кровать у стены",
                     slug="bedroom")
     V.update_script(store, sid, {"shots": [
@@ -2205,3 +2246,289 @@ def test_location_plate_and_verbatim_text_in_every_shot_of_the_scene(env, monkey
     plate_name = Path(next(iter(plate_file))).name
     assert vjob["params"]["reference_sheets"][0] == plate_name and len(vjob["params"]["reference_sheets"]) <= 3
     assert "first reference image is the background plate" in vjob["prompt"]
+
+
+# --------------------------------------------------------------------------- #
+# Серия 3 «Утренний кофе»: подробный блокинг, пустая плита, старт продолжения из хвоста видео
+# --------------------------------------------------------------------------- #
+
+EP3_ROOM = ("уютная маленькая спальня, вечер, тёплый свет настольной лампы и гирлянды на стене, кровать с лавандовым "
+            "пледом, пушистый ковёр, на полу разбросаны носки, у кровати станция зарядки робота-пылесоса, окно с синим "
+            "вечерним небом")
+EP3_MUG = "кружка с кофе"
+EP3_SHOTS = [
+    {"duration": 5, "location": "bedroom", "needs_motion": True,
+     "characters": [{"id": "mira", "action": "ставит кружку и отворачивается"}, {"id": "beep"}],
+     "camera": {"shot": "medium", "angle": "eye_level", "lens": 35, "move": "static"},
+     "action": "Сонная Мира ставит кружку кофе на прикроватную тумбочку и поворачивается к окну потянуться",
+     "state": {"characters": [{"id": "mira", "pose": "standing", "facing": "left", "position": "center foreground",
+                               "holding": EP3_MUG},
+                              {"id": "beep", "pose": "lying", "facing": "left", "position": "left background",
+                               "holding": "ничего"}],
+               "props": [{"name": EP3_MUG, "state": "в руках Миры", "count": 1}]},
+     "end_state": {"characters": [{"id": "mira", "pose": "standing", "facing": "away", "position": "center foreground",
+                                   "holding": "ничего"},
+                                  {"id": "beep", "pose": "lying", "facing": "left", "position": "left background",
+                                   "holding": "ничего"}],
+                   "props": [{"name": EP3_MUG, "state": "стоит на прикроватной тумбочке", "count": 1}]},
+     "dialogue": []},
+    {"duration": 5, "location": "bedroom", "needs_motion": True, "continues_from_prev": True,
+     "characters": [{"id": "mira"}, {"id": "beep", "action": "подкатывается к тумбочке"}],
+     "camera": {"shot": "medium_close", "angle": "low", "lens": 50, "move": "push_in"},
+     "action": "Бип подкатывается к тумбочке и слегка в неё врезается", "dialogue": []},
+]
+
+
+def _ep3(store, provider="none"):
+    pid = V.create_ai_project(store, "Мира и Бип", style_kind="anime", provider=provider)["project"]["id"]
+    V.save_character(store, pid, "Мира", "девушка 20 лет, короткое каре цвета мяты, круглые очки; рост средний",
+                     slug="mira")
+    V.save_character(store, pid, "Бип", "круглый робот-пылесос размером с тарелку; белый корпус, глаза-экраны",
+                     slug="beep", speech="sfx")
+    V.save_location(store, pid, "Спальня Миры вечером", EP3_ROOM, slug="bedroom")
+    script = V.create_script(store, pid, brief="кофе", duration_target=10)
+    from app.aivideo_script import apply_script
+
+    apply_script(store, script["id"], {"title": "Утренний кофе", "logline": "кофе", "shots": EP3_SHOTS})
+    return pid, script["id"]
+
+
+def test_blocking_room_has_every_described_thing_once_per_location(env):
+    """Комната блокинга — все вещи из описания локации (и мебель, которую называют планы), одна
+    раскладка на локацию: все планы снимают одну и ту же комнату; кэш в локации."""
+    from app import aivideo_blocking as B
+    from app import aivideo_layout as L
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    shots = V.list_shots(store, sid)
+    layout = B.shot_layout(store, pid, shots[0])
+    types = {o["type"] for o in layout["objects"]}
+    assert {"bed", "lamp", "garland", "rug", "socks", "dock", "window"} <= types
+    assert "nightstand" in types  # «ставит кружку на прикроватную тумбочку» + настольной лампе нужна опора
+    by = {o["type"]: o for o in layout["objects"]}
+    assert by["lamp"]["on"] == by["nightstand"]["id"] and by["lamp"]["y"] == pytest.approx(55)
+    assert by["bed"]["accent"] == "#b8a9f0"  # лавандовый плед
+    assert by["window"]["accent"] == "#2c3e7a"  # вечернее небо за окном
+    assert by["bed"]["size"][1] < 60 and by["nightstand"]["size"][1] < 70  # узнаваемые пропорции, не столбы
+    # Мебель не налезает друг на друга.
+    solid = [o for o in layout["objects"] if L._on_floor(o)]
+    for i, a in enumerate(solid):
+        for b in solid[i + 1:]:
+            assert not L._overlap(L._footprint(a), L._footprint(b), pad=0), (a["id"], b["id"])
+    # Одна на локацию: оба плана — та же комната; кэш в локации, повторно не пересчитывается.
+    assert B.shot_layout(store, pid, shots[1])["objects"] == layout["objects"]
+    loc = V.location_by_slug(store, pid, "bedroom")
+    assert L.cached(loc)["key"] == layout["key"]
+    nodes0 = [n for n in B.scenes_of(store, shots[0])["start"]["nodes"] if n.get("type") == "group"]
+    nodes1 = [n for n in B.scenes_of(store, shots[1])["start"]["nodes"] if n.get("type") == "group"]
+    furniture = len(layout["objects"])
+    assert nodes0[:furniture] == nodes1[:furniture]
+    # Реквизит: кружка у Миры в руке на старте, на тумбочке — в конце.
+    spec = B.current(store, shots[0])["spec"]
+    assert spec["start"]["props"][0]["holder"] == "mira"
+    assert spec["start"]["actors"][0]["arms"] == "holding"
+    assert spec["end"]["props"][0]["on"] == by["nightstand"]["id"]
+    assert spec["end"]["actors"][0]["arms"] == "up"  # «повернуться к окну потянуться»
+
+
+def test_blocking_room_follows_plate_via_gemini_vision_once(env):
+    import json
+
+    from app import aivideo_layout as L
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    G.request_stage(store, pid, "refs")  # плита (сухой прогон)
+    loc = V.location_by_slug(store, pid, "bedroom")
+
+    class Vision:
+        calls = 0
+
+        def generate_content(self, model, payload):
+            Vision.calls += 1
+            parts = payload["contents"][0]["parts"]
+            assert any("inline_data" in p for p in parts)  # плита — картинкой
+            body = {"objects": [
+                {"type": "bed", "x": 0.3, "depth": 0.7, "wall": "back", "color": "#c9b8e8"},
+                {"type": "nightstand", "x": 0.62, "depth": 0.85, "wall": "back", "color": "#a07050"},
+                {"type": "lamp", "x": 0.62, "depth": 0.85, "wall": "on", "on": "nightstand", "color": "#ffe0a0"},
+                {"type": "desk", "x": 0.9, "depth": 0.6, "wall": "right", "color": "#b08860"},
+                {"type": "rug", "x": 0.5, "depth": 0.4, "wall": "floor", "color": "#f4c6d0"}]}
+            return {"candidates": [{"content": {"parts": [{"text": json.dumps(body)}]}}]}
+
+    out = L.location_layout(store, pid, loc, vision=True, client=Vision())
+    assert out["source"] == "vision" and Vision.calls == 1
+    by = {o["type"]: o for o in out["objects"]}
+    assert by["bed"]["pos"][0] < 0 < by["nightstand"]["pos"][0]  # как на плите: кровать слева, тумбочка правее
+    assert by["desk"]["rot"] == -90 and by["rug"]["color"] == "#f4c6d0"
+    assert by["lamp"]["on"] == by["nightstand"]["id"]
+    assert {"garland", "dock", "window", "socks"} <= set(by)  # из описания — то, чего зрение не назвало
+    again = L.location_layout(store, pid, V.location_by_slug(store, pid, "bedroom"), vision=True, client=Vision())
+    assert Vision.calls == 1 and again["objects"] == out["objects"]  # кэш: одна раскладка на локацию
+
+
+def test_blocking_mannequins_real_size_pose_and_camera_by_plan(env):
+    """Манекены в реальном росте (человек ~165, робот-диск — низкий), руки в позе, кружка в руке; камера
+    по плану (объектив → поле кадра), смотрит на персонажей, не внутри вещи; самоконтроль кадра."""
+    from app import aivideo_blocking as B
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    shot = V.list_shots(store, sid)[0]
+    infos = {c["id"]: c for c in B.cast_info(store, pid, shot)}
+    assert infos["mira"]["stand_in"] == "human" and infos["mira"]["size"] == 165
+    assert infos["beep"]["stand_in"] == "disc" and infos["beep"]["size"] < 35
+    assert infos["mira"]["color"] != infos["beep"]["color"]
+    assert "orange" not in B.legend(store, pid, shot)
+    built = B.built_of(store, shot)
+    layout = B.shot_layout(store, pid, shot)
+    room = layout["room"]
+    boxes = [b for b in (B.L.object_box(o) for o in layout["objects"]) if b]
+    for which in ("start", "end"):
+        check, scene = built[which]["check"], built[which]["scene"]
+        assert check["ok"], (which, check)
+        assert check["shares"]["mira"] > 0.03 and check["shares"]["beep"] > 0  # оба в кадре
+        cam = scene["camera"]
+        assert abs(cam["position"][0]) < room["width"] / 2 and cam["position"][1] < room["height"]
+        assert not any(B._inside(b, cam["position"]) for b in boxes)
+        assert 40 <= cam["fov"] <= 70  # 35 мм ≈ 54°, в тесной комнате — чуть шире
+    # Манекен: голова, туловище, руки и ноги (группы суставов), рост ~165 см.
+    rig = B._human_rig(165, "standing", "holding")
+    hand = B._hand_local(rig, 1)
+    assert 85 < hand[1] < 125 and hand[2] > 15  # рука с кружкой — перед собой на уровне пояса/груди
+    up = B._hand_local(B._human_rig(165, "standing", "up"), 1)
+    assert up[1] > 175  # руки над головой — «потянуться»
+    sit = B._human_rig(165, "sitting", "down")
+    assert sit["root"][1] < 0  # сидит — таз ниже, чем стоя
+    _nodes, box = B._actor_parts({"pose": "lying"}, infos["beep"])
+    assert box["height"] < 25  # робот-диск низкий, а не столб на весь кадр
+    # Камера по плану: 50 мм — уже поле, чем 35 мм.
+    assert B.lens_fov(50) < B.lens_fov(35) == pytest.approx(54.43, abs=0.05)
+
+
+def test_blocking_self_check_rejects_bad_frame_and_keyframe_goes_without_it(env):
+    """Кадр макета не прошёл самоконтроль (камера внутри шкафа, шкаф на весь кадр) — в кадр он не идёт:
+    промпт без блокинга, пометка в params; хороший макет — идёт с указанием «только позиции и ракурс»."""
+    from app import aivideo_blocking as B
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    G.request_stage(store, pid, "refs")
+    shot = V.list_shots(store, sid)[0]
+    plate = V.selected_ref(store, pid, "location", V.location_by_slug(store, pid, "bedroom")["id"], "location")
+    png = Path(store.get_montage_asset(plate["asset_id"])["file_path"])
+    asset = store.create_montage_asset(kind="image", label="b", file_path=str(png), original_filename=png.name,
+                                       mime_type="image/jpeg", size_bytes=png.stat().st_size)
+    V.add_ref(store, pid, "shot", shot["id"], "blocking_start", asset["id"], prompt="blocking:test")
+    job = {"project_id": pid, "ref_kind": "keyframe", "target_id": shot["id"], "model": "google/gemini-nano-banana-2.1",
+           "provider": "none", "kind": "image"}
+    prompt, _refs, _cap, info = G.build_request(store, job)
+    assert info["blocking"] == {"used": True} and info["roles"][0] == "блокинг: старт"
+    assert "ONLY for the camera angle" in prompt and "never draw mannequins" in prompt
+    # Своя камера агента — внутри шкафа перед персонажами.
+    B.set_blocking(store, shot["id"], spec={
+        "objects": [{"id": "wardrobe", "type": "wardrobe", "pos": [0, 120], "size": [160, 220, 60]}],
+        "camera": {"pos": [0, 120, 125], "target": [0, 90, 0], "fov": 54}})
+    check = B.frame_check(store, V.get_shot(store, shot["id"]), "start")
+    assert not check["ok"] and any("шкаф" in p for p in check["problems"]), check
+    prompt, _refs, _cap, info = G.build_request(store, job)
+    assert info["blocking"]["used"] is False and "шкаф" in info["blocking"]["rejected"]
+    assert "3D BLOCKING" not in prompt and not any("блокинг" in r for r in info["roles"])
+    assert any("отклонён самоконтролем" in m for m in info["missing"])
+    # Шкаф между камерой и персонажами (камера снаружи) — перекрывает больше 40 % кадра.
+    B.set_blocking(store, shot["id"], spec={
+        "objects": [{"id": "wardrobe", "type": "wardrobe", "pos": [0, 140], "size": [160, 220, 40]}],
+        "camera": {"pos": [0, 120, 240], "target": [0, 90, 0], "fov": 54}})
+    check = B.frame_check(store, V.get_shot(store, shot["id"]), "start")
+    assert not check["ok"] and any("перекрывает" in p for p in check["problems"]), check
+    # Без своей камеры сервис ставит её сам: вещь стоит ровно там, где встала бы камера, — камера не
+    # внутри неё (отодвинута), кадр проходит самоконтроль.
+    data = V.get_shot(store, shot["id"])["blocking"]
+    data["spec"].pop("camera")
+    data["spec"]["objects"] = []
+    B._save(store, shot["id"], data)
+    free = B.built_of(store, V.get_shot(store, shot["id"]))["start"]["camera"]["pos"]
+    data["spec"]["objects"] = [{"id": "plant", "type": "plant", "pos": [free[0], free[2]], "size": [40, 200, 40]}]
+    B._save(store, shot["id"], data)
+    built = B.built_of(store, V.get_shot(store, shot["id"]))["start"]
+    plant = B.L.object_box(B.L.clean_object(data["spec"]["objects"][0], 0))
+    assert not B._inside(plant, built["camera"]["pos"]) and built["check"]["ok"], built["check"]
+
+
+def test_location_plate_prompt_is_empty_room_without_characters(env):
+    """Плита — пустая комната: без людей, животных, роботов и персонажей проекта (иначе на плите уже
+    робот-пылесос, и в кадрах вместо Бипа серый пылесос); негатив — тоже."""
+    _client_, store = env
+    pid, _sid = _ep3(store)
+    loc = V.location_by_slug(store, pid, "bedroom")
+    job = {"project_id": pid, "ref_kind": "location", "target_id": loc["id"], "model": "google/gemini-nano-banana-2.1",
+           "provider": "none", "kind": "image", "slot": ""}
+    prompt = G.build_request(store, job)[0]
+    assert "NO people" in prompt and "NO animals" in prompt and "NO robots" in prompt
+    assert "NO characters of any kind" in prompt
+    assert "not Мира (" in prompt and "not Бип (круглый робот-пылесос" in prompt
+    assert "nothing that looks like any of them" in prompt
+    assert "draw only that thing, empty — its owner is not in the room" in prompt
+    avoid = prompt.split("Avoid:", 1)[1]
+    for word in ("people", "robot vacuum", "animal", "character", "mannequin"):
+        assert word in avoid
+    assert EP3_ROOM in prompt  # описание — дословно
+
+
+def _fake_tail_video(dest):
+    """Фейковое видео ffmpeg'ом: красное, последние 0.5 с — синие (последний кадр — синий)."""
+    import subprocess
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=144x256:d=1.5:r=12",
+                    "-f", "lavfi", "-i", "color=c=blue:s=144x256:d=0.5:r=12", "-filter_complex",
+                    "[0][1]concat=n=2:v=1:a=0,format=yuv420p", str(dest)], check=True, capture_output=True)
+    return dest
+
+
+def test_hailuo_no_endframes_next_start_is_tail_of_previous_video_in_order(paid_video, monkeypatch):
+    """H3 берёт только стартовый кадр: конечные кадры не заказываются (смета дешевле), старт сцепленного
+    плана — ПОСЛЕДНИЙ кадр готового видео прошлого плана (ffmpeg, keyframe c source=video_tail), видео
+    следующего плана ждёт видео прошлого в очереди (без лишних POST)."""
+    import cv2
+
+    (_client_, store), img, vid = paid_video
+    vid.uncertain, vid.cost = False, 50.0  # в пределах одобренной суммы (H3 ≈ 57 ₽ за план)
+    monkeypatch.setattr(vid, "fetch", lambda result, dest, params: _fake_tail_video(dest))
+    pid, sid = _ep3(store, provider="polza")
+    shots = V.list_shots(store, sid)
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    est = G.estimate(store, pid, "keyframes", sid)
+    assert [i["label"] for i in est["items"]] == ["план 1: старт"]  # ни одного конечного кадра
+    assert est["total_rub"] == pytest.approx(6.0)
+    V.update_style(store, pid, {"video_model": "bytedance/seedance-2"}, owner=True)
+    pairs = G.estimate(store, pid, "keyframes", sid)
+    assert [i["ref_kind"] for i in pairs["items"]] == ["keyframe", "endframe", "endframe"]  # у Seedance — пары
+    V.update_style(store, pid, {"video_model": "minimax/hailuo-3-max"}, owner=True)
+    req = G.request_stage(store, pid, "keyframes", sid)
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    G.run_pending(store)
+    assert V.selected_ref(store, pid, "shot", shots[0]["id"], "endframe") is None
+    req = G.request_stage(store, pid, "video", sid)
+    assert [i["start"] for i in req["estimate"]["items"]] == ["keyframe", "video_tail"]
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    vid.pending_polls = 10**6  # видео плана 1 ещё делается
+    first = G.run_pending(store, poll_timeout=0)
+    assert vid.posts == 1 and first["polling"] and len(first["waiting"]) == 1
+    j2 = next(j for j in G.list_jobs(store, approval_id=req["approval_id"]) if j["target_id"] == shots[1]["id"])
+    assert j2["status"] == "approved" and "жду видео прошлого плана" in j2["error"]
+    vid.pending_polls = 0
+    second = G.run_pending(store, poll_timeout=0)
+    assert vid.posts == 2 and second["resumed"]["finished"]
+    v1 = V.selected_ref(store, pid, "shot", shots[0]["id"], "shot_video")
+    tail = V.selected_ref(store, pid, "shot", shots[1]["id"], "keyframe")
+    assert tail["prompt"] == f"source=video_tail; video_ref={v1['id']}"
+    j2 = G.get_job(store, j2["id"])
+    assert j2["status"] == "done" and j2["params"]["start_ref_id"] == tail["id"] and j2["params"]["mode"] == "start"
+    tail_file = store.get_montage_asset(tail["asset_id"])["file_path"]
+    pixel = cv2.imread(tail_file).mean(axis=(0, 1))  # BGR
+    assert pixel[0] > 150 and pixel[2] < 80  # последний кадр (синий), а не начало видео (красное)
+    assert Path(vid.last_refs[0]).name == Path(tail_file).name

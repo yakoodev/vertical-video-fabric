@@ -240,6 +240,9 @@ AIV_COLUMNS = [
     ("aiv_characters", "constraints", "TEXT NOT NULL DEFAULT ''"),
     # Манекен блокинга: human | disc | quadruped | small (пусто — по карте личности).
     ("aiv_characters", "stand_in", "TEXT NOT NULL DEFAULT ''"),
+    # Раскладка локации для блокинга — одна на все её планы (app/aivideo_layout.py): комната и вещи
+    # из описания / с плиты (Gemini-зрение), {room, objects, source, key}; ключ — описание + плита.
+    ("aiv_locations", "layout_json", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
