@@ -1,5 +1,7 @@
 cryptography>=44,<46
 faster-whisper>=1.1,<2
+# faster-whisper 1.2 зовёт av.open(metadata_errors=…), в av 19 этого аргумента нет — Whisper падает.
+av>=11,<17
 fastapi>=0.115,<1
 httpx>=0.27,<1
 instagrapi>=2.1,<3

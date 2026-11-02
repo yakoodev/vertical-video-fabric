@@ -9,9 +9,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { buildRoom, type RoomBuild, type RoomSpec } from "./room.ts";
+import { buildRoom, cutawayFor, type RoomBuild, type RoomSpec } from "./room.ts";
 import { createCharacter, type Character, type CharacterSpec } from "./character.ts";
-import { mug, poster, primitive, robotDisc, stringLights, type Prop } from "./props.ts";
+import { buttonPanel, display, mug, poster, primitive, robotDisc, stringLights, type Prop } from "./props.ts";
 import { blobTexture } from "./textures.ts";
 import { facingYaw, sampleAngle, sampleKeys, sampleNumber, samplePath, sampleVec, shake, windowWeight, type Key } from "./timeline.ts";
 
@@ -41,6 +41,10 @@ interface ObjectSpec {
   receiveShadow?: boolean;
   light?: LightSpec;
   visible?: Key[];
+  /** Не рисовать, когда камера выше этой высоты (светильник/люк под срезанным потолком в общем плане сверху). */
+  hideAbove?: number;
+  /** Вещь на стене комнаты (back/front/left/right/ceiling): срезана стена по камере — не рисуется и вещь. */
+  wall?: string;
 }
 
 interface LightSpec {
@@ -79,6 +83,8 @@ interface CameraKey extends Key {
   /** Где в кадре центр героя: доля ширины от его края (0.15–0.5), maxPitch — наклон вниз не круче, °. */
   framing?: number;
   maxPitch?: number;
+  /** Кадр «снаружи» (общий план сверху со срезом потолка): камеру не прижимать к стенам комнаты. */
+  free?: boolean;
 }
 
 /** Правило follow-камеры: высота — рост героя × [0.95; 1.05] (уровень плеч/чуть выше головы). */
@@ -92,12 +98,16 @@ export interface SceneSpec {
   height?: number;
   fps?: number;
   duration?: number;
-  environment?: { background?: string; fog?: { color?: string; near?: number; far?: number } | false; exposure?: number; envIntensity?: number; toneMapping?: string; style?: "flat" };
+  environment?: { background?: string; fog?: { color?: string; near?: number; far?: number } | false; exposure?: number; envIntensity?: number; toneMapping?: string;
+    /** flat — блокинг (всё матовое); lowpoly — плоские грани у мебели и стен, матовые цвета (персонажи-игрушки — гладкие). */
+    style?: "flat" | "lowpoly" };
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
   characters?: CharacterSpec[];
   camera?: { fov?: number; near?: number; far?: number; keys: CameraKey[]; margin?: number; clamp?: boolean;
+    /** Заливка от камеры: слабый точечный свет, едет с камерой (без теней). */
+    fill?: { color?: string; intensity?: number; distance?: number; keys?: Key[] };
     keepInFrame?: { ids?: string[]; margin?: number; feet?: boolean }; shake?: { t: number; amp?: number; duration?: number }[] };
   quality?: { shadows?: boolean; shadowSize?: number; antialias?: boolean };
 }
@@ -118,6 +128,7 @@ class Engine {
   textureLoader = new THREE.TextureLoader();
   warnings: string[] = [];
   probe!: CanvasRenderingContext2D;
+  fill: THREE.PointLight | null = null;
 
   load(ref: string): Promise<Loaded> {
     if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
@@ -168,6 +179,12 @@ class Engine {
       this.scene.add(this.room.group);
     }
     for (const l of spec.lights || []) this.addLight(l, this.scene);
+    const fill = spec.camera?.fill;
+    if (fill) {
+      // Через addLight: ключи яркости (keys) и мигание работают так же, как у остальных ламп.
+      this.fill = this.addLight({ type: "point", id: "camera_fill", color: fill.color || "#ffe8d0", intensity: fill.intensity ?? 0.6,
+        distance: fill.distance ?? 4, decay: 2, keys: fill.keys }, this.scene) as THREE.PointLight;
+    }
     for (const c of spec.characters || []) {
       const ch = await createCharacter(c, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
@@ -187,6 +204,19 @@ class Engine {
     probe.height = 48;
     this.probe = probe.getContext("2d", { willReadFrequently: true })!;
     // Шейдеры и тени — заранее, чтобы первый кадр не отличался.
+    if (spec.environment?.style === "lowpoly") {
+      // Лоу-поли: у мебели и декораций плоские грани и матовый цвет; игрушки (toy:*) — гладкие, светящееся — как есть.
+      this.scene.traverse((o: any) => {
+        if (!o.isMesh || String(o.name).startsWith("toy:")) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          if (!m || !("roughness" in m)) continue;
+          m.flatShading = true;
+          m.normalMap = null;
+          if (!(m.metalness > 0.4)) m.roughness = Math.max(m.roughness, 0.8);
+          m.needsUpdate = true;
+        }
+      });
+    }
     if (spec.environment?.style === "flat") {
       // Блокинг: всё матовое, без бликов и металла — ровные цвета, читается форма и место.
       this.scene.traverse((o: any) => {
@@ -295,7 +325,8 @@ class Engine {
       const p = o.params || {};
       const kind = o.primitive || "box";
       prop = kind === "mug" ? mug(p) : kind === "robot_disc" ? robotDisc(p) : kind === "string_lights" ? stringLights(p.points || [[0, 0, 0], [1, 0, 0]], p)
-        : kind === "poster" ? poster(p) : kind === "blob_shadow" ? blobShadow(p) : primitive(kind, p);
+        : kind === "poster" ? poster(p) : kind === "blob_shadow" ? blobShadow(p) : kind === "display" ? display(p)
+        : kind === "button_panel" ? buttonPanel(p) : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
     }
@@ -430,8 +461,11 @@ class Engine {
     const tgt = sampleVec(keys, t, "target") || [0, 1, 0];
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
     const roll = sampleAngle(keys, t, "roll") ?? 0;
-    // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false).
-    if (this.room && cs.clamp !== false) {
+    // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false, и кадров free).
+    let active: CameraKey | undefined;
+    for (const k of cs.keys) if (k.t <= t + 1e-9) active = k;
+    const free = !!(active ?? cs.keys[0]).free;
+    if (this.room && cs.clamp !== false && !free) {
       const m = cs.margin ?? 0.12, b = this.room.bounds;
       const cx = Math.min(b.maxX - m, Math.max(b.minX + m, pos[0]));
       const cy = Math.min(b.height - m, Math.max(0.1, pos[1]));
@@ -453,6 +487,17 @@ class Engine {
       this.camera.updateProjectionMatrix();
     }
     if (cs.keepInFrame) this.keepInFrame(cs.keepInFrame);
+    let cut: string[] = [];
+    if (this.room && this.spec.room?.cutaway) {
+      this.camera.updateMatrixWorld(true);
+      cut = cutawayFor(this.room, this.camera.position);
+    }
+    for (const o of this.objects) {
+      if (o.spec.hideAbove !== undefined && this.camera.position.y > o.spec.hideAbove) o.node.visible = false;
+      if (o.spec.wall && cut.includes(o.spec.wall)) o.node.visible = false;
+    }
+    // Мягкая заливка от камеры (лица в тёмной сцене читаются, тени остаются от основного света).
+    if (this.fill) this.fill.position.copy(this.camera.position).add(new THREE.Vector3(0, 0.15, 0));
   }
 
   /**

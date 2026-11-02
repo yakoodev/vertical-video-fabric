@@ -304,3 +304,47 @@ test("браузер: follow-камера — за плечом на высот�
     await scene.close();
   }
 });
+
+test("браузер: лоу-поли серия — игрушка на костях UAL, срез стены по камере, табло и кнопки, общий план сверху", { skip: !HAVE && "нет браузера/паков/бандла" }, async () => {
+  const spec = {
+    width: 216, height: 384, fps: 30, duration: 2,
+    environment: { style: "lowpoly", background: "#06070a", fog: { color: "#07080c", near: 3, far: 11 } },
+    room: { width: 2, depth: 2.2, height: 2.5, style: "lowpoly", cutaway: true, baseboard: false, hallway: false },
+    lights: [{ type: "hemisphere", intensity: 0.6 }, { type: "spot", id: "main", position: [0, 2.4, 0], target: [0, 0, 0], intensity: 30,
+      castShadow: true, keys: [{ t: 0, intensity: 30 }, { t: 1, intensity: 30 }, { t: 1.04, intensity: 0 }] }],
+    objects: [
+      { id: "rail", primitive: "cylinder", wall: "back", params: { size: [0.04, 1.6], flat: true }, position: [0, 0.9, -1.04], rotation: [0, 0, 90] },
+      { id: "display", primitive: "display", wall: "front", params: { text: "22" }, position: [0, 2.2, 1.08], rotation: [0, 180, 0],
+        state: [{ t: 0, text: "22", glow: 1 }, { t: 1.5, text: "23" }] },
+      { id: "panel", primitive: "button_panel", wall: "right", params: { rows: 6, cols: 2 }, position: [0.98, 1, 0.6], rotation: [0, -90, 0],
+        state: [{ t: 0, glow: 1 }, { t: 1, glow: 0, alarm: true }] },
+      { id: "lamp", primitive: "rounded_box", hideAbove: 2.55, params: { size: [1, 0.03, 0.6], radius: 0.01, emissive: "#fff3dc" }, position: [0, 2.46, 0] },
+    ],
+    characters: [{
+      id: "hero", model: "quaternius-characters/Superhero_Male_FullBody.gltf", height: 1.72, style: "toy",
+      toy: { top: "#f2c21b", coat: true, hood: true, backpack: "#5d6b3a", hair: "#a8452a" },
+      animations: ["quaternius-animations/UAL1_Standard.glb", "quaternius-animations/UAL2_Standard.glb"],
+      position: [0, 0, 0.3], yaw: 0, actions: [{ clip: "Idle_Lantern_Loop", start: 0 }],
+    }],
+    // 0–1 с — за задней стеной (стена срезана), 1–2 с — общий план сверху (потолок и лампа срезаны).
+    camera: { clamp: false, fill: { intensity: 0.8 }, keys: [
+      { t: 0, position: [0.3, 1.65, -1.7], target: [0, 1.2, 1.0], fov: 52 },
+      { t: 1, cut: true, free: true, position: [0, 4.6, 0.7], target: [0, 0.5, 0.3], fov: 50 },
+      { t: 2, free: true, position: [0, 4.4, 0.7], target: [0, 0.5, 0.3], fov: 50 }] },
+  };
+  const scene = await openScene({ bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader" }, spec);
+  try {
+    assert.deepEqual(scene.info.warnings, []);
+    const back = await scene.inspect(0.5);
+    const h = back.characters.hero;
+    assert.ok(Math.abs(h.max[1] - h.min[1] - 1.72) < 0.3, `рост игрушки ${h.max[1] - h.min[1]}`);
+    assert.ok(Math.abs(h.min[1]) < 0.06, `стоит на полу: ${h.min[1]}`);
+    assert.ok(back.camera[2] < -1.1, "камера за задней стеной (clamp выключен)");
+    assert.ok((await scene.render(0.5)).luma > 8, "за срезанной стеной — комната, а не заливка стены");
+    const top = await scene.inspect(1.5);
+    assert.ok(top.camera[1] > 4, "кадр free — камеру не прижало под потолок");
+    assert.ok((await scene.render(1.5)).luma > 3, "сверху видно кабину без потолка");
+  } finally {
+    await scene.close();
+  }
+});

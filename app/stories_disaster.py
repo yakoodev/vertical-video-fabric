@@ -587,7 +587,11 @@ def cover_bases(store: Any, ep: dict) -> list[Path]:
     """Картинки сцен для обложки: начало (герой на месте), та самая ошибка, середина — разные."""
     from app.aivideo_gen import _asset_path
 
-    beats = (ep.get("timeline") or {}).get("beats") or ep.get("beats") or []
+    # 3D-серия: кадры готового 3D-видео (герой за спиной, ошибка, жуткая деталь) — картинок сцен нет.
+    frames = [Path(p) for p in (ep.get("timeline") or {}).get("cover_frames") or [] if Path(p).is_file()]
+    if frames:
+        return frames[:3]
+    beats = [b for b in (ep.get("timeline") or {}).get("beats") or ep.get("beats") or [] if b.get("scene_id")]
     sentences = (ep.get("script") or {}).get("sentences") or []
     mistake = next((i for i, s in enumerate(sentences) if s.get("role") == "mistake"), None)
     order: list[int] = []

@@ -177,6 +177,10 @@ DEFAULT_STYLE = ("Cute 3D toy-like animation, simple characters with big perfect
 FORMAT_STORY, FORMAT_DISASTER = "story", "disaster"
 FORMATS = (FORMAT_STORY, FORMAT_DISASTER)
 FORMAT_LABELS = {FORMAT_STORY: "история", FORMAT_DISASTER: "сериал-катастрофа"}
+# Чем рисуется эпизод: картинки сцен (ИИ) или свой 3D-движок (лоу-поли, 0 ₽).
+ENGINE_IMAGES, ENGINE_3D = "images", "3d"
+ENGINES = (ENGINE_IMAGES, ENGINE_3D)
+ENGINE_LABELS = {ENGINE_IMAGES: "картинки сцен (ИИ)", ENGINE_3D: "3D-движок (лоу-поли, 0 ₽)"}
 # Длина эпизода по жанру: (мин, макс, по умолчанию), секунды.
 DURATIONS = {FORMAT_STORY: (30.0, 75.0, 50.0), FORMAT_DISASTER: (60.0, 90.0, 75.0)}
 DEFAULT_CAPTIONS = {"color": "#ffffff", "active": "#ffffff", "stroke": "#151515", "size": 110, "y": 0.74,
@@ -887,14 +891,30 @@ def episode_format(world: dict, ep: dict | None = None) -> str:
     return value if value in FORMATS else FORMAT_STORY
 
 
+def episode_engine(ep: dict | None) -> str:
+    """Чем рисуется эпизод: ``images`` — картинки сцен (ИИ, по карточке), ``3d`` — свой 3D-движок
+    (app/series3d.py: лоу-поли сцена под озвучку, 0 ₽, без картинок сцен)."""
+    value = str(((ep or {}).get("options") or {}).get("engine") or ENGINE_IMAGES)
+    return value if value in ENGINES else ENGINE_IMAGES
+
+
+def is_3d(ep: dict | None) -> bool:
+    return episode_engine(ep) == ENGINE_3D
+
+
 def create_episode(store: Any, world_id: int, premise: str, duration: Any = None, tone: str = "",
                    options: dict | None = None, requested_by: str = "agent") -> dict:
     """Новый эпизод. Жанр — ``options.format`` или формат мира; у сериала-катастрофы эпизод — часть
-    сериала мира (``options.part``: следующая по счёту, если не задана), длина 60–90 с."""
+    сериала мира (``options.part``: следующая по счёту, если не задана), длина 60–90 с. ``options.engine``:
+    ``3d`` — серия на своём 3D-движке (без картинок сцен, 0 ₽), иначе картинки сцен."""
     world = get_world(store, world_id)
     options = dict(options or {})
     fmt = P._choice(str(options.get("format") or world.get("format") or FORMAT_STORY), FORMATS, "format")
     options["format"] = fmt
+    if options.get("engine") in (None, ""):
+        options.pop("engine", None)
+    else:
+        options["engine"] = P._choice(str(options["engine"]), ENGINES, "engine")
     lo, hi, default = DURATIONS[fmt]
     label = FORMAT_LABELS[fmt]
     premise = P._long_text(premise, 800)

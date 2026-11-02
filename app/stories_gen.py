@@ -445,6 +445,10 @@ def plan_beats(store: Any, episode_id: int) -> dict:
         raise S.StoryError("у эпизода нет сценария")
     world = S.get_world(store, int(ep["world_id"]))
     beats = split_beats(ep["script"])
+    if S.is_3d(ep):
+        # 3D-движок: картинок сцен нет — биты только для времени фраз, HUD и звуков (кадры ставит режиссура
+        # app/series3d.py по словам озвучки при сборке).
+        return _plan_beats_3d(store, episode_id, beats)
     library = S.list_scenes(store, int(world["id"]))
     by_id = {int(s["id"]): s for s in library}
     created: list[dict] = []
@@ -512,6 +516,20 @@ def plan_beats(store: Any, episode_id: int) -> dict:
     S.set_status(store, episode_id, "planned", None, beats=beats, notes=notes, error="")
     return {"ok": True, "episode_id": int(episode_id), "beats": len(beats), "scenes": len({b["scene_id"] for b in beats}),
             "new_scenes": new, "reused_scenes": reused, "notes": notes}
+
+
+def _plan_beats_3d(store: Any, episode_id: int, beats: list[dict]) -> dict:
+    """Биты 3D-серии: без сцен библиотеки (``scene_id`` нет), звук кадра — настоящая запись по тегу сценария."""
+    options = S.sfx_options(store)
+    notes: list[str] = ["3D-движок: сцены не рисуются — кадры, свет и звуки событий ставит режиссура по озвучке"]
+    for beat in beats:
+        tag = (beat.get("spec") or {}).get("sfx") if beat.get("variant") != "alt" else ""
+        hit = S.resolve_sfx(tag, options) if tag else None
+        beat.update({"scene_id": None, "scene_title": "", "scene_new": False, "camera": "",
+                     "sfx": {"tag": tag, "ref": hit["ref"], "label": hit["label"]} if hit else None})
+    S.set_status(store, episode_id, "planned", None, beats=beats, notes=notes, error="")
+    return {"ok": True, "episode_id": int(episode_id), "beats": len(beats), "scenes": 0, "new_scenes": [],
+            "reused_scenes": [], "notes": notes, "engine": S.ENGINE_3D}
 
 
 def _decorate(store: Any, world_id: int, beats: list[dict]) -> None:
@@ -861,6 +879,10 @@ def assemble(store: Any, episode_id: int) -> dict:
     from app.motion import normalize_camera, normalize_layers
 
     ep = S.get_episode(store, episode_id)
+    if S.is_3d(ep):
+        from app import stories_3d
+
+        return stories_3d.assemble(store, episode_id)
     world = S.get_world(store, int(ep["world_id"]))
     ref = S.narration_ref(store, ep)
     if ref is None:

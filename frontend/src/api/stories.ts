@@ -97,6 +97,8 @@ export interface StoryWorld {
 }
 
 export type StoryFormat = "story" | "disaster";
+/** Чем рисуется эпизод: images — картинки сцен (ИИ), 3d — свой лоу-поли 3D-движок (0 ₽, без картинок). */
+export type StoryEngine = "images" | "3d";
 
 export type EpisodeStatus =
   | "new" | "scripted" | "planned" | "awaiting_approval" | "generating" | "assembling" | "done" | "failed" | "cancelled";
@@ -159,7 +161,7 @@ export interface StoryEpisode {
   estimate_rub: number;
   error: string;
   notes: string[];
-  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean; format?: StoryFormat; part?: number; music?: string };
+  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean; format?: StoryFormat; part?: number; music?: string; engine?: StoryEngine };
   created_at: string;
   script?: {
     title: string;
@@ -263,7 +265,7 @@ export const storiesApi = {
 
   createEpisode: (
     worldId: number,
-    body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean; format?: StoryFormat },
+    body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean; format?: StoryFormat; engine?: StoryEngine },
   ) =>
     api.post<StoryEpisode>(`/api/stories/worlds/${worldId}/episodes`, body),
   episode: (id: number) => api.get<StoryEpisode>(`/api/stories/episodes/${id}`),
