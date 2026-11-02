@@ -380,7 +380,7 @@ def elevator_location() -> dict:
         # В темноте — холодная заливка (экран телефона, отсвет фонарика от стали): герой читается по цвету и силуэту,
         # красный аварийный — контровой акцент, а не заливка всего кадра.
         {"type": "point", "id": "emergency_fill", "color": "#c4d3ea", "intensity": 0, "position": [0.3, 1.45, 0.85],
-         "decay": 1.6, "distance": 4, "level": 0.9},
+         "decay": 1.6, "distance": 4, "level": 1.2},
     ]
     return {
         "name": "elevator", "label": "лифт",
@@ -408,7 +408,7 @@ def elevator_location() -> dict:
         "glow": ["ceiling_light", "display", "panel"], "display": "display", "panel": "panel",
         "doors": ["door_l", "door_r"], "focus": "doors", "start_floor": "", "emergency_lamp": "emergency_lamp",
         # Заливка от камеры слабее: глянец дождевика и сталь не дают «прожектор» в центре кадра.
-        "fill_levels": (0.25, 0.3), "fill_color": "#d4e6ff", "phone_light": 1.8,
+        "fill_levels": (0.25, 0.75), "fill_color": "#d4e6ff", "phone_light": 1.8,
     }
 
 
@@ -1128,7 +1128,7 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
                 light["keys"] = _light_keys(float(light["intensity"]), t, light_back)
             amb = by_id[loc["ambient"]]
             amb["keys"] = [{"t": 0, "intensity": amb["intensity"]}, {"t": round(t, 3), "intensity": amb["intensity"]},
-                           {"t": round(t + 0.05, 3), "intensity": 0.16, "ease": "linear"}]
+                           {"t": round(t + 0.05, 3), "intensity": 0.3, "ease": "linear"}]
             emer = by_id[loc["emergency"]]
             emer["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t + 0.7, 3), "intensity": 0},
                             {"t": round(t + 1.0, 3), "intensity": float(emer.get("level") or 0.8), "ease": "linear"}]
@@ -1139,8 +1139,8 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
                 # в полную силу вместе с аварийным.
                 lv = float(ef.get("level") or 1.0)
                 ef["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t, 3), "intensity": 0},
-                              {"t": round(t + 0.04, 3), "intensity": round(lv * 0.5, 3), "ease": "linear"},
-                              {"t": round(t + 0.7, 3), "intensity": round(lv * 0.5, 3)},
+                              {"t": round(t + 0.04, 3), "intensity": round(lv * 0.8, 3), "ease": "linear"},
+                              {"t": round(t + 0.7, 3), "intensity": round(lv * 0.8, 3)},
                               {"t": round(t + 1.0, 3), "intensity": lv, "ease": "linear"}]
                 if light_back:
                     ef["keys"] += [{"t": round(light_back, 3), "intensity": float(ef.get("level") or 1.0)},
