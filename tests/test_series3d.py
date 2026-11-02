@@ -138,9 +138,8 @@ def test_direct_elevator_series():
     assert phone["attach"][0]["to"] == "hero:hand_r" and phone["light"]["type"] == "spot"
     assert all(a["start"] >= tb - 1.5 for a in phone["attach"]), "фонарик — после блэкаута"
     hero = spec["characters"][0]
-    # Жёлтый дождевик парня — сгенерированный меш на скелете Quaternius (опорные точки суставов — в HERO_MESH).
-    assert hero["style"] == "mesh" and hero["mesh"]["model"] == "builtin/hero_raincoat.glb" and "toy" not in hero
-    assert {"pelvis", "Head", "top", "hand_r", "ball_l", "armpit_l", "hem_r"} <= set(hero["mesh"]["joints"])
+    # По умолчанию — игрушка (сгенерированный меш забракован, только явно — см. test_mesh_hero_only_for_raincoat_guy).
+    assert hero["style"] == "toy" and hero["toy"]["top"] == S3.COLORS["yellow"]
     # «Кино»: PBR-поверхности, живые отражения, постобработка; на крупных — глубина резкости.
     env = spec["environment"]
     assert env["style"] == "cinematic" and env["post"]["ao"] > 0 and env["post"]["dof"] and env["reflections"]
@@ -293,8 +292,15 @@ def test_story_episode_with_3d_engine(env, monkeypatch):  # noqa: F811
     assert tl["cover_frames"] and all(Path(p).is_file() for p in tl["cover_frames"])
 
 
-def test_mesh_hero_only_for_raincoat_guy():
+def test_mesh_hero_only_for_raincoat_guy(monkeypatch):
+    monkeypatch.delenv("SERIES3D_HERO_MESH", raising=False)
+    assert S3.mesh_hero(S3.hero_look(DANYA)) is None, "сгенерированный герой — только явно"
+    monkeypatch.setenv("SERIES3D_HERO_MESH", "1")
     assert S3.mesh_hero(S3.hero_look(DANYA)) is S3.HERO_MESH
+    res = S3.direct(LIFT, _words(), look=S3.hero_look(DANYA))
+    hero = res["spec"]["characters"][0]
+    assert hero["style"] == "mesh" and hero["mesh"]["model"] == "builtin/hero_raincoat.glb" and "toy" not in hero
+    assert {"pelvis", "Head", "top", "hand_r", "ball_l", "armpit_l", "hem_r"} <= set(hero["mesh"]["joints"])
     girl = S3.hero_look("a girl Masha, 19, long blond hair, red beanie, blue jacket, black jeans")
     assert S3.mesh_hero(girl) is None
     ch = S3._character(girl, [{"t": 0, "p": [0, 0, 0]}], [], [], [])

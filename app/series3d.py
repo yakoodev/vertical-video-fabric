@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextvars
 import math
+import os
 import re
 from typing import Any
 
@@ -248,8 +249,11 @@ def hero_look(card: str | None) -> dict:
 
 
 def mesh_hero(look: dict) -> dict | None:
-    """Готовый сгенерированный герой под карточку: жёлтый дождевик с капюшоном (парень) — меш HERO_MESH на скелете
-    Quaternius; для остальных карточек — игрушка из деталей (toy)."""
+    """Сгенерированный герой (жёлтый дождевик, парень) — меш HERO_MESH на скелете Quaternius. ВЫКЛЮЧЕН по умолчанию:
+    владелец забраковал лицо и пластику (2026-11-02) — включается явно (``look["mesh"]`` или ``SERIES3D_HERO_MESH=1``)
+    для опытов; по умолчанию — игрушка из деталей (toy)."""
+    if not (look.get("mesh") or os.environ.get("SERIES3D_HERO_MESH") == "1"):
+        return None
     if look.get("female") or not look.get("coat") or look.get("top") != COLORS["yellow"] or look.get("hat"):
         return None
     return HERO_MESH
