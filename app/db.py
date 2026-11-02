@@ -553,6 +553,8 @@ class Database:
                 "timing_offset_sec",
                 "REAL NOT NULL DEFAULT 0",
             )
+            # Проверка вставки Gemini-зрением «реальный человек на фото/видео» (app/ai/people_check.py), JSON.
+            self._ensure_column(conn, "montage_assets", "people_check", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "subtitle_profiles", "outline_width", "REAL NOT NULL DEFAULT 5")
             self._ensure_column(conn, "subtitle_profiles", "shadow", "REAL NOT NULL DEFAULT 1")
             self._reset_legacy_gemini_subtitle_offset(conn)

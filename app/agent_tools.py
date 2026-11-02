@@ -2311,11 +2311,21 @@ def insert_facts(ctx: ToolContext) -> list[dict]:
     время — шкала clip."""
     render = _current_render(ctx)
 
-    def asset_kind(asset_id: Any) -> str | None:
+    def asset_of(asset_id: Any) -> dict:
         try:
-            return ctx.store.get_montage_asset(int(asset_id)).get("kind")
+            return ctx.store.get_montage_asset(int(asset_id))
         except (KeyError, TypeError, ValueError):
-            return None
+            return {}
+
+    def asset_kind(asset_id: Any) -> str | None:
+        return asset_of(asset_id).get("kind")
+
+    def people(asset_id: Any) -> dict:
+        """Реальный человек на файле по кэшу проверки (app/ai/people_check.py) — поле факта для отчёта."""
+        check = asset_of(asset_id).get("people_check") if asset_id is not None else None
+        if isinstance(check, dict) and check.get("real_person") is True:
+            return {"real_person": str(check.get("what") or "реальный человек")}
+        return {}
 
     out = []
     for layer in _layers_of(render):
@@ -2329,12 +2339,13 @@ def insert_facts(ctx: ToolContext) -> list[dict]:
             "gif" if src.lower().split("?")[0].endswith(".gif") else "image"))
         out.append({"what": f"слой {layer.get('type')} {layer.get('id')}", "kind": kind,
                     "at": round(_num(layer.get("start"), 0.0) or 0.0, 2), "end": round(_num(layer.get("end"), 0.0) or 0.0, 2),
-                    "id": str(layer.get("id") or "")})
+                    "id": str(layer.get("id") or ""), **people(props.get("asset_id"))})
     for index, ins in enumerate(render.get("inserts") or []):
         kind = asset_kind(ins.get("asset_id")) or "image"
         at = _num(ins.get("at"), 0.0) or 0.0
         out.append({"what": f"вставка {ins.get('mode') or 'pip'} #{index}", "kind": kind, "at": round(at, 2),
-                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}"})
+                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}",
+                    **people(ins.get("asset_id"))})
     out.sort(key=lambda f: f["at"])
     return out
 
@@ -2975,7 +2986,9 @@ def h_search_web_images(_ctx: ToolContext, args: dict) -> dict:
             {k: r.get(k) for k in ("url", "title", "source", "license", "width", "height") if r.get(k) is not None}
             for r in found.get("results") or []
         ],
-        "hint": "понравившуюся картинку добавь в библиотеку через add_image_from_url, потом ставь слоем image с asset_id",
+        "hint": ("понравившуюся картинку добавь в библиотеку через add_image_from_url, потом ставь слоем image с "
+                 "asset_id; фото/видео реальных людей при запрете (плейбук, заказ) add_image_from_url не примет — "
+                 "бери рисованные, мультяшные, аниме, животных"),
     }
 
 
@@ -2998,8 +3011,57 @@ def h_add_image_from_url(ctx: ToolContext, args: dict) -> dict:
             # Поиск по названию приносит мимо (на «Олег Монгол» — фото БелАЗа).
             ctx.store.delete_montage_asset(asset["id"])
             raise ToolError(f"картинка не про «{query[:60]}» — возьми другого кандидата из search_web_images")
-    return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
-            "width": asset.get("width"), "height": asset.get("height")}
+    try:
+        people = people_gate(ctx, asset)
+    except ToolError:
+        ctx.store.delete_montage_asset(asset["id"])  # скачанное под запрет в библиотеке не держим
+        raise
+    out = {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
+           "width": asset.get("width"), "height": asset.get("height")}
+    return {**out, **people}
+
+
+# Плейбуки, где владелец запретил фото реальных людей на вставках (docs/playbooks: «только мемы без фото
+# реальных людей»), и такой же запрет словами в запросе.
+NO_REAL_PEOPLE_PLAYBOOKS = {"vtuber-story", "stream-shorts", "stream-horizontal"}
+NO_REAL_PEOPLE_RE = re.compile(
+    r"без\s+(?:фото(?:графий)?\s+|видео\s+)?(?:реальн\w*|живых|настоящих)\s+люд|без\s+(?:фото(?:графий)?\s+)?людей"
+    r"|no\s+real\s+people",
+    re.IGNORECASE,
+)
+
+
+def real_people_rule(ctx: ToolContext) -> str | None:
+    """Почему в этом ходе нельзя вставлять фото/видео реальных людей (плейбук или слова владельца) — или None."""
+    if ctx.playbook and str(ctx.playbook).lower() in NO_REAL_PEOPLE_PLAYBOOKS:
+        return f"плейбук {ctx.playbook}: только мемы без фото реальных людей"
+    if ctx.request and NO_REAL_PEOPLE_RE.search(ctx.request):
+        return "владелец в заказе: без фото реальных людей"
+    return None
+
+
+def people_gate(ctx: ToolContext, asset: dict) -> dict:
+    """Gemini-зрение: реальный человек на ассете? (кэш в ассете, app/ai/people_check.py). Запрещено в этом
+    ходе (``real_people_rule``) — ToolError с объяснением; иначе — поля для ответа (предупреждение/пометка).
+
+    QA 4 (клип 896): «angry monitor» — гифка с офисным работником, «sleeping student» — фото студента, при
+    заказе «без фото реальных людей»; проверка релевантности их пропустила."""
+    from app.ai.people_check import check_asset, describe
+
+    if asset.get("kind") == "audio":
+        return {}
+    check = check_asset(ctx.store, asset)
+    if check.get("real_person") is None:
+        return {"people_check": check.get("skipped") or "не проверено"}
+    if not check["real_person"]:
+        return {"people_check": "реальных людей нет" + (f" ({check['what']})" if check.get("what") else "")}
+    rule = real_people_rule(ctx)
+    if rule:
+        raise ToolError(f"на вставке #{asset['id']} {describe(check)} — {rule}. Возьми рисованную/мультяшную "
+                        "картинку, аниме или животных (другой кандидат search_web_images / другой файл библиотеки)")
+    return {"people_check": describe(check),
+            "people_warning": (f"на вставке {describe(check)}: если заказ «без фото реальных людей» — замени; "
+                               "в отчёте назови это прямо")}
 
 
 MAX_UPLOAD_IMAGE_BYTES = 12 * 1024 * 1024
@@ -5296,16 +5358,21 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         args = {**args, "at": round(on_word["t"] + float(args.get("word_offset") or 0), 3)}
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
+    people = people_gate(ctx, asset)  # реальный человек при запрете — отказ до записи
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
              if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
     out: dict = {"ok": True, "inserts": fresh["inserts"]}
+    if people.get("people_check"):
+        out["people_check"] = people["people_check"]
     if on_word:
         out["on_word"] = (f"на слове «{on_word['word']}» (lines[{on_word['line']}].words[{on_word['word_i']}])"
                           + (f"; {on_word['note']}" if on_word.get("note") else ""))
     warnings = [note] if note else []
+    if people.get("people_warning"):
+        warnings.append(people["people_warning"])
     twice = [i for i in inserts if int(i.get("asset_id") or -1) == int(asset["id"]) and i.get("mode") != "sound"]
     if twice and mode != "sound":
         # QA 02.11 (клип 892): одна и та же гифка на 6.7 и 13.5 с.

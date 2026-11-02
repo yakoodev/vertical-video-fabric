@@ -239,3 +239,109 @@ def test_auto_edit_tool_takes_playbook_from_context_and_keeps_agent_camera(tmp_p
     assert [round(k["t"], 2) for k in render["camera"]] == [3.0, 3.2]  # камера агента на месте
     assert not [l for l in render["layers"] if l["id"] in ("auto_boom", "auto_whoosh")]
 
+
+# ------------------------------------------------------------------ 4. реальные люди на вставках
+
+
+class _FakeVision:
+    """Gemini-зрение: отвечает по подписи ассета (как будто смотрит на кадр)."""
+
+    calls = 0
+    answers: dict[str, dict] = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    def generate_content(self, model, payload):
+        type(self).calls += 1
+        prompt = payload["contents"][0]["parts"][0]["text"]
+        assert "РЕАЛЬНЫЙ человек" in prompt and any("inlineData" in p for p in payload["contents"][0]["parts"])
+        import json
+
+        answer = type(self).answers.get("current", {"real_person": False, "what": "мультяшный таракан"})
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps(answer, ensure_ascii=False)}]}}]}
+
+
+def _vision(monkeypatch, real: bool, what: str):
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key", raising=False)
+    monkeypatch.setattr("app.ai.people_check.GeminiClient", _FakeVision)
+    _FakeVision.calls = 0
+    _FakeVision.answers = {"current": {"real_person": real, "what": what}}
+
+
+def _image_asset(store, tmp_path, label="angry monitor"):
+    from PIL import Image
+
+    path = tmp_path / f"{label.replace(' ', '_')}.png"
+    Image.new("RGB", (64, 48), (200, 120, 40)).save(path)
+    return store.create_montage_asset(kind="image", label=label, file_path=str(path), width=64, height=48)
+
+
+def test_people_check_is_cached_in_asset_and_skipped_without_key(tmp_path, monkeypatch):
+    from app.ai import people_check
+    from app.settings import settings
+
+    store, _plan_ = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path)
+    monkeypatch.setattr(settings, "gemini_api_key", "", raising=False)
+    skipped = people_check.check_asset(store, asset)
+    assert skipped["real_person"] is None and "нет ключа Gemini" in skipped["skipped"]
+    assert store.get_montage_asset(asset["id"])["people_check"] is None  # пропуск не кэшируется
+
+    _vision(monkeypatch, True, "офисный работник бьёт компьютер")
+    first = people_check.check_asset(store, asset)
+    assert first == {"real_person": True, "what": "офисный работник бьёт компьютер"} and _FakeVision.calls == 1
+    cached = store.get_montage_asset(asset["id"])
+    assert cached["people_check"]["real_person"] is True
+    again = people_check.check_asset(store, cached)
+    assert again["cached"] and _FakeVision.calls == 1  # второй раз модель не зовём
+
+
+def test_add_insert_refuses_real_person_under_playbook(tmp_path, monkeypatch):
+    store, plan = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path, "sleeping student")
+    _vision(monkeypatch, True, "спящий студент за партой")
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST, playbook="vtuber-story")
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": asset["id"], "at": 2.0, "duration": 2.0, "mode": "full"})
+    assert not ok and "реальный человек (спящий студент за партой)" in out["error"] and "рисованную" in out["error"]
+    assert not store.get_clip_plan(plan["id"])["render_settings"].get("inserts")
+    # Без запрета (нет плейбука и слов владельца) — встаёт, но с предупреждением.
+    free = ToolContext(store=store, clip_plan_id=plan["id"], request="вставь мем на 2 с")
+    out, ok = run_tool(free, "add_insert", {"asset_id": asset["id"], "at": 2.0, "duration": 2.0, "mode": "full"})
+    assert ok and any("реальный человек" in w for w in out["warnings"]) and _FakeVision.calls == 1  # кэш
+    # Рисованное — можно и при плейбуке.
+    cartoon = _image_asset(store, tmp_path, "cartoon cockroach")
+    _vision(monkeypatch, False, "мультяшный таракан")
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": cartoon["id"], "at": 5.0, "duration": 2.0, "mode": "full"})
+    assert ok and out["people_check"].startswith("реальных людей нет")
+
+
+def test_add_image_from_url_drops_real_person_when_order_forbids(tmp_path, monkeypatch):
+    store, plan = _plan(tmp_path, monkeypatch)
+    made = {}
+
+    def fake_add_from_url(store_, url, label="", description=""):
+        made["asset"] = _image_asset(store_, tmp_path, label or "angry monitor")
+        return made["asset"]
+
+    monkeypatch.setattr("app.ai.asset_generate.add_from_url", fake_add_from_url)
+    _vision(monkeypatch, True, "офисный работник у монитора")
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST.replace(
+        "Мат заглушить", "Вставки — только мемы/картинки без фото реальных людей. Мат заглушить"))
+    out, ok = run_tool(ctx, "add_image_from_url", {"url": "https://example.com/a.gif", "label": "angry monitor"})
+    assert not ok and "без фото реальных людей" in out["error"]
+    with pytest.raises(KeyError):
+        store.get_montage_asset(made["asset"]["id"])  # скачанное под запрет удалено
+
+
+def test_lint_notes_real_person_inserts(tmp_path, monkeypatch):
+    from app.quality_lint import people_findings
+
+    store, _plan_ = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path)
+    store.update_montage_asset(asset["id"], people_check={"real_person": True, "what": "офисный работник"})
+    found = people_findings(store, {"inserts": [{"asset_id": asset["id"], "at": 12.97, "mode": "full"}]})
+    assert len(found) == 1 and "реальный человек (офисный работник)" in found[0]["message"]
+
