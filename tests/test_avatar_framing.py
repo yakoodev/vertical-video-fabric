@@ -204,6 +204,55 @@ def test_scene_cuts_in_window_are_source_seconds(tmp_path):
     assert cuts and abs(cuts[0] - 3.0) < 0.1
 
 
+def _scene_change_source(path, dissolve: float):
+    # Сцена A (0–2.6 с): «аватар» белым слева, справа «ютуб» с бегущей полосой; сцена B: наоборот.
+    # Смена в 2.0 с: наплыв ``dissolve`` с (xfade) или жёсткая склейка (0).
+    def scene(left: bool) -> str:
+        x = 0 if left else 160
+        other = 160 if left else 0
+        return (f"color=c=0x202020:s=320x180:r=30:d=4,drawbox=x={x}:y=0:w=160:h=180:color=white:t=fill,"
+                f"drawbox=x='{other}+mod(t*60\\,140)':y=60:w=20:h=60:color=red:t=fill")
+    if dissolve:
+        graph = f"{scene(True)}[a];{scene(False)}[b];[a][b]xfade=transition=fade:duration={dissolve}:offset=2.0"
+    else:
+        graph = f"{scene(True)}[a];{scene(False)}[b];[a]trim=0:2[a2];[b]trim=0:2,setpts=PTS-STARTPTS[b2];[a2][b2]concat"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-filter_complex", graph, "-pix_fmt", "yuv420p", "-c:v", "libx264",
+                    str(path)], check=True)
+
+
+def test_avatar_boundary_on_dissolve_is_its_middle_not_its_end(tmp_path):
+    # QA 02.11 (клип 895): смена сцены в стриме — наплыв ≈0.5 с, граница мест стояла на его конце
+    # (склейка ffmpeg), и рамка старого места 0.35 с показывала чужую сцену.
+    _require_ffmpeg()
+    from app.scene_cuts import transition_span
+
+    video = tmp_path / "dissolve.mp4"
+    _scene_change_source(video, 0.5)
+    span = transition_span(str(video), 0.5, 3.5)
+    assert span and not span["hard"]
+    assert 1.95 <= span["start"] <= 2.12 and 2.38 <= span["end"] <= 2.55 and span["mid"] == pytest.approx(2.25, abs=0.06)
+    assert transition_span(str(video), 0.5, 3.5, hint=2.5) == span  # склейка ffmpeg на конце — та же смена
+    hard = tmp_path / "hard.mp4"
+    _scene_change_source(hard, 0)
+    cut = transition_span(str(hard), 0.5, 3.5)
+    assert cut and cut["hard"] and cut["start"] == pytest.approx(2.0, abs=0.04)
+    left, right = {"x0": 0.0, "y0": 0.0, "x1": 0.5, "y1": 1.0}, {"x0": 0.5, "y0": 0.0, "x1": 1.0, "y1": 1.0}
+    places = avatar_box.place_avatar([left, right], [1.0, 3.2])["places"]
+    snapped = avatar_box.refine_boundaries(places, [2.5])  # ffmpeg увидел только конец наплыва
+    assert snapped[1]["src_from"] == 2.5
+    finder = lambda lo, hi, hint: transition_span(str(video), lo, hi, hint=hint)  # noqa: E731
+    settled = avatar_box.settle_transitions(snapped, finder)
+    assert settled[0]["src_to"] == settled[1]["src_from"] == pytest.approx(2.25, abs=0.06)
+    assert settled[1]["transition"]["start"] < settled[1]["src_from"] < settled[1]["transition"]["end"]
+    # Наплыв ffmpeg не нашёл вовсе (порог на соседние кадры) — смену находим сами между кадрами мест.
+    assert avatar_box.settle_transitions(places, finder)[1]["src_from"] == pytest.approx(2.25, abs=0.06)
+    # Жёсткая склейка — граница на первом кадре новой сцены.
+    hard_finder = lambda lo, hi, hint: transition_span(str(hard), lo, hi, hint=hint)  # noqa: E731
+    assert avatar_box.settle_transitions(places, hard_finder)[1]["src_from"] == pytest.approx(2.0, abs=0.04)
+    # Смены нет — граница как была.
+    assert avatar_box.settle_transitions(snapped, lambda lo, hi, hint: None)[1]["src_from"] == 2.5
+
+
 def test_layout_cams_normalize_and_spans_per_part():
     left = {"x": 0.1, "y": 0.0, "w": 0.45, "h": 1.0}
     right = {"x": 0.7, "y": 0.4, "w": 0.27, "h": 0.57}

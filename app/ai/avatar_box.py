@@ -245,6 +245,36 @@ def refine_boundaries(places: list[dict], cuts: list[float]) -> list[dict]:
     return out
 
 
+def settle_transitions(places: list[dict], finder: Any) -> list[dict]:
+    """Граница мест по самой смене сцены: ``finder(lo, hi, hint)`` → ``{start, end, mid, hard}``
+    (``scene_cuts.transition_span``) между соседними кадрами мест; ``hint`` — склейка из
+    ``refine_boundaries``.
+
+    QA 02.11 (клип 895): в стриме сцена сменилась наплывом ≈0.4 с, граница встала на его конец
+    (склейку ffmpeg) — рамка старого места 0.35 с показывала ютуб. Жёсткая склейка — граница на первом
+    кадре новой сцены; наплыв — на его середине: каждая рамка видит чужую сцену не больше чем
+    наполовину прозрачной и только половину наплыва (кросс-фейд рамок дал бы не меньше чужого)."""
+    out = [dict(p) for p in places]
+    for left, right in zip(out, out[1:]):
+        lo = (left.get("frame_times") or [left.get("src_to")])[-1]
+        hi = (right.get("frame_times") or [right.get("src_from")])[0]
+        if lo is None or hi is None or float(hi) <= float(lo):
+            continue
+        hint = float(right["src_from"]) if right.get("from_shot_cut") and right.get("src_from") is not None else None
+        try:
+            span = finder(float(lo), float(hi), hint)
+        except Exception:  # noqa: BLE001 - не нашли — граница остаётся, где была
+            span = None
+        if not span or not (float(lo) < float(span["start"]) <= float(span["end"]) < float(hi)):
+            continue
+        at = round(float(span["start"] if span.get("hard") else span["mid"]), 3)
+        left["src_to"], right["src_from"] = at, at
+        right["from_shot_cut"] = True
+        if not span.get("hard"):
+            right["transition"] = {"start": float(span["start"]), "end": float(span["end"])}
+    return out
+
+
 def _boundary_cuts(store: Any, source: dict, local: str, places: list[dict]) -> list[float]:
     """Склейки планов исходника между кадрами соседних мест: кэш источника (get_shots), иначе
     ffmpeg только по этим окнам (секунды, не весь стрим)."""
@@ -326,6 +356,10 @@ def detect_avatar(store: Any, clip_plan_id: int, client: Any = None, *, refresh:
             places = refine_boundaries(places, _boundary_cuts(store, source, local, places))
         except Exception:  # noqa: BLE001 - склейку не нашли — граница посередине между кадрами
             pass
+        from app.scene_cuts import transition_span
+
+        # Наплыв ffmpeg-склейка ловит только концом (или не ловит совсем) — граница по самой смене.
+        places = settle_transitions(places, lambda lo, hi, hint: transition_span(local, lo, hi, hint=hint))
     spans = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
     if places and spans:
         # Первое и последнее место — до краёв клипа (кадры берутся не с самых краёв).
