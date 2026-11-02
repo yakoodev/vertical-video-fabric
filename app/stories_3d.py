@@ -60,8 +60,15 @@ def _pack_item(ref: str) -> dict | None:
 
 
 def music_mode(world: dict, ep: dict) -> str:
-    """Опция ``music`` эпизода (иначе мира): ``none`` — без фона, ``auto``/пусто — фон есть."""
-    return str((ep.get("options") or {}).get("music") or world.get("music") or "").strip().lower()
+    """Опция ``music`` эпизода (иначе мира): ``none`` — без фона, ``auto``/пусто — фон есть. У мира-катастрофы
+    ``none`` стоит по умолчанию (2D: музыку ставят в приложении площадки) — тревожный фон 3D-серии он не выключает,
+    выключить — ``music: none`` у эпизода."""
+    ep_mode = str((ep.get("options") or {}).get("music") or "").strip().lower()
+    if ep_mode:
+        return ep_mode
+    if str(world.get("format") or "") == "disaster":
+        return ""
+    return str(world.get("music") or "").strip().lower()
 
 
 def music_beds() -> list[dict]:

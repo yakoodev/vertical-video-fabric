@@ -806,7 +806,7 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
                            right, s * 0.36 * big)
                 tgt = [look[0], max(look[1], pos[1] - 0.6), look[2]]
                 end = _add(pos, _norm(_sub(tgt, pos)), 0.14)
-                cands.append({"position": pos, "target": tgt, "fov": FOV, "end": end, "end_target": tgt, "free": False})
+                cands.append({"position": pos, "target": tgt, "fov": round(FOV * (1 + (big - 1) * 0.4), 1), "end": end, "end_target": tgt, "free": False})
     elif kind == "face":
         # Реакция: лицо героя крупно, спереди или в три четверти (что встаёт внутри декорации).
         head = [hero[0], head_y, hero[2]]
@@ -1129,8 +1129,13 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
             emer["flicker"] = [{"t": round(t + 0.7, 3), "amount": 0.7, "duration": 0.6}]
             if by_id.get("emergency_fill"):
                 ef = by_id["emergency_fill"]
-                ef["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t + 0.7, 3), "intensity": 0},
-                              {"t": round(t + 1.0, 3), "intensity": float(ef.get("level") or 1.0), "ease": "linear"}]
+                # Сразу после «погас» — тусклый отсвет (кадр не уходит в чёрное: проверка чёрных кадров), потом —
+                # в полную силу вместе с аварийным.
+                lv = float(ef.get("level") or 1.0)
+                ef["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t, 3), "intensity": 0},
+                              {"t": round(t + 0.04, 3), "intensity": round(lv * 0.5, 3), "ease": "linear"},
+                              {"t": round(t + 0.7, 3), "intensity": round(lv * 0.5, 3)},
+                              {"t": round(t + 1.0, 3), "intensity": lv, "ease": "linear"}]
                 if light_back:
                     ef["keys"] += [{"t": round(light_back, 3), "intensity": float(ef.get("level") or 1.0)},
                                    {"t": round(light_back + 0.2, 3), "intensity": 0}]

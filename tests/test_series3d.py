@@ -315,3 +315,11 @@ def test_builtin_model_checked(tmp_path):
     spec["characters"][0]["mesh"] = {"model": "builtin/hero_raincoat.glb"}
     with pytest.raises(SceneSpecError):
         validate_spec(spec, check_assets=False)
+
+
+def test_bed_on_by_default_for_new_disaster_world():
+    # Новый мир-катастрофа получает music: none (для 2D) — у 3D-серии фон всё равно есть; эпизод может выключить.
+    world = {"format": "disaster", "music": "none"}
+    assert S3D.music_mode(world, {"options": {}}) == ""
+    assert S3D.music_mode(world, {"options": {"music": "none"}}) == "none"
+    assert S3D.music_mode({"format": "story", "music": "none"}, {"options": {}}) == "none"
