@@ -810,6 +810,10 @@ def run_agent(
             body = _response_object(result)
             if ok and _is_mutating(name):
                 last_change_body = body
+                try:
+                    agent_tools.apply_playbook_defaults(ctx)  # vtuber-story: без стоп-кадра в конце (QA 5)
+                except Exception:  # noqa: BLE001 - умолчание плейбука не повод сорвать ход
+                    pass
             if isinstance(result, ImageResult):
                 data, mime = _shrink_frame(result)
                 body["note"] = "кадр приложен следующей картинкой"
@@ -985,7 +989,8 @@ def clip_check(ctx: ToolContext) -> dict | None:
     out["note"] = ("свежая проверка после правки: lint_warnings > 0 — в отчёте НЕ пиши «lint пройден»/«без "
                    "предупреждений»; вставки называй по kind (image — картинка, gif — гифка, video — видео); "
                    "censored — что заглушила цензура, accents — на каком слове ПО ФАКТУ стоит звук, real_person у "
-                   "вставки — на ней реальный человек: в отчёте скажи об этом прямо")
+                   "вставки — на ней реальный человек: в отчёте скажи об этом прямо; avatar_face_whole «нет» — лицо аватара "
+                   "срезано краем кадра (avatar_face_cut): не пиши «лицо в кадре», исправь рамку")
     return out
 
 
@@ -1018,6 +1023,17 @@ def report_facts(ctx: ToolContext) -> dict:
     if accents:
         out["accents"] = [{"t": a["t"], "word": a["word"], "sound": str(a.get("asset") or "").rsplit("/", 1)[-1]}
                           for a in accents[:MAX_ACCENT_FACTS]]
+    try:
+        faces = agent_tools.avatar_face_report(ctx.store, ctx.plan_id)
+    except Exception:  # noqa: BLE001 - без лица аватара — факта нет
+        faces = []
+    if faces:
+        # QA 5 (клип 897): «проверил глазами — лицо в кадре», а правый глаз за кадром 20 с.
+        out["avatar_face_whole"] = "да" if all(f["face_whole"] for f in faces) else "нет"
+        cut = [f for f in faces if not f["face_whole"]]
+        if cut:
+            out["avatar_face_cut"] = [{"from_t": f["from_t"], "to_t": f["to_t"],
+                                       "cut": [agent_tools._SIDE_RU.get(s, s) for s in f["cut"]]} for f in cut[:4]]
     return out
 
 
@@ -1026,6 +1042,10 @@ _SOUND_WORDS_RE = re.compile(r"звук|удар|акцент|boom|бум|sfx|э
 _MUTE_WORDS_RE = re.compile(r"заглуш|цензур|запик|глуш|звёздочк|звездочк", re.IGNORECASE)
 _REAL_WORDS_RE = re.compile(r"реальн\w*\s+(?:человек|люд)|фото\w*\s+(?:человека|людей)|живого человека", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё*]+(?:-[A-Za-zА-Яа-яЁё*]+)*")
+# Отчёт признаёт срез лица / утверждает, что лицо в кадре (QA 5: «Проверил глазами — лицо в кадре» при срезе).
+_FACE_CUT_RE = re.compile(r"(?:лиц|глаз)\w*[^.\n]{0,40}?(?:срез|обрез|режет|за кадр|не целиком|не влез)"
+                          r"|(?:срез|обрез)\w*[^.\n]{0,40}?(?:лиц|глаз)", re.IGNORECASE)
+_FACE_OK_RE = re.compile(r"лиц\w*\s+(?:\w+\s+){0,2}?(?:в кадре|целиком|видно)", re.IGNORECASE)
 
 
 def _mentions(sentence: str, word: str) -> bool:
@@ -1061,6 +1081,14 @@ def report_fact_gaps(text: str, check: dict | None) -> list[str]:
         sound_sentences = [x for x in sentences if _SOUND_WORDS_RE.search(x)]
         if not any(_mentions(x, word) for x in sound_sentences):
             gaps.append(f"звук-акцент {accent.get('sound') or ''} по факту на {accent['t']:g} с — на слове «{word}»")
+    if check.get("avatar_face_whole") == "нет":
+        cut = check.get("avatar_face_cut") or []
+        where = "; ".join(f"{c['from_t']:g}–{c['to_t']:g} с ({', '.join(c.get('cut') or [])})" for c in cut[:3])
+        owned = any(_FACE_CUT_RE.search(x) for x in sentences)
+        claims_ok = any(_FACE_OK_RE.search(x) and not _FACE_CUT_RE.search(x) for x in sentences)
+        if not owned or claims_ok:
+            gaps.append("лицо аватара НЕ целиком в кадре" + (f": срезано на {where}" if where else "")
+                        + " — рамка/крупность режут лицо")
     for fact in check.get("inserts") or []:
         if fact.get("real_person") and not any(_REAL_WORDS_RE.search(x) for x in sentences):
             gaps.append(f"на вставке {fact.get('at', 0):g}–{fact.get('end', 0):g} с ({fact.get('what')}) — реальный "

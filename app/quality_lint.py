@@ -1279,6 +1279,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
             except Exception:  # noqa: BLE001 - без лица аватара — прежние проверки
                 faces = []
             findings += image_card_findings(store, layers, duration, faces=faces)
+        findings += avatar_face_findings(store, int(clip_plan_id), rs)
 
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
@@ -1442,6 +1443,58 @@ def _captions_band(layers: list[dict], a: float, b: float) -> tuple | None:
     return None
 
 
+CAPTION_TEXT_SHARE = 0.6     # строка субтитров по 1–3 слова — средние 60 % ширины кадра
+CAPTION_COVER_SHARE = 0.15   # картинка поверх субтитров закрывает столько их полосы — уже не читаются
+
+
+def _layer_order(layers: list[dict], layer: dict) -> tuple[int, int]:
+    """Порядок отрисовки слоя (как компоновщик: track, потом место в списке): больше — поверх."""
+    index = next((i for i, l in enumerate(layers) if l is layer or (layer.get("id") and l.get("id") == layer.get("id"))),
+                 len(layers))
+    return int(_num(layer.get("track"), 0.0)), index
+
+
+def _covered_captions(layers: list[dict], layer: dict, start: float, end: float, faces: list[dict] | None,
+                      hooks: list[dict], duration: float | None) -> dict | None:
+    """Картинка/видео ПОВЕРХ субтитров (QA 5, клип 897: стикер-таракан во весь кадр закрыл «какая-то лезет»):
+    находка с подсказкой — субтитры выше картинкой (track) или место карточки мимо субтитров, лица и хука."""
+    from app.promo_lint import layer_rect
+
+    me = _layer_order(layers, layer)
+    for caps in layers:
+        if caps.get("type") != "captions" or caps.get("hidden") or _layer_order(layers, caps) > me:
+            continue
+        a, b = max(start, _num(caps.get("start"))), min(end, _num(caps.get("end"), duration or end))
+        if b - a < 0.1:
+            continue
+        props = caps.get("props") if isinstance(caps.get("props"), dict) else {}
+        half = 1.5 * _num(props.get("size"), 80.0)
+        cy = _num(caps.get("y"), 0.72) * H
+        band = ((1 - CAPTION_TEXT_SHARE) / 2 * W, cy - half, (1 + CAPTION_TEXT_SHARE) / 2 * W, cy + half)
+        box = layer_rect(layer, (a + b) / 2)
+        if not box:
+            continue
+        share = _rect_overlap(box, band) / max(1.0, (band[2] - band[0]) * (band[3] - band[1]))
+        if share < CAPTION_COVER_SHARE:
+            continue
+        lid = str(layer.get("id") or layer.get("type"))
+        what = "картинка" if layer.get("type") == "image" else "видео"
+        above = int(_num(layer.get("track"), 0.0)) + 1
+        fix = f"субтитры поверх неё: update_layer {caps.get('id')} patch {{\"track\": {above}}}"
+        if box[2] - box[0] < IMAGE_FULL_SHARE * W:
+            avoid = [band, *[tuple(z["rect"]) for z in faces or []
+                             if min(b, float(z["t1"])) - max(a, float(z["t0"])) > 0]]
+            avoid += [hb for hb in (layer_rect(h, (a + b) / 2) for h in hooks
+                                    if min(b, _num(h.get("end"), b)) - max(a, _num(h.get("start"))) > 0) if hb]
+            spot = card_spot(box, avoid)
+            if spot:
+                fix = (f"поставь мимо субтитров, лица и хука: x={spot['x']} y={spot['y']}, props.w ≤ {spot['w_px']}; "
+                       f"или {fix}")
+        return _finding("montage", "warn", f"{what} {lid} на {a:.1f}–{b:.1f} с закрывает субтитры {caps.get('id')} "
+                                           f"({share:.0%} их полосы) — слова не читаются", fix, t=a, until=b, layer=lid)
+    return None
+
+
 def card_spot(rect: tuple, avoid: list[tuple]) -> dict | None:
     """Место карточки ``rect`` (px) рядом с текущим, где она не трогает ``avoid`` (лицо, хук, субтитры):
     ``{x, y, w_px}`` (центр — доли кадра, ширина ≤ 40 % кадра) или None — места нет."""
@@ -1522,6 +1575,9 @@ def image_card_findings(store: Any, layers: list[dict], duration: float | None =
         lid = str(layer.get("id") or kind)
         what = "картинка" if kind == "image" else "видео"
         full = width >= IMAGE_FULL_SHARE * W
+        covered = _covered_captions(visible, layer, start, end, faces, hooks, duration)
+        if covered:
+            out.append(covered)
         hook_boxes: list[tuple] = []
         for hook in hooks:
             a, b = max(start, _num(hook.get("start"))), min(end, _num(hook.get("end"), duration or 0.0))
@@ -1602,6 +1658,22 @@ def image_card_findings(store: Any, layers: list[dict], duration: float | None =
                                     "хук закрыт картинкой, картинка — текстом", fix, t=a, until=b, layer=lid))
                 break
     return out
+
+
+def avatar_face_findings(store: Any, clip_plan_id: int, rs: dict) -> list[dict]:
+    """avatar_full: лицо аватара (бокс detect_avatar) выходит за кадр — рамка или крупность режут лицо (QA 5,
+    клип 897: правый глаз за кадром 20 с, lint молчал)."""
+    try:
+        from app.agent_tools import _SIDE_RU, avatar_face_report
+
+        rows = avatar_face_report(store, clip_plan_id, rs)
+    except Exception:  # noqa: BLE001 - без лица — проверки нет
+        return []
+    return [_finding("montage", "warn", f"лицо аватара срезано краем кадра на {r['from_t']:.1f}–{r['to_t']:.1f} с "
+                                        f"({', '.join(_SIDE_RU.get(s, s) for s in r['cut'])})",
+                     "set_layout mode avatar_full cams \"auto\" — рамка и крупность встанут по лицу; рамку руками — "
+                     "шире к лицу или video_scale меньше", t=r["from_t"], until=r["to_t"])
+            for r in rows if not r["face_whole"]]
 
 
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:

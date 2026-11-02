@@ -453,11 +453,14 @@ def test_chat_beside_head_is_cut_from_the_side_not_the_top():
     chat = {"x0": 0.85, "y0": 0.0, "x1": 1.0, "y1": 0.55}  # колонка чата справа, рядом с головой, не над лицом
     (x0, y0, x1, y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [chat], face)
     # Раньше: верх до 0.55 (срез по лбу — дешевле по площади). Теперь макушка цела, чат убран справа.
-    assert sides == ["right"] and y0 == 0.42 and x1 == 0.85
-    # Чат прямо над головой (боком не убрать, не задев лицо) — как в QA 3: срез сверху, лицо целиком.
+    # QA 5 (клип 897): не ближе запаса к лицу — край на зоне лица 0.855 (полоска чата 0.85–0.855 остаётся); верх —
+    # только запас PAD до макушки модели (0.45), голова цела.
+    zone = avatar_box.face_zone(face)
+    assert "right" in sides and y0 <= model["y0"] and x1 == zone["x1"] == 0.855
+    # Чат прямо над головой (боком не убрать, не задев лицо) — как в QA 3: срез сверху, но не ближе полувысоты лица.
     over = {"x0": 0.62, "y0": 0.0, "x1": 1.0, "y1": 0.5}
     (_x0, top, _x1, _y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [over], face)
-    assert sides == ["top"] and top == 0.5 < face["y0"]
+    assert sides == ["top"] and top == zone["y0"] == 0.45 < face["y0"]
 
 
 def test_head_above_face_is_kept_when_gemini_box_is_tight():

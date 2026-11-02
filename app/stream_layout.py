@@ -112,6 +112,12 @@ def normalize_avatar_cams(raw: object) -> list[dict]:
         entry = {"from": round(max(0.0, a), 3), "to": round(b, 3), "cam": cam}
         if item.get("video_scale") is not None:
             entry["video_scale"] = round(_num(item.get("video_scale"), 1.0, 1.0, 4.0), 4)
+        try:
+            freeze = float(item.get("freeze_from")) if item.get("freeze_from") is not None else None
+        except (TypeError, ValueError):
+            freeze = None
+        if freeze is not None and freeze == freeze and entry["from"] - FREEZE_MAX_SEC <= freeze < entry["from"] - 0.01:
+            entry["freeze_from"] = round(max(0.0, freeze), 3)
         out.append(entry)
     out.sort(key=lambda e: e["from"])
     clean: list[dict] = []
@@ -120,8 +126,31 @@ def normalize_avatar_cams(raw: object) -> list[dict]:
             clean[-1]["to"] = entry["from"]
             if clean[-1]["to"] - clean[-1]["from"] < 0.05:
                 clean.pop()
+        if entry.get("freeze_from") is not None and clean and entry["freeze_from"] <= clean[-1]["from"]:
+            entry.pop("freeze_from")  # стоп-кадр длиннее прежнего места — не трогаем
         clean.append(entry)
     return clean[:MAX_AVATAR_CAMS]
+
+
+FREEZE_MAX_SEC = 1.5
+
+
+def avatar_freezes(layout: dict, start: float, end: float) -> list[dict]:
+    """Стоп-кадры на наплывах смены сцены в части исходника ``start..end``: ``[{t0, t1}]`` — секунды ОТ НАЧАЛА
+    части, где вместо кадров исходника стоит последний кадр до ``t0`` (``layout.cams[].freeze_from`` .. ``from``).
+
+    QA 5 (клип 897): ≈0.2 с полупрозрачного ютуба на смене сцены — ни одного кадра с чужой сценой. Стоп-кадр
+    без кадра до него (часть начинается внутри наплыва) не ставится."""
+    out: list[dict] = []
+    for entry in normalize_avatar_cams(layout.get("cams")):
+        freeze = entry.get("freeze_from")
+        if freeze is None:
+            continue
+        a, b = float(freeze), min(float(entry["from"]), float(end))
+        if a - start < 0.04 or b <= a or a >= end:
+            continue
+        out.append({"t0": round(a - start, 3), "t1": round(b - start, 3)})
+    return out
 
 
 def avatar_cam_spans(layout: dict, start: float, end: float) -> tuple[dict, list[dict]]:
@@ -220,6 +249,90 @@ def avatar_auto_scale(cam: dict, width: int, height: int, src_w: float | None, s
     """Крупность аватара по умолчанию: заполнить высоту кадра, но не шире AVATAR_MAX_AUTO_SCALE."""
     cover = (height / width) * cam_aspect(cam, src_w, src_h)  # ширин кадра, чтобы высота = кадр
     return round(min(AVATAR_MAX_AUTO_SCALE, max(1.0, cover)), 3)
+
+
+def avatar_visible_rect(layout: dict, width: int, height: int, src_w: float | None = None,
+                        src_h: float | None = None) -> dict:
+    """avatar_full: какая часть ИСХОДНИКА (доли, ``{x0, y0, x1, y1}``) видна в кадре ``width``×``height``.
+
+    Рамка ``cam`` ставится шириной ``video_scale`` ширин кадра по центру — при крупности > 1 её бока
+    срезаются краями кадра (QA 5, клип 897: рамка с лицом у правого края, крупность 1.5 — правый глаз
+    за кадром)."""
+    lay = {**layout, "mode": AVATAR_MODE}
+    geo = avatar_geometry(lay, width, height, src_w, src_h)
+    cam = normalize_layout(lay)["cam"]
+    vx0, vx1 = max(0, geo["x"]), min(width, geo["x"] + geo["w"])
+    vy0, vy1 = max(0, geo["y"]), min(height, geo["y"] + geo["h"])
+    fx = lambda px: float(cam["x"]) + (px - geo["x"]) / max(1e-6, geo["w"]) * float(cam["w"])  # noqa: E731
+    fy = lambda py: float(cam["y"]) + (py - geo["y"]) / max(1e-6, geo["h"]) * float(cam["h"])  # noqa: E731
+    return {"x0": fx(vx0), "y0": fy(vy0), "x1": fx(vx1), "y1": fy(vy1)}
+
+
+def _covers(outer: dict, inner: dict, eps: float = 2e-3) -> bool:
+    return (outer["x0"] <= inner["x0"] + eps and outer["y0"] <= inner["y0"] + eps
+            and outer["x1"] >= inner["x1"] - eps and outer["y1"] >= inner["y1"] - eps)
+
+
+def face_cut_sides(visible: dict, face: dict, eps: float = 2e-3) -> list[str]:
+    """Стороны, где ``face`` (доли исходника) выходит за видимую часть ``visible``: left/right/top/bottom."""
+    return [name for name, cut in (("left", face["x0"] < visible["x0"] - eps), ("right", face["x1"] > visible["x1"] + eps),
+                                   ("top", face["y0"] < visible["y0"] - eps),
+                                   ("bottom", face["y1"] > visible["y1"] + eps)) if cut]
+
+
+def fit_avatar_face(cam: dict, zone: dict, video_scale: float, width: int, height: int, src_w: float | None,
+                    src_h: float | None, avatar_y: float = 0.5, auto: bool = True) -> tuple[dict, float, list[str]]:
+    """Рамка и крупность аватара, при которых лицо с запасом ``zone`` (доли исходника, ``avatar_box.face_zone``)
+    целиком в кадре. → (cam, video_scale, что поправлено: ``widened`` / ``centered`` / ``scaled``).
+
+    QA 5 (клип 897): рамку сузили ради чата, а крупность 1.5 срезала её бока по центру — лицо у края рамки
+    ушло за кадр. Правило: (1) рамка содержит зону лица (расширяется до неё); (2) зона не видна при этой
+    крупности — либо крупность меньше, либо рамка по центру лица (дальний от лица бок срезается) с крупностью
+    ``auto`` (по умолчанию для новой рамки) или прежней; из двух берётся то, где лицо в кадре крупнее."""
+    notes: list[str] = []
+    x0, y0 = float(cam["x"]), float(cam["y"])
+    x1, y1 = x0 + float(cam["w"]), y0 + float(cam["h"])
+    zx0, zy0, zx1, zy1 = (max(0.0, min(1.0, float(zone[k]))) for k in ("x0", "y0", "x1", "y1"))
+    nx0, ny0, nx1, ny1 = min(x0, zx0), min(y0, zy0), max(x1, zx1), max(y1, zy1)
+    if (nx0, ny0, nx1, ny1) != (x0, y0, x1, y1):
+        notes.append("widened")
+    zone = {"x0": zx0, "y0": zy0, "x1": zx1, "y1": zy1}
+
+    def box(a: float, b: float, c: float, d: float) -> dict:
+        return {"x": round(a, 4), "y": round(b, 4), "w": round(c - a, 4), "h": round(d - b, 4)}
+
+    def visible_ok(c: dict, s: float) -> bool:
+        lay = {"mode": AVATAR_MODE, "cam": c, "video_scale": s, "avatar_y": avatar_y}
+        return _covers(avatar_visible_rect(lay, width, height, src_w, src_h), zone)
+
+    def best_scale(c: dict, target: float) -> float:
+        target = max(1.0, float(target))
+        if visible_ok(c, target):
+            return round(target, 4)
+        lo, hi = 1.0, target
+        if not visible_ok(c, lo):
+            return 1.0
+        for _ in range(30):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if visible_ok(c, mid) else (lo, mid)
+        return round(max(1.0, lo - 1e-3), 4)
+
+    wide = box(nx0, ny0, nx1, ny1)
+    scale = float(video_scale or 1.0)
+    if visible_ok(wide, scale):
+        return wide, scale, notes
+    options = [(wide, best_scale(wide, scale), [*notes, "scaled"])]
+    zc = (zx0 + zx1) / 2
+    cx = (nx0 + nx1) / 2
+    if abs(cx - zc) > 1e-3:
+        cx0, cx1 = (max(nx0, 2 * zc - nx1), nx1) if cx < zc else (nx0, min(nx1, 2 * zc - nx0))
+        centered = box(cx0, ny0, cx1, ny1)
+        target = avatar_auto_scale(centered, width, height, src_w, src_h) if auto else scale
+        s = best_scale(centered, target)
+        options.append((centered, s, [*notes, "centered"] + (["scaled"] if s < target - 1e-3 else [])))
+    # Лицо в кадре крупнее — лучше: ширина рамки на выходе (scale·width) на долю лица в рамке.
+    cam_out, scale_out, how = max(options, key=lambda o: o[1] / max(1e-6, o[0]["w"]))
+    return cam_out, scale_out, how
 
 
 def even_px(value: float) -> int:

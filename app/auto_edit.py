@@ -135,13 +135,15 @@ PLAYBOOK_AUTO: dict[str, dict] = {
                  "min_size": 92, "end": 10.0},
         # «Субтитры по 1–2 слова … maxWords: 2, uppercase: false».
         "captions": {"maxWords": 2, "uppercase": False},
+        # История под повтор: без стоп-кадра 0.5 с в конце (QA 5, клип 897), если владелец его не просил.
+        "end_hold_sec": 0.0,
     },
 }
 
 
 def playbook_rules(playbook: str | None) -> dict | None:
-    """Правила автомонтажа при активном плейбуке: ``{hook?, captions?}`` (пустой dict — плейбук без своих правил
-    для автомонтажа: только субтитры, без хука, наездов и ударов); None — плейбука нет."""
+    """Правила автомонтажа при активном плейбуке: ``{hook?, captions?, end_hold_sec?}`` (пустой dict — плейбук
+    без своих правил для автомонтажа: только субтитры, без хука, наездов и ударов); None — плейбука нет."""
     if not playbook:
         return None
     return PLAYBOOK_AUTO.get(str(playbook).strip().lower(), {})
@@ -336,6 +338,8 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
     settings["layers"] = result["layers"]
     if rules is None:
         settings["camera"] = result["camera"]
+    elif "end_hold_sec" in rules and settings.get("end_hold_sec") is None:
+        settings["end_hold_sec"] = float(rules["end_hold_sec"])
     # Субтитры-слой заменяет обычные — выключаем их, чтобы не было двух подписей.
     settings["subs_on"] = False
     store.set_clip_plan_render_settings(clip_plan_id, settings)

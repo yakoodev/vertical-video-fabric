@@ -134,11 +134,131 @@ def mask_censored_words(store: Any, clip_plan_id: int, payload: dict | None) -> 
     spans = censor_spans(plan)
     if not spans:
         return payload
+    payload, _moved = sync_censored_timing(store, plan, payload, spans)
     found = [{"i": i} for i in censored_word_indices(store, plan, payload["words"], spans)]
     if not found:
         return payload
     masked, _count = star_subtitles(payload, found, GROUPS)
+    # Эмфаза (крупнее, прыжок) на заглушённом мате — никогда (QA 5, клип 897: «х****» выделен).
+    hit = {item["i"] for item in found}
+    masked = {**masked, "words": [{k: v for k, v in w.items() if k != "emph"} if i in hit else w
+                                  for i, w in enumerate(masked.get("words") or [])]}
     return masked
+
+
+SYNC_TOLERANCE_SEC = 0.12   # слово со звёздочками раньше/позже своей тишины на столько — уже видно глазом
+SYNC_NEAR_SEC = 0.4         # слово-мат не задевает тишину, но ближе этого к ней — это его тишина
+
+
+def word_for_span(start: float, end: float, level: int) -> tuple[float, float]:
+    """Где было слово, из которого ``mute_range`` дал тишину ``start..end`` на уровне ``level`` (обратная функция)."""
+    from app.profanity import LEVELS, clamp_level
+
+    spec = LEVELS[clamp_level(level)]
+    a, b = float(start), float(end)
+    if "head_sec" in spec:
+        e = b - float(spec.get("pad_sec", 0.0))
+        s = a - float(spec["head_sec"])
+        if e - s < float(spec["head_sec"]) / float(spec.get("head_max", 0.15)):
+            s = (a - float(spec.get("head_max", 0.15)) * e) / (1 - float(spec.get("head_max", 0.15)))
+        return round(s, 3), round(max(e, s + 0.05), 3)
+    d = (b - a) / max(1e-6, float(spec["to"]) - float(spec["from"]))
+    s = a - float(spec["from"]) * d
+    return round(s, 3), round(s + d, 3)
+
+
+def sync_censored_timing(store: Any, plan: dict, payload: dict, spans: list[dict] | None = None) -> tuple[dict, list[dict]]:
+    """Слово-мат в субтитрах — там же, где его тишина (``by: censor``): звёздочки появляются, когда глушится звук.
+
+    QA 5 (клип 897): агент переписал слова (set_subtitle_words), «п*****» встало на 30.07–30.73, а тишина
+    (проверенная рендером) — 30.6–31.5: звёздочки на полслова раньше звука. Тишина — правда о звуке, поэтому
+    сдвигается слово: на место, из которого цензура её поставила (``word_for_span``), не залезая на соседей.
+    → (субтитры, ``[{i, word, from: [s, e], to: [s, e]}]`` шкала clip)."""
+    from app.profanity import classify_token
+
+    spans = censor_spans(plan) if spans is None else spans
+    words = [dict(w) for w in payload.get("words") or []]
+    if not spans or not words:
+        return payload, []
+    clock = _clock(store, plan)
+    ranges: dict[int, tuple[float, float]] = {}
+    for i, w in enumerate(words):
+        if not classify_token(w.get("word"), GROUPS):
+            continue
+        try:
+            parts = _word_clip_ranges(clock, float(w["start"]), float(w["end"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(parts) == 1:
+            ranges[i] = (float(parts[0]["start"]), float(parts[0]["end"]))
+    # Каждой тишине — своё слово: задевающее её больше всех, иначе ближайшее в пределах SYNC_NEAR_SEC.
+    owner: dict[int, dict] = {}
+    for span in sorted(spans, key=lambda m: float(m["start"])):
+        a, b = float(span["start"]), float(span["end"])
+        if sum(1 for ws, we in ranges.values() if min(b, we) - max(a, ws) > 0) > 1:
+            continue  # тишины соседних слов слились в одну — чья она, не понять
+        best, best_key = None, None
+        for i, (ws, we) in ranges.items():
+            overlap = min(b, we) - max(a, ws)
+            gap = max(0.0, max(a, ws) - min(b, we)) if overlap <= 0 else 0.0
+            if overlap <= 0 and gap > SYNC_NEAR_SEC:
+                continue
+            key = (overlap > 0, overlap if overlap > 0 else -gap)
+            if best_key is None or key > best_key:
+                best, best_key = i, key
+        if best is None:
+            continue
+        if best in owner:  # слово через стык — две тишины: не трогаем
+            owner[best] = {}
+            continue
+        owner[best] = span
+    moved: list[dict] = []
+    for i, span in owner.items():
+        if not span:
+            continue
+        ws, we = ranges[i]
+        s, e = word_for_span(float(span["start"]), float(span["end"]), int(span.get("level") or 1))
+        if abs(ws - s) <= SYNC_TOLERANCE_SEC and abs(we - e) <= 2 * SYNC_TOLERANCE_SEC:
+            continue
+        w = words[i]
+        ps, pe = float(w["start"]) + (s - ws), float(w["end"]) + (e - we)
+        prev = words[i - 1] if i > 0 else None
+        nxt = words[i + 1] if i + 1 < len(words) else None
+        if prev is not None and float(prev["end"]) > ps:
+            if ps - float(prev["start"]) >= 0.05:
+                prev["end"] = round(ps, 3)
+            else:
+                ps = float(prev["end"])
+        if nxt is not None and float(nxt["start"]) < pe:
+            if float(nxt["end"]) - pe >= 0.05:
+                nxt["start"] = round(pe, 3)
+            else:
+                pe = float(nxt["start"])
+        if pe - ps < 0.05:
+            continue
+        w["start"], w["end"] = round(ps, 3), round(pe, 3)
+        moved.append({"i": i, "word": str(w.get("word") or ""), "from": [round(ws, 2), round(we, 2)],
+                      "to": [round(ws + ps - float(payload["words"][i]["start"]), 2),
+                             round(we + pe - float(payload["words"][i]["end"]), 2)]})
+    if not moved:
+        return payload, []
+    out = {**payload, "words": words}
+    lines = [dict(line) for line in payload.get("lines") or [] if isinstance(line, dict)]
+    if lines:
+        # Строка, где было слово, растягивается до него — иначе слово ушло бы из своей строки.
+        for item in moved:
+            old = payload["words"][item["i"]]
+            new = words[item["i"]]
+            for line in lines:
+                try:
+                    if float(line["start"]) - 1e-3 <= float(old["start"]) < float(line["end"]) + 1e-3:
+                        line["start"] = round(min(float(line["start"]), float(new["start"])), 3)
+                        line["end"] = round(max(float(line["end"]), float(new["end"])), 3)
+                        break
+                except (KeyError, TypeError, ValueError):
+                    continue
+        out["lines"] = lines
+    return out, moved
 
 
 def already_censored(store: Any, clip_plan_id: int, keep: Any = ()) -> dict | None:
