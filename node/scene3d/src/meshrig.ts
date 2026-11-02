@@ -22,7 +22,7 @@ export interface MeshRigSpec {
   /** Глянец по цвету текстуры: яркие насыщенные (дождевик) — шероховатость gloss, остальное — matte. */
   gloss?: { hue?: number[]; roughness?: number; matte?: number;
     /** Цвет глянцевой вещи: подтянуть тон к hueTo (0..1) и насыщенность ×sat (жёлтый дождевик не уходит в оливку). */
-    hueTo?: number; sat?: number };
+    hueTo?: number; sat?: number; light?: number };
   /** Итерации сглаживания весов (по умолчанию 6). */
   smooth?: number;
 }
@@ -365,7 +365,7 @@ export function tintColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpec["gl
     col.getHSL(hsl);
     if (!(hsl.h >= h0 - 0.03 && hsl.h <= h1 && hsl.s > 0.25 && hsl.l > 0.18)) continue;
     const h = gloss.hueTo !== undefined ? hsl.h + (gloss.hueTo - hsl.h) * 0.7 : hsl.h;
-    col.setHSL(h, Math.min(1, hsl.s * (gloss.sat ?? 1)), hsl.l);
+    col.setHSL(h, Math.min(1, hsl.s * (gloss.sat ?? 1)), Math.min(0.62, hsl.l * (gloss.light ?? 1)));
     px[i] = Math.round(col.r * 255);
     px[i + 1] = Math.round(col.g * 255);
     px[i + 2] = Math.round(col.b * 255);

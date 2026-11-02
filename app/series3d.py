@@ -54,7 +54,7 @@ DOF = {"face": 1.0, "detail": 1.3, "low": 0.5}  # сила размытия по
 # бирюзовые тени, тёплые света, приглушённая насыщенность, виньетка и зерно; глубина резкости — ключи камеры dof.
 POST = {"ao": 1.0, "aoRadius": 0.3, "aoScale": 0.5, "bloom": {"strength": 0.45, "radius": 0.5, "threshold": 1.4},
         "grade": {"lift": [0.012, 0.02, 0.025], "gamma": [0.98, 1.0, 1.02], "gain": [1.02, 1.0, 0.97],
-                  "shadows": "#3f6f78", "highlights": "#c9a27a", "split": 0.25, "contrast": 1.1, "saturation": 1.0},
+                  "shadows": "#3d5a82", "highlights": "#d0ab7c", "split": 0.2, "contrast": 1.1, "saturation": 1.0},
         "vignette": 0.5, "grain": 0.045, "ca": 1.4, "dof": True}  # заливка от камеры: при свете / в темноте (лицо читается, тьма остаётся)
 
 # Одна яркая вещь героя — цвета по словам карточки (англ./рус.).
@@ -92,7 +92,7 @@ HERO_MESH = {
         "armpit_l": [0.355, 0.1, 0.0], "hem_l": [0.36, -0.45, 0.0],
         "armpit_r": [-0.31, 0.1, 0.0], "hem_r": [-0.40, -0.45, 0.0],
     },
-    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82, "hueTo": 0.135, "sat": 1.25},
+    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82, "hueTo": 0.14, "sat": 1.45, "light": 1.12},
     "smooth": 6,
 }
 
@@ -374,12 +374,13 @@ def elevator_location() -> dict:
          "beam": {"length": 3.0, "radius": 1.0, "opacity": 0.03}},
         {"type": "point", "id": "fill", "color": "#bfe4e6", "intensity": 1.4, "position": [0, 1.6, -0.6], "decay": 2},
         {"type": "point", "id": "emergency", "color": "#ff2a14", "intensity": 0, "position": [-W / 2 + 0.2, H - 0.3, -D / 2 + 0.15],
-         "decay": 1.2, "distance": 7, "level": 5.0, "castShadow": True,
+         "decay": 1.7, "distance": 6, "level": 2.6, "castShadow": True,
          "shadow": {"size": 512, "bias": -0.003, "normalBias": 0.03, "radius": 6},
          "halo": {"size": 0.55, "opacity": 0.75, "color": "#ff3a22"}},
-        # Отсвет аварийного от дверей/пола: красная заливка лица спереди, пока горит аварийный (как на референсе).
-        {"type": "point", "id": "emergency_fill", "color": "#ff3020", "intensity": 0, "position": [0.3, 1.3, 0.85],
-         "decay": 1.6, "distance": 4, "level": 1.1},
+        # В темноте — холодная заливка (экран телефона, отсвет фонарика от стали): герой читается по цвету и силуэту,
+        # красный аварийный — контровой акцент, а не заливка всего кадра.
+        {"type": "point", "id": "emergency_fill", "color": "#c4d3ea", "intensity": 0, "position": [0.3, 1.45, 0.85],
+         "decay": 1.6, "distance": 4, "level": 0.9},
     ]
     return {
         "name": "elevator", "label": "лифт",
@@ -407,7 +408,7 @@ def elevator_location() -> dict:
         "glow": ["ceiling_light", "display", "panel"], "display": "display", "panel": "panel",
         "doors": ["door_l", "door_r"], "focus": "doors", "start_floor": "", "emergency_lamp": "emergency_lamp",
         # Заливка от камеры слабее: глянец дождевика и сталь не дают «прожектор» в центре кадра.
-        "fill_levels": (0.25, 0.3), "phone_light": 1.8,
+        "fill_levels": (0.25, 0.3), "fill_color": "#d4e6ff", "phone_light": 1.8,
     }
 
 
@@ -812,9 +813,9 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
         head = [hero[0], head_y, hero[2]]
         # Сидит/присел — дальше и чуть сверху (в кадре всё тело), стоит — крупно на уровне глаз.
         dists, lift, drop = ((1.6, 1.45, 1.3), 0.12, 0.12) if crouch else ((1.3, 1.15, 1.0), -0.05, 0.08)
-        if crouch and big > 1.2:
-            # Сгенерированный герой сидя опускает голову — снимаем ниже, чтобы видеть лицо, а не макушку.
-            lift, drop = -0.22, -0.02
+        if big > 1.2:
+            # У сгенерированного героя чёлка на глаза и тяжёлая голова — снимаем ниже, лицо из-под волос.
+            lift, drop = (-0.22, -0.02) if crouch else (-0.16, -0.02)
         for ang in (22 * side, -22 * side, 45 * side, -45 * side, 70 * side, -70 * side):
             v = _yaw_vec(yaw + ang)
             for dist in dists:
@@ -897,6 +898,7 @@ def _kinds_for(shots: list[dict], acts: list[tuple]) -> list[str]:
     """Ракурсы по ролям и действиям: первый кадр — общий сверху; деталь, когда говорят о вещи; реакция —
     лицо; финал — лицо, потом деталь; по умолчанию — за спиной. Соседние — разные."""
     out = []
+    sat = False
     for n, (shot, act) in enumerate(zip(shots, acts)):
         name = act[0]
         role = shot.get("role") or ""
@@ -914,7 +916,9 @@ def _kinds_for(shots: list[dict], acts: list[tuple]) -> list[str]:
         elif name in ("jolt", "listen") or role == "mistake":
             prefs = ["face", "ots", "low"]
         elif name == "sit":
-            prefs = ["face", "overhead", "low"]
+            # Первый раз сел — лицо; дальше (качнулась, опустилась) — общий сверху: кабина и герой в углу.
+            prefs = ["overhead", "face", "low"] if sat else ["face", "overhead", "low"]
+            sat = True
         elif role == "finale":
             prefs = ["face", "ots"]
         else:
@@ -928,7 +932,9 @@ def _order(prefs: list[str], history: list[str]) -> list[str]:
     подряд), потом запасные."""
     prev = history[-1] if history else None
     streak = len(history) >= 2 and history[-1] == history[-2] == "ots"
-    first = [k for k in prefs if k != prev or (k == "ots" and not streak)]
+    # Лицо дважды подряд можно (реакция за реакцией — другой ракурс), трижды — нет.
+    faces = len(history) >= 2 and history[-1] == history[-2] == "face"
+    first = [k for k in prefs if k != prev or (k == "ots" and not streak) or (k == "face" and not faces)]
     rest = [k for k in ("ots", "face", "low", "overhead") if k not in first]
     return first + [k for k in prefs if k not in first] + rest
 
@@ -1189,7 +1195,9 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
             # Табло в темноте «оживает» само, если в серии меняется цифра (жуткая деталь).
             for e in floors[1:]:
                 if e["t"] > blackout:
-                    state.append({"t": round(e["t"] - 0.02, 3), "glow": 1.0})
+                    # Загорается заранее со старой цифрой (кадр на табло не пустой), на слове — новая.
+                    on = max(blackout + 1.0, e["t"] - 1.8)
+                    state.append({"t": round(on, 3), "glow": 1.0})
         disp["state"] = sorted(state, key=lambda k: k["t"])
     for oid in loc["glow"]:
         o = obj_by_id.get(oid)
@@ -1289,7 +1297,7 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
             "environment": env, "room": loc["room"], "lights": lights, "objects": objects, "characters": [character],
             # Камера сама не прижимается к стенам: ракурсы уже проверены (внутри декорации или за срезанной стеной).
             "camera": {"fov": FOV, "keys": cam_keys, "shake": shake, "margin": 0.1, "clamp": False,
-                       "fill": {"color": "#ffe6cc", "intensity": fill_lit, "distance": 4,
+                       "fill": {"color": loc.get("fill_color", "#ffe6cc"), "intensity": fill_lit, "distance": 4,
                                 "keys": ([{"t": 0, "intensity": fill_lit}, {"t": round(blackout, 3), "intensity": fill_lit},
                                           {"t": round(blackout + 0.05, 3), "intensity": fill_dark}]
                                          if blackout is not None else None)}},

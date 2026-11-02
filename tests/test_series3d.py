@@ -101,7 +101,10 @@ def test_direct_elevator_series():
     assert shots[0]["camera"] == "overhead" and shots[0]["free"]
     kinds = [s["camera"] for s in shots]
     assert kinds.count("ots") >= len(shots) // 3, "чаще всего — за спиной героя"
-    assert all(not (a == b and a != "ots") for a, b in zip(kinds, kinds[1:])), "соседние ракурсы разные"
+    # Соседние — разные, кроме «за спиной» и реакций лицом (не больше двух подряд, другой угол).
+    assert all(not (a == b and a not in ("ots", "face")) for a, b in zip(kinds, kinds[1:])), "соседние ракурсы разные"
+    assert all(not (a == b == c == "face") for a, b, c in zip(kinds, kinds[1:], kinds[2:]))
+    assert kinds.count("face") >= 3 and kinds[1:].count("overhead") >= 1, "реакции лицом и общий сверху в середине"
     # Камера внутри шахты/кабины, герой в кадре, не мелкий; деталь не закрыта героем.
     loc = S3.elevator_location()
     for s in shots:
