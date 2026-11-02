@@ -1,0 +1,574 @@
+"""QA 4 Gemini-монтажёра (клип 896, плейбук vtuber-story): находки и их починка.
+
+1. Цензура заглушила сам панчлайн «обосралась» (5 вызовов, soft включил агент).
+2. Звук-акцент встал на «это» за 2.8 с до панчлайна (at_word).
+3. Автомонтаж при плейбуке поставил свой жёлтый хук, удар и 5 наездов.
+4. Реальные люди на вставках (гифка с офисным работником, фото студента).
+5. Прозрачная гифка во весь кадр — на чёрном.
+6. trim_ui срезал макушку, когда чат можно было убрать сбоку.
+7. Отчёт агента умолчал о заглушённом панчлайне, реальных людях и промахе звука.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app import censor
+from app.agent_tools import ToolContext, run_tool
+from app.profanity import DEFAULT_GROUPS, GROUPS, classify_token
+from test_cuts import _mock_render
+
+REQUEST = ("Смонтируй по плейбуку vtuber-story: история витубера Муры — она думает, что по монитору ползёт "
+           "огромный таракан; панчлайн «Я обосралась» в конце. Мат заглушить (censor_profanity).")
+
+
+def _plan(tmp_path, monkeypatch, words=None, mute=None, layers=None):
+    store, _service, plan, preset, _calls = _mock_render(tmp_path, monkeypatch, [(0, 10)])
+    store.set_clip_plan_render_settings(plan["id"], {"preset_id": preset["id"], "mute": mute or [],
+                                                     **({"layers": layers} if layers else {})})
+    words = words or [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0),
+                      ("Я", 4.0, 4.9), ("обосралась,", 5.0, 5.9), ("пиздец.", 6.2, 6.8)]
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 1.0, "end": 2.0, "text": " ".join(w for w, _a, _b in words[:3])},
+                  {"start": 4.0, "end": 6.8, "text": " ".join(w for w, _a, _b in words[3:])}],
+        "words": [{"word": w, "start": a, "end": b} for w, a, b in words],
+    })
+    return store, plan
+
+
+def _words(store, plan):
+    return [w["word"] for w in store.get_clip_plan_subtitles(plan["id"])["words"]]
+
+
+def _censor_spans(store, plan):
+    return [m for m in store.get_clip_plan(plan["id"])["render_settings"].get("mute") or [] if m.get("by") == "censor"]
+
+
+# ------------------------------------------------------------------ 1. цензура и панчлайн
+
+
+def test_dictionary_rude_vernacular_is_not_mat():
+    # «обосралась» — грубое просторечие (soft), не обсценная лексика: по умолчанию не глушится.
+    assert classify_token("обосралась,", DEFAULT_GROUPS) is None
+    assert classify_token("обосралась", GROUPS) == "soft"
+    assert classify_token("пиздец.", DEFAULT_GROUPS) == "mat"
+
+
+def test_quoted_words_and_keep_match():
+    assert censor.quoted_words(REQUEST) == ["обосралась"]
+    assert censor.keep_match("о*********,", ["обосралась"]) == "обосралась"  # звёздочки: первая буква и длина
+    assert censor.keep_match("Обосрался!", ["обосралась"]) == "обосралась"  # словоформа
+    assert censor.keep_match("п*****", ["обосралась"]) is None
+    assert censor.owner_asks_soft(REQUEST) is False  # «обосралась» в кавычках — не просьба глушить soft
+    assert censor.owner_asks_soft("заглуши и мягкий мат тоже") is True
+
+
+def test_soft_from_agent_is_ignored_and_punchline_stays(tmp_path, monkeypatch):
+    store, plan = _plan(tmp_path, monkeypatch)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST)
+    out, ok = run_tool(ctx, "censor_profanity", {"verify": False, "soft": True, "groups": ["mat", "rude", "soft"]})
+    assert ok, out
+    assert [w["word"] for w in out["words"]] == ["п*****."]
+    assert any("не мат" in n for n in out["notes"])
+    assert _words(store, plan)[4] == "обосралась,"
+    assert len(_censor_spans(store, plan)) == 1
+
+
+def test_repeat_calls_are_already_applied_even_with_explicit_args(tmp_path, monkeypatch):
+    # QA 4: 5 вызовов — явные levels/style/groups обходили «уже применено».
+    store, plan = _plan(tmp_path, monkeypatch)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST)
+    assert run_tool(ctx, "censor_profanity", {"verify": False})[1]
+    spans = _censor_spans(store, plan)
+    for args in ({"levels": 3}, {"style": "silence"}, {"groups": ["mat", "soft"]}, {"soft": True}):
+        again, ok = run_tool(ctx, "censor_profanity", {"verify": False, **args})
+        assert ok and again["status"] == "already" and "НЕ применены" in again["note"], args
+    assert _censor_spans(store, plan) == spans
+    # Переделать — только явным redo.
+    redo, ok = run_tool(ctx, "censor_profanity", {"verify": False, "redo": True, "levels": 3})
+    assert ok and redo["words"][0]["level"] == 3
+
+
+def test_punchline_muted_earlier_is_restored(tmp_path, monkeypatch):
+    # Состояние клипа 896: панчлайн уже со звёздочками и под отрезком цензуры.
+    words = [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0),
+             ("Я", 4.0, 4.9), ("о*********,", 5.0, 5.9), ("п*****.", 6.2, 6.8)]
+    mute = [{"start": 5.18, "end": 5.86, "by": "censor", "level": 2, "style": "reverse"},
+            {"start": 6.38, "end": 6.71, "by": "censor", "level": 1, "style": "reverse"}]
+    store, plan = _plan(tmp_path, monkeypatch, words=words, mute=mute)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST)
+    out, ok = run_tool(ctx, "censor_profanity", {"verify": False})
+    assert ok, out
+    assert out.get("kept") == [{"i": 4, "word": "обосралась"}] and "НЕ глушу" in out["note"]
+    assert _words(store, plan)[4:] == ["обосралась,", "п*****."]
+    assert store.get_clip_plan_subtitles(plan["id"])["lines"][1]["text"] == "Я обосралась, п*****."
+    assert [(m["start"], m["end"]) for m in _censor_spans(store, plan)] == [(6.38, 6.71)]
+    # Явно по просьбе владельца — force_words глушит и слово из кавычек.
+    owner = REQUEST + " Мягкий мат тоже глуши."
+    forced, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"], request=owner), "censor_profanity",
+                          {"verify": False, "soft": True, "force_words": [4]})
+    assert ok and [w["i"] for w in forced["words"]] == [4, 5]
+
+
+def test_word_under_sound_accent_is_kept(tmp_path, monkeypatch):
+    layers = [{"id": "boom", "type": "audio", "start": 5.0, "end": 6.2,
+               "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}}]
+    store, plan = _plan(tmp_path, monkeypatch, layers=layers)
+    owner = "Смонтируй, мягкий мат тоже глуши."  # soft разрешён, но слово под ударом — панчлайн
+    out, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"], request=owner), "censor_profanity",
+                       {"verify": False, "soft": True})
+    assert ok and [w["i"] for w in out["words"]] == [5] and out["kept"] == [{"i": 4, "word": "обосралась"}]
+
+
+def test_without_owner_request_soft_works_as_before(tmp_path, monkeypatch):
+    # MCP/прямые вызовы без запроса владельца: soft — как раньше.
+    store, plan = _plan(tmp_path, monkeypatch)
+    out, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"]), "censor_profanity",
+                       {"verify": False, "soft": True})
+    assert ok and [w["i"] for w in out["words"]] == [4, 5]
+
+
+# ------------------------------------------------------------------ 2. звук-акцент на слово (at_word)
+
+# Строки 14–15 клипа 896 (clip_after.json): панчлайн уже со звёздочками после цензуры.
+QA4_LINES = [
+    [("Вот", 25.44, 25.63), ("это", 25.72, 25.81), ("вот,", 25.9, 25.95), ("видите,", 26.04, 26.17),
+     ("она", 26.28, 26.33), ("еще", 26.42, 26.53), ("лезет?", 26.62, 27.13)],
+    [("Я", 28.0, 29.03), ("о*********,", 29.12, 30.07), ("п*****.", 30.52, 31.17)],
+]
+
+
+def _qa4_plan(tmp_path, monkeypatch):
+    store, _service, plan, preset, _calls = _mock_render(tmp_path, monkeypatch, [(0, 32)])
+    store.set_clip_plan_render_settings(plan["id"], {"preset_id": preset["id"]})
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": ws[0][1], "end": ws[-1][2], "text": " ".join(w for w, _a, _b in ws)} for ws in QA4_LINES],
+        "words": [{"word": w, "start": a, "end": b} for ws in QA4_LINES for w, a, b in ws],
+    })
+    return store, plan
+
+
+def test_at_word_finds_punchline_under_stars_and_forms(tmp_path, monkeypatch):
+    from app.agent_tools import word_at, word_time
+
+    store, plan = _qa4_plan(tmp_path, monkeypatch)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    # Раньше «обосралась» по тексту не находилось: в субтитрах «о*********,».
+    hit = word_at(ctx, {"text": "обосралась"})
+    assert hit["t"] == 29.12 and hit["line"] == 1 and "звёздочками" in hit["note"]
+    assert word_time(ctx, "Обосралась!") == 29.12  # регистр и пунктуация
+    assert word_time(ctx, {"text": "лезет"}) == 26.62
+    assert word_time(ctx, {"text": "ещё"}) == 26.42  # ё/е
+    assert word_time(ctx, {"text": "видит"}) == 26.04  # словоформа
+    # Номер строки съехал на 1 (как у агента в QA 4), но слово названо — верим слову.
+    fixed = word_at(ctx, {"line": 0, "word": 1, "text": "обосралась"})
+    assert fixed["t"] == 29.12 and "«это»" in fixed["note"]
+    assert word_at(ctx, {"line": 0, "word": 1})["word"] == "это"
+
+
+def test_add_layers_reports_the_word_under_the_sound(tmp_path, monkeypatch):
+    from test_agent_tools import _sfx_pack
+
+    store, plan = _qa4_plan(tmp_path, monkeypatch)
+    _sfx_pack(tmp_path, monkeypatch, files=("drama-boom.ogg", "impact-low.ogg"))
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        {"type": "audio", "at_word": {"line": 0, "word": 1}, "duration": 1.2,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}},
+        {"type": "audio", "at_word": {"text": "обосралась"}, "duration": 1.2,
+         "props": {"asset_id": "sfx:freesound/impact-low.ogg", "volume": 0.4}}]})
+    assert ok, out
+    assert "«это»" in out["on_words"][0] and "«о*********,»" in out["on_words"][1]
+    starts = sorted(float(l["start"]) for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"])
+    assert starts == [25.72, 29.12]
+
+
+# ------------------------------------------------------------------ 3. автомонтаж при активном плейбуке
+
+
+def _speech(text: str, start: float = 0.5, step: float = 0.4):
+    out, t = [], start
+    for w in text.split():
+        out.append({"word": w, "start": round(t, 2), "end": round(t + 0.3, 2)})
+        t += step
+    return out
+
+
+def test_auto_edit_under_vtuber_story_has_no_own_punches_and_white_hook():
+    from app.auto_edit import build_auto_edit
+
+    words = _speech("ребят я сижу думаю огромная какая-то лезет по монитору а это в клипе я обосралась! " * 3)
+    duration = words[-1]["end"] + 1
+    plain = build_auto_edit("Таракан на экране?!", words, [0.3] * 200, duration)
+    assert plain["camera"] and any(l["id"] == "auto_boom" for l in plain["layers"])  # без плейбука — как было
+
+    book = build_auto_edit("Таракан на экране?!", words, [0.3] * 200, duration, playbook="vtuber-story")
+    ids = {l["id"] for l in book["layers"]}
+    assert book["camera"] == [] and "auto_boom" not in ids and "auto_whoosh" not in ids
+    hook = next(l for l in book["layers"] if l["id"] == "auto_hook")
+    props = hook["props"]
+    assert props["color"] == "#ffffff" and not props["uppercase"] and props["size"] >= 90
+    assert props["stroke"]["color"] == "#111111" and props["text"] == "Таракан на экране?!"
+    assert 8.0 <= hook["end"] <= 12.0
+    caps = next(l for l in book["layers"] if l["type"] == "captions")
+    assert caps["props"]["maxWords"] == 2 and caps["props"]["uppercase"] is False
+
+    other = build_auto_edit("Таракан", words, [0.3] * 200, duration, playbook="meme-insert")
+    assert other["camera"] == [] and {l["type"] for l in other["layers"]} == {"captions"}  # без своего хука
+
+
+def test_auto_edit_tool_takes_playbook_from_context_and_keeps_agent_camera(tmp_path, monkeypatch):
+    from test_clip_spec import _store_plan
+
+    store, plan = _store_plan(tmp_path, monkeypatch, [])
+    camera = [{"t": 3.0, "zoom": 1.0}, {"t": 3.2, "zoom": 1.15}]
+    store.set_clip_plan_render_settings(plan["id"], {"camera": camera, "layers": [
+        {"id": "auto_boom", "type": "audio", "start": 2.0, "end": 3.0,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg"}}]})
+    store.set_clip_plan_subtitles(plan["id"], {"lines": [], "words": _speech("это огромный таракан на мониторе " * 4)})
+
+    def no_waveform(*a, **k):
+        raise RuntimeError("нет волны")
+
+    monkeypatch.setattr("app.clip_waveform.clip_waveform", no_waveform)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST, playbook="vtuber-story")
+    out, ok = run_tool(ctx, "auto_edit", {})
+    assert ok, out
+    assert out["playbook"] == "vtuber-story" and "наездов" in out["note"]
+    render = store.get_clip_plan(plan["id"])["render_settings"]
+    assert [round(k["t"], 2) for k in render["camera"]] == [3.0, 3.2]  # камера агента на месте
+    assert not [l for l in render["layers"] if l["id"] in ("auto_boom", "auto_whoosh")]
+
+
+# ------------------------------------------------------------------ 4. реальные люди на вставках
+
+
+class _FakeVision:
+    """Gemini-зрение: отвечает по подписи ассета (как будто смотрит на кадр)."""
+
+    calls = 0
+    answers: dict[str, dict] = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    def generate_content(self, model, payload):
+        type(self).calls += 1
+        prompt = payload["contents"][0]["parts"][0]["text"]
+        assert "РЕАЛЬНЫЙ человек" in prompt and any("inlineData" in p for p in payload["contents"][0]["parts"])
+        import json
+
+        answer = type(self).answers.get("current", {"real_person": False, "what": "мультяшный таракан"})
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps(answer, ensure_ascii=False)}]}}]}
+
+
+def _vision(monkeypatch, real: bool, what: str):
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key", raising=False)
+    monkeypatch.setattr("app.ai.people_check.GeminiClient", _FakeVision)
+    _FakeVision.calls = 0
+    _FakeVision.answers = {"current": {"real_person": real, "what": what}}
+
+
+def _image_asset(store, tmp_path, label="angry monitor"):
+    from PIL import Image
+
+    path = tmp_path / f"{label.replace(' ', '_')}.png"
+    Image.new("RGB", (64, 48), (200, 120, 40)).save(path)
+    return store.create_montage_asset(kind="image", label=label, file_path=str(path), width=64, height=48)
+
+
+def test_people_check_is_cached_in_asset_and_skipped_without_key(tmp_path, monkeypatch):
+    from app.ai import people_check
+    from app.settings import settings
+
+    store, _plan_ = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path)
+    monkeypatch.setattr(settings, "gemini_api_key", "", raising=False)
+    skipped = people_check.check_asset(store, asset)
+    assert skipped["real_person"] is None and "нет ключа Gemini" in skipped["skipped"]
+    assert store.get_montage_asset(asset["id"])["people_check"] is None  # пропуск не кэшируется
+
+    _vision(monkeypatch, True, "офисный работник бьёт компьютер")
+    first = people_check.check_asset(store, asset)
+    assert first == {"real_person": True, "what": "офисный работник бьёт компьютер"} and _FakeVision.calls == 1
+    cached = store.get_montage_asset(asset["id"])
+    assert cached["people_check"]["real_person"] is True
+    again = people_check.check_asset(store, cached)
+    assert again["cached"] and _FakeVision.calls == 1  # второй раз модель не зовём
+
+
+def test_add_insert_refuses_real_person_under_playbook(tmp_path, monkeypatch):
+    store, plan = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path, "sleeping student")
+    _vision(monkeypatch, True, "спящий студент за партой")
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST, playbook="vtuber-story")
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": asset["id"], "at": 2.0, "duration": 2.0, "mode": "full"})
+    assert not ok and "реальный человек (спящий студент за партой)" in out["error"] and "рисованную" in out["error"]
+    assert not store.get_clip_plan(plan["id"])["render_settings"].get("inserts")
+    # Без запрета (нет плейбука и слов владельца) — встаёт, но с предупреждением.
+    free = ToolContext(store=store, clip_plan_id=plan["id"], request="вставь мем на 2 с")
+    out, ok = run_tool(free, "add_insert", {"asset_id": asset["id"], "at": 2.0, "duration": 2.0, "mode": "full"})
+    assert ok and any("реальный человек" in w for w in out["warnings"]) and _FakeVision.calls == 1  # кэш
+    # Рисованное — можно и при плейбуке.
+    cartoon = _image_asset(store, tmp_path, "cartoon cockroach")
+    _vision(monkeypatch, False, "мультяшный таракан")
+    out, ok = run_tool(ctx, "add_insert", {"asset_id": cartoon["id"], "at": 5.0, "duration": 2.0, "mode": "full"})
+    assert ok and out["people_check"].startswith("реальных людей нет")
+
+
+def test_add_image_from_url_drops_real_person_when_order_forbids(tmp_path, monkeypatch):
+    store, plan = _plan(tmp_path, monkeypatch)
+    made = {}
+
+    def fake_add_from_url(store_, url, label="", description=""):
+        made["asset"] = _image_asset(store_, tmp_path, label or "angry monitor")
+        return made["asset"]
+
+    monkeypatch.setattr("app.ai.asset_generate.add_from_url", fake_add_from_url)
+    _vision(monkeypatch, True, "офисный работник у монитора")
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST.replace(
+        "Мат заглушить", "Вставки — только мемы/картинки без фото реальных людей. Мат заглушить"))
+    out, ok = run_tool(ctx, "add_image_from_url", {"url": "https://example.com/a.gif", "label": "angry monitor"})
+    assert not ok and "без фото реальных людей" in out["error"]
+    with pytest.raises(KeyError):
+        store.get_montage_asset(made["asset"]["id"])  # скачанное под запрет удалено
+
+
+def test_lint_notes_real_person_inserts(tmp_path, monkeypatch):
+    from app.quality_lint import people_findings
+
+    store, _plan_ = _plan(tmp_path, monkeypatch)
+    asset = _image_asset(store, tmp_path)
+    store.update_montage_asset(asset["id"], people_check={"real_person": True, "what": "офисный работник"})
+    found = people_findings(store, {"inserts": [{"asset_id": asset["id"], "at": 12.97, "mode": "full"}]})
+    assert len(found) == 1 and "реальный человек (офисный работник)" in found[0]["message"]
+
+
+# ------------------------------------------------------------------ 5. прозрачная гифка во весь кадр
+
+
+def _gifs(tmp_path):
+    from PIL import Image, ImageDraw
+
+    clear = Image.new("RGBA", (80, 60), (0, 0, 0, 0))
+    ImageDraw.Draw(clear).ellipse((30, 20, 50, 40), fill=(30, 60, 220, 255))  # синий «таракан» по центру
+    transparent = tmp_path / "cockroach.gif"
+    clear.save(transparent, save_all=True, append_images=[clear.rotate(5)], duration=100, loop=0, disposal=2)
+    opaque = tmp_path / "monitor.gif"
+    Image.new("RGB", (80, 60), (240, 240, 240)).save(opaque)
+    return transparent, opaque
+
+
+def test_transparent_gif_detected_and_gets_clip_backdrop(tmp_path):
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import ALPHA_FILL, asset_has_alpha, full_insert_chain, resolve_fill
+
+    _require_ffmpeg()
+    transparent, opaque = _gifs(tmp_path)
+    assert asset_has_alpha(transparent) and not asset_has_alpha(opaque)
+    gif = {"kind": "gif", "file_path": str(transparent)}
+    assert resolve_fill({}, gif) == ALPHA_FILL == "clip"
+    assert resolve_fill({}, {"kind": "gif", "file_path": str(opaque)}) == "blur"
+    assert resolve_fill({"fill": "black"}, gif) == "black"  # явный fill — как просили
+    chain = full_insert_chain("[1:v]", 180, 320, "clip", "1")
+    assert "color=black@0" in chain and "format=rgba" in chain
+
+
+def test_transparent_full_insert_renders_over_blurred_clip_not_black(tmp_path):
+    import subprocess
+
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import build_inserts_args
+
+    _require_ffmpeg()
+    transparent, _opaque = _gifs(tmp_path)
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=180x320:r=25:d=2",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", str(clip)], check=True)
+    out = tmp_path / "out.mp4"
+    asset = {"id": 1, "kind": "gif", "file_path": str(transparent), "has_audio": False}
+    args = build_inserts_args(clip, out, [{"asset_id": 1, "at": 0.5, "duration": 1.0, "mode": "full", "volume": 1.0,
+                                           "duck": False, "x": 0.5, "y": 0.5, "scale": 0.82}],
+                              {1: asset}, 180, 320, 2.0, clip_has_audio=False)
+    graph = args[args.index("-filter_complex") + 1]
+    assert "[0:v]split=2[bm1][bs1]" in graph and "boxblur" in graph
+    subprocess.run(args, check=True, capture_output=True)
+    frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1.0", "-i", str(out), "-frames:v", "1",
+                            "-vf", "crop=8:8:4:4,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                           capture_output=True, check=True).stdout
+    r, g, b = frame[:3]
+    assert r > 150 and g < 90 and b < 90, (r, g, b)  # угол — размытый красный кадр клипа, а не чёрный
+
+
+def test_sticker_on_solid_black_is_keyed_over_blurred_clip(tmp_path):
+    """Клип 896 на деле: «dancing cockroach» — синий таракан на СПЛОШНОМ чёрном фоне (альфы нет), квадрат 220×220;
+    размытая копия чёрной гифки — тоже чёрная, и весь кадр был чёрным."""
+    import subprocess
+
+    from PIL import Image, ImageDraw
+
+    from test_api_pipeline import _require_ffmpeg
+
+    from app.montage_assets import asset_matte, build_inserts_args, key_black
+
+    _require_ffmpeg()
+    flat = Image.new("RGB", (110, 110), (0, 0, 0))
+    ImageDraw.Draw(flat).ellipse((45, 35, 65, 75), fill=(40, 70, 230))
+    sticker = tmp_path / "dancing-cockroach.gif"
+    flat.save(sticker, save_all=True, append_images=[flat.rotate(8)], duration=100, loop=0)
+    photo = tmp_path / "night.png"
+    Image.new("RGB", (110, 110), (90, 90, 120)).save(photo)  # обычная картинка — не стикер
+    assert asset_matte(sticker) == "black" and asset_matte(photo) is None
+    asset = {"id": 1, "kind": "gif", "file_path": str(sticker), "has_audio": False}
+    assert key_black({}, asset) and not key_black({"fill": "blur"}, asset)
+
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=180x320:r=25:d=2",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", str(clip)], check=True)
+    out = tmp_path / "out.mp4"
+    args = build_inserts_args(clip, out, [{"asset_id": 1, "at": 0.5, "duration": 1.0, "mode": "full", "volume": 1.0,
+                                           "duck": False, "x": 0.5, "y": 0.5, "scale": 0.82}],
+                              {1: asset}, 180, 320, 2.0, clip_has_audio=False)
+    assert "colorkey" in args[args.index("-filter_complex") + 1]
+    subprocess.run(args, check=True, capture_output=True)
+    for crop in ("8:8:4:4", "8:8:10:100"):  # угол кадра и чёрный фон самого стикера (квадрат 180×180 по центру)
+        frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1.0", "-i", str(out), "-frames:v", "1",
+                                "-vf", f"crop={crop},scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                               capture_output=True, check=True).stdout
+        assert frame[0] > 150 and frame[1] < 90, (crop, tuple(frame[:3]))
+
+
+# ------------------------------------------------------------------ 6. рамка аватара: чат сбоку — боковой край
+
+
+def test_chat_beside_head_is_cut_from_the_side_not_the_top():
+    from app.ai import avatar_box
+
+    model = {"x0": 0.60, "y0": 0.45, "x1": 0.95, "y1": 0.97}
+    face = {"x0": 0.68, "y0": 0.55, "x1": 0.82, "y1": 0.75}
+    chat = {"x0": 0.85, "y0": 0.0, "x1": 1.0, "y1": 0.55}  # колонка чата справа, рядом с головой, не над лицом
+    (x0, y0, x1, y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [chat], face)
+    # Раньше: верх до 0.55 (срез по лбу — дешевле по площади). Теперь макушка цела, чат убран справа.
+    assert sides == ["right"] and y0 == 0.42 and x1 == 0.85
+    # Чат прямо над головой (боком не убрать, не задев лицо) — как в QA 3: срез сверху, лицо целиком.
+    over = {"x0": 0.62, "y0": 0.0, "x1": 1.0, "y1": 0.5}
+    (_x0, top, _x1, _y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [over], face)
+    assert sides == ["top"] and top == 0.5 < face["y0"]
+
+
+def test_head_above_face_is_kept_when_gemini_box_is_tight():
+    # Клип 896, сцена 1: рамка модели от Gemini y0 0.32 (над глазами), лицо 0.38–0.585, а макушка с рожками —
+    # у самого верха кадра; рамка резала волосы.
+    from app.ai import avatar_box
+
+    tight = {"x0": 0.49, "y0": 0.32, "x1": 0.912, "y1": 0.938,
+             "face": {"x0": 0.605, "y0": 0.38, "x1": 0.81, "y1": 0.585}}
+    cam = avatar_box.place_avatar([tight])["cam"]
+    assert cam["y"] <= 0.38 - 1.5 * 0.205 + 1e-6  # над лицом — полторы его высоты и запас
+    assert cam["y"] + cam["h"] >= 0.938  # низ модели на месте
+
+
+def test_cached_avatar_places_get_new_geometry_but_keep_boundaries():
+    # Кэш detect_avatar клипа 896 (снят старыми правилами): рамки пересчитываются по per_frame, отрезки — как были.
+    from app.ai import avatar_box
+
+    face0 = {"x0": 0.783, "y0": 0.63, "x1": 0.906, "y1": 0.778}
+    corner = {"x0": 0.707, "y0": 0.457, "x1": 0.95, "y1": 0.97, "face": face0,
+              "ui": [{"x0": 0.812, "y0": 0.3, "x1": 0.999, "y1": 0.355}, {"x0": 0.862, "y0": 0.448, "x1": 0.999, "y1": 0.51},
+                     {"x0": 0.899, "y0": 0.52, "x1": 0.999, "y1": 0.58}]}
+    big = {"x0": 0.49, "y0": 0.32, "x1": 0.912, "y1": 0.938, "face": {"x0": 0.605, "y0": 0.38, "x1": 0.81, "y1": 0.585}}
+    cache = {"cam": {"x": 0.6924, "y": 0.58, "w": 0.2722, "h": 0.42}, "box": {}, "per_frame": [big, corner, corner],
+             "times": [279.875, 285.225, 290.575],
+             "places": [{"place": 1, "cam": {"x": 0.4647, "y": 0.2829, "w": 0.4726, "h": 0.6922}, "src_from": 277.2,
+                         "src_to": 282.208},
+                        {"place": 0, "cam": {"x": 0.6924, "y": 0.58, "w": 0.2722, "h": 0.42}, "src_from": 282.208,
+                         "src_to": 309.3, "transition": {"start": 282.075, "end": 282.342}}]}
+    fresh = avatar_box.refresh_geometry(cache)
+    first, second = fresh["places"]
+    assert first["cam"]["y"] < 0.1 and first["src_to"] == 282.208  # голова сцены 1 целиком
+    assert second["cam"]["y"] < 0.58 and second["transition"] == {"start": 282.075, "end": 282.342}
+    assert fresh["cam"] == second["cam"]
+
+
+# ------------------------------------------------------------------ 7. сверка отчёта с фактами клипа
+
+# Отчёт агента QA 4 (agent_chat.json) — дословно пункты про панчлайн и мат.
+QA4_REPORT = ("Готово! Ролик смонтирован строго по плейбуку «vtuber-story».\n"
+              "5. **Вставки:** Подобрал картинки/гифки под таракана, монитор и общагу.\n"
+              "6. **Панчлайн (29.1 с):** На слове «обосралась» срабатывает ч/б фильтр на 1.5 с, резкий наезд камеры "
+              "(zoom 1.15) и звук удара (drama-boom).\n"
+              "7. **Звук и финал:** Весь мат надёжно заглушён (`censor_profanity` успешно отработал).")
+QA4_FACTS = {"censored": [{"word": "о*********,", "owner": "обосралась"}, {"word": "п*****."}],
+             "accents": [{"t": 25.72, "word": "это", "sound": "drama-boom.ogg"}],
+             "inserts": [{"kind": "gif", "at": 6.45, "end": 8.95, "what": "вставка full #0"},
+                         {"kind": "gif", "at": 12.97, "end": 14.97, "what": "вставка full #1",
+                          "real_person": "офисный работник бьёт компьютер"}]}
+
+
+def test_report_gaps_catch_qa4_report():
+    from app.ai import editor_agent
+
+    gaps = editor_agent.report_fact_gaps(QA4_REPORT, QA4_FACTS)
+    assert len(gaps) == 3, gaps
+    assert "«обосралась»" in gaps[0] and "на слове «это»" in gaps[1] and "реальный человек" in gaps[2]
+    fixed = editor_agent.honest_report(QA4_REPORT, QA4_FACTS)
+    assert "Сверка сервиса с клипом" in fixed and "25.72" in fixed and "офисный работник" in fixed
+    honest = ("Звук удара drama-boom встал на слово «это» (25.7 с), не на панчлайн. Цензура заглушила и панчлайн "
+              "«обосралась» — его надо вернуть. На гифке 13 с реальный человек — заменю.")
+    assert editor_agent.report_fact_gaps(honest, QA4_FACTS) == []
+    # Звук на самом панчлайне под звёздочками — отчёт называет его полным словом.
+    starred = {"accents": [{"t": 29.12, "word": "о*********,", "sound": "drama-boom.ogg"}]}
+    assert editor_agent.report_fact_gaps("Удар drama-boom на слове «обосралась».", starred) == []
+
+
+def test_report_facts_from_clip(tmp_path, monkeypatch):
+    from app.ai import editor_agent
+
+    words = [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0),
+             ("Я", 4.0, 4.9), ("о*********,", 5.0, 5.9), ("п*****.", 6.2, 6.8)]
+    mute = [{"start": 5.18, "end": 5.86, "by": "censor", "level": 2, "style": "reverse"},
+            {"start": 6.38, "end": 6.71, "by": "censor", "level": 1, "style": "reverse"}]
+    layers = [{"id": "boom", "type": "audio", "start": 1.3, "end": 2.5,
+               "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}},
+              {"id": "whoosh", "type": "audio", "start": 0.0, "end": 0.7,
+               "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}}]
+    store, plan = _plan(tmp_path, monkeypatch, words=words, mute=mute, layers=layers)
+    facts = editor_agent.report_facts(ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST))
+    assert facts["censored"] == [{"word": "о*********,", "owner": "обосралась"}, {"word": "п*****."}]
+    assert facts["accents"] == [{"t": 1.3, "word": "это", "sound": "drama-boom.ogg"}]  # whoosh — не акцент
+
+
+def test_agent_is_nudged_when_report_hides_facts(tmp_path, monkeypatch):
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+    from test_editor_agent import ScriptedGemini, _call
+
+    from app.ai import editor_agent
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 1.0, "end": 3.0, "text": "Вот это лезет. Я обосралась"}],
+        "words": [{"word": w, "start": a, "end": b} for w, a, b in
+                  [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0), ("Я", 2.1, 2.3),
+                   ("обосралась", 2.4, 3.0)]]})
+    store.set_clip_plan_render_settings(plan["id"], {"layers": [
+        {"id": "boom", "type": "audio", "start": 1.3, "end": 2.5,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}}]})
+    hook = {"type": "text", "start": 0.0, "end": 2.0, "x": 0.5, "y": 0.25,
+            "props": {"text": "ЧТО ПОЛЗЁТ?", "size": 96, "stroke": {"color": "#000000", "width": 10}}}
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [hook]})],
+        [_call("view_frame", {"t": 1.0})],
+        [{"text": "Готово: хук на 0–2 с, звук удара drama-boom на слове «обосралась»."}],
+        [{"text": "Готово: хук на 0–2 с. Звук удара drama-boom стоит на слове «это» (1.3 с), а не на панчлайне."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], REQUEST, client=fake, model="m")
+    nudge = fake.requests[3][1]["contents"][-1]["parts"][0]["text"]
+    assert "Отчёт расходится с клипом" in nudge and "на слове «это»" in nudge
+    assert out["text"].startswith("Готово: хук на 0–2 с. Звук удара") and "Сверка сервиса" not in out["text"]
+

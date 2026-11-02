@@ -64,7 +64,35 @@ def cached_avatar(store: Any, clip_plan_id: int) -> dict | None:
         data = json.loads(_cache_path(clip_plan_id, plan).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError):
         return None
-    return data if isinstance(data, dict) else None
+    return refresh_geometry(data) if isinstance(data, dict) else None
+
+
+def refresh_geometry(data: dict) -> dict:
+    """Рамки мест из кэша — заново по ответу модели (``per_frame``) текущими правилами (запас над лицом, срез чата
+    сбоку): кэш, снятый до правки правил, иначе так и отдавал бы прежние рамки (QA 4 — срезанная макушка).
+    Отрезки мест (границы по склейке, наплывы) — как в кэше; другое число/порядок мест — кэш как есть."""
+    boxes, times = data.get("per_frame"), data.get("times")
+    places = data.get("places")
+    if not isinstance(boxes, list) or not isinstance(places, list) or not places:
+        return data
+    try:
+        fresh = place_avatar(boxes, times if isinstance(times, list) else None)
+    except Exception:  # noqa: BLE001 - битый кэш — как есть
+        return data
+    if [p.get("place") for p in fresh["places"]] != [p.get("place") for p in places]:
+        return data
+    out_places = []
+    for old, new in zip(places, fresh["places"]):
+        merged = {**old, "cam": new["cam"], "box": new["box"]}
+        for key in ("face", "ui_left"):
+            if key in new:
+                merged[key] = new[key]
+            else:
+                merged.pop(key, None)
+        out_places.append(merged)
+    top = {k: v for k, v in data.items() if k not in ("face", "ui_left")}
+    return {**top, "cam": fresh["cam"], "box": fresh["box"], "places": out_places,
+            **{k: fresh[k] for k in ("face", "ui_left") if k in fresh}}
 
 
 def source_times(plan: dict, n: int = MAX_FRAMES) -> list[float]:
@@ -161,7 +189,9 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
     верхе модели 0.46), и нижние сообщения оставались в кадре весь ролик. Теперь край может зайти и внутрь
     модели — не глубже ``MAX_MODEL_CUT`` её размера и не в лицо ``face`` (глаза и рот от Gemini): из
     вариантов краёв по окнам берётся тот, где чата в рамке меньше всего при самой малой потере модели
-    (чат весит ``UI_WEIGHT``). Окно посреди модели (подпись на теле) срезать дороже — оно остаётся."""
+    (чат весит ``UI_WEIGHT``). Окно посреди модели (подпись на теле) срезать дороже — оно остаётся.
+    Среди вариантов, что убирают чат не хуже лучшего, берётся тот, что меньше режет макушку: чат сбоку от
+    головы убирается боковым краем, а не срезом сверху до лба (QA 4, клип 896)."""
     x0, y0, x1, y1 = cam
     wins: list[dict] = []
     for u in ui:
@@ -181,7 +211,7 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
     rights = {x1} | {u["x0"] for u in wins if x1 > u["x0"] >= union["x1"] - limit * w
                      and (face is None or u["x0"] >= face["x1"])}
     model = w * h
-    best, best_cost = cam, None
+    variants = []
     for t in sorted(tops):
         for b in sorted(bottoms):
             for left in sorted(lefts):
@@ -189,9 +219,14 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
                     rect = (left, t, r, b)
                     chat = sum(_overlap(rect, u) for u in wins)
                     loss = model - _overlap(rect, union)
-                    cost = (UI_WEIGHT * chat + loss, loss)
-                    if best_cost is None or cost < best_cost:
-                        best, best_cost = rect, cost
+                    variants.append(((UI_WEIGHT * chat + loss, loss), chat, rect))
+    best_cost, best_chat, best = min(variants)
+    # QA 4 (клип 896): чат сбоку от головы — рамка резалась сверху до лба (рожки и волосы долой), хотя убрать
+    # чат можно было боковым краем. Из вариантов, что убирают чат не хуже лучшего, берём тот, что меньше
+    # заходит сверху в модель (макушку держим), и только потом — по прежней цене.
+    head = [(max(0.0, rect[1] - union["y0"]), cost, rect) for cost, chat, rect in variants
+            if chat <= best_chat + UI_LEFT_MIN]
+    best = min(head)[2] if head else best
     sides = [name for name, before, after in (("top", y0, best[1]), ("bottom", y1, best[3]),
                                               ("left", x0, best[0]), ("right", x1, best[2])) if before != after]
     return best, sides
@@ -216,6 +251,7 @@ def _iou(a: dict, b: dict) -> float:
     return inter / union if union > 0 else 0.0
 
 
+HEAD_ABOVE_FACE = 1.5  # макушка с волосами и рожками — не ниже стольких высот лица над его верхом
 FACE_GUESS = (0.2, 0.15, 0.8, 0.65)  # лицо внутри рамки модели, когда Gemini его не дал (доли рамки)
 
 
@@ -239,11 +275,16 @@ def _cam_of(group: list[dict]) -> tuple[dict, dict, dict]:
     """Рамки одного места → (объединение, cam с запасом PAD без окон чата, ``{face?, ui_left?}``) в долях
     кадра исходника."""
     union = _union(group)
+    faces = [b["face"] for b in group if isinstance(b.get("face"), dict)]
+    face = _union(faces) if faces else None
+    if face:
+        # QA 4 (клип 896): рамка модели от Gemini кончалась над глазами (y0 0.32 при макушке 0.03 и рожках ≈0.1) —
+        # верх головы срезан. Над лицом (глаза и рот) у модели волосы, рожки, уши — не меньше HEAD_ABOVE_FACE его
+        # высот: верх рамки не ниже этого.
+        union["y0"] = max(0.0, min(union["y0"], face["y0"] - HEAD_ABOVE_FACE * (face["y1"] - face["y0"])))
     w, h = union["x1"] - union["x0"], union["y1"] - union["y0"]
     x0, y0 = max(0.0, union["x0"] - w * PAD), max(0.0, union["y0"] - h * PAD)
     x1, y1 = min(1.0, union["x1"] + w * PAD), min(1.0, union["y1"] + h * PAD)
-    faces = [b["face"] for b in group if isinstance(b.get("face"), dict)]
-    face = _union(faces) if faces else None
     ui = [u for b in group for u in b.get("ui") or []]
     if ui:
         (x0, y0, x1, y1), _sides = trim_ui((x0, y0, x1, y1), union, ui, face)
@@ -392,7 +433,7 @@ def detect_avatar(store: Any, clip_plan_id: int, client: Any = None, *, refresh:
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data
+                return refresh_geometry(data)
         except (OSError, ValueError):
             pass
     source = store.get_source(int(plan["source_id"]))

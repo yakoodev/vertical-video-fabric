@@ -1270,6 +1270,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
     if "montage" in wanted:
         findings += montage_findings(rs, duration)
+        findings += people_findings(store, rs)
         if layers_fmt == "9:16":
             try:
                 from app.agent_tools import avatar_face_zones
@@ -1355,6 +1356,34 @@ def montage_findings(rs: dict, duration: float | None = None) -> list[dict]:
                                                "повтор выглядит как нехватка материала",
                             "на второе место — другая картинка/гифка под смысл слов (search_images / add_image_from_url) "
                             "или убери повтор", t=items[1][0]))
+    return out
+
+
+def people_findings(store: Any, rs: dict) -> list[dict]:
+    """Вставки/картинки, где проверка Gemini-зрением нашла реального человека (кэш ``people_check`` ассета,
+    app/ai/people_check.py). QA 4 (клип 896): гифка с офисным работником и фото студента при заказе «без фото
+    реальных людей» — lint молчал. Здесь не знаем заказа — замечание (info), запрет ставят add_insert и
+    add_image_from_url по плейбуку/заказу."""
+    out: list[dict] = []
+    refs: list[tuple[Any, float, str]] = []
+    for ins in rs.get("inserts") or []:
+        if isinstance(ins, dict) and ins.get("mode") != "sound" and ins.get("asset_id") is not None:
+            refs.append((ins["asset_id"], _num(ins.get("at")), f"вставка на {_num(ins.get('at')):g} с"))
+    for layer in rs.get("layers") or []:
+        if isinstance(layer, dict) and not layer.get("hidden") and layer.get("type") in ("image", "video"):
+            ref = _media_ref(layer)
+            if str(ref or "").isdigit():
+                refs.append((ref, _num(layer.get("start")), f"слой {layer.get('id')} на {_num(layer.get('start')):g} с"))
+    for ref, t, label in refs:
+        try:
+            check = store.get_montage_asset(int(ref)).get("people_check")
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(check, dict) and check.get("real_person") is True:
+            what = str(check.get("what") or "").strip()
+            out.append(_finding("montage", "info", f"{label}: на ней реальный человек" + (f" ({what})" if what else ""),
+                                "заказ «без фото реальных людей» (vtuber-story, stream-shorts) — замени на рисованную/"
+                                "мультяшную картинку или животных", t=t))
     return out
 
 

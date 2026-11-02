@@ -77,6 +77,10 @@ class ToolContext:
     # Хук перед первой правкой: снимок истории. Вызывается не чаще раза за контекст.
     on_first_change: Callable[[], None] | None = None
     changed: bool = False
+    # Запрос владельца этого хода (ИИ-монтажёр) и активный плейбук: инструменты сверяются с ними —
+    # слова владельца в кавычках цензура не глушит, автомонтаж при плейбуке не ставит своё (QA 4).
+    request: str = ""
+    playbook: str | None = None
 
     def before_change(self) -> None:
         if not self.changed and self.on_first_change is not None:
@@ -1874,7 +1878,7 @@ def h_auto_edit(ctx: ToolContext, args: dict) -> dict:
 
     ctx.before_change()
     return apply_auto_edit(ctx.store, ctx.plan_id, style=str(args.get("style") or "hormozi"),
-                           keep_layers=args.get("keep_layers", True) is not False)
+                           keep_layers=args.get("keep_layers", True) is not False, playbook=ctx.playbook)
 
 
 def h_compose_cover(ctx: ToolContext, args: dict) -> dict:
@@ -2003,12 +2007,37 @@ def _norm_word(text: str) -> str:
     return re.sub(r"[^\wё]+", "", str(text or "").lower().replace("ё", "е"))
 
 
-def word_time(ctx: ToolContext, ref: Any) -> float:
-    """Начало слова субтитров в секундах клипа (как в get_clip).
+def _word_match(word: str, want: str) -> int:
+    """Насколько слово субтитров ``word`` — это искомое ``want`` (оба через ``_norm_word``): 4 — то же слово,
+    3 — то же под звёздочками цензуры («о*********» ~ «обосралась»: первая буква и длина), 2 — та же основа
+    (словоформа: «таракана» ~ «таракан»), 1 — содержит искомое (≥ 3 букв), 0 — нет."""
+    raw = str(word or "").lower().replace("ё", "е")
+    core = re.sub(r"[^\w*]+", "", raw)
+    plain = core.replace("*", "")
+    if not want or not core:
+        return 0
+    if plain == want and "*" not in core:
+        return 4
+    if "*" in core:
+        return 3 if core[0] == want[0] and len(core) == len(want) else 0
+    common = 0
+    for a, b in zip(plain, want):
+        if a != b:
+            break
+        common += 1
+    if min(len(plain), len(want)) >= 4 and common >= max(4, min(len(plain), len(want)) - 2):
+        return 2
+    return 1 if len(want) >= 3 and want in plain else 0
 
-    ``ref`` — {"line": i, "word": j} (номера из get_clip.subtitles.lines) или
-    {"text": "Артас", "nth": 1} / просто строка: n-е вхождение слова. Агент-монтажёр
-    просил «поставь звук на слово», а не считать секунды руками."""
+
+def word_at(ctx: ToolContext, ref: Any) -> dict:
+    """Слово субтитров по ссылке at_word → ``{t, word, line, word_i, note?}`` (t — начало, секунды клипа).
+
+    ``ref`` — {"line": i, "word": j} (номера из get_clip.subtitles.lines) или {"text": "Артас", "nth": 1} /
+    просто строка: n-е вхождение слова. По тексту ищется сначала то же слово (регистр и ё/е не важны), потом
+    слово под звёздочками цензуры, потом словоформа, потом вхождение. QA 4 (клип 896): звук на «обосралась»
+    встал на «это» строкой выше — номер строки съехал, а слово под звёздочками по тексту не находилось.
+    Даны и номер, и текст, а они расходятся — верит тексту (note)."""
     timeline = clip_timeline(ctx.store, ctx.plan_id)
     lines = _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"])["lines"]
     if not lines:
@@ -2017,20 +2046,43 @@ def word_time(ctx: ToolContext, ref: Any) -> float:
         ref = {"text": ref}
     if not isinstance(ref, dict):
         raise ToolError("at_word: {line, word} или {text, nth}")
-    if ref.get("text") is not None:
-        want, nth, seen = _norm_word(ref["text"]), int(ref.get("nth") or 1), 0
-        for line in lines:
-            for word in line["words"]:
-                if want and want in _norm_word(word[0]):
-                    seen += 1
-                    if seen == nth:
-                        return float(word[1])
+    by_index = None
+    if ref.get("line") is not None:
+        try:
+            li, wj = int(ref.get("line")), int(ref.get("word", 0) or 0)
+            word = lines[li]["words"][wj]
+            by_index = {"t": float(word[1]), "word": str(word[0]), "line": li, "word_i": wj}
+        except (TypeError, ValueError, IndexError) as exc:
+            if ref.get("text") is None:
+                raise ToolError("at_word: нет такой строки/слова (см. get_clip.subtitles.lines[i].words[j])") from exc
+    if ref.get("text") is None:
+        return by_index  # type: ignore[return-value]
+    want, nth = _norm_word(ref["text"]), max(1, int(ref.get("nth") or 1))
+    scored = [(_word_match(word[0], want), li, wj, word) for li, line in enumerate(lines)
+              for wj, word in enumerate(line["words"])]
+    best = max((sc for sc, *_rest in scored), default=0)
+    hits = [x for x in scored if x[0] == best and best > 0]
+    if by_index is not None and hits and not ref.get("nth"):
+        # Номер и текст вместе: из подходящих по тексту — ближайшее к названной строке.
+        hits.sort(key=lambda x: (abs(x[1] - by_index["line"]), x[1], x[2]))
+        hit = hits[0]
+    elif len(hits) >= nth:
+        hit = hits[nth - 1]
+    else:
         raise ToolError(f"at_word: слова «{ref['text']}» (вхождение {nth}) нет в субтитрах")
-    try:
-        line = lines[int(ref.get("line"))]
-        return float(line["words"][int(ref.get("word", 0))][1])
-    except (TypeError, ValueError, IndexError) as exc:
-        raise ToolError("at_word: нет такой строки/слова (см. get_clip.subtitles.lines[i].words[j])") from exc
+    _sc, li, wj, word = hit
+    out = {"t": float(word[1]), "word": str(word[0]), "line": li, "word_i": wj}
+    if by_index is not None and (by_index["line"], by_index["word_i"]) != (li, wj):
+        out["note"] = (f"lines[{by_index['line']}].words[{by_index['word_i']}] — это «{by_index['word']}», а не "
+                       f"«{ref['text']}»: поставил на «{word[0]}» (lines[{li}].words[{wj}])")
+    elif best == 3:
+        out["note"] = f"«{ref['text']}» в субтитрах под звёздочками цензуры: «{word[0]}»"
+    return out
+
+
+def word_time(ctx: ToolContext, ref: Any) -> float:
+    """Начало слова субтитров в секундах клипа (как в get_clip) — см. ``word_at``."""
+    return word_at(ctx, ref)["t"]
 
 
 def _place_on_word(ctx: ToolContext, item: dict) -> dict:
@@ -2044,7 +2096,9 @@ def _place_on_word(ctx: ToolContext, item: dict) -> dict:
     if item.get("at_word") is None:
         start = float(item.get("start") or 0)
     else:
-        start = round(word_time(ctx, item.pop("at_word")) + float(item.pop("word_offset", 0) or 0), 3)
+        found = word_at(ctx, item.pop("at_word"))
+        item["_on_word"] = found  # какое слово на деле под слоем — в ответ add_layers (QA 4: звук не на том слове)
+        start = round(found["t"] + float(item.pop("word_offset", 0) or 0), 3)
     if until is not None:
         end = word_time(ctx, until)
         if end <= start + 0.1:
@@ -2079,6 +2133,13 @@ def _resolve_caption_marks(ctx: ToolContext, layer: dict) -> dict:
     return {**layer, "props": fixed}
 
 
+def _on_word_line(index: int, item: dict, placed: dict) -> str:
+    """«layers[1] audio 25.72 с → на слове «это» (lines[14].words[1])» — агент видит, куда встал слой."""
+    text = (f"layers[{index}] {item.get('type')} {float(item.get('start') or 0):g} с → на слове «{placed['word']}» "
+            f"(lines[{placed['line']}].words[{placed['word_i']}])")
+    return text + (f"; {placed['note']}" if placed.get("note") else "")
+
+
 def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     raw = args.get("layers")
     if isinstance(raw, dict):
@@ -2096,6 +2157,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     # Теперь битый слой пропускается с причиной, остальные встают.
     skipped: list[str] = []
     prepared: list[tuple[int, dict]] = []
+    on_words: list[str] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             skipped.append(f"layers[{index}]: ожидается объект слоя")
@@ -2105,6 +2167,9 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         except ToolError as exc:
             skipped.append(f"layers[{index}]: {exc}" + (f" ({'; '.join(exc.problems)})" if exc.problems else ""))
             continue
+        placed = item.pop("_on_word", None)
+        if placed:
+            on_words.append(_on_word_line(index, item, placed))
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
@@ -2145,6 +2210,8 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         + _layers_room_warning(len(layers))
         + _scene_engine_problems(added)[1],
     }
+    if on_words:
+        out["on_words"] = on_words
     if any(l.get("type") == "scene" for l in added):
         out["check"] = "сцена: посмотри кадры preview_scene_frame(layer_id, t: [0, середина, конец]) или view_frame"
     if skipped:
@@ -2244,11 +2311,21 @@ def insert_facts(ctx: ToolContext) -> list[dict]:
     время — шкала clip."""
     render = _current_render(ctx)
 
-    def asset_kind(asset_id: Any) -> str | None:
+    def asset_of(asset_id: Any) -> dict:
         try:
-            return ctx.store.get_montage_asset(int(asset_id)).get("kind")
+            return ctx.store.get_montage_asset(int(asset_id))
         except (KeyError, TypeError, ValueError):
-            return None
+            return {}
+
+    def asset_kind(asset_id: Any) -> str | None:
+        return asset_of(asset_id).get("kind")
+
+    def people(asset_id: Any) -> dict:
+        """Реальный человек на файле по кэшу проверки (app/ai/people_check.py) — поле факта для отчёта."""
+        check = asset_of(asset_id).get("people_check") if asset_id is not None else None
+        if isinstance(check, dict) and check.get("real_person") is True:
+            return {"real_person": str(check.get("what") or "реальный человек")}
+        return {}
 
     out = []
     for layer in _layers_of(render):
@@ -2262,12 +2339,13 @@ def insert_facts(ctx: ToolContext) -> list[dict]:
             "gif" if src.lower().split("?")[0].endswith(".gif") else "image"))
         out.append({"what": f"слой {layer.get('type')} {layer.get('id')}", "kind": kind,
                     "at": round(_num(layer.get("start"), 0.0) or 0.0, 2), "end": round(_num(layer.get("end"), 0.0) or 0.0, 2),
-                    "id": str(layer.get("id") or "")})
+                    "id": str(layer.get("id") or ""), **people(props.get("asset_id"))})
     for index, ins in enumerate(render.get("inserts") or []):
         kind = asset_kind(ins.get("asset_id")) or "image"
         at = _num(ins.get("at"), 0.0) or 0.0
         out.append({"what": f"вставка {ins.get('mode') or 'pip'} #{index}", "kind": kind, "at": round(at, 2),
-                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}"})
+                    "end": round(at + (_num(ins.get("duration"), 1.5) or 1.5), 2), "id": f"insert#{index}",
+                    **people(ins.get("asset_id"))})
     out.sort(key=lambda f: f["at"])
     return out
 
@@ -2908,7 +2986,9 @@ def h_search_web_images(_ctx: ToolContext, args: dict) -> dict:
             {k: r.get(k) for k in ("url", "title", "source", "license", "width", "height") if r.get(k) is not None}
             for r in found.get("results") or []
         ],
-        "hint": "понравившуюся картинку добавь в библиотеку через add_image_from_url, потом ставь слоем image с asset_id",
+        "hint": ("понравившуюся картинку добавь в библиотеку через add_image_from_url, потом ставь слоем image с "
+                 "asset_id; фото/видео реальных людей при запрете (плейбук, заказ) add_image_from_url не примет — "
+                 "бери рисованные, мультяшные, аниме, животных"),
     }
 
 
@@ -2931,8 +3011,57 @@ def h_add_image_from_url(ctx: ToolContext, args: dict) -> dict:
             # Поиск по названию приносит мимо (на «Олег Монгол» — фото БелАЗа).
             ctx.store.delete_montage_asset(asset["id"])
             raise ToolError(f"картинка не про «{query[:60]}» — возьми другого кандидата из search_web_images")
-    return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
-            "width": asset.get("width"), "height": asset.get("height")}
+    try:
+        people = people_gate(ctx, asset)
+    except ToolError:
+        ctx.store.delete_montage_asset(asset["id"])  # скачанное под запрет в библиотеке не держим
+        raise
+    out = {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
+           "width": asset.get("width"), "height": asset.get("height")}
+    return {**out, **people}
+
+
+# Плейбуки, где владелец запретил фото реальных людей на вставках (docs/playbooks: «только мемы без фото
+# реальных людей»), и такой же запрет словами в запросе.
+NO_REAL_PEOPLE_PLAYBOOKS = {"vtuber-story", "stream-shorts", "stream-horizontal"}
+NO_REAL_PEOPLE_RE = re.compile(
+    r"без\s+(?:фото(?:графий)?\s+|видео\s+)?(?:реальн\w*|живых|настоящих)\s+люд|без\s+(?:фото(?:графий)?\s+)?людей"
+    r"|no\s+real\s+people",
+    re.IGNORECASE,
+)
+
+
+def real_people_rule(ctx: ToolContext) -> str | None:
+    """Почему в этом ходе нельзя вставлять фото/видео реальных людей (плейбук или слова владельца) — или None."""
+    if ctx.playbook and str(ctx.playbook).lower() in NO_REAL_PEOPLE_PLAYBOOKS:
+        return f"плейбук {ctx.playbook}: только мемы без фото реальных людей"
+    if ctx.request and NO_REAL_PEOPLE_RE.search(ctx.request):
+        return "владелец в заказе: без фото реальных людей"
+    return None
+
+
+def people_gate(ctx: ToolContext, asset: dict) -> dict:
+    """Gemini-зрение: реальный человек на ассете? (кэш в ассете, app/ai/people_check.py). Запрещено в этом
+    ходе (``real_people_rule``) — ToolError с объяснением; иначе — поля для ответа (предупреждение/пометка).
+
+    QA 4 (клип 896): «angry monitor» — гифка с офисным работником, «sleeping student» — фото студента, при
+    заказе «без фото реальных людей»; проверка релевантности их пропустила."""
+    from app.ai.people_check import check_asset, describe
+
+    if asset.get("kind") == "audio":
+        return {}
+    check = check_asset(ctx.store, asset)
+    if check.get("real_person") is None:
+        return {"people_check": check.get("skipped") or "не проверено"}
+    if not check["real_person"]:
+        return {"people_check": "реальных людей нет" + (f" ({check['what']})" if check.get("what") else "")}
+    rule = real_people_rule(ctx)
+    if rule:
+        raise ToolError(f"на вставке #{asset['id']} {describe(check)} — {rule}. Возьми рисованную/мультяшную "
+                        "картинку, аниме или животных (другой кандидат search_web_images / другой файл библиотеки)")
+    return {"people_check": describe(check),
+            "people_warning": (f"на вставке {describe(check)}: если заказ «без фото реальных людей» — замени; "
+                               "в отчёте назови это прямо")}
 
 
 MAX_UPLOAD_IMAGE_BYTES = 12 * 1024 * 1024
@@ -3877,8 +4006,24 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
     если verify, круги «рендер → Whisper по готовому файлу → шире, где узнаётся»."""
     from app import censor
 
-    options = {"stars": args.get("stars", True) is not False, "soft": bool(args.get("soft")),
-               "groups": args.get("groups") or None, "skip": args.get("skip") or ()}
+    notes: list[str] = []
+    soft = bool(args.get("soft"))
+    groups = args.get("groups") or None
+    if ctx.request and not censor.owner_asks_soft(ctx.request):
+        # QA 4 (клип 896): soft включил агент сам — заглушил панчлайн «обосралась». Мягкая брань (блин,
+        # жопа, срать) — не мат, площадки за неё не режут; глушим её, только если владелец просил.
+        if soft or (isinstance(groups, (list, tuple)) and "soft" in groups):
+            notes.append("мягкая брань (soft: блин, жопа, срать…) — не мат; владелец её глушить не просил — не глушу")
+        soft = False
+        if isinstance(groups, (list, tuple)):
+            groups = [g for g in groups if g != "soft"] or None
+    options = {"stars": args.get("stars", True) is not False, "soft": soft,
+               "groups": groups, "skip": args.get("skip") or ()}
+    keep = censor_keep_words(ctx)
+    if keep:
+        options["keep"] = keep
+    if args.get("force_words"):
+        options["force_words"] = [int(i) for i in args.get("force_words") or () if str(i).lstrip("-").isdigit()]
     if args.get("track") not in (None, ""):
         options["track"] = args.get("track")  # только эта дорожка (число или "voice"), app/censor.py
     if args.get("style") not in (None, ""):
@@ -3893,15 +4038,23 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
         if args.get("verify", True) is False or args.get("clear"):
             raise ToolError("идёт проверка цензуры этого клипа (рендер + Whisper) — дождись её: "
                             "повтори censor_profanity без verify=false")
-    explicit = any(args.get(k) not in (None, "", [], False) for k in
-                   ("levels", "level", "style", "groups", "soft", "skip", "track", "clear", "verify_again"))
-    if not explicit and args.get("stars", True) is not False:
+    # QA 4 (клип 896): 5 вызовов подряд — явные levels/style/groups обходили «уже применено». Теперь
+    # повторный вызов при стоящей цензуре — «уже применено», что бы ни передали; переделать — redo: true.
+    redo = any(args.get(k) not in (None, "", [], False) for k in ("redo", "overwrite", "clear", "verify_again",
+                                                                    "force_words"))
+    if not redo and args.get("stars", True) is not False:
         try:
-            done = censor.already_censored(ctx.store, ctx.plan_id)
+            done = censor.already_censored(ctx.store, ctx.plan_id, keep=keep)
         except Exception:  # noqa: BLE001 - не смогли сверить — делаем как обычно
             done = None
         if done:
-            return {"ok": True, "status": "already", "already_applied": True, **done}
+            explicit = [k for k in ("levels", "level", "style", "groups", "soft", "skip", "track")
+                        if args.get(k) not in (None, "", [], False)]
+            if explicit:
+                done["note"] += (f". Переданные {', '.join(explicit)} НЕ применены: цензура уже стоит — переделать "
+                                 "её можно только с redo: true (и только если владелец просил)")
+            return {"ok": True, "status": "already", "already_applied": True, **done,
+                    **({"notes": notes} if notes else {})}
     try:
         if args.get("clear"):
             ctx.before_change()
@@ -3910,7 +4063,7 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
             ctx.before_change()
             out = censor.censor_plan(ctx.store, ctx.plan_id, levels, **options)
             out["note"] += ". Без проверки: рендер и Whisper не запускались (verify=true — проверит сам)"
-            return {"ok": True, "verified": False, **out}
+            return {"ok": True, "verified": False, **out, **({"notes": notes} if notes else {})}
         if not censor.job_running(ctx.plan_id):
             ctx.before_change()
         out = censor.censor_job(ctx.store, ctx.plan_id, levels=levels,
@@ -3918,7 +4071,53 @@ def h_censor_profanity(ctx: ToolContext, args: dict) -> dict:
                                 **options)
     except ValueError as exc:
         raise ToolError(f"censor_profanity: {exc}") from exc
-    return {"ok": True, **out}
+    return {"ok": True, **out, **({"notes": notes} if notes else {})}
+
+
+def accent_words(ctx: ToolContext) -> list[dict]:
+    """Звуки-акценты клипа и слово субтитров под каждым: ``[{layer, asset, t, word, line, j}]`` (шкала clip).
+
+    Слово — то, что начинается в пределах ``ACCENT_WORD_SEC`` от начала звука (at_word ставит звук на начало
+    слова), иначе ближайшее звучащее в этот момент; нет слов рядом — word пусто. QA 4 (клип 896): агент
+    поставил drama-boom «на обосралась», а звук стоял на «это» за 2.8 с до панчлайна, и никто этого не видел."""
+    render = _current_render(ctx)
+    sounds = [l for l in render.get("layers") or [] if isinstance(l, dict) and l.get("type") == "audio"
+              and not l.get("hidden") and str((l.get("props") or {}).get("asset_id") or "").startswith("sfx:")]
+    if not sounds:
+        return []
+    timeline = clip_timeline(ctx.store, ctx.plan_id)
+    lines = _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"])["lines"]
+    flat = [(li, j, w) for li, line in enumerate(lines) for j, w in enumerate(line["words"])]
+    out = []
+    for layer in sounds:
+        t = float(layer.get("start") or 0)
+        near = min(flat, key=lambda x: abs(float(x[2][1]) - t), default=None)
+        hit = near if near and abs(float(near[2][1]) - t) <= ACCENT_WORD_SEC else next(
+            (x for x in flat if float(x[2][1]) <= t < float(x[2][2]) + 0.05), None)
+        out.append({"layer": layer.get("id"), "asset": str((layer.get("props") or {}).get("asset_id")),
+                    "t": round(t, 2), "word": str(hit[2][0]) if hit else "",
+                    **({"line": hit[0], "j": hit[1]} if hit else {})})
+    return out
+
+
+ACCENT_WORD_SEC = 0.12
+
+
+def censor_keep_words(ctx: ToolContext) -> list[str]:
+    """Слова, которые цензура без явного force_words не глушит: из кавычек запроса владельца (панчлайн,
+    ключевое слово) и под звуками-акцентами (at_word)."""
+    from app.censor import quoted_words
+
+    keep = quoted_words(ctx.request) if ctx.request else []
+    try:
+        for item in accent_words(ctx):
+            core = re.sub(r"[^\w*]+", "", item["word"].lower().replace("ё", "е"))
+            # Слово под звуком уже со звёздочками — каким оно было, не знаем (мог быть и мат): не трогаем.
+            if len(core) >= 3 and "*" not in core and core not in keep:
+                keep.append(core)
+    except Exception:  # noqa: BLE001 - без слоёв — только слова владельца
+        pass
+    return keep
 
 
 def h_add_music_from_url(ctx: ToolContext, args: dict) -> dict:
@@ -5153,17 +5352,27 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     inserts = list(render.get("inserts") or [])
     if len(inserts) >= MAX_INSERTS:
         raise ToolError(f"вставок уже {MAX_INSERTS} — больше нельзя; для картинок используй слой image")
+    on_word = None
     if args.get("at_word") is not None:
-        args = {**args, "at": round(word_time(ctx, args["at_word"]) + float(args.get("word_offset") or 0), 3)}
+        on_word = word_at(ctx, args["at_word"])
+        args = {**args, "at": round(on_word["t"] + float(args.get("word_offset") or 0), 3)}
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
+    people = people_gate(ctx, asset)  # реальный человек при запрете — отказ до записи
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
              if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
     out: dict = {"ok": True, "inserts": fresh["inserts"]}
+    if people.get("people_check"):
+        out["people_check"] = people["people_check"]
+    if on_word:
+        out["on_word"] = (f"на слове «{on_word['word']}» (lines[{on_word['line']}].words[{on_word['word_i']}])"
+                          + (f"; {on_word['note']}" if on_word.get("note") else ""))
     warnings = [note] if note else []
+    if people.get("people_warning"):
+        warnings.append(people["people_warning"])
     twice = [i for i in inserts if int(i.get("asset_id") or -1) == int(asset["id"]) and i.get("mode") != "sound"]
     if twice and mode != "sound":
         # QA 02.11 (клип 892): одна и та же гифка на 6.7 и 13.5 с.
@@ -6700,7 +6909,10 @@ def _build_registry() -> list[Tool]:
             "согласная) — человек понимает, автосубтитры TikTok/YouTube мат не распознают; в субтитрах — первая "
             "буква и звёздочки («б****»). Ручные mute не трогает, свои прежние отрезки заменяет; повторный "
             "запуск идемпотентен (звёздочки находит сам). По умолчанию мат + «сука»; soft=true — ещё блин, "
-            "хрен, жопа, говно. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
+            "хрен, жопа, говно, срать — ТОЛЬКО если владелец сам просил глушить мягкую брань (иначе soft не "
+            "применяется: это не мат). Слова владельца в кавычках (панчлайн, ключевое слово) и слово под звуком-"
+            "акцентом не глушатся (kept в ответе), кроме настоящего мата; заглушить такое всё же — force_words [i], "
+            "только по просьбе владельца. verify=true (по умолчанию) — рендер → Whisper по звуку готового файла → там, где "
             "мат ещё узнаётся (±0.4 с), уровень +1 и новый рендер, не больше max_rounds (3) кругов; это минуты: "
             "ответ status running — повтори тот же вызов через retry_after_sec. Итог: words [{i, word, start, "
             "end, level, heard, note}], render_id последнего рендера, unmuted_heard — мат, который Whisper "
@@ -6712,8 +6924,9 @@ def _build_registry() -> list[Tool]:
             "(тихий писк), noise (розовый шум), reverse (задом наперёд), lowpass («под водой»), stretch (растяжка, "
             "тон ниже), duck (−35 дБ, не в ноль); не задан — прежний стиль клипа (хранится у отрезков), у нового "
             "— reverse (выбор владельца на слух). Слово, что узнаётся и на уровне 3, verify сам переключает на "
-            "silence, затем noise (только его; style_switched в ответе). Цензура уже стоит на весь мат — повтор "
-            "без параметров отвечает status already («уже применено», без рендера); verify_again: true — проверить "
+            "silence, затем noise (только его; style_switched в ответе). Вызывай ОДИН раз: цензура уже стоит на весь "
+            "мат — повтор с любыми levels/style/groups отвечает status already («уже применено», без рендера) и их "
+            "не применяет; переделать — redo: true (только если владелец просил), verify_again: true — проверить "
             "рендером заново. Слова под цензурой в субтитрах всегда со звёздочками и не подсвечиваются "
             "(highlightWords/эмфаза на них не действуют). "
             "/ Mute profanity mid-word, star it in subtitles, verify by Whisper on the render.",
@@ -6721,6 +6934,9 @@ def _build_registry() -> list[Tool]:
                   "levels": {"type": ["integer", "object"]}, "soft": {"type": "boolean"},
                   "stars": {"type": "boolean"}, "skip": {"type": "array", "items": {"type": "integer"}},
                   "clear": {"type": "boolean"},
+                  "redo": {"type": "boolean", "description": "переделать уже стоящую цензуру (иначе повтор — already)"},
+                  "force_words": {"type": "array", "items": {"type": "integer"},
+                                  "description": "номера слов владельца/под акцентом, которые всё же глушить"},
                   "track": {"type": ["integer", "string"], "description": "\"voice\" или номер дорожки"},
                   "style": {"type": "string", "enum": ["silence", "beep", "noise", "reverse", "lowpass", "stretch",
                                                        "duck"]}}),
@@ -7286,8 +7502,9 @@ def _build_registry() -> list[Tool]:
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
                   "reason": {"type": "string"},
-                  "fill": {"type": "string", "enum": ["blur", "cover", "black"],
-                           "description": "mode full: чем заполнить кадр вокруг вставки другой пропорции"},
+                  "fill": {"type": "string", "enum": ["blur", "cover", "black", "clip"],
+                           "description": ("mode full: чем заполнить кадр вокруг вставки другой пропорции; clip — "
+                                           "размытый кадр клипа (по умолчанию у прозрачных гифок/PNG)")},
                   "at_word": _AT_WORD_SCHEMA,
                   "word_offset": {"type": "number"}}, ["asset_id"]),
             h_add_insert, mutating=True,

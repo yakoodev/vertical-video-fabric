@@ -2776,7 +2776,11 @@ def api_clip_plan_censor(
         store=store, clip_plan_id=clip_plan_id,
         on_first_change=lambda: snapshot_clip(store, clip_plan_id, "цензура мата"),
     )
-    result, ok = agent_tools.run_tool(ctx, "censor_profanity", body.model_dump(exclude_none=True))
+    args = body.model_dump(exclude_none=True)
+    if any(args.get(k) not in (None, "", [], False) for k in ("levels", "level", "style", "groups", "soft", "skip", "track")):
+        # Владелец в редакторе явно меняет цензуру — это не повторный вызов агента («уже применено»).
+        args["redo"] = True
+    result, ok = agent_tools.run_tool(ctx, "censor_profanity", args)
     if not ok:
         problems = "; ".join(str(p) for p in result.get("problems") or [])
         raise HTTPException(status_code=400, detail=str(result.get("error") or "цензура не удалась")

@@ -1474,10 +1474,16 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
             args += ["-stream_loop", "-1", "-ss", f"{offset:.3f}", "-i", asset["file_path"]]
         if ins["mode"] == "full":
             # Как в рендере (montage_assets.full_insert_chain): вокруг — размытая копия, а не кадр клипа.
-            from app.montage_assets import full_insert_chain
+            from app.montage_assets import ALPHA_FILL, CLIP_BLUR, full_insert_chain, key_black, resolve_fill
 
             x, y = "(W-w)/2", "(H-h)/2"
-            graph.append(f"{full_insert_chain(f'[{n}:v]', width, height, ins.get('fill'), str(n))},format=rgba[i{n}]")
+            fill = resolve_fill(ins, asset)
+            chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, asset))
+            graph.append(f"{chain},format=rgba[i{n}]")
+            if fill == ALPHA_FILL:
+                # Прозрачная вставка — поверх размытого кадра клипа, как в рендере.
+                graph.append(f"{last}{CLIP_BLUR}[bg{n}]")
+                last = f"[bg{n}]"
         else:
             box_w = max(2, int(width * ins["scale"]) // 2 * 2)
             box_h = max(2, int(height * INSERT_MAX_HEIGHT) // 2 * 2)

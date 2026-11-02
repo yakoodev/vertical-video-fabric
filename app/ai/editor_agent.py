@@ -578,6 +578,7 @@ def run_agent(
         store=store,
         clip_plan_id=clip_plan_id,
         on_first_change=lambda: snapshot(store, clip_plan_id, f"ИИ: {_short_request(message, 50)}"),
+        request=str(message or ""),
     )
     clip_state, _ok = agent_tools.run_tool(ctx, "get_clip", {})
     first = (
@@ -629,6 +630,7 @@ def run_agent(
     auto_avatar_looked = False
     nudged_continue = False
     nudged_report = False
+    nudged_facts = False
     nudged_work = False
     nudged_fix = False
     asked_report = False
@@ -766,6 +768,15 @@ def run_agent(
                     "секунде; что не получилось — так и скажи."
                 )}]})
                 continue
+            if final_text and ctx.changed and not nudged_facts:
+                # QA 4 (клип 896): «удар на обосралась» — а звук на «это»; молчание о заглушённом панчлайне и
+                # реальных людях на вставках. Один раз показываем факты и просим исправить/переписать.
+                gaps = report_fact_gaps(final_text, clip_check(ctx))
+                if gaps:
+                    nudged_facts = True
+                    report_only = report_only or not tools_on
+                    contents.append({"role": "user", "parts": [{"text": facts_nudge(gaps, tools_on)}]})
+                    continue
             break
         said = _strip_leaks(_parts_text(parts))
         if said and (degenerate(said) or not report_like(said)):
@@ -788,6 +799,7 @@ def run_agent(
             except KeyError:
                 label = f"Неизвестный инструмент {name}"
             step = {"tool": name, "label": label, "ok": None, "args": _brief_args(args)}
+            ctx.playbook = active_playbook(message, steps)  # инструменты (auto_edit) сверяются с плейбуком
             steps.append(step)
             emit()
             result, ok = agent_tools.run_tool(ctx, name, args)
@@ -960,14 +972,108 @@ def clip_check(ctx: ToolContext) -> dict | None:
     except Exception:  # noqa: BLE001
         pass
     try:
-        out["inserts"] = [{k: f[k] for k in ("kind", "at", "end", "what")} for f in agent_tools.insert_facts(ctx)]
+        out["inserts"] = [{k: f[k] for k in ("kind", "at", "end", "what", "real_person") if k in f}
+                          for f in agent_tools.insert_facts(ctx)]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out.update(report_facts(ctx))
     except Exception:  # noqa: BLE001
         pass
     if not out:
         return None
     out["note"] = ("свежая проверка после правки: lint_warnings > 0 — в отчёте НЕ пиши «lint пройден»/«без "
-                   "предупреждений»; вставки называй по kind (image — картинка, gif — гифка, video — видео)")
+                   "предупреждений»; вставки называй по kind (image — картинка, gif — гифка, video — видео); "
+                   "censored — что заглушила цензура, accents — на каком слове ПО ФАКТУ стоит звук, real_person у "
+                   "вставки — на ней реальный человек: в отчёте скажи об этом прямо")
     return out
+
+
+# Звуки, которые не акцент на слово (переход, вжух в начале) — сверка отчёта их не требует.
+_NOT_ACCENT_RE = re.compile(r"whoosh|swoosh|swish|transition|riser", re.IGNORECASE)
+MAX_ACCENT_FACTS = 3
+
+
+def report_facts(ctx: ToolContext) -> dict:
+    """Факты клипа, о которых отчёт агента молчал или врал (QA 4, клип 896): ``censored`` — слова под цензурой
+    (``owner`` — слово владельца из кавычек запроса, т.е. заглушён панчлайн), ``accents`` — звук-акцент и слово
+    под ним по факту. Реальные люди на вставках — в ``inserts[].real_person``."""
+    from app import censor
+
+    out: dict = {}
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    if censor.censor_spans(plan):
+        words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+        keep = censor.quoted_words(ctx.request) if ctx.request else []
+        rows = []
+        for i in censor.censored_word_indices(ctx.store, plan, words):
+            row = {"word": str(words[i].get("word") or "")}
+            owner = censor.keep_match(row["word"], keep) if keep else None
+            if owner:
+                row["owner"] = owner
+            rows.append(row)
+        if rows:
+            out["censored"] = rows
+    accents = [a for a in agent_tools.accent_words(ctx) if not _NOT_ACCENT_RE.search(a.get("asset") or "")]
+    if accents:
+        out["accents"] = [{"t": a["t"], "word": a["word"], "sound": str(a.get("asset") or "").rsplit("/", 1)[-1]}
+                          for a in accents[:MAX_ACCENT_FACTS]]
+    return out
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+|\n+")
+_SOUND_WORDS_RE = re.compile(r"звук|удар|акцент|boom|бум|sfx|эффект", re.IGNORECASE)
+_MUTE_WORDS_RE = re.compile(r"заглуш|цензур|запик|глуш|звёздочк|звездочк", re.IGNORECASE)
+_REAL_WORDS_RE = re.compile(r"реальн\w*\s+(?:человек|люд)|фото\w*\s+(?:человека|людей)|живого человека", re.IGNORECASE)
+_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё*]+(?:-[A-Za-zА-Яа-яЁё*]+)*")
+
+
+def _mentions(sentence: str, word: str) -> bool:
+    """Предложение называет слово ``word``: то же, словоформа, а слово под звёздочками («о*********») — так же
+    звёздочками или полным словом той же длины и первой буквы («обосралась»)."""
+    tokens = _TOKEN_RE.findall(sentence)
+    if "*" in word:
+        core = re.sub(r"[^\w*]+", "", word.lower().replace("ё", "е"))
+        return any(re.sub(r"[^\w*]+", "", t.lower().replace("ё", "е")) == core
+                   or agent_tools._word_match(word, agent_tools._norm_word(t)) == 3 for t in tokens)
+    want = agent_tools._norm_word(word)
+    return bool(want) and any(agent_tools._word_match(tok, want) >= 2 for tok in tokens)
+
+
+def report_fact_gaps(text: str, check: dict | None) -> list[str]:
+    """Факты из ``clip_check``, которые отчёт не называет или называет неверно — строками для владельца/агента."""
+    if not check:
+        return []
+    sentences = [x for x in _SENTENCE_SPLIT_RE.split(text or "") if x.strip()]
+    gaps: list[str] = []
+    censored = check.get("censored") or []
+    owner = [c for c in censored if c.get("owner")]
+    for row in owner:
+        if not any(_MUTE_WORDS_RE.search(x) and _mentions(x, row["owner"]) for x in sentences):
+            gaps.append(f"цензура заглушила слово владельца «{row['owner']}» (в субтитрах «{row['word']}») — "
+                        "панчлайн не слышен")
+    if censored and not owner and not any(_MUTE_WORDS_RE.search(x) for x in sentences):
+        gaps.append("заглушено цензурой: " + ", ".join(f"«{c['word']}»" for c in censored[:5]))
+    for accent in check.get("accents") or []:
+        word = str(accent.get("word") or "")
+        if not word:
+            continue
+        sound_sentences = [x for x in sentences if _SOUND_WORDS_RE.search(x)]
+        if not any(_mentions(x, word) for x in sound_sentences):
+            gaps.append(f"звук-акцент {accent.get('sound') or ''} по факту на {accent['t']:g} с — на слове «{word}»")
+    for fact in check.get("inserts") or []:
+        if fact.get("real_person") and not any(_REAL_WORDS_RE.search(x) for x in sentences):
+            gaps.append(f"на вставке {fact.get('at', 0):g}–{fact.get('end', 0):g} с ({fact.get('what')}) — реальный "
+                        f"человек: {fact['real_person']}")
+    return gaps
+
+
+def facts_nudge(gaps: list[str], tools_on: bool) -> str:
+    fix = ("Если это расходится с заказом (панчлайн заглушён, звук не на том слове, реальные люди при запрете) — "
+           "исправь инструментами (censor_profanity redo, update_layer/at_word, другая вставка), потом отчёт. "
+           if tools_on else "")
+    return ("Отчёт расходится с клипом или молчит о важном. По факту: " + "; ".join(gaps) + ". " + fix
+            + "Перепиши отчёт по-русски 3–6 пунктов и назови это прямо — не пиши того, чего нет в клипе.")
 
 
 _LINT_CLAIM_RE = re.compile(
@@ -991,6 +1097,7 @@ def honest_report(text: str, check: dict | None, steps: list[dict] | None = None
     facts = check.get("inserts") or []
     if _GIF_CLAIM_RE.search(text or "") and facts and not any(f.get("kind") in ("gif", "video") for f in facts):
         notes.append("гифок в клипе нет — вставки по факту: " + agent_tools.describe_inserts(facts))
+    notes += report_fact_gaps(text, check)
     if not notes:
         return text
     return (text.rstrip() + "\n\nСверка сервиса с клипом: " + "; ".join(notes) + ".").strip()

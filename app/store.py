@@ -2324,6 +2324,9 @@ class AppStore:
             updates["description"] = str(fields["description"] or "")[:500]
         if "tags" in fields:
             updates["tags"] = str(fields["tags"] or "")[:200]
+        if "people_check" in fields:
+            value = fields["people_check"]
+            updates["people_check"] = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else ""
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
             self.db.execute(f"UPDATE montage_assets SET {sets} WHERE id = ?", (*updates.values(), asset_id))
@@ -3421,6 +3424,11 @@ def _prepare_subtitle_profile_fields(fields: dict[str, Any], partial: bool) -> d
 
 def _decode_asset(asset: dict) -> dict:
     asset["has_audio"] = bool(asset.get("has_audio"))
+    try:
+        check = json.loads(asset.get("people_check") or "null")
+    except (TypeError, ValueError):
+        check = None
+    asset["people_check"] = check if isinstance(check, dict) else None
     asset["url"] = f"/media/montage-assets/{asset['id']}"
     return asset
 
