@@ -181,6 +181,9 @@ FORMAT_LABELS = {FORMAT_STORY: "история", FORMAT_DISASTER: "сериал-
 ENGINE_IMAGES, ENGINE_3D = "images", "3d"
 ENGINES = (ENGINE_IMAGES, ENGINE_3D)
 ENGINE_LABELS = {ENGINE_IMAGES: "картинки сцен (ИИ)", ENGINE_3D: "3D-движок (лоу-поли, 0 ₽)"}
+# Чем рисуется 3D-серия: свой лоу-поли движок в сервисе или Blender на компьютере владельца (очередь хост-воркера).
+RENDERER_THREE, RENDERER_BLENDER = "three", "blender"
+RENDERERS = (RENDERER_THREE, RENDERER_BLENDER)
 # Длина эпизода по жанру: (мин, макс, по умолчанию), секунды.
 DURATIONS = {FORMAT_STORY: (30.0, 75.0, 50.0), FORMAT_DISASTER: (60.0, 90.0, 75.0)}
 DEFAULT_CAPTIONS = {"color": "#ffffff", "active": "#ffffff", "stroke": "#151515", "size": 110, "y": 0.74,
@@ -830,6 +833,10 @@ def _episode_view(row: Any, full: bool = True) -> dict:
         if full or key in ("options", "notes"):
             data[key] = _loads(raw, default)
     data["status_label"] = STATUS_LABELS.get(data["status"], data["status"])
+    wait = timeline.get("render3d") if data["status"] == "assembling" else None
+    if isinstance(wait, dict) and wait.get("label"):
+        data["status_label"] = str(wait["label"])     # «рендер на компьютере… 42%»
+        data["render3d"] = wait
     data["editor_url"] = timeline.get("editor_url") if data.get("clip_id") else None
     return data
 
@@ -906,7 +913,9 @@ def create_episode(store: Any, world_id: int, premise: str, duration: Any = None
                    options: dict | None = None, requested_by: str = "agent") -> dict:
     """Новый эпизод. Жанр — ``options.format`` или формат мира; у сериала-катастрофы эпизод — часть
     сериала мира (``options.part``: следующая по счёту, если не задана), длина 60–90 с. ``options.engine``:
-    ``3d`` — серия на своём 3D-движке (без картинок сцен, 0 ₽), иначе картинки сцен."""
+    ``3d`` — серия на своём 3D-движке (без картинок сцен, 0 ₽), иначе картинки сцен; ``options.renderer`` у 3D:
+    ``three`` — лоу-поли движок в сервисе, ``blender`` — кино-качество Blender на компьютере владельца (очередь
+    хост-воркера, app/render_queue.py)."""
     world = get_world(store, world_id)
     options = dict(options or {})
     fmt = P._choice(str(options.get("format") or world.get("format") or FORMAT_STORY), FORMATS, "format")
@@ -915,6 +924,12 @@ def create_episode(store: Any, world_id: int, premise: str, duration: Any = None
         options.pop("engine", None)
     else:
         options["engine"] = P._choice(str(options["engine"]), ENGINES, "engine")
+    if options.get("renderer") in (None, ""):
+        options.pop("renderer", None)
+    else:
+        options["renderer"] = P._choice(str(options["renderer"]), RENDERERS, "renderer")
+        if options["renderer"] == RENDERER_BLENDER:
+            options["engine"] = ENGINE_3D
     lo, hi, default = DURATIONS[fmt]
     label = FORMAT_LABELS[fmt]
     premise = P._long_text(premise, 800)
@@ -1327,3 +1342,9 @@ def request_item(store: Any, target: str, regenerate: bool = False, requested_by
     pid = _Extension().project_of(store, target_type, target_id)
     return G.request_stage(store, int(pid), STAGE, None, [f"{target_type}:{int(target_id)}"], regenerate=regenerate,
                            requested_by=requested_by, note=note)
+
+
+def episode_renderer(ep: dict | None) -> str:
+    """3D-серия: ``three`` — лоу-поли движок сервиса, ``blender`` — Blender на компьютере владельца."""
+    value = str(((ep or {}).get("options") or {}).get("renderer") or RENDERER_THREE)
+    return value if value in RENDERERS else RENDERER_THREE

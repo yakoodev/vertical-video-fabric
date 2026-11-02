@@ -260,6 +260,38 @@ premise="блэкаут застал парня на 36 этаже, кто-то 
 Без сервиса: `python tools/series3d_demo.py script.json out.mp4 --sheet sheet.jpg --env .env --gl gpu` —
 временная база, тот же конвейер, печатает время рендера.
 
+### 3D-серия в Blender (`options.renderer: "blender"`, галочка «🎬 Blender»)
+
+Кино-качество пробного кадра на всю серию (`app/series3d_blender.py`, сцена `tools/blender/series_scene.py`,
+набор сцены — из `tools/blender/hero_shot.py`): герой KayKit в дождевике с мимикой, капюшон сдвинут назад (брови
+видны), телефон в левой руке, правая жмёт и стучит.
+
+* **Режиссура по фразам**: на кадр — действие из словаря (`approach`, `press_button` + кнопка 1–12/`bell`/`all`,
+  `knock`, `pry_doors`, `sit_corner`, `stand_up`, `phone_out`, `phone_light`, `look_display`, `look_ceiling`,
+  `look_camera`, `flinch`, `shout`, `listen`, `wait`), эмоция (`calm … exhausted`) и план (`ots` за плечом, `face`,
+  `detail` — у нажатия рука + кнопка + лицо в профиль, `overhead`). Выбирает Gemini (бесплатный текст, JSON-схема
+  со строгими enum'ами), без ключа/при ошибке — правила по словам. Правка: сидя — сначала встать, кнопка — в
+  досягаемости, один план подряд не повторяется, `look_camera` — с лип-синком. События на словах — как у
+  лоу-поли (`series3d.detect_events`): мигание и блэкаут, аварийный красный, рывок (тряска + проседание камеры),
+  стук, табло.
+* **Исполнение** (`perform`, покадрово, без Blender — тесты): клипы KayKit с наплывами, шаги (короткий путь) или
+  склейка (длинный), поворот на месте — корень плавно + шаги, IK рук с подгонкой касания по мешу, взгляд
+  (саккады + пружина головы), мимика, рот — лип-синк по виземам слов × огибающая озвучки (`lipsync`:
+  `speaking` — только реплики/крик/взгляд в объектив, `all`, `off`), камера плана с наведением на настоящую голову
+  и поправкой «лицо выше субтитров».
+* **Рендер**: одна сцена на серию, недостающие кадры кусков-планов в кэш `<кэш>/<хэш плана>/f_NNNNN.png`
+  (рендер анимации по диапазонам — без пересоздания движка на кадр); хэш — от дорожек плана: правка фразы
+  перерисует её планы; упал — повтор дорисует. Склейка → mp4 без звука → тот же холст (субтитры, HUD, титры,
+  звуки событий и нажатий, тревожный фон).
+* **Хост-воркер** (в Docker нет GPU/Blender): сборка ставит задание в очередь `render3d_jobs` и ждёт — эпизод в
+  «собираю клип», статус «рендер на компьютере… N%», компьютер не в сети — заметка. На компьютере:
+  `python tools/render_worker.py --server http://localhost:8088` (токен как у MCP — `--token-file`,
+  `VVF_TOKEN`; кэш — `D:/vvf-offload/render3d`). Ручки (Bearer): `POST /api/render3d/claim`,
+  `POST /api/render3d/jobs/{id}/heartbeat|complete (multipart mp4)|fail|cancel`, `GET /api/render3d/jobs`,
+  `GET /api/render3d/status`. Пульса нет 3 мин — задание снова в очереди (3 попытки).
+* Без сервиса: `python tools/series3d_blender.py script.json out.mp4 --sheet sheet.jpg --env .env
+  [--quality final|preview|draft]` — временная база, рендер здесь же (`SERIES3D_BLENDER_LOCAL=1`).
+
 ## REST (вкладка «Истории»)
 
 `GET /api/projects/{id}/stories`; мир `POST /api/projects/{id}/stories/worlds`, `PATCH/DELETE

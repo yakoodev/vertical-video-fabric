@@ -1459,4 +1459,5 @@ def main():
     log("готово", json.dumps(report, ensure_ascii=False))
 
 
-main()
+if __name__ == "__main__":   # серия (tools/blender/series_scene.py) берёт отсюда набор сцены как библиотеку
+    main()

@@ -4619,6 +4619,13 @@ from app.stories_api import build_stories_router  # noqa: E402
 
 app.include_router(build_stories_router(AuthDep, lambda: store))
 
+# Очередь 3D-рендера: воркер на хосте с Blender берёт задания, шлёт пульс, отдаёт mp4 (app/render_queue.py).
+from app.render_queue import build_render3d_router, on_done as _render3d_on_done  # noqa: E402
+from app.stories_gen import kick as _stories_kick  # noqa: E402
+
+app.include_router(build_render3d_router(AuthDep, lambda: store))
+_render3d_on_done(_stories_kick)  # рендер готов — работник историй сразу собирает клип
+
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))
 

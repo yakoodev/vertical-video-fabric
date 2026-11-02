@@ -9,11 +9,20 @@
 ``role: music``, петля копиями внахлёст, громкость по замеру озвучки (фон на ``BED_UNDER_VOICE_DB`` тише голоса).
 Опция эпизода/мира ``music: none`` — без фона; трек из библиотеки (``music_track_id``) — вместо фона, как у 2D.
 Гул кабины и шахты (``role: ambience``) — так же петлёй из режиссуры. Обложки — кадры 3D-видео по шаблону формата.
+
+``options.renderer: blender`` — кино-качество: режиссура ``app.series3d_blender`` (действие/эмоция/план на фразу —
+Gemini по схеме, иначе правила; лип-синк по огибающей озвучки), рендер — Blender. В Docker его нет: сборка ставит
+задание в очередь хост-воркера (``app/render_queue.py``) и ждёт (эпизод остаётся «собираю клип», статус —
+«рендер на компьютере… N%»); готово — тот же холст. ``SERIES3D_BLENDER_LOCAL=1`` и Blender рядом — рендер здесь же
+(``tools/series3d_blender.py``).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -264,8 +273,14 @@ def assemble(store: Any, episode_id: int) -> dict:
     path = _asset_path(store, ref)
     audio_sec = float(probe_duration(path))
     notes: list[str] = [n for n in (ep.get("notes") or []) if not str(n).startswith("3D:")]
-    words: list[dict] = []
-    if S.world_voice(store, world)["provider"] != "none":
+    blender = S.episode_renderer(ep) == S.RENDERER_BLENDER
+    key = blender_key(ep, ref) if blender else ""
+    job = _blender_job(store, ep, key) if blender else None
+    # Слова уже распознаны для задания рендера — не гоняем Whisper на каждом проходе ожидания.
+    words: list[dict] = [dict(w) for w in ((job or {}).get("payload") or {}).get("words") or []]
+    if words:
+        pass
+    elif S.world_voice(store, world)["provider"] != "none":
         try:
             words = SG.transcribe_words(path)
         except Exception as exc:  # noqa: BLE001 - Whisper выключен/не встал: по длине текста
@@ -284,15 +299,26 @@ def assemble(store: Any, episode_id: int) -> dict:
     placed = [{**p, "scene_id": 0} for p in SG.place(ep["beats"], words, total)]
     look = S3.hero_look(hero_card(store, ep))
     options = ep.get("options") or {}
-    result = S3.direct(ep["script"], words, total=total, look=look, location=options.get("location"))
-    problems = S3.check_shots(result)
+    if blender:
+        got = blender_video(store, ep, words, total, look, path, key, job, notes)
+        if got is None:
+            return {"ok": True, "wait": True, "episode_id": int(episode_id), "engine": S.ENGINE_3D}
+        result, video_src, info = got
+        problems: list[str] = []
+    else:
+        result = S3.direct(ep["script"], words, total=total, look=look, location=options.get("location"))
+        problems = S3.check_shots(result)
+        video_src = None
     if problems:
         notes.append("3D: проверка кадров — " + "; ".join(problems[:6]))
     work = settings.tmp_dir / f"series3d-{episode_id}-{uuid4().hex[:8]}"
     work.mkdir(parents=True, exist_ok=True)
     try:
         video = work / "series.mp4"
-        info = render3d(result, video)
+        if video_src is not None:
+            shutil.copyfile(video_src, video)
+        else:
+            info = render3d(result, video)
         covers = _frames(video, cover_times(result["shots"]), _covers_dir(), f"ep{int(episode_id)}-{uuid4().hex[:6]}")
         asset = save_video(store, video, f"3D: {ep.get('title') or ep['premise']}")
     finally:
@@ -352,9 +378,10 @@ def assemble(store: Any, episode_id: int) -> dict:
                 "shots_per_min": round(len(shots) / total * 60, 1), "sfx": len(result.get("sfx") or []),
                 "layers": len(render["layers"]), "music_track_id": track, "music_bed": bed, "cover_frames": covers,
                 "scene3d": {"location": result["location"], "asset_id": int(asset["id"]),
+                            "renderer": S.episode_renderer(ep), "director": result.get("director"),
                             "render_sec": info.get("seconds"), "frames": info.get("frames"),
-                            "shots": [{k: s.get(k) for k in ("n", "t0", "t1", "text", "role", "action", "camera", "spot")}
-                                      for s in shots],
+                            "shots": [{k: s.get(k) for k in ("n", "t0", "t1", "text", "role", "action", "camera", "spot",
+                                                             "emotion", "speaks") if k in s} for s in shots],
                             "events": [{k: e.get(k) for k in ("kind", "t", "value")} for e in result["events"]],
                             "checks": problems, "look": result.get("look")},
                 **({"mix": mixed} if mixed else {})}
@@ -365,7 +392,8 @@ def assemble(store: Any, episode_id: int) -> dict:
                          "hud": [{"text": h["props"]["text"], "color": h["props"]["color"], "start": h["start"],
                                   "end": h["end"], "x": h["x"], "y": h["y"]} for h in hud],
                          "publish": D.publish_meta(ep)})
-    notes.append(f"3D: {result['location']}, кадров {len(shots)}, рендер {info.get('seconds')} с")
+    notes.append(f"3D: {result['location']}, кадров {len(shots)}, рендер {info.get('seconds')} с"
+                 + (f" (Blender, режиссура: {result.get('director')})" if blender else ""))
     S.set_status(store, episode_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
                  notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "shots": len(shots),
@@ -373,6 +401,79 @@ def assemble(store: Any, episode_id: int) -> dict:
     if options.get("render"):
         out["publish"] = SG.finish_publish(store, episode_id, clip_id, cover=options.get("cover", True))
     return out
+
+
+def blender_key(ep: dict, ref: dict) -> str:
+    """Что рендерим: фразы сценария + озвучка + качество + версия сцены — то же задание не ставим дважды."""
+    from app import series3d_blender as SB
+
+    opts = ep.get("options") or {}
+    blob = {"sentences": [s.get("text") for s in (ep.get("script") or {}).get("sentences") or []],
+            "narration": str(ref.get("asset_id")), "quality": opts.get("quality") or "final",
+            "lipsync": opts.get("lipsync") or "speaking", "v": SB.SCENE_VERSION, "episode": int(ep["id"])}
+    return "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def _blender_job(store: Any, ep: dict, key: str) -> dict | None:
+    """Задание рендера этой серии; упавшее, о котором эпизод уже сообщил (повтор после «Продолжить»), — не берём."""
+    from app import render_queue as RQ
+
+    job = RQ.find(store, key, payload=True)
+    reported = ((ep.get("timeline") or {}).get("render3d") or {}).get("failed_job")
+    if job and job["status"] == "failed" and reported == job["id"]:
+        return None
+    if job and job["status"] == "done" and RQ.result_file(job) is None:
+        return None
+    return job
+
+
+def blender_local() -> bool:
+    """Рендерить здесь же (CLI/хост), а не через очередь: ``SERIES3D_BLENDER_LOCAL=1`` и Blender найден."""
+    from app import series3d_blender as SB
+
+    flag = os.getenv("SERIES3D_BLENDER_LOCAL", "").strip().lower() in ("1", "true", "yes", "on")
+    return flag and SB.find_blender() is not None
+
+
+def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: dict, audio: Path, key: str,
+                  job: dict | None, notes: list[str]) -> tuple[dict, Path, dict] | None:
+    """Режиссура Blender + рендер: ``(result, mp4, info)`` готово; ``None`` — ждём хост-воркер (статус в эпизоде)."""
+    from app import render_queue as RQ
+    from app import series3d_blender as SB
+
+    eid = int(ep["id"])
+    opts = ep.get("options") or {}
+    payload = (job or {}).get("payload")
+    if payload is None:
+        payload = SB.build_job(ep["script"], words, total, gemini=True, envelope=SB.audio_envelope(audio),
+                               lipsync_mode=str(opts.get("lipsync") or "speaking"),
+                               quality=str(opts.get("quality") or "final"), look=look, seed=eid)
+        if payload.get("director_error"):
+            notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")
+    if blender_local():
+        work = settings.tmp_dir / f"series3d-blender-{eid}"
+        cache = settings.data_dir / "render3d_cache"
+        out = work / "series.mp4"
+        info = SB.render_local(payload, out, work=work, cache=cache)
+        return SB.result_for(payload), out, {"seconds": info.get("seconds"), "frames": info.get("frames"),
+                                             "cached": info.get("cached")}
+    if job is None:
+        job = RQ.enqueue(store, payload, key=key, episode_id=eid, title=str(ep.get("title") or ep.get("premise") or ""))
+    if job["status"] == "done":
+        res = job.get("result") or {}
+        return SB.result_for(payload), RQ.result_file(job), {"seconds": res.get("seconds"), "frames": res.get("frames"),
+                                                            "cached": res.get("cached"), "job_id": job["id"]}
+    timeline = dict(ep.get("timeline") or {})
+    if job["status"] in ("failed", "cancelled"):
+        timeline["render3d"] = {"failed_job": job["id"], "status": job["status"]}
+        S.update_episode(store, eid, timeline=timeline)
+        raise S.StoryError(f"рендер 3D на компьютере: {job.get('error') or job['status']} — «Продолжить» поставит заново")
+    label, note = RQ.wait_label(store, job)
+    timeline["render3d"] = {"job_id": job["id"], "status": job["status"], "progress": job["progress"], "label": label,
+                            "note": note, "worker": job.get("worker") or ""}
+    wait_notes = notes + ([f"3D: {note}"] if note else [])
+    S.update_episode(store, eid, timeline=timeline, notes=wait_notes)
+    return None
 
 
 def _covers_dir() -> Path:

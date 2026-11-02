@@ -1050,7 +1050,8 @@ def advance(store: Any, episode_id: int, client: Any = None, max_steps: int = 8)
                     if check_generation(store, episode_id) in ("wait", "failed", "cancelled"):
                         break
                 elif status == "assembling":
-                    assemble(store, episode_id)
+                    if (assemble(store, episode_id) or {}).get("wait"):
+                        break  # 3D-серия ждёт рендер на компьютере (очередь хост-воркера)
                 else:
                     break
             except Exception as exc:  # noqa: BLE001 - шаг упал: эпизод ждёт правки
