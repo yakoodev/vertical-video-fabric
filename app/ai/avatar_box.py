@@ -172,6 +172,7 @@ MAX_MODEL_CUT = 0.3          # окно чата поверх края моде�
 MAX_MODEL_CUT_BLIND = 0.25   # то же, когда лицо неизвестно (кэш без face)
 UI_WEIGHT = 3.0              # доля кадра под чатом в рамке «стоит» втрое дороже срезанной доли модели
 UI_LEFT_MIN = 0.0005         # меньше этой площади (доли кадра) чата в рамке — не замечание
+CHAT_MOSTLY_GONE = 0.25      # вариант без лишнего среза сверху, где чата от лучшего по цене осталось не больше доли
 
 
 def _overlap(rect: tuple, box: dict) -> float:
@@ -191,7 +192,11 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
     вариантов краёв по окнам берётся тот, где чата в рамке меньше всего при самой малой потере модели
     (чат весит ``UI_WEIGHT``). Окно посреди модели (подпись на теле) срезать дороже — оно остаётся.
     Среди вариантов, что убирают чат не хуже лучшего, берётся тот, что меньше режет макушку: чат сбоку от
-    головы убирается боковым краем, а не срезом сверху до лба (QA 4, клип 896)."""
+    головы убирается боковым краем, а не срезом сверху до лба (QA 4, клип 896).
+
+    QA 5 (клип 897): край по окну чата встал в 0.02 от бокса лица (глаза и рот) — в кадре срезан правый глаз.
+    Инвариант: рамка не заходит в ``face_zone`` (лицо с запасом ``FACE_MARGIN_*``); край можно поставить на
+    сам край этой зоны — чат срезается хотя бы частично, остаток назван в ``ui_left``."""
     x0, y0, x1, y1 = cam
     wins: list[dict] = []
     for u in ui:
@@ -202,14 +207,16 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
         return cam, []
     w, h = union["x1"] - union["x0"], union["y1"] - union["y0"]
     limit = MAX_MODEL_CUT if face else MAX_MODEL_CUT_BLIND
-    tops = {y0} | {u["y1"] for u in wins if y0 < u["y1"] <= union["y0"] + limit * h
-                   and (face is None or u["y1"] <= face["y0"])}
-    bottoms = {y1} | {u["y0"] for u in wins if y1 > u["y0"] >= union["y1"] - limit * h
-                      and (face is None or u["y0"] >= face["y1"])}
-    lefts = {x0} | {u["x1"] for u in wins if x0 < u["x1"] <= union["x0"] + limit * w
-                    and (face is None or u["x1"] <= face["x0"])}
-    rights = {x1} | {u["x0"] for u in wins if x1 > u["x0"] >= union["x1"] - limit * w
-                     and (face is None or u["x0"] >= face["x1"])}
+    zone = face_zone(face) if face else None
+    # Края-кандидаты: по окнам чата и по краю зоны лица (дальше в лицо — нельзя).
+    top_c = [u["y1"] for u in wins] + ([zone["y0"]] if zone else [])
+    bottom_c = [u["y0"] for u in wins] + ([zone["y1"]] if zone else [])
+    left_c = [u["x1"] for u in wins] + ([zone["x0"]] if zone else [])
+    right_c = [u["x0"] for u in wins] + ([zone["x1"]] if zone else [])
+    tops = {y0} | {v for v in top_c if y0 < v <= union["y0"] + limit * h and (zone is None or v <= zone["y0"])}
+    bottoms = {y1} | {v for v in bottom_c if y1 > v >= union["y1"] - limit * h and (zone is None or v >= zone["y1"])}
+    lefts = {x0} | {v for v in left_c if x0 < v <= union["x0"] + limit * w and (zone is None or v <= zone["x0"])}
+    rights = {x1} | {v for v in right_c if x1 > v >= union["x1"] - limit * w and (zone is None or v >= zone["x1"])}
     model = w * h
     variants = []
     for t in sorted(tops):
@@ -221,6 +228,13 @@ def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
                     loss = model - _overlap(rect, union)
                     variants.append(((UI_WEIGHT * chat + loss, loss), chat, rect))
     best_cost, best_chat, best = min(variants)
+    # QA 5: край по зоне лица убирает чат не целиком — при той же глубине среза сверху берём вариант, где чата
+    # заметно меньше (чат сбоку от головы — боковым краем до зоны лица, а не только запасом сверху).
+    intrusion = max(0.0, best[1] - union["y0"])
+    least = min((chat, cost, rect) for cost, chat, rect in variants
+                if max(0.0, rect[1] - union["y0"]) <= intrusion + 1e-9)
+    if least[0] < best_chat - UI_LEFT_MIN and least[0] <= CHAT_MOSTLY_GONE * best_chat:
+        best_chat, best = least[0], least[2]
     # QA 4 (клип 896): чат сбоку от головы — рамка резалась сверху до лба (рожки и волосы долой), хотя убрать
     # чат можно было боковым краем. Из вариантов, что убирают чат не хуже лучшего, берём тот, что меньше
     # заходит сверху в модель (макушку держим), и только потом — по прежней цене.
@@ -253,6 +267,20 @@ def _iou(a: dict, b: dict) -> float:
 
 HEAD_ABOVE_FACE = 1.5  # макушка с волосами и рожками — не ниже стольких высот лица над его верхом
 FACE_GUESS = (0.2, 0.15, 0.8, 0.65)  # лицо внутри рамки модели, когда Gemini его не дал (доли рамки)
+# Запас вокруг бокса лица (глаза и рот от Gemini), который рамка аватара не режет никогда (QA 5, клип 897):
+# доли ширины лица с боков, высоты — сверху и снизу.
+FACE_MARGIN_X = 0.25
+FACE_MARGIN_TOP = 0.5
+FACE_MARGIN_BOTTOM = 0.25
+
+
+def face_zone(face: dict) -> dict:
+    """Лицо с обязательным запасом (доли исходника, в пределах кадра): рамка аватара всегда содержит его
+    целиком — никакая обрезка чата/интерфейса и никакая крупность этого не нарушают."""
+    x0, y0, x1, y1 = (float(face[k]) for k in ("x0", "y0", "x1", "y1"))
+    fw, fh = max(0.0, x1 - x0), max(0.0, y1 - y0)
+    return {"x0": round(max(0.0, x0 - FACE_MARGIN_X * fw), 4), "y0": round(max(0.0, y0 - FACE_MARGIN_TOP * fh), 4),
+            "x1": round(min(1.0, x1 + FACE_MARGIN_X * fw), 4), "y1": round(min(1.0, y1 + FACE_MARGIN_BOTTOM * fh), 4)}
 
 
 def face_of(box: dict, face: dict | None = None) -> dict:
@@ -288,6 +316,10 @@ def _cam_of(group: list[dict]) -> tuple[dict, dict, dict]:
     ui = [u for b in group for u in b.get("ui") or []]
     if ui:
         (x0, y0, x1, y1), _sides = trim_ui((x0, y0, x1, y1), union, ui, face)
+    if face:
+        # Инвариант (QA 5, клип 897): лицо с запасом — всегда в рамке, даже если запас PAD до него не дотянул.
+        zone = face_zone(face)
+        x0, y0, x1, y1 = min(x0, zone["x0"]), min(y0, zone["y0"]), max(x1, zone["x1"]), max(y1, zone["y1"])
     cam = {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
     extra: dict = {}
     if face:
@@ -390,6 +422,63 @@ def settle_transitions(places: list[dict], finder: Any) -> list[dict]:
         right["from_shot_cut"] = True
         if not span.get("hard"):
             right["transition"] = {"start": float(span["start"]), "end": float(span["end"])}
+    return out
+
+
+HOLD_PAD_SEC = 0.04      # стоп-кадр на наплыве — с запасом в кадр (1/30 с) по обе стороны
+HOLD_SNAP_SEC = 0.6      # граница рамок руками ближе этого к наплыву — тот же стоп-кадр
+HOLD_MAX_SEC = 1.5       # наплыв длиннее — не замораживаем (это уже не смена сцены, а монтаж стрима)
+
+
+def hold_for(transition: Any) -> tuple[float, float] | None:
+    """Наплыв ``{start, end}`` (секунды исходника) → (с какой секунды стоп-кадр, где граница рамок) или None."""
+    if not isinstance(transition, dict):
+        return None
+    try:
+        start, end = float(transition["start"]), float(transition["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not 0 < end - start <= HOLD_MAX_SEC:
+        return None
+    return round(start - HOLD_PAD_SEC, 3), round(end + HOLD_PAD_SEC, 3)
+
+
+def cams_from_places(places: list[dict]) -> list[dict]:
+    """Места аватара → ``layout.cams`` ``[{from, to, cam, freeze_from?}]``.
+
+    QA 5 (клип 897): граница мест на середине наплыва — всё равно ≈0.2 с полупрозрачного ютуба в рамке
+    (каждая рамка видит чужую сцену половину наплыва). Теперь на наплыве ни одного кадра с чужой сценой:
+    последний чистый кадр старой сцены стоит стоп-кадром до конца наплыва (``freeze_from`` у записи нового
+    места — с этой секунды исходника и до её ``from``), рамка нового места — с первого чистого кадра новой."""
+    cams = [{"from": p["src_from"], "to": p["src_to"], "cam": p["cam"]} for p in places]
+    for left, right, place in zip(cams, cams[1:], places[1:]):
+        hold = hold_for(place.get("transition"))
+        if hold and float(left["from"]) < hold[0] and hold[1] < float(right["to"]):
+            right["freeze_from"], right["from"] = hold
+            left["to"] = hold[1]
+    return cams
+
+
+def snap_holds(cams: list[dict], places: list[dict]) -> list[dict]:
+    """Рамки по отрезкам руками (``cams`` с from/to в секундах исходника): граница рядом с наплывом, который
+    нашёл detect_avatar, — на его конец со стоп-кадром (как ``cams_from_places``)."""
+    holds = [h for h in (hold_for(p.get("transition")) for p in places) if h]
+    out = [dict(c) for c in cams]
+    if not holds:
+        return out
+    ordered = sorted(range(len(out)), key=lambda i: float(out[i].get("from") or 0))
+    for li, ri in zip(ordered, ordered[1:]):
+        left, right = out[li], out[ri]
+        try:
+            at = float(right["from"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for freeze, end in holds:
+            if freeze - HOLD_SNAP_SEC <= at <= end + HOLD_SNAP_SEC and float(left["from"]) < freeze \
+                    and end < float(right.get("to") or end + 1):
+                right["freeze_from"], right["from"] = freeze, end
+                left["to"] = end
+                break
     return out
 
 

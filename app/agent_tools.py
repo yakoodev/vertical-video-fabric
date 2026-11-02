@@ -1483,11 +1483,17 @@ def avatar_face_zones(store: Any, clip_plan_id: int, render: dict | None = None)
     known = [p for p in [found, *(found.get("places") or [])] if isinstance(p, dict) and p.get("cam") and p.get("box")]
     W, H = 1080, 1920
 
-    def face_rect(look: dict) -> tuple | None:
+    with_face = [p for p in known if isinstance(p.get("face"), dict)]
+
+    def face_rect(look: dict, span: tuple[float, float]) -> tuple | None:
         cam = look["cam"]
         match = next((p for p in known if _same_cam(p["cam"], cam)), None)
+        # Рамка, поправленная под лицо (set_layout: шире/по центру лица), — лицо того места по времени.
+        timed = None if match else _face_for_cam(with_face, cam, span)
         if match:
             face = face_of(match["box"], match.get("face"))
+        elif timed:
+            face = face_of({}, timed)
         else:  # рамка руками: модель — сама рамка
             face = face_of({"x0": cam["x"], "y0": cam["y"], "x1": cam["x"] + cam["w"], "y1": cam["y"] + cam["h"]})
         geo = avatar_geometry({**lay, "cam": cam, "video_scale": look.get("video_scale") or lay.get("video_scale")},
@@ -1501,7 +1507,7 @@ def avatar_face_zones(store: Any, clip_plan_id: int, render: dict | None = None)
     for piece in clip_timeline(store, int(clip_plan_id))["pieces"]:
         s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
         for a, b, look in _cam_bits(lay, s0, s1):
-            rect = face_rect(look)
+            rect = face_rect(look, (s0 + a, s0 + b))
             if not rect:
                 continue
             rect = tuple(round(v, 1) for v in rect)
@@ -1511,6 +1517,152 @@ def avatar_face_zones(store: Any, clip_plan_id: int, render: dict | None = None)
                 else:
                     zones.append({"t0": t0, "t1": t1, "rect": rect})
     return zones
+
+
+def _known_avatar_places(store: Any, clip_plan_id: int) -> list[dict]:
+    """Места аватара из кэша detect_avatar с лицом: ``[{cam, box, face, src_from?, src_to?}]`` (без вызова модели)."""
+    try:
+        from app.ai.avatar_box import cached_avatar
+
+        found = cached_avatar(store, int(clip_plan_id)) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    return [p for p in [*(found.get("places") or []), found] if isinstance(p, dict) and p.get("cam")
+            and isinstance(p.get("face"), dict)]
+
+
+def _face_for_cam(known: list[dict], cam: dict, span: tuple[float, float] | None) -> dict | None:
+    """Лицо аватара (доли исходника) для рамки ``cam`` на отрезке исходника ``span``: место detect_avatar с той
+    же рамкой, иначе место, что дольше всех лежит на отрезке, — если его лицо хоть краем в рамке (рамка руками
+    около аватара). Не нашлось — None (лицо не знаем, рамку не трогаем)."""
+    same = next((p for p in known if _same_cam(p["cam"], cam)), None)
+    if same:
+        return same["face"]
+    if span is None:
+        return None
+    a, b = span
+    timed = [(min(b, float(p["src_to"])) - max(a, float(p["src_from"])), p) for p in known
+             if p.get("src_from") is not None and p.get("src_to") is not None]
+    timed = [(o, p) for o, p in timed if o > 0]
+    if not timed:
+        return None
+    face = max(timed, key=lambda item: item[0])[1]["face"]
+    rect = (float(cam["x"]), float(cam["y"]), float(cam["x"]) + float(cam["w"]), float(cam["y"]) + float(cam["h"]))
+    ix = min(rect[2], float(face["x1"])) - max(rect[0], float(face["x0"]))
+    iy = min(rect[3], float(face["y1"])) - max(rect[1], float(face["y0"]))
+    return face if ix > 0 and iy > 0 else None
+
+
+_SIDE_RU = {"left": "левый край", "right": "правый край", "top": "верх", "bottom": "низ"}
+
+
+def fit_avatar_faces(store: Any, clip_plan_id: int, layout: dict, render: dict, source: dict,
+                     auto_scale: bool = True) -> tuple[dict, list[str]]:
+    """avatar_full: каждая рамка (``cam`` и ``cams``) — с лицом аватара целиком и с запасом в КАДРЕ
+    (``stream_layout.fit_avatar_face``): рамка, срезающая лицо, расширяется до него, крупность, при которой
+    бока рамки с лицом уходят за кадр, — меньше. → (раскладка, предупреждения агенту).
+
+    QA 5 (клип 897): рамку второго места сузили ради чата, крупность 1.5 срезала её бока — правый глаз за кадром
+    20 с ролика. Лицо — из detect_avatar (кэш); не знаем лица — рамка как есть."""
+    from app.ai.avatar_box import face_zone
+    from app.formats import frame_size, settings_render_format
+    from app.stream_layout import avatar_auto_scale, fit_avatar_face, normalize_layout
+
+    known = _known_avatar_places(store, clip_plan_id)
+    if not known:
+        return layout, []
+    width, height = frame_size(settings_render_format(render))
+    src_w, src_h = source.get("width"), source.get("height")
+    ay = float(layout.get("avatar_y", 0.5))
+    base_scale = float(layout.get("video_scale") or 1.0)
+    notes: list[str] = []
+
+    def fit(cam: dict, scale: float, span: tuple[float, float] | None, name: str) -> tuple[dict, float]:
+        face = _face_for_cam(known, cam, span)
+        if not face:
+            return cam, scale
+        auto = auto_scale and abs(scale - avatar_auto_scale(cam, width, height, src_w, src_h)) < 0.01
+        new_cam, new_scale, how = fit_avatar_face(cam, face_zone(face), scale, width, height, src_w, src_h, ay, auto)
+        if how:
+            from app.stream_layout import avatar_visible_rect, face_cut_sides
+
+            cut = face_cut_sides(avatar_visible_rect({"cam": cam, "video_scale": scale, "avatar_y": ay}, width, height,
+                                                     src_w, src_h), face_zone(face))
+            what = ", ".join(_SIDE_RU[s] for s in cut) or "край"
+            fix = []
+            if "widened" in how:
+                fix.append("рамка расширена до лица")
+            if "centered" in how:
+                fix.append("рамка по центру лица")
+            if new_scale < scale - 1e-3:
+                fix.append(f"video_scale {scale:g} → {new_scale:g}")
+            notes.append(f"{name}: лицо аватара не помещалось в кадр целиком ({what} лица с запасом за кадром) — "
+                         f"{', '.join(fix) or 'поправлено'}. Лицо режется — никогда: чат/интерфейс в рамке лучше "
+                         "среза лица (прикрой его плашкой, а не рамкой)")
+        return new_cam, new_scale
+
+    out = dict(layout)
+    cams = [dict(e) for e in layout.get("cams") or []]
+    for index, entry in enumerate(cams):
+        scale = float(entry.get("video_scale") or base_scale)
+        cam, new_scale = fit(entry["cam"], scale, (float(entry["from"]), float(entry["to"])), f"cams[{index}]")
+        if cam != entry["cam"] or abs(new_scale - scale) > 1e-4:
+            entry["cam"] = cam
+            entry["video_scale"] = new_scale
+        cams[index] = entry
+    if cams:
+        out["cams"] = cams
+    if not cams:
+        plan = store.get_clip_plan(int(clip_plan_id))
+        spans = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
+        whole = (min(a for a, _b in spans), max(b for _a, b in spans)) if spans else None
+        cam, new_scale = fit(layout["cam"], base_scale, whole, "cam")
+    else:
+        # Основа вне отрезков: та же рамка, что у места detect_avatar, — без отдельного предупреждения.
+        before = len(notes)
+        cam, new_scale = fit(layout["cam"], base_scale, None, "cam")
+        del notes[before:]
+    out["cam"], out["video_scale"] = cam, new_scale
+    return normalize_layout(out), notes
+
+
+def avatar_face_report(store: Any, clip_plan_id: int, render: dict | None = None) -> list[dict]:
+    """Факт для сверки отчёта: лицо аватара (бокс от detect_avatar) целиком в кадре на каждом месте avatar_full —
+    ``[{from_t, to_t, face_whole: bool, cut: [стороны]}]`` по шкале clip; лица не знаем — место без факта.
+    QA 5 (клип 897): «проверил глазами — лицо в кадре», а правый глаз был за кадром 20 с."""
+    from app.formats import frame_size, settings_render_format
+    from app.stream_layout import avatar_visible_rect, face_cut_sides, normalize_layout
+
+    if render is None:
+        plan = store.get_clip_plan(int(clip_plan_id))
+        render = normalize_render_settings(plan.get("render_settings") or {})
+    layout = render.get("layout") or {}
+    if layout.get("mode") != "avatar_full" or not isinstance(layout.get("cam"), dict):
+        return []
+    known = _known_avatar_places(store, clip_plan_id)
+    if not known:
+        return []
+    lay = normalize_layout(layout)
+    plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    source = store.get_source(int(plan["source_id"]))
+    width, height = frame_size(settings_render_format(render))
+    rows: list[dict] = []
+    for piece in clip_timeline(store, int(clip_plan_id))["pieces"]:
+        s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+        for a, b, look in _cam_bits(lay, s0, s1):
+            face = _face_for_cam(known, look["cam"], (s0 + a, s0 + b))
+            if not face:
+                continue
+            visible = avatar_visible_rect({**lay, "cam": look["cam"], "video_scale": look.get("video_scale")
+                                           or lay.get("video_scale")}, width, height, source.get("width"),
+                                          source.get("height"))
+            cut = face_cut_sides(visible, face)
+            for t0, t1 in source_span_to_clip([piece], s0 + a, s0 + b):
+                if rows and rows[-1]["cut"] == cut and abs(rows[-1]["to_t"] - t0) < 0.05:
+                    rows[-1]["to_t"] = round(t1, 2)
+                else:
+                    rows.append({"from_t": round(t0, 2), "to_t": round(t1, 2), "face_whole": not cut, "cut": cut})
+    return rows
 
 
 def avatar_places(ctx: ToolContext) -> list[dict]:
@@ -3640,6 +3792,29 @@ def h_set_motion_blur(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+_END_HOLD_ASK_RE = re.compile(r"стоп[- ]?кадр|замира|замри|end[_ ]?hold|freeze", re.IGNORECASE)
+
+
+def apply_playbook_defaults(ctx: ToolContext) -> bool:
+    """Умолчания активного плейбука, которых нет у клипа: стоп-кадр в конце (``end_hold_sec``) у vtuber-story — 0.
+
+    QA 5 (клип 897): в конце ролика стоп-кадр 0.5 с (общее умолчание RENDER_END_HOLD_SEC) — на повторе ролик
+    «замирает»; в прошлый раз агент сам ставил set_end_hold 0, в этот — нет. Стоп-кадр владелец просил в запросе
+    или агент задал явно — не трогаем. → поменяли ли что-то."""
+    from app.auto_edit import playbook_rules
+
+    rules = playbook_rules(ctx.playbook) or {}
+    if "end_hold_sec" not in rules:
+        return False
+    if ctx.request and _END_HOLD_ASK_RE.search(ctx.request):
+        return False
+    render = _current_render(ctx)
+    if render.get("end_hold_sec") is not None:
+        return False
+    _save_render(ctx, {**render, "end_hold_sec": float(rules["end_hold_sec"])})
+    return True
+
+
 def h_set_end_hold(ctx: ToolContext, args: dict) -> dict:
     """Стоп-кадр в конце ролика на клип: 0 — мем обрывается на последнем кадре, null — как у сервиса."""
     from app.clip_settings import END_HOLD_MAX_SEC, normalize_end_hold
@@ -3793,8 +3968,15 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
     if layout_args.get("mode") == "avatar_full":
         avatar_from = _avatar_layout_args(ctx, render, source, layout_args)
     merged = {**(render.get("layout") or {}), **layout_args}
-    fresh = _save_render(ctx, {**render, "layout": normalize_layout(merged)})
+    face_notes: list[str] = []
+    new_layout = normalize_layout(merged)
+    if new_layout["mode"] == "avatar_full":
+        new_layout, face_notes = fit_avatar_faces(ctx.store, ctx.plan_id, new_layout, render, source,
+                                                  auto_scale="video_scale" not in args)
+    fresh = _save_render(ctx, {**render, "layout": new_layout})
     out: dict = {"ok": True, "layout": fresh["layout"]}
+    if face_notes:
+        out.setdefault("warnings", []).extend(face_notes)
     if took_facecam:
         out["cam_from"] = "facecam источника (detect-facecam) — проверь view_frame"
     if game_x is not None:
@@ -3874,6 +4056,14 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
         layout_args.pop("cams")
     elif isinstance(layout_args.get("cams"), list):
         layout_args["cams"] = _clip_time_cams(ctx, layout_args["cams"])
+        try:
+            from app.ai.avatar_box import cached_avatar, snap_holds
+
+            # Граница руками у наплыва, найденного detect_avatar, — на его конец со стоп-кадром (без чужой сцены).
+            layout_args["cams"] = snap_holds(layout_args["cams"], (cached_avatar(ctx.store, ctx.plan_id) or {})
+                                             .get("places") or [])
+        except Exception:  # noqa: BLE001 - без кэша — границы как заданы
+            pass
         where = "рамки по отрезкам из аргументов (cams)"
     elif "cam" in layout_args and old.get("cams"):
         layout_args["cams"] = []  # один cam из аргументов — на весь клип (прежние рамки по отрезкам сняты)
@@ -3893,7 +4083,10 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
                 places = [p for p in found.get("places") or [] if p.get("src_from") is not None]
                 if found.get("moves") and len(places) > 1:
                     # Аватар переезжает (QA 02.11, клип 892): рамка по отрезкам исходника, а не одна на клип.
-                    layout_args["cams"] = [{"from": p["src_from"], "to": p["src_to"], "cam": p["cam"]} for p in places]
+                    from app.ai.avatar_box import cams_from_places
+
+                    # Наплыв между местами — стоп-кадр старой сцены до конца наплыва (QA 5, клип 897).
+                    layout_args["cams"] = cams_from_places(places)
                     where = (f"аватар найден detect_avatar в {found.get('place_count')} местах — рамка по отрезкам "
                              "(layout.cams)")
             elif source.get("facecam"):
@@ -4469,6 +4662,15 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
                    "и после 7 слов"}
     if moved:
         out["highlights"] = moved
+    stored = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+    shifted = [b for a, b in zip(words, stored) if len(words) == len(stored) and "*" in str(b.get("word") or "")
+               and abs(float(a["start"]) - float(b["start"])) > 0.1]
+    if shifted:
+        # QA 5 (клип 897): «п*****» на 30.07, а тишина мата с 30.6 — звёздочки раньше звука. Слово встаёт под тишину.
+        out.setdefault("warnings", []).append(
+            "слова-мат сдвинуты под свои отрезки глушения (звёздочки — когда глушится звук): "
+            + ", ".join(f"«{b['word']}» {float(b['start']):.2f}–{float(b['end']):.2f} с (куски подряд)" for b in shifted[:4])
+            + ". Глушение стоит по звуку (проверено рендером) — двигать слово мимо него не нужно")
     return out
 
 
@@ -4520,18 +4722,25 @@ def h_emphasize_words(ctx: ToolContext, args: dict) -> dict:
         levels.update({i: 0 for i, w in enumerate(words) if w.get("emph")})
     problems: list[str] = []
     picked_by = None
+    banned = _muted_word_indices(ctx, words)
+    keys = _key_word_indices(ctx, words, banned)
     if args.get("auto"):
         taken = {i for i, w in enumerate(words) if w.get("emph") and not args.get("clear")}
-        todo = [line for line in lines if not any(w["i"] in taken for w in line)]
-        picked: list[int] = []
+        # Заглушённый мат — не кандидат (QA 5: подсвечен «х****»); слово владельца/под звуком — первое.
+        todo = [[w for w in line if w["i"] not in banned] for line in lines
+                if not any(w["i"] in taken for w in line)]
+        picked: list[int] = [next(w["i"] for w in line if w["i"] in keys) for line in todo
+                             if any(w["i"] in keys for w in line)]
+        rest = [line for line in todo if not any(w["i"] in keys for w in line)]
+        more: list[int] = []
         if str(args.get("pick") or "").lower() == "gemini":
             try:
-                picked, picked_by = gemini_pick(todo), "gemini"
+                more, picked_by = gemini_pick(rest), "gemini"
             except Exception as exc:  # noqa: BLE001 - Gemini часто недоступен: эвристика
                 problems.append(f"Gemini не выбрал ({exc}) — взял эвристику")
-        if not picked:
-            picked, picked_by = pick_heuristic(todo), "heuristic"
-        levels.update({i: level or 1 for i in picked})
+        if not more:
+            more, picked_by = pick_heuristic(rest), "heuristic"
+        levels.update({i: level or 1 for i in picked + [i for i in more if i not in banned]})
     refs = [("indices", r) for r in args.get("indices") or []] + [("words", r) for r in args.get("words") or []]         + [("at", r) for r in args.get("at") or []]
     for key, ref in refs:
         if key == "indices" and isinstance(ref, str) and ref.strip().isdigit():
@@ -4541,6 +4750,9 @@ def h_emphasize_words(ctx: ToolContext, args: dict) -> dict:
             problems.append(f"{key}: слова {ref!r} нет в субтитрах (номер из get_clip, текст или {{line, word}})")
             continue
         levels[index] = level
+    if level:
+        levels, notes = _guard_emphasis(words, lines, levels, banned, keys)
+        problems += notes
     if not levels:
         raise ToolError("нечего менять: передай indices, words или at, auto: true или clear: true",
                         problems or None)
@@ -4558,6 +4770,67 @@ def h_emphasize_words(ctx: ToolContext, args: dict) -> dict:
     if problems:
         out["warnings"] = problems
     return out
+
+
+def _muted_word_indices(ctx: ToolContext, words: list[dict]) -> set[int]:
+    """Слова субтитров под цензурой: со звёздочками или под отрезком тишины ``by: censor``."""
+    out = {i for i, w in enumerate(words) if "*" in str(w.get("word") or "")}
+    try:
+        from app.censor import censored_word_indices
+
+        out |= set(censored_word_indices(ctx.store, ctx.store.get_clip_plan(ctx.plan_id), words))
+    except Exception:  # noqa: BLE001 - без цензуры — только звёздочки
+        pass
+    return out
+
+
+def _key_word_indices(ctx: ToolContext, words: list[dict], banned: set[int]) -> set[int]:
+    """Ключевые слова клипа: из кавычек запроса владельца и под звуками-акцентами (at_word) — их выделять в
+    первую очередь (QA 5: в панчлайне «Я обосралась» выделено «Я» при ударе на «обосралась»)."""
+    from app.censor import keep_match
+
+    try:
+        keep = censor_keep_words(ctx)
+    except Exception:  # noqa: BLE001
+        keep = []
+    if not keep:
+        return set()
+    return {i for i, w in enumerate(words) if i not in banned and keep_match(w.get("word"), keep)}
+
+
+def _guard_emphasis(words: list[dict], lines: list[list[dict]], levels: dict[int, int], banned: set[int],
+                    keys: set[int]) -> tuple[dict[int, int], list[str]]:
+    """Эмфаза никогда не на заглушённом мате; местоимение/служебное слово («Я») — заменяется ключевым словом той же
+    строки (слово владельца/под звуком, иначе самое сильное), нет такого — не ставится. → (уровни, замечания)."""
+    from app.word_emphasis import key_word_score, weak_word
+
+    line_of = {w["i"]: line for line in lines for w in line}
+    out: dict[int, int] = {}
+    notes: list[str] = []
+    for index, value in levels.items():
+        if not value:
+            out[index] = value
+            continue
+        word = str(words[index].get("word") or "") if 0 <= index < len(words) else ""
+        if index in banned:
+            notes.append(f"«{word}» — заглушённый мат: эмфазу на нём не ставлю (заглушённое не подсвечивают)")
+            continue
+        if not weak_word(word):
+            out[index] = value
+            continue
+        line = [w for w in line_of.get(index, []) if w["i"] not in banned and w["i"] != index]
+        better = next((w for w in line if w["i"] in keys), None)
+        if better is None:
+            scored = [(key_word_score(w.get("word")), w) for w in line]
+            scored = [x for x in scored if x[0] > 0]
+            better = max(scored, key=lambda x: x[0])[1] if scored else None
+        if better is None:
+            notes.append(f"«{word}» — служебное слово/местоимение, выделять нечего: эмфазу не ставлю")
+            continue
+        out[int(better["i"])] = value
+        notes.append(f"«{word}» — местоимение/служебное, не удар: выделил «{better.get('word')}» "
+                     + ("(слово владельца/под звуком-акцентом)" if better["i"] in keys else "(ключевое слово строки)"))
+    return out, notes
 
 
 def _emph_index(words: list[dict], lines: list[list[dict]], ref: Any) -> int | None:
@@ -7220,7 +7493,8 @@ def _build_registry() -> list[Tool]:
             "прыжок (по умолчанию), shake — ×1.45, прыжок и встряска (самый сильный удар), off — снять. auto: true — "
             "одно ключевое слово на строку само (число, слово с «!», иначе самое длинное не служебное; pick: "
             "\"gemini\" — выбирает Gemini, недоступен — та же эвристика), строки, где эмфаза уже есть, не трогает; "
-            "clear: true — сначала снять все. Работает в слое captions (размер emphScale и цвет emphColor слоя) и в "
+            "clear: true — сначала снять все. Заглушённый мат (звёздочки) не выделяется; местоимение/служебное («Я») "
+            "заменяется ключевым словом строки (слово владельца в кавычках или под звуком-акцентом). Работает в слое captions (размер emphScale и цвет emphColor слоя) и в "
             "прожигаемых субтитрах (там без встряски); метка едет со словом при вырезах и правке строк. "
             "/ Emphasize key subtitle words: bigger + pop (shake adds a jolt).",
             _obj({"words": {"type": "array", "items": {"type": "string"}, "description": "тексты слов"},

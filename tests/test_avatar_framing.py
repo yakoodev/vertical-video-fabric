@@ -204,9 +204,11 @@ def test_chat_over_model_head_is_cut_but_not_the_face():
     assert boxes[0]["face"]["y0"] == 0.62
     out = avatar_box.place_avatar(boxes)
     cam = out["cam"]
-    assert cam["y"] == 0.581 and out["face"]["y0"] == 0.62  # верх — под чатом, лицо целиком в рамке
+    # QA 5 (клип 897): над лицом — запас в полвысоты лица (0.62 − 0.06): край встаёт на него, а не на низ чата
+    # (0.581); полоска чата 0.56–0.581 остаётся и названа в ui_left — лицо важнее.
+    assert cam["y"] == 0.56 and out["face"]["y0"] == 0.62
     assert cam["x"] < 0.711 and cam["x"] + cam["w"] > 0.95  # бока модели не срезаны
-    assert "ui_left" not in out
+    assert out["ui_left"] == [chat]
     # Сообщения чата отдельными рамками (как Gemini отвечает чаще) — та же рамка.
     bubbles = [{"x0": 0.865, "y0": 0.444, "x1": 0.985, "y1": 0.509}, {"x0": 0.892, "y0": 0.519, "x1": 0.999, "y1": 0.581},
                {"x0": 0.874, "y0": 0.519, "x1": 0.968, "y1": 0.581}, {"x0": 0.84, "y0": 0.3, "x1": 0.999, "y1": 0.354}]
@@ -214,7 +216,7 @@ def test_chat_over_model_head_is_cut_but_not_the_face():
     # Чат ниже, до глаз: в лицо рамку не режем — окно остаётся и названо в ui_left.
     deep = {"x0": 0.81, "y0": 0.0, "x1": 0.998, "y1": 0.66}
     kept = avatar_box.place_avatar([{**model, "ui": [deep], "face": {"x0": 0.76, "y0": 0.62, "x1": 0.9, "y1": 0.74}}])
-    assert kept["cam"]["y"] < 0.457 + 0.01 and kept["ui_left"] == [deep]
+    assert kept["cam"]["y"] <= avatar_box.face_zone(kept["face"])["y0"] and kept["ui_left"] == [deep]
     # Без лица (старый кэш) — не глубже четверти модели.
     (_x0, y0, _x1, _y1), sides = avatar_box.trim_ui((0.69, 0.43, 0.97, 0.99), model, [deep])
     assert sides == [] and y0 == 0.43

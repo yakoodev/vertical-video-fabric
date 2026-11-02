@@ -74,6 +74,11 @@ export interface AvatarCam {
   to: number;
   cam: LayoutRect;
   video_scale?: number;
+  /**
+   * Смена сцены наплывом: с этой секунды исходника до `from` — стоп-кадр последнего кадра старой
+   * сцены (рендер, app/stream_layout.avatar_freezes); ставит set_layout, редактор сохраняет как есть.
+   */
+  freeze_from?: number;
 }
 
 /** Прямоугольник в пикселях исходника (videoWidth × videoHeight). */
@@ -139,6 +144,10 @@ export function normalizeAvatarCams(raw: unknown): AvatarCam[] {
     if (box.w == null || box.h == null) continue;
     const entry: AvatarCam = { from: Math.round(Math.max(0, a) * 1000) / 1000, to: Math.round(b * 1000) / 1000, cam: normalizeCam(box) };
     if (it.video_scale != null) entry.video_scale = r4(num(it.video_scale, 1, 1, 4));
+    const freeze = Number(it.freeze_from);
+    if (it.freeze_from != null && Number.isFinite(freeze) && entry.from - 1.5 <= freeze && freeze < entry.from - 0.01) {
+      entry.freeze_from = Math.round(Math.max(0, freeze) * 1000) / 1000;
+    }
     out.push(entry);
   }
   out.sort((x, y) => x.from - y.from);
@@ -149,6 +158,8 @@ export function normalizeAvatarCams(raw: unknown): AvatarCam[] {
       last.to = entry.from;
       if (last.to - last.from < 0.05) clean.pop();
     }
+    const prev = clean[clean.length - 1];
+    if (entry.freeze_from != null && prev && entry.freeze_from <= prev.from) delete entry.freeze_from;
     clean.push(entry);
   }
   return clean.slice(0, MAX_AVATAR_CAMS);
