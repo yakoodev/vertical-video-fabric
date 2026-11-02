@@ -38,8 +38,11 @@
   дана, места из state/end_state планов); нет ключа — ``auto_spec`` по state (left/center/right,
   foreground/background, поза, «у кровати», «на тумбочке»). Агент и владелец правят spec
   (``set_blocking``) или кладут свою JSON-сцену движка поверх (``scenes.start/end``).
-* **Рендер** — компоновщиком (тот же, что рендер клипа), 9:16, 0 ₽: версии ``blocking_start`` /
-  ``blocking_end`` плана (``prompt`` = ``blocking:<хэш сцены>``).
+* **Рендер** — 3D-движком сцен (``app/aivideo_blocking3d.py``: комната из моделей Kenney, персонажи
+  со скелетом в позах из клипов UAL, цвета из карточек, нейтральный матовый стиль), 9:16, 0 ₽ —
+  ``prompt`` = ``blocking3d:<хэш>``. Нет браузера/паков, своя сцена агента или
+  ``AIV_BLOCKING_ENGINE=2d`` — компоновщиком (2D-холст, ``blocking:<хэш сцены>``). Версии
+  ``blocking_start`` / ``blocking_end`` плана.
 """
 
 from __future__ import annotations
@@ -50,10 +53,13 @@ import math
 import re
 from typing import Any
 
+import logging
+
 from app import aivideo as V
 from app import aivideo_layout as L
 from app import projects as P
 
+_log = logging.getLogger(__name__)
 KINDS = ("box", "cylinder", "disc", "sphere")
 POSES = ("standing", "walking", "sitting", "crouching", "kneeling", "lying")
 ARMS = ("down", "up", "forward", "holding", "wave")
@@ -171,7 +177,13 @@ def cast_info(store: Any, project_id: int, shot: dict) -> list[dict]:
 
 
 def legend(store: Any, project_id: int, shot: dict) -> str:
-    """Для промпта кадра: какой манекен — кто («slate-blue mannequin = Мира; sand flat disc = Бип»)."""
+    """Для промпта кадра: какой манекен — кто («slate-blue mannequin = Мира; sand flat disc = Бип»).
+    Кадр блокинга нарисован 3D-движком — персонажи там в своих цветах («mint hair, lavender top = Мира»)."""
+    ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), "blocking_start")
+    if ref and str(ref.get("prompt") or "").startswith("blocking3d:"):
+        from app import aivideo_blocking3d as B3
+
+        return B3.legend(cast_info(store, project_id, shot), _characters(store, project_id, shot))
     what = {"human": "mannequin", "disc": "flat disc", "quadruped": "animal stand-in", "small": "ball stand-in"}
     return "; ".join(f"the {c['color_name']} {what.get(c['stand_in'], 'stand-in')} = {c['name']}"
                      for c in cast_info(store, project_id, shot))
@@ -321,7 +333,13 @@ def _moment(state: dict, cast: list[dict], infos: dict[str, dict], layout: dict,
         actor = {"id": member["id"], "pos": pos, "facing": facing_deg(st.get("facing") or "camera"), "pose": pose,
                  "arms": arms if kind == "human" else "down"}
         anchor = L.find(layout, text)
+        if anchor is None and end:
+            # Конец плана: вещь из действия персонажа («стукается бампером о тумбочку») — он у неё.
+            anchor = L.find(layout, member.get("action") or "")
+            if anchor is not None and anchor.get("type") in L.FLAT_TYPES:
+                anchor = None
         if anchor is not None and anchor.get("type") not in ("lamp", "books", "computer", "plush", "garland"):
+            actor["_anchored"] = True
             on = (bool(_ON_WORDS.search(_norm(text))) or pose in ("lying", "sitting")) and \
                 anchor["type"] in ("bed", "sofa", "chair", "rug", "table", "desk")
             if on and anchor["type"] != "rug":
@@ -383,16 +401,55 @@ def _in_front(o: dict, gap: float) -> list[float]:
     return [float(o["pos"][0]) + dx, float(o["pos"][1]) + dz]
 
 
-def auto_spec(store: Any, project_id: int, shot: dict, nxt: dict | None, layout: dict | None = None) -> dict:
-    """Раскладка без Gemini: места/позы/взгляд/руки из state (старт) и конца плана, у вещей комнаты."""
+def auto_spec(store: Any, project_id: int, shot: dict, nxt: dict | None, layout: dict | None = None,
+              prev: list[dict] | None = None) -> dict:
+    """Раскладка без Gemini: места/позы/взгляд/руки из state (старт) и конца плана, у вещей комнаты.
+
+    Связность: план, продолжающий предыдущий (``prev`` — планы серии до этого), начинает с тех же мест,
+    где тот закончил; кто в конце «там же» (то же место в state) — стоит там же; кто ставит предмет
+    на вещь (в начале в руке, в конце на тумбочке) — стоит у этой вещи."""
     cast = shot.get("cast") or []
     if layout is None:
         layout = shot_layout(store, project_id, shot)
     infos = {c["id"]: c for c in cast_info(store, project_id, shot)}
     action = f"{shot.get('action') or ''} {shot.get('motion_prompt') or ''}"
-    return {"room": {}, "objects": [],
-            "start": _moment(shot.get("state") or {}, cast, infos, layout, action),
-            "end": _moment(V.end_state_of(shot, nxt), cast, infos, layout, action, end=True)}
+    start = _moment(shot.get("state") or {}, cast, infos, layout, action)
+    end = _moment(V.end_state_of(shot, nxt), cast, infos, layout, action, end=True)
+    objects = {o["id"]: o for o in layout.get("objects") or []}
+    # Предмет из руки на вещь — персонаж у этой вещи и в начале, и в конце.
+    for p in end["props"]:
+        support = objects.get(str(p.get("on") or ""))
+        held = next((q for q in start["props"] if q.get("holder") and prop_kind(q.get("name"))[0] ==
+                     prop_kind(p.get("name"))[0]), None)
+        if support is None or held is None:
+            continue
+        for moment in (start, end):
+            for a in moment["actors"]:
+                if a["id"] == held["holder"] and not a.get("on"):
+                    a["pos"] = _in_front(support, 35.0)
+                    a["_anchored"] = True
+    # Продолжение прошлого плана: начало — там, где он закончился.
+    if prev and shot.get("continues_from_prev") and prev[-1].get("location") == shot.get("location"):
+        before = auto_spec(store, project_id, prev[-1], shot, layout, prev[:-1])
+        last = {a["id"]: a for a in before["end"]["actors"]}
+        for a in start["actors"]:
+            if a["id"] in last and not a.get("_anchored"):
+                a["pos"] = list(last[a["id"]]["pos"])
+                if last[a["id"]].get("on"):
+                    a["on"] = last[a["id"]]["on"]
+    # Кто в конце на том же месте по state — стоит там же, где в начале.
+    st_pos = {c["id"]: str(c.get("position") or "") for c in (shot.get("state") or {}).get("characters") or []}
+    en_pos = {c["id"]: str(c.get("position") or "") for c in V.end_state_of(shot, nxt).get("characters") or []}
+    first = {a["id"]: a for a in start["actors"]}
+    for a in end["actors"]:
+        if not a.get("_anchored") and a["id"] in first and st_pos.get(a["id"]) == en_pos.get(a["id"]):
+            a["pos"] = list(first[a["id"]]["pos"])
+            if first[a["id"]].get("on"):
+                a["on"] = first[a["id"]]["on"]
+    for moment in (start, end):
+        for a in moment["actors"]:
+            a.pop("_anchored", None)
+    return {"room": {}, "objects": [], "start": start, "end": end}
 
 
 def _clean_props(items: Any, actor_ids: set[str]) -> list[dict]:
@@ -1174,6 +1231,7 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
             boxes.append(b)
     actor_boxes = []
     placed: dict[str, dict] = {}
+    spots: dict[str, dict] = {}
     for a in actors:
         info = by_id[a["id"]]
         kind = info.get("stand_in", "human")
@@ -1209,6 +1267,15 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
                 _settle_actor(a, radius, objects, room)
         else:
             radius = 0.0
+        spots[a["id"]] = {**a, "radius": radius}
+        placed[a["id"]] = spots[a["id"]]
+    _face_partners(actors, by_id, shot, which)
+    placed = {}
+    for a in actors:
+        info = by_id[a["id"]]
+        kind = info.get("stand_in", "human")
+        support = obj_by.get(str(a.get("on") or ""))
+        radius = spots[a["id"]]["radius"]
         parts, box = _actor_parts(a, info)
         if kind == "human" and a.get("pose") == "sitting" and support is None and not a.get("y"):
             parts.append({"type": "box", "size": [40, 44, 40], "position": [0, 22, -6], "color": "#8a7f72"})  # табурет
@@ -1231,8 +1298,10 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
         actor_boxes.append(ab)
         placed[a["id"]] = {**a, "rig": box.get("rig"), "kind": kind, "size": float(info.get("size") or 0), "y": y,
                            "box": box, "radius": radius}
+    props_placed = []
     for k, p in enumerate(moment.get("props") or []):
         nodes += _prop_nodes(p, placed, obj_by, k)
+        props_placed.append(prop_place(p, placed, obj_by, k))
     # Вещи действия: на что ставят/кладут реквизит (в начале или в конце плана), на чём сидят/лежат,
     # что названо в действии («врезается в тумбочку») — они обязаны быть в кадре.
     focus_ids = {str(p.get("on")) for m in ("start", "end") for p in (spec.get(m) or {}).get("props") or []
@@ -1261,7 +1330,31 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
         "style": {"shading": "toon", "bands": 3, "outline": {"color": "#2a2a30", "width": 2}},
         "nodes": nodes,
     }
-    return {"scene": scene, "check": check, "camera": cam, "boxes": boxes}
+    return {"scene": scene, "check": check, "camera": cam, "boxes": boxes, "room": room, "objects": objects,
+            "actors": list(placed.values()), "props": props_placed}
+
+
+def _face_partners(actors: list[dict], infos: dict[str, dict], shot: dict, which: str) -> None:
+    """Конец плана: человек, чьё действие — над/к другому персонажу («наклоняет кружку над роботом»,
+    «протягивает Бипу»), повёрнут к нему (места уже расставлены — по ним)."""
+    if which != "end":
+        return
+    for a in actors:
+        if infos.get(a["id"], {}).get("stand_in", "human") != "human":
+            continue
+        member = next((c for c in shot.get("cast") or [] if c["id"] == a["id"]), {})
+        text = _norm(member.get("action") or "")
+        for b in actors:
+            if b is a:
+                continue
+            kind = infos.get(b["id"], {}).get("stand_in", "human")
+            name = _norm(infos.get(b["id"], {}).get("name") or b["id"])
+            if (name and name[:max(3, len(name) - 1)] in text) or (
+                    kind == "disc" and re.search(r"робот|пылесос|robot|vacuum", text)):
+                dx, dz = b["pos"][0] - a["pos"][0], b["pos"][1] - a["pos"][1]
+                if dx * dx + dz * dz > 1:
+                    a["facing"] = round(math.degrees(math.atan2(dx, dz)), 1)
+                break
 
 
 def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | None = None) -> dict:
@@ -1269,7 +1362,8 @@ def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict], layout:
     return build(spec, which, shot, infos, layout)["scene"]
 
 
-def _prop_nodes(prop: dict, actors: dict[str, dict], objects: dict[str, dict], k: int = 0) -> list[dict]:
+def prop_place(prop: dict, actors: dict[str, dict], objects: dict[str, dict], k: int = 0) -> dict:
+    """Где реквизит в кадре: {kind, size, color, base [x, y, z] см, holder, on, count} (2D- и 3D-блокинг)."""
     kind, size, color = prop_kind(prop.get("name") or prop.get("id"))
     if prop.get("size") and kind == "item":
         size = [float(prop["size"])] * 3
@@ -1295,8 +1389,16 @@ def _prop_nodes(prop: dict, actors: dict[str, dict], objects: dict[str, dict], k
             base = [base[0] + dx2, base[1], base[2] + dz2]
     else:
         base = list(prop.get("pos") or [0, 0, 40])
+    return {"id": prop.get("id"), "name": prop.get("name") or prop.get("id"), "kind": kind, "size": size,
+            "color": color, "base": [float(v) for v in base], "holder": holder["id"] if holder is not None else "",
+            "on": support["id"] if support is not None else "", "count": int(prop.get("count") or 1)}
+
+
+def _prop_nodes(prop: dict, actors: dict[str, dict], objects: dict[str, dict], k: int = 0) -> list[dict]:
+    pl = prop_place(prop, actors, objects, k)
+    kind, size, color, base = pl["kind"], pl["size"], pl["color"], pl["base"]
     out = []
-    for i in range(int(prop.get("count") or 1)):
+    for i in range(pl["count"]):
         out.append({"type": "group", "position": [_r(base[0] + i * size[0] * 1.5), _r(base[1]), _r(base[2])],
                     "rotation": [0, 0, 0], "children": _prop_parts(kind, size, color)})
     return out
@@ -1347,7 +1449,8 @@ def current(store: Any, shot: dict) -> dict:
     key = state_key(shot, nxt)
     if data.get("spec") and (data.get("source") in ("agent", "owner") or data.get("state_key") == key):
         return data
-    return {"spec": auto_spec(store, _project_of(store, shot), shot, nxt), "source": "auto", "state_key": key,
+    return {"spec": auto_spec(store, _project_of(store, shot), shot, nxt, prev=shots[:n]), "source": "auto",
+            "state_key": key,
             "scenes": {}, "outdated": bool(data.get("spec"))}
 
 
@@ -1501,7 +1604,7 @@ def write_blocking(store: Any, script_id: int, client: Any = None, only: set[int
     for shot in todo:
         n = next(i for i, s in enumerate(shots) if s["id"] == shot["id"])
         nxt = shots[n + 1] if n + 1 < len(shots) else None
-        auto = auto_spec(store, project_id, shot, nxt)
+        auto = auto_spec(store, project_id, shot, nxt, prev=shots[:n])
         got = by_idx.get(int(shot["idx"]))
         if got and source == "gemini":
             raw = {"room": {}, "objects": [], "start": got.get("start") or auto["start"],
@@ -1555,6 +1658,37 @@ def _ask_gemini(store: Any, script: dict, client: Any = None) -> dict:
     return data
 
 
+def _characters(store: Any, project_id: int, shot: dict) -> dict[str, dict]:
+    out = {}
+    for member in shot.get("cast") or []:
+        c = V.character_by_slug(store, project_id, member["id"])
+        if c:
+            out[member["id"]] = c
+    return out
+
+
+def frame_plans(store: Any, shot: dict) -> dict[str, dict]:
+    """Чем рисовать кадры блокинга плана: {which: {engine: 3d|2d, marker, scene}}. 3D-движок
+    (``app/aivideo_blocking3d``) — по умолчанию, если доступен; своя сцена агента и нет браузера/паков
+    (или AIV_BLOCKING_ENGINE=2d) — старый 2D-холст."""
+    from app import aivideo_blocking3d as B3
+
+    built = built_of(store, shot)
+    use3d = B3.available()
+    project_id = _project_of(store, shot)
+    infos = chars = None
+    out = {}
+    for which, b in built.items():
+        if use3d and not b.get("override"):
+            if infos is None:
+                infos, chars = cast_info(store, project_id, shot), _characters(store, project_id, shot)
+            spec3 = B3.scene_spec(b, shot, infos, chars, which)
+            out[which] = {"engine": "3d", "marker": f"blocking3d:{B3.spec_key(spec3)}", "scene": spec3, "built": b}
+        else:
+            out[which] = {"engine": "2d", "marker": f"blocking:{scene_key(b['scene'])}", "scene": b["scene"], "built": b}
+    return out
+
+
 def render(store: Any, shot_id: int, which: str, job: dict | None = None) -> dict:
     """Скриншот блокинга (9:16, 0 ₽) → версия ``blocking_<which>`` плана. Тот же кадр уже есть — он."""
     from uuid import uuid4
@@ -1564,21 +1698,34 @@ def render(store: Any, shot_id: int, which: str, job: dict | None = None) -> dic
 
     shot = V.get_shot(store, shot_id)
     project_id = _project_of(store, shot)
-    scenes = scenes_of(store, shot)
-    if which not in scenes:
+    plans = frame_plans(store, shot)
+    if which not in plans:
         raise V.AivError(f"план {shot['idx']}: блокинга «{which}» нет (конец — только у плана с видео)")
-    scene = scenes[which]
-    marker = f"blocking:{scene_key(scene)}"
+    plan = plans[which]
+    marker = plan["marker"]
     kind = f"blocking_{which}"
     have = V.selected_ref(store, project_id, "shot", int(shot_id), kind)
     if have and have.get("prompt") == marker and have.get("asset_id"):
         if have["stale"]:
             store.db.execute("UPDATE aiv_refs SET stale = 0 WHERE id = ?", (int(have["id"]),))
         return V.get_ref(store, int(have["id"]))
-    frames, _info = se.render_scene_png(store, scene, [0.0], w=BLOCKING_W, h=BLOCKING_H, background=None,
-                                        width=RENDER_WIDTH)
+    png = None
+    if plan["engine"] == "3d":
+        from app import aivideo_blocking3d as B3
+        from app.scene3d import Scene3dError, SceneSpecError
+
+        try:
+            png = B3.render_png(plan["scene"])
+        except (Scene3dError, SceneSpecError) as exc:  # 3D не отрисовался — кадр всё равно будет (2D)
+            _log.warning("aiv: 3D-блокинг плана %s (%s) не отрисован: %s — 2D-холст", shot["idx"], which, exc)
+            marker = f"blocking:{scene_key(plan['built']['scene'])}"
+            plan = {**plan, "engine": "2d", "scene": plan["built"]["scene"]}
+    if png is None:
+        frames, _info = se.render_scene_png(store, plan["scene"], [0.0], w=BLOCKING_W, h=BLOCKING_H, background=None,
+                                            width=RENDER_WIDTH)
+        png = frames[0]
     dest = assets_dir() / f"{uuid4().hex}-aiv-{kind}.png"
-    dest.write_bytes(frames[0])
+    dest.write_bytes(png)
     meta = probe_asset(dest)
     asset = store.create_montage_asset(
         kind="image", label=f"ИИ-видео: план {shot['idx']} — блокинг {which}"[:120],
@@ -1592,8 +1739,8 @@ def render(store: Any, shot_id: int, which: str, job: dict | None = None) -> dic
 def needs_render(store: Any, project_id: int, shot: dict) -> list[str]:
     """Какие кадры блокинга плана надо (пере)рисовать: нет, устарел или сцена другая."""
     out = []
-    for which, scene in scenes_of(store, shot).items():
+    for which, plan in frame_plans(store, shot).items():
         ref = V.selected_ref(store, project_id, "shot", int(shot["id"]), f"blocking_{which}")
-        if not ref or ref["stale"] or not ref.get("asset_id") or ref.get("prompt") != f"blocking:{scene_key(scene)}":
+        if not ref or ref["stale"] or not ref.get("asset_id") or ref.get("prompt") != plan["marker"]:
             out.append(which)
     return out

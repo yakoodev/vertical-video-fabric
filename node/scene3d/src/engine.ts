@@ -27,6 +27,8 @@ interface ObjectSpec {
   rotation?: number[];
   scale?: number | number[];
   anchor?: "bottom-center" | "origin";
+  /** Вписать модель в габарит [ширина, высота, глубина] (м) — неравномерно, как вещь раскладки. */
+  fit?: number[];
   parent?: string;
   materials?: Record<string, string | { color?: string; roughness?: number; metalness?: number; emissive?: string; emissiveIntensity?: number }>;
   keys?: Key[];
@@ -90,12 +92,13 @@ export interface SceneSpec {
   height?: number;
   fps?: number;
   duration?: number;
-  environment?: { background?: string; fog?: { color?: string; near?: number; far?: number } | false; exposure?: number; envIntensity?: number; toneMapping?: string };
+  environment?: { background?: string; fog?: { color?: string; near?: number; far?: number } | false; exposure?: number; envIntensity?: number; toneMapping?: string; style?: "flat" };
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
   characters?: CharacterSpec[];
-  camera?: { fov?: number; near?: number; far?: number; keys: CameraKey[]; margin?: number; shake?: { t: number; amp?: number; duration?: number }[] };
+  camera?: { fov?: number; near?: number; far?: number; keys: CameraKey[]; margin?: number; clamp?: boolean;
+    keepInFrame?: { ids?: string[]; margin?: number; feet?: boolean }; shake?: { t: number; amp?: number; duration?: number }[] };
   quality?: { shadows?: boolean; shadowSize?: number; antialias?: boolean };
 }
 
@@ -146,6 +149,7 @@ class Engine {
     this.camera.aspect = W / H;
     this.camera.near = spec.camera?.near ?? 0.05;
     this.camera.far = spec.camera?.far ?? 60;
+    this.camera.updateProjectionMatrix();
 
     const env = spec.environment || {};
     this.scene.background = new THREE.Color(env.background || "#151821");
@@ -183,6 +187,20 @@ class Engine {
     probe.height = 48;
     this.probe = probe.getContext("2d", { willReadFrequently: true })!;
     // Шейдеры и тени — заранее, чтобы первый кадр не отличался.
+    if (spec.environment?.style === "flat") {
+      // Блокинг: всё матовое, без бликов и металла — ровные цвета, читается форма и место.
+      this.scene.traverse((o: any) => {
+        if (!o.isMesh) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          if (m && "roughness" in m && !(m.emissive && m.emissiveIntensity > 0.05 && m.emissive.getHex())) {
+            m.roughness = Math.max(m.roughness, 0.9);
+            m.metalness = 0;
+            m.normalMap = null;
+            m.needsUpdate = true;
+          }
+        }
+      });
+    }
     this.renderer.compile(this.scene, this.camera);
     return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
   }
@@ -283,7 +301,12 @@ class Engine {
     }
     // Масштаб — у внутреннего узла, чтобы дети (parent) не растягивались вместе с ним.
     const s = o.scale ?? 1;
-    const sc = Array.isArray(s) ? s : [s, s, s];
+    let sc = Array.isArray(s) ? s : [s, s, s];
+    if (o.fit && o.model) {
+      const box = new THREE.Box3().setFromObject(inner.children[0]);
+      const size = box.getSize(new THREE.Vector3());
+      sc = [o.fit[0] / Math.max(1e-4, size.x), o.fit[1] / Math.max(1e-4, size.y), o.fit[2] / Math.max(1e-4, size.z)];
+    }
     const scaled = new THREE.Group();
     scaled.scale.set(sc[0], sc[1], sc[2]);
     scaled.add(inner.children[0]);
@@ -407,8 +430,8 @@ class Engine {
     const tgt = sampleVec(keys, t, "target") || [0, 1, 0];
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
     const roll = sampleAngle(keys, t, "roll") ?? 0;
-    // Камера не в стене: держим внутри комнаты с отступом.
-    if (this.room) {
+    // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false).
+    if (this.room && cs.clamp !== false) {
       const m = cs.margin ?? 0.12, b = this.room.bounds;
       const cx = Math.min(b.maxX - m, Math.max(b.minX + m, pos[0]));
       const cy = Math.min(b.height - m, Math.max(0.1, pos[1]));
@@ -428,6 +451,40 @@ class Engine {
     if (this.camera.fov !== fov) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
+    }
+    if (cs.keepInFrame) this.keepInFrame(cs.keepInFrame);
+  }
+
+  /**
+   * Головы (и ступни) названных персонажей — в кадре с запасом: не влезают — камера отъезжает назад
+   * по линии взгляда (кадр шире, композиция та же). Голова не режется ни при какой позе.
+   */
+  keepInFrame(k: { ids?: string[]; margin?: number; feet?: boolean }) {
+    const ids = k.ids && k.ids.length ? k.ids : Object.keys(this.characters);
+    const m = k.margin ?? 0.08;
+    const pts: THREE.Vector3[] = [];
+    for (const id of ids) {
+      const ch = this.characters[id];
+      if (!ch) continue;
+      const head = ch.boneWorld("Head", new THREE.Vector3());
+      // Голова с причёской: точки сферы радиусом ~11% роста вокруг кости головы (центр чуть выше кости).
+      const c = head.clone().add(new THREE.Vector3(0, ch.height * 0.05, 0));
+      const r = ch.height * 0.11;
+      for (const d of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0, 0.7, 0.7], [0, 0.7, -0.7]])
+        pts.push(c.clone().add(new THREE.Vector3(d[0] * r, d[1] * r, d[2] * r)));
+      if (k.feet) pts.push(ch.boneWorld("ball_l", new THREE.Vector3()), ch.boneWorld("ball_r", new THREE.Vector3()));
+    }
+    if (!pts.length) return;
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    for (let i = 0; i < 40; i++) {
+      this.camera.updateMatrixWorld(true);
+      const bad = pts.some((p) => {
+        const v = p.clone().project(this.camera);
+        return v.z > 1 || Math.abs(v.x) > 1 - m || Math.abs(v.y) > 1 - m;
+      });
+      if (!bad) return;
+      this.camera.position.addScaledVector(dir, -0.06);
+      if (!this.warnings.includes("camera_pulled_back")) this.warnings.push("camera_pulled_back");
     }
   }
 
