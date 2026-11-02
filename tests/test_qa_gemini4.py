@@ -441,3 +441,55 @@ def test_sticker_on_solid_black_is_keyed_over_blurred_clip(tmp_path):
                                capture_output=True, check=True).stdout
         assert frame[0] > 150 and frame[1] < 90, (crop, tuple(frame[:3]))
 
+
+# ------------------------------------------------------------------ 6. рамка аватара: чат сбоку — боковой край
+
+
+def test_chat_beside_head_is_cut_from_the_side_not_the_top():
+    from app.ai import avatar_box
+
+    model = {"x0": 0.60, "y0": 0.45, "x1": 0.95, "y1": 0.97}
+    face = {"x0": 0.68, "y0": 0.55, "x1": 0.82, "y1": 0.75}
+    chat = {"x0": 0.85, "y0": 0.0, "x1": 1.0, "y1": 0.55}  # колонка чата справа, рядом с головой, не над лицом
+    (x0, y0, x1, y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [chat], face)
+    # Раньше: верх до 0.55 (срез по лбу — дешевле по площади). Теперь макушка цела, чат убран справа.
+    assert sides == ["right"] and y0 == 0.42 and x1 == 0.85
+    # Чат прямо над головой (боком не убрать, не задев лицо) — как в QA 3: срез сверху, лицо целиком.
+    over = {"x0": 0.62, "y0": 0.0, "x1": 1.0, "y1": 0.5}
+    (_x0, top, _x1, _y1), sides = avatar_box.trim_ui((0.58, 0.42, 0.97, 1.0), model, [over], face)
+    assert sides == ["top"] and top == 0.5 < face["y0"]
+
+
+def test_head_above_face_is_kept_when_gemini_box_is_tight():
+    # Клип 896, сцена 1: рамка модели от Gemini y0 0.32 (над глазами), лицо 0.38–0.585, а макушка с рожками —
+    # у самого верха кадра; рамка резала волосы.
+    from app.ai import avatar_box
+
+    tight = {"x0": 0.49, "y0": 0.32, "x1": 0.912, "y1": 0.938,
+             "face": {"x0": 0.605, "y0": 0.38, "x1": 0.81, "y1": 0.585}}
+    cam = avatar_box.place_avatar([tight])["cam"]
+    assert cam["y"] <= 0.38 - 1.5 * 0.205 + 1e-6  # над лицом — полторы его высоты и запас
+    assert cam["y"] + cam["h"] >= 0.938  # низ модели на месте
+
+
+def test_cached_avatar_places_get_new_geometry_but_keep_boundaries():
+    # Кэш detect_avatar клипа 896 (снят старыми правилами): рамки пересчитываются по per_frame, отрезки — как были.
+    from app.ai import avatar_box
+
+    face0 = {"x0": 0.783, "y0": 0.63, "x1": 0.906, "y1": 0.778}
+    corner = {"x0": 0.707, "y0": 0.457, "x1": 0.95, "y1": 0.97, "face": face0,
+              "ui": [{"x0": 0.812, "y0": 0.3, "x1": 0.999, "y1": 0.355}, {"x0": 0.862, "y0": 0.448, "x1": 0.999, "y1": 0.51},
+                     {"x0": 0.899, "y0": 0.52, "x1": 0.999, "y1": 0.58}]}
+    big = {"x0": 0.49, "y0": 0.32, "x1": 0.912, "y1": 0.938, "face": {"x0": 0.605, "y0": 0.38, "x1": 0.81, "y1": 0.585}}
+    cache = {"cam": {"x": 0.6924, "y": 0.58, "w": 0.2722, "h": 0.42}, "box": {}, "per_frame": [big, corner, corner],
+             "times": [279.875, 285.225, 290.575],
+             "places": [{"place": 1, "cam": {"x": 0.4647, "y": 0.2829, "w": 0.4726, "h": 0.6922}, "src_from": 277.2,
+                         "src_to": 282.208},
+                        {"place": 0, "cam": {"x": 0.6924, "y": 0.58, "w": 0.2722, "h": 0.42}, "src_from": 282.208,
+                         "src_to": 309.3, "transition": {"start": 282.075, "end": 282.342}}]}
+    fresh = avatar_box.refresh_geometry(cache)
+    first, second = fresh["places"]
+    assert first["cam"]["y"] < 0.1 and first["src_to"] == 282.208  # голова сцены 1 целиком
+    assert second["cam"]["y"] < 0.58 and second["transition"] == {"start": 282.075, "end": 282.342}
+    assert fresh["cam"] == second["cam"]
+
