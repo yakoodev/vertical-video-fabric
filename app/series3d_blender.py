@@ -366,7 +366,10 @@ def show_items(loc: str, shot: dict) -> list[dict]:
             out.append({"item": name, "point": [round(c, 3) for c in pt]})
         else:
             out.append({"item": name, "point": None, "missing": True})
-    if shot.get("decal"):
+    if shot.get("decal") and loc == "cabin":
+        # в кабине цифры — на табло над дверями (номер этажа), отдельной надписи нет
+        out.append({"item": f"надпись «{shot['decal']}»", "point": [round(c, 3) for c in DISPLAY]})
+    elif shot.get("decal"):
         t = loc_of(loc)["targets"].get("decal")
         out.append({"item": f"надпись «{shot['decal']}»",
                     "point": [round(c, 3) for c in loc_world(loc, t)] if t else None, **({} if t else {"missing": True})})
@@ -772,6 +775,7 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
     labels = (labels + ["narrator"] * len(words))[: len(words)]
     planned = []
     where = "cabin"
+    decal_at: dict[str, str] = {}
     for s in shots:
         dark = blackout is not None and s["t0"] + 0.3 >= blackout
         pick = choices.get(s["n"]) or rule_choice(s, by_shot.get(s["n"], []), dark)
@@ -782,6 +786,10 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
             loc = by_rules       # текст явно назвал другое место — правило сильнее
         where = loc
         decal = pick.get("decal") or decal_from_text(text_)
+        if re.fullmatch(r"\d{1,2}[:.]\d{2}", decal or ""):
+            decal = ""            # время («03:33») — часы/телефон, не надпись на стене
+        if decal and decal_at.setdefault(loc, decal) != decal:
+            decal = ""            # на месте одна надпись — первая названная; другой в кадре не будет
         pick = {**pick, "location": loc, "decal": decal, "props": list(pick.get("props") or [])}
         idx = [k for k in range(len(words)) if s["t0"] <= float(words[k]["start"]) < s["t1"]]
         said = {labels[k] for k in idx} - {"narrator"}
@@ -1648,6 +1656,30 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
     return out("face", p, face, 1.0, 30.0, fstop=2.2, focus="face", push=0.9, offset=(0.0, 0.0, -0.06))
 
 
+def cam_sees(cam: dict, face: tuple, point: tuple, margin: float = 0.9) -> bool:
+    """Попадает ли точка в вертикальный кадр 9:16 камеры плана (без Blender: как сцена целит — между вещью и лицом)."""
+    pos = cam["pos_a"]
+    face_aim = tuple(face[i] + cam["offset"][i] for i in range(3))
+    look = tuple(cam["point"][i] + (face_aim[i] - cam["point"][i]) * cam["face_w"] for i in range(3))
+    fwd = [look[i] - pos[i] for i in range(3)]
+    n_ = math.sqrt(sum(c * c for c in fwd)) or 1.0
+    fwd = [c / n_ for c in fwd]
+    right = [fwd[1], -fwd[0], 0.0]
+    rn = math.hypot(right[0], right[1]) or 1.0
+    right = [right[0] / rn, right[1] / rn, 0.0]
+    up = [right[1] * fwd[2] - right[2] * fwd[1], right[2] * fwd[0] - right[0] * fwd[2],
+          right[0] * fwd[1] - right[1] * fwd[0]]
+    v = [point[i] - pos[i] for i in range(3)]
+    z = sum(v[i] * fwd[i] for i in range(3))
+    if z <= 0.05:
+        return False
+    tan_v = 18.0 / cam["lens"]                 # датчик 36 по длинной (вертикальной) стороне
+    tan_h = tan_v * 1080 / 1920
+    x = sum(v[i] * right[i] for i in range(3)) / z
+    y = sum(v[i] * up[i] for i in range(3)) / z
+    return abs(x) <= tan_h * margin and abs(y) <= tan_v * margin
+
+
 def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
     """Камеры всех кадров (без повтора одинакового ракурса подряд — другой бок)."""
     rnd = random.Random(seed + 11)
@@ -1664,16 +1696,36 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         g = perf["gaze"][f]
         aim = g if isinstance(g, (list, tuple)) else None
         prev = out[-1]["kind"] if out else ""
-        cam = None
-        for kind in dict.fromkeys((s["camera"], *CAMERA_PREFS.get(s["action"], ()), "face", "overhead", "ots")):
-            if kind == prev:
-                continue
+        root, head = tuple(perf["root"][f]), perf["heading"][f]
+        face = face_point(root, head, posture)
+        # что фраза называет (лампа, надпись, двери…) — план, где это в кадре; за плечом смотрим на эту вещь
+        items = [tuple(x["point"]) for x in s.get("show") or [] if x.get("point")]
+        cam, best = None, -1
+        rnd_n = random.Random(seed * 1000 + s["n"])   # свой случай у плана: пробы ракурсов не сдвигают другие планы
+        kinds = list(dict.fromkeys((s["camera"], *CAMERA_PREFS.get(s["action"], ()), "face", "overhead", "ots", "detail")))
+        # тот же план подряд — только последней попыткой и только если иначе названное не видно (с другого места)
+        order = [(k, False) for k in kinds if k != prev] + ([(prev, True)] if items and prev else [])
+        for kind, again in order:
+            if again and cam is not None and best == len(items):
+                break
             avoid = [c["pos_a"] for c in out if c["kind"] == kind][-2:]
-            cam = shot_camera(kind, s, tuple(perf["root"][f]), perf["heading"][f], posture, aim, rnd, avoid) or                 shot_camera(kind, s, tuple(perf["root"][f]), perf["heading"][f], posture, aim, rnd)
-            if cam is not None:
+            if again:
+                avoid = avoid + [out[-1]["pos_a"]]
+            for aim_ in ((items[0], aim) if items and kind == "ots" else (aim,)):
+                c_ = shot_camera(kind, s, root, head, posture, aim_, random.Random(rnd_n.random()), avoid)
+                if c_ is None and not again:
+                    c_ = shot_camera(kind, s, root, head, posture, aim_, random.Random(rnd_n.random()))
+                if c_ is None:
+                    continue
+                seen = sum(cam_sees(c_, face, p) for p in items)
+                if seen > best:
+                    cam, best = c_, seen
+                if seen == len(items):
+                    break
+            if cam is not None and best == len(items):
                 break
         if cam is None:   # совсем тесно — общий сверху без проверки повтора
-            cam = shot_camera("overhead", s, tuple(perf["root"][f]), perf["heading"][f], posture, aim, rnd)
+            cam = shot_camera("overhead", s, root, head, posture, aim, rnd)
         s["camera"] = cam["kind"]
         cam["face_y"] = face_target(s["n"], len(perf["shots"]), cam["kind"])
         out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], "location": s.get("location") or "cabin", **cam})

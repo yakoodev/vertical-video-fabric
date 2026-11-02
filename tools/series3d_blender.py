@@ -234,9 +234,13 @@ def main(argv: list[str] | None = None) -> int:
                         "-c:a", "copy", "-movflags", "+faststart", str(tmp)], check=True)
         try:
             tmp.replace(out)
-        except PermissionError:   # файл открыт (отправлен/смотрят) — новый рядом
-            out = out.with_name(out.stem + f"-{int(time.time())}.mp4")
-            tmp.replace(out)
+        except PermissionError:
+            try:   # открыт плеером без права удаления: переписать содержимое на месте
+                shutil.copyfile(tmp, out)
+                tmp.unlink()
+            except PermissionError:   # совсем занят — новый рядом
+                out = out.with_name(out.stem + f"-{int(time.time())}.mp4")
+                tmp.replace(out)
     final_sec = round(time.time() - built, 1)
     bl = timing.get("blender_sec") or 0.0
     st = {"script_sec": stages.get("script_sec", 0.0), "tts_sec": stages.get("tts_sec", 0.0),
@@ -253,12 +257,71 @@ def main(argv: list[str] | None = None) -> int:
                "part_title": (ep.get("script") or {}).get("part_title"),
                "notes": ep.get("notes"), "data": str(data), "cache": str(cache)}
     if args.sheet:
-        summary["sheet"] = str(contact_sheet(out, args.sheet, count=12, cols=6, width=300))
+        rep = (timing.get("report") or {}).get("shots") or []
+        if rep and timing.get("shots"):
+            summary["sheet"], summary["seen"] = phrase_sheet(out, timing["shots"], rep, Path(args.sheet))
+        else:
+            summary["sheet"] = str(contact_sheet(out, args.sheet, count=12, cols=6, width=300))
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     _ = S3D
     if not args.keep and not args.data:
         shutil.rmtree(data, ignore_errors=True)
     return 0
+
+
+PLACE_RU = {"cabin": "кабина", "shaft": "шахта", "landing": "площадка", "techfloor": "тех. этаж", "corridor": "коридор"}
+
+
+def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path, cols: int = 7) -> tuple[str, str]:
+    """Лист «фраза → что в кадре»: кадр середины каждого плана, место и названные вещи (✓ видно / ✗ нет) + фраза."""
+    import subprocess
+    import tempfile
+    import textwrap
+
+    by_n = {r["n"]: r for r in report}
+    tmp = Path(tempfile.mkdtemp(prefix="phrase_sheet_"))
+    tiles, ok, total = [], 0, 0
+    try:
+        for s in shots:
+            r = by_n.get(s["n"], {})
+            seen = [x for x in r.get("show") or [] if not str(x["item"]).startswith("место")]
+            vis = [x["visible"] for x in seen if x["visible"] is not None]
+            ok, total = ok + sum(1 for v in vis if v), total + len(vis)
+            marks = ", ".join(f"{x['item']} {'видно' if x['visible'] else 'НЕТ'}" for x in seen) or "—"
+            cap = f"{s['n']}. {PLACE_RU.get(r.get('location') or '', '?')} · {r.get('kind', s.get('camera'))}: {marks}"
+            lines = textwrap.wrap(cap, 36)[:2] + textwrap.wrap("«" + str(s.get("text") or "") + "»", 34)[:4]
+            vf = "scale=270:-2,pad=270:610:0:0:0x111111"
+            for i, line in enumerate(lines):   # строка — свой drawtext: перевод строки в textfile рисуется квадратиком
+                cf = tmp / f"c{s['n']}_{i}.txt"
+                cf.write_bytes(line.encode("utf-8"))
+                esc = cf.as_posix().replace(":", "\\:")
+                color = "0xffd23f" if i < min(2, len(lines)) and i < len(textwrap.wrap(cap, 36)[:2]) else "white"
+                vf += (",drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':"
+                       f"textfile='{esc}':expansion=none:x=6:y={484 + i * 19}:fontsize=13:fontcolor={color}")
+            img = tmp / f"t{s['n']:03d}.jpg"
+            t = (float(s["t0"]) + float(s["t1"])) / 2
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
+                            "-vf", vf, str(img)], check=True)
+            tiles.append(img)
+        pad = (-len(tiles)) % cols
+        labels = [f"[{i}:v]" for i in range(len(tiles))]
+        graph = "".join(f"color=0x111111:s=270x610:d=1[p{k}];" for k in range(pad))
+        labels += [f"[p{k}]" for k in range(pad)]
+        rows = len(labels) // cols
+        graph += "".join("".join(labels[r * cols:(r + 1) * cols]) + f"hstack={cols}[r{r}];" for r in range(rows))
+        graph += "".join(f"[r{r}]" for r in range(rows)) + f"vstack={rows}[out]" if rows > 1 else ""
+        args_ = ["ffmpeg", "-v", "error", "-y"]
+        for t_ in tiles:
+            args_ += ["-i", str(t_)]
+        out_lab = "[out]" if rows > 1 else "[r0]"
+        if rows == 1:
+            graph = graph.rstrip(";")
+        sheet.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(args_ + ["-filter_complex", graph, "-map", out_lab, "-frames:v", "1", "-q:v", "3", str(sheet)],
+                       check=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return str(sheet), f"{ok}/{total}"
 
 
 def _printer():

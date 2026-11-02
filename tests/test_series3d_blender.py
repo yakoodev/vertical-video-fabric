@@ -731,3 +731,37 @@ def test_writer_only_available_places():
         SG._ask = old
     assert data["sentences"][0]["text"].startswith("Он вышел в коридор") and calls
     assert not B.offlist_mentions(data["sentences"])
+
+
+def test_camera_shows_what_phrase_names_and_time_is_not_a_wall_sign():
+    script = {"title": "Если блэкаут застал вас в лифте", "new_characters": [{"name": "Даня"}], "sentences": [
+        {"text": "Свет в кабине погас.", "role": "problem"},
+        {"text": "Даня раздвинул двери и вышел в тёмный бетонный коридор.", "role": "problem"},
+        {"text": "Под потолком коридора мигала лампа.", "role": "problem"},
+        {"text": "На стене висел календарь за 1998 год.", "role": "problem"},
+        {"text": "Надпись «2001» рядом была свежей.", "role": "problem"},
+        {"text": "На часах было 03:33.", "role": "finale"}]}
+    from app.explainer_gen import proportional_words
+
+    words = proportional_words(" ".join(x["text"] for x in script["sentences"]), 16.0)
+    job = B.build_job(script, words, 17.0, gemini=False)
+    decals = [s["decal"] for s in job["shots"] if s["decal"]]
+    assert decals == ["1998"], decals          # одна надпись на место, время — не надпись
+    perf = B.perform(job)
+    seen = total = 0
+    for sh, cam in zip(perf["shots"], perf["cameras"]):
+        f = min(perf["frames"] - 1, int((sh["t0"] + sh["t1"]) / 2 * 30))
+        face = B.face_point(tuple(perf["root"][f]), perf["heading"][f], sh.get("posture_end", "stand"))
+        pts = [x["point"] for x in sh.get("show") or [] if x.get("point")]
+        total += len(pts)
+        seen += sum(B.cam_sees(cam, face, tuple(p)) for p in pts)
+    assert total and seen / total >= 0.75, (seen, total)
+    cal = next(c for sh, c in zip(perf["shots"], perf["cameras"]) if "календар" in sh["text"])
+    assert cal["kind"] in ("ots", "detail", "overhead")
+
+
+def test_cam_sees_geometry():
+    cam = {"pos_a": (0.0, 0.0, 1.0), "point": (0.0, 2.0, 1.0), "face_w": 0.0, "offset": (0, 0, 0), "lens": 20.0}
+    assert B.cam_sees(cam, (0.0, 1.0, 1.0), (0.0, 3.0, 1.2))
+    assert not B.cam_sees(cam, (0.0, 1.0, 1.0), (0.0, -1.0, 1.0))       # за спиной
+    assert not B.cam_sees(cam, (0.0, 1.0, 1.0), (2.0, 1.0, 1.0))        # далеко вбок (узкая сторона кадра)
