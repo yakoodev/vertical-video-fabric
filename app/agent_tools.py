@@ -2007,12 +2007,37 @@ def _norm_word(text: str) -> str:
     return re.sub(r"[^\wё]+", "", str(text or "").lower().replace("ё", "е"))
 
 
-def word_time(ctx: ToolContext, ref: Any) -> float:
-    """Начало слова субтитров в секундах клипа (как в get_clip).
+def _word_match(word: str, want: str) -> int:
+    """Насколько слово субтитров ``word`` — это искомое ``want`` (оба через ``_norm_word``): 4 — то же слово,
+    3 — то же под звёздочками цензуры («о*********» ~ «обосралась»: первая буква и длина), 2 — та же основа
+    (словоформа: «таракана» ~ «таракан»), 1 — содержит искомое (≥ 3 букв), 0 — нет."""
+    raw = str(word or "").lower().replace("ё", "е")
+    core = re.sub(r"[^\w*]+", "", raw)
+    plain = core.replace("*", "")
+    if not want or not core:
+        return 0
+    if plain == want and "*" not in core:
+        return 4
+    if "*" in core:
+        return 3 if core[0] == want[0] and len(core) == len(want) else 0
+    common = 0
+    for a, b in zip(plain, want):
+        if a != b:
+            break
+        common += 1
+    if min(len(plain), len(want)) >= 4 and common >= max(4, min(len(plain), len(want)) - 2):
+        return 2
+    return 1 if len(want) >= 3 and want in plain else 0
 
-    ``ref`` — {"line": i, "word": j} (номера из get_clip.subtitles.lines) или
-    {"text": "Артас", "nth": 1} / просто строка: n-е вхождение слова. Агент-монтажёр
-    просил «поставь звук на слово», а не считать секунды руками."""
+
+def word_at(ctx: ToolContext, ref: Any) -> dict:
+    """Слово субтитров по ссылке at_word → ``{t, word, line, word_i, note?}`` (t — начало, секунды клипа).
+
+    ``ref`` — {"line": i, "word": j} (номера из get_clip.subtitles.lines) или {"text": "Артас", "nth": 1} /
+    просто строка: n-е вхождение слова. По тексту ищется сначала то же слово (регистр и ё/е не важны), потом
+    слово под звёздочками цензуры, потом словоформа, потом вхождение. QA 4 (клип 896): звук на «обосралась»
+    встал на «это» строкой выше — номер строки съехал, а слово под звёздочками по тексту не находилось.
+    Даны и номер, и текст, а они расходятся — верит тексту (note)."""
     timeline = clip_timeline(ctx.store, ctx.plan_id)
     lines = _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"])["lines"]
     if not lines:
@@ -2021,20 +2046,43 @@ def word_time(ctx: ToolContext, ref: Any) -> float:
         ref = {"text": ref}
     if not isinstance(ref, dict):
         raise ToolError("at_word: {line, word} или {text, nth}")
-    if ref.get("text") is not None:
-        want, nth, seen = _norm_word(ref["text"]), int(ref.get("nth") or 1), 0
-        for line in lines:
-            for word in line["words"]:
-                if want and want in _norm_word(word[0]):
-                    seen += 1
-                    if seen == nth:
-                        return float(word[1])
+    by_index = None
+    if ref.get("line") is not None:
+        try:
+            li, wj = int(ref.get("line")), int(ref.get("word", 0) or 0)
+            word = lines[li]["words"][wj]
+            by_index = {"t": float(word[1]), "word": str(word[0]), "line": li, "word_i": wj}
+        except (TypeError, ValueError, IndexError) as exc:
+            if ref.get("text") is None:
+                raise ToolError("at_word: нет такой строки/слова (см. get_clip.subtitles.lines[i].words[j])") from exc
+    if ref.get("text") is None:
+        return by_index  # type: ignore[return-value]
+    want, nth = _norm_word(ref["text"]), max(1, int(ref.get("nth") or 1))
+    scored = [(_word_match(word[0], want), li, wj, word) for li, line in enumerate(lines)
+              for wj, word in enumerate(line["words"])]
+    best = max((sc for sc, *_rest in scored), default=0)
+    hits = [x for x in scored if x[0] == best and best > 0]
+    if by_index is not None and hits and not ref.get("nth"):
+        # Номер и текст вместе: из подходящих по тексту — ближайшее к названной строке.
+        hits.sort(key=lambda x: (abs(x[1] - by_index["line"]), x[1], x[2]))
+        hit = hits[0]
+    elif len(hits) >= nth:
+        hit = hits[nth - 1]
+    else:
         raise ToolError(f"at_word: слова «{ref['text']}» (вхождение {nth}) нет в субтитрах")
-    try:
-        line = lines[int(ref.get("line"))]
-        return float(line["words"][int(ref.get("word", 0))][1])
-    except (TypeError, ValueError, IndexError) as exc:
-        raise ToolError("at_word: нет такой строки/слова (см. get_clip.subtitles.lines[i].words[j])") from exc
+    _sc, li, wj, word = hit
+    out = {"t": float(word[1]), "word": str(word[0]), "line": li, "word_i": wj}
+    if by_index is not None and (by_index["line"], by_index["word_i"]) != (li, wj):
+        out["note"] = (f"lines[{by_index['line']}].words[{by_index['word_i']}] — это «{by_index['word']}», а не "
+                       f"«{ref['text']}»: поставил на «{word[0]}» (lines[{li}].words[{wj}])")
+    elif best == 3:
+        out["note"] = f"«{ref['text']}» в субтитрах под звёздочками цензуры: «{word[0]}»"
+    return out
+
+
+def word_time(ctx: ToolContext, ref: Any) -> float:
+    """Начало слова субтитров в секундах клипа (как в get_clip) — см. ``word_at``."""
+    return word_at(ctx, ref)["t"]
 
 
 def _place_on_word(ctx: ToolContext, item: dict) -> dict:
@@ -2048,7 +2096,9 @@ def _place_on_word(ctx: ToolContext, item: dict) -> dict:
     if item.get("at_word") is None:
         start = float(item.get("start") or 0)
     else:
-        start = round(word_time(ctx, item.pop("at_word")) + float(item.pop("word_offset", 0) or 0), 3)
+        found = word_at(ctx, item.pop("at_word"))
+        item["_on_word"] = found  # какое слово на деле под слоем — в ответ add_layers (QA 4: звук не на том слове)
+        start = round(found["t"] + float(item.pop("word_offset", 0) or 0), 3)
     if until is not None:
         end = word_time(ctx, until)
         if end <= start + 0.1:
@@ -2083,6 +2133,13 @@ def _resolve_caption_marks(ctx: ToolContext, layer: dict) -> dict:
     return {**layer, "props": fixed}
 
 
+def _on_word_line(index: int, item: dict, placed: dict) -> str:
+    """«layers[1] audio 25.72 с → на слове «это» (lines[14].words[1])» — агент видит, куда встал слой."""
+    text = (f"layers[{index}] {item.get('type')} {float(item.get('start') or 0):g} с → на слове «{placed['word']}» "
+            f"(lines[{placed['line']}].words[{placed['word_i']}])")
+    return text + (f"; {placed['note']}" if placed.get("note") else "")
+
+
 def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     raw = args.get("layers")
     if isinstance(raw, dict):
@@ -2100,6 +2157,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     # Теперь битый слой пропускается с причиной, остальные встают.
     skipped: list[str] = []
     prepared: list[tuple[int, dict]] = []
+    on_words: list[str] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             skipped.append(f"layers[{index}]: ожидается объект слоя")
@@ -2109,6 +2167,9 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         except ToolError as exc:
             skipped.append(f"layers[{index}]: {exc}" + (f" ({'; '.join(exc.problems)})" if exc.problems else ""))
             continue
+        placed = item.pop("_on_word", None)
+        if placed:
+            on_words.append(_on_word_line(index, item, placed))
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
@@ -2149,6 +2210,8 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         + _layers_room_warning(len(layers))
         + _scene_engine_problems(added)[1],
     }
+    if on_words:
+        out["on_words"] = on_words
     if any(l.get("type") == "scene" for l in added):
         out["check"] = "сцена: посмотри кадры preview_scene_frame(layer_id, t: [0, середина, конец]) или view_frame"
     if skipped:
@@ -5227,8 +5290,10 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     inserts = list(render.get("inserts") or [])
     if len(inserts) >= MAX_INSERTS:
         raise ToolError(f"вставок уже {MAX_INSERTS} — больше нельзя; для картинок используй слой image")
+    on_word = None
     if args.get("at_word") is not None:
-        args = {**args, "at": round(word_time(ctx, args["at_word"]) + float(args.get("word_offset") or 0), 3)}
+        on_word = word_at(ctx, args["at_word"])
+        args = {**args, "at": round(on_word["t"] + float(args.get("word_offset") or 0), 3)}
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
@@ -5237,6 +5302,9 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})
     out: dict = {"ok": True, "inserts": fresh["inserts"]}
+    if on_word:
+        out["on_word"] = (f"на слове «{on_word['word']}» (lines[{on_word['line']}].words[{on_word['word_i']}])"
+                          + (f"; {on_word['note']}" if on_word.get("note") else ""))
     warnings = [note] if note else []
     twice = [i for i in inserts if int(i.get("asset_id") or -1) == int(asset["id"]) and i.get("mode") != "sound"]
     if twice and mode != "sound":

@@ -126,3 +126,58 @@ def test_without_owner_request_soft_works_as_before(tmp_path, monkeypatch):
     out, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"]), "censor_profanity",
                        {"verify": False, "soft": True})
     assert ok and [w["i"] for w in out["words"]] == [4, 5]
+
+
+# ------------------------------------------------------------------ 2. звук-акцент на слово (at_word)
+
+# Строки 14–15 клипа 896 (clip_after.json): панчлайн уже со звёздочками после цензуры.
+QA4_LINES = [
+    [("Вот", 25.44, 25.63), ("это", 25.72, 25.81), ("вот,", 25.9, 25.95), ("видите,", 26.04, 26.17),
+     ("она", 26.28, 26.33), ("еще", 26.42, 26.53), ("лезет?", 26.62, 27.13)],
+    [("Я", 28.0, 29.03), ("о*********,", 29.12, 30.07), ("п*****.", 30.52, 31.17)],
+]
+
+
+def _qa4_plan(tmp_path, monkeypatch):
+    store, _service, plan, preset, _calls = _mock_render(tmp_path, monkeypatch, [(0, 32)])
+    store.set_clip_plan_render_settings(plan["id"], {"preset_id": preset["id"]})
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": ws[0][1], "end": ws[-1][2], "text": " ".join(w for w, _a, _b in ws)} for ws in QA4_LINES],
+        "words": [{"word": w, "start": a, "end": b} for ws in QA4_LINES for w, a, b in ws],
+    })
+    return store, plan
+
+
+def test_at_word_finds_punchline_under_stars_and_forms(tmp_path, monkeypatch):
+    from app.agent_tools import word_at, word_time
+
+    store, plan = _qa4_plan(tmp_path, monkeypatch)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    # Раньше «обосралась» по тексту не находилось: в субтитрах «о*********,».
+    hit = word_at(ctx, {"text": "обосралась"})
+    assert hit["t"] == 29.12 and hit["line"] == 1 and "звёздочками" in hit["note"]
+    assert word_time(ctx, "Обосралась!") == 29.12  # регистр и пунктуация
+    assert word_time(ctx, {"text": "лезет"}) == 26.62
+    assert word_time(ctx, {"text": "ещё"}) == 26.42  # ё/е
+    assert word_time(ctx, {"text": "видит"}) == 26.04  # словоформа
+    # Номер строки съехал на 1 (как у агента в QA 4), но слово названо — верим слову.
+    fixed = word_at(ctx, {"line": 0, "word": 1, "text": "обосралась"})
+    assert fixed["t"] == 29.12 and "«это»" in fixed["note"]
+    assert word_at(ctx, {"line": 0, "word": 1})["word"] == "это"
+
+
+def test_add_layers_reports_the_word_under_the_sound(tmp_path, monkeypatch):
+    from test_agent_tools import _sfx_pack
+
+    store, plan = _qa4_plan(tmp_path, monkeypatch)
+    _sfx_pack(tmp_path, monkeypatch, files=("drama-boom.ogg", "impact-low.ogg"))
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"])
+    out, ok = run_tool(ctx, "add_layers", {"layers": [
+        {"type": "audio", "at_word": {"line": 0, "word": 1}, "duration": 1.2,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}},
+        {"type": "audio", "at_word": {"text": "обосралась"}, "duration": 1.2,
+         "props": {"asset_id": "sfx:freesound/impact-low.ogg", "volume": 0.4}}]})
+    assert ok, out
+    assert "«это»" in out["on_words"][0] and "«о*********,»" in out["on_words"][1]
+    starts = sorted(float(l["start"]) for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"])
+    assert starts == [25.72, 29.12]
