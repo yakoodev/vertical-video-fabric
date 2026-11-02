@@ -31,3 +31,6 @@ frontend/dist/
 
 # Playwright MCP: скриншоты и логи агентов
 .playwright-mcp/
+
+# Собирается из node/scene3d/src (npm run build:scene3d; в Docker — свой шаг)
+/node/scene3d/dist/
