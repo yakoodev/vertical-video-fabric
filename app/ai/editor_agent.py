@@ -816,6 +816,7 @@ def run_agent(
                 last_change_body = body
                 try:
                     agent_tools.apply_playbook_defaults(ctx)  # vtuber-story: без стоп-кадра в конце (QA 5)
+                    agent_tools.nameplate_after_hook(ctx)  # плашка не из-под хука (QA 8)
                 except Exception:  # noqa: BLE001 - умолчание плейбука не повод сорвать ход
                     pass
             if isinstance(result, ImageResult):
@@ -1261,8 +1262,28 @@ def strip_service_echo(text: str) -> str:
     return "\n".join([tail.strip(), *lines[cut:]] if tail.strip() else lines[cut:]).strip()
 
 
+# Русский внутренний монолог перед отчётом (QA 8, клип 901: «- 1) Посмотрел картинки… 3) Мне запрещено подбирать
+# координаты… 5) Я должен отчитаться и задать вопрос. Отчитаюсь, как просили. Готово! …»).
+_REPORT_START_RE = re.compile(r"(?m)^[\s*_#>-]*(?:Готово|Отч[её]т|Итог|Сделано|Что сделал)\b")
+_PLANNING_RE = re.compile(
+    r"\b(?:я должен|я должна|мне нужно|мне надо|мне запрещено|надо отчитаться|отчитаюсь|как просили|"
+    r"посмотрел[аи]? картинк|теперь я|сначала я|далее я|мой план|план действий)\b", re.IGNORECASE)
+
+
+def strip_ru_monologue(text: str) -> str:
+    """Отрезать русское размышление-план перед отчётом: до первой строки «Готово/Отчёт/Итог…», если в этой
+    преамбуле есть признаки плана самому себе («я должен», «отчитаюсь», «мне запрещено»). Иначе — как есть."""
+    match = _REPORT_START_RE.search(text or "")
+    if not match or match.start() == 0:
+        return text
+    head = text[:match.start()]
+    if not _PLANNING_RE.search(head):
+        return text
+    return text[match.start():].lstrip(" \n*_#>-")
+
+
 def _strip_leaks(text: str) -> str:
-    cleaned = strip_monologue(strip_service_echo(_MARKER_RE.sub("", text))).lstrip(" .\n")
+    cleaned = strip_ru_monologue(strip_monologue(strip_service_echo(_MARKER_RE.sub("", text)))).lstrip(" .\n")
     return _LEAK_PREFIX_RE.sub("", cleaned, count=1).strip()
 
 

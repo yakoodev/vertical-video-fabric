@@ -3915,6 +3915,29 @@ def h_set_motion_blur(ctx: ToolContext, args: dict) -> dict:
 _END_HOLD_ASK_RE = re.compile(r"стоп[- ]?кадр|замира|замри|end[_ ]?hold|freeze", re.IGNORECASE)
 
 
+def nameplate_after_hook(ctx: ToolContext) -> bool:
+    """Плашка канала в углу выходит, когда уходит хук. ``set_nameplate`` так и ставит, но если хук добавили
+    ПОСЛЕ плашки, она остаётся с 0 с и выглядывает из-под хука (QA 8, клип 901). → поменяли ли что-то."""
+    from app.brand_kit import NAMEPLATE_ID, find_hook
+
+    render = _current_render(ctx)
+    layers = [dict(l) for l in render.get("layers") or []]
+    plate = next((l for l in layers if l.get("id") == NAMEPLATE_ID and not l.get("hidden")), None)
+    hook = find_hook([l for l in layers if l.get("id") != NAMEPLATE_ID])
+    if plate is None or hook is None or hook.get("hidden"):
+        return False
+    position = str((plate.get("props") or {}).get("position") or plate.get("position") or "")
+    corner = position.startswith("top-") or float(plate.get("y", 0.5)) < 0.2
+    start, hook_start, hook_end = (float(plate.get("start") or 0.0), float(hook.get("start") or 0.0),
+                                   float(hook.get("end") or 0.0))
+    end = float(plate.get("end") or 0.0)
+    if not corner or not (hook_start <= start < hook_end - 0.05) or hook_end >= end - 0.5:
+        return False
+    plate["start"] = round(hook_end, 3)
+    _save_render(ctx, {**render, "layers": [plate if l.get("id") == NAMEPLATE_ID else l for l in layers]})
+    return True
+
+
 def apply_playbook_defaults(ctx: ToolContext) -> bool:
     """Умолчания активного плейбука, которых нет у клипа: стоп-кадр в конце (``end_hold_sec``) у vtuber-story — 0.
 

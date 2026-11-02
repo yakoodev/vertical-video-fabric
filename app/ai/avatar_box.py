@@ -40,10 +40,11 @@ PROMPT = (
     "даже если они крупнее. Рамка — вся видимая модель (голова и тело). В face — рамка ЛИЦА аватара (глаза и "
     "рот, без волос). Ещё отметь окна ЧАТА, текста и интерфейса стрима (оверлеи, донаты, подписи, рамки) рядом "
     "с аватаром и ПОВЕРХ него — в ui, каждое сообщение чата отдельной рамкой. Ответь ТОЛЬКО JSON-объектом: "
-    "{{\"frames\": [{{\"frame\": 1, \"avatar\": true, \"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, "
+    "{{\"frames\": [{{\"frame\": 1, \"avatar\": true, \"box\": {{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, "
     "\"face\": {{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, \"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
-    "запись на КАЖДЫЙ кадр в том же порядке (frame — номер кадра с 1), координаты — ДОЛИ кадра 0..1 (не пиксели и "
-    "не 0–1000); кадр без аватара — {{\"frame\": N, \"avatar\": false}}."
+    "запись на КАЖДЫЙ кадр в том же порядке (frame — номер кадра с 1), в каждой рамке ВСЕ ЧЕТЫРЕ числа x0, y0, "
+    "x1, y1 — ДОЛИ кадра 0..1 с тремя знаками после точки (0.512, не пиксели и не 0–1000); кадр без аватара — "
+    "{{\"frame\": N, \"avatar\": false}}."
 )
 
 
@@ -772,19 +773,19 @@ def _boundary_cuts(store: Any, source: dict, local: str, places: list[dict]) -> 
 
 
 def _rect_schema() -> dict:
-    return {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")},
-            "required": ["x0", "y0", "x1", "y1"]}
+    keys = ["x0", "y0", "x1", "y1"]
+    return {"type": "object", "properties": {k: {"type": "number"} for k in keys}, "required": keys,
+            "propertyOrdering": keys}
 
 
 def response_schema() -> dict:
     """Жёсткая форма ответа (``responseSchema``): объект ``frames`` с записью на каждый кадр — номер, есть ли аватар,
     рамки в долях кадра. Кадр без аватара — ``avatar: false`` без рамки."""
-    rect = {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}
     return {
         "type": "object",
         "properties": {"frames": {"type": "array", "items": {
             "type": "object",
-            "properties": {"frame": {"type": "integer"}, "avatar": {"type": "boolean"}, **rect,
+            "properties": {"frame": {"type": "integer"}, "avatar": {"type": "boolean"}, "box": _rect_schema(),
                            "face": _rect_schema(), "ui": {"type": "array", "items": _rect_schema()}},
             "required": ["frame", "avatar"]}}},
         "required": ["frames"],
@@ -824,7 +825,12 @@ def ask_boxes(client: Any, parts: list[dict], size: tuple[int, int] | None = Non
                                     "maxOutputTokens": MAX_ANSWER_TOKENS,
                                     "responseSchema": response_schema()}}
     problem = "пустой ответ"
-    for _attempt in range(ASK_ATTEMPTS):
+    for attempt in range(ASK_ATTEMPTS):
+        if attempt == 1 and "responseSchema" in payload["generationConfig"]:
+            # QA 8: со схемой модель бывает стабильно ломает ответ (пропуск x1, бесконечное число) — повторы без
+            # схемы, формат держат PROMPT и терпимый разбор.
+            payload = {**payload, "generationConfig": {k: v for k, v in payload["generationConfig"].items()
+                                                       if k != "responseSchema"}}
         try:
             response = client.generate_content(settings.gemini_text_model, payload)
         except RuntimeError as exc:
