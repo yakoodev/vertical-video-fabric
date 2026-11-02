@@ -69,6 +69,10 @@ MUST_SEE = {"extreme_close": 0.16, "close": 0.24, "medium_close": 0.4, "medium":
 # close — плечи и голова, extreme_close — лицо. Над макушкой — запас не меньше HEAD_ROOM высоты кадра.
 CUT = {"medium": 0.45, "medium_close": 0.6, "close": 0.74, "extreme_close": 0.84}
 HEAD_ROOM = 0.05
+# Кадр блокинга не теснее этого (доля роста главного по высоте кадра): иначе манекен на весь кадр,
+# и модель не понимает ни места, ни действия.
+MIN_FRAME = {"medium": 1.0, "medium_close": 0.9, "close": 0.85, "extreme_close": 0.8}
+CROWD_MAX = 0.6  # персонажи заняли больше — комнаты не видно
 SIZES = ("extreme_close", "close", "medium_close", "medium", "full", "wide", "extreme_wide")
 MIN_SHARE = {"extreme_wide": 0.003, "wide": 0.008, "full": 0.02, "medium": 0.035, "medium_close": 0.05,
              "close": 0.07, "extreme_close": 0.07}
@@ -775,7 +779,7 @@ def _must_see(box: dict, size: str) -> dict:
 
 
 def _place_camera(actors: list[dict], size: str, shot_cam: dict, room: dict, yaw: float = 0.0,
-                  lift: float = 0.0) -> dict:
+                  lift: float = 0.0, focus: Any = ()) -> dict:
     """Камера по крупности/ракурсу/объективу: смотрит на центр масс персонажей, все влезают."""
     fov = lens_fov(shot_cam.get("lens"))
     humans = [a for a in actors if a.get("kind") == "human"]
@@ -785,32 +789,29 @@ def _place_camera(actors: list[dict], size: str, shot_cam: dict, room: dict, yaw
     seen = [_must_see(a, size) for a in actors]
     main = next((a for a in actors if a.get("main") and a.get("head")), None)
     if main is not None and size in CUT:
-        # Крупность по главному персонажу: низ кадра — по поясу/бёдрам (medium), груди, плечам
-        # (close); сверху — макушка с запасом HEAD_ROOM высоты кадра. Остальные люди — так же сверху;
-        # маленьких персонажей на полу кадр этой крупности не обязан брать целиком.
-        # Верх — макушка или поднятые руки («потянуться»), что выше.
-        top = max(main["head"][1] + main["head_r"], main["center"][1] + main["half"][1])
-        base = main["center"][1] - main["half"][1]
-        cut = base + CUT[size] * max(1.0, top - base)
-        frame_h = (top - cut) / (1.0 - HEAD_ROOM - 0.02)
-        hx, hz = main["head"][0], main["head"][2]
-        ty = cut + frame_h / 2
-        # По ширине вертикальный кадр крупного плана держит голову (плечи могут уйти за край), средний —
-        # корпус без вытянутой руки.
-        if size == "medium":
-            half_x, half_z = min(main["half"][0], 22.0), main["head_r"] * 0.6
-        else:
-            half_x = half_z = main["head_r"] * 1.1
-        # По вертикали запас уже в frame_h (HEAD_ROOM) — подгонка не добавляет свой.
-        seen = [{**main, "center": [hx, (top + cut) / 2, hz], "half": [half_x, (top - cut) / 2, half_z],
-                 "rot": main["rot"], "fit_v": 0.99}]
-        for a in actors:
-            if a is not main and a.get("kind") == "human" and a.get("head"):
-                a_top = a["head"][1] + a["head_r"]
-                seen.append({**a, "center": [a["head"][0], a_top - a["head_r"] * 2, a["head"][2]],
-                             "half": [a["half"][0], a["head_r"] * 2, min(a["half"][2], 18.0)]})
+        # Блокинг должен показать МЕСТО и ДЕЙСТВИЕ: в кадре все участники плана и вещи действия плюс
+        # кусок комнаты; крупность плана — ориентир (сколько роста главного видно, но не меньше
+        # MIN_FRAME). Людям можно резать ноги (низ кадра — не выше бёдер), голову — никогда: над
+        # макушкой (или поднятыми руками) запас HEAD_ROOM. Маленькие персонажи и вещи — целиком.
+        def human_part(a: dict, frame: float) -> dict:
+            top = max(a["head"][1] + a["head_r"], a["center"][1] + a["half"][1])
+            base = a["center"][1] - a["half"][1]
+            cut = base + CUT["medium"] * max(1.0, top - base)
+            top += (HEAD_ROOM + 0.02) * frame
+            return {**a, "center": [a["center"][0], (top + cut) / 2, a["center"][2]],
+                    "half": [min(a["half"][0], 24.0), (top - cut) / 2, min(a["half"][2], 18.0)], "fit_v": 1.0}
+
+        h_main = max(1.0, main["head"][1] + main["head_r"] - (main["center"][1] - main["half"][1]))
+        frame_h = max(FRAME_HEIGHT.get(size, 0.8) * h_main, MIN_FRAME[size] * h_main)
+        seen = [human_part(a, frame_h) if a.get("kind") == "human" and a.get("head") else a for a in actors]
+    if focus:
+        seen = seen + [dict(f) for f in focus]
+    if main is not None and size in CUT:
         tx = sum(a["center"][0] for a in seen) / len(seen)
         tz = sum(a["center"][2] for a in seen) / len(seen)
+        lo = min(a["center"][1] - a["half"][1] for a in seen)
+        hi = max(a["center"][1] + a["half"][1] for a in seen)
+        ty = (lo + hi) / 2
     elif seen:
         tx = sum(a["center"][0] for a in seen) / len(seen)
         tz = sum(a["center"][2] for a in seen) / len(seen)
@@ -998,24 +999,21 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         near_actor = target_dist
     shares: dict[str, float] = {}
     total = 0.0
-    warnings: list[str] = []
-    has_main = any(boxes[i].get("main") for i in actor_idx)
-
-    def soft(b: dict) -> bool:
-        """Маленький персонаж на полу при крупном плане главного — может быть вне кадра (не ошибка)."""
-        return size in CUT and has_main and not b.get("main") and b.get("kind") != "human"
-
-    for i in actor_idx:
+    for i in actor_idx:  # каждый участник плана — в кадре и не закрыт (Бип за кадром — ошибка)
         b = boxes[i]
         any_hit = int(np.isfinite(hits[:, i]).sum())
         own = int(((first == i) & np.isfinite(first_t)).sum())
         shares[b["id"]] = round(own / n, 4)
         total += own / n
         if any_hit == 0:
-            (warnings if soft(b) else problems).append(f"«{b['label']}» не в кадре")
+            problems.append(f"«{b['label']}» не в кадре")
         elif own / any_hit < 1 - HIDDEN_MAX:
-            (warnings if soft(b) else problems).append(f"«{b['label']}» закрыт(а) — видно "
-                                                       f"{round(100 * own / any_hit)}%")
+            problems.append(f"«{b['label']}» закрыт(а) — видно {round(100 * own / any_hit)}%")
+    for i, b in enumerate(boxes):  # вещи действия («ставит кружку на тумбочку») — тоже в кадре
+        if b.get("focus") and not int(((first == i) & np.isfinite(first_t)).sum()):
+            problems.append(f"«{b['label']}» (вещь действия) не в кадре")
+    if total > CROWD_MAX:
+        problems.append(f"персонажи на весь кадр ({round(100 * total)}%) — не видно ни места, ни действия")
     # Обязательное от персонажа (у человека при этой крупности — верх тела/лицо) влезает в кадр целиком.
     f, r, u = _basis(pos, list(camera["target"]))
     tv = math.tan(math.radians(float(camera.get("fov") or 40) / 2))
@@ -1037,16 +1035,16 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
                 problems.append(f"голова «{b['label']}» срезана или у верхнего края кадра (запас "
                                 f"{max(0, round(100 * room_top, 1))}% < {round(100 * HEAD_ROOM)}%)")
                 continue
-            if size in CUT:
-                continue  # крупный план главного — мерило голова, низ кадра режет тело по плану
+        if b.get("kind") == "human" and size in CUT:
+            continue  # людям на крупном плане можно резать ноги; мерило — голова (выше)
         cut = False
         for c in _box_corners(_must_see(b, size)):
             p = ndc(c)
             if p is None or abs(p[0]) > 1.06 or abs(p[1]) > 1.06:
                 cut = True
                 break
-        if cut and not any(b["label"] in p for p in problems + warnings):
-            (warnings if soft(b) else problems).append(f"«{b['label']}» не влезает в кадр")
+        if cut and not any(b["label"] in p for p in problems):
+            problems.append(f"«{b['label']}» не влезает в кадр")
     if actor_idx and total < MIN_SHARE.get(size, 0.02):
         problems.append(f"персонажи слишком мелкие — {round(100 * total, 1)}% кадра")
     occluders: dict[str, float] = {}
@@ -1063,8 +1061,8 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         front = int(((first == i) & (first_t < 25.0)).sum()) / n
         if front > OCCLUDE_MAX:
             problems.append(f"«{b['label']}» вплотную к камере — {round(100 * front)}% кадра")
-    return {"ok": not problems, "problems": problems, "warnings": warnings, "shares": shares,
-            "occluders": occluders, "characters_share": round(total, 4)}
+    return {"ok": not problems, "problems": problems, "shares": shares, "occluders": occluders,
+            "characters_share": round(total, 4)}
 
 
 def _camera_notes(steps: int, sz: str, size: str, yaw: float, lift: float) -> list[str]:
@@ -1081,21 +1079,21 @@ def _wider(size: str, steps: int) -> str:
     return SIZES[min(len(SIZES) - 1, k + steps)]
 
 
-def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], room: dict) -> tuple[dict, dict]:
-    """Камера плана + самоконтроль. Не прошёл кадр по плану — пробуем чуть сместить/поднять камеру и
-    взять шире; ничего не прошло — кадр по плану с ``ok: False`` (такой блокинг в кадр не идёт)."""
+def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], room: dict,
+                  focus: Any = ()) -> tuple[dict, dict]:
+    """Камера плана + самоконтроль. В кадре все участники и вещи действия (``focus``); не прошёл кадр
+    по плану — пробуем сместить/поднять камеру и взять шире; ничего не прошло — кадр по плану с
+    ``ok: False`` (такой блокинг в кадр не идёт)."""
     cam_cfg = shot.get("camera") or {}
     size = str(cam_cfg.get("shot") or "medium")
     if size not in SIZES:
         size = "medium"
     first: tuple[dict, dict] | None = None
-    tries = 0
-    for steps in (0, 1, 2):
+    for steps in (0, 1, 2, 3):
         sz = _wider(size, steps)
-        lenient: tuple[dict, dict, float, float] | None = None
         for yaw in (0.0, 18.0, -18.0, 35.0, -35.0):
             for lift in (0.0, 45.0):
-                cam = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift)
+                cam = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift, focus)
                 # Камера внутри вещи — отодвигаем вдоль луча к цели, пока не выйдет.
                 for _ in range(30):
                     hit = next((b for b in all_boxes if _inside(b, cam["pos"])), None)
@@ -1107,21 +1105,11 @@ def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], ro
                     if n < 40:
                         break
                     cam["pos"] = [_r(cam["pos"][i] + vec[i] / n * 10.0) for i in range(3)]
-                tries += 1
-                check = check_frame(cam, all_boxes, room, sz, grid=(14, 24) if tries > 1 else GRID)
-                if tries > 1 and check["ok"]:
-                    check = check_frame(cam, all_boxes, room, sz)
+                check = check_frame(cam, all_boxes, room, sz)
                 if first is None:
                     first = (cam, check)
-                if check["ok"] and check.get("warnings"):
-                    if lenient is None:  # годится, но маленький персонаж вне кадра — ищем лучше
-                        lenient = (cam, check, yaw, lift)
-                    continue
                 if check["ok"]:
                     return cam, {**check, "size": sz, "notes": _camera_notes(steps, sz, size, yaw, lift)}
-        if lenient is not None:  # та же крупность важнее, чем робот на полу целиком в кадре
-            cam, check, yaw, lift = lenient
-            return cam, {**check, "size": sz, "notes": _camera_notes(steps, sz, size, yaw, lift)}
     cam, check = first  # type: ignore[misc]
     return cam, {**check, "size": size, "notes": ["ни один вариант камеры не прошёл самоконтроль"]}
 
@@ -1245,12 +1233,25 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
                            "box": box, "radius": radius}
     for k, p in enumerate(moment.get("props") or []):
         nodes += _prop_nodes(p, placed, obj_by, k)
+    # Вещи действия: на что ставят/кладут реквизит (в начале или в конце плана), на чём сидят/лежат,
+    # что названо в действии («врезается в тумбочку») — они обязаны быть в кадре.
+    focus_ids = {str(p.get("on")) for m in ("start", "end") for p in (spec.get(m) or {}).get("props") or []
+                 if p.get("on")}
+    focus_ids |= {str(a.get("on")) for a in actors if a.get("on")}
+    named = L.find({"objects": objects}, shot.get("action") or "")
+    if named is not None and named.get("type") not in L.FLAT_TYPES:
+        focus_ids.add(named["id"])
+    focus = []
+    for b in boxes:
+        if b["role"] == "object" and b["id"] in focus_ids:
+            b["focus"] = True
+            focus.append(b)
     if spec.get("camera"):
         cam = spec["camera"]
         check = check_frame(cam, boxes, room, str((shot.get("camera") or {}).get("shot") or "medium"))
         check = {**check, "size": (shot.get("camera") or {}).get("shot") or "medium", "notes": ["своя камера spec"]}
     else:
-        cam, check = choose_camera(shot, actor_boxes, boxes, room)
+        cam, check = choose_camera(shot, actor_boxes, boxes, room, focus)
     scene = {
         "camera": {"type": "perspective", "position": list(cam["pos"]), "target": list(cam["target"]),
                    "fov": float(cam.get("fov") or 40), "near": 3, "far": 6000},

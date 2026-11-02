@@ -2389,8 +2389,9 @@ def test_blocking_room_is_grounded_with_real_proportions(env):
 
 
 def test_blocking_head_is_never_cut_and_framing_follows_shot_size(env):
-    """Голова главного персонажа целиком в кадре с запасом сверху ≥ 5 % высоты кадра; medium — от
-    бёдер до макушки, close — плечи и голова; самоконтроль ловит срез головы."""
+    """Кадр блокинга показывает место и действие: все участники плана (и Бип на полу), вещь действия
+    (тумбочка, на которую ставят кружку) и кусок комнаты — крупность плана только ориентир; голова
+    главного целиком, запас сверху ≥ 5 % высоты кадра; самоконтроль ловит срез головы."""
     from app import aivideo_blocking as B
 
     _client_, store = env
@@ -2399,22 +2400,26 @@ def test_blocking_head_is_never_cut_and_framing_follows_shot_size(env):
     infos = B.cast_info(store, pid, shot)
     layout = B.shot_layout(store, pid, shot)
     spec = B.clean_spec(B.current(store, shot)["spec"], ["mira", "beep"])
-    heights = {}
     for size in ("medium", "medium_close", "close"):
-        built = B.build(spec, "start", {**shot, "camera": {"shot": size, "angle": "eye_level", "lens": 35}}, infos,
-                        layout)
-        assert built["check"]["ok"], (size, built["check"]["problems"])
-        mira = next(b for b in built["boxes"] if b.get("main"))
-        room_top = B.head_room(built["camera"], mira)
-        assert room_top >= B.HEAD_ROOM - 0.005, (size, room_top)
-        if built["check"]["size"] == size:  # крупность по плану: в кадре ровно нужная часть роста
-            import math
-
-            cam = built["camera"]
-            dist = math.dist(cam["pos"], mira["head"])
-            heights[size] = 2 * dist * math.tan(math.radians(cam["fov"] / 2))
-    assert heights["close"] < heights["medium_close"] < heights["medium"] < 165 * 0.75
-    assert heights["close"] < 165 * 0.45  # плечи и голова, а не по пояс
+        for which in ("start", "end"):
+            built = B.build(spec, which, {**shot, "camera": {"shot": size, "angle": "eye_level", "lens": 35}},
+                            infos, layout)
+            check = built["check"]
+            assert check["ok"], (size, which, check["problems"])
+            mira = next(b for b in built["boxes"] if b.get("main"))
+            assert B.head_room(built["camera"], mira) >= B.HEAD_ROOM - 0.005, (size, which)
+            assert check["shares"]["beep"] > 0  # Бип в cast — в кадре
+            assert check["characters_share"] <= B.CROWD_MAX  # не манекен на весь кадр — видна комната
+            focus = [b for b in built["boxes"] if b.get("focus")]
+            assert [b["id"] for b in focus] == ["nightstand"]  # «ставит кружку на тумбочку»
+    # Бип за кадром — ошибка самоконтроля, а не пометка.
+    built = B.build(spec, "start", {**shot, "camera": {"shot": "close"}}, infos, layout)
+    mira = next(b for b in built["boxes"] if b.get("main"))
+    hx, hy, hz = mira["head"]
+    tight = {"pos": [hx, hy, hz + 70], "target": [hx, hy - 5, hz], "fov": 40}
+    check = B.check_frame(tight, built["boxes"], layout["room"], "close")
+    assert not check["ok"] and any("«Бип» не в кадре" in p for p in check["problems"])
+    assert any("тумбочка" in p and "не в кадре" in p for p in check["problems"])
     # Камера, срезающая голову, — самоконтроль это ловит.
     built = B.build(spec, "start", {**shot, "camera": {"shot": "medium"}}, infos, layout)
     mira = next(b for b in built["boxes"] if b.get("main"))
@@ -2481,9 +2486,7 @@ def test_blocking_mannequins_real_size_pose_and_camera_by_plan(env):
     for which in ("start", "end"):
         check, scene = built[which]["check"], built[which]["scene"]
         assert check["ok"], (which, check)
-        # Главная — в кадре; робот на полу при medium может уйти за низ кадра (это пометка, не ошибка).
-        assert check["shares"]["mira"] > 0.03
-        assert check["shares"]["beep"] > 0 or any("Бип" in w for w in check["warnings"])
+        assert check["shares"]["mira"] > 0.03 and check["shares"]["beep"] > 0  # все участники в кадре
         cam = scene["camera"]
         assert abs(cam["position"][0]) < room["width"] / 2 and cam["position"][1] < room["height"]
         assert not any(B._inside(b, cam["position"]) for b in boxes)
