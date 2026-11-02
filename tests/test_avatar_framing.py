@@ -192,6 +192,34 @@ def test_avatar_cam_padding_stops_at_chat_overlay():
     assert sides == [] and y0 == 0.4
 
 
+def test_chat_over_model_head_is_cut_but_not_the_face():
+    # QA 3 (клип 895): колонка чата справа сверху до y 0.581 лежит ПОВЕРХ головы модели (верх 0.457);
+    # прежняя обрезка останавливалась на краю модели — нижние сообщения были в кадре весь ролик.
+    model = {"x0": 0.711, "y0": 0.457, "x1": 0.95, "y1": 0.963}
+    chat = {"x0": 0.81, "y0": 0.0, "x1": 0.998, "y1": 0.581}
+    youtube_title = {"x0": 0.084, "y0": 0.88, "x1": 0.288, "y1": 0.94}  # далеко — не мешает
+    text = json.dumps({"frames": [{**model, "ui": [chat, youtube_title],
+                                   "face": {"x0": 0.76, "y0": 0.62, "x1": 0.9, "y1": 0.74}}] * 3})
+    boxes = avatar_box.parse_boxes(text, 3)
+    assert boxes[0]["face"]["y0"] == 0.62
+    out = avatar_box.place_avatar(boxes)
+    cam = out["cam"]
+    assert cam["y"] == 0.581 and out["face"]["y0"] == 0.62  # верх — под чатом, лицо целиком в рамке
+    assert cam["x"] < 0.711 and cam["x"] + cam["w"] > 0.95  # бока модели не срезаны
+    assert "ui_left" not in out
+    # Сообщения чата отдельными рамками (как Gemini отвечает чаще) — та же рамка.
+    bubbles = [{"x0": 0.865, "y0": 0.444, "x1": 0.985, "y1": 0.509}, {"x0": 0.892, "y0": 0.519, "x1": 0.999, "y1": 0.581},
+               {"x0": 0.874, "y0": 0.519, "x1": 0.968, "y1": 0.581}, {"x0": 0.84, "y0": 0.3, "x1": 0.999, "y1": 0.354}]
+    assert avatar_box.place_avatar([{**model, "ui": bubbles}] * 2)["cam"]["y"] == 0.581
+    # Чат ниже, до глаз: в лицо рамку не режем — окно остаётся и названо в ui_left.
+    deep = {"x0": 0.81, "y0": 0.0, "x1": 0.998, "y1": 0.66}
+    kept = avatar_box.place_avatar([{**model, "ui": [deep], "face": {"x0": 0.76, "y0": 0.62, "x1": 0.9, "y1": 0.74}}])
+    assert kept["cam"]["y"] < 0.457 + 0.01 and kept["ui_left"] == [deep]
+    # Без лица (старый кэш) — не глубже четверти модели.
+    (_x0, y0, _x1, _y1), sides = avatar_box.trim_ui((0.69, 0.43, 0.97, 0.99), model, [deep])
+    assert sides == [] and y0 == 0.43
+
+
 def test_scene_cuts_in_window_are_source_seconds(tmp_path):
     _require_ffmpeg()
     from app.scene_cuts import detect_scene_cuts

@@ -37,9 +37,11 @@ PROMPT = (
     "Это {n} кадров стрима (целиком, по порядку). Найди на каждом АВАТАР СТРИМЕРА: нарисованную "
     "VTuber/PNGtuber-модель или вебку с лицом стримера — она поверх игры/браузера, обычно сбоку или в углу, "
     "иногда крупно. Люди и персонажи ВНУТРИ видео, ютуба, игры, фильма, браузера на экране — НЕ аватар, "
-    "даже если они крупнее. Рамка — вся видимая модель (голова и тело). Ещё отметь окна ЧАТА, текста и "
-    "интерфейса стрима (оверлеи, донаты, подписи, рамки) РЯДОМ с аватаром — в ui. Ответь ТОЛЬКО JSON: "
-    "{{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, \"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
+    "даже если они крупнее. Рамка — вся видимая модель (голова и тело). В face — рамка ЛИЦА аватара (глаза и "
+    "рот, без волос). Ещё отметь окна ЧАТА, текста и интерфейса стрима (оверлеи, донаты, подписи, рамки) рядом "
+    "с аватаром и ПОВЕРХ него — в ui, каждое сообщение чата отдельной рамкой. Ответь ТОЛЬКО JSON: "
+    "{{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, \"face\": {{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, "
+    "\"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
     "по рамке на КАЖДЫЙ кадр в том же порядке, доли кадра 0..1; кадр без аватара — {{}}."
 )
 
@@ -52,7 +54,7 @@ def _cache_key(plan: dict) -> str:
 def _cache_path(clip_plan_id: int, plan: dict) -> Path:
     folder = settings.runtime_dir / "avatar-box"
     folder.mkdir(parents=True, exist_ok=True)
-    return folder / f"{int(clip_plan_id)}-{_cache_key(plan)}-v2.json"
+    return folder / f"{int(clip_plan_id)}-{_cache_key(plan)}-v3.json"  # v3: лицо (face) и окна поверх модели
 
 
 def cached_avatar(store: Any, clip_plan_id: int) -> dict | None:
@@ -113,9 +115,13 @@ def parse_boxes(text: str, n: int) -> list[dict | None]:
     for item in frames[:n]:
         box = _box(item)
         if box is not None and isinstance(item, dict) and isinstance(item.get("ui"), list):
-            ui = [u for u in (_ui_box(x) for x in item["ui"][:8]) if u]
+            ui = [u for u in (_ui_box(x) for x in item["ui"][:12]) if u]
             if ui:
                 box["ui"] = ui
+        if box is not None and isinstance(item, dict) and isinstance(item.get("face"), dict):
+            face = _ui_box(item["face"])
+            if face and _inside(face, box):
+                box["face"] = face
         boxes.append(box)
     return boxes + [None] * (n - len(boxes))
 
@@ -129,33 +135,77 @@ def _ui_box(data: Any) -> dict | None:
     return box if box["x1"] - box["x0"] >= 0.01 and box["y1"] - box["y0"] >= 0.01 else None
 
 
-EDGE_EPS = 0.01
+def _inside(inner: dict, outer: dict, eps: float = 0.02) -> bool:
+    return (inner["x0"] >= outer["x0"] - eps and inner["y0"] >= outer["y0"] - eps
+            and inner["x1"] <= outer["x1"] + eps and inner["y1"] <= outer["y1"] + eps)
 
 
-def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict]) -> tuple[tuple, list[str]]:
-    """Рамка с запасом ``cam`` (x0, y0, x1, y1) без окон чата/интерфейса ``ui`` (QA 02.11, клип 892: запас PAD
-    захватил обрывки чата «SaZiann…» в углу кадра). Окно по одну сторону от самого аватара (``union``) —
-    край рамки отодвигается до окна, но не внутрь аватара. → (рамка, срезанные стороны)."""
+MAX_MODEL_CUT = 0.3          # окно чата поверх края модели: срезать модель не больше этой доли её размера
+MAX_MODEL_CUT_BLIND = 0.25   # то же, когда лицо неизвестно (кэш без face)
+UI_WEIGHT = 3.0              # доля кадра под чатом в рамке «стоит» втрое дороже срезанной доли модели
+UI_LEFT_MIN = 0.0005         # меньше этой площади (доли кадра) чата в рамке — не замечание
+
+
+def _overlap(rect: tuple, box: dict) -> float:
+    ix = min(rect[2], box["x1"]) - max(rect[0], box["x0"])
+    iy = min(rect[3], box["y1"]) - max(rect[1], box["y0"])
+    return ix * iy if ix > 0 and iy > 0 else 0.0
+
+
+def trim_ui(cam: tuple[float, float, float, float], union: dict, ui: list[dict],
+            face: dict | None = None) -> tuple[tuple, list[str]]:
+    """Рамка с запасом ``cam`` (x0, y0, x1, y1) без окон чата/интерфейса ``ui``. → (рамка, срезанные стороны).
+
+    QA 02.11 (клип 892): запас PAD захватил обрывки чата «SaZiann…» — рамка резалась до окна, но не глубже
+    края модели. QA 3 (клип 895) — этого мало: чат в углу лежит ПОВЕРХ головы модели (окно до y 0.58 при
+    верхе модели 0.46), и нижние сообщения оставались в кадре весь ролик. Теперь край может зайти и внутрь
+    модели — не глубже ``MAX_MODEL_CUT`` её размера и не в лицо ``face`` (глаза и рот от Gemini): из
+    вариантов краёв по окнам берётся тот, где чата в рамке меньше всего при самой малой потере модели
+    (чат весит ``UI_WEIGHT``). Окно посреди модели (подпись на теле) срезать дороже — оно остаётся."""
     x0, y0, x1, y1 = cam
-    sides: list[str] = []
+    wins: list[dict] = []
     for u in ui:
-        if not (u["x0"] < x1 and x0 < u["x1"] and u["y0"] < y1 and y0 < u["y1"]):
-            continue
-        # Сторона — где центр окна вне аватара; рамка режется до окна, но не глубже края модели.
-        cx, cy = (u["x0"] + u["x1"]) / 2, (u["y0"] + u["y1"]) / 2
-        if cy < union["y0"] - EDGE_EPS:
-            y0, side = max(y0, min(u["y1"], union["y0"])), "top"
-        elif cy > union["y1"] + EDGE_EPS:
-            y1, side = min(y1, max(u["y0"], union["y1"])), "bottom"
-        elif cx < union["x0"] - EDGE_EPS:
-            x0, side = max(x0, min(u["x1"], union["x0"])), "left"
-        elif cx > union["x1"] + EDGE_EPS:
-            x1, side = min(x1, max(u["x0"], union["x1"])), "right"
-        else:
-            continue  # окно на самом аватаре — рамку внутрь модели не режем
-        if side not in sides:
-            sides.append(side)
-    return (x0, y0, x1, y1), sides
+        key = {k: round(float(u[k]), 3) for k in ("x0", "y0", "x1", "y1")}
+        if _overlap(cam, key) > 0 and key not in wins:
+            wins.append(key)
+    if not wins:
+        return cam, []
+    w, h = union["x1"] - union["x0"], union["y1"] - union["y0"]
+    limit = MAX_MODEL_CUT if face else MAX_MODEL_CUT_BLIND
+    tops = {y0} | {u["y1"] for u in wins if y0 < u["y1"] <= union["y0"] + limit * h
+                   and (face is None or u["y1"] <= face["y0"])}
+    bottoms = {y1} | {u["y0"] for u in wins if y1 > u["y0"] >= union["y1"] - limit * h
+                      and (face is None or u["y0"] >= face["y1"])}
+    lefts = {x0} | {u["x1"] for u in wins if x0 < u["x1"] <= union["x0"] + limit * w
+                    and (face is None or u["x1"] <= face["x0"])}
+    rights = {x1} | {u["x0"] for u in wins if x1 > u["x0"] >= union["x1"] - limit * w
+                     and (face is None or u["x0"] >= face["x1"])}
+    model = w * h
+    best, best_cost = cam, None
+    for t in sorted(tops):
+        for b in sorted(bottoms):
+            for left in sorted(lefts):
+                for r in sorted(rights):
+                    rect = (left, t, r, b)
+                    chat = sum(_overlap(rect, u) for u in wins)
+                    loss = model - _overlap(rect, union)
+                    cost = (UI_WEIGHT * chat + loss, loss)
+                    if best_cost is None or cost < best_cost:
+                        best, best_cost = rect, cost
+    sides = [name for name, before, after in (("top", y0, best[1]), ("bottom", y1, best[3]),
+                                              ("left", x0, best[0]), ("right", x1, best[2])) if before != after]
+    return best, sides
+
+
+def ui_left(cam: dict, ui: list[dict]) -> list[dict]:
+    """Окна чата/интерфейса, что остались в рамке ``cam`` (доли исходника) заметной площадью."""
+    rect = (cam["x"], cam["y"], cam["x"] + cam["w"], cam["y"] + cam["h"])
+    out: list[dict] = []
+    for u in ui:
+        box = {k: round(float(u[k]), 3) for k in ("x0", "y0", "x1", "y1")}
+        if _overlap(rect, box) >= UI_LEFT_MIN and box not in out:
+            out.append(box)
+    return out
 
 
 def _iou(a: dict, b: dict) -> float:
@@ -166,18 +216,31 @@ def _iou(a: dict, b: dict) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _cam_of(group: list[dict]) -> tuple[dict, dict]:
-    """Рамки одного места → (объединение, cam с запасом PAD) в долях кадра исходника."""
-    union = {"x0": min(b["x0"] for b in group), "y0": min(b["y0"] for b in group),
-             "x1": max(b["x1"] for b in group), "y1": max(b["y1"] for b in group)}
+def _union(boxes: list[dict]) -> dict:
+    return {"x0": min(b["x0"] for b in boxes), "y0": min(b["y0"] for b in boxes),
+            "x1": max(b["x1"] for b in boxes), "y1": max(b["y1"] for b in boxes)}
+
+
+def _cam_of(group: list[dict]) -> tuple[dict, dict, dict]:
+    """Рамки одного места → (объединение, cam с запасом PAD без окон чата, ``{face?, ui_left?}``) в долях
+    кадра исходника."""
+    union = _union(group)
     w, h = union["x1"] - union["x0"], union["y1"] - union["y0"]
     x0, y0 = max(0.0, union["x0"] - w * PAD), max(0.0, union["y0"] - h * PAD)
     x1, y1 = min(1.0, union["x1"] + w * PAD), min(1.0, union["y1"] + h * PAD)
+    faces = [b["face"] for b in group if isinstance(b.get("face"), dict)]
+    face = _union(faces) if faces else None
     ui = [u for b in group for u in b.get("ui") or []]
     if ui:
-        (x0, y0, x1, y1), _sides = trim_ui((x0, y0, x1, y1), union, ui)
+        (x0, y0, x1, y1), _sides = trim_ui((x0, y0, x1, y1), union, ui, face)
     cam = {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
-    return {k: round(v, 4) for k, v in union.items()}, cam
+    extra: dict = {}
+    if face:
+        extra["face"] = {k: round(v, 4) for k, v in face.items()}
+    left = ui_left(cam, ui) if ui else []
+    if left:
+        extra["ui_left"] = left
+    return {k: round(v, 4) for k, v in union.items()}, cam, extra
 
 
 def place_avatar(boxes: list[dict | None], times: list[float] | None = None) -> dict:
@@ -213,8 +276,8 @@ def place_avatar(boxes: list[dict | None], times: list[float] | None = None) -> 
     timed = times is not None and len(times) >= len(boxes)
     places = []
     for k, run in enumerate(runs):
-        box, cam = looks[run["place"]]
-        place = {"place": run["place"], "cam": cam, "box": box, "frames": run["frames"]}
+        box, cam, extra = looks[run["place"]]
+        place = {"place": run["place"], "cam": cam, "box": box, "frames": run["frames"], **extra}
         if timed:
             place["src_from"] = round(float(times[run["first"]]) if k == 0 else
                                       (float(times[runs[k - 1]["last"]]) + float(times[run["first"]])) / 2, 3)
@@ -222,8 +285,8 @@ def place_avatar(boxes: list[dict | None], times: list[float] | None = None) -> 
                                     (float(times[run["last"]]) + float(times[runs[k + 1]["first"]])) / 2, 3)
             place["frame_times"] = [round(float(times[i]), 3) for i, _b in found if run["first"] <= i <= run["last"]]
         places.append(place)
-    box, cam = looks[0]
-    return {"cam": cam, "box": box, "frames_with_avatar": len(found), "moves": len(groups) > 1,
+    box, cam, extra = looks[0]
+    return {"cam": cam, "box": box, **extra, "frames_with_avatar": len(found), "moves": len(groups) > 1,
             "place_count": len(groups), "places": places}
 
 

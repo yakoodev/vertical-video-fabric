@@ -1517,6 +1517,12 @@ def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
             "set_layout mode avatar_full без cam сам поставит рамку по отрезкам (layout.cams) — не задавай один "
             f"cam на весь клип. Потом view_frame в КАЖДОМ отрезке ({looks}): без этого отчёт не примут"]
         out["next"] = f"set_layout mode avatar_full (рамки по отрезкам возьмутся сами) → view_frame {looks}"
+    chat = [w for p in [found, *(found.get("places") or [])] for w in p.get("ui_left") or []]
+    if chat:
+        where = "; ".join(f"x{w['x0']:.2f}–{w['x1']:.2f} y{w['y0']:.2f}–{w['y1']:.2f}" for w in chat[:3])
+        out.setdefault("warnings", []).append(
+            f"в рамке аватара остаётся окно чата/интерфейса поверх модели ({where}, доли исходника): срезать его — "
+            "значит резать лицо. Посмотри view_frame; можно задать cam руками или прикрыть угол своей плашкой")
     if args.get("save"):
         plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
         ctx.before_change()
