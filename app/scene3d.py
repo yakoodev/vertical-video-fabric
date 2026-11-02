@@ -51,6 +51,15 @@
 спрятано), ``glasses``, ``seat``/``lie`` — высота сиденья/лежанки; поза — кадр клипа:
 ``actions: [{"clip", "start": 0, "speed": 0, "offset": секунда}]``.
 
+Для лоу-поли серий (``app/series3d.py``): ``environment.style: "lowpoly"`` — плоские грани, матовые цвета;
+``room.style: "lowpoly"`` (стены и пол без текстур), ``room.cutaway: true`` — стена (и потолок), за которой
+оказалась камера, не рисуется вместе с вещами ``objects[].wall: "back|front|left|right"``; ``objects[].hideAbove`` —
+не рисовать, когда камера выше; примитивы ``rounded_box`` (``radius``, ``flat``, ``emissive``, state ``glow``),
+``display`` (табло: state ``text``, ``glow``), ``button_panel`` (state ``glow``, ``lit``, ``alarm``); персонаж
+``style: "toy"`` + ``toy: {skin, hair, hairStyle, top, coat, hood, hoodUp, pants, shoes, hat, backpack}`` — игрушка
+из скруглённых деталей на костях модели (тело спрятано); ключ камеры ``free: true`` — кадр не прижимается к
+стенам; ``camera.fill: {intensity, color, keys}`` — мягкая заливка от камеры.
+
 ``render_scene(spec, out)`` — mp4; ``preview_frames(spec, [t…], dir)`` — PNG нескольких кадров без
 полного рендера; ``contact_sheet(video, out)`` — лист кадров. Командная строка:
 ``python -m app.scene3d scene.json out.mp4 [--sheet sheet.jpg] [--preview 0,2,4 --preview-dir D]``.
@@ -78,7 +87,8 @@ FPS_MIN, FPS_MAX = 1, 60
 DURATION_MAX = 120.0
 SIDE_MAX = 2160
 MAX_FRAMES = 3600
-OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow"}
+OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
+                     "rounded_box", "display", "button_panel"}
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}
 WALLS = {"back", "front", "left", "right"}
 TIMEOUT_SEC = 3600

@@ -15,6 +15,7 @@ import {
   type StoriesOverview,
   type StoryCharacter,
   type StoryEpisode,
+  type StoryEngine,
   type StoryFormat,
   type StoryLocation,
   type StoryScene,
@@ -150,6 +151,7 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
     tone: fmt === "disaster" ? "напряжённо" : STORY_TONES[0],
     title_card: fmt === "disaster",
     render: false,
+    engine: "images" as StoryEngine,
   });
   const [form, setForm] = useState(() => initial(world.format ?? "story"));
   const [lo, hi] = STORY_DURATIONS[form.format];
@@ -189,6 +191,17 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
           </button>
         ))}
         {disaster ? <span className="chip story-part">часть {nextPart}</span> : null}
+        <label
+          className="aiv-check"
+          title="Свой 3D-движок: лоу-поли герой-игрушка по карточке актёра, кадр на каждую фразу озвучки, свет и звуки на словах. Без картинок сцен и без карточки — 0 ₽; рендер — минуты."
+        >
+          <input
+            type="checkbox"
+            checked={form.engine === "3d"}
+            onChange={(e) => setForm({ ...form, engine: e.target.checked ? "3d" : "images" })}
+          />{" "}
+          🧊 3D-серия (движок, 0 ₽)
+        </label>
       </div>
       <textarea
         className="input"
@@ -224,6 +237,9 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
         </button>
       </div>
       <span className="muted">
+        {form.engine === "3d"
+          ? "3D-серия: лифт или квартира в лоу-поли, героя узнают по яркой вещи из карточки актёра; кадры, свет (блэкаут, мигание), тряска и звуки — по словам озвучки. Картинки сцен не рисуются. "
+          : ""}
         {disaster
           ? "Серия — часть сериала мира: хук на «вы» до 12 с, цифры на экране как в игре (опасность красным, ресурсы жёлтым), в конце «ЧАСТЬ N+1 — …». Музыку не вшиваем — поставь её в TikTok тихо."
           : "Первый эпизод с новым составом ≈ 25–30 картинок (≈ 80–130 ₽, одна карточка); следующие дешевле — сцены, актёры и локации переиспользуются."}
@@ -278,6 +294,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
           {e.title || e.premise}
         </button>
         {e.options?.format === "disaster" ? <span className="chip story-part">часть {e.options.part ?? 1}</span> : null}
+        {e.options?.engine === "3d" ? <span className="chip">3D</span> : null}
         <span className="muted">
           {e.duration_target.toFixed(0)} с · {e.tone}
         </span>

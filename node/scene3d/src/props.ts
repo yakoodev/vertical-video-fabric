@@ -4,6 +4,7 @@
  * координат, «перёд» — +z.
  */
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { faceTexture, type Face } from "./textures.ts";
 import { rng } from "./timeline.ts";
 
@@ -217,17 +218,132 @@ export function poster(opts: { width?: number; height?: number; colors?: string[
   return { object: shadowAll(grp, true, true) };
 }
 
-export function primitive(kind: string, opts: { size?: number[]; color?: string; roughness?: number; metalness?: number; emissive?: string } = {}): Prop {
+export interface PrimitiveOpts {
+  size?: number[]; color?: string; roughness?: number; metalness?: number; emissive?: string; emissiveIntensity?: number;
+  /** Скругление граней rounded_box (м). */
+  radius?: number;
+  /** Сегментов по кругу у цилиндра/шара (лоу-поли — 8–12). */
+  segments?: number;
+  /** Плоские грани (лоу-поли). */
+  flat?: boolean;
+  /** Не отбрасывать тень (светящиеся панели, тонкие детали у самой лампы). */
+  noShadow?: boolean;
+}
+
+/**
+ * Простая форма: box | rounded_box | cylinder | sphere. Состояние ``glow`` (0..1, ключи state) — яркость
+ * свечения (панель света гаснет при блэкауте, кнопки мигают).
+ */
+export function primitive(kind: string, opts: PrimitiveOpts = {}): Prop {
   const s = opts.size || [0.2, 0.2, 0.2];
+  const baseGlow = opts.emissiveIntensity ?? 1;
   const mat = new THREE.MeshStandardMaterial({ color: opts.color || "#cccccc", roughness: opts.roughness ?? 0.7, metalness: opts.metalness ?? 0,
-    emissive: opts.emissive || "#000000" });
+    emissive: opts.emissive || "#000000", emissiveIntensity: baseGlow, flatShading: !!opts.flat });
   let geo: THREE.BufferGeometry;
-  if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], 32);
-  else if (kind === "sphere") geo = new THREE.SphereGeometry(s[0] / 2, 32, 16);
-  else geo = new THREE.BoxGeometry(s[0], s[1], s[2] ?? s[0]);
+  const seg = Math.max(3, Math.min(64, Math.round(opts.segments ?? 32)));
+  if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], seg);
+  else if (kind === "sphere") geo = new THREE.SphereGeometry(s[0] / 2, seg, Math.max(2, Math.round(seg / 2)));
+  else if (kind === "rounded_box") {
+    const d = s[2] ?? s[0];
+    geo = new RoundedBoxGeometry(s[0], s[1], d, 2, Math.min(opts.radius ?? 0.02, Math.min(s[0], s[1], d) / 2 - 1e-4));
+  } else geo = new THREE.BoxGeometry(s[0], s[1], s[2] ?? s[0]);
   const m = new THREE.Mesh(geo, mat);
   m.position.y = kind === "sphere" ? s[0] / 2 : s[1] / 2;
   const g = new THREE.Group();
   g.add(m);
-  return { object: shadowAll(g) };
+  shadowAll(g, !opts.noShadow, true);
+  return {
+    object: g,
+    update: (_t, state) => {
+      if (state.glow !== undefined) mat.emissiveIntensity = baseGlow * Number(state.glow);
+    },
+  };
+}
+
+/**
+ * Табло (номер этажа, таймер): тёмная панель с текстом-свечением; state ``text`` меняет надпись, ``glow`` —
+ * яркость (0 — погасло). Текст — канвас, пиксельный шрифт не нужен: крупные цифры.
+ */
+export function display(opts: { size?: number[]; text?: string; color?: string; bg?: string; glow?: number } = {}): Prop {
+  const s = opts.size || [0.22, 0.12, 0.02];
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = Math.max(32, Math.round((256 * s[1]) / s[0]));
+  const g2 = c.getContext("2d")!;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const color = opts.color || "#ff4a3a";
+  let shown = "";
+  const draw = (text: string) => {
+    if (text === shown) return;
+    shown = text;
+    g2.fillStyle = "#000000";
+    g2.fillRect(0, 0, c.width, c.height);
+    g2.fillStyle = color;
+    g2.font = `bold ${Math.round(c.height * 0.78)}px Arial, sans-serif`;
+    g2.textAlign = "center";
+    g2.textBaseline = "middle";
+    g2.fillText(text, c.width / 2, c.height * 0.54);
+    tex.needsUpdate = true;
+  };
+  draw(opts.text ?? "");
+  const base = opts.glow ?? 1.6;
+  const face = new THREE.MeshStandardMaterial({ color: "#050505", emissive: "#ffffff", emissiveMap: tex, emissiveIntensity: base, roughness: 0.4 });
+  const body = new THREE.MeshStandardMaterial({ color: opts.bg || "#16181c", roughness: 0.5, metalness: 0.3 });
+  const grp = new THREE.Group();
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(s[0] + 0.02, s[1] + 0.02, s[2]), body);
+  frame.position.y = s[1] / 2 + 0.01;
+  grp.add(frame);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(s[0], s[1]), face);
+  screen.position.set(0, s[1] / 2 + 0.01, s[2] / 2 + 0.001);
+  grp.add(screen);
+  return {
+    object: grp,
+    update: (_t, state) => {
+      if (state.text !== undefined) draw(String(state.text));
+      face.emissiveIntensity = base * (state.glow !== undefined ? Number(state.glow) : 1);
+    },
+  };
+}
+
+/**
+ * Кнопочная панель (лифт, домофон): пластина с сеткой круглых кнопок; state ``glow`` — подсветка всех,
+ * ``lit`` — номера горящих кнопок (с 0, слева направо, сверху вниз), ``alarm`` — кнопка вызова (красная внизу).
+ */
+export function buttonPanel(opts: { rows?: number; cols?: number; size?: number[]; color?: string; button?: string; light?: string; alarm?: boolean } = {}): Prop {
+  const rows = Math.max(1, Math.min(12, Math.round(opts.rows ?? 6))), cols = Math.max(1, Math.min(4, Math.round(opts.cols ?? 2)));
+  const s = opts.size || [0.2, 0.55, 0.02];
+  const grp = new THREE.Group();
+  const plate = new THREE.Mesh(new RoundedBoxGeometry(s[0], s[1], s[2], 2, 0.008), new THREE.MeshStandardMaterial({ color: opts.color || "#9aa1aa", roughness: 0.35, metalness: 0.6 }));
+  plate.position.y = s[1] / 2;
+  grp.add(plate);
+  const light = new THREE.Color(opts.light || "#ffd27a");
+  const mats: THREE.MeshStandardMaterial[] = [];
+  const r = Math.min(s[0] / (cols * 2.6), s[1] / (rows * 2.8));
+  for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
+    const m = new THREE.MeshStandardMaterial({ color: opts.button || "#d9dde2", roughness: 0.3, metalness: 0.2, emissive: light, emissiveIntensity: 0 });
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.012, 16), m);
+    b.rotation.x = Math.PI / 2;
+    b.position.set((j - (cols - 1) / 2) * r * 2.6, s[1] * 0.92 - r * 1.4 - i * r * 2.7, s[2] / 2 + 0.004);
+    grp.add(b);
+    mats.push(m);
+  }
+  let alarm: THREE.MeshStandardMaterial | null = null;
+  if (opts.alarm !== false) {
+    alarm = new THREE.MeshStandardMaterial({ color: "#d4302a", roughness: 0.3, emissive: "#ff2a1a", emissiveIntensity: 0 });
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.25, r * 1.25, 0.016, 16), alarm);
+    b.rotation.x = Math.PI / 2;
+    b.position.set(0, s[1] * 0.08 + r, s[2] / 2 + 0.005);
+    grp.add(b);
+  }
+  shadowAll(grp, false, true);
+  return {
+    object: grp,
+    update: (t, state) => {
+      const glow = state.glow !== undefined ? Number(state.glow) : 1;
+      const lit = new Set<number>(Array.isArray(state.lit) ? state.lit : []);
+      mats.forEach((m, i) => (m.emissiveIntensity = lit.has(i) ? 1.4 * glow : 0.08 * glow));
+      if (alarm) alarm.emissiveIntensity = state.alarm ? 0.9 + 0.8 * Math.max(0, Math.sin(t * 9)) : 0.15 * glow;
+    },
+  };
 }

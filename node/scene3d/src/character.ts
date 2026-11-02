@@ -10,6 +10,7 @@
 import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { actionStates, facingYaw, samplePath, windowWeight, type Action, type Key } from "./timeline.ts";
+import { buildToy, type ToySpec } from "./toy.ts";
 
 export interface PoseSpec {
   start: number;
@@ -30,8 +31,11 @@ export interface CharacterSpec {
   skin?: "light" | "dark";
   skinColor?: string;
   skinTone?: { lighten?: number; saturation?: number; hue?: number };
-  /** «flat» — стиль блокинга: матовые ровные цвета без текстур кожи и рельефа (не реализм тела). */
-  style?: "flat" | "textured";
+  /** «flat» — стиль блокинга: матовые ровные цвета без текстур кожи и рельефа (не реализм тела);
+   * «toy» — лоу-поли игрушка из скруглённых деталей на костях (toy.ts), тело модели спрятано. */
+  style?: "flat" | "textured" | "toy";
+  /** Внешность игрушки (style: "toy"): кожа, волосы, яркий верх, капюшон, штаны, обувь, рюкзак. */
+  toy?: ToySpec;
   /** Высота сиденья (м): корень опускается/поднимается так, чтобы таз сидел на этой высоте. */
   seat?: number;
   /** Высота лежанки (м): лежащий персонаж — на поверхности кровати/дивана. */
@@ -305,7 +309,8 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
   const bodyMesh = body as THREE.SkinnedMesh;
   const mat = bodyMesh.material as THREE.MeshStandardMaterial;
   // В паке «Light/Dark» — это цвет белья (светлое/тёмное), тон кожи один. Под одеждой белья не видно.
-  if (spec.skin === "light" || spec.skin === "dark") {
+  const toy = spec.style === "toy";
+  if (!toy && (spec.skin === "light" || spec.skin === "dark")) {
     const dir = spec.model.slice(0, spec.model.lastIndexOf("/") + 1);
     const file = spec.skin === "light"
       ? (/Female/i.test(spec.model) ? "T_Superhero_Female_Light_BaseColor.png" : "T_Superhero_Male_Ligh.png")
@@ -345,7 +350,15 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
   scene.position.y = -box.min.y * k;
   scene.updateMatrixWorld(true);
 
-  if (spec.hair) {
+  if (toy) {
+    const hide: THREE.Object3D[] = [];
+    scene.traverse((o: any) => {
+      if (o.isMesh) hide.push(o);
+    });
+    buildToy(bones, hide, height, spec.toy || {});
+  }
+
+  if (spec.hair && !toy) {
     const h = await load(spec.hair.model);
     const clone = SkeletonUtils.clone(h.scene);
     const meshes = rebindSkinned(clone, bones, bodyMesh.parent!);
@@ -357,7 +370,7 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     }
   }
 
-  if (spec.outfit) {
+  if (spec.outfit && !toy) {
     const o = spec.outfit;
     const P = (n: string) => (bones[n] ? bones[n].getWorldPosition(new THREE.Vector3()) : null);
     const spine1 = P("spine_01"), hip = P("thigh_l"), knee = P("calf_l"), shL = P("upperarm_l"), elL = P("lowerarm_l");
@@ -422,7 +435,7 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     }
   }
 
-  if (spec.glasses) attachGlasses(scene, bones, spec.glasses.color || "#3a3236");
+  if (spec.glasses && !toy) attachGlasses(scene, bones, spec.glasses.color || "#3a3236");
 
   // Анимации: клипы библиотек, приведённые к этому скелету.
   const pelvisRest = bones.pelvis ? bones.pelvis.position.clone() : null;

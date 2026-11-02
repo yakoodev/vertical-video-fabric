@@ -37,10 +37,17 @@ export interface RoomSpec {
   open?: ("back" | "front" | "left" | "right")[];
   /** Насколько продлить пол и боковые стены к камере (м) — за краем комнаты не видно пустоты. */
   extend?: number;
+  /** «lowpoly» — ровные цвета без текстур (паркет/штукатурка), плоские грани. */
+  style?: "lowpoly";
+  /** Срез: стена (и потолок), за которой оказалась камера, не рисуется — камера может стоять «за стеной». */
+  cutaway?: boolean;
 }
 
 export interface RoomBuild {
   group: THREE.Group;
+  /** Стены (группы с проёмами, плинтусом, окном) и потолок — для среза по камере. */
+  walls: Partial<Record<"back" | "front" | "left" | "right", THREE.Group>>;
+  ceiling: THREE.Object3D | null;
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number; height: number };
   windows: { center: THREE.Vector3; normal: THREE.Vector3; width: number; height: number }[];
   doors: { center: THREE.Vector3; normal: THREE.Vector3; width: number; height: number }[];
@@ -91,9 +98,15 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
   const windows: RoomBuild["windows"] = [];
   const doors: RoomBuild["doors"] = [];
 
+  const low = spec.style === "lowpoly";
+  const walls: RoomBuild["walls"] = {};
   // Пол.
-  const fl = planksTexture(spec.floor?.color || "#9c7552", 2, spec.floor?.plank ?? 0.16);
-  const floorMat = new THREE.MeshStandardMaterial({ map: fl.map, roughnessMap: fl.rough, roughness: 0.85, metalness: 0 });
+  let floorMat: THREE.MeshStandardMaterial;
+  if (low) floorMat = new THREE.MeshStandardMaterial({ color: spec.floor?.color || "#9c7552", roughness: 0.9, metalness: 0, flatShading: true });
+  else {
+    const fl = planksTexture(spec.floor?.color || "#9c7552", 2, spec.floor?.plank ?? 0.16);
+    floorMat = new THREE.MeshStandardMaterial({ map: fl.map, roughnessMap: fl.rough, roughness: 0.85, metalness: 0 });
+  }
   materials.floor = floorMat;
   const ext = spec.extend ?? 0;
   const floorGeo = new THREE.PlaneGeometry(W + 2 * th, D + 2 * th + ext);
@@ -113,7 +126,9 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
   const wallMat = (name: string) => {
     const isAccent = accent && accent.wall === name;
     const color = isAccent ? accent!.color : wallColor;
-    const m = new THREE.MeshStandardMaterial({ color: "#ffffff", map: plasterTexture(color, 2, 3 + name.length, isAccent ? accent!.stripes ?? 0 : 0), roughness: 0.95 });
+    const m = low
+      ? new THREE.MeshStandardMaterial({ color, roughness: 0.92, flatShading: true })
+      : new THREE.MeshStandardMaterial({ color: "#ffffff", map: plasterTexture(color, 2, 3 + name.length, isAccent ? accent!.stripes ?? 0 : 0), roughness: 0.95 });
     materials[`wall_${name}`] = m;
     return m;
   };
@@ -150,8 +165,10 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     const mesh = new THREE.Mesh(geo, wallMat(wall));
     mesh.name = `wall_${wall}`;
     const frame = wallFrame(spec, wall);
+    frame.name = `wall:${wall}`;
     frame.add(shadow(mesh));
     group.add(frame);
+    walls[wall] = frame;
 
     // Плинтус (кроме дверных проёмов).
     if (spec.baseboard !== false) {
@@ -180,14 +197,16 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     }
   }
 
+  let ceiling: THREE.Object3D | null = null;
   if (spec.ceiling !== false) {
-    const cm = new THREE.MeshStandardMaterial({ color: spec.ceiling?.color || "#f1ece4", roughness: 1 });
+    const cm = new THREE.MeshStandardMaterial({ color: spec.ceiling?.color || "#f1ece4", roughness: 1, flatShading: low });
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W + 2 * th, D + 2 * th), cm);
     ceil.rotation.x = Math.PI / 2;
     ceil.position.y = H;
     ceil.receiveShadow = true;
     ceil.name = "ceiling";
     group.add(ceil);
+    ceiling = ceil;
   }
 
   // Мировые координаты проёмов (для света луны и ориентиров).
@@ -199,7 +218,29 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     delete (w as any)._frame;
   }
 
-  return { group, bounds: { minX: -W / 2, maxX: W / 2, minZ: -D / 2, maxZ: D / 2, height: H }, windows, doors, materials };
+  return { group, walls, ceiling, bounds: { minX: -W / 2, maxX: W / 2, minZ: -D / 2, maxZ: D / 2, height: H }, windows, doors, materials };
+}
+
+/**
+ * Срез по камере: стена, за плоскостью которой стоит камера, и потолок, если камера выше него, не
+ * рисуются (камера «за стеной» видит комнату, а не заливку стены). Возвращает спрятанные стены.
+ */
+export function cutawayFor(room: RoomBuild, cam: THREE.Vector3, margin = 0.02): string[] {
+  const b = room.bounds;
+  const out: string[] = [];
+  const hide: Record<string, boolean> = {
+    back: cam.z < b.minZ + margin, front: cam.z > b.maxZ - margin, left: cam.x < b.minX + margin, right: cam.x > b.maxX - margin,
+  };
+  for (const [name, frame] of Object.entries(room.walls)) {
+    if (!frame) continue;
+    frame.visible = !hide[name];
+    if (hide[name]) out.push(name);
+  }
+  if (room.ceiling) {
+    room.ceiling.visible = cam.y < b.height - margin;
+    if (!room.ceiling.visible) out.push("ceiling");
+  }
+  return out;
 }
 
 function buildWindow(frame: THREE.Group, o: Opening, u: number, y: number, th: number, _H: number,
