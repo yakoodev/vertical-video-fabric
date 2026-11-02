@@ -176,6 +176,61 @@ def test_dolly_keeps_frame_with_wider_lens():
     assert B._dolly(cam, 0.1) is None  # ближе 60 см или шире 80° — нельзя
 
 
+# Ответ зрения по плите серии 3 в «свободной» форме, как отвечает модель: синонимы типов, «back wall»,
+# одна вещь названа дважды. На плите: окно слева, тумбочка с лампой у изголовья, кровать справа.
+PLATE_ITEMS = [
+    {"type": "window", "name": "окно со шторами", "x": 0.15, "depth": 0.8, "wall": "back wall"},
+    {"type": "bedside table", "name": "тумбочка", "x": 0.5, "depth": 0.85, "wall": "Back"},
+    {"type": "nightstand", "name": "прикроватная тумбочка", "x": 0.52, "depth": 0.84, "wall": "back"},
+    {"type": "table lamp", "name": "лампа", "x": 0.52, "depth": 0.86, "wall": "on top of the nightstand",
+     "on": "nightstand"},
+    {"type": "bed", "name": "кровать", "x": 0.72, "depth": 0.65, "wall": "floor", "color": "#f4b6c2"},
+    {"type": "bed", "name": "подушка", "x": 0.8, "depth": 0.78, "wall": "on", "on": "bed"},
+    {"type": "fairy lights", "name": "гирлянда", "x": 0.5, "depth": 0.95, "wall": "back wall"},
+    {"type": "shelves", "name": "полки с игрушками", "x": 0.85, "depth": 0.95, "wall": "back"},
+    {"type": "other", "name": "носок", "x": 0.45, "depth": 0.15, "wall": "floor"},
+]
+
+
+def test_vision_layout_follows_plate_one_nightstand():
+    # Планы называют тумбочку — раскладка по описанию добавила бы свою; на плите она есть — одна.
+    lay = L.from_vision(PLATE_ITEMS, ROOM, ["nightstand", "lamp"])
+    kinds = [o["type"] for o in lay["objects"]]
+    for kind in ("nightstand", "lamp", "bed", "window", "garland"):
+        assert kinds.count(kind) == 1, (kind, kinds)
+    by = {o["type"]: o for o in lay["objects"]}
+    room = lay["room"]
+    # Как на плите: окно слева, тумбочка — левее кровати, кровать справа изголовьем к задней стене.
+    assert by["window"]["pos"][0] < by["nightstand"]["pos"][0] < by["bed"]["pos"][0]
+    assert by["bed"]["pos"][1] - by["bed"]["size"][2] / 2 <= -room["depth"] / 2 + 5
+    assert by["nightstand"]["pos"][1] <= -room["depth"] / 2 + by["nightstand"]["size"][2]
+    assert by["lamp"]["on"] == "nightstand" and by["lamp"]["y"] == pytest.approx(L.top_of(by["nightstand"]))
+    assert any(o["type"] == "shelf" for o in lay["objects"])
+    assert L.vision_wall("left side") == "left" and L.vision_wall("on the desk", "desk") == "on"
+    assert L.vision_kind({"type": "other", "name": "прикроватная тумбочка"}) == "nightstand"
+
+
+def test_blocking_actors_stand_by_plate_furniture():
+    lay = L.from_vision(PLATE_ITEMS, ROOM, ["nightstand"])
+    import app.aivideo_blocking as mod
+
+    orig = mod.cast_info
+    mod.cast_info = lambda store, pid, shot: INFOS
+    try:
+        spec = B.auto_spec(None, 1, SHOT, None, lay)
+    finally:
+        mod.cast_info = orig
+    built = B.build(spec, "end", SHOT, INFOS, lay)
+    stand = next(o for o in lay["objects"] if o["type"] == "nightstand")
+    mira = next(a for a in built["actors"] if a["id"] == "mira")
+    # Мира у той тумбочки, что на плите (сбоку, не заслоняя), кружка на ней.
+    assert abs(mira["pos"][0] - stand["pos"][0]) < 110 and abs(mira["pos"][1] - stand["pos"][1]) < 110
+    assert built["props"][0]["on"] == stand["id"]
+    assert built["check"]["ok"], built["check"]
+    # Камера — со стороны плиты (спереди, z > 0), а не из-за задней стены.
+    assert built["camera"]["pos"][2] > 0
+
+
 @pytest.mark.skipif(not B3.available(), reason="нет Node/браузера/бандла/3D-паков")
 def test_real_blocking_frame_png():
     spec = B3.scene_spec(_built("end"), SHOT, INFOS, {"mira": MIRA, "beep": BEEP}, "end", width=216, height=384)
