@@ -253,6 +253,25 @@ def test_reply_leaks_are_stripped_and_auto_focus_is_offered():
     assert "auto_focus" in {t.name for t in agent_tools.list_tools()}
 
 
+def test_english_monologue_before_russian_report_is_cut():
+    # QA 02.11 (клип 895): рассуждение Gemini пришло обычным текстом, без пометки thought.
+    leaked = ("herence}\n\nThe frame looks nice, avatar is zoomed in, the nameplate is in the top right, subtitles "
+              "look great.\n\nEverything is according to the vtuber-story playbook.\n\nI'll write the final report."
+              "Готово! Клип смонтирован по плейбуку «История витубера».\n\n1. **Кадрирование**: только аватар "
+              "(`set_layout avatar_full`).")
+    out = editor_agent._clean_reply(leaked)
+    assert out.startswith("Готово! Клип смонтирован") and "frame looks" not in out and "set_layout" in out
+    assert editor_agent._parts_text([{"text": leaked}]).startswith("herence")  # части модели не трогаем
+    assert editor_agent.strip_monologue("Checking the frame now, it looks fine. **Готово**: хук на 0–2 с, плашка "
+                                        "с 8 с.") == "**Готово**: хук на 0–2 с, плашка с 8 с."
+    # Нормальные ответы — как есть: короткая латиница, термин, название песни, сплошь английский.
+    for keep in ("OK, сделал: хук на 0–2 с и плашка в углу с 8 с.",
+                 "`set_layout avatar_full` поставил рамку аватара на весь клип, проверил кадры.",
+                 "Virtual Insanity by Jamiroquai — это песня на экране, вырезал её из кадра целиком.",
+                 "Mura is on screen the whole clip and the hook is at the top. Хук"):
+        assert editor_agent.strip_monologue(keep) == keep
+
+
 def test_thinking_aloud_mid_work_continues(tmp_path, monkeypatch):
     """Проверочный прогон: «рассуждения» текстом на 9-м шаге из 40 переводили ход в отчёт без
     инструментов, и Gemini писал «не успел из-за лимита шагов»."""
