@@ -1427,12 +1427,92 @@ def _place_view(pieces: list[dict], place: dict) -> dict | None:
             "clip_spans": [list(s) for s in spans]}
 
 
+def _cam_bits(layout: dict, s0: float, s1: float) -> list[tuple[float, float, dict]]:
+    """Рамки аватара по части исходника ``s0..s1``: ``[(a, b, {cam, video_scale})]``, секунды от начала части."""
+    from app.stream_layout import avatar_cam_spans
+
+    main, spans = avatar_cam_spans(layout, s0, s1)
+    bits = [(0.0, s1 - s0, main)]
+    for span in spans:  # перекрасить отрезки другой рамки
+        look = {"cam": span["cam"], "video_scale": span.get("video_scale") or main.get("video_scale")}
+        cut = []
+        for a, b, old in bits:
+            lo, hi = max(a, span["t0"]), min(b, span["t1"])
+            if hi <= lo:
+                cut.append((a, b, old))
+                continue
+            cut += [x for x in ((a, lo, old), (lo, hi, look), (hi, b, old)) if x[1] - x[0] > 1e-3]
+        bits = cut
+    return bits
+
+
+def _same_cam(a: dict, b: dict) -> bool:
+    return all(abs(float(a[k]) - float(b[k])) < 0.02 for k in ("x", "y", "w", "h"))
+
+
+def avatar_face_zones(store: Any, clip_plan_id: int, render: dict | None = None) -> list[dict]:
+    """Где лицо аватара в кадре avatar_full (опорный 1080×1920): ``[{t0, t1, rect: (x0, y0, x1, y1) px}]``
+    по шкале clip. Рамка модели и лицо — из detect_avatar (место с той же рамкой cam), иначе — середина
+    верхней части рамки (``avatar_box.face_of``). Не avatar_full или не 9:16 — пусто.
+
+    QA 3 (клип 895): картинки-карточки 500 px на y 0.40 закрыли лицо Муры, add_layers и lint молчали."""
+    from app.ai.avatar_box import cached_avatar, face_of
+    from app.formats import settings_layers_format
+    from app.stream_layout import avatar_geometry, normalize_layout
+
+    if render is None:
+        plan = store.get_clip_plan(int(clip_plan_id))
+        render = normalize_render_settings(plan.get("render_settings") or {})
+    layout = render.get("layout") or {}
+    if layout.get("mode") != "avatar_full" or not isinstance(layout.get("cam"), dict):
+        return []
+    if settings_layers_format(render) != "9:16":
+        return []
+    lay = normalize_layout(layout)
+    plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    source = store.get_source(int(plan["source_id"]))
+    src_w, src_h = source.get("width"), source.get("height")
+    try:
+        found = cached_avatar(store, int(clip_plan_id)) or {}
+    except Exception:  # noqa: BLE001
+        found = {}
+    known = [p for p in [found, *(found.get("places") or [])] if isinstance(p, dict) and p.get("cam") and p.get("box")]
+    W, H = 1080, 1920
+
+    def face_rect(look: dict) -> tuple | None:
+        cam = look["cam"]
+        match = next((p for p in known if _same_cam(p["cam"], cam)), None)
+        if match:
+            face = face_of(match["box"], match.get("face"))
+        else:  # рамка руками: модель — сама рамка
+            face = face_of({"x0": cam["x"], "y0": cam["y"], "x1": cam["x"] + cam["w"], "y1": cam["y"] + cam["h"]})
+        geo = avatar_geometry({**lay, "cam": cam, "video_scale": look.get("video_scale") or lay.get("video_scale")},
+                              W, H, src_w, src_h)
+        px = lambda sx: geo["x"] + (sx - cam["x"]) / max(1e-6, cam["w"]) * geo["w"]  # noqa: E731
+        py = lambda sy: geo["y"] + (sy - cam["y"]) / max(1e-6, cam["h"]) * geo["h"]  # noqa: E731
+        rect = (max(0.0, px(face["x0"])), max(0.0, py(face["y0"])), min(W, px(face["x1"])), min(H, py(face["y1"])))
+        return rect if rect[2] - rect[0] > 20 and rect[3] - rect[1] > 20 else None
+
+    zones: list[dict] = []
+    for piece in clip_timeline(store, int(clip_plan_id))["pieces"]:
+        s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+        for a, b, look in _cam_bits(lay, s0, s1):
+            rect = face_rect(look)
+            if not rect:
+                continue
+            rect = tuple(round(v, 1) for v in rect)
+            for t0, t1 in source_span_to_clip([piece], s0 + a, s0 + b):
+                if zones and zones[-1]["rect"] == rect and abs(zones[-1]["t1"] - t0) < 0.05:
+                    zones[-1]["t1"] = t1
+                else:
+                    zones.append({"t0": t0, "t1": t1, "rect": rect})
+    return zones
+
+
 def avatar_places(ctx: ToolContext) -> list[dict]:
     """Где аватар по ходу клипа, если мест больше одного: ``[{place, cam, from_t, to_t, view_t, src_from,
     src_to}]`` (шкала clip). Из раскладки avatar_full с ``cams``, иначе из найденного detect_avatar.
     Одно место — пустой список."""
-    from app.stream_layout import avatar_cam_spans
-
     render = _current_render(ctx)
     layout = render.get("layout") or {}
     pieces = clip_timeline(ctx.store, ctx.plan_id)["pieces"]
@@ -1440,18 +1520,8 @@ def avatar_places(ctx: ToolContext) -> list[dict]:
     if layout.get("mode") == "avatar_full" and layout.get("cams"):
         for piece in pieces:
             s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
-            main, spans = avatar_cam_spans(layout, s0, s1)
-            bits = [(0.0, s1 - s0, main["cam"])]
-            for span in spans:  # перекрасить отрезки другой рамки
-                cut = []
-                for a, b, cam in bits:
-                    lo, hi = max(a, span["t0"]), min(b, span["t1"])
-                    if hi <= lo:
-                        cut.append((a, b, cam))
-                        continue
-                    cut += [x for x in ((a, lo, cam), (lo, hi, span["cam"]), (hi, b, cam)) if x[1] - x[0] > 1e-3]
-                bits = cut
-            for a, b, cam in bits:
+            for a, b, look in _cam_bits(layout, s0, s1):
+                cam = look["cam"]
                 if rows and rows[-1]["cam"] == cam and abs(rows[-1]["src_to"] - (s0 + a)) < 0.05:
                     rows[-1]["src_to"] = round(s0 + b, 3)
                 else:
@@ -2085,16 +2155,21 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
 
 
 def _image_card_warnings(ctx: ToolContext, render: dict, layers: list[dict], ids: set[str], duration: float) -> list[str]:
-    """Новая картинка под хуком или мелкая (видимая часть без прозрачных полей < 35 % ширины) — как lint montage."""
+    """Новая картинка/видео под хуком, на лице аватара (avatar_full) или мелкая (видимая часть без прозрачных
+    полей < 35 % ширины) — как lint montage."""
     from app.formats import settings_layers_format
 
-    if settings_layers_format(render) != "9:16" or not any(l.get("type") == "image" for l in layers
+    if settings_layers_format(render) != "9:16" or not any(l.get("type") in ("image", "video") for l in layers
                                                             if str(l.get("id")) in ids):
         return []
     try:
         from app.quality_lint import image_card_findings
 
-        found = image_card_findings(ctx.store, layers, duration, only_ids=ids)
+        try:
+            faces = avatar_face_zones(ctx.store, ctx.plan_id, render)
+        except Exception:  # noqa: BLE001 - без лица — прежние проверки
+            faces = []
+        found = image_card_findings(ctx.store, layers, duration, only_ids=ids, faces=faces)
     except Exception:  # noqa: BLE001 - подсказка, не повод сорвать правку
         return []
     return [f"{f['message']} → {f['fix']}" for f in found]
@@ -2277,7 +2352,8 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     saved = next((l for l in _layers_of(fresh) if str(l.get("id")) == layer_id), normalized[0])
     out = {"ok": True, "layer": saved,
            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
-           + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]}
+           + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]
+           + _image_card_warnings(ctx, fresh, _layers_of(fresh), {layer_id}, duration)}
     if voice_notes:
         out["notes"] = voice_notes
     if saved.get("type") == "pngtuber":

@@ -216,6 +216,20 @@ def _iou(a: dict, b: dict) -> float:
     return inter / union if union > 0 else 0.0
 
 
+FACE_GUESS = (0.2, 0.15, 0.8, 0.65)  # лицо внутри рамки модели, когда Gemini его не дал (доли рамки)
+
+
+def face_of(box: dict, face: dict | None = None) -> dict:
+    """Лицо аватара (доли исходника): от Gemini или с запасом — середина верхней части рамки модели
+    (у чиби голова — полмодели, у вебки — верх кадра)."""
+    if isinstance(face, dict) and all(k in face for k in ("x0", "y0", "x1", "y1")):
+        return {k: float(face[k]) for k in ("x0", "y0", "x1", "y1")}
+    w, h = float(box["x1"]) - float(box["x0"]), float(box["y1"]) - float(box["y0"])
+    gx0, gy0, gx1, gy1 = FACE_GUESS
+    return {"x0": float(box["x0"]) + w * gx0, "y0": float(box["y0"]) + h * gy0,
+            "x1": float(box["x0"]) + w * gx1, "y1": float(box["y0"]) + h * gy1}
+
+
 def _union(boxes: list[dict]) -> dict:
     return {"x0": min(b["x0"] for b in boxes), "y0": min(b["y0"] for b in boxes),
             "x1": max(b["x1"] for b in boxes), "y1": max(b["y1"] for b in boxes)}
