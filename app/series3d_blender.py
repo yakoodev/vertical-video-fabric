@@ -252,6 +252,171 @@ def spot_for(name: str) -> tuple[tuple[float, float], float]:
 
 
 # --------------------------------------------------------------------------- #
+# Локации серии: кабина + шахта, площадка этажа, технический этаж, коридор (одна раскладка на локацию)
+# --------------------------------------------------------------------------- #
+# Все в одной сцене Blender, каждая — со своим началом координат по x (свет одной не попадает в другую); внутри —
+# свои места героя (spots: (x, y, курс)), точки интереса (targets), границы камеры и реквизит (props: что сцена
+# показывает). Двери лифта у коридора и площадки — на той же стене (y = FRONT), что в кабине: те же «раздвигать/
+# стучать». Надпись на стене (decal) — текстом в сцене (например «1998»).
+LOCS: dict[str, dict] = {
+    "cabin": {"label": "кабина лифта", "origin": (0.0, 0.0),
+              "bounds": (LEFT + 0.06, -LEFT - 0.06, FRONT + 0.06, D / 2 - 0.06, 0.12, H - 0.1),
+              "props": ("кнопки", "табло", "двери лифта", "люк", "поручни", "аварийный свет"),
+              "keywords": r"кабин|лифт\w*(?! шахт)|кнопк|табло|поручн",
+              "spots": {}, "targets": {}},
+    "shaft": {"label": "шахта лифта (на крыше кабины)", "origin": (12.0, 0.0), "bounds": (-1.05, 1.05, -1.15, 1.15, 0.2, 3.2),
+              "props": ("тросы", "противовес", "стены шахты", "крыша кабины", "люк", "направляющие"),
+              "keywords": r"шахт|трос|противовес|крыш\w* (лифт|кабин)|через люк|на крышу",
+              "spots": {"entry": (0.15, 0.25, 0.0), "center": (0.0, 0.0, 0.0), "edge": (0.0, -0.55, 0.0)},
+              "targets": {"key": (0.0, 0.0, 3.5), "ceiling": (0.0, 0.0, 6.0), "sound": (0.0, 0.0, 4.5),
+                          "cables": (0.05, 0.05, 2.0), "counterweight": (0.8, 0.75, 1.4), "wall": (0.0, -1.2, 1.2),
+                          "hatch": (0.3, 0.45, 0.02), "decal": (0.0, -1.18, 1.3)}},
+    "landing": {"label": "площадка этажа (лестничная клетка)", "origin": (24.0, 0.0), "bounds": (-1.35, 1.35, FRONT + 0.06, 1.4, 0.15, 2.45),
+                "props": ("двери квартир", "номер этажа на стене", "лампа", "лестница", "двери лифта", "надпись на стене"),
+                "keywords": r"площадк|лестни|ступен|квартир|этаж\w* (вышел|вышла)|подъезд|номер этажа",
+                "spots": {"entry": (0.0, -0.45, 3.1416), "center": (0.0, 0.1, 3.1416), "doors": (0.0, FRONT + 0.36, 0.0),
+                          "decal": (0.0, 0.75, 3.1416), "apartment": (-0.75, 0.2, -1.5708)},
+                "targets": {"key": (0.0, 1.47, 1.35), "decal": (0.0, 1.47, 1.35), "ceiling": (0.0, 0.0, 2.55),
+                            "sound": (1.2, 1.2, 1.4), "lamp": (0.0, 0.0, 2.45), "apartment": (-1.47, 0.3, 0.9),
+                            "doors": (0.0, DOOR_FACE_Y, 0.8)}},
+    "techfloor": {"label": "технический этаж (машинное отделение)", "origin": (36.0, 0.0), "bounds": (-1.9, 1.9, -1.9, 1.9, 0.15, 2.5),
+                  "props": ("мотор лебёдки", "электрощит", "трубы", "лампа", "надпись на стене"),
+                  "keywords": r"машинн|технич\w* этаж|лебёдк|лебедк|щит|мотор|котельн",
+                  "spots": {"entry": (0.0, -0.6, 3.1416), "center": (0.0, 0.0, 3.1416), "motor": (0.55, 0.3, 2.3)},
+                  "targets": {"key": (0.9, 1.0, 0.8), "decal": (-1.88, 0.4, 1.3), "ceiling": (0.0, 0.0, 2.6),
+                              "sound": (0.9, 1.0, 0.8), "lamp": (0.0, 0.3, 2.3), "cabinet": (-1.0, 1.85, 1.0)}},
+    "corridor": {"label": "коридор технического этажа", "origin": (48.0, 0.0), "bounds": (-0.82, 0.82, FRONT + 0.06, 6.9, 0.15, 2.3),
+                 "props": ("бетонные стены", "лампочка", "календарь/надпись на стене", "двери", "двери лифта в торце",
+                           "трубы"),
+                 "keywords": r"коридор|проход|бетонн\w* (стен|коридор)|в глубин",
+                 "spots": {"entry": (0.0, FRONT + 0.5, 3.1416), "center": (0.0, 0.9, 3.1416),
+                           "doors": (0.0, FRONT + 0.36, 0.0), "lamp": (0.0, 1.9, 3.1416), "decal": (-0.3, 1.6, -1.5708),
+                           "deep": (0.0, 3.6, 3.1416)},
+                 "targets": {"key": (-0.79, 1.6, 1.05), "decal": (-0.79, 1.6, 1.05), "ceiling": (0.0, 1.2, 2.4),
+                             "sound": (0.0, 7.0, 0.9), "lamp": (0.0, 2.6, 2.05), "doors": (0.0, DOOR_FACE_Y, 0.8),
+                             "deep": (0.0, 6.5, 0.8)}},
+}
+LOC_NAMES = tuple(LOCS)
+LOC_TARGETS = ("doors", "lamp", "decal", "deep", "apartment", "motor", "cabinet", "edge", "center")
+
+
+def loc_of(name: str | None) -> dict:
+    return LOCS.get(str(name or "cabin")) or LOCS["cabin"]
+
+
+def loc_world(loc: str, p: tuple) -> tuple:
+    """Точка локации → мир (сдвиг начала координат)."""
+    ox, oy = loc_of(loc)["origin"]
+    return (p[0] + ox, p[1] + oy, *p[2:])
+
+
+def loc_spot(loc: str, name: str) -> tuple[tuple[float, float], float]:
+    """Место героя (мир) и курс для цели в локации; кабина — свои расчёты (кнопки, стук, угол)."""
+    if loc == "cabin":
+        return spot_for(name)
+    spots = loc_of(loc)["spots"]
+    x, y, h = spots.get(name) or spots.get("center") or spots["entry"]
+    return loc_world(loc, (x, y)), h
+
+
+def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
+    """Точка интереса локации (мир): key — главная вещь (надпись, номер этажа, тросы), ceiling, sound, …"""
+    if loc == "cabin":
+        cab = {"key": DISPLAY, "display": DISPLAY, "ceiling": HATCH, "sound": (0.05, DOOR_FACE_Y, 0.8),
+               "doors": (0.0, DOOR_FACE_Y, 0.8)}
+        return cab.get(name) or default or DISPLAY
+    t = loc_of(loc)["targets"]
+    p = t.get(name) or t.get("key")
+    return loc_world(loc, p) if p else (default or loc_world(loc, (0.0, 1.0, 1.0)))
+
+
+DOOR_OPEN = {"corridor": 0.2}     # двери лифта в торце коридора — открыты (герой из них вышел), пока не схлопнутся
+
+
+def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
+    x0, x1, y0, y1, z0, z1 = loc_of(loc)["bounds"]
+    ox, oy = loc_of(loc)["origin"]
+    x, y = p[0] - ox, p[1] - oy
+    return x0 + margin <= x <= x1 - margin and y0 + margin <= y <= y1 - margin
+
+
+# Что фраза называет → что сцена показывает (точка для проверки «видно в кадре»): по словам и реквизиту Gemini.
+SHOW_WORDS = (("лампочк|лампа|светильник", "lamp"), ("календар|надпис|на стене|1998|цифр\\w* на стен", "decal"),
+              ("двер|створ", "doors"), ("трос", "cables"), ("противовес", "counterweight"), ("номер", "decal"),
+              ("люк", "hatch"), ("стен\\w* шахт", "wall"), ("\\bщит|электрощит", "cabinet"), ("мотор|лебёдк|лебедк", "key"),
+              ("коридор|проход|в глубин", "deep"), ("табло", "display"), ("кнопк", "buttons"), ("квартир", "apartment"))
+
+
+def show_items(loc: str, shot: dict) -> list[dict]:
+    """Вещи и место, которые фраза называет: ``[{item, point}]`` — сцена обязана их показать (проверка в отчёте)."""
+    text = _low(" ".join([shot.get("text") or "", " ".join(shot.get("props") or [])]))
+    out = [{"item": f"место: {loc_of(loc)['label']}", "point": None}]
+    seen = set()
+    for rx, name in SHOW_WORDS:
+        if not re.search(rx, text) or name in seen:
+            continue
+        seen.add(name)
+        if loc == "cabin":
+            pt = {"display": DISPLAY, "buttons": button_pos("1"), "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH,
+                  "lamp": CEIL_LIGHT}.get(name)
+        else:
+            t = loc_of(loc)["targets"]
+            pt = loc_world(loc, t[name]) if name in t else None
+        if pt is not None:
+            out.append({"item": name, "point": [round(c, 3) for c in pt]})
+        else:
+            out.append({"item": name, "point": None, "missing": True})
+    if shot.get("decal"):
+        t = loc_of(loc)["targets"].get("decal")
+        out.append({"item": f"надпись «{shot['decal']}»",
+                    "point": [round(c, 3) for c in loc_world(loc, t)] if t else None, **({} if t else {"missing": True})})
+    return out
+
+
+def writer_places() -> str:
+    """Что сценарист может упоминать: места и вещи, которые сцена покажет."""
+    return "\n".join(f"- {v['label']}: {', '.join(v['props'])}" for v in LOCS.values())
+
+
+# Места/вещи, которых сцена не покажет: сценарист их не упоминает (иначе фраза переписывается).
+OFFLIST = (r"улиц|подвал|кухн|ванн(ой|ая|у)\b|балкон|\bокн[оаеу]|окошк|во двор|двор[ае]?\b|парк\b|\bлес\b|магазин|"
+           r"автомобил|машин[аеуы]\b|квартир\w* (внутри|изнутри)|в квартир|комнат|спальн|чердак|крыш\w* дома|"
+           r"перрон|метро|больниц|кладбищ")
+
+
+def offlist_mentions(sentences: list[dict]) -> list[tuple[int, str]]:
+    """Фразы, где упомянуто место/вещь, которых нет в наборе локаций: ``[(номер, что)]``."""
+    out = []
+    for i, sent in enumerate(sentences):
+        hit = re.search(OFFLIST, _low(sent.get("text")))
+        if hit:
+            out.append((i, hit.group(0)))
+    return out
+
+
+def rule_location(text: str, current: str) -> str:
+    """Где кадр по словам фразы; не названо — там же, где был."""
+    low = _low(text)
+    for name in ("shaft", "corridor", "techfloor", "landing", "cabin"):
+        if re.search(LOCS[name]["keywords"], low):
+            if name == "cabin" and current != "cabin" and not re.search(
+                    r"(вернул\w*|залез\w*|забежал\w*|вош[её]л|зашёл|зашел|шагнул|запрыгнул)\s.{0,25}(лифт|кабин)|в кабине", low):
+                continue   # «двери лифта», «путь в кабину» в коридоре — ещё не возврат в кабину
+            return name
+    return current
+
+
+DECAL_RX = r"(\d{4})\s*год|надпис\w*\s*[«\"]([^»\"]{1,14})|календар\w*\s+за\s+(\d{4})"
+
+
+def decal_from_text(text: str) -> str:
+    m_ = re.search(DECAL_RX, _low(text))
+    if not m_:
+        return ""
+    return next((g for g in m_.groups() if g), "").upper()[:14]
+
+
+# --------------------------------------------------------------------------- #
 # Кадры и выбор действий
 # --------------------------------------------------------------------------- #
 
@@ -435,17 +600,24 @@ GEMINI_SCHEMA = {
             "emotion": {"type": "string", "enum": list(EMOTIONS)},
             "camera": {"type": "string", "enum": list(CAMERAS)},
             "speaker": {"type": "string", "enum": list(SPEAKERS)},
+            "location": {"type": "string", "enum": list(LOCS)},
+            "props": {"type": "array", "items": {"type": "string"}},
+            "decal": {"type": "string"},
         },
-        "required": ["n", "action", "emotion", "camera", "speaker"]}}},
+        "required": ["n", "action", "emotion", "camera", "speaker", "location"]}}},
     "required": ["shots"],
 }
 
 
 def gemini_prompt(title: str, shots: list[dict], events_by_shot: dict[int, list[dict]]) -> str:
     lines = [
-        "Ты режиссёр короткой вертикальной 3D-серии. Локация одна: кабина лифта (двери спереди, кнопочная панель на левой "
-        "стене, табло этажа над дверью, люк в потолке). Герой один — игрушечный мальчик в жёлтом дождевике. Голос за кадром "
-        "читает текст; на каждый кадр выбери поставленное действие героя, эмоцию лица и план камеры.",
+        "Ты режиссёр короткой вертикальной 3D-серии. Герой один — игрушечный мальчик в жёлтом дождевике. Голос за кадром "
+        "читает текст; на каждый кадр выбери МЕСТО (location — где герой по тексту, только из списка), вещи, которые текст "
+        "называет и которые надо показать (props — из списка вещей этого места), надпись на стене, если текст её называет "
+        "(decal: «1998», «23», до 14 знаков, иначе пусто), поставленное действие героя, эмоцию лица и план камеры.",
+        "Места (location) и вещи в них:\n" + "\n".join(f"{k} — {v['label']}: {', '.join(v['props'])}" for k, v in LOCS.items()),
+        "Место меняется только когда текст говорит, что герой туда перешёл (раздвинул двери и вышел в коридор, вылез через "
+        "люк в шахту); иначе — там же, где был в прошлом кадре. Кнопки, табло, поручни — только в кабине.",
         f"Серия: «{title}».",
         "Действия (action): " + "; ".join(f"{k} — {v}" for k, v in ACTIONS.items()) + ".",
         "Цель (target) — для approach: " + ", ".join(TARGETS) + ". Кнопка (button) — для press_button.",
@@ -491,7 +663,10 @@ def gemini_choices(title: str, shots: list[dict], events_by_shot: dict[int, list
         out[n] = {"action": item["action"], "target": item.get("target") if item.get("target") in TARGETS else "center",
                   "button": item.get("button") if item.get("button") in BUTTONS else "1",
                   "emotion": item["emotion"], "camera": item["camera"],
-                  "speaker": item.get("speaker") if item.get("speaker") in SPEAKERS else "narrator", "by": "gemini"}
+                  "speaker": item.get("speaker") if item.get("speaker") in SPEAKERS else "narrator", "by": "gemini",
+                  "location": item.get("location") if item.get("location") in LOCS else "",
+                  "props": [str(x)[:40] for x in (item.get("props") or [])][:4],
+                  "decal": str(item.get("decal") or "").strip().upper()[:14]}
     return out
 
 
@@ -511,6 +686,19 @@ def fix_sequence(shots: list[dict]) -> list[dict]:
             s["action"] = a = "wait"
         if posture == "sit" and a not in SIT_OK:
             s["stand_first"] = True
+        loc = s.get("location") if s.get("location") in LOCS else "cabin"
+        if out and out[-1].get("location") != loc:
+            posture = "stand"     # другое место — склейкой, герой стоит
+            s["stand_first"] = False
+        s["location"] = loc
+        if loc != "cabin":
+            # кнопки и табло — только в кабине; двери лифта есть в коридоре и на площадке
+            has_doors = "doors" in LOCS[loc]["spots"]
+            if a == "press_button" or (a in ("pry_doors", "knock") and not has_doors):
+                s["action"] = a = "approach" if has_doors else "look_display"
+                s["target"] = "doors" if has_doors else "center"
+            elif a == "sit_corner":
+                s["action"] = a = "wait"
         if a == "press_button":
             s["target"] = "panel"
             s["button"] = s.get("button") if s.get("button") in BUTTONS else "1"
@@ -564,6 +752,12 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
     for e in events:
         k = next((s["n"] for s in shots if s["t0"] <= e["t"] < s["t1"]), len(shots) - 1)
         by_shot.setdefault(k, []).append(e)
+    for sp in spans:
+        low_ = _low(sp["text"])
+        if re.search(r"двер|створ", low_) and re.search(r"схлопнул|захлопнул|закрыл|сомкнул|сдвинул", low_):
+            k_ = S3.find_word(words, sp["w0"], sp["w1"], r"^(схлопнул|захлопнул|закрыл|сомкнул|сдвинул)")
+            events.append({"kind": "doors_close", "t": float(words[k_]["start"]) if k_ is not None else sp["t0"],
+                           "sentence": sp["i"], "role": sp["role"]})
     blackout = next((e["t"] for e in events if e["kind"] == "blackout"), None)
     choices: dict[int, dict] = {}
     director, error = "rules", ""
@@ -577,9 +771,18 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
     labels = [lab for sent in sentences for lab in speech_labels(sent["text"], names)]
     labels = (labels + ["narrator"] * len(words))[: len(words)]
     planned = []
+    where = "cabin"
     for s in shots:
         dark = blackout is not None and s["t0"] + 0.3 >= blackout
         pick = choices.get(s["n"]) or rule_choice(s, by_shot.get(s["n"], []), dark)
+        text_ = s.get("spoken") or s["text"]
+        by_rules = rule_location(text_, where)
+        loc = pick.get("location") if pick.get("location") in LOCS else by_rules
+        if by_rules != where and loc == where:
+            loc = by_rules       # текст явно назвал другое место — правило сильнее
+        where = loc
+        decal = pick.get("decal") or decal_from_text(text_)
+        pick = {**pick, "location": loc, "decal": decal, "props": list(pick.get("props") or [])}
         idx = [k for k in range(len(words)) if s["t0"] <= float(words[k]["start"]) < s["t1"]]
         said = {labels[k] for k in idx} - {"narrator"}
         if said and pick.get("speaker") in ("hero", "other") and pick.get("by") == "gemini":
@@ -755,7 +958,6 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     phone_mode = _Track(0.0)          # 0 — экран, 1 — фонарик
     flash_track = _Track(0.0)         # фонарик включён
     contacts: list[dict] = []         # касания (для подгонки IK по мешу и звуков)
-    door_keys = _Track(0.0)
     shout_bursts: list[tuple[float, float]] = []
     speak_windows: list[tuple[float, float]] = []
     seg_clip = None
@@ -774,9 +976,13 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         return blackout is not None and t >= blackout and (light_back is None or t < light_back)
 
     first_spot, first_head = spot_for(shots[0].get("target") if shots[0]["action"] == "approach" else "center")
+    if shots and shots[0].get("location") in LOCS and shots[0]["location"] != "cabin":
+        first_spot, first_head = loc_spot(shots[0]["location"], "entry")
     pos, heading, posture = first_spot, first_head, "stand"
     phone_out = False
     phone_hold: dict | None = None
+    cur_loc = shots[0].get("location") if shots and shots[0].get("location") in LOCS else "cabin"
+    door_tracks: dict[str, _Track] = {}
     pos_keys.append((0.0, pos))
     head_keys.keys = [(0.0, heading)]
     add_clip("Idle_A", 0.0, blend=0.01)
@@ -785,6 +991,22 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         t0, t1 = float(s["t0"]), float(s["t1"])
         a = s["action"]
         span = t1 - t0
+        loc = s.get("location") if s.get("location") in LOCS else "cabin"
+        if loc != cur_loc:
+            # другое место — склейкой: герой уже там, стоит у входа (телефон в руке остаётся)
+            spot0, h0 = loc_spot(loc, "entry" if loc != "cabin" else "center")
+            pos_keys.append((t0, spot0))
+            head_keys.key(t0 - 1e-3, heading)
+            head_keys.key(t0, h0)
+            pos, heading, posture = spot0, h0, "stand"
+            if seg_clip != "Idle_A":
+                add_clip("Idle_A", t0, blend=0.01)
+            cur_loc = loc
+        origin = loc_of(loc)["origin"]
+
+        def W(p_: tuple, o_=origin) -> tuple:
+            return (p_[0] + o_[0], p_[1] + o_[1], *p_[2:])
+        dtrack = door_tracks.setdefault(loc, _Track(DOOR_OPEN.get(loc, 0.0)))
         # куда и как стоять
         if a == "press_button":
             want = ["1", "3", "2", "4"] if s.get("button") == "all" else [reachable(s.get("button") or "1")]
@@ -792,15 +1014,17 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             spot, hd = press_stand(want)
         elif a == "knock":
             spot, hd = spot_for("knock")
+            spot = W(spot)
         elif a == "pry_doors":
             spot, hd = spot_for("pry")
+            spot = W(spot)
         elif a == "sit_corner":
             spot, hd = spot_for("corner")
         elif a == "approach":
-            spot, hd = spot_for(s.get("target") or "center")
-        elif a in ("shout", "listen") and posture == "stand" and abs(_ang(heading)) > math.radians(35):
+            spot, hd = loc_spot(loc, s.get("target") or "center")
+        elif loc == "cabin" and a in ("shout", "listen") and posture == "stand" and abs(_ang(heading)) > math.radians(35):
             spot, hd = pos, 0.0
-        elif posture == "stand" and pos[1] < FRONT + 0.45 and a not in ("shout", "listen", "flinch"):
+        elif loc == "cabin" and posture == "stand" and pos[1] < FRONT + 0.45 and a not in ("shout", "listen", "flinch"):
             # у самых дверей лицу некуда снимать — отходит в середину кабины
             spot, hd = spot_for("center")
         else:
@@ -877,7 +1101,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             dh = _ang(hd - heading)
             mid = facing(heading + dh / 2)
             p_end = (pos[0] + mid[0] * STEP_LEN, pos[1] + mid[1] * STEP_LEN)
-            room = abs(p_end[0]) < 0.55 and FRONT + 0.32 < p_end[1] < D / 2 - 0.3
+            room = inside_loc(loc, (p_end[0], p_end[1], 1.0), 0.3)
             if abs(dh) > math.radians(50) and room and posture == "stand" and span > 2.2:
                 # разворот шагом: один шаг (корень по опорной стопе), корпус поворачивается на шаге
                 ws = tt + 0.05
@@ -943,7 +1167,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         elif a == "knock":
             hits = [a0 + 0.35 + i * 0.38 for i in range(3)]
             hits = [h for h in hits if h < t1 - 0.15] or [a0 + 0.2]
-            kp = KNOCK_POINT
+            kp = W(KNOCK_POINT)
             reaches.append({"button": kp, "normal": DOOR_NORMAL, "t_start": a0, "t_contact": hits[0],
                             "t_release": hits[-1] + 0.05, "t_end": hits[-1] + 0.6, "hover": 0.06, "depth": 0.004,
                             "id": "door", "side": "r", "hits": hits})
@@ -956,21 +1180,23 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             full = bool(re.search(r"раздвинул|открыл|разжал|распахнул", _low(s.get("text"))))
             t_grip = a0 + 0.45
             open_t = t_grip + 0.5
-            holds.append({"side": "both", "t0": a0, "t1": t1 + 0.4, "grip": t_grip, "mode": "doors"})
-            door_keys.key(open_t, door_keys.keys[-1][1])
+            holds.append({"side": "both", "t0": a0, "t1": t1 + 0.4, "grip": t_grip, "mode": "doors", "origin": origin,
+                          "loc": loc})
+            base_gap = dtrack.keys[-1][1]
+            dtrack.key(open_t, base_gap)
             if full:
-                door_keys.key(open_t + 1.1, 0.24)
+                dtrack.key(open_t + 1.1, 0.24)
             else:
-                door_keys.key(open_t + 0.4, 0.025)
-                door_keys.key(open_t + 0.8, 0.012)
-                door_keys.key(min(t1, open_t + 1.5), 0.03)
-                door_keys.key(min(t1 + 0.3, open_t + 2.0), 0.0)
+                dtrack.key(open_t + 0.4, base_gap + 0.025)
+                dtrack.key(open_t + 0.8, base_gap + 0.012)
+                dtrack.key(min(t1, open_t + 1.5), base_gap + 0.03)
+                dtrack.key(min(t1 + 0.3, open_t + 2.0), base_gap)
             contacts.append({"kind": "doors", "t": open_t, "full": full})
-            gkey(a0 - 0.1, (0.0, DOOR_FACE_Y, 0.75))
+            gkey(a0 - 0.1, W((0.0, DOOR_FACE_Y, 0.75)))
             # тужится — отворачивает лицо вбок (к камере детали, она с +X): лицо видно, а не капюшон
-            gkey(t_grip + 0.35, (0.70, FRONT + 0.12, 0.85))
+            gkey(t_grip + 0.35, W((0.70, FRONT + 0.12, 0.85)))
             if full:
-                gkey(open_t + 1.3, (0.0, FRONT - 0.4, 0.45))     # в шахту: внизу край этажа
+                gkey(open_t + 1.3, W((0.0, FRONT - 0.4, 0.45)))     # в шахту: внизу край этажа
             lean_v = -0.16
             if phone_out:
                 phone_iv[-1][1] = a0 + 0.3        # обе руки на дверях — телефон в карман
@@ -986,7 +1212,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             gkey(a0 + 0.2, (0.0, FRONT, 0.55))
             cam_subject = "face"
         elif a == "stand_up":
-            gkey(a0, DISPLAY)
+            gkey(a0, loc_target(loc, "key"))
         elif a in ("phone_out", "phone_light"):
             if not phone_out:
                 phone_iv.append([a0, None])
@@ -1002,16 +1228,22 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             gkey(a0 + 0.1, "phone")
             if aim:
                 # светит туда, куда смотрит: на двери, потом ведёт лучом по кабине
-                tgt = (0.0, DOOR_FACE_Y, 0.9) if rnd.random() < 0.5 else (DISPLAY[0], DISPLAY[1], DISPLAY[2] - 0.1)
+                if loc == "cabin":
+                    tgt = (0.0, DOOR_FACE_Y, 0.9) if rnd.random() < 0.5 else (DISPLAY[0], DISPLAY[1], DISPLAY[2] - 0.1)
+                else:
+                    tgt = loc_target(loc, "key")
                 gkey(a0 + 0.9, tgt)
                 gkey(a0 + 0.9 + max(0.6, (t1 - a0) * 0.45), (tgt[0] + 0.35, tgt[1] + 0.25, tgt[2] + 0.25))
             cam_subject = "phone"
         elif a == "look_display":
-            gkey(a0, DISPLAY)
+            gkey(a0, loc_target(loc, "key"))
             cam_subject = "display"
         elif a == "look_ceiling":
-            gkey(a0, HATCH)
-            gkey(a0 + max(0.6, span * 0.55), (CEIL_LIGHT[0] - 0.15, CEIL_LIGHT[1] - 0.2, H))
+            if loc == "cabin":
+                gkey(a0, HATCH)
+                gkey(a0 + max(0.6, span * 0.55), (CEIL_LIGHT[0] - 0.15, CEIL_LIGHT[1] - 0.2, H))
+            else:
+                gkey(a0, loc_target(loc, "ceiling"))
             cam_subject = "face"
         elif a == "look_camera":
             gkey(a0, "camera")
@@ -1021,22 +1253,32 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             startles.append((tf + 0.05, 1.0))
             add_clip("Hit_A", max(tt, tf), blend=0.12, loop=False) if posture == "stand" else None
             add_clip("Idle_A", max(tt, tf) + clip_len["Hit_A"] - 0.05, blend=0.3) if posture == "stand" else None
-            gkey(tf + 0.1, (CEIL_LIGHT[0], CEIL_LIGHT[1], H))
+            gkey(tf + 0.1, (CEIL_LIGHT[0], CEIL_LIGHT[1], H) if loc == "cabin" else loc_target(loc, "ceiling"))
         elif a == "shout":
-            gkey(a0, (0.0, DOOR_FACE_Y, 1.05))
+            gkey(a0, (0.0, DOOR_FACE_Y, 1.05) if loc == "cabin" else loc_target(loc, "sound"))
             lean_v = 0.18
             # кричит без своей реплики в сценарии — рот закрыт (только испуг/напряжение): рот — лишь под речь героя
         elif a == "listen":
-            gkey(a0, (0.05, DOOR_FACE_Y, 0.8))
+            gkey(a0, (0.05, DOOR_FACE_Y, 0.8) if loc == "cabin" else loc_target(loc, "sound"))
             roll_v = 0.22
             if seg_clip == "Idle_A" and posture == "stand":
                 add_clip("Idle_B", a0, blend=0.4, speed=0.6)
         elif a == "wait":
             if posture == "stand" and seg_clip != "Idle_B":
                 add_clip("Idle_B", a0, blend=0.4, speed=0.7)
-            gkey(a0, (0.1, FRONT + 0.3, 0.0) if rnd.random() < 0.5 else DISPLAY)
-            gkey(a0 + span * 0.5, DISPLAY if dark(a0) else (0.3, FRONT, 0.6))
+            if loc == "cabin":
+                gkey(a0, (0.1, FRONT + 0.3, 0.0) if rnd.random() < 0.5 else DISPLAY)
+                gkey(a0 + span * 0.5, DISPLAY if dark(a0) else (0.3, FRONT, 0.6))
+            else:
+                gkey(a0, loc_target(loc, "key"))
+                gkey(a0 + span * 0.5, loc_target(loc, "sound"))
             lean_v = -0.05
+        for e in events:
+            if e["kind"] == "doors_close" and t0 <= e["t"] < t1:
+                dtrack.key(e["t"], dtrack.keys[-1][1])
+                dtrack.key(e["t"] + 0.22, 0.0)
+                startles.append((e["t"] + 0.1, 0.8))
+                gkey(e["t"] + 0.12, W((0.0, DOOR_FACE_Y, 0.8)))
         if phone_out and a not in ("phone_out", "phone_light"):
             # телефон уже в руке — светит туда, куда смотрит (экраном к себе — только когда смотрит в телефон)
             phone_mode.key(a0 + 0.1, phone_mode.keys[-1][1])
@@ -1045,7 +1287,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         lean.key(t0 + 0.4, lean_v)
         roll.key(t0 + 0.4, roll_v)
         shot_out.append({**s, "a0": round(a0, 3), "spot": [round(pos[0], 4), round(pos[1], 4)], "heading": round(heading, 4),
-                         "posture_end": posture, "subject": cam_subject, "phone": phone_out})
+                         "posture_end": posture, "subject": cam_subject, "phone": phone_out, "location": loc,
+                         "origin": list(origin), "key_target": list(loc_target(loc, "key")),
+                         "show": show_items(loc, s)})
 
     # события → испуг, взгляд на источник
     for e in events:
@@ -1083,7 +1327,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if prev is None or prev[1] < w:
                 hand["r"][f] = (tuple(round(c, 5) for c in p), round(w, 4), r["id"])
     pm_c = phone_mode.curve()
-    door_c0 = door_keys.curve()
+    door_cs = {k: v.curve() for k, v in door_tracks.items()}
+    door_c0 = door_cs.get("cabin") or _Track(0.0).curve()
     for h in holds:
         for f, t in enumerate(times):
             if t < h["t0"] or (h["t1"] is not None and t > h["t1"]):
@@ -1101,13 +1346,14 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 w = m.smoothstep((t - h["t0"]) / 0.25)
                 hand["l"][f] = (to_world(rp, hd, loc), round(w, 4), "phone")
             elif h["mode"] == "doors":
-                op = door_c0.at(t)
+                op = (door_cs.get(h.get("loc") or "cabin") or door_c0).at(t)
+                ox, oy = h.get("origin") or (0.0, 0.0)
                 w = m.smoothstep((t - h["t0"]) / max(h["grip"] - h["t0"], 1e-3))
                 if h["t1"] is not None:
                     w *= 1.0 - m.smoothstep((t - (h["t1"] - 0.4)) / 0.4)
                 for side, sx in (("r", -1.0), ("l", 1.0)):
                     # створки разъезжаются — кисти на кромках (x: −1 — вправо от героя к −X мира)
-                    p = (sx * (0.045 + op), DOOR_FACE_Y + 0.025, 0.62)
+                    p = (ox + sx * (0.045 + op), oy + DOOR_FACE_Y + 0.025, 0.62)
                     if w > 0 and (hand[side][f] is None or hand[side][f][1] < w):
                         hand[side][f] = (p, round(w, 4), "doors")
     # телефон виден в своих интервалах (в кармане — нет), левая рука держит его только тогда
@@ -1121,11 +1367,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     gz = []
     for t in times:
         g = gaze_c.at(t)
+        here = next((x_["location"] for x_ in shot_out if x_["t0"] <= t < x_["t1"]), shot_out[-1]["location"])
         for e in events:
             if e["kind"] in ("blackout", "scrape") and e["t"] + 0.15 <= t < e["t"] + 1.1:
-                g = (CEIL_LIGHT[0], CEIL_LIGHT[1], H)
+                g = (CEIL_LIGHT[0], CEIL_LIGHT[1], H) if here == "cabin" else loc_target(here, "ceiling")
             elif e["kind"] == "knock" and e["t"] + 0.1 <= t < e["t"] + 1.2:
-                g = (0.0, DOOR_FACE_Y, 0.85)
+                g = (0.0, DOOR_FACE_Y, 0.85) if here == "cabin" else loc_target(here, "sound")
         gz.append(g if isinstance(g, str) else tuple(round(c, 4) for c in g))
     emo_c, lean_c, roll_c = emo.curve(), lean.curve(), roll.curve()
     blinks = m.blink_times(dur, seed=int(job.get("seed") or 7) + 4, min_gap=1.9, max_gap=4.0,
@@ -1165,7 +1412,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     for c in contacts:
         if c["kind"] == "press" and c["button"] != "bell":
             lit_at.setdefault(c["button"], c["t"])
-    door_c = door_keys.curve()
+    door_c = door_c0
     for t in times:
         main = 1.0
         if blackout is not None:
@@ -1211,6 +1458,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         lit = sorted(b for b, tb in lit_at.items() if t >= tb)
         lights.append({"main": round(main, 4), "red": round(red, 4), "flash": round(flash, 4), "display": round(disp_on, 4),
                        "floor": value, "doors": round(door_c.at(t), 4), "shake": round(shake, 5), "drop": round(drop, 5),
+                       "ldoors": {k: round(c_.at(t), 4) for k, c_ in door_cs.items() if k != "cabin"},
                        "lit": lit, "dark": dark(t)})
 
     phone = []
@@ -1269,8 +1517,15 @@ def _beam_off_camera(perf: dict, beam: list[tuple]) -> list[tuple]:
 CAM_BOUNDS = (LEFT + 0.06, -LEFT - 0.06, FRONT + 0.06, D / 2 - 0.06, 0.12, H - 0.1)
 
 
+_CAM = {"bounds": CAM_BOUNDS}     # границы камеры текущего места (camera_plan ставит на каждый план)
+
+
+def cam_bounds() -> tuple:
+    return _CAM["bounds"]
+
+
 def cam_inside(p: tuple[float, float, float]) -> bool:
-    x0, x1, y0, y1, z0, z1 = CAM_BOUNDS
+    x0, x1, y0, y1, z0, z1 = cam_bounds()
     return x0 <= p[0] <= x1 and y0 <= p[1] <= y1 and z0 <= p[2] <= z1
 
 
@@ -1331,17 +1586,24 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         p = around(0.72, (-38, 38, -55, 55, 0), -0.08, center)
         if p:
             return out("detail", p, hand_l, 0.5, 26.0, fstop=2.4, focus="point")
+    ox, oy = shot.get("origin") or (0.0, 0.0)
+    key = tuple(shot.get("key_target") or DISPLAY)
     if kind == "detail" and subject == "display":
+        # главная вещь места (табло, надпись, номер этажа) из-за плеча героя; не встаёт — сама вещь крупно
         p = (face[0] - fx * 0.70 + fy * 0.22 * side, face[1] - fy * 0.70 - fx * 0.22 * side, face[2] + 0.08)
         if cam_inside(p):
-            return out("detail", p, DISPLAY, 0.0, 62.0, fstop=4.0, focus="point", push=0.95)
-        return out("detail", (0.30, FRONT + 0.45, 1.20), DISPLAY, 0.0, 30.0, fstop=4.0, focus="point")
+            return out("detail", p, key, 0.0, 62.0 if key == DISPLAY else 40.0, fstop=4.0, focus="point", push=0.95)
+        if key == DISPLAY:
+            return out("detail", (0.30, FRONT + 0.45, 1.20), DISPLAY, 0.0, 30.0, fstop=4.0, focus="point")
+        return None
     if kind == "detail" and subject == "doors":
         # сбоку у дверей, почти анфас: руки на створках и лицо (герой стоит к дверям вплотную)
         # сбоку сверху у дверей: руки на створках, щель и лицо в профиль (вплотную к дверям анфаса нет)
         sx = 1.0   # с +X: туда герой отворачивает лицо, когда тужится; у стука правая рука — к −X
-        pos = (sx * 0.58, FRONT + 0.13, 0.98)
-        pt = (0.0, DOOR_FACE_Y + 0.10, 0.62)
+        pos = (ox + sx * 0.58, oy + FRONT + 0.13, 0.98)
+        pt = (ox, oy + DOOR_FACE_Y + 0.10, 0.62)
+        if not cam_inside(pos):
+            return None
         return out("detail", pos, pt, 0.75, 17.0, fstop=3.2, focus="face", push=0.96)
     if kind == "detail":
         return None
@@ -1354,7 +1616,7 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
                 return out("ots", p, tgt, 0.12, 20.0, fstop=3.2, focus="point", push=0.94)
         return None
     if kind == "overhead":
-        x0, x1, y0, y1, _z0, z1 = CAM_BOUNDS
+        x0, x1, y0, y1, _z0, z1 = cam_bounds()
         best, best_s = None, -1e9
         for cx in (x0 + 0.02, x1 - 0.02):
             for cy in (y0 + 0.02, y1 - 0.02):
@@ -1392,6 +1654,10 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
     fps = perf["fps"]
     out = []
     for s in perf["shots"]:
+        lo = loc_of(s.get("location"))
+        b_ = lo["bounds"]
+        ox_, oy_ = lo["origin"]
+        _CAM["bounds"] = (b_[0] + ox_, b_[1] + ox_, b_[2] + oy_, b_[3] + oy_, b_[4], b_[5])
         tm = min(s["t1"] - 0.05, max(s.get("a0", s["t0"]) + 0.3, (s["t0"] + s["t1"]) / 2))
         f = min(perf["frames"] - 1, int(tm * fps))
         posture = s.get("posture_end", "stand")
@@ -1410,7 +1676,8 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
             cam = shot_camera("overhead", s, tuple(perf["root"][f]), perf["heading"][f], posture, aim, rnd)
         s["camera"] = cam["kind"]
         cam["face_y"] = face_target(s["n"], len(perf["shots"]), cam["kind"])
-        out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], **cam})
+        out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], "location": s.get("location") or "cabin", **cam})
+    _CAM["bounds"] = CAM_BOUNDS
     return out
 
 
@@ -1605,6 +1872,8 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(S3.SFX["knock"], t, "стук", "knock")
         elif k == "sting":
             add(S3.SFX["sting"], t, "акцент", "sting")
+        elif k == "doors_close":
+            add(SFX["doors_open"], t, "двери схлопнулись", "doors_close")
     for c in perf["contacts"]:
         if c["kind"] == "press":
             add(SFX["bell" if c.get("button") == "bell" else "press"], c["t"] - 0.01, "кнопка", "press")
@@ -1690,7 +1959,8 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
         hits = any(c["kind"] in ("knock", "doors") and s["t0"] <= c["t"] < s["t1"] for c in perf["contacts"])
         st = any(s["t0"] - 0.1 <= t < s["t1"] for t, _ in perf.get("startles") or [])
         kind = (cams.get(s["n"]) or {}).get("kind") or s.get("camera")
-        out[s["n"]] = {"volume": beam or flick, "blur": move or shake or hits or st, "dof": kind in ("face", "detail")}
+        out[s["n"]] = {"volume": beam or flick or (s.get("location") or "cabin") != "cabin",
+                       "blur": move or shake or hits or st, "dof": kind in ("face", "detail")}
     return out
 
 
@@ -1723,7 +1993,7 @@ def _code_hash() -> str:
     root = Path(__file__).resolve().parent.parent
     h = hashlib.sha1()
     for p in (root / "tools" / "blender" / "series_scene.py", root / "tools" / "blender" / "hero_shot.py",
-              root / "app" / "motion3d.py"):
+              root / "tools" / "blender" / "series_places.py", root / "app" / "motion3d.py"):
         if p.is_file():
             h.update(p.read_bytes())
     return h.hexdigest()[:12]

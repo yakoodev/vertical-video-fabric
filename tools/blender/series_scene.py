@@ -31,6 +31,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 import hero_shot as kit  # noqa: E402  (набор сцены пробного кадра)
+import series_places as places  # noqa: E402  (шахта, площадка, технический этаж, коридор)
 from app import motion3d as m  # noqa: E402
 from app import series3d_blender as B  # noqa: E402
 
@@ -867,6 +868,13 @@ def main():
              "symbols": kit.load_font(CFG.get("font_symbols", []))}
     floors = sorted({lt["floor"] for lt in perf["lights"]})
     L = build_lift(fonts, floors)
+    used = {sh.get("location") or "cabin" for sh in perf["shots"]}
+    decals: dict[str, str] = {}
+    for sh in perf["shots"]:
+        if sh.get("decal") and sh.get("location") and sh["location"] not in decals:
+            decals[sh["location"]] = sh["decal"]
+    built_places = places.build_places(used - {"cabin"}, fonts, decals)
+    log("локации:", sorted(used))
     arm, mats, face = kit.build_hero({"character": CFG["character"]})
     push_hood_back(arm, float(CFG.get("hood_back", 0.13)), float(CFG.get("hood_lift", 0.05)))
     clips = kit.load_clips(CFG["animations"])
@@ -891,6 +899,7 @@ def main():
     phone = kit.build_phone()
     attach_phone(arm, phone, perf, frames)
     build_lights(L, perf, frames, phone)
+    places.key_place_doors(built_places, perf, frames)
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
     log("сцена собрана")
     setup_preset(out_dir, CFG.get("preset") or {"name": CFG.get("quality", "final"), **B.QUALITY["final"]})
@@ -909,7 +918,19 @@ def main():
             if p.z > 0 and 0 <= p.x <= 1 and 0 <= p.y <= 1:
                 inside += 1
                 ys.append(round(1 - p.y, 3))
-        shots_rep.append({"n": c["n"], "kind": c["kind"], "face_y": ys, "face_in": inside})
+        # что фраза называет — видно ли в кадре (точка вещи в кадре и перед камерой)
+        sh = next(x for x in perf["shots"] if x["n"] == c["n"])
+        mid_k = idx[len(idx) // 2]
+        sc.frame_set(frames[mid_k])
+        seen = []
+        for it in sh.get("show") or []:
+            if it.get("point") is None:
+                seen.append({"item": it["item"], "visible": None if not it.get("missing") else False})
+                continue
+            pp = world_to_camera_view(sc, cam, V(it["point"]))
+            seen.append({"item": it["item"], "visible": bool(pp.z > 0 and -0.02 <= pp.x <= 1.02 and -0.02 <= pp.y <= 1.02)})
+        shots_rep.append({"n": c["n"], "kind": c["kind"], "face_y": ys, "face_in": inside, "location": sh.get("location"),
+                          "text": sh.get("text"), "show": seen})
     report = {"contact_err_mm": contact_err, "shots": shots_rep, "setup_sec": round(time.time() - T0, 1), "frames": nf,
               "clip_len_diff": diff, "feet": measure_feet(arm, perf, frames)}
     if CFG.get("save_blend"):

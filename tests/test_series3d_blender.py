@@ -669,3 +669,65 @@ def test_percent_and_clock_are_not_floors():
     w = proportional_words(" ".join(x["text"] for x in sents), 10.0)
     floors = [e["value"] for e in S3.detect_events(S3.sentence_spans(sents, w, 11.0), w) if e["kind"] == "floor"]
     assert floors == ["23", "23"]
+
+
+
+# --------------------------------------------------------------------------- #
+# Места: текст ↔ окружение
+# --------------------------------------------------------------------------- #
+
+def test_locations_follow_text_and_scene_shows_items():
+    script = {"title": "Если блэкаут застал вас в лифте", "new_characters": [{"name": "Даня"}], "sentences": [
+        {"text": "Свет в кабине погас.", "role": "problem"},
+        {"text": "Даня раздвинул двери и вышел в тёмный бетонный коридор.", "role": "problem"},
+        {"text": "На стене висел календарь за 1998 год.", "role": "problem"},
+        {"text": "Внезапно двери лифта за его спиной схлопнулись.", "role": "problem"},
+        {"text": "Путь в кабину был закрыт.", "role": "finale"}]}
+    from app.explainer_gen import proportional_words
+
+    words = proportional_words(" ".join(x["text"] for x in script["sentences"]), 14.0)
+    job = B.build_job(script, words, 15.0, gemini=False)
+    locs = [s["location"] for s in job["shots"]]
+    assert locs[0] == "cabin" and locs[-1] == "corridor", locs
+    assert "corridor" in locs[1:3]
+    cal = next(s for s in job["shots"] if "календар" in s["text"])
+    assert cal["decal"] == "1998" and cal["location"] == "corridor"
+    assert any(e["kind"] == "doors_close" for e in job["events"])
+    perf = B.perform(job)
+    # герой в коридоре — корень внутри коридора; камера внутри границ места
+    for sh, cam in zip(perf["shots"], perf["cameras"]):
+        f = int((sh["t0"] + sh["t1"]) / 2 * 30)
+        assert B.inside_loc(sh["location"], tuple(perf["root"][f]) + (0.0,)), (sh["n"], sh["location"])
+        assert B.inside_loc(sh["location"], cam["pos_a"]), (sh["n"], cam["kind"])
+    shown = next(s for s in perf["shots"] if "календар" in s["text"])["show"]
+    assert any(x["item"] == "надпись «1998»" and x["point"] for x in shown)
+    # двери лифта в коридоре: открыты, потом схлопнулись
+    ld = [lt["ldoors"].get("corridor") for lt in perf["lights"] if "corridor" in lt.get("ldoors", {})]
+    assert ld and max(ld) >= 0.19 and ld[-1] == 0.0
+
+
+def test_writer_only_available_places():
+    bad = B.offlist_mentions([{"text": "Он вышел на улицу и посмотрел в окно."}, {"text": "Коридор был пуст."}])
+    assert [i for i, _ in bad] == [0]
+    assert "коридор" in B.writer_places() and "шахта" in B.writer_places()
+
+    class Fake:
+        def __init__(self):
+            self.calls = 0
+
+    from app import stories_gen as SG
+
+    calls = []
+
+    def fake_ask(client, rules, ctx, schema, temperature=0.9):
+        calls.append(ctx)
+        return {"sentences": [{"i": 0, "text": "Он вышел в коридор и посмотрел на лампочку."}]}
+
+    old = SG._ask
+    SG._ask = fake_ask
+    try:
+        data = SG.fit_script_to_places(None, {"sentences": [{"text": "Он вышел на улицу."}, {"text": "Коридор."}]})
+    finally:
+        SG._ask = old
+    assert data["sentences"][0]["text"].startswith("Он вышел в коридор") and calls
+    assert not B.offlist_mentions(data["sentences"])

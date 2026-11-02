@@ -217,7 +217,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(clip["output_path"], out)
+    try:
+        shutil.copyfile(clip["output_path"], out)
+    except PermissionError:   # файл открыт — пишем рядом
+        out = out.with_name(out.stem + f"-{int(time.time())}.mp4")
+        shutil.copyfile(clip["output_path"], out)
     if out.stat().st_size > args.max_mb * 1e6:
         # пережать под лимит: битрейт по длине, звук как есть
         import subprocess
@@ -228,7 +232,11 @@ def main(argv: list[str] | None = None) -> int:
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(out), "-c:v", "libx264", "-preset", "slow",
                         "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.3)}k", "-bufsize", f"{kbps * 2}k",
                         "-c:a", "copy", "-movflags", "+faststart", str(tmp)], check=True)
-        tmp.replace(out)
+        try:
+            tmp.replace(out)
+        except PermissionError:   # файл открыт (отправлен/смотрят) — новый рядом
+            out = out.with_name(out.stem + f"-{int(time.time())}.mp4")
+            tmp.replace(out)
     final_sec = round(time.time() - built, 1)
     bl = timing.get("blender_sec") or 0.0
     st = {"script_sec": stages.get("script_sec", 0.0), "tts_sec": stages.get("tts_sec", 0.0),
