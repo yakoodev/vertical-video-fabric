@@ -25,7 +25,7 @@ import math
 import re
 from typing import Any
 
-LAYOUT_VERSION = 1
+LAYOUT_VERSION = 2
 ROOM_DEFAULT = {"width": 440, "depth": 420, "height": 260, "floor": "#b58a62", "wall": "#e9dfd0"}
 
 # Цветовые слова описания → цвет (родная палитра плиты ближе, чем серые коробки).
@@ -44,9 +44,9 @@ COLOR_WORDS: list[tuple[str, str]] = [
 # Тип вещи: слова (regex по описанию, без ё), размер [ширина x, высота y, глубина z] см, цвет, место.
 # place: back | left | right | floor | on:<тип>|<тип>… | corner ; wall — висит на стене на высоте y.
 CATALOG: dict[str, dict[str, Any]] = {
-    "bed": {"words": r"кроват|\bbed\b|постел", "size": [120, 50, 200], "color": "#b0835a", "place": "back",
+    "bed": {"words": r"кроват|\bbed\b|постел", "size": [140, 45, 200], "color": "#b0835a", "place": "back",
             "label": "кровать"},
-    "nightstand": {"words": r"тумбоч|прикроватн|nightstand|bedside", "size": [45, 55, 40], "color": "#a87b55",
+    "nightstand": {"words": r"тумбоч|прикроватн|nightstand|bedside", "size": [45, 50, 40], "color": "#a87b55",
                    "place": "back", "label": "тумбочка"},
     "lamp": {"words": r"ламп|\blamp|светильник|ночник", "size": [28, 48, 28], "color": "#f6e3b0",
              "place": "on:nightstand|desk|dresser|table", "label": "лампа"},
@@ -75,9 +75,9 @@ CATALOG: dict[str, dict[str, Any]] = {
                 "label": "комод"},
     "rug": {"words": r"ков[её]р|коврик|\brug|carpet", "size": [160, 1, 110], "color": "#dcc0b8", "place": "floor",
             "label": "ковёр"},
-    "socks": {"words": r"носк|носок|\bsock", "size": [40, 3, 30], "color": "#f4b6c2", "place": "floor",
+    "socks": {"words": r"носк|носок|\bsock", "size": [40, 2, 30], "color": "#f4b6c2", "place": "floor",
               "label": "носки"},
-    "clothes": {"words": r"одежд|разбросан\w* вещ|\bвещи\b|clothes", "size": [45, 8, 35], "color": "#9cb0c8",
+    "clothes": {"words": r"одежд|разбросан\w* вещ|\bвещи\b|clothes", "size": [45, 2, 35], "color": "#9cb0c8",
                 "place": "floor", "label": "одежда"},
     "dock": {"words": r"станци\w* зарядк|зарядн\w* станц|док-станц|\bdock|charging", "size": [32, 11, 14],
              "color": "#3a3d44", "place": "back", "label": "зарядная станция"},
@@ -104,7 +104,7 @@ CATALOG: dict[str, dict[str, Any]] = {
 }
 WALL_TYPES = {"window", "garland", "poster", "mirror", "shelf", "tv"}  # висят на стене
 FLAT_TYPES = {"rug", "socks", "clothes"}  # плоские — не мешают ставить мебель и не загораживают кадр
-SUPPORT_TOP = {"bed": 50, "nightstand": 55, "desk": 75, "table": 75, "dresser": 85, "sofa": 45, "counter": 90,
+SUPPORT_TOP = {"bed": 46, "nightstand": 50, "desk": 75, "table": 75, "dresser": 85, "sofa": 45, "counter": 90,
                "stove": 90, "chair": 46}  # высота поверхности (см) у мебели, на которую что-то ставят
 _ORDER = ["bed", "nightstand", "dock", "window", "garland", "desk", "chair", "computer", "shelf", "bookcase",
           "wardrobe", "dresser", "sofa", "table", "fridge", "counter", "stove", "tv", "door", "poster", "mirror",
@@ -376,7 +376,7 @@ def auto_layout(description: str, extra: Any = ()) -> dict:
                 if kind == "plush" and support["type"] == "bed":
                     o["pos"] = [support["pos"][0] - support["size"][0] * 0.15,
                                 support["pos"][1] - support["size"][2] / 2 + 45]
-                    o["y"] = top_of(support) + 6
+                    o["y"] = top_of(support)
                     o["on"] = support["id"]
                 else:
                     _put_on(o, support, slot)
@@ -399,7 +399,22 @@ def auto_layout(description: str, extra: Any = ()) -> dict:
                 o["pos"] = [o["pos"][0] - 70, o["pos"][1] - 20]
         add(o)
     _unique_ids(placed)
+    ground(placed)
     return {"room": room, "objects": placed, "source": "auto"}
+
+
+def ground(objects: list[dict]) -> None:
+    """Ничего не висит: плоское и напольное — на полу (y=0), стоящее на вещи — на её поверхности."""
+    by = {o["id"]: o for o in objects}
+    for o in objects:
+        if o.get("type") in FLAT_TYPES:
+            o["y"] = 0.0
+            o.pop("on", None)
+            o["size"][1] = min(2.0, float(o["size"][1]))
+        elif o.get("on") and o["on"] in by:
+            o["y"] = top_of(by[o["on"]])
+        elif o.get("type") not in WALL_TYPES:
+            o["y"] = 0.0
 
 
 def _unique_ids(objects: list[dict]) -> None:
@@ -501,6 +516,7 @@ def from_vision(items: list, description: str, extra: Any = ()) -> dict:
         placed.append(o)
         by.setdefault(o["type"], o)
     _unique_ids(placed)
+    ground(placed)
     return {"room": room, "objects": placed, "source": "vision"}
 
 
@@ -671,11 +687,11 @@ def furniture_parts(o: dict) -> list[dict]:
     dark = _shade(col, 0.72)
     if kind == "bed":
         blanket = acc or "#c9b8e8"
-        return [_box([w, 24, d], [0, 12, 0], col), _box([w, 100, 7], [0, 50, -d / 2 + 3.5], dark),
-                _box([w - 6, 18, d - 10], [0, 33, 2], "#f1ece4"),
-                _box([w * 0.62, 12, 34], [0, 48, -d / 2 + 30], "#f6f1ea"),
-                _box([w + 2, 7, d * 0.62], [0, 45.5, d * 0.18], blanket),
-                _box([w + 2, 30, 3], [0, 32, d * 0.18 + d * 0.31 + 1], blanket)]
+        return [_box([w, 22, d], [0, 11, 0], col), _box([w, 95, 7], [0, 47.5, -d / 2 + 3.5], dark),
+                _box([w - 6, 18, d - 10], [0, 31, 2], "#f1ece4"),
+                _box([w * 0.62, 12, 34], [0, 46, -d / 2 + 30], "#f6f1ea"),
+                _box([w + 2, 6, d * 0.62], [0, 43, d * 0.18], blanket),
+                _box([w + 2, 26, 3], [0, 30, d * 0.18 + d * 0.31 + 1], blanket)]
     if kind == "nightstand":
         return [_box([w, h, d], [0, h / 2, 0], col), _box([w * 0.82, h * 0.32, 1.5], [0, h * 0.68, d / 2 + 0.6], dark),
                 {"type": "sphere", "radius": 1.8, "position": [0, h * 0.68, d / 2 + 2], "color": "#e8d9a8",
@@ -764,15 +780,15 @@ def furniture_parts(o: dict) -> list[dict]:
                           _box([10, 2, 2], [0, y, d / 2 + 1.2], "#d8c070")]
         return parts
     if kind == "rug":
-        return [_box([w, max(1.0, h), d], [0, max(1.0, h) / 2, 0], col)]
+        return [_box([w, min(2.0, max(0.8, h)), d], [0, min(2.0, max(0.8, h)) / 2, 0], col)]
     if kind == "socks":
         cols = [col, "#f2d16b", "#9cc8e8"]
         spots = [(-12, -6, 25), (10, 8, -40), (-4, 14, 70)]
-        return [_box([7, 3, 18], [sx, 1.5, sz], cols[i % 3], rotation=[0, rot, 0])
+        return [_box([7, 1.5, 18], [sx, 0.75, sz], cols[i % 3], rotation=[0, rot, 0])
                 for i, (sx, sz, rot) in enumerate(spots[:int(o.get("count") or 2)])]
     if kind == "clothes":
-        return [_box([w, 4, d], [0, 2, 0], col, rotation=[0, 15, 0]),
-                _box([w * 0.7, 4, d * 0.6], [6, 6, -4], "#e8e4dc", rotation=[0, -20, 0])]
+        return [_box([w, 1.5, d], [0, 0.75, 0], col, rotation=[0, 15, 0]),
+                _box([w * 0.7, 1.5, d * 0.6], [6, 1.6, -4], "#e8e4dc", rotation=[0, -20, 0])]
     if kind == "dock":
         return [_box([w, 2, d + 10], [0, 1, 5], dark), _box([w, h, d * 0.5], [0, h / 2, -d * 0.25], col),
                 {"type": "sphere", "radius": 1.2, "position": [0, h - 3, d * 0.02], "color": "#22d3ee", "segments": 8,
@@ -817,9 +833,13 @@ def furniture_parts(o: dict) -> list[dict]:
 
 
 def furniture_node(o: dict) -> dict:
-    return {"type": "group", "position": [round(float(o["pos"][0]), 2), round(float(o.get("y") or 0.0), 2),
+    node = {"type": "group", "position": [round(float(o["pos"][0]), 2), round(float(o.get("y") or 0.0), 2),
                                           round(float(o["pos"][1]), 2)],
             "rotation": [0, float(o.get("rot") or 0.0), 0], "children": furniture_parts(o), "sort": "object"}
+    if o.get("type") in FLAT_TYPES:
+        node["order"] = -1  # порядок наследуется детьми (складывается): сразу после пола (−2), до мебели (0)
+        node["position"][1] = 0.0  # плоское — всегда на полу
+    return node
 
 
 def object_box(o: dict) -> dict | None:

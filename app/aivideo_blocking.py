@@ -65,6 +65,10 @@ ROOM_DEFAULT = L.ROOM_DEFAULT
 FRAME_HEIGHT = {"extreme_wide": 3.6, "wide": 2.3, "full": 1.3, "medium": 0.8, "medium_close": 0.55,
                 "close": 0.36, "extreme_close": 0.2}
 MUST_SEE = {"extreme_close": 0.16, "close": 0.24, "medium_close": 0.4, "medium": 0.6}  # верхняя доля роста
+# Где низ кадра режет главного персонажа (доля роста от пола): medium — бёдра/пояс, medium_close — грудь,
+# close — плечи и голова, extreme_close — лицо. Над макушкой — запас не меньше HEAD_ROOM высоты кадра.
+CUT = {"medium": 0.45, "medium_close": 0.6, "close": 0.74, "extreme_close": 0.84}
+HEAD_ROOM = 0.05
 SIZES = ("extreme_close", "close", "medium_close", "medium", "full", "wide", "extreme_wide")
 MIN_SHARE = {"extreme_wide": 0.003, "wide": 0.008, "full": 0.02, "medium": 0.035, "medium_close": 0.05,
              "close": 0.07, "extreme_close": 0.07}
@@ -682,6 +686,9 @@ def _actor_parts(actor: dict, info: dict) -> tuple[list[dict], dict]:
         box = {"half": [22 * rig["s"], (size + reach) / 2, front], "cy": (size + reach) / 2,
                "height": size}
     box["rig"] = rig
+    head = _mv(_mat(*rig["body"]), [0.0, 154 * rig["s"], 0.0])
+    box["head"] = [head[i] + rig["root"][i] for i in range(3)]  # центр головы в осях манекена
+    box["head_r"] = 11 * rig["s"]
     return nodes, box
 
 
@@ -776,7 +783,35 @@ def _place_camera(actors: list[dict], size: str, shot_cam: dict, room: dict, yaw
                                                                      default=150.0)
     frame_h = FRAME_HEIGHT.get(size, FRAME_HEIGHT["medium"]) * subj_h
     seen = [_must_see(a, size) for a in actors]
-    if seen:
+    main = next((a for a in actors if a.get("main") and a.get("head")), None)
+    if main is not None and size in CUT:
+        # Крупность по главному персонажу: низ кадра — по поясу/бёдрам (medium), груди, плечам
+        # (close); сверху — макушка с запасом HEAD_ROOM высоты кадра. Остальные люди — так же сверху;
+        # маленьких персонажей на полу кадр этой крупности не обязан брать целиком.
+        # Верх — макушка или поднятые руки («потянуться»), что выше.
+        top = max(main["head"][1] + main["head_r"], main["center"][1] + main["half"][1])
+        base = main["center"][1] - main["half"][1]
+        cut = base + CUT[size] * max(1.0, top - base)
+        frame_h = (top - cut) / (1.0 - HEAD_ROOM - 0.02)
+        hx, hz = main["head"][0], main["head"][2]
+        ty = cut + frame_h / 2
+        # По ширине вертикальный кадр крупного плана держит голову (плечи могут уйти за край), средний —
+        # корпус без вытянутой руки.
+        if size == "medium":
+            half_x, half_z = min(main["half"][0], 22.0), main["head_r"] * 0.6
+        else:
+            half_x = half_z = main["head_r"] * 1.1
+        # По вертикали запас уже в frame_h (HEAD_ROOM) — подгонка не добавляет свой.
+        seen = [{**main, "center": [hx, (top + cut) / 2, hz], "half": [half_x, (top - cut) / 2, half_z],
+                 "rot": main["rot"], "fit_v": 0.99}]
+        for a in actors:
+            if a is not main and a.get("kind") == "human" and a.get("head"):
+                a_top = a["head"][1] + a["head_r"]
+                seen.append({**a, "center": [a["head"][0], a_top - a["head_r"] * 2, a["head"][2]],
+                             "half": [a["half"][0], a["head_r"] * 2, min(a["half"][2], 18.0)]})
+        tx = sum(a["center"][0] for a in seen) / len(seen)
+        tz = sum(a["center"][2] for a in seen) / len(seen)
+    elif seen:
         tx = sum(a["center"][0] for a in seen) / len(seen)
         tz = sum(a["center"][2] for a in seen) / len(seen)
         lo = min(a["center"][1] - a["half"][1] for a in seen)
@@ -810,7 +845,7 @@ def _place_camera(actors: list[dict], size: str, shot_cam: dict, room: dict, yaw
                 qa = sum(q[i] * r[i] for i in range(3))
                 qb = sum(q[i] * u[i] for i in range(3))
                 qf = sum(q[i] * f[i] for i in range(3))
-                need = max(need, abs(qa) / (th_ * 0.9) - qf, abs(qb) / (tv_ * 0.9) - qf)
+                need = max(need, abs(qa) / (th_ * 0.9) - qf, abs(qb) / (tv_ * a.get("fit_v", 0.9)) - qf)
         return max(25.0, need)
 
     pos = [tx, ty, tz + 300.0]
@@ -909,6 +944,27 @@ def _hit_walls(origin: list[float], dirs: Any, room: dict) -> Any:
     return best
 
 
+def head_room(camera: dict, actor_box: dict) -> float:
+    """Запас кадра над макушкой персонажа (доля высоты кадра); голова вне кадра/срезана — < 0."""
+    pos = list(camera["pos"])
+    f, r, u = _basis(pos, list(camera["target"]))
+    tv = math.tan(math.radians(float(camera.get("fov") or 40) / 2))
+    th = tv * 9 / 16
+    hx, hy, hz = actor_box["head"]
+    rad = float(actor_box.get("head_r") or 11.0)
+    out = []
+    for p in ([hx, hy + rad, hz], [hx, hy, hz], [hx, hy - rad, hz]):
+        q = [p[k] - pos[k] for k in range(3)]
+        z = sum(q[k] * f[k] for k in range(3))
+        if z <= 1.0:
+            return -1.0
+        out.append((sum(q[k] * r[k] for k in range(3)) / z / th, sum(q[k] * u[k] for k in range(3)) / z / tv))
+    top, centre, chin = out
+    if abs(centre[0]) > 0.97 or chin[1] < -1.0:
+        return -1.0
+    return (1 - top[1]) / 2
+
+
 def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium",
                 grid: tuple[int, int] = GRID) -> dict:
     """Самоконтроль кадра блокинга лучами по сетке кадра: камера не внутри вещи/стены; каждый
@@ -942,6 +998,13 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         near_actor = target_dist
     shares: dict[str, float] = {}
     total = 0.0
+    warnings: list[str] = []
+    has_main = any(boxes[i].get("main") for i in actor_idx)
+
+    def soft(b: dict) -> bool:
+        """Маленький персонаж на полу при крупном плане главного — может быть вне кадра (не ошибка)."""
+        return size in CUT and has_main and not b.get("main") and b.get("kind") != "human"
+
     for i in actor_idx:
         b = boxes[i]
         any_hit = int(np.isfinite(hits[:, i]).sum())
@@ -949,24 +1012,41 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         shares[b["id"]] = round(own / n, 4)
         total += own / n
         if any_hit == 0:
-            problems.append(f"«{b['label']}» не в кадре")
+            (warnings if soft(b) else problems).append(f"«{b['label']}» не в кадре")
         elif own / any_hit < 1 - HIDDEN_MAX:
-            problems.append(f"«{b['label']}» закрыт(а) — видно {round(100 * own / any_hit)}%")
+            (warnings if soft(b) else problems).append(f"«{b['label']}» закрыт(а) — видно "
+                                                       f"{round(100 * own / any_hit)}%")
     # Обязательное от персонажа (у человека при этой крупности — верх тела/лицо) влезает в кадр целиком.
     f, r, u = _basis(pos, list(camera["target"]))
     tv = math.tan(math.radians(float(camera.get("fov") or 40) / 2))
     th = tv * 9 / 16
+
+    def ndc(p: list[float]) -> tuple[float, float] | None:
+        q = [p[k] - pos[k] for k in range(3)]
+        z = sum(q[k] * f[k] for k in range(3))
+        if z <= 1.0:
+            return None
+        return sum(q[k] * r[k] for k in range(3)) / z / th, sum(q[k] * u[k] for k in range(3)) / z / tv
+
     for i in actor_idx:
+        b = boxes[i]
+        if b.get("main") and b.get("head"):
+            # Голова главного персонажа целиком в кадре, над макушкой — запас ≥ HEAD_ROOM высоты кадра.
+            room_top = head_room(camera, b)
+            if room_top < HEAD_ROOM - 0.005:
+                problems.append(f"голова «{b['label']}» срезана или у верхнего края кадра (запас "
+                                f"{max(0, round(100 * room_top, 1))}% < {round(100 * HEAD_ROOM)}%)")
+                continue
+            if size in CUT:
+                continue  # крупный план главного — мерило голова, низ кадра режет тело по плану
         cut = False
-        for c in _box_corners(_must_see(boxes[i], size)):
-            q = [c[k] - pos[k] for k in range(3)]
-            z = sum(q[k] * f[k] for k in range(3))
-            if z <= 1.0 or abs(sum(q[k] * r[k] for k in range(3)) / z) > th * 1.06 or \
-                    abs(sum(q[k] * u[k] for k in range(3)) / z) > tv * 1.06:
+        for c in _box_corners(_must_see(b, size)):
+            p = ndc(c)
+            if p is None or abs(p[0]) > 1.06 or abs(p[1]) > 1.06:
                 cut = True
                 break
-        if cut and not any(boxes[i]["label"] in p for p in problems):
-            problems.append(f"«{boxes[i]['label']}» не влезает в кадр")
+        if cut and not any(b["label"] in p for p in problems + warnings):
+            (warnings if soft(b) else problems).append(f"«{b['label']}» не влезает в кадр")
     if actor_idx and total < MIN_SHARE.get(size, 0.02):
         problems.append(f"персонажи слишком мелкие — {round(100 * total, 1)}% кадра")
     occluders: dict[str, float] = {}
@@ -983,8 +1063,17 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         front = int(((first == i) & (first_t < 25.0)).sum()) / n
         if front > OCCLUDE_MAX:
             problems.append(f"«{b['label']}» вплотную к камере — {round(100 * front)}% кадра")
-    return {"ok": not problems, "problems": problems, "shares": shares, "occluders": occluders,
-            "characters_share": round(total, 4)}
+    return {"ok": not problems, "problems": problems, "warnings": warnings, "shares": shares,
+            "occluders": occluders, "characters_share": round(total, 4)}
+
+
+def _camera_notes(steps: int, sz: str, size: str, yaw: float, lift: float) -> list[str]:
+    notes = []
+    if steps:
+        notes.append(f"крупность шире плана ({sz} вместо {size}) — иначе персонажи не влезали")
+    if yaw or lift:
+        notes.append("камера сдвинута/поднята — иначе кадр закрывала мебель")
+    return notes
 
 
 def _wider(size: str, steps: int) -> str:
@@ -1003,6 +1092,7 @@ def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], ro
     tries = 0
     for steps in (0, 1, 2):
         sz = _wider(size, steps)
+        lenient: tuple[dict, dict, float, float] | None = None
         for yaw in (0.0, 18.0, -18.0, 35.0, -35.0):
             for lift in (0.0, 45.0):
                 cam = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift)
@@ -1023,13 +1113,15 @@ def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], ro
                     check = check_frame(cam, all_boxes, room, sz)
                 if first is None:
                     first = (cam, check)
+                if check["ok"] and check.get("warnings"):
+                    if lenient is None:  # годится, но маленький персонаж вне кадра — ищем лучше
+                        lenient = (cam, check, yaw, lift)
+                    continue
                 if check["ok"]:
-                    notes = []
-                    if steps:
-                        notes.append(f"крупность шире плана ({sz} вместо {size}) — иначе персонажи не влезали")
-                    if yaw or lift:
-                        notes.append("камера сдвинута/поднята — иначе кадр закрывала мебель")
-                    return cam, {**check, "size": sz, "notes": notes}
+                    return cam, {**check, "size": sz, "notes": _camera_notes(steps, sz, size, yaw, lift)}
+        if lenient is not None:  # та же крупность важнее, чем робот на полу целиком в кадре
+            cam, check, yaw, lift = lenient
+            return cam, {**check, "size": sz, "notes": _camera_notes(steps, sz, size, yaw, lift)}
     cam, check = first  # type: ignore[misc]
     return cam, {**check, "size": size, "notes": ["ни один вариант камеры не прошёл самоконтроль"]}
 
@@ -1140,8 +1232,13 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
         ab = {"id": a["id"], "role": "actor", "label": info.get("name") or a["id"], "kind": kind,
               "pose": a.get("pose"), "center": [x, y + box["cy"], z], "half": box["half"], "rot": facing,
               "height": box["height"]}
-        if kind == "human" and a.get("pose") == "lying":  # лёжа — длинная сторона вдоль взгляда
-            ab["half"] = [box["half"][0], box["half"][1], box["half"][2]]
+        if box.get("head"):
+            hx, hz = _rot_y(box["head"][0], box["head"][2], facing)
+            ab["head"] = [x + hx, y + box["head"][1], z + hz]
+            ab["head_r"] = box["head_r"]
+            # Главный персонаж — первый человек плана не лёжа: по нему крупность и запас над головой.
+            if a.get("pose") != "lying" and not any(b.get("main") for b in actor_boxes):
+                ab["main"] = True
         boxes.append(ab)
         actor_boxes.append(ab)
         placed[a["id"]] = {**a, "rig": box.get("rig"), "kind": kind, "size": float(info.get("size") or 0), "y": y,
@@ -1163,7 +1260,7 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
         "style": {"shading": "toon", "bands": 3, "outline": {"color": "#2a2a30", "width": 2}},
         "nodes": nodes,
     }
-    return {"scene": scene, "check": check, "camera": cam}
+    return {"scene": scene, "check": check, "camera": cam, "boxes": boxes}
 
 
 def compile_scene(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | None = None) -> dict:

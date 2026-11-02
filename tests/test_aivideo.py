@@ -2307,7 +2307,7 @@ def test_blocking_room_has_every_described_thing_once_per_location(env):
     assert {"bed", "lamp", "garland", "rug", "socks", "dock", "window"} <= types
     assert "nightstand" in types  # «ставит кружку на прикроватную тумбочку» + настольной лампе нужна опора
     by = {o["type"]: o for o in layout["objects"]}
-    assert by["lamp"]["on"] == by["nightstand"]["id"] and by["lamp"]["y"] == pytest.approx(55)
+    assert by["lamp"]["on"] == by["nightstand"]["id"] and by["lamp"]["y"] == pytest.approx(50)
     assert by["bed"]["accent"] == "#b8a9f0"  # лавандовый плед
     assert by["window"]["accent"] == "#2c3e7a"  # вечернее небо за окном
     assert by["bed"]["size"][1] < 60 and by["nightstand"]["size"][1] < 70  # узнаваемые пропорции, не столбы
@@ -2330,6 +2330,99 @@ def test_blocking_room_has_every_described_thing_once_per_location(env):
     assert spec["start"]["actors"][0]["arms"] == "holding"
     assert spec["end"]["props"][0]["on"] == by["nightstand"]["id"]
     assert spec["end"]["actors"][0]["arms"] == "up"  # «повернуться к окну потянуться»
+
+
+def _assert_grounded(layout):
+    """Ничего не висит: плоское — на полу (толщина ≤ 2 см), каждая вещь на полу или на поверхности вещи
+    под ней (центр — над её площадкой), настенное — у стены."""
+    from app import aivideo_layout as L
+
+    room = layout["room"]
+    w, d = room["width"], room["depth"]
+    for o in layout["objects"]:
+        y = float(o.get("y") or 0)
+        if o["type"] in L.FLAT_TYPES:
+            assert y == 0 and o["size"][1] <= 2, o
+            continue
+        if o["type"] in L.WALL_TYPES:
+            x, z = o["pos"]
+            assert min(abs(x + w / 2), abs(x - w / 2), abs(z + d / 2)) <= o["size"][2] / 2 + 3, o
+            continue
+        if y == 0:
+            continue
+        under = [s for s in layout["objects"] if s is not o and abs(L.top_of(s) - y) < 0.5]
+        x, z = o["pos"]
+        assert any(L._footprint(s)[0] <= x <= L._footprint(s)[2] and L._footprint(s)[1] <= z <= L._footprint(s)[3]
+                   for s in under), f"{o['id']} висит на высоте {y}"
+
+
+def test_blocking_room_is_grounded_with_real_proportions(env):
+    """«Стол летает или ковёр высоко?» — ковёр и носки на полу и рисуются под ногами персонажей (сразу
+    после пола), вещи стоят на полу или на поверхности, пропорции реальные."""
+    from app import aivideo_blocking as B
+    from app import aivideo_layout as L
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    shot = V.list_shots(store, sid)[0]
+    layout = B.shot_layout(store, pid, shot)
+    _assert_grounded(layout)
+    by = {o["type"]: o for o in layout["objects"]}
+    assert by["bed"]["size"] == [140, 45, 200] and L.top_of(by["bed"]) <= 50  # кровать 1.4 × 2 м, высота 45
+    assert by["nightstand"]["size"][1] == 50 and by["lamp"]["y"] == 50
+    for desc in ("кухня: обеденный стол, два стула, холодильник, плита, на столе ноутбук, ковёр",
+                 "гостиная: диван, журнальный столик, телевизор, торшер, полки с книгами, растение в горшке"):
+        lay = L.auto_layout(desc)
+        _assert_grounded(lay)
+        for o in lay["objects"]:
+            if o["type"] in ("desk", "table") and "журнальн" not in desc:
+                assert o["size"][1] == 75
+    # Плоское — слой сразу после пола: ноги персонажа рисуются поверх ковра, а не ковёр поверх ног.
+    rug = next(n for n in B.scenes_of(store, shot)["start"]["nodes"] if n.get("order") == -1)
+    assert rug["position"][1] == 0
+    floor = B.scenes_of(store, shot)["start"]["nodes"][0]
+    assert floor["order"] == -2 and all(c.get("order") is None for c in rug["children"])
+    vis = L.from_vision([{"type": "rug", "x": 0.5, "depth": 0.3, "wall": "on", "on": "bed"},
+                         {"type": "lamp", "x": 0.6, "depth": 0.9, "wall": "floor"},
+                         {"type": "bed", "x": 0.3, "depth": 0.7, "wall": "back"}], EP3_ROOM)
+    _assert_grounded(vis)  # зрение ошиблось («ковёр на кровати») — всё равно ничего не висит
+
+
+def test_blocking_head_is_never_cut_and_framing_follows_shot_size(env):
+    """Голова главного персонажа целиком в кадре с запасом сверху ≥ 5 % высоты кадра; medium — от
+    бёдер до макушки, close — плечи и голова; самоконтроль ловит срез головы."""
+    from app import aivideo_blocking as B
+
+    _client_, store = env
+    pid, sid = _ep3(store)
+    shot = V.list_shots(store, sid)[0]
+    infos = B.cast_info(store, pid, shot)
+    layout = B.shot_layout(store, pid, shot)
+    spec = B.clean_spec(B.current(store, shot)["spec"], ["mira", "beep"])
+    heights = {}
+    for size in ("medium", "medium_close", "close"):
+        built = B.build(spec, "start", {**shot, "camera": {"shot": size, "angle": "eye_level", "lens": 35}}, infos,
+                        layout)
+        assert built["check"]["ok"], (size, built["check"]["problems"])
+        mira = next(b for b in built["boxes"] if b.get("main"))
+        room_top = B.head_room(built["camera"], mira)
+        assert room_top >= B.HEAD_ROOM - 0.005, (size, room_top)
+        if built["check"]["size"] == size:  # крупность по плану: в кадре ровно нужная часть роста
+            import math
+
+            cam = built["camera"]
+            dist = math.dist(cam["pos"], mira["head"])
+            heights[size] = 2 * dist * math.tan(math.radians(cam["fov"] / 2))
+    assert heights["close"] < heights["medium_close"] < heights["medium"] < 165 * 0.75
+    assert heights["close"] < 165 * 0.45  # плечи и голова, а не по пояс
+    # Камера, срезающая голову, — самоконтроль это ловит.
+    built = B.build(spec, "start", {**shot, "camera": {"shot": "medium"}}, infos, layout)
+    mira = next(b for b in built["boxes"] if b.get("main"))
+    hx, hy, hz = mira["head"]
+    low = {"pos": [hx, hy - 40, hz + 90], "target": [hx, hy - 55, hz], "fov": 40}
+    assert B.head_room(low, mira) < B.HEAD_ROOM
+    check = B.check_frame(low, built["boxes"], layout["room"], "medium")
+    assert not check["ok"] and any("голова «Мира» срезана" in p for p in check["problems"])
 
 
 def test_blocking_room_follows_plate_via_gemini_vision_once(env):
@@ -2388,7 +2481,9 @@ def test_blocking_mannequins_real_size_pose_and_camera_by_plan(env):
     for which in ("start", "end"):
         check, scene = built[which]["check"], built[which]["scene"]
         assert check["ok"], (which, check)
-        assert check["shares"]["mira"] > 0.03 and check["shares"]["beep"] > 0  # оба в кадре
+        # Главная — в кадре; робот на полу при medium может уйти за низ кадра (это пометка, не ошибка).
+        assert check["shares"]["mira"] > 0.03
+        assert check["shares"]["beep"] > 0 or any("Бип" in w for w in check["warnings"])
         cam = scene["camera"]
         assert abs(cam["position"][0]) < room["width"] / 2 and cam["position"][1] < room["height"]
         assert not any(B._inside(b, cam["position"]) for b in boxes)
