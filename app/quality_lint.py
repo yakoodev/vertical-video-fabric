@@ -1280,6 +1280,8 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                 faces = []
             findings += image_card_findings(store, layers, duration, faces=faces)
         findings += avatar_face_findings(store, int(clip_plan_id), rs)
+        findings += avatar_presence_findings(store, int(clip_plan_id), rs)
+        findings += tail_fragment_findings(store, plan, rs)
 
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
@@ -1674,6 +1676,44 @@ def avatar_face_findings(store: Any, clip_plan_id: int, rs: dict) -> list[dict]:
                      "set_layout mode avatar_full cams \"auto\" — рамка и крупность встанут по лицу; рамку руками — "
                      "шире к лицу или video_scale меньше", t=r["from_t"], until=r["to_t"])
             for r in rows if not r["face_whole"]]
+
+
+def avatar_presence_findings(store: Any, clip_plan_id: int, rs: dict) -> list[dict]:
+    """avatar_full: аватара в кадре нет — рамка не накрывает ни одно место из detect_avatar или проверка кропа
+    Gemini-зрением сказала «не аватар» (кэш app/ai/avatar_check.py). QA 6 (клип 898): 23 с плеера YouTube вместо
+    Муры, lint — 0 предупреждений."""
+    try:
+        from app.agent_tools import _absent_text, avatar_absent_spans
+
+        rows = avatar_absent_spans(store, clip_plan_id, rs)
+    except Exception:  # noqa: BLE001 - нет кэша/источника — проверки нет
+        return []
+    return [_finding("montage", "warn", "аватара в кадре нет на " + _absent_text(r),
+                     "set_layout mode avatar_full cams \"auto\" (рамки по detect_avatar) или рамка руками на сам аватар "
+                     "(source_contact_sheet покажет, где он); не выходит — спроси владельца",
+                     t=r["from_t"], until=r["to_t"])
+            for r in rows]
+
+
+def tail_fragment_findings(store: Any, plan: dict, rs: dict) -> list[dict]:
+    """Клип кончается обрывком новой фразы, и вырезы его не убрали (QA 6, клип 898: «Седьмой стрель.» после
+    панчлайна). Слова — субтитры клипа (шкала clip до вырезов, как cuts)."""
+    from app.cuts import plan_duration, tail_fragment
+
+    try:
+        words = (store.get_clip_plan_subtitles(int(plan["id"])) or {}).get("words") or []
+        tail = tail_fragment(words, plan_duration(plan))
+    except Exception:  # noqa: BLE001 - нет субтитров — проверки нет
+        return []
+    if not tail:
+        return []
+    cuts = [(_num(c.get("start")), _num(c.get("end"))) for c in rs.get("cuts") or [] if isinstance(c, dict)]
+    if any(s <= tail["start"] + 0.05 and e >= tail["end"] - 0.05 for s, e in cuts):
+        return []
+    return [_finding("montage", "warn", f"клип кончается оборванной фразой «{tail['words']}» "
+                                        f"({tail['start']:.2f}–{tail['end']:.2f} с) — конец на полуслове",
+                     f"вырез {{start: {tail['start']:.2f}, end: {tail['end']:.2f}}} в apply_cuts (suggest_cuts его "
+                     "предлагает) или trim_piece конца куска", t=tail["start"], until=tail["end"])]
 
 
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:

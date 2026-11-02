@@ -635,6 +635,7 @@ def run_agent(
     nudged_fix = False
     asked_report = False
     report_only = False
+    framing_told = False
     silent_nudges = 0
     gap_warnings: list[str] = []  # «пустой кадр»/«нет финала» из последнего ответа линта
     while True:
@@ -679,7 +680,9 @@ def run_agent(
         if not calls and tools_on and steps and not nudged_fix:
             # Хочет закончить, а последний вызов не прошёл или ролик с дырой (прогон 578: пачка
             # финала отклонена, агент не повторил — последние 4 с пустой фон). Один раз дожимаем.
-            nudge = fix_nudge(steps, _current_gaps(ctx, gap_warnings))
+            # Кадрирование остановлено по пределу попыток — его неудачи «исправь и повтори» не дожимаем.
+            fixable = [s for s in steps if s.get("tool") not in AVATAR_TOOLS] if ctx.framing_stop else steps
+            nudge = fix_nudge(fixable, _current_gaps(ctx, gap_warnings))
             if nudge:
                 nudged_fix = True
                 contents.append({"role": "user", "parts": [{"text": nudge}]})
@@ -709,7 +712,8 @@ def run_agent(
             )}]})
             continue
         if not calls and tools_on and steps and idle:
-            missing = unviewed_avatar_places(ctx, steps)
+            # Кадрирование остановлено по пределу попыток — «посмотри и поправь рамку» уже не к месту.
+            missing = [] if ctx.framing_stop else unviewed_avatar_places(ctx, steps)
             if missing and avatar_nudges < MAX_LOOK_NUDGES:
                 # Аватар в нескольких местах (QA 02.11, клип 892): один лист кадров не заменяет взгляд на
                 # каждое место — агент сдал ролик с 4 с волос без лица, ни разу не вызвав view_frame.
@@ -829,6 +833,10 @@ def run_agent(
             if check:
                 last_change_body["clip_check"] = check
             last_change_body = None
+        if ctx.framing_stop and not framing_told:
+            # QA 6 (клип 898): 12 set_layout руками без прогресса. Предел попыток — указание остановиться и спросить.
+            framing_told = True
+            images.append({"text": framing_stop_nudge(ctx.framing_stop)})
         contents.append({"role": "user", "parts": responses + images})
         _prune_images(contents)
 
@@ -836,6 +844,8 @@ def run_agent(
         final_text = _fallback_summary(steps)
     if ctx.changed:
         final_text = honest_report(final_text, clip_check(ctx), steps)
+    if ctx.framing_stop:
+        final_text = framing_question(final_text)
     return {"text": final_text, "steps": steps, "changed": ctx.changed, "model": used_model, "rounds": rounds}
 
 
@@ -853,6 +863,27 @@ GAP_MARKERS = ("пустой кадр", "нет финала")
 VISUAL_TOOLS = {"set_focus", "set_layout", "add_layers", "add_insert"}
 LOOK_TOOLS = {"view_frame", "contact_sheet"}
 MAX_LOOK_NUDGES = 1  # потом лист кадров снимает сервис
+
+
+def framing_stop_nudge(reason: str) -> str:
+    return ("СТОП кадрирования: " + reason + ". Больше не ставь рамки аватара и не зови detect_avatar — доделай "
+            "остальное по задаче (титры, субтитры, звук, вставки), потом отчёт, где честно скажи, что кадр аватара не "
+            "получился, и задай владельцу вопрос со знаком «?».")
+
+
+FRAMING_QUESTION = ("Вопрос владельцу: кадр аватара не получился за несколько попыток — подскажите, где аватар "
+                    "(секунда и угол кадра), или поставьте рамку сами в редакторе (раскладка «только аватар»)?")
+
+
+_FRAMING_ASK_RE = re.compile(r"аватар|рамк|кадр|где\b|модел|вебк", re.IGNORECASE)
+
+
+def framing_question(text: str) -> str:
+    """Кадрирование остановлено по пределу попыток (QA 6), а отчёт не спрашивает владельца — дописываем вопрос."""
+    asks = [s for s in re.findall(r"[^.!?\n]*\?", text or "") if _FRAMING_ASK_RE.search(s)]
+    if asks:
+        return text
+    return ((text or "").rstrip() + "\n\n" + FRAMING_QUESTION).strip()
 
 
 def _is_mutating(name: str) -> bool:
