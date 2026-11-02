@@ -15,9 +15,12 @@ JSON-сцена движка (функция времени) → mp4. Без в�
   (срез потолка). Соседние кадры — разные ракурсы. Камера всегда внутри декорации (проверка
   ``check_shots``: камера не в стене, голова героя в кадре, герой не мелкий).
 * **События на словах** — на начале нужного слова: «погас/блэкаут» — основной свет мигнул и погас, табло и
-  кнопки потухли, через миг — красный аварийный; «трясёт/рывок/скрежет» — тряска камеры и удар; «мигает» —
-  мерцание; «вспышка/искры» — вспышка; «стук» — серия ударов; «N этаж» и «табло … N» — цифры на табло;
-  «Была лишь одна проблема» — акцент. Звуки — только настоящие записи паков (``SFX``), без музыки.
+  кнопки потухли, через миг — красный аварийный (щелчок рубильника, гул кабины глохнет); «трясёт/рывок» —
+  тряска камеры и лязг; «заскрежетало/скрип» — скрежет металла и лёгкая тряска; «мигает» — мерцание;
+  «вспышка/искры» — вспышка; «стук» — стук в металлическую дверь (серия из трёх); «N этаж» и «табло … N» —
+  цифры на табло; «Была лишь одна проблема» — акцент. Звуки — только настоящие записи паков (``SFX``); фон-петли
+  (``AMBIENCE``): гул кабины, пока горит свет, в темноте — далёкий гул шахты. Тревожную музыку под голос
+  кладёт сборка (app/stories_3d.py).
 
 ``render_episode`` — сцена → mp4 через ``app.scene3d.render_scene``. Сборка серии (субтитры по 1–3 слова,
 HUD-плашки, название, титр «ЧАСТЬ N+1», звуки, голос) — холст-клип сервиса (``app.stories_gen``).
@@ -62,19 +65,29 @@ HAIR_COLORS = {"red": "#a8452a", "рыж": "#a8452a", "ginger": "#a8452a", "blon
 HERO_DEFAULT = {"skin": "#e3a985", "hair": "#4a2f22", "hairStyle": "short", "top": "#f2c21b", "coat": True,
                 "hood": True, "pants": "#2f3542", "shoes": "#1c1d22", "backpack": "#5d6b3a"}
 
-# Звуки событий — настоящие записи паков (freesound — монтажные CC0, kenney-impact — удары/шаги CC0).
+# Звуки событий — настоящие записи паков (tension — лифт и тревожный фон CC0, freesound — монтажные CC0,
+# kenney-impact — удары/шаги CC0).
 SFX = {
-    "blackout": ("sfx:freesound/sub-drop.ogg", 0.9),
-    "jolt": ("sfx:kenney-impact/impactMetal_heavy_001.ogg", 1.0),
+    "blackout": ("sfx:tension/breaker.ogg", 1.0),  # щелчок рубильника — свет отключился
+    "power_down": ("sfx:tension/power-down.ogg", 0.8),  # гул кабины проседает и глохнет
+    "jolt": ("sfx:tension/clank.ogg", 1.0),  # рывок кабины — лязг
     "jolt2": ("sfx:kenney-impact/impactMetal_heavy_003.ogg", 0.8),
+    "scrape": ("sfx:tension/metal-scrape.ogg", 0.9),  # «заскрежетало» — трос/металл
     "flash": ("sfx:freesound/impact-cinematic.ogg", 0.7),
-    "knock": ("sfx:kenney-impact/impactMetal_light_002.ogg", 1.0),
+    "knock": ("sfx:tension/knock-metal.ogg", 1.0),  # стук в металлическую дверь (на записи — три удара)
     "press": ("sfx:freesound/camera-2.ogg", 0.5),
     "sting": ("sfx:freesound/sting.ogg", 0.75),
     "tension": ("sfx:freesound/tension.ogg", 0.45),
     "step": ("sfx:kenney-impact/footstep_concrete_001.ogg", 0.5),
     "door": ("sfx:kenney-impact/impactMetal_medium_002.ogg", 0.7),
 }
+# Фон-петли локации (пак tension): ``(ref, на сколько дБ тише голоса)``. Гул кабины — пока горит свет, после
+# блэкаута — далёкий гул шахты (до «свет загорелся» или до конца).
+AMBIENCE = {
+    "hum": ("sfx:tension/cabin-hum.ogg", 26.0),
+    "dark": ("sfx:tension/shaft-rumble.ogg", 24.0),
+}
+KNOCKS = 1  # записей стука подряд: на записи уже серия из трёх ударов
 
 _NUM_WORDS = {"двадцать два": 22, "двадцать три": 23, "двадцать один": 21, "тринадцать": 13}
 
@@ -541,7 +554,8 @@ CLIP_HEAD = {"Idle_Loop": (1.6, 0.02), "Crouch_Idle_Loop": (0.92, 0.21), "Push_L
 EVENTS = [
     ("blackout", r"^(погас|отключ|обесточ|темнот|блэкаут|блекаут|вырубил|отруб)"),
     ("flicker", r"^(мига|мерца|моргн|замига)"),
-    ("jolt", r"^(за|по)?(тряс|дерн|рывок|тряхн|качнул|скреж|лязг|грохот|удар|пада|рухну|провали)"),
+    ("scrape", r"^(за|про)?(скреж|скрип|скреб)"),
+    ("jolt", r"^(за|по)?(тряс|дерн|рывок|тряхн|качнул|лязг|грохот|удар|пада|рухну|провали)"),
     ("flash", r"^(вспыш|искр|вспыхн)"),
     ("knock", r"^(стук|стуч|постуча)"),
     ("alarm", r"^(тревог|сирен|аварийн)"),
@@ -996,6 +1010,7 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             emer["flicker"] = [{"t": round(t + 0.7, 3), "amount": 0.7, "duration": 0.6}]
             shake.append({"t": round(t, 3), "amp": 0.012, "duration": 0.6})
             add_sfx("blackout", t - 0.05, "блэкаут")
+            add_sfx("power_down", t, "гул глохнет")
         elif e["kind"] == "flicker":
             for lid in loc["main_lights"]:
                 by_id[lid].setdefault("flicker", []).append({"t": round(t, 3), "amount": 0.75, "duration": 0.9})
@@ -1003,7 +1018,11 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             shake.append({"t": round(t, 3), "amp": 0.035, "duration": 0.9})
             for lid in loc["main_lights"] + [loc["emergency"]]:
                 by_id[lid].setdefault("flicker", []).append({"t": round(t, 3), "amount": 0.6, "duration": 0.5})
-            add_sfx("jolt" if len([x for x in sfx if x["kind"] == "jolt"]) % 2 == 0 else "jolt2", t, "рывок")
+            n_jolts = len([x for x in sfx if x["kind"] in ("jolt", "jolt2")])
+            add_sfx("jolt" if n_jolts % 2 == 0 else "jolt2", t, "рывок")
+        elif e["kind"] == "scrape":
+            shake.append({"t": round(t, 3), "amp": 0.01, "duration": 1.2})
+            add_sfx("scrape", t, "скрежет")
         elif e["kind"] == "flash":
             for lid in loc["main_lights"][:1]:
                 light = by_id[lid]
@@ -1015,8 +1034,8 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             add_sfx("flash", t, "вспышка")
         elif e["kind"] == "knock":
             shake.append({"t": round(t, 3), "amp": 0.008, "duration": 0.4})
-            for r in range(3):
-                add_sfx("knock", t + r * 0.32, "стук")
+            for r in range(KNOCKS):
+                add_sfx("knock", t + r * 1.2, "стук")
         elif e["kind"] == "sting":
             add_sfx("sting", t, "акцент")
     for light in lights:
@@ -1101,6 +1120,23 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
     first_story = next((s for s in shot_out if s["role"] not in ("hook", "")), None)
     if first_story:
         add_sfx("tension", first_story["t0"], "напряжение")
+
+    def add_bed(kind: str, t0: float, t1: float, label: str, fade_in: float, fade_out: float) -> None:
+        if kind in AMBIENCE and t1 - t0 >= 0.5:
+            ref, under = AMBIENCE[kind]
+            sfx.append({"t": round(max(0.0, t0), 3), "ref": ref, "volume": 1.0, "label": label, "kind": kind,
+                        "end": round(min(total, t1), 3), "role": "ambience", "under_db": under,
+                        "fade_in": fade_in, "fade_out": fade_out})
+
+    # Фон-петли: гул кабины, пока горит свет (глохнет на блэкауте), в темноте — далёкий гул шахты.
+    if loc_name == "elevator":
+        if blackout is None:
+            add_bed("hum", 0.0, total, "гул кабины", 0.4, 1.5)
+        else:
+            add_bed("hum", 0.0, blackout + 0.12, "гул кабины", 0.4, 0.18)
+            add_bed("dark", blackout + 0.6, light_back or total, "гул шахты", 2.5, 1.0 if light_back else 2.0)
+            if light_back:
+                add_bed("hum", light_back, total, "гул кабины", 0.3, 1.5)
 
     character = _character(look, path, facing, actions, poses)
     env = dict(loc["environment"])

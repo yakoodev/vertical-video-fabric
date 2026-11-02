@@ -138,8 +138,72 @@ def test_direct_elevator_series():
     assert hero["style"] == "toy" and hero["toy"]["top"] == S3.COLORS["yellow"]
     assert spec["camera"]["clamp"] is False and spec["camera"]["shake"]
     # Звуки — только записи паков, на нужных словах.
-    assert res["sfx"] and all(x["ref"].startswith(("sfx:freesound/", "sfx:kenney-impact/")) for x in res["sfx"])
-    assert any(x["kind"] == "blackout" and abs(x["t"] - tb) < 0.2 for x in res["sfx"])
+    sfx = res["sfx"]
+    assert sfx and all(x["ref"].startswith(("sfx:tension/", "sfx:freesound/", "sfx:kenney-impact/")) for x in sfx)
+    assert all({"t", "ref", "volume", "label"} <= set(x) for x in sfx)
+    assert any(x["kind"] == "blackout" and abs(x["t"] - tb) < 0.2 for x in sfx), "щелчок рубильника на «погас»"
+    assert any(x["kind"] == "power_down" and abs(x["t"] - tb) < 0.2 for x in sfx), "гул глохнет"
+    scrape = next(e for e in ev if e["kind"] == "scrape")
+    assert "скреж" in scrape["word"].lower() and any(x["kind"] == "scrape" and x["t"] == round(scrape["t"], 3) for x in sfx)
+    knock = next(e for e in ev if e["kind"] == "knock")
+    assert [x["kind"] for x in sfx if abs(x["t"] - knock["t"]) < 0.05] == ["knock"], "одна запись — три удара"
+    assert any(x["kind"] == "jolt" and x["ref"] == S3.SFX["jolt"][0] for x in sfx), "рывок — лязг"
+    # Фон-петли: гул кабины до блэкаута, после — гул шахты до конца.
+    hum = [x for x in sfx if x["kind"] == "hum"]
+    dark = [x for x in sfx if x["kind"] == "dark"]
+    assert len(hum) == 1 and hum[0]["t"] == 0 and abs(hum[0]["end"] - tb) < 0.3 and hum[0]["role"] == "ambience"
+    assert len(dark) == 1 and dark[0]["t"] > tb and abs(dark[0]["end"] - total) < 1e-3
+
+
+def test_loop_layers_cover_episode_with_crossfades():
+    one = S3D.loop_layers("sfx:tension/x.ogg", 0.0, 30.0, 60.0, {"role": "music"}, "st_bed", "Музыка", 1.5, 2.5)
+    assert len(one) == 1 and one[0]["end"] == 30.0 and one[0]["props"]["fadeIn"] == 1.5
+    assert one[0]["props"]["fadeOut"] == 2.5 and one[0]["props"]["mode"] == "track"
+    many = S3D.loop_layers("sfx:tension/x.ogg", 0.0, 100.0, 40.0, {"role": "music"}, "st_bed", "Музыка", 1.5, 2.5)
+    assert len(many) == 3 and many[0]["start"] == 0 and many[-1]["end"] == 100.0
+    assert len({lay["id"] for lay in many}) == 3
+    for a, b in zip(many, many[1:]):
+        assert abs(a["end"] - b["start"] - S3D.LOOP_XFADE) < 1e-6, "копии внахлёст"
+        assert a["props"]["fadeOut"] == S3D.LOOP_XFADE and b["props"]["fadeIn"] == S3D.LOOP_XFADE
+        assert a["end"] - a["start"] <= 40.0 + 1e-6, "копия не длиннее файла"
+    assert many[-1]["props"]["fadeOut"] == 2.5
+    item = {"lufs": -26.0}
+    assert S3D.bed_gain_db(item, -16.0, 22.0) == -12.0, "фон на 22 дБ тише голоса"
+
+
+def _tension_pack():
+    from app.motion_assets import load_packs
+
+    pack = load_packs().get(S3D.BED_PACK)
+    if not pack:
+        pytest.skip("пак tension не скачан (tools/fetch_packs.py --only tension)")
+    return pack
+
+
+def test_tension_pack_has_event_sounds_and_beds():
+    from app.motion_assets import pack_item_info, resolve_pack_ref
+
+    pack = _tension_pack()
+    assert pack["kind"] == "sfx" and pack["license"] == "CC0-1.0"
+    refs = [ref for ref, _vol in S3.SFX.values() if ref.startswith("sfx:tension/")]
+    refs += [ref for ref, _under in S3.AMBIENCE.values()]
+    assert len(refs) >= 7
+    for ref in refs:
+        path = resolve_pack_ref(ref)
+        assert path is not None and Path(path).is_file(), ref
+        info = pack_item_info(ref)
+        assert info["source_url"].startswith("https://freesound.org/s/"), ref
+    for ref, _under in S3.AMBIENCE.values():
+        info = pack_item_info(ref)
+        assert info.get("loop") and info.get("lufs") is not None and info["duration"] >= 10, ref
+    beds = S3D.music_beds()
+    assert 4 <= len(beds) <= 6
+    for bed in beds:
+        assert bed["role"] == "music" and bed.get("loop") and bed["lufs"] <= -22
+        assert 30 <= bed["duration"] <= 180 and bed["source_url"].startswith("https://freesound.org/s/")
+    picks = {S3D.pick_bed({"id": w}, {})["file"] for w in range(len(beds))}
+    assert len(picks) == len(beds), "мир — свой фон, по кругу"
+    assert S3D.pick_bed({"id": 5}, {}) == S3D.pick_bed({"id": 5}, {}), "детерминированно"
 
 
 def test_direct_apartment_and_errors():
@@ -187,7 +251,25 @@ def test_story_episode_with_3d_engine(env, monkeypatch):  # noqa: F811
     assert any(str(lay["id"]) == "st_part" for lay in layers) and any(str(lay["id"]) == "st_title" for lay in layers)
     sfx = [lay for lay in layers if lay["type"] == "audio" and lay["props"].get("role") == "sfx"]
     assert sfx, "звуки событий режиссуры"
-    assert not store.get_clip_plan(ep["clip_id"])["render_settings"].get("music_on")
+    assert not store.get_clip_plan(ep["clip_id"])["render_settings"].get("music_on"), "музыка — слоем, не треком"
+    music = [lay for lay in layers if lay["type"] == "audio" and lay["props"].get("role") == "music"]
+    if S3D.music_beds():
+        # Тревожный фон тихо под голосом на всю серию, без заметки «музыка не вшита».
+        assert music and music[0]["start"] == 0 and abs(music[-1]["end"] - tl["duration"]) < 1e-3
+        assert all(m["props"]["asset_id"].startswith("sfx:tension/bed-") for m in music)
+        assert all(m["props"]["mode"] == "track" and m["props"]["gain_db"] < 0 for m in music)
+        assert tl["music_bed"]["ref"] == music[0]["props"]["asset_id"]
+        assert not any("музыка не вшита" in str(n) for n in ep.get("notes") or [])
+        hum = [lay for lay in layers if lay["type"] == "audio" and lay["props"].get("role") == "ambience"]
+        assert hum, "гул кабины и шахты"
+    # music: none — без фона, заметка про музыку площадки как у 2D-катастрофы.
+    ep2 = X.create(store, ids["world_id"], "блэкаут в лифте 2", None, script=LIFT,
+                   options={"engine": "3d", "music": "none"}, run=True)
+    assert ep2["status"] == "done", (ep2["error"], ep2.get("notes"))
+    layers2 = store.get_clip_plan(ep2["clip_id"])["render_settings"]["layers"]
+    assert not [lay for lay in layers2 if lay["type"] == "audio" and lay["props"].get("role") == "music"]
+    assert ep2["timeline"]["music_bed"] is None
+    assert any("музыка не вшита" in str(n) for n in ep2.get("notes") or [])
     # Субтитры — слова сценария.
     words = store.get_clip_plan_subtitles(ep["clip_id"])["words"]
     assert any("блэкаут" in str(w.get("word") or w.get("text")) for w in words)
