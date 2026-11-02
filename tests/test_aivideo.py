@@ -44,6 +44,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "polza_api_key", "")
     # Деньги в тестах — по прайсу ×2 (6 ₽ за кадр nano-banana), независимо от замеров.
     monkeypatch.setattr(PR, "MEASURED_IMAGE_PRICES", {})
+    # Блокинг в этих тестах — 2D-холст (3D-движок — свои тесты ниже и в test_aivideo_blocking3d.py).
+    monkeypatch.setenv("AIV_BLOCKING_ENGINE", "2d")
     client, store = _client(tmp_path, monkeypatch)
     return client, store
 
@@ -2630,3 +2632,99 @@ def test_hailuo_no_endframes_next_start_is_tail_of_previous_video_in_order(paid_
     pixel = cv2.imread(tail_file).mean(axis=(0, 1))  # BGR
     assert pixel[0] > 150 and pixel[2] < 80  # последний кадр (синий), а не начало видео (красное)
     assert Path(vid.last_refs[0]).name == Path(tail_file).name
+
+
+def _png(w: int = 54, h: int = 96) -> bytes:
+    import struct
+    import zlib
+
+    raw = b"".join(b"\x00" + bytes([200, 180, 160]) * w for _ in range(h))
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def test_blocking_3d_engine_renders_frames_and_legend(env, monkeypatch):
+    from app import aivideo_blocking as B
+    from app import aivideo_blocking3d as B3
+
+    _client_, store = env
+    monkeypatch.setenv("AIV_BLOCKING_ENGINE", "auto")
+    real_available = B3.available
+    monkeypatch.setattr(B3, "available", lambda: True)
+    specs: list[dict] = []
+    monkeypatch.setattr(B3, "render_png", lambda spec: specs.append(spec) or _png())
+    pid, sid, out = _state_project(store)
+    shot = V.get_shot(store, out["shots"][1]["id"])
+    plans = B.frame_plans(store, shot)
+    assert {p["engine"] for p in plans.values()} == {"3d"}
+    assert sorted(B.needs_render(store, pid, shot)) == sorted(plans)
+    ref = B.render(store, int(shot["id"]), "start")
+    assert ref["prompt"].startswith("blocking3d:") and len(specs) == 1
+    spec = specs[0]
+    # Те же данные, что у 2D: камера плана, персонаж в позе из клипа, носок в руке — на сокете кисти.
+    mira = next(c for c in spec["characters"] if c["id"] == "mira")
+    assert mira["style"] == "flat" and mira["outfit"]["fit"] == "loose"
+    assert mira["actions"][0]["clip"] == B3.POSE_CLIPS[("standing", "holding")][0]
+    sock = next(o for o in spec["objects"] if o["id"].startswith("prop_"))
+    assert sock["attach"][0]["to"] == "mira:hand_r"
+    assert spec["camera"]["keys"][0]["position"] and spec["camera"]["clamp"] is False
+    # Тот же кадр второй раз не рисуется; конец ещё нужен.
+    assert B.render(store, int(shot["id"]), "start")["id"] == ref["id"] and len(specs) == 1
+    assert B.needs_render(store, pid, shot) == ["end"]
+    assert "= Мира" in B.legend(store, pid, shot) and "mannequin" not in B.legend(store, pid, shot)
+    # Выключатель: AIV_BLOCKING_ENGINE=2d — снова холст.
+    monkeypatch.setenv("AIV_BLOCKING_ENGINE", "2d")
+    monkeypatch.setattr(B3, "available", real_available)
+    assert {p["engine"] for p in B.frame_plans(store, shot).values()} == {"2d"}
+
+
+def test_blocking_3d_failure_falls_back_to_canvas(env, monkeypatch):
+    _need_compositor()
+    from app import aivideo_blocking as B
+    from app import aivideo_blocking3d as B3
+    from app.scene3d import Scene3dError
+
+    _client_, store = env
+    monkeypatch.setattr(B3, "available", lambda: True)
+
+    def boom(spec):
+        raise Scene3dError("нет браузера")
+
+    monkeypatch.setattr(B3, "render_png", boom)
+    pid, sid, out = _state_project(store)
+    ref = B.render(store, int(out["shots"][0]["id"]), "start")
+    assert ref["prompt"].startswith("blocking:")
+
+
+def test_blocking_auto_spec_keeps_places_between_shots(monkeypatch):
+    from app import aivideo_blocking as B
+    from app import aivideo_layout as L
+
+    layout = L.auto_layout("спальня, кровать, прикроватная тумбочка с лампой, окно, ковёр")
+    cast = [{"id": "mira", "action": "ставит кружку"}, {"id": "bip", "action": "стукается бампером о тумбочку"}]
+    st = {"characters": [{"id": "mira", "pose": "standing", "position": "center foreground", "holding": "кружка"},
+                         {"id": "bip", "pose": "lying", "position": "left background"}],
+          "props": [{"name": "кружка", "state": "в руках Миры"}]}
+    en = {"characters": [{"id": "mira", "pose": "standing", "position": "center foreground", "holding": "ничего"},
+                         {"id": "bip", "pose": "lying", "position": "center foreground"}],
+          "props": [{"name": "кружка", "state": "стоит на прикроватной тумбочке"}]}
+    s1 = {"id": 1, "idx": 1, "cast": cast, "location": "bedroom", "action": "Мира ставит кружку на тумбочку",
+          "state": st, "end_state": en, "continues_from_prev": False}
+    s2 = {"id": 2, "idx": 2, "cast": cast, "location": "bedroom", "action": "Бип подкатывается к тумбочке",
+          "state": en, "end_state": en, "continues_from_prev": True}
+    infos = [{"id": "mira", "stand_in": "human"}, {"id": "bip", "stand_in": "disc"}]
+    monkeypatch.setattr(B, "cast_info", lambda store, pid, shot: infos)
+    a = B.auto_spec(None, 1, s1, s2, layout)
+    b = B.auto_spec(None, 1, s2, None, layout, prev=[s1])
+    stand = next(o for o in layout["objects"] if o["type"] == "nightstand")
+    mira_a = {m: next(x for x in a[m]["actors"] if x["id"] == "mira")["pos"] for m in ("start", "end")}
+    # Ставит кружку на тумбочку — стоит у тумбочки и в начале, и в конце.
+    assert mira_a["start"] == mira_a["end"] == B._in_front(stand, 35.0)
+    # Продолжение: начало плана 2 — там, где закончился план 1.
+    assert next(x for x in b["start"]["actors"] if x["id"] == "mira")["pos"] == mira_a["end"]
+    # Конец: Бип у вещи из своего действия («о тумбочку»).
+    assert next(x for x in b["end"]["actors"] if x["id"] == "bip")["pos"] == B._in_front(stand, 25.0)

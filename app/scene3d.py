@@ -39,9 +39,17 @@
                                  "rotate": {"кость": [x, y, z]}}]}],
       "camera": {"keys": [{"t", "position", "target", "fov", "ease", "cut", "rel": id персонажа} |
                           {"t", "follow": id персонажа, "look": [x, y, z] | id объекта, "lookOffset",
-                           "distance": 1.15, "shoulder": 0.24, "side": 1 | -1, "height": 0.95–1.05, "fov"}],
-                 "shake": [{"t", "amp"}], "margin": 0.12}
+                           "distance" (по умолчанию от fov), "framing": 0.3, "side": 1 | -1, "height": 0.95–1.05, "fov"}],
+                 "shake": [{"t", "amp"}], "margin": 0.12, "clamp": true,
+                 "keepInFrame": {"ids": [персонажи], "margin": 0.06}}
     }
+
+Для блокинга (``app/aivideo_blocking3d.py``): ``environment.style: "flat"`` — всё матовое;
+``room.open: ["front"]``, ``room.ceiling: false``, ``room.extend`` — открытая декорация, камера снаружи
+(``camera.clamp: false``); ``objects[].fit: [w, h, d]`` — модель вписана в габарит; персонаж
+``style: "flat"`` (ровный цвет кожи ``skinColor``), ``outfit.fit: "loose"`` (свободная одежда, тело под ней
+спрятано), ``glasses``, ``seat``/``lie`` — высота сиденья/лежанки; поза — кадр клипа:
+``actions: [{"clip", "start": 0, "speed": 0, "offset": секунда}]``.
 
 ``render_scene(spec, out)`` — mp4; ``preview_frames(spec, [t…], dir)`` — PNG нескольких кадров без
 полного рендера; ``contact_sheet(video, out)`` — лист кадров. Командная строка:

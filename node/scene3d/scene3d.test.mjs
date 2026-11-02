@@ -229,6 +229,45 @@ test("браузер: превью-кадры пишутся PNG", { skip: !HAVE
   for (const p of res.previews) assert.ok(existsSync(p.file) && p.luma > 10);
 });
 
+test("браузер: блокинг — модель вписана в габарит, поза из клипа на сиденье, голова в кадре, открытая декорация", { skip: !HAVE && "нет браузера/паков/бандла" }, async () => {
+  const spec = {
+    width: 216, height: 384, fps: 30, duration: 1,
+    environment: { style: "flat", fog: false, toneMapping: "neutral" },
+    room: { width: 3, depth: 3, height: 2.5, open: ["front"], ceiling: false, extend: 6,
+      openings: [{ wall: "back", type: "window", x: 0, y: 0.9, width: 1, height: 1, curtains: { color: "#efe2cf" } }] },
+    lights: [{ type: "hemisphere", intensity: 1 }],
+    objects: [
+      { id: "bed", model: "kenney-furniture/bedDouble.glb", fit: [1.4, 0.5, 2.0], position: [0.6, 0, -0.4] },
+      { id: "bot", primitive: "robot_disc", params: { radius: 0.14, screen: "rim", stripe: "#8fd3c1", antenna: "#ff3b30", face: "innocent" }, position: [-0.8, 0, 0.3] },
+    ],
+    characters: [
+      { id: "sit", model: "quaternius-characters/Superhero_Female_FullBody.gltf", height: 1.6, style: "flat", seat: 0.46,
+        hair: { model: "quaternius-characters/Hair_Long.gltf", color: "#8fd3c1" }, glasses: { color: "#333333" },
+        outfit: { shirt: "#b8a9f0", shorts: "#9a9a9a", fit: "loose" }, animations: ["quaternius-animations/UAL1_Standard.glb"],
+        position: [-0.3, 0, 0.2], yaw: 0, actions: [{ clip: "Sitting_Idle_Loop", start: 0, speed: 0, offset: 0.5 }] },
+    ],
+    // Камера вплотную к голове и за передней стеной — clamp выключен, голову держит keepInFrame.
+    camera: { clamp: false, keepInFrame: { ids: ["sit"], margin: 0.06 }, keys: [{ t: 0, position: [-0.3, 1.1, 0.75], target: [-0.3, 1.0, 0], fov: 40 }] },
+  };
+  const scene = await openScene({ bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader" }, spec);
+  try {
+    const ins = await scene.inspect(0);
+    const bed = ins.objects.bed;
+    assert.ok(Math.abs(bed.max[0] - bed.min[0] - 1.4) < 0.02 && Math.abs(bed.max[1] - bed.min[1] - 0.5) < 0.02 &&
+      Math.abs(bed.max[2] - bed.min[2] - 2.0) < 0.02, `габарит кровати ${JSON.stringify(bed)}`);
+    const sit = ins.characters.sit;
+    assert.ok(sit.max[1] < 1.45, `сидит (верх ${sit.max[1]})`);
+    assert.ok(sit.min[1] > -0.05 && sit.min[1] < 0.1, `ступни на полу (${sit.min[1]})`);
+    // Камера отъехала назад: голова целиком в кадре.
+    assert.ok(ins.camera[2] > 0.8, `камера отъехала: ${ins.camera}`);
+    assert.ok((await scene.warnings()).includes("camera_pulled_back"));
+    const st = await scene.render(0);
+    assert.ok(st.luma > 30);
+  } finally {
+    await scene.close();
+  }
+});
+
 test("браузер: follow-камера — за плечом на высоте роста, смотрит в точку действия, герой сбоку", { skip: !HAVE && "нет браузера/паков/бандла" }, async () => {
   const look = [0.6, 0.45, -0.6];
   const spec = {

@@ -33,6 +33,10 @@ export interface RoomSpec {
   baseboard?: { color?: string; height?: number } | false;
   openings?: Opening[];
   hallway?: { color?: string; light?: string } | false;
+  /** Открытая декорация (блокинг): каких стен нет (обычно front — камера снимает «из-за» неё). */
+  open?: ("back" | "front" | "left" | "right")[];
+  /** Насколько продлить пол и боковые стены к камере (м) — за краем комнаты не видно пустоты. */
+  extend?: number;
 }
 
 export interface RoomBuild {
@@ -67,14 +71,15 @@ function wallFrame(spec: RoomSpec, wall: keyof typeof WALLS): THREE.Group {
   g.rotation.y = WALLS[wall].rotY;
   if (wall === "back") g.position.set(0, 0, -d / 2);
   if (wall === "front") g.position.set(0, 0, d / 2);
-  if (wall === "left") g.position.set(-w / 2, 0, 0);
-  if (wall === "right") g.position.set(w / 2, 0, 0);
+  const ext = spec.extend ?? 0;
+  if (wall === "left") g.position.set(-w / 2, 0, ext / 2);
+  if (wall === "right") g.position.set(w / 2, 0, ext / 2);
   return g;
 }
 
 /** Положение проёма вдоль стены (u) по его мировому x/z. */
-function openingU(o: Opening): number {
-  return o.wall === "back" ? o.x : o.wall === "front" ? -o.x : o.wall === "left" ? -o.x : o.x;
+function openingU(o: Opening, ext = 0): number {
+  return o.wall === "back" ? o.x : o.wall === "front" ? -o.x : o.wall === "left" ? -(o.x - ext / 2) : o.x - ext / 2;
 }
 
 export function buildRoom(spec: RoomSpec): RoomBuild {
@@ -90,7 +95,9 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
   const fl = planksTexture(spec.floor?.color || "#9c7552", 2, spec.floor?.plank ?? 0.16);
   const floorMat = new THREE.MeshStandardMaterial({ map: fl.map, roughnessMap: fl.rough, roughness: 0.85, metalness: 0 });
   materials.floor = floorMat;
-  const floorGeo = new THREE.PlaneGeometry(W + 2 * th, D + 2 * th);
+  const ext = spec.extend ?? 0;
+  const floorGeo = new THREE.PlaneGeometry(W + 2 * th, D + 2 * th + ext);
+  floorGeo.translate(0, -ext / 2, 0); // после поворота −90° по x это +z — к камере
   const uv = floorGeo.attributes.uv as THREE.BufferAttribute;
   const pos = floorGeo.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, pos.getX(i), pos.getY(i)); // UV в метрах
@@ -111,13 +118,14 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     return m;
   };
   for (const wall of ["back", "front", "left", "right"] as const) {
-    const len = wall === "back" || wall === "front" ? W + 2 * th : D;
+    if ((spec.open || []).includes(wall)) continue;
+    const len = wall === "back" || wall === "front" ? W + 2 * th : D + ext;
     const ops = (spec.openings || []).filter((o) => o.wall === wall);
     // Контур стены; двери — вырезы от пола в самом контуре (дыра не может касаться края формы).
     const shape = new THREE.Shape();
     shape.moveTo(-len / 2, 0);
-    for (const o of ops.filter((x) => x.type === "door").sort((a, b) => openingU(a) - openingU(b))) {
-      const u = openingU(o);
+    for (const o of ops.filter((x) => x.type === "door").sort((a, b) => openingU(a, spec.extend ?? 0) - openingU(b, spec.extend ?? 0))) {
+      const u = openingU(o, spec.extend ?? 0);
       shape.lineTo(u - o.width / 2, 0);
       shape.lineTo(u - o.width / 2, o.height);
       shape.lineTo(u + o.width / 2, o.height);
@@ -128,7 +136,7 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     shape.lineTo(-len / 2, H);
     shape.closePath();
     for (const o of ops.filter((x) => x.type === "window")) {
-      const u = openingU(o), y = o.y ?? 0.9;
+      const u = openingU(o, spec.extend ?? 0), y = o.y ?? 0.9;
       const hole = new THREE.Path();
       hole.moveTo(u - o.width / 2, y);
       hole.lineTo(u - o.width / 2, y + o.height);
@@ -149,8 +157,8 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     if (spec.baseboard !== false) {
       const bh = spec.baseboard?.height ?? 0.08;
       const bm = new THREE.MeshStandardMaterial({ color: spec.baseboard?.color || "#f3efe7", roughness: 0.6 });
-      const cuts = ops.filter((o) => o.type === "door").map((o) => [openingU(o) - o.width / 2 - 0.07, openingU(o) + o.width / 2 + 0.07]).sort((a, b) => a[0] - b[0]);
-      const inner = wall === "back" || wall === "front" ? W : D - 0.03;
+      const cuts = ops.filter((o) => o.type === "door").map((o) => [openingU(o, spec.extend ?? 0) - o.width / 2 - 0.07, openingU(o, spec.extend ?? 0) + o.width / 2 + 0.07]).sort((a, b) => a[0] - b[0]);
+      const inner = wall === "back" || wall === "front" ? W : D + ext - 0.03;
       let from = -inner / 2;
       const segs: [number, number][] = [];
       for (const [a, b] of cuts) {
@@ -166,7 +174,7 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     }
 
     for (const o of ops) {
-      const u = openingU(o), y = o.y ?? (o.type === "door" ? 0 : 0.9);
+      const u = openingU(o, spec.extend ?? 0), y = o.y ?? (o.type === "door" ? 0 : 0.9);
       if (o.type === "window") buildWindow(frame, o, u, y, th, H, windows, materials);
       else buildDoor(frame, o, u, th, doors, spec, materials);
     }
@@ -226,9 +234,11 @@ function buildWindow(frame: THREE.Group, o: Opening, u: number, y: number, th: n
   glass.renderOrder = 2;
   frame.add(glass);
   // Вид из окна: плоскость в 3 м за стеной, сама светится, туман её не трогает.
-  const view = new THREE.Mesh(new THREE.PlaneGeometry(o.width * 4.2, o.width * 3.15),
+  // Вид из окна: плоскость в 0.8 м за стеной, не выше стены (сверху комнаты без потолка её не видно).
+  const viewH = Math.max(o.height * 1.6, 2 * Math.min(o.height * 1.4, _H - (y + o.height * 0.55) - 0.02));
+  const view = new THREE.Mesh(new THREE.PlaneGeometry(o.width * 2.6, viewH),
     new THREE.MeshBasicMaterial({ map: nightViewTexture(o.view?.seed ?? 11, { sky: o.view?.sky }), fog: false, toneMapped: true }));
-  view.position.set(u, y + o.height * 0.55, -th - 3);
+  view.position.set(u, y + o.height * 0.55, -th - 0.8);
   frame.add(view);
 
   if (o.curtains !== false) {

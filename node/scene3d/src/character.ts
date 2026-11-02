@@ -30,9 +30,17 @@ export interface CharacterSpec {
   skin?: "light" | "dark";
   skinColor?: string;
   skinTone?: { lighten?: number; saturation?: number; hue?: number };
+  /** «flat» — стиль блокинга: матовые ровные цвета без текстур кожи и рельефа (не реализм тела). */
+  style?: "flat" | "textured";
+  /** Высота сиденья (м): корень опускается/поднимается так, чтобы таз сидел на этой высоте. */
+  seat?: number;
+  /** Высота лежанки (м): лежащий персонаж — на поверхности кровати/дивана. */
+  lie?: number;
+  /** Круглые очки на лице (цвет оправы). */
+  glasses?: { color?: string } | false;
   height?: number;
   hair?: { model: string; color?: string } | false;
-  outfit?: { shirt?: string; shorts?: string; socks?: string; sleeve?: number; shortsLength?: number } | false;
+  outfit?: { shirt?: string; shorts?: string; socks?: string; sleeve?: number; shortsLength?: number; fit?: "loose" | "tight" } | false;
   animations?: string[];
   path?: Key[];
   position?: number[];
@@ -114,8 +122,13 @@ export function adaptClip(clip: THREE.AnimationClip, pelvisRest: THREE.Vector3 |
  */
 type Region = (world: THREE.Vector3, w: (names: string[]) => number) => 0 | 1 | 2;
 
+/**
+ * loose — свободная одежда: тело под ней прячется (hide — треугольники тела, которые закрыла
+ * оболочка), а сама оболочка сглаживается по Таубину без «прилипания» к телу — грудь, пресс и
+ * ягодицы не читаются, остаётся силуэт ткани.
+ */
 function buildShell(body: THREE.SkinnedMesh, inRegion: Region, project: (world: THREE.Vector3, w: (names: string[]) => number) => void,
-  offset: number, color: string, smoothIter = 6): THREE.SkinnedMesh | null {
+  offset: number, color: string, smoothIter = 6, loose = false, hide?: Set<number>): THREE.SkinnedMesh | null {
   const geo = body.geometry;
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const nor = geo.attributes.normal as THREE.BufferAttribute;
@@ -143,6 +156,7 @@ function buildShell(body: THREE.SkinnedMesh, inRegion: Region, project: (world: 
   for (let f = 0; f < index.length; f += 3) {
     const a = index[f], b = index[f + 1], c = index[f + 2];
     if (inside[a] && inside[b] && inside[c] && (inside[a] === 1 || inside[b] === 1 || inside[c] === 1)) tris.push(a, b, c);
+    if (hide && inside[a] === 1 && inside[b] === 1 && inside[c] === 1) hide.add(f / 3);
   }
   const inv = m.clone().invert();
   if (!tris.length) return null;
@@ -188,6 +202,28 @@ function buildShell(body: THREE.SkinnedMesh, inRegion: Region, project: (world: 
   for (const [k, c] of edgeCount) if (c === 1) for (const v of k.split("_")) border[Number(v)] = 1;
   const S = Float32Array.from(P);
   const off = offset / scale;
+  if (loose) {
+    // Сначала наружу на offset, потом Таубин (λ/μ) — сглаживание без усадки; край на месте.
+    for (let j = 0; j < n; j++) for (let k = 0; k < 3; k++) S[j * 3 + k] = P[j * 3 + k] + N[j * 3 + k] * off;
+    const pass = (lam: number) => {
+      const next = Float32Array.from(S);
+      for (let j = 0; j < n; j++) {
+        if (weld[j] !== j || border[j] || !nb[j].size) continue;
+        let x = 0, y = 0, z = 0;
+        for (const q of nb[j]) { x += S[q * 3]; y += S[q * 3 + 1]; z += S[q * 3 + 2]; }
+        const c = nb[j].size;
+        next[j * 3] = S[j * 3] + lam * (x / c - S[j * 3]);
+        next[j * 3 + 1] = S[j * 3 + 1] + lam * (y / c - S[j * 3 + 1]);
+        next[j * 3 + 2] = S[j * 3 + 2] + lam * (z / c - S[j * 3 + 2]);
+      }
+      S.set(next);
+    };
+    for (let it = 0; it < smoothIter; it++) {
+      pass(0.6);
+      pass(-0.63);
+    }
+    smoothIter = 0;
+  }
   for (let it = 0; it < smoothIter; it++) {
     const next = Float32Array.from(S);
     for (let j = 0; j < n; j++) {
@@ -208,7 +244,8 @@ function buildShell(body: THREE.SkinnedMesh, inRegion: Region, project: (world: 
     let x = S[w * 3], y = S[w * 3 + 1], z = S[w * 3 + 2];
     const nx = N[j * 3], ny = N[j * 3 + 1], nz = N[j * 3 + 2];
     const dn = (x - P[j * 3]) * nx + (y - P[j * 3 + 1]) * ny + (z - P[j * 3 + 2]) * nz;
-    const push = Math.max(off, dn + off * 0.35) - dn;
+    // Свободная: тело под ней спрятано — только не глубже трети отступа (край у кожи остаётся снаружи).
+    const push = loose ? Math.max(0, off * 0.35 - dn) : Math.max(off, dn + off * 0.35) - dn;
     out[j * 3] = x + nx * push; out[j * 3 + 1] = y + ny * push; out[j * 3 + 2] = z + nz * push;
   }
   const g = new THREE.BufferGeometry();
@@ -286,6 +323,17 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
   }
   if (spec.skinTone && mat.map?.image) mat.map = toneTexture(mat.map, spec.skinTone);
   if (spec.skinColor) mat.color.set(spec.skinColor);
+  const flat = spec.style === "flat";
+  if (flat) {
+    // Блокинг: ровный матовый цвет кожи без текстуры и карты нормалей — без анатомии.
+    scene.traverse((o: any) => {
+      if (!o.isMesh || !o.material || o.name === "Eyes") return;
+      const m = o.material as THREE.MeshStandardMaterial;
+      const isBody = o === bodyMesh;
+      const c = isBody ? (spec.skinColor || "#f0c8a8") : (spec.hair && spec.hair.color) || "#3a2a20";
+      o.material = new THREE.MeshStandardMaterial({ color: c, roughness: 1, metalness: 0, name: m.name });
+    });
+  }
 
   // Рост: масштаб корня по габариту в позе привязки.
   scene.updateMatrixWorld(true);
@@ -302,8 +350,10 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     const clone = SkeletonUtils.clone(h.scene);
     const meshes = rebindSkinned(clone, bones, bodyMesh.parent!);
     for (const m of meshes) {
-      m.material = (m.material as THREE.Material).clone();
-      if (spec.hair.color) (m.material as THREE.MeshStandardMaterial).color.set(spec.hair.color);
+      m.material = flat
+        ? new THREE.MeshStandardMaterial({ color: spec.hair.color || "#3a2a20", roughness: 0.95, metalness: 0, side: THREE.DoubleSide })
+        : (m.material as THREE.Material).clone();
+      if (spec.hair.color && !flat) (m.material as THREE.MeshStandardMaterial).color.set(spec.hair.color);
     }
   }
 
@@ -320,7 +370,11 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
       const torso = ["pelvis", "spine_01", "spine_02", "spine_03", "clavicle_l", "clavicle_r", "neck_01"];
       // Белые списки костей: вершина в одежде, только если почти весь её вес — на этих костях
       // (кисти и пальцы в позе привязки бывают на высоте груди — по высоте их не отсечь).
-      const hem = waist - 0.08 * k;
+      // Свободная одежда (блокинг): футболка ниже бёдер и далеко от тела, шорты пошире — силуэт ткани.
+      const loose = o.fit === "loose";
+      const hide = loose ? new Set<number>() : undefined;
+      if (loose) bodyMesh.geometry = bodyMesh.geometry.clone(); // своя копия — прячем треугольники под одеждой
+      const hem = waist - (loose ? 0.15 : 0.08) * k;
       const top = waist + 0.025 * k;
       if (o.shorts) {
         const ok = ["pelvis", "spine_01", "spine_02", "thigh_l", "thigh_r"];
@@ -329,7 +383,7 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
           return p.y <= top && p.y >= shortsBottom ? 1 : 2;
         }, (p) => {
           p.y = Math.min(top, Math.max(shortsBottom, p.y));
-        }, 0.008, o.shorts, 0);
+        }, loose ? 0.03 : 0.008, o.shorts, loose ? 40 : 0, loose, hide);
       }
       if (o.shirt) {
         const ok = [...torso, ...arms, "thigh_l", "thigh_r"];
@@ -354,13 +408,21 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
             const d = p.clone().sub(sh).dot(axis);
             if (d > sleeve) p.addScaledVector(axis, sleeve - d);
           }
-        }, 0.017, o.shirt, 14);
+        }, loose ? 0.045 : 0.017, o.shirt, loose ? 60 : 14, loose, hide);
+      }
+      if (hide && hide.size && bodyMesh.geometry.index) {
+        const idx = bodyMesh.geometry.index.array;
+        const keep: number[] = [];
+        for (let f = 0; f < idx.length / 3; f++) if (!hide.has(f)) keep.push(idx[f * 3], idx[f * 3 + 1], idx[f * 3 + 2]);
+        bodyMesh.geometry.setIndex(keep);
       }
       if (o.socks) {
         buildShell(bodyMesh, (_p, w) => (w(["foot_l", "foot_r", "ball_l", "ball_r"]) > 0.35 ? 1 : 0), () => {}, 0.004, o.socks, 2);
       }
     }
   }
+
+  if (spec.glasses) attachGlasses(scene, bones, spec.glasses.color || "#3a3236");
 
   // Анимации: клипы библиотек, приведённые к этому скелету.
   const pelvisRest = bones.pelvis ? bones.pelvis.position.clone() : null;
@@ -455,6 +517,16 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     root.updateMatrixWorld(true);
     applyPoses(t);
     root.updateMatrixWorld(true);
+    // Сидит на стуле/кровати: таз — на высоте сиденья; лежит — нижняя точка тела на лежанке.
+    if (spec.seat !== undefined && bones.pelvis) {
+      const py = bones.pelvis.getWorldPosition(tmpV).y;
+      root.position.y += spec.seat + 0.09 * (height / 1.65) - py;
+      root.updateMatrixWorld(true);
+    } else if (spec.lie !== undefined) {
+      const lowest = ["pelvis", "spine_03", "Head", "calf_l", "calf_r"].reduce((m, n) => Math.min(m, bones[n] ? bones[n].getWorldPosition(tmpV).y : m), Infinity);
+      root.position.y += spec.lie + 0.08 * (height / 1.65) - lowest;
+      root.updateMatrixWorld(true);
+    }
   };
 
   return {
@@ -509,6 +581,45 @@ function toneTexture(src: THREE.Texture, tone: { lighten?: number; saturation?: 
   t.wrapT = src.wrapT;
   t.anisotropy = 8;
   return t;
+}
+
+/** Круглые очки на кости головы: по глазам в позе привязки — две оправы, мостик, дужки. */
+function attachGlasses(scene: THREE.Object3D, bones: Record<string, THREE.Bone>, color: string) {
+  const head = bones.Head;
+  let eyes: THREE.Object3D | null = null;
+  scene.traverse((o: any) => {
+    if (o.isMesh && o.name === "Eyes") eyes = o;
+  });
+  if (!head || !eyes) return;
+  scene.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(eyes, true);
+  const c = box.getCenter(new THREE.Vector3());
+  const w = box.max.x - box.min.x;
+  const r = Math.max(0.014, w * 0.3);
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.2 });
+  const g = new THREE.Group();
+  for (const sx of [-1, 1]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, r * 0.11, 8, 28), mat);
+    ring.position.set(sx * (w / 2 - r * 0.15), 0, 0);
+    g.add(ring);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.08, r * 0.08, r * 4.2, 6), mat);
+    arm.rotation.x = Math.PI / 2;
+    arm.position.set(sx * (w / 2 + r * 0.8), r * 0.15, -r * 2.1);
+    g.add(arm);
+  }
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.09, r * 0.09, Math.max(0.004, w - 2 * r * 1.7), 6), mat);
+  bridge.rotation.z = Math.PI / 2;
+  bridge.position.y = r * 0.25;
+  g.add(bridge);
+  // Мир в позе привязки (лицо в +z) → локально кости головы.
+  g.position.set(c.x, c.y, box.max.z + r * 0.35);
+  g.updateMatrixWorld(true);
+  const local = new THREE.Matrix4().copy(head.matrixWorld).invert().multiply(g.matrixWorld);
+  local.decompose(g.position, g.quaternion, g.scale);
+  head.add(g);
+  g.traverse((o: any) => {
+    if (o.isMesh) o.castShadow = true;
+  });
 }
 
 /** Повернуть кость в мировых осях на долю w кватерниона q (сохраняя положение). */

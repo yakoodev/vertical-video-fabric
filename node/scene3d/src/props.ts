@@ -55,8 +55,10 @@ export function mug(opts: { color?: string; inner?: string; radius?: number; hei
  * Робот-пылесос: белый диск со скруглённым краем, серый бампер спереди, на крышке — тёмный
  * экран-«визор» с лицом (выражения: happy/neutral/dizzy/surprised/sleepy по ключам face).
  */
-export function robotDisc(opts: { color?: string; radius?: number; faceColor?: string } = {}): Prop {
-  const R = opts.radius ?? 0.17, H = 0.075;
+export function robotDisc(opts: { color?: string; radius?: number; height?: number; faceColor?: string; screen?: "visor" | "rim";
+  stripe?: string; antenna?: string | boolean; face?: Face } = {}): Prop {
+  const R = opts.radius ?? 0.17, H = opts.height ?? Math.max(0.06, R * 0.44);
+  const rim = opts.screen === "rim";
   const g = new THREE.Group();
   const white = new THREE.MeshStandardMaterial({ color: opts.color || "#f4f4f2", roughness: 0.3, metalness: 0.05 });
   const grey = new THREE.MeshStandardMaterial({ color: "#8d9198", roughness: 0.55 });
@@ -87,28 +89,58 @@ export function robotDisc(opts: { color?: string; radius?: number; faceColor?: s
   const faceMat = new THREE.MeshStandardMaterial({ color: "#0a0f14", emissive: "#ffffff", emissiveIntensity: 1.6, roughness: 0.2, metalness: 0.1 });
   const faces: Record<string, THREE.Texture> = {};
   const setFace = (f: Face) => {
-    faces[f] ||= faceTexture(f, opts.faceColor);
+    faces[f] ||= faceTexture(f, opts.faceColor, rim);
     if (faceMat.emissiveMap !== faces[f]) {
       faceMat.emissiveMap = faces[f];
       faceMat.map = faces[f];
       faceMat.needsUpdate = true;
     }
   };
-  setFace("happy");
-  // Визор — низкая «таблетка» на крышке: спереди дуга экрана, сзади белый корпус, сверху крышка.
-  const vr = R * 0.6, vh = 0.034;
-  const visor = new THREE.Mesh(new THREE.CylinderGeometry(vr, vr, vh, 48, 1, true, -Math.PI * 0.32, Math.PI * 0.64), faceMat);
-  visor.position.set(0, H + vh / 2 - 0.002, 0);
-  g.add(visor);
-  const back = new THREE.Mesh(new THREE.CylinderGeometry(vr - 0.001, vr - 0.001, vh, 48, 1, true, Math.PI * 0.32, Math.PI * 1.36), white);
-  back.position.copy(visor.position);
-  g.add(back);
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(vr - 0.004, vr, 0.006, 48), white);
-  cap.position.y = H + vh - 0.002 + 0.003;
-  g.add(cap);
-  const led = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.004, 0.01), new THREE.MeshBasicMaterial({ color: "#7ff3ff" }));
-  led.position.set(0, H - 0.008, R * 0.93);
-  g.add(led);
+  setFace(opts.face || "happy");
+  let screenMesh: THREE.Mesh;
+  if (rim) {
+    // Экраны-глаза на передней кромке корпуса (как у Бипа): тёмная дуга с двумя круглыми глазами.
+    const sh = H * 0.5;
+    screenMesh = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.0015, R + 0.0015, sh, 48, 1, true, -Math.PI * 0.3, Math.PI * 0.6), faceMat);
+    screenMesh.position.y = H * 0.5;
+    g.add(screenMesh);
+  } else {
+    // Визор — низкая «таблетка» на крышке: спереди дуга экрана, сзади белый корпус, сверху крышка.
+    const vr = R * 0.6, vh = 0.034;
+    screenMesh = new THREE.Mesh(new THREE.CylinderGeometry(vr, vr, vh, 48, 1, true, -Math.PI * 0.32, Math.PI * 0.64), faceMat);
+    screenMesh.position.set(0, H + vh / 2 - 0.002, 0);
+    g.add(screenMesh);
+    const back = new THREE.Mesh(new THREE.CylinderGeometry(vr - 0.001, vr - 0.001, vh, 48, 1, true, Math.PI * 0.32, Math.PI * 1.36), white);
+    back.position.copy(screenMesh.position);
+    g.add(back);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(vr - 0.004, vr, 0.006, 48), white);
+    cap.position.y = H + vh - 0.002 + 0.003;
+    g.add(cap);
+    const led = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.004, 0.01), new THREE.MeshBasicMaterial({ color: "#7ff3ff" }));
+    led.position.set(0, H - 0.008, R * 0.93);
+    g.add(led);
+  }
+  if (opts.stripe) {
+    // Цветная полоса по ободу (кроме экрана спереди).
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.001, R + 0.001, Math.max(0.008, H * 0.16), 64, 1, true,
+      rim ? Math.PI * 0.32 : 0, rim ? Math.PI * 1.36 : Math.PI * 2), new THREE.MeshStandardMaterial({ color: opts.stripe, roughness: 0.5 }));
+    band.position.y = rim ? H * 0.82 : H * 0.55;
+    g.add(band);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 0.86, Math.max(0.003, H * 0.05), 8, 64), band.material);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = H + 0.001;
+    g.add(ring);
+  }
+  if (opts.antenna) {
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, H * 0.9, 8), new THREE.MeshStandardMaterial({ color: "#9aa0a6", roughness: 0.5 }));
+    stalk.position.set(0, H + H * 0.45, -R * 0.45);
+    g.add(stalk);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.008, R * 0.07), 16, 10),
+      new THREE.MeshStandardMaterial({ color: typeof opts.antenna === "string" ? opts.antenna : "#ff3b30", emissive: typeof opts.antenna === "string" ? opts.antenna : "#ff3b30", emissiveIntensity: 1.2 }));
+    bulb.position.set(0, H + H * 0.9 + 0.004, -R * 0.45);
+    g.add(bulb);
+  }
+  const visor = screenMesh;
   shadowAll(g);
   visor.castShadow = false;
   return {

@@ -151,7 +151,7 @@ export function nightViewTexture(seed = 11, opts: { sky?: string[]; moon?: boole
   return t;
 }
 
-export type Face = "happy" | "neutral" | "dizzy" | "surprised" | "sleepy";
+export type Face = "happy" | "neutral" | "dizzy" | "surprised" | "sleepy" | "innocent" | "sad";
 
 /** Лицо робота на экране: глаза-овалы и рот; dizzy — «> <», surprised — круглые глаза и «о». */
 export function robotFaceCanvas(face: Face, color = "#7ff3ff"): HTMLCanvasElement {
@@ -198,8 +198,64 @@ export function robotFaceCanvas(face: Face, color = "#7ff3ff"): HTMLCanvasElemen
   return c;
 }
 
-export function faceTexture(face: Face, color?: string): THREE.Texture {
-  const t = new THREE.CanvasTexture(robotFaceCanvas(face, color));
+/**
+ * Два больших круглых экрана-глаза (без рта) — для робота с глазами на кромке корпуса.
+ * innocent — огромные зрачки с бликами, happy — дуги «^ ^», dizzy — крестики, sleepy — полоски.
+ */
+export function eyesCanvas(face: Face, color = "#3aa0ff"): HTMLCanvasElement {
+  const [c, g] = canvas(512, 128);
+  g.fillStyle = "#0b1622";
+  g.fillRect(0, 0, 512, 128);
+  for (const cx of [170, 342]) {
+    // Экран глаза — круглое тёмное стекло с ободком.
+    g.fillStyle = "#06101a";
+    g.beginPath();
+    g.arc(cx, 64, 54, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "#2b3846";
+    g.lineWidth = 5;
+    g.stroke();
+    g.fillStyle = color;
+    g.strokeStyle = color;
+    g.lineCap = "round";
+    g.lineWidth = 12;
+    g.shadowColor = color;
+    g.shadowBlur = 18;
+    if (face === "happy") {
+      g.beginPath();
+      g.arc(cx, 78, 26, Math.PI * 1.1, Math.PI * 1.9);
+      g.stroke();
+    } else if (face === "dizzy") {
+      g.beginPath();
+      g.moveTo(cx - 22, 42); g.lineTo(cx + 22, 86); g.moveTo(cx + 22, 42); g.lineTo(cx - 22, 86);
+      g.stroke();
+    } else if (face === "sleepy" || face === "sad") {
+      g.beginPath();
+      g.moveTo(cx - 26, face === "sad" ? 58 : 66); g.lineTo(cx + 26, face === "sad" ? 74 : 66);
+      g.stroke();
+    } else {
+      const r = face === "innocent" ? 40 : face === "surprised" ? 34 : 26;
+      g.beginPath();
+      g.arc(cx, 64, r, 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+      g.fillStyle = "#ffffff";
+      g.beginPath();
+      g.arc(cx - r * 0.35, 64 - r * 0.38, r * (face === "innocent" ? 0.32 : 0.22), 0, Math.PI * 2);
+      g.fill();
+      if (face === "innocent") {
+        g.beginPath();
+        g.arc(cx + r * 0.38, 64 + r * 0.3, r * 0.13, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    g.shadowBlur = 0;
+  }
+  return c;
+}
+
+export function faceTexture(face: Face, color?: string, eyesOnly = false): THREE.Texture {
+  const t = new THREE.CanvasTexture(eyesOnly ? eyesCanvas(face, color) : robotFaceCanvas(face, color));
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
