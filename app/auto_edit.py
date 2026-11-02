@@ -124,6 +124,29 @@ def caption_y_for(settings: dict | None) -> float:
     return 0.72
 
 
+# QA 4 (клип 896): при плейбуке vtuber-story auto_edit поставил свой жёлтый капс-хук 64 px, удар drama-boom на
+# «кульминацию» и 5 наездов (сильнейший с тряской — до панчлайна), агент их не убрал. При активном плейбуке
+# автомонтаж не ставит своих наездов, ударов и whoosh; хук — только если плейбук его так описывает (здесь — его
+# стилем), субтитры — по правилам плейбука. Наезд и звук на панчлайн агент ставит сам по плейбуку.
+PLAYBOOK_AUTO: dict[str, dict] = {
+    "vtuber-story": {
+        # «Заголовок-крючок сверху (2–4 слова, крупно, белый с тёмной обводкой) на первые 8–12 с».
+        "hook": {"color": "#ffffff", "stroke": {"color": "#111111", "width": 14}, "uppercase": False,
+                 "min_size": 92, "end": 10.0},
+        # «Субтитры по 1–2 слова … maxWords: 2, uppercase: false».
+        "captions": {"maxWords": 2, "uppercase": False},
+    },
+}
+
+
+def playbook_rules(playbook: str | None) -> dict | None:
+    """Правила автомонтажа при активном плейбуке: ``{hook?, captions?}`` (пустой dict — плейбук без своих правил
+    для автомонтажа: только субтитры, без хука, наездов и ударов); None — плейбука нет."""
+    if not playbook:
+        return None
+    return PLAYBOOK_AUTO.get(str(playbook).strip().lower(), {})
+
+
 def hook_size(text: str) -> int:
     """Кегль хука по длине: до двух строк в ширине 980 px."""
     n = len(text)
@@ -140,6 +163,7 @@ def build_auto_edit(
     caption_y: float = 0.72,
     anchor: dict | None = None,
     hook_top: float | None = None,
+    playbook: str | None = None,
 ) -> dict:
     """Слои и камера автомонтажа. ``words`` — [{word, start, end}] во времени клипа.
 
@@ -151,20 +175,33 @@ def build_auto_edit(
     from app.agent_tools import safe_text_y
 
     layers: list[dict] = []
-    hook = (title or "").strip().upper()[:60]
+    rules = playbook_rules(playbook)
+    book_hook = (rules or {}).get("hook")
+    hook = (title or "").strip()[:60]
+    if rules is not None and not book_hook:
+        hook = ""  # плейбук без своего хука: заголовок ставит агент по плейбуку, не жёлтый капс CRAFT
+    elif not book_hook:
+        hook = hook.upper()
     if hook:
         # Длинный заголовок мельче: в 96 px он ложится в три строки и упирается в верх кадра.
         hook_props = {"text": hook, "font": "Montserrat", "weight": 900, "size": hook_size(hook),
                       "color": "#ffd600", "uppercase": True, "stroke": {"color": "#000000", "width": 12}, "maxWidth": 980}
+        hook_end = 3.0
+        if book_hook:
+            hook_props.update(color=book_hook["color"], stroke=dict(book_hook["stroke"]),
+                              uppercase=bool(book_hook.get("uppercase")),
+                              size=max(int(book_hook.get("min_size") or 0), hook_size(hook)))
+            hook_end = float(book_hook.get("end") or hook_end)
         layers.append({
-            "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(3.0, duration), "track": 3,
+            "id": "auto_hook", "type": "text", "name": "Хук", "start": 0.0, "end": min(hook_end, duration), "track": 3,
             # Две строки на 0.13 вылезают верхом за безопасную зону 0.10 — центр ниже на высоту текста.
             "x": 0.5, "y": safe_text_y(hook_props, HOOK_Y, **({"top": hook_top} if hook_top else {})),
             "in": {"type": "pop", "duration": 0.35},
             "out": {"type": "fade", "duration": 0.2}, "props": hook_props,
         })
-        layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
-                       "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}})
+        if rules is None:
+            layers.append({"id": "auto_whoosh", "type": "audio", "start": 0.0, "end": min(0.75, duration),
+                           "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}})
 
     # Эмодзи в монтаже владелец не хочет («хуёво выглядят»): акцент — цвет слова.
     # Сильные слова — жёлтым, смысловые (деньги, страх, еда…) — зелёным, не чаще раза в 2 с.
@@ -181,7 +218,8 @@ def build_auto_edit(
             last_key = w["start"]
     if words:
         voices = sorted({w.get("speaker") for w in words if w.get("speaker") and w.get("speaker") != "A"})
-        caps = {"style": style, "maxWords": 3, "highlightWords": highlights[:60]}
+        caps = {"style": style, "maxWords": 3, "highlightWords": highlights[:60],
+                **((rules or {}).get("captions") or {})}
         if voices:
             caps["speakers"] = ["A"]
         layers.append({
@@ -204,7 +242,7 @@ def build_auto_edit(
             })
 
     camera: list[dict] = []
-    moments = punch_moments(words, peaks, duration)
+    moments = punch_moments(words, peaks, duration) if rules is None else []
     strongest = max((m[2] for m in moments), default=0)
     for t, length, score in moments:
         big = score >= strongest - 1e-6
@@ -224,8 +262,12 @@ def build_auto_edit(
     return {"layers": normalize_layers(layers), "camera": normalize_camera(camera)}
 
 
-def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", keep_layers: bool = False) -> dict:
-    """Собрать автомонтаж и записать в настройки клипа (снимок для Ctrl+Z — заранее)."""
+def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", keep_layers: bool = False,
+                    playbook: str | None = None) -> dict:
+    """Собрать автомонтаж и записать в настройки клипа (снимок для Ctrl+Z — заранее).
+
+    ``playbook`` — активный плейбук ИИ-монтажёра: без своих наездов, ударов и whoosh, хук и субтитры — по
+    плейбуку (``PLAYBOOK_AUTO``), камера клипа не трогается."""
     from app.clip_history import snapshot
     from app.clip_waveform import clip_waveform
 
@@ -279,7 +321,7 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
 
     result = build_auto_edit(
         plan.get("title") or "", words, peaks, duration, style=style, caption_y=caption_y, anchor=anchor,
-        hook_top=text_band(plan.get("render_settings"))[0],
+        hook_top=text_band(plan.get("render_settings"))[0], playbook=playbook,
     )
     settings = dict(plan.get("render_settings") or {})
     old_layers = settings.get("layers") or []
@@ -287,9 +329,23 @@ def apply_auto_edit(store: Any, clip_plan_id: int, *, style: str = "hormozi", ke
         kept = [l for l in old_layers if not str(l.get("id", "")).startswith("auto_")]
         result["layers"] = kept + result["layers"]
     snapshot(store, clip_plan_id, "автомонтаж")
+    rules = playbook_rules(playbook)
+    if rules is not None:
+        # Удар и whoosh прежнего автомонтажа при плейбуке тоже убираем; камеру агента не трогаем.
+        result["layers"] = [l for l in result["layers"] if l.get("id") not in ("auto_boom", "auto_whoosh")]
     settings["layers"] = result["layers"]
-    settings["camera"] = result["camera"]
+    if rules is None:
+        settings["camera"] = result["camera"]
     # Субтитры-слой заменяет обычные — выключаем их, чтобы не было двух подписей.
     settings["subs_on"] = False
     store.set_clip_plan_render_settings(clip_plan_id, settings)
-    return {"layers": len(result["layers"]), "camera": len(result["camera"]), "duration": round(duration, 2)}
+    out = {"layers": len(result["layers"]), "camera": len(result["camera"]), "duration": round(duration, 2)}
+    if rules is not None:
+        hook = next((l for l in result["layers"] if l.get("id") == "auto_hook"), None)
+        out["playbook"] = playbook
+        out["note"] = (f"плейбук {playbook}: автомонтаж поставил только субтитры"
+                       + (" и хук в стиле плейбука (белый, крупно, с тёмной обводкой, "
+                          f"до {float(hook['end']):g} с — перепиши текст крючком)" if hook else "")
+                       + "; своих наездов, ударов и whoosh не ставил, камеру не трогал. Паузы и «эээ» — find_noises → "
+                       "apply_cuts; наезд и звук на панчлайн — по плейбуку (set_camera punch_at, слой audio at_word)")
+    return out

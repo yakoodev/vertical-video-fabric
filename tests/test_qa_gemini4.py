@@ -181,3 +181,61 @@ def test_add_layers_reports_the_word_under_the_sound(tmp_path, monkeypatch):
     assert "«это»" in out["on_words"][0] and "«о*********,»" in out["on_words"][1]
     starts = sorted(float(l["start"]) for l in store.get_clip_plan(plan["id"])["render_settings"]["layers"])
     assert starts == [25.72, 29.12]
+
+
+# ------------------------------------------------------------------ 3. автомонтаж при активном плейбуке
+
+
+def _speech(text: str, start: float = 0.5, step: float = 0.4):
+    out, t = [], start
+    for w in text.split():
+        out.append({"word": w, "start": round(t, 2), "end": round(t + 0.3, 2)})
+        t += step
+    return out
+
+
+def test_auto_edit_under_vtuber_story_has_no_own_punches_and_white_hook():
+    from app.auto_edit import build_auto_edit
+
+    words = _speech("ребят я сижу думаю огромная какая-то лезет по монитору а это в клипе я обосралась! " * 3)
+    duration = words[-1]["end"] + 1
+    plain = build_auto_edit("Таракан на экране?!", words, [0.3] * 200, duration)
+    assert plain["camera"] and any(l["id"] == "auto_boom" for l in plain["layers"])  # без плейбука — как было
+
+    book = build_auto_edit("Таракан на экране?!", words, [0.3] * 200, duration, playbook="vtuber-story")
+    ids = {l["id"] for l in book["layers"]}
+    assert book["camera"] == [] and "auto_boom" not in ids and "auto_whoosh" not in ids
+    hook = next(l for l in book["layers"] if l["id"] == "auto_hook")
+    props = hook["props"]
+    assert props["color"] == "#ffffff" and not props["uppercase"] and props["size"] >= 90
+    assert props["stroke"]["color"] == "#111111" and props["text"] == "Таракан на экране?!"
+    assert 8.0 <= hook["end"] <= 12.0
+    caps = next(l for l in book["layers"] if l["type"] == "captions")
+    assert caps["props"]["maxWords"] == 2 and caps["props"]["uppercase"] is False
+
+    other = build_auto_edit("Таракан", words, [0.3] * 200, duration, playbook="meme-insert")
+    assert other["camera"] == [] and {l["type"] for l in other["layers"]} == {"captions"}  # без своего хука
+
+
+def test_auto_edit_tool_takes_playbook_from_context_and_keeps_agent_camera(tmp_path, monkeypatch):
+    from test_clip_spec import _store_plan
+
+    store, plan = _store_plan(tmp_path, monkeypatch, [])
+    camera = [{"t": 3.0, "zoom": 1.0}, {"t": 3.2, "zoom": 1.15}]
+    store.set_clip_plan_render_settings(plan["id"], {"camera": camera, "layers": [
+        {"id": "auto_boom", "type": "audio", "start": 2.0, "end": 3.0,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg"}}]})
+    store.set_clip_plan_subtitles(plan["id"], {"lines": [], "words": _speech("это огромный таракан на мониторе " * 4)})
+
+    def no_waveform(*a, **k):
+        raise RuntimeError("нет волны")
+
+    monkeypatch.setattr("app.clip_waveform.clip_waveform", no_waveform)
+    ctx = ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST, playbook="vtuber-story")
+    out, ok = run_tool(ctx, "auto_edit", {})
+    assert ok, out
+    assert out["playbook"] == "vtuber-story" and "наездов" in out["note"]
+    render = store.get_clip_plan(plan["id"])["render_settings"]
+    assert [round(k["t"], 2) for k in render["camera"]] == [3.0, 3.2]  # камера агента на месте
+    assert not [l for l in render["layers"] if l["id"] in ("auto_boom", "auto_whoosh")]
+

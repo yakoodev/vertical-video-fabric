@@ -1878,7 +1878,7 @@ def h_auto_edit(ctx: ToolContext, args: dict) -> dict:
 
     ctx.before_change()
     return apply_auto_edit(ctx.store, ctx.plan_id, style=str(args.get("style") or "hormozi"),
-                           keep_layers=args.get("keep_layers", True) is not False)
+                           keep_layers=args.get("keep_layers", True) is not False, playbook=ctx.playbook)
 
 
 def h_compose_cover(ctx: ToolContext, args: dict) -> dict:
