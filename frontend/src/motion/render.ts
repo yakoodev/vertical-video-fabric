@@ -116,11 +116,33 @@ export function holdFinalLayers(layers: Layer[], duration: number | undefined): 
 
 /** Слои, видимые в момент `t`, в порядке рисования: дорожка снизу вверх, внутри — по списку. */
 export function visibleLayers(layers: Layer[], t: number): Layer[] {
-  return layers
-    .map((layer, index) => ({ layer, index }))
-    .filter(({ layer }) => isLayerActive(layer, t))
-    .sort((a, b) => (a.layer.track ?? 0) - (b.layer.track ?? 0) || a.index - b.index)
-    .map(({ layer }) => layer);
+  return liftOverGrayscale(
+    layers
+      .map((layer, index) => ({ layer, index }))
+      .filter(({ layer }) => isLayerActive(layer, t))
+      .sort((a, b) => (a.layer.track ?? 0) - (b.layer.track ?? 0) || a.index - b.index)
+      .map(({ layer }) => layer),
+  );
+}
+
+/** Слои, которые ч/б не красит: субтитры (подсветка слова остаётся жёлтой) и плашка канала. */
+const ABOVE_GRAYSCALE = new Set<Layer["type"]>(["captions", "nameplate"]);
+
+/**
+ * Ч/б (fx grayscale) красит всё, что ниже по дорожкам, — и субтитры на дорожке 0 (QA 02.11, клип 895:
+ * жёлтая подсветка слова на панчлайне стала серой). Субтитры и плашку ниже последнего ч/б рисуем сразу
+ * над ним, в прежнем порядке; остальное — как было.
+ */
+export function liftOverGrayscale(visible: Layer[]): Layer[] {
+  let last = -1;
+  visible.forEach((layer, i) => {
+    if (layer.type === "fx" && !layer.behind && (layer as FxLayer).props?.kind === "grayscale") last = i;
+  });
+  if (last < 0) return visible;
+  const lifted = visible.slice(0, last).filter((l) => ABOVE_GRAYSCALE.has(l.type) && !l.behind);
+  if (!lifted.length) return visible;
+  const rest = visible.slice(0, last + 1).filter((l) => !lifted.includes(l));
+  return [...rest, ...lifted, ...visible.slice(last + 1)];
 }
 
 /**

@@ -1078,8 +1078,39 @@ _LEAK_PREFIX_RE = re.compile(r"^[^А-Яа-яЁё\s]{1,12}?(?=[А-ЯЁ])")
 
 
 def _strip_leaks(text: str) -> str:
-    cleaned = _MARKER_RE.sub("", text).lstrip(" .\n")
+    cleaned = strip_monologue(_MARKER_RE.sub("", text)).lstrip(" .\n")
     return _LEAK_PREFIX_RE.sub("", cleaned, count=1).strip()
+
+
+_CYR_RE = re.compile(r"[А-Яа-яЁё]")
+_SENTENCE_END_RE = re.compile(r"[.!?:…}\]]\s*$")
+MONOLOGUE_MIN_LETTERS = 25  # меньше — не монолог («OK, », «`set_layout` », «Mura »)
+REPORT_MIN_CYRILLIC = 20
+
+
+def strip_monologue(text: str) -> str:
+    """Отрезать англоязычное размышление перед русским отчётом (QA 02.11, клип 895: Gemini прислал
+    рассуждение обычным текстом — «herence} The frame looks nice… I'll write the final report.Готово!…»).
+
+    Режем, только если всё до первой русской буквы — законченные фразы не по-русски (≥ 25 латинских
+    букв, ≥ 3 слов, кончается точкой/«!»/«?»/«:»/скобкой), а после — нормальный русский текст. «OK, сделал»,
+    «`set_layout` поставил», «Virtual Insanity — это песня» остаются как есть."""
+    match = _CYR_RE.search(text or "")
+    if not match or match.start() == 0:
+        return text
+    start = match.start()
+    # Начало русского слова/фразы: «**Готово**», «"Хук"», «1. Хук» — служебные знаки перед буквой тоже его.
+    while start > 0 and not text[start - 1].isspace() and not text[start - 1].isalpha() and text[start - 1] not in ".!?:}]":
+        start -= 1
+    head, tail = text[:start], text[start:]
+    latin = sum(ch.isascii() and ch.isalpha() for ch in head)
+    if latin < MONOLOGUE_MIN_LETTERS or len(head.split()) < 3 or not _SENTENCE_END_RE.search(head):
+        return text
+    letters = sum(ch.isalpha() for ch in tail)
+    cyrillic = len(_CYR_RE.findall(tail))
+    if cyrillic < REPORT_MIN_CYRILLIC or not letters or cyrillic / letters < 0.6:
+        return text
+    return tail.lstrip()
 
 
 def _clean_reply(text: str) -> str:

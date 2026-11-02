@@ -1271,7 +1271,13 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
     if "montage" in wanted:
         findings += montage_findings(rs, duration)
         if layers_fmt == "9:16":
-            findings += image_card_findings(store, layers, duration)
+            try:
+                from app.agent_tools import avatar_face_zones
+
+                faces = avatar_face_zones(store, int(clip_plan_id), rs)
+            except Exception:  # noqa: BLE001 - без лица аватара — прежние проверки
+                faces = []
+            findings += image_card_findings(store, layers, duration, faces=faces)
 
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
@@ -1382,17 +1388,92 @@ def _hook_layers(layers: list[dict]) -> list[dict]:
         "hook" in str(l.get("id") or "").lower() or (_num(l.get("start")) < 1.0 and _num(l.get("y"), 0.5) < 0.32))]
 
 
+FACE_COVER_SHARE = 0.15      # картинка закрывает столько лица аватара — уже брак
+FULL_INSERT_MAX_SEC = 3.0    # вставка во весь кадр поверх аватара — не дольше
+CARD_MAX_SHARE = 0.4         # карточка рядом с лицом — не шире этой доли кадра
+CARD_MARGIN = 40.0           # px от краёв кадра, лица, хука и субтитров
+
+
+def _rect_overlap(a: tuple, b: tuple) -> float:
+    ix, iy = min(a[2], b[2]) - max(a[0], b[0]), min(a[3], b[3]) - max(a[1], b[1])
+    return ix * iy if ix > 0 and iy > 0 else 0.0
+
+
+def _captions_band(layers: list[dict], a: float, b: float) -> tuple | None:
+    """Полоса субтитров-слоя (px) на отрезке a..b: y слоя ± полторы строки."""
+    for layer in layers:
+        if layer.get("type") != "captions" or layer.get("hidden"):
+            continue
+        if min(b, _num(layer.get("end"), b)) - max(a, _num(layer.get("start"))) <= 0:
+            continue
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        half = 1.5 * _num(props.get("size"), 80.0)
+        cy = _num(layer.get("y"), 0.72) * H
+        return (0.0, cy - half, W, cy + half)
+    return None
+
+
+def card_spot(rect: tuple, avoid: list[tuple]) -> dict | None:
+    """Место карточки ``rect`` (px) рядом с текущим, где она не трогает ``avoid`` (лицо, хук, субтитры):
+    ``{x, y, w_px}`` (центр — доли кадра, ширина ≤ 40 % кадра) или None — места нет."""
+    w, h = rect[2] - rect[0], rect[3] - rect[1]
+    if w <= 0 or h <= 0:
+        return None
+    k = min(1.0, CARD_MAX_SHARE * W / w)
+    w, h = w * k, h * k
+    cx0, cy0 = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+    best = None
+    for shrink in (1.0, 0.8, 0.65):
+        cw, ch = w * shrink, h * shrink
+        if cw < IMAGE_MIN_VISIBLE_SHARE * W * 0.8:
+            break
+        for ix in range(41):
+            cx = cw / 2 + CARD_MARGIN + (W - cw - 2 * CARD_MARGIN) * ix / 40
+            for iy in range(61):
+                cy = ch / 2 + 0.1 * H + (0.8 * H - ch) * iy / 60
+                box = (cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2)
+                if any(_rect_overlap(box, (z[0] - CARD_MARGIN / 2, z[1] - CARD_MARGIN / 2, z[2] + CARD_MARGIN / 2,
+                                           z[3] + CARD_MARGIN / 2)) > 0 for z in avoid):
+                    continue
+                d = (cx - cx0) ** 2 + (cy - cy0) ** 2
+                if best is None or d < best[0]:
+                    best = (d, cx, cy, cw)
+        if best:
+            break
+    if not best:
+        return None
+    return {"x": round(best[1] / W, 2), "y": round(best[2] / H, 2), "w_px": int(best[3])}
+
+
+def _natural_size(store: Any, ref: Any) -> tuple | None:
+    if store is None or not str(ref or "").isdigit():
+        return None
+    try:
+        asset = store.get_montage_asset(int(ref))
+    except Exception:  # noqa: BLE001
+        return None
+    w, h = asset.get("width"), asset.get("height")
+    return (int(w), int(h)) if w and h else None
+
+
 def image_card_findings(store: Any, layers: list[dict], duration: float | None = None,
-                        only_ids: set[str] | None = None) -> list[dict]:
-    """Картинка-карточка под хуком и мелкая картинка (QA 02.11, клип 892: кровать ≈300 px под самым хуком,
-    почти не читается). Полнокадровые вставки, наклейки из паков и картинки за видео не проверяем."""
+                        only_ids: set[str] | None = None, faces: list[dict] | None = None) -> list[dict]:
+    """Картинка-карточка под хуком, на лице аватара и мелкая картинка.
+
+    QA 02.11 (клип 892): кровать ≈300 px под самым хуком, почти не читается. QA 3 (клип 895): карточки
+    500 px на y 0.40 закрыли лицо Муры, первая — ещё и хук; проверка считала картинку квадратом (размер
+    файла не брала), а лицо не знала. ``faces`` — где лицо аватара (``agent_tools.avatar_face_zones``,
+    ``[{t0, t1, rect}]`` px): картинка/видео не должны закрывать его больше ``FACE_COVER_SHARE``; вставка
+    во весь кадр — не дольше 3 с. Подсказка — место у края кадра (≤ 40 % ширины) мимо лица, хука и
+    субтитров. Наклейки из паков и картинки за видео не проверяем."""
     from app.promo_lint import layer_rect
 
     out: list[dict] = []
     visible = [l for l in layers if isinstance(l, dict) and not l.get("hidden")]
     hooks = _hook_layers(visible)
     for layer in visible:
-        if layer.get("type") != "image" or layer.get("behind") or only_ids is not None and str(layer.get("id")) not in only_ids:
+        kind = layer.get("type")
+        if kind not in ("image", "video") or layer.get("behind") or only_ids is not None and str(layer.get("id")) not in only_ids:
             continue
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
         ref = props.get("asset_id") or props.get("src")
@@ -1401,22 +1482,68 @@ def image_card_findings(store: Any, layers: list[dict], duration: float | None =
         start, end = _num(layer.get("start")), _num(layer.get("end"), duration or 0.0)
         if end <= start:
             continue
+        natural = _natural_size(store, props.get("asset_id"))
+        if natural:
+            layer = {**layer, "_natural": natural}  # пропорция файла: вертикальная карточка — не квадрат
         mid = (start + end) / 2
         rect = layer_rect(layer, mid)
         if not rect:
             continue
         width = rect[2] - rect[0]
-        if width >= IMAGE_FULL_SHARE * W:
+        lid = str(layer.get("id") or kind)
+        what = "картинка" if kind == "image" else "видео"
+        full = width >= IMAGE_FULL_SHARE * W
+        hook_boxes: list[tuple] = []
+        for hook in hooks:
+            a, b = max(start, _num(hook.get("start"))), min(end, _num(hook.get("end"), duration or 0.0))
+            if b - a >= 0.1:
+                box = layer_rect(hook, (a + b) / 2)
+                if box:
+                    hook_boxes.append(box)
+        for zone in faces or []:
+            a, b = max(start, float(zone["t0"])), min(end, float(zone["t1"]))
+            if b - a < 0.1:
+                continue
+            face = tuple(zone["rect"])
+            if full:
+                if end - start > FULL_INSERT_MAX_SEC + 0.05:
+                    out.append(_finding("montage", "warn",
+                                        f"{what} {lid} во весь кадр {end - start:.1f} с закрывает аватара",
+                                        f"вставка во весь кадр — не дольше {FULL_INSERT_MAX_SEC:g} с (update_layer end) "
+                                        "или карточкой у края кадра (≤ 40 % ширины)", t=start, until=end, layer=lid))
+                break
+            box = layer_rect(layer, (a + b) / 2)
+            face_area = max(1.0, (face[2] - face[0]) * (face[3] - face[1]))
+            if not box or _rect_overlap(box, face) / face_area < FACE_COVER_SHARE:
+                continue
+            avoid = [face, *hook_boxes]
+            band = _captions_band(visible, a, b)
+            if band:
+                avoid.append(band)
+            spot = card_spot(box, avoid)
+            full_fix = (f"вставка во весь кадр не дольше {FULL_INSERT_MAX_SEC:g} с (props.w 1080 или add_insert "
+                        "full — на размытой подложке)")
+            fix = (f"поставь мимо лица, хука и субтитров: x={spot['x']} y={spot['y']}, props.w ≤ {spot['w_px']} "
+                   f"(≤ 40 % кадра); или {full_fix}" if spot else
+                   f"аватар во весь кадр — у края места мимо лица нет: {full_fix}, или картинка шире и ниже "
+                   "(между лицом и субтитрами)")
+            out.append(_finding("montage", "warn",
+                                f"{what} {lid} на {a:.1f}–{b:.1f} с закрывает лицо аватара "
+                                f"({_rect_overlap(box, face) / face_area:.0%} лица)", fix, t=a, until=b, layer=lid))
+            break
+        if full:
             continue
-        lid = str(layer.get("id") or "image")
-        share = 1.0
-        if store is not None and str(ref or "").isdigit():
-            try:
-                share = visible_width_share(store.get_montage_asset(int(ref))["file_path"])
-            except Exception:  # noqa: BLE001
-                share = 1.0
-        seen = width * share
-        if seen < IMAGE_MIN_VISIBLE_SHARE * W:
+        if kind != "image":
+            seen = None
+        else:
+            share = 1.0
+            if store is not None and str(ref or "").isdigit():
+                try:
+                    share = visible_width_share(store.get_montage_asset(int(ref))["file_path"])
+                except Exception:  # noqa: BLE001
+                    share = 1.0
+            seen = width * share
+        if seen is not None and seen < IMAGE_MIN_VISIBLE_SHARE * W:
             need = IMAGE_MIN_VISIBLE_SHARE * W / max(1.0, seen) * _num(layer.get("scale"), 1.0)
             out.append(_finding("montage", "warn",
                                 f"картинка {lid} видна ≈{seen:.0f} px ({seen / W:.0%} ширины кадра"
@@ -1432,11 +1559,18 @@ def image_card_findings(store: Any, layers: list[dict], duration: float | None =
             if not box or not hook_box:
                 continue
             if box[0] < hook_box[2] and hook_box[0] < box[2] and box[1] < hook_box[3] and hook_box[1] < box[3]:
+                fix = (f"опусти картинку ниже хука (y ≥ {(hook_box[3] + (box[3] - box[1]) / 2 + 30) / H:.2f}) "
+                       "или поставь её после ухода хука")
+                face_now = [tuple(z["rect"]) for z in faces or [] if min(b, float(z["t1"])) - max(a, float(z["t0"])) > 0]
+                if face_now:
+                    # Ниже хука у аватара — лицо: место мимо хука, лица и субтитров.
+                    band = _captions_band(visible, a, b)
+                    spot = card_spot(box, [hook_box, *face_now, *([band] if band else [])])
+                    fix = (f"поставь мимо хука и лица: x={spot['x']} y={spot['y']}, props.w ≤ {spot['w_px']}, или после "
+                           "ухода хука" if spot else "мимо хука и лица места нет — поставь после ухода хука")
                 out.append(_finding("montage", "warn",
-                                    f"картинка {lid} на {a:.1f}–{b:.1f} с лежит под хуком {hook.get('id')} — "
-                                    "текст на картинке не читается, картинка закрыта текстом",
-                                    f"опусти картинку ниже хука (y ≥ {(hook_box[3] + (box[3] - box[1]) / 2 + 30) / H:.2f}) "
-                                    "или поставь её после ухода хука", t=a, until=b, layer=lid))
+                                    f"{what} {lid} на {a:.1f}–{b:.1f} с лежит под хуком {hook.get('id')} — "
+                                    "хук закрыт картинкой, картинка — текстом", fix, t=a, until=b, layer=lid))
                 break
     return out
 

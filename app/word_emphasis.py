@@ -41,6 +41,38 @@ you we they he she i me my your our their his her its just like really very what
 how there here then than not no yes do does did have has had will would can could should
 """.split())
 
+# Слабые слова: местоимения в формах, «видите/знаешь/короче»-связки, «реально/прям» — длинные, но
+# не удар (QA 02.11, клип 895: auto выделил «какая-то» и «видите»). Плюс неопределённые «-то/-нибудь».
+WEAK_WORDS = frozenset("""
+этого этому этой этим этих этом того тому той тем тех том такое такого такому такую таким таких
+какое какого какому какую каким каких каком чего кого кому чему чем ком ничего никого никто ничто
+нечто некто него нему ней ним них нём нем неё нее собой сама сам сами само самый самая самое самые
+свою своего своему своим своих мою моего моему моим моих твою твоего твоих нашу нашего наших вашу
+вашего ваших которого которой которую которым которых котором всегда никогда иногда опять снова
+прям прямо реально вроде наверное кажется видимо походу будто словно типо
+видите видишь видим видела видел видели смотрите смотри смотришь знаешь знаете знаю понимаешь
+понимаете понимаю слушай слушайте говорю говорит говорят говорила говорил сказала сказал думаю
+думала думал хотела хотел хотят могла мог могут стала стал стали была буду будем будут
+есть ещё блин ладно окей короч вообще-то
+something anything nothing someone anyone everyone thing things stuff kind sort literally actually
+basically gonna wanna know see look think mean guess
+""".split())
+_WEAK_SUFFIXES = ("-то", "-нибудь", "-либо", "-таки")
+_WEAK_PREFIXES = ("кое-",)
+
+
+def weak_word(word: Any) -> bool:
+    """Служебное, местоимение или неопределённое слово («какая-то», «кто-нибудь», «кое-что») —
+    в «ключевые» не годится, даже если длинное."""
+    bare = _bare(word)
+    if not bare:
+        return True
+    if bare in STOPWORDS or bare in WEAK_WORDS:
+        return True
+    if bare.endswith(_WEAK_SUFFIXES) or bare.startswith(_WEAK_PREFIXES):
+        return True
+    return False
+
 _NUMBER = re.compile(r"\d")
 _LETTERS = re.compile(r"[^\wё-]+", re.IGNORECASE)
 
@@ -76,7 +108,7 @@ def key_word_score(word: str) -> float:
         return 0.0
     if _NUMBER.search(raw):
         return 100.0 + len(bare)  # цифры, суммы, «100%» — всегда главное в строке
-    if bare in STOPWORDS:
+    if weak_word(raw):
         return 0.0
     score = 0.0
     if raw.endswith("!") or raw.endswith("!?") or raw.endswith("?!"):
@@ -139,8 +171,21 @@ def gemini_pick(lines: list[list[dict]], client: Any = None, model: str | None =
             out.append(words[int(item["word"])]["i"])
         except (KeyError, TypeError, ValueError, IndexError):
             continue
+    out = drop_weak(out, [w for line in lines for w in line])
     if not out:
         raise RuntimeError("Gemini ничего не выбрал")
+    return out
+
+
+def drop_weak(picked: list[int], words: list[dict]) -> list[int]:
+    """Без слабых слов (``weak_word``), что бы ни выбрал Gemini: число и «!» остаются."""
+    by_i = {int(w["i"]): w for w in words if isinstance(w, dict) and "i" in w}
+    out = []
+    for i in picked:
+        raw = str((by_i.get(int(i)) or {}).get("word") or "")
+        if i in by_i and weak_word(raw) and not _NUMBER.search(raw) and not raw.rstrip().endswith("!"):
+            continue
+        out.append(i)
     return out
 
 
