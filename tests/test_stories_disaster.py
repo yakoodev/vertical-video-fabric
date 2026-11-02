@@ -194,7 +194,7 @@ def test_series_parts_previously_and_hook_continuation(env):
     first = X.create(store, world["id"], "блэкаут, часть 1", run=True, client=FakeGemini(DISASTER))
     assert first["status"] == "done", first["error"]
     second_story = copy.deepcopy(DISASTER)
-    second_story["part_title"] = "ЛИФТ ПОЕХАЛ САМ"
+    second_story["part_title"] = "Часть 3 — лифт поехал сам, хотя света в доме нет"  # длиннее HUD, с номером
     fake = FakeGemini(second_story)
     second = X.create(store, world["id"], "что было за дверью", run=True, client=fake)
     assert second["status"] == "done", second["error"]
@@ -206,7 +206,8 @@ def test_series_parts_previously_and_hook_continuation(env):
     assert prev["next_part_title"] == "ОНА ОСТАЛАСЬ НАВЕРХУ"
     assert "ЧАСТЬ 2 — ОНА ОСТАЛАСЬ НАВЕРХУ" in series["continue_from"] and "чужие ботинки" in series["continue_from"]
     layers = _layers(store, second["clip_id"])
-    assert next(l for l in layers if l["id"] == "st_part")["props"]["text"] == "ЧАСТЬ 3 — ЛИФТ ПОЕХАЛ САМ"
+    assert (next(l for l in layers if l["id"] == "st_part")["props"]["text"]
+            == "ЧАСТЬ 3 — ЛИФТ ПОЕХАЛ САМ, ХОТЯ СВЕТА В ДОМЕ НЕТ")
     assert next(l for l in layers if l["id"] == "st_title_part")["props"]["text"] == "ЧАСТЬ 2"
     # Номер части можно задать; отменённая часть не занимает номер; обычная история — не часть сериала.
     fifth = S.create_episode(store, world["id"], "часть пять", options={"part": 5})

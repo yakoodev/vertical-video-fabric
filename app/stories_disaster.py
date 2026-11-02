@@ -283,7 +283,9 @@ def finish_script(script: dict, data: dict, ep: dict) -> dict:
     script["text"] = " ".join(s["text"] for s in sentences)
     script["format"] = FORMAT
     script["part"] = part_of(ep)
-    script["part_title"] = hud_text(P._text(data.get("part_title"), 60).replace("—", " ")).strip(" -—")[:48]
+    # Крючок следующей части капсом, без номера (сценарист иногда пишет «ЧАСТЬ 2 — …» сам).
+    part_title = " ".join(P._text(data.get("part_title"), 80).split()).upper()
+    script["part_title"] = re.sub(r"^ЧАСТЬ\s*\d+\s*[—–-]?\s*", "", part_title).strip(" .-—–")[:48].strip()
     from app.cover_variants import clean_hook
 
     script["hook_words"] = " ".join(clean_hook(data.get("hook_words")).split()[:4]).upper()

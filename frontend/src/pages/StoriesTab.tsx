@@ -154,7 +154,9 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
   const [form, setForm] = useState(() => initial(world.format ?? "story"));
   const [lo, hi] = STORY_DURATIONS[form.format];
   const disaster = form.format === "disaster";
-  const nextPart = o.episodes.filter((e) => e.world_id === world.id && e.options?.format === "disaster" && e.status !== "cancelled").length + 1;
+  // Как на сервере (stories_disaster.next_part): наибольший номер части мира + 1, отменённые не считаются.
+  const nextPart =
+    Math.max(0, ...o.episodes.filter((e) => e.world_id === world.id && e.options?.format === "disaster" && e.status !== "cancelled").map((e) => e.options.part ?? 0)) + 1;
   const create = useMutation({
     mutationFn: () => storiesApi.createEpisode(world.id, form),
     onSuccess: () => {
