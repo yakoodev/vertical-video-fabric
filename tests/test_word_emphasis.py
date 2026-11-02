@@ -51,6 +51,22 @@ def test_levels_and_heuristic_pick():
     assert pick_heuristic(lines) == [1, 4, 6]  # самое длинное; «!»; число; служебные — ничего
 
 
+def test_auto_emphasis_skips_weak_words():
+    # QA 02.11 (клип 895): auto выделил «какая-то» и «видите» — длинные, но пустые слова.
+    from app.word_emphasis import drop_weak, weak_word
+
+    for weak in ("какая-то", "Кто-нибудь", "кое-что", "видите?", "этого", "реально", "какую", "something"):
+        assert weak_word(weak) and key_word_score(weak) == 0, weak
+    for strong in ("таракан", "общаге", "обосралась!", "монитору", "100"):
+        assert not weak_word(strong) and key_word_score(strong) > 0, strong
+    lines = [[{"i": 0, "word": "меня"}, {"i": 1, "word": "какая-то"}, {"i": 2, "word": "лезет"}],
+             [{"i": 3, "word": "его"}, {"i": 4, "word": "видите"}],
+             [{"i": 5, "word": "вот"}, {"i": 6, "word": "таракана"}]]
+    assert pick_heuristic(lines) == [2, 6]
+    flat = [w for line in lines for w in line]
+    assert drop_weak([1, 4, 6], flat) == [6]  # выбор Gemini тоже чистится
+
+
 def test_emphasize_words_tool_marks_words_and_survives_edits(tmp_path, monkeypatch):
     store, _service, plan, _preset = _plan(tmp_path, monkeypatch)
     ctx = _ctx(store, plan["id"])
