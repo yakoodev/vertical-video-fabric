@@ -140,7 +140,8 @@ class Engine {
   probe!: CanvasRenderingContext2D;
   fill: THREE.PointLight | null = null;
   post: PostFX | null = null;
-  cube: { cam: THREE.CubeCamera; rt: THREE.WebGLCubeRenderTarget } | null = null;
+  cube: { cam: THREE.CubeCamera; rt: THREE.WebGLCubeRenderTarget; pmrem: THREE.PMREMGenerator; env: THREE.WebGLRenderTarget | null;
+    sig: string } | null = null;
   fx: { light: THREE.Light; spec: LightSpec; beam?: THREE.Mesh; halo?: THREE.Sprite }[] = [];
   focus = 2;
   dof = 0;
@@ -251,11 +252,11 @@ class Engine {
       });
     }
     if (env.reflections) {
-      const rt = new THREE.WebGLCubeRenderTarget(env.reflections.size ?? 128, { type: THREE.HalfFloatType });
+      const rt = new THREE.WebGLCubeRenderTarget(env.reflections.size ?? 128, { type: THREE.UnsignedByteType });
       const cam = new THREE.CubeCamera(0.05, 30, rt);
       cam.position.set(...(env.reflections.position as [number, number, number]));
       this.scene.add(cam);
-      this.cube = { cam, rt };
+      this.cube = { cam, rt, pmrem: new THREE.PMREMGenerator(this.renderer), env: null, sig: "" };
       this.scene.environmentIntensity = env.reflections.intensity ?? 1;
     }
     if (env.post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, env.post, spec.quality?.antialias === false ? 0 : 4);
@@ -662,12 +663,23 @@ class Engine {
     this.update(t);
     if (this.cube) {
       // Отражения: сцена без персонажей и эффектов (слой 0) из точки кабины; среда на время съёмки снята.
-      const shown = Object.values(this.characters).map((c) => c.root).filter((r) => r.visible);
-      for (const r of shown) r.visible = false;
-      this.scene.environment = null;
-      this.cube.cam.update(this.renderer, this.scene);
-      this.scene.environment = this.cube.rt.texture;
-      for (const r of shown) r.visible = true;
+      // Переснимаем, только когда изменился свет (подпись — округлённые силы ламп и свечение объектов — функция t,
+      // кадр по-прежнему зависит только от t), PMREM — в один и тот же буфер (без новых текстур на кадр:
+      // на SwiftShader пересъёмка каждый кадр через внутренний PMREM ломала контекст).
+      const sig = this.lights.map((l) => Math.round(l.light.intensity * 4) / 4).join(",") + "|" + this.objects.map((o) => {
+        const m = (o.prop?.object as any)?.children?.[0]?.material;
+        return m && m.emissiveIntensity !== undefined ? Math.round(m.emissiveIntensity * 4) / 4 : "";
+      }).join(",");
+      if (sig !== this.cube.sig) {
+        this.cube.sig = sig;
+        const shown = Object.values(this.characters).map((c) => c.root).filter((r) => r.visible);
+        for (const r of shown) r.visible = false;
+        this.scene.environment = null;
+        this.cube.cam.update(this.renderer, this.scene);
+        this.cube.env = this.cube.pmrem.fromCubemap(this.cube.rt.texture, this.cube.env);
+        for (const r of shown) r.visible = true;
+      }
+      this.scene.environment = this.cube.env!.texture;
     }
     if (this.post) this.post.render(this.camera, t, this.dof, this.focus);
     else this.renderer.render(this.scene, this.camera);

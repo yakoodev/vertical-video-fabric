@@ -64,6 +64,10 @@ export function parseArgs(argv) {
   if (!["jpeg", "png"].includes(format)) throw new UsageError("--format jpeg|png");
   const gl = out.gl || process.env.SCENE3D_GL || "swiftshader";
   if (!["swiftshader", "gpu"].includes(gl)) throw new UsageError("--gl swiftshader|gpu");
+  // Постобработка: full — всё; lite — без затенения щелей и глубины резкости (на CPU/SwiftShader вдвое быстрее);
+  // off — без постобработки. По умолчанию: GPU — full, SwiftShader — lite.
+  const post = out.post || process.env.SCENE3D_POST || (gl === "gpu" ? "full" : "lite");
+  if (!["full", "lite", "off"].includes(post)) throw new UsageError("--post full|lite|off");
   return {
     spec: resolve(out.spec),
     output: out.out ? resolve(out.out) : null,
@@ -77,6 +81,7 @@ export function parseArgs(argv) {
     previewDir: out.previewDir ? resolve(out.previewDir) : null,
     inspect: out.inspect !== undefined ? num("inspect", 0, 0, 600) : null,
     gl,
+    post,
     format,
     quality: Math.round(num("quality", 92, 50, 100)),
     crf: Math.round(num("crf", 18, 0, 51)),
@@ -235,8 +240,19 @@ export function chromeArgs(profile, gl) {
   return args;
 }
 
+/** Режим постобработки к спеке (копия): lite — без AO и DOF, off — без постобработки. */
+export function applyPostMode(spec, mode) {
+  const post = spec?.environment?.post;
+  if (!post || !mode || mode === "full") return spec;
+  const env = { ...spec.environment };
+  if (mode === "off") delete env.post;
+  else env.post = { ...post, ao: 0, dof: false };
+  return { ...spec, environment: env };
+}
+
 /** Браузер со страницей сцены, загруженной и готовой: {render(t), shot(), inspect(t), close()}. */
 export async function openScene(opts, spec, log = () => {}) {
+  spec = applyPostMode(spec, opts.post);
   const width = spec.width || 1080, height = spec.height || 1920;
   if (!existsSync(opts.bundle)) throw new Error(`нет бандла ${opts.bundle}: npm run build:scene3d`);
   const work = mkdtempSync(join(tmpdir(), "vvf-scene3d-"));

@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   actionStates, ease, facingYaw, lerpAngle, pathYaw, sampleKeys, sampleVec, samplePath, shake, windowWeight,
 } from "./src/timeline.ts";
-import { chromeArgs, concatArgs, findChrome, openScene, parseArgs, safeJoin, segmentArgs, serve, splitFrames } from "./render.mjs";
+import { applyPostMode, chromeArgs, concatArgs, findChrome, openScene, parseArgs, safeJoin, segmentArgs, serve, splitFrames } from "./render.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
@@ -420,4 +420,15 @@ test("браузер: «кино» — пост-обработка, отраже
   assert.ok(hero.headCenter[1] > 1.3 && hero.headCenter[1] < 1.6, `центр головы ${hero.headCenter}`);
   assert.ok(Math.abs(hero.headR - 0.26) < 0.02, `радиус головы ${hero.headR}`);
   assert.ok(hero.hand_r[1] < 1.0 && hero.hand_l[1] < 1.0, "руки опущены");
+});
+
+test("постобработка: GPU — полная, SwiftShader — облегчённая (без AO и DOF), off — без неё", () => {
+  assert.equal(parseArgs(["--spec", "s.json", "--out", "o.mp4", "--gl", "gpu"]).post, "full");
+  assert.equal(parseArgs(["--spec", "s.json", "--out", "o.mp4", "--gl", "swiftshader"]).post, "lite");
+  assert.throws(() => parseArgs(["--spec", "s.json", "--out", "o.mp4", "--post", "max"]));
+  const spec = { environment: { post: { ao: 1, dof: true, grain: 0.05 } } };
+  assert.deepEqual(applyPostMode(spec, "lite").environment.post, { ao: 0, dof: false, grain: 0.05 });
+  assert.equal(applyPostMode(spec, "off").environment.post, undefined);
+  assert.equal(applyPostMode(spec, "full"), spec);
+  assert.equal(spec.environment.post.ao, 1, "исходная спека не меняется");
 });
