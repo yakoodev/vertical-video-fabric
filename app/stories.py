@@ -140,6 +140,15 @@ STORY_SCHEMA_SQL = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_story_episodes_status ON story_episodes(status, id)",
 ]
+# Колонки, добавленные после первых запусков (старые базы получают их ALTER TABLE).
+STORY_COLUMNS = [
+    # Жанр-шаблон мира по умолчанию: story — смешная история, disaster — сериал-катастрофа
+    # (app/stories_disaster.py); эпизод может переопределить (options.format).
+    ("story_worlds", "format", "TEXT NOT NULL DEFAULT 'story'"),
+    # Музыка в ролике: '' — как обычно (трек мира/проекта), none — не вшивать (катастрофа: музыку
+    # ставят в TikTok из библиотеки площадки), auto — вшивать и у катастрофы.
+    ("story_worlds", "music", "TEXT NOT NULL DEFAULT ''"),
+]
 
 STAGE = "stories"
 STYLE_KIND = "story_style"
@@ -154,7 +163,7 @@ ACTIVE_STATUSES = ("new", "scripted", "planned", "awaiting_approval", "generatin
 STATUS_LABELS = {"new": "пишу сценарий", "scripted": "подбираю сцены", "planned": "считаю стоимость",
                  "awaiting_approval": "ждёт одобрения", "generating": "рисую сцены и озвучку",
                  "assembling": "собираю клип", "done": "готово", "failed": "ошибка", "cancelled": "отменено"}
-TONES = ("смешно", "с иронией", "абсурдно", "уютно", "драматично")
+TONES = ("смешно", "с иронией", "абсурдно", "уютно", "драматично", "напряжённо")
 DURATION_MIN = 30.0
 DURATION_MAX = 75.0
 ORIGINS = ("generated", "upload", "agent")
@@ -165,6 +174,11 @@ DEFAULT_STYLE_LABEL = "3D-игрушки: круглые головы, мягк�
 DEFAULT_STYLE = ("Cute 3D toy-like animation, simple characters with big perfectly round heads, dot eyes and tiny "
                  "bodies, soft matte clay/plasticine materials, warm soft studio lighting, cosy miniature diorama "
                  "sets, gentle depth of field, soft saturated colors")
+FORMAT_STORY, FORMAT_DISASTER = "story", "disaster"
+FORMATS = (FORMAT_STORY, FORMAT_DISASTER)
+FORMAT_LABELS = {FORMAT_STORY: "история", FORMAT_DISASTER: "сериал-катастрофа"}
+# Длина эпизода по жанру: (мин, макс, по умолчанию), секунды.
+DURATIONS = {FORMAT_STORY: (30.0, 75.0, 50.0), FORMAT_DISASTER: (60.0, 90.0, 75.0)}
 DEFAULT_CAPTIONS = {"color": "#ffffff", "active": "#ffffff", "stroke": "#151515", "size": 110, "y": 0.74,
                     "uppercase": False}
 # Звуки — только настоящие записи: пак freesound, «Удары и шаги» Kenney и звуки, которые владелец добавил
@@ -191,6 +205,9 @@ def ensure_stories_schema(conn) -> None:
     """Таблицы историй (из ``Database.init`` после ИИ-видео) + расширение этапа генерации."""
     for sql in STORY_SCHEMA_SQL:
         conn.execute(sql)
+    for table, column, ddl in STORY_COLUMNS:
+        if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     _register()
 
 
@@ -230,7 +247,8 @@ def _image_asset(store: Any, asset_id: Any, what: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 WORLD_FIELDS = ("name", "style_label", "style_passport", "negative", "narrator", "voice", "music_track_id",
-                "captions", "notes", "slug")
+                "captions", "notes", "slug", "format", "music")
+MUSIC_MODES = ("", "auto", "none")
 
 
 def _captions(value: Any, current: dict | None = None) -> dict:
@@ -318,6 +336,18 @@ def save_world(store: Any, project_id: int | None = None, world_id: int | None =
             sets["captions_json"] = _json(_captions(value, (current or {}).get("captions")))
         elif key == "slug":
             sets[key] = V.slugify(value, "world")
+        elif key == "format":
+            sets[key] = P._choice(str(value or "").strip() or FORMAT_STORY, FORMATS, "format")
+        elif key == "music":
+            sets[key] = P._choice(str(value or "").strip().lower(), MUSIC_MODES, "music")
+    if current is None and sets.get("format") == FORMAT_DISASTER:
+        # Сериал-катастрофа: лоу-поли и тёмный свет, рассказчик на «вы» → 3-е лицо, музыку не вшиваем.
+        from app import stories_disaster as D
+
+        for key, default in (("style_label", D.STYLE_LABEL), ("style_passport", D.STYLE), ("narrator", D.NARRATOR),
+                             ("music", "none")):
+            if not sets.get(key):
+                sets[key] = default
     if current is None:
         pid = int(project_id)
         name = sets.get("name") or "Истории"
@@ -851,23 +881,41 @@ def set_status(store: Any, episode_id: int, status: str, expect: tuple[str, ...]
     return bool(store.db.execute(sql, args).rowcount)
 
 
-def create_episode(store: Any, world_id: int, premise: str, duration: Any = 50, tone: str = "",
+def episode_format(world: dict, ep: dict | None = None) -> str:
+    """Жанр эпизода: ``options.format`` эпизода, иначе формат мира (story | disaster)."""
+    value = str(((ep or {}).get("options") or {}).get("format") or world.get("format") or FORMAT_STORY)
+    return value if value in FORMATS else FORMAT_STORY
+
+
+def create_episode(store: Any, world_id: int, premise: str, duration: Any = None, tone: str = "",
                    options: dict | None = None, requested_by: str = "agent") -> dict:
+    """Новый эпизод. Жанр — ``options.format`` или формат мира; у сериала-катастрофы эпизод — часть
+    сериала мира (``options.part``: следующая по счёту, если не задана), длина 60–90 с."""
     world = get_world(store, world_id)
+    options = dict(options or {})
+    fmt = P._choice(str(options.get("format") or world.get("format") or FORMAT_STORY), FORMATS, "format")
+    options["format"] = fmt
+    lo, hi, default = DURATIONS[fmt]
+    label = FORMAT_LABELS[fmt]
     premise = P._long_text(premise, 800)
     if len(premise) < 3:
         raise StoryError("нужна завязка истории (premise): о чём, кто, где, чем кончится")
     try:
-        seconds = float(duration or 50)
+        seconds = float(duration or default)
     except (TypeError, ValueError) as exc:
-        raise StoryError(f"duration — секунды {DURATION_MIN:.0f}–{DURATION_MAX:.0f}") from exc
-    if not DURATION_MIN <= seconds <= DURATION_MAX:
-        raise StoryError(f"duration {seconds:g} с: история {DURATION_MIN:.0f}–{DURATION_MAX:.0f} с")
+        raise StoryError(f"duration — секунды {lo:.0f}–{hi:.0f}") from exc
+    if not lo <= seconds <= hi:
+        raise StoryError(f"duration {seconds:g} с: {label} {lo:.0f}–{hi:.0f} с")
+    if fmt == FORMAT_DISASTER:
+        from app import stories_disaster as D
+
+        options = D.episode_options(store, world, options)
     cur = store.db.execute(
         "INSERT INTO story_episodes (project_id, world_id, premise, duration_target, tone, options_json, requested_by) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (int(world["project_id"]), int(world_id), premise, round(seconds, 1), P._text(tone, 60) or TONES[0],
-         _json(options or {}), P._text(requested_by, 40)))
+        (int(world["project_id"]), int(world_id), premise, round(seconds, 1),
+         P._text(tone, 60) or ("напряжённо" if fmt == FORMAT_DISASTER else TONES[0]),
+         _json(options), P._text(requested_by, 40)))
     return get_episode(store, int(cur.lastrowid))
 
 
@@ -993,6 +1041,10 @@ def scene_prompt(store: Any, world: dict, scene: dict) -> tuple[str, list[Path],
             refs.append(path)
             roles.append("стиль")
     accent = f" Small cartoon accent: {scene['accent'].strip().rstrip('.')}." if scene.get("accent") else ""
+    if world.get("format") == FORMAT_DISASTER:
+        # Сериал-катастрофа: цифры HUD — в верхнем левом углу, лицо героя туда не ставим.
+        accent += (" Keep the top-left corner of the frame calm and free of faces (game HUD numbers go there); "
+                   "close camera, often over the hero's shoulder.")
     prompt = SCENE_PROMPT.format(**_style_args(world), where=where, who=who,
                                  action=str(scene.get("action") or "").strip().rstrip("."), accent=accent)
     return prompt, refs, roles, missing

@@ -6,6 +6,8 @@ import { audioTracksApi } from "@/api/assets";
 import { ApiError } from "@/api/client";
 import {
   EPISODE_ACTIVE,
+  STORY_DURATIONS,
+  STORY_FORMATS,
   STORY_TONES,
   storiesApi,
   storiesKey,
@@ -13,6 +15,7 @@ import {
   type StoriesOverview,
   type StoryCharacter,
   type StoryEpisode,
+  type StoryFormat,
   type StoryLocation,
   type StoryScene,
   type StoryWorld,
@@ -140,7 +143,20 @@ function ApprovalBanners({ o }: { o: StoriesOverview }) {
 function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
   const toast = useToast();
   const invalidate = useInvalidate(o.project.id);
-  const [form, setForm] = useState({ premise: "", duration: 50, tone: STORY_TONES[0], title_card: false, render: false });
+  const initial = (fmt: StoryFormat) => ({
+    premise: "",
+    format: fmt,
+    duration: STORY_DURATIONS[fmt][2],
+    tone: fmt === "disaster" ? "напряжённо" : STORY_TONES[0],
+    title_card: fmt === "disaster",
+    render: false,
+  });
+  const [form, setForm] = useState(() => initial(world.format ?? "story"));
+  const [lo, hi] = STORY_DURATIONS[form.format];
+  const disaster = form.format === "disaster";
+  // Как на сервере (stories_disaster.next_part): наибольший номер части мира + 1, отменённые не считаются.
+  const nextPart =
+    Math.max(0, ...o.episodes.filter((e) => e.world_id === world.id && e.options?.format === "disaster" && e.status !== "cancelled").map((e) => e.options.part ?? 0)) + 1;
   const create = useMutation({
     mutationFn: () => storiesApi.createEpisode(world.id, form),
     onSuccess: () => {
@@ -159,17 +175,36 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
           сцен в библиотеке {ready} — готовые бесплатны, новая ≈ 3–4,5 ₽; потолок эпизода {rub(o.episode_cap_rub)}
         </span>
       </div>
+      <div className="series-row" role="radiogroup" aria-label="Жанр">
+        {STORY_FORMATS.map((f) => (
+          <button
+            key={f.id}
+            role="radio"
+            aria-checked={form.format === f.id}
+            className={`btn sm ${form.format === f.id ? "primary" : "ghost"}`}
+            title={f.hint}
+            onClick={() => setForm({ ...initial(f.id), premise: form.premise })}
+          >
+            {f.label}
+          </button>
+        ))}
+        {disaster ? <span className="chip story-part">часть {nextPart}</span> : null}
+      </div>
       <textarea
         className="input"
         rows={2}
-        placeholder="Завязка: «заключённый год копает ложкой подкоп, а дверь камеры всё это время была открыта»"
+        placeholder={
+          disaster
+            ? "Катастрофа и место: «блэкаут застал парня на 36 этаже, соседи стучат по перилам» — сценарий по формуле «Если … застала вас …»"
+            : "Завязка: «заключённый год копает ложкой подкоп, а дверь камеры всё это время была открыта»"
+        }
         value={form.premise}
         onChange={(e) => setForm({ ...form, premise: e.target.value })}
       />
       <div className="series-row">
         <label className="expl-field">
           <span className="muted">Длина: {form.duration} с</span>
-          <input type="range" min={30} max={75} step={5} value={form.duration} onChange={(e) => setForm({ ...form, duration: Number(e.target.value) })} />
+          <input type="range" min={lo} max={hi} step={5} value={form.duration} onChange={(e) => setForm({ ...form, duration: Number(e.target.value) })} />
         </label>
         <select className="input" value={form.tone} onChange={(e) => setForm({ ...form, tone: e.target.value })} title="Тон рассказчика">
           {STORY_TONES.map((t) => (
@@ -189,7 +224,9 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
         </button>
       </div>
       <span className="muted">
-        Первый эпизод с новым составом ≈ 25–30 картинок (≈ 80–130 ₽, одна карточка); следующие дешевле — сцены, актёры и локации переиспользуются.
+        {disaster
+          ? "Серия — часть сериала мира: хук на «вы» до 12 с, цифры на экране как в игре (опасность красным, ресурсы жёлтым), в конце «ЧАСТЬ N+1 — …». Музыку не вшиваем — поставь её в TikTok тихо."
+          : "Первый эпизод с новым составом ≈ 25–30 картинок (≈ 80–130 ₽, одна карточка); следующие дешевле — сцены, актёры и локации переиспользуются."}
       </span>
     </section>
   );
@@ -240,6 +277,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
         <button className="link-btn expl-topic" onClick={() => setOpen(!open)} title="Сценарий и кадры">
           {e.title || e.premise}
         </button>
+        {e.options?.format === "disaster" ? <span className="chip story-part">часть {e.options.part ?? 1}</span> : null}
         <span className="muted">
           {e.duration_target.toFixed(0)} с · {e.tone}
         </span>
@@ -298,7 +336,22 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
                 <span className="chip">{d.timeline.duration.toFixed(1)} с</span>
                 <span className="chip">{d.timeline.shots_per_min} кадров/мин</span>
                 <span className="chip">звуков {d.timeline.sfx}</span>
+                {d.timeline.part_card ? <span className="chip">{d.timeline.part_card}</span> : null}
               </div>
+            ) : null}
+            {d.timeline?.hud?.length ? (
+              <div className="aiv-est story-hud-list" title="Цифры на экране (HUD)">
+                {d.timeline.hud.map((h, i) => (
+                  <span key={i} className="story-hud" style={{ color: h.color }}>
+                    {h.text} <span className="muted mono">{h.start.toFixed(1)} с</span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {d.timeline?.publish ? (
+              <p className="muted" title="Описание к публикации">
+                {d.timeline.publish.description} {d.timeline.publish.hashtags.join(" ")}
+              </p>
             ) : null}
             {d.script?.text ? <p className="expl-script">{d.script.text}</p> : null}
             {d.script?.warnings?.length ? <div className="aiv-warn">{d.script.warnings.join("; ")}</div> : null}
@@ -580,6 +633,8 @@ function WorldCard({ world, projectId }: { world: StoryWorld; projectId: number 
     style_passport: world.style_passport,
     narrator: world.narrator,
     music_track_id: world.music_track_id ?? 0,
+    format: world.format ?? "story",
+    music: world.music ?? "",
   });
   const [caps, setCaps] = useState(world.captions);
   const [voice, setVoice] = useState<TtsVoiceValue>({ ...world.voice, voice: world.voice.voice ?? "", model: world.voice.model ?? "" });
@@ -656,6 +711,23 @@ function WorldCard({ world, projectId }: { world: StoryWorld; projectId: number 
               <span className="muted">Субтитры: {Math.round(caps.y * 100)}%</span>
               <input type="range" min={0.6} max={0.84} step={0.01} value={caps.y} onChange={(e) => setCaps({ ...caps, y: Number(e.target.value) })} />
             </label>
+            <select className="input" value={w.format} onChange={(e) => setW({ ...w, format: e.target.value as StoryFormat })} title="Жанр новых эпизодов">
+              {STORY_FORMATS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input"
+              value={w.music}
+              onChange={(e) => setW({ ...w, music: e.target.value as "" | "auto" | "none" })}
+              title="Вшивать ли музыку (сериал-катастрофа — по умолчанию нет: музыку ставят в TikTok из библиотеки)"
+            >
+              <option value="">музыка: как в жанре</option>
+              <option value="none">музыку не вшивать</option>
+              <option value="auto">музыку вшивать</option>
+            </select>
             <select className="input" value={w.music_track_id} onChange={(e) => setW({ ...w, music_track_id: Number(e.target.value) })} title="Музыка под голосом">
               <option value={0}>без музыки</option>
               {(tracks.data ?? []).map((t) => (
@@ -682,12 +754,12 @@ function NewWorld({ o, empty }: { o: StoriesOverview; empty: boolean }) {
   const toast = useToast();
   const invalidate = useInvalidate(o.project.id);
   const [open, setOpen] = useState(empty);
-  const [form, setForm] = useState({ name: "", narrator: "" });
+  const [form, setForm] = useState<{ name: string; narrator: string; format: StoryFormat }>({ name: "", narrator: "", format: "story" });
   const add = useMutation({
     mutationFn: () => storiesApi.addWorld(o.project.id, { ...form, voice: { provider: "gemini" } }),
     onSuccess: () => {
       toast.success("Мир создан — стиль «3D-игрушки» по умолчанию, поменять можно в карточке мира");
-      setForm({ name: "", narrator: "" });
+      setForm({ name: "", narrator: "", format: "story" });
       invalidate();
     },
     onError: (e) => toast.error(errText(e, "Не создано")),
@@ -706,7 +778,20 @@ function NewWorld({ o, empty }: { o: StoriesOverview; empty: boolean }) {
       {empty ? <EmptyState icon="🧸" title="Миров пока нет" hint="Мир — стиль, рассказчик и голос; в нём живут актёры, локации и библиотека сцен." /> : null}
       <h3>Новый мир</h3>
       <input className="input" placeholder="Название: «Игрушечная тюрьма»" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      <textarea className="input" rows={2} placeholder="Рассказчик: ироничный, на «ты», любит абсурд" value={form.narrator} onChange={(e) => setForm({ ...form, narrator: e.target.value })} />
+      <select className="input" value={form.format} onChange={(e) => setForm({ ...form, format: e.target.value as StoryFormat })} title="Жанр мира">
+        {STORY_FORMATS.map((f) => (
+          <option key={f.id} value={f.id}>
+            {f.label} — {f.hint}
+          </option>
+        ))}
+      </select>
+      <textarea
+        className="input"
+        rows={2}
+        placeholder={form.format === "disaster" ? "Рассказчик: пусто — спокойный напряжённый голос, хук на «вы», дальше 3-е лицо" : "Рассказчик: ироничный, на «ты», любит абсурд"}
+        value={form.narrator}
+        onChange={(e) => setForm({ ...form, narrator: e.target.value })}
+      />
       <div className="series-row">
         <button className="btn primary sm" disabled={!form.name.trim() || add.isPending} onClick={() => add.mutate()}>
           Создать

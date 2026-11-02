@@ -33,14 +33,31 @@ _SHOT = _obj({"location": {"type": "string", "description": "key (slug) или i
               "sfx": {"type": "string", "description": "звук действия: «храп», «будильник» или ref из story_sfx"},
               "accent": {"type": "string", "description": "ПО-АНГЛИЙСКИ: cartoon motion lines, floating Zzz…"},
               "scene_id": {"type": "integer", "description": "готовая сцена библиотеки (0 ₽)"}}, ["action"])
-_SENTENCES = {"type": "array", "items": _obj({"text": {"type": "string"}, "shots": {"type": "array", "items": _SHOT}},
-                                             ["text"])}
+_SENTENCES = {"type": "array", "items": _obj({
+    "text": {"type": "string"}, "shots": {"type": "array", "items": _SHOT},
+    "hud": {"type": "string", "description": "сериал-катастрофа: цифра на экране как в игре — «02:07», «ЗАРЯД 9%», "
+                                             "«−41°C», «22 / 23 ЭТАЖ», «▼ 00:45» (до 24 знаков)"},
+    "hud_kind": {"type": "string", "enum": ["danger", "resource", "info"],
+                 "description": "danger — красным (угроза), resource — жёлтым (заряд, вода), info — белым"},
+    "role": {"type": "string", "enum": ["hook", "problem", "solution", "mistake", "cta", "finale", "story"]}},
+    ["text"])}
 _NEW_CAST = {"type": "array", "items": _obj({"key": {"type": "string"}, "name": {"type": "string"},
                                              "identity_card": {"type": "string"}, "persona": {"type": "string"}},
                                             ["name", "identity_card"])}
 _NEW_LOCS = {"type": "array", "items": _obj({"key": {"type": "string"}, "name": {"type": "string"},
                                              "description": {"type": "string"}}, ["name", "description"])}
-_SCRIPT_KEYS = ("title", "logline", "sentences", "new_characters", "new_locations", "text")
+_SCRIPT_KEYS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
+                "viewer_question", "hashtags", "mistake", "cliffhanger")
+_SERIES = {"part_title": {"type": "string", "description": "катастрофа: крючок следующей части капсом — титр "
+                                                            "«ЧАСТЬ N+1 — …» в конце"},
+           "hook_words": {"type": "string", "description": "катастрофа: 2–4 слова для красной плашки обложки"},
+           "viewer_question": {"type": "string", "description": "катастрофа: вопрос зрителю в описание «А ты бы …?»"},
+           "hashtags": {"type": "array", "items": {"type": "string"}, "description": "катастрофа: 3–5 тегов"},
+           "mistake": {"type": "string", "description": "катастрофа: та самая одна ошибка"},
+           "cliffhanger": {"type": "string", "description": "катастрофа: жуткая деталь финала"}}
+_FORMAT = {"type": "string", "enum": list(S.FORMATS),
+           "description": "story — смешная история (30–75 с); disaster — сериал-катастрофа (60–90 с, части, HUD-цифры, "
+                          "без музыки, титр «ЧАСТЬ N+1»)"}
 
 
 def _call(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -68,7 +85,8 @@ def episode_brief(store: Any, episode_id: int) -> dict:
     script = ep.get("script") or {}
     if script:
         out["script"] = {k: script.get(k) for k in ("title", "logline", "text", "chars", "est_sec", "shots",
-                                                    "warnings", "source")}
+                                                    "warnings", "source", "format", "part", "part_title", "hook_words",
+                                                    "viewer_question", "mistake", "cliffhanger") if k in script}
         out["script"]["sentences"] = script.get("sentences")
     timeline = ep.get("timeline") or {}
     beats = timeline.get("beats") or ep.get("beats") or []
@@ -76,7 +94,8 @@ def episode_brief(store: Any, episode_id: int) -> dict:
                                            "sfx", "variant", "reuse") if b.get(k) not in (None, [], "")} for b in beats]
     if timeline:
         out["timeline"] = {k: timeline.get(k) for k in ("duration", "shots_per_min", "sfx", "layers", "camera_keys",
-                                                        "music_track_id", "mix")}
+                                                        "music_track_id", "mix", "format", "part", "speech_end",
+                                                        "part_card", "hud", "publish") if k in timeline}
     if ep["status"] in ("planned", "awaiting_approval", "generating", "failed") and ep.get("beats"):
         try:
             out["estimate"] = X.estimate(store, episode_id)
@@ -175,10 +194,10 @@ def h_create(ctx: ToolContext, args: dict) -> dict:
     script = None
     if args.get("sentences") or args.get("text"):
         script = {k: args.get(k) for k in _SCRIPT_KEYS}
-    options = {k: args[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx")
-               if args.get(k) is not None}
+    options = {k: args[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part",
+                                    "music") if args.get(k) is not None}
     ep = _call(X.create, ctx.store, _need(args, "world_id", "story_overview"), str(args.get("premise") or ""),
-               args.get("duration") or 50, str(args.get("tone") or ""), script, options, "agent", bool(args.get("wait")))
+               args.get("duration"), str(args.get("tone") or ""), script, options, "agent", bool(args.get("wait")))
     return {"ok": True, "episode_id": ep["id"], "status": ep["status"], "episode": episode_brief(ctx.store, int(ep["id"])),
             "note": ("работник ведёт эпизод сам: сценарий → сцены (готовые из библиотеки, новые — по карточке) → "
                      "ОДНА карточка владельцу → сборка. Статус — story_status(episode_id)")}
@@ -234,8 +253,11 @@ def tools() -> list[Tool]:
              "каждый промпт (по умолчанию 3D toy-like); negative; narrator — характер рассказчика для сценариста; "
              "voice {provider gemini (бесплатно) | polza (платно), voice, style} — послушать: tts_preview; "
              "music_track_id (list_music); captions {color, active, stroke, size, y, uppercase} — субтитры по одному "
-             "слову; style_asset_id — референс стиля (upload_image). / Create or edit a story world.",
+             "слову; style_asset_id — референс стиля (upload_image); format — жанр по умолчанию (story | disaster: "
+             "сериал-катастрофа, новый мир получает лоу-поли стиль и music none); music — none (не вшивать) | auto. "
+             "/ Create or edit a story world.",
              _obj({"project_id": {"type": "integer"}, "world_id": {"type": "integer"}, "name": {"type": "string"},
+                   "format": _FORMAT, "music": {"type": "string", "enum": ["", "auto", "none"]},
                    "style_label": {"type": "string"}, "style_passport": {"type": "string"},
                    "negative": {"type": "string"}, "narrator": {"type": "string"}, "voice": _VOICE,
                    "music_track_id": {"type": "integer"}, "captions": _CAPTIONS, "notes": {"type": "string"},
@@ -291,14 +313,21 @@ def tools() -> list[Tool]:
              _obj({"query": {"type": "string"}}), h_sfx, scope="project"),
         Tool("story_create", "Делаю историю",
              "Завязка → готовый эпизод: world_id, premise (кто, где, что задумал, чем кончится), duration 30–75 с "
-             "(по умолчанию 50), tone (смешно / с иронией / абсурдно / уютно). Работник сам: сценарий Gemini (крючок, "
+             "(по умолчанию 50; катастрофа 60–90, 75), tone (смешно / с иронией / абсурдно / уютно). Работник сам: сценарий Gemini (крючок, "
              "поворот, панчлайн; на каждую фразу 1–2 кадра: кто, где, действие, камера, звук, акцент) → биты 1.2–3 с "
              "→ сцены из библиотеки (новые — только если нет похожей) → ОДНА карточка владельцу на новые сцены, "
              "листы, плиты и платную озвучку (потолок STORIES_EPISODE_CAP_RUB) → сборка холст-клипа (камера, звуки, "
              "субтитры по слову, музыка). Свой сценарий вместо Gemini — sentences [{text, shots [...]}], "
              "new_characters, new_locations. title_card — название в начале, cut_sfx — вжухи на склейках, render — "
-             "рендер+обложки, wait — вести шаги в этом вызове. / Make a narrated story short from a premise.",
+             "рендер+обложки, wait — вести шаги в этом вызове. format disaster — сериал-катастрофа (по умолчанию — "
+             "формат мира): «Если [катастрофа] застала вас [в месте]», хук на «вы» до 12 с с «одной ошибкой», "
+             "проблема → решение → новая проблема каждые ~10 с, цифры HUD на экране (sentences[].hud), финал «Была "
+             "лишь одна проблема…» и титр «ЧАСТЬ N+1 — part_title»; эпизоды мира — части сериала (part — по счёту), "
+             "музыка не вшивается (music auto — вшить), обложка по шаблону, описание — вопрос зрителю и 3–5 тегов. "
+             "/ Make a narrated story short from a premise.",
              _obj({"world_id": {"type": "integer"}, "premise": {"type": "string"}, "duration": {"type": "number"},
+                   "format": _FORMAT, "part": {"type": "integer", "description": "номер части сериала (катастрофа)"},
+                   "music": {"type": "string", "enum": ["auto", "none"]}, **_SERIES,
                    "tone": {"type": "string"}, "title": {"type": "string"}, "logline": {"type": "string"},
                    "sentences": _SENTENCES, "new_characters": _NEW_CAST, "new_locations": _NEW_LOCS,
                    "text": {"type": "string"}, "render": {"type": "boolean"}, "cover": {"type": "boolean"},
@@ -320,7 +349,7 @@ def tools() -> list[Tool]:
              "/ Set the story script with shots.",
              _obj({"episode_id": {"type": "integer"}, "title": {"type": "string"}, "logline": {"type": "string"},
                    "sentences": _SENTENCES, "new_characters": _NEW_CAST, "new_locations": _NEW_LOCS,
-                   "text": {"type": "string"}, "continue": {"type": "boolean"}}, ["episode_id"]),
+                   "text": {"type": "string"}, "continue": {"type": "boolean"}, **_SERIES}, ["episode_id"]),
              h_set_script, mutating=True, scope="project"),
         Tool("story_update_beats", "Правлю биты истории",
              "До сборки: beats [{i, scene_id (из библиотеки) | new_scene {location_id, cast, action, tags, accent}, "
