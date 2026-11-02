@@ -1243,8 +1243,26 @@ _MARKER_RE = re.compile(r"\((?:изображение не показано|ст
 _LEAK_PREFIX_RE = re.compile(r"^[^А-Яа-яЁё\s]{1,12}?(?=[А-ЯЁ])")
 
 
+# Эхо служебных подписей сервиса к картинкам в начале ответа (QA 7, клип 899: «я. Описание: кадр приложен
+# следующей картинкой. Внимательно посмотри… не примет твой ответ) Готово. Отчёт…»).
+_ECHO_MARKS = ("кадр приложен следующей картинкой", "не примет твой ответ", "Эта картинка — contact_sheet")
+_ECHO_END = "не примет твой ответ)"
+
+
+def strip_service_echo(text: str) -> str:
+    """Срезать в начале ответа строки, повторяющие служебные подписи к картинкам; остальной текст не трогать."""
+    lines = (text or "").split("\n")
+    cut = 0
+    while cut < len(lines) and (not lines[cut].strip() or any(m in lines[cut] for m in _ECHO_MARKS)):
+        cut += 1
+    if not any(any(m in line for m in _ECHO_MARKS) for line in lines[:cut]):
+        return text
+    tail = lines[cut - 1].split(_ECHO_END, 1)[1] if _ECHO_END in lines[cut - 1] else ""  # «…ответ) Готово.»
+    return "\n".join([tail.strip(), *lines[cut:]] if tail.strip() else lines[cut:]).strip()
+
+
 def _strip_leaks(text: str) -> str:
-    cleaned = strip_monologue(_MARKER_RE.sub("", text)).lstrip(" .\n")
+    cleaned = strip_monologue(strip_service_echo(_MARKER_RE.sub("", text))).lstrip(" .\n")
     return _LEAK_PREFIX_RE.sub("", cleaned, count=1).strip()
 
 

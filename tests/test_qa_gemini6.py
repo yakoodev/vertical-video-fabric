@@ -136,9 +136,9 @@ def test_ask_boxes_uses_schema_and_retries_once_on_bad_answer():
 
 def test_ask_boxes_fails_loudly_after_retry():
     fake = FakeAvatarGemini(["", "мусор"])
-    with pytest.raises(avatar_box.AvatarAnswerError, match="попыток 2"):
+    with pytest.raises(avatar_box.AvatarAnswerError, match=f"попыток {avatar_box.ASK_ATTEMPTS}"):
         avatar_box.ask_boxes(fake, _parts())
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == avatar_box.ASK_ATTEMPTS
     # Эндпоинт без responseSchema — повтор без схемы.
     old = FakeAvatarGemini([RuntimeError("Invalid JSON payload: unknown name responseSchema"), json.dumps([CORNER] * 2)])
     assert _approx(avatar_box.ask_boxes(old, _parts(2))[0], CORNER)

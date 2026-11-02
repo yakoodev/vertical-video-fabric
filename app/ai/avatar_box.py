@@ -328,7 +328,8 @@ def _norm_rect(rect: tuple, scale: tuple[float, float]) -> dict:
     return {"x0": min(x0, x1), "y0": min(y0, y1), "x1": max(x0, x1), "y1": max(y0, y1)}
 
 
-def parse_frames(text: str, n: int, size: tuple[int, int] | None = None) -> tuple[list[dict | None], bool]:
+def parse_frames(text: str, n: int, size: tuple[int, int] | None = None,
+                 strict: bool = False) -> tuple[list[dict | None], bool]:
     """Ответ Gemini → (рамка аватара на каждый из ``n`` кадров, разобран ли ответ).
 
     Разобран — если в ответе нашёлся список кадров (или одна рамка) и хоть одна запись — рамка или явное «аватара
@@ -344,7 +345,11 @@ def parse_frames(text: str, n: int, size: tuple[int, int] | None = None) -> tupl
     # Одна рамка без списка кадров (старый ответ, в том числе в обёртке {"result": {...}}) — на все кадры.
     single = n > 1 and len(items) == 1 and not isinstance(data, list) and not any(
         isinstance(data, dict) and isinstance(data.get(k), list) for k in FRAME_LIST_KEYS)
+    if strict and not single and len(items) < n:
+        return [None] * n, False  # QA 7: одна запись вместо шести — обрыв ответа, а не «аватара нет»
     items = _ordered(items, n)
+    if strict and not _complete(items):
+        return [None] * n, False
     raw: list[tuple[tuple, tuple | None, list[tuple]] | None] = []
     understood = 0
     for item in items:
@@ -387,6 +392,19 @@ def parse_frames(text: str, n: int, size: tuple[int, int] | None = None) -> tupl
     if single:
         boxes = boxes[:1] * n  # одна рамка без списка кадров — на все кадры (лучше, чем ничего)
     return boxes[:n] + [None] * (n - len(boxes[:n])), True
+
+
+def _complete(items: list) -> bool:
+    """Строгий разбор (ответ на запрос со схемой): каждая запись — рамка или ЯВНОЕ «аватара нет» (``avatar:
+    false`` / null). Запись без полной рамки и без ``avatar: false`` — обрыв ответа (QA 7: запись без x1 и число
+    с бесконечными нулями кэшировались как «аватара нет»)."""
+    for item in items:
+        if item is None or _raw_rect(item) is not None:
+            continue
+        if isinstance(item, dict) and any(item.get(k) is False for k in _NO_AVATAR_KEYS):
+            continue
+        return False
+    return True
 
 
 def parse_boxes(text: str, n: int, size: tuple[int, int] | None = None) -> list[dict | None]:
@@ -773,7 +791,8 @@ def response_schema() -> dict:
     }
 
 
-ASK_ATTEMPTS = 2  # пустой/неразобранный ответ — один повтор запроса
+ASK_ATTEMPTS = 3  # пустой/неразобранный/оборванный ответ — повтор запроса (QA 7: битые ответы подряд)
+MAX_ANSWER_TOKENS = 4096
 
 
 def response_text(response: Any) -> str:
@@ -801,6 +820,8 @@ def ask_boxes(client: Any, parts: list[dict], size: tuple[int, int] | None = Non
     неразобранном ответе — ещё один. Не вышло и со второго раза — ``AvatarAnswerError`` (сбой, а не «аватара нет»)."""
     payload = {"contents": [{"role": "user", "parts": [{"text": PROMPT.format(n=len(parts))}, *parts]}],
                "generationConfig": {"responseMimeType": "application/json", "temperature": 0,
+                                    # Потолок длины: QA 7 — число с бесконечным хвостом нулей до обрыва ответа.
+                                    "maxOutputTokens": MAX_ANSWER_TOKENS,
                                     "responseSchema": response_schema()}}
     problem = "пустой ответ"
     for _attempt in range(ASK_ATTEMPTS):
@@ -814,7 +835,7 @@ def ask_boxes(client: Any, parts: list[dict], size: tuple[int, int] | None = Non
             problem = f"Gemini не ответил: {str(exc)[:160]}"
             continue
         text = response_text(response)
-        boxes, ok = parse_frames(text, len(parts), size)
+        boxes, ok = parse_frames(text, len(parts), size, strict=True)
         if ok:
             return boxes
         problem = "пустой ответ" if not text.strip() else f"ответ не разобран: {text.strip()[:120]!r}"
