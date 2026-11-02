@@ -149,6 +149,26 @@ QUATERNIUS_CHARACTERS = {
     "extra": re.compile(r"^[^/]+/Base Characters/Textures/(T_Superhero_[A-Za-z]+_Ligh(?:t_BaseColor)?\.png)$"),
     "license_member": re.compile(r"^[^/]+/License_Standard\.txt$"),
 }
+# KayKit (Kay Lousberg, CC0): стилизованные чиби-персонажи со скелетом Rig_Medium и чистым лицом (глаза,
+# брови — отдельные острова меша → моргание и мимика), анимации того же скелета. Бесплатный уровень с itch.io.
+KAYKIT_LICENSE = {
+    "license": "CC0-1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution": "Kay Lousberg (kaylousberg.com) — CC0, указывать автора не обязательно",
+}
+KAYKIT_PACKS = [
+    {"id": "kaykit-adventurers", "name": "3D: чиби-герои KayKit Adventurers (Rig_Medium)",
+     "page": "https://kaylousberg.itch.io/kaykit-adventurers",
+     "itch": ("kaylousberg", "kaykit-adventurers"), "upload": "15363167", "file": "kaykit-adventurers-2.0-free.zip",
+     "sha256": "abe48f4763fba0896bab486ee9e6d08ca6b5b3884b9601f235c8847ae94dc479",
+     "member": re.compile(r"^[^/]+/Characters/gltf/([^/]+\.glb)$"), "role": "character"},
+    {"id": "kaykit-animations", "name": "3D: анимации KayKit (Rig_Medium: покой, ходьба, взаимодействие…)",
+     "page": "https://kaylousberg.itch.io/kaykit-character-animations",
+     "itch": ("kaylousberg", "kaykit-character-animations"), "upload": "15799903",
+     "file": "kaykit-character-animations-1.1.zip",
+     "sha256": "65882f31f905ad2e953819648a59287cdeab8f623908d5ef701971d3758be20f",
+     "member": re.compile(r"^[^/]+/Animations/gltf/Rig_Medium/([^/]+\.glb)$"), "role": "animations"},
+]
 CHARACTER_RU = {
     "Superhero_Female_FullBody": ("Девушка (базовое тело)", "character"),
     "Superhero_Male_FullBody": ("Парень (базовое тело)", "character"),
@@ -1252,14 +1272,45 @@ def fetch_quaternius_animations(target: Path, dl: Path) -> dict:
                          items, QUATERNIUS_LICENSE)
 
 
+def fetch_kaykit(target: Path, dl: Path, spec: dict) -> dict:
+    pack_dir = target / spec["id"]
+    stamp = f"{spec['upload']} {spec['sha256']} idx{INDEX_VERSION}"
+    meta_path = pack_dir / "items.json"
+    if read_stamp(pack_dir) != stamp or not meta_path.exists():
+        user, game = spec["itch"]
+        archive = download_signed(lambda: itch_signed_url(user, game, spec["upload"]), dl / spec["file"], spec["sha256"])
+        fresh_dir(pack_dir)
+        items: list[dict] = []
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.namelist():
+                if member.count("/") == 1 and member.endswith("/License.txt"):
+                    (pack_dir / "LICENSE.txt").write_bytes(zf.read(member))
+                m = spec["member"].match(member)
+                if not m:
+                    continue
+                data = zf.read(member)
+                dest = pack_dir / safe_name(m.group(1))
+                dest.write_bytes(data)
+                words = [w.lower() for w in re.split(r"[_\s]+|(?<=[a-z])(?=[A-Z])", dest.stem) if w]
+                items.append(describe_item(dest, "model3d", dest.stem.replace("_", " "), [spec["role"], *words],
+                                           role=spec["role"], **_model_extra(gltf_json(data))))
+        items.sort(key=lambda i: i["file"])
+        meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        write_stamp(pack_dir, stamp)
+        log(f"{spec['id']}: {len(items)} файлов")
+    items = json.loads(meta_path.read_text(encoding="utf-8"))
+    return _model3d_pack(spec["id"], spec["name"], spec["page"], spec["upload"], items, KAYKIT_LICENSE)
+
+
 # --------------------------------------------------------------------------- #
 
 PACK_ORDER =["twemoji", "openmoji-extras", "kenney-particles", "freesound", "tension",
               "kenney-impact", "kenney-interface", "kenney-ui", "imgflip",
-              "kenney-furniture", "quaternius-characters", "quaternius-animations"]
+              "kenney-furniture", "quaternius-characters", "quaternius-animations", "kaykit-adventurers", "kaykit-animations"]
 # Отказ этих паков сборку не роняет: imgflip — живой внешний сервис, 3D-паки берутся по
 # подписанным ссылкам (страницы Kenney / itch.io), которые авторы могут поменять.
-SOFT_PACKS = {"imgflip", "kenney-furniture", "quaternius-characters", "quaternius-animations"}
+SOFT_PACKS = {"imgflip", "kenney-furniture", "quaternius-characters", "quaternius-animations",
+              "kaykit-adventurers", "kaykit-animations"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1299,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
         **{spec["id"]: (lambda spec=spec: fetch_kenney_3d(target, dl, spec)) for spec in KENNEY_3D_PACKS},
         "quaternius-characters": lambda: fetch_quaternius_characters(target, dl),
         "quaternius-animations": lambda: fetch_quaternius_animations(target, dl),
+        **{spec["id"]: (lambda spec=spec: fetch_kaykit(target, dl, spec)) for spec in KAYKIT_PACKS},
     }
     packs: list[dict] = []
     failed: list[str] = []
