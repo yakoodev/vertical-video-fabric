@@ -28,6 +28,7 @@ HUD-плашки, название, титр «ЧАСТЬ N+1», звуки, г�
 
 from __future__ import annotations
 
+import contextvars
 import math
 import re
 from typing import Any
@@ -47,7 +48,14 @@ WALK_SPEED = 1.1  # м/с
 CAMERA_MARGIN = 0.16  # камера не ближе к стене (м)
 FOV = 52.0
 STYLE = "lowpoly"
-FILL, FILL_DARK = 0.9, 0.35  # заливка от камеры: при свете / в темноте (лицо читается, тьма остаётся)
+FILL, FILL_DARK = 0.9, 0.35
+DOF = {"face": 1.0, "detail": 1.3, "low": 0.5}  # сила размытия по ракурсу (ключ камеры dof)
+# Постобработка 3D-серий (node/scene3d/src/post.ts): мягкое затенение щелей, свечение ламп, «киношная» цветокоррекция —
+# бирюзовые тени, тёплые света, приглушённая насыщенность, виньетка и зерно; глубина резкости — ключи камеры dof.
+POST = {"ao": 1.0, "aoRadius": 0.3, "aoScale": 0.5, "bloom": {"strength": 0.45, "radius": 0.5, "threshold": 1.4},
+        "grade": {"lift": [0.012, 0.02, 0.025], "gamma": [0.98, 1.0, 1.02], "gain": [1.02, 1.0, 0.97],
+                  "shadows": "#3f6f78", "highlights": "#c9a27a", "split": 0.25, "contrast": 1.1, "saturation": 1.0},
+        "vignette": 0.5, "grain": 0.045, "ca": 1.4, "dof": True}  # заливка от камеры: при свете / в темноте (лицо читается, тьма остаётся)
 
 # Одна яркая вещь героя — цвета по словам карточки (англ./рус.).
 COLORS = {
@@ -64,6 +72,29 @@ HAIR_COLORS = {"red": "#a8452a", "рыж": "#a8452a", "ginger": "#a8452a", "blon
                "grey": "#9a9a9a", "gray": "#9a9a9a", "сед": "#9a9a9a", "white": "#dcdcdc", "pink": "#e58fb5"}
 HERO_DEFAULT = {"skin": "#e3a985", "hair": "#4a2f22", "hairStyle": "short", "top": "#f2c21b", "coat": True,
                 "hood": True, "pants": "#2f3542", "shoes": "#1c1d22", "backpack": "#5d6b3a"}
+
+# Сгенерированный герой (Gemini-картинка → Hunyuan3D-2mini форма → проекция картинки как текстура; node/scene3d/assets):
+# статичный меш в A-позе, Y вверх, лицом в +z, единицы меша. Опорные точки суставов сняты по силуэту — по ним движок
+# ставит скелет Quaternius в позу меша и считает веса (node/scene3d/src/meshrig.ts). Глянец — жёлтый ПВХ дождевика.
+HERO_MESH = {
+    "model": "builtin/hero_raincoat.glb",
+    "joints": {
+        "pelvis": [-0.08, -0.40, 0.0], "spine_01": [-0.08, -0.28, 0.0], "spine_02": [-0.08, -0.08, 0.0],
+        "spine_03": [-0.08, 0.10, 0.0], "neck_01": [-0.08, 0.32, 0.0], "Head": [-0.08, 0.43, 0.0],
+        "top": [-0.08, 0.96, 0.0],
+        "upperarm_l": [0.19, 0.17, 0.0], "lowerarm_l": [0.45, -0.05, -0.01], "hand_l": [0.5, -0.2, -0.01],
+        "upperarm_r": [-0.29, 0.17, 0.0], "lowerarm_r": [-0.5, -0.05, -0.01], "hand_r": [-0.57, -0.2, -0.01],
+        "thigh_l": [0.09, -0.43, 0.0], "calf_l": [0.10, -0.70, 0.0], "foot_l": [0.11, -0.91, -0.02],
+        "ball_l": [0.11, -0.97, 0.12],
+        "thigh_r": [-0.25, -0.43, 0.0], "calf_r": [-0.26, -0.70, 0.0], "foot_r": [-0.27, -0.91, -0.02],
+        "ball_r": [-0.27, -0.97, 0.12],
+        # Граница корпуса для весов рук: подмышка → край подола (что латеральнее — рука).
+        "armpit_l": [0.355, 0.1, 0.0], "hem_l": [0.36, -0.45, 0.0],
+        "armpit_r": [-0.31, 0.1, 0.0], "hem_r": [-0.40, -0.45, 0.0],
+    },
+    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82},
+    "smooth": 6,
+}
 
 # Звуки событий — настоящие записи паков (tension — лифт и тревожный фон CC0, freesound — монтажные CC0,
 # kenney-impact — удары/шаги CC0).
@@ -213,11 +244,24 @@ def hero_look(card: str | None) -> dict:
     return look
 
 
+def mesh_hero(look: dict) -> dict | None:
+    """Готовый сгенерированный герой под карточку: жёлтый дождевик с капюшоном (парень) — меш HERO_MESH на скелете
+    Quaternius; для остальных карточек — игрушка из деталей (toy)."""
+    if look.get("female") or not look.get("coat") or look.get("top") != COLORS["yellow"] or look.get("hat"):
+        return None
+    return HERO_MESH
+
+
 def _character(look: dict, path: list[dict], facing: list[dict], actions: list[dict], poses: list[dict]) -> dict:
     toy = {k: v for k, v in look.items() if k != "female"}
-    return {"id": HERO_ID, "model": CHAR_MODEL_FEMALE if look.get("female") else CHAR_MODEL, "height": HERO_HEIGHT,
-            "style": "toy", "toy": toy, "animations": list(ANIMATIONS), "path": path, "facing": facing,
-            "actions": actions, "poses": poses}
+    out = {"id": HERO_ID, "model": CHAR_MODEL_FEMALE if look.get("female") else CHAR_MODEL, "height": HERO_HEIGHT,
+           "style": "toy", "toy": toy, "animations": list(ANIMATIONS), "path": path, "facing": facing,
+           "actions": actions, "poses": poses}
+    mesh = mesh_hero(look)
+    if mesh:
+        out.update({"style": "mesh", "mesh": mesh})
+        out.pop("toy")
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -226,8 +270,10 @@ def _character(look: dict, path: list[dict], facing: list[dict], actions: list[d
 
 
 def _box(oid: str, pos, size, color, *, rot=None, rounded=0.0, emissive=None, glow=None, metal=0.0, rough=0.8,
-         no_shadow=False, hide_above=None) -> dict:
+         no_shadow=False, hide_above=None, surface=None) -> dict:
     params: dict[str, Any] = {"size": _r(size), "color": color, "roughness": rough, "metalness": metal, "flat": True}
+    if surface:
+        params["surface"] = surface
     if rounded:
         params["radius"] = rounded
     if emissive:
@@ -259,65 +305,95 @@ def _on(wall: str, *objs: dict) -> list[dict]:
 
 
 def elevator_location() -> dict:
-    """Кабина лифта 2.0 × 2.2 × 2.5 м в тёмной шахте: двери спереди (+z), кнопочная панель на правой стене (+x),
-    табло над дверями, поручень, панель света на потолке, аварийный люк. Срез стен/потолка по камере — для
-    общего плана сверху."""
+    """Кабина лифта 2.0 × 2.2 × 2.5 м в бетонной шахте: стены — листы шлифованной нержавейки со швами, пол —
+    резина «монетка», потолок — крашеный металл с панелью холодного света; двери спереди (+z), кнопочная панель
+    на правой стене (+x), табло над дверями, поручень, аварийный красный фонарь в углу, люк. Свет и материалы —
+    по сгенерированным референсам: холодный бирюзовый ключ сверху, глубокие тени, дымка; в темноте —
+    красный аварийный и луч фонарика. Срез стен/потолка по камере — для общего плана сверху."""
     W, D, H = 2.0, 2.2, 2.5
-    steel, dark, seam = "#7c838c", "#2a2d33", "#4b5058"
+    dark = "#24272c"
+    steel = {"kind": "brushed_steel", "color": "#a3a9ae"}
     objects = [
-        # Двери: две створки с щелью, рама вокруг; табло этажа над дверями (смотрит в кабину, −z).
+        # Двери: две створки шлифованной стали с щелью, рама вокруг; табло этажа над дверями (смотрит в кабину, −z).
         *_on("front",
-             _box("door_l", [-0.27, 0, D / 2 - 0.035], [0.53, 2.12, 0.04], "#9aa2ab", metal=0.55, rough=0.35),
-             _box("door_r", [0.27, 0, D / 2 - 0.035], [0.53, 2.12, 0.04], "#9aa2ab", metal=0.55, rough=0.35),
-             _box("door_frame_top", [0, 2.12, D / 2 - 0.03], [1.26, 0.1, 0.05], dark),
-             _box("door_frame_l", [-0.6, 0, D / 2 - 0.03], [0.07, 2.16, 0.05], dark),
-             _box("door_frame_r", [0.6, 0, D / 2 - 0.03], [0.07, 2.16, 0.05], dark),
+             _box("door_l", [-0.27, 0, D / 2 - 0.035], [0.53, 2.12, 0.04], "#a9b0b6", metal=0.9, rough=0.45,
+                  surface={**steel, "seed": 5}),
+             _box("door_r", [0.27, 0, D / 2 - 0.035], [0.53, 2.12, 0.04], "#a9b0b6", metal=0.9, rough=0.45,
+                  surface={**steel, "seed": 6}),
+             _box("door_frame_top", [0, 2.12, D / 2 - 0.03], [1.26, 0.1, 0.05], dark, metal=0.6, rough=0.5),
+             _box("door_frame_l", [-0.6, 0, D / 2 - 0.03], [0.07, 2.16, 0.05], dark, metal=0.6, rough=0.5),
+             _box("door_frame_r", [0.6, 0, D / 2 - 0.03], [0.07, 2.16, 0.05], dark, metal=0.6, rough=0.5),
+             _box("door_sill", [0, 0, D / 2 - 0.09], [1.2, 0.012, 0.1], "#8d9297", metal=0.9, rough=0.5),
              {"id": "display", "primitive": "display", "params": {"size": [0.3, 0.15, 0.03], "text": "",
-                                                                  "color": "#ff4a3a"},
+                                                                  "color": "#ff3324", "glow": 2.6},
               "position": [0, 2.2, D / 2 - 0.02], "rotation": [0, 180, 0]}),
         # Кнопочная панель на правой стене (+x), лицом в кабину (−x).
         *_on("right",
              {"id": "panel", "primitive": "button_panel", "params": {"rows": 6, "cols": 2, "size": [0.2, 0.56, 0.025]},
-              "position": [W / 2 - 0.02, 0.98, 0.62], "rotation": [0, -90, 0]},
-             *[_box(f"seam_r{i}", [W / 2 - 0.006, 0, z], [0.012, H, 0.025], seam) for i, z in enumerate((-0.37,))]),
-        # Поручень по задней стене, швы панелей, плинтус.
+              "position": [W / 2 - 0.02, 0.98, 0.62], "rotation": [0, -90, 0]}),
+        # Поручень по задней стене, плинтус.
         *_on("back",
-             _cyl("rail", [0, 0.92, -D / 2 + 0.07], 0.035, 1.7, "#b9bec4", rot=[0, 0, 90], metal=0.7, rough=0.3),
-             _cyl("rail_post_l", [-0.8, 0.86, -D / 2 + 0.03], 0.025, 0.08, "#b9bec4", rot=[90, 0, 0], metal=0.7),
-             _cyl("rail_post_r", [0.8, 0.86, -D / 2 + 0.03], 0.025, 0.08, "#b9bec4", rot=[90, 0, 0], metal=0.7),
-             *[_box(f"seam_b{i}", [x, 0, -D / 2 + 0.006], [0.025, H, 0.012], seam) for i, x in enumerate((-0.34, 0.34))],
-             _box("kick", [0, 0, -D / 2 + 0.01], [W, 0.12, 0.02], dark)),
-        *_on("left", *[_box(f"seam_l{i}", [-W / 2 + 0.006, 0, z], [0.012, H, 0.025], seam)
-                       for i, z in enumerate((-0.37, 0.37))]),
-        # Панель света на потолке — гаснет при блэкауте; сверху (общий план) её не видно.
-        _box("ceiling_light", [0, H - 0.035, 0], [1.1, 0.03, 0.62], "#fff7e8", rounded=0.012, emissive="#fff3dc",
-             glow=1.5, no_shadow=True, hide_above=H + 0.05),
-        _box("hatch", [0, H - 0.012, -0.55], [0.6, 0.012, 0.5], "#3a3f46", hide_above=H + 0.05),
-        # Шахта: тёмные стены вокруг кабины, тросы и направляющие над крышей.
-        _box("shaft_back", [0, -3, -D / 2 - 1.05], [W + 2.2, 10, 0.2], "#1f2228"),
-        _box("shaft_left", [-W / 2 - 1.0, -3, 0.3], [0.2, 10, D + 2.4], "#22252b"),
-        _box("shaft_right", [W / 2 + 1.0, -3, 0.3], [0.2, 10, D + 2.4], "#22252b"),
-        _box("roof", [0, H + 0.002, 0], [W + 0.3, 0.06, D + 0.3], "#30343a", hide_above=H + 0.05),
-        *[_cyl(f"cable{i}", [x, H + 3.0, -0.1], 0.025, 6.0, "#15171a", segments=6) for i, x in enumerate((-0.12, 0.0, 0.12))],
+             _cyl("rail", [0, 0.92, -D / 2 + 0.07], 0.035, 1.7, "#c9ced3", rot=[0, 0, 90], metal=1.0, rough=0.22,
+                  segments=24),
+             _cyl("rail_post_l", [-0.8, 0.86, -D / 2 + 0.03], 0.025, 0.08, "#c9ced3", rot=[90, 0, 0], metal=1.0,
+                  rough=0.25, segments=16),
+             _cyl("rail_post_r", [0.8, 0.86, -D / 2 + 0.03], 0.025, 0.08, "#c9ced3", rot=[90, 0, 0], metal=1.0,
+                  rough=0.25, segments=16),
+             _box("kick", [0, 0, -D / 2 + 0.01], [W, 0.12, 0.02], dark, metal=0.7, rough=0.55)),
+        *_on("left", _box("kick_l", [-W / 2 + 0.01, 0, 0], [0.02, 0.12, D], dark, metal=0.7, rough=0.55)),
+        # Аварийный фонарь в заднем левом углу под потолком: корпус и красное стекло (светится, пока горит свет).
+        _box("emergency_lamp", [-W / 2 + 0.16, H - 0.2, -D / 2 + 0.05], [0.16, 0.08, 0.06], "#5a0d08",
+             emissive="#ff2a18", glow=3.0, no_shadow=True, rough=0.3),
+        _box("emergency_case", [-W / 2 + 0.16, H - 0.215, -D / 2 + 0.025], [0.19, 0.11, 0.03], dark, metal=0.5,
+             rough=0.5),
+        # Панель холодного света на потолке — гаснет при блэкауте; сверху (общий план) её не видно.
+        _box("ceiling_light", [0, H - 0.035, 0], [1.1, 0.03, 0.62], "#f2fbff", rounded=0.012, emissive="#e6f6ff",
+             glow=2.4, no_shadow=True, hide_above=H + 0.05),
+        _box("ceiling_frame", [0, H - 0.02, 0], [1.18, 0.02, 0.7], dark, metal=0.6, rough=0.5, hide_above=H + 0.05,
+             no_shadow=True),
+        _box("hatch", [0, H - 0.012, -0.62], [0.6, 0.012, 0.42], "#3a3f46", metal=0.4, rough=0.6,
+             hide_above=H + 0.05, no_shadow=True, surface={"kind": "painted_metal", "color": "#4a4f55", "seed": 9}),
+        # Шахта: бетонные стены вокруг кабины, тросы и направляющие над крышей.
+        _box("shaft_back", [0, -3, -D / 2 - 1.05], [W + 2.2, 10, 0.2], "#4b4a47",
+             surface={"kind": "concrete", "color": "#4b4a47", "seed": 3}),
+        _box("shaft_left", [-W / 2 - 1.0, -3, 0.3], [0.2, 10, D + 2.4], "#4b4a47",
+             surface={"kind": "concrete", "color": "#4b4a47", "seed": 4}),
+        _box("shaft_right", [W / 2 + 1.0, -3, 0.3], [0.2, 10, D + 2.4], "#4b4a47",
+             surface={"kind": "concrete", "color": "#4b4a47", "seed": 5}),
+        # Крыша тени не даёт: верхний свет стоит над потолком (ровнее заливает кабину, без «прожектора» в макушку).
+        _box("roof", [0, H + 0.002, 0], [W + 0.3, 0.06, D + 0.3], "#30343a", hide_above=H + 0.05, no_shadow=True,
+             surface={"kind": "painted_metal", "color": "#3a3e44", "seed": 2}),
+        *[_cyl(f"cable{i}", [x, H + 3.0, -0.1], 0.025, 6.0, "#15171a", segments=8, metal=0.8, rough=0.5)
+          for i, x in enumerate((-0.12, 0.0, 0.12))],
     ]
     lights = [
-        {"type": "hemisphere", "id": "ambient", "color": "#5a6a8c", "ground": "#1a1512", "intensity": 0.55},
-        {"type": "spot", "id": "main", "color": "#ffe9c8", "intensity": 34, "position": [0, H - 0.08, 0.05],
-         "target": [0, 0, 0.1], "angle": 72, "penumbra": 0.75, "decay": 2, "castShadow": True,
-         "shadow": {"size": 1024, "bias": -0.0006, "normalBias": 0.02, "radius": 4}},
-        {"type": "point", "id": "fill", "color": "#ffd9a8", "intensity": 2.2, "position": [0, 1.6, -0.6], "decay": 2},
-        {"type": "point", "id": "emergency", "color": "#ff3a24", "intensity": 0, "position": [0.6, H - 0.2, -0.75],
-         "decay": 2, "distance": 6, "level": 0.7},
+        {"type": "hemisphere", "id": "ambient", "color": "#4a6a78", "ground": "#14110f", "intensity": 0.32},
+        {"type": "spot", "id": "main", "color": "#e3f4ff", "intensity": 27, "position": [0, H + 0.55, 0.05],
+         "target": [0, 0, 0.1], "angle": 62, "penumbra": 0.85, "decay": 2, "castShadow": True,
+         "shadow": {"size": 1024, "bias": -0.0006, "normalBias": 0.02, "radius": 5},
+         "beam": {"length": 3.0, "radius": 1.0, "opacity": 0.03}},
+        {"type": "point", "id": "fill", "color": "#bfe4e6", "intensity": 1.4, "position": [0, 1.6, -0.6], "decay": 2},
+        {"type": "point", "id": "emergency", "color": "#ff2a14", "intensity": 0, "position": [-W / 2 + 0.2, H - 0.3, -D / 2 + 0.15],
+         "decay": 1.2, "distance": 7, "level": 5.0, "castShadow": True,
+         "shadow": {"size": 512, "bias": -0.003, "normalBias": 0.03, "radius": 6},
+         "halo": {"size": 0.55, "opacity": 0.75, "color": "#ff3a22"}},
+        # Отсвет аварийного от дверей/пола: красная заливка лица спереди, пока горит аварийный (как на референсе).
+        {"type": "point", "id": "emergency_fill", "color": "#ff3020", "intensity": 0, "position": [0.3, 1.3, 0.85],
+         "decay": 1.6, "distance": 4, "level": 1.1},
     ]
     return {
         "name": "elevator", "label": "лифт",
         # Камера может стоять «за стеной» (стена срезается), но внутри шахты.
         "camera_bounds": [-W / 2 - 0.85, W / 2 + 0.85, -D / 2 - 0.9, D / 2 + 1.3, H],
         "room": {"width": W, "depth": D, "height": H, "thickness": 0.08, "style": "lowpoly", "cutaway": True,
-                 "floor": {"color": "#2b2e33"}, "walls": {"color": steel}, "ceiling": {"color": "#c9cdd2"},
+                 "floor": {"color": "#26282b", "surface": {"kind": "coin_rubber", "color": "#25272a"}},
+                 "walls": {"color": "#8f969d", "surface": {"kind": "steel_panel", "color": "#9097a0", "seed": 11}},
+                 "ceiling": {"color": "#c9cdd2", "surface": {"kind": "painted_metal", "color": "#b9bdbf", "seed": 8}},
                  "baseboard": False, "hallway": False},
-        "environment": {"background": "#06070a", "fog": {"color": "#07080c", "near": 3.2, "far": 11},
-                        "exposure": 1.05, "envIntensity": 0.12, "style": STYLE},
+        "environment": {"background": "#040507", "fog": {"color": "#06090b", "near": 2.6, "far": 10},
+                        "exposure": 1.1, "envIntensity": 0.12, "style": "cinematic",
+                        "reflections": {"position": [0.0, 1.3, 0.0], "size": 128, "intensity": 0.6},
+                        "post": POST},
         "lights": lights, "objects": objects,
         "bounds": [-W / 2, W / 2, -D / 2, D / 2, H],
         # Места героя: x, z, yaw (0 — лицом к дверям, +z).
@@ -325,11 +401,13 @@ def elevator_location() -> dict:
                   "corner": [-0.52, -0.6, 25.0], "back": [-0.1, -0.3, 0.0]},
         # Точки интереса: позиция и «нормаль» (куда смотрит поверхность — откуда снимать деталь).
         "targets": {"doors": ([0, 1.15, D / 2 - 0.06], [0, 0, -1]), "panel": ([W / 2 - 0.05, 1.25, 0.62], [-1, 0, 0]),
-                    "display": ([0, 2.28, D / 2 - 0.05], [0, -0.35, -1]), "hatch": ([0, H - 0.02, -0.55], [0, -1, 0]),
+                    "display": ([0, 2.28, D / 2 - 0.05], [0, -0.35, -1]), "hatch": ([0, H - 0.02, -0.62], [0, -1, 0]),
                     "floor": ([0, 0.05, 0.3], [0, 1, 0])},
         "main_lights": ["main", "fill"], "ambient": "ambient", "emergency": "emergency",
         "glow": ["ceiling_light", "display", "panel"], "display": "display", "panel": "panel",
-        "doors": ["door_l", "door_r"], "focus": "doors", "start_floor": "",
+        "doors": ["door_l", "door_r"], "focus": "doors", "start_floor": "", "emergency_lamp": "emergency_lamp",
+        # Заливка от камеры слабее: глянец дождевика и сталь не дают «прожектор» в центре кадра.
+        "fill_levels": (0.25, 0.3), "phone_light": 1.8,
     }
 
 
@@ -633,9 +711,27 @@ def camera_ok(p: list[float], loc: dict, free: bool = False, margin: float = CAM
     return _inside(p, bounds, margin)
 
 
+# Сгенерированный герой (HERO_MESH): ниже центр головы, сама голова с причёской крупнее — замер движком (inspect).
+CLIP_HEAD_MESH = {"Idle_Loop": (1.455, 0.07), "Crouch_Idle_Loop": (0.89, 0.45), "Push_Loop": (1.1, 0.43),
+                  "Sitting_Idle_Loop": (1.25, 0.02), "Punch_Jab": (1.4, 0.05)}
+HEAD_R_MESH = 0.26
+# Какой герой в кадре сейчас считается (таблица голов и радиус) — ставит direct()/check_shots() по карточке.
+_HEAD: contextvars.ContextVar = contextvars.ContextVar("series3d_head", default=(CLIP_HEAD, HEAD_R))
+
+
+def _head_for(look: dict | None) -> tuple[dict, float]:
+    return (CLIP_HEAD_MESH, HEAD_R_MESH) if look and mesh_hero(look) else (CLIP_HEAD, HEAD_R)
+
+
 def head_of(clip: str | None) -> tuple[float, float]:
     """(высота центра головы, вынос вперёд) героя в позе клипа, м — замер движком (``CLIP_HEAD``)."""
-    return CLIP_HEAD.get(str(clip or ""), CLIP_HEAD["Idle_Loop"])
+    table = _HEAD.get()[0]
+    return table.get(str(clip or ""), table["Idle_Loop"])
+
+
+def head_r() -> float:
+    """От центра головы до макушки (м) у текущего героя."""
+    return _HEAD.get()[1]
 
 
 def hero_points(spot: list[float], clip: str | None = None) -> dict:
@@ -643,7 +739,7 @@ def hero_points(spot: list[float], clip: str | None = None) -> dict:
     hy, ahead = head_of(clip)
     f = _yaw_vec(spot[2] if len(spot) > 2 else 0.0)
     x, z = spot[0] + f[0] * ahead, spot[1] + f[2] * ahead
-    return {"top": [x, hy + HEAD_R, z], "head": [x, hy, z], "chest": [x, max(0.3, hy - 0.45), z],
+    return {"top": [x, hy + head_r(), z], "head": [x, hy, z], "chest": [x, max(0.3, hy - 0.45), z],
             "feet": [spot[0], 0.02, spot[1]]}
 
 
@@ -671,7 +767,7 @@ def _blocks(spot: list[float], cam: list[float], focus: list[float], clip: str |
     hero = [spot[0], 0.0, spot[1]]
     d, k = _seg_dist2d(hero, cam, focus)
     y = cam[1] + (focus[1] - cam[1]) * k
-    return d < 0.32 and 0.0 < k < 0.97 and y < head_of(clip)[0] + HEAD_R + 0.05
+    return d < 0.32 and 0.0 < k < 0.97 and y < head_of(clip)[0] + head_r() + 0.05
 
 
 def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: dict, side: int, clip: str | None) -> dict | None:
@@ -684,6 +780,8 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
     head_y, ahead = head_of(clip)
     crouch = head_y < 1.1
     hero = _add(hero, fwd, ahead * 0.6)
+    # Крупный герой (сгенерированный: голова с причёской и рюкзак больше) — камера дальше и шире в сторону.
+    big = min(1.5, max(1.0, head_r() / HEAD_R))
     cands: list[dict] = []
     if kind == "overhead":
         # Общий план — только сверху: над кабиной (потолок срезан), чуть со стороны лица героя.
@@ -704,7 +802,8 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
         right = [-dirv[2], 0.0, dirv[0]]
         for dist in (1.85, 1.65, 1.45, 1.25):
             for s in (side, -side):
-                pos = _add(_add([hero[0], head_y + (0.16 if crouch else 0.05), hero[2]], dirv, -dist), right, s * 0.36)
+                pos = _add(_add([hero[0], head_y + (0.16 if crouch else 0.05), hero[2]], dirv, -dist * (0.5 + big / 2)),
+                           right, s * 0.36 * big)
                 tgt = [look[0], max(look[1], pos[1] - 0.6), look[2]]
                 end = _add(pos, _norm(_sub(tgt, pos)), 0.14)
                 cands.append({"position": pos, "target": tgt, "fov": FOV, "end": end, "end_target": tgt, "free": False})
@@ -713,10 +812,13 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
         head = [hero[0], head_y, hero[2]]
         # Сидит/присел — дальше и чуть сверху (в кадре всё тело), стоит — крупно на уровне глаз.
         dists, lift, drop = ((1.6, 1.45, 1.3), 0.12, 0.12) if crouch else ((1.3, 1.15, 1.0), -0.05, 0.08)
+        if crouch and big > 1.2:
+            # Сгенерированный герой сидя опускает голову — снимаем ниже, чтобы видеть лицо, а не макушку.
+            lift, drop = -0.22, -0.02
         for ang in (22 * side, -22 * side, 45 * side, -45 * side, 70 * side, -70 * side):
             v = _yaw_vec(yaw + ang)
             for dist in dists:
-                pos = _add([head[0], head_y + lift, head[2]], v, dist)
+                pos = _add([head[0], head_y + lift, head[2]], v, dist * big)
                 tgt = [head[0], head_y - drop, head[2]]
                 end = _add(pos, _norm(_sub(tgt, pos)), 0.12)
                 cands.append({"position": pos, "target": tgt, "fov": 40.0, "end": end, "end_target": tgt, "free": False})
@@ -845,6 +947,16 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
            location: str | None = None, fps: int = FPS) -> dict:
     """Сценарий + слова озвучки → ``{spec, shots, events, sfx, location, checks}``. ``spec`` — сцена
     движка на всю серию (``total`` секунд), ``sfx`` — звуки событий ``[{t, ref, volume, label}]``."""
+    look = look or hero_look("")
+    token = _HEAD.set(_head_for(look))
+    try:
+        return _direct(script, words, total=total, look=look, location=location, fps=fps)
+    finally:
+        _HEAD.reset(token)
+
+
+def _direct(script: dict, words: list[dict], *, total: float | None, look: dict, location: str | None,
+            fps: int) -> dict:
     sentences = [s for s in (script.get("sentences") or []) if str(s.get("text") or "").strip()]
     if not sentences:
         raise DirectionError("в сценарии нет фраз")
@@ -938,6 +1050,10 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
                                                                                             "Head": [-18, 0, 0]}})
         elif name == "listen":
             poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4, "rotate": {"Head": [6, 0, 14]}})
+        elif name == "sit" and mesh_hero(look):
+            # Тяжёлая голова сгенерированного героя в клипе «присел» уходит в грудь — приподнять: лицо в кадре.
+            poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4,
+                          "rotate": {"spine_03": [-18, 0, 0], "neck_01": [-24, 0, 0], "Head": [-12, 0, 0]}})
         if phone:
             phone_windows.append([a0, t1])
         prev_spot = spot
@@ -981,6 +1097,9 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
               "ease": "inOutSine"}
         if cam["free"]:
             k1["free"] = True
+        # Глубина резкости (post.dof): на крупных — фон мягко размыт, фокус — на цели кадра.
+        if DOF.get(s["camera"]):
+            k0["dof"] = k1["dof"] = DOF[s["camera"]]
         cam_keys += [k0, k1]
 
     # Свет, табло, кнопки по событиям.
@@ -1008,6 +1127,13 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             emer["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t + 0.7, 3), "intensity": 0},
                             {"t": round(t + 1.0, 3), "intensity": float(emer.get("level") or 0.8), "ease": "linear"}]
             emer["flicker"] = [{"t": round(t + 0.7, 3), "amount": 0.7, "duration": 0.6}]
+            if by_id.get("emergency_fill"):
+                ef = by_id["emergency_fill"]
+                ef["keys"] = [{"t": 0, "intensity": 0}, {"t": round(t + 0.7, 3), "intensity": 0},
+                              {"t": round(t + 1.0, 3), "intensity": float(ef.get("level") or 1.0), "ease": "linear"}]
+                if light_back:
+                    ef["keys"] += [{"t": round(light_back, 3), "intensity": float(ef.get("level") or 1.0)},
+                                   {"t": round(light_back + 0.2, 3), "intensity": 0}]
             shake.append({"t": round(t, 3), "amp": 0.012, "duration": 0.6})
             add_sfx("blackout", t - 0.05, "блэкаут")
             add_sfx("power_down", t, "гул глохнет")
@@ -1070,6 +1196,15 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             if light_back:
                 st.append({"t": round(light_back + 0.2, 3), "glow": 1.0})
         o["state"] = st
+    # Стекло аварийного фонаря светится вместе с его светом (зажигается после блэкаута, гаснет со светом).
+    lamp = obj_by_id.get(loc.get("emergency_lamp") or "")
+    if lamp is not None:
+        st = [{"t": 0, "glow": 0.0}]
+        if blackout is not None:
+            st += [{"t": round(blackout + 0.85, 3), "glow": 1.0}]
+            if light_back:
+                st.append({"t": round(light_back + 0.2, 3), "glow": 0.0})
+        lamp["state"] = st
     panel = obj_by_id.get(loc["panel"])
     if panel is not None:
         presses = [s for s in shot_out if s["action"] == "press"]
@@ -1103,7 +1238,8 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
             else:
                 merged.append([a, b])
         objects.append({"id": "phone", "primitive": "box", "params": {"size": [0.075, 0.15, 0.012], "color": "#121418",
-                                                                       "emissive": "#9fc6ff", "emissiveIntensity": 0.25},
+                                                                       "emissive": "#9fc6ff", "emissiveIntensity": 0.06,
+                                                                       "roughness": 0.25, "metalness": 0.4},
                         "position": [loc["spots"]["corner"][0], -0.5, loc["spots"]["corner"][1]],
                         "attach": [{"to": f"{HERO_ID}:hand_r", "start": round(a, 3), "end": round(b, 3), "fadeIn": 0.05,
                                     "fadeOut": 0.05, "offset": [0, 0.04, 0.05], "settle": False} for a, b in merged],
@@ -1111,10 +1247,13 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
                                                               ({"t": round(a, 3), "on": True}, {"t": round(b, 3), "on": False})],
                         "light": {"type": "spot", "color": "#e9f1ff", "intensity": 0, "position": [0, 0.08, 0.02],
                                   "target": [0, 0.2, 3.0], "angle": 38, "penumbra": 0.85, "decay": 2,
+                                  # Луч фонарика виден в дымке кабины, у линзы — яркая точка.
+                                  "beam": {"length": 2.4, "radius": 0.8, "opacity": 0.12},
+                                  "halo": {"size": 0.06, "opacity": 0.5},
                                   "keys": [{"t": 0, "intensity": 0}] + [
                                       x for a, b in merged for x in ({"t": round(a, 3), "intensity": 0},
-                                                                     {"t": round(a + 0.15, 3), "intensity": PHONE_LIGHT},
-                                                                     {"t": round(b - 0.1, 3), "intensity": PHONE_LIGHT},
+                                                                     {"t": round(a + 0.15, 3), "intensity": loc.get("phone_light", PHONE_LIGHT)},
+                                                                     {"t": round(b - 0.1, 3), "intensity": loc.get("phone_light", PHONE_LIGHT)},
                                                                      {"t": round(b, 3), "intensity": 0})]}})
     # Напряжение в начале истории (после хука) — тихо.
     first_story = next((s for s in shot_out if s["role"] not in ("hook", "")), None)
@@ -1139,14 +1278,15 @@ def direct(script: dict, words: list[dict], *, total: float | None = None, look:
                 add_bed("hum", light_back, total, "гул кабины", 0.3, 1.5)
 
     character = _character(look, path, facing, actions, poses)
+    fill_lit, fill_dark = loc.get("fill_levels") or (FILL, FILL_DARK)
     env = dict(loc["environment"])
     spec = {"version": 1, "width": WIDTH, "height": HEIGHT, "fps": int(fps), "duration": round(total, 3),
             "environment": env, "room": loc["room"], "lights": lights, "objects": objects, "characters": [character],
             # Камера сама не прижимается к стенам: ракурсы уже проверены (внутри декорации или за срезанной стеной).
             "camera": {"fov": FOV, "keys": cam_keys, "shake": shake, "margin": 0.1, "clamp": False,
-                       "fill": {"color": "#ffe6cc", "intensity": FILL, "distance": 4,
-                                "keys": ([{"t": 0, "intensity": FILL}, {"t": round(blackout, 3), "intensity": FILL},
-                                          {"t": round(blackout + 0.05, 3), "intensity": FILL_DARK}]
+                       "fill": {"color": "#ffe6cc", "intensity": fill_lit, "distance": 4,
+                                "keys": ([{"t": 0, "intensity": fill_lit}, {"t": round(blackout, 3), "intensity": fill_lit},
+                                          {"t": round(blackout + 0.05, 3), "intensity": fill_dark}]
                                          if blackout is not None else None)}},
             "quality": {"shadows": True, "shadowSize": 1024, "antialias": True}}
     return {"spec": spec, "shots": shot_out, "events": events, "sfx": sorted(sfx, key=lambda x: x["t"]),

@@ -135,7 +135,21 @@ def test_direct_elevator_series():
     assert phone["attach"][0]["to"] == "hero:hand_r" and phone["light"]["type"] == "spot"
     assert all(a["start"] >= tb - 1.5 for a in phone["attach"]), "фонарик — после блэкаута"
     hero = spec["characters"][0]
-    assert hero["style"] == "toy" and hero["toy"]["top"] == S3.COLORS["yellow"]
+    # Жёлтый дождевик парня — сгенерированный меш на скелете Quaternius (опорные точки суставов — в HERO_MESH).
+    assert hero["style"] == "mesh" and hero["mesh"]["model"] == "builtin/hero_raincoat.glb" and "toy" not in hero
+    assert {"pelvis", "Head", "top", "hand_r", "ball_l", "armpit_l", "hem_r"} <= set(hero["mesh"]["joints"])
+    # «Кино»: PBR-поверхности, живые отражения, постобработка; на крупных — глубина резкости.
+    env = spec["environment"]
+    assert env["style"] == "cinematic" and env["post"]["ao"] > 0 and env["post"]["dof"] and env["reflections"]
+    assert spec["room"]["walls"]["surface"]["kind"] == "steel_panel"
+    assert spec["room"]["floor"]["surface"]["kind"] == "coin_rubber"
+    face = [k for k in spec["camera"]["keys"] if k.get("dof")]
+    assert face and all(k["dof"] in S3.DOF.values() for k in face)
+    assert phone["light"]["beam"]["opacity"] > 0 and phone["light"]["halo"]
+    emer_fill = next(x for x in spec["lights"] if x["id"] == "emergency_fill")
+    assert emer_fill["keys"][0]["intensity"] == 0 and emer_fill["keys"][-1]["intensity"] > 0
+    lamp = next(o for o in spec["objects"] if o["id"] == "emergency_lamp")
+    assert lamp["state"][0]["glow"] == 0 and lamp["state"][-1]["glow"] == 1.0, "стекло фонаря загорается с аварийным"
     assert spec["camera"]["clamp"] is False and spec["camera"]["shake"]
     # Звуки — только записи паков, на нужных словах.
     sfx = res["sfx"]
@@ -274,3 +288,30 @@ def test_story_episode_with_3d_engine(env, monkeypatch):  # noqa: F811
     words = store.get_clip_plan_subtitles(ep["clip_id"])["words"]
     assert any("блэкаут" in str(w.get("word") or w.get("text")) for w in words)
     assert tl["cover_frames"] and all(Path(p).is_file() for p in tl["cover_frames"])
+
+
+def test_mesh_hero_only_for_raincoat_guy():
+    assert S3.mesh_hero(S3.hero_look(DANYA)) is S3.HERO_MESH
+    girl = S3.hero_look("a girl Masha, 19, long blond hair, red beanie, blue jacket, black jeans")
+    assert S3.mesh_hero(girl) is None
+    ch = S3._character(girl, [{"t": 0, "p": [0, 0, 0]}], [], [], [])
+    assert ch["style"] == "toy" and ch["toy"]["top"] == S3.COLORS["blue"]
+    # Таблица голов — по герою на время режиссуры, снаружи — игрушка.
+    assert S3.head_of("Idle_Loop") == S3.CLIP_HEAD["Idle_Loop"] and S3.head_r() == S3.HEAD_R
+    S3.direct(LIFT, _words(), look=S3.hero_look(DANYA))
+    assert S3.head_r() == S3.HEAD_R, "контекст головы сброшен после direct()"
+
+
+def test_builtin_model_checked(tmp_path):
+    from app.scene3d import SceneSpecError
+
+    spec = {"duration": 1, "camera": {"keys": [{"t": 0, "position": [0, 1, 3], "target": [0, 1, 0]}]},
+            "characters": [{"id": "h", "model": "quaternius-characters/x.gltf",
+                                           "mesh": {"model": "builtin/hero_raincoat.glb", "joints": {"pelvis": [0, 0, 0]}}}]}
+    validate_spec(spec, check_assets=False)
+    spec["characters"][0]["mesh"]["model"] = "builtin/nope.glb"
+    with pytest.raises(SceneSpecError):
+        validate_spec(spec, check_assets=False)
+    spec["characters"][0]["mesh"] = {"model": "builtin/hero_raincoat.glb"}
+    with pytest.raises(SceneSpecError):
+        validate_spec(spec, check_assets=False)

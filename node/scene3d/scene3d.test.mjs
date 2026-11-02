@@ -123,6 +123,15 @@ test("раздача файлов: только паки и движок, без
   assert.match(page.body.toString(), /width:100px/);
 });
 
+test("раздача файлов: встроенные модели движка (/assets/) — только из node/scene3d/assets", () => {
+  const ctx = { width: 100, height: 200, bundle: BUNDLE, packs: PACKS };
+  const hero = serve("http://scene3d.local/assets/hero_raincoat.glb", ctx);
+  assert.equal(hero.status, 200);
+  assert.equal(hero.mime, "model/gltf-binary");
+  assert.equal(serve("http://scene3d.local/assets/../render.mjs", ctx).status, 404);
+  assert.equal(serve("http://scene3d.local/assets/%2e%2e/render.mjs", ctx).status, 404);
+});
+
 test("ffmpeg: сегменты в ТВ-диапазоне BT.709, склейка без перекодирования", () => {
   const a = segmentArgs(30, 18, "jpeg", "s.mp4");
   assert.ok(a.includes("libx264") && a.includes("mjpeg"));
@@ -347,4 +356,68 @@ test("браузер: лоу-поли серия — игрушка на кос�
   } finally {
     await scene.close();
   }
+});
+
+/** «Кино»: PBR-поверхности, живые отражения, лучи и ореолы, постобработка, сгенерированный герой на скелете. */
+const CINEMA = {
+  width: 216, height: 384, fps: 10, duration: 2,
+  environment: { background: "#040507", style: "cinematic", reflections: { position: [0, 1.3, 0], size: 32 },
+    post: { ao: 1, aoScale: 0.5, bloom: { strength: 0.5, threshold: 1.2 }, grade: { shadows: "#3f6f78", highlights: "#c9a27a", contrast: 1.1 },
+      vignette: 0.5, grain: 0.05, ca: 1.4, dof: true } },
+  room: { width: 2, depth: 2.2, height: 2.5, style: "lowpoly", cutaway: true, baseboard: false, hallway: false,
+    floor: { surface: { kind: "coin_rubber" } }, walls: { surface: { kind: "steel_panel" } }, ceiling: { surface: { kind: "painted_metal" } } },
+  lights: [
+    { type: "hemisphere", color: "#4a6a78", intensity: 0.4 },
+    { type: "spot", id: "main", intensity: 20, position: [0, 2.4, 0], target: [0, 0, 0], angle: 60, castShadow: true, beam: { length: 2.3, opacity: 0.05 } },
+    { type: "point", id: "emergency", color: "#ff2a14", intensity: 2, position: [-0.8, 2.2, -1], halo: { size: 0.4 },
+      keys: [{ t: 0, intensity: 0 }, { t: 1, intensity: 2 }] },
+  ],
+  objects: [{ id: "door", primitive: "box", params: { size: [0.5, 2, 0.04], surface: { kind: "brushed_steel" } }, position: [0, 0, 1.05] }],
+  characters: [{ id: "hero", model: "quaternius-characters/Superhero_Male_FullBody.gltf", height: 1.72, style: "mesh",
+    mesh: { model: "builtin/hero_raincoat.glb", gloss: { hue: [0.105, 0.2] }, joints: {
+      pelvis: [-0.08, -0.4, 0], spine_01: [-0.08, -0.28, 0], spine_02: [-0.08, -0.08, 0], spine_03: [-0.08, 0.1, 0],
+      neck_01: [-0.08, 0.32, 0], Head: [-0.08, 0.43, 0], top: [-0.08, 0.96, 0],
+      upperarm_l: [0.19, 0.17, 0], lowerarm_l: [0.45, -0.05, 0], hand_l: [0.5, -0.2, 0],
+      upperarm_r: [-0.29, 0.17, 0], lowerarm_r: [-0.5, -0.05, 0], hand_r: [-0.57, -0.2, 0],
+      thigh_l: [0.09, -0.43, 0], calf_l: [0.1, -0.7, 0], foot_l: [0.11, -0.91, 0], ball_l: [0.11, -0.97, 0.12],
+      thigh_r: [-0.25, -0.43, 0], calf_r: [-0.26, -0.7, 0], foot_r: [-0.27, -0.91, 0], ball_r: [-0.27, -0.97, 0.12],
+      armpit_l: [0.355, 0.1, 0], hem_l: [0.36, -0.45, 0], armpit_r: [-0.31, 0.1, 0], hem_r: [-0.4, -0.45, 0] } },
+    animations: ["quaternius-animations/UAL1_Standard.glb"], actions: [{ clip: "Idle_Loop", start: 0, end: 3 }],
+    position: [0, 0, 0] }],
+  camera: { fov: 45, clamp: false, keys: [{ t: 0, position: [0.3, 1.4, -0.9], target: [0, 1.1, 0.6], dof: 1 }, { t: 2, position: [0.2, 1.4, -0.8], target: [0, 1.1, 0.6], dof: 1 }],
+    keepInFrame: { ids: ["hero"] } },
+};
+
+test("браузер: «кино» — пост-обработка, отражения, лучи и сгенерированный герой детерминированы, герой на ногах", { skip: !HAVE && "нет браузера/паков/бандла" }, async () => {
+  const opts = { bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader" };
+  const a = await openScene(opts, CINEMA);
+  let first, again, other, info, lumaLit, lumaDark;
+  try {
+    assert.deepEqual(a.info.warnings, []);
+    lumaDark = (await a.render(0.05)).luma;
+    await a.render(1.5);
+    first = sha(await a.shot("png"));
+    lumaLit = (await a.render(1.9)).luma;
+    await a.render(0.4);
+    await a.render(1.5);
+    again = sha(await a.shot("png"));
+    info = await a.inspect(1.5);
+  } finally {
+    await a.close();
+  }
+  const b = await openScene(opts, CINEMA);
+  try {
+    await b.render(1.5);
+    other = sha(await b.shot("png"));
+  } finally {
+    await b.close();
+  }
+  assert.equal(again, first, "тот же браузер, другой порядок");
+  assert.equal(other, first, "другой браузер");
+  assert.ok(lumaLit > 8 && lumaDark > 3, `кадр не чёрный (${lumaDark} / ${lumaLit})`);
+  const hero = info.characters.hero;
+  // Меш на скелете: голова (с причёской) — верх фигуры, рост ~1.72 м, кисти ниже плеч в покое.
+  assert.ok(hero.headCenter[1] > 1.3 && hero.headCenter[1] < 1.6, `центр головы ${hero.headCenter}`);
+  assert.ok(Math.abs(hero.headR - 0.26) < 0.02, `радиус головы ${hero.headR}`);
+  assert.ok(hero.hand_r[1] < 1.0 && hero.hand_l[1] < 1.0, "руки опущены");
 });

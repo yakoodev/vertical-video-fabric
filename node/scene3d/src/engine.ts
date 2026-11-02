@@ -13,7 +13,9 @@ import { buildRoom, cutawayFor, type RoomBuild, type RoomSpec } from "./room.ts"
 import { createCharacter, type Character, type CharacterSpec } from "./character.ts";
 import { buttonPanel, display, mug, poster, primitive, robotDisc, stringLights, type Prop } from "./props.ts";
 import { blobTexture } from "./textures.ts";
-import { facingYaw, sampleAngle, sampleKeys, sampleNumber, samplePath, sampleVec, shake, windowWeight, type Key } from "./timeline.ts";
+import { facingYaw, rng, sampleAngle, sampleKeys, sampleNumber, samplePath, sampleVec, shake, windowWeight, type Key } from "./timeline.ts";
+import { beamMesh, haloSprite, PostFX, type PostSpec } from "./post.ts";
+import { applySurface, type SurfaceSpec } from "./surfaces.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
 const D2R = Math.PI / 180;
@@ -63,6 +65,10 @@ interface LightSpec {
   shadow?: { size?: number; bias?: number; normalBias?: number; radius?: number; near?: number; far?: number; extent?: number };
   flicker?: { t: number; amount?: number; duration?: number }[];
   keys?: Key[];
+  /** Видимый объёмный луч (spot): длина и радиус конуса (м), яркость при наибольшей силе света. */
+  beam?: { length?: number; radius?: number; opacity?: number; color?: string };
+  /** Ореол самой лампы (спрайт, м): горит пропорционально текущей силе света. */
+  halo?: { size?: number; opacity?: number; color?: string };
 }
 
 interface CameraKey extends Key {
@@ -100,7 +106,11 @@ export interface SceneSpec {
   duration?: number;
   environment?: { background?: string; fog?: { color?: string; near?: number; far?: number } | false; exposure?: number; envIntensity?: number; toneMapping?: string;
     /** flat — блокинг (всё матовое); lowpoly — плоские грани у мебели и стен, матовые цвета (персонажи-игрушки — гладкие). */
-    style?: "flat" | "lowpoly" };
+    style?: "flat" | "lowpoly" | "cinematic";
+    /** Постобработка кадра (post.ts): AO, bloom, цветокоррекция, зерно, виньетка, глубина резкости. */
+    post?: PostSpec;
+    /** Живые отражения: кубическая карта сцены из точки position каждый кадр (без персонажей и эффектов). */
+    reflections?: { position: number[]; size?: number; intensity?: number } };
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
@@ -129,11 +139,18 @@ class Engine {
   warnings: string[] = [];
   probe!: CanvasRenderingContext2D;
   fill: THREE.PointLight | null = null;
+  post: PostFX | null = null;
+  cube: { cam: THREE.CubeCamera; rt: THREE.WebGLCubeRenderTarget } | null = null;
+  fx: { light: THREE.Light; spec: LightSpec; beam?: THREE.Mesh; halo?: THREE.Sprite }[] = [];
+  focus = 2;
+  dof = 0;
 
   load(ref: string): Promise<Loaded> {
     if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
     if (!this.gltfCache.has(ref)) {
-      this.gltfCache.set(ref, this.loader.loadAsync(ASSET_BASE + ref).then((g: any) => ({ scene: g.scene, animations: g.animations || [] })));
+      // builtin/… — модели самого движка (node/scene3d/assets), остальное — паки.
+      const url = ref.startsWith("builtin/") ? "http://scene3d.local/assets/" + ref.slice(8) : ASSET_BASE + ref;
+      this.gltfCache.set(ref, this.loader.loadAsync(url).then((g: any) => ({ scene: g.scene, animations: g.animations || [] })));
     }
     return this.gltfCache.get(ref)!;
   }
@@ -144,6 +161,8 @@ class Engine {
 
   async init(spec: SceneSpec) {
     this.spec = spec;
+    // Всё «случайное» внутри three (шум AO, uuid) — от засеянного ГПСЧ: одинаково в любом браузере и куске.
+    Math.random = rng(20261102);
     const W = spec.width || 1080, H = spec.height || 1920;
     const canvas = document.getElementById("c") as HTMLCanvasElement;
     canvas.width = W;
@@ -209,7 +228,7 @@ class Engine {
       this.scene.traverse((o: any) => {
         if (!o.isMesh || String(o.name).startsWith("toy:")) return;
         for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-          if (!m || !("roughness" in m)) continue;
+          if (!m || !("roughness" in m) || String(m.name).startsWith("surface:")) continue;
           m.flatShading = true;
           m.normalMap = null;
           if (!(m.metalness > 0.4)) m.roughness = Math.max(m.roughness, 0.8);
@@ -231,6 +250,15 @@ class Engine {
         }
       });
     }
+    if (env.reflections) {
+      const rt = new THREE.WebGLCubeRenderTarget(env.reflections.size ?? 128, { type: THREE.HalfFloatType });
+      const cam = new THREE.CubeCamera(0.05, 30, rt);
+      cam.position.set(...(env.reflections.position as [number, number, number]));
+      this.scene.add(cam);
+      this.cube = { cam, rt };
+      this.scene.environmentIntensity = env.reflections.intensity ?? 1;
+    }
+    if (env.post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, env.post, spec.quality?.antialias === false ? 0 : 4);
     this.renderer.compile(this.scene, this.camera);
     return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
   }
@@ -293,6 +321,27 @@ class Engine {
     light.name = l.id || l.type;
     (light as any).userData.baseIntensity = light.intensity;
     parent.add(light);
+    if (l.beam || l.halo) {
+      const fx: Engine["fx"][number] = { light, spec: l };
+      const pos = new THREE.Vector3(...((l.position || [0, 0, 0]) as [number, number, number]));
+      if (l.beam && l.type === "spot") {
+        const len = l.beam.length ?? 2.5;
+        const rad = l.beam.radius ?? len * Math.tan((l.angle ?? 40) * D2R * 0.8);
+        const b = beamMesh(l.beam.color || l.color || "#ffffff", len, rad);
+        b.position.copy(pos);
+        const dir = new THREE.Vector3(...((l.target || [0, 0, 0]) as [number, number, number])).sub(pos).normalize();
+        b.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+        parent.add(b);
+        fx.beam = b;
+      }
+      if (l.halo) {
+        const h = haloSprite(l.halo.color || l.color || "#ffffff", l.halo.size ?? 0.3);
+        h.position.copy(pos);
+        parent.add(h);
+        fx.halo = h;
+      }
+      this.fx.push(fx);
+    }
     this.lights.push({ spec: l, light });
     return light;
   }
@@ -329,6 +378,21 @@ class Engine {
         : kind === "button_panel" ? buttonPanel(p) : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
+      if (p.surface) {
+        // PBR-поверхность: UV в метрах с учётом масштаба объекта.
+        const sf: SurfaceSpec = typeof p.surface === "string" ? { kind: p.surface } : p.surface;
+        const s0 = o.scale ?? 1;
+        const sc = Array.isArray(s0) ? s0 : [s0, s0, s0];
+        prop.object.traverse((c: any) => {
+          if (!c.isMesh || c.userData.keepMaterial) return;
+          const g = c.geometry.clone();
+          g.scale(sc[0], sc[1], sc[2]);
+          c.geometry = g;
+          c.updateWorldMatrix(true, false);
+          applySurface(c, sf);
+          c.geometry.scale(1 / sc[0], 1 / sc[1], 1 / sc[2]);
+        });
+      }
     }
     // Масштаб — у внутреннего узла, чтобы дети (parent) не растягивались вместе с ним.
     const s = o.scale ?? 1;
@@ -362,6 +426,19 @@ class Engine {
       }
       const ki = l.spec.keys ? sampleNumber(l.spec.keys, t, "intensity") : undefined;
       l.light.intensity = (ki ?? (l.light as any).userData.baseIntensity) * k;
+    }
+    for (const f of this.fx) {
+      // Опора яркости луча/ореола — наибольшая сила света (в ключах свет может стартовать с нуля).
+      const peak = Math.max(1e-6, (f.light as any).userData.baseIntensity || 0, ...(f.spec.keys || []).map((k: any) => Number(k.intensity) || 0));
+      const level = Math.max(0, f.light.intensity / peak);
+      if (f.beam) {
+        (f.beam.material as THREE.ShaderMaterial).uniforms.opacity.value = (f.spec.beam!.opacity ?? 0.18) * level;
+        f.beam.visible = level > 0.003;
+      }
+      if (f.halo) {
+        f.halo.material.opacity = Math.min(1, (f.spec.halo!.opacity ?? 0.8) * level);
+        f.halo.visible = level > 0.003;
+      }
     }
     // Объекты: сначала без родителя (их мир нужен детям), потом дети.
     const ordered = this.objects.slice().sort((a, b) => depth(a.spec, this.objects) - depth(b.spec, this.objects));
@@ -461,6 +538,7 @@ class Engine {
     const tgt = sampleVec(keys, t, "target") || [0, 1, 0];
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
     const roll = sampleAngle(keys, t, "roll") ?? 0;
+    this.dof = sampleNumber(keys, t, "dof") ?? 0;
     // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false, и кадров free).
     let active: CameraKey | undefined;
     for (const k of cs.keys) if (k.t <= t + 1e-9) active = k;
@@ -481,6 +559,7 @@ class Engine {
     this.camera.position.set(pos[0] + sx, pos[1] + sy, pos[2]);
     this.camera.up.set(0, 1, 0);
     this.camera.lookAt(tgt[0] + sx, tgt[1] + sy, tgt[2]);
+    this.focus = Math.max(0.2, new THREE.Vector3(tgt[0], tgt[1], tgt[2]).distanceTo(this.camera.position));
     if (roll) this.camera.rotateZ(roll * D2R);
     if (this.camera.fov !== fov) {
       this.camera.fov = fov;
@@ -511,10 +590,9 @@ class Engine {
     for (const id of ids) {
       const ch = this.characters[id];
       if (!ch) continue;
-      const head = ch.boneWorld("Head", new THREE.Vector3());
-      // Голова с причёской: точки сферы радиусом ~11% роста вокруг кости головы (центр чуть выше кости).
-      const c = head.clone().add(new THREE.Vector3(0, ch.height * 0.05, 0));
-      const r = ch.height * 0.11;
+      // Голова с причёской: точки сферы вокруг её центра (у игрушки ~11% роста, у меша — по макушке).
+      const c = headCenter(ch);
+      const r = ch.head.r;
       for (const d of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0, 0.7, 0.7], [0, 0.7, -0.7]])
         pts.push(c.clone().add(new THREE.Vector3(d[0] * r, d[1] * r, d[2] * r)));
       if (k.feet) pts.push(ch.boneWorld("ball_l", new THREE.Vector3()), ch.boneWorld("ball_r", new THREE.Vector3()));
@@ -582,7 +660,17 @@ class Engine {
 
   render(t: number) {
     this.update(t);
-    this.renderer.render(this.scene, this.camera);
+    if (this.cube) {
+      // Отражения: сцена без персонажей и эффектов (слой 0) из точки кабины; среда на время съёмки снята.
+      const shown = Object.values(this.characters).map((c) => c.root).filter((r) => r.visible);
+      for (const r of shown) r.visible = false;
+      this.scene.environment = null;
+      this.cube.cam.update(this.renderer, this.scene);
+      this.scene.environment = this.cube.rt.texture;
+      for (const r of shown) r.visible = true;
+    }
+    if (this.post) this.post.render(this.camera, t, this.dof, this.focus);
+    else this.renderer.render(this.scene, this.camera);
     // Средняя яркость кадра по уменьшенной копии — проверка «чёрных» кадров.
     const g = this.probe;
     g.drawImage(this.renderer.domElement, 0, 0, 27, 48);
@@ -604,13 +692,26 @@ class Engine {
     }
     for (const [id, c] of Object.entries(this.characters)) {
       const b = new THREE.Box3().setFromObject(c.root, true);
-      out.characters[id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3), hand_r: c.boneWorld("hand_r").toArray().map(r3), hand_l: c.boneWorld("hand_l").toArray().map(r3), head: c.boneWorld("Head").toArray().map(r3) };
+      out.characters[id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3), hand_r: c.boneWorld("hand_r").toArray().map(r3), hand_l: c.boneWorld("hand_l").toArray().map(r3), head: c.boneWorld("Head").toArray().map(r3),
+        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r) };
     }
     return out;
   }
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** Центр головы с причёской: по оси кости головы (к макушке) на head.up от кости. */
+function headCenter(c: Character): THREE.Vector3 {
+  const b = c.bones.Head;
+  if (!b) return c.boneWorld("Head");
+  const p = b.getWorldPosition(new THREE.Vector3());
+  const q = b.getWorldQuaternion(new THREE.Quaternion());
+  // Ось «вверх» головы в позе привязки — мировой +y; поворот кости от привязки поворачивает её.
+  const bind = (b.userData.bindQuat as THREE.Quaternion | undefined) || q;
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q.clone().multiply(bind.clone().invert()));
+  return p.addScaledVector(up, c.head.up);
+}
 
 function depth(s: ObjectSpec, all: { spec: ObjectSpec }[]): number {
   let d = 0, cur: ObjectSpec | undefined = s;

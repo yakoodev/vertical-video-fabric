@@ -11,6 +11,7 @@ import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { actionStates, facingYaw, samplePath, windowWeight, type Action, type Key } from "./timeline.ts";
 import { buildToy, type ToySpec } from "./toy.ts";
+import { fitSkeleton, glossFromColor, meshToChar, skinMeshes, type MeshRigSpec } from "./meshrig.ts";
 
 export interface PoseSpec {
   start: number;
@@ -33,7 +34,9 @@ export interface CharacterSpec {
   skinTone?: { lighten?: number; saturation?: number; hue?: number };
   /** «flat» — стиль блокинга: матовые ровные цвета без текстур кожи и рельефа (не реализм тела);
    * «toy» — лоу-поли игрушка из скруглённых деталей на костях (toy.ts), тело модели спрятано. */
-  style?: "flat" | "textured" | "toy";
+  style?: "flat" | "textured" | "toy" | "mesh";
+  /** style "mesh": статичный меш (сгенерированный) на этом скелете — авто-скиннинг по опорным точкам (meshrig.ts). */
+  mesh?: MeshRigSpec;
   /** Внешность игрушки (style: "toy"): кожа, волосы, яркий верх, капюшон, штаны, обувь, рюкзак. */
   toy?: ToySpec;
   /** Высота сиденья (м): корень опускается/поднимается так, чтобы таз сидел на этой высоте. */
@@ -63,6 +66,8 @@ export interface Character {
   update(t: number): void;
   boneWorld(name: string, out?: THREE.Vector3): THREE.Vector3;
   yawAt(t: number): number;
+  /** Голова с причёской: центр — на up м выше кости головы (по её оси), радиус r (м). */
+  head: { up: number; r: number };
 }
 
 type Loaded = { scene: THREE.Group; animations: THREE.AnimationClip[] };
@@ -358,6 +363,48 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     buildToy(bones, hide, height, spec.toy || {});
   }
 
+  let headInfo = { up: height * 0.05, r: height * 0.11 };
+  if (spec.style === "mesh" && spec.mesh) {
+    // Тело модели прячем, на её скелет вешаем сгенерированный меш.
+    scene.traverse((o: any) => {
+      if (o.isMesh) o.visible = false;
+    });
+    const g = await load(spec.mesh.model);
+    g.scene.updateMatrixWorld(true);
+    const meshes: THREE.Mesh[] = [];
+    g.scene.traverse((o: any) => {
+      if (!o.isMesh) return;
+      const geo = (o.geometry as THREE.BufferGeometry).clone().applyMatrix4(o.matrixWorld);
+      const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m: THREE.MeshStandardMaterial) => {
+        const c = m.clone();
+        if (spec.mesh!.gloss && c.map) {
+          const r = glossFromColor(c.map, spec.mesh!.gloss);
+          if (r) {
+            c.roughnessMap = r;
+            c.roughness = 1;
+          }
+        }
+        c.metalness = 0;
+        c.side = THREE.DoubleSide; // разрезы в подмышках показывают изнанку, а не дыру
+        return c;
+      });
+      meshes.push(new THREE.Mesh(geo, mats.length === 1 ? mats[0] : mats));
+    });
+    let minY = Infinity, maxY = -Infinity;
+    for (const m of meshes) {
+      m.geometry.computeBoundingBox();
+      minY = Math.min(minY, m.geometry.boundingBox!.min.y);
+      maxY = Math.max(maxY, m.geometry.boundingBox!.max.y);
+    }
+    const { f } = meshToChar(spec.mesh.joints, minY, height, maxY);
+    const P: Record<string, THREE.Vector3> = {};
+    for (const [k2, v] of Object.entries(spec.mesh.joints)) P[k2] = f(v);
+    root.updateMatrixWorld(true);
+    fitSkeleton(bones, P);
+    skinMeshes(meshes, bones, P, (v) => f(v), root, spec.mesh.smooth ?? 6);
+    if (P.top && P.Head) headInfo = { up: (P.top.y - P.Head.y) * 0.5, r: (P.top.y - P.Head.y) * 0.56 };
+  }
+
   if (spec.hair && !toy) {
     const h = await load(spec.hair.model);
     const clone = SkeletonUtils.clone(h.scene);
@@ -504,6 +551,10 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
 
   // Поза покоя костей: перед каждым кадром кости возвращаются в неё — ни миксер, ни позы не
   // тянут состояние с прошлого кадра (кадр зависит только от t).
+  if (bones.Head) {
+    scene.updateMatrixWorld(true);
+    bones.Head.userData.bindQuat = bones.Head.getWorldQuaternion(new THREE.Quaternion());
+  }
   const rest = Object.values(bones).map((b) => [b, b.position.clone(), b.quaternion.clone(), b.scale.clone()] as const);
   const update = (t: number) => {
     for (const [b, p, q, s] of rest) {
@@ -550,6 +601,7 @@ export async function createCharacter(spec: CharacterSpec, load: (ref: string) =
     height,
     update,
     yawAt,
+    head: headInfo,
     boneWorld: (name, out = new THREE.Vector3()) => {
       const b = bones[name];
       return b ? b.getWorldPosition(out) : root.getWorldPosition(out);

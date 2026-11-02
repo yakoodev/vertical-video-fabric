@@ -122,8 +122,10 @@ export function serve(url, ctx) {
   const path = url.slice(ORIGIN.length).split(/[?#]/)[0];
   if (path === "/index.html") return { status: 200, body: Buffer.from(pageHtml(ctx.width, ctx.height)), mime: MIME[".html"] };
   if (path === "/engine/scene3d.js") return { status: 200, body: readFileSync(ctx.bundle), mime: MIME[".js"] };
-  if (path.startsWith("/packs/")) {
-    const file = safeJoin(ctx.packs, path.slice("/packs/".length));
+  if (path.startsWith("/packs/") || path.startsWith("/assets/")) {
+    // /assets/ — встроенные модели движка (node/scene3d/assets), /packs/ — скачанные паки.
+    const assets = path.startsWith("/assets/");
+    const file = safeJoin(assets ? join(HERE, "assets") : ctx.packs, path.slice(assets ? "/assets/".length : "/packs/".length));
     const mime = file && MIME[extname(file).toLowerCase()];
     if (!file || !mime || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
     return { status: 200, body: readFileSync(file), mime };
