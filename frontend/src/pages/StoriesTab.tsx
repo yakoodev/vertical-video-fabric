@@ -17,6 +17,7 @@ import {
   type StoryEpisode,
   type StoryEngine,
   type StoryRenderer,
+  type StoryQuality,
   type StoryFormat,
   type StoryLocation,
   type StoryScene,
@@ -154,6 +155,7 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
     render: false,
     engine: "images" as StoryEngine,
     renderer: "three" as StoryRenderer,
+    quality: "fast" as StoryQuality,
   });
   const [form, setForm] = useState(() => initial(world.format ?? "story"));
   const [lo, hi] = STORY_DURATIONS[form.format];
@@ -216,6 +218,19 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
             />{" "}
             🎬 Blender (рендер на компьютере)
           </label>
+        ) : null}
+        {form.engine === "3d" && form.renderer === "blender" ? (
+          <select
+            className="input"
+            value={form.quality}
+            onChange={(e) => setForm({ ...form, quality: e.target.value as StoryQuality })}
+            title="Пресет рендера: быстрый финал ≈ в 2–3 раза быстрее кино; черновик — проверить действия за минуты"
+          >
+            <option value="fast">финал (быстро)</option>
+            <option value="fast720">финал 720p + апскейл</option>
+            <option value="final">кино (медленно)</option>
+            <option value="draft">черновик действий</option>
+          </select>
         ) : null}
       </div>
       <textarea

@@ -60,7 +60,7 @@ def test_fix_sequence_feasible_and_no_repeated_plan():
     out = B.fix_sequence(shots)
     assert out[1]["stand_first"], "сидя к панели — сначала встать"
     assert out[2]["action"] == "wait", "уже стоит — «встать» не играть"
-    assert out[3]["speaks"] and out[3]["camera"] in ("face", "overhead"), "в объектив — лицом и с лип-синком"
+    assert out[3]["camera"] in ("face", "overhead"), "в объектив — лицом (рот — только на речи героя)"
     assert all(a["camera"] != b["camera"] for a, b in zip(out, out[1:])), "один план подряд"
     assert out[1]["target"] == "panel"
 
@@ -82,13 +82,14 @@ def test_gemini_choice_by_schema_with_rules_fallback():
     rules = B.plan_shots(LIFT, words, total, gemini=False)
     n = len(rules["shots"])
     picks = [{"n": i, "action": "listen", "target": "doors", "button": "1", "emotion": "scared", "camera": "face",
-              "speaks": False} for i in range(n)]
-    picks[2] = {"n": 2, "action": "dance", "emotion": "calm", "camera": "face", "speaks": False}  # не из словаря
+              "speaker": "narrator"} for i in range(n)]
+    picks[2] = {"n": 2, "action": "dance", "emotion": "calm", "camera": "face", "speaker": "narrator"}  # не из словаря
     fake = FakeGemini(picks)
     plan = B.plan_shots(LIFT, words, total, gemini=True, client=fake)
     schema = fake.payload["generationConfig"]["responseSchema"]["properties"]["shots"]["items"]["properties"]
     assert schema["action"]["enum"] == list(B.ACTIONS) and schema["camera"]["enum"] == list(B.CAMERAS)
     assert schema["emotion"]["enum"] == list(B.EMOTIONS) and "bell" in schema["button"]["enum"]
+    assert schema["speaker"]["enum"] == ["narrator", "hero", "other"]
     assert plan["director"] == "gemini"
     assert plan["shots"][0]["by"] == "gemini" and plan["shots"][2]["by"] == "rules", "неверный ответ — правила"
     assert all(a["camera"] != b["camera"] for a, b in zip(plan["shots"], plan["shots"][1:]))
@@ -189,6 +190,7 @@ def test_turn_in_place_steps_and_walk_moves_root():
 # --------------------------------------------------------------------------- #
 
 PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 80 + b"\x00\x00\x00\x00IEND\xaeB`\x82")
+JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 80 + b"\xff\xd9"
 
 
 def test_chunk_keys_change_only_for_edited_shot():
@@ -224,7 +226,8 @@ class FakeBlender:
                     break
                 d = Path(cfg["cache"]) / c["key"]
                 d.mkdir(parents=True, exist_ok=True)
-                (d / B.frame_name(f)).write_bytes(PNG)
+                ext = c.get("ext", "png")
+                (d / B.frame_name(f, ext)).write_bytes(JPG if ext == "jpg" else PNG)
                 n += 1
                 lines.append(f"PROGRESS {n} {total}\n")
         Path(cfg["out_dir"], "report.json").write_text("{}", "utf-8")
@@ -245,27 +248,82 @@ def test_render_resumes_from_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(B, "find_blender", lambda explicit=None: "blender")
     monkeypatch.setattr(B, "scene_config", lambda job, work, cache, packs=None: {"cache": str(cache), "out_dir": str(work)})
     monkeypatch.setattr(B.subprocess, "Popen", FakeBlender)
+    monkeypatch.setattr(B, "video_flat", lambda path, *a, **k: False)
     encoded = []
     monkeypatch.setattr(B.subprocess, "run", lambda args, **kw: encoded.append(args) or Path(args[-1]).write_bytes(b"mp4"))
     FakeBlender.calls, FakeBlender.fail_after = [], 50
     cache = tmp_path / "cache"
     with pytest.raises(B.RenderError):
-        B.render_local(job, tmp_path / "a.mp4", work=tmp_path / "w", cache=cache)
+        B.render_local(job, tmp_path / "a.mp4", work=tmp_path / "w", cache=cache, workers=1)
     first = sum(len(v) for v in FakeBlender.calls[0]["todo"].values())
     assert first == 180
     FakeBlender.fail_after = None
     progress = []
-    res = B.render_local(job, tmp_path / "a.mp4", work=tmp_path / "w", cache=cache, progress=lambda p, n: progress.append(p))
+    res = B.render_local(job, tmp_path / "a.mp4", work=tmp_path / "w", cache=cache, workers=1,
+                         progress=lambda p, n: progress.append(p))
     second = sum(len(v) for v in FakeBlender.calls[1]["todo"].values())
     assert second == 130, "дорисованы только недостающие кадры"
     assert res["frames"] == 180 and res["rendered"] == 130 and res["cached"] == 50 and progress[-1] == 1.0
     # третий запуск — всё из кэша, Blender не нужен
     res3 = B.render_local(job, tmp_path / "b.mp4", work=tmp_path / "w2", cache=cache)
     assert len(FakeBlender.calls) == 2 and res3["rendered"] == 0
-    # оборванный PNG рисуется заново
-    some = next(cache.iterdir()) / B.frame_name(1)
-    some.write_bytes(PNG[:40])
+    # оборванный кадр рисуется заново (черновик — JPEG)
+    some = next(cache.iterdir()) / B.frame_name(1, "jpg")
+    some.write_bytes(JPG[:40])
     assert not B.frame_ok(some)
+    png = tmp_path / "x.png"
+    png.write_bytes(PNG)
+    assert B.frame_ok(png)
+    png.write_bytes(PNG[:-6])
+    assert not B.frame_ok(png)
+
+
+def test_presets_effects_by_shot_and_cache_per_preset(tmp_path, monkeypatch):
+    job = _job()
+    assert job["quality"] == B.DEFAULT_QUALITY == "fast"
+    assert B.preset({"quality": "нет такого"})["name"] == B.DEFAULT_QUALITY
+    perf = B.perform(job)
+    fx = B.shot_fx(perf, "auto")
+    by = {s["n"]: s for s in perf["shots"]}
+    # луч фонарика — объём; спокойный план при свете — без объёма; шаг/рывок — размытие; лицо крупно — ГРИП
+    beam = [n for n, s in by.items() if s["phone"] and perf["phone"][int((s["t0"] + s["t1"]) / 2 * 30)]["light"] > 0.5]
+    assert beam and all(fx[n]["volume"] for n in beam)
+    lit_calm = [n for n, s in by.items() if s["t1"] < (perf["blackout"] or 0) - 1.5 and s["action"] in ("look_camera",)]
+    assert lit_calm and not any(fx[n]["volume"] for n in lit_calm)
+    flinch = [n for n, s in by.items() if s["action"] == "flinch"]
+    assert flinch and all(fx[n]["blur"] for n in flinch)
+    assert all(fx[c["n"]]["dof"] == (c["kind"] in ("face", "detail")) for c in perf["cameras"])
+    assert all(v == {"volume": False, "blur": False, "dof": False} for v in B.shot_fx(perf, "none").values())
+    assert all(all(v.values()) for v in B.shot_fx(perf, "all").values())
+    # кэш — по пресету: другой пресет — другие ключи, тот же — те же; формат кадров по пресету
+    k_fast = B.chunk_keys(job, perf)
+    assert [c["key"] for c in k_fast] == [c["key"] for c in B.chunk_keys(job, B.perform(job))]
+    job_final = {**job, "quality": "final"}
+    k_final = B.chunk_keys(job_final, B.perform(job_final))
+    assert not {c["key"] for c in k_fast} & {c["key"] for c in k_final}
+    assert {c["ext"] for c in k_fast} == {"jpg"} and {c["ext"] for c in k_final} == {"png"}
+    assert B.QUALITY["fast720"]["upscale"] and B.QUALITY["draft"]["fx"] == "none"
+
+
+def test_parallel_blender_processes_split_frames(tmp_path, monkeypatch):
+    job = _job(quality="draft")
+    monkeypatch.setattr(B, "find_blender", lambda explicit=None: "blender")
+    monkeypatch.setattr(B, "scene_config", lambda job, work, cache, packs=None: {"cache": str(cache), "out_dir": str(work)})
+    monkeypatch.setattr(B.subprocess, "Popen", FakeBlender)
+    monkeypatch.setattr(B, "video_flat", lambda path, *a, **k: False)
+    encoded = []
+    monkeypatch.setattr(B.subprocess, "run", lambda args, **kw: encoded.append(args) or Path(args[-1]).write_bytes(b"mp4"))
+    FakeBlender.calls, FakeBlender.fail_after = [], None
+    res = B.render_local(job, tmp_path / "a.mp4", work=tmp_path / "w", cache=tmp_path / "cache")
+    assert res["processes"] == 2 and len(FakeBlender.calls) == 2
+    sizes = [sum(len(v) for v in c["todo"].values()) for c in FakeBlender.calls]
+    assert sum(sizes) == res["frames"] and min(sizes) > res["frames"] * 0.3, "кадры поровну между процессами"
+    keys0 = set(FakeBlender.calls[0]["todo"])
+    assert not keys0 & set(FakeBlender.calls[1]["todo"]), "кусок рисует один процесс"
+    assert any("f_%05d.jpg" in str(a) for a in encoded[-1])
+    groups = B.split_chunks([{"key": "a"}, {"key": "b"}, {"key": "c"}], {"a": [1] * 10, "b": [1] * 6, "c": [1] * 5}, 2)
+    sizes = {"a": 10, "b": 6, "c": 5}
+    assert sorted(sum(sizes[c["key"]] for c in g) for g in groups) == [10, 11]
 
 
 # --------------------------------------------------------------------------- #
@@ -419,3 +477,78 @@ def test_story_failed_host_render_then_continue(env, tmp_path, monkeypatch):  # 
     assert ep["status"] == "assembling"
     jobs = RQ.list_jobs(store)
     assert len(jobs) == 2 and jobs[0]["status"] == "queued", "«Продолжить» ставит рендер заново"
+
+
+def test_flat_video_detected(tmp_path):
+    """Однотонный выход (зелёная основа холста без слоёв, пустые кадры) — брак, а не «готово»."""
+    green = tmp_path / "green.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x00ff00:s=108x192:d=2:r=10",
+                    "-pix_fmt", "yuv420p", str(green)], check=True)
+    real = tmp_path / "real.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=108x192:d=2:r=10",
+                    "-pix_fmt", "yuv420p", str(real)], check=True)
+    assert B.video_flat(green) and not B.video_flat(real)
+    assert B.video_flat(tmp_path / "нет.mp4"), "нечитаемое — тоже брак"
+
+
+
+# --------------------------------------------------------------------------- #
+# Кто говорит: рот героя — только на его прямой речи
+# --------------------------------------------------------------------------- #
+
+def test_speech_labels_quotes_colon_and_dash():
+    lab = B.speech_labels
+    assert set(lab("Он сел в угол, подальше от дверей.")) == {"narrator"}
+    assert lab("«Помогите!» — крикнул Даня.") == ["hero", "narrator", "narrator", "narrator"]
+    assert lab("Голос за дверью сказал: спасатели, держитесь.")[-2:] == ["other", "other"]
+    assert lab("Даня закричал: «Эй, я здесь!»")[2:] == ["hero", "hero", "hero"]
+    assert lab("— Эй! — позвал он.") == ["narrator", "hero", "narrator", "narrator", "narrator"]
+    assert set(lab("На табличке было написано «не курить».")) == {"narrator"}, "надпись — не реплика"
+    lines = B.dialog_lines([{"text": "В 23:24 постучали."}, {"text": "«Кто там?» — спросил Даня."}])
+    assert [ln["speaker"] for ln in lines] == ["narrator", "hero", "narrator"]
+    assert not B.has_hero_lines(LIFT["sentences"]), "в «Лифте» реплик героя нет"
+
+
+def test_no_mouth_on_narration_only_oh_on_startle():
+    job = _job()
+    assert job["speech"]["hero_windows"] == [] and not any(s["speaks"] for s in job["shots"])
+    assert {s["speaker"] for s in job["shots"]} <= {"narrator", "other"}
+    perf = B.perform(job)
+    starts = [t for t, _ in perf["startles"]]
+    for f, fc in enumerate(perf["face"]):
+        if fc["mouth"][0] > 0.05:
+            t = f / 30
+            assert any(0 <= t - ts < 2.5 for ts in starts), f"рот открыт на {t:.2f} с без испуга"
+
+
+def test_lipsync_only_on_hero_line():
+    script = {"title": "Лифт", "sentences": [
+        {"text": "Свет погас, и Даня остался один.", "role": "problem"},
+        {"text": "«Помогите, я в лифте!» — крикнул Даня.", "role": "problem"},
+        {"text": "Голос снаружи ответил: держись.", "role": "solution"}]}
+    text = " ".join(x["text"] for x in script["sentences"])
+    words = __import__("app.explainer_gen", fromlist=["x"]).proportional_words(text, 9.0)
+    job = B.build_job(script, words, 10.0, gemini=False)
+    win = job["speech"]["hero_windows"]
+    hero_words = [w for w, lab in zip(job["words"], job["speech"]["labels"]) if lab == "hero"]
+    assert [w["word"] for w in hero_words] == ["«Помогите,", "я", "в", "лифте!»"]
+    assert len(win) == 1 and abs(win[0][0] - hero_words[0]["start"]) < 1e-3
+    perf = B.perform(job)
+    opened = [f / 30 for f, fc in enumerate(perf["face"]) if fc["mouth"][0] > 0.15]
+    assert opened and all(win[0][0] - 0.15 <= t <= win[0][1] + 0.15 or
+                          any(0 <= t - ts < 2.5 for ts, _ in perf["startles"]) for t in opened)
+    assert any(s["speaker"] == "hero" and s["speaks"] for s in job["shots"])
+
+
+def test_gemini_tts_dialog_two_voices():
+    from app.dubbing import GeminiTTS, hero_voice_for
+
+    tts = GeminiTTS(api_key="k", voice="Charon")
+    lines = [{"speaker": "narrator", "text": "Свет погас."}, {"speaker": "hero", "text": "«Помогите!»"}]
+    pl = tts.dialog_payload(lines, {"narrator": "Charon", "hero": hero_voice_for("Charon")})
+    cfgs = pl["generationConfig"]["speechConfig"]["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
+    assert [c["speaker"] for c in cfgs] == ["Рассказчик", "Герой"]
+    assert [c["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] for c in cfgs] == ["Charon", "Puck"]
+    text = pl["contents"][0]["parts"][0]["text"]
+    assert "Рассказчик: Свет погас." in text and "Герой: «Помогите!»" in text
+    assert hero_voice_for("Puck") != "Puck"

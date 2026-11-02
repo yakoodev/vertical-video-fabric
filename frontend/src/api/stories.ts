@@ -101,6 +101,8 @@ export type StoryFormat = "story" | "disaster";
 export type StoryEngine = "images" | "3d";
 /** Чем рисуется 3D-серия: лоу-поли движок сервиса или Blender на компьютере владельца (очередь хост-воркера). */
 export type StoryRenderer = "three" | "blender";
+/** Пресет рендера Blender (app/series3d_blender.py QUALITY). */
+export type StoryQuality = "fast" | "fast720" | "final" | "draft";
 /** Пока 3D-серия ждёт рендер на компьютере: статус задания очереди. */
 export type Render3dWait = { job_id: number; status: string; progress: number; label: string; note: string; worker: string };
 
@@ -166,7 +168,7 @@ export interface StoryEpisode {
   estimate_rub: number;
   error: string;
   notes: string[];
-  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean; format?: StoryFormat; part?: number; music?: string; engine?: StoryEngine; renderer?: StoryRenderer };
+  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean; format?: StoryFormat; part?: number; music?: string; engine?: StoryEngine; renderer?: StoryRenderer; quality?: StoryQuality };
   created_at: string;
   script?: {
     title: string;
@@ -270,7 +272,7 @@ export const storiesApi = {
 
   createEpisode: (
     worldId: number,
-    body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean; format?: StoryFormat; engine?: StoryEngine; renderer?: StoryRenderer },
+    body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean; format?: StoryFormat; engine?: StoryEngine; renderer?: StoryRenderer; quality?: StoryQuality },
   ) =>
     api.post<StoryEpisode>(`/api/stories/worlds/${worldId}/episodes`, body),
   episode: (id: number) => api.get<StoryEpisode>(`/api/stories/episodes/${id}`),

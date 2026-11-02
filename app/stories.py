@@ -930,6 +930,12 @@ def create_episode(store: Any, world_id: int, premise: str, duration: Any = None
         options["renderer"] = P._choice(str(options["renderer"]), RENDERERS, "renderer")
         if options["renderer"] == RENDERER_BLENDER:
             options["engine"] = ENGINE_3D
+    if options.get("quality") in (None, ""):
+        options.pop("quality", None)
+    else:
+        from app.series3d_blender import QUALITY
+
+        options["quality"] = P._choice(str(options["quality"]), tuple(QUALITY), "quality")
     lo, hi, default = DURATIONS[fmt]
     label = FORMAT_LABELS[fmt]
     premise = P._long_text(premise, 800)
@@ -1230,10 +1236,18 @@ class _Extension:
         price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
         note = {"gemini": "Gemini TTS, бесплатно", "none": "сухой прогон"}.get(voice["provider"],
                                                                               "цена TTS из app/dubbing.py")
+        dialog: dict = {}
+        if is_3d(ep) and voice["provider"] == "gemini":
+            from app.dubbing import hero_voice_for
+            from app.series3d_blender import dialog_lines, has_hero_lines
+
+            sentences = [x for x in (ep.get("script") or {}).get("sentences") or [] if str(x.get("text") or "").strip()]
+            if has_hero_lines(sentences):   # прямая речь героя — другим голосом, рассказчик — своим
+                dialog = {"dialog": dialog_lines(sentences), "hero_voice": hero_voice_for(voice["voice"])}
         return {"stage": STAGE, "kind": "tts", "target_type": T_EP, "target_id": int(ep["id"]),
                 "ref_kind": NARRATION_KIND, "slot": "", "label": f"озвучка «{P._text(ep['title'] or ep['premise'], 60)}»",
                 "provider": voice["provider"], "model": voice["model"], "voice": voice["voice"],
-                **({"style": voice["style"]} if voice.get("style") else {}),
+                **({"style": voice["style"]} if voice.get("style") else {}), **dialog,
                 "text": text, "chars": len(text), "estimate_rub": round(len(text) * price, 2), "price_note": note,
                 "regenerate": bool(regenerate)}
 

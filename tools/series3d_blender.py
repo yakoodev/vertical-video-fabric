@@ -2,7 +2,8 @@
 во временной базе, без сервиса и Docker, с рендером здесь же (``SERIES3D_BLENDER_LOCAL=1``).
 
     python tools/series3d_blender.py SCRIPT.json OUT.mp4 [--sheet SHEET.jpg] [--env ../.env] [--voice Charon]
-        [--quality final|preview|draft] [--lipsync speaking|all|off] [--data DIR] [--cache DIR] [--keep]
+        [--quality fast|fast720|final|preview|draft] [--workers N] [--lipsync speaking|all|off] [--data DIR]
+        [--cache DIR] [--keep] [--reassemble]
 
 Шаги: сценарий → озвучка (Gemini TTS, бесплатно; без ключа — тон) → слова (Whisper) → режиссура
 (``app.series3d_blender``: действие/эмоция/план на фразу — Gemini по схеме, иначе правила; события на словах;
@@ -41,11 +42,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sheet")
     ap.add_argument("--env")
     ap.add_argument("--voice", default="")
-    ap.add_argument("--quality", default="final", choices=["final", "preview", "draft"])
+    ap.add_argument("--quality", default="fast", choices=["final", "fast", "fast720", "preview", "draft"],
+                    help="пресет рендера (app.series3d_blender.QUALITY): final — кино, fast — финал быстро, draft — черновик")
+    ap.add_argument("--workers", type=int, default=0, help="процессов Blender (0 — из пресета)")
     ap.add_argument("--lipsync", default="speaking", choices=["speaking", "all", "off"])
     ap.add_argument("--data", help="папка временной базы (по умолчанию — временная)")
     ap.add_argument("--cache", help="кэш кадров (по умолчанию D:/vvf-offload/render3d/cache или <data>/render3d_cache)")
     ap.add_argument("--keep", action="store_true", help="не удалять временную базу")
+    ap.add_argument("--reassemble", action="store_true",
+                    help="--data с готовой серией: пересобрать (озвучка та же, перерисуются только изменённые планы)")
     args = ap.parse_args(argv)
     if args.env:
         _load_env(Path(args.env))
@@ -88,6 +93,13 @@ def main(argv: list[str] | None = None) -> int:
     if not SB.find_blender():
         print(json.dumps({"ok": False, "error": "нет Blender (BLENDER_BIN)"}, ensure_ascii=False))
         return 2
+    from app.motion_render import CompositorMissing, compositor_command
+
+    try:   # без компоновщика холст «успешно» отдаёт зелёную основу без слоёв — проверяем до часа рендера
+        compositor_command()
+    except CompositorMissing as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
     # рендер в общий кэш кадров (повторный запуск после правки фразы перерисует только её планы)
     orig_render = SB.render_local
 
@@ -96,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     def render_cached(job, out, *, work, cache=None, **kw):
         t = time.time()
         kw.setdefault("progress", _printer())
+        if args.workers:
+            kw.setdefault("workers", args.workers)
         res = orig_render(job, out, work=work, cache=cache_dir, **kw)
         timing.update({"blender_sec": round(time.time() - t, 1), "rendered": res.get("rendered"),
                        "cached": res.get("cached"), "frames": res.get("frames"), "chunks": res.get("chunks"),
@@ -114,6 +128,13 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
     # Та же папка данных (--data) с недоделанной серией — продолжить её: озвучка и режиссура те же, кадры из кэша.
     old = [e for e in S.list_episodes(store) if e["status"] not in ("done", "cancelled")]
+    if not old and args.reassemble:
+        done = [e for e in S.list_episodes(store) if e["status"] == "done"]
+        if done:   # пересобрать готовую: та же озвучка и режиссура, перерисуются только изменённые планы
+            opts = {**(done[0].get("options") or {}), "quality": args.quality}
+            S.update_episode(store, int(done[0]["id"]), options=opts)   # другой пресет — та же режиссура
+            S.set_status(store, int(done[0]["id"]), "assembling", ("done",))
+            old = [S.get_episode(store, int(done[0]["id"]))]
     if old:
         ep = old[0]
         eid = int(ep["id"])
@@ -149,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
     clip = ClipRenderService(store).render_clip_plan(int(ep["clip_id"]))
     if clip.get("status") != "succeeded":
         print(json.dumps({"ok": False, "render": clip.get("status"), "error": clip.get("error")}, ensure_ascii=False))
+        return 1
+    if SB.video_flat(clip["output_path"]):
+        print(json.dumps({"ok": False, "error": "готовый клип однотонный (холст без слоёв?)", "clip": clip["output_path"],
+                          "notes": clip.get("error") or clip.get("notes")}, ensure_ascii=False))
         return 1
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)

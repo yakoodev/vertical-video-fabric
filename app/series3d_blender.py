@@ -84,8 +84,8 @@ CAMERAS = {
 }
 # Предпочтения плана по действию (первый — лучший; повтор прошлого плана пропускается).
 CAMERA_PREFS = {
-    "approach": ("overhead", "ots", "face"),
-    "press_button": ("detail", "ots", "face"),
+    "approach": ("overhead", "face"),
+    "press_button": ("detail", "overhead", "ots"),
     "knock": ("ots", "face", "overhead"),
     "pry_doors": ("ots", "detail", "overhead"),
     "sit_corner": ("overhead", "face"),
@@ -285,9 +285,78 @@ def rule_choice(shot: dict, events: list[dict], dark: bool) -> dict:
         emotion = "startled"
     elif action in ("sit_corner", "wait") and dark:
         emotion = "exhausted"
-    speaks = action in ("look_camera", "shout")
     return {"action": action, "target": target, "button": button, "emotion": emotion,
-            "camera": CAMERA_PREFS[action][0], "speaks": speaks, "by": "rules"}
+            "camera": CAMERA_PREFS[action][0], "speaker": "narrator", "by": "rules"}
+
+
+SPEAKERS = ("narrator", "hero", "other")
+SPEECH_VERB = (r"сказал|сказала|крикнул|крикнула|закричал|закричала|позвал|позвала|прошептал|прошептала|ответил|"
+               r"ответила|спросил|спросила|произн[её]с|заорал|завопил|шепнул|пробормотал|выдохнул|взмолился|повторил")
+OTHER_SPEAKER = (r"голос|кто-то|кто то|спасател|диспетчер|сосед|мужчин|женщин|охранник|динамик|громкоговор|"
+                 r"оператор|снаружи|за дверью|незнаком")
+_OPEN_Q, _CLOSE_Q = "«“„\"", "»”\""
+
+
+def speech_labels(text: str) -> list[str]:
+    """Кто говорит каждое слово фразы: ``narrator`` (закадровый рассказчик), ``hero`` (прямая речь героя) или
+    ``other`` (реплика другого: голос за дверью, диспетчер). Реплика — в кавычках или после «сказал/крикнул…:»;
+    кто сказал — по словам вне реплики (голос/спасатель/диспетчер… — другой, иначе — герой). Без реплик — всё
+    рассказчик: рот героя под закадровый голос не двигается."""
+    tokens = str(text or "").split()
+    labels = ["narrator"] * len(tokens)
+    spans: list[tuple[int, int]] = []
+    start = None
+    for i, t in enumerate(tokens):
+        core = t.strip(".,!?…;:—–-")
+        if not core:
+            continue
+        if start is None and core[:1] in _OPEN_Q:
+            start = i
+        if start is not None and (core[-1:] in _CLOSE_Q) and (i > start or len(core) > 1):
+            spans.append((start, i))
+            start = None
+    if start is not None:
+        spans.append((start, len(tokens) - 1))
+    low = [_low(t) for t in tokens]
+    dashes = [i for i, t in enumerate(tokens) if t in ("—", "–", "-")]
+    if not spans and dashes and dashes[0] == 0:
+        # диалог через тире: «— Эй! — позвал он.»
+        nxt = next((i for i in dashes[1:] if re.search(SPEECH_VERB, " ".join(low[i:]))), None)
+        if nxt is not None and nxt > 1:
+            spans.append((1, nxt - 1))
+    if not spans:
+        for k, t in enumerate(tokens):
+            if t.endswith(":") and k + 1 < len(tokens) and re.search(SPEECH_VERB, " ".join(low[: k + 1])):
+                spans.append((k + 1, len(tokens) - 1))
+                break
+    if not spans:
+        return labels
+    inside = {i for a, b in spans for i in range(a, b + 1)}
+    outside = " ".join(w for i, w in enumerate(low) if i not in inside)
+    if not re.search(SPEECH_VERB, outside) and not any(t.endswith(":") for t in tokens):
+        return labels          # цитата без «сказал» (надпись, табличка) — читает рассказчик
+    who = "other" if re.search(OTHER_SPEAKER, outside) else "hero"
+    for i in inside:
+        labels[i] = who
+    return labels
+
+
+def dialog_lines(sentences: list[dict]) -> list[dict]:
+    """Озвучка по ролям: ``[{speaker: narrator|hero, text}]`` подряд (реплики «других» читает рассказчик)."""
+    out: list[dict] = []
+    for sent in sentences:
+        tokens = str(sent.get("text") or "").split()
+        for tok, lab in zip(tokens, speech_labels(sent.get("text") or "")):
+            who = "hero" if lab == "hero" else "narrator"
+            if out and out[-1]["speaker"] == who:
+                out[-1]["text"] += " " + tok
+            else:
+                out.append({"speaker": who, "text": tok})
+    return out
+
+
+def has_hero_lines(sentences: list[dict]) -> bool:
+    return any(lab == "hero" for s_ in sentences for lab in speech_labels(s_.get("text") or ""))
 
 
 GEMINI_SCHEMA = {
@@ -301,9 +370,9 @@ GEMINI_SCHEMA = {
             "button": {"type": "string", "enum": list(BUTTONS)},
             "emotion": {"type": "string", "enum": list(EMOTIONS)},
             "camera": {"type": "string", "enum": list(CAMERAS)},
-            "speaks": {"type": "boolean"},
+            "speaker": {"type": "string", "enum": list(SPEAKERS)},
         },
-        "required": ["n", "action", "emotion", "camera", "speaks"]}}},
+        "required": ["n", "action", "emotion", "camera", "speaker"]}}},
     "required": ["shots"],
 }
 
@@ -321,8 +390,10 @@ def gemini_prompt(title: str, shots: list[dict], events_by_shot: dict[int, list[
         "Правила: действие показывает то, о чём фраза (кнопки — press_button, «раздвинул двери» — pry_doors, стучат снаружи — "
         "listen, сам стучит — knock, сел — sit_corner); хук на «вы» — герой смотрит в камеру (look_camera) или показывает "
         "ошибку действием; один и тот же план камеры два кадра подряд нельзя; деталь (detail) — когда важна рука/вещь; "
-        "общий сверху (overhead) — для пространства и одиночества; крупно лицо — на реакции. speaks=true — только когда "
-        "текст звучит как реплика самого героя или он кричит (рот двигается под голос), иначе false.",
+        "общий сверху (overhead) — для пространства и одиночества; крупно лицо — на реакции. speaker — кто говорит "
+        "реплику в кадре: narrator — закадровый рассказчик (почти всегда: рассказ в 3-м лице, обращение к зрителю), "
+        "hero — только прямая речь самого героя (в кавычках или «— крикнул Даня»), other — реплика другого (голос за "
+        "дверью, диспетчер). Рот героя двигается только на hero.",
         "Кадры (n, роль, время, события на словах, текст):",
     ]
     for s in shots:
@@ -355,14 +426,14 @@ def gemini_choices(title: str, shots: list[dict], events_by_shot: dict[int, list
             continue
         out[n] = {"action": item["action"], "target": item.get("target") if item.get("target") in TARGETS else "center",
                   "button": item.get("button") if item.get("button") in BUTTONS else "1",
-                  "emotion": item["emotion"], "camera": item["camera"], "speaks": bool(item.get("speaks")),
-                  "by": "gemini"}
+                  "emotion": item["emotion"], "camera": item["camera"],
+                  "speaker": item.get("speaker") if item.get("speaker") in SPEAKERS else "narrator", "by": "gemini"}
     return out
 
 
 def fix_sequence(shots: list[dict]) -> list[dict]:
     """Выполнимость и монтаж: сидя — сначала встать (``stand_first``), стоя «встать» — ждать; кнопка — достижимая;
-    план камеры не повторяет прошлый; рот говорит только в ``speaks``."""
+    план камеры не повторяет прошлый. Рот говорит только на прямой речи героя (``plan_shots``: ``speech``)."""
     posture = "stand"
     prev_cam = ""
     out = []
@@ -387,13 +458,16 @@ def fix_sequence(shots: list[dict]) -> list[dict]:
             posture = "sit"
         else:
             posture = "stand"
-        if a == "look_camera":
-            s["speaks"] = True      # смотрит в объектив — говорит текст сам (рот под озвучку)
         cam = s.get("camera") if s.get("camera") in CAMERAS else CAMERA_PREFS[a][0]
         if cam not in CAMERA_PREFS[a] and a in ("look_camera", "sit_corner", "stand_up", "flinch", "look_ceiling"):
             cam = CAMERA_PREFS[a][0]   # спиной к объективу/деталь без детали — не тот план
         if cam == prev_cam:
             cam = next((c for c in CAMERA_PREFS[a] if c != prev_cam), None) or next(c for c in CAMERAS if c != prev_cam)
+        if cam == "ots" and a == "approach":
+            cam = "overhead" if prev_cam != "overhead" else "face"   # идёт от камеры — со спины лишь капюшон
+        if cam == "face" and a == "press_button":
+            # лицом к панели вбок — спереди виден только капюшон: деталь (рука, кнопка, профиль) или сверху
+            cam = "detail" if prev_cam != "detail" else "overhead"
         if cam == "ots" and a in HAND_ACTIONS:
             # со спины руки не видно — рука, кнопка/двери и лицо сбоку (или сверху, если деталь только что была)
             cam = "detail" if prev_cam != "detail" else "overhead"
@@ -435,15 +509,36 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
             director = "gemini" if choices else "rules"
         except Exception as exc:  # noqa: BLE001 - сеть/квота/ответ не по схеме — правила
             error = f"{type(exc).__name__}: {str(exc)[:160]}"
+    labels = [lab for sent in sentences for lab in speech_labels(sent["text"])]
+    labels = (labels + ["narrator"] * len(words))[: len(words)]
     planned = []
     for s in shots:
         dark = blackout is not None and s["t0"] + 0.3 >= blackout
         pick = choices.get(s["n"]) or rule_choice(s, by_shot.get(s["n"], []), dark)
+        idx = [k for k in range(len(words)) if s["t0"] <= float(words[k]["start"]) < s["t1"]]
+        said = {labels[k] for k in idx} - {"narrator"}
+        if said and pick.get("speaker") in ("hero", "other") and pick.get("by") == "gemini":
+            for k in idx:   # Gemini уточняет, чья найденная реплика (кавычки/«сказал:» нашли правила)
+                if labels[k] != "narrator":
+                    labels[k] = pick["speaker"]
+            said = {pick["speaker"]}
+        speaker = "hero" if "hero" in said else ("other" if said else "narrator")
         planned.append({"n": s["n"], "t0": round(float(s["t0"]), 3), "t1": round(float(s["t1"]), 3),
                         "text": s.get("spoken") or s["text"], "role": s.get("role") or "",
-                        "sentences": s.get("sentences") or [s.get("i", 0)], **pick})
+                        "sentences": s.get("sentences") or [s.get("i", 0)], **pick,
+                        "speaker": speaker, "speaks": speaker == "hero"})
+    windows: list[list[float]] = []
+    for k, lab in enumerate(labels):
+        if lab != "hero":
+            continue
+        a_, b_ = float(words[k]["start"]), float(words[k]["end"])
+        if windows and a_ - windows[-1][1] < 0.35:
+            windows[-1][1] = b_
+        else:
+            windows.append([a_, b_])
     return {"shots": fix_sequence(planned), "events": events, "words": words, "director": director,
-            "director_error": error}
+            "director_error": error, "speech": {"labels": labels, "hero_windows": [[round(a_, 3), round(b_, 3)]
+                                                                                   for a_, b_ in windows]}}
 
 
 # --------------------------------------------------------------------------- #
@@ -826,11 +921,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         elif a == "shout":
             gkey(a0, (0.0, DOOR_FACE_Y, 1.05))
             lean_v = 0.18
-            if not s.get("speaks"):
-                for i in range(2):
-                    b0 = a0 + 0.2 + i * 1.0
-                    if b0 + 0.4 < t1:
-                        shout_bursts.append((b0, b0 + 0.45))
+            # кричит без своей реплики в сценарии — рот закрыт (только испуг/напряжение): рот — лишь под речь героя
         elif a == "listen":
             gkey(a0, (0.05, DOOR_FACE_Y, 0.8))
             roll_v = 0.22
@@ -846,8 +937,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             # телефон уже в руке — светит туда, куда смотрит (экраном к себе — только когда смотрит в телефон)
             phone_mode.key(a0 + 0.1, phone_mode.keys[-1][1])
             phone_mode.key(a0 + 0.5, 1.0)
-        if s.get("speaks"):
-            speak_windows.append((t0, t1))
+
         lean.key(t0 + 0.4, lean_v)
         roll.key(t0 + 0.4, roll_v)
         shot_out.append({**s, "a0": round(a0, 3), "spot": [round(pos[0], 4), round(pos[1], 4)], "heading": round(heading, 4),
@@ -950,6 +1040,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     emo_c, lean_c, roll_c = emo.curve(), lean.curve(), roll.curve()
     blinks = m.blink_times(dur, seed=int(job.get("seed") or 7) + 4, min_gap=1.9, max_gap=4.0,
                            forced=[t for t, _ in startles])
+    speak_windows = [tuple(w) for w in ((job.get("speech") or {}).get("hero_windows") or [])]
     lip_mode = job.get("lipsync") or "speaking"
     windows = None if lip_mode == "all" else ([] if lip_mode == "off" else speak_windows)
     mouth = lipsync(job.get("words") or [], nf, fps, job.get("envelope"), windows)
@@ -1193,6 +1284,11 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         pt = (face[0], face[1], face[2] - 0.22)
         return out("overhead", best, pt, 0.5, 17.0, fstop=4.0, focus="face", push=0.94)
     # крупно лицо: спереди под небольшим углом, чуть ниже глаз
+    if shot.get("n") == 0:
+        # первый план под титром названия (верх кадра): лицо мельче и ниже, под титром, над субтитрами
+        p = around(1.25, (22, -22, 40, -40, 0), 0.10)
+        if p is not None:
+            return out("face", p, face, 1.0, 28.0, fstop=2.4, focus="face", push=0.93, offset=(0.0, 0.0, 0.0))
     p = around(0.95, (22, -22, 40, -40, 0, 60, -60), -0.03)
     if p is None:
         return None
@@ -1316,20 +1412,72 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
 # Задание рендера, куски и кэш
 # --------------------------------------------------------------------------- #
 
-QUALITY = {"final": {"samples": 48, "scale": 100}, "preview": {"samples": 16, "scale": 50},
-           "draft": {"samples": 4, "scale": 33}}
+# Пресеты рендера. Узкое место Eevee здесь — не GPU, а CPU между кадрами: композитор (свечение + размытая виньетка
+# на CPU), пересчёт сцены на каждый замер размытия движения, сжатие PNG. Поэтому быстрые пресеты: композитор на GPU,
+# кадры JPEG 95, объём/размытие/глубина резкости — только в планах, где нужны (``shot_fx``), меньше сэмплов, два
+# процесса Blender на разные планы.
+#   samples — сэмплы Eevee; scale — % от 1080×1920 (fast720 — 720×1280, апскейл до 1080×1920 lanczos при склейке);
+#   fx — all: объём/размытие/ГРИП везде, auto — по планам, none — без них; frames — формат кадров кэша;
+#   comp_gpu — композитор на GPU; workers — процессов Blender; blur_steps — шагов размытия движения.
+QUALITY = {
+    "final": {"samples": 48, "scale": 100, "fx": "all", "frames": "PNG", "comp_gpu": False, "workers": 1, "blur_steps": 1,
+              "label": "кино: как пробный кадр, всё везде"},
+    "fast": {"samples": 24, "scale": 100, "fx": "auto", "frames": "JPEG", "comp_gpu": True, "workers": 2, "blur_steps": 1,
+             "label": "финал быстро: 1080p, эффекты по планам, 2 процесса"},
+    "fast720": {"samples": 24, "scale": 66.667, "fx": "auto", "frames": "JPEG", "comp_gpu": True, "workers": 2,
+                "blur_steps": 1, "upscale": True, "label": "финал быстрее: 720p + апскейл lanczos"},
+    "preview": {"samples": 16, "scale": 50, "fx": "auto", "frames": "JPEG", "comp_gpu": True, "workers": 1, "blur_steps": 1,
+                "label": "проверка: 540p"},
+    "draft": {"samples": 4, "scale": 50, "fx": "none", "frames": "JPEG", "comp_gpu": True, "workers": 2, "blur_steps": 1,
+              "label": "черновик действий: 540p, 4 сэмпла, без объёма/размытия/ГРИП"},
+}
+DEFAULT_QUALITY = "fast"
+
+
+def preset(job: dict) -> dict:
+    """Пресет задания (неизвестный — ``DEFAULT_QUALITY``)."""
+    name = job.get("quality") if job.get("quality") in QUALITY else DEFAULT_QUALITY
+    return {"name": name, **QUALITY[name]}
+
+
+def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
+    """Какие дорогие эффекты нужны плану: объём — когда в кадре луч фонарика или мигает/гаснет свет; размытие
+    движения — шаги, рывок/испуг, стук, двери, тряска камеры; глубина резкости — крупные планы и детали."""
+    fps = perf["fps"]
+    out: dict[int, dict] = {}
+    cams = {c["n"]: c for c in perf.get("cameras") or []}
+    walks = [(sg["start"], sg["start"] + 1.2) for sg in perf["track"] if sg["clip"] in ("Walking_A", "Walking_B", "Hit_A",
+                                                                                          "Sit_Floor_Down", "Sit_Floor_StandUp")]
+    for s in perf["shots"]:
+        if mode in ("all", "none"):
+            on = mode == "all"
+            out[s["n"]] = {"volume": on, "blur": on, "dof": on}
+            continue
+        f0, f1 = int(s["t0"] * fps), min(perf["frames"], int(s["t1"] * fps) + 1)
+        lt = perf["lights"][f0:f1]
+        ph = perf["phone"][f0:f1]
+        beam = any(p["on"] and p["light"] > 0.05 for p in ph)
+        flick = any(0.02 < x["main"] < 0.98 for x in lt)
+        move = any(a < s["t1"] and b > s["t0"] for a, b in walks)
+        shake = any(x["shake"] > 0.003 or x["drop"] < -0.005 for x in lt)
+        hits = any(c["kind"] in ("knock", "doors") and s["t0"] <= c["t"] < s["t1"] for c in perf["contacts"])
+        st = any(s["t0"] - 0.1 <= t < s["t1"] for t, _ in perf.get("startles") or [])
+        kind = (cams.get(s["n"]) or {}).get("kind") or s.get("camera")
+        out[s["n"]] = {"volume": beam or flick, "blur": move or shake or hits or st, "dof": kind in ("face", "detail")}
+    return out
 
 
 def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
-              envelope: list[float] | None = None, lipsync_mode: str = "speaking", quality: str = "final",
+              envelope: list[float] | None = None, lipsync_mode: str = "speaking", quality: str = DEFAULT_QUALITY,
               look: dict | None = None, seed: int = 7) -> dict:
     """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество."""
     plan = plan_shots(script, words, total, gemini=gemini, client=client)
     return {"version": SCENE_VERSION, "fps": FPS, "duration": round(float(total), 3), "title": script.get("title") or "",
             "shots": plan["shots"], "events": plan["events"], "words": plan["words"], "director": plan["director"],
+            "speech": plan["speech"],
             "director_error": plan["director_error"], "envelope": [round(x, 4) for x in (envelope or [])],
             "lipsync": lipsync_mode if lipsync_mode in LIPSYNC_MODES else "speaking",
-            "quality": quality if quality in QUALITY else "final", "look": look or {}, "seed": int(seed)}
+            "quality": quality if quality in QUALITY else DEFAULT_QUALITY, "look": look or {}, "seed": int(seed)}
 
 
 def chunks(perf: dict) -> list[dict]:
@@ -1357,13 +1505,16 @@ def _code_hash() -> str:
 def chunk_keys(job: dict, perf: dict) -> list[dict]:
     """Хэш куска — от покадровых дорожек его кадров (+ соседей на наплыв), плана камеры, качества и кода сцены."""
     code = _code_hash()
+    pr = preset(job)
+    fx = shot_fx(perf, pr["fx"])
+    rset = {k: pr[k] for k in ("samples", "scale", "frames", "comp_gpu", "blur_steps")}
     out = []
     shots = {s["n"]: s for s in perf["shots"]}
     for c in chunks(perf):
         a, b = max(0, c["f0"] - 1 - 3), min(perf["frames"], c["f1"] + 3)
         s = shots[c["n"]]
         c_n = c["n"]
-        blob = {"v": SCENE_VERSION, "code": code, "q": job.get("quality"), "f": [c["f0"], c["f1"]],
+        blob = {"v": SCENE_VERSION, "code": code, "q": rset, "fx": fx.get(c["n"]), "f": [c["f0"], c["f1"]],
                 "shot": {k: s.get(k) for k in ("action", "camera", "subject", "spot", "heading", "target", "button", "emotion",
                                               "posture_end", "phone", "t0", "t1", "a0")},
                 "root": perf["root"][a:b], "heading": perf["heading"][a:b], "gaze": perf["gaze"][a:b],
@@ -1374,26 +1525,29 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
                 "camera": next((c for c in perf["cameras"] if c["n"] == c_n), None),
                 "look": job.get("look") or {}}
         key = hashlib.sha1(json.dumps(blob, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
-        out.append({**c, "key": key})
+        out.append({**c, "key": key, "fx": fx.get(c["n"]), "ext": "jpg" if pr["frames"] == "JPEG" else "png"})
     return out
 
 
 def frame_ok(path: Path) -> bool:
-    """PNG дописан до конца (IEND) — оборванный рендером кадр рисуем заново."""
+    """Кадр дописан до конца (PNG — IEND, JPEG — FFD9) — оборванный рендером кадр рисуем заново."""
     try:
         size = path.stat().st_size
         if size < 64:
             return False
         with path.open("rb") as fh:
             fh.seek(-12, os.SEEK_END)
-            return fh.read(12)[4:8] == b"IEND"
+            tail = fh.read(12)
+        if path.suffix.lower() in (".jpg", ".jpeg"):
+            return tail.rstrip(b"\x00")[-2:] == b"\xff\xd9"
+        return tail[4:8] == b"IEND"
     except OSError:
         return False
 
 
-def frame_name(f: int) -> str:
+def frame_name(f: int, ext: str = "png") -> str:
     """Имя кадра в папке куска — по номеру кадра серии (так пишет рендер анимации Blender: ``f_#####``)."""
-    return f"f_{int(f):05d}.png"
+    return f"f_{int(f):05d}.{ext}"
 
 
 def missing_frames(cache: Path, keys: list[dict]) -> dict[str, list[int]]:
@@ -1401,7 +1555,7 @@ def missing_frames(cache: Path, keys: list[dict]) -> dict[str, list[int]]:
     out = {}
     for c in keys:
         d = cache / c["key"]
-        need = [f for f in range(c["f0"], c["f1"] + 1) if not frame_ok(d / frame_name(f))]
+        need = [f for f in range(c["f0"], c["f1"] + 1) if not frame_ok(d / frame_name(f, c.get("ext", "png")))]
         if need:
             out[c["key"]] = need
     return out
@@ -1457,8 +1611,8 @@ def scene_config(job: dict, work: Path, cache: Path, packs: Path | None = None) 
             "character": need("kaykit-adventurers/Rogue_Hooded.glb"),
             "animations": [need(f"kaykit-animations/{n}.glb") for n in ("Rig_Medium_General", "Rig_Medium_MovementBasic",
                                                                           "Rig_Medium_Simulation")],
-            "samples": QUALITY[job.get("quality") or "final"]["samples"],
-            "quality": job.get("quality") or "final",
+            "samples": preset(job)["samples"],
+            "quality": preset(job)["name"], "preset": preset(job),
             "font_display": ["C:/Windows/Fonts/bahnschrift.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"],
             "font_ui": ["C:/Windows/Fonts/bahnschrift.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
             "font_symbols": ["C:/Windows/Fonts/seguisym.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]}
@@ -1468,13 +1622,54 @@ class RenderError(RuntimeError):
     pass
 
 
+def frame_spread(path: Path | str, samples: int = 8) -> list[float]:
+    """Разброс яркости (СКО, 0..255) кадров видео в ``samples`` точках — однотонный кадр ≈ 0."""
+    from app.dubbing import probe_duration
+
+    try:
+        dur = float(probe_duration(Path(path)) or 0.0)
+    except Exception:  # noqa: BLE001 - нечитаемый файл — пустой список, вызывающий считает браком
+        return []
+    out = []
+    for i in range(samples):
+        t = dur * (i + 0.5) / samples
+        proc = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
+                               "-vf", "scale=72:128,format=gray", "-f", "rawvideo", "-"], capture_output=True, check=False)
+        px = proc.stdout
+        if not px:
+            continue
+        mean = sum(px) / len(px)
+        out.append(math.sqrt(sum((x - mean) ** 2 for x in px) / len(px)))
+    return out
+
+
+def video_flat(path: Path | str, samples: int = 8, threshold: float = 3.0) -> bool:
+    """Видео однотонное (зелёная основа холста без слоёв, чёрный/пустой рендер): все пробы почти без разброса."""
+    spread = frame_spread(path, samples)
+    return not spread or max(spread) < threshold
+
+
+def split_chunks(keys: list[dict], todo: dict[str, list[int]], workers: int) -> list[list[dict]]:
+    """Куски с недостающими кадрами — по процессам поровну по числу кадров (жадно, крупные первыми)."""
+    groups: list[list[dict]] = [[] for _ in range(max(1, workers))]
+    load = [0] * len(groups)
+    for c in sorted((c for c in keys if c["key"] in todo), key=lambda c: -len(todo[c["key"]])):
+        i = load.index(min(load))
+        groups[i].append(c)
+        load[i] += len(todo[c["key"]])
+    return [g for g in groups if g]
+
+
 def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Path | str | None = None,
                  blender: str | None = None, progress: Callable[[float, str], Any] | None = None,
                  only: list[int] | None = None, stills: list[int] | None = None, timeout: float = 4 * 3600,
-                 should_stop: Callable[[], bool] | None = None) -> dict:
-    """Рендер серии Blender'ом здесь: сцена один раз → недостающие кадры кусков в кэш (возобновляемо) → склейка
-    в mp4 без звука. ``progress(доля 0..1, заметка)``; ``only`` — номера планов; ``stills`` — только эти кадры
-    (номера с 1, PNG в ``work``) для проверки; ``should_stop()`` — True: остановить Blender (отмена задания)."""
+                 should_stop: Callable[[], bool] | None = None, workers: int | None = None) -> dict:
+    """Рендер серии Blender'ом здесь: сцена один раз на процесс → недостающие кадры кусков в кэш (возобновляемо)
+    → склейка в mp4 без звука. ``progress(доля 0..1, заметка)``; ``only`` — номера планов; ``stills`` — только эти
+    кадры (номера с 1, PNG в ``work``) для проверки; ``should_stop()`` — True: остановить Blender (отмена задания);
+    ``workers`` — процессов Blender (по умолчанию из пресета: куски делятся между ними)."""
+    import threading
+
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     cache = Path(cache or work / "cache")
@@ -1482,6 +1677,7 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
     exe = find_blender(blender)
     if not exe:
         raise RenderError("нет Blender: задай BLENDER_BIN (portable 4.5 LTS) — рендер 3D-серии идёт на компьютере с GPU")
+    pr = preset(job)
     perf = perform(job)
     keys = chunk_keys(job, perf)
     if only is not None:
@@ -1489,50 +1685,76 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
     todo = missing_frames(cache, keys)
     total_missing = sum(len(v) for v in todo.values())
     (work / "job.json").write_text(json.dumps(job, ensure_ascii=False), "utf-8")
-    cfg = scene_config(job, work, cache)
-    cfg["chunks"] = keys
-    cfg["todo"] = todo
-    if stills:
-        cfg["stills"] = [int(x) for x in stills]
-    (work / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), "utf-8")
+    base = scene_config(job, work, cache)
     scene = Path(__file__).resolve().parent.parent / "tools" / "blender" / "series_scene.py"
     t0 = time.time()
-    rendered = 0
-    log_path = work / "blender.log"
-    if total_missing or stills:
-        if progress:
-            progress(0.0, f"сцена Blender: {total_missing} кадров к рендеру из {perf['frames']}")
-        with log_path.open("w", encoding="utf-8", errors="replace") as log:
+    groups = [keys] if stills else split_chunks(keys, todo, int(workers or pr["workers"]))
+    done = [0] * len(groups)
+    lock = threading.Lock()
+    stop = {"err": None}
+    procs: list[subprocess.Popen] = []
+
+    def run(i: int, group: list[dict]) -> None:
+        wdir = work if len(groups) == 1 else work / f"w{i}"
+        wdir.mkdir(parents=True, exist_ok=True)
+        cfg = {**base, "out_dir": str(wdir), "chunks": group, "todo": {c["key"]: todo[c["key"]] for c in group
+                                                                      if c["key"] in todo}}
+        if stills:
+            cfg["stills"] = [int(x) for x in stills]
+        (wdir / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), "utf-8")
+        with (wdir / "blender.log").open("w", encoding="utf-8", errors="replace") as log:
             proc = subprocess.Popen([exe, "-b", "--factory-startup", "-P", str(scene), "--", "--config",
-                                     str(work / "config.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     str(wdir / "config.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace")
+            procs.append(proc)
             assert proc.stdout is not None
             for line in proc.stdout:
                 log.write(line)
-                if line.startswith("PROGRESS "):
-                    log.flush()
-                    parts = line.split()
-                    try:
-                        rendered = int(parts[1])
-                    except (IndexError, ValueError):
-                        continue
+                if not line.startswith("PROGRESS "):
+                    continue
+                log.flush()
+                try:
+                    n = int(line.split()[1])
+                except (IndexError, ValueError):
+                    continue
+                with lock:
+                    done[i] = n
+                    total = sum(done)
                     if progress:
-                        progress(min(0.99, rendered / max(1, total_missing)), f"кадр {rendered}/{total_missing}")
-                if should_stop is not None and line.startswith('PROGRESS ') and should_stop():
-                    proc.kill()
-                    raise RenderError('рендер остановлен (задание отменено) — готовые кадры в кэше')
-                if time.time() - t0 > timeout:
-                    proc.kill()
-                    raise RenderError("рендер дольше лимита — остановлен (кадры в кэше, повторный запуск продолжит)")
+                        progress(min(0.99, total / max(1, total_missing)), f"кадр {total}/{total_missing}")
+                    if should_stop is not None and should_stop():
+                        stop["err"] = "рендер остановлен (задание отменено) — готовые кадры в кэше"
+                    if time.time() - t0 > timeout:
+                        stop["err"] = "рендер дольше лимита — остановлен (кадры в кэше, повторный запуск продолжит)"
+                    if stop["err"]:
+                        for p_ in procs:
+                            p_.kill()
+                        break
             code = proc.wait()
-        if code != 0:
-            tail = log_path.read_text("utf-8", errors="replace")[-3000:]
-            raise RenderError(f"Blender упал (код {code}); кадры в кэше — повторный запуск продолжит. {tail[-600:]}")
-    report_path = work / "report.json"
-    report = json.loads(report_path.read_text("utf-8")) if report_path.is_file() else {}
+        if code != 0 and not stop["err"]:
+            tail = (wdir / "blender.log").read_text("utf-8", errors="replace")[-600:]
+            stop["err"] = f"Blender упал (код {code}); кадры в кэше — повторный запуск продолжит. {tail}"
+
+    if total_missing or stills:
+        if progress:
+            progress(0.0, f"сцена Blender: {total_missing} кадров к рендеру из {perf['frames']}, процессов {len(groups)}")
+        threads = [threading.Thread(target=run, args=(i, g), daemon=True) for i, g in enumerate(groups)]
+        for i, th in enumerate(threads):
+            th.start()
+            if i + 1 < len(threads):
+                time.sleep(2.0)   # второй процесс стартует со сдвигом — не толкаются на загрузке сцены
+        for th in threads:
+            th.join()
+        if stop["err"]:
+            raise RenderError(stop["err"])
+    reports = [json.loads(p_.read_text("utf-8")) for p_ in sorted(work.glob("report.json")) + sorted(work.glob("w*/report.json"))]
+    report = reports[0] if reports else {}
+    if len(reports) > 1:
+        report = {**report, "workers": [{k: r.get(k) for k in ("setup_sec", "render_sec", "rendered")} for r in reports]}
+    render_sec = round(time.time() - t0, 1)
     if stills:
         return {"ok": True, "stills": [str(work / f"still_{int(f):04d}.png") for f in stills], "report": report,
-                "seconds": round(time.time() - t0, 1)}
+                "seconds": render_sec}
     left = missing_frames(cache, keys)
     if left:
         raise RenderError(f"не дорисованы куски: {', '.join(list(left)[:5])} — повторный запуск продолжит")
@@ -1543,23 +1765,32 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
         shutil.rmtree(seq)
     seq.mkdir()
     n = 0
+    exts = set()
     for c in keys:
+        ext = c.get("ext", "png")
+        exts.add(ext)
         for f in range(c["f0"], c["f1"] + 1):
             n += 1
-            src = cache / c["key"] / frame_name(f)
-            dst = seq / f"f_{n:05d}.png"
+            src = cache / c["key"] / frame_name(f, ext)
+            dst = seq / f"f_{n:05d}.{ext}"
             try:
                 os.link(src, dst)
             except OSError:
                 shutil.copyfile(src, dst)
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(perf["fps"]), "-i", str(seq / "f_%05d.png"),
-                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,noise=alls=3:allf=t,format=yuv420p", "-c:v", "libx264", "-preset", "slow", "-crf", "17",
-                    "-profile:v", "high", "-movflags", "+faststart", str(out)], check=True)
+    ext = exts.pop() if len(exts) == 1 else "png"
+    scale = "scale=1080:1920:flags=lanczos" if pr.get("upscale") else "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    t_enc = time.time()
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(perf["fps"]), "-i", str(seq / f"f_%05d.{ext}"),
+                    "-vf", f"{scale},noise=alls=3:allf=t,format=yuv420p", "-c:v", "libx264", "-preset", "slow",
+                    "-crf", "17", "-profile:v", "high", "-movflags", "+faststart", str(out)], check=True)
     shutil.rmtree(seq, ignore_errors=True)
+    if video_flat(out):
+        raise RenderError(f"склейка однотонная (пустые кадры?) — {out.name} не годится, кадры в кэше проверь")
     if progress:
         progress(1.0, "склеено")
     return {"ok": True, "out": str(out), "frames": n, "rendered": total_missing, "cached": n - total_missing,
-            "seconds": round(time.time() - t0, 1), "report": report, "chunks": len(keys)}
+            "seconds": round(time.time() - t0, 1), "encode_sec": round(time.time() - t_enc, 1), "report": report,
+            "chunks": len(keys), "preset": pr["name"], "processes": len(groups)}
 
 
 # --------------------------------------------------------------------------- #
@@ -1572,6 +1803,7 @@ def result_for(job: dict, perf: dict | None = None) -> dict:
     cam_map = {"overhead": "overhead", "face": "face", "ots": "ots", "detail": "detail"}
     shots = [{"n": s["n"], "t0": s["t0"], "t1": s["t1"], "text": s["text"], "role": s.get("role") or "",
               "action": s["action"], "camera": cam_map[s["camera"]], "spot": s.get("target") or "",
-              "emotion": s.get("emotion"), "speaks": bool(s.get("speaks")), "by": s.get("by")} for s in job["shots"]]
+              "emotion": s.get("emotion"), "speaks": bool(s.get("speaks")), "speaker": s.get("speaker") or "narrator",
+              "by": s.get("by")} for s in job["shots"]]
     return {"shots": shots, "events": job.get("events") or [], "sfx": sfx_for(job, perf), "location": "elevator",
             "checks": [], "notes": [], "look": job.get("look") or {}, "director": job.get("director")}

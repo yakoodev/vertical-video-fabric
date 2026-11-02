@@ -403,15 +403,29 @@ def assemble(store: Any, episode_id: int) -> dict:
     return out
 
 
-def blender_key(ep: dict, ref: dict) -> str:
-    """Что рендерим: фразы сценария + озвучка + качество + версия сцены — то же задание не ставим дважды."""
+def blender_quality(ep: dict) -> str:
+    from app import series3d_blender as SB
+
+    q = str((ep.get("options") or {}).get("quality") or SB.DEFAULT_QUALITY)
+    return q if q in SB.QUALITY else SB.DEFAULT_QUALITY
+
+
+def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
+    """Что рендерим: фразы сценария + озвучка + версия сцены (+ пресет) — то же задание не ставим дважды.
+    Без пресета — ключ режиссуры: другой пресет той же серии берёт ту же режиссуру (сравнимо, без нового Gemini)."""
     from app import series3d_blender as SB
 
     opts = ep.get("options") or {}
     blob = {"sentences": [s.get("text") for s in (ep.get("script") or {}).get("sentences") or []],
-            "narration": str(ref.get("asset_id")), "quality": opts.get("quality") or "final",
-            "lipsync": opts.get("lipsync") or "speaking", "v": SB.SCENE_VERSION, "episode": int(ep["id"])}
-    return "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
+            "narration": str(ref.get("asset_id")), "lipsync": opts.get("lipsync") or "speaking",
+            "v": SB.SCENE_VERSION, "episode": int(ep["id"])}
+    base = "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
+    return f"{base}-{blender_quality(ep)}" if with_quality else base
+
+
+def blender_key_base(key: str) -> str:
+    """Ключ режиссуры из ключа задания (без пресета)."""
+    return key.rsplit("-", 1)[0] if key.count("-") >= 2 else key
 
 
 def _blender_job(store: Any, ep: dict, key: str) -> dict | None:
@@ -450,16 +464,19 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
     if payload is None and local and saved.is_file():
         try:   # повтор локального рендера (упал/перезапуск) — та же режиссура, кадры из кэша
             old = json.loads(saved.read_text("utf-8"))
-            payload = old if old.get("key") == key else None
+            payload = old if old.get("key") in (key, blender_key_base(key)) else None
+            if payload is not None:   # правила монтажа могли поменяться — пересобрать план (кадры без правок — из кэша)
+                payload["shots"] = SB.fix_sequence(payload["shots"])
         except (OSError, ValueError):
             payload = None
     if payload is None:
         payload = SB.build_job(ep["script"], words, total, gemini=True, envelope=SB.audio_envelope(audio),
                                lipsync_mode=str(opts.get("lipsync") or "speaking"),
-                               quality=str(opts.get("quality") or "final"), look=look, seed=eid)
-        payload["key"] = key
+                               quality=blender_quality(ep), look=look, seed=eid)
+        payload["key"] = blender_key_base(key)
         if payload.get("director_error"):
             notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")
+    payload["quality"] = blender_quality(ep)
     if local:
         cache = settings.data_dir / "render3d_cache"
         out = work / "series.mp4"

@@ -638,6 +638,8 @@ def build_camera(arm, perf, frames, rig):
                 p = world_to_camera_view(sc, cam, V(face_pts[mid]))
                 y_top = 1.0 - p.y
                 want = 0.40 if c["kind"] in ("face", "overhead") else 0.42
+                if c["n"] == 0:
+                    want = 0.58   # над лицом — титр названия (0.34), под ним — субтитры (0.74)
                 if abs(y_top - want) < 0.03 or p.z <= 0:
                     break
                 # лицо ниже нужного — цель ниже (камера наклоняется), выше — выше
@@ -713,6 +715,40 @@ def cam_pos_estimate(perf):
 
 # ============================================================== рендер
 
+def setup_preset(out_dir: Path, pr: dict):
+    """Пресет рендера (series3d_blender.QUALITY): сэмплы, размер кадра, композитор на GPU, формат кадров кэша.
+    Узкое место — CPU между кадрами (композитор, сжатие PNG, пересчёт сцены на замеры размытия), не GPU."""
+    sc = bpy.context.scene
+    kit.setup_render(out_dir, "final")
+    sc.eevee.taa_render_samples = int(pr.get("samples", 48))
+    scale = float(pr.get("scale", 100))
+    sc.render.resolution_percentage = 100
+    sc.render.resolution_x = int(round(1080 * scale / 100 / 2)) * 2
+    sc.render.resolution_y = int(round(1920 * scale / 100 / 2)) * 2
+    if pr.get("fx") == "none":
+        sc.render.use_motion_blur = False
+    if hasattr(sc.eevee, "motion_blur_steps"):
+        sc.eevee.motion_blur_steps = int(pr.get("blur_steps", 1))
+    if pr.get("comp_gpu"):
+        for attr, val in (("compositor_device", "GPU"), ("compositor_precision", "AUTO")):
+            try:
+                setattr(sc.render, attr, val)
+            except (AttributeError, TypeError):
+                pass
+    try:
+        sc.render.use_persistent_data = True
+    except AttributeError:
+        pass
+    if pr.get("frames") == "JPEG":
+        sc.render.image_settings.file_format = "JPEG"
+        sc.render.image_settings.quality = 95
+    else:
+        sc.render.image_settings.file_format = "PNG"
+        sc.render.image_settings.compression = 15
+    log(f"пресет {pr.get('name')}: {sc.render.resolution_x}×{sc.render.resolution_y}, сэмплов "
+        f"{sc.eevee.taa_render_samples}, кадры {sc.render.image_settings.file_format}, эффекты {pr.get('fx')}")
+
+
 def render_chunks(out_dir: Path, cache: Path):
     """Недостающие кадры кусков — рендером анимации по непрерывным диапазонам (движок Eevee не пересоздаётся на
     каждый кадр, как при покадровом render(write_still)); после записи кадра — ``PROGRESS n total``."""
@@ -750,19 +786,28 @@ def render_chunks(out_dir: Path, cache: Path):
                 ranges.append((a, f))
                 a = None
         state["shot"] = c["n"]
+        # дорогие эффекты — только в планах, где нужны (пресет fx: auto), см. series3d_blender.shot_fx
+        fx = c.get("fx") or {"volume": True, "blur": True, "dof": True}
+        fog = bpy.data.objects.get("fog_volume")
+        if fog is not None:
+            fog.hide_render = not fx["volume"]
+        if sc.camera is not None:
+            sc.camera.data.dof.use_dof = bool(fx["dof"])
+        blur_on = blur and bool(fx["blur"])
         for a, b in ranges:
             sc.render.filepath = str(d / "f_#####")
-            if a == c["f0"] and blur:
+            if a == c["f0"] and blur_on:
                 # первый кадр плана — без размытия движения: иначе склейка (камера/герой «прыгнули») смазывает кадр
                 sc.render.use_motion_blur = False
                 sc.frame_start = sc.frame_end = a
                 bpy.ops.render.render(animation=True)
-                sc.render.use_motion_blur = True
                 a += 1
                 if a > b:
                     continue
+            sc.render.use_motion_blur = blur_on
             sc.frame_start, sc.frame_end = a, b
             bpy.ops.render.render(animation=True)
+        sc.render.use_motion_blur = blur
     bpy.app.handlers.render_write.remove(wrote)
     return round(time.time() - t_r, 1), total
 
@@ -807,12 +852,7 @@ def main():
     build_lights(L, perf, frames, phone)
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
     log("сцена собрана")
-    quality = CFG.get("quality", "final")
-    kit.setup_render(out_dir, "preview" if quality == "draft" else quality)
-    if quality == "draft":   # черновик движения: треть размера, 4 сэмпла, без размытия
-        sc.render.resolution_percentage = B.QUALITY["draft"]["scale"]
-        sc.eevee.taa_render_samples = B.QUALITY["draft"]["samples"]
-        sc.render.use_motion_blur = False
+    setup_preset(out_dir, CFG.get("preset") or {"name": CFG.get("quality", "final"), **B.QUALITY["final"]})
     # проверка кадра: где лицо в каждом плане (доля высоты сверху), видно ли
     from bpy_extras.object_utils import world_to_camera_view
 
@@ -840,6 +880,7 @@ def main():
             sc.render.motion_blur_position = "END"
         except (AttributeError, TypeError):
             pass
+        sc.render.image_settings.file_format = "PNG"   # проверочные кадры — PNG при любом пресете
         for f in stills:
             sc.frame_set(int(f))
             sc.render.filepath = str(out_dir / f"still_{int(f):04d}.png")
