@@ -122,6 +122,18 @@ def test_screen_boxes_are_not_the_hero():
     assert only_screen["union"] is None and text_positions(only_screen["union"])["subject"] is None
 
 
+def test_subject_boxes_parse_bare_array_and_box_2d_scale():
+    # QA 6: Gemini отвечает то голым массивом, то box_2d в шкале 0–1000 — не «никого нет».
+    bare = json.dumps([{"x0": 0.3, "y0": 0.3, "x1": 0.6, "y1": 0.7, "kind": "screen"},
+                       {"box_2d": [500, 700, 900, 1000], "kind": "avatar"}])
+    boxes = _parse_boxes(bare, 2)
+    assert boxes[0]["screen"] is True
+    assert boxes[1] == {"x0": 0.7, "y0": 0.5, "x1": 1.0, "y1": 0.9}
+    assert _parse_boxes("не json", 2) == [None, None]
+    one = _parse_boxes(json.dumps({"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.6}), 3)
+    assert one[0] == one[2] == {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.6}
+
+
 # ------------------------------------------------------------------ detect_avatar (Gemini — фейк)
 
 

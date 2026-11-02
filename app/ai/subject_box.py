@@ -178,16 +178,36 @@ def _union(boxes: list[dict | None]) -> dict | None:
 
 def _parse_boxes(text: str, n: int) -> list[dict | None]:
     """Ответ модели → рамка на каждый из ``n`` кадров. Старый ответ одной рамкой —
-    она на все кадры (лучше, чем ничего)."""
+    она на все кадры (лучше, чем ничего). Формат ответа Gemini бывает разным (голый массив, обёртки,
+    box_2d, шкала 0–1000) — разбор общий с ``avatar_box`` (QA 6: голый массив давал «никого нет»)."""
+    from app.ai import avatar_box as A
+
     try:
-        start, end = text.index("{"), text.rindex("}") + 1
-        data = json.loads(text[start:end])
+        data = A._load_json(text)
     except ValueError:
         return [None] * n
-    if isinstance(data, dict) and isinstance(data.get("frames"), list):
-        boxes = [_box_of(item) for item in data["frames"][:n]]
-        return boxes + [None] * (n - len(boxes))
-    return [_box_of(data)] * n
+    items = A._frame_items(data)
+    if not items:
+        return [None] * n
+    single = len(items) == 1 and isinstance(data, dict) and not any(
+        isinstance(data.get(k), list) for k in A.FRAME_LIST_KEYS)
+    items = A._ordered(items, n)
+    rects = [A._raw_rect(item) for item in items]
+    scale = A._scale_of([r for r in rects if r], None)
+    if scale is None:
+        return [None] * n
+    boxes: list[dict | None] = []
+    for item, rect in zip(items, rects):
+        if rect is None:
+            boxes.append(None)
+            continue
+        norm = A._norm_rect(rect, scale)
+        if isinstance(item, dict) and item.get("kind") is not None:
+            norm["kind"] = item["kind"]
+        boxes.append(_box_of(norm))
+    if single and n > 1:
+        boxes = boxes[:1] * n
+    return boxes[:n] + [None] * (n - len(boxes[:n]))
 
 
 def _box_of(data: Any) -> dict | None:
@@ -220,11 +240,7 @@ def _shrink(png: bytes) -> bytes:
 
 
 def _parse_box(text: str) -> dict | None:
-    try:
-        start, end = text.index("{"), text.rindex("}") + 1
-        return _box_of(json.loads(text[start:end]))
-    except ValueError:
-        return None
+    return _parse_boxes(text, 1)[0]
 
 
 def text_positions(box: dict | None, fallback_caption_y: float = DEFAULT_CAPTION_Y) -> dict:
