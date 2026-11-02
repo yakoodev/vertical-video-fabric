@@ -37,7 +37,9 @@
                       "actions": [{"clip", "start", "end", "fade", "speed", "offset"}],
                       "poses": [{"start", "end", "fade", "aim": {"кость": [вправо, вверх, вперёд]},
                                  "rotate": {"кость": [x, y, z]}}]}],
-      "camera": {"keys": [{"t", "position", "target", "fov", "ease", "cut", "rel": id персонажа}],
+      "camera": {"keys": [{"t", "position", "target", "fov", "ease", "cut", "rel": id персонажа} |
+                          {"t", "follow": id персонажа, "look": [x, y, z] | id объекта, "lookOffset",
+                           "distance": 1.15, "shoulder": 0.24, "side": 1 | -1, "height": 0.95–1.05, "fov"}],
                  "shake": [{"t", "amp"}], "margin": 0.12}
     }
 
@@ -72,6 +74,8 @@ OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cyl
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}
 WALLS = {"back", "front", "left", "right"}
 TIMEOUT_SEC = 3600
+# Камера за плечом героя (follow): высота — доля роста героя (node/scene3d/src/engine.ts, FOLLOW_HEIGHT_*).
+FOLLOW_HEIGHT = (0.95, 1.05)
 BLACK_EXIT = 3
 
 Runner = Callable[[list[str], float], subprocess.CompletedProcess]
@@ -255,8 +259,15 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         raise SceneSpecError("camera.keys: нужен хотя бы один ключ камеры")
     _keys(cam["keys"], "camera.keys", duration)
     for i, k in enumerate(cam["keys"]):
-        if k.get("rel") and k["rel"] not in chars:
-            raise SceneSpecError(f"camera.keys[{i}].rel: нет персонажа «{k['rel']}»")
+        for f in ("rel", "follow"):
+            if k.get(f) and k[f] not in chars:
+                raise SceneSpecError(f"camera.keys[{i}].{f}: нет персонажа «{k[f]}»")
+        if isinstance(k.get("look"), str) and k["look"] not in objs:
+            raise SceneSpecError(f"camera.keys[{i}].look: нет объекта «{k['look']}»")
+        if isinstance(k.get("look"), list):
+            _vec(k["look"], f"camera.keys[{i}].look")
+        if k.get("height") is not None and not FOLLOW_HEIGHT[0] <= _num(k["height"], f"camera.keys[{i}].height") <= FOLLOW_HEIGHT[1]:
+            warnings.append(f"camera.keys[{i}].height: камера за плечом — {FOLLOW_HEIGHT[0]}–{FOLLOW_HEIGHT[1]} роста, движок прижмёт")
         for f in ("position", "target"):
             if k.get(f) is not None:
                 _vec(k[f], f"camera.keys[{i}].{f}")
@@ -266,7 +277,7 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         rw, rd, rh = room["width"] / 2, room["depth"] / 2, room["height"]
         for i, k in enumerate(cam["keys"]):
             p = k.get("position")
-            if p and not k.get("rel") and (abs(p[0]) > rw or abs(p[2]) > rd or not 0 < p[1] < rh):
+            if p and not k.get("rel") and not k.get("follow") and (abs(p[0]) > rw or abs(p[2]) > rd or not 0 < p[1] < rh):
                 warnings.append(f"camera.keys[{i}]: камера вне комнаты — движок прижмёт её к стене")
     return {"warnings": warnings, "frames": frames, "fps": fps, "duration": duration, "width": w, "height": h,
             "models": sorted(set(models))}

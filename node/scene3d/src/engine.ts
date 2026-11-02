@@ -65,7 +65,24 @@ interface CameraKey extends Key {
   fov?: number;
   rel?: string;
   roll?: number;
+  /** Камера «за плечом» героя (over-the-shoulder): id персонажа. */
+  follow?: string;
+  /** Куда смотреть: точка действия [x, y, z] или id объекта (его основание + lookOffset). */
+  look?: number[] | string;
+  lookOffset?: number[];
+  /** Дистанция за спиной (м; по умолчанию — от fov), плечо: 1 — правое, −1 — левое, высота — доля роста. */
+  distance?: number;
+  side?: number;
+  height?: number;
+  /** Где в кадре центр героя: доля ширины от его края (0.15–0.5), maxPitch — наклон вниз не круче, °. */
+  framing?: number;
+  maxPitch?: number;
 }
+
+/** Правило follow-камеры: высота — рост героя × [0.95; 1.05] (уровень плеч/чуть выше головы). */
+export const FOLLOW_HEIGHT_MIN = 0.95;
+export const FOLLOW_HEIGHT_MAX = 1.05;
+export const FOLLOW_DEFAULTS = { side: 1, height: 1.0, framing: 0.3, maxPitch: 22 };
 
 export interface SceneSpec {
   version?: number;
@@ -382,7 +399,10 @@ class Engine {
       const p = new THREE.Vector3(-v[0], v[1], v[2]).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).add(ch.root.position);
       return [p.x, p.y, p.z];
     };
-    const keys = cs.keys.map((k) => ({ ...k, position: resolve(k, "position"), target: resolve(k, "target") }));
+    const keys = cs.keys.map((k) => {
+      const f = k.follow ? this.followShot(k, t) : null;
+      return { ...k, position: f ? f.position : resolve(k, "position"), target: f ? f.target : resolve(k, "target") };
+    });
     const pos = sampleVec(keys, t, "position") || [0, 1.5, 3];
     const tgt = sampleVec(keys, t, "target") || [0, 1, 0];
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
@@ -411,6 +431,53 @@ class Engine {
     }
   }
 
+  /**
+   * Камера за плечом героя: смотрит в точку действия (не в центр тела), стоит позади героя по
+   * линии «действие → герой», сдвинута к плечу, на высоте роста × [0.95; 1.05]. Герой оказывается
+   * сбоку кадра, впереди — то, на что он смотрит.
+   */
+  followShot(k: CameraKey, t: number): { position: number[]; target: number[] } | null {
+    const ch = this.characters[k.follow!];
+    if (!ch) return null;
+    const hero = ch.root.position.clone();
+    const yaw = ch.yawAt(t) * D2R;
+    const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    let look: THREE.Vector3;
+    const off = k.lookOffset || [0, 0, 0];
+    if (typeof k.look === "string") {
+      const o = this.objects.find((x) => x.spec.id === k.look);
+      look = o ? o.node.getWorldPosition(new THREE.Vector3()) : hero.clone().addScaledVector(fwd, 1.5);
+      look.add(new THREE.Vector3(off[0], off[1], off[2]));
+    } else if (Array.isArray(k.look)) look = new THREE.Vector3(k.look[0], k.look[1], k.look[2]);
+    else look = hero.clone().addScaledVector(fwd, 1.5).setY(ch.height * 0.55);
+    // Направление взгляда — от героя к действию (по горизонтали); если действие «под ногами» — вперёд героя.
+    const dir = look.clone().sub(hero).setY(0);
+    if (dir.lengthSq() < 0.04) dir.copy(fwd);
+    dir.normalize();
+    const right = new THREE.Vector3(-dir.z, 0, dir.x); // вправо от взгляда
+    const side = (k.side ?? FOLLOW_DEFAULTS.side) >= 0 ? 1 : -1;
+    const hk = Math.min(FOLLOW_HEIGHT_MAX, Math.max(FOLLOW_HEIGHT_MIN, k.height ?? FOLLOW_DEFAULTS.height));
+    const fov = (k.fov ?? this.spec.camera?.fov ?? 45) * D2R;
+    const tanH = Math.tan(fov / 2) * this.camera.aspect;
+    // Дистанция по умолчанию — чтобы плечи героя (~0.48 м) заняли ~42% ширины кадра: в вертикальном
+    // кадре узко, ближе — герой закрывает всё действие.
+    const distance = k.distance ?? Math.min(3, Math.max(1.2, 0.48 / (2 * tanH * 0.42)));
+    // Герой — сбоку: линия взгляда «камера → действие» проходит мимо его плеча на таком расстоянии,
+    // чтобы центр героя пришёлся на долю framing ширины кадра от его края (по умолчанию ~треть).
+    const framing = Math.min(0.5, Math.max(0.15, k.framing ?? FOLLOW_DEFAULTS.framing));
+    const clearance = distance * tanH * (1 - 2 * framing);
+    const pass = hero.clone().setY(0).addScaledVector(right, side * clearance);
+    const sight = look.clone().setY(0).sub(pass);
+    if (sight.lengthSq() < 0.04) sight.copy(dir);
+    sight.normalize();
+    const pos = pass.addScaledVector(sight, -distance).setY(ch.height * hk);
+    // Не круче maxPitch вниз: в кадре остаётся пространство, а не только спина и пол.
+    const horiz = Math.max(0.8, Math.hypot(look.x - pos.x, look.z - pos.z));
+    const maxDrop = horiz * Math.tan((k.maxPitch ?? FOLLOW_DEFAULTS.maxPitch) * D2R);
+    const target = new THREE.Vector3(look.x, Math.max(look.y, pos.y - maxDrop), look.z);
+    return { position: pos.toArray(), target: target.toArray() };
+  }
+
   render(t: number) {
     this.update(t);
     this.renderer.render(this.scene, this.camera);
@@ -426,7 +493,8 @@ class Engine {
   /** Сведения для проверки сцены: где кто, габариты объектов на t. */
   inspect(t: number) {
     this.update(t);
-    const out: Record<string, any> = { camera: this.camera.position.toArray(), objects: {}, characters: {} };
+    const dirv = this.camera.getWorldDirection(new THREE.Vector3());
+    const out: Record<string, any> = { camera: this.camera.position.toArray(), cameraDir: dirv.toArray().map(r3), objects: {}, characters: {} };
     for (const o of this.objects) {
       o.node.updateMatrixWorld(true);
       const b = new THREE.Box3().setFromObject(o.node);

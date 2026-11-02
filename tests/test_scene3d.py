@@ -248,3 +248,24 @@ def test_real_render_small(tmp_path):
     assert st["pix_fmt"] == "yuv420p" and st.get("color_range") == "tv"
     frames = scene3d.preview_frames(spec, [0.0, 1.0], tmp_path / "prev")
     assert len(frames) == 2 and all(Path(f["file"]).is_file() for f in frames)
+
+
+def test_follow_camera_keys_validated():
+    spec = example()
+    follow = [k for k in spec["camera"]["keys"] if k.get("follow")]
+    assert follow and all(k["follow"] == "girl" for k in follow), "пример снимает за плечом героини"
+    assert validate_spec(spec, check_assets=False)["warnings"] == []
+    bad = example()
+    bad["camera"]["keys"][-1]["follow"] = "ghost"
+    with pytest.raises(SceneSpecError, match="ghost"):
+        validate_spec(bad, check_assets=False)
+    bad = example()
+    bad["camera"]["keys"][-1]["look"] = "no_such_object"
+    with pytest.raises(SceneSpecError, match="no_such_object"):
+        validate_spec(bad, check_assets=False)
+    high = example()
+    high["camera"]["keys"][-1]["height"] = 1.4
+    assert any("роста" in w for w in validate_spec(high, check_assets=False)["warnings"])
+    assert scene3d.FOLLOW_HEIGHT == (0.95, 1.05)
+    engine = (ROOT / "node" / "scene3d" / "src" / "engine.ts").read_text("utf-8")
+    assert "FOLLOW_HEIGHT_MIN = 0.95" in engine and "FOLLOW_HEIGHT_MAX = 1.05" in engine

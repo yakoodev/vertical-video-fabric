@@ -228,3 +228,40 @@ test("браузер: превью-кадры пишутся PNG", { skip: !HAVE
   assert.equal(res.previews.length, 2);
   for (const p of res.previews) assert.ok(existsSync(p.file) && p.luma > 10);
 });
+
+test("браузер: follow-камера — за плечом на высоте роста, смотрит в точку действия, герой сбоку", { skip: !HAVE && "нет браузера/паков/бандла" }, async () => {
+  const look = [0.6, 0.45, -0.6];
+  const spec = {
+    ...SMALL,
+    // Комната 3×3 м: дистанция явная, чтобы камеру не прижало к стене.
+    camera: { keys: [{ t: 0, follow: "hero", look, fov: 55, distance: 1.1 }, { t: 2, follow: "hero", look: "bed", lookOffset: [0, 0.4, 0], height: 1.3, fov: 55, distance: 1.1 }] },
+  };
+  const scene = await openScene({ bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader" }, spec);
+  try {
+    for (const t of [0.4, 1.6]) {
+      const ins = await scene.inspect(t);
+      const h = ins.characters.hero;
+      const cam = ins.camera, dir = ins.cameraDir;
+      // Высота: рост 1.6 × [0.95; 1.05] (на 2 с просили 1.3 — движок прижимает к 1.05).
+      assert.ok(cam[1] / 1.6 >= 0.949 && cam[1] / 1.6 <= 1.051, `высота камеры ${cam[1]}`);
+      const hero = [(h.min[0] + h.max[0]) / 2, (h.min[2] + h.max[2]) / 2];
+      const view = Math.atan2(dir[0], dir[2]);
+      const toHero = Math.atan2(hero[0] - cam[0], hero[1] - cam[2]);
+      const off = ((toHero - view + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+      // За правым плечом: герой левее центра кадра (положительный угол — влево), но в кадре.
+      assert.ok(off > 0.06 && off < 0.3, `герой сбоку: ${off.toFixed(3)} рад`);
+      // Камера позади героя относительно точки действия.
+      const bed = ins.objects.bed;
+      const target = t < 1 ? [look[0], look[2]] : [(bed.min[0] + bed.max[0]) / 2, (bed.min[2] + bed.max[2]) / 2];
+      assert.ok(Math.hypot(target[0] - cam[0], target[1] - cam[2]) > Math.hypot(target[0] - hero[0], target[1] - hero[1]),
+        "камера за спиной, действие впереди");
+    }
+    // Взгляд — в точку действия, не в центр тела.
+    const ins = await scene.inspect(0);
+    const d = ins.cameraDir, cam = ins.camera;
+    const ang = Math.abs(Math.atan2(d[0], d[2]) - Math.atan2(look[0] - cam[0], look[2] - cam[2]));
+    assert.ok(ang < 0.02, `смотрит в точку действия (${ang})`);
+  } finally {
+    await scene.close();
+  }
+});
