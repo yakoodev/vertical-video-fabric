@@ -496,14 +496,18 @@ def tools() -> list[Tool]:
              "/ Check a generated shot video.",
              _obj({"ref_id": {"type": "integer"}}, ["ref_id"]), h_check_video, scope="project"),
         Tool("aiv_block_shot", "Блокинг плана",
-             "3D-блокинг (бесплатно, наш движок сцен): простые манекены (капсула с головой и «носом» — человек, "
-             "плоский диск — робот-пылесос, коробки — мебель, мелкие фигуры — реквизит) в комнате, камера плана; "
-             "скриншоты старта и конца плана (9:16) идут ПЕРВЫМ референсом ключевых кадров (композиция, позы, "
-             "места). shot_id — один план: spec — своя раскладка {room {width, depth, height}, objects [{id, kind "
-             "box|cylinder|disc|sphere, size [w,h,d] см, pos [x,z], rot}], camera? {pos, target, fov}, start/end "
-             "{actors [{id, pos [x,z], facing град (0 — в камеру, 90 — вправо, -90 — влево, 180 — спиной), pose "
-             "standing|walking|sitting|kneeling|lying, y?}], props [{id, kind, size, count, pos [x,y,z] | "
-             "holder}]}} (x вправо, z к камере, пол y=0); scenes {start?, end?} — своя JSON-сцена движка поверх "
+             "3D-блокинг (бесплатно, наш движок сцен): подробный макет — комната локации со всеми вещами из её "
+             "описания/плиты (одна раскладка на локацию, layout в ответе), манекены персонажей в реальном росте "
+             "(голова, туловище, руки, ноги в позе; робот-диск — низкий диск), реквизит в руках и на местах, "
+             "камера по плану (крупность, ракурс, объектив) + самоконтроль кадра (checks: не прошёл — блокинг в "
+             "кадр не идёт); скриншоты старта и конца плана (9:16) идут ПЕРВЫМ референсом ключевых кадров "
+             "(только позиции, позы, ракурс). shot_id — один план: spec — своя раскладка {start/end {actors [{id, "
+             "pos [x,z], facing град (0 — в камеру, 90 — вправо, -90 — влево, 180 — спиной), pose "
+             "standing|walking|sitting|crouching|kneeling|lying, arms down|up|forward|holding|wave, on — id вещи "
+             "комнаты}], props [{id, name, count, holder | on (id вещи) | pos [x,y,z]}]}, objects? (пусто — комната "
+             "локации; своя — [{id, type bed|nightstand|lamp|desk|chair|window|… или kind box|cylinder|disc|"
+             "sphere, size [w,h,d] см, pos [x,z], y, rot}]), camera? {pos, target, fov}} (x вправо, z к камере, пол "
+             "y=0); scenes {start?, end?} — своя JSON-сцена движка поверх "
              "(get_scene_reference); rewrite — пересоздать раскладку (Gemini или по state); render (да) — "
              "отрисовать; with_scenes — вернуть JSON-сцены (посмотреть preview_scene_frame). script_id без shot_id "
              "— вся серия (как этап blocking). / Block a shot in 3D (free).",

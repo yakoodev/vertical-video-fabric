@@ -202,11 +202,13 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
     for n, shot in enumerate(script["shots"]):
         if _video_of(store, project_id, shot):
             continue
-        # Стоп-кадр плана — его стартовый кадр (свой или общий: конечный кадр прошлого плана).
+        # Стоп-кадр плана — его стартовый кадр (свой или общий: конечный кадр прошлого плана; у модели
+        # без конечного кадра — последний кадр видео прошлого плана).
         ref, shared = G.start_frame_ref(store, project_id, script["shots"], n)
         if not ref:
-            missing.append(f"{shot['idx']} (старт — конечный кадр плана {shared}: этап keyframes)"
-                           if shared else str(shot["idx"]))
+            where = ("последний кадр видео плана {n}: этап video" if G.tail_mode(store, project_id, script_id)
+                     else "конечный кадр плана {n}: этап keyframes")
+            missing.append(f"{shot['idx']} (старт — {where.format(n=shared)})" if shared else str(shot["idx"]))
         else:
             frames[shot["id"]] = ref
     if missing:
