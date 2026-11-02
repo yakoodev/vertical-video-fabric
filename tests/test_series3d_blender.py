@@ -178,7 +178,7 @@ def test_turn_in_place_steps_and_walk_moves_root():
     job = {"fps": 30, "duration": 10.0, "shots": B.fix_sequence(shots), "events": [], "words": []}
     perf = B.perform(job)
     clips = [sg["clip"] for sg in perf["track"]]
-    assert "Walking_A" in clips, "короткий путь — шагом, не склейкой"
+    assert B.WALK_CLIP in clips, "короткий путь — шагом, не склейкой"
     r = perf["root"]
     assert math.dist(r[int(3.0 * 30)], r[int(6.5 * 30)]) > 0.25
     steps = [math.dist(r[i], r[i + 1]) for i in range(len(r) - 1)]
@@ -552,3 +552,51 @@ def test_gemini_tts_dialog_two_voices():
     text = pl["contents"][0]["parts"][0]["text"]
     assert "Рассказчик: Свет погас." in text and "Герой: «Помогите!»" in text
     assert hero_voice_for("Puck") != "Puck"
+
+
+
+# --------------------------------------------------------------------------- #
+# Ходьба: корень по опорной стопе, 1–3 шага, разгон/торможение, поворот до шага
+# --------------------------------------------------------------------------- #
+
+def _walk_job():
+    plan = [(0.0, 2.0, "wait", "center"), (2.0, 6.5, "approach", "panel"), (6.5, 11.0, "approach", "doors"),
+            (11.0, 14.0, "listen", "doors"), (14.0, 18.5, "approach", "center")]
+    shots = [{"n": n, "t0": a, "t1": b, "action": act, "target": tg, "button": "1", "emotion": "calm",
+              "camera": "overhead", "speaks": False, "stand_first": False} for n, (a, b, act, tg) in enumerate(plan)]
+    return {"fps": 30, "duration": 18.5, "shots": shots, "events": [], "words": []}
+
+
+def test_walk_feet_do_not_slide():
+    perf = B.perform(_walk_job())
+    walks = [sg for sg in perf["track"] if sg["clip"] == B.WALK_CLIP]
+    assert len(walks) >= 2, "короткие подходы — шагом (в лифте 1–3 шага), длинные с разворотом — склейкой"
+    for sg in walks:
+        steps = (sg["end"] - sg["start"] - (1 - 0.45) * sg["ease_in"]) / (B.CLIP_LEN[B.WALK_CLIP] / 2)
+        assert steps <= B.MAX_WALK_STEPS + 2.05, "1–3 шага (+ шаги разворота)"
+        assert sg["ease_in"] > 0 and sg["ease_out"] > 0, "разгон и торможение"
+    slide = B.foot_slide(perf)
+    assert len(slide) > 100 and max(slide) < 10.0, f"стопа в контакте скользит {max(slide):.1f} мм/кадр"
+    r = perf["root"]
+    assert math.dist(r[int(6.4 * 30)], B.press_stand(["1"])[0]) < 0.01, "пришёл к панели"
+    cuts = {int(round(sh["t0"] * 30)) - 1 for sh in perf["shots"]}   # на склейке герой может «переставиться»
+    assert max(math.dist(r[i], r[i + 1]) for i in range(len(r) - 1) if i not in cuts) < 0.03, "корень без рывков"
+    # курс: сначала поворот к цели (на месте или на первом шаге), идёт лицом вперёд
+    f = int(3.5 * 30)
+    move = (r[f + 3][0] - r[f][0], r[f + 3][1] - r[f][1])
+    fx, fy = B.facing(perf["heading"][f])
+    assert (move[0] * fx + move[1] * fy) / max(math.hypot(*move), 1e-9) > 0.85, "идёт лицом по ходу, не боком"
+
+
+def test_constant_root_speed_would_slide():
+    """Постоянная скорость корня под клип шага (как было) — опорная стопа едет на миллиметры–сантиметр за кадр."""
+    const = sum(B.WALK_STANCE) / len(B.WALK_STANCE)
+    assert max(abs(x - const) * B.S * 1000 for x in B.WALK_STANCE) > 5.0
+
+
+def test_clip_ease_slows_start_and_end():
+    sg = B.m.ClipSegment("Walking_C", 1.0, 1.6, ease_in=0.4, ease_out=0.4, end=3.0)
+    assert sg.clip_seconds(1.0) == 0.0
+    assert sg.clip_seconds(1.1) < 0.1 * 0.8, "на входе медленнее"
+    assert abs((sg.clip_seconds(2.0) - sg.clip_seconds(1.9)) - 0.1) < 1e-6, "в середине — обычная скорость"
+    assert sg.clip_seconds(3.0) - sg.clip_seconds(2.9) < 0.1 * 0.8, "на выходе медленнее"

@@ -132,8 +132,58 @@ FACE_Z = {"stand": 1.62 * S, "sit": 1.28 * S}
 SIT_DROP = 0.17                    # насколько ниже грудь сидя (клип Sit_Floor_Idle)
 
 # Длины клипов KayKit (с) и шаг — замер в Blender (сцена сверяет и пишет в отчёт расхождение).
-CLIP_LEN = {"Idle_A": 1.067, "Idle_B": 2.133, "Walking_A": 1.067, "Walking_B": 1.067, "Sit_Floor_Down": 1.0,
-            "Sit_Floor_Idle": 4.0, "Sit_Floor_StandUp": 1.133, "Hit_A": 0.667, "Hit_B": 0.867}
+CLIP_LEN = {"Idle_A": 1.067, "Idle_B": 2.133, "Walking_A": 1.067, "Walking_B": 1.067, "Walking_C": 1.6,
+            "Sit_Floor_Down": 1.0, "Sit_Floor_Idle": 4.0, "Sit_Floor_StandUp": 1.133, "Hit_A": 0.667, "Hit_B": 0.867}
+
+# Шаг: KayKit Walking_C (осторожная ходьба, 2 шага за 1.6 с, шаг ≈ 18 см у героя) — ровнее Walking_A/B.
+# Стопы клипа на месте (замер в Blender, система героя без масштаба): (y левой, z левой, y правой, z правой) на кадр
+# клипа (30 к/с); вперёд — −y. Корень едет ровно на столько, на сколько опорная стопа (ниже другой) уезжает назад:
+# стопа в контакте стоит на полу (root motion из клипа), а не скользит, как при постоянной скорости корня.
+WALK_CLIP = "Walking_C"
+WALK_FEET = [(-0.1433, 0.1463, 0.1896, 0.2276), (-0.1336, 0.1461, 0.1865, 0.2279), (-0.11, 0.1458, 0.1778, 0.2288), (-0.0802, 0.1454, 0.1641, 0.2302), (-0.0493, 0.1443, 0.1464, 0.2324), (-0.0184, 0.1422, 0.1254, 0.2352), (0.0142, 0.1408, 0.1019, 0.2386), (0.0445, 0.1405, 0.0768, 0.2427), (0.0685, 0.1405, 0.0508, 0.2475), (0.0875, 0.1404, 0.0247, 0.2528), (0.103, 0.1404, -0.0006, 0.2586), (0.1164, 0.1403, -0.0245, 0.2647), (0.1289, 0.1401, -0.0462, 0.2709), (0.1419, 0.1393, -0.0628, 0.2752), (0.1559, 0.1375, -0.0731, 0.275), (0.1713, 0.1346, -0.079, 0.2696), (0.1884, 0.1306, -0.083, 0.2587), (0.2059, 0.1289, -0.0873, 0.243), (0.2211, 0.1343, -0.0934, 0.2239), (0.2377, 0.1408, -0.102, 0.2036), (0.2515, 0.15, -0.1127, 0.1843), (0.2412, 0.1814, -0.1239, 0.1678), (0.2205, 0.2074, -0.1339, 0.1555), (0.1996, 0.2226, -0.1409, 0.1481), (0.1896, 0.2276, -0.1433, 0.1463), (0.1857, 0.2282, -0.1336, 0.1469), (0.1763, 0.2294, -0.11, 0.1466), (0.1624, 0.231, -0.0802, 0.1459), (0.1446, 0.2332, -0.0494, 0.1444), (0.1237, 0.2359, -0.0184, 0.1422), (0.1004, 0.2393, 0.0142, 0.1408), (0.0756, 0.2433, 0.0445, 0.1405), (0.0499, 0.2479, 0.0685, 0.1405), (0.0242, 0.253, 0.0875, 0.1404), (-0.0009, 0.2587, 0.103, 0.1404), (-0.0246, 0.2647, 0.1164, 0.1403), (-0.0462, 0.2709, 0.1289, 0.1401), (-0.0627, 0.2751, 0.1419, 0.1393), (-0.0728, 0.2748, 0.1559, 0.1375), (-0.0787, 0.2693, 0.1713, 0.1346), (-0.0827, 0.2584, 0.1884, 0.1306), (-0.0871, 0.2428, 0.2077, 0.1253), (-0.0935, 0.2241, 0.2241, 0.1286), (-0.1022, 0.2043, 0.2412, 0.1345), (-0.1128, 0.1855, 0.2514, 0.1501), (-0.1239, 0.1694, 0.2409, 0.1817), (-0.1339, 0.157, 0.2199, 0.2078), (-0.1408, 0.1491, 0.1989, 0.2229), (-0.1433, 0.1463, 0.1896, 0.2276)]
+WALK_FOOT_X = 0.1709
+WALK_PASS = (8 / 30, 32 / 30)   # кадры клипа, где стопы ближе всего: начало и конец шага — ноги рядом
+MAX_WALK_STEPS = 3              # в лифте — 1–3 шага, дальше — склейка
+
+
+def _walk_stance() -> list[float]:
+    """Сдвиг опорной стопы назад за кадр клипа (ед. без масштаба) — на столько корень едет вперёд."""
+    out = []
+    for i in range(len(WALK_FEET) - 1):
+        ly, lz, ry, rz = WALK_FEET[i]
+        ly2, lz2, ry2, rz2 = WALK_FEET[i + 1]
+        out.append((ly2 - ly) if lz <= rz else (ry2 - ry))
+    return out
+
+
+WALK_STANCE = _walk_stance()
+WALK_CYCLE_UNITS = sum(WALK_STANCE)
+STEP_LEN = WALK_CYCLE_UNITS * S / 2          # м за шаг (полцикла)
+_STANCE_CUM = [0.0]
+for _v in WALK_STANCE:
+    _STANCE_CUM.append(_STANCE_CUM[-1] + _v)
+
+
+def stance_units(lt: float) -> float:
+    """Пройдено корнем (ед. без масштаба) от начала клипа шага к его секунде ``lt`` (с переходом через цикл)."""
+    n = len(WALK_STANCE)
+    phi = lt * 30.0
+    cycles, rest = divmod(phi, n)
+    i = int(rest)
+    frac = rest - i
+    return cycles * WALK_CYCLE_UNITS + _STANCE_CUM[i] + WALK_STANCE[min(i, n - 1)] * frac
+
+
+def walk_plan(dist: float) -> tuple[int, float]:
+    """(шагов, сколько секунд клипа сыграть): шагов 1–3 по длине пути, начало и конец — ноги рядом."""
+    steps = max(1, min(MAX_WALK_STEPS, int(round(dist / STEP_LEN))))
+    return steps, steps * CLIP_LEN[WALK_CLIP] / 2
+
+
+def walk_seconds(clip_sec: float, ease: float = 0.35) -> float:
+    """Сколько реальных секунд идёт ``clip_sec`` секунд клипа с разгоном и торможением ``ease``."""
+    return clip_sec + (1 - m.ClipSegment.EASE_LOW) * ease
+
 STRIDE = 0.6708            # ед/с клипа Walking_A без масштаба (×S = м/с)
 CLIPS_NEEDED = tuple(CLIP_LEN)
 
@@ -676,7 +726,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     rnd = random.Random(int(job.get("seed") or 7))
 
     track = m.ClipTrack()
-    walks: list[tuple[float, float, tuple, tuple]] = []      # (t0, t1, from, to) — корень едет по весу шага
+    walks: list[dict] = []           # окна шага: корень по опорной стопе клипа (walk_root)
     pos_keys: list[tuple[float, tuple[float, float]]] = []   # телепорт на склейке
     head_keys = _Track(0.0)
     gaze = _Track((0.0, FRONT, 1.0))
@@ -752,9 +802,18 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 add_clip("Idle_A", t0, blend=0.01)
             posture = "stand"
         walk_dist = math.dist(spot, pos)
-        speed = stride * S
-        need = m.walk_duration(walk_dist, speed * 1.35, clip_len["Walking_A"]) if moved else 0.0
-        if moved and (k == 0 or walk_dist > 0.75 or need > 0.5 * span or a == "sit_corner" and walk_dist > 0.45):
+        steps, clip_sec = walk_plan(walk_dist)
+        wsec = walk_seconds(clip_sec)
+        dirv = (spot[0] - pos[0], spot[1] - pos[1]) if moved else (0.0, 0.0)
+        walk_head = m.heading_of(dirv) if moved else heading
+        t_turn0 = 0.25 + 0.45 * abs(_ang(walk_head - heading)) / math.pi if moved else 0.0
+        far = walk_dist > MAX_WALK_STEPS * STEP_LEN * 1.25
+        if moved:   # шаги разворота в начале/конце (см. ниже) — тоже время шага
+            _h = clip_len[WALK_CLIP] / 2
+            _d0, _d1 = abs(_ang(walk_head - heading)), abs(_ang(hd - walk_head))
+            wsec = walk_seconds(clip_sec + (_h if _d0 > math.radians(100) else 0.0)
+                                + (0.0 if _d1 <= math.radians(40) else _h * (2 if _d1 > math.radians(100) else 1)))
+        if moved and (k == 0 or far or t_turn0 + wsec > (0.9 if a == "approach" else 0.6) * span or a == "sit_corner" and walk_dist > 0.45):
             # склейка: герой уже на месте (переход между кадрами не показываем)
             pos_keys.append((t0, spot))
             head_keys.key(t0 - 1e-3, heading)
@@ -763,37 +822,67 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 add_clip("Idle_A", t0, blend=0.01)
             pos, heading = spot, hd
         elif moved:
-            dirv = (spot[0] - pos[0], spot[1] - pos[1])
-            walk_head = m.heading_of(dirv)
-            turn = abs(_ang(walk_head - heading))
-            t_turn = 0.18 + 0.25 * turn / math.pi
+            # сначала взгляд к цели; корпус: малый поворот — на месте до шага, большой — на первом шаге (вокруг
+            # опорной стопы); 1–3 шага с разгоном и торможением; к цели лицом — на последнем шаге (большой — лишний шаг)
+            gaze.key(tt, (spot[0], spot[1], 0.5))
+            dh0 = _ang(walk_head - heading)
+            h_walk = heading + dh0
+            dh_end = _ang(hd - walk_head)
+            half = clip_len[WALK_CLIP] / 2
+            # большой разворот — на шаге (корпус вокруг опорной стопы); больше 100° — за два шага, не рывком
+            turn0 = half * (2 if abs(dh0) > math.radians(100) else 1)
+            turn1 = half * (2 if abs(dh_end) > math.radians(100) else 1)
+            if abs(dh0) > math.radians(100):
+                clip_sec += half
+            if abs(dh_end) > math.radians(40):
+                clip_sec += turn1
+            pre = t_turn0 if abs(dh0) <= math.radians(40) else 0.15
             head_keys.key(tt, heading)
-            head_keys.key(tt + t_turn, heading + _ang(walk_head - heading))
-            wdur = m.walk_duration(walk_dist, speed, clip_len["Walking_A"])
-            cs = min(1.45, max(0.8, (walk_dist / max(wdur, 1e-6)) / speed))
-            if wdur > 0.6 * span:
-                wdur = max(clip_len["Walking_A"] / 2, walk_dist / (speed * 1.45))
-                cs = (walk_dist / wdur) / speed
-            add_clip("Walking_A", tt + 0.05, blend=0.25, speed=cs)
-            walks.append((tt + 0.05, tt + 0.05 + wdur, pos, spot))
-            arrive = tt + 0.05 + wdur
-            pos_keys.append((arrive, spot))
-            h_end = heading + _ang(walk_head - heading) + _ang(hd - walk_head)
-            head_keys.key(arrive - 0.2, heading + _ang(walk_head - heading))
-            head_keys.key(arrive + 0.35, h_end)
-            add_clip("Idle_A", arrive, blend=0.3)
+            ws = tt + pre - 0.05
+            we = ws + walk_seconds(clip_sec)
+            if abs(dh0) <= math.radians(40):
+                head_keys.key(tt + pre, h_walk)
+            else:
+                head_keys.key(ws + 0.25, heading)
+                head_keys.key(ws + 0.25 + turn0, h_walk)
+            track.add(m.ClipSegment(WALK_CLIP, max(ws, track.segments[-1].start + 0.05), clip_len[WALK_CLIP], blend=0.3,
+                                    loop=True, offset=WALK_PASS[0], ease_in=0.35, ease_out=0.35, end=we))
+            walks.append({"t0": ws, "t1": we + 0.4, "target": spot, "kind": "walk"})
+            h_end = h_walk + dh_end
+            if abs(dh_end) > math.radians(40):
+                head_keys.key(we - turn1 - 0.1, h_walk)
+                head_keys.key(we - 0.15, h_end)
+            else:
+                head_keys.key(we - 0.45, h_walk)
+                head_keys.key(we + 0.25, h_end)
+            add_clip("Idle_A", we - 0.05, blend=0.4)
             heading, pos = h_end, spot
-            tt = arrive + 0.15
+            tt = we + 0.2
         elif abs(_ang(hd - heading)) > math.radians(18):
-            # поворот на месте — корень плавно, ноги переступают (клип шага медленно)
             dh = _ang(hd - heading)
-            t_turn = 0.35 + 0.45 * abs(dh) / math.pi
-            head_keys.key(tt + 0.05, heading)
-            head_keys.key(tt + 0.05 + t_turn, heading + dh)
-            add_clip("Walking_B", tt + 0.05, blend=0.15, speed=0.75)
-            add_clip("Idle_A", tt + 0.05 + t_turn - 0.1, blend=0.25)
-            heading += dh
-            tt += t_turn
+            mid = facing(heading + dh / 2)
+            p_end = (pos[0] + mid[0] * STEP_LEN, pos[1] + mid[1] * STEP_LEN)
+            room = abs(p_end[0]) < 0.55 and FRONT + 0.32 < p_end[1] < D / 2 - 0.3
+            if abs(dh) > math.radians(50) and room and posture == "stand" and span > 2.2:
+                # разворот шагом: один шаг (корень по опорной стопе), корпус поворачивается на шаге
+                ws = tt + 0.05
+                we = ws + walk_seconds(CLIP_LEN[WALK_CLIP] / 2, 0.3)
+                track.add(m.ClipSegment(WALK_CLIP, max(ws, track.segments[-1].start + 0.05), clip_len[WALK_CLIP],
+                                        blend=0.25, loop=True, offset=WALK_PASS[0], ease_in=0.3, ease_out=0.3, end=we))
+                walks.append({"t0": ws, "t1": we + 0.3, "target": None, "kind": "turn"})
+                head_keys.key(ws, heading)
+                head_keys.key(we - 0.1, heading + dh)
+                add_clip("Idle_A", we - 0.05, blend=0.35)
+                pos = p_end
+                heading += dh
+                tt = we + 0.1
+            else:
+                # небольшой поворот — на месте, плавно (ноги почти не уходят)
+                t_turn = 0.35 + 0.6 * abs(dh) / math.pi
+                head_keys.key(tt + 0.05, heading)
+                head_keys.key(tt + 0.05 + t_turn, heading + dh)
+                heading += dh
+                tt += t_turn
         a0 = min(tt + 0.05, t1 - 0.3)
         # эмоция кадра (наплыв 0.35 с)
         emo.key(t0 + 0.02, emo.keys[-1][1] if emo.keys else EMOTIONS["calm"])
@@ -953,23 +1042,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
 
     # покадрово: корень
     tl = track
-    pos_c = m.Curve(sorted(pos_keys, key=lambda k: k[0]), ease="step")
     head_c = head_keys.curve()
-    root, heads = [], []
-    walk_w = [dict((c, w) for c, _, w in tl.weights_at(t)).get("Walking_A", 0.0) for t in times]
-    walk_at: dict[int, tuple[float, float]] = {}
-    for (w0, w1, a_, b_) in walks:
-        # корень едет со скоростью ∝ весу клипа шага: разгон/торможение — вместе с наплывом, стопа не скользит
-        fr = [i for i in range(nf) if w0 - 0.4 <= times[i] <= w1 + 0.6]
-        tot = sum(walk_w[i] for i in fr) or 1.0
-        acc = 0.0
-        for i in fr:
-            acc += walk_w[i]
-            walk_at[i] = m.lerp(a_, b_, min(1.0, acc / tot))
-    for f, t in enumerate(times):
-        p = walk_at.get(f) or pos_c.at(t)
-        root.append((round(p[0], 5), round(p[1], 5)))
-        heads.append(round(head_c.at(t), 5))
+    heads = [round(head_c.at(t), 5) for t in times]
+    root = walk_root(tl, sorted(pos_keys, key=lambda k: k[0]), walks, heads, times)
 
     # руки: правая (нажатия/стук), левая и обе (телефон, двери)
     hand = {"r": [None] * nf, "l": [None] * nf}
@@ -1137,7 +1212,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             beam_raw.append((root[f][0] + fx * 0.9, root[f][1] + fy * 0.9, 0.05))
     perf = {"fps": fps, "frames": nf, "duration": dur, "track": [
         {"clip": sg.clip, "start": round(sg.start, 4), "duration": sg.duration, "blend": sg.blend, "speed": round(sg.speed, 4),
-         "loop": sg.loop, "offset": sg.offset} for sg in track.segments],
+         "loop": sg.loop, "offset": sg.offset, "ease_in": sg.ease_in, "ease_out": sg.ease_out,
+         "end": None if sg.end is None else round(sg.end, 4)} for sg in track.segments],
         "root": root, "heading": heads, "hands": hand, "gaze": gz, "face": face, "body": body, "lights": lights,
         "phone": phone, "contacts": contacts, "shots": shot_out, "startles": startles,
         "blackout": blackout, "light_back": light_back, "speak_windows": speak_windows}
@@ -1322,6 +1398,111 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
     return out
 
 
+def planted_local(lt: float) -> tuple[str, float, float]:
+    """Опорная стопа клипа шага в момент ``lt``: (сторона, x, y) в системе клипа (x — влево, y — назад), ед."""
+    n = len(WALK_FEET) - 1
+    phi = (lt * 30.0) % n
+    i = int(phi)
+    a_, b_ = WALK_FEET[i], WALK_FEET[min(i + 1, n)]
+    k = phi - i
+    ly, lz, ry, rz = (a_[j] + (b_[j] - a_[j]) * k for j in range(4))
+    return ("l", WALK_FOOT_X, ly) if lz <= rz else ("r", -WALK_FOOT_X, ry)
+
+
+def clip_to_world(root: tuple[float, float], heading: float, x: float, y: float) -> tuple[float, float]:
+    """Точка клипа (x — влево от взгляда, y — назад; ед. без масштаба) → мир."""
+    fx, fy = facing(heading)
+    rx, ry = fy, -fx
+    return (root[0] + (-x * rx - y * fx) * S, root[1] + (-x * ry - y * fy) * S)
+
+
+def walk_root(track: m.ClipTrack, pos_keys: list[tuple[float, tuple]], walks: list[dict], heads: list[float],
+              times: list[float]) -> list[tuple[float, float]]:
+    """Корень по кадрам. Склейки — сразу на месте. На шаге в полный вес опорная стопа клипа стоит на полу: корень
+    ставится так, чтобы она не сдвинулась (и поворот корпуса идёт вокруг неё) — root motion из клипа. В наплывах
+    шага — корень едет на сдвиг опорной стопы × вес. Шаг к цели доводится до точки поправкой по кадрам окна
+    (1–3 шага: миллиметры за кадр)."""
+    n = len(times)
+    walk = []
+    for t in times:
+        lt, w = None, 0.0
+        for clip, l_, w_ in track.weights_at(t):
+            if clip == WALK_CLIP:
+                lt, w = l_, w_
+        walk.append((lt, w))
+
+    def step(cur: tuple[float, float], f: int) -> tuple[float, float]:
+        lt, w = walk[f]
+        plt, pw = walk[f - 1] if f else (None, 0.0)
+        if lt is None or plt is None or w <= 0:
+            return cur
+        if w >= 0.999 and pw >= 0.999:
+            side0, x0, y0 = planted_local(plt)
+            side1, x1, y1 = planted_local(lt)
+            if side0 == side1:
+                px, py = clip_to_world(cur, heads[f - 1], x0, y0)
+                nx, ny = clip_to_world((0.0, 0.0), heads[f], x1, y1)
+                return (px - nx, py - ny)
+        d = stance_units(lt) - stance_units(plt)
+        if d < -WALK_CYCLE_UNITS / 2:          # переход через цикл
+            d += WALK_CYCLE_UNITS
+        fx, fy = facing(heads[f])
+        return (cur[0] + fx * d * S * w, cur[1] + fy * d * S * w)
+
+    keys = list(pos_keys)
+    cur = keys[0][1] if keys else (0.0, 0.0)
+    out = []
+    ki = 1
+    win_i = 0
+    walks = sorted(walks, key=lambda w_: w_["t0"])
+    corr: dict[int, tuple[float, float]] = {}
+    for f, t in enumerate(times):
+        while ki < len(keys) and keys[ki][0] <= t + 1e-9:
+            cur = keys[ki][1]
+            ki += 1
+        while win_i < len(walks) and walks[win_i]["t0"] <= t:
+            w_ = walks[win_i]
+            win_i += 1
+            if w_["target"] is None:
+                continue
+            fr = [i for i in range(f, n) if times[i] <= w_["t1"]]
+            sim, moves = cur, []
+            for i in fr:
+                nxt = step(sim, i)
+                moves.append(math.dist(sim, nxt))
+                sim = nxt
+            ex, ey = w_["target"][0] - sim[0], w_["target"][1] - sim[1]
+            tot = sum(moves) or 1.0
+            corr = {i: (ex * mv / tot, ey * mv / tot) for i, mv in zip(fr, moves)}
+        nxt = step(cur, f)
+        if f in corr:
+            nxt = (nxt[0] + corr[f][0], nxt[1] + corr[f][1])
+        cur = nxt
+        out.append((round(cur[0], 5), round(cur[1], 5)))
+    return out
+
+
+def foot_slide(perf: dict) -> list[float]:
+    """Скольжение опорной стопы (мм за кадр) на кадрах полного веса шага: стопа клипа в мире = корень + поворот ×
+    стопа × масштаб; опорная — ниже другой в обоих кадрах."""
+    track = track_of(perf)
+    fps = perf["fps"]
+    out = []
+    prev = None
+    for f in range(perf["frames"]):
+        t = f / fps
+        ws = [(lt, w) for c, lt, w in track.weights_at(t) if c == WALK_CLIP]
+        if not ws or ws[0][1] < 0.999:
+            prev = None
+            continue
+        side, x, y = planted_local(ws[0][0])
+        wx, wy = clip_to_world(tuple(perf["root"][f]), perf["heading"][f], x, y)
+        if prev is not None and prev[0] == side:
+            out.append(math.hypot(wx - prev[1], wy - prev[2]) * 1000)
+        prev = (side, wx, wy)
+    return out
+
+
 def _posture_at(shots: list[dict], t: float) -> str:
     for s in shots:
         if s["t0"] <= t < s["t1"]:
@@ -1333,7 +1514,8 @@ def track_of(perf: dict) -> m.ClipTrack:
     tr = m.ClipTrack()
     for sg in perf["track"]:
         tr.add(m.ClipSegment(sg["clip"], sg["start"], sg["duration"], blend=sg["blend"], speed=sg["speed"],
-                             loop=sg["loop"], offset=sg["offset"]))
+                             loop=sg["loop"], offset=sg["offset"], ease_in=sg.get("ease_in", 0.0),
+                             ease_out=sg.get("ease_out", 0.0), end=sg.get("end")))
     return tr
 
 
@@ -1446,7 +1628,7 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
     fps = perf["fps"]
     out: dict[int, dict] = {}
     cams = {c["n"]: c for c in perf.get("cameras") or []}
-    walks = [(sg["start"], sg["start"] + 1.2) for sg in perf["track"] if sg["clip"] in ("Walking_A", "Walking_B", "Hit_A",
+    walks = [(sg["start"], sg["start"] + 1.2) for sg in perf["track"] if sg["clip"] in ("Walking_A", "Walking_B", "Walking_C", "Hit_A",
                                                                                           "Sit_Floor_Down", "Sit_Floor_StandUp")]
     for s in perf["shots"]:
         if mode in ("all", "none"):

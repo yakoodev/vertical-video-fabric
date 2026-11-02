@@ -201,6 +201,9 @@ def bake_body(arm, clips, perf, frames, cam_pos_at):
     times = [(f - 1) / FPS for f in frames]
     root = [(perf["root"][i][0], perf["root"][i][1], 0.0) for i in range(n)]
     heads = perf["heading"][:n]
+    # glTF-импорт ставит объектам вращение кватернионом — ключи rotation_euler тогда молча не действуют (герой
+    # всегда смотрел к дверям и ходил боком). Курс — эйлером.
+    arm.rotation_mode = "XYZ"
     kit.key_vec(arm, "location", frames, root)
     kit.fcurve(arm, "rotation_euler", 2, frames, heads)
     kit.fcurve(arm, "rotation_euler", 0, frames, [0.0] * n)
@@ -749,6 +752,45 @@ def setup_preset(out_dir: Path, pr: dict):
         f"{sc.eevee.taa_render_samples}, кадры {sc.render.image_settings.file_format}, эффекты {pr.get('fx')}")
 
 
+def measure_feet(arm, perf, frames):
+    """Скольжение стоп на шаге по настоящему скелету (после запекания и IK): опорная стопа — ниже другой и у пола;
+    сдвиг по полу между соседними кадрами, мм. Только окна шага/разворота (±0.4 с)."""
+    sc = bpy.context.scene
+    wins = [(sg["start"] - 0.4, (sg.get("end") or sg["start"] + 1.0) + 0.5) for sg in perf["track"]
+            if sg["clip"] == B.WALK_CLIP]
+    sel = [f for f in frames if any(a <= (f - 1) / FPS <= b for a, b in wins)]
+    track = B.track_of(perf)
+    slides, full, prev = [], [], None
+    dbg = []
+    for f in sel:
+        sc.frame_set(f)
+        pl = {s_: arm.matrix_world @ arm.pose.bones[f"foot.{s_}"].head for s_ in ("l", "r")}
+        side = "l" if pl["l"].z <= pl["r"].z else "r"
+        cur = (f, side, pl[side].copy(), pl[side].z < 0.1)
+        if prev and prev[0] == f - 1 and prev[1] == side and cur[3] and prev[3]:
+            d = cur[2] - prev[2]
+            mm = math.hypot(d.x, d.y) * 1000
+            slides.append(mm)
+            w = sum(w_ for c_, _l, w_ in track.weights_at((f - 1) / FPS) if c_ == B.WALK_CLIP)
+            if w >= 0.999:
+                full.append(mm)
+            if len(dbg) < 400:
+                dbg.append((f, side, round(mm, 1), round(w, 2), [round(x, 3) for x in cur[2]],
+                            [round(x, 3) for x in arm.location], round(arm.rotation_euler.z, 3),
+                            [round(x, 4) for x in arm.pose.bones[f"foot.{side}"].head]))
+        prev = cur
+    if CFG.get("feet_debug"):
+        (Path(CFG["out_dir"]) / "feet_debug.json").write_text(json.dumps(dbg), "utf-8")
+    full.sort()
+    slides.sort()
+    if not slides:
+        return {"frames": 0}
+    return {"frames": len(slides), "max_mm": round(slides[-1], 1), "p95_mm": round(slides[int(len(slides) * 0.95)], 1),
+            "mean_mm": round(sum(slides) / len(slides), 2),
+            "full_step": {"frames": len(full), "max_mm": round(full[-1], 1) if full else None,
+                          "p95_mm": round(full[int(len(full) * 0.95)], 1) if full else None}}
+
+
 def render_chunks(out_dir: Path, cache: Path):
     """Недостающие кадры кусков — рендером анимации по непрерывным диапазонам (движок Eevee не пересоздаётся на
     каждый кадр, как при покадровом render(write_still)); после записи кадра — ``PROGRESS n total``."""
@@ -870,7 +912,7 @@ def main():
                 ys.append(round(1 - p.y, 3))
         shots_rep.append({"n": c["n"], "kind": c["kind"], "face_y": ys, "face_in": inside})
     report = {"contact_err_mm": contact_err, "shots": shots_rep, "setup_sec": round(time.time() - T0, 1), "frames": nf,
-              "clip_len_diff": diff}
+              "clip_len_diff": diff, "feet": measure_feet(arm, perf, frames)}
     if CFG.get("save_blend"):
         bpy.ops.wm.save_as_mainfile(filepath=str(out_dir / "series.blend"))
     stills = CFG.get("stills")

@@ -90,9 +90,33 @@ class ClipSegment:
     loop: bool = True
     offset: float = 0.0
     weight: float = 1.0      # доля клипа (например, испуг вполсилы поверх покоя — см. ClipTrack.layers)
+    ease_in: float = 0.0     # разгон: первые ease_in с клип идёт медленнее (с EASE_LOW до 1)
+    ease_out: float = 0.0    # торможение к ``end``
+    end: float | None = None
+
+    EASE_LOW = 0.45
+
+    def clip_seconds(self, t: float) -> float:
+        """Сколько секунд клипа прошло к моменту ``t`` (с разгоном/торможением — шаг медленнее на входе/выходе)."""
+        x = max(0.0, t - self.start)
+        lo = self.EASE_LOW
+        e = self.ease_in
+        if e > 0:
+            y = lo * x + (1 - lo) * x * x / (2 * e) if x < e else lo * e + (1 - lo) * e / 2 + (x - e)
+        else:
+            y = x
+        if self.end is not None and self.ease_out > 0:
+            dur = self.end - self.start
+            eo = self.ease_out
+            if x > dur - eo:
+                z = min(x, dur) - (dur - eo)
+                y -= (1 - lo) * z * z / (2 * eo)
+                if x > dur:
+                    y -= (1 - lo) * (x - dur)
+        return y * self.speed
 
     def local_time(self, t: float) -> float:
-        lt = self.offset + max(0.0, t - self.start) * self.speed
+        lt = self.offset + self.clip_seconds(t)
         if self.duration <= 0:
             return 0.0
         if self.loop:

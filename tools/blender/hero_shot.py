@@ -827,6 +827,7 @@ def bake_body(arm, clips, P, frames):
     prof = m.travel_profile(walk_w, 1 / FPS, 1.0)
     root_pos = [m.lerp(P["start"], P["stand"], k) for k in prof]
     headings = [P["heading"].at(t) for t in times]
+    arm.rotation_mode = "XYZ"   # glTF-импорт ставит кватернион — иначе ключи курса (rotation_euler) не действуют
     key_vec(arm, "location", frames, root_pos)
     fcurve(arm, "rotation_euler", 2, frames, headings)
     fcurve(arm, "rotation_euler", 0, frames, [0.0] * len(frames))
