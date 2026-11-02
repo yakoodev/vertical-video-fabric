@@ -461,6 +461,15 @@ def test_story_episode_waits_for_host_render(env, tmp_path, monkeypatch):  # noq
     sfx = [lay for lay in layers if lay["type"] == "audio" and lay["props"].get("role") == "sfx"]
     assert sfx, "звуки событий и нажатий"
     assert any(lay["type"] == "captions" for lay in layers)
+    # название и «ЧАСТЬ N+1» — не на лице героя (полосы лица из плана камер)
+    from app import stories_3d as S3D
+
+    faces = B.face_bands(B.perform(payload))
+    for lid in ("st_title", "st_part"):
+        lay = next(lay for lay in layers if lay["id"] == lid)
+        a0, a1 = S3D.layer_box(lay)
+        for f0, f1 in S3D.face_in(faces, lay["start"], lay["end"]):
+            assert S3D._overlap(a0, a1, f0, f1) == 0.0, f"{lid} на лице: {a0:.2f}–{a1:.2f} vs {f0:.2f}–{f1:.2f}"
 
 
 def test_story_failed_host_render_then_continue(env, tmp_path, monkeypatch):  # noqa: F811
@@ -600,3 +609,29 @@ def test_clip_ease_slows_start_and_end():
     assert sg.clip_seconds(1.1) < 0.1 * 0.8, "на входе медленнее"
     assert abs((sg.clip_seconds(2.0) - sg.clip_seconds(1.9)) - 0.1) < 1e-6, "в середине — обычная скорость"
     assert sg.clip_seconds(3.0) - sg.clip_seconds(2.9) < 0.1 * 0.8, "на выходе медленнее"
+
+
+
+def test_titles_move_off_the_face():
+    from app import stories_3d as S3D
+
+    faces = [{"n": 0, "t0": 0.0, "t1": 3.0, "y": 0.30, "h": 0.30}, {"n": 9, "t0": 40.0, "t1": 45.0, "y": 0.45, "h": 0.3}]
+    title = {"id": "st_title", "type": "text", "start": 0.0, "end": 1.6, "y": 0.34,
+             "props": {"text": "Если блэкаут застал вас в лифте", "size": 92, "maxWidth": 940, "lineHeight": 1.05,
+                       "bg": {"padY": 14}}}
+    part_t = {"id": "st_title_part", "type": "text", "start": 0.0, "end": 1.6, "y": 0.41, "props": {"text": "ЧАСТЬ 1", "size": 70}}
+    part = {"id": "st_part", "type": "text", "start": 43.0, "end": 45.0, "y": 0.45,
+            "props": {"text": "ЧАСТЬ 2 — КТО СТУЧАЛ", "size": 84, "maxWidth": 840, "lineHeight": 1.05, "bg": {"padY": 16}}}
+    layers = [title, part_t, part]
+    notes = S3D.place_titles(layers, faces, 0.74, "st_")
+    for lay in (title, part):
+        a0, a1 = S3D.layer_box(lay)
+        for f0, f1 in S3D.face_in(faces, lay["start"], lay["end"]):
+            assert S3D._overlap(a0, a1, f0, f1) == 0.0
+    assert abs(part_t["y"] - title["y"] - 0.07) < 1e-6, "«ЧАСТЬ N» едет вместе с названием"
+    assert S3D._overlap(*S3D.layer_box(title), 0.69, 0.79) == 0.0, "название не на субтитрах"
+    assert notes == []
+    # первый и последний планы — камера оставляет место под титры
+    perf = B.perform(_job())
+    cams = perf["cameras"]
+    assert cams[0]["face_y"] > B.TITLE_Y + 0.15 and cams[-1]["face_y"] < B.PART_Y - 0.15

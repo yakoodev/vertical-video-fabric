@@ -1394,7 +1394,37 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         if cam is None:   # совсем тесно — общий сверху без проверки повтора
             cam = shot_camera("overhead", s, tuple(perf["root"][f]), perf["heading"][f], posture, aim, rnd)
         s["camera"] = cam["kind"]
+        cam["face_y"] = face_target(s["n"], len(perf["shots"]), cam["kind"])
         out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], **cam})
+    return out
+
+
+# Где лицо в кадре (доля высоты сверху): субтитры — 0.74, HUD — 0.145/0.585; первый план — под титром названия
+# (TITLE_Y), последний — над титром «ЧАСТЬ N+1» (PART_Y): титры и плашки не ложатся на лицо.
+TITLE_Y, PART_Y = 0.27, 0.62
+
+
+def face_target(n: int, count: int, kind: str) -> float:
+    if n == 0:
+        return 0.52
+    if n == count - 1:
+        return 0.33
+    return 0.40 if kind in ("face", "overhead") else 0.42
+
+
+def face_bands(perf: dict) -> list[dict]:
+    """Лицо в кадре по планам: ``{n, t0, t1, y, h}`` (центр и высота, доли кадра; ``y`` None — лица почти нет: за
+    плечом, табло). Высота — голова игрушки ≈ 0.30 м на расстоянии камеры и фокусном (вертикальный кадр, датчик 36)."""
+    out = []
+    shots = {s["n"]: s for s in perf["shots"]}
+    for c in perf["cameras"]:
+        s = shots[c["n"]]
+        fi = min(perf["frames"] - 1, int((c["t0"] + c["t1"]) / 2 * perf["fps"]))
+        face = face_point(tuple(perf["root"][fi]), perf["heading"][fi], s.get("posture_end", "stand"))
+        dist = max(0.2, math.dist(c["pos_a"], face))
+        h = max(0.05, min(0.6, 0.30 * c["lens"] / (36.0 * dist)))
+        y = c.get("face_y") if c.get("face_w", 0) > 0.3 else None
+        out.append({"n": c["n"], "t0": c["t0"], "t1": c["t1"], "y": y, "h": round(h, 3)})
     return out
 
 
@@ -1988,4 +2018,5 @@ def result_for(job: dict, perf: dict | None = None) -> dict:
               "emotion": s.get("emotion"), "speaks": bool(s.get("speaks")), "speaker": s.get("speaker") or "narrator",
               "by": s.get("by")} for s in job["shots"]]
     return {"shots": shots, "events": job.get("events") or [], "sfx": sfx_for(job, perf), "location": "elevator",
+            "faces": face_bands(perf),
             "checks": [], "notes": [], "look": job.get("look") or {}, "director": job.get("director")}

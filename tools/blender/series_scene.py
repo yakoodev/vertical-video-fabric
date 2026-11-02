@@ -640,9 +640,8 @@ def build_camera(arm, perf, frames, rig):
                 bpy.context.view_layer.update()
                 p = world_to_camera_view(sc, cam, V(face_pts[mid]))
                 y_top = 1.0 - p.y
-                want = 0.40 if c["kind"] in ("face", "overhead") else 0.42
-                if c["n"] == 0:
-                    want = 0.58   # над лицом — титр названия (0.34), под ним — субтитры (0.74)
+                # где лицо в кадре — из плана (series3d_blender.face_target): под титром названия, над «ЧАСТЬ N+1»
+                want = c.get("face_y") or (0.40 if c["kind"] in ("face", "overhead") else 0.42)
                 if abs(y_top - want) < 0.03 or p.z <= 0:
                     break
                 # лицо ниже нужного — цель ниже (камера наклоняется), выше — выше

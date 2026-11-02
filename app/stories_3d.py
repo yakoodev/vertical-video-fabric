@@ -346,6 +346,8 @@ def assemble(store: Any, episode_id: int) -> dict:
         layers += D.hud_layers(ep, placed, speech_end, float(world["captions"]["y"]), {}, prefix)
         if total - speech_end >= 0.5:
             layers.append(D.part_layer(ep, speech_end, total, stroke, prefix))
+        if result.get("faces"):
+            notes += place_titles(layers, result["faces"], float(world["captions"]["y"]), prefix)
     layers.append({"id": f"{prefix}narr", "type": "audio", "name": "Рассказчик", "start": 0.0, "end": round(total, 3),
                    "props": {"asset_id": str(ref["asset_id"]), "mode": "track", "volume": 1.0, "role": "voice"}})
     layers.append({"id": f"{prefix}caps", "type": "captions", "name": "Субтитры по 1–3 слова", "start": 0.0,
@@ -401,6 +403,70 @@ def assemble(store: Any, episode_id: int) -> dict:
     if options.get("render"):
         out["publish"] = SG.finish_publish(store, episode_id, clip_id, cover=options.get("cover", True))
     return out
+
+
+TITLE_SLOTS = (0.27, 0.22, 0.56)     # название серии (под HUD 0.145, над субтитрами)
+PART_SLOTS = (0.62, 0.56, 0.20)      # «ЧАСТЬ N+1» после речи — субтитров уже нет
+
+
+def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
+    return max(0.0, min(a1, b1) - max(a0, b0))
+
+
+def layer_box(layer: dict) -> tuple[float, float]:
+    """Вертикальные границы текстового слоя (доли кадра): строки × кегль × интерлиньяж + подложка."""
+    props = layer.get("props") or {}
+    size = float(props.get("size") or 80)
+    width = float(props.get("maxWidth") or 940)
+    lines = max(1, -(-len(str(props.get("text") or "")) * size * 0.5 // width))
+    h = (lines * size * float(props.get("lineHeight") or 1.05) + 2 * float((props.get("bg") or {}).get("padY") or 10)) / 1920
+    return float(layer["y"]) - h / 2, float(layer["y"]) + h / 2
+
+
+def face_in(faces: list[dict], t0: float, t1: float) -> list[tuple[float, float]]:
+    """Полосы лица (верх, низ) в кадрах, идущих в [t0, t1)."""
+    out = []
+    for f in faces:
+        if f.get("y") is None or f["t1"] <= t0 or f["t0"] >= t1:
+            continue
+        out.append((f["y"] - f["h"] / 2, f["y"] + f["h"] / 2))
+    return out
+
+
+def place_titles(layers: list[dict], faces: list[dict], captions_y: float, prefix: str) -> list[str]:
+    """Название серии и «ЧАСТЬ N+1» — в свободную полосу кадра: не на лице (проекция головы из сцены) и не на
+    субтитрах. Возвращает заметки, если места без перекрытия нет."""
+    notes: list[str] = []
+    by_id = {str(lay.get("id")): lay for lay in layers}
+    title, part_t, part = by_id.get(f"{prefix}title"), by_id.get(f"{prefix}title_part"), by_id.get(f"{prefix}part")
+    caps = (captions_y - 0.05, captions_y + 0.05)
+
+    def best(lay: dict, slots: tuple, avoid_caps: bool, extra: float = 0.0) -> float:
+        bands = face_in(faces, float(lay["start"]), float(lay["end"]))
+        h0, h1 = layer_box(lay)
+        half = (h1 - h0) / 2
+        scored = []
+        for y in slots:
+            a, b = y - half, y + half + extra
+            cost = sum(_overlap(a, b, f0 - 0.02, f1 + 0.02) for f0, f1 in bands)
+            if avoid_caps:
+                cost += _overlap(a, b, *caps)
+            scored.append((cost, slots.index(y), y))
+        cost, _, y = min(scored)
+        if cost > 1e-6:
+            notes.append(f"3D: титр «{str((lay.get('props') or {}).get('text') or '')[:30]}» задевает лицо — места нет")
+        return y
+
+    if title is not None:
+        dy = float(part_t["y"]) - float(title["y"]) if part_t is not None else 0.0
+        extra = (layer_box(part_t)[1] - layer_box(title)[1]) if part_t is not None else 0.0
+        y = best(title, TITLE_SLOTS, True, max(0.0, extra))
+        title["y"] = round(y, 3)
+        if part_t is not None:
+            part_t["y"] = round(y + dy, 3)
+    if part is not None:
+        part["y"] = round(best(part, PART_SLOTS, False), 3)
+    return notes
 
 
 def blender_quality(ep: dict) -> str:
