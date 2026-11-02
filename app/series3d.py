@@ -873,7 +873,9 @@ def _check(kind: str, cam: dict, spot: list[float], loc: dict, clip: str | None 
             break
     # Крупный (сгенерированный) герой шире: и запас больше.
     body = 0.5 * min(1.5, max(1.0, head_r() / HEAD_R))
-    if not cam["free"] and math.hypot(cam["position"][0] - spot[0], cam["position"][2] - spot[1]) < body:
+    near = math.hypot(cam["position"][0] - spot[0], cam["position"][2] - spot[1])
+    # Ближе 0.5 м — всегда в герое; до запаса крупного героя — только если камера не выше его макушки.
+    if not cam["free"] and (near < 0.5 or (near < body and cam["position"][1] < head_of(clip)[0] + head_r() + 0.1)):
         problems.append("камера в герое")
     elif not cam["free"] and via is not None:
         for p in (cam["position"], cam.get("end") or cam["position"]):
