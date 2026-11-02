@@ -36,6 +36,7 @@ from app import autopilot as A
 from app import explainer_gen as X
 from app import projects as P
 from app import stories as S
+from app import stories_disaster as D
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -135,7 +136,16 @@ def _shot_schema() -> dict:
         "scene_id": {"type": "integer"}}, "required": ["action"]}
 
 
-def script_schema() -> dict:
+def script_schema(fmt: str = S.FORMAT_STORY) -> dict:
+    schema = _base_schema()
+    return D.extend_schema(schema) if fmt == S.FORMAT_DISASTER else schema
+
+
+def script_rules(fmt: str = S.FORMAT_STORY) -> str:
+    return D.SCRIPT_RULES if fmt == S.FORMAT_DISASTER else SCRIPT_RULES
+
+
+def _base_schema() -> dict:
     return {"type": "object", "properties": {
         "title": {"type": "string"}, "logline": {"type": "string"},
         "new_characters": {"type": "array", "items": {"type": "object", "properties": {
@@ -169,7 +179,11 @@ def script_context(store: Any, ep: dict) -> dict:
     locs = S.list_locations(store, int(world["id"]))
     slug_of_char = {int(c["id"]): c["slug"] for c in chars}
     slug_of_loc = {int(loc["id"]): loc["slug"] for loc in locs}
-    return {"channel": project["name"], "channel_about": project.get("description") or "",
+    fmt = S.episode_format(world, ep)
+    extra: dict[str, Any] = {"format": fmt}
+    if fmt == S.FORMAT_DISASTER:
+        extra["series"] = D.series_context(store, ep)
+    return {**extra, "channel": project["name"], "channel_about": project.get("description") or "",
             "style": world["style_label"], "narrator": world["narrator"],
             "cast": [{"key": c["slug"], "name": c["name"], "what": c["identity_card"], "persona": c["persona"]}
                      for c in chars],
@@ -262,8 +276,10 @@ def _shot(raw: Any, char_map: dict, loc_map: dict, scene_ids: set[int], warnings
             **({"scene_id": scene_id} if scene_id else {})}
 
 
-def normalize_script(store: Any, world: dict, data: dict) -> dict:
-    """Сценарий (Gemini или агент) → фразы с кадрами (id актёров и локаций мира) и полный текст."""
+def normalize_script(store: Any, world: dict, data: dict, ep: dict | None = None) -> dict:
+    """Сценарий (Gemini или агент) → фразы с кадрами (id актёров и локаций мира) и полный текст.
+    Сериал-катастрофа (``ep`` с форматом disaster): у фраз hud/hud_kind/role, поля серии и проверки формулы."""
+    disaster = S.episode_format(world, ep) == S.FORMAT_DISASTER
     warnings: list[str] = []
     raw_sentences = data.get("sentences")
     if not raw_sentences and P._text(data.get("text")):
@@ -282,7 +298,8 @@ def normalize_script(store: Any, world: dict, data: dict) -> dict:
             continue
         shots = [s for s in (_shot(x, char_map, loc_map, scene_ids, warnings, n)
                              for x in (raw.get("shots") or [])[:MAX_SHOTS_PER_SENTENCE]) if s]
-        sentences.append({"text": _sentence(raw["text"]), "shots": shots})
+        sentences.append({"text": _sentence(raw["text"]), "shots": shots,
+                          **(D.sentence_extra(raw) if disaster else {})})
     if not sentences:
         raise S.StoryError("в сценарии нет фраз")
     text = " ".join(s["text"] for s in sentences)
@@ -292,9 +309,13 @@ def normalize_script(store: Any, world: dict, data: dict) -> dict:
     est = round(len(text) / CPS, 1)
     if shots and est and shots / est * 60 < 18:
         warnings.append(f"кадров {shots} на {est:.0f} с — меньше 18 в минуту, добавь кадры фразам")
-    return {"title": P._text(data.get("title"), 100), "logline": P._text(data.get("logline"), 300),
-            "sentences": sentences, "text": text, "chars": len(text), "est_sec": est, "shots": shots,
-            "warnings": warnings}
+    script = {"title": P._text(data.get("title"), 100), "logline": P._text(data.get("logline"), 300),
+              "sentences": sentences, "text": text, "chars": len(text), "est_sec": est, "shots": shots,
+              "warnings": warnings}
+    if disaster:
+        script = D.finish_script(script, data, ep or {})
+        script["chars"] = len(script["text"])
+    return script
 
 
 def write_script(store: Any, episode_id: int, client: Any = None) -> dict:
@@ -303,7 +324,8 @@ def write_script(store: Any, episode_id: int, client: Any = None) -> dict:
     if client is None:
         raise S.StoryError("Gemini не настроен (GEMINI_API_KEY) — напиши сценарий сам: story_set_script(episode_id, "
                            "sentences [{text, shots [{location, characters, action, camera, sfx, accent}]}])")
-    data = _ask(client, SCRIPT_RULES, script_context(store, ep), script_schema(), 0.9)
+    fmt = S.episode_format(S.get_world(store, int(ep["world_id"])), ep)
+    data = _ask(client, script_rules(fmt), script_context(store, ep), script_schema(fmt), 0.9)
     return set_script(store, episode_id, data, source="gemini")
 
 
@@ -313,7 +335,7 @@ def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -
     if ep["status"] == "assembling":
         raise S.StoryError("эпизод собирается — дождись сборки")
     world = S.get_world(store, int(ep["world_id"]))
-    script = normalize_script(store, world, data or {})
+    script = normalize_script(store, world, data or {}, ep)
     script["source"] = source
     target = float(ep["duration_target"])
     if abs(script["est_sec"] - target) > target * 0.25:
@@ -776,7 +798,21 @@ def build_layers(store: Any, world: dict, ep: dict, placed: list[dict], narratio
                            "props": {"asset_id": str(sfx["ref"]), "mode": "track", "volume": SFX_VOLUME,
                                      "fadeOut": 0.15, "role": "sfx"}})
     options = ep.get("options") or {}
-    if options.get("title_card"):
+    disaster = D.is_disaster(world, ep)
+    speech_end = float(ep.get("_speech_end") or total)
+    if disaster:
+        # Название серии поверх первого кадра, HUD-плашки фраз, титр следующей части после последнего слова.
+        from app.aivideo_gen import _asset_path
+
+        stroke = world["captions"]["stroke"]
+        if options.get("title_card", True):
+            layers += D.title_layers(ep, placed, stroke, LAYER_PREFIX)
+        used = {int(p["scene_id"]) for p in placed}
+        paths = {sid: _asset_path(store, {"asset_id": sc.get("asset_id")}) for sid, sc in scenes.items() if sid in used}
+        layers += D.hud_layers(ep, placed, speech_end, float(world["captions"]["y"]), paths, LAYER_PREFIX)
+        if total - speech_end >= 0.5:
+            layers.append(D.part_layer(ep, speech_end, total, stroke, LAYER_PREFIX))
+    elif options.get("title_card"):
         title = P._text(ep.get("title") or ep["premise"], 60)
         end = round(min(TITLE_SEC, placed[0]["end"] if placed else TITLE_SEC, total), 3)
         # Дорожка выше сцен (1) и ниже субтитров (6): на дорожке 0 название пряталось под картинкой.
@@ -788,12 +824,14 @@ def build_layers(store: Any, world: dict, ep: dict, placed: list[dict], narratio
     layers.append({"id": f"{LAYER_PREFIX}narr", "type": "audio", "name": "Рассказчик", "start": 0.0, "end": round(total, 3),
                    "props": {"asset_id": str(narration_asset), "mode": "track", "volume": 1.0, "role": "voice"}})
     layers.append({"id": f"{LAYER_PREFIX}caps", "type": "captions", "name": "Субтитры по слову", "start": 0.0,
-                   "end": round(total, 3), "track": 6, "x": 0.5, "y": float(world["captions"]["y"]),
+                   "end": round(speech_end if disaster else total, 3), "track": 6, "x": 0.5, "y": float(world["captions"]["y"]),
                    "props": _captions_props(world)})
     return layers, camera
 
 
 def _music_track(store: Any, world: dict, ep: dict) -> int | None:
+    if D.music_off(world, ep):
+        return None
     opt = (ep.get("options") or {}).get("music_track_id")
     for value in (opt, world.get("music_track_id"), V._style_row(store, int(ep["project_id"])).get("music_track_id")):
         if value in (None, "", 0):
@@ -839,7 +877,13 @@ def assemble(store: Any, episode_id: int) -> dict:
             notes.append(f"Whisper не сработал ({type(exc).__name__}: {str(exc)[:120]}) — слова по длине текста")
     if not words:
         words = X.proportional_words(S.narration_text(ep), audio_sec)
-    total = round(max(words[-1]["end"] + TAIL_SEC, audio_sec + 0.4, MIN_DURATION_SEC), 2)
+    disaster = D.is_disaster(world, ep)
+    speech_end = round(float(words[-1]["end"]), 3)
+    if disaster:
+        # Конец обрывается сразу после последнего слова — дальше только титр следующей части (2 с).
+        total = round(max(speech_end + D.PART_SEC, MIN_DURATION_SEC), 2)
+    else:
+        total = round(max(words[-1]["end"] + TAIL_SEC, audio_sec + 0.4, MIN_DURATION_SEC), 2)
     if total > base_seconds():
         raise S.StoryError(f"история {total:.1f} с длиннее холста {base_seconds():.0f} с")
     placed = place(ep["beats"], words, total)
@@ -847,7 +891,8 @@ def assemble(store: Any, episode_id: int) -> dict:
                               (ep.get("title") or ep["premise"])[:100],
                               f"История ({world['name']}): {ep['premise']}"[:500])
     clip_id = int(clip["id"])
-    layers, camera = build_layers(store, world, ep, placed, int(ref["asset_id"]), total, notes)
+    layers, camera = build_layers(store, world, {**ep, "_speech_end": speech_end}, placed, int(ref["asset_id"]),
+                                  total, notes)
     render = dict(store.get_clip_plan(clip_id).get("render_settings") or {})
     render["layers"] = normalize_layers(layers)
     render["camera"] = normalize_camera(camera)
@@ -859,6 +904,9 @@ def assemble(store: Any, episode_id: int) -> dict:
     if track:
         _tool(ctx, "set_music", {"on": True, "track_id": track})
         _tool(ctx, "set_music_duck", {"duck": X._speech_spans(words)})
+    elif D.music_off(world, ep):
+        if D.MUSIC_NOTE not in notes:
+            notes.append(D.MUSIC_NOTE)
     else:
         notes.append("музыка не выбрана (у мира нет трека) — set_music по list_music")
     if (ep.get("options") or {}).get("cut_sfx"):
@@ -872,10 +920,17 @@ def assemble(store: Any, episode_id: int) -> dict:
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
                 "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "scene_id", "scene_title", "camera",
-                                                  "sfx", "variant")} for p in placed],
+                                                  "sfx", "variant", "sentence")} for p in placed],
                 "shots_per_min": round(len(placed) / total * 60, 1), "sfx": sfx_count,
                 "layers": len(render["layers"]), "camera_keys": len(render["camera"]), "music_track_id": track,
                 **({"mix": mixed} if mixed else {})}
+    if disaster:
+        hud = [lay for lay in render["layers"] if str(lay.get("id") or "").startswith(f"{LAYER_PREFIX}hud")]
+        timeline.update({"format": S.FORMAT_DISASTER, "part": D.part_of(ep), "speech_end": speech_end,
+                         "part_card": D.part_card_text(ep),
+                         "hud": [{"text": h["props"]["text"], "color": h["props"]["color"], "start": h["start"],
+                                  "end": h["end"], "x": h["x"], "y": h["y"]} for h in hud],
+                         "publish": D.publish_meta(ep)})
     S.set_status(store, episode_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
                  notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(render["layers"]),
@@ -891,11 +946,26 @@ def finish_publish(store: Any, episode_id: int, clip_id: int, cover: bool = True
     from app.render import ClipRenderService
 
     out: dict[str, Any] = {}
-    notes = list(S.get_episode(store, episode_id).get("notes") or [])
+    ep = S.get_episode(store, episode_id)
+    notes = list(ep.get("notes") or [])
+    disaster = D.is_disaster(S.get_world(store, int(ep["world_id"])), ep)
     try:
         clip = ClipRenderService(store).render_clip_plan(clip_id)
         out["render"] = {"clip": clip.get("id"), "status": clip.get("status")}
-        if clip.get("status") == "succeeded":
+        if clip.get("status") == "succeeded" and disaster:
+            # Сериал-катастрофа: обложка по шаблону формата и описание «вопрос + своя версия + теги» — без ИИ.
+            from app.ai.publish_meta import save_publish_meta
+
+            if cover:
+                try:
+                    out["covers"] = D.make_covers(store, episode_id, int(clip["id"]))["covers"]
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"обложки не сделаны: {str(exc)[:160]}")
+            meta = (ep.get("timeline") or {}).get("publish") or D.publish_meta(ep)
+            record = save_publish_meta(store, int(clip["id"]), meta, source="story")
+            out["title"] = record["title"]
+            out["description"] = record["description"]
+        elif clip.get("status") == "succeeded":
             if cover:
                 try:
                     from app.cover_variants import generate_covers
@@ -1009,7 +1079,7 @@ def cancel(store: Any, episode_id: int) -> dict:
     return S.get_episode(store, episode_id)
 
 
-def create(store: Any, world_id: int, premise: str, duration: Any = 50, tone: str = "", script: dict | None = None,
+def create(store: Any, world_id: int, premise: str, duration: Any = None, tone: str = "", script: dict | None = None,
            options: dict | None = None, requested_by: str = "agent", run: bool = False, client: Any = None) -> dict:
     """Новый эпизод. ``script`` — свой сценарий (без Gemini). ``run`` — сразу вести по шагам (иначе работник)."""
     ep = S.create_episode(store, world_id, premise, duration, tone, options, requested_by)

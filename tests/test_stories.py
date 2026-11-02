@@ -97,9 +97,13 @@ class FakeGemini:
         self.story = story or STORY
         self.calls: list[str] = []
         self.contexts: list[dict] = []
+        self.rules: list[str] = []
+        self.schemas: list[dict] = []
 
     def generate_content(self, model, payload):
         self.calls.append("script")
+        self.rules.append(payload["contents"][0]["parts"][0]["text"])
+        self.schemas.append(payload["generationConfig"]["responseSchema"])
         self.contexts.append(json.loads(payload["contents"][0]["parts"][1]["text"]))
         data = json.dumps(self.story, ensure_ascii=False)
         return {"candidates": [{"content": {"parts": [{"text": data}]}}]}

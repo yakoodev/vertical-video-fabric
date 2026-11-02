@@ -10,3 +10,7 @@
 .story-style { background: var(--surface); color: inherit; }
 .story-style-refs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .story-style-refs img { aspect-ratio: 9 / 16; object-fit: cover; }
+/* Сериал-катастрофа: номер части и цифры HUD (как в игре: тёмная плашка, condensed, цвет по смыслу). */
+.story-part { font-weight: 700; letter-spacing: 0.02em; }
+.story-hud-list { flex-wrap: wrap; }
+.story-hud { font-family: "Roboto Condensed", "Arial Narrow", sans-serif; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(11, 13, 18, 0.78); border-radius: 6px; padding: 2px 8px; font-size: 12px; }

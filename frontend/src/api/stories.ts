@@ -86,11 +86,17 @@ export interface StoryWorld {
   music_track_id: number | null;
   captions: StoryCaptions;
   notes: string;
+  /** Жанр по умолчанию: story — смешная история, disaster — сериал-катастрофа. */
+  format: StoryFormat;
+  /** Музыка в ролике: "" — как обычно, none — не вшивать (катастрофа), auto — вшивать. */
+  music: "" | "auto" | "none";
   style_refs: RefBrief[];
   characters: StoryCharacter[];
   locations: StoryLocation[];
   scenes: StoryScene[];
 }
+
+export type StoryFormat = "story" | "disaster";
 
 export type EpisodeStatus =
   | "new" | "scripted" | "planned" | "awaiting_approval" | "generating" | "assembling" | "done" | "failed" | "cancelled";
@@ -107,6 +113,16 @@ export interface StoryBeat {
   sfx?: { tag: string; ref: string; label: string } | null;
   variant?: string | null;
   reuse?: string;
+  sentence?: number;
+}
+
+export interface StoryHud {
+  text: string;
+  color: string;
+  start: number;
+  end: number;
+  x: number;
+  y: number;
 }
 
 export interface StoryEstimate {
@@ -143,11 +159,34 @@ export interface StoryEpisode {
   estimate_rub: number;
   error: string;
   notes: string[];
-  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean };
+  options: { render?: boolean; title_card?: boolean; cut_sfx?: boolean; format?: StoryFormat; part?: number; music?: string };
   created_at: string;
-  script?: { title: string; logline: string; text: string; chars: number; est_sec: number; shots: number; warnings: string[] };
+  script?: {
+    title: string;
+    logline: string;
+    text: string;
+    chars: number;
+    est_sec: number;
+    shots: number;
+    warnings: string[];
+    format?: StoryFormat;
+    part_title?: string;
+    hook_words?: string;
+    viewer_question?: string;
+    sentences?: { text: string; hud?: string; hud_kind?: string; role?: string }[];
+  };
   beats?: StoryBeat[];
-  timeline?: { duration: number; shots_per_min: number; sfx: number; beats: StoryBeat[] };
+  timeline?: {
+    duration: number;
+    shots_per_min: number;
+    sfx: number;
+    beats: StoryBeat[];
+    format?: StoryFormat;
+    part?: number;
+    part_card?: string;
+    hud?: StoryHud[];
+    publish?: { title: string; description: string; hashtags: string[] };
+  };
   estimate?: StoryEstimate;
   readiness?: { ready: boolean; missing: string[]; failed: string[]; active: string[]; held: string[] };
 }
@@ -162,13 +201,25 @@ export interface StoriesOverview {
   approvals: (StageCard & { group?: string })[];
 }
 
-export const STORY_TONES = ["смешно", "с иронией", "абсурдно", "уютно", "драматично"];
+export const STORY_TONES = ["смешно", "с иронией", "абсурдно", "уютно", "драматично", "напряжённо"];
+export const STORY_FORMATS: { id: StoryFormat; label: string; hint: string }[] = [
+  { id: "story", label: "История", hint: "рассказчик смешно рассказывает, 30–75 с" },
+  {
+    id: "disaster",
+    label: "Сериал-катастрофа",
+    hint: "«Если [катастрофа] застала вас [в месте]»: хук на «вы» с одной ошибкой, цифры HUD, «ЧАСТЬ N+1» в конце, 60–90 с",
+  },
+];
+/** Длина эпизода по жанру: [мин, макс, по умолчанию] (app/stories.py DURATIONS). */
+export const STORY_DURATIONS: Record<StoryFormat, [number, number, number]> = { story: [30, 75, 50], disaster: [60, 90, 75] };
 export const EPISODE_ACTIVE: EpisodeStatus[] = ["new", "scripted", "planned", "awaiting_approval", "generating", "assembling"];
 
 export const storiesKey = (projectId: number) => ["channel-projects", String(projectId), "stories"] as const;
 export const storyEpisodeKey = (episodeId: number) => ["stories", "episode", String(episodeId)] as const;
 
-export type WorldPatch = Partial<Pick<StoryWorld, "name" | "style_label" | "style_passport" | "negative" | "narrator" | "voice" | "music_track_id" | "notes">> & {
+export type WorldPatch = Partial<
+  Pick<StoryWorld, "name" | "style_label" | "style_passport" | "negative" | "narrator" | "voice" | "music_track_id" | "notes" | "format" | "music">
+> & {
   captions?: Partial<StoryCaptions>;
 };
 
@@ -210,7 +261,10 @@ export const storiesApi = {
   deleteScene: (id: number) => api.del(`/api/stories/scenes/${id}`),
   regenerateScene: (id: number) => api.post<Gen>(`/api/stories/scenes/${id}/regenerate`, {}),
 
-  createEpisode: (worldId: number, body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean }) =>
+  createEpisode: (
+    worldId: number,
+    body: { premise: string; duration: number; tone: string; render?: boolean; title_card?: boolean; format?: StoryFormat },
+  ) =>
     api.post<StoryEpisode>(`/api/stories/worlds/${worldId}/episodes`, body),
   episode: (id: number) => api.get<StoryEpisode>(`/api/stories/episodes/${id}`),
   continueEpisode: (id: number, reassemble = false) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/continue`, { reassemble }),
