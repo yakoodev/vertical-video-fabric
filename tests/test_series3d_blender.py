@@ -506,14 +506,18 @@ def test_flat_video_detected(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_speech_labels_quotes_colon_and_dash():
-    lab = B.speech_labels
+    def lab(text, names=("Даня",)):
+        return B.speech_labels(text, names)
     assert set(lab("Он сел в угол, подальше от дверей.")) == {"narrator"}
     assert lab("«Помогите!» — крикнул Даня.") == ["hero", "narrator", "narrator", "narrator"]
     assert lab("Голос за дверью сказал: спасатели, держитесь.")[-2:] == ["other", "other"]
     assert lab("Даня закричал: «Эй, я здесь!»")[2:] == ["hero", "hero", "hero"]
     assert lab("— Эй! — позвал он.") == ["narrator", "hero", "narrator", "narrator", "narrator"]
     assert set(lab("На табличке было написано «не курить».")) == {"narrator"}, "надпись — не реплика"
-    lines = B.dialog_lines([{"text": "В 23:24 постучали."}, {"text": "«Кто там?» — спросил Даня."}])
+    whisper = lab("Из телефона раздался шёпот: «Не касайся его».")
+    assert "hero" not in whisper and "other" in whisper, "шёпот из телефона — не герой"
+    assert lab("Даня ответил: «Я здесь».", ("Даня",))[-2:] == ["hero", "hero"]
+    lines = B.dialog_lines([{"text": "В 23:24 постучали."}, {"text": "«Кто там?» — спросил Даня."}], ("Даня",))
     assert [ln["speaker"] for ln in lines] == ["narrator", "hero", "narrator"]
     assert not B.has_hero_lines(LIFT["sentences"]), "в «Лифте» реплик героя нет"
 
@@ -531,7 +535,7 @@ def test_no_mouth_on_narration_only_oh_on_startle():
 
 
 def test_lipsync_only_on_hero_line():
-    script = {"title": "Лифт", "sentences": [
+    script = {"title": "Лифт", "new_characters": [{"key": "danya", "name": "Даня"}], "sentences": [
         {"text": "Свет погас, и Даня остался один.", "role": "problem"},
         {"text": "«Помогите, я в лифте!» — крикнул Даня.", "role": "problem"},
         {"text": "Голос снаружи ответил: держись.", "role": "solution"}]}

@@ -275,10 +275,39 @@ class GeminiTTS:
         }
 
     def synthesize_dialog(self, lines: list[dict], out_path: Path, voices: dict[str, str]) -> Speech:
-        """Рассказчик + реплики героя другим голосом (3D-серия: рот героя — только на его репликах)."""
+        """Рассказчик + реплики героя другим голосом (3D-серия: рот героя — только на его репликах). Одним запросом
+        multiSpeaker; модель не приняла (400) — по кускам своими голосами и склейка с короткими паузами."""
         if len({ln.get("speaker") for ln in lines}) < 2:
             return self.synthesize(" ".join(str(ln.get("text") or "") for ln in lines), out_path)
-        return self._speak(self.dialog_payload(lines, voices), out_path)
+        try:
+            return self._speak(self.dialog_payload(lines, voices), out_path)
+        except (DubError, RuntimeError) as exc:
+            if "400" not in str(exc) and "speaker" not in str(exc).lower():
+                raise
+        parts = []
+        for i, ln in enumerate(lines):
+            text = str(ln.get("text") or "").strip()
+            if not text:
+                continue
+            seg = out_path.with_name(f"{out_path.stem}.part{i}.wav")
+            tts = GeminiTTS(model=self.model, voice=voices.get(ln.get("speaker")) or self.voice, style=self.style,
+                            api_key=self.api_key, base_url=self.base_url, timeout=self.timeout, sleep=self._sleep)
+            tts.synthesize(text, seg)
+            parts.append(seg)
+        try:
+            inputs = []
+            for seg in parts:
+                inputs += ["-i", str(seg)]
+            graph = "".join(f"[{i}:a]aresample=24000,aformat=channel_layouts=mono,apad=pad_dur=0.12[a{i}];"
+                            for i in range(len(parts)))
+            graph += "".join(f"[a{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=0:a=1[out]"
+            codec = ["-c:a", "libmp3lame", "-b:a", "128k"] if out_path.suffix == ".mp3" else []
+            _run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-filter_complex", graph,
+                  "-map", "[out]", *codec, str(out_path)])
+        finally:
+            for seg in parts:
+                seg.unlink(missing_ok=True)
+        return Speech(out_path, 0.0, {"segments": len(parts)})
 
     def synthesize(self, text: str, out_path: Path) -> Speech:
         return self._speak(self.payload(text), out_path)

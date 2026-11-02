@@ -343,11 +343,12 @@ SPEAKERS = ("narrator", "hero", "other")
 SPEECH_VERB = (r"сказал|сказала|крикнул|крикнула|закричал|закричала|позвал|позвала|прошептал|прошептала|ответил|"
                r"ответила|спросил|спросила|произн[её]с|заорал|завопил|шепнул|пробормотал|выдохнул|взмолился|повторил")
 OTHER_SPEAKER = (r"голос|кто-то|кто то|спасател|диспетчер|сосед|мужчин|женщин|охранник|динамик|громкоговор|"
-                 r"оператор|снаружи|за дверью|незнаком")
+                 r"оператор|снаружи|за дверью|незнаком|ш[её]пот|телефон|раздал|послышал|донес|силуэт|фигур")
+HERO_SUBJECT = r"\bон\b|\bпарень\b|\bя\b|\bмы\b|\bгерой\b"
 _OPEN_Q, _CLOSE_Q = "«“„\"", "»”\""
 
 
-def speech_labels(text: str) -> list[str]:
+def speech_labels(text: str, hero_names: tuple[str, ...] = ()) -> list[str]:
     """Кто говорит каждое слово фразы: ``narrator`` (закадровый рассказчик), ``hero`` (прямая речь героя) или
     ``other`` (реплика другого: голос за дверью, диспетчер). Реплика — в кавычках или после «сказал/крикнул…:»;
     кто сказал — по словам вне реплики (голос/спасатель/диспетчер… — другой, иначе — герой). Без реплик — всё
@@ -385,18 +386,31 @@ def speech_labels(text: str) -> list[str]:
     outside = " ".join(w for i, w in enumerate(low) if i not in inside)
     if not re.search(SPEECH_VERB, outside) and not any(t.endswith(":") for t in tokens):
         return labels          # цитата без «сказал» (надпись, табличка) — читает рассказчик
-    who = "other" if re.search(OTHER_SPEAKER, outside) else "hero"
+    names = "|".join(re.escape(_low(n_)[:max(3, len(n_) - 1)]) for n_ in hero_names if n_)
+    hero_said = re.search(HERO_SUBJECT + (f"|{names}" if names else ""), outside)
+    # герой — только если сказал он сам (он/парень/имя героя) и это не голос/шёпот/телефон/силуэт
+    who = "hero" if hero_said and not re.search(OTHER_SPEAKER, outside) else "other"
     for i in inside:
         labels[i] = who
     return labels
 
 
-def dialog_lines(sentences: list[dict]) -> list[dict]:
+def hero_names(script: dict | None) -> tuple[str, ...]:
+    """Имена героя из сценария (new_characters: name/key) — по ним реплика приписывается герою."""
+    out = []
+    for c in (script or {}).get("new_characters") or []:
+        for k in ("name", "key"):
+            if c.get(k):
+                out.append(str(c[k]))
+    return tuple(out)
+
+
+def dialog_lines(sentences: list[dict], names: tuple[str, ...] = ()) -> list[dict]:
     """Озвучка по ролям: ``[{speaker: narrator|hero, text}]`` подряд (реплики «других» читает рассказчик)."""
     out: list[dict] = []
     for sent in sentences:
         tokens = str(sent.get("text") or "").split()
-        for tok, lab in zip(tokens, speech_labels(sent.get("text") or "")):
+        for tok, lab in zip(tokens, speech_labels(sent.get("text") or "", names)):
             who = "hero" if lab == "hero" else "narrator"
             if out and out[-1]["speaker"] == who:
                 out[-1]["text"] += " " + tok
@@ -405,8 +419,8 @@ def dialog_lines(sentences: list[dict]) -> list[dict]:
     return out
 
 
-def has_hero_lines(sentences: list[dict]) -> bool:
-    return any(lab == "hero" for s_ in sentences for lab in speech_labels(s_.get("text") or ""))
+def has_hero_lines(sentences: list[dict], names: tuple[str, ...] = ()) -> bool:
+    return any(lab == "hero" for s_ in sentences for lab in speech_labels(s_.get("text") or "", names))
 
 
 GEMINI_SCHEMA = {
@@ -559,7 +573,8 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
             director = "gemini" if choices else "rules"
         except Exception as exc:  # noqa: BLE001 - сеть/квота/ответ не по схеме — правила
             error = f"{type(exc).__name__}: {str(exc)[:160]}"
-    labels = [lab for sent in sentences for lab in speech_labels(sent["text"])]
+    names = hero_names(script)
+    labels = [lab for sent in sentences for lab in speech_labels(sent["text"], names)]
     labels = (labels + ["narrator"] * len(words))[: len(words)]
     planned = []
     for s in shots:

@@ -1239,11 +1239,12 @@ class _Extension:
         dialog: dict = {}
         if is_3d(ep) and voice["provider"] == "gemini":
             from app.dubbing import hero_voice_for
-            from app.series3d_blender import dialog_lines, has_hero_lines
+            from app.series3d_blender import dialog_lines, has_hero_lines, hero_names
 
             sentences = [x for x in (ep.get("script") or {}).get("sentences") or [] if str(x.get("text") or "").strip()]
-            if has_hero_lines(sentences):   # прямая речь героя — другим голосом, рассказчик — своим
-                dialog = {"dialog": dialog_lines(sentences), "hero_voice": hero_voice_for(voice["voice"])}
+            names = hero_names(ep.get("script"))
+            if has_hero_lines(sentences, names):   # прямая речь героя — другим голосом, рассказчик — своим
+                dialog = {"dialog": dialog_lines(sentences, names), "hero_voice": hero_voice_for(voice["voice"])}
         return {"stage": STAGE, "kind": "tts", "target_type": T_EP, "target_id": int(ep["id"]),
                 "ref_kind": NARRATION_KIND, "slot": "", "label": f"озвучка «{P._text(ep['title'] or ep['premise'], 60)}»",
                 "provider": voice["provider"], "model": voice["model"], "voice": voice["voice"],
