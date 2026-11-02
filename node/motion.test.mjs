@@ -1904,6 +1904,27 @@ test("fx grayscale: ч/б на отрезке — насыщенность 0 п�
   assert.equal(E.FX_DEFAULTS.grayscale.intensity, 1);
 });
 
+test("fx grayscale не красит субтитры и плашку: они над ч/б, прочее — по дорожкам (QA 02.11, клип 895)", () => {
+  const words = [{ t0: 0.5, t1: 1.5, w: "ОБОСРАЛАСЬ" }];
+  const caps = { id: "c", type: "captions", track: 0, start: 0, end: 3, x: 0.5, y: 0.5,
+    props: { style: "hormozi", highlightWords: [{ i: 0, color: "#ff3b30" }] } };
+  const shape = { ...textLayer(), id: "s", type: "shape", track: 0, start: 0, end: 3, x: 0.5, y: 0.2, props: { kind: "rect", w: 300, h: 200, fill: "#00ff00" } };
+  const bw = { ...textLayer(), id: "bw", type: "fx", track: 1, start: 0, end: 3, props: { kind: "grayscale" } };
+  const plate = { ...textLayer(), id: "np", type: "nameplate", track: 0, start: 0, end: 3 };
+  assert.deepEqual(E.visibleLayers([caps, shape, plate, bw], 1).map((l) => l.id), ["s", "bw", "c", "np"]);
+  assert.deepEqual(E.visibleLayers([caps, shape], 1).map((l) => l.id), ["c", "s"], "без ч/б — порядок прежний");
+  const red = (d) => {
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] < 90) n++;
+    return n;
+  };
+  const d = pixels([caps, shape, bw], 1, { words }, gradientBase);
+  assert.ok(red(d) > 200, `подсветка слова цветная поверх ч/б: ${red(d)}`);
+  const at = (x, y) => [...d.slice((y * 540 + x) * 4, (y * 540 + x) * 4 + 3)];
+  const g = at(270, 192);
+  assert.ok(Math.max(...g) - Math.min(...g) <= 3, `слой ниже ч/б — серый: ${g}`);
+});
+
 test("glitch/scramble — только у текста (у прочих fade), циклы glitch/wave — shake/float, stomp — у любого", () => {
   const shape = (over) => ({ ...textLayer(), type: "shape", props: { kind: "rect" }, ...over });
   const g = E.resolveLayer(shape({ in: { type: "glitch", duration: 1 } }), 10.5);
