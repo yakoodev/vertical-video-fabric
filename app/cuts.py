@@ -927,6 +927,50 @@ def _filler_items(words: list[dict], duration: float, keep_pad: float) -> list[d
     return [it for it in items if it["end"] - it["start"] >= MIN_CUT_SEC]
 
 
+# Оборванная фраза в конце клипа (QA 6, клип 898: после панчлайна «Я обосралась, п*****.» — «Седьмой стрель.»,
+# конец куска на полуслове). Речь упирается в конец клипа (последнее слово кончается ближе TAIL_EDGE_SEC), а
+# после законченного предложения (точка/«!»/«?» и пауза) начинается короткий обрывок — его вырезаем до конца клипа.
+TAIL_EDGE_SEC = 0.15
+TAIL_SPLIT_GAP_SEC = 0.15
+TAIL_FRAGMENT_MAX_SEC = 2.0
+TAIL_FRAGMENT_MAX_WORDS = 4
+_SENTENCE_END_RE = re.compile(r"[.!?…]+[»\"')\]]*$")
+
+
+def tail_fragment(words: Any, duration: float, keep_pad: float = 0.12) -> dict | None:
+    """Обрывок новой фразы в самом конце клипа → вырез ``{start, end, reason, words}`` до конца клипа; нет — None.
+
+    Обрывок — слова после последнего конца предложения (слово с «.», «!», «?», «…» и пауза ≥ TAIL_SPLIT_GAP_SEC), не длиннее
+    TAIL_FRAGMENT_MAX_SEC и TAIL_FRAGMENT_MAX_WORDS, и речь доходит до самого конца клипа (фраза не договорена).
+    Тишина после предыдущей фразы (реакция) остаётся, сколько можно."""
+    clean = _clean_words(words)
+    if len(clean) < 2:
+        return None
+    total = max(float(duration or 0.0), clean[-1]["end"])
+    if total - clean[-1]["end"] > TAIL_EDGE_SEC:
+        return None  # клип кончается тишиной — фраза договорена
+    k = len(clean) - 1
+    while k > 0:
+        prev = clean[k - 1]
+        if clean[k]["start"] - prev["end"] >= TAIL_SPLIT_GAP_SEC and _SENTENCE_END_RE.search(prev["word"].strip()):
+            break
+        k -= 1
+    if k <= 0:
+        return None  # конца предложения перед концом клипа нет — обрывка не видно
+    fragment = clean[k:]
+    start_at = fragment[0]["start"]
+    if total - start_at > TAIL_FRAGMENT_MAX_SEC or len(fragment) > TAIL_FRAGMENT_MAX_WORDS:
+        return None
+    prev_end = clean[k - 1]["end"]
+    start = min(max(prev_end + max(0.0, keep_pad), start_at - 0.08), start_at - 0.02)
+    start = max(prev_end, start)
+    if total - start < MIN_CUT_SEC:
+        return None
+    text = " ".join(w["word"].strip() for w in fragment)
+    return {"start": round(start, 3), "end": round(total, 3), "words": text,
+            "reason": f"оборванная фраза в конце «{text}» — клип кончается на полуслове"}
+
+
 def suggest_cuts(
     words: Any,
     duration: float,
@@ -948,6 +992,9 @@ def suggest_cuts(
     raw: list[dict] = []
     if mode in ("pauses", "both"):
         raw += _pause_items(clean, duration, min_pause, keep_pad)
+        tail = tail_fragment(clean, duration, keep_pad)
+        if tail:
+            raw.append({k: tail[k] for k in ("start", "end", "reason")})
     if mode in ("fillers", "both"):
         raw += _filler_items(clean, duration, keep_pad)
     raw.sort(key=lambda it: (it["start"], it["end"]))
@@ -1060,4 +1107,9 @@ def cut_edge_warnings(cuts: list[dict], words: list[dict], total: float) -> list
             heard = [w["word"] for w in words or [] if lo <= (float(w["start"]) + float(w["end"])) / 2 <= hi]
             if heard:
                 out.append(f"между вырезами {lo:.2f}–{hi:.2f} остался обрывок «{' '.join(heard)}» — вырежи его или расширь")
+    tail = tail_fragment(words, total)
+    if tail and not any(s <= tail["start"] + 0.05 and e >= tail["end"] - 0.05 for s, e in spans):
+        # QA 6 (клип 898): «Седьмой стрель.» после панчлайна — конец на полуслове, а вырезы его не трогали.
+        out.append(f"клип кончается оборванной фразой «{tail['words']}» ({tail['start']:.2f}–{tail['end']:.2f}) — "
+                   f"добавь вырез {{start: {tail['start']:.2f}, end: {tail['end']:.2f}}} (suggest_cuts его предлагает)")
     return out[:6]

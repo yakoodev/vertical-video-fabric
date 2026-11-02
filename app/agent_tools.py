@@ -81,6 +81,11 @@ class ToolContext:
     # слова владельца в кавычках цензура не глушит, автомонтаж при плейбуке не ставит своё (QA 4).
     request: str = ""
     playbook: str | None = None
+    # Попытки кадрирования аватара (QA 6, клип 898: 12 set_layout руками без прогресса): неудачи подряд и рамки
+    # руками за ход; на пределе — ``framing_stop`` (текст указания), дальше рамки не принимаются.
+    framing_fails: int = 0
+    framing_manual: int = 0
+    framing_stop: str = ""
 
     def before_change(self) -> None:
         if not self.changed and self.on_first_change is not None:
@@ -1665,6 +1670,113 @@ def avatar_face_report(store: Any, clip_plan_id: int, render: dict | None = None
     return rows
 
 
+MAX_CAM_CHECKS = 4        # ручные рамки: не больше стольких кадров Gemini за один set_layout
+AVATAR_HIT_SHARE = 0.05   # рамка «видит» место аватара, если накрывает хотя бы эту долю его рамки
+
+
+def _avatar_bits(store: Any, clip_plan_id: int, render: dict) -> list[dict]:
+    """avatar_full по кускам клипа: ``[{cam, sa, sb, piece}]`` — рамка на отрезке исходника ``sa..sb``."""
+    from app.stream_layout import normalize_layout
+
+    layout = render.get("layout") or {}
+    if layout.get("mode") != "avatar_full" or not isinstance(layout.get("cam"), dict):
+        return []
+    lay = normalize_layout(layout)
+    out = []
+    for piece in clip_timeline(store, int(clip_plan_id))["pieces"]:
+        s0, s1 = float(piece["start_sec"]), float(piece["end_sec"])
+        for a, b, look in _cam_bits(lay, s0, s1):
+            out.append({"cam": look["cam"], "sa": s0 + a, "sb": s0 + b, "piece": piece})
+    return out
+
+
+def _rect_hits(cam: dict, box: dict) -> bool:
+    rect = (float(cam["x"]), float(cam["y"]), float(cam["x"]) + float(cam["w"]), float(cam["y"]) + float(cam["h"]))
+    ix = min(rect[2], float(box["x1"])) - max(rect[0], float(box["x0"]))
+    iy = min(rect[3], float(box["y1"])) - max(rect[1], float(box["y0"]))
+    area = max(1e-6, (float(box["x1"]) - float(box["x0"])) * (float(box["y1"]) - float(box["y0"])))
+    return ix > 0 and iy > 0 and ix * iy >= AVATAR_HIT_SHARE * area
+
+
+def avatar_absent_spans(store: Any, clip_plan_id: int, render: dict | None = None) -> list[dict]:
+    """Где в кадре avatar_full аватара нет: ``[{from_t, to_t, cam, why, what?}]`` по шкале clip.
+
+    ``why`` — ``places``: рамка не накрывает ни одно место аватара, найденное detect_avatar (кэш, по времени);
+    ``vision``: проверка Gemini-зрением кропа рамки (app/ai/avatar_check.py, кэш) сказала «аватара нет» — там же
+    ``what`` (что видно вместо него). QA 6 (клип 898): рамка на плеер YouTube 23 с, lint молчал."""
+    from app.ai import avatar_check
+    from app.ai.avatar_box import cached_avatar
+
+    if render is None:
+        plan = store.get_clip_plan(int(clip_plan_id))
+        render = normalize_render_settings(plan.get("render_settings") or {})
+    bits = _avatar_bits(store, clip_plan_id, render)
+    if not bits:
+        return []
+    plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    source = store.get_source(int(plan["source_id"]))
+    try:
+        found = cached_avatar(store, int(clip_plan_id)) or {}
+    except Exception:  # noqa: BLE001
+        found = {}
+    places = [p for p in found.get("places") or [] if isinstance(p, dict) and isinstance(p.get("box"), dict)
+              and p["box"].get("x1") is not None]
+    if not places and isinstance(found.get("box"), dict) and found["box"].get("x1") is not None:
+        places = [found]
+    rows: list[dict] = []
+    for bit in bits:
+        cam, sa, sb = bit["cam"], bit["sa"], bit["sb"]
+        why, what = None, ""
+        checks = avatar_check.lookup(source, cam, sa, sb)
+        verdicts = [r for r in checks if isinstance(r.get("avatar"), bool)]
+        if verdicts and not any(r["avatar"] for r in verdicts):
+            why, what = "vision", str(verdicts[-1].get("what") or "")
+        elif places and not any(r["avatar"] for r in verdicts):
+            timed = [p for p in places if p.get("src_from") is not None and p.get("src_to") is not None
+                     and min(sb, float(p["src_to"])) - max(sa, float(p["src_from"])) > 1e-3]
+            if not any(_rect_hits(cam, p["box"]) for p in (timed or places)):
+                why = "places"
+        if not why:
+            continue
+        for t0, t1 in source_span_to_clip([bit["piece"]], sa, sb):
+            last = rows[-1] if rows else None
+            if last and last["why"] == why and _same_cam(last["cam"], cam) and abs(last["to_t"] - t0) < 0.05:
+                last["to_t"] = round(t1, 2)
+            else:
+                rows.append({"from_t": round(t0, 2), "to_t": round(t1, 2), "cam": cam, "why": why,
+                             **({"what": what} if what else {})})
+    return rows
+
+
+def _absent_text(row: dict) -> str:
+    cam = row["cam"]
+    head = (f"{row['from_t']:.1f}–{row['to_t']:.1f} с (cam x{float(cam['x']):.2f} y{float(cam['y']):.2f} "
+            f"w{float(cam['w']):.2f} h{float(cam['h']):.2f})")
+    if row["why"] == "vision":
+        return head + ": в рамке НЕТ аватара — Gemini видит " + (f"«{row['what']}»" if row.get("what") else "не аватар")
+    return head + ": рамка не накрывает ни одно место аватара, найденное detect_avatar"
+
+
+def check_manual_cams(ctx: ToolContext, render: dict, source: dict) -> list[dict]:
+    """Рамки руками avatar_full: по кадру Gemini на каждое место (до MAX_CAM_CHECKS, кэш по рамке и секунде) —
+    ``[{cam, t, avatar, what?, skipped?}]``."""
+    from app.ai.avatar_check import check_cam, same_cam
+
+    spots: list[tuple[dict, float, float]] = []
+    for bit in _avatar_bits(ctx.store, ctx.plan_id, render):
+        for i, (cam, a, b) in enumerate(spots):
+            if same_cam(cam, bit["cam"]):
+                if bit["sb"] - bit["sa"] > b - a:
+                    spots[i] = (cam, bit["sa"], bit["sb"])
+                break
+        else:
+            spots.append((bit["cam"], bit["sa"], bit["sb"]))
+    out = []
+    for cam, a, b in spots[:MAX_CAM_CHECKS]:
+        out.append(check_cam(ctx.store, source, cam, (a + b) / 2))
+    return out
+
+
 def avatar_places(ctx: ToolContext) -> list[dict]:
     """Где аватар по ходу клипа, если мест больше одного: ``[{place, cam, from_t, to_t, view_t, src_from,
     src_to}]`` (шкала clip). Из раскладки avatar_full с ``cams``, иначе из найденного detect_avatar.
@@ -1715,16 +1827,24 @@ def _places_text(places: list[dict]) -> str:
 
 def h_detect_avatar(ctx: ToolContext, args: dict) -> dict:
     """Аватар стримера (VTuber/PNGtuber/вебка) на кусках клипа — Gemini по целым кадрам исходника."""
-    from app.ai.avatar_box import detect_avatar
+    from app.ai.avatar_box import AvatarAnswerError, detect_avatar
 
     try:
         found = detect_avatar(ctx.store, ctx.plan_id, refresh=bool(args.get("refresh")))
+    except AvatarAnswerError as exc:
+        # QA 6 (клип 898): ответ Gemini не разобрался, а агенту сказали «аватара нет — задай cam руками» — он 12 раз
+        # угадывал рамку и поставил её на плеер YouTube. Сбой сервиса — это не «аватара нет».
+        return {"ok": False, "status": "service_failed", "cam": None,
+                "error": f"detect_avatar: сервис не смог получить рамки от Gemini ({exc}). Это СБОЙ сервиса, а не "
+                         "«аватара нет»",
+                "problems": ["повтори detect_avatar(refresh=true) один раз; снова сбой — НЕ угадывай рамку руками: "
+                             "доделай остальное и в отчёте спроси владельца, где аватар (секунда и угол кадра)"]}
     except ValueError as exc:
         raise ToolError(f"detect_avatar: {exc}") from exc
     if not found.get("cam"):
-        return {"ok": True, "cam": None, "frames": found.get("frames"),
-                "note": "аватара/вебки на кадрах клипа не нашлось — спроси владельца или задай cam руками "
-                        "(source_contact_sheet покажет кадры исходника)"}
+        return {"ok": True, "status": "no_avatar", "cam": None, "frames": found.get("frames"),
+                "note": "Gemini ответил: аватара/вебки на кадрах клипа нет. Посмотри source_contact_sheet; аватар там "
+                        "есть — set_layout cam руками (сервис проверит рамку), нет или не уверен — спроси владельца"}
     out = {"ok": True, "cam": found["cam"], "box": found.get("box"), "frames": found.get("frames"),
            "frames_with_avatar": found.get("frames_with_avatar"),
            "next": "set_layout mode avatar_full (cam возьмётся сам) → view_frame"}
@@ -4000,6 +4120,27 @@ def h_set_layout(ctx: ToolContext, args: dict) -> dict:
                     f"detect_avatar видел аватар в {len({repr(p['cam']) for p in places})} местах: {_places_text(places)}, "
                     "а cam один на весь клип — в части отрезков аватара в кадре не будет. Рамка по отрезкам: "
                     f"set_layout mode avatar_full cams \"auto\" (или cams [{{from_t, to_t, cam}}]). view_frame: {looks}")
+        manual = "cam" in args or isinstance(args.get("cams"), list)
+        if manual:
+            # QA 6 (клип 898): рамка руками на плеер YouTube — сервис принял её молча. Кроп рамки — Gemini-зрению.
+            try:
+                checks = check_manual_cams(ctx, fresh, source)
+            except Exception as exc:  # noqa: BLE001 - проверка не роняет раскладку
+                checks = [{"avatar": None, "skipped": f"проверка «аватар в рамке» не удалась: {str(exc)[:120]}"}]
+            if checks:
+                out["avatar_check"] = [{k: c[k] for k in ("cam", "t", "avatar", "what", "skipped") if k in c}
+                                       for c in checks]
+        try:
+            # По кэшу (без новых вызовов модели) — и для рамки из прежней раскладки: та же рамка мимо аватара.
+            absent = avatar_absent_spans(ctx.store, ctx.plan_id, fresh)
+        except Exception:  # noqa: BLE001
+            absent = []
+        if absent:
+            out["avatar_miss"] = True
+            out.setdefault("warnings", []).append(
+                "аватара в кадре НЕТ: " + "; ".join(_absent_text(r) for r in absent[:4])
+                + ". Рамка смотрит не туда — source_contact_sheet покажет, где аватар на этих секундах; не перебирай "
+                  "рамки наугад: 2–3 неудачи — остановись и спроси владельца")
     elif mode == "meme":
         out["note"] = ("видео сверху во всю ширину; под ним свободный фон — клади туда картинки (image) и титры, "
                        "проверь view_frame")
@@ -4072,10 +4213,14 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
             layout_args["cam"], where = old["cam"], "cam из прежней раскладки avatar_full"
         else:
             found = None
+            failed = None
             try:
-                from app.ai.avatar_box import detect_avatar
+                from app.ai.avatar_box import AvatarAnswerError, detect_avatar
 
                 found = detect_avatar(ctx.store, ctx.plan_id)
+            except AvatarAnswerError as exc:
+                failed = str(exc)[:160]
+                where = f"detect_avatar не смог (сбой ответа Gemini: {failed})"
             except Exception as exc:  # noqa: BLE001 - нет Gemini/файла — пробуем facecam
                 where = f"detect_avatar не смог: {str(exc)[:120]}"
             if found and found.get("cam"):
@@ -4091,6 +4236,11 @@ def _avatar_layout_args(ctx: ToolContext, render: dict, source: dict, layout_arg
                              "(layout.cams)")
             elif source.get("facecam"):
                 layout_args["cam"], where = source["facecam"], "facecam источника (detect-facecam)"
+            elif failed:
+                raise ToolError(f"avatar_full: detect_avatar не смог получить рамки от Gemini ({failed}) — это сбой "
+                                "сервиса, а не «аватара нет»",
+                                ["повтори detect_avatar(refresh=true) один раз; снова сбой — не угадывай рамку, в "
+                                 "отчёте спроси владельца, где аватар"])
             else:
                 raise ToolError("avatar_full: не знаю, где аватар — detect_avatar не нашёл, facecam у источника нет",
                                 ["передай cam {x, y, w, h} — прямоугольник аватара в долях всего кадра исходника "
@@ -7957,19 +8107,66 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
             args["project_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
         except (KeyError, TypeError, ValueError):
             pass
+    framing = _framing_call(name, args)
+    if framing and getattr(ctx, "framing_stop", ""):
+        return {"ok": False, "error": "кадрирование остановлено: " + ctx.framing_stop, "stop_framing": True}, False
     try:
         result = tool.handler(ctx, args)
     except ToolError as exc:
-        return {"ok": False, "error": str(exc), "problems": exc.problems}, False
+        result = {"ok": False, "error": str(exc), "problems": exc.problems}
     except KeyError as exc:
-        return {"ok": False, "error": f"не найдено: {exc}"}, False
+        result = {"ok": False, "error": f"не найдено: {exc}"}
     except (ValueError, TypeError) as exc:
-        return {"ok": False, "error": str(exc)[:300]}, False
+        result = {"ok": False, "error": str(exc)[:300]}
     except Exception as exc:  # noqa: BLE001 - инструмент не роняет агента
-        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}, False
-    if isinstance(result, dict) and result.get("ok") is False:
-        return result, False
-    return result, True
+        result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    ok = not (isinstance(result, dict) and result.get("ok") is False)
+    if framing:
+        _track_framing(ctx, framing, result, ok)
+    return result, ok
+
+
+# Сколько неудачных попыток кадрирования аватара подряд (detect_avatar без рамки/со сбоем, set_layout avatar_full с
+# ошибкой или «аватара в кадре нет») и сколько рамок руками за ход — до указания остановиться и спросить владельца.
+FRAMING_FAIL_LIMIT = 3
+FRAMING_MANUAL_LIMIT = 6
+
+
+def _framing_call(name: str, args: dict) -> str:
+    """``detect`` — поиск аватара, ``manual`` — set_layout avatar_full с рамкой руками, ``auto`` — avatar_full по
+    detect_avatar; иначе пусто (не кадрирование аватара)."""
+    if name == "detect_avatar":
+        return "detect"
+    if name == "set_layout" and args.get("mode") == "avatar_full":
+        return "manual" if ("cam" in args or isinstance(args.get("cams"), list)) else "auto"
+    return ""
+
+
+def _track_framing(ctx: ToolContext, kind: str, result: Any, ok: bool) -> None:
+    """Счёт попыток кадрирования (QA 6, клип 898: 12 set_layout и 20+ взглядов без прогресса). На пределе в ответ
+    инструмента — ``stop_framing``: перестать перебирать рамки и спросить владельца."""
+    if not hasattr(ctx, "framing_fails"):
+        return
+    body = result if isinstance(result, dict) else {}
+    checks = [c for c in body.get("avatar_check") or [] if isinstance(c, dict)]
+    verified = bool(checks) and all(c.get("avatar") is True for c in checks)
+    if kind == "manual" and ok and not verified:
+        ctx.framing_manual += 1  # рамка руками, которую Gemini-зрение не подтвердило
+    failed = (not ok) or (kind == "detect" and not body.get("cam")) or bool(body.get("avatar_miss"))
+    ctx.framing_fails = ctx.framing_fails + 1 if failed else 0
+    if ctx.framing_stop:
+        return
+    if ctx.framing_fails >= FRAMING_FAIL_LIMIT:
+        reason = f"{ctx.framing_fails} неудачных попыток кадрирования аватара подряд"
+    elif ctx.framing_manual >= FRAMING_MANUAL_LIMIT and kind == "manual" and not verified:
+        reason = f"{ctx.framing_manual} рамок аватара руками за ход"
+    else:
+        return
+    ctx.framing_stop = (f"{reason}. Не перебирай рамки дальше (set_layout avatar_full с cam/cams и detect_avatar больше "
+                        "не принимаются в этом ходе). Доделай остальное по задаче, а в отчёте задай владельцу прямой "
+                        "вопрос: где аватар (секунда и угол кадра) — или пусть поставит рамку сам в редакторе")
+    if isinstance(result, dict):
+        result["stop_framing"] = ctx.framing_stop
 
 
 def _takes_project(tool: Tool) -> bool:

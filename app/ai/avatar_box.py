@@ -39,10 +39,11 @@ PROMPT = (
     "иногда крупно. Люди и персонажи ВНУТРИ видео, ютуба, игры, фильма, браузера на экране — НЕ аватар, "
     "даже если они крупнее. Рамка — вся видимая модель (голова и тело). В face — рамка ЛИЦА аватара (глаза и "
     "рот, без волос). Ещё отметь окна ЧАТА, текста и интерфейса стрима (оверлеи, донаты, подписи, рамки) рядом "
-    "с аватаром и ПОВЕРХ него — в ui, каждое сообщение чата отдельной рамкой. Ответь ТОЛЬКО JSON: "
-    "{{\"frames\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, \"face\": {{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, "
-    "\"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
-    "по рамке на КАЖДЫЙ кадр в том же порядке, доли кадра 0..1; кадр без аватара — {{}}."
+    "с аватаром и ПОВЕРХ него — в ui, каждое сообщение чата отдельной рамкой. Ответь ТОЛЬКО JSON-объектом: "
+    "{{\"frames\": [{{\"frame\": 1, \"avatar\": true, \"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…, "
+    "\"face\": {{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}, \"ui\": [{{\"x0\":…,\"y0\":…,\"x1\":…,\"y1\":…}}]}}, …]}} — "
+    "запись на КАЖДЫЙ кадр в том же порядке (frame — номер кадра с 1), координаты — ДОЛИ кадра 0..1 (не пиксели и "
+    "не 0–1000); кадр без аватара — {{\"frame\": N, \"avatar\": false}}."
 )
 
 
@@ -130,28 +131,267 @@ def _box(data: Any) -> dict | None:
     return box
 
 
-def parse_boxes(text: str, n: int) -> list[dict | None]:
+# --------------------------------------------------------------------------- разбор ответа Gemini с рамками
+#
+# QA 6 (клип 898): тот же запрос Gemini (temperature 0) один раз ответил ``{"frames": [...]}`` в долях 0..1, другой —
+# ГОЛЫМ массивом ``[{...}, ...]`` в шкале 0–1000 (``"x0": 490``). Прежний разбор вырезал текст от первой «{» до
+# последней «}» — у массива это «{…}, {…}», невалидный JSON, и сбой разбора выдавался агенту как «аватара нет».
+# Теперь разбор принимает любую из форм, которые Gemini выдаёт на практике, и отличает «не разобрал» от «аватара нет».
+
+FRAME_LIST_KEYS = ("frames", "boxes", "results", "detections", "avatars", "items", "data")
+# Вложенная рамка модели внутри записи кадра: {"avatar": {...}}, {"box": {...}}, {"bbox": [...]}.
+BOX_KEYS = ("avatar", "box", "bbox", "rect", "bounding_box", "model")
+FACE_KEYS = ("face", "face_box", "face_2d", "face_bbox")
+UI_KEYS = ("ui", "ui_boxes", "chat", "overlays")
+# Явная отметка «на кадре аватара нет».
+_NO_AVATAR_KEYS = ("avatar", "found", "has_avatar", "present")
+_RECT_KEYS = (("x0", "y0", "x1", "y1"), ("xmin", "ymin", "xmax", "ymax"), ("left", "top", "right", "bottom"))
+
+
+class AvatarAnswerError(RuntimeError):
+    """Gemini ответил, но рамок из ответа не разобрать (или не ответил) — это сбой сервиса, а не «аватара нет»."""
+
+
+def _strip_fences(text: str) -> str:
+    text = str(text or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
+
+
+def _load_json(text: str) -> Any:
+    """Текст ответа → JSON: целиком, без ```-обёртки, иначе первое значение с первой «{» или «[». Не вышло —
+    ``ValueError``."""
+    clean = _strip_fences(text)
+    if not clean:
+        raise ValueError("пустой ответ")
     try:
-        start, end = text.index("{"), text.rindex("}") + 1
-        data = json.loads(text[start:end])
+        return json.loads(clean)
     except ValueError:
-        return [None] * n
-    frames = data.get("frames") if isinstance(data, dict) else None
-    if not isinstance(frames, list):
-        return [_box(data)] * n
-    boxes = []
-    for item in frames[:n]:
-        box = _box(item)
-        if box is not None and isinstance(item, dict) and isinstance(item.get("ui"), list):
-            ui = [u for u in (_ui_box(x) for x in item["ui"][:12]) if u]
+        pass
+    decoder = json.JSONDecoder()
+    starts = sorted(i for i in (clean.find("{"), clean.find("[")) if i >= 0)
+    for start in starts:
+        try:
+            return decoder.raw_decode(clean[start:])[0]
+        except ValueError:
+            continue
+    raise ValueError("ответ не JSON")
+
+
+def _num(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out and abs(out) != float("inf") else None
+
+
+def _quad(values: Any, y_first: bool) -> tuple[float, float, float, float] | None:
+    if not isinstance(values, (list, tuple)) or len(values) != 4:
+        return None
+    nums = [_num(v) for v in values]
+    if any(v is None for v in nums):
+        return None
+    a, b, c, d = nums  # type: ignore[misc]
+    return (b, a, d, c) if y_first else (a, b, c, d)
+
+
+def _raw_rect(obj: Any, depth: int = 0) -> tuple[float, float, float, float] | None:
+    """Прямоугольник (x0, y0, x1, y1) в шкале ответа (доли, 0–1000 или пиксели — нормализуем потом).
+
+    Формы: ``{x0,y0,x1,y1}`` (и xmin/…, left/top/…), ``{x, y, w, h}``, ``box_2d`` ``[ymin, xmin, ymax, xmax]``
+    (норма Gemini), ``bbox``/``box`` списком ``[x0, y0, x1, y1]`` или объектом, голый список из четырёх чисел
+    (порядок ``box_2d``), рамка вложенная в ``avatar``/``box``."""
+    if depth > 3:
+        return None
+    if isinstance(obj, (list, tuple)):
+        return _quad(obj, y_first=True)
+    if not isinstance(obj, dict):
+        return None
+    for keys in _RECT_KEYS:
+        if all(k in obj for k in keys):
+            nums = [_num(obj[k]) for k in keys]
+            if all(v is not None for v in nums):
+                return tuple(nums)  # type: ignore[return-value]
+    if all(k in obj for k in ("x", "y", "w", "h")):
+        x, y, w, h = (_num(obj[k]) for k in ("x", "y", "w", "h"))
+        if None not in (x, y, w, h):
+            return (x, y, x + w, y + h)  # type: ignore[operator]
+    for key in ("box_2d", "box2d", "bbox_2d"):
+        quad = _quad(obj.get(key), y_first=True)
+        if quad:
+            return quad
+    for key in BOX_KEYS:
+        inner = obj.get(key)
+        if isinstance(inner, (list, tuple)):
+            quad = _quad(inner, y_first=False)
+            if quad:
+                return quad
+        elif isinstance(inner, dict):
+            found = _raw_rect(inner, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _first_of(obj: dict, keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if obj.get(key) not in (None, "", [], {}):
+            return obj[key]
+    return None
+
+
+def _says_no_avatar(item: Any) -> bool:
+    """Запись кадра — явное «аватара нет»: null, {}, [], ``avatar: false``, строка «нет»."""
+    if item in (None, {}, []):
+        return True
+    if isinstance(item, str):
+        return item.strip().lower() in ("", "none", "null", "no", "нет", "-")
+    if isinstance(item, dict):
+        if any(item.get(k) is False for k in _NO_AVATAR_KEYS):
+            return True
+        meaningful = {k: v for k, v in item.items() if k not in ("frame", "index", "i", "n", "id", "t", "time")}
+        return not meaningful or all(v in (None, {}, [], "") for v in meaningful.values())
+    return False
+
+
+def _frame_items(data: Any) -> list | None:
+    """Список записей кадров из ответа: ``{"frames": [...]}`` (и boxes/results/…), голый массив, вложенный
+    ``{"result": {"frames": [...]}}``, массив с одной обёрткой ``[{"frames": [...]}]``. Одна рамка без списка —
+    ``[рамка]`` (на все кадры)."""
+    for _ in range(3):
+        if isinstance(data, list):
+            if len(data) == 1 and isinstance(data[0], dict) and not _raw_rect(data[0]) \
+                    and any(isinstance(data[0].get(k), list) for k in FRAME_LIST_KEYS):
+                data = data[0]
+                continue
+            return data
+        if not isinstance(data, dict):
+            return None
+        for key in FRAME_LIST_KEYS:
+            if isinstance(data.get(key), list):
+                return data[key]
+        nested = [v for v in data.values() if isinstance(v, dict)]
+        lists = [v for v in data.values() if isinstance(v, list) and v and all(isinstance(x, (dict, type(None))) for x in v)]
+        if _raw_rect(data):
+            return [data]
+        if len(lists) == 1:
+            return lists[0]
+        if len(nested) == 1:
+            data = nested[0]
+            continue
+        return None
+    return None
+
+
+def _ordered(items: list, n: int) -> list:
+    """Записи по порядку кадров: у каждой номер ``frame``/``index`` (с 1 или с 0) — ставим по нему, иначе как есть."""
+    marks = []
+    for item in items:
+        mark = _num(item.get("frame", item.get("index"))) if isinstance(item, dict) else None
+        if mark is None or mark != int(mark):
+            return items[:n]
+        marks.append(int(mark))
+    if len(set(marks)) != len(marks):
+        return items[:n]
+    base = 1 if min(marks) >= 1 and max(marks) <= n else 0 if min(marks) >= 0 and max(marks) < n else None
+    if base is None:
+        return items[:n]
+    out: list = [None] * n
+    for mark, item in zip(marks, items):
+        out[mark - base] = item
+    return out
+
+
+def _scale_of(rects: list[tuple], size: tuple[int, int] | None) -> tuple[float, float] | None:
+    """Делитель (по x, по y) для рамок не в долях: шкала 0–1000 (норма Gemini для box_2d) или пиксели кадра
+    ``size`` (координаты больше 1000). Пиксели без размера кадра — None (не разобрать)."""
+    big = [v for r in rects if max(r) > 1.5 for v in r]
+    if not big:
+        return (1.0, 1.0)
+    if max(big) <= 1000.5:
+        return (1000.0, 1000.0)
+    if size and size[0] > 0 and size[1] > 0:
+        return (float(size[0]), float(size[1]))
+    return None
+
+
+def _norm_rect(rect: tuple, scale: tuple[float, float]) -> dict:
+    """В доли 0..1 (рамка уже в долях — как есть), углы по порядку."""
+    sx, sy = (1.0, 1.0) if max(rect) <= 1.5 else scale
+    x0, y0, x1, y1 = rect[0] / sx, rect[1] / sy, rect[2] / sx, rect[3] / sy
+    return {"x0": min(x0, x1), "y0": min(y0, y1), "x1": max(x0, x1), "y1": max(y0, y1)}
+
+
+def parse_frames(text: str, n: int, size: tuple[int, int] | None = None) -> tuple[list[dict | None], bool]:
+    """Ответ Gemini → (рамка аватара на каждый из ``n`` кадров, разобран ли ответ).
+
+    Разобран — если в ответе нашёлся список кадров (или одна рамка) и хоть одна запись — рамка или явное «аватара
+    нет». ``False`` — пустой/не JSON/ни одной понятной записи: это сбой ответа, а не «аватара нет».
+    ``size`` — (ширина, высота) кадров, что видела модель: для координат в пикселях."""
+    try:
+        data = _load_json(text)
+    except ValueError:
+        return [None] * n, False
+    items = _frame_items(data)
+    if items is None:
+        return [None] * n, False
+    # Одна рамка без списка кадров (старый ответ, в том числе в обёртке {"result": {...}}) — на все кадры.
+    single = n > 1 and len(items) == 1 and not isinstance(data, list) and not any(
+        isinstance(data, dict) and isinstance(data.get(k), list) for k in FRAME_LIST_KEYS)
+    items = _ordered(items, n)
+    raw: list[tuple[tuple, tuple | None, list[tuple]] | None] = []
+    understood = 0
+    for item in items:
+        rect = _raw_rect(item)
+        if rect is None:
+            if _says_no_avatar(item):
+                understood += 1
+            raw.append(None)
+            continue
+        understood += 1
+        face = ui = None
+        if isinstance(item, dict):
+            face_obj = _first_of(item, FACE_KEYS)
+            face = _raw_rect(face_obj) if face_obj is not None else None
+            ui_obj = _first_of(item, UI_KEYS)
+            ui = [r for r in (_raw_rect(u) for u in ui_obj[:12]) if r] if isinstance(ui_obj, list) else None
+        raw.append((rect, face, ui or []))
+    if not understood:
+        return [None] * n, False
+    rects = [r for entry in raw if entry for r in [entry[0], *([entry[1]] if entry[1] else []), *entry[2]]]
+    scale = _scale_of(rects, size)
+    if scale is None:
+        return [None] * n, False
+    boxes: list[dict | None] = []
+    for entry in raw:
+        if entry is None:
+            boxes.append(None)
+            continue
+        rect, face_raw, ui_raw = entry
+        box = _box(_norm_rect(rect, scale))
+        if box is not None and ui_raw:
+            ui = [u for u in (_ui_box(_norm_rect(r, scale)) for r in ui_raw) if u]
             if ui:
                 box["ui"] = ui
-        if box is not None and isinstance(item, dict) and isinstance(item.get("face"), dict):
-            face = _ui_box(item["face"])
+        if box is not None and face_raw:
+            face = _ui_box(_norm_rect(face_raw, scale))
             if face and _inside(face, box):
                 box["face"] = face
         boxes.append(box)
-    return boxes + [None] * (n - len(boxes))
+    if single:
+        boxes = boxes[:1] * n  # одна рамка без списка кадров — на все кадры (лучше, чем ничего)
+    return boxes[:n] + [None] * (n - len(boxes[:n])), True
+
+
+def parse_boxes(text: str, n: int, size: tuple[int, int] | None = None) -> list[dict | None]:
+    """Рамка аватара на каждый из ``n`` кадров (``parse_frames`` без признака разбора)."""
+    return parse_frames(text, n, size)[0]
 
 
 def _ui_box(data: Any) -> dict | None:
@@ -513,9 +753,78 @@ def _boundary_cuts(store: Any, source: dict, local: str, places: list[dict]) -> 
     return out
 
 
+def _rect_schema() -> dict:
+    return {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")},
+            "required": ["x0", "y0", "x1", "y1"]}
+
+
+def response_schema() -> dict:
+    """Жёсткая форма ответа (``responseSchema``): объект ``frames`` с записью на каждый кадр — номер, есть ли аватар,
+    рамки в долях кадра. Кадр без аватара — ``avatar: false`` без рамки."""
+    rect = {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}
+    return {
+        "type": "object",
+        "properties": {"frames": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"frame": {"type": "integer"}, "avatar": {"type": "boolean"}, **rect,
+                           "face": _rect_schema(), "ui": {"type": "array", "items": _rect_schema()}},
+            "required": ["frame", "avatar"]}}},
+        "required": ["frames"],
+    }
+
+
+ASK_ATTEMPTS = 2  # пустой/неразобранный ответ — один повтор запроса
+
+
+def response_text(response: Any) -> str:
+    if not isinstance(response, dict):
+        return ""
+    candidates = response.get("candidates") or [{}]
+    first = candidates[0] if isinstance(candidates[0], dict) else {}
+    return "".join(str(p.get("text") or "") for p in (first.get("content") or {}).get("parts") or []
+                   if isinstance(p, dict) and not p.get("thought"))
+
+
+def sample_size(source: dict) -> tuple[int, int] | None:
+    """Размер кадров, что видит модель (``_grab``: ширина SAMPLE_W, высота по пропорции исходника)."""
+    try:
+        w, h = float(source.get("width") or 0), float(source.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return SAMPLE_W, int(round(SAMPLE_W * h / w / 2) * 2)
+
+
+def ask_boxes(client: Any, parts: list[dict], size: tuple[int, int] | None = None) -> list[dict | None]:
+    """Рамки аватара по кадрам ``parts`` (inlineData) от Gemini: запрос с жёсткой схемой ответа, при пустом или
+    неразобранном ответе — ещё один. Не вышло и со второго раза — ``AvatarAnswerError`` (сбой, а не «аватара нет»)."""
+    payload = {"contents": [{"role": "user", "parts": [{"text": PROMPT.format(n=len(parts))}, *parts]}],
+               "generationConfig": {"responseMimeType": "application/json", "temperature": 0,
+                                    "responseSchema": response_schema()}}
+    problem = "пустой ответ"
+    for _attempt in range(ASK_ATTEMPTS):
+        try:
+            response = client.generate_content(settings.gemini_text_model, payload)
+        except RuntimeError as exc:
+            if "responseSchema" in str(exc) or "response_schema" in str(exc):
+                # Старый эндпоинт без схемы — повторяем без неё (формат держит PROMPT и разбор).
+                payload = {**payload, "generationConfig": {k: v for k, v in payload["generationConfig"].items()
+                                                           if k != "responseSchema"}}
+            problem = f"Gemini не ответил: {str(exc)[:160]}"
+            continue
+        text = response_text(response)
+        boxes, ok = parse_frames(text, len(parts), size)
+        if ok:
+            return boxes
+        problem = "пустой ответ" if not text.strip() else f"ответ не разобран: {text.strip()[:120]!r}"
+    raise AvatarAnswerError(f"{problem} (попыток {ASK_ATTEMPTS})")
+
+
 def detect_avatar(store: Any, clip_plan_id: int, client: Any = None, *, refresh: bool = False) -> dict:
     """Аватар стримера на кусках клипа: ``{cam, box, frames, frames_with_avatar, moves, places, times}``.
-    ``cam`` None — аватара не нашлось (или нет Gemini). Кэш по составу кусков."""
+    ``cam`` None — Gemini ответил, что аватара на кадрах нет. Ответ не разобран/модель не ответила и после повтора —
+    ``AvatarAnswerError`` (в кэш не пишется). Нет файла/кусков/ключа — ``ValueError``. Кэш по составу кусков."""
     plan = store.get_clip_plan(int(clip_plan_id))
     cache = _cache_path(clip_plan_id, plan)
     if not refresh and cache.exists():
@@ -548,14 +857,7 @@ def detect_avatar(store: Any, clip_plan_id: int, client: Any = None, *, refresh:
                 parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(data).decode()}})
     if not parts:
         raise ValueError("ffmpeg не отдал ни одного кадра исходника")
-    response = client.generate_content(
-        settings.gemini_text_model,
-        {"contents": [{"role": "user", "parts": [{"text": PROMPT.format(n=len(parts))}, *parts]}],
-         "generationConfig": {"responseMimeType": "application/json", "temperature": 0}},
-    )
-    text = "".join(p.get("text", "") for p in
-                   ((response.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-    boxes = parse_boxes(text, len(parts))
+    boxes = ask_boxes(client, parts, sample_size(source))
     found = place_avatar(boxes, used)
     places = found["places"]
     if len(places) > 1:
