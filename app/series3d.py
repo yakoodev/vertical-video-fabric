@@ -92,7 +92,10 @@ HERO_MESH = {
         "armpit_l": [0.355, 0.1, 0.0], "hem_l": [0.36, -0.45, 0.0],
         "armpit_r": [-0.31, 0.1, 0.0], "hem_r": [-0.40, -0.45, 0.0],
     },
-    "gloss": {"hue": [0.105, 0.2], "roughness": 0.3, "matte": 0.82, "hueTo": 0.14, "sat": 1.45, "light": 1.12},
+    # Дождевик перекрашивается в чистый ярко-жёлтый (#F5C518): тон ровно жёлтый, насыщенность не ниже 0.9, тёмные
+    # «запечённые» тени картинки высветлены — под холодным светом не оливка, в красном — оранжевый, не коричневый.
+    "gloss": {"hue": [0.105, 0.155], "roughness": 0.3, "matte": 0.82, "hueTo": 0.125, "hueMix": 1.0, "sat": 1.4,
+              "satMin": 0.88, "light": 1.15, "lightMin": 0.45},
     "smooth": 6,
 }
 
@@ -816,7 +819,8 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
         dists, lift, drop = ((1.6, 1.45, 1.3), 0.12, 0.12) if crouch else ((1.3, 1.15, 1.0), -0.05, 0.08)
         if big > 1.2:
             # У сгенерированного героя чёлка на глаза и тяжёлая голова — снимаем ниже, лицо из-под волос.
-            lift, drop = (-0.22, -0.02) if crouch else (-0.16, -0.02)
+            # Лицо у него — нижняя половина «головы с причёской»: цель ниже центра.
+            lift, drop = (-0.22, 0.06) if crouch else (-0.16, 0.1)
         for ang in (22 * side, -22 * side, 45 * side, -45 * side, 70 * side, -70 * side):
             v = _yaw_vec(yaw + ang)
             for dist in dists:
@@ -1068,7 +1072,9 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
             poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4, "rotate": {"neck_01": [-28, 0, 0],
                                                                                             "Head": [-18, 0, 0]}})
         elif name == "listen":
-            poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4, "rotate": {"Head": [6, 0, 14]}})
+            # Прислушивается — голова чуть набок (у крупной головы сгенерированного героя — едва, иначе лицо уходит).
+            roll = 6 if mesh_hero(look) else 14
+            poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4, "rotate": {"Head": [3, 0, roll]}})
         elif name == "sit" and mesh_hero(look):
             # Тяжёлая голова сгенерированного героя в клипе «присел» уходит в грудь — приподнять: лицо в кадре.
             poses.append({"start": round(a0, 3), "end": round(t1, 3), "fade": 0.4,

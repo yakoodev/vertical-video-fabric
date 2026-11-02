@@ -444,16 +444,22 @@ def part_card_text(ep: dict) -> str:
     return f"ЧАСТЬ {nxt} — {title}" if title else f"ЧАСТЬ {nxt}"
 
 
+# Титр части — в безопасной зоне ширины кадра 1080 (≈ 86%): строки переносятся по maxWidth, подложка с полями внутри.
+PART_SIZE, PART_MAX_WIDTH, PART_PAD_X = 84, 840, 26
+SAFE_WIDTH = 930
+
+
 def part_layer(ep: dict, speech_end: float, total: float, stroke: str, prefix: str) -> dict:
     """Титр «ЧАСТЬ N+1 — …» на последние 2 с: сразу после последнего слова, до конца ролика."""
     return {"id": f"{prefix}part", "type": "text", "name": "Титр следующей части", "start": round(speech_end, 3),
             "end": round(total, 3), "track": TITLE_TRACK, "x": 0.5, "y": 0.45,
-            "props": {"text": part_card_text(ep), "font": HUD_FONT, "weight": 900, "size": 96, "color": "#ffffff",
-                      "align": "center", "uppercase": True, "maxWidth": 960, "lineHeight": 1.05,
+            "props": {"text": part_card_text(ep), "font": HUD_FONT, "weight": 900, "size": PART_SIZE, "color": "#ffffff",
+                      "align": "center", "uppercase": True, "maxWidth": PART_MAX_WIDTH, "lineHeight": 1.05,
                       "stroke": {"color": stroke, "width": 8},
-                      "bg": {"color": "#000000", "opacity": 0.55, "radius": 18, "padX": 30, "padY": 16},
+                      "bg": {"color": "#000000", "opacity": 0.55, "radius": 18, "padX": PART_PAD_X, "padY": 16},
                       "highlight": {"words": [0, 1], "color": COVER_YELLOW, "bg": None}},
-            "in": {"type": "stomp", "duration": 0.3}}
+            # «Выпрыгивает» без перелёта за края (удар-stomp раздувал строку шире кадра).
+            "in": {"type": "pop", "duration": 0.3}}
 
 
 # --------------------------------------------------------------------------- #

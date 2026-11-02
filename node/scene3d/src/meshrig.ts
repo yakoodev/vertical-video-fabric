@@ -22,7 +22,9 @@ export interface MeshRigSpec {
   /** Глянец по цвету текстуры: яркие насыщенные (дождевик) — шероховатость gloss, остальное — matte. */
   gloss?: { hue?: number[]; roughness?: number; matte?: number;
     /** Цвет глянцевой вещи: подтянуть тон к hueTo (0..1) и насыщенность ×sat (жёлтый дождевик не уходит в оливку). */
-    hueTo?: number; sat?: number; light?: number };
+    hueTo?: number; sat?: number; light?: number;
+    /** Доля сдвига тона к hueTo (1 — ровно hueTo), нижние пороги насыщенности и светлоты вещи. */
+    hueMix?: number; satMin?: number; lightMin?: number };
   /** Итерации сглаживания весов (по умолчанию 6). */
   smooth?: number;
 }
@@ -347,7 +349,7 @@ export function glossFromColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpe
 
 /** Копия карты цвета: тона вещи из gloss.hue — к hueTo, насыщенность ×sat (остальное без изменений). */
 export function tintColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpec["gloss"]>): THREE.Texture | null {
-  if (gloss.hueTo === undefined && gloss.sat === undefined) return null;
+  if (gloss.hueTo === undefined && gloss.sat === undefined && gloss.satMin === undefined) return null;
   const img = map.image as CanvasImageSource & { width: number; height: number };
   if (!img || !img.width) return null;
   const c = document.createElement("canvas");
@@ -363,9 +365,11 @@ export function tintColor(map: THREE.Texture, gloss: NonNullable<MeshRigSpec["gl
   for (let i = 0; i < px.length; i += 4) {
     col.setRGB(px[i] / 255, px[i + 1] / 255, px[i + 2] / 255);
     col.getHSL(hsl);
-    if (!(hsl.h >= h0 - 0.03 && hsl.h <= h1 && hsl.s > 0.25 && hsl.l > 0.18)) continue;
-    const h = gloss.hueTo !== undefined ? hsl.h + (gloss.hueTo - hsl.h) * 0.7 : hsl.h;
-    col.setHSL(h, Math.min(1, hsl.s * (gloss.sat ?? 1)), Math.min(0.62, hsl.l * (gloss.light ?? 1)));
+    if (!(hsl.h >= h0 && hsl.h <= h1 && hsl.s > 0.25 && hsl.l > 0.18)) continue;
+    const h = gloss.hueTo !== undefined ? hsl.h + (gloss.hueTo - hsl.h) * (gloss.hueMix ?? 0.7) : hsl.h;
+    const sat = Math.min(1, Math.max(gloss.satMin ?? 0, hsl.s * (gloss.sat ?? 1)));
+    const light = Math.min(0.62, Math.max(gloss.lightMin ?? 0, hsl.l * (gloss.light ?? 1)));
+    col.setHSL(h, sat, light);
     px[i] = Math.round(col.r * 255);
     px[i + 1] = Math.round(col.g * 255);
     px[i + 2] = Math.round(col.b * 255);
