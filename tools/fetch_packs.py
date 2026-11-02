@@ -26,6 +26,9 @@ API) пересобирается всегда — это быстро.
 
 Монтажные звуки «freesound» — настоящие записи CC0 с freesound.org (закреплены
 sha256); ffmpeg режет тишину, ограничивает длину и кодирует в OGG.
+
+«tension» — тревожный фон (dark ambient / drone, петли без шва) и звуки лифта (рубильник,
+гул кабины и шахты, лязг, скрежет, стук в дверь) для 3D-серий — тоже CC0 с freesound.org.
 """
 
 from __future__ import annotations
@@ -929,6 +932,181 @@ def fetch_freesound(target: Path, dl: Path) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# «tension» — тревожный фон и звуки лифта для 3D-серий (CC0 с freesound.org)
+# --------------------------------------------------------------------------- #
+# Владелец о 3D-серии «застрял в лифте»: «не хватает какой-нибудь страшной музыки на фоне. Или не страшной, а
+# тревожной». Музыка (role music) — dark ambient / drone без мелодии и ударных: кусок трека (start, len) склеен в
+# петлю без шва (хвост перетекает в начало), стерео, громкость −26 LUFS (≈ RMS −24…−26 дБ), пик ≤ −6 dBFS.
+# Фон-петли лифта (role ambience: гул кабины, далёкий гул шахты) — так же петлёй, моно, −30 LUFS. Звуки событий
+# (role sfx: рубильник, гул глохнет, лязг, скрежет, стук в дверь) — как пак freesound: тишина в начале долой, длина
+# ограничена, затухание, громкость как у монтажных звуков. В items.json у петель — lufs (по нему сборка ставит
+# громкость под голос), loop, role. Прослушать при подборе было нечем — отбор по описанию, тегам и замерам
+# (громкость, LRA, крест-фактор, спектр, «ритмичность» огибающей): без ударных, голосов и мелодии.
+TENSION_VERSION = "1"
+TENSION_MUSIC_LUFS = -26.0
+TENSION_AMBIENCE_LUFS = -30.0
+TENSION_LOOP_XFADE = 2.0  # секунды хвоста, перетекающего в начало петли
+# (файл, id звука, превью, sha256, подпись, теги, роль, start, len|макс. секунд)
+#   music/ambience: кусок [start, start+len] → петля; sfx: с start, не длиннее len.
+_FS = "https://cdn.freesound.org/previews"
+TENSION_SOUNDS: list[tuple] = [
+    # --- Тревожный фон (role music): дрон / dark ambient без мелодии и ударных ---------------------------- #
+    ("bed-terror", 155142, f"{_FS}/155/155142_2098884-hq.mp3",
+     "d021e3965966fe056e87967faa05d048bc6e44ca685a2fa3106f0560e9b3c152",
+     "Тревожный гул", ["музыка", "фон", "тревога", "саспенс", "дрон", "dark ambient", "drone", "suspense"],
+     "music", 8.0, 94.0),
+    ("bed-space-drone", 20705, f"{_FS}/20/20705_53896-hq.mp3",
+     "a73e47fcad2f85f46e3ca1a2bf77fe20ef089d0a0c0f3b7104c8a0768b90ce4e",
+     "Тёмный дрон с шорохами", ["музыка", "фон", "тревога", "дрон", "темнота", "drone", "dark"],
+     "music", 12.0, 52.0),
+    ("bed-scary-loop", 342902, f"{_FS}/342/342902_5048136-hq.mp3",
+     "f23d3ddcd8fe86e88b104ee94b36e72a4429de7b3ec56a6164c0475bc0e5a494",
+     "Жуткий фон", ["музыка", "фон", "тревога", "жуть", "саспенс", "creepy", "suspense", "loop"],
+     "music", 0.0, 72.0),
+    ("bed-ominous-deep", 467026, f"{_FS}/467/467026_9662992-hq.mp3",
+     "aceb214f0f4697a744a7abb88cd55a08db6e9c040b1591219f201f469787ea2d",
+     "Глубокий зловещий фон", ["музыка", "фон", "тревога", "низкий", "дрон", "ominous", "deep", "drone"],
+     "music", 0.0, 65.5),
+    ("bed-dark-strings", 519181, f"{_FS}/519/519181_9857906-hq.mp3",
+     "53855b7d479d7c8618a75f5d17e7a830291129df65ad5e60f38720937d12130f",
+     "Тёмные струнные, напряжение", ["музыка", "фон", "тревога", "струнные", "саспенс", "strings", "tense"],
+     "music", 0.0, 102.0),
+    ("bed-risset-gloom", 347866, f"{_FS}/347/347866_129727-hq.mp3",
+     "ce7e438e8a7a669d01c366f3959a3e0e06c51dde0824eb6fc7042c07a27cb077",
+     "Бесконечное падение (тон Риссе)", ["музыка", "фон", "тревога", "падение", "дрон", "risset", "drone", "gloom"],
+     "music", 0.0, 89.5),
+    # --- Фон-петли лифта (role ambience) ---------------------------------------------------------------- #
+    ("cabin-hum", 389661, f"{_FS}/389/389661_7158173-hq.mp3",
+     "58a186e3bdf64b370ed1a7e02d205a0c6d49298aeb80c47b4c9665fa73f5d6eb",
+     "Гул кабины лифта", ["лифт", "гул", "кабина", "фон", "elevator", "hum", "room tone"],
+     "ambience", 0.3, 30.8),
+    ("shaft-rumble", 817225, f"{_FS}/817/817225_9250976-hq.mp3",
+     "119eb6e2227351b91a9f42df470ddab67a71882131e10ad8d56244100b853793",
+     "Далёкий гул шахты", ["шахта", "гул", "подземелье", "темнота", "фон", "rumble", "underground", "room tone"],
+     "ambience", 0.0, 57.9),
+    # --- Звуки событий (role sfx) ------------------------------------------------------------------------ #
+    ("breaker", 131599, f"{_FS}/131/131599_823769-hq.mp3",
+     "5cdcb7d71dec5fa09e51c1686efcbbda53a07195028ad026437cb1dd2db23eda",
+     "Рубильник — свет отключился", ["рубильник", "щелчок", "отключение", "блэкаут", "breaker", "switch", "power off"],
+     "sfx", 0.0, 2.2),
+    ("power-down", 395378, f"{_FS}/395/395378_4373137-hq.mp3",
+     "798b7522670141afea8e698ae8f8b4d4d0587676c0154a3d0fcd74ae07b4cd5d",
+     "Гул глохнет", ["отключение", "гул", "машина", "блэкаут", "power down", "shut down"],
+     "sfx", 0.0, 2.2),
+    ("clank", 161228, f"{_FS}/161/161228_544580-hq.mp3",
+     "32eed2f49b942020ed9a4380c6419c757479613a565e57910e89cbfdf7c02c35",
+     "Лязг кабины", ["лязг", "рывок", "металл", "лифт", "clank", "metal", "elevator"],
+     "sfx", 0.25, 2.4),
+    ("metal-scrape", 238289, f"{_FS}/238/238289_1554038-hq.mp3",
+     "24cd58681e284a83074f88faca426c22d9a731b785dc23e41e3f470b9727bee8",
+     "Скрежет металла", ["скрежет", "скрип", "металл", "трос", "creak", "scrape", "metal"],
+     "sfx", 0.0, 3.1),
+    ("knock-metal", 661640, f"{_FS}/661/661640_11519060-hq.mp3",
+     "fe644303c802c2ea0207689a001915b0d68dceade59ae263062225cd721d9a8e",
+     "Стук в металлическую дверь (три удара)", ["стук", "дверь", "металл", "knock", "metal door"],
+     "sfx", 8.35, 1.9),
+]
+
+
+def _loudness(ffmpeg: str, path: Path) -> tuple[float, float]:
+    """(громкость LUFS, пик сэмпла dBFS) файла — ebur128."""
+    proc = subprocess.run([ffmpeg, "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128=peak=sample",
+                           "-f", "null", "-"], capture_output=True, text=True, errors="replace", timeout=300, check=False)
+    summary = proc.stderr.rsplit("Summary:", 1)[-1]
+    i = re.search(r"I:\s+(-?[\d.]+) LUFS", summary)
+    peak = re.search(r"Peak:\s+(-?[\d.]+) dBFS", summary)
+    if not i or not peak:
+        raise RuntimeError(f"не измерить громкость {path.name}")
+    return float(i.group(1)), float(peak.group(1))
+
+
+def _tension_loop(ffmpeg: str, src: Path, dest: Path, start: float, length: float, channels: int,
+                  target_lufs: float, peak_db: float) -> float:
+    """Кусок трека → петля без шва (последние TENSION_LOOP_XFADE с перетекают в начало, равная мощность), громкость
+    к target_lufs (пик не выше peak_db — тогда тише) → OGG. Возвращает громкость готового файла (LUFS)."""
+    xf = TENSION_LOOP_XFADE
+    wav = dest.with_suffix(".loop.wav")
+    graph = (f"[0:a]atrim={start:.3f}:{start + length:.3f},asetpts=PTS-STARTPTS,aresample={SR},"
+             f"aformat=channel_layouts={'stereo' if channels == 2 else 'mono'},asplit=3[a][b][c];"
+             f"[a]atrim=0:{xf:.3f},asetpts=PTS-STARTPTS,afade=t=in:d={xf:.3f}:curve=qsin[h];"
+             f"[b]atrim={length - xf:.3f}:{length:.3f},asetpts=PTS-STARTPTS,afade=t=out:d={xf:.3f}:curve=qsin[t];"
+             f"[h][t]amix=inputs=2:normalize=0:duration=first[x];"
+             f"[c]atrim={xf:.3f}:{length - xf:.3f},asetpts=PTS-STARTPTS[m];"
+             f"[x][m]concat=n=2:v=0:a=1[out]")
+    subprocess.run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-filter_complex", graph,
+                    "-map", "[out]", "-c:a", "pcm_s16le", str(wav)], check=True, timeout=300)
+    # Только усиление/ослабление: лимитер сдвинул бы звук (задержка) и порвал шов петли — пик держим самим усилением.
+    lufs, peak = _loudness(ffmpeg, wav)
+    gain = min(target_lufs - lufs, peak_db - peak)
+    subprocess.run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(wav), "-af", f"volume={gain:.2f}dB",
+                    "-c:a", "libvorbis", "-q:a", "5", "-ar", str(SR), str(dest)], check=True, timeout=300)
+    wav.unlink(missing_ok=True)
+    return round(_loudness(ffmpeg, dest)[0], 1)
+
+
+def fetch_tension(target: Path, dl: Path) -> dict:
+    pack_id = "tension"
+    pack_dir = target / pack_id
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("для звуков нужен ffmpeg")
+    stamp = f"tension v{TENSION_VERSION} n{len(TENSION_SOUNDS)} idx{INDEX_VERSION}"
+    meta_path = pack_dir / "items.json"
+    if read_stamp(pack_dir) != stamp or not meta_path.exists():
+        fresh_dir(pack_dir)
+        work = fresh_dir(dl / pack_id)
+        items: list[dict] = []
+        for name, sound_id, url, sha, label, tags, role, start, length in TENSION_SOUNDS:
+            mp3 = download(url, work / f"{name}.mp3", sha)
+            dest = pack_dir / f"{safe_name(name)}.ogg"
+            extra: dict = {"role": role, "source_url": f"https://freesound.org/s/{sound_id}/"}
+            if role in ("music", "ambience"):
+                music = role == "music"
+                extra["lufs"] = _tension_loop(ffmpeg, mp3, dest, start, length, 2 if music else 1,
+                                              TENSION_MUSIC_LUFS if music else TENSION_AMBIENCE_LUFS,
+                                              -6.0 if music else -10.0)
+                extra["loop"] = True
+            else:
+                wav = work / f"{name}.wav"
+                fade = min(0.25, length / 4)
+                subprocess.run(
+                    [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.3f}", "-i", str(mp3),
+                     "-af", f"silenceremove=start_periods=1:start_threshold=-45dB,atrim=0:{length},"
+                            f"afade=t=out:st={max(0.0, length - fade):.3f}:d={fade:.3f}",
+                     "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(wav)],
+                    check=True, timeout=60,
+                )
+                _write_wav(wav, _normalize(_read_wav(wav), FREESOUND_RMS_DB, FREESOUND_PEAK_DB))
+                subprocess.run(
+                    [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(wav),
+                     "-c:a", "libvorbis", "-q:a", "5", "-ar", str(SR), str(dest)],
+                    check=True, timeout=60,
+                )
+            items.append(describe_item(dest, "sfx", label, list(tags), **extra))
+        (pack_dir / "LICENSE.txt").write_text(
+            "Музыка и звуки с freesound.org под лицензией CC0 1.0 (public domain), атрибуция не нужна. "
+            "Источник каждого — source_url в items.json.\n",
+            encoding="utf-8",
+        )
+        meta_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        write_stamp(pack_dir, stamp)
+        log(f"tension: {sum(1 for i in items if i['role'] == 'music')} треков фона, "
+            f"{sum(1 for i in items if i['role'] != 'music')} звуков лифта")
+    items = json.loads(meta_path.read_text(encoding="utf-8"))
+    return {
+        "id": pack_id,
+        "name": "Тревожный фон и звуки лифта (Freesound, CC0)",
+        "kind": "sfx",
+        "license": "CC0-1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "attribution": "",
+        "source": "https://freesound.org",
+        "version": TENSION_VERSION,
+        "items": items,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # 3D-модели (kind model3d) — для движка сцен node/scene3d
 # --------------------------------------------------------------------------- #
 
@@ -1076,7 +1254,7 @@ def fetch_quaternius_animations(target: Path, dl: Path) -> dict:
 
 # --------------------------------------------------------------------------- #
 
-PACK_ORDER =["twemoji", "openmoji-extras", "kenney-particles", "freesound",
+PACK_ORDER =["twemoji", "openmoji-extras", "kenney-particles", "freesound", "tension",
               "kenney-impact", "kenney-interface", "kenney-ui", "imgflip",
               "kenney-furniture", "quaternius-characters", "quaternius-animations"]
 # Отказ этих паков сборку не роняет: imgflip — живой внешний сервис, 3D-паки берутся по
@@ -1115,6 +1293,7 @@ def main(argv: list[str] | None = None) -> int:
         "twemoji": lambda: fetch_twemoji(target, dl),
         "openmoji-extras": lambda: fetch_openmoji_extras(target, dl),
         "freesound": lambda: fetch_freesound(target, dl),
+        "tension": lambda: fetch_tension(target, dl),
         "imgflip": lambda: fetch_imgflip(target, dl),
         **{spec["id"]: (lambda spec=spec: fetch_kenney(target, dl, spec)) for spec in KENNEY_PACKS},
         **{spec["id"]: (lambda spec=spec: fetch_kenney_3d(target, dl, spec)) for spec in KENNEY_3D_PACKS},

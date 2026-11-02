@@ -9,6 +9,7 @@
  */
 import * as THREE from "three";
 import { fabricTexture, nightViewTexture, plasterTexture, planksTexture } from "./textures.ts";
+import { applySurface, type SurfaceSpec } from "./surfaces.ts";
 
 export interface Opening {
   wall: "back" | "front" | "left" | "right";
@@ -27,9 +28,9 @@ export interface RoomSpec {
   depth: number;
   height: number;
   thickness?: number;
-  floor?: { color?: string; plank?: number };
-  walls?: { color?: string; accent?: { wall: string; color: string; stripes?: number } };
-  ceiling?: { color?: string } | false;
+  floor?: { color?: string; plank?: number; surface?: SurfaceSpec };
+  walls?: { color?: string; accent?: { wall: string; color: string; stripes?: number }; surface?: SurfaceSpec };
+  ceiling?: { color?: string; surface?: SurfaceSpec } | false;
   baseboard?: { color?: string; height?: number } | false;
   openings?: Opening[];
   hallway?: { color?: string; light?: string } | false;
@@ -119,6 +120,7 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
   floor.receiveShadow = true;
   floor.name = "floor";
   group.add(floor);
+  if (spec.floor?.surface) applySurface(floor, spec.floor.surface);
 
   // Стены.
   const wallColor = spec.walls?.color || "#e8dccb";
@@ -164,6 +166,7 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     geo.translate(0, 0, -th);
     const mesh = new THREE.Mesh(geo, wallMat(wall));
     mesh.name = `wall_${wall}`;
+    if (spec.walls?.surface) applySurface(mesh, spec.walls.surface);
     const frame = wallFrame(spec, wall);
     frame.name = `wall:${wall}`;
     frame.add(shadow(mesh));
@@ -205,6 +208,7 @@ export function buildRoom(spec: RoomSpec): RoomBuild {
     ceil.position.y = H;
     ceil.receiveShadow = true;
     ceil.name = "ceiling";
+    if (spec.ceiling && spec.ceiling.surface) applySurface(ceil, spec.ceiling.surface);
     group.add(ceil);
     ceiling = ceil;
   }

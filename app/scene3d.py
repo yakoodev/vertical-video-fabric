@@ -112,6 +112,9 @@ class Scene3dError(RuntimeError):
 # --------------------------------------------------------------------------- #
 
 
+BUILTIN_DIR = Path(__file__).resolve().parent.parent / "node" / "scene3d" / "assets"
+
+
 def packs_dir() -> Path:
     from app.settings import settings
 
@@ -207,6 +210,11 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         if not isinstance(ref, str) or ref.count("/") != 1 or ".." in ref:
             raise SceneSpecError(f"{name}: ссылка на модель — «пак/файл», а не {ref!r}")
         models.append(ref)
+        if ref.startswith("builtin/"):
+            # Модели самого движка (node/scene3d/assets, в репозитории) — сгенерированный герой и т.п.
+            if not (BUILTIN_DIR / ref.split("/", 1)[1]).is_file():
+                raise SceneSpecError(f"{name}: нет встроенной модели {ref} (node/scene3d/assets)")
+            return None
         if index and ref not in index:
             raise SceneSpecError(f"{name}: нет модели {ref} в паках")
         return index.get(ref)
@@ -222,6 +230,10 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
             raise SceneSpecError(f"characters[{i}].model: {c['model']} без скелета")
         if c.get("hair"):
             model(c["hair"].get("model"), f"characters[{i}].hair.model")
+        if c.get("mesh"):
+            model(c["mesh"].get("model"), f"characters[{i}].mesh.model")
+            if not isinstance(c["mesh"].get("joints"), dict):
+                raise SceneSpecError(f"characters[{i}].mesh.joints: опорные точки суставов меша")
         clips: set[str] = set()
         for j, ref in enumerate(c.get("animations") or []):
             it = model(ref, f"characters[{i}].animations[{j}]")

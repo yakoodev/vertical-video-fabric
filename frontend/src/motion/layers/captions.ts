@@ -612,7 +612,9 @@ function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scal
   // У удара каждое слово влетает само — страница целиком не выпрыгивает.
   if (r.animation === "none" || r.animation === "typewriter" || r.animation === "stomp") return { scale: 1, alpha: 1 };
   const p = clamp01((t - page.t0) / 0.12);
-  return { scale: 0.86 + 0.14 * ease("outBack", p), alpha: clamp01(p * 3) };
+  // Страница «выпрыгивает» масштабом; прозрачность — едва (с 85%): первый кадр страницы не тусклый
+  // (на тёмном кадре полупрозрачные субтитры читаются хуже, на листе кадров — «блёклое слово»).
+  return { scale: 0.86 + 0.14 * ease("outBack", p), alpha: 0.85 + 0.15 * clamp01(p * 3) };
 }
 
 /** Слово, записанное звёздочками после цензуры мата («б****», «бл*ть», «***»): не подсвечивается. */

@@ -4,8 +4,11 @@
 ``app.series3d.direct`` (локация-шаблон, герой-игрушка по карточке актёра, кадр на фразу, события на словах) →
 рендер сцены ``node/scene3d`` в mp4 (headless Chromium, ``SCENE3D_GL``/``SCENE3D_WORKERS``) → видео в «Файлы для
 монтажа» → холст-клип: 3D-видео во весь кадр, субтитры по 1–3 слова с подсветкой текущего, HUD-плашки фраз,
-название серии и титр «ЧАСТЬ N+1» (сериал-катастрофа), звуки событий (настоящие записи паков), голос. Музыка у
-сериала-катастрофы не вшивается. Обложки — кадры 3D-видео по шаблону формата.
+название серии и титр «ЧАСТЬ N+1» (сериал-катастрофа), звуки событий (настоящие записи паков), голос и тревожный
+фон (``music_bed``): трек пака ``tension`` (CC0, без мелодии и ударных) тихо под голосом на всю серию — слой audio
+``role: music``, петля копиями внахлёст, громкость по замеру озвучки (фон на ``BED_UNDER_VOICE_DB`` тише голоса).
+Опция эпизода/мира ``music: none`` — без фона; трек из библиотеки (``music_track_id``) — вместо фона, как у 2D.
+Гул кабины и шахты (``role: ambience``) — так же петлёй из режиссуры. Обложки — кадры 3D-видео по шаблону формата.
 """
 
 from __future__ import annotations
@@ -28,6 +31,96 @@ CAPTION_WORDS = 3  # субтитры по 1–3 слова, текущее по
 ACTIVE_COLOR = "#ffd400"
 SFX_MAX_SEC = 3.5
 COVER_FRAMES = 3
+# Тревожный фон серии — треки пака tension (tools/fetch_packs.py: CC0, петли без швов, громкость в items.json).
+BED_PACK = "tension"
+BED_UNDER_VOICE_DB = 22.0  # фон под речью тише голоса на столько (норма — 20…24 дБ)
+BED_FADE_IN, BED_FADE_OUT = 1.5, 2.5
+LOOP_XFADE = 1.0  # петля длиннее файла — копии внахлёст с перекрёстным затуханием
+VOICE_LUFS_DEFAULT = -16.0  # озвучку не измерить — считаем такой
+
+
+def voice_lufs(path: Path) -> float:
+    """Громкость озвучки (BS.1770, тишина отсечена гейтом) — от неё громкость фона и гула."""
+    from app.audio_mix import SILENT, ebur128
+
+    try:
+        value = float(ebur128(path)["i"])
+    except Exception:  # noqa: BLE001 - нет ffmpeg/битый файл: фон по типовой громкости TTS
+        return VOICE_LUFS_DEFAULT
+    return value if value > SILENT + 1 else VOICE_LUFS_DEFAULT
+
+
+def _pack_item(ref: str) -> dict | None:
+    from app.motion_assets import pack_item_info
+
+    try:
+        return pack_item_info(ref)
+    except Exception:  # noqa: BLE001 - пака нет — звука нет
+        return None
+
+
+def music_mode(world: dict, ep: dict) -> str:
+    """Опция ``music`` эпизода (иначе мира): ``none`` — без фона, ``auto``/пусто — фон есть. У мира-катастрофы
+    ``none`` стоит по умолчанию (2D: музыку ставят в приложении площадки) — тревожный фон 3D-серии он не выключает,
+    выключить — ``music: none`` у эпизода."""
+    ep_mode = str((ep.get("options") or {}).get("music") or "").strip().lower()
+    if ep_mode:
+        return ep_mode
+    if str(world.get("format") or "") == "disaster":
+        return ""
+    return str(world.get("music") or "").strip().lower()
+
+
+def music_beds() -> list[dict]:
+    """Треки тревожного фона из пака (роль music), по имени файла; пака нет — пусто."""
+    from app.motion_assets import load_packs
+
+    pack = load_packs().get(BED_PACK) or {}
+    if pack.get("kind") != "sfx":
+        return []
+    return sorted((dict(it, ref=f"sfx:{BED_PACK}/{it['file']}") for it in pack["_items"].values()
+                   if it.get("role") == "music"), key=lambda it: it["file"])
+
+
+def pick_bed(world: dict, ep: dict) -> dict | None:
+    """Фон серии: ``options.music_bed`` (имя файла пака), иначе один на мир — по id мира (сериал узнаётся)."""
+    beds = music_beds()
+    if not beds:
+        return None
+    want = str((ep.get("options") or {}).get("music_bed") or "").strip()
+    for bed in beds:
+        if want and want in (bed["file"], bed["file"].rsplit(".", 1)[0]):
+            return bed
+    return beds[int(world.get("id") or ep.get("world_id") or 0) % len(beds)]
+
+
+def bed_gain_db(item: dict, voice_db: float, under_db: float) -> float:
+    """Поправка дорожки (gain_db), чтобы петля звучала на ``under_db`` тише голоса (громкость файла — lufs пака)."""
+    from app.motion import TRACK_MAX_GAIN_DB, TRACK_MIN_GAIN_DB
+
+    lufs = float(item.get("lufs") or -26.0)
+    return round(max(TRACK_MIN_GAIN_DB, min(TRACK_MAX_GAIN_DB, voice_db - under_db - lufs)), 2)
+
+
+def loop_layers(ref: str, start: float, end: float, file_sec: float, props: dict, lid: str, name: str,
+                fade_in: float = 0.0, fade_out: float = 0.0) -> list[dict]:
+    """Звук-петля на [start, end]: слой audio короче файла — один; длиннее — копии файла внахлёст
+    (``LOOP_XFADE``, перекрёстное затухание) — рендер сам аудио-слой не зацикливает."""
+    out: list[dict] = []
+    file_sec = max(file_sec, LOOP_XFADE * 4)
+    t, n = float(start), 0
+    while t < end - 0.05:
+        seg_end = min(end, t + file_sec)
+        last = seg_end >= end - 1e-6
+        p = {"asset_id": ref, "mode": "track", **props,
+             "fadeIn": round(fade_in if n == 0 else LOOP_XFADE, 3),
+             "fadeOut": round(fade_out if last else LOOP_XFADE, 3)}
+        out.append({"id": f"{lid}{n:02d}" if n else lid, "type": "audio", "name": name[:60],
+                    "start": round(t, 3), "end": round(seg_end, 3), "props": p})
+        if last:
+            break
+        t, n = seg_end - LOOP_XFADE, n + 1
+    return out
 
 
 def render3d(result: dict, out_path: Path) -> dict:
@@ -88,8 +181,10 @@ def cover_times(shots: list[dict]) -> list[float]:
     return picks or [mid(shots[len(shots) // 2])]
 
 
-def sfx_layers(store: Any, result: dict, placed: list[dict], total: float, prefix: str) -> list[dict]:
-    """Звуки: события режиссуры (блэкаут, рывок, стук…) и звук кадра из сценария — настоящие записи, без дублей."""
+def sfx_layers(store: Any, result: dict, placed: list[dict], total: float, prefix: str,
+               voice_db: float = VOICE_LUFS_DEFAULT) -> list[dict]:
+    """Звуки: события режиссуры (блэкаут, рывок, стук…) и звук кадра из сценария — настоящие записи, без дублей.
+    Звук с ``end`` — фон-петля (гул кабины, шахта): до ``end``, громкость — ``under_db`` ниже голоса (``voice_db``)."""
     from app.stories_gen import SFX_OFFSET_SEC, SFX_VOLUME, _sfx_duration
 
     items = [dict(x) for x in result.get("sfx") or []]
@@ -97,19 +192,45 @@ def sfx_layers(store: Any, result: dict, placed: list[dict], total: float, prefi
         sfx = p.get("sfx") or {}
         if sfx.get("ref"):
             t = round(min(p["end"] - 0.2, p["start"] + SFX_OFFSET_SEC), 3)
-            if not any(abs(x["t"] - t) < 0.6 for x in items):
+            if not any(abs(x["t"] - t) < 0.6 and not x.get("end") for x in items):
                 items.append({"t": t, "ref": str(sfx["ref"]), "volume": SFX_VOLUME, "label": sfx.get("label") or ""})
     layers = []
     for n, x in enumerate(sorted(items, key=lambda i: i["t"])):
-        dur = min(SFX_MAX_SEC, max(0.3, _sfx_duration(store, str(x["ref"]))))
         start = max(0.0, float(x["t"]))
         if start >= total - 0.1:
             continue
-        layers.append({"id": f"{prefix}fx{n:02d}", "type": "audio", "name": f"Звук: {x.get('label') or ''}"[:60],
+        name = f"Звук: {x.get('label') or ''}"
+        if x.get("end"):
+            info = _pack_item(str(x["ref"]))
+            end = min(total, float(x["end"]))
+            if info is None or end - start < 0.3:
+                continue
+            props = {"volume": float(x.get("volume") or 1.0), "role": str(x.get("role") or "ambience")}
+            if x.get("under_db") is not None:
+                props["gain_db"] = bed_gain_db(info, voice_db, float(x["under_db"]))
+            layers += loop_layers(str(x["ref"]), start, end, float(info.get("duration") or 0), props,
+                                  f"{prefix}fx{n:02d}", name, float(x.get("fade_in") or 0.3),
+                                  float(x.get("fade_out") or 0.3))
+            continue
+        dur = min(SFX_MAX_SEC, max(0.3, _sfx_duration(store, str(x["ref"]))))
+        layers.append({"id": f"{prefix}fx{n:02d}", "type": "audio", "name": name[:60],
                        "start": round(start, 3), "end": round(min(total, start + dur), 3),
                        "props": {"asset_id": str(x["ref"]), "mode": "track", "volume": float(x.get("volume") or 0.6),
                                  "fadeOut": 0.15, "role": "sfx"}})
     return layers
+
+
+def music_bed_layers(world: dict, ep: dict, total: float, voice_db: float, prefix: str) -> tuple[list[dict], dict | None]:
+    """Тревожный фон на всю серию тихо под голосом: слои audio (role music) и что взято; пака нет — ([], None)."""
+    bed = pick_bed(world, ep)
+    if bed is None:
+        return [], None
+    gain = bed_gain_db(bed, voice_db, BED_UNDER_VOICE_DB)
+    layers = loop_layers(bed["ref"], 0.0, total, float(bed.get("duration") or 0),
+                         {"volume": 1.0, "gain_db": gain, "role": "music"}, f"{prefix}bed",
+                         f"Музыка: {bed.get('name') or bed['file']}", BED_FADE_IN, BED_FADE_OUT)
+    return layers, {"ref": bed["ref"], "name": bed.get("name"), "gain_db": gain, "voice_lufs": round(voice_db, 1),
+                    "under_voice_db": BED_UNDER_VOICE_DB, "copies": len(layers)}
 
 
 def save_video(store: Any, path: Path, label: str) -> dict:
@@ -182,7 +303,16 @@ def assemble(store: Any, episode_id: int) -> dict:
                            "track": 1, "x": 0.5, "y": 0.5, "z": 0,
                            "props": {"asset_id": int(asset["id"]), "w": 1080, "content": True, "from": 0, "speed": 1,
                                      "loop": False, "freeze": True}}]
-    layers += sfx_layers(store, result, placed, total, prefix)
+    voice_db = voice_lufs(path)
+    layers += sfx_layers(store, result, placed, total, prefix, voice_db)
+    # Фон: трек библиотеки (music_track_id / auto) — музыкой клипа ниже; иначе тревожный фон пака; none — тишина.
+    track = SG._music_track(store, world, ep)
+    bed = None
+    if track is None and music_mode(world, ep) != "none":
+        bed_layers, bed = music_bed_layers(world, ep, total, voice_db, prefix)
+        layers += bed_layers
+        if bed is None:
+            notes.append(f"3D: тревожного фона нет — пак {BED_PACK} не скачан (tools/fetch_packs.py --only {BED_PACK})")
     if disaster:
         stroke = world["captions"]["stroke"]
         if options.get("title_card", True):
@@ -206,13 +336,12 @@ def assemble(store: Any, episode_id: int) -> dict:
     ctx = T.ToolContext(store=store, clip_plan_id=clip_id,
                         on_first_change=lambda: snapshot(store, clip_id, "3D-серия: сборка"))
     SG._tool(ctx, "set_subtitle_words", {"words": words})
-    track = SG._music_track(store, world, ep)
     if track:
         SG._tool(ctx, "set_music", {"on": True, "track_id": track})
         from app.explainer_gen import _speech_spans
 
         SG._tool(ctx, "set_music_duck", {"duck": _speech_spans(words)})
-    elif D.music_off(world, ep) and D.MUSIC_NOTE not in notes:
+    elif bed is None and D.music_off(world, ep) and D.MUSIC_NOTE not in notes:
         notes.append(D.MUSIC_NOTE)
     mixed = auto_mix_clip(ctx, notes)
     fresh = store.get_clip_plan(clip_id)
@@ -221,7 +350,7 @@ def assemble(store: Any, episode_id: int) -> dict:
                 "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "camera", "sfx", "sentence")} for p in placed],
                 "shots_per_min": round(len(shots) / total * 60, 1), "sfx": len(result.get("sfx") or []),
-                "layers": len(render["layers"]), "music_track_id": track, "cover_frames": covers,
+                "layers": len(render["layers"]), "music_track_id": track, "music_bed": bed, "cover_frames": covers,
                 "scene3d": {"location": result["location"], "asset_id": int(asset["id"]),
                             "render_sec": info.get("seconds"), "frames": info.get("frames"),
                             "shots": [{k: s.get(k) for k in ("n", "t0", "t1", "text", "role", "action", "camera", "spot")}

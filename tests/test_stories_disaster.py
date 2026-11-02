@@ -353,3 +353,18 @@ def test_mcp_and_rest_disaster_format(env):
     r = client.patch(f"/api/stories/worlds/{wid}", json={"music": "auto"})
     assert r.status_code == 200 and r.json()["music"] == "auto"
     assert client.patch(f"/api/stories/worlds/{wid}", json={"format": "comedy"}).status_code == 400
+
+
+def test_part_card_fits_safe_width():
+    # Титр «ЧАСТЬ N — …» любой длины — в безопасной зоне: перенос по maxWidth, поля подложки внутри, без
+    # «удара» с перелётом за края (раньше «ЧАСТЬ 2 — КТО СТУЧАЛ» обрезалось слева и справа).
+    from app import stories_disaster as D
+
+    ep = {"script": {"part_title": "Кто стучал в двери лифта посреди ночи на двадцать третьем этаже"}, "options": {}}
+    lay = D.part_layer(ep, 50.0, 52.0, "#151515", "st_")
+    p = lay["props"]
+    assert p["maxWidth"] + 2 * p["bg"]["padX"] + 2 * p["stroke"]["width"] <= D.SAFE_WIDTH <= 1080 * 0.88
+    assert lay["in"]["type"] != "stomp"
+    # Самое длинное слово титра (≈0.6 em на букву у узкого жирного шрифта) влезает в строку.
+    longest = max(len(w) for w in D.part_card_text(ep).split())
+    assert longest * p["size"] * 0.6 <= p["maxWidth"]
