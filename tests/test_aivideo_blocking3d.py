@@ -124,6 +124,58 @@ def test_available_respects_switch(monkeypatch):
     assert B3.available() is False
 
 
+# Живой случай серии 3 (раскладка Gemini-зрения по плите и spec от Gemini): стол посреди комнаты между
+# камерой и тумбочкой, Мира вплотную перед тумбочкой, кружка — точка без holder при руках «держит».
+LIVE_LAYOUT = {"room": {"width": 380, "depth": 380, "height": 260, "floor": "#b58a62", "wall": "#e9dfd0"}, "objects": [
+    {**L._obj("window"), "pos": [-99.2, -114.0], "y": 95.0},
+    {**L._obj("bed"), "pos": [-95.0, -89.0]},
+    {**L._obj("nightstand"), "pos": [3.5, -169.0]},
+    {**L._obj("dock"), "pos": [54.0, -182.0]},
+    {**L._obj("table"), "pos": [45.0, 19.0]},
+    {**L._obj("lamp"), "pos": [3.5, -169.0], "y": 50.0, "on": "nightstand"},
+    {**L._obj("rug"), "pos": [25.0, 7.6]},
+]}
+LIVE_SPEC = {"room": {}, "objects": [],
+             "start": {"actors": [{"id": "mira", "pos": [15.0, -145.0], "facing": -90.0, "pose": "standing", "arms": "holding"},
+                                  {"id": "beep", "pos": [-60.0, -150.0], "facing": -90.0, "pose": "lying"}],
+                       "props": [{"id": "coffee_mug", "name": "кружка с кофе", "count": 1, "pos": [15.0, 100.0, -145.0]}]},
+             "end": {"actors": [{"id": "mira", "pos": [15.0, -145.0], "facing": 180.0, "pose": "standing", "arms": "up"},
+                                {"id": "beep", "pos": [3.5, -148.0], "facing": 90.0, "pose": "lying"}],
+                     "props": [{"id": "coffee_mug", "name": "кружка с кофе", "count": 1, "on": "nightstand"}]}}
+
+
+@pytest.mark.parametrize("which, size", [("start", "medium"), ("end", "medium_close")])
+def test_live_case_mug_in_hand_nothing_blocks_and_nightstand_seen(which, size):
+    shot = {**SHOT, "camera": {"shot": size, "angle": "low" if size == "medium_close" else "eye_level", "lens": 50}}
+    built = B.build(B.clean_spec(LIVE_SPEC, ["mira", "beep"]), which, shot, INFOS, LIVE_LAYOUT)
+    check = built["check"]
+    assert check["ok"], check
+    # Мебель перед камерой не закрывает кадр, вещь действия видна.
+    assert all(v <= B.OCCLUDE_MAX for v in check["occluders"].values()), check["occluders"]
+    mira = next(a for a in built["actors"] if a["id"] == "mira")
+    stand = next(o for o in LIVE_LAYOUT["objects"] if o["id"] == "nightstand")
+    # Мира не заслоняет тумбочку: шагнула вбок от её фронта.
+    assert abs(mira["pos"][0] - stand["pos"][0]) >= stand["size"][0] / 2 + 15
+    mug = built["props"][0]
+    if which == "start":
+        assert mug["holder"] == "mira"  # точка без holder при «держит» — в руке
+    else:
+        assert mug["on"] == "nightstand" and mug["base"][1] == pytest.approx(L.top_of(stand))
+
+
+def test_dolly_keeps_frame_with_wider_lens():
+    cam = {"pos": [0.0, 150.0, 300.0], "target": [0.0, 100.0, 0.0], "fov": 40.0}
+    near = B._dolly(cam, 0.5)
+    import math
+
+    d0 = math.dist(cam["pos"], cam["target"])
+    d1 = math.dist(near["pos"], near["target"])
+    assert d1 == pytest.approx(d0 * 0.5, rel=0.01)
+    # Высота кадра у цели та же: tg(fov/2)·d.
+    assert math.tan(math.radians(near["fov"] / 2)) * d1 == pytest.approx(math.tan(math.radians(20)) * d0, rel=0.02)
+    assert B._dolly(cam, 0.1) is None  # ближе 60 см или шире 80° — нельзя
+
+
 @pytest.mark.skipif(not B3.available(), reason="нет Node/браузера/бандла/3D-паков")
 def test_real_blocking_frame_png():
     spec = B3.scene_spec(_built("end"), SHOT, INFOS, {"mira": MIRA, "beep": BEEP}, "end", width=216, height=384)

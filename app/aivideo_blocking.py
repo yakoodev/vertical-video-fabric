@@ -82,8 +82,9 @@ CROWD_MAX = 0.6  # персонажи заняли больше — комнат
 SIZES = ("extreme_close", "close", "medium_close", "medium", "full", "wide", "extreme_wide")
 MIN_SHARE = {"extreme_wide": 0.003, "wide": 0.008, "full": 0.02, "medium": 0.035, "medium_close": 0.05,
              "close": 0.07, "extreme_close": 0.07}
-OCCLUDE_MAX = 0.40  # вещь перед персонажами закрывает больше — кадр не годится
-HIDDEN_MAX = 0.65  # персонаж закрыт больше чем на столько — не годится
+OCCLUDE_MAX = 0.10  # вещь перед персонажами (край стола у камеры) закрывает больше — кадр не годится
+HIDDEN_MAX = 0.35  # персонаж закрыт больше чем на столько — не годится (живой план 13: стол закрывал 40%)
+FOCUS_SEEN_MIN = 0.4  # вещь действия (тумбочка, на которую ставят кружку) видна хотя бы на столько
 BLOCKING_W, BLOCKING_H = 1080, 1920
 RENDER_WIDTH = 540
 LIMIT = 1000.0  # см: дальше комнаты ничего не ставим
@@ -1066,9 +1067,15 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
             problems.append(f"«{b['label']}» не в кадре")
         elif own / any_hit < 1 - HIDDEN_MAX:
             problems.append(f"«{b['label']}» закрыт(а) — видно {round(100 * own / any_hit)}%")
-    for i, b in enumerate(boxes):  # вещи действия («ставит кружку на тумбочку») — тоже в кадре
-        if b.get("focus") and not int(((first == i) & np.isfinite(first_t)).sum()):
+    for i, b in enumerate(boxes):  # вещи действия («ставит кружку на тумбочку») — тоже в кадре и видны
+        if not b.get("focus"):
+            continue
+        seen_rays = int(((first == i) & np.isfinite(first_t)).sum())
+        any_rays = int(np.isfinite(hits[:, i]).sum())
+        if not seen_rays:
             problems.append(f"«{b['label']}» (вещь действия) не в кадре")
+        elif seen_rays / max(1, any_rays) < FOCUS_SEEN_MIN:
+            problems.append(f"«{b['label']}» (вещь действия) закрыта — видно {round(100 * seen_rays / any_rays)}%")
     if total > CROWD_MAX:
         problems.append(f"персонажи на весь кадр ({round(100 * total)}%) — не видно ни места, ни действия")
     # Обязательное от персонажа (у человека при этой крупности — верх тела/лицо) влезает в кадр целиком.
@@ -1145,30 +1152,57 @@ def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], ro
     size = str(cam_cfg.get("shot") or "medium")
     if size not in SIZES:
         size = "medium"
-    first: tuple[dict, dict] | None = None
+    best: tuple[int, int, dict, dict, str] | None = None
     for steps in (0, 1, 2, 3):
         sz = _wider(size, steps)
-        for yaw in (0.0, 18.0, -18.0, 35.0, -35.0):
+        for yaw in (0.0, 18.0, -18.0, 35.0, -35.0, 55.0, -55.0):
             for lift in (0.0, 45.0):
-                cam = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift, focus)
-                # Камера внутри вещи — отодвигаем вдоль луча к цели, пока не выйдет.
-                for _ in range(30):
-                    hit = next((b for b in all_boxes if _inside(b, cam["pos"])), None)
-                    if hit is None:
-                        break
-                    t = cam["target"]
-                    vec = [t[i] - cam["pos"][i] for i in range(3)]
-                    n = math.sqrt(sum(v * v for v in vec)) or 1.0
-                    if n < 40:
-                        break
-                    cam["pos"] = [_r(cam["pos"][i] + vec[i] / n * 10.0) for i in range(3)]
-                check = check_frame(cam, all_boxes, room, sz)
-                if first is None:
-                    first = (cam, check)
-                if check["ok"]:
-                    return cam, {**check, "size": sz, "notes": _camera_notes(steps, sz, size, yaw, lift)}
-    cam, check = first  # type: ignore[misc]
-    return cam, {**check, "size": size, "notes": ["ни один вариант камеры не прошёл самоконтроль"]}
+                base = _place_camera(actor_boxes, sz, cam_cfg, room, yaw, lift, focus)
+                # Мебель между камерой и действием (стол посреди комнаты) — камера подъезжает ближе
+                # по той же линии, за неё, а объектив шире: кадр той же крупности без загородки.
+                for dolly in (1.0, 0.7, 0.5, 0.35):
+                    cam = _dolly(base, dolly)
+                    if cam is None:
+                        continue
+                    # Камера внутри вещи — отодвигаем вдоль луча к цели, пока не выйдет.
+                    for _ in range(30):
+                        hit = next((b for b in all_boxes if _inside(b, cam["pos"])), None)
+                        if hit is None:
+                            break
+                        t = cam["target"]
+                        vec = [t[i] - cam["pos"][i] for i in range(3)]
+                        n = math.sqrt(sum(v * v for v in vec)) or 1.0
+                        if n < 40:
+                            break
+                        cam["pos"] = [_r(cam["pos"][i] + vec[i] / n * 10.0) for i in range(3)]
+                    check = check_frame(cam, all_boxes, room, sz)
+                    if check["ok"]:
+                        notes = _camera_notes(steps, sz, size, yaw, lift)
+                        if dolly < 1.0:
+                            notes.append("камера ближе и объектив шире — иначе кадр закрывала мебель")
+                        return cam, {**check, "size": sz, "notes": notes}
+                    # Лучший из провалившихся: меньше проблем, раньше в порядке перебора (ближе к плану).
+                    rank = (len(check["problems"]), steps)
+                    if best is None or rank < best[:2]:
+                        best = (rank[0], rank[1], cam, check, sz)
+    _n, _s, cam, check, sz = best  # type: ignore[misc]
+    return cam, {**check, "size": sz, "notes": ["ни один вариант камеры не прошёл самоконтроль — взят с наименьшими "
+                                                "проблемами"]}
+
+
+def _dolly(cam: dict, k: float) -> dict | None:
+    """Камера на доле k прежней дистанции до цели, угол поля шире настолько, чтобы кадр у цели остался тем же."""
+    if k >= 1.0:
+        return dict(cam)
+    pos, tgt = cam["pos"], cam["target"]
+    vec = [pos[i] - tgt[i] for i in range(3)]
+    dist = math.sqrt(sum(v * v for v in vec))
+    if dist * k < 60.0:
+        return None
+    fov = math.degrees(2 * math.atan(math.tan(math.radians(float(cam.get("fov") or 40) / 2)) / k))
+    if fov > 80.0:
+        return None
+    return {"pos": [_r(tgt[i] + vec[i] * k) for i in range(3)], "target": list(tgt), "fov": _r(fov)}
 
 
 # --------------------------------------------------------------------------- #
@@ -1194,6 +1228,35 @@ def _settle_actor(actor: dict, radius: float, objects: list[dict], room: dict) -
         x = max(-w / 2 + radius, min(w / 2 - radius, actor["pos"][0] + dx))
         z = max(-d / 2 + radius, min(d / 2 - radius, actor["pos"][1] + dz))
     actor["pos"] = [_r(x), _r(z)]
+
+
+def _step_aside(actor: dict, radius: float, focus: list[dict], objects: list[dict], room: dict) -> None:
+    """Человек вплотную перед вещью действия (стоит у тумбочки, заслоняя её от любой камеры спереди) —
+    шаг в сторону: встаёт сбоку от неё, лицом туда же; вещь и то, что на ней, видно (живой план 12–14)."""
+    for o in focus:
+        if o.get("type") in L.FLAT_TYPES or L.WALL_TYPES & {o.get("type")}:
+            continue
+        rot = float(o.get("rot") or 0.0)
+        ox, oz = (float(v) for v in o["pos"])
+        # Положение человека в осях вещи: u — вдоль её фронта, v — от фронта наружу.
+        dx, dz = actor["pos"][0] - ox, actor["pos"][1] - oz
+        u, v = _rot_y(dx, dz, -rot)
+        hw, hd = float(o["size"][0]) / 2, float(o["size"][2]) / 2
+        if abs(u) < hw + radius * 0.6 and hd - 5 < v < hd + radius + 45:
+            w, d = float(room["width"]), float(room["depth"])
+            solid = [x for x in objects if L._on_floor(x) and x is not o]
+            options = []
+            for side in ((1 if u >= 0 else -1), (-1 if u >= 0 else 1)):
+                su = side * (hw + radius + 8)
+                px, pz = _rot_y(su, hd + radius * 0.5, rot)
+                cand = [ox + px, oz + pz]
+                fp = (cand[0] - radius, cand[1] - radius, cand[0] + radius, cand[1] + radius)
+                inside = abs(cand[0]) <= w / 2 - radius and abs(cand[1]) <= d / 2 - radius
+                free = inside and not any(L._overlap(fp, L._footprint(x), pad=2.0) for x in solid)
+                options.append((not free, cand))
+            options.sort(key=lambda t: t[0])
+            actor["pos"] = [_r(options[0][1][0]), _r(options[0][1][1])]
+            return
 
 
 def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | None = None) -> dict:
@@ -1232,6 +1295,12 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
     actor_boxes = []
     placed: dict[str, dict] = {}
     spots: dict[str, dict] = {}
+    focus_pre = {str(p.get("on")) for m in ("start", "end") for p in (spec.get(m) or {}).get("props") or []
+                 if p.get("on")}
+    named_pre = L.find({"objects": objects}, shot.get("action") or "")
+    if named_pre is not None and named_pre.get("type") not in L.FLAT_TYPES:
+        focus_pre.add(named_pre["id"])
+    focus_objs = [obj_by[i] for i in focus_pre if i in obj_by]
     for a in actors:
         info = by_id[a["id"]]
         kind = info.get("stand_in", "human")
@@ -1255,6 +1324,8 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
             radius = {"human": 22.0, "disc": float(info.get("size") or 33) / 2 + 3,
                       "quadruped": float(info.get("size") or 46) / 2, "small": 14.0}.get(kind, 22.0)
             _settle_actor(a, radius, objects, room)
+            if kind == "human":
+                _step_aside(a, radius, focus_objs, objects, room)
             # Двое в одной точке (оба «center foreground») — рядом, а не друг в друге.
             for k in range(8):
                 other = next((p for p in placed.values() if not p.get("on") and
@@ -1299,7 +1370,20 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
         placed[a["id"]] = {**a, "rig": box.get("rig"), "kind": kind, "size": float(info.get("size") or 0), "y": y,
                            "box": box, "radius": radius}
     props_placed = []
-    for k, p in enumerate(moment.get("props") or []):
+    # Предмет «висит» сам по себе (pos без holder/on), а у персонажа руки «держит» — он в руке (живой
+    # план 12: кружка с кофе была точкой внутри Миры).
+    holders = [a["id"] for a in actors if a.get("arms") == "holding" and by_id.get(a["id"], {}).get("stand_in",
+                                                                                                     "human") == "human"]
+    taken = {str(p.get("holder")) for p in moment.get("props") or [] if p.get("holder")}
+    fixed = []
+    for p in moment.get("props") or []:
+        free = [h for h in holders if h not in taken]
+        if not p.get("holder") and not p.get("on") and free:
+            p = {**p, "holder": free[0]}
+            p.pop("pos", None)
+            taken.add(free[0])
+        fixed.append(p)
+    for k, p in enumerate(fixed):
         nodes += _prop_nodes(p, placed, obj_by, k)
         props_placed.append(prop_place(p, placed, obj_by, k))
     # Вещи действия: на что ставят/кладут реквизит (в начале или в конце плана), на чём сидят/лежат,
