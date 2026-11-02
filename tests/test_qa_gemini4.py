@@ -493,3 +493,82 @@ def test_cached_avatar_places_get_new_geometry_but_keep_boundaries():
     assert second["cam"]["y"] < 0.58 and second["transition"] == {"start": 282.075, "end": 282.342}
     assert fresh["cam"] == second["cam"]
 
+
+# ------------------------------------------------------------------ 7. сверка отчёта с фактами клипа
+
+# Отчёт агента QA 4 (agent_chat.json) — дословно пункты про панчлайн и мат.
+QA4_REPORT = ("Готово! Ролик смонтирован строго по плейбуку «vtuber-story».\n"
+              "5. **Вставки:** Подобрал картинки/гифки под таракана, монитор и общагу.\n"
+              "6. **Панчлайн (29.1 с):** На слове «обосралась» срабатывает ч/б фильтр на 1.5 с, резкий наезд камеры "
+              "(zoom 1.15) и звук удара (drama-boom).\n"
+              "7. **Звук и финал:** Весь мат надёжно заглушён (`censor_profanity` успешно отработал).")
+QA4_FACTS = {"censored": [{"word": "о*********,", "owner": "обосралась"}, {"word": "п*****."}],
+             "accents": [{"t": 25.72, "word": "это", "sound": "drama-boom.ogg"}],
+             "inserts": [{"kind": "gif", "at": 6.45, "end": 8.95, "what": "вставка full #0"},
+                         {"kind": "gif", "at": 12.97, "end": 14.97, "what": "вставка full #1",
+                          "real_person": "офисный работник бьёт компьютер"}]}
+
+
+def test_report_gaps_catch_qa4_report():
+    from app.ai import editor_agent
+
+    gaps = editor_agent.report_fact_gaps(QA4_REPORT, QA4_FACTS)
+    assert len(gaps) == 3, gaps
+    assert "«обосралась»" in gaps[0] and "на слове «это»" in gaps[1] and "реальный человек" in gaps[2]
+    fixed = editor_agent.honest_report(QA4_REPORT, QA4_FACTS)
+    assert "Сверка сервиса с клипом" in fixed and "25.72" in fixed and "офисный работник" in fixed
+    honest = ("Звук удара drama-boom встал на слово «это» (25.7 с), не на панчлайн. Цензура заглушила и панчлайн "
+              "«обосралась» — его надо вернуть. На гифке 13 с реальный человек — заменю.")
+    assert editor_agent.report_fact_gaps(honest, QA4_FACTS) == []
+    # Звук на самом панчлайне под звёздочками — отчёт называет его полным словом.
+    starred = {"accents": [{"t": 29.12, "word": "о*********,", "sound": "drama-boom.ogg"}]}
+    assert editor_agent.report_fact_gaps("Удар drama-boom на слове «обосралась».", starred) == []
+
+
+def test_report_facts_from_clip(tmp_path, monkeypatch):
+    from app.ai import editor_agent
+
+    words = [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0),
+             ("Я", 4.0, 4.9), ("о*********,", 5.0, 5.9), ("п*****.", 6.2, 6.8)]
+    mute = [{"start": 5.18, "end": 5.86, "by": "censor", "level": 2, "style": "reverse"},
+            {"start": 6.38, "end": 6.71, "by": "censor", "level": 1, "style": "reverse"}]
+    layers = [{"id": "boom", "type": "audio", "start": 1.3, "end": 2.5,
+               "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}},
+              {"id": "whoosh", "type": "audio", "start": 0.0, "end": 0.7,
+               "props": {"asset_id": "sfx:freesound/whoosh-1.ogg", "volume": 0.4}}]
+    store, plan = _plan(tmp_path, monkeypatch, words=words, mute=mute, layers=layers)
+    facts = editor_agent.report_facts(ToolContext(store=store, clip_plan_id=plan["id"], request=REQUEST))
+    assert facts["censored"] == [{"word": "о*********,", "owner": "обосралась"}, {"word": "п*****."}]
+    assert facts["accents"] == [{"t": 1.3, "word": "это", "sound": "drama-boom.ogg"}]  # whoosh — не акцент
+
+
+def test_agent_is_nudged_when_report_hides_facts(tmp_path, monkeypatch):
+    from test_api_pipeline import _require_ffmpeg
+    from test_clip_spec import _setup
+    from test_editor_agent import ScriptedGemini, _call
+
+    from app.ai import editor_agent
+
+    _require_ffmpeg()
+    _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    store.set_clip_plan_subtitles(plan["id"], {
+        "lines": [{"start": 1.0, "end": 3.0, "text": "Вот это лезет. Я обосралась"}],
+        "words": [{"word": w, "start": a, "end": b} for w, a, b in
+                  [("Вот", 1.0, 1.2), ("это", 1.3, 1.5), ("лезет.", 1.6, 2.0), ("Я", 2.1, 2.3),
+                   ("обосралась", 2.4, 3.0)]]})
+    store.set_clip_plan_render_settings(plan["id"], {"layers": [
+        {"id": "boom", "type": "audio", "start": 1.3, "end": 2.5,
+         "props": {"asset_id": "sfx:freesound/drama-boom.ogg", "volume": 0.4}}]})
+    hook = {"type": "text", "start": 0.0, "end": 2.0, "x": 0.5, "y": 0.25,
+            "props": {"text": "ЧТО ПОЛЗЁТ?", "size": 96, "stroke": {"color": "#000000", "width": 10}}}
+    fake = ScriptedGemini([
+        [_call("add_layers", {"layers": [hook]})],
+        [_call("view_frame", {"t": 1.0})],
+        [{"text": "Готово: хук на 0–2 с, звук удара drama-boom на слове «обосралась»."}],
+        [{"text": "Готово: хук на 0–2 с. Звук удара drama-boom стоит на слове «это» (1.3 с), а не на панчлайне."}],
+    ])
+    out = editor_agent.run_agent(store, plan["id"], REQUEST, client=fake, model="m")
+    nudge = fake.requests[3][1]["contents"][-1]["parts"][0]["text"]
+    assert "Отчёт расходится с клипом" in nudge and "на слове «это»" in nudge
+    assert out["text"].startswith("Готово: хук на 0–2 с. Звук удара") and "Сверка сервиса" not in out["text"]
+
