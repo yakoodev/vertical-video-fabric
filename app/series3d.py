@@ -771,7 +771,8 @@ def _blocks(spot: list[float], cam: list[float], focus: list[float], clip: str |
     return d < 0.32 and 0.0 < k < 0.97 and y < head_of(clip)[0] + head_r() + 0.05
 
 
-def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: dict, side: int, clip: str | None) -> dict | None:
+def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: dict, side: int, clip: str | None,
+                via: list[float] | None = None) -> dict | None:
     """Ракурс кадра → {position, target, fov, end (позиция в конце кадра), free}. None — не встаёт.
     Кандидаты перебираются, пока ракурс не пройдёт ``_check`` (камера не в стене, герой виден и не мелкий,
     деталь не закрыта героем)."""
@@ -848,7 +849,7 @@ def _camera_for(kind: str, spot: list[float], focus: list[float] | None, loc: di
                 cands.append({"position": pos, "target": tgt, "fov": 56.0, "end": end, "end_target": tgt, "free": False})
     for c in cands:
         c.setdefault("thing", focus)
-        if not _check(kind, c, spot, loc, clip):
+        if not _check(kind, c, spot, loc, clip, via):
             return c
     return None
 
@@ -861,15 +862,25 @@ def _behind_its_wall(cam: list[float], thing: list[float], loc: dict) -> bool:
             or (cam[0] > x1 and thing[0] > x1 - near) or (cam[0] < x0 and thing[0] < x0 + near))
 
 
-def _check(kind: str, cam: dict, spot: list[float], loc: dict, clip: str | None = None) -> list[str]:
-    """Проблемы ракурса: камера в стене/в герое, голова вне кадра, герой мелкий, деталь закрыта героем."""
+def _check(kind: str, cam: dict, spot: list[float], loc: dict, clip: str | None = None,
+           via: list[float] | None = None) -> list[str]:
+    """Проблемы ракурса: камера в стене/в герое (и на его пути с прошлого места ``via``), голова вне кадра, герой
+    мелкий, деталь закрыта героем."""
     problems = []
     for p in (cam["position"], cam.get("end") or cam["position"]):
         if not camera_ok(p, loc, cam["free"]):
             problems.append("камера в стене")
             break
-    if not cam["free"] and math.hypot(cam["position"][0] - spot[0], cam["position"][2] - spot[1]) < 0.5:
+    # Крупный (сгенерированный) герой шире: и запас больше.
+    body = 0.5 * min(1.5, max(1.0, head_r() / HEAD_R))
+    if not cam["free"] and math.hypot(cam["position"][0] - spot[0], cam["position"][2] - spot[1]) < body:
         problems.append("камера в герое")
+    elif not cam["free"] and via is not None:
+        for p in (cam["position"], cam.get("end") or cam["position"]):
+            d, _k = _seg_dist2d(p, [via[0], 0.0, via[1]], [spot[0], 0.0, spot[1]])
+            if d < body * 0.8 and p[1] < head_of(clip)[0] + head_r() + 0.1:
+                problems.append("камера на пути героя")
+                break
     if cam.get("focus") is not None and _blocks(spot, cam["position"], cam["focus"], clip):
         problems.append("герой закрывает деталь")
     if not cam["free"] and cam.get("thing") is not None and _behind_its_wall(cam["position"], cam["thing"], loc):
@@ -1062,6 +1073,7 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
                           "rotate": {"spine_03": [-18, 0, 0], "neck_01": [-24, 0, 0], "Head": [-12, 0, 0]}})
         if phone:
             phone_windows.append([a0, t1])
+        came_from = prev_spot
         prev_spot = spot
 
         focus = loc["targets"][focus_name][0] if focus_name in loc["targets"] else None
@@ -1069,7 +1081,7 @@ def _direct(script: dict, words: list[dict], *, total: float | None, look: dict,
         order = _order(kind, [s["camera"] for s in shot_out])
         wanted = order[0]
         for k in order:
-            cam = _camera_for(k, spot, focus, loc, side, clip)
+            cam = _camera_for(k, spot, focus, loc, side, clip, via=came_from)
             if cam is not None:
                 kind = k
                 break
