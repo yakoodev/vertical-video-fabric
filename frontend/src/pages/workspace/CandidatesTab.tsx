@@ -85,6 +85,7 @@ import {
   drawContainFrame,
   drawFitFrame,
   drawLayoutFrame,
+  avatarLayoutAt,
   fitWindow,
   gameplayAspect,
   layoutForFormat,
@@ -770,11 +771,11 @@ function CropFrame({
     // основа — как в рендере (render._preset_with_output).
     const out = frameSize(format);
     const landscape = isLandscape(format);
-    const lay = layoutForFormat(layout, out, srcW, srcH);
+    const layAll = layoutForFormat(layout, out, srcW, srcH);
     // Вертикальный исходник в 16:9 — целиком по высоте на размытой подложке («fit»).
     const contain = sourceStrategy(format, srcW, srcH, crop) === "fit";
     // Окно геймплея: пропорции кадра или шире, если сверху стоит вебка (split).
-    const targetAR = gameplayAspect(lay, out.w, out.h, out);
+    const targetAR = gameplayAspect(layAll, out.w, out.h, out);
     const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
     const effAR = (srcW * c.w) / (srcH * c.h);
     const baseFw = contain ? 1 : effAR >= targetAR ? targetAR / effAR : 1;
@@ -792,6 +793,8 @@ function CropFrame({
       const el = ref.current;
       if (el && (v || draggingRef.current)) {
         const cur = v ? v.currentTime : 0;
+        // avatar_full с рамками по отрезкам (layout.cams, секунды исходника) — рамка под курсором, как в рендере.
+        const lay = avatarLayoutAt(layAll, cur);
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
@@ -4299,6 +4302,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   layout={layout}
                   onChange={setLayout}
                   frameAt={videoRef.current?.currentTime ?? 0}
+                  videoRef={videoRef}
+                  segments={activePlan?.segments ?? []}
+                  onSeekSource={(src) => {
+                    const v = videoRef.current;
+                    if (!v) return;
+                    v.pause();
+                    playbackRef.current = null;
+                    v.currentTime = src;
+                  }}
                   chromaKey={source.chroma_key}
                   backdrop={backdrop}
                   onBackdrop={setBackdrop}

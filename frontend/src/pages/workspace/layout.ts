@@ -61,6 +61,19 @@ export interface StreamLayout {
   avatar_y?: number;
   /** avatar_full: фон — размытый тот же аватар (по умолчанию), false — `bg`. */
   bg_blur?: boolean;
+  /**
+   * avatar_full: рамки аватара по отрезкам ИСХОДНИКА (секунды исходника, не клипа — как
+   * app/stream_layout.normalize_avatar_cams). Вне отрезков — `cam`. Нет поля — одна `cam` на клип.
+   */
+  cams?: AvatarCam[];
+}
+
+/** Рамка аватара на отрезке исходника `from..to` (с); `video_scale` — своя крупность, иначе общая. */
+export interface AvatarCam {
+  from: number;
+  to: number;
+  cam: LayoutRect;
+  video_scale?: number;
 }
 
 /** Прямоугольник в пикселях исходника (videoWidth × videoHeight). */
@@ -108,12 +121,66 @@ export function normalizeCam(raw: Partial<LayoutRect> | null | undefined): Layou
   };
 }
 
+export const MAX_AVATAR_CAMS = 8;
+
+/**
+ * Как app/stream_layout.normalize_avatar_cams: по порядку `from`, без наложений (наложение
+ * обрезается по началу следующего), отрезки короче 0.05 с выкинуты, не больше 8.
+ */
+export function normalizeAvatarCams(raw: unknown): AvatarCam[] {
+  const out: AvatarCam[] = [];
+  for (const item of Array.isArray(raw) ? raw : []) {
+    if (!item || typeof item !== "object") continue;
+    const it = item as Record<string, unknown>;
+    const a = Number(it.from);
+    const b = Number(it.to);
+    if (it.from == null || it.to == null || !Number.isFinite(a) || !Number.isFinite(b) || b - a < 0.05) continue;
+    const box = (it.cam && typeof it.cam === "object" ? it.cam : it) as Partial<LayoutRect>;
+    if (box.w == null || box.h == null) continue;
+    const entry: AvatarCam = { from: Math.round(Math.max(0, a) * 1000) / 1000, to: Math.round(b * 1000) / 1000, cam: normalizeCam(box) };
+    if (it.video_scale != null) entry.video_scale = r4(num(it.video_scale, 1, 1, 4));
+    out.push(entry);
+  }
+  out.sort((x, y) => x.from - y.from);
+  const clean: AvatarCam[] = [];
+  for (const entry of out) {
+    const last = clean[clean.length - 1];
+    if (last && entry.from < last.to) {
+      last.to = entry.from;
+      if (last.to - last.from < 0.05) clean.pop();
+    }
+    clean.push(entry);
+  }
+  return clean.slice(0, MAX_AVATAR_CAMS);
+}
+
+/**
+ * avatar_full с `cams`: раскладка с рамкой, что стоит на секунде ИСХОДНИКА `srcT` (как рендер —
+ * render._preset_for_segment + stream_layout.avatar_cam_spans: отрезок [from, to), вне отрезков —
+ * `cam` раскладки; крупность — своя у рамки, иначе общая `video_scale`). Без `cams` — как есть.
+ */
+export function avatarLayoutAt<T extends StreamLayout | null | undefined>(layout: T, srcT: number): T {
+  if (!layout || layout.mode !== "avatar_full" || !layout.cams?.length) return layout;
+  const i = avatarCamIndex(layout.cams, srcT);
+  if (i < 0) return layout;
+  const e = layout.cams[i];
+  return { ...layout, cam: e.cam, video_scale: e.video_scale ?? layout.video_scale };
+}
+
+/** Индекс рамки `cams`, что стоит на секунде исходника `srcT` (отрезок [from, to)), −1 — вне отрезков. */
+export function avatarCamIndex(cams: AvatarCam[] | undefined, srcT: number): number {
+  return (cams ?? []).findIndex((e) => srcT >= e.from && srcT < e.to);
+}
+
 /** Полная форма раскладки из чего угодно (как normalize_layout на сервере). */
 export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): StreamLayout {
   const s = raw ?? {};
   const pip = s.pip ?? DEFAULT_LAYOUT.pip;
   const border = s.border ?? DEFAULT_LAYOUT.border;
   const mode: LayoutMode = MODES.includes(s.mode as LayoutMode) ? (s.mode as LayoutMode) : "single";
+  // Рамки по отрезкам — только у avatar_full и только непустые (как на сервере): иначе
+  // автосохранение редактора стирало бы `cams`, поставленные агентом (set_layout).
+  const cams = mode === "avatar_full" ? normalizeAvatarCams(s.cams) : [];
   return {
     mode,
     cam: normalizeCam(s.cam),
@@ -133,6 +200,7 @@ export function normalizeLayout(raw: Partial<StreamLayout> | null | undefined): 
     video_scale: r4(num(s.video_scale, 1, 1, 4)),
     bg: normalizeBackground(s.bg),
     ...(mode === "avatar_full" ? { avatar_y: r4(num(s.avatar_y, 0.5, 0.2, 0.8)), bg_blur: s.bg_blur !== false } : {}),
+    ...(cams.length ? { cams } : {}),
   };
 }
 

@@ -10,11 +10,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { qk } from "@/api/keys";
 import { facecamApi, sourcesApi } from "@/api/sources";
-import type { SourceDetail } from "@/api/types";
+import type { AiSegment, SourceDetail } from "@/api/types";
+import { sourceToClip } from "./ClipTimeline";
 import type { Backdrop, ChromaKey, Despill } from "./chromaKey";
 import { BackgroundPicker } from "./BackgroundPicker";
 import { ModuleOnly } from "@/components/RequireModule";
-import { DEFAULT_CAM, normalizeCam, normalizeLayout, type LayoutRect, type StreamLayout } from "./layout";
+import {
+  DEFAULT_CAM,
+  avatarCamIndex,
+  normalizeCam,
+  normalizeLayout,
+  type AvatarCam,
+  type LayoutRect,
+  type StreamLayout,
+} from "./layout";
 
 type Props = {
   sourceId: number;
@@ -30,7 +39,56 @@ type Props = {
   accent?: string | null;
   /** Пустой холст: видео нет, весь кадр — фон; вебка и хромакей не нужны (выключенный ключ — зелёный кадр). */
   canvas?: boolean;
+  /** Плеер редактора: панель следит за курсором сама (какое место аватара сейчас в кадре). */
+  videoRef?: React.RefObject<HTMLVideoElement>;
+  /** Куски клипа (секунды исходника): места аватара показываются во времени клипа. */
+  segments?: AiSegment[];
+  /** Поставить курсор плеера на секунду исходника (переход к месту аватара). */
+  onSeekSource?: (sourceSec: number) => void;
 };
+
+/** м:сс — подписи времени мест аватара. */
+const mmss = (sec: number) => {
+  const t = Math.max(0, Math.round(sec));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Где место аватара `from..to` (секунды исходника) попадает в клип: первая секунда исходника
+ * внутри кусков (по порядку клипа), её время в клипе и время конца места в клипе (по последнему
+ * куску, где оно есть); null — место целиком вне кусков.
+ */
+function placeInClip(place: AvatarCam, segments: AiSegment[]): { src: number; clip: number | null; clipEnd: number | null } | null {
+  let first: number | null = null;
+  let last: number | null = null;
+  for (const s of segments) {
+    const a = Math.max(place.from, s.start_sec);
+    const b = Math.min(place.to, s.end_sec);
+    if (b <= a) continue;
+    if (first == null) first = a;
+    last = b;
+  }
+  if (first == null || last == null) return null;
+  return { src: first, clip: sourceToClip(segments, first), clipEnd: sourceToClip(segments, last) };
+}
+
+/** Секунда исходника под курсором плеера: обновляется на перемотке и при игре (timeupdate). */
+function usePlayhead(videoRef: React.RefObject<HTMLVideoElement> | undefined, fallback: number): number {
+  const [t, setT] = useState<number | null>(null);
+  const video = videoRef?.current ?? null;
+  useEffect(() => {
+    if (!video) return;
+    const update = () => setT(video.currentTime);
+    update();
+    video.addEventListener("timeupdate", update);
+    video.addEventListener("seeked", update);
+    return () => {
+      video.removeEventListener("timeupdate", update);
+      video.removeEventListener("seeked", update);
+    };
+  }, [video]);
+  return video && t != null ? t : fallback;
+}
 
 type Choice = { id: string; label: string; hint: string; mode: StreamLayout["mode"]; pos?: StreamLayout["cam_pos"] };
 
@@ -344,9 +402,87 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   );
 }
 
-export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKey, backdrop, onBackdrop, accent, canvas }: Props) {
+/**
+ * avatar_full: места аватара по ходу клипа (layout.cams — отрезки исходника → рамка). Клик —
+ * курсор к началу места (рамку места правят на кадре ниже), ✕ — убрать место (там будет общая рамка).
+ */
+function AvatarPlaces({
+  places,
+  active,
+  segments,
+  onSeek,
+  onChange,
+}: {
+  places: AvatarCam[];
+  active: number;
+  segments: AiSegment[];
+  onSeek?: (sourceSec: number) => void;
+  onChange: (cams: AvatarCam[]) => void;
+}) {
+  return (
+    <div className="lay-places">
+      <div className="li-cap">Аватар переезжает — рамка по местам ({places.length})</div>
+      {places.map((p, i) => {
+        const where = placeInClip(p, segments);
+        const label = where
+          ? `${where.clip != null ? mmss(where.clip) : "?"}–${where.clipEnd != null ? mmss(where.clipEnd) : "?"} клипа`
+          : "вне клипа";
+        return (
+          <div key={`${p.from}-${i}`} className={`lay-place${i === active ? " on" : ""}`}>
+            <button
+              type="button"
+              className="lay-place-go"
+              disabled={!where || !onSeek}
+              title={where ? "Курсор на начало места — ниже правится его рамка" : "Этого отрезка исходника нет в кусках клипа"}
+              onClick={() => where && onSeek?.(where.src)}
+            >
+              <span className="lay-place-n">{i + 1}</span>
+              <span className="lay-grow">{label}</span>
+              <span className="muted">
+                исх. {mmss(p.from)}–{mmss(p.to)}
+                {p.video_scale ? ` · ${Math.round(p.video_scale * 100)}%` : ""}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="btn ghost sm"
+              title="Убрать место: на этом отрезке будет общая рамка"
+              aria-label={`Убрать место ${i + 1}`}
+              onClick={() => onChange(places.filter((_, j) => j !== i))}
+            >
+              ✕
+            </button>
+          </div>
+        );
+      })}
+      <button type="button" className="btn ghost sm" onClick={() => onChange([])} title="Убрать места: одна общая рамка на весь клип">
+        Одна рамка на весь клип
+      </button>
+    </div>
+  );
+}
+
+export function LayoutPanel({
+  sourceId,
+  layout: raw,
+  onChange,
+  frameAt: frameAtProp,
+  chromaKey,
+  backdrop,
+  onBackdrop,
+  accent,
+  canvas,
+  videoRef,
+  segments = [],
+  onSeekSource,
+}: Props) {
   const keyed = Boolean(chromaKey);
   const layout = normalizeLayout(raw);
+  const frameAt = usePlayhead(videoRef, frameAtProp);
+  // avatar_full с рамками по отрезкам: правится рамка места под курсором, вне мест — общая `cam`.
+  const places = layout.mode === "avatar_full" ? layout.cams ?? [] : [];
+  const placeIdx = avatarCamIndex(places, frameAt);
+  const editedCam = placeIdx >= 0 ? places[placeIdx].cam : layout.cam;
   const [savedCam, setSavedCam] = useState<LayoutRect | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: "ok" | "warn"; text: string } | null>(null);
@@ -397,7 +533,7 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
 
   const remember = async () => {
     try {
-      const r = await facecamApi.save(sourceId, layout.cam);
+      const r = await facecamApi.save(sourceId, editedCam);
       setSavedCam(r.cam ? normalizeCam(r.cam) : null);
       setNote({ kind: "ok", text: "Запомнил: новые клипы этого источника возьмут эту вебку" });
     } catch (e) {
@@ -483,13 +619,36 @@ export function LayoutPanel({ sourceId, layout: raw, onChange, frameAt, chromaKe
         </>
       ) : layout.mode !== "single" ? (
         <>
-          <div className="li-cap">Где вебка в исходнике</div>
-          <CamEditor src={frameSrc} cam={layout.cam} onCommit={(cam) => patch({ cam })} />
+          {places.length ? (
+            <AvatarPlaces
+              places={places}
+              active={placeIdx}
+              segments={segments}
+              onSeek={onSeekSource}
+              onChange={(cams) => patch({ cams })}
+            />
+          ) : null}
+          <div className="li-cap">
+            {places.length
+              ? placeIdx >= 0
+                ? `Рамка места ${placeIdx + 1} (курсор на ${mmss(frameAt)} исходника)`
+                : "Рамка вне мест — общая для остального клипа"
+              : layout.mode === "avatar_full"
+                ? "Где аватар в исходнике"
+                : "Где вебка в исходнике"}
+          </div>
+          <CamEditor
+            src={frameSrc}
+            cam={editedCam}
+            onCommit={(cam) =>
+              placeIdx >= 0 ? patch({ cams: places.map((p, i) => (i === placeIdx ? { ...p, cam } : p)) }) : patch({ cam })
+            }
+          />
           <div className="lay-row">
             <button
               type="button"
               className="btn ghost sm"
-              disabled={!!savedCam && sameCam(savedCam, layout.cam)}
+              disabled={!!savedCam && sameCam(savedCam, editedCam)}
               title="Новые клипы этого источника сразу возьмут эту рамку"
               onClick={remember}
             >
