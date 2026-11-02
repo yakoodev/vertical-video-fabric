@@ -11,6 +11,13 @@ COPY frontend/src/motion /motion/frontend/src/motion
 COPY node/motion-render.ts /motion/node/motion-render.ts
 RUN npx --yes esbuild@0.28.2 /motion/node/motion-render.ts --bundle --platform=node --format=esm \
     --target=node20 --external:@napi-rs/canvas --outfile=/motion/motion-render.mjs --log-level=warning
+# 3D scenes (node/scene3d): the three.js engine is bundled into one browser script that the
+# headless Chromium renderer loads (node/scene3d/render.mjs); three is a build-time dependency only.
+WORKDIR /scene3d
+RUN npm init -y >/dev/null && npm install --no-audit --no-fund three@0.185.0 esbuild@0.28.2
+COPY node/scene3d/src /scene3d/src
+RUN npx esbuild /scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify     --outfile=/scene3d/dist/scene3d.js --log-level=warning
+WORKDIR /build
 
 # --- Stage 2: runtime ---
 FROM node:24-bookworm-slim
@@ -46,11 +53,13 @@ RUN apt-get update \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Content packs for motion layers (Twemoji, stickers, SFX, meme templates):
+# Content packs for motion layers (Twemoji, stickers, SFX, meme templates) and CC0 3D models for
+# node/scene3d (Kenney furniture, Quaternius characters + animations, ~55 MB):
 # fetched at build time with pinned versions + sha256 (stdlib-only script, data
 # only — nothing downloaded is executed). Placed early and copied alone so the
 # layer stays cached until the script itself changes. PACKS_SKIP=imgflip skips
-# the meme templates if i.imgflip.com is unreachable from the build network.
+# the meme templates if i.imgflip.com is unreachable from the build network;
+# PACKS_SKIP=kenney-furniture,quaternius-characters,quaternius-animations skips the 3D models.
 ARG PACKS_SKIP=""
 COPY tools/fetch_packs.py /app/tools/fetch_packs.py
 RUN python3 /app/tools/fetch_packs.py /app/vendor/packs --skip "${PACKS_SKIP}"
@@ -98,6 +107,7 @@ COPY tests /app/tests
 COPY pytest.ini /app/pytest.ini
 COPY --from=frontend-build /build/dist /app/frontend/dist
 COPY --from=frontend-build /motion/motion-render.mjs /app/node/motion-render.mjs
+COPY --from=frontend-build /scene3d/dist/scene3d.js /app/node/scene3d/dist/scene3d.js
 
 RUN mkdir -p /data && chown -R node:node /data /app
 

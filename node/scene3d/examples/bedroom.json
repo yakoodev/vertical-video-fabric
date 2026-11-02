@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration": 10,
+  "environment": {
+    "background": "#141826",
+    "fog": {"color": "#1c1a24", "near": 5, "far": 16},
+    "exposure": 1.05,
+    "envIntensity": 0.12
+  },
+  "room": {
+    "width": 4.0,
+    "depth": 4.4,
+    "height": 2.7,
+    "floor": {"color": "#a07650", "plank": 0.15},
+    "walls": {"color": "#e6d9c6", "accent": {"wall": "back", "color": "#b9b3cf", "stripes": 0.12}},
+    "baseboard": {"color": "#f4f0e8", "height": 0.08},
+    "openings": [
+      {"wall": "back", "type": "window", "x": -0.85, "y": 0.92, "width": 1.15, "height": 1.3, "curtains": {"color": "#a497c6", "open": 0.65}},
+      {"wall": "left", "type": "door", "x": 1.1, "width": 0.9, "height": 2.08, "door": {"color": "#d8ccb6", "angle": 95, "hinge": "left"}}
+    ],
+    "hallway": {"color": "#cbbca4", "light": "#ffcf9a"}
+  },
+  "lights": [
+    {"type": "hemisphere", "color": "#7d8bb3", "ground": "#4a3628", "intensity": 0.45},
+    {
+      "type": "directional",
+      "id": "moon",
+      "color": "#9db2ee",
+      "intensity": 0.9,
+      "position": [-2.6, 3.6, -5.5],
+      "target": [-0.6, 0, -0.4],
+      "castShadow": true,
+      "shadow": {"size": 2048, "extent": 3.2, "bias": -0.0004, "normalBias": 0.03}
+    },
+    {
+      "type": "point",
+      "id": "fairy",
+      "color": "#ffbf73",
+      "intensity": 0.6,
+      "position": [1.05, 2.0, -1.9],
+      "decay": 2
+    }
+  ],
+  "objects": [
+    {
+      "id": "rug",
+      "model": "kenney-furniture/rugRounded.glb",
+      "position": [0.15, 0, -0.35],
+      "rotation": [0, 0, 0],
+      "scale": [1.6, 1, 1.6],
+      "materials": {"carpet": "#d9cbb4", "carpetDarker": "#b9a6c9"}
+    },
+    {
+      "id": "bed",
+      "model": "kenney-furniture/bedDouble.glb",
+      "position": [1.05, 0, -1.16],
+      "rotation": [0, 0, 0],
+      "scale": [1.65, 1.45, 1.18],
+      "materials": {"carpet": "#8e83b5", "carpetWhite": "#efe9df", "wood": "#9b7351"}
+    },
+    {
+      "id": "nightstand",
+      "model": "kenney-furniture/cabinetBedDrawerTable.glb",
+      "position": [-0.05, 0, -1.96],
+      "rotation": [0, 0, 0],
+      "scale": 2.1,
+      "materials": {"wood": "#a57d58"}
+    },
+    {
+      "id": "lamp",
+      "model": "kenney-furniture/lampRoundTable.glb",
+      "parent": "nightstand",
+      "position": [0.13, 0.553, -0.09],
+      "scale": 1.5,
+      "materials": {"lamp": {"color": "#fff1d6", "emissive": "#ffc477", "emissiveIntensity": 1.4}},
+      "light": {"type": "point", "id": "lamp", "color": "#ffae5e", "intensity": 2.3, "position": [0, 0.3, 0], "castShadow": true, "flicker": [{"t": 6.9, "amount": 0.55, "duration": 0.6}], "shadow": {"bias": -0.003, "normalBias": 0.03, "radius": 5}}
+    },
+    {
+      "id": "mug",
+      "primitive": "mug",
+      "params": {"color": "#f5f1ea"},
+      "parent": "nightstand",
+      "position": [0.03, 0.553, 0.1],
+      "rotation": [0, -30, 0],
+      "attach": [{"to": "girl:hand_r", "start": 0, "end": 3.92, "fadeOut": 0.3, "offset": [0.0, -0.05, 0.05]}],
+      "shakes": [{"t": 6.9, "amp": 0.004, "rot": 7, "freq": 11, "decay": 4, "duration": 1.4}]
+    },
+    {"id": "plant", "model": "kenney-furniture/pottedPlant.glb", "position": [-1.75, 0, -1.75], "scale": 1.7},
+    {
+      "id": "desk",
+      "model": "kenney-furniture/desk.glb",
+      "position": [1.64, 0, 0.62],
+      "rotation": [0, -90, 0],
+      "scale": 1.8,
+      "materials": {"wood": "#c7a27a"}
+    },
+    {
+      "id": "chair",
+      "model": "kenney-furniture/chairDesk.glb",
+      "position": [1.1, 0, 0.62],
+      "rotation": [0, 90, 0],
+      "scale": 1.55
+    },
+    {
+      "id": "laptop",
+      "model": "kenney-furniture/laptop.glb",
+      "parent": "desk",
+      "position": [0, 0.69, 0.05],
+      "rotation": [0, 0, 0],
+      "scale": 1.6
+    },
+    {
+      "id": "desklamp",
+      "model": "kenney-furniture/lampSquareTable.glb",
+      "parent": "desk",
+      "position": [0.45, 0.69, -0.12],
+      "scale": 1.4,
+      "materials": {"lamp": {"color": "#fff1d6", "emissive": "#ffc477", "emissiveIntensity": 1.0}},
+      "light": {"type": "point", "id": "desklamp", "color": "#ffb36b", "intensity": 0.9, "position": [0, 0.32, 0]}
+    },
+    {
+      "id": "shelf",
+      "model": "kenney-furniture/bookcaseOpen.glb",
+      "position": [1.78, 0, 1.75],
+      "rotation": [0, -90, 0],
+      "scale": 2.0,
+      "materials": {"wood": "#a57d58"}
+    },
+    {
+      "id": "books1",
+      "model": "kenney-furniture/books.glb",
+      "parent": "shelf",
+      "position": [0.1, 1.24, 0.0],
+      "scale": 1.8
+    },
+    {
+      "id": "books2",
+      "model": "kenney-furniture/books.glb",
+      "parent": "shelf",
+      "position": [-0.15, 0.42, 0.0],
+      "rotation": [0, 180, 0],
+      "scale": 1.8
+    },
+    {
+      "id": "bear",
+      "model": "kenney-furniture/bear.glb",
+      "parent": "shelf",
+      "position": [0.12, 0.84, 0.02],
+      "scale": 0.9
+    },
+    {
+      "id": "poster",
+      "primitive": "poster",
+      "params": {"width": 0.55, "height": 0.75, "seed": 5},
+      "position": [1.99, 1.3, 0.62],
+      "rotation": [0, -90, 0]
+    },
+    {
+      "id": "poster2",
+      "primitive": "poster",
+      "params": {"width": 0.42, "height": 0.56, "seed": 12, "colors": ["#efe4d2", "#c98f9f", "#8aa3b8", "#4b4466"], "frame": "#e9e2d6"},
+      "position": [-1.99, 1.3, -0.35],
+      "rotation": [0, 90, 0]
+    },
+    {
+      "id": "poster3",
+      "primitive": "poster",
+      "params": {"width": 0.3, "height": 0.4, "seed": 31, "colors": ["#f3ead8", "#d9a46c", "#6f8f7a"], "frame": "#2d2622"},
+      "position": [-1.99, 1.42, 0.28],
+      "rotation": [0, 90, 0]
+    },
+    {
+      "id": "basket",
+      "model": "kenney-furniture/cardboardBoxOpen.glb",
+      "position": [-1.75, 0, 0.25],
+      "rotation": [0, 20, 0],
+      "scale": 1.5,
+      "materials": {"wood": "#c9a77c"}
+    },
+    {
+      "id": "fairy_lights",
+      "primitive": "string_lights",
+      "params": {"points": [[0.3, 2.12, -2.17], [1.05, 2.05, -2.17], [1.8, 2.12, -2.17]], "count": 22, "sag": 0.1}
+    },
+    {
+      "id": "robot",
+      "primitive": "robot_disc",
+      "params": {"radius": 0.17},
+      "path": [{"t": 0, "p": [-0.05, 0.55]}, {"t": 5.0, "p": [-0.05, 0.55]}, {"t": 6.9, "p": [-0.05, -1.55], "ease": "inSine"}, {"t": 7.2, "p": [-0.08, -1.4], "ease": "outCubic"}, {"t": 10, "p": [-0.08, -1.4]}],
+      "facing": [{"t": 6.9, "yaw": 172, "dur": 0.12}, {"t": 7.35, "yaw": -12, "dur": 0.9, "ease": "outBack"}],
+      "state": [{"t": 0, "face": "happy"}, {"t": 6.9, "face": "dizzy"}, {"t": 8.4, "face": "surprised"}, {"t": 9.2, "face": "happy"}],
+      "shakes": [{"t": 6.9, "amp": 0.006, "rot": 4, "freq": 7, "decay": 4}]
+    }
+  ],
+  "characters": [
+    {
+      "id": "girl",
+      "model": "quaternius-characters/Superhero_Female_FullBody.gltf",
+      "skin": "light",
+      "skinTone": {"lighten": 0.3, "saturation": 0.75},
+      "height": 1.66,
+      "hair": {"model": "quaternius-characters/Hair_Long.gltf", "color": "#5a3b2a"},
+      "outfit": {"shirt": "#b9a5e6", "shorts": "#7d7f86", "socks": "#f1efea", "sleeve": 0.5},
+      "animations": ["quaternius-animations/UAL1_Standard.glb", "quaternius-animations/UAL2_Standard.glb"],
+      "path": [{"t": 0, "p": [-2.9, 1.05]}, {"t": 1.25, "p": [-1.65, 0.85]}, {"t": 2.55, "p": [-0.75, -0.5]}, {"t": 3.35, "p": [-0.3, -1.28]}, {"t": 4.75, "p": [-0.3, -1.28]}, {"t": 5.4, "p": [-0.68, -1.45]}],
+      "facing": [{"t": 3.15, "yaw": 180, "dur": 0.3}, {"t": 4.65, "auto": true, "dur": 0.35}, {"t": 5.3, "yaw": 180, "dur": 0.45}, {"t": 7.15, "yaw": 145, "dur": 0.6}],
+      "actions": [{"clip": "Walk_Loop", "start": 0, "end": 3.4, "fade": 0.3, "speed": 1.0}, {"clip": "Idle_Loop", "start": 3.3, "end": 3.5, "fade": 0.2}, {"clip": "PickUp_Table", "start": 3.4, "end": 4.42, "fade": 0.25, "speed": 0.8}, {"clip": "Idle_Loop", "start": 4.3, "end": 4.85, "fade": 0.25}, {"clip": "Walk_Loop", "start": 4.75, "end": 5.5, "fade": 0.25, "speed": 0.9, "offset": 0.3}, {"clip": "Idle_Loop", "start": 5.4, "end": 7.6, "fade": 0.3}, {"clip": "Idle_No_Loop", "start": 7.5, "fade": 0.4}],
+      "poses": [{"start": 0, "end": 3.6, "fade": 0.01, "fadeOut": 0.35, "aim": {"upperarm_r": [0.12, -1, 0.3], "lowerarm_r": [0.1, 0.05, 1]}}, {"start": 5.7, "end": 7.25, "fade": 0.55, "fadeOut": 0.3, "aim": {"upperarm_l": [-0.28, 1, 0.05], "lowerarm_l": [0.3, 1, 0.0], "upperarm_r": [0.28, 1, 0.05], "lowerarm_r": [-0.3, 1, 0.0]}, "rotate": {"spine_03": [-6, 0, 0]}}, {"start": 7.0, "end": 9.5, "fade": 0.35, "rotate": {"Head": [10, -20, 0]}}]
+    }
+  ],
+  "camera": {
+    "fov": 52,
+    "keys": [
+      {"t": 0, "position": [1.45, 1.55, 2.05], "target": [-1.6, 1.0, 0.5], "fov": 56},
+      {"t": 2.6, "position": [1.08, 1.5, 1.35], "target": [-0.95, 0.95, -0.15], "fov": 54, "ease": "linear"},
+      {"t": 2.6, "cut": true, "follow": "girl", "look": [-0.02, 0.62, -1.86], "fov": 52},
+      {"t": 4.3, "follow": "girl", "look": [-0.02, 0.6, -1.86], "fov": 52},
+      {"t": 5.4, "follow": "girl", "look": [-0.3, 0.8, -2.0], "framing": 0.25, "distance": 1.8, "fov": 55},
+      {"t": 6.2, "follow": "girl", "look": [-0.12, 0.5, -1.8], "framing": 0.22, "distance": 1.6, "fov": 56},
+      {"t": 10, "follow": "girl", "look": [-0.1, 0.45, -1.75], "framing": 0.22, "distance": 1.5, "fov": 55}
+    ],
+    "shake": [{"t": 6.9, "amp": 0.004, "duration": 0.6}]
+  }
+}

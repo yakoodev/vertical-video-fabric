@@ -14,3 +14,4 @@ logs
 .env
 
 vendor/packs
+node/scene3d/dist

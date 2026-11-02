@@ -178,7 +178,8 @@ def test_emoji_and_pack_search_give_layer_refs():
 
     from app import motion_assets
 
-    if not motion_assets.list_packs():
+    # Скачаны только 3D-паки (--only kenney-furniture,…) — эмодзи и звуков нет, проверять нечего.
+    if not any(p["id"] == "twemoji" for p in motion_assets.list_packs()):
         pytest.skip("паки не скачаны (tools/fetch_packs.py)")
     ctx = ToolContext(store=None)
     out, ok = run_tool(ctx, "search_emoji", {"q": "огонь", "limit": 5})
