@@ -19,13 +19,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import sys
 import time
 from pathlib import Path
 
 import bpy
-from mathutils import Euler, Matrix, Quaternion, Vector
+from mathutils import Euler, Matrix, Vector
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -730,6 +729,12 @@ def render_chunks(out_dir: Path, cache: Path):
         print(f"PROGRESS {state['done']} {total} shot={state['shot']} frame={scene.frame_current}", flush=True)
 
     bpy.app.handlers.render_write.append(wrote)
+    blur = sc.render.use_motion_blur
+    try:
+        # затвор «до кадра»: размытие берёт только прошлый кадр — последний кадр плана не тянется в следующий
+        sc.render.motion_blur_position = "END"
+    except (AttributeError, TypeError):
+        pass
     sc.render.use_overwrite = True
     sc.render.use_placeholder = False
     sc.render.use_file_extension = True
@@ -746,8 +751,17 @@ def render_chunks(out_dir: Path, cache: Path):
                 a = None
         state["shot"] = c["n"]
         for a, b in ranges:
-            sc.frame_start, sc.frame_end = a, b
             sc.render.filepath = str(d / "f_#####")
+            if a == c["f0"] and blur:
+                # первый кадр плана — без размытия движения: иначе склейка (камера/герой «прыгнули») смазывает кадр
+                sc.render.use_motion_blur = False
+                sc.frame_start = sc.frame_end = a
+                bpy.ops.render.render(animation=True)
+                sc.render.use_motion_blur = True
+                a += 1
+                if a > b:
+                    continue
+            sc.frame_start, sc.frame_end = a, b
             bpy.ops.render.render(animation=True)
     bpy.app.handlers.render_write.remove(wrote)
     return round(time.time() - t_r, 1), total
@@ -822,6 +836,10 @@ def main():
     stills = CFG.get("stills")
     if stills:
         t_r = time.time()
+        try:
+            sc.render.motion_blur_position = "END"
+        except (AttributeError, TypeError):
+            pass
         for f in stills:
             sc.frame_set(int(f))
             sc.render.filepath = str(out_dir / f"still_{int(f):04d}.png")

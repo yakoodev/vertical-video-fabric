@@ -1165,11 +1165,11 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         return None
     if kind == "ots":
         tgt = aim_point or (root[0] + fx * 1.2, root[1] + fy * 1.2, 0.85)
-        for sh, back in ((0.34 * side, 0.78), (-0.34 * side, 0.78), (0.28 * side, 0.62), (-0.28 * side, 0.55)):
-            # вправо от взгляда: (fy, −fx); sh>0 — над правым плечом
-            p = (face[0] - fx * back + fy * sh, face[1] - fy * back - fx * sh, face[2] + 0.24)
+        for sh, back in ((0.40 * side, 0.85), (-0.40 * side, 0.85), (0.34 * side, 0.66), (-0.34 * side, 0.6)):
+            # вправо от взгляда: (fy, −fx); sh>0 — над правым плечом; выше головы — капюшон не на полкадра
+            p = (face[0] - fx * back + fy * sh, face[1] - fy * back - fx * sh, face[2] + 0.36)
             if fresh(p):
-                return out("ots", p, tgt, 0.22, 21.0, fstop=3.2, focus="point", push=0.94)
+                return out("ots", p, tgt, 0.12, 20.0, fstop=3.2, focus="point", push=0.94)
         return None
     if kind == "overhead":
         x0, x1, y0, y1, _z0, z1 = CAM_BOUNDS
@@ -1193,7 +1193,7 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         pt = (face[0], face[1], face[2] - 0.22)
         return out("overhead", best, pt, 0.5, 17.0, fstop=4.0, focus="face", push=0.94)
     # крупно лицо: спереди под небольшим углом, чуть ниже глаз
-    p = around(0.86, (22, -22, 40, -40, 0, 60, -60), -0.03)
+    p = around(0.95, (22, -22, 40, -40, 0, 60, -60), -0.03)
     if p is None:
         return None
     return out("face", p, face, 1.0, 30.0, fstop=2.2, focus="face", push=0.9, offset=(0.0, 0.0, -0.06))
@@ -1510,6 +1510,7 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
             for line in proc.stdout:
                 log.write(line)
                 if line.startswith("PROGRESS "):
+                    log.flush()
                     parts = line.split()
                     try:
                         rendered = int(parts[1])

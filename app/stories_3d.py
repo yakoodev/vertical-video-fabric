@@ -444,14 +444,23 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
     eid = int(ep["id"])
     opts = ep.get("options") or {}
     payload = (job or {}).get("payload")
+    local = blender_local()
+    work = settings.tmp_dir / f"series3d-blender-{eid}"
+    saved = work / "job.json"
+    if payload is None and local and saved.is_file():
+        try:   # повтор локального рендера (упал/перезапуск) — та же режиссура, кадры из кэша
+            old = json.loads(saved.read_text("utf-8"))
+            payload = old if old.get("key") == key else None
+        except (OSError, ValueError):
+            payload = None
     if payload is None:
         payload = SB.build_job(ep["script"], words, total, gemini=True, envelope=SB.audio_envelope(audio),
                                lipsync_mode=str(opts.get("lipsync") or "speaking"),
                                quality=str(opts.get("quality") or "final"), look=look, seed=eid)
+        payload["key"] = key
         if payload.get("director_error"):
             notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")
-    if blender_local():
-        work = settings.tmp_dir / f"series3d-blender-{eid}"
+    if local:
         cache = settings.data_dir / "render3d_cache"
         out = work / "series.mp4"
         info = SB.render_local(payload, out, work=work, cache=cache)

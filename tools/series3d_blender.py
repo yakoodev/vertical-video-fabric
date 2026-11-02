@@ -8,7 +8,8 @@
 (``app.series3d_blender``: действие/эмоция/план на фразу — Gemini по схеме, иначе правила; события на словах;
 лип-синк) → сцена Blender (лифт один на всю серию) → рендер кусками по планам в кэш (``--cache``; упал —
 повторный запуск дорисует) → склейка → холст сервиса (субтитры 1–3 слова, HUD, название, «ЧАСТЬ N+1», звуки
-событий, тревожный фон) → mp4. ``--env`` — файл KEY=VALUE, берутся только GEMINI_*.
+событий, тревожный фон) → mp4. ``--env`` — файл KEY=VALUE, берутся только GEMINI_*. ``--data`` с недоделанной
+серией — продолжить её (та же озвучка и режиссура, готовые кадры из кэша).
 """
 
 from __future__ import annotations
@@ -111,16 +112,26 @@ def main(argv: list[str] | None = None) -> int:
     store.db.init()
     script = json.loads(Path(args.script).read_text("utf-8"))
     started = time.time()
-    provider = "polza" if settings.gemini_api_key else "none"   # ярлык провайдера: голос мира — Gemini TTS
-    pid = V.create_ai_project(store, "3D-сериал (Blender)", provider=provider)["project"]["id"]
-    voice = {"provider": "gemini", **({"voice": args.voice} if args.voice else {})}
-    world = S.save_world(store, pid, name="Блэкаут", format=S.FORMAT_DISASTER, voice=voice,
-                         narrator="спокойный напряжённый закадровый голос")
-    options = {"engine": S.ENGINE_3D, "renderer": S.RENDERER_BLENDER, "quality": args.quality, "lipsync": args.lipsync,
-               "format": "disaster", "title_card": True}
-    ep = X.create(store, world["id"], script.get("logline") or script.get("title") or "серия", None, script=script,
-                  options=options)
-    eid = int(ep["id"])
+    # Та же папка данных (--data) с недоделанной серией — продолжить её: озвучка и режиссура те же, кадры из кэша.
+    old = [e for e in S.list_episodes(store) if e["status"] not in ("done", "cancelled")]
+    if old:
+        ep = old[0]
+        eid = int(ep["id"])
+        pid = int(ep["project_id"])
+        if ep["status"] == "failed":
+            X.resume(store, eid)
+        print(f"продолжаю эпизод {eid} ({ep['status']})", flush=True)
+    else:
+        provider = "polza" if settings.gemini_api_key else "none"   # ярлык провайдера: голос мира — Gemini TTS
+        pid = V.create_ai_project(store, "3D-сериал (Blender)", provider=provider)["project"]["id"]
+        voice = {"provider": "gemini", **({"voice": args.voice} if args.voice else {})}
+        world = S.save_world(store, pid, name="Блэкаут", format=S.FORMAT_DISASTER, voice=voice,
+                             narrator="спокойный напряжённый закадровый голос")
+        options = {"engine": S.ENGINE_3D, "renderer": S.RENDERER_BLENDER, "quality": args.quality,
+                   "lipsync": args.lipsync, "format": "disaster", "title_card": True}
+        ep = X.create(store, world["id"], script.get("logline") or script.get("title") or "серия", None, script=script,
+                      options=options)
+        eid = int(ep["id"])
     status = ""
     for _ in range(40):
         ep = X.advance(store, eid)
