@@ -259,7 +259,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.sheet:
         rep = (timing.get("report") or {}).get("shots") or []
         if rep and timing.get("shots"):
-            summary["sheet"], summary["seen"] = phrase_sheet(out, timing["shots"], rep, Path(args.sheet))
+            raw = settings.tmp_dir / f"series3d-blender-{eid}" / "series.mp4"
+            summary["sheet"], summary["seen"], checks = phrase_sheet(out, timing["shots"], rep, Path(args.sheet), raw=raw)
+            summary["dark_shots"] = [c["n"] for c in checks if c["dark"]]
+            summary["no_hero_shots"] = [c["n"] for c in checks if not c["hero"] and not c["insert"]]
+            summary["ots_bad"] = [c["n"] for c in checks if c["kind"] == "ots" and (not c["hero"] or c["missing"])]
         else:
             summary["sheet"] = str(contact_sheet(out, args.sheet, count=12, cols=6, width=300))
     print(json.dumps(summary, ensure_ascii=False, indent=1))
@@ -272,8 +276,54 @@ def main(argv: list[str] | None = None) -> int:
 PLACE_RU = {"cabin": "кабина", "shaft": "шахта", "landing": "площадка", "techfloor": "тех. этаж", "corridor": "коридор"}
 
 
-def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path, cols: int = 7) -> tuple[str, str]:
-    """Лист «фраза → что в кадре»: кадр середины каждого плана, место и названные вещи (✓ видно / ✗ нет) + фраза."""
+DARK_MEAN, DARK_SPREAD = 38.0, 14.0   # область героя: средняя яркость / разброс (0..255) ниже — «ТЕМНО»
+FRAME_DARK = 10.0                     # весь кадр темнее — «ТЕМНО» (тёмный фон при видном герое — не брак)
+
+
+def luma_stats(video: Path, t: float, box: tuple[float, float, float, float] | None) -> dict:
+    """Яркость кадра в момент ``t``: среднее и разброс по всему кадру и по области ``box`` (x0, y0, x1, y1 — доли)."""
+    import subprocess
+
+    w, h = 108, 192
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
+                           "-vf", f"scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, check=False)
+    px = proc.stdout
+    if len(px) < w * h:
+        return {}
+
+    def stats(vals: list[int]) -> tuple[float, float]:
+        mean = sum(vals) / max(1, len(vals))
+        return round(mean, 1), round((sum((v - mean) ** 2 for v in vals) / max(1, len(vals))) ** 0.5, 1)
+    out = {"frame": stats(list(px[: w * h]))}
+    if box:
+        x0, y0, x1, y1 = (int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h))
+        vals = [px[y * w + x] for y in range(max(0, y0), min(h, y1)) for x in range(max(0, x0), min(w, x1))]
+        if vals:
+            out["hero"] = stats(vals)
+    return out
+
+
+def shot_light(video: Path, t: float, rep: dict) -> dict:
+    """Проверка плана: виден ли герой (лицо в кадре в пробах сцены) и читается ли (яркость/контраст его области)."""
+    xy = rep.get("face_xy")
+    hero = bool(xy and 0.0 <= xy[0] <= 1.0 and 0.0 <= xy[1] <= 1.0 and rep.get("face_in", 0) > 0)
+    box = None
+    if hero:
+        # голова и плечи: от макушки до груди, не залезая в полосу субтитров (0.70+)
+        box = (max(0.0, xy[0] - 0.18), max(0.0, xy[1] - 0.12), min(1.0, xy[0] + 0.18), min(0.68, xy[1] + 0.16))
+    st = luma_stats(video, t, box)
+    frame = st.get("frame") or (0.0, 0.0)
+    region = st.get("hero") or frame
+    dark = frame[0] < FRAME_DARK or region[0] < DARK_MEAN or region[1] < DARK_SPREAD and region[0] < DARK_MEAN * 1.6
+    # вставка-деталь (табло, кнопка) без героя — законна; «нет героя» — брак для остальных планов
+    insert = rep.get("kind") == "detail" and not hero
+    return {"hero": hero, "frame": frame, "region": region, "dark": bool(dark), "insert": insert}
+
+
+def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path, cols: int = 7,
+                 raw: Path | None = None) -> tuple[str, str, list[dict]]:
+    """Лист «фраза → что в кадре»: кадр середины каждого плана, место, план, названные вещи (видно / НЕТ), герой в
+    кадре и свет по его области (яркость/контраст; ТЕМНО — брак) + фраза. ``raw`` — рендер без титров (для замера)."""
     import subprocess
     import tempfile
     import textwrap
@@ -281,6 +331,7 @@ def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path
     by_n = {r["n"]: r for r in report}
     tmp = Path(tempfile.mkdtemp(prefix="phrase_sheet_"))
     tiles, ok, total = [], 0, 0
+    checks: list[dict] = []
     try:
         for s in shots:
             r = by_n.get(s["n"], {})
@@ -288,14 +339,23 @@ def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path
             vis = [x["visible"] for x in seen if x["visible"] is not None]
             ok, total = ok + sum(1 for v in vis if v), total + len(vis)
             marks = ", ".join(f"{x['item']} {'видно' if x['visible'] else 'НЕТ'}" for x in seen) or "—"
+            t_mid = (float(s["t0"]) + float(s["t1"])) / 2
+            lit = shot_light(raw if raw and raw.is_file() else video, t_mid, r)
+            checks.append({"n": s["n"], "kind": r.get("kind"), **lit,
+                           "missing": [x["item"] for x in seen if x["visible"] is False]})
             cap = f"{s['n']}. {PLACE_RU.get(r.get('location') or '', '?')} · {r.get('kind', s.get('camera'))}: {marks}"
-            lines = textwrap.wrap(cap, 36)[:2] + textwrap.wrap("«" + str(s.get("text") or "") + "»", 34)[:4]
+            who = "да" if lit["hero"] else ("вставка" if lit["insert"] else "НЕТ")
+            light = (f"герой {who} · свет {lit['region'][0]:.0f}/{lit['region'][1]:.0f}"
+                     + (" ТЕМНО" if lit["dark"] else ""))
+            head = textwrap.wrap(cap, 36)[:2] + [light]
+            lines = head + textwrap.wrap("«" + str(s.get("text") or "") + "»", 34)[:3]
             vf = "scale=270:-2,pad=270:610:0:0:0x111111"
             for i, line in enumerate(lines):   # строка — свой drawtext: перевод строки в textfile рисуется квадратиком
                 cf = tmp / f"c{s['n']}_{i}.txt"
                 cf.write_bytes(line.encode("utf-8"))
                 esc = cf.as_posix().replace(":", "\\:")
-                color = "0xffd23f" if i < min(2, len(lines)) and i < len(textwrap.wrap(cap, 36)[:2]) else "white"
+                bad = line is light and (lit["dark"] or not (lit["hero"] or lit["insert"]))
+                color = "0xff4040" if bad else ("0xffd23f" if i < len(head) else "white")
                 vf += (",drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':"
                        f"textfile='{esc}':expansion=none:x=6:y={484 + i * 19}:fontsize=13:fontcolor={color}")
             img = tmp / f"t{s['n']:03d}.jpg"
@@ -321,7 +381,7 @@ def phrase_sheet(video: Path, shots: list[dict], report: list[dict], sheet: Path
                        check=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return str(sheet), f"{ok}/{total}"
+    return str(sheet), f"{ok}/{total}", checks
 
 
 def _printer():

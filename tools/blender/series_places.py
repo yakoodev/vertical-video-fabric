@@ -54,6 +54,17 @@ def _lamp(name, o, p, color=(1.0, 0.72, 0.42), energy=18.0, cord=0.35, distance=
     return li
 
 
+def _strip_fill(name, o, p, size, energy, color):
+    """Прямоугольная площадка света под потолком, вниз, без теней и дымки — общий заполняющий места."""
+    li = kit.make_light(name, "AREA", color, energy, _w(o, p), size=size[0], shadow=False, volume=0.0)
+    try:
+        li.data.shape = "RECTANGLE"
+        li.data.size_y = size[1]
+    except AttributeError:
+        pass
+    return li
+
+
 def _decal(name, o, p, text, rot, size=0.16, font=None, color="#2a2522"):
     mat = kit.principled(f"{name}_ink", kit.hexc(color), rough=0.8)
     return kit.text(name, text, size, _w(o, p), mat, rot=rot, font=font)
@@ -132,12 +143,14 @@ def build_corridor(o, fonts, decal):
         _decal(f"corr_cal_row{r}", o, (-0.886, cy, cz - 0.02 - r * 0.06), "1 2 3 4 5 6 7", kit.TXT_LEFT, size=0.035,
                font=fonts.get("ui"))
     # свет: тусклая лампочка + дежурный холодный у дальнего конца
-    _lamp("corr_lamp", o, B.LOCS["corridor"]["targets"]["lamp"], energy=55.0, cord=0.3)
-    _lamp("corr_lamp2", o, (0.0, 5.2, 2.05), color=(1.0, 0.65, 0.35), energy=30.0, cord=0.3)
-    far = kit.make_light("corr_far", "POINT", (0.55, 0.65, 0.85), 18.0, _w(o, (0.0, 6.6, 2.1)), size=0.3, shadow=True, volume=1.0)
-    near = kit.make_light("corr_near_fill", "AREA", (0.75, 0.8, 0.95), 25.0, _w(o, (0.0, -0.3, 2.3)), rot=(0, 0, 0), size=1.2,
+    _lamp("corr_lamp", o, B.LOCS["corridor"]["targets"]["lamp"], energy=95.0, cord=0.3)
+    _lamp("corr_lamp2", o, (0.0, 5.2, 2.05), color=(1.0, 0.65, 0.35), energy=50.0, cord=0.3)
+    far = kit.make_light("corr_far", "POINT", (0.55, 0.65, 0.85), 30.0, _w(o, (0.0, 6.6, 2.1)), size=0.3, shadow=True, volume=1.0)
+    near = kit.make_light("corr_near_fill", "AREA", (0.75, 0.8, 0.95), 45.0, _w(o, (0.0, -0.3, 2.3)), rot=(0, 0, 0), size=1.2,
                           shadow=False, volume=0.0)
     _ = (far, near)
+    # мягкая подсветка вдоль всего потолка (без теней и дымки): стены, двери и календарь читаются, не только пятно лампы
+    _strip_fill("corr_ceiling_fill", o, (0.0, 3.0, 2.33), (1.5, 7.2), 45.0, (0.85, 0.82, 0.78))
     _fog("corr", o, (1.78, 7.85, 2.38), (0.0, 3.05, 1.2), density=0.16)
     return {"doors": doors}
 
@@ -206,7 +219,7 @@ def build_shaft(o, fonts, decal):
     _lamp("shaft_lamp", o, (-1.0, -1.0, 2.6), color=(1.0, 0.75, 0.5), energy=45.0, cord=0.05)
     top = kit.make_light("shaft_top", "SPOT", (0.6, 0.7, 0.9), 220.0, _w(o, (0.2, 0.3, 6.5)), rot=(0, 0, 0), size=0.3,
                          spot=(math.radians(50), 0.6), volume=2.0)
-    fill = kit.make_light("shaft_fill", "AREA", (0.6, 0.65, 0.8), 30.0, _w(o, (0.0, 0.0, 3.0)), size=2.0, shadow=False,
+    fill = kit.make_light("shaft_fill", "AREA", (0.6, 0.65, 0.8), 55.0, _w(o, (0.0, 0.0, 3.0)), size=2.0, shadow=False,
                           volume=0.0)
     _ = fill
     _ = (red, top)

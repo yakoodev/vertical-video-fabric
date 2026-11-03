@@ -452,7 +452,9 @@ def key_face(rig, perf, body, frames):
 PHONE_SCALE = 1.35   # 5.7 × 11.6 см у игрушки ростом 1.08 м с кулаком-«чиби»: телефон виден над кулаком
 
 
-def attach_phone(arm, phone, perf, frames):
+def attach_phone(arm, phone, perf, frames, cam_at=None):
+    """Телефон в левой руке: экраном к лицу, фонариком на цель луча; с ``screen`` (часы, заряд) — экраном к камере
+    (герой показывает экран), чтобы значение читалось."""
     sc = bpy.context.scene
     locs, rots, scales = [], [], []
     for i, f in enumerate(frames):
@@ -472,8 +474,13 @@ def attach_phone(arm, phone, perf, frames):
         k = ph["aim"]
         # экран (−Y телефона) — к лицу; светит — задняя крышка (+Y) на цель луча
         d = (-face_dir).lerp(beam, k).normalized()
+        if ph.get("screen") and cam_at is not None:
+            away = (grip - V(cam_at(i))).normalized()     # +Y телефона от камеры — экран (−Y) в объектив
+            d = (-face_dir).lerp(away, 0.85).normalized()
         q = d.to_track_quat("Y", "Z")
-        locs.append(tuple(grip + q.to_matrix() @ V((0.0, 0.0, 0.058))))
+        # показывает экран — телефон над кулаком и чуть к камере (кулак не закрывает цифры)
+        off = V((0.0, -0.03, 0.075)) if ph.get("screen") else V((0.0, 0.0, 0.058))
+        locs.append(tuple(grip + q.to_matrix() @ off))
         rots.append(tuple(q.to_euler("XYZ")))
         scales.append((PHONE_SCALE,) * 3)
     rots = m.spring_follow([tuple(r) for r in rots], 1 / FPS, 0.06)
@@ -481,6 +488,28 @@ def attach_phone(arm, phone, perf, frames):
     kit.key_vec(phone, "location", frames, locs)
     kit.key_vec(phone, "rotation_euler", frames, rots)
     kit.key_vec(phone, "scale", frames, scales, interp="CONSTANT")
+
+
+def phone_screen_text(phone, perf, frames, font):
+    """Значение на экране телефона (``phone[f].screen``: «03:33», «14%», «−12 °C») — светлые цифры на тёмной
+    подложке экрана; по объекту на значение, виден только в своих кадрах."""
+    values = sorted({p.get("screen") for p in perf["phone"] if p.get("screen")})
+    if not values:
+        return {}
+    back_mat = kit.emission_mat("phone_screen_back", (0.03, 0.05, 0.12), 1.0)
+    ink = kit.emission_mat("phone_screen_ink", (1.0, 1.0, 1.0), 9.0)
+    out = {}
+    for j, val in enumerate(values):
+        back = kit.box(f"phone_scr_back{j}", (0.036, 0.0006, 0.077), (0, -0.0053, 0), back_mat, bevel=0.0)
+        back.parent = phone
+        size = 0.0135 if len(val) <= 5 else 0.0105
+        txt = kit.text(f"phone_scr_txt{j}", val, size, (0.0, -0.0058, 0.012), ink, font=font)
+        txt.parent = phone
+        vis = [((1, 1, 1) if perf["phone"][i].get("screen") == val else (0, 0, 0)) for i in range(len(frames))]
+        for ob in (back, txt):
+            kit.key_vec(ob, "scale", frames, vis, interp="CONSTANT")
+        out[val] = txt
+    return out
 
 
 # ============================================================== свет
@@ -681,9 +710,40 @@ def build_camera(arm, perf, frames, rig):
     for k in range(n):
         lt = perf["lights"][k]
         d = fd[k]
-        base = 0.35 + 1.7 * (1.0 - lt["main"]) if lt["dark"] or lt["main"] < 0.5 else 0.35
-        vals.append(base * min(2.0, max(0.5, (d / 0.8) ** 2)))
+        place = by_n[shot_of[k]].get("location") or "cabin"
+        if place != "cabin":
+            # вне кабины своего света мало (лампочка вдали): заполняющий «от фонарика/лампы» — лицо читается
+            base = B.FILL_W.get(place, 14.0)
+        else:
+            base = 0.5 + 3.5 * (1.0 - lt["main"]) if lt["dark"] or lt["main"] < 0.5 else 0.35
+        vals.append(base * min(3.0, max(0.5, (d / 0.8) ** 2)))
     kit.fcurve(eye.data, "energy", 0, frames, vals)
+    # контровой сзади-сверху (от камеры через героя): силуэт и капюшон отделяются от тёмного фона
+    rim = kit.make_light("hero_rim", "SPOT", (0.62, 0.76, 1.0), 0.0, (0, 0, 0), size=0.15, spot=(math.radians(55), 0.5),
+                         volume=0.25)
+    rim_loc, rim_rot, rim_e = [], [], []
+    for k in range(n):
+        c = by_n[shot_of[k]]
+        place = c.get("location") or "cabin"
+        face = V(face_pts[k])
+        back = V((face.x - locs[k][0], face.y - locs[k][1], 0.0))
+        back = back.normalized() if back.length > 1e-4 else V((0.0, 1.0, 0.0))
+        p = face + back * 0.85 + V((0.0, 0.0, 0.6))
+        x0, x1, y0, y1, _z0, z1 = B.loc_of(place)["bounds"]
+        ox, oy = B.loc_of(place)["origin"]
+        p = V((min(max(p.x, x0 + ox + 0.08), x1 + ox - 0.08), min(max(p.y, y0 + oy + 0.08), y1 + oy - 0.08),
+               min(p.z, z1 - 0.05)))
+        rim_loc.append(tuple(p))
+        rim_rot.append(tuple((face - p).to_track_quat("-Z", "Y")))
+        lt = perf["lights"][k]
+        rim_e.append(B.RIM_W.get(place, 0.0) if place != "cabin" else (12.0 if lt["dark"] else 0.0))
+    rim.rotation_mode = "QUATERNION"
+    kit.key_vec(rim, "location", frames, rim_loc)
+    kit.key_vec(rim, "rotation_quaternion", frames, rim_rot)
+    kit.fcurve(rim.data, "energy", 0, frames, rim_e)
+    # экспозиция по месту (вне кабины — светлее): лицо и место читаются, тёмное остаётся тёмным, но не чёрным
+    kit.fcurve(sc, "view_settings.exposure", 0, frames,
+               [B.EXPOSURE.get(by_n[shot_of[k]].get("location") or "cabin", 0.0) for k in range(n)], interp="CONSTANT")
     cam.rotation_mode = "QUATERNION"
     kit.key_vec(cam, "location", frames, locs)
     kit.key_vec(cam, "rotation_quaternion", frames, rots)
@@ -897,7 +957,8 @@ def main():
     contact_err = fit_contacts(arm, ik, perf, frames)
     key_face(rig, perf, body, frames)
     phone = kit.build_phone()
-    attach_phone(arm, phone, perf, frames)
+    attach_phone(arm, phone, perf, frames, cam_pos_estimate(perf))
+    phone_screen_text(phone, perf, frames, fonts.get("display"))
     build_lights(L, perf, frames, phone)
     places.key_place_doors(built_places, perf, frames)
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
@@ -923,13 +984,26 @@ def main():
         mid_k = idx[len(idx) // 2]
         sc.frame_set(frames[mid_k])
         seen = []
+        pf = world_to_camera_view(sc, cam, V(face_pts[mid_k]))
+        face_xy = [round(pf.x, 3), round(1 - pf.y, 3)] if pf.z > 0 else None
         for it in sh.get("show") or []:
+            if it.get("screen"):
+                # экран телефона в кадре и повёрнут к камере
+                sc.frame_set(frames[mid_k])
+                pp = world_to_camera_view(sc, cam, phone.matrix_world.translation)
+                normal = (phone.matrix_world.to_3x3() @ V((0.0, -1.0, 0.0))).normalized()
+                to_cam = (cam.matrix_world.translation - phone.matrix_world.translation).normalized()
+                ok = bool(phone.scale.x > 0 and pp.z > 0 and 0.03 <= pp.x <= 0.97 and 0.03 <= pp.y <= 0.97
+                          and normal.dot(to_cam) > 0.35)
+                seen.append({"item": it["item"], "visible": ok})
+                continue
             if it.get("point") is None:
                 seen.append({"item": it["item"], "visible": None if not it.get("missing") else False})
                 continue
             pp = world_to_camera_view(sc, cam, V(it["point"]))
             seen.append({"item": it["item"], "visible": bool(pp.z > 0 and -0.02 <= pp.x <= 1.02 and -0.02 <= pp.y <= 1.02)})
         shots_rep.append({"n": c["n"], "kind": c["kind"], "face_y": ys, "face_in": inside, "location": sh.get("location"),
+                          "samples": len(idx[:: max(1, len(idx) // 5)]), "face_xy": face_xy,
                           "text": sh.get("text"), "show": seen})
     report = {"contact_err_mm": contact_err, "shots": shots_rep, "setup_sec": round(time.time() - T0, 1), "frames": nf,
               "clip_len_diff": diff, "feet": measure_feet(arm, perf, frames)}
