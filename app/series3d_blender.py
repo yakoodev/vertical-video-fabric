@@ -1637,7 +1637,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         scr = str(sh_.get("screen") or "") if sh_ and vis[f] and t >= float(sh_.get("a0", sh_["t0"])) + 0.5 else ""
         phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
                       "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
-                      **({"screen": scr} if scr else {})})
+                      # на экране: «−» в шрифте сцены нет — дефис; «-12°C» короче — крупнее
+                      **({"screen": scr.replace("−", "-").replace(" °", "°")} if scr else {})})
     perf["phone"] = phone
     return perf
 
@@ -1734,7 +1735,8 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
     if kind == "detail" and subject == "phone" and shot.get("screen"):
         # экран со значением (часы, заряд): телефон в руке экраном к камере и лицо над ним — близко, длинный фокус
         phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0)))
-        center = tuple(phone_c[i] * 0.55 + face[i] * 0.45 for i in range(3))
+        # телефон — в середине кадра (выше субтитров), лицо — сверху
+        center = tuple(phone_c[i] * 0.8 + face[i] * 0.2 for i in range(3))
         p = around(0.62, (-20, 20, -32, 32, 0, -45, 45), 0.0, center)
         if p:
             # кадр ≈ 0.62 м по высоте (телефон и лицо целиком) при любом отступе камеры от стен
@@ -1844,7 +1846,7 @@ def ots_ok(cam: dict, face: tuple, target: tuple) -> bool:
     не во весь кадр (камера не ближе 0.45 м)."""
     if math.dist(cam["pos_a"], face) < 0.7:
         return False
-    return cam_sees(cam, face, face, 0.72) and cam_sees(cam, face, tuple(target), 0.9)
+    return cam_sees(cam, face, face, 0.6) and cam_sees(cam, face, tuple(target), 0.9)
 
 
 def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
@@ -2458,6 +2460,8 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
             stop["err"] = f"Blender упал (код {code}); кадры в кэше — повторный запуск продолжит. {tail}"
 
     if total_missing or stills:
+        for old in [work / "report.json", *work.glob("w*/report.json")]:
+            old.unlink(missing_ok=True)   # отчёт прошлого прогона (другие планы) не выдавать за этот
         if progress:
             progress(0.0, f"сцена Blender: {total_missing} кадров к рендеру из {perf['frames']}, процессов {len(groups)}")
         threads = [threading.Thread(target=run, args=(i, g), daemon=True) for i, g in enumerate(groups)]
