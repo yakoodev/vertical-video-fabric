@@ -14,6 +14,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { ApprovalsPage } from "@/pages/ApprovalsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { RequireModule } from "@/components/RequireModule";
+import { OwnerCoverEditor, SharedCoverEditor } from "@/pages/cover/CoverEditorPages";
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
 function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined>) => string }) {
@@ -24,6 +25,9 @@ function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined
 export function App() {
   return (
     <Routes>
+      {/* Редактор превью — весь экран. Ссылка /c/<токен> открывается без входа и не ходит в API сервиса. */}
+      <Route path="c/:token" element={<SharedCoverEditor />} />
+      <Route path="covers/:docId" element={<RequireModule id="covers"><OwnerCoverEditor /></RequireModule>} />
       <Route element={<AppShell />}>
         {/* legacy paths from the old Jinja client */}
         <Route path="sources" element={<Navigate to="/projects" replace />} />

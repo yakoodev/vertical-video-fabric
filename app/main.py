@@ -4699,6 +4699,12 @@ app.include_router(build_modules_router(AuthDep, lambda: store))
 # --------------------------------------------------------------------------- #
 # Single-page app (React/Vite build). MUST be registered last so the catch-all
 # route has the lowest priority and never shadows /api, /media, /ui, /docs, etc.
+# 🖼 Редактор превью и ссылка на редактирование /c/<token> (app/cover_docs.py): до SPA-ловушки,
+# страница по ссылке открывается без входа.
+from app.cover_docs_api import build_cover_docs_router  # noqa: E402
+
+app.include_router(build_cover_docs_router(AuthDep, lambda: store, lambda: settings.root_dir / "frontend" / "dist" / "index.html"))
+
 # In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
 # `frontend/dist` may not exist — guarded accordingly.
 # --------------------------------------------------------------------------- #

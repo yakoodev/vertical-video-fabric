@@ -84,6 +84,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `auto_edit(clip_id, style?)` | автомонтаж без ИИ: хук, субтитры с эмодзи, наезды и удары по речи — основа для правки |
 | `compose_cover(clip_id, t, title, style?, final?)` | обложка: кадр (t — шкала clip, `final: true` — готовый ролик) + крупный заголовок, включается сразу |
 | `generate_covers(clip_id, count?, texts?, styles?, render_id?)` | **варианты обложки готового рендера** (1–6, по умолчанию 3): сильные кадры (лицо, резкость, цвет), хук 2–5 слов в треть без лиц, стиль бренда; 9:16 — 1080×1920, 16:9 — 1280×720. Ответ — картинка вариантов и их id; см. [`guides/covers.md`](guides/covers.md) |
+| `create_cover_doc(clip_id, template?, text?, render_id?)`, `update_cover_doc(clip_id, doc_id, changes?, add?, remove?, order?, bg?, frame?)`, `render_cover_doc(clip_id, doc_id, apply?, burn?)`, `share_cover_doc(clip_id, doc_id, perm?, days?, revoke?)` | **обложка, собранная слоями, без ИИ** (`docs/guides/covers.md`): шаблон раскладки, кадр ролика, аватар, текст и фигуры; готовая картинка и ссылка `/c/<токен>` на правку без входа, только к этому документу |
 | `list_covers(clip_id, sheet?)`, `choose_cover(clip_id, cover_id, burn?)` | варианты и выбор: обложка клипа (превью, карточка одобрения, миниатюра YouTube 16:9); `burn` (да) — ещё и в настройки клипа, следующий рендер вошьёт первым кадром |
 | `make_compilation(clip_ids, title?)` | новый клип «ТОП-N» из нескольких клипов проекта |
 | `add_layers`, `update_layer`, `remove_layers`, `clear_layers` | моушн-слои (проверка `app/motion.py`) |
