@@ -40,6 +40,19 @@ MAX_CUTS = 200
 MIN_PART_SEC = 0.1
 # Вырезы ближе этого друг к другу сливаются: между ними остался бы обрывок.
 MERGE_GAP_SEC = 0.001
+# Остров — то, что зритель видит одним куском между настоящими разрывами (kept_islands).
+# Горизонталка Муры 31.10: 72 куска, 15 короче 3 с — «моменты из одного слова».
+MIN_ISLAND_SEC = 2.5
+MIN_ISLAND_WORDS = 3
+# Правило слов — только для коротких: длинный тихий кусок игры обрывком не считается.
+ISLAND_WORDS_MAX_SEC = 6.0
+# Вырез паузы или «ээ» не длиннее этого — речь идёт дальше той же сценой, разрыва нет
+# (длиннее и suggest_cuts помечает risky); столько слов и больше — вырезали сам разговор.
+SOFT_CUT_SEC = LONG_PAUSE_SEC
+HARD_CUT_WORDS = 3
+# Соседние куски идут подряд по исходнику — стык не разрыв.
+PIECE_GAP_SEC = 0.05
+ISLAND_WARNINGS_MAX = 8
 
 
 def _finite(value: Any) -> float | None:
@@ -971,19 +984,155 @@ def tail_fragment(words: Any, duration: float, keep_pad: float = 0.12) -> dict |
             "reason": f"оборванная фраза в конце «{text}» — клип кончается на полуслове"}
 
 
+def _piece_breaks(segments: Any) -> list[float]:
+    """Стыки кусков (шкала «куски подряд»), где монтаж прыгает в другое место исходника."""
+    out: list[float] = []
+    at = 0.0
+    prev: dict | None = None
+    for seg in segments or []:
+        if prev is not None:
+            joined = abs(float(seg["start_sec"]) - float(prev["end_sec"])) <= PIECE_GAP_SEC
+            if not joined or seg.get("reverse") or prev.get("reverse"):
+                out.append(round(at, 3))
+        at += seg_length(seg)
+        prev = seg
+    return out
+
+
+def kept_islands(cuts: Any, words: Any, segments: Any = None, total: float | None = None) -> list[dict]:
+    """Что останется после вырезов — острова по порядку, всё на шкале «куски подряд».
+
+    Разрыв — вырез длиннее ``SOFT_CUT_SEC`` или со словами (от ``HARD_CUT_WORDS``), вырез через стык
+    кусков и сам стык, если следующий кусок не продолжает предыдущий по исходнику. Вырез паузы разрывом
+    не считается: фраза идёт дальше той же сценой, и панчлайн сразу за ним — не обрывок, а её конец.
+    Обрывки короче ``MIN_PART_SEC`` рендер всё равно отдаёт вырезу (``plan_cuts``) — здесь их нет.
+
+    Ответ: ``[{start, end, duration, words, text, parts, by_cut}]``; ``duration`` — без вырезов
+    внутри, ``by_cut`` — острова коснулся вырез (иначе это кусок целиком, как его создали).
+    """
+    length = sum(seg_length(s) for s in segments or [])
+    total = float(total) if total is not None else length
+    spans = [(c["start"], c["end"]) for c in normalize_cuts(cuts)]
+    breaks = [b for b in _piece_breaks(segments) if 0.0 < b < total]
+
+    parts: list[tuple[float, float]] = []
+    cursor = 0.0
+    for a, b in spans + [(total, total)]:
+        stops = [cursor] + [x for x in breaks if cursor < x < a] + [a]
+        parts += [(p, q) for p, q in zip(stops, stops[1:]) if q - p >= MIN_PART_SEC]
+        cursor = max(cursor, b)
+
+    clean = _clean_words(words)
+    groups: list[list[tuple[float, float]]] = []
+    for part in parts:
+        if groups:
+            gap_from = groups[-1][-1][1]
+            gap = part[0] - gap_from
+            lost = sum(gap_from <= (w["start"] + w["end"]) / 2 <= part[0] for w in clean)
+            hard = (gap <= 1e-9 or gap > SOFT_CUT_SEC or lost >= HARD_CUT_WORDS
+                    or any(gap_from <= x <= part[0] for x in breaks))
+            if not hard:
+                groups[-1].append(part)
+                continue
+        groups.append([part])
+
+    islands = []
+    for group in groups:
+        heard = [w["word"].strip() for w in clean
+                 if any(a <= (w["start"] + w["end"]) / 2 <= b for a, b in group)]
+        start, end = group[0][0], group[-1][1]
+        by_cut = len(group) > 1 or any(abs(start - b) < 1e-6 or abs(end - a) < 1e-6 for a, b in spans)
+        islands.append({"start": round(start, 3), "end": round(end, 3),
+                        "duration": round(sum(b - a for a, b in group), 3), "words": len(heard),
+                        "text": " ".join(heard), "parts": len(group), "by_cut": by_cut})
+    return islands
+
+
+def short_islands(islands: list[dict], has_words: bool = True, min_sec: float = MIN_ISLAND_SEC,
+                  min_words: int = MIN_ISLAND_WORDS, by_cut_only: bool = True) -> list[dict]:
+    """Обрывки среди ``kept_islands``: короче ``min_sec`` или (если субтитры есть) меньше
+    ``min_words`` слов на коротком острове. Единственный остров — это весь клип, не обрывок;
+    ``min_sec`` ≤ 0 — проверка выключена. ``by_cut_only`` — без кусков, созданных короткими нарочно."""
+    if len(islands) < 2 or min_sec <= 0:
+        return []
+    words_until = max(ISLAND_WORDS_MAX_SEC, min_sec)
+
+    def short(island: dict) -> bool:
+        if island["duration"] < min_sec:
+            return True
+        return has_words and island["words"] < min_words and island["duration"] < words_until
+
+    return [i for i in islands if short(i) and (i["by_cut"] or not by_cut_only)]
+
+
+def merge_short_islands(cuts: Any, words: Any, segments: Any = None, total: float | None = None,
+                        min_sec: float = MIN_ISLAND_SEC) -> tuple[list[dict], list[dict]]:
+    """Вырезать обрывки вместе с соседними вырезами: (новые вырезы, вырезанные острова).
+    Весь клип не вырезаем: если обрывки всё, что есть, самый длинный остаётся."""
+    islands = kept_islands(cuts, words, segments, total)
+    doomed = short_islands(islands, bool(_clean_words(words)), min_sec)
+    if len(doomed) == len(islands):
+        keep = max(doomed, key=lambda i: i["duration"])
+        doomed = [i for i in doomed if i is not keep]
+    if not doomed:
+        return normalize_cuts(cuts), []
+    extra = [{"start": i["start"], "end": i["end"]} for i in doomed]
+    return normalize_cuts(normalize_cuts(cuts) + extra), doomed
+
+
+def island_warnings(islands: list[dict], to_clip: Any = None, limit: int = ISLAND_WARNINGS_MAX) -> list[str]:
+    """Обрывки — по-человечески; ``to_clip(start, end)`` — шкала, которую видит агент."""
+    out = []
+    for island in islands[:limit]:
+        a, b = to_clip(island["start"], island["end"]) if to_clip else (island["start"], island["end"])
+        heard = f"«{island['text']}»" if island["text"] else "кусок без речи"
+        out.append(f"обрывок {heard} на {a:.2f}–{b:.2f} ({island['duration']:.1f} с, слов: {island['words']}) — "
+                   "зритель увидит вспышку без начала и конца: сдвинь край соседнего выреза, чтобы фраза "
+                   "прозвучала целиком, или вырежи её (apply_cuts с merge_short_islands: true)")
+    if len(islands) > limit:
+        out.append(f"и ещё обрывков: {len(islands) - limit} — смотри lint_clip, проверка fragments")
+    return out
+
+
+def _spare_islands(items: list[dict], words: list[dict], segments: Any, total: float) -> list[dict]:
+    """Рекомендованный вырез, после которого остался бы обрывок, становится ``risky``: пауза лучше вспышки.
+
+    Снимаем меньший из внутренних вырезов у обрывка. Вырезы по краям клипа (тишина в начале, оборванный
+    хвост) соседей не соединяют — их не трогаем."""
+    has_words = bool(words)
+    for _round in range(len(items) + 1):
+        safe = [it for it in items if not it.get("risky")]
+        spare = None
+        for island in short_islands(kept_islands(safe, words, segments, total), has_words):
+            near = [it for it in safe if it["start"] > 0 and it["end"] < total - 1e-6
+                    and (abs(it["end"] - island["start"]) < 1e-3 or abs(it["start"] - island["end"]) < 1e-3)]
+            if near:
+                spare = (min(near, key=lambda it: it["end"] - it["start"]), island)
+                break
+        if spare is None:
+            return items
+        item, island = spare
+        item["risky"] = True
+        heard = f"«{island['text']}»" if island["text"] else "кусок без речи"
+        item["reason"] = f"{item['reason']} — но оставит обрывок {heard}, смотри сам"
+    return items
+
+
 def suggest_cuts(
     words: Any,
     duration: float,
     mode: str = "both",
     min_pause: float = 0.45,
     keep_pad: float = 0.12,
+    segments: Any = None,
 ) -> dict:
     """Что вырезать по пословным таймингам клипа. Ничего не сохраняет.
 
     ``mode``: pauses — тишина между словами длиннее ``min_pause`` (середина,
     ``keep_pad`` тишины у каждого слова остаётся); fillers — слова-паразиты и
     повторы; both — всё вместе (пересекающиеся вырезы сливаются, причины —
-    через «+»).
+    через «+»). Вырез, который оставил бы обрывок (``kept_islands``), в рекомендованные не идёт:
+    ``segments`` — куски клипа, чтобы видеть обрывки и на их стыках.
     """
     clean = _clean_words(words)
     duration = max(float(duration or 0.0), clean[-1]["end"] if clean else 0.0)
@@ -1031,6 +1180,7 @@ def suggest_cuts(
         risky += [{**item, "start": a, "end": b} for a, b in pieces if b - a >= MIN_CUT_SEC]
     items = sorted(safe + risky, key=lambda it: (it["start"], it["end"]))
     items = [{**it, "start": round(it["start"], 3), "end": round(it["end"], 3)} for it in items[:MAX_CUTS]]
+    items = _spare_islands(items, clean, segments, duration)
     # Рекомендованный набор — без «рискованных» длинных пауз: их владелец отмечает сам.
     cuts = normalize_cuts([it for it in items if not it.get("risky")])
     saved = cuts_total(cuts)
@@ -1083,7 +1233,8 @@ def suggest_for_plan(store: Any, clip_plan_id: int, mode: str, min_pause: float,
     words = payload.get("words") or []
     if not words:
         raise ValueError("у клипа нет пословных субтитров — сначала сделайте субтитры в редакторе")
-    return suggest_cuts(words, plan_duration(plan), mode=mode, min_pause=min_pause, keep_pad=keep_pad)
+    return suggest_cuts(words, plan_duration(plan), mode=mode, min_pause=min_pause, keep_pad=keep_pad,
+                        segments=plan.get("segments") or [])
 
 
 def cut_edge_warnings(cuts: list[dict], words: list[dict], total: float) -> list[str]:
@@ -1113,3 +1264,12 @@ def cut_edge_warnings(cuts: list[dict], words: list[dict], total: float) -> list
         out.append(f"клип кончается оборванной фразой «{tail['words']}» ({tail['start']:.2f}–{tail['end']:.2f}) — "
                    f"добавь вырез {{start: {tail['start']:.2f}, end: {tail['end']:.2f}}} (suggest_cuts его предлагает)")
     return out[:6]
+
+
+def cut_warnings(cuts: list[dict], words: list[dict], segments: Any, total: float, to_clip: Any = None,
+                 min_sec: float = MIN_ISLAND_SEC) -> list[str]:
+    """Всё, что вырезы испортили: огрызки на стыках и обрывки. Про один и тот же кусок — одно сообщение."""
+    short = short_islands(kept_islands(cuts, words, segments, total), bool(_clean_words(words)), min_sec)
+    edges = [w for w in cut_edge_warnings(cuts, words, total)
+             if not any(f"{i['start']:.2f}–{i['end']:.2f}" in w for i in short)]
+    return edges + island_warnings(short, to_clip)

@@ -1200,10 +1200,11 @@ def _clip_warnings(ctx: ToolContext, plan: dict, timeline: dict, layers: list) -
         ))
     cuts = (timeline.get("render") or {}).get("cuts") or []
     if cuts:
-        from app.cuts import cut_edge_warnings
+        from app.cuts import cut_warnings
 
         words = (ctx.store.get_clip_plan_subtitles(plan["id"]) or {}).get("words") or []
-        warnings.extend(f"Вырезы: {w}" for w in cut_edge_warnings(cuts, words, float(timeline["duration"])))
+        warnings.extend(f"Вырезы: {w}" for w in cut_warnings(cuts, words, plan.get("segments") or [],
+                                                             float(timeline["duration"])))
     if timeline["pieces"]:
         ending = ending_warning(ctx.store, int(plan["source_id"]), float(timeline["pieces"][-1]["source_end"]))
         if ending:
@@ -2116,24 +2117,42 @@ def clip_cuts_to_plain(clock: Any, raw: Any) -> Any:
     return out
 
 
+def _plain_span_to_clip(clock: Any, start: float, end: float) -> tuple[float, float]:
+    parts = clock.plain_range_to_clip(start, end)
+    return (parts[0]["start"], parts[-1]["end"]) if parts else (start, end)
+
+
 def h_apply_cuts(ctx: ToolContext, args: dict) -> dict:
-    from app.cuts import check_cuts_for_plan, cuts_total
+    from app.cuts import MIN_ISLAND_SEC, check_cuts_for_plan, cut_warnings, cuts_total, merge_short_islands, plan_duration
 
     plan = ctx.store.get_clip_plan(ctx.plan_id)
-    raw = clip_cuts_to_plain(plan_clock(ctx.store, plan), args.get("cuts") or [])
+    clock = plan_clock(ctx.store, plan)
+    raw = clip_cuts_to_plain(clock, args.get("cuts") or [])
     cuts, problems = check_cuts_for_plan(plan, raw)
     if problems:
         raise ToolError("вырезы не приняты", problems)
+    min_island = _num(args.get("min_island_sec"))
+    min_island = MIN_ISLAND_SEC if min_island is None else float(min_island)
+    if min_island < 0:
+        raise ToolError("min_island_sec — секунды, ≥ 0 (0 — не проверять обрывки)")
+    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+    segments, total = plan.get("segments") or [], plan_duration(plan)
+    merged: list[dict] = []
+    if args.get("merge_short_islands") is True:
+        wider, merged = merge_short_islands(cuts, words, segments, total, min_island)
+        cuts, problems = check_cuts_for_plan(plan, wider)
+        if problems:
+            raise ToolError("вырезы не приняты", problems)
     ctx.before_change()
     settings = dict(_current_render(ctx))
     settings["cuts"] = cuts
     ctx.store.set_clip_plan_render_settings(ctx.plan_id, settings)
     out: dict = {"cuts": len(cuts), "saved_sec": round(cuts_total(cuts), 2), "time": "clip",
                  "finished_duration": _clock(ctx).final_duration}
-    from app.cuts import cut_edge_warnings, plan_duration
-
-    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
-    warnings = cut_edge_warnings(cuts, words, plan_duration(plan))
+    if merged:
+        out["merged_islands"] = [{"start": a, "end": b, "text": i["text"]}
+                                 for i in merged for a, b in [_plain_span_to_clip(clock, i["start"], i["end"])]]
+    warnings = cut_warnings(cuts, words, segments, total, lambda a, b: _plain_span_to_clip(clock, a, b), min_island)
     if cuts and _source_keyed(ctx):
         # Владелец: «на 4-5 секунде персонаж моргает на склейке» — втубер стоит
         # неподвижно, и вырезанная пауза видна как рывок головы.
@@ -7743,7 +7762,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "suggest_cuts", "Ищу паузы и паразиты",
             "Найти паузы и слова-паразиты по словам клипа (ничего не меняет). mode: pauses|fillers|both. "
-            "Длинные паузы помечены risky — в реакциях это часто сам момент, не вырезай их вслепую. Шкала clip: "
+            "Длинные паузы и вырезы, после которых остался бы обрывок, помечены risky и в cuts не входят — в реакциях "
+            "это часто сам момент, не вырезай их вслепую. Шкала clip: "
             "cuts можно передать в apply_cuts как есть. / Suggest jump cuts.",
             _obj({"mode": {"type": "string"}, "min_pause": {"type": "number"}, "keep_pad": {"type": "number"}}),
             h_suggest_cuts, label=lambda a: "Ищу паузы и слова-паразиты",
@@ -7752,10 +7772,15 @@ def _build_registry() -> list[Tool]:
             "apply_cuts", "Вырезаю паузы",
             "Сохранить вырезы [{start,end}] — шкала clip (секунды клипа ДО вырезов, с наплывами, как слои, "
             "субтитры и cuts в get_clip); [] — вернуть всё. piece — номер куска, если вырез в зоне наплыва "
-            "перехода (там время принадлежит двум кускам; get_clip и suggest_cuts его дают). / Save jump cuts.",
+            "перехода (там время принадлежит двум кускам; get_clip и suggest_cuts его дают). В warnings — обрывки: "
+            "кусок между вырезами короче min_island_sec или без трёх слов; merge_short_islands: true вырежет их "
+            "вместе с соседними вырезами (merged_islands в ответе). / Save jump cuts.",
             _obj({"cuts": {"type": "array", "items": {"type": "object", "properties": {
                 "start": {"type": "number"}, "end": {"type": "number"},
-                "piece": {"type": "integer", "description": "чей вырез в зоне наплыва"}}}}}, ["cuts"]),
+                "piece": {"type": "integer", "description": "чей вырез в зоне наплыва"}}}},
+                  "min_island_sec": {"type": "number", "description": "короче — обрывок, по умолчанию 2.5; 0 — не проверять"},
+                  "merge_short_islands": {"type": "boolean", "description": "вырезать обрывки вместе с соседними вырезами"}},
+                 ["cuts"]),
             h_apply_cuts, mutating=True, label=lambda a: f"Вырезаю {len(a.get('cuts') or [])} кусочков",
         ),
         Tool(

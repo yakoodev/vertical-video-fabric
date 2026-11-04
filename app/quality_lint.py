@@ -25,6 +25,8 @@
   звуки не закрывают слова, итог −14 LUFS и true peak ≤ −1 dBTP (по свежему рендеру или прогнозом).
 * ``montage`` — ремесло монтажа без медиа: ч/б (fx grayscale) до конца клипа или дольше 2.5 с — цвет не
   вернётся; одна и та же вставка (asset) дважды (QA 02.11, клип 892).
+* ``fragments`` — обрывки после вырезов (app/cuts.py ``kept_islands``): кусок короче 2.5 с или без трёх
+  слов между разрывами — «момент из одного слова» (горизонталка Муры 31.10). Без медиа, по текущему плану.
 
 Только предупреждения: ничего не меняет и не блокирует. ``plan``-проверки (зоны, чтение,
 подсказки лупа) — без медиа, за доли секунды; ``flashes`` и оценка лупа — по последнему
@@ -41,13 +43,15 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage")
+CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage", "fragments")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
     "read": "reading", "reading_speed": "reading", "speed": "reading", "subtitles": "reading",
     "flash": "flashes", "strobe": "flashes", "photosensitive": "flashes", "loops": "loop",
     "mix": "audio_mix", "audio": "audio_mix", "sound": "audio_mix", "loudness": "audio_mix", "music": "audio_mix",
+    "fragment": "fragments", "islands": "fragments", "island": "fragments", "cuts": "fragments",
 }
+MAX_FRAGMENT_FINDINGS = 12
 MEDIA_CHECKS = ("flashes",)  # без рендера не проверить; loop без рендера — только подсказки
 
 W, H = 1080.0, 1920.0  # опорный кадр 9:16 — интерфейс площадок есть только у вертикали
@@ -1283,6 +1287,11 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         findings += avatar_presence_findings(store, int(clip_plan_id), rs)
         findings += tail_fragment_findings(store, plan, rs)
 
+    if "fragments" in wanted:
+        items, info = fragment_findings(store, plan, rs, clock)
+        findings += items
+        out["fragments"] = info
+
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
         if mode == "no":
@@ -1716,9 +1725,38 @@ def tail_fragment_findings(store: Any, plan: dict, rs: dict) -> list[dict]:
                      "предлагает) или trim_piece конца куска", t=tail["start"], until=tail["end"])]
 
 
+def fragment_findings(store: Any, plan: dict, rs: dict, clock: Any) -> tuple[list[dict], dict]:
+    """Обрывки по текущему плану. Вырез оставил кусок — warn; короткий кусок целиком — info:
+    его могли создать таким нарочно (кадр под баннер в промо)."""
+    from app.cuts import kept_islands, short_islands
+
+    try:
+        words = (store.get_clip_plan_subtitles(int(plan["id"])) or {}).get("words") or []
+    except Exception:  # noqa: BLE001 - нет субтитров — только по длине
+        words = []
+    islands = kept_islands(rs.get("cuts") or [], words, plan.get("segments") or [])
+    short = short_islands(islands, bool(words), by_cut_only=False)
+    out = []
+    for island in short[:MAX_FRAGMENT_FINDINGS]:
+        parts = clock.plain_range_to_clip(island["start"], island["end"])
+        a, b = (parts[0]["start"], parts[-1]["end"]) if parts else (island["start"], island["end"])
+        heard = f"«{_short(island['text'], 40)}»" if island["text"] else "кусок без речи"
+        if island["by_cut"]:
+            out.append(_finding("fragments", "warn",
+                                f"обрывок {heard}: {island['duration']:.1f} с, слов {island['words']} — вспышка без начала и конца",
+                                "сдвинь край соседнего выреза, чтобы фраза прозвучала целиком, или вырежи её "
+                                "(apply_cuts с merge_short_islands: true)", t=a, until=b))
+        else:
+            out.append(_finding("fragments", "info",
+                                f"короткий кусок {heard}: {island['duration']:.1f} с, слов {island['words']}",
+                                "кусок нужен как кадр под титр — оставь; это момент — расширь (trim_piece) до законченной фразы",
+                                t=a, until=b))
+    return out, {"pieces": len(islands), "short": len(short)}
+
+
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
     labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
-              "audio_mix": "сведение звука", "montage": "монтаж"}
+              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки"}
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:
