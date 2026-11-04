@@ -28,6 +28,9 @@
 * ``fragments`` — обрывки после вырезов (app/cuts.py ``kept_islands``): кусок короче 2.5 с или без трёх
   слов между разрывами — «момент из одного слова» (горизонталка Муры 31.10). Без медиа, по текущему плану.
 
+* ``sub_sync`` — субтитры против голоса (app/speech_activity.py, Silero VAD по дорожке речи, без рендера): строка
+  раньше голоса больше 0.25 с или позже больше 0.5 с, строка без голоса, речь без субтитров перед строкой.
+
 Только предупреждения: ничего не меняет и не блокирует. ``plan``-проверки (зоны, чтение,
 подсказки лупа) — без медиа, за доли секунды; ``flashes`` и оценка лупа — по последнему
 готовому рендеру (``media``: auto — если он есть). Время находок: ``t`` — шкала clip (перемотка
@@ -43,15 +46,16 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage", "fragments")
+CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage", "fragments", "sub_sync")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
     "read": "reading", "reading_speed": "reading", "speed": "reading", "subtitles": "reading",
     "flash": "flashes", "strobe": "flashes", "photosensitive": "flashes", "loops": "loop",
     "mix": "audio_mix", "audio": "audio_mix", "sound": "audio_mix", "loudness": "audio_mix", "music": "audio_mix",
-    "fragment": "fragments", "islands": "fragments", "island": "fragments", "cuts": "fragments",
+    "sync": "sub_sync", "subsync": "sub_sync", "fragment": "fragments", "islands": "fragments", "island": "fragments", "cuts": "fragments",
 }
 MAX_FRAGMENT_FINDINGS = 12
+MAX_SYNC_FINDINGS = 12
 MEDIA_CHECKS = ("flashes",)  # без рендера не проверить; loop без рендера — только подсказки
 
 W, H = 1080.0, 1920.0  # опорный кадр 9:16 — интерфейс площадок есть только у вертикали
@@ -1292,6 +1296,18 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         findings += items
         out["fragments"] = info
 
+    if "sub_sync" in wanted:
+        if mode == "no":
+            skipped["sub_sync"] = "проверка медиа выключена (media: false)"
+        else:
+            try:
+                items, info = sub_sync_findings(store, plan, clock)
+                findings += items
+                if info:
+                    out["sub_sync"] = info
+            except Exception as exc:  # noqa: BLE001 - нет исходника/звука — скажем, не упадём
+                skipped["sub_sync"] = f"не удалось разобрать звук: {str(exc)[:200]}"
+
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
         if mode == "no":
@@ -1754,9 +1770,44 @@ def fragment_findings(store: Any, plan: dict, rs: dict, clock: Any) -> tuple[lis
     return out, {"pieces": len(islands), "short": len(short)}
 
 
+def sub_sync_findings(store: Any, plan: dict, clock: Any) -> tuple[list[dict], dict]:
+    """Начало каждой строки субтитров против голоса. Вырезанное не считается: зритель его не увидит."""
+    from app.piece_speed import seg_speed
+    from app.speech_activity import line_sync, plan_speech_spans
+
+    payload = store.get_clip_plan_subtitles(int(plan["id"])) or {}
+    lines, words = payload.get("lines") or [], payload.get("words") or []
+    if not lines or not words:
+        return [], {}
+    if any(abs(seg_speed(s) - 1.0) > 1e-3 for s in plan.get("segments") or []):
+        return [], {"skipped": "у кусков своя скорость — звук клипа не совпадает со шкалой слов"}
+    labels = {"early": "раньше голоса на", "late": "позже голоса на"}
+    out, counts = [], {"lines": len(lines), "early": 0, "late": 0, "silent": 0, "lost": 0}
+    cuts = (plan.get("render_settings") or {}).get("cuts") or []
+    for issue in line_sync(lines, words, plan_speech_spans(store, int(plan["id"]))):
+        parts = clock.plain_range_to_clip(issue["start"], issue["end"])
+        if not parts or any(float(c["start"]) <= issue["start"] < float(c["end"]) for c in cuts):
+            continue
+        counts[issue["kind"]] += 1
+        if len(out) >= MAX_SYNC_FINDINGS:
+            continue
+        t = parts[0]["start"]
+        said = f"«{_short(issue['text'], 40)}»"
+        if issue["kind"] in labels:
+            out.append(_finding("sub_sync", "warn", f"строка {said} {labels[issue['kind']]} {issue['by']:.2f} с",
+                                "snap_subtitles_to_speech поставит начало на голос", t=t, until=parts[-1]["end"]))
+        elif issue["kind"] == "silent":
+            out.append(_finding("sub_sync", "warn", f"строка {said}: голоса на этом месте нет",
+                                "проверь listen: текст не отсюда или время уехало", t=t, until=parts[-1]["end"]))
+        else:
+            out.append(_finding("sub_sync", "info", f"перед строкой {said} {issue['by']:.1f} с речи без субтитров",
+                                "послушай listen: потерянная фраза или чужой голос (separate_voices)", t=t, until=parts[-1]["end"]))
+    return out, counts
+
+
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
     labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
-              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки"}
+              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки", "sub_sync": "субтитры и голос"}
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:

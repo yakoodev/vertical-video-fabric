@@ -53,6 +53,9 @@
 
 ### 5. Субтитры
 
+- Порядок: `generate_subtitles` → `separate_voices` → `identify_voices` (банк голосов канала, `register_voice`) →
+  `lint_clip(checks: ["sub_sync"])`, находки — `snap_subtitles_to_speech`. Ручных раскидок времени по строке нет,
+  имя говорящего руками в текст не пишется (`docs/guides/subtitles.md`).
 - `generate_subtitles` (идёт по `speech_tracks`), затем **сверка с речью** на каждой фразе стримера:
   читай `get_clip.subtitles`, сомнительные места слушай `listen(from_sec, to_sec)`; неверное слово
   исправляй по смыслу сцены — `set_subtitle_words` / `edit_subtitle_lines` (Whisper ошибётся так же
@@ -101,7 +104,7 @@
 `list_projects`, `set_source_audio`, `get_source_transcript`, `chat_activity`, `get_chat`,
 `source_loudness`, `source_contact_sheet`, `create_clip`, `trim_piece`, `set_segment_speed`, `suggest_cuts`/`apply_cuts`,
 `set_layout`, `set_focus`, `view_frame`, `generate_subtitles`, `get_clip`, `listen`,
-`set_subtitle_words`, `edit_subtitle_lines`, `list_subtitle_styles`, `set_subtitles`,
+`separate_voices`, `register_voice`, `identify_voices`, `snap_subtitles_to_speech`, `set_subtitle_words`, `edit_subtitle_lines`, `list_subtitle_styles`, `set_subtitles`,
 `censor_profanity` (если есть) / `mute_audio`, `set_source_gain`, `set_nameplate`, `apply_brand`,
 `contact_sheet`, `lint_clip`.
 

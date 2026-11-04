@@ -167,10 +167,45 @@ def _same_text(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+def _align_line(text: str, inside: list[dict], start: float, end: float) -> list[dict]:
+    """Переписанная строка: совпавшие слова держат время распознанных, поправленные — время слова,
+    которое заменили; остальные встают между соседями. Голос строки не теряем."""
+    import difflib
+
+    from app.ai.speakers import _fill_timing, _norm
+
+    tokens = [t for t in re.split(r"\s+", text.strip()) if t]
+    if not tokens:
+        return []
+    speaker = next((w["speaker"] for w in inside if w.get("speaker")), None)
+    timing: list = [None] * len(tokens)
+    if len(tokens) == len(inside):
+        timing = [(max(start, float(w["start"])), min(end, float(w["end"]))) for w in inside]
+    else:
+        sm = difflib.SequenceMatcher(a=[_norm(t) for t in tokens], b=[_norm(str(w["word"])) for w in inside], autojunk=False)
+        for block in sm.get_matching_blocks():
+            for k in range(block.size):
+                w = inside[block.b + k]
+                timing[block.a + k] = (max(start, float(w["start"])), min(end, float(w["end"])))
+    if not any(timing):
+        # Ни одного общего слова: речь строки от первого до последнего распознанного слова.
+        span = {"word": "", "start": float(inside[0]["start"]), "end": float(inside[-1]["end"])}
+        return [{**w, **({"speaker": speaker} if speaker else {})}
+                for w in _split_words(text, max(start, span["start"]), min(end, span["end"]))]
+    filled = _fill_timing(tokens, timing, {"s": speaker or "", "start": start, "end": end})
+    return [{k: v for k, v in w.items() if k != "speaker" or v} for w in filled]
+
+
 def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
     """Keep the original per-word timing where the text is untouched; re-spread it
     where the owner rewrote the line (so karaoke never breaks on an edit)."""
+    return _rebuild_words(lines, old_words)[0]
+
+
+def _rebuild_words(lines: list[dict], old_words: list[dict]) -> tuple[list[dict], list[int]]:
+    """→ (слова, номера слов без опоры на распознанное — их время раскладка вслепую, ``fit_blind_words``)."""
     words: list[dict] = []
+    blind: list[int] = []
     for line, inside in zip(lines, words_by_line(lines, tidy_words(old_words))):
         start, end = float(line["start"]), float(line["end"])
         if inside and _same_text(" ".join(w["word"] for w in inside), line["text"]):
@@ -180,9 +215,44 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
                  **({"emph": w["emph"]} if w.get("emph") else {})}
                 for w in inside
             )
+        elif inside:
+            words.extend(_align_line(line["text"], inside, start, end))
         else:
-            words.extend(_split_words(line["text"], start, end))
-    return words
+            spread = _split_words(line["text"], start, end)
+            blind.extend(range(len(words), len(words) + len(spread)))
+            words.extend(spread)
+    return words, blind
+
+
+def fit_blind_words(store: Any, clip_plan_id: int, words: list[dict], blind: list[int]) -> tuple[list[dict], list[str]]:
+    """Строки без единого распознанного слова внутри — к настоящей речи (VAD) в их границах.
+    Голоса нет или звука нет — время остаётся, и об этом warning: равномерно вслепую молча не бывает."""
+    if not blind:
+        return words, []
+    from app.speech_activity import plan_speech_spans, spans_within, spread_over_speech
+
+    try:
+        spans = plan_speech_spans(store, clip_plan_id)
+    except Exception:  # noqa: BLE001 - нет исходника: время как есть, но честно
+        return words, ["время новых строк не проверено по звуку — исходник недоступен"]
+    out = list(words)
+    notes: list[str] = []
+    runs: list[list[int]] = []
+    for index in blind:
+        if runs and index == runs[-1][-1] + 1 and float(out[index]["start"]) <= float(out[index - 1]["end"]) + 0.02:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    for run in runs:
+        items = [out[i] for i in run]
+        a, b = float(items[0]["start"]), float(items[-1]["end"])
+        parts = spans_within(spans, a, b)
+        if sum(e - s for s, e in parts) < 0.08 * len(run):
+            notes.append(f"«{' '.join(str(w['word']) for w in items)[:60]}» ({a:.2f} с): голоса на этом месте нет — проверь время")
+            continue
+        for i, w in zip(run, spread_over_speech(items, parts)):
+            out[i] = w
+    return out, notes
 
 
 _TOKEN_EDGE = re.compile(r"^[^\w*]+|[^\w*]+$", re.UNICODE)
@@ -598,14 +668,16 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
     if not clean:
         store.set_clip_plan_subtitles(clip_plan_id, None)
         return {"lines": [], "words": [], "edited": True}
+    rebuilt, blind = _rebuild_words(clean, current.get("words") or [])
+    rebuilt, notes = fit_blind_words(store, clip_plan_id, rebuilt, blind)
     payload = {
         **current,
         "lines": clean,
-        "words": rebuild_words(clean, current.get("words") or []),
+        "words": rebuilt,
         "edited": True,
     }
     store.set_clip_plan_subtitles(clip_plan_id, payload)
-    return payload
+    return {**payload, "align_warnings": notes} if notes else payload
 
 
 def _default_profile(store: Any) -> dict:

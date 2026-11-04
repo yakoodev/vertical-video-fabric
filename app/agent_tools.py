@@ -1262,6 +1262,61 @@ def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
     return {"ok": True, **out, "note": note}
 
 
+def h_register_voice(ctx: ToolContext, args: dict) -> dict:
+    from app.voice_bank import register_voice
+
+    source_id = args.get("source_id")
+    try:
+        return {"ok": True, **register_voice(
+            ctx.store, str(args.get("name") or ""), clip_plan_id=None if source_id else ctx.plan_id,
+            source_id=int(source_id) if source_id else None, start=_num(args.get("start")), end=_num(args.get("end")),
+            speaker=args.get("speaker"), kind=str(args.get("kind") or "person"),
+        )}
+    except (RuntimeError, ValueError, KeyError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def h_identify_voices(ctx: ToolContext, args: dict) -> dict:
+    from app.voice_bank import identify_voices
+
+    ctx.before_change()
+    try:
+        out = identify_voices(ctx.store, ctx.plan_id, labels=args.get("labels", True) is not False,
+                              reassign=args.get("reassign") is True)
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+    out.pop("subtitles", None)
+    out["note"] = ("names — кто уверенно опознан, unsure — кого нет (имя не ставлю, не угадываю); conflicts — реплики, "
+                   "звучащие как другой человек: послушай (listen) и поправь assign_voice или reassign: true")
+    return {"ok": True, **out}
+
+
+def h_list_voices(ctx: ToolContext, _args: dict) -> dict:
+    from app.voice_bank import list_voices, plan_project
+
+    return {"voices": list_voices(ctx.store, plan_project(ctx.store, ctx.plan_id))}
+
+
+def h_delete_voice(ctx: ToolContext, args: dict) -> dict:
+    from app.voice_bank import delete_voice
+
+    try:
+        delete_voice(ctx.store, int(args.get("voice_id") or 0))
+    except KeyError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True}
+
+
+def h_snap_subtitles_to_speech(ctx: ToolContext, _args: dict) -> dict:
+    from app.speech_activity import snap_lines_to_speech
+
+    ctx.before_change()
+    try:
+        return {"ok": True, **snap_lines_to_speech(ctx.store, ctx.plan_id)}
+    except (RuntimeError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def h_translate_subtitles(ctx: ToolContext, args: dict) -> dict:
     from app.translation import translate_subtitles
 
@@ -4839,6 +4894,14 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
     # «кусками подряд». Раньше слово из get_clip, отданное обратно как есть, уезжало
     # на длину наплыва.
     words = words_clip_to_plain(_clock(ctx), words, old_payload.get("words") or [])
+    # Текст, которого нет среди распознанных слов, встаёт на настоящую речь: равномерная раскладка
+    # вслепую давала субтитры раньше голоса (клипы 905–918).
+    align_notes: list[str] = []
+    if args.get("align", True) is not False:
+        from app.speech_activity import fit_unknown_words, plan_speech_spans
+
+        words, align_notes = fit_unknown_words(words, old_payload.get("words") or [],
+                                               lambda: plan_speech_spans(ctx.store, ctx.plan_id))
     # Дефисные хвосты Whisper («какой» «-то») склеиваются, дубли на стыке строк убираются.
     words = tidy_words(words)
     ctx.before_change()
@@ -4852,6 +4915,8 @@ def h_set_subtitle_words(ctx: ToolContext, args: dict) -> dict:
            "time": "clip",
            "note": "строки собраны из слов: новая строка на конце предложения (. ! ?), паузе > 0.6 с, смене голоса s "
                    "и после 7 слов"}
+    if align_notes:
+        out["warnings"] = align_notes
     if moved:
         out["highlights"] = moved
     stored = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
@@ -7664,7 +7729,9 @@ def _build_registry() -> list[Tool]:
             "без Gemini; emph — эмфаза слова (1 pop, 2 shake, см. emphasize_words). Подсветка слов (highlightWords) остаётся на тех же словах. Для исправления "
             "ошибок распознавания и опоздавших слов. Строки соберутся из слов сами: новая строка на конце "
             "предложения (. ! ? …), паузе > 0.6 с, смене голоса и после 7 слов; «какой» «-то» склеится в "
-            "«какой-то». Пустой список [] — убрать субтитры клипа (клип без речи). "
+            "«какой-то». Новый текст, которого нет среди распознанных слов, встаёт на настоящую речь (VAD), "
+            "в warnings — где голоса нет; align: false — оставить заданное время как есть. "
+            "Пустой список [] — убрать субтитры клипа (клип без речи). "
             "/ Replace subtitle words with exact timings; [] clears them.",
             _obj({"words": {"type": "array", "items": _obj({"word": {"type": "string"}, "start": {"type": "number"},
                                                               "end": {"type": "number"},
@@ -7673,7 +7740,8 @@ def _build_registry() -> list[Tool]:
                                                                        "description": "эмфаза: 1 pop, 2 shake"},
                                                               "speaker": {"type": "string",
                                                                           "description": "то же, что s"}},
-                                                             ["word", "start", "end"])}},
+                                                             ["word", "start", "end"])},
+                  "align": {"type": "boolean", "description": "по умолчанию true: новый текст — по настоящей речи"}},
                  ["words"]),
             h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
         ),
@@ -7715,6 +7783,43 @@ def _build_registry() -> list[Tool]:
             "auto_edit делает это сам; вызывай, если перераспознал речь после auto_edit. / Separate voices.",
             _obj({}, []),
             h_separate_voices, mutating=True, label=lambda a: "Разбираю голоса",
+        ),
+        Tool(
+            "register_voice", "Запоминаю голос",
+            "Банк голосов канала: запомнить, чей это голос. name — имя («Мура», «Глеб», «TTS чата»), kind — person или bot "
+            "(озвучка чата — обычная запись). Откуда: speaker (все слова буквы A/B/C/D этого клипа), или start/end клипа "
+            "(шкала куски подряд), или source_id со start/end секунд источника. Нужно от 6 с чистой речи, надёжно от 15 с; "
+            "то же имя — новый образец к прежнему. Бери отрезки, где человек говорит один. / Remember a voice.",
+            _obj({"name": {"type": "string"}, "speaker": {"type": "string"}, "start": {"type": "number"}, "end": {"type": "number"},
+                  "source_id": {"type": "integer"}, "kind": {"type": "string", "enum": ["person", "bot"]}}, ["name"]),
+            h_register_voice, label=lambda a: f"Запоминаю голос: {a.get('name') or ''}",
+        ),
+        Tool(
+            "identify_voices", "Узнаю голоса",
+            "Кто есть кто в клипе по банку голосов (после separate_voices): буквам A/B/C/D ставит имена, только если "
+            "совпадение уверенное; остальное честно в unsure. labels (по умолчанию true) — в готовых субтитрах реплика "
+            "не главного голоса идёт как «Глеб: …», имя в текст руками не пиши. conflicts — реплики, которые звучат как "
+            "другой человек; reassign: true отдаёт их его букве. Реплики короче 2.5 с не сравниваются: "
+            "по ним опознание ненадёжно. / Identify clip voices by the voice bank.",
+            _obj({"labels": {"type": "boolean"}, "reassign": {"type": "boolean"}}, []),
+            h_identify_voices, mutating=True, label=lambda a: "Узнаю голоса",
+        ),
+        Tool(
+            "list_voices", "Смотрю банк голосов",
+            "Голоса в банке канала этого клипа и общие: id, name, kind, seconds, samples. / List the voice bank.",
+            _obj({}, []), h_list_voices, label=lambda a: "Смотрю банк голосов",
+        ),
+        Tool(
+            "delete_voice", "Удаляю голос из банка",
+            "Убрать голос из банка (voice_id из list_voices). / Delete a bank voice.",
+            _obj({"voice_id": {"type": "integer"}}, ["voice_id"]), h_delete_voice, label=lambda a: "Удаляю голос из банка",
+        ),
+        Tool(
+            "snap_subtitles_to_speech", "Ставлю субтитры на голос",
+            "Поправить находки lint_clip sub_sync: первое слово строки, опережающей голос или опоздавшей, встаёт на "
+            "настоящее начало речи (VAD). Текст не меняется. Потерянные фразы и строки без голоса — в ответе (rest), "
+            "их решает человек. / Snap subtitle line starts to detected speech.",
+            _obj({}, []), h_snap_subtitles_to_speech, mutating=True, label=lambda a: "Ставлю субтитры на голос",
         ),
         Tool(
             "translate_subtitles", "Перевожу субтитры на русский",

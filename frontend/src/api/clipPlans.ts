@@ -168,6 +168,22 @@ export interface VoicesResult {
   subtitles: PlanSubtitles;
 }
 
+export interface VoiceMatch {
+  name: string | null;
+  score: number;
+  margin: number;
+  sure: boolean;
+  seconds?: number;
+}
+
+export interface IdentifyVoicesResult {
+  voices: Record<string, VoiceMatch>;
+  names: Record<string, string>;
+  unsure: { voice: string; closest: string | null; score: number; seconds: number }[];
+  conflicts: { start: number; end: number; text: string; voice: string; was: string; sounds_like: string; score: number }[];
+  subtitles: PlanSubtitles;
+}
+
 export const clipPlansApi = {
   /** 🎬 Отдать клип в монтажку: ссылка на выгрузку таймлайна (cookie-авторизация). */
   timelineUrl: (clipPlanId: number, format: "otio" | "edl" | "fcpxml") =>
@@ -195,6 +211,14 @@ export const clipPlansApi = {
   /** Отдать слова отрезка другому голосу (поправить модель руками). */
   assignVoice: (clipPlanId: number, start: number, end: number, speaker: string) =>
     api.post<VoicesResult>(`/api/clip-plans/${clipPlanId}/voices/assign`, { start, end, speaker }),
+  /** Кто есть кто: имена голосам по банку голосов канала. */
+  identifyVoices: (clipPlanId: number) =>
+    api.post<IdentifyVoicesResult>(`/api/clip-plans/${clipPlanId}/voices/identify`, {}),
+  /** Запомнить голос клипа в банке канала. */
+  registerVoice: (clipPlanId: number, speaker: string, name: string) =>
+    api.post<{ id: number; name: string; seconds: number; warning?: string }>(
+      `/api/clip-plans/${clipPlanId}/voices/register`, { speaker, name },
+    ),
   /** Эмфаза слов субтитров (emphasize_words): indices — номера слов, style off — снять; auto — по слову на строку. */
   emphasizeWords: (
     clipPlanId: number,
