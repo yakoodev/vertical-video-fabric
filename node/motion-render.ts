@@ -9,6 +9,7 @@
  * Сборка: `npm run build:motion` → `node/motion-render.mjs` (esbuild, один файл,
  * @napi-rs/canvas — внешняя зависимость). Контракт CLI — docs/motion/spec.md.
  */
+import { paintCoverDoc, type CoverDoc, type CoverImageLike } from "../frontend/src/motion/coverdoc";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -1180,9 +1181,43 @@ function validateSceneMode(argv: string[]): void {
   process.stdout.write(JSON.stringify(out));
 }
 
+/**
+ * Обложка из редактора (app/cover_docs.py): `--cover-doc job.json --out out.png`, job — {doc, assets_dir}.
+ * Рисует тот же код, что холст редактора (frontend/src/motion/coverdoc.ts). Имена файлов в doc уже
+ * проверены бэкендом; сюда попадают только файлы из папки документа.
+ */
+async function coverDocMode(argv: string[]): Promise<void> {
+  const value = (name: string) => {
+    const at = argv.indexOf(name);
+    return at >= 0 ? argv[at + 1] : undefined;
+  };
+  const jobPath = value("--cover-doc");
+  const out = value("--out");
+  if (!jobPath || !out) throw new UsageError("--cover-doc: нужны job.json и --out");
+  registerFonts(value("--fonts-dir"));
+  registerFonts(value("--user-fonts-dir"));
+  installVariableFonts();
+  const job = JSON.parse(readFileSync(jobPath, "utf8")) as { doc: CoverDoc; assets_dir: string };
+  const images = new Map<string, CoverImageLike>();
+  for (const layer of job.doc.layers) {
+    if (layer.type !== "image" || !layer.src || images.has(layer.src)) continue;
+    images.set(layer.src, (await loadImage(join(job.assets_dir, basename(layer.src)))) as unknown as CoverImageLike);
+  }
+  const canvas = createCanvas(job.doc.width, job.doc.height);
+  paintCoverDoc(canvas.getContext("2d") as unknown as CanvasRenderingContext2D, job.doc, {
+    getImage: (src) => images.get(src) ?? null,
+    createCanvas: (w, h) => createCanvas(w, h) as unknown as { getContext(type: "2d"): unknown },
+  });
+  writeFileSync(out, canvas.toBuffer("image/png"));
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes("--validate-scene")) {
     validateSceneMode(process.argv.slice(2));
+    return;
+  }
+  if (process.argv.includes("--cover-doc")) {
+    await coverDocMode(process.argv.slice(2));
     return;
   }
   const args = parseArgs(process.argv.slice(2));

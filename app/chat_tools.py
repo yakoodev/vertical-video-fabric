@@ -49,7 +49,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "set_motion_blur", "add_glitch",
         "add_insert", "remove_insert", "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
-        "choose_cover", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
+        "choose_cover", "create_cover_doc", "update_cover_doc", "render_cover_doc", "share_cover_doc", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
         "preview_scene_frame")),
     "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",

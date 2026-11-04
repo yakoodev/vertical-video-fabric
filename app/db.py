@@ -514,6 +514,10 @@ class Database:
             from app.cover_variants import ensure_cover_variants_schema
 
             ensure_cover_variants_schema(conn)
+            # Документы обложек, собранных руками, и ссылки на редактирование (app/cover_docs.py)
+            from app.cover_docs import ensure_cover_docs_schema
+
+            ensure_cover_docs_schema(conn)
             # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
             # площадки по времени — обратная связь «что заходит» для монтажа.
             # error — снимок не удался (причина для UI), числа тогда NULL.

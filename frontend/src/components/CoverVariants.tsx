@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { coverDocsApi } from "@/api/coverDocs";
 import { clipsApi } from "@/api/clips";
 import { qk } from "@/api/keys";
 import type { Clip } from "@/api/types";
@@ -17,6 +19,7 @@ const STYLE_LABELS: Record<string, string> = {
 export function CoverVariants({ clip }: { clip: Clip }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const covers = useQuery({ queryKey: qk.clipCovers(clip.id), queryFn: () => clipsApi.covers(clip.id) });
   const list = covers.data?.covers ?? [];
 
@@ -49,6 +52,12 @@ export function CoverVariants({ clip }: { clip: Clip }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось выбрать"),
   });
 
+  const compose = useMutation({
+    mutationFn: () => coverDocsApi.create({ clip_id: clip.id, template: "avatar-bottom" }),
+    onSuccess: (r) => navigate(`/covers/${r.id}`),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось открыть редактор превью"),
+  });
+
   const ratio = clip.width > 0 && clip.height > 0 ? `${clip.width} / ${clip.height}` : "9 / 16";
   const landscape = clip.width > clip.height;
 
@@ -56,6 +65,15 @@ export function CoverVariants({ clip }: { clip: Clip }) {
     <div className="field cv-wrap">
       <div className="cv-head">
         <span>Обложка</span>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={compose.isPending || clip.status !== "succeeded"}
+          onClick={() => compose.mutate()}
+          title="Редактор слоёв: кадр из ролика, аватар, текст. Без ИИ, можно дать ссылку на правку"
+        >
+          {compose.isPending ? "Открываю…" : "Собрать превью"}
+        </button>
         <button
           type="button"
           className="btn sm pub-gen-btn"
