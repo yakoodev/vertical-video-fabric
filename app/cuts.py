@@ -300,7 +300,9 @@ def subtitles_to_final(payload: dict, segments: list[dict], transition: Any, cut
     """
     from app.clip_subtitles import shift_for_transition
     from app.transitions import part_overlaps
+    from app.voice_bank import with_speaker_labels
 
+    payload = with_speaker_labels(payload)
     if cut_plan is not None:
         payload = remap_subtitles(payload, cut_plan.mapper)
         parts, jumps = cut_plan.parts, cut_plan.jump_joins

@@ -192,6 +192,26 @@ export function SubtitleEditor({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось разобрать голоса"),
   });
 
+  const identify = useMutation({
+    mutationFn: () => clipPlansApi.identifyVoices(clipPlanId),
+    onSuccess: (data) => {
+      applyFresh(data.subtitles);
+      const known = Object.entries(data.names).map(([v, name]) => `${v} — ${name}`);
+      const open = [
+        data.unsure.length ? `не узнал: ${data.unsure.map((u) => u.voice).join(", ")}` : "",
+        data.conflicts.length ? `спорных реплик: ${data.conflicts.length}` : "",
+      ].filter(Boolean);
+      toast.success([known.join(", ") || "Никого уверенно не узнал", ...open].join(" · "));
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось узнать голоса"),
+  });
+
+  const remember = useMutation({
+    mutationFn: ({ speaker, name }: { speaker: string; name: string }) => clipPlansApi.registerVoice(clipPlanId, speaker, name),
+    onSuccess: (data) => (data.warning ? toast.error(data.warning) : toast.success(`Запомнил голос: ${data.name}`)),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запомнить голос"),
+  });
+
   const assign = useMutation({
     mutationFn: ({ line, speaker }: { line: SubtitleLine; speaker: string }) =>
       clipPlansApi.assignVoice(clipPlanId, line.start, line.end + 0.001, speaker),
@@ -237,7 +257,8 @@ export function SubtitleEditor({
   };
   const lineWords = dirty ? null : wordsByLine(lines, query.data?.words ?? []);
 
-  const busy = generate.isPending || save.isPending || voices.isPending || assign.isPending || emphasis.isPending;
+  const busy = generate.isPending || save.isPending || voices.isPending || assign.isPending || emphasis.isPending
+    || identify.isPending || remember.isPending;
   return (
     <div className="subed">
       <div className="subed-top">
@@ -301,8 +322,27 @@ export function SubtitleEditor({
               <i style={voiceTag(v)} />
               <b>{v}</b> {speakers[v] || (v === "A" ? "главный" : "голос")}
               <span className="muted"> · {counts[v]}</span>
+              <button
+                className="btn sm ghost"
+                disabled={busy}
+                title="Запомнить этот голос в банке канала: потом он узнаётся по имени в других клипах"
+                onClick={() => {
+                  const name = window.prompt(`Чей голос ${v}?`, speakers[v] || "")?.trim();
+                  if (name) remember.mutate({ speaker: v, name });
+                }}
+              >
+                Запомнить
+              </button>
             </span>
           ))}
+          <button
+            className="btn sm"
+            disabled={busy || dirty}
+            title="Сравнить голоса клипа с банком канала и подписать имена. Неуверенные останутся без имени"
+            onClick={() => identify.mutate()}
+          >
+            {identify.isPending ? "Узнаю…" : "Кто это"}
+          </button>
           <span className="muted subed-voices-hint">Метка у строки — сменить голос</span>
         </div>
       ) : null}

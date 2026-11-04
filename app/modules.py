@@ -185,7 +185,7 @@ MODULES: list[Module] = [
         "Локальный Whisper: расшифровка источника, субтитры по словам, «послушать» кусок клипа. "
         "Выключен — модель не загружается вовсе, уже загруженная выгружается.",
         cost=("cpu", "ram"), cost_note="модель 1–3 ГБ в памяти, минуты CPU на час звука",
-        tools=("get_source_transcript", "listen", "generate_subtitles"),
+        tools=("get_source_transcript", "listen", "generate_subtitles", "snap_subtitles_to_speech"),
         routes=("/api/sources/{id}/transcript",),
         ui=("расшифровка источника",),
     ),
@@ -194,8 +194,8 @@ MODULES: list[Module] = [
         "Разделение голосов: Gemini размечает, кто говорит, второй слой субтитров для собеседников.",
         cost=("network", "cpu"), cost_note="Gemini API + повторное распознавание Whisper",
         depends=("transcription",),
-        tools=("separate_voices",),
-        routes=("/api/clip-plans/{id}/voices*",),
+        tools=("separate_voices", "register_voice", "identify_voices", "list_voices", "delete_voice"),
+        routes=("/api/clip-plans/{id}/voices*", "/api/voice-bank*"),
         ui=("кнопки «Голоса» в редакторе субтитров",),
     ),
     Module(

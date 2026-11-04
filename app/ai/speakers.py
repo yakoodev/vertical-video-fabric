@@ -272,6 +272,13 @@ def separate_voices(
             w.pop("speaker", None)
         speakers = {k: v for k, v in speakers.items() if k == "A"}
     lines = lines_from_words(merged)
+    # Слова, которые расслышал только Gemini, стоят по его времени — начало строки сверяем с голосом.
+    try:
+        from app.speech_activity import plan_speech_spans, snap_starts
+
+        snap_starts(lines, merged, plan_speech_spans(store, clip_plan_id))
+    except Exception:  # noqa: BLE001 - нет звука для сверки — время как разобрал Gemini, lint_clip покажет
+        pass
     fresh = {**payload, "words": merged, "lines": lines, "speakers": speakers, "edited": True}
     fresh["speakers_key"] = _words_key(merged)
     store.set_clip_plan_subtitles(clip_plan_id, fresh)

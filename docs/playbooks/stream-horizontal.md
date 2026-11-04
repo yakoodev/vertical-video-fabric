@@ -53,11 +53,14 @@
 `set_source_audio`, `get_source_transcript`, `chat_activity`, `source_loudness`, `source_contact_sheet`,
 `create_clip`, `trim_piece`, `suggest_cuts`, `apply_cuts`, `set_format`, `set_layout`, `set_camera`,
 `search_pack`, `add_layers`, `add_insert`, `emphasize_words`, `set_transition`, `set_subtitles`,
-`generate_subtitles`, `set_subtitle_words`, `censor_profanity` (если есть) / `mute_audio`,
+`generate_subtitles`, `separate_voices`, `register_voice`, `identify_voices`, `snap_subtitles_to_speech`, `set_subtitle_words`, `censor_profanity` (если есть) / `mute_audio`,
 `set_nameplate`, `contact_sheet`, `listen`, `view_frame`, `lint_clip`.
 
 ## Чек-лист перед сдачей
 
+- [ ] Субтитры по порядку: `generate_subtitles` → `separate_voices` → `identify_voices` → `lint_clip(checks: ["sub_sync"])`
+      без `warn`. Ручных раскидок времени по строке нет, имена говорящих руками в текст не пишутся
+      (`docs/guides/subtitles.md`); `unsure` из `identify_voices` разобран на слух, а не угадан.
 - [ ] `lint_clip(checks: ["fragments", "reading", "flashes", "montage"])` по свежему рендеру — нет `warn`;
       `fragments.short` — 0 (зоны кнопок TikTok/Reels/Shorts у 16:9 не проверяются: края и водяной знак
       YouTube ловит `add_layers`).

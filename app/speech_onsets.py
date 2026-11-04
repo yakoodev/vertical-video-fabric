@@ -23,6 +23,7 @@ _GAP_FILL_FRAMES = 3  # паузы короче 60 мс внутри слова 
 LEAD_MIN_SAMPLES = 3
 LEAD_MIN_SEC = 0.08
 MAX_LEAD_SEC = 0.6
+NOISY_VOICED_SHARE = 0.85  # громкость «звучит» в такой доле кадров — это не речь, а игра под ней
 
 
 def wav_pcm(path) -> bytes:
@@ -69,6 +70,28 @@ def voiced_frames(pcm: bytes, rate: int = SAMPLE_RATE) -> list[bool]:
         else:
             i += 1
     return voiced
+
+
+def _vad_or_loudness(pcm: bytes, voiced: list[bool]) -> list[bool]:
+    """Громкость «звучит» почти всё время (игра, музыка под голосом) — начала слов так не найти:
+    берём Silero VAD. Обычная запись с паузами — громкость, как раньше."""
+    if not voiced or sum(voiced) / len(voiced) < NOISY_VOICED_SHARE:
+        return voiced
+    try:
+        import numpy as np
+
+        from app.audio_map import vad_segments
+
+        spans, how = vad_segments(np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0, SAMPLE_RATE)
+    except Exception:  # noqa: BLE001 - без numpy/VAD — как раньше
+        return voiced
+    if how != "silero" or not spans:
+        return voiced
+    frames = [False] * len(voiced)
+    for a, b in spans:
+        for i in range(int(a / FRAME_SEC), min(len(frames), int(b / FRAME_SEC) + 1)):
+            frames[i] = True
+    return frames
 
 
 def _at(voiced: list[bool], t: float) -> bool:
@@ -164,7 +187,7 @@ def snap_payload(payload: dict, pcm: bytes) -> int:
         [i for i, w in enumerate(words) if float(line["start"]) - 1e-3 <= float(w["start"]) < float(line["end"]) + 1e-3]
         for line in lines
     ]
-    snapped, moved = snap_words(words, voiced_frames(pcm))
+    snapped, moved = snap_words(words, _vad_or_loudness(pcm, voiced_frames(pcm)))
     if not moved:
         return 0
     payload["words"] = snapped

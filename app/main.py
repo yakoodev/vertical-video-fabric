@@ -2981,6 +2981,72 @@ def api_assign_voice(clip_plan_id: int, payload: AssignVoiceRequest, _auth: Auth
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class IdentifyVoicesRequest(BaseModel):
+    labels: bool = True
+    reassign: bool = False
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/voices/identify",
+    tags=["Subtitles"],
+    summary="Голоса: кто есть кто по банку голосов канала (имена только при уверенном совпадении)",
+)
+def api_identify_voices(clip_plan_id: int, _auth: AuthDep, payload: IdentifyVoicesRequest | None = None) -> dict:
+    from app.voice_bank import identify_voices
+
+    body = payload or IdentifyVoicesRequest()
+    try:
+        snapshot_clip(store, clip_plan_id, "имена голосов")
+        return identify_voices(store, clip_plan_id, labels=body.labels, reassign=body.reassign)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class RegisterVoiceRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    speaker: str | None = Field(default=None, pattern="^[A-D]$")
+    start: float | None = None
+    end: float | None = None
+    kind: str = Field(default="person", pattern="^(person|bot)$")
+
+
+@app.post(
+    "/api/clip-plans/{clip_plan_id}/voices/register",
+    tags=["Subtitles"],
+    summary="Голоса: запомнить в банке канала голос этого клипа (буква или отрезок)",
+)
+def api_register_voice(clip_plan_id: int, payload: RegisterVoiceRequest, _auth: AuthDep) -> dict:
+    from app.voice_bank import register_voice
+
+    try:
+        return register_voice(store, payload.name, clip_plan_id=clip_plan_id, speaker=payload.speaker,
+                              start=payload.start, end=payload.end, kind=payload.kind)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/voice-bank", tags=["Subtitles"], summary="Банк голосов: канал (project_id) и общие")
+def api_voice_bank(_auth: AuthDep, project_id: int | None = None) -> dict:
+    from app.voice_bank import list_voices
+
+    return {"voices": list_voices(store, project_id)}
+
+
+@app.delete("/api/voice-bank/{voice_id}", tags=["Subtitles"], summary="Банк голосов: убрать голос")
+def api_voice_bank_delete(voice_id: int, _auth: AuthDep) -> dict:
+    from app.voice_bank import delete_voice
+
+    try:
+        delete_voice(store, voice_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 class AiMontageApplyRequest(BaseModel):
     spec: dict
 

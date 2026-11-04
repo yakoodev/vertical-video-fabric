@@ -476,6 +476,10 @@ class Database:
             from app.twitch_chat import ensure_chat_schema
 
             ensure_chat_schema(conn)
+            # Банк голосов: пары «голос → человек» (app/voice_bank.py).
+            from app.voice_bank import ensure_voice_schema
+
+            ensure_voice_schema(conn)
             # Проекты (серии и каналы): бриф, правила владельца, ручные публикации,
             # теги клипов, гипотезы + sources.project_id (app/projects.py).
             from app.projects import ensure_projects_schema
