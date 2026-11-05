@@ -36,6 +36,7 @@ export const qk = {
   channelProjects: ["channel-projects"] as const,
   channelProject: (id: number | string) => ["channel-projects", String(id)] as const,
   channelBrief: (id: number | string) => ["channel-projects", String(id), "brief"] as const,
+  channelKnowledge: (id: number | string) => ["channel-projects", String(id), "knowledge"] as const,
   channelRules: (id: number | string, status: string) => ["channel-projects", String(id), "rules", status] as const,
   channelStats: (id: number | string) => ["channel-projects", String(id), "stats"] as const,
   channelPublications: (id: number | string) => ["channel-projects", String(id), "publications"] as const,

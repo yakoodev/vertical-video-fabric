@@ -290,6 +290,51 @@
 
 /* ---------- строки видео ---------- */
 .vrows { display: block; }
+
+/* Проект → Видео: список и рядом «Что агент знает» */
+.proj-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: 20px; align-items: start; }
+.proj-split-main { min-width: 0; }
+@media (max-width: 1180px) {
+  .proj-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* «Что агент знает о проекте» */
+.know { display: grid; gap: 12px; min-width: 0; }
+.know:not(.know-card) { max-width: 900px; }
+.know-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.know-h h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.know-lead, .know-empty { margin: 0; font-size: 13.5px; line-height: 1.5; }
+.know-more { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--accent-2); justify-self: start; }
+.know-more:hover { color: var(--text); }
+.kg { display: grid; gap: 0; min-width: 0; }
+.kg h3 { margin: 4px 0 6px; font-size: 14.5px; font-weight: 650; }
+.kg-hint { margin: -2px 0 6px; font-size: 12.5px; }
+.kitem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  align-items: start;
+}
+.kitem-ro { grid-template-columns: minmax(0, 1fr); }
+.kitem-main, .kitem-edit { display: grid; gap: 3px; min-width: 0; }
+.kitem-edit { gap: 6px; }
+.kitem-x { font-size: 14.5px; line-height: 1.42; overflow-wrap: anywhere; }
+.kitem-x b { font-weight: 620; }
+.kitem-o { font-size: 12.5px; color: var(--text-dim); overflow-wrap: anywhere; }
+.kitem-o a { color: var(--text-dim); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+.kitem-o a:hover { color: var(--text); }
+.kitem-a { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.kitem-edit textarea, .kadd textarea { width: 100%; resize: vertical; line-height: 1.4; }
+.kadd { display: grid; gap: 8px; }
+.kwait { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-soft); font-size: 13.5px; }
+.kwait-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.kwait ul { margin: 0; padding-left: 18px; color: var(--text-dim); font-size: 13px; display: grid; gap: 2px; }
+@media (max-width: 620px) {
+  .kitem { grid-template-columns: minmax(0, 1fr); }
+  .kitem-a { justify-content: flex-start; }
+}
 .vrow-tools { margin-bottom: 8px; }
 .vrow {
   display: grid;

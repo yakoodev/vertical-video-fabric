@@ -599,10 +599,15 @@ def run_agent(
         request=str(message or ""),
     )
     clip_state, _ok = agent_tools.run_tool(ctx, "get_clip", {})
+    from app.project_knowledge import block_for_plan
+
     first = (
         f"{message.strip()}\n\n---\nТекущее состояние клипа (get_clip):\n"
         + json.dumps(agent_tools.result_for_json(clip_state), ensure_ascii=False)[:MAX_RESULT_CHARS]
     )
+    lore = block_for_plan(store, clip_plan_id)
+    if lore:
+        first += f"\n\n---\n{lore}"
     contents = _history_contents(history or []) + [{"role": "user", "parts": [{"text": first}]}]
     if len(contents) > 1 and contents[-2]["role"] == "user":  # история кончилась вопросом без ответа
         contents[-2]["parts"][0]["text"] += "\n\n(ответа не было)"
@@ -1388,6 +1393,21 @@ def _active_run(clip_plan_id: int) -> _Run | None:
         return run
 
 
+def remember_owner_fact(store: Any, clip_plan_id: int, message: str, source_id: Any = None) -> str:
+    """«Запомни: …» в чате клипа → факт проекта этого клипа (app/project_knowledge.py). Строка для ответа или пусто."""
+    from app import project_knowledge as K
+    from app.asset_scope import clip_project
+
+    try:
+        remembered = K.remember_from_chat(store, clip_project(store, int(clip_plan_id)), message,
+                                          origin_ref=f"clip#{int(clip_plan_id)}", clip_plan_id=int(clip_plan_id),
+                                          source_id=int(source_id) if source_id else None)
+    except Exception as exc:  # noqa: BLE001 - разговор важнее записи
+        _log.info("remember fact from clip chat %s failed: %s", clip_plan_id, exc)
+        return ""
+    return K.remembered_note(remembered)
+
+
 def start_run(
     store: Any,
     clip_plan_id: int,
@@ -1401,7 +1421,7 @@ def start_run(
     text = str(message or "").strip()
     if not text:
         raise ValueError("пустое сообщение")
-    store.get_clip_plan(clip_plan_id, include_segments=False)  # KeyError → 404
+    plan = store.get_clip_plan(clip_plan_id, include_segments=False)  # KeyError → 404
     with _RUNS_LOCK:
         current = _RUNS.get(int(clip_plan_id))
         if current is not None and current.thread is not None and current.thread.is_alive():
@@ -1416,16 +1436,20 @@ def start_run(
         store.db.execute("UPDATE clip_agent_messages SET run_id = ? WHERE id = ?", (run.id, run.message_id))
         _RUNS[int(clip_plan_id)] = run
 
+    note = remember_owner_fact(store, clip_plan_id, text, source_id=plan.get("source_id"))
+    prompt = f"{text}\n\nСервис уже сделал: {note}" if note else text
+
     def work() -> None:
         def on_step(steps: list[dict]) -> None:
             store.update_clip_agent_message(run.message_id, steps=steps)
 
         try:
             result = run_agent(
-                store, clip_plan_id, text, client=client, model=used_model, history=history,
+                store, clip_plan_id, prompt, client=client, model=used_model, history=history,
                 on_step=on_step, should_cancel=run.cancel.is_set, max_steps=max_steps,
             )
-            store.update_clip_agent_message(run.message_id, text=result["text"], steps=result["steps"], status="done")
+            reply = f"{note}\n\n{result['text']}" if note else result["text"]
+            store.update_clip_agent_message(run.message_id, text=reply, steps=result["steps"], status="done")
         except AgentCancelled:
             store.update_clip_agent_message(run.message_id, text="Остановлено. Уже сделанные правки остались — "
                                             "Ctrl+Z откатит их целиком.", status="cancelled")

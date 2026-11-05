@@ -7,6 +7,7 @@
 
 Ответ со ``scope="channel"`` — про канал вообще («кто такой Глеб») — идёт в бриф проекта
 (app/projects.py), чтобы не спрашивать на каждом стриме. ``scope="stream"`` — только про этот стрим.
+Весь список того, что агент знает о проекте, и его правка — app/project_knowledge.py.
 """
 
 from __future__ import annotations
@@ -254,8 +255,72 @@ def _write_brief(store: Any, item: dict) -> dict:
     return {"written": True, "project_id": project_id, "section": next(iter(patch))}
 
 
+def brief_place(item: dict) -> str:
+    """Где в брифе лежит ответ про канал: ``people:имя``, ``jokes:текст`` или ``notes:начало строки``
+    (та же раскладка, что у ``_brief_patch``). Экран «Что агент знает» по ней находит вопрос строки."""
+    about = item.get("about") or ""
+    if item["kind"] == "who" and about:
+        return f"people:{about.lower()}"
+    if item["kind"] == "joke":
+        return f"jokes:{(about or item['question']).lower()}"
+    return f"notes:{item['question']} — "
+
+
+def in_brief(item: dict, brief: dict) -> bool:
+    place = brief_place(item)
+    section, _, value = place.partition(":")
+    if section == "notes":
+        return any(line.startswith(value) for line in (brief.get("notes") or "").splitlines())
+    from app.projects import BRIEF_SECTIONS
+
+    key = BRIEF_SECTIONS[section][0]
+    return any(str(row.get(key) or "").lower() == value for row in brief.get(section) or [])
+
+
+def _unwrite_brief(store: Any, item: dict, value: str) -> None:
+    """Владелец снял ответ про канал: строка уходит из брифа, если её с тех пор никто не менял."""
+    from app import projects as P
+
+    project_id = P.project_of_source(store, int(item["source_id"]))
+    if project_id is None:
+        return
+    brief = P.get_brief(store, project_id)["brief"]
+    section, _, target = brief_place(item).partition(":")
+    if section == "notes":
+        kept = [line for line in brief["notes"].splitlines() if not line.startswith(target)]
+        if len(kept) != len(brief["notes"].splitlines()):
+            P.update_brief(store, project_id, {"notes": "\n".join(kept)})
+        return
+    key, body = {"people": ("name", "who"), "jokes": ("text", "about")}[section]
+    for row in brief[section]:
+        if str(row[key]).lower() == target and row.get(body) == P._text(value, 600):
+            P.update_brief(store, project_id, {section: [{key: row[key], "_delete": True}]})
+            return
+
+
+def correct_answer(store: Any, question_id: int, text: Any) -> dict:
+    """Владелец поправил свой ответ на экране «Что агент знает»: остаётся ответом, но своими словами."""
+    get_question(store, question_id)
+    value = _body(text)
+    if not value:
+        raise ValueError("нужен текст ответа")
+    store.db.execute(
+        "UPDATE stream_questions SET answer_option = NULL, answer_text = ?, status = 'answered', "
+        "answered_at = CURRENT_TIMESTAMP WHERE id = ?", (value, int(question_id)))
+    return get_question(store, question_id)
+
+
+def forget_answer(store: Any, question_id: int) -> dict:
+    """Владелец убрал ответ: для агента его больше нет, вопрос заново не задаём (его можно открыть в «Вопросах»)."""
+    store.db.execute(
+        "UPDATE stream_questions SET answer_option = NULL, answer_text = '', status = 'skipped', "
+        "answered_at = CURRENT_TIMESTAMP WHERE id = ?", (int(question_id),))
+    return get_question(store, question_id)
+
+
 def answer_question(store: Any, question_id: int, option: Any = None, text: Any = "", skip: bool = False) -> dict:
     item = get_question(store, question_id)
+    before = answer_value(item) if item["status"] == "answered" else ""
     custom = _body(text)
     picked = None
     if option not in (None, ""):
@@ -282,6 +347,11 @@ def answer_question(store: Any, question_id: int, option: Any = None, text: Any 
         try:
             brief = _write_brief(store, fresh)
         except Exception as exc:  # noqa: BLE001 - ответ уже сохранён, бриф можно дописать позже
+            brief = {"written": False, "reason": str(exc)[:200]}
+    elif before and fresh["scope"] == "channel":
+        try:
+            _unwrite_brief(store, fresh, before)
+        except Exception as exc:  # noqa: BLE001 - ответ снят, а строку брифа владелец уберёт сам
             brief = {"written": False, "reason": str(exc)[:200]}
     return {**fresh, "brief": brief}
 

@@ -96,9 +96,14 @@ function Header({ view }: { view: ChatThreadView | undefined }) {
           <Link to={`/p/${view.project.id}`} className="chat-project-chip">
             {view.project.name}
           </Link>
-        ) : (
+        ) : view.video ? null : (
           <span className="chat-project-chip muted">общий</span>
         )}
+        {view.video ? (
+          <Link to={`/v/${view.video.id}`} className="chat-project-chip">
+            Видео: {view.video.title}
+          </Link>
+        ) : null}
       </div>
       <div className="chat-header-actions">
         <label className="chat-model" title="Провайдер и модель ответа">
@@ -168,7 +173,7 @@ export function ChatPage() {
   // Без выбранной переписки на широком экране — открыть последнюю.
   useEffect(() => {
     if (id || !list.data || window.innerWidth < 860) return;
-    const all = [...list.data.general, ...list.data.projects.flatMap((p) => p.threads)];
+    const all = [...list.data.general, ...list.data.videos, ...list.data.projects.flatMap((p) => p.threads)];
     const latest = all.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
     if (latest) navigate(`/chat/${latest.id}`, { replace: true });
   }, [id, list.data, navigate]);
@@ -178,6 +183,7 @@ export function ChatPage() {
     (p) => !q || p.name.toLowerCase().includes(q) || p.threads.some((t) => t.title.toLowerCase().includes(q)),
   );
   const general = (list.data?.general ?? []).filter((t) => !q || t.title.toLowerCase().includes(q));
+  const looseVideos = (list.data?.videos ?? []).filter((t) => !q || t.title.toLowerCase().includes(q));
 
   return (
     <div className={`chat-page${id ? " has-thread" : ""}`}>
@@ -195,6 +201,12 @@ export function ChatPage() {
             <div className="chat-nav-cap">Общие</div>
             {general.length ? general.map((t) => <ThreadItem key={t.id} t={t} active={t.id === id} />) : <div className="chat-nav-none muted">Нет общих переписок</div>}
           </div>
+          {looseVideos.length ? (
+            <div className="chat-nav-group">
+              <div className="chat-nav-cap">Видео вне проектов</div>
+              {looseVideos.map((t) => <ThreadItem key={t.id} t={t} active={t.id === id} />)}
+            </div>
+          ) : null}
           {projects.map((p) => (
             <div key={p.id} className="chat-nav-group">
               <div className="chat-nav-cap">
@@ -223,7 +235,7 @@ export function ChatPage() {
           <div className="chat-empty chat-empty-page">
             <div className="chat-empty-mark">✦</div>
             <div className="chat-empty-title">Выбери переписку или начни новую</div>
-            <p className="muted">Общий чат — про весь сервис; чат проекта видит его бриф, правила, очередь одобрения и расписание.</p>
+            <p className="muted">Общий чат — про весь сервис. Чат проекта и его видео знают лор и правила этого проекта, очередь одобрения и расписание.</p>
             <button className="btn primary" onClick={() => create.mutate(null)}>
               + Новый чат
             </button>

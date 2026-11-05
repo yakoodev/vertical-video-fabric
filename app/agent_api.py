@@ -80,7 +80,10 @@ class AgentMessageRequest(BaseModel):
 def api_agent_send(clip_plan_id: int, payload: AgentMessageRequest) -> dict:
     client = editor_agent.client_factory() if editor_agent.client_factory else None
     if client is None and not settings.gemini_api_key:
-        raise HTTPException(status_code=400, detail="Не настроен GEMINI_API_KEY — ИИ-монтажёру нужна Gemini")
+        # «Запомни» работает и без модели: факт записан, а ответить агент не может.
+        note = editor_agent.remember_owner_fact(_store(), clip_plan_id, payload.message)
+        raise HTTPException(status_code=400, detail=(f"{note} " if note else "")
+                            + "Не настроен GEMINI_API_KEY — ИИ-монтажёру нужна Gemini")
     try:
         return editor_agent.start_run(
             _store(), clip_plan_id, payload.message, client=client, model=payload.model, max_steps=payload.max_steps

@@ -203,6 +203,13 @@
 }
 .vov-tabs button.on { color: var(--text); font-weight: 620; border-bottom-color: var(--accent); }
 .vov-body { min-height: 0; overflow: auto; padding: 6px 8px; }
+/* Чат видео: своя прокрутка и поле ввода внизу панели, панель выше обычной */
+.vov-pane-chat { height: min(72vh, 620px); }
+.vov-body-chat { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.vov-body-chat .chat-conv.compact { flex: 1; height: auto; min-height: 0; }
+.vov-body-chat .chat-thread { padding: 12px 12px 10px; }
+.vov-body-chat .chat-bottom { padding: 8px 10px 8px; }
+.vov-chat-head { display: flex; justify-content: flex-end; padding: 4px 8px; border-bottom: 1px solid var(--hairline); }
 .vp-lines { display: grid; gap: 1px; height: 100%; overflow: auto; align-content: start; position: relative; }
 .vp-line {
   display: grid;
@@ -410,6 +417,7 @@ button.cseg-row:hover { background: var(--surface-2); }
 @media (max-width: 860px) {
   .vov-grid { grid-template-columns: minmax(0, 1fr); }
   .vov-pane { height: 380px; }
+  .vov-pane-chat { height: min(78vh, 620px); }
   .cpage-grid { grid-template-columns: minmax(0, 1fr); }
   .cpage-col:first-child { grid-column: auto; }
 }

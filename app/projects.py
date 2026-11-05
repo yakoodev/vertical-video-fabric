@@ -161,6 +161,27 @@ PROJECTS_SCHEMA_SQL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_plan_projects ON plan_projects(project_id)",
+    # «Что агент знает» (app/project_knowledge.py): факты из чатов и заметок владельца.
+    # status: active / deleted (убран владельцем: запись остаётся, чтобы агент не записал его снова).
+    # source_id, clip_plan_id — откуда факт, а не его границы: факт принадлежит всему проекту.
+    """
+    CREATE TABLE IF NOT EXISTS project_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        text_key TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'owner',
+        origin_ref TEXT NOT NULL DEFAULT '',
+        quote TEXT NOT NULL DEFAULT '',
+        source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
+        clip_plan_id INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (project_id, text_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_project_facts ON project_facts(project_id, status, id)",
 ]
 
 
@@ -627,6 +648,8 @@ def project_brief(store: Any, project_id: int, covered_limit: int = 150) -> dict
     stats = project_stats(store, project_id, top=3)
     hypotheses = [{key: h[key] for key in ("id", "statement", "status", "conclusion", "group", "metric")}
                   for h in list_hypotheses(store, project_id)]
+    from app.project_knowledge import brief_extras
+
     return {
         "project": {key: project.get(key) for key in ("id", "name", "kind", "kind_label", "description", "links",
                                                        "brand")} | {
@@ -635,15 +658,17 @@ def project_brief(store: Any, project_id: int, covered_limit: int = 150) -> dict
                         for s in project["sources"]]},
         **brief,
         "rules": [_rule_brief(r) for r in list_rules(store, project_id=project_id)],
+        **brief_extras(store, project_id),
         "covered": covered["clips"],
         "covered_total": covered["total"],
         "hypotheses": hypotheses,
         "stats": {"totals": stats["totals"], "best": stats["best"], "worst": stats["worst"], "note": stats["note"]},
         "how_to": ("Перед нарезкой и названиями: держись лора (люди, шутки, арки), не бери темы из taboo, "
                    "соблюдай rules (dont — запрет, do — обязательно, preference — по возможности; "
-                   "needs_review — правило под вопросом, уточни у владельца). covered — что уже нарезано: "
-                   "не повторяй те же моменты (pieces — секунды источника). Новое о проекте — "
-                   "update_project_brief; слова владельца — add_rule с цитатой и датой."),
+                   "needs_review — правило под вопросом, уточни у владельца). facts — что владелец просил "
+                   "запомнить, memes — мемы, которые он выбрал. covered — что уже нарезано: "
+                   "не повторяй те же моменты (pieces — секунды источника). Новое о проекте со слов владельца — "
+                   "remember_fact или update_project_brief; правило на будущее — add_rule с цитатой и датой."),
     }
 
 

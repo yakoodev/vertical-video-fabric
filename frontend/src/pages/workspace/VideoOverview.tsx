@@ -1,7 +1,8 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { api } from "@/api/client";
+import { ApiError, api } from "@/api/client";
+import { chatApi } from "@/api/chat";
 import type { ClipGridData, ClipGridItem } from "@/api/clipGroups";
 import { qk } from "@/api/keys";
 import { sourcesApi } from "@/api/sources";
@@ -15,9 +16,15 @@ import { AiBatchPanel } from "@/pages/workspace/AiBatchPanel";
 import { AnalyzeForm } from "@/pages/workspace/AnalyzeForm";
 
 const StreamQuestionsTab = lazyPage<{ sourceId: string }>(() => import("@/pages/workspace/StreamQuestionsTab"), "StreamQuestionsTab");
+const ChatConversation = lazyPage<ComponentProps<typeof import("@/pages/chat/ChatConversation").ChatConversation>>(
+  () => import("@/pages/chat/ChatConversation"),
+  "ChatConversation",
+);
 
 type Cue = { start: number; end: number; text: string };
 type ChatLine = { t: number; user: string; text: string };
+
+type Pane = "tr" | "chat" | "q" | "agent";
 
 /** Окно строк вокруг текущего времени: 3500 строк транскрипта в DOM не нужны. */
 const WINDOW_BACK = 12;
@@ -106,6 +113,36 @@ function ChatPane({ sourceId, time, onSeek }: { sourceId: number; time: number; 
   );
 }
 
+/** Чат этого видео: агент знает, о каком видео речь, и лор его проекта. Переписка заводится при первом открытии. */
+function VideoChatPane({ sourceId }: { sourceId: number }) {
+  const thread = useQuery({
+    queryKey: ["video-chat-thread", sourceId],
+    queryFn: () => chatApi.videoThread(sourceId),
+    staleTime: Infinity,
+  });
+  if (thread.isLoading) return <Loading />;
+  if (thread.isError || !thread.data) {
+    return <p className="muted vp-empty">Чат не открылся: {thread.error instanceof ApiError ? thread.error.message : "ошибка"}</p>;
+  }
+  const id = thread.data.id;
+  return (
+    <Suspense fallback={<Loading />}>
+      <ChatConversation
+        key={id}
+        threadId={id}
+        compact
+        header={() => (
+          <div className="vov-chat-head">
+            <Link className="btn ghost sm" to={`/chat/${id}`}>
+              Открыть на весь экран
+            </Link>
+          </div>
+        )}
+      />
+    </Suspense>
+  );
+}
+
 /** Шкала стрима: где на записи лежат клипы. */
 function ClipRuler({ clips, duration }: { clips: ClipGridItem[]; duration: number }) {
   if (duration < 60 || !clips.length) return null;
@@ -145,8 +182,10 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
   const [params, setParams] = useSearchParams();
   const questionsOn = useModuleOn("stream_questions");
   const chatOn = useModuleOn("twitch_chat");
+  const agentOn = useModuleOn("agent_chat");
   const aiMontageOn = useModuleOn("ai_montage");
-  const [pane, setPane] = useState<"tr" | "chat" | "q">("tr");
+  // ?pane=agent — ссылка сразу на чат видео.
+  const [pane, setPane] = useState<Pane>(params.get("pane") === "agent" ? "agent" : "tr");
   const [time, setTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [clips, setClips] = useState<ClipGridItem[]>([]);
@@ -167,10 +206,11 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
   };
   const favorites = source.clip_plans.filter((p) => !p.hidden && p.favorite).length;
   const ratio = source.width && source.height ? `${source.width} / ${source.height}` : "16 / 9";
-  const tabs: ["tr" | "chat" | "q", string][] = [
+  const tabs: [Pane, string][] = [
     ["tr", `Транскрипт${source.transcript_segments ? ` ${source.transcript_segments}` : ""}`],
-    ...(chatOn ? ([["chat", "Чат Twitch"]] as ["chat", string][]) : []),
-    ...(questionsOn ? ([["q", "Вопросы"]] as ["q", string][]) : []),
+    ...(chatOn ? ([["chat", "Чат Twitch"]] as [Pane, string][]) : []),
+    ...(questionsOn ? ([["q", "Вопросы"]] as [Pane, string][]) : []),
+    ...(agentOn ? ([["agent", "Чат видео"]] as [Pane, string][]) : []),
   ];
   return (
     <div className="vov">
@@ -202,7 +242,7 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
             Запись и анализ: кадр, полосы, анализы ({source.analyses.length})
           </Link>
         </div>
-        <div className="vov-pane">
+        <div className={`vov-pane${pane === "agent" ? " vov-pane-chat" : ""}`}>
           <div className="vov-tabs" role="tablist">
             {tabs.map(([key, label]) => (
               <button key={key} type="button" role="tab" aria-selected={pane === key} className={pane === key ? "on" : ""} onClick={() => setPane(key)}>
@@ -210,7 +250,8 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
               </button>
             ))}
           </div>
-          <div className="vov-body">
+          <div className={`vov-body${pane === "agent" ? " vov-body-chat" : ""}`}>
+            {pane === "agent" ? <VideoChatPane sourceId={source.id} /> : null}
             {pane === "tr" ? <TranscriptPane sourceId={source.id} ready={Boolean(source.has_transcript)} time={time} onSeek={seek} /> : null}
             {pane === "chat" ? <ChatPane sourceId={source.id} time={time} onSeek={seek} /> : null}
             {pane === "q" ? (

@@ -156,6 +156,9 @@ def project_context(store: Any, clip: dict) -> dict[str, Any]:
         project = P.get_project(store, int(project_id), include_sources=False)
         brief = P.get_brief(store, int(project_id))
         rules = P.list_rules(store, project_id=int(project_id))
+        from app.project_knowledge import list_facts
+
+        facts = list_facts(store, int(project_id))
     except Exception:  # noqa: BLE001 - без проекта метаданные всё равно пишутся
         return {}
     out: dict[str, Any] = {
@@ -166,6 +169,7 @@ def project_context(store: Any, clip: dict) -> dict[str, Any]:
         "jokes": [j.get("text") for j in brief.get("jokes") or [] if j.get("text")][:8],
         "taboo": [t.get("topic") for t in brief.get("taboo") or [] if t.get("topic")][:10],
         "rules": [{"kind": r.get("kind"), "text": r.get("text")} for r in rules if r.get("text")][:20],
+        "facts": [f["text"] for f in facts][:20],
     }
     return {k: v for k, v in out.items() if v}
 

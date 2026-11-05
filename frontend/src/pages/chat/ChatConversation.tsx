@@ -14,8 +14,11 @@ import {
   type LiveRun,
   type StepPreview,
 } from "@/api/chat";
+import { projectsApi } from "@/api/projects";
+import { qk } from "@/api/keys";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
+import { projectPath } from "@/lib/paths";
 import { ApprovalCard } from "@/pages/ApprovalsPage";
 import { Markdown, type MediaRef } from "@/pages/chat/Markdown";
 import "@/styles/chat.css";
@@ -23,7 +26,7 @@ import "@/styles/chat.css";
 /**
  * Переписка с агентом: реплики, живой ответ (SSE), шаги-карточки инструментов с превью,
  * подтверждение опасного, «Откатить» правки клипа, поле ввода с файлами.
- * Используется страницей «Чат» и вкладкой «Чат» серии.
+ * Используется страницей «Чат», вкладкой «Чат» проекта, чатом видео и общим чатом.
  */
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -51,6 +54,26 @@ const SUGGESTIONS = [
   "Заглуши мат в последнем клипе",
   "Какие правила у проекта?",
 ];
+
+const PROJECT_SUGGESTIONS = [
+  "Что ты знаешь об этом проекте?",
+  "Нарежь новый стрим",
+  "Какие правила у проекта?",
+  "Что из клипов ещё не отрендерено?",
+];
+
+const VIDEO_SUGGESTIONS = [
+  "Что ты знаешь про это видео?",
+  "Найди ещё моменты, не повторяй готовые клипы",
+  "Какие клипы этого видео ещё без рендера?",
+];
+
+const MAX_FACT_LEN = 600;
+
+function suggestionsFor(view: ChatThreadView): string[] {
+  if (view.video) return VIDEO_SUGGESTIONS;
+  return view.project ? PROJECT_SUGGESTIONS : SUGGESTIONS;
+}
 
 function useLiveRun(threadId: number, running: boolean, onDone: () => void) {
   const [live, setLive] = useState<LiveRun | null>(null);
@@ -441,6 +464,11 @@ function AssistantMessage({
             {PHASE_LABEL[phase ?? "thinking"] ?? "думает…"}
           </div>
         ) : null}
+        {m.meta?.remembered && !m.text.includes("Запомнил") ? (
+          <div className="chat-remembered">
+            Запомнил: «{m.meta.remembered.text}» · <Link to={projectPath(m.meta.remembered.project_id, "know")}>что агент знает</Link>
+          </div>
+        ) : null}
         {m.changes?.length ? <Changes changes={m.changes} threadId={threadId} onRef={onRef} /> : null}
         {m.status === "error" || m.status === "interrupted" || m.status === "cancelled" ? (
           <div className={`chat-small chat-status-${m.status}`}>
@@ -633,6 +661,29 @@ function Composer({
 // Переписка
 // --------------------------------------------------------------------------- //
 
+/** «Запомнить» у своей реплики: факт проекта без модели и без волшебных слов. */
+function RememberButton({ m, view }: { m: ChatMsg; view: ChatThreadView }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const projectId = view.project?.id;
+  const [done, setDone] = useState(false);
+  const remember = useMutation({
+    mutationFn: () => projectsApi.addFact(projectId!, m.text, { source_id: view.video?.id, origin_ref: `chat#${m.id}` }),
+    onSuccess: () => {
+      setDone(true);
+      qc.invalidateQueries({ queryKey: qk.channelKnowledge(projectId!) });
+      toast.success("Запомнил, это видно в «Что агент знает»");
+    },
+    onError: (e) => toast.error(errText(e, "Не запомнилось")),
+  });
+  if (!projectId || m.text.length > MAX_FACT_LEN) return null;
+  return (
+    <button className="chat-remember" disabled={done || remember.isPending} onClick={() => remember.mutate()} title="Записать эту реплику в то, что агент знает о проекте">
+      {done ? "Запомнил" : "Запомнить"}
+    </button>
+  );
+}
+
 export function ChatConversation({
   threadId,
   compact,
@@ -719,13 +770,15 @@ export function ChatConversation({
           {!messages.length ? (
             <div className="chat-empty">
               <div className="chat-empty-mark">✦</div>
-              <div className="chat-empty-title">{view.data!.project ? `Агент проекта «${view.data!.project.name}»` : "Агент сервиса"}</div>
+              <div className="chat-empty-title">
+                {view.data!.video ? `Агент видео «${view.data!.video.title}»` : view.data!.project ? `Агент проекта «${view.data!.project.name}»` : "Агент сервиса"}
+              </div>
               <p className="muted">
                 Пиши как обычному ассистенту: агент читает проекты и клипы, правит монтаж, субтитры и звук, запускает нарезку. Опасное — публикацию и
                 удаление — сделает только после твоей кнопки. Правки клипа откатываются.
               </p>
               <div className="chat-suggest">
-                {SUGGESTIONS.map((s) => (
+                {suggestionsFor(view.data!).map((s) => (
                   <button key={s} className="agent-chip" disabled={!ai.available || send.isPending} onClick={() => send.mutate({ text: s, attachments: [] })}>
                     {s}
                   </button>
@@ -733,7 +786,7 @@ export function ChatConversation({
               </div>
             </div>
           ) : null}
-          {messages.map((m) =>
+          {messages.map((m, i) =>
             m.role === "user" ? (
               <div key={m.id} className="chat-msg user">
                 <div className="chat-bubble">
@@ -748,7 +801,10 @@ export function ChatConversation({
                     </div>
                   ) : null}
                 </div>
-                {m.origin === "tg" ? <span className="muted chat-small">из Telegram</span> : null}
+                <div className="chat-msg-foot">
+                  {m.origin === "tg" ? <span className="muted chat-small">из Telegram</span> : null}
+                  {messages[i + 1]?.meta?.remembered ? null : <RememberButton m={m} view={view.data!} />}
+                </div>
               </div>
             ) : (
               <AssistantMessage key={m.id} m={m} live={live} threadId={threadId} onRef={onRef} />

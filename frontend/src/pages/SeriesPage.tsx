@@ -36,6 +36,7 @@ import { ExplainerTab } from "@/pages/ExplainerTab";
 import { ExplainerChannelTab } from "@/pages/ExplainerChannelTab";
 import { StoriesTab } from "@/pages/StoriesTab";
 import { useModules } from "@/hooks/useModules";
+import { KnowledgeCard, KnowledgeTab } from "@/pages/project/ProjectKnowledge";
 
 /**
  * Страница проекта /p/:projectId (app/projects.py): всё про канал или тему. Вкладка в адресе (?tab=);
@@ -48,6 +49,7 @@ type Tab =
   | "questions"
   | "files"
   | "chat"
+  | "know"
   | "brief"
   | "rules"
   | "hyp"
@@ -64,7 +66,7 @@ const TABS: [Tab, string, string?][] = [
   ["questions", "Вопросы", "stream_questions"],
   ["files", "Файлы"],
   ["chat", "Чат", "agent_chat"],
-  ["brief", "Лор и правила"],
+  ["know", "Лор и правила"],
   ["stats", "Статистика"],
   ["autopilot", "Автопилот", "autopilot"],
   // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
@@ -78,11 +80,12 @@ const TABS: [Tab, string, string?][] = [
 ];
 // Подвкладки «Лор и правила»: те же адреса ?tab=brief|rules|hyp, что были у отдельных вкладок.
 const LORE_TABS: [Tab, string][] = [
+  ["know", "Что агент знает"],
   ["brief", "Резюме и лор"],
   ["rules", "Правила"],
   ["hyp", "Гипотезы"],
 ];
-const TAB_ALIAS: Record<string, Tab> = { lore: "brief", auto: "autopilot" };
+const TAB_ALIAS: Record<string, Tab> = { lore: "know", auto: "autopilot" };
 
 const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>(
   () => import("@/pages/project/ProjectVideosTab"),
@@ -124,7 +127,7 @@ export function SeriesPage() {
       (!mod || on(mod)) &&
       (key === "aiv" || key === "story" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
   );
-  const lore = tab === "rules" || tab === "hyp";
+  const lore = tab === "brief" || tab === "rules" || tab === "hyp";
   const shown: Tab = lore || (tab && tabs.some(([key]) => key === tab)) ? (tab as Tab) : "videos";
   const navProject = nav.data?.projects.find((x) => x.id === id);
 
@@ -134,7 +137,7 @@ export function SeriesPage() {
 
   const videosCount = navProject?.videos ?? p.sources?.length ?? 0;
   const readyCount = (p.sources ?? []).reduce((sum, s) => sum + (s.clips_count ?? 0), 0);
-  const inLore = shown === "brief" || shown === "rules" || shown === "hyp";
+  const inLore = shown === "know" || shown === "brief" || shown === "rules" || shown === "hyp";
   return (
     <>
       <div className="page-title page-title-row">
@@ -154,7 +157,7 @@ export function SeriesPage() {
       </div>
       <PageTabs
         label="Вкладки проекта"
-        active={inLore ? "brief" : shown}
+        active={inLore ? "know" : shown}
         tabs={tabs.map(([key, label]) => ({
           key,
           label,
@@ -173,7 +176,14 @@ export function SeriesPage() {
           </nav>
         ) : null}
         <Suspense fallback={<Loading />}>
-          {shown === "videos" ? <ProjectVideosTab projectId={id} onNewVideo={openNewVideo} /> : null}
+          {shown === "videos" ? (
+            <div className="proj-split">
+              <div className="proj-split-main">
+                <ProjectVideosTab projectId={id} onNewVideo={openNewVideo} />
+              </div>
+              <KnowledgeCard projectId={id} />
+            </div>
+          ) : null}
           {shown === "clips" ? <ProjectClips projectId={id} /> : null}
           {shown === "questions" ? <ProjectQuestions projectId={id} /> : null}
           {shown === "files" ? <ProjectFiles projectId={id} /> : null}
@@ -182,6 +192,7 @@ export function SeriesPage() {
         {shown === "channel" ? <ExplainerChannelTab projectId={id} /> : null}
         {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
         {shown === "story" ? <StoriesTab projectId={id} /> : null}
+        {shown === "know" ? <KnowledgeTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
         {shown === "stats" ? <StatsTab projectId={id} /> : null}

@@ -4,6 +4,7 @@
 * ``PATCH /api/sources/{id}/project`` — источник в проект (``{"project_id": null}`` — убрать)
 * ``GET/PATCH /api/projects/{id}/brief`` — бриф для агента / частичное обновление лора
 * ``POST /api/projects/{id}/brief/draft`` — черновик брифа из расшифровок (хук, генератор не встроен)
+* ``GET/POST/PATCH/DELETE /api/projects/{id}/knowledge`` — что агент знает о проекте: список, правка, удаление
 * ``GET /api/rules``, ``POST /api/rules``, ``POST /api/rules/{id}/revoke`` — правила владельца
 * ``GET /api/projects/{id}/stats`` — агрегаты, лучшие и худшие клипы
 * ``GET/POST /api/projects/{id}/publications``, ``PATCH/DELETE /api/manual-publications/{id}``,
@@ -21,7 +22,12 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+from app import project_knowledge as K
 from app import projects as P
+
+
+def _int_or_none(value: Any) -> int | None:
+    return int(value) if value not in (None, "", 0) else None
 
 
 def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -81,6 +87,30 @@ def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
     @router.post("/api/projects/{project_id}/brief/draft", summary="Черновик брифа из расшифровок (хук)")
     def api_brief_draft(project_id: int, _auth: auth_dep, apply: bool = Query(False)) -> dict:
         return call(P.draft_brief, project_id, apply=apply)
+
+    # --- что агент знает (app/project_knowledge.py) -------------------------- #
+
+    @router.get("/api/projects/{project_id}/knowledge", summary="Что агент знает о проекте: всё одним списком")
+    def api_knowledge(project_id: int, _auth: auth_dep) -> dict:
+        return call(K.knowledge_view, project_id)
+
+    @router.post("/api/projects/{project_id}/knowledge", summary="Добавить факт (из заметки или реплики чата)")
+    def api_add_fact(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        from_chat = payload.get("from_chat") is True
+        added = call(K.add_fact, project_id, payload.get("text"),
+                     origin=K.ORIGIN_CHAT if from_chat else K.ORIGIN_OWNER,
+                     quote=str(payload.get("text") or "") if from_chat else "",
+                     origin_ref=str(payload.get("origin_ref") or ""),
+                     source_id=_int_or_none(payload.get("source_id")))
+        return {"created": added["created"], "fact": added["fact"], "view": call(K.knowledge_view, project_id)}
+
+    @router.patch("/api/projects/{project_id}/knowledge", summary="Поправить строку: ref из списка, text, title")
+    def api_update_knowledge(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        return call(K.update_row, project_id, str(payload.get("ref") or ""), payload.get("text"), payload.get("title"))
+
+    @router.delete("/api/projects/{project_id}/knowledge", summary="Убрать строку: агент больше её не получает")
+    def api_delete_knowledge(project_id: int, _auth: auth_dep, ref: str = Query(...)) -> dict:
+        return call(K.delete_row, project_id, ref)
 
     # --- правила ------------------------------------------------------------ #
 
