@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 
 from app.settings import settings
@@ -21,8 +22,8 @@ _slots = threading.BoundedSemaphore(2)
 
 
 def _ffmpeg_still(src: Path, out: Path, at: float, *encode: str) -> bool:
-    tmp = out.with_name(f"{out.stem}.tmp{out.suffix}")
-    tmp.unlink(missing_ok=True)
+    # Свой временный файл на запрос: страница может попросить один кадр дважды сразу.
+    tmp = out.with_name(f"{out.stem}.{uuid.uuid4().hex}.tmp{out.suffix}")
     seek = ["-ss", f"{at:.3f}"] if at > 0 else []
     done = subprocess.run(
         ["ffmpeg", "-y", "-v", "error", *seek, "-i", str(src), "-frames:v", "1",
@@ -32,7 +33,11 @@ def _ffmpeg_still(src: Path, out: Path, at: float, *encode: str) -> bool:
     if done.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
         tmp.unlink(missing_ok=True)
         return False
-    tmp.replace(out)
+    try:
+        tmp.replace(out)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        return out.exists()
     return True
 
 

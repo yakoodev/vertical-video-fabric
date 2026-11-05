@@ -3,11 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { clipsApi } from "@/api/clips";
+import { clipPath } from "@/lib/paths";
 import { qk } from "@/api/keys";
 import type { NavState } from "@/api/nav";
 import { Icon } from "@/components/Icon";
 import { useModules } from "@/hooks/useModules";
-import { clipEditorPath, projectPath, videoPath } from "@/lib/paths";
+import { projectPath, videoPath } from "@/lib/paths";
 
 // Searchable words for the source type, so «твич» / «ютуб» find videos.
 const SOURCE_KIND: Record<string, string> = {
@@ -92,9 +93,11 @@ export function CommandPalette({
     if (m) {
       const id = m[1];
       const tabs: [string, string][] = [
-        ["source", "Исходник"],
-        ["candidates", "Моменты"],
         ["clips", "Клипы этого видео"],
+        ["source", "Запись и анализ"],
+        ["candidates", "Моменты"],
+        ["segments", "Сегменты"],
+        ["renders", "Рендеры этого видео"],
         ["montaged", "Смонтированные"],
         ...(on("stream_questions") ? ([["questions", "Вопросы этого видео"]] as [string, string][]) : []),
       ];
@@ -146,9 +149,9 @@ export function CommandPalette({
         id: `plan-${p.id}`,
         group: "Клипы этого видео",
         label: p.title || `План #${p.id}`,
-        hint: `${p.favorite ? "★ " : ""}${p.ai_pick ? `✨${p.ai_pick.score} ` : ""}→ монтаж`,
+        hint: `${p.favorite ? "★ " : ""}${p.ai_pick ? `✨${p.ai_pick.score} ` : ""}→ клип`,
         icon: "scissors",
-        run: go(clipEditorPath(project.data!.id, p.id)),
+        run: go(clipPath(p.id)),
       });
     }
     for (const s of sources.data ?? []) {
@@ -157,13 +160,19 @@ export function CommandPalette({
         id: `src-${s.id}`,
         group: "Видео",
         label: name,
-        hint: `${s.clip_plans_count ?? 0} клипов`,
+        hint: `${s.clip_cards_count ?? s.clip_plans_count ?? 0} клипов`,
         keywords: `${SOURCE_KIND[s.source_type] ?? ""} ${s.original_filename}`,
         icon: "film",
         run: go(videoPath(s.id, "candidates")),
       });
     }
+    const seenPlans = new Set<number>();
     for (const c of (clips.data ?? []).slice(0, 300)) {
+      // Несколько рендеров одного плана — один пункт: новый рендер первым в списке.
+      if (c.clip_plan_id != null) {
+        if (seenPlans.has(c.clip_plan_id)) continue;
+        seenPlans.add(c.clip_plan_id);
+      }
       list.push({
         id: `clip-${c.id}`,
         group: "Клипы",
@@ -171,8 +180,8 @@ export function CommandPalette({
         hint: c.status === "succeeded" ? "готов" : c.status,
         icon: "scissors",
         run: go(
-          c.source_id && c.clip_plan_id
-            ? clipEditorPath(c.source_id, c.clip_plan_id)
+          c.clip_plan_id
+            ? clipPath(c.clip_plan_id)
             : c.source_id
               ? videoPath(c.source_id, "clips")
               : "/pubs?tab=ready",

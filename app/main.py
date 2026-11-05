@@ -332,6 +332,8 @@ class SourceRead(BaseModel):
     updated_at: str
     analyses_count: int | None = None
     clip_plans_count: int | None = None
+    # Клипов для человека: группа версий считается один раз (app/clip_groups.py).
+    clip_cards_count: int | None = None
     clips_count: int | None = None
     # Проект-серия/канал источника (app/projects.py); None — без проекта.
     project_id: int | None = None
@@ -2228,6 +2230,8 @@ class ManualClipRequest(BaseModel):
     title: str
     description: str = ""
     pieces: list[ManualClipPiece]
+    # Новая версия этого клипа (id любого его плана): план ляжет в его группу, карточка не задвоится.
+    version_of: int | None = None
 
 
 @app.post(
@@ -2240,7 +2244,8 @@ def api_create_manual_clip(source_id: int, payload: ManualClipRequest, _auth: Au
 
     try:
         return create_manual_clip(
-            store, source_id, payload.title, [p.model_dump() for p in payload.pieces], payload.description
+            store, source_id, payload.title, [p.model_dump() for p in payload.pieces], payload.description,
+            version_of=payload.version_of,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -4778,6 +4783,10 @@ from app.cuts_api import build_cuts_router  # noqa: E402
 app.include_router(build_cuts_router(AuthDep, lambda: store))
 
 # ▶ Смотреть монтаж: план проигрывания, прокси 480p и пакет для монтажки (app/preview_api.py).
+from app.clip_groups_api import build_clip_groups_router  # noqa: E402
+
+# Клип как группа планов: сетка, экран /clips/:id, версии и откат (app/clip_groups.py).
+app.include_router(build_clip_groups_router(AuthDep, lambda: store))
 from app.preview_api import build_preview_router  # noqa: E402
 
 app.include_router(build_preview_router(AuthDep, lambda: store))

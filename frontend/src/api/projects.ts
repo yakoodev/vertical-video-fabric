@@ -39,6 +39,7 @@ export interface ChannelProject {
     original_url: string;
     duration_sec: number;
     clip_plans_count: number;
+    clip_cards_count?: number;
     clips_count: number;
   }[];
 }

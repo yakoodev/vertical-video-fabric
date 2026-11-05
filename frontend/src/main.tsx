@@ -9,6 +9,7 @@ import { ToastProvider } from "@/components/Toast";
 import "@/styles/fonts.css";
 import "@/styles/global.css";
 import "@/styles/shell.css";
+import "@/styles/clip.css";
 
 watchMediaRelease();
 

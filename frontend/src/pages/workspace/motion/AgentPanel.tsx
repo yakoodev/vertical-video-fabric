@@ -35,10 +35,13 @@ export function AgentPanel({
   clipPlanId,
   onChanged,
   onRunningChange,
+  compact = false,
 }: {
   clipPlanId: number;
   onChanged: () => void;
   onRunningChange?: (running: boolean) => void;
+  /** На экране клипа: без заголовка и подсказок, чат в узкой колонке. */
+  compact?: boolean;
 }) {
   const toast = useToast();
   const [text, setText] = useState("");
@@ -105,9 +108,9 @@ export function AgentPanel({
   };
 
   return (
-    <div className="agent">
+    <div className={`agent${compact ? " agent--compact" : ""}`}>
       <div className="agent-head">
-        <strong>✨ ИИ-ассистент</strong>
+        {compact ? null : <strong>✨ ИИ-ассистент</strong>}
         <span className={`agent-dot${running ? " on" : ""}`} title={running ? "работает" : "ждёт"} />
         <span className="muted agent-model">{chat.data?.model ?? ""}</span>
         {messages.length && !running ? (
@@ -119,8 +122,9 @@ export function AgentPanel({
       <div className="agent-list" ref={listRef}>
         {!messages.length ? (
           <div className="agent-empty muted">
-            Опишите, что сделать с клипом. Ассистент сам расставит титры, мемы, звуки и наезды, посмотрит кадры и
-            отчитается. Не понравится — Ctrl+Z откатит весь его ход.
+            {compact
+              ? "С агентом по этому монтажу ещё не говорили. Опишите, что поменять: он сам расставит титры, мемы, звуки и наезды, правки появятся в версиях."
+              : "Опишите, что сделать с клипом. Ассистент сам расставит титры, мемы, звуки и наезды, посмотрит кадры и отчитается. Не понравится — Ctrl+Z откатит весь его ход."}
           </div>
         ) : null}
         {messages.map((m) => (
@@ -151,7 +155,7 @@ export function AgentPanel({
         ))}
       </div>
       <div className="agent-chips">
-        {SUGGESTIONS.map((s) => (
+        {(compact ? [] : SUGGESTIONS).map((s) => (
           <button key={s} type="button" className="agent-chip" disabled={running} onClick={() => submit(s)} title={s}>
             {s}
           </button>
@@ -162,7 +166,7 @@ export function AgentPanel({
           className="input"
           rows={2}
           value={text}
-          placeholder={running ? "Ассистент работает…" : "Опишите, что изменить…  (Enter — отправить)"}
+          placeholder={running ? "Ассистент работает…" : compact ? "Что поменять в этом клипе" : "Опишите, что изменить…  (Enter — отправить)"}
           disabled={running}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

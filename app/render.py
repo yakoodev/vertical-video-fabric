@@ -1125,8 +1125,14 @@ class ClipRenderService:
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
         может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
         with heavy_slot("render", f"клип {clip_plan_id}"):
+            from app.clip_groups import capture_quiet, snapshot_render
+
             stamp = self._plan_fingerprint(clip_plan_id)
+            state = capture_quiet(self.store, clip_plan_id)
             clip = self._render_clip_plan_unlocked(clip_plan_id, *args, **kwargs)
+            if isinstance(clip, dict) and clip.get("id"):
+                # Вечный снимок монтажа этой версии: откат с экрана клипа (история правок — всего 20 шагов).
+                snapshot_render(self.store, clip_plan_id, int(clip["id"]), state)
             if stamp and isinstance(clip, dict) and clip.get("id"):
                 # С какого состояния клипа сделан файл: lint_clip сверяет, правили ли клип после.
                 try:

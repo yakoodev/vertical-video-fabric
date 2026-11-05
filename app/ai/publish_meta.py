@@ -420,14 +420,15 @@ def auto_meta_after_render(store: Any, clip: dict, client: GeminiClient | None =
     try:
         if clip.get("status") != "succeeded" or not clip_id:
             return {"status": "skipped", "reason": "рендер не готов"}
-        if not auto_meta_enabled(store):
-            return {"status": "skipped", "reason": "выключено"}
         fresh = store.get_clip(clip_id)
         if fresh.get("publish_meta"):
             return {"status": "skipped", "reason": "уже есть"}
+        # Перенос текста с прежнего рендера модели не требует: правка владельца не должна пропасть без ключа Gemini.
         inherited = _inherit_meta(store, fresh)
         if inherited:
             return {"status": "inherited", **inherited}
+        if not auto_meta_enabled(store):
+            return {"status": "skipped", "reason": "выключено"}
         meta = generate_publish_metadata(store, clip_id, client=client or GeminiClient(timeout=90))
         record = save_publish_meta(store, clip_id, meta, source="auto")
         return {"status": "generated", "title": record["title"]}
@@ -443,7 +444,11 @@ def _inherit_meta(store: Any, clip: dict) -> dict | None:
         return None
     try:
         plan = store.get_clip_plan(int(plan_id), include_segments=False)
-        previous = [c for c in store.list_clips_for_plan(int(plan_id))
+        # Весь клип, а не один план: новая версия монтажа — новый план той же группы (app/clip_groups.py).
+        from app.clip_groups import group_members
+
+        members = [int(m["id"]) for m in group_members(store, int(plan_id))]
+        previous = [c for c in store.list_clips_for_plans(members)
                     if c.get("status") == "succeeded" and int(c.get("id") or 0) < int(clip["id"])]
     except Exception:  # noqa: BLE001 - нет прежних — генерируем
         return None

@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { sourcesApi } from "@/api/sources";
-import { analysesApi, type AnalyzeRequest } from "@/api/analyses";
-import { promptsApi } from "@/api/prompts";
+import { analysesApi } from "@/api/analyses";
 import { qk } from "@/api/keys";
 import type { AiAnalysis, CropRect, SourceDetail } from "@/api/types";
 import { useToast } from "@/components/Toast";
-import { useModules } from "@/hooks/useModules";
 import { ApiError } from "@/api/client";
 import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
 import { MissingSourceNotice, isSourceFileMissing } from "@/components/MissingSourceNotice";
-
-const PROVIDERS = ["action", "polza", "gemini", "artemox", "mock"];
+import { AnalyzeForm } from "@/pages/workspace/AnalyzeForm";
 
 interface Insets {
   left: number;
@@ -107,8 +104,6 @@ function AnalysisProgress({ analysis, onCancel }: { analysis: AiAnalysis; onCanc
 export function SourceTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  // «ИИ-нарезка» и «Распознавание речи» — модули (app/modules.py).
-  const { on: moduleOn } = useModules();
   const query = useQuery({
     queryKey: qk.source(sourceId),
     queryFn: () => sourcesApi.get(sourceId),
@@ -116,20 +111,8 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
     refetchInterval: (q) =>
       q.state.data?.analyses?.some((a) => ["queued", "running", "cancelling"].includes(a.status)) ? 4000 : false,
   });
-  const [provider, setProvider] = useState(PROVIDERS[0]);
-  const [prompt, setPrompt] = useState("");
-  const [presetId, setPresetId] = useState(0);
-  const [useTranscript, setUseTranscript] = useState(true);
   const [insets, setInsets] = useState<Insets>(FULL_FRAME);
   const [showFailed, setShowFailed] = useState(false);
-
-  const presetsQuery = useQuery({ queryKey: qk.promptPresets, queryFn: promptsApi.list });
-  const analysisPresets = (presetsQuery.data ?? []).filter((p) => p.task === "analysis");
-  useEffect(() => {
-    if (!analysisPresets.length || presetId) return;
-    const def = analysisPresets.find((p) => p.is_default) ?? analysisPresets[0];
-    setPresetId(def.id);
-  }, [analysisPresets.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (query.data) setInsets(cropToInsets(query.data.content_crop));
@@ -155,16 +138,6 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
       qc.setQueryData<SourceDetail>(qk.source(sourceId), updated);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить кадр"),
-  });
-
-  const analyze = useMutation({
-    mutationFn: (body: AnalyzeRequest) => analysesApi.start(sourceId, body),
-    onSuccess: () => {
-      toast.success("Анализ запущен");
-      qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-      qc.invalidateQueries({ queryKey: qk.activeTasks });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось запустить анализ"),
   });
 
   if (query.isLoading) return <Loading />;
@@ -351,67 +324,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
         : null}
 
 
-        {!moduleOn("ai_analysis") ? (
-          <div className="panel muted" style={{ fontSize: 13 }}>
-            Модуль «ИИ-нарезка моментов» выключен (Настройки → Модули) — клипы можно сделать вручную в «Моменты».
-          </div>
-        ) : <div className="panel" style={{ display: "grid", gap: 10 }}>
-          <strong className="src-h">Запустить анализ</strong>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <label className="field" style={{ flex: 1, minWidth: 200 }}>
-              <span>Пресет анализа</span>
-              <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-                <option value={0}>Авто (по источнику)</option>
-                {analysisPresets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                    {p.is_default ? " ★" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field" style={{ width: 130 }}>
-              <span>Провайдер</span>
-              <select className="input" value={provider} onChange={(e) => setProvider(e.target.value)}>
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <textarea
-            className="input"
-            rows={2}
-            placeholder="Свой промпт (необязательно — переопределяет выбранный пресет)"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          {moduleOn("transcription") ? <label className="check" title="Прогнать Whisper и отдать дословный транскрипт модели — точнее границы реза и цитаты (для Gemini)">
-            <input type="checkbox" checked={useTranscript} onChange={(e) => setUseTranscript(e.target.checked)} />
-            <span>Транскрипт (Whisper) в анализ</span>
-            {query.data?.has_transcript ? (
-              <span className="muted" style={{ fontSize: 12 }}>
-                · ✓ закэширован ({query.data.transcript_segments} сегм.)
-              </span>
-            ) : null}
-          </label> : null}
-          <button
-            className="btn primary"
-            disabled={analyze.isPending || sourceMissing}
-            title={sourceMissing ? "Для анализа нужна запись стрима" : ""}
-            onClick={() =>
-              analyze.mutate(
-                prompt.trim()
-                  ? { provider, prompt: prompt.trim(), use_transcript: useTranscript }
-                  : { provider, prompt_preset_id: presetId || undefined, use_transcript: useTranscript },
-              )
-            }
-          >
-            {analyze.isPending ? "Запуск…" : running ? "▶ Ещё один анализ" : "▶ Анализировать"}
-          </button>
-        </div>}
+        <AnalyzeForm source={source} />
 
       <div className="panel">
         <strong className="src-h">Анализы ({source.analyses.length})</strong>

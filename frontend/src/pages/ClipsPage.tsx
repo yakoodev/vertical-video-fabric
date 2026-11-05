@@ -1,47 +1,36 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { clipGroupsApi, type RenderFilter } from "@/api/clipGroups";
 import { clipsApi } from "@/api/clips";
 import { qk } from "@/api/keys";
 import type { Clip } from "@/api/types";
 import { ApiError } from "@/api/client";
-import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { useToast } from "@/components/Toast";
 import { ClipCard } from "@/components/ClipCard";
-import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
 import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
-type ClipFilter = "all" | "ready" | "published" | "error" | "vertical" | "horizontal";
-const clipMatches = (c: Clip, f: ClipFilter): boolean =>
-  f === "all"
-    ? true
-    : f === "vertical"
-      ? c.status === "succeeded" && c.height >= c.width
-      : f === "horizontal"
-        ? c.status === "succeeded" && c.width > c.height
-        : f === "published"
-          ? (c.published_targets_count ?? 0) > 0
-          : f === "error"
-            ? ["failed", "error"].includes(c.status)
-            : c.status === "succeeded";
+const PAGE = 60;
 
-/** Клипы всех проектов («Готовые ролики») или одного (projectId, вкладка «Клипы»); карточки те же. */
-export function ClipsPage({ embedded, projectId }: { embedded?: boolean; projectId?: number } = {}) {
+/** Все готовые ролики всех проектов страницами («Публикации и аккаунты → Готовые ролики»). Клипы одного проекта и видео — ClipGrid. */
+export function ClipsPage({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
-  const listKey = projectId ? (["clips", "project", String(projectId)] as const) : qk.clips();
-  const query = useQuery({
-    queryKey: listKey,
-    queryFn: () => (projectId ? clipsApi.listForProject(projectId) : clipsApi.list()),
+  const [filter, setFilter] = useState<RenderFilter>("all");
+  const query = useInfiniteQuery({
+    queryKey: [...qk.clips(), "pages", filter],
+    queryFn: ({ pageParam }) => clipGroupsApi.renders(filter, pageParam, PAGE),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined),
   });
   const [toDelete, setToDelete] = useState<Clip | null>(null);
   const [toPublish, setToPublish] = useState<Clip | null>(null);
   const publishingOn = useModuleOn("publishing"); // app/modules.py
-  const [filter, setFilter] = useState<ClipFilter>("all");
-  const shown = useShowMore((query.data ?? []).filter((c) => clipMatches(c, filter)), filter);
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const first = query.data?.pages[0];
 
   const upload = useMutation({
     mutationFn: (file: File) => clipsApi.uploadEdited(file),
@@ -52,15 +41,18 @@ export function ClipsPage({ embedded, projectId }: { embedded?: boolean; project
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось загрузить клип"),
   });
 
-  const del = useDeleteMutation<Clip>({
-    listKey,
-    mutationFn: clipsApi.remove,
-    successMessage: () => "Клип удалён",
-    onSuccess: () => setToDelete(null),
+  const del = useMutation({
+    mutationFn: (id: number) => clipsApi.remove(id),
+    onSuccess: () => {
+      toast.success("Клип удалён");
+      setToDelete(null);
+      void qc.invalidateQueries({ queryKey: qk.clips() });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось удалить"),
   });
 
   // Загруженный клип без видео-основы не лежит в проекте: кнопка живёт в «Готовых роликах».
-  const uploadButton = projectId ? null : (
+  const uploadButton = (
     <label className="btn primary" style={{ cursor: upload.isPending ? "wait" : "pointer" }}>
       {upload.isPending ? "Загрузка…" : "📤 Загрузить клип"}
       <input
@@ -85,19 +77,19 @@ export function ClipsPage({ embedded, projectId }: { embedded?: boolean; project
           {uploadButton}
         </div>
       ) : null}
-      {embedded || projectId ? null : <PageHead title="Клипы" sub="Отрендеренные и загруженные клипы" actions={uploadButton} />}
+      {embedded ? null : <PageHead title="Клипы" sub="Отрендеренные и загруженные клипы" actions={uploadButton} />}
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
-      ) : !query.data?.length ? (
+      ) : !first?.counts.all ? (
         <EmptyState
           icon="✂️"
           title="Клипов пока нет"
           hint="Отрендерите моменты видео или загрузите готовый клип"
           actions={
-            <Link className="btn primary" to={projectId ? `/p/${projectId}` : "/projects"}>
-              {projectId ? "К видео проекта" : "Все видео"}
+            <Link className="btn primary" to="/projects">
+              Все видео
             </Link>
           }
         />
@@ -114,7 +106,7 @@ export function ClipsPage({ embedded, projectId }: { embedded?: boolean; project
               ["error", "Ошибка"],
             ] as const
           ).map(([key, label]) => {
-            const n = query.data.filter((c) => clipMatches(c, key)).length;
+            const n = first.counts[key];
             return key === "all" || n ? (
               <button
                 key={key}
@@ -127,7 +119,7 @@ export function ClipsPage({ embedded, projectId }: { embedded?: boolean; project
           })}
         </div>
         <div className="card-grid clip-grid">
-          {shown.visible.map((clip) => (
+          {items.map((clip) => (
             <ClipCard
               key={clip.id}
               clip={clip}
@@ -150,7 +142,13 @@ export function ClipsPage({ embedded, projectId }: { embedded?: boolean; project
             />
           ))}
         </div>
-        <ShowMore rest={shown.rest} onMore={shown.more} />
+        {query.hasNextPage ? (
+          <div className="show-more">
+            <button type="button" className="btn sm" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>
+              {query.isFetchingNextPage ? "Загрузка…" : `Показать ещё (${first.total - items.length})`}
+            </button>
+          </div>
+        ) : null}
         </>
       )}
 

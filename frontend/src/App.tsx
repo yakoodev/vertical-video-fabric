@@ -15,6 +15,7 @@ const ProjectWorkspace = lazyPage(() => import("@/pages/ProjectWorkspace"), "Pro
 const SeriesPage = lazyPage(() => import("@/pages/SeriesPage"), "SeriesPage");
 const MontageAssetsPage = lazyPage(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const AutomationPage = lazyPage(() => import("@/pages/AutomationPage"), "AutomationPage");
+const ClipPage = lazyPage(() => import("@/pages/ClipPage"), "ClipPage");
 const PubsPage = lazyPage(() => import("@/pages/PubsPage"), "PubsPage");
 const InboxPage = lazyPage(() => import("@/pages/InboxPage"), "InboxPage");
 const HelpPage = lazyPage(() => import("@/pages/HelpPage"), "HelpPage");
@@ -72,9 +73,10 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<Home />} />
 
-        {/* Лестница: проект → видео; клип пока открывается в монтаже внутри видео (?clip=). */}
+        {/* Лестница: проект → видео → клип; монтаж клипа — редактор внутри видео (?clip=). */}
         <Route path="p/:projectId" element={<RequireModule id="series"><SeriesPage /></RequireModule>} />
         <Route path="v/:sourceId/*" element={<ProjectWorkspace />} />
+        <Route path="clips/:clipId" element={<ClipPage />} />
 
         {/* Вне проектов. */}
         <Route path="inbox" element={<InboxPage />} />
@@ -99,14 +101,13 @@ export function App() {
         <Route path="publications" element={<Moved to={() => "/pubs"} extra={{ tab: "pubs" }} />} />
         <Route path="publications/:jobId" element={<Moved to={(p) => `/pubs/${p.jobId}`} />} />
         <Route path="assets" element={<AssetsMoved />} />
-        {/* Самые старые, от прежнего клиента. /clips/:id позже станет страницей клипа. */}
+        {/* Самые старые, от прежнего клиента. */}
         <Route path="sources" element={<Navigate to="/projects" replace />} />
         <Route path="sources/:sourceId" element={<Moved to={(p) => `/v/${p.sourceId}`} />} />
         <Route path="sources/:sourceId/studio" element={<Moved to={(p) => `/v/${p.sourceId}/candidates`} />} />
         <Route path="jobs" element={<Moved to={() => "/pubs"} extra={{ tab: "pubs" }} />} />
         <Route path="jobs/:jobId" element={<Moved to={(p) => `/pubs/${p.jobId}`} />} />
         <Route path="auto" element={<Moved to={() => "/automation"} />} />
-        <Route path="clips/:clipId" element={<Moved to={() => "/pubs"} extra={{ tab: "ready" }} />} />
         <Route path="posts/new" element={<Moved to={() => "/pubs"} extra={{ tab: "ready" }} />} />
         <Route path="presets" element={<Moved to={() => "/settings"} />} />
         <Route path="*" element={<Navigate to="/" replace />} />

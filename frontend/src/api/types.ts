@@ -40,6 +40,8 @@ export interface Source {
   updated_at: string;
   analyses_count?: number;
   clip_plans_count?: number;
+  /** Клипов для человека: группа версий считается один раз. */
+  clip_cards_count?: number;
   clips_count?: number;
   /** Проект-серия/канал источника (app/projects.py); null — без проекта. */
   project_id?: number | null;
@@ -199,6 +201,9 @@ export function segSpeed(piece: { speed?: number }): number {
 
 export interface ClipPlan {
   id: number;
+  /** Группа версий одного клипа (app/clip_groups.py); null — план сам себе клип. */
+  clip_group_id?: number | null;
+  group_locked?: number;
   source_id: number;
   analysis_id: number | null;
   status: string;

@@ -100,9 +100,10 @@ export function ClipCard({
         {clip.width ? <span>· {clip.width}×{clip.height}</span> : null}
         {clip.published_targets_count ? <StatsBadge clipId={clip.id} /> : null}
         {clip.clip_plan_id ? (
+          <><Link className="clip-edit-link" to={`/clips/${clip.clip_plan_id}`}>Клип</Link>
           <Link className="clip-edit-link" to={`/v/${clip.source_id}/candidates?clip=${clip.clip_plan_id}`} title="Открыть монтаж этого клипа">
             Монтаж
-          </Link>
+          </Link></>
         ) : null}
       </div>
       {clip.qc ? (
