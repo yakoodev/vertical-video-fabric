@@ -77,6 +77,13 @@ type Args = {
   preset: string;
   frame?: number;
   png?: string;
+  /** Трансляция предпросмотра (app/stream_preview.py): основа — сырые кадры на stdin, готовые кадры — на stdout. */
+  stdinFrames?: boolean;
+  stdoutFrames?: boolean;
+  fromFrame?: number;
+  frameCount?: number;
+  printBaseFilter?: boolean;
+  colorspace?: string;
 };
 
 class UsageError extends Error {}
@@ -99,7 +106,9 @@ function parseArgs(argv: string[]): Args {
   const frame = out.frame !== undefined ? Number(out.frame) : undefined;
   if (frame !== undefined && !Number.isFinite(frame)) throw new UsageError(`--frame: не число: ${out.frame}`);
   if (frame !== undefined && !out.png) throw new UsageError("с --frame нужен --png out.png");
-  if (frame === undefined && !out.output) throw new UsageError("нужен --output motion.mp4 (или --frame T --png out.png)");
+  if (frame === undefined && !out.output && !out["stdout-frames"] && !out["print-base-filter"]) {
+    throw new UsageError("нужен --output motion.mp4 (или --frame T --png out.png)");
+  }
   const crf = out.crf !== undefined ? Number(out.crf) : 18;
   return {
     comp: out.comp,
@@ -117,6 +126,12 @@ function parseArgs(argv: string[]): Args {
     preset: out.preset || "veryfast",
     frame,
     png: out.png,
+    stdinFrames: !!out["stdin-frames"],
+    stdoutFrames: !!out["stdout-frames"],
+    fromFrame: out["from-frame"] !== undefined ? Math.max(0, Math.round(Number(out["from-frame"])) || 0) : undefined,
+    frameCount: out["frame-count"] !== undefined ? Math.max(0, Math.round(Number(out["frame-count"])) || 0) : undefined,
+    printBaseFilter: !!out["print-base-filter"],
+    colorspace: out.colorspace,
   };
 }
 
@@ -1061,6 +1076,46 @@ function encoderArgs(args: Args, comp: Composition, colorspace: string | null): 
   ];
 }
 
+/**
+ * Трансляция предпросмотра: кадры [--from-frame, +--frame-count) основы из stdin (сырой RGBA, уже через
+ * fitFilter — его печатает --print-base-filter) → слои → сырой RGBA в stdout. Кодировщик запускает сервер.
+ */
+async function renderFrames(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>, anims: Map<string, AnimSeq>): Promise<void> {
+  const W = comp.width;
+  const painter = makePainter(comp, env);
+  const first = args.fromFrame ?? 0;
+  const count = args.frameCount ?? Math.max(1, Math.round(comp.duration * comp.fps)) - first;
+  const out = process.stdout;
+  let closed = false;
+  out.on("error", () => (closed = true));
+  const write = (buf: Buffer) =>
+    new Promise<void>((res, rej) => {
+      if (closed) return rej(new Error("получатель кадров закрыл stdout"));
+      if (out.write(buf)) res();
+      else out.once("drain", res);
+    });
+  const step = async (i: number, base: Buffer | null) => {
+    await prepareVideos(comp, videos, motionTime(comp.freezes, i / comp.fps));
+    await prepareAnims(comp, anims, motionTime(comp.freezes, i / comp.fps));
+    painter.paint(base, i / comp.fps);
+    await write(painter.canvas.data() as Buffer);
+  };
+  let i = first;
+  const end = first + count;
+  if (args.stdinFrames) {
+    for await (const frame of rawFrames(process.stdin, W * baseHeight(comp) * 4)) {
+      if (i >= end) break;
+      await step(i, frame);
+      i++;
+    }
+  }
+  while (i < end) {
+    await step(i, null);
+    i++;
+  }
+  await new Promise<void>((res) => out.end(res));
+}
+
 async function renderVideo(args: Args, comp: Composition, env: RenderEnv, videos: Map<string, FrameSeq>, anims: Map<string, AnimSeq>): Promise<void> {
   const W = comp.width;
   const H = comp.height;
@@ -1222,6 +1277,10 @@ async function main(): Promise<void> {
   }
   const args = parseArgs(process.argv.slice(2));
   const comp = readComp(args.comp);
+  if (args.printBaseFilter) {
+    process.stdout.write(fitFilter(comp, args.colorspace ?? null));
+    return;
+  }
   if (args.input && !existsSync(args.input)) throw new Error(`нет файла основы: ${args.input}`);
   registerFonts(args.fontsDir);
   // Свои шрифты (app/user_fonts.py, data/fonts) — тот же формат реестра.
@@ -1232,6 +1291,7 @@ async function main(): Promise<void> {
   const anims = await loadAnims(args.anims, comp);
   const env = makeEnv(comp, images, videos, anims);
   if (args.frame !== undefined) await renderPng(args, comp, env, videos, anims);
+  else if (args.stdoutFrames) await renderFrames(args, comp, env, videos, anims);
   else await renderVideo(args, comp, env, videos, anims);
 }
 

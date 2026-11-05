@@ -63,6 +63,7 @@ _pieces: dict[str, dict] = {}  # кусок: «источник/имя файл�
 _workers: list[threading.Thread] = []
 _proxy_proc: subprocess.Popen | None = None
 _proxy_paused = False
+_stream_active = False  # идёт сборка трансляции (app/stream_preview.py): её ffmpeg вместо этих
 _NAME = re.compile(r"^(\d{10})-(\d{10})-([0-9a-f]{8})v(\d+)\.mp4$")
 
 
@@ -206,6 +207,8 @@ def _start_workers() -> None:
 
 
 def _next_piece() -> dict | None:
+    if _stream_active:
+        return None
     queued = [p for p in _pieces.values() if p["state"] == "queued"]
     return min(queued, key=lambda p: p["priority"]) if queued else None
 
@@ -220,7 +223,7 @@ def _worker(index: int) -> None:
                     piece["state"] = "running"
                     _sync_proxy_pause()
                     break
-                if index == 0 and _proxy_queue:
+                if index == 0 and _proxy_queue and not _stream_active:
                     proxy_job = _proxy_queue.pop(0)
                     break
                 _wake.wait()
@@ -257,10 +260,22 @@ def _sync_proxy_pause() -> None:
     if _proxy_proc is None or _proxy_proc.poll() is not None:
         _proxy_paused = False
         return
-    want = _pieces_active()
+    want = _pieces_active() or _stream_active
     if want != _proxy_paused:
         _suspend(_proxy_proc, want)
         _proxy_paused = want
+
+
+def stream_busy(on: bool) -> None:
+    """Трансляция занимает ffmpeg: общий прокси заморожен, новые куски ждут — всего не больше двух ffmpeg."""
+    global _stream_active
+    with _wake:
+        if _stream_active == on:
+            return
+        _stream_active = on
+        _sync_proxy_pause()
+        if not on:
+            _wake.notify_all()
 
 
 def build_args(source: dict, output: Path) -> list[str]:

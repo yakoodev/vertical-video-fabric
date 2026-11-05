@@ -189,6 +189,18 @@ def frame_slot(label: str = "") -> _Slot:
     return FRAMES.slot("frame", label)
 
 
+class heavy_queue_nested:  # noqa: N801 - контекстный менеджер
+    """Этот поток считается уже в очереди: звуковой проход предпросмотра (app/stream_preview.py) лёгкий,
+    минутный рендер он не ждёт и места не занимает."""
+
+    def __enter__(self) -> "heavy_queue_nested":
+        HEAVY._local.depth = getattr(HEAVY._local, "depth", 0) + 1  # noqa: SLF001
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        HEAVY._local.depth = max(0, getattr(HEAVY._local, "depth", 1) - 1)  # noqa: SLF001
+
+
 def heavy(kind: str):
     """Декоратор: вся функция — в очереди тяжёлых задач."""
     import functools

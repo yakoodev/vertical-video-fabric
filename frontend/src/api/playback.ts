@@ -152,7 +152,26 @@ export type PlaybackPlan = {
   warnings: string[];
 };
 
+/** Рендер 480p во время показа (app/stream_preview.py): как идёт сборка. */
+export type StreamStatus = {
+  key: string | null;
+  state: "queued" | "recording" | "rendering" | "ready" | "failed" | "no_source";
+  error?: string | null;
+  stage?: string;
+  /** Адрес HLS: появляется, как только готов звук и план кадров (длина ролика известна сразу). */
+  playlist?: string;
+  total?: number;
+  ready?: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  notes?: string[];
+  message?: string;
+  render?: { url: string; poster?: string; clip_id: number; stale: boolean } | null;
+};
+
 export const playbackApi = {
+  stream: (clipPlanId: number, retry = false) => api.post<StreamStatus>(`/api/clip-plans/${clipPlanId}/stream`, { retry }),
   plan: (clipPlanId: number) => api.get<PlaybackPlan>(`/api/clip-plans/${clipPlanId}/playback`),
   revision: (clipPlanId: number) => api.get<{ revision: string }>(`/api/clip-plans/${clipPlanId}/revision`),
   proxyStatus: (sourceId: number | string) => api.get<ProxyStatus>(`/api/sources/${sourceId}/proxy`),

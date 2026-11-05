@@ -264,11 +264,17 @@ def build_inserts_args(
     height: int,
     duration: float,
     clip_has_audio: bool = True,
+    video_only: bool = False,
+    base_label: str = "[0:v]",
+    first_input: int = 1,
 ) -> list[str] | None:
-    """ffmpeg command overlaying the inserts on the clip, or None if nothing applies."""
+    """ffmpeg command overlaying the inserts on the clip, or None if nothing applies.
+
+    ``video_only`` — только картинка (предпросмотр-трансляция, app/stream_preview.py: звук у неё свой проход),
+    ``base_label``/``first_input`` — откуда брать кадр и с какого номера входа идут файлы вставок."""
     from app.motion_render import speech_level_db
 
-    speech_db = speech_level_db(clip_path) if clip_has_audio else None
+    speech_db = speech_level_db(clip_path) if clip_has_audio and not video_only else None
     usable = []
     for ins in inserts:
         asset = assets.get(ins["asset_id"])
@@ -281,6 +287,8 @@ def build_inserts_args(
         mode = "sound" if kind == "audio" else ins["mode"]
         if mode == "sound" and not (kind == "audio" or asset.get("has_audio")):
             continue  # a silent picture has nothing to play as a sound
+        if video_only and (mode == "sound" or kind == "audio"):
+            continue
         usable.append({**ins, "end": end, "len": end - ins["at"], "mode": mode, "asset": asset})
     if not usable:
         return None
@@ -299,10 +307,10 @@ def build_inserts_args(
             args += ["-t", f"{ins['len']:.3f}", "-i", path]
 
     graph: list[str] = []
-    v_last = "[0:v]"
+    v_last = base_label
     audio_parts: list[str] = []
     ducks: list[str] = []
-    for n, ins in enumerate(usable, start=1):
+    for n, ins in enumerate(usable, start=first_input):
         at, end, mode = ins["at"], ins["end"], ins["mode"]
         kind = ins["asset"]["kind"]
         if mode in ("full", "pip") and kind != "audio":
@@ -338,7 +346,7 @@ def build_inserts_args(
             v_last = f"[v{n}]"
             if mode == "full" and ins.get("duck"):
                 ducks.append(f"between(t,{at:.3f},{end:.3f})")
-        if kind == "audio" or ins["asset"].get("has_audio"):
+        if not video_only and (kind == "audio" or ins["asset"].get("has_audio")):
             delay = int(round(at * 1000))
             graph.append(
                 f"[{n}:a]aresample=48000,atrim=0:{ins['len']:.3f},asetpts=PTS-STARTPTS,"
@@ -347,7 +355,7 @@ def build_inserts_args(
             )
             audio_parts.append(f"[a{n}]")
 
-    if clip_has_audio:
+    if clip_has_audio and not video_only:
         base = "[0:a]aresample=48000"
         if ducks:
             base += f",volume=enable='{'+'.join(ducks)}':volume={DUCK_VOLUME}"
