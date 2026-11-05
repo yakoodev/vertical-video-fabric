@@ -342,49 +342,17 @@ def _sfx_chain(kind: str, index_label: str) -> tuple[list[str], str, float]:
     )
 
 
-def build_join_args(
-    parts: list[Path],
+def join_picture_filters(
+    n: int,
     durations: list[float],
-    output_path: Path,
+    overlaps: list[float],
     transition: dict,
-    *,
-    has_audio: bool,
-    gaps: list[float | None] | None = None,
-    video_codec: str = "libx264",
-    video_bitrate: str = "",
-    crf: object = None,
-    audio_codec: str = "aac",
-    audio_bitrate: str = "",
-    jump_joins: list[bool] | None = None,
-    jl: dict | None = None,
     width: int = 1080,
     fps: float = 30.0,
 ) -> list[str]:
-    """ffmpeg args joining ``parts`` with the given transition settings.
-
-    ``jump_joins`` — какие склейки это джамп-каты (app/cuts.py): встык, без
-    звука стыка и всегда с коротким фейдом звука против щелчка.
-    ``jl`` — J/L-склейки (app/audio_edit.py): ``{plan: plan_jl(...), handles: [(часть, "head"|"tail",
-    путь)]}`` — звук собирается по плану, ручки звука — дополнительные входы; картинка как всегда.
-    """
-    if len(parts) != len(durations) or not parts:
-        raise ValueError("parts and durations must be non-empty and the same length")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    n = len(parts)
-    overlaps = plan_joins(transition, durations, gaps, jump_joins)
+    """Граф картинки склейки: входы ``[0:v]…[n-1:v]`` → ``[vout]``. Его же читает предпросмотр-трансляция."""
     xfade_name = TRANSITIONS[transition["type"]][1]
-
-    args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
-    for part in parts:
-        args.extend(["-i", str(part)])
-    handle_inputs: dict[tuple[int, str], int] = {}
-    for k, side, path in (jl or {}).get("handles") or []:
-        handle_inputs[(int(k), str(side))] = n + len(handle_inputs)
-        args.extend(["-i", str(path)])
-
     filters: list[str] = []
-
-    # ---- picture ---------------------------------------------------------
     if xfade_name and n > 1 and any(o > 0 for o in overlaps):
         # Одна шкала времени у всех входов: concat (встык) отдаёт 1/1000000, а
         # сам кусок — 1/15360, и следующий xfade падает «timebase do not match».
@@ -423,6 +391,49 @@ def build_join_args(
             filters.append(f"[{k}:v]setpts=PTS-STARTPTS[c{k}]")
         inputs = "".join(f"[c{k}]" for k in range(n))
         filters.append(f"{inputs}concat=n={n}:v=1:a=0[vout]")
+    return filters
+
+
+def build_join_args(
+    parts: list[Path],
+    durations: list[float],
+    output_path: Path,
+    transition: dict,
+    *,
+    has_audio: bool,
+    gaps: list[float | None] | None = None,
+    video_codec: str = "libx264",
+    video_bitrate: str = "",
+    crf: object = None,
+    audio_codec: str = "aac",
+    audio_bitrate: str = "",
+    jump_joins: list[bool] | None = None,
+    jl: dict | None = None,
+    width: int = 1080,
+    fps: float = 30.0,
+) -> list[str]:
+    """ffmpeg args joining ``parts`` with the given transition settings.
+
+    ``jump_joins`` — какие склейки это джамп-каты (app/cuts.py): встык, без
+    звука стыка и всегда с коротким фейдом звука против щелчка.
+    ``jl`` — J/L-склейки (app/audio_edit.py): ``{plan: plan_jl(...), handles: [(часть, "head"|"tail",
+    путь)]}`` — звук собирается по плану, ручки звука — дополнительные входы; картинка как всегда.
+    """
+    if len(parts) != len(durations) or not parts:
+        raise ValueError("parts and durations must be non-empty and the same length")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    n = len(parts)
+    overlaps = plan_joins(transition, durations, gaps, jump_joins)
+
+    args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    for part in parts:
+        args.extend(["-i", str(part)])
+    handle_inputs: dict[tuple[int, str], int] = {}
+    for k, side, path in (jl or {}).get("handles") or []:
+        handle_inputs[(int(k), str(side))] = n + len(handle_inputs)
+        args.extend(["-i", str(path)])
+
+    filters = join_picture_filters(n, durations, overlaps, transition, width, fps)
 
     # ---- sound -----------------------------------------------------------
     audio_label = None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import math
@@ -546,7 +547,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        preset = self._output_preset(preset, source, aspect, end_hold_sec, layers_format)
         preset = _preset_with_music_automation(preset, audio_edit)
         if freezes:
             preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
@@ -564,9 +565,9 @@ class ClipRenderService:
         self.store.update_ai_segment_status(segment_id, "rendering")
         self.store.mark_clip_rendering(clip["id"])
         render_id = uuid4().hex
-        output_path = settings.clip_dir / f"{render_id}.mp4"
+        output_path = self._clip_dir() / f"{render_id}.mp4"
         has_post = bool(subtitle_profile_id) or bool(preset.get("music_track_id"))
-        base_output_path = settings.clip_dir / f"{render_id}.base.mp4" if has_post else output_path
+        base_output_path = self._clip_dir() / f"{render_id}.base.mp4" if has_post else output_path
         temp_paths: list[Path] = []
         if has_post:
             temp_paths.append(base_output_path)
@@ -583,7 +584,7 @@ class ClipRenderService:
             edit = part_edit(audio_edit, 0, float(segment["start_sec"]), float(segment["end_sec"]))
             if edit:
                 piece_preset = {**piece_preset, "audio_edit": edit}
-            args = build_ffmpeg_render_args(
+            args = self._build_part_args(
                 source_path=Path(source["local_path"]),
                 output_path=base_output_path,
                 start_sec=float(segment["start_sec"]),
@@ -640,6 +641,23 @@ class ClipRenderService:
             for path in temp_paths:
                 path.unlink(missing_ok=True)
             return clip
+
+    # Точки подключения предпросмотра-трансляции (app/stream_preview.py): обычный рендер здесь ничего не меняет.
+    def _clip_dir(self) -> Path:
+        return settings.clip_dir
+
+    def _tmp_dir(self) -> Path:
+        return settings.tmp_dir
+
+    def _output_preset(self, preset: dict, source: dict | None, aspect: str | None, end_hold_sec: float = 0.0,
+                       layers_format: str | None = None) -> dict:
+        return _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+
+    def _build_part_args(self, **kwargs: Any) -> list[str]:
+        return build_ffmpeg_render_args(**kwargs)
+
+    def _build_join_args(self, *args: Any, **kwargs: Any) -> list[str]:
+        return build_join_args(*args, **kwargs)
 
     def _preset(self, preset_id: int | None) -> dict:
         if preset_id is not None:
@@ -708,7 +726,7 @@ class ClipRenderService:
             layout=layout,
         )
         preset = _preset_with_source_audio(preset, source)
-        preset = _preset_with_output(preset, source, aspect, end_hold_sec, layers_format)
+        preset = self._output_preset(preset, source, aspect, end_hold_sec, layers_format)
         preset = _preset_with_music_automation(preset, audio_edit)
         if freezes:
             preset = {**preset, "freezes": freezes}  # стоп-кадры посреди ролика (app/freeze.py)
@@ -727,10 +745,10 @@ class ClipRenderService:
         )
         self.store.mark_clip_rendering(clip["id"])
         render_id = uuid4().hex
-        output_path = settings.clip_dir / f"{render_id}.mp4"
+        output_path = self._clip_dir() / f"{render_id}.mp4"
         has_post = bool(subtitle_profile_id) or bool(preset.get("music_track_id"))
-        base_output_path = settings.clip_dir / f"{render_id}.base.mp4" if has_post else output_path
-        temp_dir = settings.tmp_dir / f"montage-{render_id}"
+        base_output_path = self._clip_dir() / f"{render_id}.base.mp4" if has_post else output_path
+        temp_dir = self._tmp_dir() / f"montage-{render_id}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         temp_paths: list[Path] = []
         if has_post:
@@ -761,7 +779,7 @@ class ClipRenderService:
                 if retime:
                     piece_preset = {**piece_preset, "piece_retime": retime}
                 _run_ffmpeg(
-                    build_ffmpeg_render_args(
+                    self._build_part_args(
                         source_path=Path(source["local_path"]),
                         output_path=part_path,
                         start_sec=float(segment["start_sec"]),
@@ -798,7 +816,7 @@ class ClipRenderService:
                     jl = self._jl_handles(source, base_preset, parts, durations, join, jumps, shifts,
                                           audio_edit, temp_dir)
                 _run_ffmpeg(
-                    build_join_args(
+                    self._build_join_args(
                         rendered_parts,
                         durations,
                         base_output_path,
@@ -924,9 +942,9 @@ class ClipRenderService:
         )
         self.store.mark_clip_rendering(clip["id"])
         render_id = uuid4().hex
-        output_path = settings.clip_dir / f"{render_id}.mp4"
+        output_path = self._clip_dir() / f"{render_id}.mp4"
         has_post = bool(subtitle_profile_id) or bool(preset.get("music_track_id"))
-        base_output_path = settings.clip_dir / f"{render_id}.base.mp4" if has_post else output_path
+        base_output_path = self._clip_dir() / f"{render_id}.base.mp4" if has_post else output_path
         temp_paths: list[Path] = []
         if has_post:
             temp_paths.append(base_output_path)
@@ -1644,23 +1662,12 @@ class ClipRenderService:
         One extra ffmpeg pass on the output file; a failure keeps the render
         without inserts and says so in the clip's error, never loses the clip.
         """
-        from app.montage_assets import build_inserts_args, normalize_inserts
+        from app.montage_assets import build_inserts_args
 
-        inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
-        mapper = self._final_mapper(plan, cut_plan)
-        if mapper is not None and inserts:
-            from app.cuts import remap_inserts
-
-            inserts = remap_inserts(inserts, mapper)
+        inserts, assets = self._final_inserts(plan, cut_plan)
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
-        assets = {}
-        for ins in inserts:
-            try:
-                assets[ins["asset_id"]] = self.store.get_montage_asset(ins["asset_id"])
-            except KeyError:
-                pass
         try:
             meta = probe_media(path)
             has_audio = _has_audio_stream(path)
@@ -1677,6 +1684,24 @@ class ClipRenderService:
             return self._attach_qc(clip, path, meta)
         except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
             return self._note_clip_error(clip["id"], f"вставки не наложены: {str(exc)[:200]}")
+
+    def _final_inserts(self, plan: dict, cut_plan=None) -> tuple[list[dict], dict]:
+        """Вставки клипа в секундах готового ролика и их файлы."""
+        from app.montage_assets import normalize_inserts
+
+        inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
+        mapper = self._final_mapper(plan, cut_plan)
+        if mapper is not None and inserts:
+            from app.cuts import remap_inserts
+
+            inserts = remap_inserts(inserts, mapper)
+        assets = {}
+        for ins in inserts:
+            try:
+                assets[ins["asset_id"]] = self.store.get_montage_asset(ins["asset_id"])
+            except KeyError:
+                pass
+        return inserts, assets
 
     @staticmethod
     def _apply_freezes(base: Path, preset: dict) -> None:
@@ -1732,7 +1757,7 @@ class ClipRenderService:
         )
 
         notes: list[str] = []
-        work = settings.tmp_dir / f"motion-{render_id}"
+        work = self._tmp_dir() / f"motion-{render_id}"
         work.mkdir(parents=True, exist_ok=True)
         try:
             layers, assets, missing = resolve_layer_assets(self.store, motion.get("layers") or [])
@@ -2003,9 +2028,24 @@ class ClipRenderService:
         subtitle_profile_id: int,
         preset: dict,
     ) -> None:
+        profile = self._subtitle_profile_for_render(clip_id, subtitle_profile_id, preset)
+        ready = self._plan_subtitles_for_clip(clip_id, float(preset.get("fps") or 30))
+        provider = get_subtitle_provider(profile["provider"])
+        model = subtitle_model_for_profile(profile)
+        track = self.store.create_subtitle_track(
+            clip_id,
+            provider=provider.provider,
+            subtitle_profile_id=subtitle_profile_id,
+            model=model,
+            status="running",
+        )
+        self.store.update_clip(clip_id, subtitle_track_id=track["id"])
+        return self._burn_subtitles(clip_id, input_path, output_path, profile, ready, provider, model, track, preset)
+
+    def _subtitle_profile_for_render(self, clip_id: int, subtitle_profile_id: int, preset: dict) -> dict:
+        """Стиль субтитров этого рендера: поправки запроса и отступ под формат кадра."""
         profile = self.store.get_subtitle_profile(subtitle_profile_id)
         profile["prompt"] = _subtitle_prompt_for_clip(self.store, clip_id)
-        ready = self._plan_subtitles_for_clip(clip_id, float(preset.get("fps") or 30))
         # A per-render nudge (set on the preset) overrides the profile's saved
         # timing offset, so a single drifting clip can be pulled into sync without
         # changing the shared subtitle style.
@@ -2024,16 +2064,10 @@ class ClipRenderService:
             # Формат не 9:16: отступ стиля задан в px кадра 1920 — та же доля высоты кадра формата.
             height = int(preset.get("output_height") or 1920)
             profile = {**profile, "margin_v": round(int(profile.get("margin_v") or 160) * height / 1920)}
-        provider = get_subtitle_provider(profile["provider"])
-        model = subtitle_model_for_profile(profile)
-        track = self.store.create_subtitle_track(
-            clip_id,
-            provider=provider.provider,
-            subtitle_profile_id=subtitle_profile_id,
-            model=model,
-            status="running",
-        )
-        self.store.update_clip(clip_id, subtitle_track_id=track["id"])
+        return profile
+
+    def _burn_subtitles(self, clip_id: int, input_path: Path, output_path: Path, profile: dict, ready: Any,
+                        provider: Any, model: Any, track: dict, preset: dict) -> None:
         audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
         ass_path = settings.subtitle_dir / f"{uuid4().hex}.ass"
         try:
@@ -2216,7 +2250,7 @@ class ClipRenderService:
         current = base_output_path
         for index, name in enumerate(passes):
             is_last = index == len(passes) - 1
-            dest = output_path if is_last else settings.clip_dir / f"{render_id}.{name}.mp4"
+            dest = output_path if is_last else self._clip_dir() / f"{render_id}.{name}.mp4"
             if name == "voice_fx":
                 _run_ffmpeg(build_voice_fx_args(current, dest, voice_fx), timeout=60 * 20)
             elif name == "music":
@@ -2728,6 +2762,11 @@ def _render_filter(
     source_crop: dict | None = None,
     reframe_x: str | None = None,
 ) -> str:
+    if preset.get("stand_in"):
+        # Предпросмотр-трансляция (app/stream_preview.py): проход собирает только звук, картинка — чёрная
+        # заглушка размера кадра, видео записи вообще не декодируется.
+        band = preset.get("pin_band")
+        return f"color=c=black:s={width}x{height + int(band['h']) if band else height}:r={_fps(fps)},format=yuv420p,setsar=1[vout]"
     mode = preset.get("scale_mode") or "cover"
     anchor = preset.get("crop_anchor") or "center"
     layout = preset.get("layout")
@@ -3384,7 +3423,8 @@ def _retimed(graph: str, preset: dict, fps: float) -> str:
     head, sep, tail = graph.rpartition("[vout]")
     if not sep:
         return graph
-    video = video_chain(segment, fps) or "null"
+    # Заглушка картинки бесконечна: реверс её не дождался бы, длину режет -frames:v.
+    video = "null" if preset.get("stand_in") else (video_chain(segment, fps) or "null")
     graph = f"{head}[vretime_in]{tail};[vretime_in]{video}[vout]"
     if not retime.get("has_audio"):
         return graph
@@ -3497,7 +3537,15 @@ def _subtitle_timing_offset(profile: dict) -> float:
     return max(-2.0, min(2.0, offset))
 
 
+# Перехват запуска для прохода предпросмотра (app/stream_preview.py); None — как всегда.
+RENDER_RUNNER: contextvars.ContextVar[Any] = contextvars.ContextVar("render_runner", default=None)
+
+
 def _run_ffmpeg(args: list[str], timeout: int, cwd: Path | None = None) -> None:
+    runner = RENDER_RUNNER.get()
+    if runner is not None:
+        runner.ffmpeg(args, timeout, cwd)
+        return
     proc = subprocess.run(
         args,
         capture_output=True,
@@ -3514,6 +3562,10 @@ def _run_compositor(args: list[str], timeout: int) -> None:
     """Node-компоновщик моушна. Строки ``progress i/n`` в stderr — не ошибка, их
     в сообщение не тащим: прогресса рендера в сервисе нет, а причину падения
     из-за них не было бы видно."""
+    runner = RENDER_RUNNER.get()
+    if runner is not None:
+        runner.compositor(args, timeout)
+        return
     proc = subprocess.run(
         args,
         capture_output=True,

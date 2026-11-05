@@ -1,32 +1,32 @@
 /**
- * ▶ Встраиваемый просмотр смонтированного клипа. Нужен только `clipPlanId`: сам берёт план с сервера
- * (app/playback.py), сам следит за правками (отпечаток монтажа, app/playback.revision) и играет весь
- * клип без рендера. Записи и прокси нет — показывает готовый рендер и честно говорит об этом.
+ * ▶ Встраиваемый просмотр смонтированного клипа: рендер 480p прямо во время показа (app/stream_preview.py).
+ * Нужен только `clipPlanId`. Сервер собирает ролик тем же кодом, что и рендер, и отдаёт его HLS по мере готовности;
+ * здесь обычный <video> со своими кнопками браузера: одинаково в Firefox, Chrome и на телефоне.
  *
- * Горячие клавиши работают, пока фокус внутри плеера (и не мешают редактору вокруг): пробел — плей,
+ * Спиннера без конца нет: на каждом шаге видно, что происходит (звук и план кадров, «собрано N из M»), а если
+ * сборка стоит или сервер молчит, плеер говорит об этом и даёт выход (повтор, готовый рендер).
+ * Правка монтажа (агент, другая вкладка, редактор) видна сама: отпечаток сменился — старая сборка отменена, новая
+ * пересобирает только изменённое, плеер остаётся на той же секунде.
+ *
+ * Горячие клавиши работают, пока фокус внутри плеера (на весь экран — всегда): пробел — плей,
  * ←/→ — кадр, Shift+←/→ — секунда, Home/End, M — звук, F — на весь экран.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { playbackApi, type PiecesStatus, type PlaybackPlan } from "@/api/playback";
-import { colorFixCss } from "@/api/types";
-import { frameSize } from "@/motion";
-import { lookFilterCss } from "./frame";
-import { MontageEngine, type EngineState } from "./engine";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { playbackApi, type StreamStatus } from "@/api/playback";
 
 /** Как часто спрашивать отпечаток монтажа: правка агента видна не позже этого, мс. */
 export const REVISION_POLL_MS = 2000;
-/** Как часто спрашивать куски, пока собираются, мс. */
-const PIECES_POLL_MS = 700;
-/** Столько ждём кадр (и дозагрузку на ходу), потом честно говорим и предлагаем выход, мс. */
-const STALL_MS = 15000;
+/** Как часто спрашивать ход сборки, мс; опрос заодно говорит серверу, что зритель на месте. */
+const STATUS_POLL_MS = 1000;
+const STATUS_IDLE_POLL_MS = 8000;
+/** Столько без единого готового чанка и без кадра, пока ждём: говорим честно и даём выход (ждать не перестаём), мс. */
+const STALL_MS = 45000;
+const FPS_GUESS = 30;
 
-function formatTime(sec: number): string {
-  const s = Math.max(0, sec);
-  const m = Math.floor(s / 60);
-  const rest = s - m * 60;
-  return `${String(m).padStart(2, "0")}:${rest.toFixed(1).padStart(4, "0")}`;
-}
+type HlsModule = typeof import("hls.js");
+
+let hlsModule: Promise<HlsModule> | null = null;
+const loadHls = () => (hlsModule ??= import("hls.js"));
 
 /** Следить за отпечатком монтажа клипа: сменился — зовём `onChange`. */
 export function useClipRevision(clipPlanId: number | null, onChange: (revision: string) => void, enabled = true): void {
@@ -60,6 +60,13 @@ export function useClipRevision(clipPlanId: number | null, onChange: (revision: 
   }, [clipPlanId, enabled]);
 }
 
+const STAGE_TEXT: Record<string, string> = {
+  queued: "Встаю в очередь сборки…",
+  recording: "Готовлю монтаж: звук и план кадров…",
+  rendering: "Готовлю видео…",
+  ready: "Загружаю видео…",
+};
+
 export function MontagePlayer({
   clipPlanId,
   autoPlay = false,
@@ -77,123 +84,193 @@ export function MontagePlayer({
   rootRef?: React.RefObject<HTMLElement>;
   title?: string;
 }) {
-  const qc = useQueryClient();
-  const planQuery = useQuery({
-    queryKey: ["playback", clipPlanId],
-    queryFn: () => playbackApi.plan(clipPlanId),
-    staleTime: 0,
-    placeholderData: (previous) => previous,
-  });
-  const plan = planQuery.data;
-  const [engine] = useState(() => new MontageEngine());
-  const baseRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const selfRef = useRef<HTMLDivElement>(null);
-  const headRef = useRef<HTMLDivElement>(null);
-  const timeRef = useRef<HTMLSpanElement>(null);
-  const [state, setState] = useState<EngineState>(() => engine.state());
-  const [volume, setVolume] = useState(() => {
-    try {
-      const saved = Number(localStorage.getItem("vvf.player.volume"));
-      return Number.isFinite(saved) && saved > 0 && saved <= 1 ? saved : 1;
-    } catch {
-      return 1;
-    }
-  });
-  const [muted, setMuted] = useState(false);
-  const [loop, setLoop] = useState(false);
-  const [pieceCss, setPieceCss] = useState("");
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const [showRender, setShowRender] = useState(false);
+  const hlsRef = useRef<import("hls.js").default | null>(null);
+  const [status, setStatus] = useState<StreamStatus | null>(null);
+  const [lostServer, setLostServer] = useState(false);
+  const [hasFrame, setHasFrame] = useState(false);
+  const [waiting, setWaiting] = useState(true);
+  const [needsTap, setNeedsTap] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [stalled, setStalled] = useState(false);
-  const firstPlanRef = useRef(true);
-  const autoPlayedRef = useRef(false);
-  const scrubRef = useRef<{ wasPlaying: boolean } | null>(null);
+  const [showRender, setShowRender] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const attachedKey = useRef<string | null>(null);
+  const resumeAt = useRef(0);
+  const statusRef = useRef<StreamStatus | null>(null);
+  const pollNow = useRef<() => void>(() => undefined);
 
-  useEffect(() => () => engine.destroy(), [engine]);
-  // Для проверок и отладки: движок открытого плеера.
+  // Ход сборки: опрос пока плеер открыт. Один и тот же запрос и ставит сборку, и держит её живой.
   useEffect(() => {
-    const host = window as unknown as { __montage?: MontageEngine };
-    host.__montage = engine;
-    return () => {
-      if (host.__montage === engine) delete host.__montage;
+    let stopped = false;
+    let timer = 0;
+    let fails = 0;
+    const poll = async (retry = false) => {
+      window.clearTimeout(timer);
+      try {
+        const next = await playbackApi.stream(clipPlanId, retry);
+        if (stopped) return;
+        fails = 0;
+        setLostServer(false);
+        statusRef.current = next;
+        setStatus(next);
+      } catch {
+        if (stopped) return;
+        fails += 1;
+        if (fails >= 3) setLostServer(true);
+      }
+      const st = statusRef.current;
+      const done = st && st.state === "ready" && st.ready === st.total;
+      timer = window.setTimeout(() => void poll(), done ? STATUS_IDLE_POLL_MS : STATUS_POLL_MS);
     };
-  }, [engine]);
-  useEffect(() => engine.onState(setState), [engine]);
-  useEffect(() => {
-    engine.setOutput(volume, muted);
-    try {
-      localStorage.setItem("vvf.player.volume", String(volume));
-    } catch {
-      /* приватное окно */
-    }
-  }, [engine, volume, muted]);
-  useEffect(() => engine.setLoop(loop), [engine, loop]);
-  useEffect(() => {
-    if (baseRef.current && overlayRef.current) engine.attach(baseRef.current, overlayRef.current);
+    pollNow.current = () => void poll();
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [clipPlanId]);
+  useClipRevision(clipPlanId, () => {
+    setUpdatedAt(Date.now());
+    pollNow.current();
   });
-  useEffect(() => {
-    if (!plan) return;
-    engine.setPlan(plan);
-    if (firstPlanRef.current) firstPlanRef.current = false;
-    else setUpdatedAt(Date.now());
-    if (autoPlay && !autoPlayedRef.current && plan.media.kind !== "render" && plan.media.kind !== "none") {
-      autoPlayedRef.current = true;
-      engine.play();
-    }
-  }, [engine, plan, autoPlay]);
-  // Правка извне (агент, другая вкладка): новый план без перезагрузки, та же секунда.
-  useClipRevision(clipPlanId, () => void qc.invalidateQueries({ queryKey: ["playback", clipPlanId] }));
 
-  // Лёгкий прокси: попросить, когда смотрят оригинал; дособрался — пересесть на него на паузе.
-  const sourceId = plan?.source.id;
-  const kind = plan?.media.kind;
-  const proxy = useQuery({
-    queryKey: ["source-proxy", sourceId],
-    queryFn: () => playbackApi.proxyEnsure(sourceId as number),
-    enabled: Boolean(sourceId) && (kind === "original" || kind === "pieces"),
-    refetchInterval: (q) => (["queued", "running"].includes(q.state.data?.status ?? "") ? 5000 : false),
+  const playlist = status?.playlist;
+  const streamKey = status?.key ?? null;
+
+  // Подключить сборку к <video>. Правка: новый ключ — та же секунда, кадр предыдущей остаётся до первого нового.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playlist || !streamKey || attachedKey.current === streamKey) return;
+    let cancelled = false;
+    const wasPlaying = attachedKey.current != null && !video.paused;
+    if (attachedKey.current != null) resumeAt.current = video.currentTime;
+    attachedKey.current = streamKey;
+    setMediaError(null);
+    const start = () => {
+      if (cancelled) return;
+      if (resumeAt.current > 0) {
+        try {
+          video.currentTime = resumeAt.current;
+        } catch {
+          /* ещё нельзя: начнём с начала */
+        }
+      }
+      if (autoPlay || wasPlaying) {
+        video.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
+      }
+    };
+    void loadHls().then(({ default: Hls }) => {
+      if (cancelled) return;
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      if (Hls.isSupported()) {
+        const patient = {
+          // Чанк может ещё собираться: сервер отвечает 503, спрашиваем снова, пока он не будет готов.
+          maxTimeToFirstByteMs: 30000,
+          maxLoadTimeMs: 120000,
+          timeoutRetry: { maxNumRetry: 20, retryDelayMs: 500, maxRetryDelayMs: 2000 },
+          errorRetry: { maxNumRetry: 600, retryDelayMs: 500, maxRetryDelayMs: 2000 },
+        };
+        const hls = new Hls({
+          maxBufferLength: 20,
+          maxMaxBufferLength: 40,
+          backBufferLength: 30,
+          // Один вариант качества: автоматике нечего выбирать, и первый чанк не ждёт замера сети.
+          startLevel: 0,
+          capLevelToPlayerSize: false,
+          fragLoadPolicy: { default: patient },
+          playlistLoadPolicy: { default: patient },
+          manifestLoadPolicy: { default: patient },
+        });
+        hlsRef.current = hls;
+        let recovered = 0;
+        hls.on(Hls.Events.MANIFEST_PARSED, () => start());
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          if (!data.fatal || cancelled) return;
+          if (data.details === "manifestIncompatibleCodecsError" || data.details === "bufferIncompatibleCodecsError" || data.details === "bufferAddCodecError") {
+            // Вечного спиннера здесь быть не должно: без H.264 в браузере не поможет никакой повтор.
+            setMediaError("Браузер не умеет играть H.264. В Firefox на Linux для этого нужен системный ffmpeg (libavcodec).");
+          } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            window.setTimeout(() => !cancelled && hls.startLoad(), 1500);
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recovered < 3) {
+            recovered += 1;
+            hls.recoverMediaError();
+          } else {
+            setMediaError(`Видео не играется: ${data.details}`);
+          }
+        });
+        hls.loadSource(playlist);
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Старый iPhone без MSE: родной HLS браузера.
+        video.src = playlist;
+        video.addEventListener("loadedmetadata", start, { once: true });
+      } else {
+        setMediaError("Этот браузер не умеет играть такое видео.");
+      }
+    }).catch(() => setMediaError("Не загрузился код плеера: обновите страницу."));
+    return () => {
+      cancelled = true;
+    };
+  }, [playlist, streamKey, autoPlay]);
+  useEffect(() => () => {
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
+    attachedKey.current = null;
+  }, []);
+
+  // Честный статус: что с кадром прямо сейчас.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const on = () => setWaiting(false);
+    const off = () => setWaiting(true);
+    const first = () => setHasFrame(true);
+    const error = () => setMediaError(video.error ? `Видео не играется: ${video.error.message || `ошибка ${video.error.code}`}` : "Видео не играется.");
+    video.addEventListener("playing", on);
+    video.addEventListener("canplay", on);
+    video.addEventListener("waiting", off);
+    video.addEventListener("seeking", off);
+    video.addEventListener("seeked", on);
+    video.addEventListener("loadeddata", first);
+    video.addEventListener("timeupdate", first);
+    video.addEventListener("error", error);
+    return () => {
+      video.removeEventListener("playing", on);
+      video.removeEventListener("canplay", on);
+      video.removeEventListener("waiting", off);
+      video.removeEventListener("seeking", off);
+      video.removeEventListener("seeked", on);
+      video.removeEventListener("loadeddata", first);
+      video.removeEventListener("timeupdate", first);
+      video.removeEventListener("error", error);
+    };
   });
-  // Куски 480p: сервер собирает их от той части, что сейчас на экране; готовые плеер берёт на ходу.
-  const pieces = useQuery({
-    queryKey: ["preview-pieces", clipPlanId, plan?.revision],
-    queryFn: () => playbackApi.piecesEnsure(clipPlanId, engine.state().t > 0 ? engine.activePart()?.index ?? 0 : 0),
-    enabled: kind === "pieces",
-    refetchInterval: (q) => {
-      const d = q.state.data;
-      return d && d.ready + d.failed >= d.total ? false : PIECES_POLL_MS;
-    },
-  });
-  const piecesData = pieces.data;
-  useEffect(() => {
-    if (piecesData) engine.updatePieces(piecesData);
-  }, [engine, piecesData]);
-  const proxyStatus = proxy.data?.status;
-  useEffect(() => {
-    if (proxyStatus === "ready" && kind === "original") void qc.invalidateQueries({ queryKey: ["playback", clipPlanId] });
-  }, [proxyStatus, kind, clipPlanId, qc]);
 
-  // Время и бегунок — прямо в DOM каждый кадр: React-стейт перерисовывал бы плеер 60 раз в секунду.
-  useEffect(
-    () =>
-      engine.onFrame((t) => {
-        const total = engine.plan?.duration || 0;
-        if (timeRef.current) timeRef.current.textContent = formatTime(t);
-        if (headRef.current) headRef.current.style.left = `${total > 0 ? Math.min(100, (t / total) * 100) : 0}%`;
-        const css = colorFixCss(engine.activePart()?.color_fix);
-        setPieceCss((prev) => (prev === css ? prev : css));
-      }),
-    [engine],
-  );
+  // Предел ожидания: сборка не движется и кадра нет — говорим честно, ждать не перестаём.
+  const readyCount = status?.ready ?? 0;
+  const blocked = !mediaError && status?.state !== "failed" && status?.state !== "no_source" && (!hasFrame || waiting);
+  useEffect(() => {
+    setStalled(false);
+    if (!blocked) return;
+    const timer = window.setTimeout(() => setStalled(true), STALL_MS);
+    return () => window.clearTimeout(timer);
+  }, [blocked, readyCount, status?.state, streamKey]);
 
-  const seekFromPointer = useCallback(
-    (clientX: number, el: HTMLElement) => {
-      const r = el.getBoundingClientRect();
-      const k = Math.min(1, Math.max(0, (clientX - r.left) / (r.width || 1)));
-      engine.seek(k * (engine.plan?.duration ?? 0), scrubRef.current ? false : undefined);
-    },
-    [engine],
-  );
+  const retry = useCallback(() => {
+    setStalled(false);
+    setShowRender(false);
+    setMediaError(null);
+    attachedKey.current = null;
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
+    void playbackApi.stream(clipPlanId, true).then((next) => {
+      statusRef.current = next;
+      setStatus(next);
+    }).catch(() => setLostServer(true));
+  }, [clipPlanId]);
 
   const toggleFullscreen = useCallback(() => {
     const el = rootRef?.current ?? selfRef.current;
@@ -206,17 +283,20 @@ export function MontagePlayer({
     (e: KeyboardEvent | React.KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
       const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) && (target as HTMLInputElement).type !== "range") return false;
-      const fps = engine.plan?.fps || 30;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return false;
+      const video = videoRef.current;
+      if (!video) return false;
       const key = e.key.toLowerCase();
-      if (e.key === " ") engine.toggle();
-      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        engine.pause();
+      if (e.key === " ") {
+        if (video.paused) void video.play().catch(() => setNeedsTap(true));
+        else video.pause();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        video.pause();
         const dir = e.key === "ArrowLeft" ? -1 : 1;
-        engine.seek(engine.t + dir * (e.shiftKey ? 1 : 1 / fps));
-      } else if (e.key === "Home") engine.seek(0);
-      else if (e.key === "End") engine.seek((engine.plan?.duration ?? 0) - 1 / fps);
-      else if (key === "m" || key === "ь") setMuted((m) => !m);
+        video.currentTime = Math.max(0, video.currentTime + dir * (e.shiftKey ? 1 : 1 / FPS_GUESS));
+      } else if (e.key === "Home") video.currentTime = 0;
+      else if (e.key === "End") video.currentTime = Math.max(0, (video.duration || 0) - 1 / FPS_GUESS);
+      else if (key === "m" || key === "ь") video.muted = !video.muted;
       else if (key === "f" || key === "а") toggleFullscreen();
       else if (e.key === "Escape" && onClose) onClose();
       else return false;
@@ -224,7 +304,7 @@ export function MontagePlayer({
       e.stopPropagation();
       return true;
     },
-    [engine, onClose, toggleFullscreen],
+    [onClose, toggleFullscreen],
   );
   // На весь экран и в оверлее клавиши ловим раньше редактора: пробел здесь — этот плеер.
   useEffect(() => {
@@ -245,40 +325,41 @@ export function MontagePlayer({
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [onClose]);
 
-  // Спиннер не вечный: кадра нет или дозагрузка стоит дольше предела — говорим честно и даём выход.
-  const waiting = Boolean(plan) && !state.error && !state.needsTap && (state.buffering || (!state.firstFrame && kind !== "render" && kind !== "none"));
-  useEffect(() => {
-    setStalled(false);
-    if (!waiting) return;
-    const timer = window.setTimeout(() => setStalled(true), STALL_MS);
-    return () => window.clearTimeout(timer);
-  }, [waiting, state.firstFrame, piecesData?.ready]);
-  const retry = useCallback(() => {
-    setStalled(false);
-    setShowRender(false);
-    engine.unlock();
-    engine.retry();
-    if (kind === "pieces") {
-      void playbackApi.piecesEnsure(clipPlanId, engine.activePart()?.index ?? 0, true).then((st) => engine.updatePieces(st)).catch(() => undefined);
-      void pieces.refetch();
-    }
-    void planQuery.refetch();
-  }, [engine, kind, clipPlanId, pieces, planQuery]);
-
-  const frame = plan ? frameSize(plan.format) : { w: 1080, h: 1920 };
-  const lookCss = plan ? [pieceCss, lookFilterCss(plan.look)].filter(Boolean).join(" ") : "";
-  const chips = useMemo(() => mediaChip(plan, proxy.data?.status, proxy.data?.progress, piecesData), [plan, proxy.data?.status, proxy.data?.progress, piecesData]);
-  const render = plan?.media.render ?? null;
-  const isFallback = plan?.media.kind === "render" || plan?.media.kind === "none" || (showRender && Boolean(render));
-  const failedPiece = piecesData?.failed ? piecesData.parts.find((p) => p.status === "failed") : undefined;
-  const problem = state.error ?? (failedPiece && state.waitingPiece ? "Этот кусок не собрался на сервере." : null) ?? (stalled ? (kind === "pieces" && state.waitingPiece ? "Куски собираются дольше обычного: сервер занят." : "Видео не успевает загрузиться: сеть слабая или сервер занят.") : null);
-  const loadingText = !plan
+  const render = status?.render ?? null;
+  const noSource = status?.state === "no_source";
+  const problem = mediaError
+    ?? (status?.state === "failed" ? `Сборка не удалась: ${status.error || "причина неизвестна"}` : null)
+    ?? (lostServer ? "Нет связи с сервером. Пробую снова…" : null)
+    ?? (stalled ? "Сборка стоит: сервер занят другой работой или завис. Ждать можно дальше." : null);
+  const total = status?.total ?? 0;
+  const ready = status?.ready ?? 0;
+  const statusText = !status
     ? "Готовлю монтаж…"
-    : state.waitingPiece && piecesData
-      ? `Готовлю видео: ${piecesData.ready} из ${piecesData.total}`
-      : state.waitingPiece
-        ? "Готовлю видео…"
-        : "Загружаю видео…";
+    : status.playlist && total
+      ? ready < total ? `Готовлю видео: собрано ${ready} из ${total}` : "Загружаю видео…"
+      : STAGE_TEXT[status.state] ?? "Готовлю монтаж…";
+  const frame = status?.width && status?.height ? { w: status.width, h: status.height } : null;
+  const showStatus = !noSource && !showRender && !problem && (!hasFrame || waiting) && !needsTap;
+
+  if (noSource || (showRender && render)) {
+    return (
+      <div ref={selfRef} className={`mplayer ${className}`} tabIndex={0} onKeyDown={onClose ? undefined : (e) => void onKeyDown(e)}>
+        <div className="mplayer-stage">
+          <div className="mplayer-fallback">
+            {render ? <video key={render.url} src={render.url} poster={render.poster} controls autoPlay={autoPlay} preload="metadata" playsInline /> : null}
+            <div className="mplayer-note" role="status">
+              {noSource ? status?.message : `Это готовый рендер${render?.stale ? ", собранный до последних правок: их в нём нет" : ""}.`}{" "}
+              {showRender ? <button type="button" className="btn sm" onClick={retry}>Вернуться к сборке</button> : null}
+            </div>
+          </div>
+        </div>
+        <div className="mplayer-meta muted">
+          {title ? <span className="mplayer-title">{title}</span> : null}
+          {onClose ? <button type="button" className="btn sm ghost" onClick={onClose} title="Закрыть (Esc)">✕</button> : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -286,165 +367,61 @@ export function MontagePlayer({
       className={`mplayer ${className}`}
       tabIndex={0}
       onKeyDown={onClose ? undefined : (e) => void onKeyDown(e)}
-      onPointerDown={() => engine.unlock()}
-      data-state={state.playing && !state.buffering ? "playing" : "paused"}
+      data-state={showStatus ? "waiting" : "video"}
     >
       <div className="mplayer-stage">
-        {!plan && planQuery.isError ? <div className="mplayer-msg">Монтаж не загрузился: {String(planQuery.error)}</div> : null}
-        {isFallback && plan ? (
-          <div className="mplayer-fallback">
-            {showRender && render ? (
-              <>
-                <video key={render.url} src={render.url} poster={render.poster} controls autoPlay preload="metadata" playsInline />
-                <div className="mplayer-note" role="status">
-                  Это готовый рендер{render.stale ? ", собранный до последних правок: их в нём нет" : ""}.{" "}
-                  <button type="button" className="btn sm" onClick={retry}>Вернуться к монтажу</button>
-                </div>
-              </>
-            ) : (
-              <>
-                {plan.media.kind === "render" ? (
-                  <video key={plan.media.url ?? ""} src={plan.media.url ?? undefined} poster={plan.media.poster} controls autoPlay={autoPlay} preload="metadata" playsInline />
-                ) : null}
-                <div className="mplayer-note" role="status">{plan.media.message}</div>
-              </>
-            )}
-          </div>
-        ) : (
-          <div
-            className="mplayer-frame"
-            style={{ aspectRatio: `${frame.w} / ${frame.h}`, "--frame-k": frame.w / frame.h } as React.CSSProperties}
-            onClick={() => {
-              if (state.firstFrame || state.needsTap) engine.toggle();
-            }}
-            title="Пробел — плей/пауза"
-          >
-            <canvas
-              ref={baseRef}
-              width={frame.w / 2}
-              height={frame.h / 2}
-              style={{ filter: lookCss || undefined, transform: plan?.mirror ? "scaleX(-1)" : undefined }}
-            />
-            <canvas ref={overlayRef} className="mplayer-overlay" width={frame.w} height={frame.h} />
-            {plan?.look?.vignette ? <div className="stage-vignette" style={{ opacity: Math.min(1, plan.look.vignette) }} /> : null}
-            {(waiting || !plan) && !problem ? (
-              <div className="mplayer-status" role="status">
-                <div className="mplayer-spinner" aria-hidden />
-                <span>{loadingText}</span>
-                {state.waitingPiece && piecesData?.total ? (
-                  <span className="mplayer-progress" aria-hidden>
-                    <i style={{ width: `${Math.round((piecesData.ready / piecesData.total) * 100)}%` }} />
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            {problem ? (
-              <div className="mplayer-status mplayer-status--problem" role="alert" onClick={(e) => e.stopPropagation()}>
-                <span>{problem}</span>
-                <span className="mplayer-actions">
-                  <button type="button" className="btn sm primary" onClick={retry}>Повторить</button>
-                  {render ? (
-                    <button type="button" className="btn sm" onClick={() => { engine.pause(); setShowRender(true); }}>
-                      Смотреть готовый рендер{render.stale ? " (старый)" : ""}
-                    </button>
-                  ) : null}
+        <div
+          className="mplayer-frame"
+          style={frame ? ({ aspectRatio: `${frame.w} / ${frame.h}`, "--frame-k": frame.w / frame.h } as React.CSSProperties) : undefined}
+        >
+          <video ref={videoRef} className="mplayer-video" controls playsInline preload="auto" />
+          {showStatus ? (
+            <div className="mplayer-status" role="status" data-testid="stream-status">
+              <div className="mplayer-spinner" aria-hidden />
+              <span>{statusText}</span>
+              {status?.playlist && total && ready < total ? (
+                <span className="mplayer-progress" aria-hidden>
+                  <i style={{ width: `${Math.round((ready / total) * 100)}%` }} />
                 </span>
-              </div>
-            ) : null}
-            {state.needsTap && !problem ? <div className="mplayer-bigplay mplayer-bigplay--tap">▶<small>Нажмите, чтобы смотреть</small></div> : null}
-            {plan && state.firstFrame && !state.playing && !state.buffering && !state.needsTap && !problem ? <div className="mplayer-bigplay" aria-hidden>▶</div> : null}
-            {state.audioLocked && state.playing && !problem ? <div className="mplayer-audio-lock" aria-hidden>🔇 нажмите, чтобы включить звук</div> : null}
-          </div>
-        )}
-      </div>
-      {plan?.media.note ? <div className="mplayer-note" role="status">{plan.media.note}</div> : null}
-      {isFallback ? null : (
-        <div className="mplayer-bar">
-          <button type="button" className="btn primary sm mplayer-play" onClick={() => engine.toggle()} disabled={!plan} title="Пробел">
-            {state.playing ? (state.buffering || !state.firstFrame ? "⏳ Загрузка" : "⏸ Пауза") : state.ended ? "↻ Сначала" : "▶ Смотреть"}
-          </button>
-          <span className="mplayer-time mono">
-            <span ref={timeRef}>{formatTime(state.t)}</span> / {formatTime(plan?.duration ?? 0)}
-          </span>
-          <div
-            className="mplayer-scrub"
-            role="slider"
-            aria-label="Прокрутка клипа"
-            aria-valuemin={0}
-            aria-valuemax={plan?.duration ?? 0}
-            aria-valuenow={state.t}
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              scrubRef.current = { wasPlaying: state.playing };
-              if (state.playing) engine.pause();
-              seekFromPointer(e.clientX, e.currentTarget);
-            }}
-            onPointerMove={(e) => {
-              if (scrubRef.current) seekFromPointer(e.clientX, e.currentTarget);
-            }}
-            onPointerUp={() => {
-              const was = scrubRef.current?.wasPlaying;
-              scrubRef.current = null;
-              if (was) engine.play();
-            }}
-            onPointerCancel={() => {
-              scrubRef.current = null;
-            }}
-          >
-            {plan?.parts.map((p) => (
-              <span
-                key={p.index}
-                className={`mplayer-part${p.piece % 2 ? " alt" : ""}${p.index && plan.parts[p.index - 1].piece !== p.piece ? " scene" : ""}`}
-                style={{ left: `${(p.start / plan.duration) * 100}%`, width: `${((p.end - p.start) / plan.duration) * 100}%` }}
-                title={`Кусок ${p.piece + 1}: ${formatTime(p.src_start)}–${formatTime(p.src_end)} записи`}
-              />
-            ))}
-            <div ref={headRef} className="mplayer-head" style={{ left: 0 }} />
-          </div>
-          <button type="button" className="btn sm ghost" onClick={() => setMuted((m) => !m)} title="Звук (M)" aria-pressed={muted}>
-            {muted ? "🔇" : "🔊"}
-          </button>
-          <input
-            type="range"
-            className="mplayer-volume"
-            min={0}
-            max={1}
-            step={0.05}
-            value={muted ? 0 : volume}
-            aria-label="Громкость"
-            onChange={(e) => {
-              setVolume(Number(e.target.value));
-              setMuted(false);
-            }}
-          />
-          <label className="switch mplayer-loop" title="Играть по кругу">
-            <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
-            <span className="switch-track" />
-            <span>Круг</span>
-          </label>
-          <button type="button" className="btn sm ghost" onClick={toggleFullscreen} title="На весь экран (F)">⛶</button>
-          {onClose ? (
-            <button type="button" className="btn sm ghost" onClick={onClose} title="Закрыть (Esc)">✕</button>
+              ) : null}
+            </div>
+          ) : null}
+          {problem ? (
+            <div className="mplayer-status mplayer-status--problem" role="alert">
+              <span>{problem}</span>
+              <span className="mplayer-actions">
+                <button type="button" className="btn sm primary" onClick={retry}>Повторить</button>
+                {render ? (
+                  <button type="button" className="btn sm" onClick={() => setShowRender(true)}>
+                    Смотреть готовый рендер{render.stale ? " (старый)" : ""}
+                  </button>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
+          {needsTap && !problem ? (
+            <button
+              type="button"
+              className="mplayer-bigplay mplayer-bigplay--tap"
+              onClick={() => void videoRef.current?.play().then(() => setNeedsTap(false)).catch(() => undefined)}
+            >
+              ▶<small>Нажмите, чтобы смотреть</small>
+            </button>
           ) : null}
         </div>
-      )}
+      </div>
       <div className="mplayer-meta muted">
         {title ? <span className="mplayer-title">{title}</span> : null}
-        {chips ? <span className="mplayer-chip" title={chips.hint}>{chips.text}</span> : null}
-        {updatedAt ? <span className="mplayer-chip mplayer-chip--ok" key={updatedAt}>монтаж обновлён</span> : null}
-        {plan?.warnings.length && !isFallback ? (
-          <span className="mplayer-chip" title={plan.warnings.join("\n")}>чем отличается от рендера</span>
+        {status?.playlist && total && ready < total && hasFrame ? (
+          <span className="mplayer-chip" data-testid="stream-chip">собрано {ready} из {total}</span>
         ) : null}
+        {updatedAt ? <span className="mplayer-chip mplayer-chip--ok" key={updatedAt}>монтаж обновлён</span> : null}
+        {status?.notes?.length ? <span className="mplayer-chip" title={status.notes.join("\n")}>{status.notes[0]}</span> : null}
+        <span className="mplayer-chip" title="Тот же монтаж, что и рендер: кадр в 480p, 30 кадров/с">480p</span>
+        <span className="mplayer-spacer" />
+        <button type="button" className="btn sm ghost" onClick={toggleFullscreen} title="На весь экран (F)">⛶</button>
+        {onClose ? <button type="button" className="btn sm ghost" onClick={onClose} title="Закрыть (Esc)">✕</button> : null}
       </div>
     </div>
   );
-}
-
-function mediaChip(plan: PlaybackPlan | undefined, _status?: string, _progress?: number, pieces?: PiecesStatus): { text: string; hint: string } | null {
-  if (!plan) return null;
-  // Чем именно играет плеер, зрителю знать незачем: только ход подготовки.
-  if (plan.media.kind === "pieces" && pieces && pieces.ready < pieces.total) {
-    return { text: `готовлю видео: ${pieces.ready} из ${pieces.total}`, hint: "Ещё несколько секунд" };
-  }
-  return null;
 }

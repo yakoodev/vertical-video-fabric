@@ -4746,9 +4746,11 @@ select.input { padding-top: 0; padding-bottom: 0; }
   background: #000;
   border-radius: 10px;
   overflow: hidden;
-  cursor: pointer;
+  aspect-ratio: 16 / 9;
 }
 .mplayer-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.mplayer-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+.mplayer-spacer { flex: 1; }
 .mplayer-bigplay {
   position: absolute;
   left: 50%;
@@ -4840,12 +4842,13 @@ select.input { padding-top: 0; padding-bottom: 0; }
   background: rgba(8, 8, 14, 0.78);
   border-radius: 12px;
   cursor: default;
+  pointer-events: none;
 }
 .mplayer-status .mplayer-spinner { position: static; margin: 0; }
-.mplayer-status--problem { background: rgba(20, 10, 14, 0.9); border: 1px solid rgba(253, 164, 175, 0.5); }
+.mplayer-status--problem { pointer-events: auto; background: rgba(20, 10, 14, 0.9); border: 1px solid rgba(253, 164, 175, 0.5); }
 .mplayer-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .mplayer-progress { display: block; width: 180px; max-width: 100%; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.2); }
 .mplayer-progress i { display: block; height: 100%; background: #a78bfa; transition: width 0.3s; }
-.mplayer-bigplay--tap { width: auto; height: auto; padding: 16px 22px; border-radius: 14px; flex-direction: column; display: flex; gap: 6px; align-items: center; pointer-events: none; }
+.mplayer-bigplay--tap { pointer-events: auto; border: 0; cursor: pointer; width: auto; height: auto; padding: 16px 22px; border-radius: 14px; flex-direction: column; display: flex; gap: 6px; align-items: center; }
 .mplayer-bigplay--tap small { font-size: 13px; }
 .mplayer-audio-lock { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 5px 12px; font-size: 13px; color: #fff; background: rgba(0, 0, 0, 0.65); border-radius: 999px; pointer-events: none; white-space: nowrap; }
