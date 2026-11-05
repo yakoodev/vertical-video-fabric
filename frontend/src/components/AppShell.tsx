@@ -39,7 +39,7 @@ export const SHORTCUTS: [string, string][] = [
   ["?", "эта подсказка"],
 ];
 
-const PROJECT_TABS = ["videos", "clips", "questions", "files", "chat", "brief", "stats", "autopilot"];
+const PROJECT_TABS = ["videos", "clips", "questions", "files", "chat", "know", "stats", "autopilot"];
 const VIDEO_TABS = ["clips", "source", "candidates", "edit", "segments", "renders", "montaged"];
 const INBOX_TABS = ["approve", "questions", "tasks"];
 const PUBS_TABS = ["pubs", "accounts", "ready"];

@@ -65,6 +65,33 @@ export interface Taboo {
   why: string;
 }
 
+/** «Что агент знает»: одна строка списка (app/project_knowledge.py). ref — куда идёт правка и удаление. */
+export interface KnowledgeRow {
+  ref: string;
+  title?: string;
+  text: string;
+  origin: string;
+  at?: string;
+  href?: string;
+  note?: string;
+  quote?: string;
+  editable: boolean;
+  removable: boolean;
+}
+
+export interface KnowledgeGroup {
+  key: string;
+  title: string;
+  items: KnowledgeRow[];
+}
+
+export interface KnowledgeView {
+  project_id: number;
+  total: number;
+  groups: KnowledgeGroup[];
+  waiting: { questions: number; memes: number; items: { id: number; source_id: number; text: string }[] };
+}
+
 /** Бриф (лор), схема vvf.project_brief v1. */
 export interface Brief {
   schema: string;
@@ -239,6 +266,17 @@ export const projectsApi = {
     api.patch<{ source_id: number; project_id: number | null }>(`/api/sources/${sourceId}/project`, {
       project_id: projectId,
     }),
+
+  knowledge: (id: number) => api.get<KnowledgeView>(`/api/projects/${id}/knowledge`),
+  addFact: (id: number, text: string, chat?: { source_id?: number | null; origin_ref?: string }) =>
+    api.post<{ created: boolean; view: KnowledgeView }>(`/api/projects/${id}/knowledge`, {
+      text,
+      ...(chat ? { from_chat: true, ...chat } : {}),
+    }),
+  updateKnowledge: (id: number, ref: string, text: string, title?: string) =>
+    api.patch<KnowledgeView>(`/api/projects/${id}/knowledge`, { ref, text, title }),
+  deleteKnowledge: (id: number, ref: string) =>
+    api.del<KnowledgeView>(`/api/projects/${id}/knowledge?ref=${encodeURIComponent(ref)}`),
 
   brief: (id: number) => api.get<ProjectBrief>(`/api/projects/${id}/brief`),
   /** patch — частичный бриф (+ replace_sections), см. app/projects.merge_brief. */

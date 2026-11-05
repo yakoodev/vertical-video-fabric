@@ -291,6 +291,7 @@ def test_migrates_old_project_chat_table(tmp_path):
     conn = sqlite3.connect(tmp_path / "old.sqlite")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("CREATE TABLE sources (id INTEGER PRIMARY KEY)")  # чат видео ссылается на видео
     conn.execute("CREATE TABLE project_autopilot (project_id INTEGER PRIMARY KEY, chat_summary TEXT NOT NULL DEFAULT '',"
                  " chat_summary_upto INTEGER NOT NULL DEFAULT 0)")
     conn.execute("""CREATE TABLE project_chat_messages (

@@ -19,6 +19,8 @@ import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
 import { VodWatchPanel } from "@/pages/SeriesVodWatch";
 import { useModuleOn } from "@/hooks/useModules";
 import { ChatConversation } from "@/pages/chat/ChatConversation";
+import { KnowledgeCard } from "@/pages/project/ProjectKnowledge";
+import { chatApi, chatKeys } from "@/api/chat";
 
 /**
  * Вкладки страницы серии: «Автопилот» (доверие, слоты, лимиты, ближайшие публикации,
@@ -393,22 +395,50 @@ export function ProjectChatTab({ projectId }: { projectId: number }) {
     onError: (e) => toast.error(errText(e, "Не получилось")),
   });
   const tg = chat.data?.telegram;
+  // Переписки проекта: основная (её же видит Telegram), свои новые и чаты его видео.
+  const list = useQuery({ queryKey: chatKeys.threads, queryFn: chatApi.threads, refetchInterval: 30000 });
+  const [picked, setPicked] = useState<number | null>(null);
+  const threads = list.data?.projects.find((p) => p.id === projectId)?.threads ?? [];
+  const threadId = picked ?? chat.data?.thread_id ?? 0;
+  const create = useMutation({
+    mutationFn: () => chatApi.create({ project_id: projectId }),
+    onSuccess: (t) => {
+      qc.invalidateQueries({ queryKey: chatKeys.threads });
+      setPicked(t.id);
+    },
+    onError: (e) => toast.error(errText(e, "Не создалось")),
+  });
 
   return (
     <div className="series-grid">
       <section className="panel series-panel project-chat">
-        {chat.data?.thread_id ? (
+        {threadId ? (
           <ChatConversation
-            threadId={chat.data.thread_id}
+            key={threadId}
+            threadId={threadId}
             compact
             header={(view) => (
               <div className="agent-head project-chat-head">
                 <span className={`agent-dot${view?.running ? " on" : ""}`} />
-                <strong>Агент проекта</strong>
+                <strong>Задания на весь проект</strong>
                 {chat.data && !chat.data.ai_available ? <span className="chip series-review">ИИ недоступен</span> : null}
-                <Link className="btn ghost sm" style={{ marginLeft: "auto" }} to={`/chat/${chat.data!.thread_id}`}>
-                  Открыть в «Чате»
-                </Link>
+                <div className="project-chat-acts">
+                  {threads.length > 1 ? (
+                    <select className="input" aria-label="Переписка" value={threadId} onChange={(e) => setPicked(Number(e.target.value))}>
+                      {threads.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title || "Новый чат"}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <button className="btn ghost sm" disabled={create.isPending} onClick={() => create.mutate()}>
+                    + Новый
+                  </button>
+                  <Link className="btn ghost sm" to={`/chat/${threadId}`}>
+                    На весь экран
+                  </Link>
+                </div>
               </div>
             )}
           />
@@ -416,11 +446,13 @@ export function ProjectChatTab({ projectId }: { projectId: number }) {
           <Loading />
         )}
       </section>
+      <div className="series-col">
+      <KnowledgeCard projectId={projectId} />
       <section className="panel series-panel">
         <h3>Как это работает</h3>
         <p className="muted series-hint">
-          Агент видит бриф, действующие правила, статистику, гипотезы, очередь одобрения и расписание проекта. Длинная
-          переписка сжимается в резюме.
+          Агент видит всё, что знает о проекте, статистику, гипотезы, очередь одобрения и расписание. Напишите «запомни: …»,
+          и это останется в проекте. Длинная переписка сжимается в резюме.
         </p>
         <p className="muted series-hint">
           Правила из разговора:{" "}
@@ -448,6 +480,7 @@ export function ProjectChatTab({ projectId }: { projectId: number }) {
           </details>
         ) : null}
       </section>
+      </div>
     </div>
   );
 }

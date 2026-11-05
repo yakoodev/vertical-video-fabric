@@ -120,6 +120,14 @@ DANGEROUS = {
 PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Polza TTS)",
                "tts_preview": "Проба голоса (платно, Polza TTS)"}
 
+# В чате проекта и его видео эти инструменты работают только с этим проектом: лор одного проекта не должен попасть
+# в разговор о другом. В общем чате проекта нет, там можно назвать любой.
+PROJECT_BOUND = {
+    "get_project_brief", "update_project_brief", "remember_fact", "forget_fact", "list_rules", "add_rule", "revoke_rule",
+    "get_project_stats", "list_hypotheses", "add_hypothesis", "evaluate_hypotheses", "add_manual_publication",
+    "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices",
+}
+
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.
 MEDIA_SUBDIR = "chat_media"
 MAX_RESULT_PREVIEW = 1500
@@ -153,6 +161,8 @@ def _analysis_provider(requested: str) -> str:
 def h_analyze_source(ctx: ToolContext, args: dict) -> dict:
     source_id = int(args.get("source_id") or 0)
     source = ctx.store.get_source(source_id)
+    if ctx.project_hint and source.get("project_id") not in (None, ctx.project_hint):
+        raise ToolError(f"источник #{source_id} из другого проекта: в этом чате режем только свои видео")
     if source.get("status") not in ("ready", "succeeded", None, ""):
         raise ToolError(f"источник #{source_id} ещё не готов: {source.get('status')}")
     provider = _analysis_provider(args.get("provider") or "")
@@ -185,10 +195,21 @@ def h_add_source_from_url(ctx: ToolContext, args: dict) -> dict:
     if service is None:
         raise ToolError("загрузки недоступны в этом процессе")
     ingestor = SERVICES.get("ingestor")
-    task = service.start(url, quality=str(args.get("quality") or ""), ingestor=ingestor() if ingestor else None)
+    project_id = ctx.project_hint
+    extra: dict[str, Any] = {}
+    if project_id:  # «нарежь новый стрим» в чате проекта: видео ложится в этот проект, как из «Новое видео»
+        def assign(source: dict) -> None:
+            from app import projects as P
+
+            P.set_source_project(ctx.store, int(source["id"]), int(project_id))
+
+        extra["on_source"] = assign
+    task = service.start(url, quality=str(args.get("quality") or ""), ingestor=ingestor() if ingestor else None, **extra)
+    where = "ляжет в этот проект, " if project_id else ""
     return {"ok": True, "download": {k: task.get(k) for k in ("id", "status", "label", "url")},
-            "note": "скачивание в фоне (видно в «Очереди»); когда появится источник — list_projects; "
-                    "в проект-серию добавить — save_channel_project(add_source_ids=[id])"}
+            "note": f"скачивание в фоне (видно в «Очереди»); видео {where}когда появится источник — list_projects, "
+                    "потом analyze_source(source_id)"
+                    + ("" if project_id else "; в проект-серию добавить — save_channel_project(add_source_ids=[id])")}
 
 
 def h_approve_publication(ctx: ToolContext, args: dict) -> dict:
@@ -398,6 +419,24 @@ def danger_label(name: str) -> str:
                                    if name == "submit_for_approval" else name)
 
 
+def _foreign_project(store: Any, args: dict, project_id: int) -> str | None:
+    """Вызов из чата проекта указывает на другой проект — текст отказа."""
+    from app import projects as P
+
+    asked = args.get("project_id")
+    if asked not in (None, "") and int(asked) != int(project_id):
+        return f"это чат проекта #{project_id}, данные проекта #{asked} здесь недоступны: спроси в общем чате"
+    source = args.get("source_id")
+    if source not in (None, ""):
+        try:
+            owner = P.project_of_source(store, int(source))
+        except KeyError:
+            return f"источника #{source} нет"
+        if owner not in (None, int(project_id)):
+            return f"источник #{source} из другого проекта, в этом чате он недоступен: спроси в общем чате"
+    return None
+
+
 def run(store: Any, name: str, args: dict, *, project_id: int | None,
         clip_ctx: Callable[[int], ToolContext] | None = None) -> tuple[Any, bool, int | None]:
     """Выполнить инструмент чата. Возвращает (результат, ok, clip_id)."""
@@ -417,6 +456,13 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
             return {"ok": False, "error": "нужен clip_id (list_clips)"}, False, None
         ctx = clip_ctx(clip_id) if clip_ctx else ToolContext(store=store, clip_plan_id=clip_id)
     else:
+        if name in PROJECT_BOUND and project_id:
+            try:
+                refusal = _foreign_project(store, args, int(project_id))
+            except (TypeError, ValueError):
+                refusal = "project_id и source_id — числа"
+            if refusal:
+                return {"ok": False, "error": refusal}, False, None
         if tool.scope == "project" and project_id and args.get("project_id") in (None, "") \
                 and args.get("source_id") in (None, ""):
             args["project_id"] = int(project_id)

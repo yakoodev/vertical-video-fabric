@@ -10,6 +10,8 @@
 * **Переписки** (``chat_threads``): у переписки может быть проект-серия/канал или нет
   (общий чат). У проекта — своя «основная» переписка (``is_default``): её же показывает
   вкладка «Чат» серии и в неё пишет Telegram-тема проекта. Реплики — ``project_chat_messages``.
+  Чат видео — переписка с ``source_id``: одна на видео, проект берётся у видео в момент чтения
+  (перенесли видео — чат работает уже в новом проекте, лор старого к нему не идёт), удаляется вместе с видео.
 * **Инструменты группами** (``app/chat_tools.py``): база (проект + посмотреть клип) в каждом
   ходе, остальное — ``load_tools`` по запросу модели или по словам владельца.
 * **Ответ печатается по ходу**: ход идёт в фоновом потоке, текст Gemini приходит потоком
@@ -45,6 +47,7 @@ from typing import Any, Callable
 
 from app import autopilot as A
 from app import chat_tools as CT
+from app import project_knowledge as K
 from app import projects as P
 from app.agent_tools import ImageResult, ToolContext
 from app.settings import settings
@@ -55,6 +58,8 @@ HISTORY_KEEP = 12  # последних реплик — модели целик
 SUMMARIZE_AFTER = 30  # больше несжатых реплик — старые уходят в резюме
 SUMMARY_CHARS = 3000
 CONTEXT_CHARS = 24000
+CONTEXT_SOURCES = 40  # у Apex 218 видео: их список не должен вытеснять лор из обрезки
+VIDEO_THREAD_TITLE = "Чат видео"
 MAX_ROUNDS = 24
 MAX_OUTPUT_TOKENS = 8192
 SAY = "_say"
@@ -85,6 +90,7 @@ CHAT_SCHEMA_SQL = [
     CREATE TABLE IF NOT EXISTS chat_threads (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
         title TEXT NOT NULL DEFAULT '',
         is_default INTEGER NOT NULL DEFAULT 0,
         model TEXT NOT NULL DEFAULT '',
@@ -129,6 +135,10 @@ CHAT_SCHEMA_SQL = [
 def ensure_chat_schema(conn) -> None:
     for sql in CHAT_SCHEMA_SQL:
         conn.execute(sql)
+    if "source_id" not in {r[1] for r in conn.execute("PRAGMA table_info(chat_threads)").fetchall()}:
+        # Чат видео. Старые переписки остаются как были: без видео.
+        conn.execute("ALTER TABLE chat_threads ADD COLUMN source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_threads_source ON chat_threads(source_id)")
     columns = {r[1]: r for r in conn.execute("PRAGMA table_info(project_chat_messages)").fetchall()}
     if not columns:
         conn.execute(_MESSAGES_SQL.format(name="project_chat_messages"))
@@ -193,7 +203,28 @@ def get_thread(store: Any, thread_id: int) -> dict:
     row = store.db.query_one("SELECT * FROM chat_threads WHERE id = ?", (int(thread_id),))
     if not row:
         raise KeyError(f"переписка #{thread_id} не найдена")
-    return _thread(row)
+    data = _thread(row)
+    if data.get("source_id"):  # у чата видео проект — тот, где видео лежит сейчас
+        data["project_id"] = P.project_of_source(store, int(data["source_id"]))
+    return data
+
+
+def video_thread(store: Any, source_id: int) -> dict:
+    """Чат видео: один на видео, заводится при первом открытии. Колонка project_id у него пустая, см. ``get_thread``."""
+    store.get_source(int(source_id))
+    row = store.db.query_one("SELECT id FROM chat_threads WHERE source_id = ? ORDER BY id LIMIT 1", (int(source_id),))
+    if row:
+        return get_thread(store, int(row["id"]))
+    cur = store.db.execute("INSERT INTO chat_threads (source_id, title) VALUES (?, ?)",
+                           (int(source_id), VIDEO_THREAD_TITLE))
+    return get_thread(store, int(cur.lastrowid))
+
+
+def _video_title(store: Any, source_id: int) -> str:
+    from app import nav
+
+    source = store.get_source(int(source_id))
+    return nav.titles_for(store, [source]).get(int(source_id), "") or source.get("original_filename") or f"видео #{source_id}"
 
 
 def create_thread(store: Any, project_id: int | None = None, title: str = "", model: str = "",
@@ -254,23 +285,39 @@ def delete_thread(store: Any, thread_id: int) -> dict:
 
 
 def list_threads(store: Any) -> dict:
-    """Левая колонка страницы «Чат»: проекты (с их переписками) и общие переписки."""
+    """Левая колонка страницы «Чат»: проекты (с их переписками), общие и чаты видео вне проектов."""
+    from app import nav
+
     rows = store.db.query_all(
         "SELECT t.*, (SELECT COUNT(*) FROM project_chat_messages m WHERE m.thread_id = t.id) AS messages_count, "
         "(SELECT text FROM project_chat_messages m WHERE m.thread_id = t.id AND m.text != '' ORDER BY m.id DESC "
-        "LIMIT 1) AS last_text FROM chat_threads t ORDER BY t.updated_at DESC, t.id DESC")
+        "LIMIT 1) AS last_text, s.project_id AS video_project_id, s.source_type, s.original_filename, "
+        "s.created_at AS source_created_at FROM chat_threads t LEFT JOIN sources s ON s.id = t.source_id "
+        "ORDER BY t.updated_at DESC, t.id DESC")
+    videos = [{"id": r["source_id"], "source_type": r["source_type"], "original_filename": r["original_filename"],
+               "created_at": r["source_created_at"]} for r in rows if r["source_id"]]
+    names = nav.titles_for(store, videos) if videos else {}
     threads = []
     for row in rows:
         item = _thread(row)
+        for key in ("source_type", "original_filename", "source_created_at"):
+            item.pop(key, None)
+        video_project = item.pop("video_project_id", None)
+        if item.get("source_id"):
+            item["project_id"] = video_project
+            if item["title"] == VIDEO_THREAD_TITLE:
+                item["title"] = f"Видео: {names.get(int(item['source_id'])) or item['source_id']}"
         item["last_text"] = " ".join(re.sub(r"[*`#>_]+", "", str(item.get("last_text") or "")).split())[:140]
         item["running"] = active_run(item["id"]) is not None
         item.pop("summary", None)
         threads.append(item)
+    # Чат видео заводится при открытии вкладки: пустые в общий список не идут.
+    visible = [t for t in threads if not t.get("source_id") or t.get("messages_count")]
     projects = [{"id": p["id"], "name": p["name"], "kind": p.get("kind"),
-                 "threads": [t for t in threads if t["project_id"] == p["id"]]}
+                 "threads": [t for t in visible if t["project_id"] == p["id"]]}
                 for p in P.list_projects(store)]
-    return {"projects": projects, "general": [t for t in threads if not t["project_id"]],
-            "ai": ai_status()}
+    return {"projects": projects, "general": [t for t in visible if not t["project_id"] and not t.get("source_id")],
+            "videos": [t for t in visible if not t["project_id"] and t.get("source_id")], "ai": ai_status()}
 
 
 # --------------------------------------------------------------------------- #
@@ -436,6 +483,9 @@ SYSTEM = """\
 - Правила проекта — только словами владельца, с цитатой. Если в сообщении владельца правило или отмена
   правила, сервис уже разобрал его (блок «Сервис уже сделал»): опирайся на это и не дублируй.
   Своё наблюдение — гипотеза (add_hypothesis) или вопрос владельцу (propose_rule), не правило.
+- Что ты знаешь о проекте — в срезе ниже: лор (brief), rules, facts (что владелец просил запомнить), memes (какие мемы
+  он выбрал). Держись этого и не выдумывай сверх. Владелец рассказал новое о проекте (кто это, что значит словечко,
+  как тут принято) — запиши remember_fact одной фразой; «забудь» — forget_fact. Он видит и правит этот список сам.
 - Ссылка в сообщении: видео-исходник (YouTube, Twitch, файл) — add_source_from_url; картинка, гифка, мем
   в клип — add_image_from_url / add_video_from_url (группа assets).
 - Приложенные файлы: «файл для монтажа #N» — asset_id для add_insert и слоёв; «источник #N» — source_id
@@ -444,14 +494,35 @@ SYSTEM = """\
 """
 
 PROJECT_NOTE = ("\nЭто переписка проекта-серии/канала #{pid}. В инструментах проекта project_id — id этого "
-                "проекта (он ниже); у клиповых — clip_id.\n")
+                "проекта (он ниже); у клиповых — clip_id. Лор и правила других проектов отсюда недоступны.\n"
+                "Задание на проект: новый стрим по ссылке — add_source_from_url (видео ляжет в этот проект, скачается "
+                "в фоне), уже скачанное — analyze_source(source_id).\n")
+VIDEO_NOTE = ("\nЭто чат одного видео: source_id {sid}, «{title}». «Это видео», «стрим», «здесь» — оно. Инструментам "
+              "источника давай source_id {sid}, клипы этого видео — list_clips(source_id={sid}), ещё нарезать — "
+              "analyze_source(source_id={sid}). Что про него известно — в блоке video среза.\n")
 GENERAL_NOTE = ("\nЭто общий чат, без проекта. Проекты-серии/каналы и источники — в срезе ниже; инструментам "
                 "проекта давай project_id (list_channel_projects) или source_id.\n")
 
 
-def project_context(store: Any, project_id: int) -> str:
-    """Свежий срез проекта в каждый ход: бриф, правила, статистика, гипотезы, одобрение, расписание."""
+def video_context(store: Any, source_id: int) -> dict:
+    """Какое это видео: для чата видео, в каждом ходе. Ответы владельца — только про него."""
+    from app.stream_questions import answers_brief
+
+    source = store.get_source(int(source_id))
+    plans = store.db.query_one("SELECT COUNT(*) AS n FROM clip_plans WHERE source_id = ? AND hidden = 0", (int(source_id),))
+    return {"source_id": int(source_id), "title": _video_title(store, source_id), "status": source.get("status"),
+            "duration_sec": source.get("duration_sec"), "size": [source.get("width"), source.get("height")],
+            "original_url": source.get("original_url") or "", "has_transcript": bool(source.get("has_transcript")),
+            "moments_and_clips": int(plans["n"]), "owner_answers": answers_brief(store, int(source_id))}
+
+
+def project_context(store: Any, project_id: int, source_id: int | None = None) -> str:
+    """Свежий срез проекта в каждый ход: бриф, правила, статистика, гипотезы, одобрение, расписание.
+    Текст обрезается по длине, поэтому сначала идёт то, что агент знает, а длинные списки — в конце."""
     brief = P.project_brief(store, project_id, covered_limit=30)
+    project = brief.pop("project")
+    sources = project.get("sources") or []
+    project = {**project, "sources": sources[:CONTEXT_SOURCES], "sources_total": len(sources)}
     stats = P.project_stats(store, project_id, top=3)
     stats.pop("items", None)
     approvals = [{k: a.get(k) for k in ("id", "kind", "status", "title", "question", "decision_comment",
@@ -460,12 +531,15 @@ def project_context(store: Any, project_id: int) -> str:
     schedule = A.get_schedule(store, project_id)
     cfg = A.get_config(store, project_id)
     data = {
-        "project_id": int(project_id), "brief": brief, "stats": stats, "approvals_open": approvals,
+        "project_id": int(project_id),
+        **({"video": video_context(store, int(source_id))} if source_id else {}),
+        "brief": brief, "stats": stats, "approvals_open": approvals,
         "schedule": {"timezone": schedule["timezone"], "upcoming": [
             {k: u.get(k) for k in ("id", "title", "scheduled_local", "publish_status", "platforms")}
             for u in schedule["upcoming"][:10]]},
         "autopilot": {"trust": cfg["trust"], "slots": cfg["slots"], "per_day": cfg["per_day"],
                       "auto_rules": cfg["auto_rules"]},
+        "project": project,
     }
     text = json.dumps(data, ensure_ascii=False, default=str)
     return text if len(text) <= CONTEXT_CHARS else text[:CONTEXT_CHARS] + "…(обрезано)"
@@ -765,8 +839,10 @@ def _system(thread: dict, groups: list[str]) -> str:
     text = SYSTEM.format(groups=CT.groups_hint())
     if thread.get("project_id"):
         text += PROJECT_NOTE.format(pid=thread["project_id"])
-    else:
+    elif not thread.get("source_id"):
         text += GENERAL_NOTE
+    if thread.get("source_id"):
+        text += VIDEO_NOTE.format(sid=thread["source_id"], title=thread.get("source_title") or "")
     if groups:
         text += "\nПодгружены группы: " + ", ".join(groups) + ".\n"
     if any(g in groups for g in ("montage", "subtitles", "screens")):
@@ -818,7 +894,10 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
     if not isinstance(thread, dict):
         thread = get_thread(store, int(thread))
     project_id = thread.get("project_id")
-    learned = decided = None
+    source_id = thread.get("source_id")
+    if source_id:
+        thread = {**thread, "source_title": _video_title(store, int(source_id))}
+    learned = decided = remembered = None
     gemini = _gemini(client)
     if project_id:
         cfg = A.get_config(store, project_id)
@@ -828,16 +907,27 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
                                         origin_ref=f"chat#{message_id}" if message_id else "chat",
                                         auto_rules=cfg["auto_rules"],
                                         judge=rule_judge(gemini) if gemini is not None else None)
-    note = _service_note(learned, decided)
+            if (learned or {}).get("action") == "none":
+                # Не правило, а факт: «запомни: Глеб — модер». Модель для этого не нужна.
+                remembered = K.remember_from_chat(store, project_id, message.split("\n[Прикреплён")[0],
+                                                  origin_ref=f"chat#{message_id}" if message_id else "chat",
+                                                  source_id=int(source_id) if source_id else None)
+    note = " ".join(x for x in (_service_note(learned, decided), K.remembered_note(remembered)) if x)
     if gemini is None:
         text = ("ИИ-агент сейчас недоступен: в сервисе не настроен GEMINI_API_KEY. Сообщение сохранено. "
                 "Что сделать: добавь ключ Gemini из AI Studio в .env сервиса и перезапусти его.") \
             + (f"\n{note}" if note else "")
-        return {"text": text, "steps": [], "learned": learned, "decided": decided, "ai": False, "changes": []}
+        return {"text": text, "steps": [], "learned": learned, "decided": decided, "remembered": remembered,
+                "ai": False, "changes": []}
 
     groups = list(dict.fromkeys([*thread.get("tool_groups", []), *CT.preload_for(message)]))
-    context = project_context(store, project_id) if project_id else general_context(store)
-    label = "срез проекта" if project_id else "срез сервиса"
+    if project_id:
+        context = project_context(store, project_id, source_id=source_id)
+    elif source_id:  # видео вне проектов: лора нет, только оно само
+        context = json.dumps({"video": video_context(store, int(source_id))}, ensure_ascii=False, default=str)
+    else:
+        context = general_context(store)
+    label = "срез проекта" if project_id else ("срез видео" if source_id else "срез сервиса")
     first = f"{message.strip()}\n\n---\nСвежий {label}:\n{context}"
     if note:
         first += f"\n\nСервис уже сделал: {note}"
@@ -975,8 +1065,8 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
             update_thread(store, thread["id"], tool_groups=groups)
     except KeyError:
         pass
-    return {"text": final, "steps": steps, "learned": learned, "decided": decided, "ai": True, "model": used_model,
-            "changes": changes}
+    return {"text": final, "steps": steps, "learned": learned, "decided": decided, "remembered": remembered, "ai": True,
+            "model": used_model, "changes": changes}
 
 
 # --------------------------------------------------------------------------- #
@@ -1037,7 +1127,8 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
             try:
                 result = run_turn(store, get_thread(store, thread_id), prompt, actor=actor, message_id=user_id,
                                   reply_id=reply_id, history=history, client=client, on_step=on_step, run=run)
-                meta = {"changes": result.get("changes") or []}
+                meta = {"changes": result.get("changes") or [],
+                        **({"remembered": result["remembered"]} if result.get("remembered") else {})}
                 update_message(store, reply_id, text=result["text"], steps=result["steps"],
                                learned=result.get("learned") or {}, status="done",
                                model=result.get("model") or "", meta=meta)
@@ -1234,7 +1325,10 @@ def thread_view(store: Any, thread_id: int, after: int = 0) -> dict:
                        "auto_rules": A.get_config(store, p["id"])["auto_rules"]}
         except KeyError:
             project = None
-    return {"thread": {k: v for k, v in thread.items()}, "project": project,
+    video = None
+    if thread.get("source_id"):
+        video = {"id": int(thread["source_id"]), "title": _video_title(store, int(thread["source_id"]))}
+    return {"thread": {k: v for k, v in thread.items()}, "project": project, "video": video,
             "messages": _decorate(store, messages), "running": run is not None,
             "live": run.snapshot() if run else None, "summary": thread.get("summary") or "",
             "model": thread.get("model") or settings.gemini_agent_model, "ai": ai_status(),

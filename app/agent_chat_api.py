@@ -2,6 +2,7 @@
 
 * ``GET  /api/chat/threads`` — переписки: по проектам и общие
 * ``POST /api/chat/threads`` {project_id?, title?, model?} — новая переписка
+* ``POST /api/chat/video-thread`` {source_id} — чат видео (один на видео)
 * ``GET/PATCH/DELETE /api/chat/threads/{id}`` — переписка (реплики, шаги, живой ход) / имя, модель / удалить
 * ``POST /api/chat/threads/{id}/messages`` {text, attachments?} — написать (ответ — в фоне)
 * ``GET  /api/chat/threads/{id}/stream`` — SSE живого хода: text, steps, phase, done
@@ -56,6 +57,10 @@ def build_agent_chat_router(auth_dep: Any, get_store: Callable[[], Any],
         project_id = payload.get("project_id")
         return call(C.create_thread, int(project_id) if project_id else None, title=str(payload.get("title") or ""),
                     model=str(payload.get("model") or ""))
+
+    @router.post("/api/chat/video-thread", summary="Чат видео: один на видео, заводится при первом открытии")
+    def api_video_thread(_auth: auth_dep, payload: dict = Body(...)) -> dict:
+        return call(C.video_thread, int(payload.get("source_id") or 0))
 
     @router.get("/api/chat/threads/{thread_id}", summary="Переписка: реплики, шаги, живой ход")
     def api_thread(thread_id: int, _auth: auth_dep) -> dict:

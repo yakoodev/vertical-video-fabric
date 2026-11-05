@@ -121,6 +121,12 @@ class VideoAnalysisService:
         heat_block = heatmap_prompt_block(self.store, source_id)
         if heat_block:
             analyzer_prompt = f"{analyzer_prompt}\n\n{heat_block}".strip()
+        # Что агент знает о проекте этого видео (app/project_knowledge.py). Тоже только модели.
+        from app.project_knowledge import block_for_source
+
+        lore_block = block_for_source(self.store, source_id)
+        if lore_block:
+            analyzer_prompt = f"{analyzer_prompt}\n\n{lore_block}".strip()
         if source["status"] == "failed":
             raise ValueError("failed source cannot be analyzed")
         normalized_preprocessing = normalize_analysis_preprocessing(preprocessing)
@@ -239,6 +245,8 @@ class VideoAnalysisService:
                     )
                     if format_block:
                         retry_prompt = f"{retry_prompt}\n\n{format_block}"
+                    if lore_block:
+                        retry_prompt = f"{retry_prompt}\n\n{lore_block}"
                     result = analyzer.analyze(analyzer_source, retry_prompt, selected_model, **gemini_kwargs)
                     retry_meta = {"reason": retry_reason}
                 quality_error = _narrative_quality_error(

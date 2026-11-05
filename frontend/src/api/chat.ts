@@ -9,6 +9,8 @@ import type { Approval } from "@/api/autopilot";
 export interface ChatThread {
   id: number;
   project_id: number | null;
+  /** Чат видео: id видео. Проект у такого чата — тот, где видео лежит сейчас. */
+  source_id?: number | null;
   title: string;
   is_default: boolean;
   model: string;
@@ -24,6 +26,8 @@ export interface ChatThread {
 export interface ChatThreadList {
   projects: { id: number; name: string; kind: string; threads: ChatThread[] }[];
   general: ChatThread[];
+  /** Чаты видео вне проектов. */
+  videos: ChatThread[];
   ai: AiStatus;
 }
 
@@ -109,7 +113,13 @@ export interface ChatMsg {
   status: "done" | "running" | "error" | "cancelled" | "interrupted";
   model: string;
   origin: string;
-  meta: { attachments?: ChatAttachment[]; service?: boolean; changes?: unknown[] };
+  meta: {
+    attachments?: ChatAttachment[];
+    service?: boolean;
+    changes?: unknown[];
+    /** Сервис записал факт из «запомни: …» (app/project_knowledge.py). */
+    remembered?: { id: number; text: string; created: boolean; project_id: number };
+  };
   changes?: ChatChange[];
   confirmations?: ChatConfirmation[];
   created_at: string;
@@ -125,6 +135,7 @@ export interface LiveRun {
 export interface ChatThreadView {
   thread: ChatThread;
   project: { id: number; name: string; kind: string; auto_rules: string } | null;
+  video: { id: number; title: string } | null;
   messages: ChatMsg[];
   running: boolean;
   live: LiveRun | null;
@@ -152,6 +163,7 @@ export const chatApi = {
   create: (body: { project_id?: number | null; title?: string; model?: string }) =>
     api.post<ChatThread>("/api/chat/threads", body),
   thread: (id: number) => api.get<ChatThreadView>(`/api/chat/threads/${id}`),
+  videoThread: (sourceId: number) => api.post<ChatThread>("/api/chat/video-thread", { source_id: sourceId }),
   update: (id: number, body: { title?: string; model?: string }) => api.patch<ChatThread>(`/api/chat/threads/${id}`, body),
   remove: (id: number) => api.del<{ deleted: number }>(`/api/chat/threads/${id}`),
   clear: (id: number) => api.del<{ deleted: number }>(`/api/chat/threads/${id}/messages`),

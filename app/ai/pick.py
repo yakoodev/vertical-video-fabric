@@ -136,7 +136,12 @@ def pick_best(
     n = max(1, min(int(count), 50, len(candidates)))
     fmt = _analysis_output_format(store, output_format)
     rules = rules_for_format(fmt, _landscape_max_clip_sec(store) if fmt == "16:9" else 180.0)
-    prompt = rules.format(n=n, goal=f"Пожелание владельца: {goal.strip()}\n" if goal.strip() else "")
+    # Что агент знает о проекте видео: в подстановке, поэтому фигурные скобки в тексте шаблону не мешают.
+    from app.project_knowledge import block_for_source
+
+    lore = block_for_source(store, source_id)
+    wish = (f"Пожелание владельца: {goal.strip()}\n" if goal.strip() else "") + (f"{lore}\n" if lore else "")
+    prompt = rules.format(n=n, goal=wish)
     prompt += "\n".join(json.dumps(c, ensure_ascii=False) for c in candidates)
     used_model = model or settings.gemini_pick_model
     response = (client or GeminiClient()).generate_content(

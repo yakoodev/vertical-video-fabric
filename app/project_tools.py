@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from app import project_knowledge as K
 from app import projects as P
 from app.agent_tools import Tool, ToolContext, ToolError, _obj
 
@@ -70,8 +71,10 @@ def h_save_channel_project(ctx: ToolContext, args: dict) -> dict:
 
 def h_get_project_brief(ctx: ToolContext, args: dict) -> dict:
     limit = int(args.get("covered_limit") or 150)
-    brief = P.project_brief(ctx.store, _pid(ctx, args), covered_limit=max(1, min(limit, 500)))
-    if args.get("source_id") not in (None, ""):
+    project_id = _pid(ctx, args)
+    brief = P.project_brief(ctx.store, project_id, covered_limit=max(1, min(limit, 500)))
+    # Ответы по стриму — только если этот стрим из этого проекта: чужой лор сюда не приходит.
+    if args.get("source_id") not in (None, "") and P.project_of_source(ctx.store, int(args["source_id"])) == project_id:
         # Ответы владельца по этому стриму и выбранные мемы (app/stream_questions.py) — рядом с лором.
         from app.stream_questions import answers_brief
 
@@ -88,6 +91,27 @@ def h_update_project_brief(ctx: ToolContext, args: dict) -> dict:
     except P.BriefConflict as exc:
         raise ToolError(str(exc)) from exc
     return {"ok": True, **out}
+
+
+def h_remember_fact(ctx: ToolContext, args: dict) -> dict:
+    project_id = _pid(ctx, args)
+    try:
+        out = K.add_fact(ctx.store, project_id, args.get("text"), origin=K.ORIGIN_AGENT, quote=args.get("quote") or "",
+                         source_id=int(args["source_id"]) if args.get("source_id") not in (None, "") else None)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if out.get("refused"):
+        return {"ok": False, "error": out["note"]}
+    return {"ok": True, "project_id": project_id, "created": out["created"], "fact_id": out["fact"]["id"],
+            "text": out["fact"]["text"]}
+
+
+def h_forget_fact(ctx: ToolContext, args: dict) -> dict:
+    project_id = _pid(ctx, args)
+    try:
+        return {"ok": True, "project_id": project_id, **K.delete_fact(ctx.store, project_id, int(args.get("fact_id") or 0))}
+    except KeyError as exc:
+        raise ToolError(str(exc).strip("'\"")) from exc
 
 
 def h_list_rules(ctx: ToolContext, args: dict) -> dict:
@@ -205,7 +229,8 @@ def project_tools() -> list[Tool]:
         Tool(
             "get_project_brief", "Бриф проекта",
             "ЧИТАЙ ПЕРЕД НАРЕЗКОЙ И НАЗВАНИЯМИ: лор проекта (summary, people, arcs, jokes, taboo, notes), активные "
-            "правила владельца (проекта и глобальные), covered — что уже нарезано (pieces — секунды источника, "
+            "правила владельца (проекта и глобальные), facts — что владелец просил запомнить, memes — какие мемы он "
+            "выбрал, с source_id ещё stream_answers — его ответы про этот стрим, covered — что уже нарезано (pieces — секунды источника, "
             "не повторяйся), гипотезы и короткая статистика. brief_rev — для update_project_brief(base_rev). "
             "/ Project brief: lore, owner rules, already cut clips.",
             _obj({**_PROJECT_ARGS, "covered_limit": {"type": "integer"}}), h_get_project_brief, scope="project",
@@ -219,6 +244,24 @@ def project_tools() -> list[Tool]:
             "затирания). / Patch project lore.",
             _obj({**_PROJECT_ARGS, "patch": {"type": "object"}, "base_rev": {"type": "integer"}}, ["patch"]),
             h_update_project_brief, mutating=True, scope="project",
+        ),
+        Tool(
+            "remember_fact", "Запоминаю",
+            "Записать факт о проекте в «Что агент знает», одной фразой: кто есть кто, что значит словечко, как тут "
+            "принято. Только то, что сказал владелец (quote — его слова); своё наблюдение сюда не пиши. Правило на "
+            "будущее — add_rule. Владелец видит и правит список сам; убранное им второй раз не записывается. "
+            "/ Remember a project fact said by the owner.",
+            _obj({**_PROJECT_ARGS, "text": {"type": "string"}, "quote": {"type": "string"}}, ["text"]),
+            h_remember_fact, mutating=True, scope="project",
+            label=lambda a: f"Запоминаю: {str(a.get('text') or '')[:60]}",
+        ),
+        Tool(
+            "forget_fact", "Забываю",
+            "Убрать факт (fact_id — id из facts в get_project_brief), если владелец сказал «забудь» или факт устарел "
+            "с его слов. / Forget a project fact.",
+            _obj({**_PROJECT_ARGS, "fact_id": {"type": "integer"}}, ["fact_id"]),
+            h_forget_fact, mutating=True, scope="project",
+            label=lambda a: f"Забываю факт #{a.get('fact_id')}",
         ),
         Tool(
             "list_rules", "Правила владельца",

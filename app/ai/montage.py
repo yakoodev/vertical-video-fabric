@@ -457,7 +457,12 @@ def propose_montage(
     spec, context = build_context(store, clip_plan_id)
     used_model = model or settings.gemini_montage_model
     gemini = client or GeminiClient()
+    from app.project_knowledge import block_for_plan
+
     request = rules_for_format(_plan_format(store, clip_plan_id), store)
+    lore = block_for_plan(store, clip_plan_id)
+    if lore:
+        request += f"\n{lore}\n"
     request += (f"\nПожелание владельца: {goal.strip()}\n" if goal.strip() else "") + "\nКлип (JSON):\n"
     request += json.dumps(context, ensure_ascii=False)
     contents: list[dict] = [{"role": "user", "parts": [{"text": request}]}]
