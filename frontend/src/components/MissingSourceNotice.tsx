@@ -21,9 +21,12 @@ export function isSourceFileMissing(source?: { has_file?: boolean | null; status
 export function MissingSourceNotice({
   source,
   compact = false,
+  proxyReady = false,
 }: {
   source: { id: number; original_url?: string | null };
   compact?: boolean;
+  /** Остался лёгкий прокси 480p: монтаж смотреть и править можно, нельзя только рендерить. */
+  proxyReady?: boolean;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -63,7 +66,9 @@ export function MissingSourceNotice({
       <div className="src-missing-text">
         <strong>Запись стрима удалена</strong>
         <span className="muted">
-          Готовый рендер, субтитры и настройки на месте. Новый рендер и кадры исходника — только с записью.
+          {proxyReady
+            ? "Монтаж играет с лёгкого прокси 480p: смотреть и править можно. Новый рендер — только с записью."
+            : "Готовый рендер, субтитры и настройки на месте. Новый рендер и кадры исходника — только с записью."}
           {!source.original_url ? " Ссылки нет: запись загружали файлом." : ""}
         </span>
         {task?.status === "failed" ? <span className="src-missing-err" title={task.error}>Не скачалось: {task.error.length > 200 ? `${task.error.slice(0, 200)}…` : task.error}</span> : null}

@@ -274,6 +274,41 @@ export function layerAssetSizes(layers: Layer[], known: AssetSizes = {}): { size
 
 let fontsPromise: Promise<MotionFont[]> | null = null;
 
+// Шрифтов больше десяти мегабайт: разом они занимали все соединения с сервером, и на слабой сети
+// первый кадр видео ждал их 30 с. Теперь — по два за раз, нужные клипу вперёд очереди.
+const FONT_CONCURRENCY = 2;
+const fontQueue: { family: string; face: FontFace }[] = [];
+let fontsLoading = 0;
+
+/** Пока смотрят монтаж (проигрывание важнее): грузим только нужные клипу, остальные ждут. */
+let fontsOnly: Set<string> | null = null;
+
+function pumpFonts(): void {
+  while (fontsLoading < FONT_CONCURRENCY && fontQueue.length) {
+    const index = fontsOnly ? fontQueue.findIndex((f) => fontsOnly!.has(f.family)) : 0;
+    if (index < 0) return;
+    const { face } = fontQueue.splice(index, 1)[0];
+    fontsLoading += 1;
+    face
+      .load()
+      .then((loaded) => {
+        document.fonts.add(loaded);
+        invalidateTextCache();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        fontsLoading -= 1;
+        pumpFonts();
+      });
+  }
+}
+
+/** Идёт проигрывание: грузить только эти семейства. null — снова все по очереди. */
+export function holdFontsExcept(families: Iterable<string> | null): void {
+  fontsOnly = families ? new Set(families) : null;
+  pumpFonts();
+}
+
 /**
  * Подключить шрифты движка один раз на вкладку. Когда очередной шрифт
  * догрузился, кэш раскладки текста сбрасывается: ширины строк считались
@@ -292,14 +327,9 @@ export function loadMotionFonts(): Promise<MotionFont[]> {
           weight: fontFaceWeight(f),
           style: f.style === "italic" ? "italic" : "normal",
         });
-        face
-          .load()
-          .then((loaded) => {
-            document.fonts.add(loaded);
-            invalidateTextCache();
-          })
-          .catch(() => undefined);
+        fontQueue.push({ family: f.family, face });
       }
+      pumpFonts();
       return fonts;
     })
     .catch(() => {

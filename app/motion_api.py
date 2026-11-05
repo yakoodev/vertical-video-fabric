@@ -42,6 +42,8 @@ class VoicePayload(BaseModel):
 
     layers: list[Any] | None = None
     fps: float | None = None
+    # Шкала ответа: clip — как слои редактора, final — как у рендера (предпросмотр монтажа).
+    scale: str | None = None
 
 
 class LevelsPayload(BaseModel):
@@ -49,6 +51,7 @@ class LevelsPayload(BaseModel):
 
     sources: list[str] | None = None
     fps: float | None = None
+    scale: str | None = None
 
 
 class CameraPresetPayload(BaseModel):
@@ -256,8 +259,9 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         saved = normalize_render_settings(plan.get("render_settings") or {})
         layers = normalize_layers(payload.layers) if payload and payload.layers is not None else saved["layers"]
         fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
-        voice, notes = plan_voice(store, plan, layers, fps, "clip")
-        return {"voice": voice, "notes": notes, "scale": "clip"}
+        scale = "final" if payload and payload.scale == "final" else "clip"
+        voice, notes = plan_voice(store, plan, layers, fps, scale)
+        return {"voice": voice, "notes": notes, "scale": scale}
 
     @router.post(
         "/api/clip-plans/{clip_plan_id}/levels",
@@ -282,8 +286,9 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         else:
             sources = react_sources(normalize_render_settings(plan.get("render_settings") or {})["layers"])
         fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
-        levels, notes = plan_levels(store, plan, sources, fps, "clip")
-        return {"levels": levels, "notes": notes, "scale": "clip"}
+        scale = "final" if payload and payload.scale == "final" else "clip"
+        levels, notes = plan_levels(store, plan, sources, fps, scale)
+        return {"levels": levels, "notes": notes, "scale": scale}
 
     def _asset_path(asset_id: int):
         from pathlib import Path
