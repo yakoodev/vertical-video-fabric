@@ -1013,8 +1013,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const hasFile = Boolean(query.data?.has_file);
   useEffect(() => {
     if (!clipParam || !hasFile) return;
+    // Сначала куски этого клипа (на них «Смотреть монтаж» играет сразу), общий прокси им уступает.
+    void playbackApi.piecesEnsure(clipParam).catch(() => undefined);
     void playbackApi.proxyEnsure(sourceId).then((st) => qc.setQueryData(["source-proxy", Number(sourceId)], st)).catch(() => undefined);
-  }, [Boolean(clipParam), hasFile, sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clipParam, hasFile, sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = videoRef.current;
     const plan = query.data?.clip_plans.find((p) => p.id === editorPlanId) ?? null;
@@ -1218,6 +1220,26 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // panel after the file was applied (the file may have changed them).
   const [clipFileOpen, setClipFileOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
+  // Пока открыт «Смотреть монтаж», плеер редактора не качает запись: один её заголовок — десятки МБ,
+  // и на слабой сети они забивали канал кускам. Закрыли — вернулись на ту же секунду.
+  const watchParkRef = useRef<number | null>(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (watchOpen) {
+      watchParkRef.current = v.currentTime;
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
+    } else if (watchParkRef.current != null) {
+      const at = watchParkRef.current;
+      watchParkRef.current = null;
+      if (v.getAttribute("src")) {
+        v.addEventListener("loadedmetadata", () => { v.currentTime = at; }, { once: true });
+        v.load();
+      }
+    }
+  }, [watchOpen]);
   // Moment under the pointer — the target of the F / X / E shortcuts.
   const hoverPlanRef = useRef<number | null>(null);
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -2293,8 +2315,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // ▶ Весь монтаж на весь экран: сначала сохранить панель, чтобы плеер видел ровно её.
   const openWatch = async () => {
     stopPlayback();
-    await flushSettings();
+    // Плеер открывается сразу, в нажатии (телефон иначе не даст весь экран и звук); сохранение — следом,
+    // отпечаток монтажа подхватит его сам.
     setWatchOpen(true);
+    await flushSettings();
   };
   const togglePlay = () => {
     const v = videoRef.current;
@@ -3053,7 +3077,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   : undefined
               }
             >
-              <video ref={videoRef} src={sourceMissing ? undefined : mediaSrc ?? undefined} controls={!sourceMissing} preload="metadata" style={sourceMissing ? { display: "none" } : undefined} />
+              <video ref={videoRef} src={sourceMissing || watchOpen ? undefined : mediaSrc ?? undefined} controls={!sourceMissing} preload="metadata" style={sourceMissing ? { display: "none" } : undefined} />
               {sourceMissing ? (
                 activePlan && planRender(activePlan.id) ? (
                   <video
@@ -3435,7 +3459,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               >
                 <video
                   ref={videoRef}
-                  src={sourceMissing ? undefined : mediaSrc ?? undefined}
+                  src={sourceMissing || watchOpen ? undefined : mediaSrc ?? undefined}
                   controls={!isCanvas && !sourceMissing}
                   preload="metadata"
                   style={isCanvas ? { opacity: 0 } : lookCss ? { filter: lookCss } : undefined}

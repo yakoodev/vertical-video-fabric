@@ -18,8 +18,18 @@ export type ProxyStatus = {
   error?: string;
 };
 
+/** Куски 480p по частям клипа (app/preview_proxy.py). */
+export type PiecesStatus = {
+  total: number;
+  ready: number;
+  failed: number;
+  parts: { index: number; start: number; end: number; status: "none" | "queued" | "running" | "ready" | "failed"; url?: string; offset?: number; error?: string }[];
+};
+
 export type PlaybackMedia = {
-  kind: "proxy" | "original" | "canvas" | "render" | "none";
+  kind: "proxy" | "pieces" | "original" | "canvas" | "render" | "none";
+  /** Готовый рендер клипа, если есть: его предлагает плеер, когда живой монтаж не успевает. */
+  render?: { url: string; poster: string; clip_id: number; stale: boolean } | null;
   url: string | null;
   has_file: boolean;
   proxy: ProxyStatus;
@@ -39,6 +49,10 @@ export type PlaybackPart = PlayPart & {
   fit?: unknown;
   color_fix?: ColorFix | null;
   speed_audio?: string | null;
+  /** Куски 480p этой части, секунды записи (у длинной части их несколько). */
+  chunks?: [number, number][];
+  /** Начало части в записи, если это её кусок: по нему считается трек фокуса. */
+  path_start?: number;
 };
 
 export type PlaybackInsert = {
@@ -143,5 +157,7 @@ export const playbackApi = {
   revision: (clipPlanId: number) => api.get<{ revision: string }>(`/api/clip-plans/${clipPlanId}/revision`),
   proxyStatus: (sourceId: number | string) => api.get<ProxyStatus>(`/api/sources/${sourceId}/proxy`),
   proxyEnsure: (sourceId: number | string, force = false) => api.post<ProxyStatus>(`/api/sources/${sourceId}/proxy`, { force }),
+  piecesEnsure: (clipPlanId: number, focus = 0, retry = false) =>
+    api.post<PiecesStatus>(`/api/clip-plans/${clipPlanId}/preview-pieces`, { focus, retry }),
   packageUrl: (clipPlanId: number, pieces = false) => `/api/clip-plans/${clipPlanId}/timeline/package${pieces ? "?pieces=true" : ""}`,
 };

@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { playbackApi, type PlaybackPlan } from "@/api/playback";
+import { playbackApi, type PiecesStatus, type PlaybackPlan } from "@/api/playback";
 import { colorFixCss } from "@/api/types";
 import { frameSize } from "@/motion";
 import { lookFilterCss } from "./frame";
@@ -16,6 +16,10 @@ import { MontageEngine, type EngineState } from "./engine";
 
 /** Как часто спрашивать отпечаток монтажа: правка агента видна не позже этого, мс. */
 export const REVISION_POLL_MS = 2000;
+/** Как часто спрашивать куски, пока собираются, мс. */
+const PIECES_POLL_MS = 700;
+/** Столько ждём кадр (и дозагрузку на ходу), потом честно говорим и предлагаем выход, мс. */
+const STALL_MS = 15000;
 
 function formatTime(sec: number): string {
   const s = Math.max(0, sec);
@@ -100,6 +104,8 @@ export function MontagePlayer({
   const [loop, setLoop] = useState(false);
   const [pieceCss, setPieceCss] = useState("");
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [showRender, setShowRender] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const firstPlanRef = useRef(true);
   const autoPlayedRef = useRef(false);
   const scrubRef = useRef<{ wasPlaying: boolean } | null>(null);
@@ -145,9 +151,23 @@ export function MontagePlayer({
   const proxy = useQuery({
     queryKey: ["source-proxy", sourceId],
     queryFn: () => playbackApi.proxyEnsure(sourceId as number),
-    enabled: Boolean(sourceId) && kind === "original",
+    enabled: Boolean(sourceId) && (kind === "original" || kind === "pieces"),
     refetchInterval: (q) => (["queued", "running"].includes(q.state.data?.status ?? "") ? 5000 : false),
   });
+  // Куски 480p: сервер собирает их от той части, что сейчас на экране; готовые плеер берёт на ходу.
+  const pieces = useQuery({
+    queryKey: ["preview-pieces", clipPlanId, plan?.revision],
+    queryFn: () => playbackApi.piecesEnsure(clipPlanId, engine.state().t > 0 ? engine.activePart()?.index ?? 0 : 0),
+    enabled: kind === "pieces",
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      return d && d.ready + d.failed >= d.total ? false : PIECES_POLL_MS;
+    },
+  });
+  const piecesData = pieces.data;
+  useEffect(() => {
+    if (piecesData) engine.updatePieces(piecesData);
+  }, [engine, piecesData]);
   const proxyStatus = proxy.data?.status;
   useEffect(() => {
     if (proxyStatus === "ready" && kind === "original") void qc.invalidateQueries({ queryKey: ["playback", clipPlanId] });
@@ -225,10 +245,40 @@ export function MontagePlayer({
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [onClose]);
 
+  // Спиннер не вечный: кадра нет или дозагрузка стоит дольше предела — говорим честно и даём выход.
+  const waiting = Boolean(plan) && !state.error && !state.needsTap && (state.buffering || (!state.firstFrame && kind !== "render" && kind !== "none"));
+  useEffect(() => {
+    setStalled(false);
+    if (!waiting) return;
+    const timer = window.setTimeout(() => setStalled(true), STALL_MS);
+    return () => window.clearTimeout(timer);
+  }, [waiting, state.firstFrame, piecesData?.ready]);
+  const retry = useCallback(() => {
+    setStalled(false);
+    setShowRender(false);
+    engine.unlock();
+    engine.retry();
+    if (kind === "pieces") {
+      void playbackApi.piecesEnsure(clipPlanId, engine.activePart()?.index ?? 0, true).then((st) => engine.updatePieces(st)).catch(() => undefined);
+      void pieces.refetch();
+    }
+    void planQuery.refetch();
+  }, [engine, kind, clipPlanId, pieces, planQuery]);
+
   const frame = plan ? frameSize(plan.format) : { w: 1080, h: 1920 };
   const lookCss = plan ? [pieceCss, lookFilterCss(plan.look)].filter(Boolean).join(" ") : "";
-  const chips = useMemo(() => mediaChip(plan, proxy.data?.status, proxy.data?.progress), [plan, proxy.data?.status, proxy.data?.progress]);
-  const isFallback = plan?.media.kind === "render" || plan?.media.kind === "none";
+  const chips = useMemo(() => mediaChip(plan, proxy.data?.status, proxy.data?.progress, piecesData), [plan, proxy.data?.status, proxy.data?.progress, piecesData]);
+  const render = plan?.media.render ?? null;
+  const isFallback = plan?.media.kind === "render" || plan?.media.kind === "none" || (showRender && Boolean(render));
+  const failedPiece = piecesData?.failed ? piecesData.parts.find((p) => p.status === "failed") : undefined;
+  const problem = state.error ?? (failedPiece && state.waitingPiece ? "Этот кусок не собрался на сервере." : null) ?? (stalled ? (kind === "pieces" && state.waitingPiece ? "Куски собираются дольше обычного: сервер занят." : "Видео не успевает загрузиться: сеть слабая или сервер занят.") : null);
+  const loadingText = !plan
+    ? "Готовлю монтаж…"
+    : state.waitingPiece && piecesData
+      ? `Собираю видео: ${piecesData.ready} из ${piecesData.total} кусков`
+      : state.waitingPiece
+        ? "Собираю видео…"
+        : "Загружаю видео…";
 
   return (
     <div
@@ -236,22 +286,37 @@ export function MontagePlayer({
       className={`mplayer ${className}`}
       tabIndex={0}
       onKeyDown={onClose ? undefined : (e) => void onKeyDown(e)}
-      data-state={state.playing ? "playing" : "paused"}
+      onPointerDown={() => engine.unlock()}
+      data-state={state.playing && !state.buffering ? "playing" : "paused"}
     >
       <div className="mplayer-stage">
         {!plan && planQuery.isError ? <div className="mplayer-msg">Монтаж не загрузился: {String(planQuery.error)}</div> : null}
         {isFallback && plan ? (
           <div className="mplayer-fallback">
-            {plan.media.kind === "render" ? (
-              <video key={plan.media.url ?? ""} src={plan.media.url ?? undefined} poster={plan.media.poster} controls autoPlay={autoPlay} preload="metadata" />
-            ) : null}
-            <div className="mplayer-note" role="status">{plan.media.message}</div>
+            {showRender && render ? (
+              <>
+                <video key={render.url} src={render.url} poster={render.poster} controls autoPlay preload="metadata" playsInline />
+                <div className="mplayer-note" role="status">
+                  Это готовый рендер{render.stale ? ", собранный до последних правок: их в нём нет" : ""}.{" "}
+                  <button type="button" className="btn sm" onClick={retry}>Вернуться к монтажу</button>
+                </div>
+              </>
+            ) : (
+              <>
+                {plan.media.kind === "render" ? (
+                  <video key={plan.media.url ?? ""} src={plan.media.url ?? undefined} poster={plan.media.poster} controls autoPlay={autoPlay} preload="metadata" playsInline />
+                ) : null}
+                <div className="mplayer-note" role="status">{plan.media.message}</div>
+              </>
+            )}
           </div>
         ) : (
           <div
             className="mplayer-frame"
             style={{ aspectRatio: `${frame.w} / ${frame.h}`, "--frame-k": frame.w / frame.h } as React.CSSProperties}
-            onClick={() => engine.toggle()}
+            onClick={() => {
+              if (state.firstFrame || state.needsTap) engine.toggle();
+            }}
             title="Пробел — плей/пауза"
           >
             <canvas
@@ -262,17 +327,41 @@ export function MontagePlayer({
             />
             <canvas ref={overlayRef} className="mplayer-overlay" width={frame.w} height={frame.h} />
             {plan?.look?.vignette ? <div className="stage-vignette" style={{ opacity: Math.min(1, plan.look.vignette) }} /> : null}
-            {state.buffering || (plan && !state.firstFrame) ? <div className="mplayer-spinner" aria-label="Загрузка" /> : null}
-            {plan && state.firstFrame && !state.playing && !state.buffering ? <div className="mplayer-bigplay" aria-hidden>▶</div> : null}
+            {(waiting || !plan) && !problem ? (
+              <div className="mplayer-status" role="status">
+                <div className="mplayer-spinner" aria-hidden />
+                <span>{loadingText}</span>
+                {state.waitingPiece && piecesData?.total ? (
+                  <span className="mplayer-progress" aria-hidden>
+                    <i style={{ width: `${Math.round((piecesData.ready / piecesData.total) * 100)}%` }} />
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {problem ? (
+              <div className="mplayer-status mplayer-status--problem" role="alert" onClick={(e) => e.stopPropagation()}>
+                <span>{problem}</span>
+                <span className="mplayer-actions">
+                  <button type="button" className="btn sm primary" onClick={retry}>Повторить</button>
+                  {render ? (
+                    <button type="button" className="btn sm" onClick={() => { engine.pause(); setShowRender(true); }}>
+                      Смотреть готовый рендер{render.stale ? " (старый)" : ""}
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+            ) : null}
+            {state.needsTap && !problem ? <div className="mplayer-bigplay mplayer-bigplay--tap">▶<small>Нажмите, чтобы смотреть</small></div> : null}
+            {plan && state.firstFrame && !state.playing && !state.buffering && !state.needsTap && !problem ? <div className="mplayer-bigplay" aria-hidden>▶</div> : null}
+            {state.audioLocked && state.playing && !problem ? <div className="mplayer-audio-lock" aria-hidden>🔇 нажмите, чтобы включить звук</div> : null}
           </div>
         )}
       </div>
       {plan?.media.note ? <div className="mplayer-note" role="status">{plan.media.note}</div> : null}
-      {state.error ? <div className="mplayer-note mplayer-note--err" role="alert">{state.error}</div> : null}
       {isFallback ? null : (
         <div className="mplayer-bar">
           <button type="button" className="btn primary sm mplayer-play" onClick={() => engine.toggle()} disabled={!plan} title="Пробел">
-            {state.playing ? "⏸ Пауза" : state.ended ? "↻ Сначала" : "▶ Смотреть"}
+            {state.playing ? (state.buffering || !state.firstFrame ? "⏳ Загрузка" : "⏸ Пауза") : state.ended ? "↻ Сначала" : "▶ Смотреть"}
           </button>
           <span className="mplayer-time mono">
             <span ref={timeRef}>{formatTime(state.t)}</span> / {formatTime(plan?.duration ?? 0)}
@@ -351,16 +440,22 @@ export function MontagePlayer({
   );
 }
 
-function mediaChip(plan: PlaybackPlan | undefined, status?: string, progress?: number): { text: string; hint: string } | null {
+function mediaChip(plan: PlaybackPlan | undefined, status?: string, progress?: number, pieces?: PiecesStatus): { text: string; hint: string } | null {
   if (!plan) return null;
   const media = plan.media;
-  if (media.kind === "proxy") return { text: "прокси 480p", hint: "Лёгкая копия записи: те же секунды, быстрая перемотка. Рендер — всегда из записи" };
+  if (media.kind === "proxy") return { text: "быстрая копия 480p", hint: "Лёгкая копия записи: те же секунды, быстрая перемотка. Рендер — всегда из записи" };
+  if (media.kind === "pieces") {
+    const copy = status === "running" ? ` Лёгкая копия всей записи собирается в фоне: ${Math.round((progress ?? 0) * 100)}%.` : "";
+    return pieces && pieces.ready < pieces.total
+      ? { text: `видео 480p: готово ${pieces.ready} из ${pieces.total}`, hint: `Куски клипа собираются прямо сейчас, сама запись не грузится.${copy}` }
+      : { text: "видео 480p", hint: `Куски клипа: сама запись не грузится. Рендер — всегда из записи.${copy}` };
+  }
   if (media.kind === "canvas") return { text: "холст", hint: "Клип без записи: фон и слои" };
   if (media.kind === "original") {
     if (status === "running" || status === "queued") {
-      return { text: `запись; прокси ${status === "queued" ? "в очереди" : `${Math.round((progress ?? 0) * 100)}%`}`, hint: "Лёгкая копия собирается в фоне, потом плеер пересядет на неё сам" };
+      return { text: `исходное видео; лёгкая копия ${status === "queued" ? "в очереди" : `${Math.round((progress ?? 0) * 100)}%`}`, hint: "Лёгкая копия собирается в фоне, потом плеер пересядет на неё сам" };
     }
-    return { text: "запись", hint: "Играет сам файл записи" };
+    return { text: "исходное видео", hint: "Играет сам файл записи" };
   }
   return null;
 }

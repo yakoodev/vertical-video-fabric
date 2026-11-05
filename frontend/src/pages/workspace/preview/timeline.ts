@@ -112,6 +112,34 @@ export function baseOfSrc(part: PlayPart, src: number): number {
   return part.start + (src - part.src_start) / (part.speed > 0 ? part.speed : 1);
 }
 
+/**
+ * Просмотр с кусков: длинная часть — несколько файлов, для плеера каждый как своя часть со стыком встык
+ * (наплыв на следующую часть остаётся у последнего куска).
+ */
+export function expandChunks<T extends PlayPart & { chunks?: [number, number][]; path_start?: number; path_of?: number }>(parts: readonly T[]): T[] {
+  const out: T[] = [];
+  parts.forEach((part, pathOf) => {
+    const chunks = part.chunks?.length ? part.chunks : [[part.src_start, part.src_end] as [number, number]];
+    const speed = part.speed > 0 ? part.speed : 1;
+    chunks.forEach(([a, b], k) => {
+      const last = k === chunks.length - 1;
+      out.push({
+        ...part,
+        index: out.length,
+        start: part.start + (a - part.src_start) / speed,
+        end: part.start + (b - part.src_start) / speed,
+        src_start: a,
+        src_end: b,
+        overlap: last ? part.overlap : 0,
+        jump: last ? part.jump : true,
+        path_start: part.src_start,
+        path_of: pathOf,
+      });
+    });
+  });
+  return out;
+}
+
 export type ValueSpan = { start: number; end: number; value: number };
 
 const clip01 = (v: number) => Math.min(1, Math.max(0, v));
