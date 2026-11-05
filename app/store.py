@@ -883,6 +883,7 @@ class AppStore:
             SELECT s.*,
                    (SELECT COUNT(*) FROM ai_analyses a WHERE a.source_id = s.id) AS analyses_count,
                    (SELECT COUNT(*) FROM clip_plans cp WHERE cp.source_id = s.id) AS clip_plans_count,
+                   (SELECT COUNT(DISTINCT COALESCE(cp.clip_group_id, -cp.id)) FROM clip_plans cp WHERE cp.source_id = s.id AND COALESCE(cp.hidden, 0) = 0) AS clip_cards_count,
                    (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clips_count,
                    (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id AND c.status = 'succeeded') AS ready_clips_count,
                    (SELECT COUNT(*) FROM jobs j JOIN clips c ON c.id = j.clip_id WHERE c.source_id = s.id) AS posts_count,
@@ -1574,6 +1575,43 @@ class AppStore:
 
     # ---- clip file (app/clip_spec.py) helpers ------------------------------
 
+    def list_clips_for_plans(self, clip_plan_ids: list[int]) -> list[dict]:
+        """Рендеры пачки планов (сетка клипов, app/clip_groups.py): поля те же, что у list_clips."""
+        if not clip_plan_ids:
+            return []
+        marks = ",".join("?" for _ in clip_plan_ids)
+        rows = self.db.query_all(
+            f"""
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                   (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+                     WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
+                   (SELECT jt.error FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+                     WHERE j.clip_id = c.id AND jt.error != '' ORDER BY jt.updated_at DESC LIMIT 1) AS last_post_error,
+                   (SELECT j.status FROM jobs j WHERE j.clip_id = c.id ORDER BY j.id DESC LIMIT 1) AS last_job_status
+            FROM clips c WHERE c.clip_plan_id IN ({marks}) ORDER BY c.id DESC
+            """,
+            [int(i) for i in clip_plan_ids],
+        )
+        return [_decode_clip_qc(dict(row)) for row in rows]
+
+    def list_clips_page(self, *, offset: int = 0, limit: int = 60, where: str = "", args: tuple = ()) -> list[dict]:
+        """Страница «Готовые ролики»: новые первыми, поля как у list_clips."""
+        rows = self.db.query_all(
+            f"""
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                   (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+                     WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
+                   (SELECT jt.error FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+                     WHERE j.clip_id = c.id AND jt.error != '' ORDER BY jt.updated_at DESC LIMIT 1) AS last_post_error,
+                   (SELECT j.status FROM jobs j WHERE j.clip_id = c.id ORDER BY j.id DESC LIMIT 1) AS last_job_status
+            FROM clips c {where} ORDER BY c.id DESC LIMIT ? OFFSET ?
+            """,
+            [*args, int(limit), int(offset)],
+        )
+        return [_decode_clip_qc(dict(row)) for row in rows]
+
     def list_clips_for_plan(self, clip_plan_id: int) -> list[dict]:
         rows = self.db.query_all(
             "SELECT * FROM clips WHERE clip_plan_id = ? ORDER BY id DESC", (clip_plan_id,)
@@ -1796,6 +1834,14 @@ class AppStore:
             "UPDATE clip_plans SET render_settings_json = ? WHERE id = ?",
             (json.dumps(clean, ensure_ascii=False), clip_plan_id),
         )
+        if clean.get("format") != before.get("format"):
+            # Вертикаль и горизонталь одного момента — разные клипы (app/clip_groups.py).
+            try:
+                from app.clip_groups import on_format_change
+
+                on_format_change(self, clip_plan_id)
+            except Exception:  # noqa: BLE001 - связь версий не должна срывать сохранение монтажа
+                pass
         return self.get_clip_plan(clip_plan_id, include_segments=False)
 
     def list_clip_plans(

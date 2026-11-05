@@ -88,7 +88,7 @@ const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>
   () => import("@/pages/project/ProjectVideosTab"),
   "ProjectVideosTab",
 );
-const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/pages/ClipsPage"), "ClipsPage");
+const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/components/ClipGrid"), "ProjectClipsTab");
 const ProjectQuestions = lazyPage<{ projectId: number }>(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
 const ProjectFiles = lazyPage<{ projectId: number }>(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 
@@ -548,7 +548,7 @@ function SourcesPanel({ project }: { project: ChannelProject }) {
             <li key={s.id} className="series-li-main">
               <Link to={videoPath(s.id)}>{s.display_name || s.original_filename || s.original_url || `Видео #${s.id}`}</Link>
               <span className="muted">
-                {formatDuration(s.duration_sec)} · {plural(s.clips_count, "клип", "клипа", "клипов")}
+                {formatDuration(s.duration_sec)} · {plural(s.clip_cards_count ?? s.clips_count, "клип", "клипа", "клипов")}
               </span>
               <button
                 className="btn ghost sm"

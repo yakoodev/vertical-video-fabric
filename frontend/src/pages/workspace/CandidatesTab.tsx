@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { clipPlansApi, type PlanSubtitles, type SubtitleLine } from "@/api/clipPlans";
 import { segmentsApi } from "@/api/segments";
@@ -64,6 +64,7 @@ import {
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
+import { clipPath } from "@/lib/paths";
 import {
   DEFAULT_LAYOUT,
   normalizeFit,
@@ -2972,6 +2973,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       ) : null}
       {view === "editor" ? (
         <div className="ed-viewbar">
+          {activePlan ? (
+            <Link className="btn primary ed-back" to={clipPath(activePlan.id)} onClick={stopPlayback} title="На экран клипа: версии, описание, превью, публикация">
+              <span className="ed-back-arrow" aria-hidden>←</span>
+              К клипу
+            </Link>
+          ) : null}
           <button className="btn ed-back" onClick={backToMoments} title="Вернуться к списку моментов (или кнопка «Назад» браузера)">
             <span className="ed-back-arrow" aria-hidden>←</span>
             Назад к моментам

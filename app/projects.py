@@ -340,6 +340,7 @@ def project_sources(store: Any, project_id: int) -> list[dict]:
         """
         SELECT s.id, s.status, s.source_type, s.original_filename, s.original_url, s.duration_sec, s.created_at,
                (SELECT COUNT(*) FROM clip_plans cp WHERE cp.source_id = s.id) AS clip_plans_count,
+               (SELECT COUNT(DISTINCT COALESCE(cp.clip_group_id, -cp.id)) FROM clip_plans cp WHERE cp.source_id = s.id AND COALESCE(cp.hidden, 0) = 0) AS clip_cards_count,
                (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clips_count
         FROM sources s WHERE s.project_id = ? ORDER BY s.id
         """,

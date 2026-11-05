@@ -146,8 +146,19 @@ def _manual_analysis(store: Any, source_id: int) -> dict:
     return store.create_ai_analysis(source_id, "manual", model="agent", status="succeeded")
 
 
-def create_manual_clip(store: Any, source_id: int, title: str, pieces: list[dict], description: str = "") -> dict:
-    """Клип из кусков исходника [{start_sec, end_sec, title?}] — дальше как обычный клип."""
+def create_manual_clip(
+    store: Any, source_id: int, title: str, pieces: list[dict], description: str = "", *, version_of: int | None = None
+) -> dict:
+    """Клип из кусков исходника [{start_sec, end_sec, title?}] — дальше как обычный клип.
+
+    ``version_of`` — id плана клипа, новой версией которого это становится. Без него план с номером
+    версии в названии («Мура v4: …») сам находит свой клип по названию, началу и формату (app/clip_groups.py)."""
+    if version_of is not None:
+        from app.clip_groups import group_members
+
+        members = group_members(store, int(version_of))
+        if not any(int(m["source_id"]) == int(source_id) for m in members):
+            raise ValueError("версия клипа должна быть из того же видео")
     title = " ".join(str(title or "").split())[:100]
     if not title:
         raise ValueError("нужно название клипа")
@@ -177,7 +188,11 @@ def create_manual_clip(store: Any, source_id: int, title: str, pieces: list[dict
         source_id, analysis["id"], title, description=str(description or "")[:2000],
         segment_ids=[seg["id"] for seg in created],
     )
-    return with_default_preset(store, plan)
+    plan = with_default_preset(store, plan)
+    from app.clip_groups import attach_new_plan
+
+    attach_new_plan(store, int(plan["id"]), version_of=version_of)
+    return store.get_clip_plan(int(plan["id"]))
 
 
 def with_default_preset(store: Any, plan: dict) -> dict:

@@ -130,7 +130,7 @@ function ProjectCard({
         <div className="pcard-stats">
           {source.width ? <span className="mono">{source.width}×{source.height}</span> : null}
           <span>{plural(source.clip_plans_count ?? 0, "момент", "момента", "моментов")}</span>
-          <span>{plural(source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
+          <span>{plural(source.clip_cards_count ?? source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
         </div>
         {series.length ? (
           <select

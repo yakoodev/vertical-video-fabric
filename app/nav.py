@@ -197,8 +197,17 @@ def nav_counts(store: Any) -> dict:
     ]
     taken = _generated_plan_ids(store)
     canvases: dict[int, int] = {}
-    for row in store.db.query_all("SELECT clip_plan_id, project_id FROM plan_projects"):
-        if int(row["clip_plan_id"]) not in taken:
+    seen: set[tuple[int, int]] = set()
+    for row in store.db.query_all(
+        "SELECT pp.clip_plan_id, pp.project_id, cp.clip_group_id FROM plan_projects pp "
+        "JOIN clip_plans cp ON cp.id = pp.clip_plan_id"
+    ):
+        if int(row["clip_plan_id"]) in taken:
+            continue
+        # Версии одного холста — один клип (app/clip_groups.py).
+        key = int(row["clip_group_id"]) if row["clip_group_id"] is not None else -int(row["clip_plan_id"])
+        if (int(row["project_id"]), key) not in seen:
+            seen.add((int(row["project_id"]), key))
             canvases[int(row["project_id"])] = canvases.get(int(row["project_id"]), 0) + 1
 
     open_questions: dict[int, int] = {}
@@ -240,13 +249,15 @@ def nav_counts(store: Any) -> dict:
 
 
 def _clip_formats(store: Any, source_ids: list[int]) -> dict[int, dict]:
-    """На видео: клипов всего и сколько готово по форматам (последний готовый файл каждого клипа)."""
+    """На видео: клипов всего и сколько готово по форматам (последний готовый файл каждого клипа).
+    Клип — группа планов (app/clip_groups.py): версии v2 и v3 одного момента считаются один раз."""
     out: dict[int, dict] = {}
     for chunk in _chunks(source_ids):
         marks = ",".join("?" for _ in chunk)
+        groups: dict[tuple[int, int], list[Any]] = {}
         for row in store.db.query_all(
             f"""
-            SELECT cp.source_id, cp.id,
+            SELECT cp.source_id, cp.id, cp.clip_group_id,
                    (SELECT c.id FROM clips c WHERE c.clip_plan_id = cp.id AND c.status = 'succeeded'
                      ORDER BY c.id DESC LIMIT 1) AS clip_id,
                    (SELECT c.width FROM clips c WHERE c.clip_plan_id = cp.id AND c.status = 'succeeded'
@@ -258,19 +269,24 @@ def _clip_formats(store: Any, source_ids: list[int]) -> dict[int, dict]:
             """,
             chunk,
         ):
-            item = out.setdefault(int(row["source_id"]), {"clips": 0, "vertical": 0, "horizontal": 0,
-                                                          "no_render": 0, "thumb_clip_id": None})
+            key = int(row["clip_group_id"]) if row["clip_group_id"] is not None else -int(row["id"])
+            groups.setdefault((int(row["source_id"]), key), []).append(row)
+        for (source_id, _key), rows in groups.items():
+            item = out.setdefault(source_id, {"clips": 0, "vertical": 0, "horizontal": 0,
+                                              "no_render": 0, "thumb_clip_id": None})
             item["clips"] += 1
-            if not row["clip_id"]:
+            rendered = [r for r in rows if r["clip_id"]]
+            if not rendered:
                 item["no_render"] += 1
                 continue
-            width, height = int(row["width"] or 0), int(row["height"] or 0)
+            last = max(rendered, key=lambda r: int(r["clip_id"]))
+            width, height = int(last["width"] or 0), int(last["height"] or 0)
             if width > height:
                 item["horizontal"] += 1
             else:
                 item["vertical"] += 1
-            if not item["thumb_clip_id"] or int(row["clip_id"]) > item["thumb_clip_id"]:
-                item["thumb_clip_id"] = int(row["clip_id"])
+            if not item["thumb_clip_id"] or int(last["clip_id"]) > item["thumb_clip_id"]:
+                item["thumb_clip_id"] = int(last["clip_id"])
     return out
 
 
@@ -338,9 +354,10 @@ def project_videos(store: Any, project_id: int | None) -> dict:
                               "name": row["title"] or row["topic"], "status": row["status"],
                               "date": row["created_at"], "plan_id": row["plan"]})
         taken = _generated_plan_ids(store, pid)
+        canvas_groups: set[int] = set()
         for row in store.db.query_all(
             """
-            SELECT cp.id, cp.title, cp.source_id, cp.created_at, cp.status
+            SELECT cp.id, cp.title, cp.source_id, cp.created_at, cp.status, cp.clip_group_id
             FROM plan_projects pp JOIN clip_plans cp ON cp.id = pp.clip_plan_id
             WHERE pp.project_id = ? ORDER BY cp.id DESC
             """,
@@ -348,6 +365,11 @@ def project_videos(store: Any, project_id: int | None) -> dict:
         ):
             if int(row["id"]) in taken:
                 continue
+            # Версии одного холста — одна строка: самая новая (ORDER BY cp.id DESC).
+            if row["clip_group_id"] is not None:
+                if int(row["clip_group_id"]) in canvas_groups:
+                    continue
+                canvas_groups.add(int(row["clip_group_id"]))
             generated.append({"key": f"canvas-{row['id']}", "kind": "Холст", "tab": "", "name": row["title"],
                               "status": row["status"], "date": row["created_at"], "plan_id": row["id"],
                               "source_id": row["source_id"]})

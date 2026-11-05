@@ -563,6 +563,27 @@ class Database:
             # Отпечаток состояния клипа на момент рендера (app/quality_lint.plan_fingerprint):
             # lint_clip честно говорит «клип правили после рендера», а не по времени статуса.
             self._ensure_column(conn, "clips", "plan_fingerprint", "TEXT")
+            # Клип = группа планов одного момента и формата (app/clip_groups.py). NULL — план сам себе клип.
+            self._ensure_column(conn, "clip_plans", "clip_group_id", "INTEGER")
+            # Владелец отделил план руками: скрипт группировки и автопривязка его не трогают.
+            self._ensure_column(conn, "clip_plans", "group_locked", "INTEGER NOT NULL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_plans_group ON clip_plans(clip_group_id)")
+            # Вечные снимки монтажа: у каждого нового рендера и перед откатом (история правок — всего 20 шагов).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clip_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_plan_id INTEGER NOT NULL REFERENCES clip_plans(id) ON DELETE CASCADE,
+                    clip_id INTEGER REFERENCES clips(id) ON DELETE SET NULL,
+                    kind TEXT NOT NULL DEFAULT 'render',
+                    label TEXT NOT NULL DEFAULT '',
+                    state_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_versions_plan ON clip_versions(clip_plan_id, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_versions_clip ON clip_versions(clip_id)")
             self._ensure_column(
                 conn,
                 "subtitle_profiles",

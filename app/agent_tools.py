@@ -6419,8 +6419,10 @@ def h_create_clip(ctx: ToolContext, args: dict) -> dict:
     from app.manual_clips import create_manual_clip
 
     try:
+        version_of = args.get("version_of")
         plan = create_manual_clip(ctx.store, _project_id(args), str(args.get("title") or ""),
-                                  args.get("pieces") or [], str(args.get("description") or ""))
+                                  args.get("pieces") or [], str(args.get("description") or ""),
+                                  version_of=int(version_of) if version_of else None)
     except (KeyError, ValueError) as exc:
         raise ToolError(f"клип не создан: {exc}") from exc
     segs = plan.get("segments") or []
@@ -8265,7 +8267,8 @@ DISCOVERY_TOOLS = [
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
         _obj({"project_id": {"type": "integer"}, "title": {"type": "string"}, "description": {"type": "string"},
               "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},
-                                                          "title": {"type": "string"}}, ["start_sec", "end_sec"])}},
+                                                          "title": {"type": "string"}}, ["start_sec", "end_sec"])},
+              "version_of": {"type": "integer", "description": "новая версия этого клипа (его clip_id): карточка не задвоится"}},
              ["project_id", "title", "pieces"]),
         h_create_clip, scope="global",
     ),
