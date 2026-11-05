@@ -1,0 +1,169 @@
+/* Вопросы по стриму и выбор мемов: отвечают с телефона большим пальцем, кнопки крупные. */
+.sq-page { display: flex; flex-direction: column; gap: 14px; max-width: 980px; }
+
+.sq-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.sq-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
+.sq-tabs button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.sq-tabs button.active { background: var(--accent-soft); color: var(--text); }
+.sq-tabs .mono { margin-left: 4px; font-size: 12px; opacity: 0.8; }
+.sq-filter { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; font-size: 13.5px; color: var(--text-dim); cursor: pointer; }
+.sq-bar { flex-basis: 100%; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.sq-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease; }
+.sq-note { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-faint); }
+
+.sq-list { display: flex; flex-direction: column; gap: 12px; }
+.sq-card {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-2);
+}
+.sq-card.sq-answered { border-color: var(--border-strong); }
+.sq-card.sq-skipped { opacity: 0.62; }
+.sq-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sq-body h3 { margin: 0; font-size: 16.5px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+
+.sq-media {
+  position: relative;
+  align-self: start;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+.sq-media video, .sq-media img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.sq-media-gone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+  background: var(--bg);
+  border: 1px dashed var(--border-strong);
+}
+.sq-play { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.sq-play-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+}
+.sq-play-icon::after {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  border-style: solid;
+  border-width: 10px 0 10px 16px;
+  border-color: transparent transparent transparent #fff;
+}
+.sq-time {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.66);
+  pointer-events: none;
+}
+.sq-media:has(video) .sq-time { display: none; }
+
+.sq-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12.5px; }
+.sq-kind { padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--text); }
+.sq-scope { color: var(--text-faint); }
+.sq-saved { margin-left: auto; color: var(--text-dim); }
+
+.sq-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.sq-option {
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.sq-option:hover { border-color: var(--accent); }
+.sq-option.active { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.sq-option:focus-visible, .sq-meme:focus-visible, .sq-play:focus-visible, .sq-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sq-own { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sq-own input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* меньше 16 — телефон приближает страницу при вводе */
+}
+
+.sq-memes { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.sq-meme {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sq-meme:hover { border-color: var(--accent); }
+.sq-meme.active { border-color: var(--accent); background: var(--accent-soft); }
+.sq-meme img, .sq-meme video { width: 100%; height: 190px; object-fit: contain; border-radius: 7px; background: #000; }
+.sq-meme-title { margin-top: 4px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.sq-meme-note { font-size: 13px; color: var(--text-dim); }
+.sq-meme-origin { font-size: 11.5px; color: var(--text-faint); overflow-wrap: anywhere; }
+.sq-none { align-self: flex-start; }
+
+@media (max-width: 760px) {
+  .sq-card { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
+  .sq-options { flex-direction: column; }
+  .sq-option { width: 100%; }
+  .sq-own .btn { min-height: 40px; }
+  .sq-memes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .sq-meme img, .sq-meme video { height: 150px; }
+  .sq-none { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sq-bar span { transition: none; }
+}

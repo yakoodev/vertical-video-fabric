@@ -363,6 +363,17 @@ MODULES: list[Module] = [
         routes=("/api/settings/telegram*", "/api/approvals/{id}/telegram", "/api/projects/{id}/chat/telegram"),
         ui=("вкладка «Telegram» в настройках",),
     ),
+    Module(
+        "stream_questions", "Вопросы по стриму и выбор мемов", "ai",
+        "Монтажёр спрашивает владельца с вариантами ответа: кто это, в чём шутка, брать ли момент. "
+        "К моментам предлагает мемы, выбор одним нажатием. Ответы идут в контекст стрима и бриф проекта.",
+        cost=("network",), cost_note="лёгкий; короткий кусочек записи кодируется при просмотре, мемы качаются по одному",
+        tools=("add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices",
+               "list_meme_catalog"),
+        routes=("/api/sources/{id}/stream-questions", "/api/stream-questions/*", "/api/meme-moments/*",
+                "/api/meme-options/*"),
+        ui=("вкладка «Вопросы» в проекте",),
+    ),
     # ------------------------------------------------------------------ автоматизация
     Module(
         "series", "Проекты-серии и каналы", "automation",

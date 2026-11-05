@@ -76,6 +76,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | `chroma_key` | Хромакей | CPU | `/detect-key`, `/chroma-key`, `set_chroma_key`, блок «Хромакей» в раскладке |
 | `end_screen` | Концовка и SVG→видео | CPU | `/api/end-screen/*`, `/end-screen`, `/api/svg-to-webm`, `set_end_screen`, `svg_to_webm` |
 | `covers` | Обложки | CPU | варианты обложки (`/api/clips/{id}/covers*`), `generate_covers`, `list_covers`, `choose_cover`, `compose_cover`, блок обложек в окне публикации |
+| `stream_questions` | Вопросы по стриму и выбор мемов | сеть | вкладка «Вопросы» в проекте, `/api/sources/{id}/stream-questions`, `/api/stream-questions/*`, `/api/meme-moments/*`, `/api/meme-options/*`, `add_stream_questions`, `list_stream_answers`, `add_meme_choices`, `list_meme_choices`, `list_meme_catalog` |
 | `compilation` | Компиляции | CPU | `/compilation`, `make_compilation` |
 | `promo` | Промо приложений | CPU | `build_app_promo` |
 

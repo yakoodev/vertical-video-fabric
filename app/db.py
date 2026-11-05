@@ -522,6 +522,10 @@ class Database:
             from app.cover_docs import ensure_cover_docs_schema
 
             ensure_cover_docs_schema(conn)
+            # Вопросы владельцу по стриму и выбор мемов (app/stream_questions.py).
+            from app.stream_questions import ensure_stream_questions_schema
+
+            ensure_stream_questions_schema(conn)
             # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
             # площадки по времени — обратная связь «что заходит» для монтажа.
             # error — снимок не удался (причина для UI), числа тогда NULL.

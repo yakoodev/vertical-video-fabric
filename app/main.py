@@ -4739,6 +4739,9 @@ app.include_router(build_modules_router(AuthDep, lambda: store))
 # страница по ссылке открывается без входа.
 from app.cover_docs_api import build_cover_docs_router  # noqa: E402
 
+from app.stream_questions_api import build_stream_questions_router  # noqa: E402
+
+app.include_router(build_stream_questions_router(AuthDep, lambda: store))
 app.include_router(build_cover_docs_router(AuthDep, lambda: store, lambda: settings.root_dir / "frontend" / "dist" / "index.html"))
 
 # In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
