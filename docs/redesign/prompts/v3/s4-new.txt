@@ -1,0 +1,1 @@
+SCREEN: "Новое видео" in a project. Seven large choice cards with an icon, a name and one short line, plus price hint: Ссылка или файл, ИИ-видео (платно), 3D-серия (0 ₽, рендер на этом ПК), История, Объяснялка, Промо приложения, Пустой холст. Follow the screenshot text. Calm and clear, the first card is the most common and slightly emphasized.

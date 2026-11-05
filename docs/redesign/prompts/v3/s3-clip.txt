@@ -1,0 +1,5 @@
+SCREEN: clip page "Мать года", subtitle "из видео «Мура Minecraft», 19:02 · 16:9". Top right: "Предыдущий клип", "Следующий клип", primary "Открыть монтаж".
+Everything fits on one screen, three columns:
+Left: large video player, under it line "1920×1080, 0:30, проверка качества пройдена", then card "Сегменты" with a timeline bar of three parts and rows "лёха 17:18–17:24", "мать года 19:05–19:44", "копать стоп 22:14–22:24".
+Middle: card "Версии монтажа 13" with version rows: thumbnail, "v3 последняя" highlighted, "16:9, 0:30, 5 ноября, 05:58", the agent's note, and button "Откатить" on older rows. Below it card "Чат с агентом о клипе" with a text field "Что поменять в этом клипе" and button "Отправить".
+Right: card "Описание и хэштеги" with button "Сгенерировать", fields Заголовок, Описание, Хэштеги. Card "Превью" with a small vertical cover image, buttons "Редактор превью" and "Сделать 3 варианта". Card "Публикация" with checkboxes YouTube, TikTok, Instagram, selects Приватность and Когда, and two buttons of exactly equal visual weight: "Скачать" and "Опубликовать".

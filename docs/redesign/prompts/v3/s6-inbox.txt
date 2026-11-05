@@ -1,0 +1,1 @@
+SCREEN: "Входящие" outside projects: tabs for approval, questions of all projects and the task queue, as in the screenshot. Dense but calm list; each item shows its project and what is expected from the owner.

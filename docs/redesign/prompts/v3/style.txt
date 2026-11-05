@@ -1,0 +1,13 @@
+Generate ONE high-fidelity desktop web-app UI mockup image, landscape 1600x1000, using your image generation tool.
+The attached image is a screenshot of a working prototype. Use it as the wireframe: keep the layout, the areas, the order of blocks and the Russian labels. Redesign only the visual quality so it looks like a finished premium product. Do not add new sections, do not drop any block.
+
+Product: "Fabric — Vertical Video", a tool for one power user who turns long streams into short clips and also generates videos, then downloads or publishes them.
+Visual style: premium dark SaaS video editor, quality level of Linear, Descript, Opus Clip and CapCut. Background #0c0a12, surfaces #15121e with 1px #262033 borders, violet accent #8b5cf6 used sparingly, green for success, amber for processing, red for errors. Rounded 12px cards, Inter font, clear hierarchy with one obvious focal point per screen, generous spacing, small muted secondary text, pill chips, simple line icons. Everything readable, nothing cramped, no decorative gradients, no emoji.
+All UI text is in Russian, spelled correctly, copied exactly from the screenshot and from the labels below. If a text is too small to read in the screenshot, use a short plausible Russian phrase on the same topic.
+
+Persistent frame on every screen:
+- Left sidebar: logo "FABRIC", group "Проекты" with the rows Мира и Бип, Истории, Сериалы, Мура (active), Промо, Apex, Сова и истории, each with a small count, then "+ Новый проект". Below it: Входящие with a badge, Публикации и аккаунты, Общие файлы. Pinned at the bottom: Настройки, Помощь.
+- Top ladder across the content: three connected steps "Проект", "Видео", "Клип", each showing its current value and a small chevron for siblings; the active step is highlighted. To the right: small buttons "Поиск Ctrl K", "Общий чат", "нет задач".
+
+Images inside the UI: Minecraft-like blocky game scenes and a cute anime-style streamer avatar with light brown hair and green eyes. No real people, no real faces, no brand logos except a small Twitch-like purple glyph.
+Do not write any files except what the image tool produces. Do not modify any source code.

@@ -1,0 +1,1 @@
+SCREEN: a generated video in progress, type История. Follow the screenshot: a vertical list of production steps with status (done, waiting, paid), the amount in rubles on the paid step, and a clear confirmation card that waits for the owner's approval before spending money, and at the end of the steps the resulting clip. The confirmation card with the price is the focal point.
