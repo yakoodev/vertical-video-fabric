@@ -8,6 +8,7 @@ import { ApiError } from "@/api/client";
 import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { useToast } from "@/components/Toast";
 import { ClipCard } from "@/components/ClipCard";
+import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
 import { useModuleOn } from "@/hooks/useModules";
@@ -30,6 +31,7 @@ export function ClipsPage() {
   const [toPublish, setToPublish] = useState<Clip | null>(null);
   const publishingOn = useModuleOn("publishing"); // app/modules.py
   const [filter, setFilter] = useState<"all" | "ready" | "published" | "error">("all");
+  const shown = useShowMore((query.data ?? []).filter((c) => clipMatches(c, filter)), filter);
 
   const upload = useMutation({
     mutationFn: (file: File) => clipsApi.uploadEdited(file),
@@ -108,7 +110,7 @@ export function ClipsPage() {
           })}
         </div>
         <div className="card-grid clip-grid">
-          {query.data.filter((c) => clipMatches(c, filter)).map((clip) => (
+          {shown.visible.map((clip) => (
             <ClipCard
               key={clip.id}
               clip={clip}
@@ -131,6 +133,7 @@ export function ClipsPage() {
             />
           ))}
         </div>
+        <ShowMore rest={shown.rest} onMore={shown.more} />
         </>
       )}
 

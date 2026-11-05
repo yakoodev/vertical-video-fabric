@@ -1,13 +1,18 @@
+import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useLocation, useParams, useSearchParams, Link } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { qk } from "@/api/keys";
 import { Badge, ErrorState, Loading, formatDuration } from "@/components/ui";
-import { SourceTab } from "@/pages/workspace/SourceTab";
-import { SegmentsTab } from "@/pages/workspace/SegmentsTab";
-import { CandidatesTab } from "@/pages/workspace/CandidatesTab";
-import { ClipsTab } from "@/pages/workspace/ClipsTab";
-import { MontagedTab } from "@/pages/workspace/MontagedTab";
+import { lazyPage } from "@/lazyPage";
+
+type TabProps = { sourceId: string };
+// Вкладка «Моменты» тянет за собой весь редактор: остальным вкладкам он не нужен.
+const SourceTab = lazyPage<TabProps>(() => import("@/pages/workspace/SourceTab"), "SourceTab");
+const SegmentsTab = lazyPage<TabProps>(() => import("@/pages/workspace/SegmentsTab"), "SegmentsTab");
+const CandidatesTab = lazyPage<TabProps>(() => import("@/pages/workspace/CandidatesTab"), "CandidatesTab");
+const ClipsTab = lazyPage<TabProps>(() => import("@/pages/workspace/ClipsTab"), "ClipsTab");
+const MontagedTab = lazyPage<TabProps>(() => import("@/pages/workspace/MontagedTab"), "MontagedTab");
 
 // "Монтаж" is not a route of its own: it opens the clip editor inside the
 // moments tab (?clip=<id>), so it shares the moments' selection and settings.
@@ -102,6 +107,7 @@ export function ProjectWorkspace() {
       </div>
       )}
 
+      <Suspense fallback={<Loading />}>
       <Routes>
         <Route index element={<Navigate to="source" replace />} />
         <Route path="source" element={<SourceTab sourceId={sourceId} />} />
@@ -111,6 +117,7 @@ export function ProjectWorkspace() {
         <Route path="montaged" element={<MontagedTab sourceId={sourceId} />} />
         <Route path="*" element={<Navigate to="source" replace />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

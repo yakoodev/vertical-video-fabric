@@ -5,6 +5,8 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { VideoThumb } from "@/components/VideoThumb";
+import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/components/ui";
 import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
 import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
@@ -16,6 +18,21 @@ const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   video: "Видео",
   audio: "Звук",
 };
+
+/** Уменьшенная картинка; GIF оживает под курсором, чтобы сотни файлов не качались разом. */
+function AssetPicture({ asset }: { asset: MontageAsset }) {
+  const [src, setSrc] = useState(`${asset.url}/thumb`);
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onMouseEnter={asset.kind === "gif" ? () => setSrc(asset.url) : undefined}
+      onError={() => setSrc(asset.url)}
+    />
+  );
+}
 
 function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: MontageAsset) => void }) {
   const qc = useQueryClient();
@@ -51,9 +68,9 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
     <div className="asset-card">
       <div className={`asset-media asset-media--${asset.kind}`}>
         {asset.kind === "image" || asset.kind === "gif" ? (
-          <img src={asset.url} alt="" loading="lazy" />
+          <AssetPicture asset={asset} />
         ) : asset.kind === "video" ? (
-          <video src={asset.url} controls preload="metadata" playsInline />
+          <VideoThumb src={asset.url} thumb={`${asset.url}/thumb`} />
         ) : (
           <div className="asset-audio">
             <span className="asset-audio-ico">♪</span>
@@ -154,6 +171,7 @@ export function MontageAssetsPage() {
   });
 
   const assets = query.data ?? [];
+  const shown = useShowMore(assets);
   const undescribed = assets.filter((a) => !a.description.trim());
   return (
     <>
@@ -237,11 +255,14 @@ export function MontageAssetsPage() {
           hint="Закиньте пару мемов и звуков — и 🤖 ИИ-монтаж начнёт вставлять их в подходящие моменты"
         />
       ) : (
-        <div className="asset-grid">
-          {assets.map((a) => (
-            <AssetCard key={a.id} asset={a} onDelete={setPending} />
-          ))}
-        </div>
+        <>
+          <div className="asset-grid">
+            {shown.visible.map((a) => (
+              <AssetCard key={a.id} asset={a} onDelete={setPending} />
+            ))}
+          </div>
+          <ShowMore rest={shown.rest} onMore={shown.more} />
+        </>
       )}
 
       <ConfirmDialog

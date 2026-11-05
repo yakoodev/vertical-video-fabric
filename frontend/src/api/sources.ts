@@ -78,7 +78,7 @@ export interface SourceAudioPatch {
 }
 
 export const sourcesApi = {
-  list: () => api.get<Source[]>("/api/sources"),
+  list: () => api.get<Source[]>("/api/sources?lite=1"),
   focusOptions: () => api.get<FocusOptions>("/api/focus-presets"),
   setFocus: (id: number | string, body: { focus_preset?: string; focus_strategy?: string }) =>
     api.patch<Source>(`/api/sources/${id}/focus-preset`, body),

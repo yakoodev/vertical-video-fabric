@@ -1035,7 +1035,7 @@ function BoardSub({ o }: { o: Overview }) {
                   {vid?.url ? (
                     <figure className="aiv-frame">
                       <div className="aiv-shot-img">
-                        <video src={vid.url} poster={start?.url ?? undefined} controls muted loop playsInline preload="metadata" />
+                        <video src={vid.url} poster={start?.url ?? undefined} controls muted loop playsInline preload="none" />
                         {vid.stale ? <span className="aiv-badge">устарело</span> : null}
                         {qa && !qa.ok ? <span className="aiv-badge review">проверь видео</span> : null}
                       </div>

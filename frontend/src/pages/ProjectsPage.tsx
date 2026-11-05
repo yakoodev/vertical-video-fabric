@@ -13,6 +13,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { NewCanvas } from "@/components/NewCanvas";
+import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
@@ -367,6 +368,7 @@ export function ProjectsPage() {
         (seriesFilter === "none" ? !s.project_id : String(s.project_id ?? "") === seriesFilter)) &&
       (!q || (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q)),
   );
+  const shown = useShowMore(filtered, `${statusFilter}|${seriesFilter}|${q}`);
 
   return (
     <>
@@ -434,11 +436,14 @@ export function ProjectsPage() {
             </div>
           </div>
           {filtered.length ? (
-            <div className="card-grid proj-grid">
-              {filtered.map((source) => (
-                <ProjectCard key={source.id} source={source} onDelete={setPending} series={series} />
-              ))}
-            </div>
+            <>
+              <div className="card-grid proj-grid">
+                {shown.visible.map((source) => (
+                  <ProjectCard key={source.id} source={source} onDelete={setPending} series={series} />
+                ))}
+              </div>
+              <ShowMore rest={shown.rest} onMore={shown.more} />
+            </>
           ) : (
             <EmptyState icon="🔍" title="Ничего не найдено" hint="Измените запрос" />
           )}

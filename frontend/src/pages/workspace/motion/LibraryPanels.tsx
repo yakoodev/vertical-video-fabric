@@ -707,7 +707,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
                   onDragStart={(ev) => dragPayload(ev, [make()])}
                   onClick={() => onAdd([make()])}
                 >
-                  {a.kind === "video" ? <video src={a.url} muted preload="metadata" /> : <img src={a.url} alt="" loading="lazy" />}
+                  <img src={`${a.url}/thumb`} alt="" loading="lazy" decoding="async" onError={(ev) => { if (a.kind !== "video") ev.currentTarget.src = a.url; }} />
                 </button>
               );
             })}

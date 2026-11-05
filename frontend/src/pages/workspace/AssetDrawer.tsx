@@ -59,7 +59,7 @@ export function AssetDrawer({ onAdd }: { onAdd: (assetId: number) => void }) {
                   title={`${a.label}${a.description ? ` — ${a.description}` : ""}\n\nПеретащите на дорожку «Вставки» или двойной клик — поставить на текущий момент`}
                 >
                   {a.kind === "image" || a.kind === "gif" ? (
-                    <img src={a.url} alt="" loading="lazy" />
+                    <img src={`${a.url}/thumb`} alt="" loading="lazy" decoding="async" onError={(ev) => { ev.currentTarget.src = a.url; }} />
                   ) : (
                     <span className="adrawer-ico">{KIND_ICON[a.kind]}</span>
                   )}

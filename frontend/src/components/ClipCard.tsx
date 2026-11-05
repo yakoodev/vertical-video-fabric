@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Clip } from "@/api/types";
 import { clipsApi } from "@/api/clips";
+import { VideoThumb } from "@/components/VideoThumb";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
@@ -47,14 +48,8 @@ export function ClipCard({
     <div className={`panel clip-card${selected ? " clip-card--selected" : ""}`}>
       {/* Готовый файл любого формата (9:16, 1:1, 4:5, 16:9) — рамка по его кадру; размер неизвестен — 9:16. */}
       <div className="clip-video" style={clip.width > 0 && clip.height > 0 ? { aspectRatio: `${clip.width} / ${clip.height}` } : undefined}>
-        {/* The cover (if the clip has one) instead of a black first frame. */}
-        <video
-          src={`/media/clips/${clip.id}`}
-          poster={clip.cover_url ?? undefined}
-          controls
-          preload="metadata"
-          playsInline
-        />
+        {/* Обложка (или кадр ролика) вместо плеера: плеер — по нажатию. */}
+        <VideoThumb src={`/media/clips/${clip.id}`} thumb={`/media/clips/${clip.id}/thumb?v=${encodeURIComponent(clip.updated_at)}`} />
         <span className="clip-ov clip-ov--status">
           <Badge status={clip.status} />
         </span>
