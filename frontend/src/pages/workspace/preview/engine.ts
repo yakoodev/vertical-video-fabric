@@ -7,7 +7,7 @@
  * часы настенные. Кадр рисует тот же composeFrame, что телефон редактора.
  */
 import { clipAccent, reframeBetween, type AssetSizes, type CameraKey, type Layer, type VideoLayer } from "@/motion";
-import type { PlaybackPart, PlaybackPlan } from "@/api/playback";
+import type { PiecesStatus, PlaybackPart, PlaybackPlan } from "@/api/playback";
 import { motionApi } from "@/api/motion";
 import { normalizeFit, normalizeLayout, type PieceFit } from "@/pages/workspace/layout";
 import { normalizeBackdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
@@ -16,7 +16,7 @@ import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import { composeFrame, DT, drawBaseFrame, focusFeel, frameGeometry, smoothFocus, type ComposeInput, type FrameGeometry, type InsertPreview, type MotionView } from "./frame";
 import { MontageAudio } from "./audio";
 import { blendTransition } from "./transitions";
-import { baseAt, crossedFreeze, finalOf, insertedTotal, motionTime, partIndexAt, srcOf } from "./timeline";
+import { baseAt, crossedFreeze, expandChunks, finalOf, insertedTotal, motionTime, partIndexAt, srcOf } from "./timeline";
 
 type Slot = {
   el: HTMLVideoElement;
@@ -24,6 +24,8 @@ type Slot = {
   part: number;
   /** Плеер стоит на нужной секунде и готов отдать кадр. */
   ready: boolean;
+  /** Какой файл в плеере (у кусков у каждой части свой). */
+  url: string;
   wantSeek: number | null;
 };
 
@@ -35,10 +37,18 @@ export type EngineState = {
   ended: boolean;
   firstFrame: boolean;
   error: string | null;
+  /** Браузер запретил запуск без нажатия: плеер стоит и ждёт жеста. */
+  needsTap: boolean;
+  /** Видео идёт, а звук браузер ещё не разрешил (AudioContext ждёт нажатия). */
+  audioLocked: boolean;
+  /** Кусок на экране ещё собирается на сервере. */
+  waitingPiece: boolean;
 };
 
 const SWITCH_EPS = 0.008;
 const PAINT_IDLE_MS = 120;
+
+const pieceKey = (start: number, end: number) => `${Math.round(start * 1000)}-${Math.round(end * 1000)}`;
 
 function makeVideo(): HTMLVideoElement {
   const el = document.createElement("video");
@@ -59,6 +69,11 @@ export class MontageEngine {
   private ended = false;
   private firstFrame = false;
   private error: string | null = null;
+  private needsTap = false;
+  private wasPlaying = false;
+  private audioLocked = false;
+  private mode: PlaybackPlan["media"]["kind"] = "none";
+  private pieces = new Map<string, { url: string; offset: number }>();
   private slots: Slot[] = [];
   private url = "";
   private cv: HTMLCanvasElement | null = null;
@@ -128,20 +143,70 @@ export class MontageEngine {
       ended: this.ended,
       firstFrame: this.firstFrame,
       error: this.error,
+      needsTap: this.needsTap,
+      audioLocked: this.audioLocked,
+      waitingPiece: Boolean(this.plan?.parts.length) && this.mode === "pieces" && !this.urlOf(this.active),
     };
   }
 
+  private urlOf(index: number): string {
+    if (this.mode !== "pieces") return this.url;
+    const part = this.plan?.parts[index];
+    return part ? this.pieces.get(pieceKey(part.src_start, part.src_end))?.url ?? "" : "";
+  }
+
+  /** Секунда файла в плеере части `index` по секунде записи (кусок начинается не с нуля записи). */
+  private fileOffset(index: number): number {
+    if (this.mode !== "pieces") return 0;
+    const part = this.plan?.parts[index];
+    return part ? this.pieces.get(pieceKey(part.src_start, part.src_end))?.offset ?? 0 : 0;
+  }
+
+  /** Сервер дособрал куски: без перемотки и без сброса того, что уже играет. */
+  updatePieces(status: PiecesStatus): void {
+    for (const row of status.parts) {
+      if (row.status === "ready" && row.url) this.pieces.set(pieceKey(row.start, row.end), { url: row.url, offset: row.offset ?? 0 });
+    }
+    const plan = this.plan;
+    if (!plan || this.mode !== "pieces" || !plan.parts.length) return;
+    if (!this.slotOf(this.active)) this.assign(this.active, srcOf(plan.parts[this.active], Math.min(this.base, plan.base_duration)));
+    this.dirty = true;
+    this.emit();
+  }
+
+  /** Жест пользователя: разрешить звук и снять запрет на запуск (вызывать из обработчика нажатия). */
+  unlock(): void {
+    this.ensureAudio();
+  }
+
+  /** «Повторить»: заново загрузить файлы с той же секунды. */
+  retry(): void {
+    this.error = null;
+    for (const s of this.slots) {
+      s.part = -1;
+      s.ready = false;
+      s.url = "";
+      s.el.removeAttribute("src");
+      s.el.load();
+    }
+    this.seek(this.t, this.playing || this.wasPlaying);
+    this.wasPlaying = false;
+    this.emit();
+  }
+
   /** Новый план: первый — загрузка; следующие (правка) — та же секунда, новый монтаж, без перезагрузки. */
-  setPlan(plan: PlaybackPlan): void {
+  setPlan(rawPlan: PlaybackPlan): void {
+    // Трек фокуса и «шире окна» — на всю часть; куски только делят её файл.
+    const paths = rawPlan.parts.map((p) => smoothFocus(p.focus ?? [], p.src_end - p.src_start, focusFeel(rawPlan.source.focus_preset)));
+    const plan = rawPlan.media.kind === "pieces" ? { ...rawPlan, parts: expandChunks(rawPlan.parts) } : rawPlan;
     const url = plan.media.url ?? "";
-    const canPlay = plan.media.kind !== "render" && plan.media.kind !== "none" && Boolean(url);
+    const canPlay = plan.media.kind !== "render" && plan.media.kind !== "none" && (Boolean(url) || plan.media.kind === "pieces");
     const first = !this.plan;
     this.plan = plan;
     this.geometry = plan.source.width && plan.source.height
       ? frameGeometry(plan.source.width, plan.source.height, plan.source.content_crop, normalizeLayout(plan.layout as never), plan.format)
       : null;
-    const feel = focusFeel(plan.source.focus_preset);
-    this.paths = plan.parts.map((p) => smoothFocus(p.focus ?? [], p.src_end - p.src_start, feel));
+    this.paths = plan.parts.map((p, i) => paths[(p as { path_of?: number }).path_of ?? i]);
     this.fits = plan.parts.map((p) => (this.geometry?.landscape ? null : normalizeFit(p.fit)));
     this.rawLayers = { layers: plan.layers, camera: plan.camera };
     this.rebuildMotion();
@@ -150,11 +215,12 @@ export class MontageEngine {
     this.buildInserts(plan);
     this.loadBanner(plan);
     this.audio?.preload(plan);
-    if (canPlay && url !== this.url && (first || !this.playing)) {
-      // Адрес основы сменился (собрался прокси) — на паузе пересаживаемся на него с той же секунды.
+    if (canPlay && (first || !this.playing) && (url !== this.url || plan.media.kind !== this.mode)) {
+      // Источник кадров сменился (собрался прокси) — на паузе пересаживаемся на него с той же секунды.
+      // На ходу остаётся прежний: куски никуда не денутся, а смена дёрнула бы картинку.
       this.url = url;
+      this.mode = plan.media.kind;
       for (const s of this.slots) {
-        s.el.src = url;
         s.ready = false;
         s.part = -1;
       }
@@ -165,12 +231,18 @@ export class MontageEngine {
   }
 
   play(): void {
-    if (!this.plan || this.plan.media.url == null) return;
+    const plan = this.plan;
+    if (!plan || plan.media.kind === "render" || plan.media.kind === "none") return;
     this.ensureAudio();
-    if (this.ended || this.t >= this.plan.duration - 0.01) this.seek(0);
+    if (this.ended || this.t >= plan.duration - 0.01) this.seek(0);
     this.ended = false;
+    this.needsTap = false;
     this.playing = true;
     this.last = performance.now();
+    // Сразу, ещё внутри нажатия: иначе телефонный браузер сочтёт запуск автоплеем и запретит.
+    const part = plan.parts[this.active];
+    const slot = this.slotOf(this.active);
+    if (slot?.ready && part && !baseAt(plan.freezes_raw, this.t).inserted && this.base < plan.base_duration) this.startSlot(slot, part);
     this.emit();
     this.dirty = true;
   }
@@ -221,6 +293,7 @@ export class MontageEngine {
     this.assign(this.active, srcOf(plan.parts[this.active], this.base));
     if (this.outgoing != null) this.assign(this.outgoing, srcOf(plan.parts[this.outgoing], this.base));
     this.playing = keepPlaying;
+    this.emit();
     this.last = performance.now();
     this.dirty = true;
     this.notifyFrame();
@@ -260,7 +333,7 @@ export class MontageEngine {
   // ------------------------------------------------------------- плееры кусков
 
   private makeSlot(): Slot {
-    const slot: Slot = { el: makeVideo(), part: -1, ready: false, wantSeek: null };
+    const slot: Slot = { el: makeVideo(), part: -1, ready: false, url: "", wantSeek: null };
     const { el } = slot;
     el.addEventListener("seeked", () => {
       if (slot.wantSeek != null && Math.abs(el.currentTime - slot.wantSeek) > 0.04) {
@@ -286,7 +359,14 @@ export class MontageEngine {
       }
     });
     el.addEventListener("error", () => {
-      if (el.getAttribute("src")) this.error = "Видео не загрузилось: проверьте сеть или откройте заново";
+      if (el.getAttribute("src")) {
+        this.error = "Видео не загрузилось: сеть оборвалась или файл недоступен.";
+        // Стоим честно: не «Загрузка» и не «Пауза», а ошибка и кнопка повтора.
+        this.wasPlaying = this.playing || this.wasPlaying;
+        this.playing = false;
+        this.audio?.stopAll();
+      }
+      this.setBuffering(false);
       this.emit();
     });
     return slot;
@@ -299,6 +379,8 @@ export class MontageEngine {
 
   /** Поставить кусок в плеер на секунду исходника `src`. */
   private assign(part: number, src: number): Slot | null {
+    const url = this.urlOf(part);
+    if (!url) return null; // кусок ещё собирается: придёт через updatePieces
     const slot =
       this.slotOf(part) ??
       this.slots.find((s) => s.part === -1) ??
@@ -306,7 +388,12 @@ export class MontageEngine {
       null;
     if (!slot) return null;
     slot.part = part;
-    this.seekSlot(slot, src);
+    if (slot.url !== url) {
+      slot.url = url;
+      slot.ready = false;
+      slot.el.src = url;
+    }
+    this.seekSlot(slot, src - this.fileOffset(part));
     return slot;
   }
 
@@ -343,7 +430,18 @@ export class MontageEngine {
     if (slot.el.playbackRate !== rate) slot.el.playbackRate = rate;
     // «tempo» — речь без смены тона (как atempo), «pitch» — тон едет со скоростью.
     slot.el.preservesPitch = part.speed_audio !== "pitch";
-    if (slot.el.paused && !part.reverse) void slot.el.play().catch(() => undefined);
+    if (slot.el.paused && !part.reverse) {
+      void slot.el.play().catch((e: unknown) => {
+        // Телефон не дал запустить без нажатия: честно стоим и просим нажать, а не рисуем «Пауза».
+        if ((e as { name?: string })?.name === "NotAllowedError" && this.playing) {
+          this.playing = false;
+          this.needsTap = true;
+          this.setBuffering(false);
+          this.audio?.stopAll();
+          this.emit();
+        }
+      });
+    }
   }
 
   // ------------------------------------------------------------- время
@@ -457,7 +555,7 @@ export class MontageEngine {
     if (part.reverse) {
       // Реверс: браузер назад не играет — настенные часы и шаги перемотки (без звука, как у рендера по умолчанию).
       this.base += dt;
-      if (!slot.el.seeking) slot.el.currentTime = srcOf(part, this.base);
+      if (!slot.el.seeking) slot.el.currentTime = srcOf(part, this.base) - this.fileOffset(index);
       this.setBuffering(false);
     } else {
       if (!slot.ready || slot.el.seeking || slot.el.readyState < 2) {
@@ -466,9 +564,12 @@ export class MontageEngine {
       }
       this.setBuffering(false);
       this.startSlot(slot, part);
-      const measured = part.start + (slot.el.currentTime - part.src_start) / (part.speed > 0 ? part.speed : 1);
+      const srcNow = slot.el.currentTime + this.fileOffset(index);
+      const measured = part.start + (srcNow - part.src_start) / (part.speed > 0 ? part.speed : 1);
       // Часы — сам плеер; назад не идём (нужно на старте, пока плеер ещё не тронулся).
       this.base = Math.max(this.base, Math.min(measured, part.end + 0.1));
+      // Файл кончился раньше расчётного конца части (округление кадров): часть считается доигранной.
+      if (slot.el.ended) this.base = Math.max(this.base, part.end);
     }
     const prevBase = baseAt(freezes, this.t).base;
     const crossed = crossedFreeze(freezes, prevBase, this.base);
@@ -513,8 +614,20 @@ export class MontageEngine {
       for (const s of this.slots) this.audio.connectVideo(s.el);
       this.audio.setOutput(this.volume, this.muted);
       if (this.plan) this.audio.preload(this.plan);
+      this.audio.ctx.addEventListener("statechange", () => {
+        this.syncAudioLock();
+      });
     }
     this.audio.resume();
+    this.syncAudioLock();
+  }
+
+  private syncAudioLock(): void {
+    const locked = this.audio ? this.audio.ctx.state !== "running" : false;
+    if (locked !== this.audioLocked) {
+      this.audioLocked = locked;
+      this.emit();
+    }
   }
 
   private updateAudio(plan: PlaybackPlan): void {
@@ -537,7 +650,7 @@ export class MontageEngine {
       }
     }
     // Звук исходника во время J/L молчит у картинки: играет второй плеер.
-    const jl = plan.audio.jl.some((j) => (j.shift > 0 ? this.t >= j.at && this.t < j.at + j.shift : this.t >= j.at + j.shift && this.t < j.at));
+    const jl = this.mode !== "pieces" && plan.audio.jl.some((j) => (j.shift > 0 ? this.t >= j.at && this.t < j.at + j.shift : this.t >= j.at + j.shift && this.t < j.at));
     const silentPart = (p: PlaybackPart) => p.reverse || p.speed_audio === "mute";
     for (const s of this.slots) {
       let level = 0;
@@ -549,7 +662,7 @@ export class MontageEngine {
     for (const ins of plan.inserts) {
       if (ins.duck_volume != null && this.t >= ins.at && this.t < ins.at + ins.duration) insertDuck = Math.min(insertDuck, ins.duck_volume);
     }
-    audio.tick(plan, this.t, { inserted: st.inserted, sideUrl: this.url || null, insertDuck });
+    audio.tick(plan, this.t, { inserted: st.inserted, sideUrl: this.mode === "pieces" ? null : this.url || null, insertDuck });
   }
 
   // ------------------------------------------------------------- слои и файлы плана
@@ -686,7 +799,7 @@ export class MontageEngine {
   private focusAt(index: number, part: PlaybackPart, src: number): number {
     const path = this.paths[index];
     if (!path?.length) return 0.5;
-    return path[Math.min(path.length - 1, Math.max(0, Math.round((src - part.src_start) / DT)))];
+    return path[Math.min(path.length - 1, Math.max(0, Math.round((src - (part.path_start ?? part.src_start)) / DT)))];
   }
 
   /** Видео-слои, что появятся в ближайшие секунды: файл догружается заранее, без чёрного кадра на входе. */

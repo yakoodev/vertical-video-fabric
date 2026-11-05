@@ -4,6 +4,7 @@
 * ``GET /api/clip-plans/{id}/revision`` — отпечаток монтажа: сменился — клип правил кто-то ещё.
 * ``GET/POST /api/sources/{id}/proxy`` — статус и постановка лёгкого прокси 480p (``app/preview_proxy.py``).
 * ``GET /media/sources/{id}/proxy`` — сам файл (Range, как у любого ``FileResponse``).
+* ``GET/POST /api/clip-plans/{id}/preview-pieces`` — куски 480p по частям клипа; ``GET /media/sources/{id}/pieces/{имя}`` — файл куска.
 * ``GET /api/clip-plans/{id}/timeline/package`` — zip для Premiere/Resolve (``app/timeline_package.py``).
 """
 
@@ -13,6 +14,13 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+
+class PiecesRequest(BaseModel):
+    """focus — с какой части клипа начать (та, что сейчас на экране); retry — собрать заново сбойные."""
+
+    focus: int = 0
+    retry: bool = False
 
 
 class ProxyRequest(BaseModel):
@@ -63,6 +71,41 @@ def build_preview_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         from app.preview_proxy import ensure
 
         return ensure(_source(source_id), force=bool(payload and payload.force))
+
+    def _ranges(clip_plan_id: int) -> tuple[dict, list]:
+        from app.playback import part_ranges
+
+        try:
+            return part_ranges(get_store(), clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/api/clip-plans/{clip_plan_id}/preview-pieces", tags=["Clip file"],
+                summary="Куски 480p для просмотра монтажа: что готово")
+    def api_pieces_status(clip_plan_id: int, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        from app.preview_proxy import pieces_status
+
+        source, ranges = _ranges(clip_plan_id)
+        return pieces_status(source, ranges)
+
+    @router.post("/api/clip-plans/{clip_plan_id}/preview-pieces", tags=["Clip file"],
+                 summary="Собрать куски 480p для просмотра монтажа (идемпотентно, вперёд общего прокси)")
+    def api_pieces_ensure(clip_plan_id: int, _auth: auth_dep, payload: PiecesRequest | None = None) -> dict:  # type: ignore[valid-type]
+        from app.preview_proxy import ensure_pieces
+
+        source, ranges = _ranges(clip_plan_id)
+        return ensure_pieces(source, ranges, payload.focus if payload else 0, bool(payload and payload.retry))
+
+    @router.get("/media/sources/{source_id}/pieces/{name}", include_in_schema=False)
+    def media_piece(source_id: int, name: str, _auth: auth_dep) -> FileResponse:  # type: ignore[valid-type]
+        from app.preview_proxy import piece_file
+
+        _source(source_id)
+        path = piece_file(source_id, name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="куска нет")
+        # Имя содержит границы и версию: файл с этим именем не меняется.
+        return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, max-age=86400, immutable"})
 
     @router.get("/media/sources/{source_id}/proxy", include_in_schema=False)
     def media_proxy(source_id: int, _auth: auth_dep) -> FileResponse:  # type: ignore[valid-type]

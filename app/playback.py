@@ -51,33 +51,66 @@ def _latest_render(store: Any, clip_plan_id: int) -> dict | None:
     return None
 
 
-def media_for(store: Any, source: dict, clip_plan_id: int, fresh_fingerprint: str | None = None) -> dict:
-    """Чем играть основу: прокси, запись или (записи и прокси нет) готовый рендер с честной припиской."""
+def media_for(store: Any, source: dict, clip_plan_id: int, fresh_fingerprint: str | None = None,
+              ranges: list[tuple[float, float]] | None = None) -> dict:
+    """Чем играть основу: прокси, куски, запись или (ничего нет) готовый рендер с честной припиской.
+
+    ``render`` — готовый рендер, если он есть: плеер предложит его, когда живой монтаж не успевает."""
     from app import preview_proxy
 
     source_id = int(source["id"])
     proxy = preview_proxy.status(source)
     has_file = bool(source.get("has_file"))
-    out: dict[str, Any] = {"proxy": proxy, "has_file": has_file}
+    latest = _latest_render(store, clip_plan_id)
+    stale = bool(latest and fresh_fingerprint and latest.get("plan_fingerprint") and latest["plan_fingerprint"] != fresh_fingerprint)
+    render = {"url": f"/media/clips/{latest['id']}", "poster": f"/media/clips/{latest['id']}/thumb",
+              "clip_id": latest["id"], "stale": stale} if latest else None
+    out: dict[str, Any] = {"proxy": proxy, "has_file": has_file, "render": render}
     if preview_proxy.is_canvas(source):
         return {**out, "kind": "canvas", "url": f"/media/sources/{source_id}"}
     if proxy.get("status") == "ready":
         note = None if has_file else "Запись удалена: монтаж играет с лёгкого прокси 480p. Новый рендер — только с записью."
         return {**out, "kind": "proxy", "url": proxy["url"], "note": note}
+    if ranges:
+        if has_file and preview_proxy.wanted(source):
+            # Большая запись без прокси: сама запись не грузится вовсе (один её заголовок — 31 МБ).
+            return {**out, "kind": "pieces", "url": None}
+        if not has_file and preview_proxy.pieces_status(source, ranges)["ready"] == len(ranges):
+            return {**out, "kind": "pieces", "url": None,
+                    "note": "Запись удалена: монтаж играет с готовых кусков 480p. Новый рендер — только с записью."}
     if has_file:
         return {**out, "kind": "original", "url": f"/media/sources/{source_id}"}
-    render = _latest_render(store, clip_plan_id)
     if render:
-        stale = bool(fresh_fingerprint and render.get("plan_fingerprint") and render["plan_fingerprint"] != fresh_fingerprint)
         message = (
             "Запись удалена, прокси нет: живой монтаж показать не из чего. Показан готовый рендер"
             + (" — он собран до последних правок, их в нём нет." if stale else ".")
         )
-        return {**out, "kind": "render", "url": f"/media/clips/{render['id']}",
-                "poster": f"/media/clips/{render['id']}/thumb", "clip_id": render["id"], "stale": stale,
-                "message": message}
+        return {**out, "kind": "render", "url": render["url"], "poster": render["poster"],
+                "clip_id": render["clip_id"], "stale": stale, "message": message}
     return {**out, "kind": "none", "url": None,
             "message": "Запись удалена, прокси и готового рендера нет: показать нечего. Скачайте запись заново."}
+
+
+def part_ranges(store: Any, clip_plan_id: int) -> tuple[dict, list[tuple[float, float]]]:
+    """Источник клипа и отрезки записи его частей — те же, что в ``playback_plan`` (без остального плана)."""
+    from app.clip_settings import normalize_render_settings
+    from app.render import ClipRenderService, effective_preset
+
+    plan = store.get_clip_plan(clip_plan_id)
+    rs = normalize_render_settings(plan.get("render_settings") or {})
+    plan = {**plan, "render_settings": {**(plan.get("render_settings") or {}), **rs}}
+    source = store.get_source(int(plan["source_id"]))
+    segments = plan.get("segments") or []
+    preset = effective_preset(store, rs.get("preset_id")) or {}
+    cut_plan = ClipRenderService(store)._cut_plan(plan, rs.get("preset_id"), float(preset.get("fps") or 30)) if segments else None  # noqa: SLF001
+    parts = cut_plan.parts if cut_plan else segments
+    from app.piece_speed import is_reversed
+    from app.preview_proxy import chunk_ranges
+
+    ranges: list[tuple[float, float]] = []
+    for p in parts:
+        ranges.extend(chunk_ranges(float(p["start_sec"]), float(p["end_sec"]), is_reversed(p)))
+    return source, ranges
 
 
 def _subtitles(store: Any, plan: dict, cut_plan: Any, freezes: list[dict], rs: dict) -> dict:
@@ -106,6 +139,7 @@ def playback_plan(store: Any, clip_plan_id: int) -> dict:
     from app.motion_render import attach_caption_words, has_chat, plan_chat_messages
     from app.piece_speed import is_reversed, seg_length, seg_speed
     from app.render import ClipRenderService, effective_preset
+    from app.preview_proxy import chunk_ranges
     from app.transitions import JOIN_SFX_FILES, TRANSITIONS, normalize_transition, part_overlaps
 
     svc = ClipRenderService(store)
@@ -145,6 +179,7 @@ def playback_plan(store: Any, clip_plan_id: int) -> dict:
             "fit": part.get("fit"),
             "color_fix": part.get("color_fix"),
             "speed_audio": part.get("speed_audio"),
+            "chunks": chunk_ranges(float(part["start_sec"]), float(part["end_sec"]), is_reversed(part)),
             "overlap": round(overlaps[index], 4) if index < len(overlaps) else 0.0,
             "jump": bool(jumps[index]) if jumps and index < len(jumps) else False,
         })
@@ -323,6 +358,8 @@ def playback_plan(store: Any, clip_plan_id: int) -> dict:
         fingerprint = plan_fingerprint(store, clip_plan_id)
     except Exception:  # noqa: BLE001 - только подпись «рендер устарел»
         fingerprint = None
+    if jl:
+        warnings.append("J/L-склейки при просмотре с кусков не слышны: звук соседнего куска лежит в другом файле")
     if any(item.get("fx") in ("denoise", "speed", "reverse") for item in fx_spans):
         warnings.append("эффекты звука на отрезке «шумодав», «скорость», «реверс» слышны только в рендере")
 
@@ -340,7 +377,7 @@ def playback_plan(store: Any, clip_plan_id: int) -> dict:
             "focus_preset": source.get("focus_preset"),
             "canvas": source_is_canvas(source),
         },
-        "media": media_for(store, source, clip_plan_id, fingerprint),
+        "media": media_for(store, source, clip_plan_id, fingerprint, [tuple(c) for p in parts for c in p["chunks"]]),
         "format": fmt,
         "frame": {"w": frame_w, "h": frame_h},
         "fps": fps,
