@@ -69,7 +69,7 @@ def media_for(store: Any, source: dict, clip_plan_id: int, fresh_fingerprint: st
     if preview_proxy.is_canvas(source):
         return {**out, "kind": "canvas", "url": f"/media/sources/{source_id}"}
     if proxy.get("status") == "ready":
-        note = None if has_file else "Запись удалена: монтаж играет с лёгкого прокси 480p. Новый рендер — только с записью."
+        note = None if has_file else "Запись удалена: монтаж показан в 480p. Новый рендер — только с записью."
         return {**out, "kind": "proxy", "url": proxy["url"], "note": note}
     if ranges:
         if has_file and preview_proxy.wanted(source):
@@ -77,18 +77,18 @@ def media_for(store: Any, source: dict, clip_plan_id: int, fresh_fingerprint: st
             return {**out, "kind": "pieces", "url": None}
         if not has_file and preview_proxy.pieces_status(source, ranges)["ready"] == len(ranges):
             return {**out, "kind": "pieces", "url": None,
-                    "note": "Запись удалена: монтаж играет с готовых кусков 480p. Новый рендер — только с записью."}
+                    "note": "Запись удалена: монтаж показан в 480p. Новый рендер — только с записью."}
     if has_file:
         return {**out, "kind": "original", "url": f"/media/sources/{source_id}"}
     if render:
         message = (
-            "Запись удалена, прокси нет: живой монтаж показать не из чего. Показан готовый рендер"
+            "Запись удалена: живой монтаж показать не из чего. Показан готовый рендер"
             + (" — он собран до последних правок, их в нём нет." if stale else ".")
         )
         return {**out, "kind": "render", "url": render["url"], "poster": render["poster"],
                 "clip_id": render["clip_id"], "stale": stale, "message": message}
     return {**out, "kind": "none", "url": None,
-            "message": "Запись удалена, прокси и готового рендера нет: показать нечего. Скачайте запись заново."}
+            "message": "Запись удалена, готового рендера нет: показать нечего. Скачайте запись заново."}
 
 
 def part_ranges(store: Any, clip_plan_id: int) -> tuple[dict, list[tuple[float, float]]]:

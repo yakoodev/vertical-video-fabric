@@ -275,9 +275,9 @@ export function MontagePlayer({
   const loadingText = !plan
     ? "Готовлю монтаж…"
     : state.waitingPiece && piecesData
-      ? `Собираю видео: ${piecesData.ready} из ${piecesData.total} кусков`
+      ? `Готовлю видео: ${piecesData.ready} из ${piecesData.total}`
       : state.waitingPiece
-        ? "Собираю видео…"
+        ? "Готовлю видео…"
         : "Загружаю видео…";
 
   return (
@@ -440,22 +440,11 @@ export function MontagePlayer({
   );
 }
 
-function mediaChip(plan: PlaybackPlan | undefined, status?: string, progress?: number, pieces?: PiecesStatus): { text: string; hint: string } | null {
+function mediaChip(plan: PlaybackPlan | undefined, _status?: string, _progress?: number, pieces?: PiecesStatus): { text: string; hint: string } | null {
   if (!plan) return null;
-  const media = plan.media;
-  if (media.kind === "proxy") return { text: "быстрая копия 480p", hint: "Лёгкая копия записи: те же секунды, быстрая перемотка. Рендер — всегда из записи" };
-  if (media.kind === "pieces") {
-    const copy = status === "running" ? ` Лёгкая копия всей записи собирается в фоне: ${Math.round((progress ?? 0) * 100)}%.` : "";
-    return pieces && pieces.ready < pieces.total
-      ? { text: `видео 480p: готово ${pieces.ready} из ${pieces.total}`, hint: `Куски клипа собираются прямо сейчас, сама запись не грузится.${copy}` }
-      : { text: "видео 480p", hint: `Куски клипа: сама запись не грузится. Рендер — всегда из записи.${copy}` };
-  }
-  if (media.kind === "canvas") return { text: "холст", hint: "Клип без записи: фон и слои" };
-  if (media.kind === "original") {
-    if (status === "running" || status === "queued") {
-      return { text: `исходное видео; лёгкая копия ${status === "queued" ? "в очереди" : `${Math.round((progress ?? 0) * 100)}%`}`, hint: "Лёгкая копия собирается в фоне, потом плеер пересядет на неё сам" };
-    }
-    return { text: "исходное видео", hint: "Играет сам файл записи" };
+  // Чем именно играет плеер, зрителю знать незачем: только ход подготовки.
+  if (plan.media.kind === "pieces" && pieces && pieces.ready < pieces.total) {
+    return { text: `готовлю видео: ${pieces.ready} из ${pieces.total}`, hint: "Ещё несколько секунд" };
   }
   return null;
 }

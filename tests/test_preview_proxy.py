@@ -73,7 +73,7 @@ def test_proxy_outlives_the_record_file_and_keeps_montage_watchable(tmp_path, mo
     assert client.get(f"/api/sources/{source['id']}/proxy").json()["status"] == "ready"
     got = playback_plan(store, plan["id"])
     assert got["media"]["kind"] == "proxy"
-    assert "прокси" in got["media"]["note"]
+    assert "480p" in got["media"]["note"]
     # Кадры и волна берутся с прокси: монтаж можно править.
     assert client.get(f"/api/sources/{source['id']}/frame?t=1&w=160").status_code == 200
     assert client.get(f"/api/clip-plans/{plan['id']}/waveform").json()["peaks"]
