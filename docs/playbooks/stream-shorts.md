@@ -17,6 +17,8 @@
 
 ### 2. Отбор моментов
 
+- **Сначала вопросы владельцу.** Как в `stream-horizontal`, шаг 0: `add_stream_questions`, `add_meme_choices`,
+  и **обязательно** `list_stream_answers` перед отбором. Выбранный мем уже в библиотеке (`asset_id`).
 - `get_source_transcript(project_id)` — реплики всего стрима (`status: "running"` — повтори через
   `retry_after_sec`). `chat_activity` — всплески чата: событие на 5–20 с **раньше** всплеска.
   Игра без речи — `source_loudness` окнами по 10 мин.

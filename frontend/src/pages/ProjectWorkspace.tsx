@@ -8,6 +8,9 @@ import { SegmentsTab } from "@/pages/workspace/SegmentsTab";
 import { CandidatesTab } from "@/pages/workspace/CandidatesTab";
 import { ClipsTab } from "@/pages/workspace/ClipsTab";
 import { MontagedTab } from "@/pages/workspace/MontagedTab";
+import { RequireModule } from "@/components/RequireModule";
+import { useModules } from "@/hooks/useModules";
+import { StreamQuestionsTab } from "@/pages/workspace/StreamQuestionsTab";
 
 // "Монтаж" is not a route of its own: it opens the clip editor inside the
 // moments tab (?clip=<id>), so it shares the moments' selection and settings.
@@ -17,11 +20,13 @@ const TABS = [
   { seg: "edit", label: "Монтаж" },
   { seg: "clips", label: "Клипы" },
   { seg: "montaged", label: "Смонтированные" },
+  { seg: "questions", label: "Вопросы", module: "stream_questions" },
 ];
 
 export function ProjectWorkspace() {
   const { sourceId = "" } = useParams();
   const location = useLocation();
+  const { on } = useModules();
   const [searchParams] = useSearchParams();
   // In the clip editor the project chrome gets out of the way: the editor shows
   // only its own «← Назад к моментам» bar.
@@ -65,7 +70,7 @@ export function ProjectWorkspace() {
           </span>
         </div>
         <nav className="pipeline">
-          {TABS.map((tab, i) => {
+          {TABS.filter((tab) => !tab.module || on(tab.module)).map((tab, i) => {
             const n = tabCount(tab.seg);
             if (tab.seg === "edit") {
               return editTarget ? (
@@ -109,6 +114,7 @@ export function ProjectWorkspace() {
         <Route path="candidates" element={<CandidatesTab sourceId={sourceId} />} />
         <Route path="clips" element={<ClipsTab sourceId={sourceId} />} />
         <Route path="montaged" element={<MontagedTab sourceId={sourceId} />} />
+        <Route path="questions" element={<RequireModule id="stream_questions"><StreamQuestionsTab sourceId={sourceId} /></RequireModule>} />
         <Route path="*" element={<Navigate to="source" replace />} />
       </Routes>
     </>

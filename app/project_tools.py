@@ -70,7 +70,13 @@ def h_save_channel_project(ctx: ToolContext, args: dict) -> dict:
 
 def h_get_project_brief(ctx: ToolContext, args: dict) -> dict:
     limit = int(args.get("covered_limit") or 150)
-    return P.project_brief(ctx.store, _pid(ctx, args), covered_limit=max(1, min(limit, 500)))
+    brief = P.project_brief(ctx.store, _pid(ctx, args), covered_limit=max(1, min(limit, 500)))
+    if args.get("source_id") not in (None, ""):
+        # Ответы владельца по этому стриму и выбранные мемы (app/stream_questions.py) — рядом с лором.
+        from app.stream_questions import answers_brief
+
+        brief["stream_answers"] = answers_brief(ctx.store, int(args["source_id"]))
+    return brief
 
 
 def h_update_project_brief(ctx: ToolContext, args: dict) -> dict:
