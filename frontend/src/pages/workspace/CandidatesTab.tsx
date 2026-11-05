@@ -1418,7 +1418,6 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tlSelKey]);
   const [subLines, setSubLines] = useState<SubtitleLine[]>([]);
-  const assetsQuery = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
   const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
@@ -1436,6 +1435,16 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   });
 
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
+  // Файлы клипа (app/asset_scope.py): общие, его проекта и чужие, что уже в нём стоят (in_clip_only: нужны слоям,
+  // в списки выбора не идут — там pickableAssets).
+  const assetsFilter = activePlanId ? { clipId: activePlanId } : { shared: true };
+  const assetsQuery = useQuery({
+    queryKey: qk.montageAssetsScoped(assetsFilter),
+    queryFn: () => montageAssetsApi.listScoped(assetsFilter),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const pickableAssets = useMemo(() => (assetsQuery.data ?? []).filter((a) => !a.in_clip_only), [assetsQuery.data]);
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
   // Two-stage flow: triage the moments list, then open one clip in the editor.
   // The open editor lives in the URL (?clip=<id>): the browser's Back returns to
@@ -3940,7 +3949,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           ) : null}
           {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
           {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
-          {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={assetsQuery.data ?? []} /> : null}
+          {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={pickableAssets} clipId={activePlanId} /> : null}
           {libTab === "generate" && libTabs.some((t) => t.key === "generate") ? <GeneratePanel onAdd={addAtCursor} /> : null}
           {libTab === "media" ? (
             <div className="ed-lib-media">
@@ -3963,6 +3972,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               ) : null}
             </div>
             <AssetDrawer
+              clipId={activePlanId}
               onAdd={(assetId) => {
                 const asset = assetsQuery.data?.find((a) => a.id === assetId);
                 setInserts((prev) => [
@@ -4822,7 +4832,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 )}
               </Group>
               <Group title="Вставки (мемы)" badge={inserts.length ? String(inserts.length) : "нет"} defaultOpen>
-                {!assetsQuery.data?.length ? (
+                {!pickableAssets.length ? (
                   <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                     Библиотека пуста — закиньте мемы и звуки в{" "}
                     <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
@@ -4843,7 +4853,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                         onChange={(e) => upd({ asset_id: Number(e.target.value) })}
                       >
                         {!asset ? <option value={ins.asset_id}>файл удалён</option> : null}
-                        {assetsQuery.data?.map((a) => (
+                        {assetsQuery.data?.filter((a) => !a.in_clip_only || a.id === ins.asset_id).map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.label} · {a.kind}
                           </option>
@@ -4907,7 +4917,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     </div>
                   );
                 })}
-                {assetsQuery.data?.length ? (
+                {pickableAssets.length ? (
                   <button
                     type="button"
                     className="btn sm"
@@ -4916,12 +4926,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       setInserts((prev) => [
                         ...prev,
                         {
-                          asset_id: assetsQuery.data![0].id,
+                          asset_id: pickableAssets[0].id,
                           at: clipTimeNow(),
                           duration: 1.5,
-                          mode: assetsQuery.data![0].kind === "audio" ? "sound" : "full",
+                          mode: pickableAssets[0].kind === "audio" ? "sound" : "full",
                           volume: 1,
-                          duck: assetsQuery.data![0].kind !== "audio",
+                          duck: pickableAssets[0].kind !== "audio",
                         },
                       ])
                     }

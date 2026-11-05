@@ -376,7 +376,7 @@ def test_add_video_from_url_tool_and_api(tmp_path, monkeypatch):
     client, store = _client(tmp_path, monkeypatch)
     got: list = []
 
-    def fake_import(store_, url, start, end, label=""):
+    def fake_import(store_, url, start, end, label="", project_id=None):
         got.append((url, start, end, label))
         if url.endswith("bad"):
             raise ValueError("отрезок длиннее 180 с")

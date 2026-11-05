@@ -173,6 +173,12 @@ def ensure_projects_schema(conn) -> None:
         # Старые источники остаются без проекта (NULL) — ничего не теряется.
         conn.execute("ALTER TABLE sources ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_project ON sources(project_id)")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(montage_assets)")}
+    if columns and "project_id" not in columns:
+        # «Файлы для монтажа»: NULL — общий файл, число — файл проекта (app/asset_scope.py). Старые файлы — общие.
+        conn.execute("ALTER TABLE montage_assets ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+    if columns:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_montage_assets_project ON montage_assets(project_id)")
 
 
 # --------------------------------------------------------------------------- #
@@ -373,8 +379,8 @@ def update_project(store: Any, project_id: int, **fields: Any) -> dict:
 
 
 def delete_project(store: Any, project_id: int) -> dict:
-    """Удалить проект: источники и клипы остаются (без проекта), правила, гипотезы и
-    ручные публикации проекта уходят вместе с ним."""
+    """Удалить проект: источники и клипы остаются (без проекта), файлы для монтажа становятся общими, правила,
+    гипотезы и ручные публикации проекта уходят вместе с ним."""
     project = get_project(store, project_id)
     store.db.execute("UPDATE sources SET project_id = NULL WHERE project_id = ?", (int(project_id),))
     store.db.execute("DELETE FROM projects WHERE id = ?", (int(project_id),))

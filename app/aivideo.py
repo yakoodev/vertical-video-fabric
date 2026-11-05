@@ -1200,6 +1200,12 @@ def selected_ref(store: Any, project_id: int, target_type: str, target_id: int, 
 
 def add_ref(store: Any, project_id: int, target_type: str, target_id: int, kind: str, asset_id: int,
             prompt: str = "", job_id: int | None = None, slot: str = "", select: bool = True) -> dict:
+    # Все картинки ИИ-видео, объяснялок и историй идут сюда: чужой файл по id не проходит (app/asset_scope.py).
+    from app.asset_scope import allowed, refusal
+
+    asset = store.get_montage_asset(int(asset_id))
+    if not allowed(asset, project_id):
+        raise AivError(refusal(store, asset, project_id, "работа"))
     row = store.db.query_one(
         "SELECT MAX(version) AS v FROM aiv_refs WHERE project_id = ? AND target_type = ? AND target_id = ? "
         "AND kind = ? AND slot = ?", (int(project_id), target_type, int(target_id), kind, slot))

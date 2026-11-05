@@ -461,9 +461,12 @@ function Composer({
   running,
   onSend,
   onStop,
+  projectId,
 }: {
   disabled: boolean;
   running: boolean;
+  /** Чат проекта: приложенный файл становится файлом этого проекта. */
+  projectId?: number | null;
   onSend: (text: string, attachments: ChatAttachment[]) => Promise<unknown>;
   onStop: () => void;
 }) {
@@ -481,7 +484,7 @@ function Composer({
   }, [text]);
 
   const upload = useCallback((p: Pending) => {
-    const run = p.target === "source" ? chatApi.uploadSource(p.file) : chatApi.uploadAsset(p.file);
+    const run = p.target === "source" ? chatApi.uploadSource(p.file) : chatApi.uploadAsset(p.file, projectId);
     run
       .then((r) => {
         const att: ChatAttachment =
@@ -745,6 +748,7 @@ export function ChatConversation({
       {media ? <MediaPanel target={media} onClose={() => setMedia(null)} /> : null}
       <div className="chat-bottom">
         <Composer
+          projectId={view.data?.project?.id}
           disabled={false}
           running={running || send.isPending}
           onSend={(text, attachments) => send.mutateAsync({ text, attachments })}

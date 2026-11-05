@@ -92,7 +92,8 @@ def _download(url: str, template: Path, start: float, end: float):
     return proc
 
 
-def import_video_from_url(store, url: str, start: object, end: object, label: str = "") -> dict:
+def import_video_from_url(store, url: str, start: object, end: object, label: str = "",
+                          project_id: int | None = None) -> dict:
     """Скачать отрезок ролика по ссылке и завести «Файл для монтажа» (video, со звуком)."""
     from app.montage_assets import assets_dir, probe_asset
     from app.render import _run_ffmpeg
@@ -132,6 +133,7 @@ def import_video_from_url(store, url: str, start: object, end: object, label: st
             original_filename=name,
             mime_type="video/mp4",
             size_bytes=dest.stat().st_size,
+            project_id=project_id,
             **meta,
         )
     finally:

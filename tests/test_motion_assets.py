@@ -226,8 +226,8 @@ class _FakeStore:
     def __init__(self) -> None:
         self.assets: list[dict] = []
 
-    def list_montage_assets(self) -> list[dict]:
-        return list(self.assets)
+    def list_montage_assets(self, *, project_id=None, visible_to=None) -> list[dict]:
+        return [a for a in self.assets if visible_to is None or a.get("project_id") is None]
 
     def create_montage_asset(self, **fields) -> dict:
         asset = {"id": len(self.assets) + 1, **fields}

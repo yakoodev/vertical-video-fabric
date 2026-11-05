@@ -33,7 +33,11 @@ export function AiMontageDialog({
   const toast = useToast();
   const [goal, setGoal] = useState(initialGoal);
   const [proposal, setProposal] = useState<AiMontageProposal | null>(null);
-  const assets = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
+  const assets = useQuery({
+    queryKey: qk.montageAssetsScoped({ clipId: clipPlanId }),
+    queryFn: () => montageAssetsApi.listScoped({ clipId: clipPlanId }),
+    staleTime: 60_000,
+  });
   const MODE: Record<string, string> = { full: "на весь кадр", pip: "окном", sound: "звук" };
 
   const propose = useMutation({

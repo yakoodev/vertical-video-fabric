@@ -47,7 +47,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def _save_upload(file: UploadFile, label: str) -> dict:
+    def _save_upload(file: UploadFile, label: str, project_id: int) -> dict:
         from app.montage_assets import assets_dir, kind_for, probe_asset
 
         store = get_store()
@@ -61,7 +61,8 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         meta = probe_asset(dest)
         return store.create_montage_asset(kind=kind, label=label[:120], description="загрузка владельца (истории)",
                                            tags="история", file_path=str(dest), original_filename=name,
-                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size, **meta)
+                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size,
+                                           project_id=int(project_id), **meta)
 
     def _fields(payload: dict, keys: tuple[str, ...]) -> dict:
         return {k: payload.get(k) for k in keys if k in payload}
@@ -87,7 +88,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/stories/worlds/{world_id}/style-ref", summary="Референс стиля (загрузка)")
     def api_style_ref(world_id: int, _auth: auth_dep, file: UploadFile = File(...)) -> dict:
         world = call(S.get_world, world_id)
-        asset = _save_upload(file, f"Мир {world['name']}: стиль")
+        asset = _save_upload(file, f"Мир {world['name']}: стиль", world["project_id"])
         return call(S.add_style_ref, world_id, int(asset["id"]))
 
     @router.post("/api/stories/worlds/{world_id}/style/generate", summary="Кадр стиля (карточка)")
@@ -116,7 +117,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/stories/characters/{character_id}/sheet", summary="Лист актёра (загрузка)")
     def api_character_sheet(character_id: int, _auth: auth_dep, file: UploadFile = File(...)) -> dict:
         c = call(S.get_character, character_id)
-        asset = _save_upload(file, f"Актёр {c['name']}: лист")
+        asset = _save_upload(file, f"Актёр {c['name']}: лист", c["project_id"])
         return call(S.save_character, None, character_id, sheet_asset_id=int(asset["id"]))
 
     @router.post("/api/stories/characters/{character_id}/sheet/generate", summary="Нарисовать лист (карточка)")
@@ -143,7 +144,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/stories/locations/{location_id}/plate", summary="Плита локации (загрузка)")
     def api_location_plate(location_id: int, _auth: auth_dep, file: UploadFile = File(...)) -> dict:
         loc = call(S.get_location, location_id)
-        asset = _save_upload(file, f"Локация {loc['name']}: плита")
+        asset = _save_upload(file, f"Локация {loc['name']}: плита", loc["project_id"])
         return call(S.save_location, None, location_id, plate_asset_id=int(asset["id"]))
 
     @router.post("/api/stories/locations/{location_id}/plate/generate", summary="Нарисовать плиту (карточка)")
@@ -166,7 +167,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
                          title: str = Form(""), tags: str = Form(""), location_id: str = Form(""),
                          cast: str = Form("")) -> dict:
         world = call(S.get_world, world_id)
-        asset = _save_upload(file, f"Мир {world['name']}: {title or 'сцена'}")
+        asset = _save_upload(file, f"Мир {world['name']}: {title or 'сцена'}", world["project_id"])
         try:
             cast_ids = json.loads(cast) if cast.strip().startswith("[") else [c for c in cast.split(",") if c.strip()]
         except ValueError:
@@ -241,9 +242,9 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         return out
 
     @router.get("/api/stories/sfx", summary="Звуки действий (настоящие записи)")
-    def api_sfx(_auth: auth_dep, q: str = "") -> dict:
+    def api_sfx(_auth: auth_dep, q: str = "", project_id: int | None = None) -> dict:
         store = get_store()
-        options = S.sfx_options(store)
+        options = S.sfx_options(store, project_id)
         return {"sounds": options, "match": S.resolve_sfx(q, options) if q else None}
 
     return router

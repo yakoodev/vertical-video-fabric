@@ -623,7 +623,7 @@ export function SoundsPanel({ onAdd, clipDuration }: { onAdd: AddLayers; clipDur
 
 /* ---------- мемы ---------- */
 
-export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: MontageAsset[] }) {
+export function MemesPanel({ onAdd, assets, clipId }: { onAdd: AddLayers; assets: MontageAsset[]; clipId?: number | null }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [q, setQ] = useState("");
@@ -639,7 +639,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
     setUploading(list.length);
     for (const f of list) {
       try {
-        const asset = await montageAssetsApi.upload(f, f.name.replace(/\.[^.]+$/, ""));
+        const asset = await montageAssetsApi.upload(f, f.name.replace(/\.[^.]+$/, ""), "", "", { clipId });
         // Видео (запись экрана) — слоем video в телефоне, картинка — как раньше.
         onAdd([asset.kind === "video" ? videoLayer(String(asset.id)) : imageLayer({ asset_id: String(asset.id) }, 760, 3)]);
       } catch (e) {
@@ -743,7 +743,7 @@ export function MemesPanel({ onAdd, assets }: { onAdd: AddLayers; assets: Montag
 
 /* ---------- генерация и поиск картинок ---------- */
 
-export function GeneratePanel({ onAdd }: { onAdd: AddLayers }) {
+export function GeneratePanel({ onAdd, clipId }: { onAdd: AddLayers; clipId?: number | null }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
@@ -752,7 +752,7 @@ export function GeneratePanel({ onAdd }: { onAdd: AddLayers }) {
   const [results, setResults] = useState<AssetSearchResult[]>([]);
   const [made, setMade] = useState<MontageAsset[]>([]);
   const generate = useMutation({
-    mutationFn: () => montageAssetsApi.generate(prompt.trim()),
+    mutationFn: () => montageAssetsApi.generate(prompt.trim(), "", "", { clipId }),
     onSuccess: (asset) => {
       qc.invalidateQueries({ queryKey: qk.montageAssets });
       setMade((prev) => [asset, ...prev]);
@@ -773,7 +773,7 @@ export function GeneratePanel({ onAdd }: { onAdd: AddLayers }) {
   const take = async (item: AssetSearchResult) => {
     setAdding(item.url);
     try {
-      const asset = await montageAssetsApi.fromUrl(item.url, item.title, item.license ? `Источник: ${item.source} · ${item.license}` : "");
+      const asset = await montageAssetsApi.fromUrl(item.url, item.title, item.license ? `Источник: ${item.source} · ${item.license}` : "", { clipId });
       qc.invalidateQueries({ queryKey: qk.montageAssets });
       onAdd([imageLayer({ asset_id: String(asset.id) }, 760, 3)]);
     } catch (e) {

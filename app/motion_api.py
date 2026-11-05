@@ -192,6 +192,10 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
             ref_exists=(lambda ref: resolve_pack_ref(ref) is not None) if pack_refs_available() else None,
         )
         problems += validate_camera(camera, duration or None)
+        from app.asset_scope import clip_project, new_foreign_assets, refusal, render_asset_ids
+
+        foreign = new_foreign_assets(store, clip_plan_id, render_asset_ids({"layers": normalize_layers(layers)}), saved)
+        problems += [refusal(store, asset, clip_project(store, clip_plan_id)) for asset in foreign]
         return {
             "problems": problems,
             "layers": normalize_layers(layers),

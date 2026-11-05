@@ -63,9 +63,11 @@ def generate_asset(
     client: GeminiClient | None = None,
     model: str | None = None,
     output_format: str = "9:16",
+    project_id: int | None = None,
 ) -> dict:
     """Draw one original image and put it in the library (described, ready to use).
-    ``output_format`` — формат клипа, куда картинка пойдёт (кадр в подсказке модели)."""
+    ``output_format`` — формат клипа, куда картинка пойдёт (кадр в подсказке модели);
+    ``project_id`` — чей файл (None — общий, app/asset_scope.py)."""
     from app import modules
 
     modules.require("asset_ai", store)
@@ -91,6 +93,7 @@ def generate_asset(
         original_filename=dest.name,
         mime_type=mime,
         size_bytes=len(blob),
+        project_id=project_id,
         **meta,
     )
     return {**asset, "prompt": wish, "model": used_model}
@@ -105,7 +108,8 @@ MIN_FOUND_BYTES = 8000
 
 
 def _download_first_usable(
-    store: Any, query: str, label: str, when: str, client: GeminiClient | None = None
+    store: Any, query: str, label: str, when: str, client: GeminiClient | None = None,
+    project_id: int | None = None,
 ) -> dict | None:
     """Качаем кандидатов по очереди, пока не попадётся картинка нормального размера."""
     from app.ai.asset_search import find_candidates
@@ -129,6 +133,7 @@ def _download_first_usable(
                 label=(label or found.get("title") or query)[:120],
                 description=" ".join(x for x in (found.get("title"), when, note) if x)[:500],
                 timeout=25,
+                project_id=project_id,
             )
         except Exception:  # noqa: BLE001 - не скачалось, пробуем следующего
             continue
@@ -184,7 +189,8 @@ def image_matches(asset: dict, query: str, client: GeminiClient | None = None) -
 
 
 def obtain_assets(
-    store: Any, wishes: list[dict], client: GeminiClient | None = None, output_format: str = "9:16"
+    store: Any, wishes: list[dict], client: GeminiClient | None = None, output_format: str = "9:16",
+    project_id: int | None = None,
 ) -> list[dict]:
     """Добыть картинки, которые заказал ИИ-монтаж: сначала найти, иначе нарисовать.
 
@@ -203,7 +209,7 @@ def obtain_assets(
         from app import modules
 
         # «Картинки из интернета» выключены (Настройки → Модули) — сразу рисуем.
-        found = _download_first_usable(store, query, label, when, client) \
+        found = _download_first_usable(store, query, label, when, client, project_id=project_id) \
             if query and modules.is_enabled("web_images", store) else None
         if found:
             got.append({**found, "wish": wish})
@@ -240,7 +246,8 @@ def ensure_assets(store: Any, wishes: list[dict], client: GeminiClient | None = 
     return made
 
 
-def add_from_url(store: Any, url: str, label: str = "", description: str = "", timeout: float = 60) -> dict:
+def add_from_url(store: Any, url: str, label: str = "", description: str = "", timeout: float = 60,
+                 project_id: int | None = None) -> dict:
     """Save a file the owner (or an agent) points at by a direct link."""
     import httpx
 
@@ -282,5 +289,6 @@ def add_from_url(store: Any, url: str, label: str = "", description: str = "", t
         original_filename=name,
         mime_type=mime,
         size_bytes=size,
+        project_id=project_id,
         **meta,
     )

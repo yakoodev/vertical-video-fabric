@@ -86,6 +86,10 @@ class ToolContext:
     framing_fails: int = 0
     framing_manual: int = 0
     framing_stop: str = ""
+    # «Файлы для монтажа» (app/asset_scope.py). project_hint — проект без клипа (чат проекта); trusted_assets —
+    # сборка сервиса (объяснялка): ставит файлы своего ролика, чужие она не выбирает.
+    project_hint: int | None = None
+    trusted_assets: bool = False
 
     def before_change(self) -> None:
         if not self.changed and self.on_first_change is not None:
@@ -312,18 +316,52 @@ def _lint_scene(ctx: ToolContext, render: dict) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+def _assets_project(ctx: ToolContext, args: dict | None = None) -> int | None:
+    """Чьи файлы видит вызов и куда кладёт новые: проект клипа; без клипа — clip_id или project_id из аргументов,
+    проект чата. None — только общие (app/asset_scope.py)."""
+    from app.asset_scope import clip_project
+
+    args = args or {}
+    clip_id = ctx.clip_plan_id if ctx.clip_plan_id is not None else args.get("clip_id")
+    if clip_id not in (None, ""):
+        try:
+            return clip_project(ctx.store, int(clip_id))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"клипа {clip_id} нет — см. list_clips") from exc
+    if args.get("project_id") not in (None, ""):
+        try:
+            return int(ctx.store.db.query_one("SELECT id FROM projects WHERE id = ?", (int(args["project_id"]),))["id"])
+        except (TypeError, ValueError) as exc:
+            raise ToolError(f"проекта {args['project_id']} нет — см. list_series") from exc
+    return ctx.project_hint
+
+
+def _foreign_asset_problem(ctx: ToolContext, asset_id: Any) -> str | None:
+    """Новый файл чужого проекта в этом клипе — текст отказа (что уже стоит в клипе, не проверяем)."""
+    from app.asset_scope import new_foreign_assets, refusal
+
+    if ctx.trusted_assets:
+        return None
+    foreign = new_foreign_assets(ctx.store, ctx.plan_id, [asset_id])
+    return refusal(ctx.store, foreign[0], _assets_project(ctx)) if foreign else None
+
+
 def _validate_new_layers(ctx: ToolContext, raw: list, duration: float) -> list[str]:
-    """Проверка той же функцией, что и файл клипа, плюс «файл/эмодзи/стикер есть»."""
+    """Проверка той же функцией, что и файл клипа, плюс «файл/эмодзи/стикер есть» и «файл не из чужого проекта»."""
+    foreign: list[str] = []
 
     def asset_exists(asset_id: int) -> bool:
         try:
             ctx.store.get_montage_asset(int(asset_id))
-            return True
         except (KeyError, TypeError, ValueError):
             return False
+        problem = _foreign_asset_problem(ctx, asset_id)
+        if problem:
+            foreign.append(problem)
+        return True
 
     problems = motion.validate_layers(raw, duration, asset_exists=asset_exists, ref_exists=_ref_checker())
-    return problems + _video_kind_problems(ctx, raw) + _scene_engine_problems(raw)[0]
+    return problems + foreign + _video_kind_problems(ctx, raw) + _scene_engine_problems(raw)[0]
 
 
 def _scene_engine_problems(raw: Any) -> tuple[list[str], list[str]]:
@@ -3293,9 +3331,12 @@ def h_search_pack(_ctx: ToolContext, args: dict) -> dict:
 
 
 def h_list_assets(ctx: ToolContext, args: dict) -> dict:
+    from app.asset_scope import visible_assets
+
     query = str(args.get("q") or "").strip().lower()
+    project_id = _assets_project(ctx, args)
     out = []
-    for asset in ctx.store.list_montage_assets():
+    for asset in visible_assets(ctx.store, project_id):
         hay = " ".join(str(asset.get(k) or "") for k in ("label", "description", "tags")).lower()
         if query and not all(word in hay for word in query.split()):
             continue
@@ -3309,11 +3350,12 @@ def h_list_assets(ctx: ToolContext, args: dict) -> dict:
                 "width": asset.get("width"),
                 "height": asset.get("height"),
                 "duration_sec": asset.get("duration_sec"),
+                "scope": "project" if asset.get("project_id") is not None else "shared",
             }
         )
         if len(out) >= 60:
             break
-    return {"assets": out}
+    return {"assets": out, "project_id": project_id}
 
 
 def h_search_web_images(_ctx: ToolContext, args: dict) -> dict:
@@ -3344,7 +3386,8 @@ def h_add_image_from_url(ctx: ToolContext, args: dict) -> dict:
     url = str(args.get("url") or "").strip()
     try:
         asset = add_from_url(ctx.store, url, label=str(args.get("label") or "")[:120],
-                             description=str(args.get("description") or "")[:500])
+                             description=str(args.get("description") or "")[:500],
+                             project_id=_assets_project(ctx, args))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
@@ -3454,6 +3497,7 @@ def h_upload_image(ctx: ToolContext, args: dict) -> dict:
         original_filename=name,
         mime_type="",
         size_bytes=len(data),
+        project_id=_assets_project(ctx, args),
         **meta,
     )
     return {"ok": True, "asset_id": asset["id"], "kind": asset["kind"], "label": asset["label"],
@@ -3484,6 +3528,9 @@ def _pngtuber_asset(ctx: ToolContext, value: Any, what: str, required: bool = Tr
         asset = ctx.store.get_montage_asset(int(value))
     except (KeyError, TypeError, ValueError) as exc:
         raise ToolError(f"{what}: файла для монтажа {value!r} нет — id из list_assets или upload_image") from exc
+    foreign = _foreign_asset_problem(ctx, asset["id"])
+    if foreign:
+        raise ToolError(f"{what}: {foreign}")
     if asset.get("kind") not in ("image", "gif", "video"):
         raise ToolError(f"{what}: файл {asset['id']} — {asset.get('kind')}, нужна картинка или GIF")
     return str(asset["id"])
@@ -3539,6 +3586,9 @@ def h_add_pngtuber(ctx: ToolContext, args: dict) -> dict:
     track, voice_note = _pngtuber_track(ctx, args)
     voice: dict = {}
     if args.get("voice_asset") not in (None, ""):
+        foreign = _foreign_asset_problem(ctx, args["voice_asset"])
+        if foreign:
+            raise ToolError(f"voice_asset: {foreign}")
         voice["asset_id"] = str(int(args["voice_asset"]))
     elif track is not None:
         voice["track"] = track
@@ -3722,6 +3772,7 @@ def h_upload_video(ctx: ToolContext, args: dict) -> dict:
         original_filename=name,
         mime_type="",
         size_bytes=len(data),
+        project_id=_assets_project(ctx, args),
         **meta,
     )
     return {**_video_asset_result(asset), **_animation_fields(dest)}
@@ -3783,6 +3834,8 @@ def h_add_video_from_source(ctx: ToolContext, args: dict) -> dict:
         original_filename=dest.name,
         mime_type="video/mp4",
         size_bytes=dest.stat().st_size,
+        # Кусок проекта: без клипа и явного проекта файл идёт в проект самого источника.
+        project_id=_assets_project(ctx, args) or source.get("project_id"),
         **meta,
     )
     return _video_asset_result(asset)
@@ -3794,7 +3847,7 @@ def h_add_video_from_url(ctx: ToolContext, args: dict) -> dict:
 
     try:
         asset = import_video_from_url(ctx.store, str(args.get("url") or ""), args.get("start"), args.get("end"),
-                                      str(args.get("label") or ""))
+                                      str(args.get("label") or ""), project_id=_assets_project(ctx, args))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
@@ -4056,7 +4109,8 @@ def h_generate_image(ctx: ToolContext, args: dict) -> dict:
     if len(prompt) < 3:
         raise ToolError("нужно описание картинки prompt")
     try:
-        asset = generate_asset(ctx.store, prompt, label=str(args.get("label") or "")[:120])
+        asset = generate_asset(ctx.store, prompt, label=str(args.get("label") or "")[:120],
+                               project_id=_assets_project(ctx, args))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except RuntimeError as exc:
@@ -4578,7 +4632,7 @@ def h_add_sound_from_url(ctx: ToolContext, args: dict) -> dict:
 
     try:
         asset = import_sound_from_url(ctx.store, str(args.get("url") or ""), str(args.get("label") or ""),
-                                      start=_num(args.get("start"), 0.0) or 0.0)
+                                      start=_num(args.get("start"), 0.0) or 0.0, project_id=_assets_project(ctx, args))
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - сеть/удалённый сайт
@@ -4779,6 +4833,10 @@ def h_set_end_screen(ctx: ToolContext, args: dict) -> dict:
         except (KeyError, TypeError, ValueError) as exc:
             raise ToolError(f"бренда {brand_id} нет — см. list_brands") from exc
     fields = {k: args[k] for k in END_SCREEN_FIELDS if k in args}
+    if fields.get("svg_asset_id"):
+        foreign = _foreign_asset_problem(ctx, fields["svg_asset_id"])
+        if foreign:
+            raise ToolError(f"svg_asset_id: {foreign}")
     try:
         return set_end_screen(ctx.store, ctx.plan_id, fields, brand_id=int(brand_id) if brand_id else None,
                               remove=args.get("remove") is True, before_change=ctx.before_change)
@@ -4788,11 +4846,20 @@ def h_set_end_screen(ctx: ToolContext, args: dict) -> dict:
 
 def h_svg_to_webm(ctx: ToolContext, args: dict) -> dict:
     """SVG (текст или файл библиотеки) → webm с альфой в «Файлы для монтажа» (app/svg_webm.py)."""
+    from app.asset_scope import allowed, refusal
     from app.svg_webm import SvgWebmError, asset_svg_text, svg_to_asset
 
+    project_id = _assets_project(ctx, args)
     try:
+        if args.get("asset_id"):
+            source = ctx.store.get_montage_asset(int(args["asset_id"]))
+            if not allowed(source, project_id):
+                raise ToolError(refusal(ctx.store, source, project_id))
         svg = asset_svg_text(ctx.store, args["asset_id"]) if args.get("asset_id") else args.get("svg")
-        asset, info = svg_to_asset(ctx.store, svg, args, label=str(args.get("label") or "SVG-анимация"))
+        asset, info = svg_to_asset(ctx.store, svg, args, label=str(args.get("label") or "SVG-анимация"),
+                                   project_id=project_id)
+    except KeyError as exc:
+        raise ToolError(f"файла для монтажа {args.get('asset_id')!r} нет") from exc
     except (ValueError, SvgWebmError) as exc:
         raise ToolError(str(exc)) from exc
     return {"ok": True, "asset_id": asset["id"], "label": asset["label"], "cached": info["cached"],
@@ -5872,6 +5939,9 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         asset = ctx.store.get_montage_asset(int(args.get("asset_id")))
     except (KeyError, TypeError, ValueError) as exc:
         raise ToolError("нет такого файла в библиотеке (см. list_assets)") from exc
+    foreign = _foreign_asset_problem(ctx, asset["id"])
+    if foreign:
+        raise ToolError(foreign)
     mode = args.get("mode") or ("sound" if asset["kind"] == "audio" else "pip")
     if mode not in MODES:
         raise ToolError(f"mode: одно из {', '.join(MODES)}")
@@ -6371,6 +6441,10 @@ def _scaffold_assets(ctx: ToolContext, spec: dict) -> tuple[dict, list[str]]:
         except (KeyError, TypeError, ValueError):
             problems.append(f"{where}: файла {ref} нет в библиотеке — id из list_assets")
             continue
+        foreign = _foreign_asset_problem(ctx, asset["id"])
+        if foreign:
+            problems.append(f"{where}: {foreign}")
+            continue
         if asset.get("kind") not in kinds:
             problems.append(f"{where}: {ref} — {asset.get('kind')}, нужен {' или '.join(kinds)}"
                             + (" (запись экрана: upload_video / add_video_from_source)" if "video" in kinds else ""))
@@ -6743,6 +6817,14 @@ def _obj(properties: dict, required: list[str] | None = None) -> dict:
     if required:
         schema["required"] = required
     return schema
+
+
+# Чей файл (app/asset_scope.py) у глобальных инструментов «Файлов для монтажа»: без клипа в контексте — эти поля;
+# нет и их — файл общий.
+ASSET_OWNER_PARAMS = {
+    "clip_id": {"type": "integer", "description": "клип: файл его проекта"},
+    "project_id": {"type": "integer", "description": "проект: файл этого проекта"},
+}
 
 
 _AT_WORD_SCHEMA = {
@@ -7209,8 +7291,10 @@ def _build_registry() -> list[Tool]:
         Tool(
             "list_assets", "Смотрю библиотеку",
             "«Файлы для монтажа» владельца (мемы, реакции, звуки) — asset_id для слоёв image/audio и "
-            "вставок. q — фильтр по словам. / Owner's montage library.",
-            _obj({"q": {"type": "string"}}), h_list_assets, scope="global",
+            "вставок: только общие и файлы проекта клипа, чужие брать нельзя. q — фильтр по словам; без клипа в "
+            "контексте — clip_id или project_id, иначе только общие. / Owner's montage library: shared files "
+            "and files of the clip's project.",
+            _obj({"q": {"type": "string"}, **ASSET_OWNER_PARAMS}), h_list_assets, scope="global",
         ),
         Tool(
             "search_web_images", "Ищу картинку в интернете",
@@ -7227,7 +7311,7 @@ def _build_registry() -> list[Tool]:
             "искал (кого/что должна показывать картинка): Gemini проверит, что она про это, иначе ошибка и "
             "бери следующего кандидата. / Download to library.",
             _obj({"url": {"type": "string"}, "label": {"type": "string"}, "description": {"type": "string"},
-                  "query": {"type": "string"}}, ["url"]),
+                  "query": {"type": "string"}, **ASSET_OWNER_PARAMS}, ["url"]),
             h_add_image_from_url, scope="global", label=lambda a: f"Скачиваю картинку {(a.get('label') or '')[:40]}",
         ),
         Tool(
@@ -7236,7 +7320,7 @@ def _build_registry() -> list[Tool]:
             "(можно data:-URL), filename с расширением .png/.jpg/.webp/.gif, label. До 12 МБ. Вернёт asset_id "
             "для слоя image. / Upload a local image as base64.",
             _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "label": {"type": "string"},
-                  "description": {"type": "string"}}, ["data_base64", "filename"]),
+                  "description": {"type": "string"}, **ASSET_OWNER_PARAMS}, ["data_base64", "filename"]),
             h_upload_image, scope="global", label=lambda a: f"Загружаю {(a.get('label') or a.get('filename') or '')[:40]}",
         ),
         Tool(
@@ -7245,7 +7329,7 @@ def _build_registry() -> list[Tool]:
             "filename .mp4/.webm/.mov/.m4v, label. До 40 МБ (больше — загрузи исходником и add_video_from_source). "
             "Вернёт asset_id для слоя video. / Upload a screen recording as base64.",
             _obj({"data_base64": {"type": "string"}, "filename": {"type": "string"}, "label": {"type": "string"},
-                  "description": {"type": "string"}}, ["data_base64", "filename"]),
+                  "description": {"type": "string"}, **ASSET_OWNER_PARAMS}, ["data_base64", "filename"]),
             h_upload_video, scope="global", label=lambda a: f"Загружаю видео {(a.get('label') or a.get('filename') or '')[:40]}",
         ),
         Tool(
@@ -7255,7 +7339,7 @@ def _build_registry() -> list[Tool]:
             "конца). Звук сохраняется (audio:false — немое); в клипе он играет только у слоя с props.audio: true. "
             "/ Cut a source range into the library for a video layer.",
             _obj({"source_id": {"type": "integer"}, "start": {"type": "number"}, "end": {"type": "number"},
-                  "label": {"type": "string"}, "audio": {"type": "boolean"}}, ["source_id"]),
+                  "label": {"type": "string"}, "audio": {"type": "boolean"}, **ASSET_OWNER_PARAMS}, ["source_id"]),
             h_add_video_from_source, scope="global",
             label=lambda a: f"Беру кусок источника {a.get('source_id')} {_num(a.get('start'), 0.0) or 0:g}–"
             f"{a.get('end') if a.get('end') is not None else 'конец'} с",
@@ -7267,7 +7351,7 @@ def _build_registry() -> list[Tool]:
             "библиотеку (asset_id для слоя video; звук в клипе — props.audio: true). Сам ролики в интернете не "
             "ищи — только ссылка владельца. / Download only a section of a video by the owner's link.",
             _obj({"url": {"type": "string"}, "start": {"type": "number"}, "end": {"type": "number"},
-                  "label": {"type": "string"}}, ["url", "start", "end"]),
+                  "label": {"type": "string"}, **ASSET_OWNER_PARAMS}, ["url", "start", "end"]),
             h_add_video_from_url, scope="global",
             label=lambda a: f"Скачиваю отрезок {_num(a.get('start'), 0.0) or 0:g}–{_num(a.get('end'), 0.0) or 0:g} с"
             + (f" «{_short(a.get('label'), 30)}»" if a.get("label") else ""),
@@ -7275,7 +7359,8 @@ def _build_registry() -> list[Tool]:
         Tool(
             "generate_image", "Рисую картинку",
             "Нарисовать оригинальную картинку/стикер (ИИ) в библиотеку; вернёт asset_id. / Generate an image.",
-            _obj({"prompt": {"type": "string"}, "label": {"type": "string"}}, ["prompt"]), h_generate_image,
+            _obj({"prompt": {"type": "string"}, "label": {"type": "string"}, **ASSET_OWNER_PARAMS}, ["prompt"]),
+            h_generate_image,
             scope="global", label=lambda a: f"Рисую «{_short(a.get('prompt'), 40)}»",
         ),
         Tool(
@@ -7407,7 +7492,8 @@ def _build_registry() -> list[Tool]:
             "звук; start — с какой секунды взять). Режет тишину в начале, обрезает до 6 с → asset_id для слоя "
             "audio. Сам звуки в интернете не ищи — только ссылка владельца; иначе пак freesound (search_pack). / "
             "Sound effect from the owner's link.",
-            _obj({"url": {"type": "string"}, "label": {"type": "string"}, "start": {"type": "number"}}, ["url"]),
+            _obj({"url": {"type": "string"}, "label": {"type": "string"}, "start": {"type": "number"},
+                  **ASSET_OWNER_PARAMS}, ["url"]),
             h_add_sound_from_url, scope="global",
             label=lambda a: f"Скачиваю звук {(a.get('label') or '')[:40]}".strip(),
         ),
@@ -7706,7 +7792,8 @@ def _build_registry() -> list[Tool]:
                   "duration": {"type": "number", "minimum": 0.2, "maximum": 30},
                   "fps": {"type": "integer", "minimum": 1, "maximum": 60},
                   "width": {"type": "integer"}, "height": {"type": "integer"},
-                  "scale": {"type": "number", "minimum": 0.25, "maximum": 3}, "strip_bg": {"type": "boolean"}}),
+                  "scale": {"type": "number", "minimum": 0.25, "maximum": 3}, "strip_bg": {"type": "boolean"},
+                  **ASSET_OWNER_PARAMS}),
             h_svg_to_webm, scope="global", label=lambda a: "SVG → webm",
         ),
         Tool(

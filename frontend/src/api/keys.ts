@@ -1,6 +1,9 @@
 // Single source of truth for query keys → predictable, narrow invalidation.
 export const qk = {
   montageAssets: ["montage-assets"] as const,
+  // Под общим ключом: invalidate(montageAssets) обновляет и списки по клипу, и вкладки страницы файлов.
+  montageAssetsScoped: (filter: { clipId?: number | null; projectId?: number | null; shared?: boolean }) =>
+    ["montage-assets", filter.clipId ?? null, filter.projectId ?? null, Boolean(filter.shared)] as const,
   sources: ["sources"] as const,
   source: (id: number | string) => ["sources", String(id)] as const,
   sourceStats: (id: number | string) => ["sources", String(id), "stats"] as const,

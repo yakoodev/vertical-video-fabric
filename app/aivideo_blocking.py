@@ -1815,7 +1815,7 @@ def render(store: Any, shot_id: int, which: str, job: dict | None = None) -> dic
         kind="image", label=f"ИИ-видео: план {shot['idx']} — блокинг {which}"[:120],
         description=f"ИИ-видео: блокинг плана {shot['idx']} ({which}) — 3D-макет композиции"[:500],
         tags="ии-видео", file_path=str(dest), original_filename=dest.name, mime_type="image/png",
-        size_bytes=dest.stat().st_size, **meta)
+        size_bytes=dest.stat().st_size, project_id=int(project_id), **meta)
     return V.add_ref(store, project_id, "shot", int(shot_id), kind, int(asset["id"]), prompt=marker,
                      job_id=(job or {}).get("id"))
 

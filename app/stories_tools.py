@@ -179,7 +179,7 @@ def h_delete(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_sfx(ctx: ToolContext, args: dict) -> dict:
-    options = S.sfx_options(ctx.store)
+    options = S.sfx_options(ctx.store, args.get("project_id"))
     q = str(args.get("query") or "").strip()
     if q:
         hit = S.resolve_sfx(q, options)

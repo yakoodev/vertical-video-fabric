@@ -658,7 +658,7 @@ def make_tail_start(store: Any, project_id: int, prev: dict, shot: dict, job: di
         description=(f"ИИ-видео: старт плана {shot['idx']} — последний кадр видео плана {prev['idx']} "
                      f"({TAIL_SOURCE})")[:500],
         tags="ии-видео", file_path=str(dest), original_filename=dest.name, mime_type="image/jpeg",
-        size_bytes=dest.stat().st_size, **meta)
+        size_bytes=dest.stat().st_size, project_id=int(project_id), **meta)
     ref = V.add_ref(store, project_id, "shot", int(shot["id"]), "keyframe", int(asset["id"]),
                     prompt=_tail_marker(video), job_id=(job or {}).get("id"))
     # Новый старт — видео этого плана (если было) стоит на старом старте: устарело.
@@ -1788,7 +1788,7 @@ def _save_asset(store: Any, job: dict, path: Path, kind: str, mime: str, label: 
     return store.create_montage_asset(
         kind=kind, label=label[:120], description=f"ИИ-видео: {job['label']} ({job['provider']}/{job['model']})"[:500],
         tags="ии-видео", file_path=str(dest), original_filename=dest.name, mime_type=mime,
-        size_bytes=dest.stat().st_size, **meta)
+        size_bytes=dest.stat().st_size, project_id=int(job["project_id"]), **meta)
 
 
 def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "",

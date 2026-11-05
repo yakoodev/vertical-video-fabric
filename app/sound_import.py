@@ -96,7 +96,7 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")[:50] or "sound"
 
 
-def import_sound_from_url(store, url: str, label: str = "", start: float = 0.0) -> dict:
+def import_sound_from_url(store, url: str, label: str = "", start: float = 0.0, project_id: int | None = None) -> dict:
     """Скачать звук по ссылке, обрезать до MAX_SOUND_SEC и завести «Файл для монтажа» (audio)."""
     from app.montage_assets import assets_dir, probe_asset
 
@@ -141,6 +141,7 @@ def import_sound_from_url(store, url: str, label: str = "", start: float = 0.0) 
             original_filename=name,
             mime_type="audio/mpeg",
             size_bytes=dest.stat().st_size,
+            project_id=project_id,
             **{**meta, "width": 0, "height": 0},
         )
     finally:

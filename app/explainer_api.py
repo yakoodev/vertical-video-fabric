@@ -41,7 +41,7 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def _save_upload(file: UploadFile, label: str) -> dict:
+    def _save_upload(file: UploadFile, label: str, project_id: int) -> dict:
         from app.montage_assets import assets_dir, kind_for, probe_asset
 
         store = get_store()
@@ -55,7 +55,8 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         meta = probe_asset(dest)
         return store.create_montage_asset(kind=kind, label=label[:120], description="загрузка владельца (объяснялки)",
                                            tags="объяснялка,маскот", file_path=str(dest), original_filename=name,
-                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size, **meta)
+                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size,
+                                           project_id=int(project_id), **meta)
 
     # --- обзор и маскоты --------------------------------------------------- #
 
@@ -80,7 +81,7 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
     @router.post("/api/explainer/mascots/{mascot_id}/sheet", summary="Лист маскота (загрузка)")
     def api_sheet(mascot_id: int, _auth: auth_dep, file: UploadFile = File(...)) -> dict:
         mascot = call(E.get_mascot, mascot_id)
-        asset = _save_upload(file, f"Маскот {mascot['name']}: лист")
+        asset = _save_upload(file, f"Маскот {mascot['name']}: лист", mascot["project_id"])
         return call(E.set_sheet, mascot_id, int(asset["id"]))
 
     @router.post("/api/explainer/mascots/{mascot_id}/sheet/generate", summary="Нарисовать лист маскота (карточка)")
@@ -94,7 +95,7 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
                         description: str = Form(""), title: str = Form(""), tags: str = Form(""),
                         number_shown: str = Form("")) -> dict:
         mascot = call(E.get_mascot, mascot_id)
-        asset = _save_upload(file, f"Маскот {mascot['name']}: {title or 'поза'}")
+        asset = _save_upload(file, f"Маскот {mascot['name']}: {title or 'поза'}", mascot["project_id"])
         return call(E.save_pose, mascot_id, description=description or title or "pose", title=title or None,
                     tags=tags, number_shown=number_shown or None, origin="upload", asset_id=int(asset["id"]))
 

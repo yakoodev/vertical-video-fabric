@@ -457,7 +457,8 @@ def import_to_montage_library(store: Any, pack_id: str, file: str) -> dict:
     """Копирует элемент пака в библиотеку «Файлов для монтажа», чтобы его можно было
     вставить классической вставкой (ffmpeg-оверлей) и чтобы его видел ИИ-монтаж.
 
-    Повторный импорт того же файла возвращает уже существующую запись.
+    Повторный импорт того же файла возвращает уже существующую запись. Паки сервисные — файл всегда общий:
+    запись, которую владелец унёс в проект, не считается (её id другим проектам брать нельзя).
     """
     from app.montage_assets import assets_dir, kind_for, probe_asset
 
@@ -468,7 +469,7 @@ def import_to_montage_library(store: Any, pack_id: str, file: str) -> dict:
         # ffmpeg-вставки SVG не читают; SVG живут только как моушн-слой.
         raise ValueError("SVG-стикер можно положить только моушн-слоем, не вставкой")
     original = f"{pack_id}/{file}"
-    for asset in store.list_montage_assets():
+    for asset in store.list_montage_assets(visible_to=()):
         if asset.get("original_filename") == original and Path(asset.get("file_path", "")).exists():
             return asset
     kind = kind_for(file)

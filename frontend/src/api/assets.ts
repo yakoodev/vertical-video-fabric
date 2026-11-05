@@ -89,7 +89,27 @@ export interface MontageAsset {
   has_audio: boolean;
   size_bytes: number;
   created_at: string;
+  /** null — общий файл, число — файл проекта (app/asset_scope.py). */
+  project_id: number | null;
+  /** Чужой файл, который уже стоит в клипе: для подписи слоя, в списках выбора его нет. */
+  in_clip_only?: boolean;
 }
+
+/** Куда положить новый файл: проект клипа, заданный проект; ничего — общий. */
+export interface AssetOwner {
+  projectId?: number | null;
+  clipId?: number | null;
+}
+
+/** Какие файлы показать: что доступно клипу, файлы проекта, только общие; ничего — все. */
+export interface AssetListFilter extends AssetOwner {
+  shared?: boolean;
+}
+
+const ownerFields = (owner?: AssetOwner) => ({
+  ...(owner?.clipId ? { clip_id: owner.clipId } : {}),
+  ...(owner?.projectId ? { project_id: owner.projectId } : {}),
+});
 
 export interface AssetSearchResult {
   url: string;
@@ -102,15 +122,26 @@ export interface AssetSearchResult {
 
 export const montageAssetsApi = {
   list: () => api.get<MontageAsset[]>("/api/montage-assets"),
-  upload: (file: File, label = "", description = "", tags = "") => {
+  listScoped: (filter: AssetListFilter) => {
+    const q = filter.clipId
+      ? `clip_id=${filter.clipId}`
+      : filter.projectId
+        ? `project_id=${filter.projectId}`
+        : filter.shared
+          ? "scope=shared"
+          : "";
+    return api.get<MontageAsset[]>(`/api/montage-assets${q ? `?${q}` : ""}`);
+  },
+  upload: (file: File, label = "", description = "", tags = "", owner?: AssetOwner) => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("label", label);
     fd.append("description", description);
     fd.append("tags", tags);
+    for (const [key, value] of Object.entries(ownerFields(owner))) fd.append(key, String(value));
     return api.form<MontageAsset>("/api/montage-assets", fd);
   },
-  update: (id: number, patch: Partial<Pick<MontageAsset, "label" | "description" | "tags">>) =>
+  update: (id: number, patch: Partial<Pick<MontageAsset, "label" | "description" | "tags" | "project_id">>) =>
     api.patch<MontageAsset>(`/api/montage-assets/${id}`, patch),
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/montage-assets/${id}`),
   /** ✨ The AI looks at the file and writes what it is / when it fits / tags. */
@@ -122,11 +153,11 @@ export const montageAssetsApi = {
       { query, count, free_only },
     ),
   /** Скачать выбранного кандидата (или любую прямую ссылку) в библиотеку. */
-  fromUrl: (url: string, label = "", description = "") =>
-    api.post<MontageAsset>(`/api/montage-assets/from-url`, { url, label, description }),
+  fromUrl: (url: string, label = "", description = "", owner?: AssetOwner) =>
+    api.post<MontageAsset>(`/api/montage-assets/from-url`, { url, label, description, ...ownerFields(owner) }),
   /** ✨ ИИ рисует оригинальную картинку по описанию. */
-  generate: (prompt: string, label = "", when = "") =>
-    api.post<MontageAsset>(`/api/montage-assets/generate`, { prompt, label, when }),
+  generate: (prompt: string, label = "", when = "", owner?: AssetOwner) =>
+    api.post<MontageAsset>(`/api/montage-assets/generate`, { prompt, label, when, ...ownerFields(owner) }),
   describeMissing: (asset_ids: number[] = []) =>
     api.post<{ described: number; failed: number; errors: Record<string, string>; assets: MontageAsset[] }>(
       `/api/montage-assets/describe`,

@@ -892,7 +892,7 @@ def pilot_dir() -> Path:
     return settings.runtime_dir / "explainer"
 
 
-def _copy_asset(store: Any, src: Path, label: str, description: str) -> dict:
+def _copy_asset(store: Any, src: Path, label: str, description: str, project_id: int | None = None) -> dict:
     """Файл → «Файлы для монтажа» (копия в каталог библиотеки, как загрузка)."""
     from app.montage_assets import assets_dir, probe_asset
 
@@ -902,7 +902,7 @@ def _copy_asset(store: Any, src: Path, label: str, description: str) -> dict:
     mime = "image/png" if dest.suffix == ".png" else "image/jpeg"
     return store.create_montage_asset(kind="image", label=label[:120], description=description[:500],
                                       tags="объяснялка,маскот", file_path=str(dest), original_filename=src.name,
-                                      mime_type=mime, size_bytes=dest.stat().st_size, **meta)
+                                      mime_type=mime, size_bytes=dest.stat().st_size, project_id=project_id, **meta)
 
 
 def import_pilot(store: Any, project_id: int | None = None, directory: str | Path | None = None) -> dict:
@@ -943,7 +943,7 @@ def import_pilot(store: Any, project_id: int | None = None, directory: str | Pat
     if not mascot["sheet"]:
         sheet = folder / SHEET_FILE
         if sheet.is_file():
-            asset = _copy_asset(store, sheet, f"Маскот {MASCOT['name']}: лист", "лист маскота пилота")
+            asset = _copy_asset(store, sheet, f"Маскот {MASCOT['name']}: лист", "лист маскота пилота", int(project_id))
             mascot = set_sheet(store, int(mascot["id"]), int(asset["id"]))
         else:
             notes.append(f"нет листа {sheet.name} — загрузи лист маскота")
@@ -958,7 +958,7 @@ def import_pilot(store: Any, project_id: int | None = None, directory: str | Pat
             notes.append(f"нет файла {spec['file']}")
             continue
         asset = _copy_asset(store, src, f"Маскот {MASCOT['name']}: {spec['title']}",
-                            f"поза пилота: {spec['description']}")
+                            f"поза пилота: {spec['description']}", int(project_id))
         if spec["slug"] in have:
             pose = save_pose(store, pose_id=int(have[spec["slug"]]["id"]), asset_id=int(asset["id"]), origin="pilot")
         else:

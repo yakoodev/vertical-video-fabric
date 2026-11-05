@@ -188,7 +188,10 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
     () => Array.from(new Set((fonts.data ?? []).map((f) => f.family))).sort((a, c) => a.localeCompare(c)),
     [fonts.data],
   );
-  const images = (assets.data ?? []).filter((a) => a.kind === "image" || a.kind === "gif");
+  // Бренд общий на все проекты: логотип — общий файл (нынешний логотип остаётся в списке, даже если его перенесли).
+  const images = (assets.data ?? []).filter(
+    (a) => (a.kind === "image" || a.kind === "gif") && (a.project_id == null || a.id === b.logo_asset_id),
+  );
   const logo = images.find((a) => a.id === b.logo_asset_id);
   const set = <K extends keyof BrandInput>(key: K, value: BrandInput[K]) => setB((prev) => ({ ...prev, [key]: value }));
 
