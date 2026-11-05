@@ -61,7 +61,8 @@ def build_end_screen_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         store = get_store()
         try:
             svg = asset_svg_text(store, body["asset_id"]) if body.get("asset_id") else body.get("svg")
-            asset, info = svg_to_asset(store, svg, body, label=str(body.get("label") or "SVG-анимация"))
+            asset, info = svg_to_asset(store, svg, body, label=str(body.get("label") or "SVG-анимация"),
+                                       project_id=int(body["project_id"]) if body.get("project_id") else None)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except SvgWebmError as exc:

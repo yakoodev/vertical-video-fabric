@@ -10,7 +10,7 @@ import { useToast } from "@/components/Toast";
  * кандидатов с источником и лицензией, файл попадает в библиотеку только по
  * кнопке «Добавить» — что публиковать, решает владелец.
  */
-export function AssetSearchPanel() {
+export function AssetSearchPanel({ projectId }: { projectId?: number | null }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -32,7 +32,7 @@ export function AssetSearchPanel() {
   const add = async (item: AssetSearchResult) => {
     setAdding(item.url);
     try {
-      await montageAssetsApi.fromUrl(item.url, item.title, item.license ? `Источник: ${item.source} · ${item.license}` : "");
+      await montageAssetsApi.fromUrl(item.url, item.title, item.license ? `Источник: ${item.source} · ${item.license}` : "", { projectId });
       qc.invalidateQueries({ queryKey: qk.montageAssets });
       toast.success("Добавлено в библиотеку — ИИ сейчас опишет файл");
       setResults((prev) => prev.filter((r) => r.url !== item.url));

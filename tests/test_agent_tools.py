@@ -284,7 +284,7 @@ def test_add_image_from_url_drops_off_topic_picture(monkeypatch):
             deleted.append(asset_id)
 
     monkeypatch.setattr("app.ai.asset_generate.add_from_url",
-                        lambda store, url, label="", description="": {"id": 5, "kind": "image", "label": label})
+                        lambda store, url, label="", description="", project_id=None: {"id": 5, "kind": "image", "label": label})
     monkeypatch.setattr("app.ai.asset_generate.image_matches", lambda asset, query, client=None: False)
     out, ok = run_tool(ToolContext(store=Store()), "add_image_from_url",
                        {"url": "https://x/belaz.jpg", "label": "Олег", "query": "Олег Монгол"})

@@ -10,7 +10,7 @@ import { useToast } from "@/components/Toast";
  * реальных людей, известных персонажей и логотипов) — такое можно публиковать,
  * в отличие от найденного в интернете чужого мема.
  */
-export function AssetGeneratePanel() {
+export function AssetGeneratePanel({ projectId }: { projectId?: number | null }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -18,7 +18,7 @@ export function AssetGeneratePanel() {
   const [when, setWhen] = useState("");
 
   const generate = useMutation({
-    mutationFn: () => montageAssetsApi.generate(prompt.trim(), "", when.trim()),
+    mutationFn: () => montageAssetsApi.generate(prompt.trim(), "", when.trim(), { projectId }),
     onSuccess: (asset) => {
       qc.invalidateQueries({ queryKey: qk.montageAssets });
       setPrompt("");

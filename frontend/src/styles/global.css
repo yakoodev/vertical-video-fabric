@@ -3405,6 +3405,23 @@ kbd {
   color: #fff;
 }
 .asset-kind { top: 7px; left: 7px; }
+.asset-proj {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  max-width: calc(100% - 70px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+}
+.asset-owner { font-size: 12px; }
+.asset-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.asset-scope .input { width: auto; min-width: 180px; }
 .asset-dur { bottom: 7px; right: 7px; }
 .asset-card .card-del { opacity: 0.85; top: 7px; right: 7px; }
 .asset-label { font-weight: 600; }

@@ -742,6 +742,7 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     work = settings.tmp_dir / f"dub-{uuid4().hex}"
     work.mkdir(parents=True, exist_ok=True)
     try:
+        from app.asset_scope import clip_project
         from app.montage_assets import assets_dir, probe_asset
 
         track = work / "dub.mp3"
@@ -753,7 +754,8 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
             kind="audio", label=f"Озвучка RU · клип {clip_plan_id}"[:120],
             description=f"TTS {tts.name}/{tts.model}, голос {tts.voice}, {estimate['chars']} символов"[:500],
             tags="озвучка", file_path=str(dest), original_filename=dest.name, mime_type="audio/mpeg",
-            size_bytes=dest.stat().st_size, **{**meta, "width": 0, "height": 0},
+            size_bytes=dest.stat().st_size, project_id=clip_project(store, clip_plan_id),
+            **{**meta, "width": 0, "height": 0},
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)

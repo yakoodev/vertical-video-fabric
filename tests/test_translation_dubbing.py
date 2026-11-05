@@ -34,8 +34,19 @@ ENGLISH = {
 }
 
 
+class _FakeDb:
+    """Проект клипа для озвучки (app/asset_scope.py): у подделки клип в проекте ``project_id``."""
+
+    def __init__(self, project_id=None):
+        self.project_id = project_id
+
+    def query_one(self, _sql, _params=()):
+        return {"project_id": self.project_id, "direct": None}
+
+
 class FakeStore:
-    def __init__(self, subs=None, render=None, segments=None):
+    def __init__(self, subs=None, render=None, segments=None, project_id=None):
+        self.db = _FakeDb(project_id)
         self.subs = subs
         self.render = normalize_render_settings(render or {})
         self.segments = segments or [{"start_sec": 10.0, "end_sec": 14.0}]
@@ -381,6 +392,16 @@ def test_dub_track_fits_phrases_and_reports_overflow(tmp_path):
     assert levels[17] < -60  # 1.7 с — пауза
     assert levels[25] > -40  # 2.5 с — вторая фраза
     assert levels[35] < -60  # 3.5 с — после окна второй фразы тишина
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="нужен ffmpeg")
+def test_dub_track_becomes_a_file_of_the_clip_project(monkeypatch, tmp_path):
+    monkeypatch.setattr(dubbing.settings, "dubbing_enabled", False)
+    monkeypatch.setattr("app.montage_assets.assets_dir", lambda: tmp_path)
+    store = _translated_store()
+    store.db = _FakeDb(5)
+    assert dubbing.dub_clip(store, 1, provider="none", confirm=True)["status"] == "done"
+    assert store.assets[0]["project_id"] == 5
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="нужен ffmpeg")

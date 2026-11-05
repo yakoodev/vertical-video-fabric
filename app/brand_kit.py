@@ -840,6 +840,7 @@ def apply_brand(
     None — как в бренде (у бренда её нет — уже стоящая плашка, например от set_nameplate, остаётся).
     Ошибки — ValueError (слои не прошли проверку), KeyError (нет клипа/бренда)."""
     from app.agent_tools import clip_timeline, covering_problems, lint_layers
+    from app.asset_scope import new_foreign_assets
     from app.auto_edit import caption_y_for
     from app.chroma_key import normalize_backdrop
     from app.formats import ref_size, settings_layers_format
@@ -977,6 +978,10 @@ def apply_brand(
             warnings.append(f"логотипа #{brand['logo_asset_id']} больше нет в библиотеке — без логотипа")
         if asset is not None and asset.get("kind") not in ("image", "gif"):
             warnings.append(f"логотип #{asset['id']} — не картинка, пропущен")
+            asset = None
+        if asset is not None and new_foreign_assets(store, clip_plan_id, [asset["id"]], render):
+            warnings.append(f"логотип #{asset['id']} лежит в другом проекте, клипу его брать нельзя — без логотипа "
+                            "(логотип бренда держи в общих файлах)")
             asset = None
         if asset is not None:
             start = 0.0

@@ -242,10 +242,14 @@ def _ref_brief(ref: dict | None) -> dict | None:
             "stale": ref["stale"]}
 
 
-def _image_asset(store: Any, asset_id: Any, what: str) -> dict:
+def _image_asset(store: Any, asset_id: Any, what: str, project_id: int | None = None) -> dict:
+    from app.asset_scope import allowed, refusal
+
     asset = store.get_montage_asset(int(asset_id))
     if asset.get("kind") != "image":
         raise StoryError(f"{what} — картинка (png/jpg/webp)")
+    if project_id is not None and not allowed(asset, project_id):
+        raise StoryError(f"{what}: " + refusal(store, asset, project_id, "мир"))
     return asset
 
 
@@ -409,7 +413,7 @@ def delete_world(store: Any, world_id: int) -> dict:
 def add_style_ref(store: Any, world_id: int, asset_id: int) -> dict:
     """Референс стиля — картинка владельца (в свободный слот, иначе заменяет третий)."""
     world = get_world(store, world_id)
-    asset = _image_asset(store, asset_id, "референс стиля")
+    asset = _image_asset(store, asset_id, "референс стиля", int(world["project_id"]))
     taken = {str(r["slot"]) for r in style_refs(store, world)}
     slot = next((str(n) for n in range(1, STYLE_REFS_MAX + 1) if str(n) not in taken), str(STYLE_REFS_MAX))
     V.add_ref(store, int(world["project_id"]), T_WORLD, int(world_id), STYLE_KIND, int(asset["id"]),
@@ -516,7 +520,7 @@ def save_character(store: Any, world_id: int | None = None, character_id: int | 
         V.mark_stale(store, int(world["project_id"]), T_CHAR, int(character_id))
         _stale_scenes(store, int(world["id"]), char_id=int(character_id))
     if sheet_asset_id:
-        _image_asset(store, sheet_asset_id, "лист актёра")
+        _image_asset(store, sheet_asset_id, "лист актёра", int(world["project_id"]))
         V.add_ref(store, int(world["project_id"]), T_CHAR, int(character_id), SHEET_KIND, int(sheet_asset_id),
                   prompt="upload")
     return get_character(store, int(character_id))
@@ -564,7 +568,7 @@ def save_location(store: Any, world_id: int | None = None, location_id: int | No
         V.mark_stale(store, int(world["project_id"]), T_LOC, int(location_id))
         _stale_scenes(store, int(world["id"]), loc_id=int(location_id))
     if plate_asset_id:
-        _image_asset(store, plate_asset_id, "плита локации")
+        _image_asset(store, plate_asset_id, "плита локации", int(world["project_id"]))
         V.add_ref(store, int(world["project_id"]), T_LOC, int(location_id), PLATE_KIND, int(plate_asset_id),
                   prompt="upload")
     return get_location(store, int(location_id))
@@ -711,7 +715,7 @@ def save_scene(store: Any, world_id: int | None = None, scene_id: int | None = N
         store.db.execute(f"UPDATE story_scenes SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                          (*sets.values(), int(scene_id)))
     if asset_id:
-        _image_asset(store, asset_id, "картинка сцены")
+        _image_asset(store, asset_id, "картинка сцены", int(world["project_id"]))
         V.add_ref(store, int(world["project_id"]), T_SCENE, int(scene_id), SCENE_KIND, int(asset_id), prompt="upload")
     return get_scene(store, int(scene_id))
 
@@ -761,8 +765,9 @@ def match_scene(scenes: list[dict], spec: dict, threshold: float = REUSE_MIN) ->
 # --------------------------------------------------------------------------- #
 
 
-def sfx_options(store: Any) -> list[dict]:
-    """Доступные записи: паки ``SFX_PACKS`` и звуки владельца в «Файлах для монтажа» (тег «звук»)."""
+def sfx_options(store: Any, project_id: int | None = None) -> list[dict]:
+    """Доступные записи: паки ``SFX_PACKS`` и звуки владельца в «Файлах для монтажа» (тег «звук»): общие и файлы
+    проекта ``project_id`` (app/asset_scope.py)."""
     from app.motion_assets import pack_items
 
     out: list[dict] = []
@@ -778,7 +783,7 @@ def sfx_options(store: Any) -> list[dict]:
                         "tags": [str(t) for t in item.get("tags") or []][:8], "source": pack_id,
                         "duration": item.get("duration") or item.get("duration_sec")})
     try:
-        assets = store.list_montage_assets()
+        assets = store.list_montage_assets(visible_to=() if project_id is None else (int(project_id),))
     except Exception:  # noqa: BLE001
         assets = []
     for asset in assets:

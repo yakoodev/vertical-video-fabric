@@ -322,7 +322,7 @@ def test_add_image_from_url_drops_real_person_when_order_forbids(tmp_path, monke
     store, plan = _plan(tmp_path, monkeypatch)
     made = {}
 
-    def fake_add_from_url(store_, url, label="", description=""):
+    def fake_add_from_url(store_, url, label="", description="", project_id=None):
         made["asset"] = _image_asset(store_, tmp_path, label or "angry monitor")
         return made["asset"]
 

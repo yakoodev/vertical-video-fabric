@@ -165,9 +165,10 @@ export const chatApi = {
   clip: (id: number) => api.get<ClipBrief>(`/api/chat/clips/${id}`),
   approval: (id: number) => api.get<Approval>(`/api/approvals/${id}`),
   projectThread: (projectId: number) => api.get<{ thread_id: number }>(`/api/projects/${projectId}/chat`),
-  uploadAsset: (file: File) => {
+  uploadAsset: (file: File, projectId?: number | null) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (projectId) fd.append("project_id", String(projectId));
     return request<{ id: number; kind: string; label: string }>("/api/montage-assets", { method: "POST", body: fd });
   },
   uploadSource: (file: File) => {

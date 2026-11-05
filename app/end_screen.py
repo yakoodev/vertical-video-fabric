@@ -564,6 +564,7 @@ def build_end_screen(
     ``src`` — поля ``normalize_end_screen`` + ``y`` (центр баннера, доля кадра) и ``w`` (ширина, опорные
     px). Баннер — webm из SVG шаблона или своего SVG (кэш по хешу: тот же текст — тот же файл)."""
     from app import motion
+    from app.asset_scope import clip_project
     from app.brand_kit import tail_start
     from app.svg_webm import asset_svg_text, svg_size, svg_to_asset
 
@@ -587,7 +588,7 @@ def build_end_screen(
     # webm — в том размере, что баннер займёт на кадре 1080 (не мельче — не мылится).
     scale = max(0.5, min(2.0, width / max(1.0, float(sw))))
     asset, info = svg_to_asset(store, svg, {"duration": round(want + WEBM_TAIL, 3), "fps": WEBM_FPS, "scale": scale},
-                               label=label, run=run)
+                               label=label, run=run, project_id=clip_project(store, clip_plan_id))
     es["asset_id"], es["duration"] = int(asset["id"]), want
     y = _num(src.get("y"), BANNER_Y_DEFAULT, 0.12, 0.8)
     layer = {

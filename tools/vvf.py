@@ -179,8 +179,13 @@ def cmd_upload(args) -> None:
 
 
 def cmd_asset(args) -> None:
-    fields = {"label": args.label} if args.label else None
-    asset = _post_file("/api/montage-assets", args.file, fields)
+    fields = {"label": args.label} if args.label else {}
+    # Чей файл: --clip — проект этого клипа, --project — проект; ничего — общий (app/asset_scope.py).
+    if args.clip:
+        fields["clip_id"] = str(args.clip)
+    if args.project:
+        fields["project_id"] = str(args.project)
+    asset = _post_file("/api/montage-assets", args.file, fields or None)
     layer = "video" if asset.get("kind") == "video" else "image" if asset.get("kind") in ("image", "gif") else "audio"
     print(f"asset_id {asset['id']}: {asset.get('kind')} · {asset.get('label', '')} · "
           f"{asset.get('width') or 0}×{asset.get('height') or 0} · {asset.get('duration_sec') or 0:.1f} с"
@@ -483,6 +488,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     p = sub.add_parser("asset", help="файл в «Файлы для монтажа» (картинка, видео, звук) → asset_id")
     p.add_argument("file")
     p.add_argument("--label", "-l", default="")
+    p.add_argument("--clip", type=int, help="файл проекта этого клипа")
+    p.add_argument("--project", type=int, help="файл этого проекта (без --clip и --project — общий)")
     p.set_defaults(fn=cmd_asset)
     p = sub.add_parser("asset-url", help="отрезок ролика по ссылке (yt-dlp, ≤ 180 с, со звуком) → asset_id видео")
     p.add_argument("url")

@@ -2294,20 +2294,31 @@ class AppStore:
         cur = self.db.execute(
             """
             INSERT INTO montage_assets (kind, label, description, tags, file_path, original_filename,
-                                        mime_type, duration_sec, width, height, has_audio, size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        mime_type, duration_sec, width, height, has_audio, size_bytes, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f["kind"], str(f["label"]).strip()[:120] or "файл", str(f.get("description") or "")[:500],
                 str(f.get("tags") or "")[:200], str(f["file_path"]), f.get("original_filename") or "",
                 f.get("mime_type") or "", float(f.get("duration_sec") or 0), int(f.get("width") or 0),
                 int(f.get("height") or 0), int(bool(f.get("has_audio"))), int(f.get("size_bytes") or 0),
+                int(f["project_id"]) if f.get("project_id") is not None else None,
             ),
         )
         return self.get_montage_asset(cur.lastrowid)
 
-    def list_montage_assets(self) -> list[dict]:
-        return [_decode_asset(dict(r)) for r in self.db.query_all("SELECT * FROM montage_assets ORDER BY id DESC")]
+    def list_montage_assets(self, *, project_id: int | None = None, visible_to: Any = None) -> list[dict]:
+        """Все файлы; ``project_id`` — только файлы этого проекта; ``visible_to`` (id проектов, () — ни одного) —
+        общие плюс файлы этих проектов: так подбирают файл для клипа (app/asset_scope.py)."""
+        where, params = "", ()
+        if project_id is not None:
+            where, params = "WHERE project_id = ?", (int(project_id),)
+        elif visible_to is not None:
+            ids = tuple(int(p) for p in visible_to)
+            marks = ", ".join("?" for _ in ids)
+            where, params = f"WHERE project_id IS NULL OR project_id IN ({marks})" if ids else "WHERE project_id IS NULL", ids
+        rows = self.db.query_all(f"SELECT * FROM montage_assets {where} ORDER BY id DESC", params)
+        return [_decode_asset(dict(r)) for r in rows]
 
     def get_montage_asset(self, asset_id: int) -> dict:
         row = self.db.query_one("SELECT * FROM montage_assets WHERE id = ?", (asset_id,))
@@ -2327,6 +2338,8 @@ class AppStore:
         if "people_check" in fields:
             value = fields["people_check"]
             updates["people_check"] = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else ""
+        if "project_id" in fields:  # None — в общие
+            updates["project_id"] = int(fields["project_id"]) if fields["project_id"] is not None else None
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
             self.db.execute(f"UPDATE montage_assets SET {sets} WHERE id = ?", (*updates.values(), asset_id))

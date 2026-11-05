@@ -133,6 +133,15 @@ def _changed_layer_problems(raw_layers: Any, stored_layers: list[dict]) -> list[
     return kept
 
 
+def _foreign_asset_problems(store: AppStore, clip_plan_id: int, render: dict, stored: dict) -> list[str]:
+    """Новый файл чужого проекта в слоях и вставках (app/asset_scope.py); стоящие в клипе файлы не проверяем."""
+    from app.asset_scope import clip_project, new_foreign_assets, refusal, render_asset_ids
+
+    wanted = render_asset_ids({"layers": normalize_layers(render.get("layers")), "inserts": render.get("inserts")})
+    foreign = new_foreign_assets(store, clip_plan_id, wanted, stored)
+    return [f"render: {refusal(store, a, clip_project(store, clip_plan_id))}" for a in foreign]
+
+
 def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion: bool = True) -> dict:
     """Check the whole file; return the normalized operations or raise SpecError.
 
@@ -245,6 +254,7 @@ def validate_spec(store: AppStore, clip_plan_id: int, spec: Any, *, check_motion
         # них не должна ломаться правка кусков, откат или ИИ-монтаж.
         stored = normalize_render_settings(plan.get("render_settings") or {})
         problems.extend(f"render.{p}" for p in _changed_layer_problems(render.get("layers"), stored["layers"]))
+        problems.extend(_foreign_asset_problems(store, clip_plan_id, render, stored))
         if normalize_camera(render.get("camera")) != stored["camera"]:
             problems.extend(f"render.{p}" for p in validate_camera(render.get("camera")))
         if normalize_cuts(render.get("cuts")) != stored["cuts"]:

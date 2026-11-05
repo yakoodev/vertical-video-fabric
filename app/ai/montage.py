@@ -196,6 +196,8 @@ def _schema() -> dict[str, Any]:
 
 def build_context(store: Any, clip_plan_id: int) -> tuple[dict, dict]:
     """(current clip file, what the model sees)."""
+    from app.asset_scope import clip_project, visible_assets
+
     spec = export_spec(store, clip_plan_id)
     try:
         cues = store.get_source_transcript(int(spec["source"]["id"]))
@@ -234,7 +236,8 @@ def build_context(store: Any, clip_plan_id: int) -> tuple[dict, dict]:
     last_qc = next((r.get("qc") for r in reversed(spec.get("renders") or []) if r.get("qc")), None)
     library = []
     if hasattr(store, "list_montage_assets"):
-        for a in store.list_montage_assets()[:MAX_LIBRARY]:
+        # Только общие файлы и файлы проекта клипа (app/asset_scope.py): library_ids отсеют всё остальное.
+        for a in visible_assets(store, clip_project(store, clip_plan_id))[:MAX_LIBRARY]:
             library.append(
                 {
                     "asset_id": a["id"],
@@ -508,7 +511,7 @@ def propose_montage(
 _EDITABLE = ("schema", "title", "description", "notes", "favorite", "pieces", "render")
 
 
-def _draw_wanted(store: Any, spec: dict) -> dict:
+def _draw_wanted(store: Any, spec: dict, clip_plan_id: int | None = None) -> dict:
     """Добываем заказанные ИИ картинки (поиск или рисунок) и ставим их вставками.
 
     Файлы остаются в библиотеке: следующий клип возьмёт их оттуда, не тратя
@@ -523,7 +526,10 @@ def _draw_wanted(store: Any, spec: dict) -> dict:
     from app.formats import settings_render_format
 
     fmt = settings_render_format(spec.get("render"))
-    made = obtain_assets(store, wishes, **({"output_format": fmt} if fmt != "9:16" else {}))
+    from app.asset_scope import clip_project
+
+    project_id = clip_project(store, clip_plan_id) if clip_plan_id is not None else None
+    made = obtain_assets(store, wishes, project_id=project_id, **({"output_format": fmt} if fmt != "9:16" else {}))
     if not made:
         return spec
     extra = []
@@ -557,7 +563,7 @@ def apply_montage(store: Any, clip_plan_id: int, spec: dict) -> tuple[dict, list
     """
     from app.clip_spec import apply_spec
 
-    spec = _draw_wanted(store, dict(spec))
+    spec = _draw_wanted(store, dict(spec), clip_plan_id)
     if store.get_clip_plan_montage_backup(clip_plan_id) is None:
         current = export_spec(store, clip_plan_id)
         store.set_clip_plan_montage_backup(clip_plan_id, {k: current[k] for k in _EDITABLE if k in current})

@@ -26,6 +26,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 CONVERTER_VERSION = "1"  # меняется — кэш считается заново
 FPS_DEFAULT = 30
@@ -237,22 +238,33 @@ def convert(svg: Any, params: Any = None, *, run: Callable[[list[str], float], s
         return {**meta, "path": str(out), "key": key, "cached": False}
 
 
-def find_asset(store: Any, path: str | Path) -> dict | None:
-    """Файл библиотеки, который уже смотрит на этот файл кэша (тот же SVG → тот же asset_id)."""
-    target = str(Path(path))
-    return next((a for a in store.list_montage_assets() if str(Path(a.get("file_path") or "")) == target), None)
+def find_asset(store: Any, path: str | Path, project_id: int | None = None) -> dict | None:
+    """Файл библиотеки для этого файла кэша (тот же SVG → тот же asset_id): общий или этого проекта. Тот же SVG
+    в другом проекте — отдельная запись с копией файла, чужой id брать нельзя (app/asset_scope.py)."""
+    target = Path(path)
+    for asset in store.list_montage_assets(visible_to=() if project_id is None else (project_id,)):
+        if str(Path(asset.get("file_path") or "")) == str(target) or asset.get("original_filename") == target.name:
+            return asset
+    return None
 
 
 def svg_to_asset(store: Any, svg: Any, params: Any = None, *, label: str = "", description: str = "",
-                 run: Callable[[list[str], float], str] | None = None) -> tuple[dict, dict]:
-    """SVG → webm с альфой → файл «Файлов для монтажа» (kind video). Повтор — тот же asset."""
-    from app.montage_assets import probe_asset
+                 run: Callable[[list[str], float], str] | None = None,
+                 project_id: int | None = None) -> tuple[dict, dict]:
+    """SVG → webm с альфой → файл «Файлов для монтажа» (kind video). Повтор — тот же asset.
+    ``project_id`` — чей файл (None — общий)."""
+    from app.montage_assets import assets_dir, probe_asset
 
     info = convert(svg, params, run=run)
-    hit = find_asset(store, info["path"])
+    hit = find_asset(store, info["path"], project_id)
     if hit is not None:
         return hit, info
     path = Path(info["path"])
+    if any(str(Path(a.get("file_path") or "")) == str(path) for a in store.list_montage_assets()):
+        # Файл кэша уже у записи другого проекта: удаление той записи удалит файл, поэтому у этой своя копия.
+        copy = assets_dir() / f"{uuid4().hex}-{path.name}"
+        shutil.copyfile(path, copy)
+        path = copy
     meta = probe_asset(path)
     asset = store.create_montage_asset(
         kind="video",
@@ -267,6 +279,7 @@ def svg_to_asset(store: Any, svg: Any, params: Any = None, *, label: str = "", d
         width=meta.get("width") or info.get("width") or 0,
         height=meta.get("height") or info.get("height") or 0,
         has_audio=False,
+        project_id=project_id,
     )
     return asset, info
 

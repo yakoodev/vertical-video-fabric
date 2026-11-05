@@ -425,7 +425,7 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
                 clip_id = int(args.get("clip_id"))
             except (TypeError, ValueError):
                 pass
-        ctx = ToolContext(store=store)
+        ctx = ToolContext(store=store, project_hint=int(project_id) if project_id else None)
     if tool.name in {t.name for t in _chat_tools()}:
         try:
             result = tool.handler(ctx, args)

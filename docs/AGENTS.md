@@ -97,7 +97,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `get_scene_reference(example?)`, `preview_scene_frame(scene \| layer_id, t, w?, h?)` | 3D/2D-сцены кодом (слой `scene`): схема и примеры; кадр(ы) сцены тем же компоновщиком с проверкой — см. «3D-сцены кодом» |
 | `list_fonts`, `search_emoji(q)`, `list_packs`, `search_pack(pack, q)` | шрифты, эмодзи, паки стикеров/звуков/мемов |
 | `upload_font(data_base64, filename, family?, weight?, style?)` | **свой шрифт** (фирменный шрифт бренда): TTF/OTF/WOFF2 до 20 МБ → `data/fonts` (реестр `data/fonts/fonts.json`, не vendor), сразу в `list_fonts` (`user: true`), превью (`@font-face` через `/api/motion/fonts`) и рендере (`--user-fonts-dir`). Файл проверяется (сигнатура, таблицы, `cmap` — `cyrillic`); лицензия — на совести загружающего. Вариативный (ось `wght`) — один файл, `weights` из диапазона: статических начертаний не делаем (fontTools нет в зависимостях), вес ставится на лету — браузер по `font-weight`, компоновщик `fontVariationSettings`. Человек — кнопка «＋ Свой шрифт» в стиле текста или `POST /api/motion/fonts` (multipart `file`, `family?`); удалить — `DELETE /api/motion/fonts/{file}` |
-| `list_assets(q?)` | «Файлы для монтажа» владельца (asset_id) |
+| `list_assets(q?, clip_id?, project_id?)` | «Файлы для монтажа» владельца (asset_id): только общие и файлы проекта клипа, см. «Общие файлы и файлы проекта» |
 | `search_web_images(query, free_only)`, `add_image_from_url(url)`, `generate_image(prompt)` | найти/скачать/нарисовать картинку → asset_id |
 | `upload_image(data_base64, filename, label?)` | своя картинка (скриншот сайта, сделанный у себя) → asset_id; GIF/APNG — ответ `animation` (кадры, fps, альфа): слой `image` играет её по кругу |
 | `add_pngtuber(idle_asset, talk_asset, shout_asset?, track?, x?, y?, w?, start?, end?, threshold_db?, hold?, attack?, shout_db?, bounce?, flipX?, pixelated?, voice_asset?, id?, allow_multiple?)` | **PNGtuber**: аватар, который «говорит», когда звучит голос дорожки `track` (0 — игра, 1 — микрофон; `"speech"` — `speech_tracks`) — см. «PNGtuber» ниже; ответ `voice_check` — доля клипа с открытым ртом и выбранный порог. Один аватар на клип: повторный вызов заменяет прежний (второй — `allow_multiple: true`) |
@@ -128,6 +128,38 @@ bearer_token_env_var = "VVF_TOKEN"
 | `set_end_screen(template \| svg_asset_id, text?, handle?, platform?, duration?, blur?, …, remove?)`, `svg_to_webm(svg \| asset_id, duration?)` | **концовка-баннер**: хвост ролика уходит в размытие, поверх — анимированный баннер «стримлю с 8 утра — заходи» (см. «Концовка-баннер»); SVG с анимацией → webm с альфой в библиотеку |
 
 Полный список с JSON Schema параметров: `GET /api/agent/tools`.
+
+### Общие файлы и файлы проекта
+
+`montage_assets.project_id`: NULL — **общий** файл (мемы, реакции, импорт из паков, логотипы брендов), число —
+**файл проекта** (кадры ИИ-видео, маскот, запись экрана промо). Логика — `app/asset_scope.py`.
+
+* **Что видно.** `list_assets`, ИИ-монтаж и звуки историй отдают общие файлы и файлы проекта клипа; клипу без
+  проекта — только общие. Проект клипа — `project_of_plan`; у холста без приписки — проект его серии, ролика или
+  эпизода. У MCP-вызова без клипа: `list_assets(clip_id)` или `list_assets(project_id)`, иначе только общие.
+* **Отказ.** Чужой файл по id не ставится: `add_layers` и `update_layer` (image, video, audio, particles, pngtuber),
+  `add_insert`, `add_pngtuber`, `build_app_promo`, `set_end_screen(svg_asset_id)`, `svg_to_webm(asset_id)`, файл клипа
+  (`PUT /spec`, `vvf.py push`), а `POST /layers/validate` называет такой файл в `problems`. Картинки ИИ-видео,
+  объяснялок и историй проверяет `add_ref`. В отказе сказано, чей файл и что делать: взять общий или свой, либо
+  попросить владельца перенести файл.
+* **Что не ломается.** Файл, который уже стоит в клипе, можно править и оставлять; рендер читает файл по id, как
+  раньше. Перенос файла в другой проект стоящие в клипах слои не меняет.
+* **Логотип бренда** держи в общих: `apply_brand` не ставит логотип чужого проекта и пишет об этом в `warnings`.
+* **Новые файлы.** `upload_image`, `upload_video`, `add_image_from_url`, `add_video_from_url`, `generate_image`,
+  `add_sound_from_url`, `svg_to_webm` кладут файл в проект клипа. Без клипа в контексте: `clip_id` или `project_id` в
+  аргументах, в чате проекта — его проект, иначе файл общий. `add_video_from_source` без них берёт проект источника.
+  Генерация ИИ-видео, объяснялок и историй, озвучка `dub_clip`, 3D-серия и концовка сразу получают свой проект.
+  Импорт из паков (`POST /api/motion/packs/.../import`) всегда общий. Проба голоса `tts_preview` — общий файл.
+* **REST.** `GET /api/montage-assets`: без параметров все, `?scope=shared` только общие, `?project_id=N` файлы проекта,
+  `?clip_id=N` доступное клипу плюс чужие файлы, уже стоящие в нём (`in_clip_only: true`, в списках выбора их не
+  показываем). `POST /api/montage-assets` принимает `project_id` или `clip_id`, как и `/generate`, `/from-url`,
+  `/video-from-url`. Перенос: `PATCH /api/montage-assets/{id} {"project_id": N}`, `null` — в общие. CLI:
+  `vvf.py asset rec.mp4 --clip 12` или `--project 5`, без них файл общий. Удаление проекта делает его файлы общими.
+* **Новый код**, который подбирает файл для клипа, берёт `asset_scope.visible_assets` и `new_foreign_assets`, а не
+  `store.list_montage_assets()` без фильтра.
+* **Старые файлы.** `tools/assign_assets_to_projects.py`: по умолчанию dry-run с разбором на копии базы, `--apply`
+  пишет, повтор ничего не меняет, `--rule 'РЕГЭКСП=ПРОЕКТ'` — решение владельца по названию. Неясное остаётся общим и
+  печатается списком.
 
 ### Шкалы времени — одна таблица
 

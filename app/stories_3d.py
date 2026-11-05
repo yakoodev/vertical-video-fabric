@@ -291,7 +291,7 @@ def bed_envelope_db(t: float, spans: list[tuple[float, float]], speech_end: floa
 
 
 def render_bed(store: Any, bed: dict, words: list[dict], total: float, voice_db: float, speech_end: float,
-               label: str) -> tuple[dict, dict] | None:
+               label: str, project_id: int | None = None) -> tuple[dict, dict] | None:
     """Фон одним файлом: петля трека пака на всю серию, громкость от замера голоса (между фразами — на
     BED_OPEN_DB тише), огибающая ducking/нарастания. → (ассет «Файлы для монтажа», замер)."""
     from app.audio_mix import ebur128
@@ -335,13 +335,14 @@ def render_bed(store: Any, bed: dict, words: list[dict], total: float, voice_db:
     meta = probe_asset(dest)
     asset = store.create_montage_asset(kind="audio", label=f"Фон: {label}"[:120], description="тревожный фон 3D-серии",
                                        tags="3d,фон", file_path=str(dest), original_filename=dest.name,
-                                       mime_type="audio/mp4", size_bytes=dest.stat().st_size, **meta)
+                                       mime_type="audio/mp4", size_bytes=dest.stat().st_size,
+                                       project_id=project_id, **meta)
     return asset, {"bed_lufs": round(float(meas.get("i") or -70), 1), "voice_lufs": round(voice_db, 1),
                    "under_voice_db": round(voice_db - float(meas.get("i") or -70), 1), "gain_db": round(gain, 1),
                    "duck_db": -BED_DUCK_DB, "swell_db": BED_SWELL_DB, "open_db": -BED_OPEN_DB}
 
 
-def save_video(store: Any, path: Path, label: str) -> dict:
+def save_video(store: Any, path: Path, label: str, project_id: int | None = None) -> dict:
     """mp4 3D-серии → «Файлы для монтажа» (видео для слоя холста)."""
     from app.montage_assets import assets_dir, probe_asset
 
@@ -350,7 +351,8 @@ def save_video(store: Any, path: Path, label: str) -> dict:
     meta = probe_asset(dest)
     return store.create_montage_asset(kind="video", label=label[:120], description="3D-серия (свой движок)",
                                       tags="3d,серия", file_path=str(dest), original_filename=dest.name,
-                                      mime_type="video/mp4", size_bytes=dest.stat().st_size, **meta)
+                                      mime_type="video/mp4", size_bytes=dest.stat().st_size,
+                                      project_id=project_id, **meta)
 
 
 def assemble(store: Any, episode_id: int) -> dict:
@@ -419,7 +421,7 @@ def assemble(store: Any, episode_id: int) -> dict:
         else:
             info = render3d(result, video)
         covers = _frames(video, cover_times(result["shots"]), _covers_dir(), f"ep{int(episode_id)}-{uuid4().hex[:6]}")
-        asset = save_video(store, video, f"3D: {ep.get('title') or ep['premise']}")
+        asset = save_video(store, video, f"3D: {ep.get('title') or ep['premise']}", int(ep["project_id"]))
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -439,7 +441,8 @@ def assemble(store: Any, episode_id: int) -> dict:
         made = None
         if picked is not None:
             try:
-                made = render_bed(store, picked, words, total, voice_db, speech_end, picked.get("name") or picked["file"])
+                made = render_bed(store, picked, words, total, voice_db, speech_end, picked.get("name") or picked["file"],
+                                  int(ep["project_id"]))
             except Exception as exc:  # noqa: BLE001 - не собрался файл фона — петля слоями, как раньше
                 notes.append(f"3D: фон одним файлом не собрался ({type(exc).__name__}) — петля слоями")
         if made is not None:

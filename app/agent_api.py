@@ -190,7 +190,7 @@ def mcp_call_tool(store: Any, name: str, arguments: dict) -> dict:
             clip_id = int(args.pop("clip_id"))
         except (KeyError, TypeError, ValueError):
             return {"content": [{"type": "text", "text": "нужен clip_id (см. list_clips)"}], "isError": True}
-    else:
+    elif "clip_id" not in (tool.parameters.get("properties") or {}):
         args.pop("clip_id", None)
     ctx = agent_tools.ToolContext(
         store=store,

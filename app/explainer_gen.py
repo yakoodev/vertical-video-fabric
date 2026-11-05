@@ -1046,7 +1046,8 @@ def assemble(store: Any, video_id: int) -> dict:
             P.assign_plan_project(store, clip_id, int(channel_id))
         except KeyError:
             notes.append(f"канал #{channel_id} не найден — клип без проекта")
-    ctx = T.ToolContext(store=store, clip_plan_id=clip_id,
+    # trusted_assets: позы маскота живут в его проекте, а клип может лежать в проекте канала.
+    ctx = T.ToolContext(store=store, clip_plan_id=clip_id, trusted_assets=True,
                         on_first_change=lambda: snapshot(store, clip_id, "объяснялка: сборка"))
     layers = build_layers(store, mascot, placed, words, int(ref["asset_id"]), total, notes)
     for i in range(0, len(layers), LAYER_BATCH):

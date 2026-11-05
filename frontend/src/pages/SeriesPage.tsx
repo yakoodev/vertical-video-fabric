@@ -112,6 +112,9 @@ export function SeriesPage() {
             {label}
           </button>
         ))}
+        <Link className="tab" to={`/assets?tab=project&project=${id}`} title="Файлы для монтажа этого проекта">
+          Файлы
+        </Link>
       </nav>
       <div className="series-body">
         {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}

@@ -136,7 +136,8 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         asset = store.create_montage_asset(kind=kind, label=f"ИИ-видео: референс {name}"[:120],
                                            description="картинка-референс владельца", tags="ии-видео",
                                            file_path=str(dest), original_filename=name,
-                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size, **meta)
+                                           mime_type=file.content_type or "", size_bytes=dest.stat().st_size,
+                                           project_id=int(project_id), **meta)
         return call(V.add_upload_ref, project_id, target_type, target_id, asset["id"])
 
     @router.post("/api/ai-video/characters/{character_id}/upload", summary="Картинка-референс персонажа (владелец)")

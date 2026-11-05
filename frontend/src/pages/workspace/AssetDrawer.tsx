@@ -12,10 +12,17 @@ const KIND_ICON: Record<MontageAsset["kind"], string> = { image: "🖼", gif: "�
  * Раньше вставку можно было добавить только через выпадающий список с числами —
  * не видя, что это за файл.
  */
-export function AssetDrawer({ onAdd }: { onAdd: (assetId: number) => void }) {
+export function AssetDrawer({ onAdd, clipId }: { onAdd: (assetId: number) => void; clipId?: number | null }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const assets = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list, staleTime: 60_000 });
+  // Только разрешённое клипу: общие файлы и файлы его проекта (без клипа — общие).
+  const filter = clipId ? { clipId } : { shared: true };
+  const assets = useQuery({
+    queryKey: qk.montageAssetsScoped(filter),
+    queryFn: () => montageAssetsApi.listScoped(filter),
+    staleTime: 60_000,
+    select: (list) => list.filter((a) => !a.in_clip_only),
+  });
 
   const needle = q.trim().toLowerCase();
   const shown = (assets.data ?? []).filter(

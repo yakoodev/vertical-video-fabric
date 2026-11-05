@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { montageAssetsApi, type MontageAsset } from "@/api/assets";
 import { qk } from "@/api/keys";
+import { projectsApi, type ChannelProject } from "@/api/projects";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -11,6 +13,13 @@ import { EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/com
 import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
 import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
 import { useModuleOn, useModules } from "@/hooks/useModules";
+
+type AssetTab = "shared" | "project" | "all";
+const ASSET_TABS: [AssetTab, string][] = [
+  ["shared", "Общие"],
+  ["project", "Проект"],
+  ["all", "Все"],
+];
 
 const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   image: "Картинка",
@@ -34,7 +43,15 @@ function AssetPicture({ asset }: { asset: MontageAsset }) {
   );
 }
 
-function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: MontageAsset) => void }) {
+function AssetCard({
+  asset,
+  onDelete,
+  projects,
+}: {
+  asset: MontageAsset;
+  onDelete: (a: MontageAsset) => void;
+  projects: ChannelProject[];
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const [label, setLabel] = useState(asset.label);
@@ -47,6 +64,14 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
       montageAssetsApi.update(asset.id, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.montageAssets }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
+  });
+  const move = useMutation({
+    mutationFn: (projectId: number | null) => montageAssetsApi.update(asset.id, { project_id: projectId }),
+    onSuccess: (a) => {
+      qc.invalidateQueries({ queryKey: qk.montageAssets });
+      toast.success(a.project_id == null ? "Файл теперь общий" : "Файл перенесён в проект");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось перенести"),
   });
   const describe = useMutation({
     mutationFn: () => montageAssetsApi.describe(asset.id),
@@ -79,6 +104,11 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
         )}
         <span className="asset-kind">{KIND_LABEL[asset.kind]}</span>
         {asset.duration_sec ? <span className="asset-dur mono">{formatDuration(asset.duration_sec)}</span> : null}
+        {asset.project_id != null ? (
+          <span className="asset-proj">
+            {projects.find((p) => p.id === asset.project_id)?.name ?? `проект #${asset.project_id}`}
+          </span>
+        ) : null}
         <button className="card-del" title="Удалить файл" onClick={() => onDelete(asset)}>
           🗑
         </button>
@@ -118,6 +148,20 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
         onChange={(e) => setTags(e.target.value)}
         onBlur={() => commit("tags", tags)}
       />
+      <select
+        className="input asset-owner"
+        title="Чей файл: общий видят все клипы, файл проекта — только клипы этого проекта"
+        value={asset.project_id ?? ""}
+        disabled={move.isPending}
+        onChange={(e) => move.mutate(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">Общий файл</option>
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            Проект: {p.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -130,7 +174,30 @@ function AssetCard({ asset, onDelete }: { asset: MontageAsset; onDelete: (a: Mon
 export function MontageAssetsPage() {
   const qc = useQueryClient();
   const toast = useToast();
-  const query = useQuery({ queryKey: qk.montageAssets, queryFn: montageAssetsApi.list });
+  // Вкладки в адресе: страница проекта ведёт сюда сразу на его файлы.
+  const [params, setParams] = useSearchParams();
+  const tab: AssetTab = params.get("tab") === "project" ? "project" : params.get("tab") === "all" ? "all" : "shared";
+  const projects = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, staleTime: 60_000 });
+  const projectList = useMemo(() => projects.data ?? [], [projects.data]);
+  const asked = Number(params.get("project")) || null;
+  const projectId = tab === "project" ? (asked ?? projectList[0]?.id ?? null) : null;
+  const filter = useMemo(
+    () => (tab === "project" ? { projectId } : tab === "all" ? {} : { shared: true }),
+    [tab, projectId],
+  );
+  const showTab = (next: AssetTab, project?: number | null) =>
+    setParams(
+      next === "shared"
+        ? {}
+        : next === "all"
+          ? { tab: "all" }
+          : { tab: "project", ...(project ? { project: String(project) } : {}) },
+    );
+  const query = useQuery({
+    queryKey: qk.montageAssetsScoped(filter),
+    queryFn: () => montageAssetsApi.listScoped(filter),
+    enabled: tab !== "project" || projectId != null,
+  });
   // Поиск картинок и ИИ-описание/генерация — модули (app/modules.py).
   const { on: moduleOn } = useModules();
   const [pending, setPending] = useState<MontageAsset | null>(null);
@@ -146,7 +213,8 @@ export function MontageAssetsPage() {
     let ok = 0;
     for (const f of list) {
       try {
-        await montageAssetsApi.upload(f);
+        // На вкладке проекта файл становится файлом этого проекта, на остальных — общим.
+        await montageAssetsApi.upload(f, "", "", "", { projectId });
         ok += 1;
       } catch (e) {
         toast.error(`${f.name}: ${e instanceof ApiError ? e.message : "не загрузился"}`);
@@ -171,14 +239,37 @@ export function MontageAssetsPage() {
   });
 
   const assets = query.data ?? [];
-  const shown = useShowMore(assets);
+  const shown = useShowMore(assets, `${tab}:${projectId}`);
   const undescribed = assets.filter((a) => !a.description.trim());
   return (
     <>
       <PageHead
         title="Файлы для монтажа"
-        sub="Мемы, реакции, стикеры и звуки — 🤖 ИИ-монтаж сам вставляет подходящие в клипы"
+        sub="Мемы, реакции, стикеры и звуки — 🤖 ИИ-монтаж сам вставляет подходящие в клипы. Клипу доступны общие файлы и файлы его проекта"
       />
+      <div className="asset-scope">
+        <nav className="pipeline">
+          {ASSET_TABS.map(([key, label]) => (
+            <button key={key} className={`tab${tab === key ? " active" : ""}`} onClick={() => showTab(key)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+        {tab === "project" ? (
+          <select
+            className="input"
+            aria-label="Проект"
+            value={projectId ?? ""}
+            onChange={(e) => showTab("project", Number(e.target.value) || null)}
+          >
+            {projectList.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
       {undescribed.length && moduleOn("asset_ai") ? (
         <div className="asset-hint">
           <span>
@@ -190,7 +281,7 @@ export function MontageAssetsPage() {
             onClick={async () => {
               setDescribing(true);
               try {
-                const r = await montageAssetsApi.describeMissing();
+                const r = await montageAssetsApi.describeMissing(undescribed.map((a) => a.id));
                 toast.success(`Описано: ${r.described}${r.failed ? `, не вышло: ${r.failed}` : ""}`);
                 qc.invalidateQueries({ queryKey: qk.montageAssets });
               } catch (e) {
@@ -206,8 +297,8 @@ export function MontageAssetsPage() {
       ) : null}
       {moduleOn("web_images") || moduleOn("asset_ai") ? (
         <div className="asset-ai-row">
-          {moduleOn("web_images") ? <AssetSearchPanel /> : null}
-          {moduleOn("asset_ai") ? <AssetGeneratePanel /> : null}
+          {moduleOn("web_images") ? <AssetSearchPanel projectId={projectId} /> : null}
+          {moduleOn("asset_ai") ? <AssetGeneratePanel projectId={projectId} /> : null}
         </div>
       ) : null}
       <div
@@ -244,21 +335,23 @@ export function MontageAssetsPage() {
         </span>
       </div>
 
-      {query.isLoading ? (
+      {query.isLoading || (tab === "project" && projects.isLoading) ? (
         <Loading />
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
+      ) : tab === "project" && projects.isSuccess && !projectList.length ? (
+        <EmptyState icon="📁" title="Проектов пока нет" hint="Файлы проекта появятся, когда будет создан проект" />
       ) : !assets.length ? (
         <EmptyState
           icon="🧩"
-          title="Библиотека пуста"
+          title={tab === "project" ? "В этом проекте файлов нет" : tab === "shared" ? "Общих файлов нет" : "Библиотека пуста"}
           hint="Закиньте пару мемов и звуков — и 🤖 ИИ-монтаж начнёт вставлять их в подходящие моменты"
         />
       ) : (
         <>
           <div className="asset-grid">
             {shown.visible.map((a) => (
-              <AssetCard key={a.id} asset={a} onDelete={setPending} />
+              <AssetCard key={a.id} asset={a} onDelete={setPending} projects={projectList} />
             ))}
           </div>
           <ShowMore rest={shown.rest} onMore={shown.more} />

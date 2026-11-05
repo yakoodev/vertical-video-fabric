@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -3207,8 +3207,41 @@ def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -
 MAX_ASSET_BYTES = 300 * 1024 * 1024
 
 
+def _asset_owner(clip_id: int | None = None, project_id: int | None = None) -> int | None:
+    """Чей новый файл (app/asset_scope.py): проект клипа, иначе заданный проект, иначе None — общий."""
+    from app.asset_scope import clip_project
+    from app.projects import get_project
+
+    try:
+        if clip_id:
+            return clip_project(store, int(clip_id))
+        if project_id:
+            return int(get_project(store, int(project_id), include_sources=False)["id"])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return None
+
+
 @app.get("/api/montage-assets", tags=["Montage assets"], summary="List the montage library")
-def api_list_montage_assets(_auth: AuthDep) -> list[dict]:
+def api_list_montage_assets(
+    _auth: AuthDep,
+    scope: Annotated[str, Query(description="all — все, shared — только общие")] = "all",
+    project_id: Annotated[int | None, Query(description="только файлы этого проекта")] = None,
+    clip_id: Annotated[int | None, Query(description="что доступно клипу: общие и его проекта плюс чужие файлы, "
+                                                     "уже стоящие в нём (in_clip_only)")] = None,
+) -> list[dict]:
+    from app.asset_scope import assets_for_clip, render_asset_ids
+
+    if clip_id is not None:
+        try:
+            render = store.get_clip_plan(clip_id, include_segments=False).get("render_settings") or {}
+            return assets_for_clip(store, clip_id, render_asset_ids(render))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if project_id is not None:
+        return store.list_montage_assets(project_id=project_id)
+    if scope == "shared":
+        return store.list_montage_assets(visible_to=())
     return store.list_montage_assets()
 
 
@@ -3219,11 +3252,14 @@ async def api_upload_montage_asset(
     label: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
     tags: Annotated[str, Form()] = "",
+    project_id: Annotated[int | None, Form(description="файл этого проекта; нет — общий")] = None,
+    clip_id: Annotated[int | None, Form(description="файл проекта этого клипа (важнее project_id)")] = None,
 ) -> dict:
     safe_name = Path(file.filename or "asset").name
     kind = asset_kind_for(safe_name, file.content_type or "")
     if kind is None:
         raise HTTPException(status_code=400, detail="нужна картинка, GIF, видео или звук")
+    owner = _asset_owner(clip_id, project_id)
     dest = montage_assets_dir() / f"{uuid4().hex}-{safe_name}"
     size = 0
     try:
@@ -3251,6 +3287,7 @@ async def api_upload_montage_asset(
         original_filename=safe_name,
         mime_type=file.content_type or "",
         size_bytes=size,
+        project_id=owner,
         **meta,
     )
     # Describe it right away: the montage agent matches files by their text, so a
@@ -3274,6 +3311,8 @@ class GenerateAssetRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=400, description="что нарисовать")
     label: str = Field(default="", max_length=120)
     when: str = Field(default="", max_length=300, description="когда уместно вставлять")
+    project_id: int | None = Field(default=None, description="файл этого проекта; нет — общий")
+    clip_id: int | None = Field(default=None, description="файл проекта этого клипа")
 
 
 @app.post(
@@ -3283,7 +3322,8 @@ class GenerateAssetRequest(BaseModel):
 )
 def api_generate_montage_asset(payload: GenerateAssetRequest, _auth: AuthDep) -> dict:
     try:
-        return generate_asset(store, payload.prompt, label=payload.label, when=payload.when)
+        return generate_asset(store, payload.prompt, label=payload.label, when=payload.when,
+                              project_id=_asset_owner(payload.clip_id, payload.project_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -3326,6 +3366,8 @@ class AssetFromUrlRequest(BaseModel):
     url: str = Field(max_length=2000)
     label: str = Field(default="", max_length=120)
     description: str = Field(default="", max_length=500)
+    project_id: int | None = Field(default=None, description="файл этого проекта; нет — общий")
+    clip_id: int | None = Field(default=None, description="файл проекта этого клипа")
 
 
 @app.post(
@@ -3334,8 +3376,10 @@ class AssetFromUrlRequest(BaseModel):
     summary="Добавить файл в библиотеку по прямой ссылке",
 )
 def api_add_montage_asset_from_url(payload: AssetFromUrlRequest, _auth: AuthDep) -> dict:
+    owner = _asset_owner(payload.clip_id, payload.project_id)
     try:
-        asset = add_asset_from_url(store, payload.url, label=payload.label, description=payload.description)
+        asset = add_asset_from_url(store, payload.url, label=payload.label, description=payload.description,
+                                   project_id=owner)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - network/remote errors
@@ -3350,6 +3394,8 @@ class VideoFromUrlRequest(BaseModel):
     start: float = Field(ge=0, description="секунда ролика по ссылке — начало отрезка")
     end: float = Field(gt=0, description="конец отрезка (не дольше 180 с от start)")
     label: str = Field(default="", max_length=120)
+    project_id: int | None = Field(default=None, description="файл этого проекта; нет — общий")
+    clip_id: int | None = Field(default=None, description="файл проекта этого клипа")
 
 
 @app.post(
@@ -3362,8 +3408,9 @@ def api_add_montage_video_from_url(payload: VideoFromUrlRequest, _auth: AuthDep)
     Звук файла играет в клипе, если у слоя ``video`` стоит ``props.audio: true``."""
     from app.video_import import import_video_from_url
 
+    owner = _asset_owner(payload.clip_id, payload.project_id)
     try:
-        return import_video_from_url(store, payload.url, payload.start, payload.end, payload.label)
+        return import_video_from_url(store, payload.url, payload.start, payload.end, payload.label, project_id=owner)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - network/remote errors
@@ -3401,12 +3448,17 @@ class MontageAssetPatch(BaseModel):
     label: str | None = Field(default=None, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     tags: str | None = Field(default=None, max_length=200)
+    project_id: int | None = Field(default=None, description="перенос файла: id проекта, null — в общие")
 
 
-@app.patch("/api/montage-assets/{asset_id}", tags=["Montage assets"], summary="Rename / describe / tag a file")
+@app.patch("/api/montage-assets/{asset_id}", tags=["Montage assets"],
+           summary="Rename / describe / tag a file, move it to a project")
 def api_patch_montage_asset(asset_id: int, payload: MontageAssetPatch, _auth: AuthDep) -> dict:
+    fields = _payload_data(payload, exclude_none=True)
+    if "project_id" in payload.model_fields_set:  # null здесь значим: перенос в общие
+        fields["project_id"] = _asset_owner(None, payload.project_id)
     try:
-        return store.update_montage_asset(asset_id, **_payload_data(payload, exclude_none=True))
+        return store.update_montage_asset(asset_id, **fields)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

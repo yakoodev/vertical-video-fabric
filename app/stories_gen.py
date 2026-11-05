@@ -193,7 +193,7 @@ def script_context(store: Any, ep: dict) -> dict:
                                "tags": s["tags"][:8]} for s in scenes[-120:]],
             "premise": ep["premise"], "duration_sec": ep["duration_target"], "tone": ep["tone"],
             "target_chars": int(ep["duration_target"] * CPS), "owner_rules": rules, "previous": previous,
-            "camera_moves": list(CAMERA_MOVES), "available_sfx": _sfx_brief(S.sfx_options(store))}
+            "camera_moves": list(CAMERA_MOVES), "available_sfx": _sfx_brief(S.sfx_options(store, project_id))}
 
 
 def _sentence(text: Any) -> str:
@@ -532,7 +532,7 @@ def plan_beats(store: Any, episode_id: int) -> dict:
     by_id = {int(s["id"]): s for s in library}
     created: list[dict] = []
     notes: list[str] = []
-    options = S.sfx_options(store)
+    options = S.sfx_options(store, int(ep["project_id"]))
     missing_sfx: list[str] = []
     prev_camera: str | None = None
     for n, beat in enumerate(beats):
@@ -599,7 +599,7 @@ def plan_beats(store: Any, episode_id: int) -> dict:
 
 def _plan_beats_3d(store: Any, episode_id: int, beats: list[dict]) -> dict:
     """Биты 3D-серии: без сцен библиотеки (``scene_id`` нет), звук кадра — настоящая запись по тегу сценария."""
-    options = S.sfx_options(store)
+    options = S.sfx_options(store, int(S.get_episode(store, episode_id)["project_id"]))
     notes: list[str] = ["3D-движок: сцены не рисуются — кадры, свет и звуки событий ставит режиссура по озвучке"]
     for beat in beats:
         tag = (beat.get("spec") or {}).get("sfx") if beat.get("variant") != "alt" else ""
@@ -665,7 +665,7 @@ def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
             if not tag:
                 beat["sfx"] = None
             else:
-                options = options if options is not None else S.sfx_options(store)
+                options = options if options is not None else S.sfx_options(store, int(world["project_id"]))
                 hit = S.resolve_sfx(tag, options)
                 if hit is None:
                     problems.append(f"бит {beat['i']}: записи «{tag}» нет (паки, «Файлы для монтажа» с тегом «звук») — "
