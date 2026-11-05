@@ -9,12 +9,18 @@ import { sourcesApi } from "@/api/sources";
 export function StoryboardPreview({
   sourceId,
   noFile,
+  noFileLabel = true,
+  fallbackThumb,
   type,
   duration,
 }: {
   sourceId: number;
   /** Записи нет: кадры не запрашивать, на карточке — пометка. */
   noFile?: boolean;
+  /** Пометка «запись удалена» на кадре (в строке списка она стоит отдельным значком). */
+  noFileLabel?: boolean;
+  /** Кадр готового клипа вместо кадра записи, когда записи нет. */
+  fallbackThumb?: string;
   type?: string;
   duration?: string;
 }) {
@@ -68,6 +74,7 @@ export function StoryboardPreview({
       }}
       onMouseMove={onMove}
     >
+      {noThumb && fallbackThumb ? <img className="pcard-thumb" src={fallbackThumb} alt="" loading="lazy" decoding="async" /> : null}
       {noThumb ? null : (
         <img
           className="pcard-thumb"
@@ -79,7 +86,7 @@ export function StoryboardPreview({
         />
       )}
       {active ? <img className="pcard-sb" src={frames[idx]} alt="" draggable={false} /> : null}
-      {noFile ? <span className="pcard-nofile">запись удалена</span> : null}
+      {noFile && noFileLabel ? <span className="pcard-nofile">запись удалена</span> : null}
       {type ? <span className="pcard-type mono">{type}</span> : null}
       {duration ? <span className="pcard-dur mono">{duration}</span> : null}
       {active && frames.length > 1 ? (

@@ -26,7 +26,7 @@ export function StatsBadge({ clipId, className = "" }: { clipId: number; classNa
   if (badge.alert) {
     return (
       <Link
-        to={badge.alert.approval_id ? `/approvals?id=${badge.alert.approval_id}` : "/approvals"}
+        to={badge.alert.approval_id ? `/inbox?tab=approve&id=${badge.alert.approval_id}` : "/inbox?tab=approve"}
         className={`chip stats-badge stats-badge--alert ${className}`}
         title="Мало просмотров после публикации — причины и чек-лист в карточке"
       >

@@ -15,6 +15,10 @@ import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
 import { useModuleOn, useModules } from "@/hooks/useModules";
 
 type AssetTab = "shared" | "project" | "all";
+const PROJECT_ASSET_TABS: [AssetTab, string][] = [
+  ["project", "Файлы проекта"],
+  ["shared", "Общие"],
+];
 const ASSET_TABS: [AssetTab, string][] = [
   ["shared", "Общие"],
   ["project", "Проект"],
@@ -171,22 +175,32 @@ function AssetCard({
  * label + «когда уместно» and drops fitting ones into clips (full frame, window
  * or sound only); the editor's «Вставки» section places them by hand.
  */
-export function MontageAssetsPage() {
+/** «Общие файлы» (/files) или вкладка «Файлы» проекта (fixedProject: файлы проекта и общие). */
+export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: number } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
-  // Вкладки в адресе: страница проекта ведёт сюда сразу на его файлы.
+  // Вкладки в адресе. Внутри проекта ?tab= занят вкладкой проекта — там свой параметр sub.
   const [params, setParams] = useSearchParams();
-  const tab: AssetTab = params.get("tab") === "project" ? "project" : params.get("tab") === "all" ? "all" : "shared";
+  const tab: AssetTab = fixedProject
+    ? params.get("sub") === "shared" ? "shared" : "project"
+    : params.get("tab") === "project" ? "project" : params.get("tab") === "all" ? "all" : "shared";
   const projects = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, staleTime: 60_000 });
   const projectList = useMemo(() => projects.data ?? [], [projects.data]);
-  const asked = Number(params.get("project")) || null;
+  const asked = fixedProject ?? (Number(params.get("project")) || null);
   const projectId = tab === "project" ? (asked ?? projectList[0]?.id ?? null) : null;
   const filter = useMemo(
     () => (tab === "project" ? { projectId } : tab === "all" ? {} : { shared: true }),
     [tab, projectId],
   );
   const showTab = (next: AssetTab, project?: number | null) =>
-    setParams(
+    fixedProject
+      ? setParams((prev) => {
+          const p = new URLSearchParams(prev);
+          if (next === "shared") p.set("sub", "shared");
+          else p.delete("sub");
+          return p;
+        }, { replace: true })
+      : setParams(
       next === "shared"
         ? {}
         : next === "all"
@@ -243,19 +257,25 @@ export function MontageAssetsPage() {
   const undescribed = assets.filter((a) => !a.description.trim());
   return (
     <>
-      <PageHead
-        title="Файлы для монтажа"
-        sub="Мемы, реакции, стикеры и звуки — 🤖 ИИ-монтаж сам вставляет подходящие в клипы. Клипу доступны общие файлы и файлы его проекта"
-      />
+      {fixedProject ? null : (
+        <PageHead
+          title="Общие файлы"
+          sub="Мемы, реакции, стикеры и звуки: 🤖 ИИ-монтаж сам вставляет подходящие в клипы. Клипу доступны общие файлы и файлы его проекта"
+        />
+      )}
       <div className="asset-scope">
-        <nav className="pipeline">
-          {ASSET_TABS.map(([key, label]) => (
-            <button key={key} className={`tab${tab === key ? " active" : ""}`} onClick={() => showTab(key)}>
+        <nav className={fixedProject ? "pills" : "pipeline"}>
+          {(fixedProject ? PROJECT_ASSET_TABS : ASSET_TABS).map(([key, label]) => (
+            <button
+              key={key}
+              className={fixedProject ? `pill${tab === key ? " on" : ""}` : `tab${tab === key ? " active" : ""}`}
+              onClick={() => showTab(key)}
+            >
               {label}
             </button>
           ))}
         </nav>
-        {tab === "project" ? (
+        {tab === "project" && !fixedProject ? (
           <select
             className="input"
             aria-label="Проект"

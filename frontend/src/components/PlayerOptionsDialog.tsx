@@ -51,11 +51,14 @@ function Row({ label, list, value, onChange }: {
 export function PlayerOptionsDialog({
   url,
   quality,
+  projectId,
   onClose,
   onStarted,
 }: {
   url: string;
   quality: string;
+  /** «Новое видео» из проекта: готовая серия ляжет в него. */
+  projectId?: number | null;
   onClose: () => void;
   onStarted: () => void;
 }) {
@@ -74,7 +77,7 @@ export function PlayerOptionsDialog({
   });
 
   const download = useMutation({
-    mutationFn: (option: PlayerOption) => downloadsApi.start(url, quality, option),
+    mutationFn: (option: PlayerOption) => downloadsApi.start(url, quality, option, projectId),
     onSuccess: () => {
       toast.success("Скачивание началось — прогресс в уведомлениях");
       qc.invalidateQueries({ queryKey: qk.activeTasks });

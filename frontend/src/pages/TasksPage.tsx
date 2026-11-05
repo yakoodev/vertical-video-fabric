@@ -52,12 +52,12 @@ function fmtDuration(start?: string | null, end?: string | null): string {
 }
 
 function taskLink(t: ActiveTask): string | null {
-  if (t.kind === "job") return `/publications/${t.id}`;
-  if (t.source_id) return `/projects/${t.source_id}`;
+  if (t.kind === "job") return `/pubs/${t.id}`;
+  if (t.source_id) return `/v/${t.source_id}`;
   return null;
 }
 
-export function TasksPage() {
+export function TasksPage({ embedded }: { embedded?: boolean } = {}) {
   const [filter, setFilter] = useState<Filter>("all");
   const query = useQuery({
     queryKey: qk.recentTasks,
@@ -79,7 +79,7 @@ export function TasksPage() {
 
   return (
     <>
-      <PageHead title="Задачи" sub="Лог выполнения: анализы, рендеры, публикации" />
+      {embedded ? null : <PageHead title="Задачи" sub="Лог выполнения: анализы, рендеры, публикации" />}
       <div className="task-filters">
         {FILTERS.map((f) => (
           <button

@@ -1,9 +1,8 @@
 import { api, request } from "@/api/client";
 
 /**
- * Проект-серия/канал (app/projects.py) — несколько источников одного стрим-канала,
- * сериала или промо. Не путать с «проектом» = источником (/projects/:sourceId):
- * в интерфейсе эта сущность называется «Серии и каналы» (/series/:id).
+ * Проект (app/projects.py) — несколько видео одного стрим-канала, сериала или промо: страница /p/:id.
+ * Источник в интерфейсе называется «видео» (/v/:id); в API и в коде он по-прежнему source.
  */
 export type ProjectKind = "stream_channel" | "series" | "promo" | "ai_video" | "explainer" | "other";
 
@@ -36,6 +35,7 @@ export interface ChannelProject {
     id: number;
     status: string;
     original_filename: string;
+    display_name?: string;
     original_url: string;
     duration_sec: number;
     clip_plans_count: number;

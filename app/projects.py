@@ -7,9 +7,9 @@
 проект. На нём позже встанет «автопилот канала».
 
 Про слово «проект». Исторически в UI и в MCP «проект» — это ИСТОЧНИК: страница
-``/projects/:sourceId``, инструменты ``list_projects`` / ``project_id`` в MCP —
+``/v/:sourceId``, инструменты ``list_projects`` / ``project_id`` в MCP —
 это id источника. Новая сущность живёт в таблице ``projects``; в интерфейсе она
-называется «Серии и каналы» (``/series/:id``), в MCP — ``*_channel_project`` и
+называется «проект» (``/p/:id``), в MCP — ``*_channel_project`` и
 инструменты брифа/правил/гипотез, у которых ``project_id`` — id ЭТОЙ таблицы
 (вместо него можно дать ``source_id`` — возьмётся проект источника).
 
@@ -345,7 +345,9 @@ def project_sources(store: Any, project_id: int) -> list[dict]:
         """,
         (int(project_id),),
     )
-    return [dict(row) for row in rows]
+    from app.nav import with_titles
+
+    return with_titles(store, [dict(row) for row in rows])
 
 
 def update_project(store: Any, project_id: int, **fields: Any) -> dict:

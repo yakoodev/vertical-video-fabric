@@ -50,10 +50,24 @@ export type StreamQuestionsState = {
   };
 };
 
+/** Вопросы и мемы сразу по многим видео: «Входящие», вкладка проекта (app/stream_questions.inbox_state). */
+export type StreamQuestionsAll = {
+  sources: { id: number; title: string; project_id: number | null; project_name: string }[];
+  questions: StreamQuestion[];
+  moments: MemeMoment[];
+  open_by_project: { project_id: number | null; name: string; open: number }[];
+};
+
 export const streamQuestionsKey = (sourceId: number | string) => ["sources", String(sourceId), "stream-questions"] as const;
+export const streamQuestionsAllKey = (projectId: number | undefined, onlyOpen: boolean) =>
+  ["stream-questions", "all", projectId ?? "all", onlyOpen] as const;
 
 export const streamQuestionsApi = {
   state: (sourceId: number | string) => api.get<StreamQuestionsState>(`/api/sources/${sourceId}/stream-questions`),
+  all: (projectId: number | undefined, onlyOpen: boolean) =>
+    api.get<StreamQuestionsAll>(
+      `/api/stream-questions?only_open=${onlyOpen ? "true" : "false"}${projectId ? `&project_id=${projectId}` : ""}`,
+    ),
   answer: (id: number, body: { option: number | null; text: string; skip?: boolean }) =>
     api.put<StreamQuestion>(`/api/stream-questions/${id}/answer`, body),
   choose: (id: number, body: { option_id?: number | null; none?: boolean }) =>

@@ -337,6 +337,8 @@ class SourceRead(BaseModel):
     project_id: int | None = None
     # Файл записи на месте? False — удалён (клипы и моменты живут), кадры и видео не запрашивать.
     has_file: bool | None = None
+    # Человеческое название видео (app/nav.py), а не twitch-XXXX.mp4.
+    display_name: str = ""
 
 
 class SourceCreateRequest(BaseModel):
@@ -393,6 +395,8 @@ class SourceDownloadRequest(BaseModel):
     smotvibe_referer: str = ""
     smotvibe_audio_format_id: str = ""
     smotvibe_filename_label: str = ""
+    # «Новое видео» из проекта: готовый источник сразу попадает в этот проект.
+    project_id: int | None = None
 
 
 class SmotvibeOptionsRequest(BaseModel):
@@ -644,12 +648,15 @@ class ClipPlanSegmentMoveRequest(BaseModel):
 
 
 @app.get("/", include_in_schema=False)
-def root(_auth: AuthDep) -> RedirectResponse:
+def root(_auth: AuthDep) -> Any:
+    # Первый экран решает клиент: последний открытый проект (App.tsx: Home).
+    if SPA_INDEX.exists():
+        return FileResponse(SPA_INDEX, headers={"Cache-Control": REVALIDATE})
     return RedirectResponse(url="/projects", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-def login_page(request: Request, next: str = "/projects") -> HTMLResponse:
+def login_page(request: Request, next: str = "/") -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -661,7 +668,7 @@ def login_page(request: Request, next: str = "/projects") -> HTMLResponse:
 def login_submit(
     request: Request,
     token: Annotated[str, Form()],
-    next: Annotated[str, Form()] = "/projects",
+    next: Annotated[str, Form()] = "/",
 ):
     safe_next = _safe_next(next)
     if not token_is_valid(token):
@@ -1871,9 +1878,23 @@ def api_start_download(payload: SourceDownloadRequest, _auth: AuthDep) -> dict:
                 "audio_format_id": payload.smotvibe_audio_format_id,
                 "filename_label": payload.smotvibe_filename_label,
             },
+            on_source=_assign_to_project(payload.project_id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _assign_to_project(project_id: int | None):
+    """Что сделать с готовым источником: положить в проект, откуда нажали «Новое видео»."""
+    if project_id is None:
+        return None
+
+    def assign(source: dict) -> None:
+        from app import projects as P
+
+        P.set_source_project(store, int(source["id"]), int(project_id))
+
+    return assign
 
 
 class SourceRedownloadRequest(BaseModel):
@@ -1927,7 +1948,9 @@ def api_cancel_download(download_id: int, _auth: AuthDep) -> dict:
 )
 def api_sources(_auth: AuthDep, lite: bool = False) -> list[dict]:
     # lite — для экрана проектов: ffprobe в metadata_json даёт 90 % веса ответа (1 МБ на 243 источника).
-    sources = store.list_sources()
+    from app.nav import with_titles
+
+    sources = with_titles(store, store.list_sources())
     if lite:
         return [{**source, "metadata_json": ""} for source in sources]
     return sources
@@ -1941,7 +1964,9 @@ def api_sources(_auth: AuthDep, lite: bool = False) -> list[dict]:
 def api_source(source_id: int, _auth: AuthDep) -> dict:
     try:
         store.ensure_clip_plans_for_source(source_id)
-        return store.get_source(source_id, include_related=True)
+        from app.nav import with_titles
+
+        return with_titles(store, [store.get_source(source_id, include_related=True)])[0]
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2230,6 +2255,8 @@ class CanvasClipRequest(BaseModel):
     title: str = ""
     name: str = ""
     description: str = ""
+    # Холст из проекта: приписка клипа к проекту (app/projects.py: plan_projects).
+    project_id: int | None = None
 
 
 @app.post(
@@ -2246,6 +2273,12 @@ def api_create_canvas_clip(payload: CanvasClipRequest, _auth: AuthDep) -> dict:
     try:
         plan = create_canvas_clip(store, payload.duration, payload.background,
                                   payload.title or payload.name, payload.description)
+        if payload.project_id is not None:
+            from app import projects as P
+
+            P.assign_plan_project(store, int(plan["id"]), int(payload.project_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {**plan, "editor_url": f"/projects/{plan['source_id']}/candidates?clip={plan['id']}"}
@@ -4766,6 +4799,11 @@ app.include_router(build_chat_router(AuthDep, lambda: store, ingestor=source_ing
 from app.projects_api import build_projects_router  # noqa: E402
 
 app.include_router(build_projects_router(AuthDep, lambda: store))
+
+# Боковая панель и лестница Проект → Видео → Клип: лёгкие счётчики и список видео (app/nav.py).
+from app.nav_api import build_nav_router  # noqa: E402
+
+app.include_router(build_nav_router(AuthDep, lambda: store))
 
 # Автопилот канала: одобрение, расписание, обучение, Telegram, чат проекта (app/autopilot_api.py).
 from app.autopilot_api import build_autopilot_router  # noqa: E402

@@ -43,7 +43,7 @@ export function AssetDrawer({ onAdd, clipId }: { onAdd: (assetId: number) => voi
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <Link className="btn sm" to="/assets" title="Загрузить новые файлы">
+            <Link className="btn sm" to="/files" title="Загрузить новые файлы">
               + Файлы
             </Link>
           </div>

@@ -5,6 +5,7 @@ import { sourcesApi, looksLikePlayerPage, QUALITY_OPTIONS } from "@/api/sources"
 import { downloadsApi } from "@/api/downloads";
 import { PROJECT_KINDS, projectsApi, type ChannelProject, type ProjectKind } from "@/api/projects";
 import { qk } from "@/api/keys";
+import { navKeys } from "@/api/nav";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useDeleteMutation } from "@/hooks/useDeleteMutation";
@@ -35,10 +36,11 @@ function ProjectCard({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.sources });
       qc.invalidateQueries({ queryKey: qk.channelProjects });
+      qc.invalidateQueries({ queryKey: navKeys.all });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось"),
   });
-  const name = source.original_filename || source.original_url || `Источник #${source.id}`;
+  const name = source.display_name || source.original_filename || source.original_url || `Видео #${source.id}`;
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(name);
 
@@ -48,7 +50,7 @@ function ProjectCard({
       await qc.cancelQueries({ queryKey: qk.sources });
       const prev = qc.getQueryData<Source[]>(qk.sources);
       qc.setQueryData<Source[]>(qk.sources, (old) =>
-        old?.map((s) => (s.id === source.id ? { ...s, original_filename: n } : s)),
+        old?.map((s) => (s.id === source.id ? { ...s, original_filename: n, display_name: n } : s)),
       );
       return { prev };
     },
@@ -56,7 +58,10 @@ function ProjectCard({
       if (ctx?.prev) qc.setQueryData(qk.sources, ctx.prev);
       toast.error(e instanceof ApiError ? e.message : "Не удалось переименовать");
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.sources }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.sources });
+      qc.invalidateQueries({ queryKey: navKeys.all });
+    },
   });
 
   const commit = () => {
@@ -69,7 +74,7 @@ function ProjectCard({
   return (
     <div className="project-card">
       <div className="pcard-coverwrap">
-        <Link to={`/projects/${source.id}`} className="pcard-link" aria-label={name}>
+        <Link to={`/v/${source.id}`} className="pcard-link" aria-label={name}>
           <StoryboardPreview
             sourceId={source.id}
             noFile={isSourceFileMissing(source)}
@@ -77,7 +82,7 @@ function ProjectCard({
             duration={formatDuration(source.duration_sec)}
           />
         </Link>
-        <button className="card-del" title="Удалить проект" onClick={() => onDelete(source)}>
+        <button className="card-del" title="Удалить видео" onClick={() => onDelete(source)}>
           🗑
         </button>
       </div>
@@ -130,12 +135,12 @@ function ProjectCard({
         {series.length ? (
           <select
             className="input pcard-series"
-            title="Серия или канал этого видео: общий лор, правила и статистика"
+            title="Проект этого видео: общий лор, правила и статистика"
             value={source.project_id ?? ""}
             disabled={setSeries.isPending}
             onChange={(e) => setSeries.mutate(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">Без серии</option>
+            <option value="">Вне проектов</option>
             {series.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -148,7 +153,7 @@ function ProjectCard({
   );
 }
 
-/** «Серии и каналы»: проекты над источниками (app/projects.py) — лор, правила, статистика, гипотезы. */
+/** Проекты над видео (app/projects.py): лор, правила, статистика, гипотезы. */
 function SeriesStrip({ series }: { series: ChannelProject[] }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -160,17 +165,18 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
     mutationFn: () => projectsApi.create({ name: name.trim(), kind }),
     onSuccess: (p) => {
       qc.invalidateQueries({ queryKey: qk.channelProjects });
-      navigate(`/series/${p.id}`);
+      qc.invalidateQueries({ queryKey: navKeys.all });
+      navigate(`/p/${p.id}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось создать"),
   });
   return (
     <section className="series-strip">
       <div className="series-strip-head">
-        <strong>Серии и каналы</strong>
+        <strong>Проекты</strong>
         <span className="muted">несколько видео одного канала или сериала: общий лор, правила владельца, статистика</span>
         <button className="btn sm" onClick={() => setAdding((v) => !v)}>
-          ＋ Новая серия
+          ＋ Новый проект
         </button>
       </div>
       {adding ? (
@@ -198,7 +204,7 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
       {series.length ? (
         <div className="series-cards">
           {series.map((p) => (
-            <Link key={p.id} to={`/series/${p.id}`} className="panel series-card">
+            <Link key={p.id} to={`/p/${p.id}`} className="panel series-card">
               <strong>{p.name}</strong>
               <span className="muted">{p.kind_label}</span>
               <span className="muted">
@@ -212,7 +218,7 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
   );
 }
 
-export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
+export function AddSource({ onStarted, projectId }: { onStarted?: () => void; projectId?: number | null } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -222,19 +228,29 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
 
   const onDone = (s: Source) => {
     onStarted?.();
-    toast.success("Источник добавлен");
+    toast.success("Видео добавлено");
     qc.invalidateQueries({ queryKey: qk.sources });
-    navigate(`/projects/${s.id}`);
+    qc.invalidateQueries({ queryKey: navKeys.all });
+    navigate(`/v/${s.id}`);
   };
-  const onErr = (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Не удалось добавить источник");
+  const onErr = (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Не удалось добавить видео");
 
-  const upload = useMutation({ mutationFn: (file: File) => sourcesApi.uploadFile(file), onSuccess: onDone, onError: onErr });
+  // Из проекта файл сразу ложится в него (ссылка — когда докачается, app/downloads.py on_source).
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const source = await sourcesApi.uploadFile(file);
+      if (projectId) await projectsApi.setSourceProject(source.id, projectId);
+      return source;
+    },
+    onSuccess: onDone,
+    onError: onErr,
+  });
   // Downloads run in the background: the task shows up in the bell with progress
   // and a cancel button, and the project card appears when it finishes.
   const ingest = useMutation({
-    mutationFn: (u: string) => downloadsApi.start(u, quality),
+    mutationFn: (u: string) => downloadsApi.start(u, quality, undefined, projectId),
     onSuccess: () => {
-      toast.success("Скачивание началось — прогресс в «Очереди»");
+      toast.success("Скачивание началось: прогресс в «Очереди задач»");
       setUrl("");
       onStarted?.();
       qc.invalidateQueries({ queryKey: qk.activeTasks });
@@ -301,11 +317,12 @@ export function AddSource({ onStarted }: { onStarted?: () => void } = {}) {
         </button>
       </div> : null}
       {/* Ролик без видео: анимированный фон, картинки и титры (app/canvas.py). */}
-      <NewCanvas onCreated={onStarted} disabled={busy} />
+      <NewCanvas onCreated={onStarted} disabled={busy} projectId={projectId} />
       {picking ? (
         <PlayerOptionsDialog
           url={picking}
           quality={quality}
+          projectId={projectId}
           onClose={() => setPicking("")}
           onStarted={() => {
             setPicking("");
@@ -346,7 +363,7 @@ export function ProjectsPage() {
   const seriesOn = useModules().ready("series");
   const seriesQuery = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, enabled: seriesOn });
   const series = seriesOn ? seriesQuery.data ?? [] : [];
-  // "" — все, "none" — без серии, иначе id серии.
+  // "" — все, "none" — вне проектов, иначе id проекта.
   const [seriesFilter, setSeriesFilter] = useState("");
   const [pending, setPending] = useState<Source | null>(null);
   const [search, setSearch] = useState("");
@@ -355,7 +372,7 @@ export function ProjectsPage() {
   const del = useDeleteMutation<Source>({
     listKey: qk.sources,
     mutationFn: sourcesApi.remove,
-    successMessage: () => "Проект удалён",
+    successMessage: () => "Видео удалено",
     onSuccess: () => setPending(null),
   });
 
@@ -368,15 +385,15 @@ export function ProjectsPage() {
       (statusFilter === "all" || statusGroup(s.status) === statusFilter) &&
       (!seriesFilter ||
         (seriesFilter === "none" ? !s.project_id : String(s.project_id ?? "") === seriesFilter)) &&
-      (!q || (s.original_filename || s.original_url || `Источник #${s.id}`).toLowerCase().includes(q)),
+      (!q || `${s.display_name ?? ""} ${s.original_filename || s.original_url || `Видео #${s.id}`}`.toLowerCase().includes(q)),
   );
   const shown = useShowMore(filtered, `${statusFilter}|${seriesFilter}|${q}`);
 
   return (
     <>
       <section className="proj-hero">
-        <h1>Проекты</h1>
-        <p className="sub">Исходные видео для анализа, нарезки и публикации</p>
+        <h1>Все проекты и видео</h1>
+        <p className="sub">Записи всех проектов и те, что пока вне проектов: анализ, нарезка, публикация</p>
         <AddSource />
       </section>
       {seriesOn ? <SeriesStrip series={series} /> : null}
@@ -385,7 +402,7 @@ export function ProjectsPage() {
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : !sources.length ? (
-        <EmptyState icon="🎬" title="Пока нет проектов" hint="Загрузите видео или добавьте ссылку, чтобы начать" />
+        <EmptyState icon="🎬" title="Пока нет видео" hint="Загрузите видео или добавьте ссылку, чтобы начать" />
       ) : (
         <>
           <div className="proj-toolbar">
@@ -409,17 +426,17 @@ export function ProjectsPage() {
               ) : null,
             )}
             <span className="muted proj-count">
-              {q || seriesFilter ? `${filtered.length} из ${sources.length}` : plural(sources.length, "проект", "проекта", "проектов")}
+              {q || seriesFilter ? `${filtered.length} из ${sources.length}` : plural(sources.length, "видео", "видео", "видео")}
             </span>
             {series.length ? (
               <select
                 className="input proj-series-filter"
                 value={seriesFilter}
                 onChange={(e) => setSeriesFilter(e.target.value)}
-                title="Показать видео одной серии"
+                title="Показать видео одного проекта"
               >
-                <option value="">Все серии</option>
-                <option value="none">Без серии</option>
+                <option value="">Все проекты</option>
+                <option value="none">Вне проектов</option>
                 {series.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -431,7 +448,7 @@ export function ProjectsPage() {
               <span aria-hidden>⌕</span>
               <input
                 className="input"
-                placeholder="Поиск проекта по названию…"
+                placeholder="Поиск видео по названию…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -454,10 +471,10 @@ export function ProjectsPage() {
 
       <ConfirmDialog
         open={Boolean(pending)}
-        title="Удалить проект?"
+        title="Удалить видео?"
         body={
           <>
-            Будут удалены исходник, все анализы, кандидаты и клипы этого проекта, а файлы — стёрты с диска.
+            Будут удалены запись, все анализы, моменты и клипы этого видео, а файлы — стёрты с диска.
             История публикаций сохранится. Действие необратимо.
           </>
         }

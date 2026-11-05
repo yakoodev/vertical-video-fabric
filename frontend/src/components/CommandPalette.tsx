@@ -4,9 +4,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { sourcesApi } from "@/api/sources";
 import { clipsApi } from "@/api/clips";
 import { qk } from "@/api/keys";
+import type { NavState } from "@/api/nav";
 import { Icon } from "@/components/Icon";
+import { useModules } from "@/hooks/useModules";
+import { clipEditorPath, projectPath, videoPath } from "@/lib/paths";
 
-// Searchable words for the source type, so «твич» / «ютуб» find projects.
+// Searchable words for the source type, so «твич» / «ютуб» find videos.
 const SOURCE_KIND: Record<string, string> = {
   twitch_url: "twitch твич",
   youtube_url: "youtube ютуб",
@@ -18,18 +21,25 @@ const SOURCE_KIND: Record<string, string> = {
 type Cmd = { id: string; group: string; label: string; hint?: string; keywords?: string; icon: string; run: () => void };
 
 /**
- * Ctrl/⌘ K — one box to jump anywhere or run a command: pages, projects (and
- * their tabs), clips, «Создать проект». Arrow keys + Enter; Esc closes.
+ * Ctrl/⌘ K — одно поле на всё: проекты и их вкладки, видео, клипы, разделы, «Новое видео».
+ * Стрелки и Enter; Esc закрывает.
  */
 export function CommandPalette({
   open,
   onClose,
   onCreate,
+  onCreateProject,
+  onOpenChat,
+  nav,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate: () => void;
+  onCreateProject: () => void;
+  onOpenChat: () => void;
+  nav: NavState | undefined;
 }) {
+  const { on } = useModules();
   const navigate = useNavigate();
   const location = useLocation();
   const [q, setQ] = useState("");
@@ -37,8 +47,8 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const sources = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list, enabled: open });
   const clips = useQuery({ queryKey: qk.clips(), queryFn: () => clipsApi.list(), enabled: open, staleTime: 30_000 });
-  // Inside a project its moments are searchable too (the most frequent target).
-  const projectId = location.pathname.match(/^\/projects\/(\d+)/)?.[1] ?? "";
+  // Inside a video its moments are searchable too (the most frequent target).
+  const projectId = location.pathname.match(/^\/v\/(\d+)/)?.[1] ?? "";
   const project = useQuery({
     queryKey: qk.source(projectId),
     queryFn: () => sourcesApi.get(projectId),
@@ -57,58 +67,100 @@ export function CommandPalette({
   const commands = useMemo<Cmd[]>(() => {
     const go = (to: string) => () => navigate(to);
     const list: Cmd[] = [
-      { id: "create", group: "Действия", label: "Создать проект", hint: "файл или ссылка", icon: "plus", run: onCreate },
-      { id: "queue", group: "Действия", label: "Открыть очередь задач", icon: "queue", run: go("/tasks") },
-      { id: "p-projects", group: "Разделы", label: "Проекты", icon: "folder", run: go("/projects") },
-      { id: "p-clips", group: "Разделы", label: "Клипы", icon: "scissors", run: go("/clips") },
-      { id: "p-assets", group: "Разделы", label: "Файлы для монтажа (мемы, звуки)", icon: "image", run: go("/assets") },
-      { id: "p-pub", group: "Разделы", label: "Публикации", icon: "send", run: go("/publications") },
-      { id: "p-auto", group: "Разделы", label: "Авто", icon: "zap", run: go("/automation") },
-      { id: "p-acc", group: "Разделы", label: "Аккаунты", icon: "users", run: go("/accounts") },
+      { id: "create", group: "Действия", label: "Новое видео", hint: "файл или ссылка", icon: "plus", run: onCreate },
+      ...(on("series") ? [{ id: "create-p", group: "Действия", label: "Новый проект", icon: "folder", run: onCreateProject }] : []),
+      ...(on("agent_chat") ? [{ id: "gchat", group: "Действия", label: "Общий чат", hint: "вопрос агенту", icon: "chat", run: onOpenChat }] : []),
+      { id: "queue", group: "Действия", label: "Очередь задач", keywords: "задачи", icon: "queue", run: go("/inbox?tab=tasks") },
+      { id: "p-inbox", group: "Разделы", label: "Входящие", keywords: "одобрение вопросы", icon: "inbox", run: go("/inbox") },
+      ...(on("autopilot") ? [{ id: "p-appr", group: "Разделы", label: "Одобрение", hint: "Входящие", icon: "check", run: go("/inbox?tab=approve") }] : []),
+      ...(on("stream_questions") ? [{ id: "p-q", group: "Разделы", label: "Вопросы всех проектов", hint: "Входящие", icon: "chat", run: go("/inbox?tab=questions") }] : []),
+      ...(on("publishing")
+        ? [
+            { id: "p-pub", group: "Разделы", label: "Публикации", icon: "send", run: go("/pubs?tab=pubs") },
+            { id: "p-acc", group: "Разделы", label: "Аккаунты", icon: "users", run: go("/pubs?tab=accounts") },
+          ]
+        : []),
+      { id: "p-ready", group: "Разделы", label: "Готовые ролики", keywords: "клипы", icon: "scissors", run: go("/pubs?tab=ready") },
+      { id: "p-assets", group: "Разделы", label: "Общие файлы", keywords: "файлы для монтажа мемы звуки", icon: "file", run: go("/files") },
+      { id: "p-all", group: "Разделы", label: "Все проекты и видео", icon: "folder", run: go("/projects") },
+      ...(on("automation") ? [{ id: "p-auto", group: "Разделы", label: "Авто", hint: "разовый запуск по ссылке", icon: "zap", run: go("/automation") }] : []),
       { id: "p-set", group: "Разделы", label: "Настройки", icon: "settings", run: go("/settings") },
       { id: "p-help", group: "Разделы", label: "Помощь", icon: "help", run: go("/help") },
     ];
-    // Inside a project: its tabs first — the most frequent jumps.
-    const m = location.pathname.match(/^\/projects\/(\d+)/);
+    // Inside a video: its tabs first; inside a project: its tabs. The most frequent jumps.
+    const m = location.pathname.match(/^\/v\/(\d+)/);
     if (m) {
       const id = m[1];
       const tabs: [string, string][] = [
         ["source", "Исходник"],
         ["candidates", "Моменты"],
-        ["clips", "Клипы проекта"],
+        ["clips", "Клипы этого видео"],
         ["montaged", "Смонтированные"],
+        ...(on("stream_questions") ? ([["questions", "Вопросы этого видео"]] as [string, string][]) : []),
       ];
       list.unshift(
         ...tabs.map(([seg, label]) => ({
           id: `tab-${seg}`,
+          group: "Это видео",
+          label,
+          icon: "arrow",
+          run: go(videoPath(id, seg)),
+        })),
+      );
+    }
+    const inProject = location.pathname.match(/^\/p\/(\d+)/)?.[1];
+    if (inProject) {
+      const tabs: [string, string][] = [
+        ["videos", "Видео проекта"],
+        ["clips", "Клипы проекта"],
+        ["questions", "Вопросы проекта"],
+        ["files", "Файлы проекта"],
+        ["chat", "Чат проекта"],
+        ["brief", "Лор и правила"],
+        ["stats", "Статистика"],
+        ["autopilot", "Автопилот"],
+      ];
+      list.unshift(
+        ...tabs.map(([tab, label]) => ({
+          id: `ptab-${tab}`,
           group: "Этот проект",
           label,
           icon: "arrow",
-          run: go(`/projects/${id}/${seg}`),
+          run: go(projectPath(inProject, tab)),
         })),
       );
+    }
+    for (const p of nav?.projects ?? []) {
+      list.push({
+        id: `project-${p.id}`,
+        group: "Проекты",
+        label: p.name,
+        hint: p.videos ? `${p.videos} видео` : "",
+        icon: "folder",
+        run: go(projectPath(p.id)),
+      });
     }
     for (const p of project.data?.clip_plans ?? []) {
       if (p.hidden) continue;
       list.push({
         id: `plan-${p.id}`,
-        group: "Моменты проекта",
+        group: "Клипы этого видео",
         label: p.title || `План #${p.id}`,
         hint: `${p.favorite ? "★ " : ""}${p.ai_pick ? `✨${p.ai_pick.score} ` : ""}→ монтаж`,
         icon: "scissors",
-        run: go(`/projects/${project.data!.id}/candidates?clip=${p.id}`),
+        run: go(clipEditorPath(project.data!.id, p.id)),
       });
     }
     for (const s of sources.data ?? []) {
-      const name = s.original_filename || s.original_url || `Проект #${s.id}`;
+      const name = s.display_name || s.original_filename || s.original_url || `Видео #${s.id}`;
       list.push({
         id: `src-${s.id}`,
-        group: "Проекты",
+        group: "Видео",
         label: name,
-        hint: `${s.clip_plans_count ?? 0} моментов`,
-        keywords: SOURCE_KIND[s.source_type] ?? "",
+        hint: `${s.clip_plans_count ?? 0} клипов`,
+        keywords: `${SOURCE_KIND[s.source_type] ?? ""} ${s.original_filename}`,
         icon: "film",
-        run: go(`/projects/${s.id}/candidates`),
+        run: go(videoPath(s.id, "candidates")),
       });
     }
     for (const c of (clips.data ?? []).slice(0, 300)) {
@@ -118,17 +170,23 @@ export function CommandPalette({
         label: c.title || `Клип #${c.id}`,
         hint: c.status === "succeeded" ? "готов" : c.status,
         icon: "scissors",
-        run: go(c.source_id ? `/projects/${c.source_id}/clips` : "/clips"),
+        run: go(
+          c.source_id && c.clip_plan_id
+            ? clipEditorPath(c.source_id, c.clip_plan_id)
+            : c.source_id
+              ? videoPath(c.source_id, "clips")
+              : "/pubs?tab=ready",
+        ),
       });
     }
     return list;
-  }, [sources.data, clips.data, project.data, location.pathname, navigate, onCreate]);
+  }, [sources.data, clips.data, project.data, location.pathname, navigate, onCreate, onCreateProject, onOpenChat, nav, on]);
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const hits = needle
       ? commands.filter((c) => `${c.label} ${c.group} ${c.hint ?? ""} ${c.keywords ?? ""}`.toLowerCase().includes(needle))
-      : commands.filter((c) => c.group !== "Клипы" && c.group !== "Моменты проекта");
+      : commands.filter((c) => c.group !== "Клипы" && c.group !== "Клипы этого видео");
     return hits.slice(0, 40);
   }, [commands, q]);
 
@@ -150,7 +208,7 @@ export function CommandPalette({
           <input
             ref={inputRef}
             value={q}
-            placeholder="Проект, клип, раздел или команда…"
+            placeholder="Проект, видео, клип, раздел или команда…"
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {

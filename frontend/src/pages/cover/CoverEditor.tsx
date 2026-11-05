@@ -744,7 +744,7 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
   return (
     <div className={`cov-app${readOnly ? " view" : ""}`} data-panel={panel}>
       <header className="cov-top">
-        {state.owner ? <Link className="btn ghost sm" to="/clips">К клипам</Link> : null}
+        {state.owner ? <Link className="btn ghost sm" to="/pubs?tab=ready">К клипам</Link> : null}
         <h1 title={state.title}>{state.title}</h1>
         {readOnly ? <span className="cov-state">Только просмотр</span> : <span className={`cov-state ${saveState}`} role="status">{SAVE_LABEL[saveState]}</span>}
         {saveState === "conflict" ? <button type="button" className="btn sm" onClick={() => void load()}>Открыть свежую версию</button> : null}

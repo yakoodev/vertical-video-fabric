@@ -22,10 +22,11 @@ export const downloadsApi = {
   cancel: (id: number) => api.post<DownloadTask>(`/api/downloads/${id}/cancel`),
   redownload: (sourceId: number) => api.post<DownloadTask>(`/api/sources/${sourceId}/redownload`, {}),
   // Returns as soon as the task is queued; progress arrives through /api/tasks/active.
-  start: (url: string, quality = "", option?: PlayerOption) =>
+  start: (url: string, quality = "", option?: PlayerOption, projectId?: number | null) =>
     api.post<DownloadTask>("/api/sources/download", {
       url,
       quality,
+      ...(projectId ? { project_id: projectId } : {}),
       ...(option
         ? {
             smotvibe_media_url: option.media_url,

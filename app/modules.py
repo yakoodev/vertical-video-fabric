@@ -370,7 +370,7 @@ MODULES: list[Module] = [
         cost=("network",), cost_note="лёгкий; короткий кусочек записи кодируется при просмотре, мемы качаются по одному",
         tools=("add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices",
                "list_meme_catalog"),
-        routes=("/api/sources/{id}/stream-questions", "/api/stream-questions/*", "/api/meme-moments/*",
+        routes=("/api/sources/{id}/stream-questions", "/api/stream-questions", "/api/stream-questions/*", "/api/meme-moments/*",
                 "/api/meme-options/*"),
         ui=("вкладка «Вопросы» в проекте",),
     ),

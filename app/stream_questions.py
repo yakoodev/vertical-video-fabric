@@ -497,6 +497,12 @@ def progress(questions: list[dict], moments: list[dict]) -> dict:
     }
 
 
+def _source_title(store: Any, source: dict) -> str:
+    from app import nav
+
+    return nav.titles_for(store, [source]).get(int(source["id"]), "") or source.get("original_filename") or ""
+
+
 def page_state(store: Any, source_id: int) -> dict:
     from app import projects as P
 
@@ -505,12 +511,69 @@ def page_state(store: Any, source_id: int) -> dict:
     moments = list_moments(store, source_id)
     project_id = P.project_of_source(store, int(source_id))
     return {
-        "source": {"id": source["id"], "title": source.get("original_filename") or source.get("original_url") or "",
+        "source": {"id": source["id"], "title": _source_title(store, source),
                    "duration": source.get("duration_sec") or 0},
         "project_id": project_id,
         "questions": questions,
         "moments": moments,
         "progress": progress(questions, moments),
+    }
+
+
+def inbox_state(store: Any, project_id: int | None = None, only_open: bool = True, limit: int = 300) -> dict:
+    """Вопросы и мемы всех видео для «Входящих» и вкладки проекта: по видео, новые стримы первыми."""
+    from app import nav
+
+    where, args = [], []
+    if project_id is not None:
+        where.append("s.project_id = ?")
+        args.append(int(project_id))
+    status_q = " AND x.status = 'open'" if only_open else ""
+    scope = (" AND " + " AND ".join(where)) if where else ""
+    limit = max(1, int(limit))
+    question_rows = store.db.query_all(
+        f"SELECT x.* FROM stream_questions x JOIN sources s ON s.id = x.source_id WHERE 1 = 1{status_q}{scope} "
+        "ORDER BY x.source_id DESC, x.t_start, x.id LIMIT ?",
+        (*args, limit),
+    )
+    moment_rows = store.db.query_all(
+        f"SELECT x.* FROM meme_moments x JOIN sources s ON s.id = x.source_id WHERE 1 = 1{status_q}{scope} "
+        "ORDER BY x.source_id DESC, x.t_start, x.id LIMIT ?",
+        (*args, limit),
+    )
+    questions = [_question(r) for r in question_rows]
+    moments = [_moment(store, r) for r in moment_rows]
+    ids = sorted({int(x["source_id"]) for x in [*questions, *moments]}, reverse=True)
+    sources: dict[int, dict] = {}
+    if ids:
+        marks = ",".join("?" for _ in ids)
+        rows = [dict(r) for r in store.db.query_all(
+            f"""
+            SELECT s.id, s.source_type, s.original_filename, s.created_at, s.project_id, p.name AS project_name
+            FROM sources s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id IN ({marks})
+            """,
+            ids,
+        )]
+        names = nav.titles_for(store, rows)
+        for row in rows:
+            sources[int(row["id"])] = {"id": row["id"], "title": names.get(int(row["id"]), ""),
+                                       "project_id": row["project_id"], "project_name": row["project_name"] or ""}
+    totals = store.db.query_all(
+        """
+        SELECT s.project_id, p.name, SUM(n) AS n FROM (
+            SELECT source_id, COUNT(*) AS n FROM stream_questions WHERE status = 'open' GROUP BY source_id
+            UNION ALL
+            SELECT source_id, COUNT(*) AS n FROM meme_moments WHERE status = 'open' GROUP BY source_id
+        ) x JOIN sources s ON s.id = x.source_id LEFT JOIN projects p ON p.id = s.project_id
+        GROUP BY s.project_id ORDER BY p.name COLLATE NOCASE
+        """
+    )
+    return {
+        "sources": [sources[i] for i in ids if i in sources],
+        "questions": questions,
+        "moments": moments,
+        "open_by_project": [{"project_id": r["project_id"], "name": r["name"] or "Вне проектов", "open": int(r["n"])}
+                            for r in totals],
     }
 
 

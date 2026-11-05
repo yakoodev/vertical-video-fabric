@@ -132,16 +132,16 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
   let body;
   let editor: string | null = null;
   if (target.kind === "source") {
-    editor = `/projects/${target.id}/source`;
+    editor = `/v/${target.id}/source`;
     body = noFile ? (
-      <div className="muted">Запись стрима удалена — открой проект, чтобы скачать её заново</div>
+      <div className="muted">Запись стрима удалена — открой видео, чтобы скачать её заново</div>
     ) : (
       <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${target.id}`} controls autoPlay muted={false} onError={() => setNoFile(true)} />
     );
   } else if (clip.isLoading) body = <Loading />;
   else if (clip.isError || !clip.data) body = <div className="muted">Клип #{target.id} не найден</div>;
   else {
-    editor = `/projects/${clip.data.source_id}/candidates?clip=${target.id}${target.t != null ? `&t=${t}` : ""}`;
+    editor = `/v/${clip.data.source_id}/candidates?clip=${target.id}${target.t != null ? `&t=${t}` : ""}`;
     body = clip.data.video_url ? (
       <video ref={videoRef} className="chat-media-video" src={clip.data.video_url} poster={clip.data.thumb_url} controls autoPlay />
     ) : fromSource ? (
@@ -227,7 +227,7 @@ function Preview({ preview, onRef }: { preview: StepPreview; onRef: (r: MediaRef
           </button>
           <span className="chat-ellipsis">{preview.title}</span>
           {preview.source_id ? (
-            <Link className="chat-small" to={`/projects/${preview.source_id}/candidates?clip=${preview.clip_plan_id}`}>
+            <Link className="chat-small" to={`/v/${preview.source_id}/candidates?clip=${preview.clip_plan_id}`}>
               в редактор →
             </Link>
           ) : null}
@@ -240,7 +240,7 @@ function Preview({ preview, onRef }: { preview: StepPreview; onRef: (r: MediaRef
     <ul className="chat-approvals">
       {preview.approvals.map((a) => (
         <li key={a.id}>
-          <Link to={`/approvals?id=${a.id}`}>#{a.id}</Link> {a.title || a.question} <span className="muted">· {a.status}</span>
+          <Link to={`/inbox?tab=approve&id=${a.id}`}>#{a.id}</Link> {a.title || a.question} <span className="muted">· {a.status}</span>
         </li>
       ))}
     </ul>

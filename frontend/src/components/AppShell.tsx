@@ -1,35 +1,28 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { Loading } from "@/components/ui";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
+import { navApi, navKeys } from "@/api/nav";
 import { ActivityCenter } from "@/components/ActivityCenter";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Icon } from "@/components/Icon";
-import { AddSource } from "@/pages/ProjectsPage";
-import { useQuery } from "@tanstack/react-query";
-import { tasksApi } from "@/api/tasks";
-import { qk } from "@/api/keys";
-import { isActive } from "@/hooks/useActiveTasks";
-import { apKeys, autopilotApi } from "@/api/autopilot";
+import { Ladder, useWhere } from "@/components/shell/Ladder";
+import { NewProjectDialog } from "@/components/shell/NewProjectDialog";
+import { Sidebar } from "@/components/shell/Sidebar";
+import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
+import { lazyPage } from "@/lazyPage";
+import { rememberProject } from "@/lib/paths";
+import { AddSource } from "@/pages/ProjectsPage";
 
-// Order follows the daily loop: make → clip → publish (manual or auto) → watch.
-// module — пункт виден, только пока модуль включён («Настройки → Модули», app/modules.py).
-const NAV: { to: string; label: string; icon: string; badge?: "active" | "approvals"; module?: string }[] = [
-  { to: "/projects", label: "Проекты", icon: "folder" },
-  { to: "/chat", label: "Чат", icon: "chat", module: "agent_chat" },
-  { to: "/clips", label: "Клипы", icon: "scissors" },
-  { to: "/assets", label: "Файлы для монтажа", icon: "image" },
-  { to: "/approvals", label: "Одобрение", icon: "check", badge: "approvals", module: "autopilot" },
-  { to: "/publications", label: "Публикации", icon: "send", module: "publishing" },
-  { to: "/automation", label: "Авто", icon: "zap", module: "automation" },
-  { to: "/tasks", label: "Очередь", icon: "queue", badge: "active" },
-  { to: "/accounts", label: "Аккаунты", icon: "users", module: "publishing" },
-];
+// Панель чата и её зависимости не нужны, пока её не открыли.
+const GeneralChatDrawer = lazyPage<{ onClose: () => void }>(() => import("@/components/shell/GeneralChatDrawer"), "GeneralChatDrawer");
 
 export const SHORTCUTS: [string, string][] = [
   ["Ctrl / ⌘ + K", "поиск и команды"],
-  ["N", "создать проект"],
-  ["1 … 5", "вкладки проекта: Исходник, Моменты, Монтаж, Клипы, Смонтированные"],
+  ["N", "новое видео"],
+  ["1 … 8", "вкладки проекта: Видео, Клипы, Вопросы, Файлы, Чат, Лор и правила, Статистика, Автопилот"],
+  ["1 … 5", "вкладки видео: Исходник, Моменты, Монтаж, Клипы, Смонтированные"],
+  ["1 … 3", "вкладки Входящих и Публикаций"],
   ["F", "Моменты: ★ в избранное (момент под курсором / открытый)"],
   ["X", "Моменты: скрыть / вернуть момент под курсором"],
   ["E", "Моменты: открыть момент под курсором в монтаже"],
@@ -46,31 +39,41 @@ export const SHORTCUTS: [string, string][] = [
   ["?", "эта подсказка"],
 ];
 
+const PROJECT_TABS = ["videos", "clips", "questions", "files", "chat", "brief", "stats", "autopilot"];
+const VIDEO_TABS = ["source", "candidates", "edit", "clips", "montaged"];
+const INBOX_TABS = ["approve", "questions", "tasks"];
+const PUBS_TABS = ["pubs", "accounts", "ready"];
+
 const typing = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
   return !!t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 };
+
+export type ShellContext = { openNewVideo: () => void };
+
+/** Кнопка «Новое видео» на странице проекта открывает диалог каркаса. */
+export const useShell = () => useOutletContext<ShellContext>();
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [palette, setPalette] = useState(false);
   const [create, setCreate] = useState(false);
+  const [newProject, setNewProject] = useState(false);
   const [keys, setKeys] = useState(false);
-  // Read the shared cache only: ActivityCenter owns the polling side effects
-  // (completion toasts) — a second useActiveTasks() would toast everything twice.
-  const tasks = useQuery({ queryKey: qk.activeTasks, queryFn: tasksApi.active, refetchInterval: 5000 });
-  const activeCount = (tasks.data ?? []).filter((t) => isActive(t.status)).length;
-  // Автопилот: сколько карточек ждёт владельца (app/autopilot.py).
-  const { on, ready } = useModules();
-  const approvals = useQuery({
-    queryKey: apKeys.counts,
-    queryFn: autopilotApi.counts,
-    refetchInterval: 30000,
-    enabled: ready("autopilot"),
-  });
-  const pendingCount = approvals.data?.pending ?? 0;
+  const [chat, setChat] = useState(false);
+  const { on } = useModules();
+  const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, refetchInterval: 30000, staleTime: 15_000 });
+  const { projectId, project } = useWhere(nav.data);
   const openCreate = useCallback(() => setCreate(true), []);
+  const openNewProject = useCallback(() => setNewProject(true), []);
+  const openKeys = useCallback(() => setKeys(true), []);
+  const openChat = useCallback(() => setChat(true), []);
+  const closeChat = useCallback(() => setChat(false), []);
+
+  useEffect(() => {
+    if (projectId) rememberProject(projectId);
+  }, [projectId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -82,18 +85,27 @@ export function AppShell() {
       if (e.key === "Escape") {
         setCreate(false);
         setKeys(false);
+        setNewProject(false);
       }
       if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
       if (document.querySelector(".modal-backdrop")) return; // a dialog owns the keyboard
       if (e.key === "?") setKeys(true);
       else if (e.key === "n" || e.key === "т") setCreate(true);
-      else if (/^[1-5]$/.test(e.key)) {
-        const m = location.pathname.match(/^\/projects\/(\d+)/);
-        if (!m) return;
-        const seg = ["source", "candidates", "edit", "clips", "montaged"][Number(e.key) - 1];
-        if (seg === "edit") {
-          document.querySelector<HTMLAnchorElement>('.pipeline a[href*="?clip="]')?.click();
-        } else navigate(`/projects/${m[1]}/${seg}`);
+      else if (/^[1-8]$/.test(e.key)) {
+        const n = Number(e.key) - 1;
+        const [, head, id] = location.pathname.split("/");
+        if (head === "p" && id && PROJECT_TABS[n]) {
+          // Вкладки, которых у проекта нет (модуль выключен), остаются без реакции: нажимаем настоящую ссылку.
+          document.querySelector<HTMLElement>(`.ptabs [data-tab="${PROJECT_TABS[n]}"]`)?.click();
+        } else if (head === "v" && id && VIDEO_TABS[n]) {
+          const seg = VIDEO_TABS[n];
+          if (seg === "edit") document.querySelector<HTMLAnchorElement>('.pipeline a[href*="?clip="]')?.click();
+          else navigate(`/v/${id}/${seg}`);
+        } else if (head === "inbox" && INBOX_TABS[n]) {
+          navigate(`/inbox?tab=${INBOX_TABS[n]}`);
+        } else if (head === "pubs" && !id && PUBS_TABS[n]) {
+          navigate(`/pubs?tab=${PUBS_TABS[n]}`);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -102,99 +114,70 @@ export function AppShell() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="mark" />
-          <span className="word">
-            FABRIC
-            <small>VERTICAL VIDEO</small>
-          </span>
-        </div>
-        <button className="nav-create" onClick={openCreate} title="Новый проект: файл или ссылка (N)">
-          <Icon name="plus" />
-          <span>Создать</span>
-          <kbd>N</kbd>
-        </button>
-        <nav className="nav-section">
-          {NAV.filter((item) => !item.module || on(item.module)).map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive: on }) => `nav-link${on ? " active" : ""}`}
-            >
-              <Icon name={item.icon} className="ico" />
-              <span>{item.label}</span>
-              {item.badge === "active" && activeCount ? <span className="nav-badge">{activeCount}</span> : null}
-              {item.badge === "approvals" && pendingCount ? <span className="nav-badge">{pendingCount}</span> : null}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="nav-spacer" />
-        <button className="nav-link nav-keys" onClick={() => setKeys(true)}>
-          <Icon name="keyboard" className="ico" />
-          <span>Горячие клавиши</span>
-          <kbd>?</kbd>
-        </button>
-        <NavLink to="/help" className={({ isActive: on }) => `nav-link${on ? " active" : ""}`}>
-          <Icon name="help" className="ico" />
-          <span>Помощь</span>
-        </NavLink>
-        <NavLink to="/settings" className={({ isActive: on }) => `nav-link${on ? " active" : ""}`}>
-          <Icon name="settings" className="ico" />
-          <span>Настройки</span>
-        </NavLink>
-        <form action="/logout" method="post">
-          <button type="submit" className="nav-link" style={{ width: "100%", border: 0, background: "none" }}>
-            <Icon name="logout" className="ico" />
-            <span>Выйти</span>
-          </button>
-        </form>
-      </aside>
+      <Sidebar nav={nav.data} projectId={projectId} onCreateProject={openNewProject} onKeys={openKeys} />
       <main className="content">
-        <div className="topbar">
-          <button className="topbar-search" onClick={() => setPalette(true)}>
-            <Icon name="search" size={16} />
-            <span>Поиск или команда…</span>
-            <kbd>Ctrl K</kbd>
-          </button>
-          <div className="topbar-right">
-            <Link to="/tasks" className={`topbar-active${activeCount ? " on" : ""}`} title="Очередь задач">
-              <Icon name="bolt" size={15} />
-              {activeCount ? `${activeCount} активн.` : "нет задач"}
-              {activeCount ? <span className="pulse-dot" /> : null}
-            </Link>
+        <header className="top">
+          <Ladder nav={nav.data} onCreateVideo={openCreate} />
+          <div className="tools">
+            <button type="button" className="tool" onClick={() => setPalette(true)} title="Поиск и команды (Ctrl K)">
+              <Icon name="search" size={16} />
+              <span>
+                Поиск<em> Ctrl K</em>
+              </span>
+            </button>
+            {on("agent_chat") ? (
+              <button type="button" className="tool" onClick={openChat} title="Вопросы агенту не про один проект">
+                <Icon name="chat" size={16} />
+                <span>Общий чат</span>
+              </button>
+            ) : null}
             <ActivityCenter />
           </div>
-        </div>
+        </header>
         <div className="content-inner">
           <Suspense fallback={<Loading />}>
-            <Outlet />
+            <Outlet context={{ openNewVideo: openCreate } satisfies ShellContext} />
           </Suspense>
         </div>
       </main>
 
-      <CommandPalette open={palette} onClose={() => setPalette(false)} onCreate={openCreate} />
+      <CommandPalette
+        open={palette}
+        onClose={() => setPalette(false)}
+        onCreate={openCreate}
+        onCreateProject={openNewProject}
+        onOpenChat={openChat}
+        nav={nav.data}
+      />
+
+      {chat ? (
+        <Suspense fallback={null}>
+          <GeneralChatDrawer onClose={closeChat} />
+        </Suspense>
+      ) : null}
+
+      {newProject ? <NewProjectDialog onClose={() => setNewProject(false)} /> : null}
 
       {create ? (
         <div className="modal-backdrop" onClick={() => setCreate(false)}>
-          <div className="modal create-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+          <div className="modal create-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Новое видео">
             <div className="pub-head">
-              <h3>Новый проект</h3>
+              <h3>{project ? `Новое видео в проекте «${project.name}»` : "Новое видео"}</h3>
               <button className="pub-x" title="Закрыть" onClick={() => setCreate(false)}>
                 ×
               </button>
             </div>
             <p className="muted" style={{ margin: "0 0 12px", fontSize: 13 }}>
-              Загрузите видео или вставьте ссылку — скачивание пойдёт в фоне, прогресс в «Очереди».
+              Загрузите видео или вставьте ссылку: скачивание пойдёт в фоне, прогресс в «Очереди задач».
             </p>
-            <AddSource onStarted={() => setCreate(false)} />
+            <AddSource onStarted={() => setCreate(false)} projectId={project?.id ?? null} />
           </div>
         </div>
       ) : null}
 
       {keys ? (
         <div className="modal-backdrop" onClick={() => setKeys(false)}>
-          <div className="modal keys-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+          <div className="modal keys-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Горячие клавиши">
             <div className="pub-head">
               <h3>Горячие клавиши</h3>
               <button className="pub-x" title="Закрыть" onClick={() => setKeys(false)}>
@@ -204,7 +187,7 @@ export function AppShell() {
             <table className="keys-table">
               <tbody>
                 {SHORTCUTS.map(([k, v]) => (
-                  <tr key={k}>
+                  <tr key={`${k}${v}`}>
                     <td>
                       <kbd>{k}</kbd>
                     </td>

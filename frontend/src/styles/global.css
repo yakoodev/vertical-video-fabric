@@ -16,11 +16,8 @@ body {
   margin: 0;
   font-family: var(--font);
   background: var(--bg);
-  background-image:
-    radial-gradient(120% 80% at 12% -10%, rgba(123, 108, 255, 0.12), transparent 60%),
-    radial-gradient(90% 70% at 100% 0%, rgba(88, 182, 255, 0.06), transparent 55%);
-  background-attachment: fixed;
   color: var(--text);
+  font-weight: 450;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   letter-spacing: 0.1px;

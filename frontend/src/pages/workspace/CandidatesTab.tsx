@@ -3409,7 +3409,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           <div className="ed-crumb">
             <span className="ed-crumb-title">{activePlan?.title || (activePlan ? `План #${activePlan.id}` : "")}</span>
             <span className="ed-crumb-src muted">
-              {source.original_filename || source.original_url || `Проект #${source.id}`}
+              {source.display_name || source.original_filename || source.original_url || `Видео #${source.id}`}
             </span>
           </div>
           <button
@@ -4293,7 +4293,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </button>
                   <a
                     className="btn sm"
-                    href="/assets"
+                    href="/files"
                     target="_blank"
                     rel="noreferrer"
                     title="Библиотека мемов (откроется в новой вкладке): ИИ ищет картинки в интернете и описывает файлы"
@@ -4886,7 +4886,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 {!pickableAssets.length ? (
                   <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                     Библиотека пуста — закиньте мемы и звуки в{" "}
-                    <a href="/assets" onClick={(e) => { e.preventDefault(); navigate("/assets"); }}>
+                    <a href="/files" onClick={(e) => { e.preventDefault(); navigate("/files"); }}>
                       «Файлы для монтажа»
                     </a>
                     . 🤖 ИИ-монтаж вставит подходящие сам.
