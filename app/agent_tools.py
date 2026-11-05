@@ -7859,7 +7859,8 @@ def _build_registry() -> list[Tool]:
                                                               "speaker": {"type": "string",
                                                                           "description": "то же, что s"}},
                                                              ["word", "start", "end"])},
-                  "align": {"type": "boolean", "description": "по умолчанию true: новый текст — по настоящей речи"}},
+                  "align": {"type": "boolean", "description": "по умолчанию true: новый текст — по настоящей речи, известные слова, "
+                                                              "уехавшие от распознанного больше чем на 0.5 с, — обратно; false — время как задано"}},
                  ["words"]),
             h_set_subtitle_words, mutating=True, label=lambda a: "Задаю слова субтитров",
         ),
@@ -7934,9 +7935,10 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "snap_subtitles_to_speech", "Ставлю субтитры на голос",
-            "Поправить находки lint_clip sub_sync: первое слово строки, опережающей голос или опоздавшей, встаёт на "
-            "настоящее начало речи (VAD). Текст не меняется. Потерянные фразы и строки без голоса — в ответе (rest), "
-            "их решает человек. / Snap subtitle line starts to detected speech.",
+            "Поправить находки lint_clip sub_sync: слова страницы, разошедшейся со сказанным, встают на время "
+            "распознанного голоса; строка, начатая в тишине, — на настоящее начало речи (VAD). Текст не меняется. "
+            "Потерянные фразы, строки без голоса и нерасслышанные — в ответе (rest), их решает человек. "
+            "/ Snap subtitle words to recognised speech.",
             _obj({}, []), h_snap_subtitles_to_speech, mutating=True, label=lambda a: "Ставлю субтитры на голос",
         ),
         Tool(
