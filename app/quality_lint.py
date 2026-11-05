@@ -28,8 +28,9 @@
 * ``fragments`` — обрывки после вырезов (app/cuts.py ``kept_islands``): кусок короче 2.5 с или без трёх
   слов между разрывами — «момент из одного слова» (горизонталка Муры 31.10). Без медиа, по текущему плану.
 
-* ``sub_sync`` — субтитры против голоса (app/speech_activity.py, Silero VAD по дорожке речи, без рендера): строка
-  раньше голоса больше 0.25 с или позже больше 0.5 с, строка без голоса, речь без субтитров перед строкой.
+* ``sub_sync`` — субтитры против звука, без рендера. Страницы против распознанных слов (app/speech_heard.py, локальный
+  whisper, один раз на набор кусков): страница раньше своих слов больше 0.6 с, позже больше 0.7 с, уплывший конец,
+  слова, которых не слышно. VAD (app/speech_activity.py): строка в тишине, речь без субтитров перед строкой.
 
 Только предупреждения: ничего не меняет и не блокирует. ``plan``-проверки (зоны, чтение,
 подсказки лупа) — без медиа, за доли секунды; ``flashes`` и оценка лупа — по последнему
@@ -241,7 +242,7 @@ def _pack(widths: list[float], space: float, max_w: float) -> list[float]:
 
 def caption_layer_pages(words: list[dict], props: Any, start: float = 0.0, end: float = math.inf) -> list[dict]:
     """Страницы слоя ``captions`` (порт captionPages движка, ширина слов — оценкой по кеглю):
-    ``[{t0, t1, words, text, lines, width}]`` на шкале clip. ``words`` — comp.words ``{t0, t1, w, s?}``."""
+    ``[{t0, t1, words, idx, text, lines, width}]`` на шкале clip. ``words`` — comp.words ``{t0, t1, w, s?}``, ``idx`` — номера их."""
     look = caption_look(props)
     size = look["size"]
     factor = _char_factor(bool(look["uppercase"]), _num(look["weight"], 900))
@@ -249,7 +250,7 @@ def caption_layer_pages(words: list[dict], props: Any, start: float = 0.0, end: 
     space = size * 0.3
     max_w = look["maxWidth"] / max(1.0, look["wordScale"] * 0.97)
     items = []
-    for wd in words or []:
+    for index, wd in enumerate(words or []):
         if not isinstance(wd, dict):
             continue
         t0 = _num(wd.get("t0"), math.nan)
@@ -262,7 +263,7 @@ def caption_layer_pages(words: list[dict], props: Any, start: float = 0.0, end: 
         if not text:
             continue
         t1 = max(t0 + 0.05, _num(wd.get("t1"), t0))
-        items.append({"text": text, "raw": str(wd.get("w") or ""), "t0": t0, "t1": t1, "s": who,
+        items.append({"i": index, "text": text, "raw": str(wd.get("w") or ""), "t0": t0, "t1": t1, "s": who,
                       "w": len(text) * (size * factor + spacing)})
     items.sort(key=lambda it: it["t0"])
     phrases: list[list[dict]] = []
@@ -307,7 +308,7 @@ def caption_layer_pages(words: list[dict], props: Any, start: float = 0.0, end: 
         # Звучащее слово крупнее (wordScale) — строка шире на его прибавку, не вся целиком.
         grow = (look["wordScale"] - 1) * max(x["w"] for x in g)
         pages.append({"t0": g[0]["t0"], "t1": g[-1]["t1"] + CAPTION_HOLD, "words": [x["text"] for x in g],
-                      "text": " ".join(x["text"] for x in g), "lines": len(lines),
+                      "idx": [x["i"] for x in g], "text": " ".join(x["text"] for x in g), "lines": len(lines),
                       "width": min(max(lines), max_w) + grow,
                       "height": len(lines) * size * look["lineHeight"]})
     for k in range(len(pages) - 1):
@@ -1771,9 +1772,12 @@ def fragment_findings(store: Any, plan: dict, rs: dict, clock: Any) -> tuple[lis
 
 
 def sub_sync_findings(store: Any, plan: dict, clock: Any) -> tuple[list[dict], dict]:
-    """Начало каждой строки субтитров против голоса. Вырезанное не считается: зритель его не увидит."""
+    """Субтитры против звука. Главное — сверка показанного со сказанным (app/speech_heard.py): VAD знает только,
+    что кто-то говорит, и пропускал страницы на секунды раньше своей фразы. Вырезанное не считается: зритель
+    его не увидит. Распознать нечем — остаётся VAD, и ответ говорит, что текст не сверен (``by_text``)."""
     from app.piece_speed import seg_speed
     from app.speech_activity import line_sync, plan_speech_spans
+    from app.speech_heard import plan_groups, plan_heard_words, text_sync
 
     payload = store.get_clip_plan_subtitles(int(plan["id"])) or {}
     lines, words = payload.get("lines") or [], payload.get("words") or []
@@ -1782,9 +1786,26 @@ def sub_sync_findings(store: Any, plan: dict, clock: Any) -> tuple[list[dict], d
     if any(abs(seg_speed(s) - 1.0) > 1e-3 for s in plan.get("segments") or []):
         return [], {"skipped": "у кусков своя скорость — звук клипа не совпадает со шкалой слов"}
     labels = {"early": "раньше голоса на", "late": "позже голоса на"}
-    out, counts = [], {"lines": len(lines), "early": 0, "late": 0, "silent": 0, "lost": 0}
+    counts: dict[str, Any] = {"lines": len(lines), "early": 0, "late": 0, "silent": 0, "lost": 0, "drift": 0, "unheard": 0}
     cuts = (plan.get("render_settings") or {}).get("cuts") or []
-    for issue in line_sync(lines, words, plan_speech_spans(store, int(plan["id"]))):
+    spans = plan_speech_spans(store, int(plan["id"]))
+    issues: list[dict] = []
+    try:
+        issues, counts["pages_checked"] = text_sync(plan_groups(plan, lines, words), words,
+                                                    plan_heard_words(store, int(plan["id"])), cuts)
+        counts["by_text"] = True
+    except Exception as exc:  # noqa: BLE001 - нет модели или выключено распознавание: скажем честно, VAD останется
+        counts["by_text"] = False
+        counts["by_text_note"] = f"текст со сказанным не сверен: {str(exc)[:160]}"
+    by_text = [float(i["start"]) for i in issues]
+    for issue in line_sync(lines, words, spans):
+        # Та же строка уже сверена по тексту — это точнее: VAD не отличает её голос от чужого.
+        if not (issue["kind"] in labels and any(abs(float(issue["start"]) - t) <= 0.3 for t in by_text)):
+            issues.append(issue)
+    order = {"early": 0, "late": 0, "drift": 0, "silent": 1, "lost": 2, "unheard": 3}
+    issues.sort(key=lambda i: (order[i["kind"]], -abs(float(i.get("by") or 0))))
+    out: list[dict] = []
+    for issue in issues:
         parts = clock.plain_range_to_clip(issue["start"], issue["end"])
         if not parts or any(float(c["start"]) <= issue["start"] < float(c["end"]) for c in cuts):
             continue
@@ -1795,10 +1816,16 @@ def sub_sync_findings(store: Any, plan: dict, clock: Any) -> tuple[list[dict], d
         said = f"«{_short(issue['text'], 40)}»"
         if issue["kind"] in labels:
             out.append(_finding("sub_sync", "warn", f"строка {said} {labels[issue['kind']]} {issue['by']:.2f} с",
-                                "snap_subtitles_to_speech поставит начало на голос", t=t, until=parts[-1]["end"]))
+                                "snap_subtitles_to_speech поставит слова на голос", t=t, until=parts[-1]["end"]))
+        elif issue["kind"] == "drift":
+            out.append(_finding("sub_sync", "warn", f"строка {said} уплывает: к концу расходится с голосом на {issue['by']:+.2f} с",
+                                "snap_subtitles_to_speech поставит слова на голос", t=t, until=parts[-1]["end"]))
         elif issue["kind"] == "silent":
             out.append(_finding("sub_sync", "warn", f"строка {said}: голоса на этом месте нет",
                                 "проверь listen: текст не отсюда или время уехало", t=t, until=parts[-1]["end"]))
+        elif issue["kind"] == "unheard":
+            out.append(_finding("sub_sync", "info", f"строка {said}: распознавание не слышит этих слов",
+                                "послушай listen: текст не отсюда или он под игрой", t=t, until=parts[-1]["end"]))
         else:
             out.append(_finding("sub_sync", "info", f"перед строкой {said} {issue['by']:.1f} с речи без субтитров",
                                 "послушай listen: потерянная фраза или чужой голос (separate_voices)", t=t, until=parts[-1]["end"]))

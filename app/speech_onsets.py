@@ -24,6 +24,7 @@ LEAD_MIN_SAMPLES = 3
 LEAD_MIN_SEC = 0.08
 MAX_LEAD_SEC = 0.6
 NOISY_VOICED_SHARE = 0.85  # громкость «звучит» в такой доле кадров — это не речь, а игра под ней
+STRETCH_MARGIN_SEC = 0.3  # запас к правдоподобной длине слова: растянутое голосом «обязаан» не режем
 
 
 def wav_pcm(path) -> bytes:
@@ -176,6 +177,23 @@ def _median(values: list[float]) -> float:
     return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def plausible_word_sec(word: str) -> float:
+    """Сколько слово может звучать: распознавание тянет его начало назад по паузе и чужой речи, а конец ставит точно."""
+    return 0.2 + 0.11 * sum(ch.isalnum() for ch in str(word))
+
+
+def trim_stretched(words: list[dict]) -> int:
+    """Начало растянутого слова — от его конца. Клип 934: «Обязан!» 3.23 с — вся страница на экране за 2.4 с до слова,
+    и ни голос, ни VAD этого не видят: под растянутым началом говорит кто-то другой. → сколько слов подрезано."""
+    moved = 0
+    for w in words:
+        limit = plausible_word_sec(w["word"]) + STRETCH_MARGIN_SEC
+        if float(w["end"]) - float(w["start"]) > limit:
+            w["start"] = round(float(w["end"]) - limit, 3)
+            moved += 1
+    return moved
+
+
 def snap_payload(payload: dict, pcm: bytes) -> int:
     """Подогнать слова субтитров (и границы строк по ним) к звуку; вернуть число сдвинутых."""
     words = payload.get("words") or []
@@ -188,6 +206,7 @@ def snap_payload(payload: dict, pcm: bytes) -> int:
         for line in lines
     ]
     snapped, moved = snap_words(words, _vad_or_loudness(pcm, voiced_frames(pcm)))
+    moved += trim_stretched(snapped)
     if not moved:
         return 0
     payload["words"] = snapped

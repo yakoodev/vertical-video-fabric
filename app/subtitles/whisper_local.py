@@ -123,8 +123,9 @@ class WhisperSubtitleProvider:
             word_timestamps=True,
             # Voice-activity filter with a bit of padding: instrumental music and
             # room tone never reach the decoder, which is where hallucinated
-            # "lyrics" come from.
-            vad_filter=True,
+            # "lyrics" come from. Сверка субтитров со сказанным (app/speech_heard.py) просит без него:
+            # выдумка ей не страшна (важны только совпавшие слова), а VAD теряет речь под игрой.
+            vad_filter=bool(profile.get("vad_filter", True)),
             vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
             beam_size=5,
             # Single temperature (no fallback sampling) keeps word timestamps

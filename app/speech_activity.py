@@ -18,6 +18,7 @@ RATE = 16000
 EARLY_SEC = 0.25  # строка раньше голоса — глаз видит текст до звука
 LATE_SEC = 0.5  # после голоса — позже этого заметно
 LOST_SPEECH_SEC = 2.5  # речи без субтитров перед строкой больше — не опоздание, а потерянная фраза
+KNOWN_MOVE_SEC = 0.5  # слово с тем же текстом уехало от прежнего времени дальше — это раскладка наугад, а не поправка
 _CACHE_MAX = 8
 _cache: dict[tuple, list[tuple[float, float]]] = {}
 
@@ -102,8 +103,10 @@ def _covered(start: float, end: float, spans: list[tuple[float, float]]) -> floa
 def fit_unknown_words(words: list[dict], old_words: list[dict], spans_fn: Any) -> tuple[list[dict], list[str]]:
     """Текст, которого нет в распознанном, — к настоящей речи. → (слова, предупреждения).
 
-    Слово, совпавшее с распознанным рядом по времени, остаётся как задано: время могли поправить
-    нарочно. Остальные идут цепочками: столько же распознанных слов на этом месте — берём их время
+    Слово, совпавшее с распознанным рядом по времени, остаётся как задано, если сдвиг мал: время могли поправить
+    нарочно. Сдвиг больше ``KNOWN_MOVE_SEC`` — слово возвращается на прежнее время (клип 930: «не особо» агент разложил
+    равномерно на 0.6 с раньше голоса, и правка прошла как «нарочно»); нужно именно так — ``align: false``.
+    Остальные идут цепочками: столько же распознанных слов на этом месте — берём их время
     (модель ослышалась); иначе цепочка уже стоит на голосе — не трогаем, а начало в тишине
     или половина мимо речи — раскладываем по речи между соседями. Нет звука или речи — честный warning.
     """
@@ -116,14 +119,24 @@ def fit_unknown_words(words: list[dict], old_words: list[dict], spans_fn: Any) -
     known = [False] * len(ordered)
     used: set[int] = set()
     sm = difflib.SequenceMatcher(a=[_norm(str(w["word"])) for w in ordered], b=[_norm(str(w["word"])) for w in old], autojunk=False)
+    returned = 0
     for block in sm.get_matching_blocks():
         for k in range(block.size):
-            if abs(float(ordered[block.a + k]["start"]) - float(old[block.b + k]["start"])) <= 1.5:
+            mine, theirs = ordered[block.a + k], old[block.b + k]
+            gap = abs(float(mine["start"]) - float(theirs["start"]))
+            if gap <= 1.5:
                 known[block.a + k] = True
                 used.add(block.b + k)
-    if all(known):
-        return ordered, []
+                if gap > KNOWN_MOVE_SEC:
+                    ordered[block.a + k] = {**mine, "start": float(theirs["start"]), "end": float(theirs["end"])}
+                    returned += 1
     notes: list[str] = []
+    if returned:
+        notes.append(f"слов возвращено на прежнее время: {returned} (сдвиг больше {KNOWN_MOVE_SEC} с); "
+                     "если сдвиг нужен, задай align: false")
+    if all(known):
+        ordered.sort(key=lambda w: float(w["start"]))
+        return ordered, notes
     spans: list[tuple[float, float]] | None = None
     failed = False
     i = 0
@@ -220,13 +233,32 @@ def snap_starts(lines: list[dict], words: list[dict], spans: list[tuple[float, f
 
 
 def snap_lines_to_speech(store: Any, clip_plan_id: int) -> dict:
-    """Начала строк — на голос. Текст не меняется; потерянные фразы и строки без голоса — только в ответе."""
+    """Субтитры — на голос. Сначала страницы, разошедшиеся со сказанным (app/speech_heard.py): слова встают на
+    распознанное время. Потом начала строк в тишине — по VAD. Текст не меняется; потерянные фразы, строки без голоса и
+    нерасслышанные — только в ответе. Распознать нечем — только VAD, и ``by_text: false``."""
+    from app.clip_subtitles import _line_words
+    from app.speech_heard import snap_to_heard
+
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
     lines, words = [dict(l) for l in payload.get("lines") or []], [dict(w) for w in payload.get("words") or []]
     if not lines or not words:
         raise ValueError("у клипа нет субтитров")
-    moved, rest = snap_starts(lines, words, plan_speech_spans(store, clip_plan_id))
+    spans = plan_speech_spans(store, clip_plan_id)
+    members = _line_words(lines, words)
+    by_text, unheard = True, []
+    try:
+        moved, unheard = snap_to_heard(store, store.get_clip_plan(clip_plan_id), lines, words)
+    except Exception:  # noqa: BLE001 - нет модели или выключено распознавание: остаётся VAD
+        moved, by_text = 0, False
+    if moved:
+        for line, own in zip(lines, members):
+            if own:  # те же словари, что в words: границы строки идут за её словами
+                line["start"] = round(min(float(w["start"]) for w in own), 3)
+                line["end"] = round(max(float(w["end"]) for w in own), 3)
+    voiced, rest = snap_starts(lines, words, spans)
+    moved += voiced
     if moved:
         store.set_clip_plan_subtitles(clip_plan_id, {**payload, "lines": lines, "words": words, "edited": True})
-    return {"moved": moved, "lost": sum(i["kind"] == "lost" for i in rest), "silent": sum(i["kind"] == "silent" for i in rest),
-            "rest": [{"kind": i["kind"], "start": i["start"], "text": i["text"][:60]} for i in rest[:12]]}
+    return {"moved": moved, "by_text": by_text, "lost": sum(i["kind"] == "lost" for i in rest),
+            "silent": sum(i["kind"] == "silent" for i in rest), "unheard": len(unheard),
+            "rest": [{"kind": i["kind"], "start": i["start"], "text": i["text"][:60]} for i in [*rest, *unheard][:12]]}
