@@ -15,7 +15,6 @@ from uuid import uuid4
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -61,7 +60,9 @@ from app.montage_assets import assets_dir as montage_assets_dir
 from app.montage_assets import kind_for as asset_kind_for
 from app.montage_assets import probe_asset as probe_montage_asset
 from app.ai.publish_meta import apply_ai_metadata, generate_publish_metadata
+from app.compression import REVALIDATE, ImmutableAssets, TextGzipMiddleware
 from app.storyboard import ensure_storyboard, frame_path, plan_thumb
+from app.thumbs import asset_thumb, clip_thumb, source_thumb
 from app.store import AppStore
 from app.timeline_export import write_timeline
 from app.video_crop import detect_content_crop
@@ -161,6 +162,8 @@ app.add_exception_handler(AuthRequired, auth_required_handler)
 from app.modules_api import ModuleGate, build_modules_router, module_disabled_handler  # noqa: E402
 
 app.add_middleware(ModuleGate, get_store=lambda: store)
+# Снаружи всех: страницы идут через домен, а JS и списки весят мегабайты (app/compression.py).
+app.add_middleware(TextGzipMiddleware)
 app.add_exception_handler(modules.ModuleDisabled, module_disabled_handler)
 templates =Jinja2Templates(directory=settings.root_dir / "app" / "templates")
 
@@ -1037,6 +1040,19 @@ def clip_media(clip_id: int, _auth: AuthDep) -> FileResponse:
     return FileResponse(path)
 
 
+# Списки показывают картинку, а не <video>; адрес с ?v=… — поэтому кэш надолго (app/thumbs.py).
+THUMB_CACHE = {"Cache-Control": "private, max-age=604800"}
+
+
+@app.get("/media/clips/{clip_id}/thumb", include_in_schema=False)
+def clip_thumb_media(clip_id: int, _auth: AuthDep) -> FileResponse:
+    try:
+        clip = store.get_clip(clip_id)
+        return FileResponse(clip_thumb(clip, store.get_clip_cover_path(clip_id)), headers=THUMB_CACHE)
+    except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=404, detail="clip thumb not found") from exc
+
+
 @app.get("/media/clips/{clip_id}/cover", include_in_schema=False)
 def clip_cover_media(clip_id: int, _auth: AuthDep) -> FileResponse:
     """The rendered clip's cover still (see app/cover.py)."""
@@ -1877,8 +1893,12 @@ def api_cancel_download(download_id: int, _auth: AuthDep) -> dict:
     tags=["Sources"],
     summary="List ingested sources",
 )
-def api_sources(_auth: AuthDep) -> list[dict]:
-    return store.list_sources()
+def api_sources(_auth: AuthDep, lite: bool = False) -> list[dict]:
+    # lite — для экрана проектов: ffprobe в metadata_json даёт 90 % веса ответа (1 МБ на 243 источника).
+    sources = store.list_sources()
+    if lite:
+        return [{**source, "metadata_json": ""} for source in sources]
+    return sources
 
 
 @app.get(
@@ -2067,6 +2087,14 @@ def api_source_storyboard(source_id: int, _auth: AuthDep) -> dict:
         "interval_sec": meta["interval_sec"],
         "frames": [f"/media/sources/{source_id}/storyboard/{i}" for i in range(meta["count"])],
     }
+
+
+@app.get("/media/sources/{source_id}/thumb", include_in_schema=False)
+def media_source_thumb(source_id: int, _auth: AuthDep) -> FileResponse:
+    try:
+        return FileResponse(source_thumb(store.get_source(source_id)), headers=THUMB_CACHE)
+    except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=404, detail="source thumb not found") from exc
 
 
 @app.get("/media/sources/{source_id}/storyboard/{index}", include_in_schema=False)
@@ -3392,6 +3420,14 @@ def api_delete_montage_asset(asset_id: int, _auth: AuthDep) -> dict:
     return {"deleted": True}
 
 
+@app.get("/media/montage-assets/{asset_id}/thumb", include_in_schema=False)
+def media_montage_asset_thumb(asset_id: int, _auth: AuthDep) -> FileResponse:
+    try:
+        return FileResponse(asset_thumb(store.get_montage_asset(asset_id)), headers=THUMB_CACHE)
+    except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=404, detail="asset thumb not found") from exc
+
+
 @app.get("/media/montage-assets/{asset_id}", include_in_schema=False)
 def media_montage_asset(asset_id: int, _auth: AuthDep) -> FileResponse:
     try:
@@ -4714,7 +4750,7 @@ _SPA_RESERVED_PREFIXES = ("api/", "media/", "ui/", "assets/", "static/")
 _SPA_RESERVED_EXACT = {"login", "logout", "docs", "openapi.json", "favicon.ico"}
 
 if (SPA_DIR / "assets").is_dir():
-    app.mount("/assets", StaticFiles(directory=SPA_DIR / "assets"), name="spa-assets")
+    app.mount("/assets", ImmutableAssets(directory=SPA_DIR / "assets"), name="spa-assets")
 
 
 @app.get("/{spa_path:path}", include_in_schema=False)
@@ -4727,4 +4763,4 @@ def spa_fallback(spa_path: str, _auth: AuthDep) -> FileResponse:
     # index.html must never be cached: assets are content-hashed (safe to cache
     # forever), but a stale index.html references old hashes and 404s after a
     # redeploy — the "blank page until hard-refresh" bug. Always revalidate it.
-    return FileResponse(SPA_INDEX, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(SPA_INDEX, headers={"Cache-Control": REVALIDATE})

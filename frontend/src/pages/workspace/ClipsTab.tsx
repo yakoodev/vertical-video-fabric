@@ -10,6 +10,7 @@ import { PublishDialog } from "@/components/PublishDialog";
 import { BatchPublishDialog } from "@/components/BatchPublishDialog";
 import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
+import { ShowMore, useShowMore } from "@/components/ShowMore";
 
 // Shared between the "Клипы" (rendered) and "Смонтированные" (montage) tabs.
 export function ProjectClipsGrid({
@@ -40,6 +41,8 @@ export function ProjectClipsGrid({
     successMessage: () => "Клип удалён",
     onSuccess: () => setToDelete(null),
   });
+
+  const shown = useShowMore((query.data ?? []).filter((c) => clipOrigin(c) === origin), origin);
 
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
@@ -80,7 +83,7 @@ export function ProjectClipsGrid({
         ) : null}
       </div>
       <div className="card-grid clip-grid">
-        {clips.map((clip) => (
+        {shown.visible.map((clip) => (
           <ClipCard
             key={clip.id}
             clip={clip}
@@ -105,6 +108,7 @@ export function ProjectClipsGrid({
           />
         ))}
       </div>
+      <ShowMore rest={shown.rest} onMore={shown.more} />
       <ConfirmDialog
         open={Boolean(toDelete)}
         title="Удалить клип?"

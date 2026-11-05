@@ -1,20 +1,26 @@
+import { Suspense } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
-import { ProjectsPage } from "@/pages/ProjectsPage";
-import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
-import { SeriesPage } from "@/pages/SeriesPage";
-import { ClipsPage } from "@/pages/ClipsPage";
-import { MontageAssetsPage } from "@/pages/MontageAssetsPage";
-import { AutomationPage } from "@/pages/AutomationPage";
-import { PublicationsPage } from "@/pages/PublicationsPage";
-import { AccountsPage } from "@/pages/AccountsPage";
-import { TasksPage } from "@/pages/TasksPage";
-import { HelpPage } from "@/pages/HelpPage";
-import { SettingsPage } from "@/pages/SettingsPage";
-import { ApprovalsPage } from "@/pages/ApprovalsPage";
-import { ChatPage } from "@/pages/ChatPage";
 import { RequireModule } from "@/components/RequireModule";
-import { OwnerCoverEditor, SharedCoverEditor } from "@/pages/cover/CoverEditorPages";
+import { Loading } from "@/components/ui";
+import { lazyPage } from "@/lazyPage";
+
+// Каждая страница — свой файл: редактор монтажа и моушн не грузятся ради списка проектов.
+const ProjectsPage = lazyPage(() => import("@/pages/ProjectsPage"), "ProjectsPage");
+const ProjectWorkspace = lazyPage(() => import("@/pages/ProjectWorkspace"), "ProjectWorkspace");
+const SeriesPage = lazyPage(() => import("@/pages/SeriesPage"), "SeriesPage");
+const ClipsPage = lazyPage(() => import("@/pages/ClipsPage"), "ClipsPage");
+const MontageAssetsPage = lazyPage(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
+const AutomationPage = lazyPage(() => import("@/pages/AutomationPage"), "AutomationPage");
+const PublicationsPage = lazyPage(() => import("@/pages/PublicationsPage"), "PublicationsPage");
+const AccountsPage = lazyPage(() => import("@/pages/AccountsPage"), "AccountsPage");
+const TasksPage = lazyPage(() => import("@/pages/TasksPage"), "TasksPage");
+const HelpPage = lazyPage(() => import("@/pages/HelpPage"), "HelpPage");
+const SettingsPage = lazyPage(() => import("@/pages/SettingsPage"), "SettingsPage");
+const ApprovalsPage = lazyPage(() => import("@/pages/ApprovalsPage"), "ApprovalsPage");
+const ChatPage = lazyPage(() => import("@/pages/ChatPage"), "ChatPage");
+const OwnerCoverEditor = lazyPage(() => import("@/pages/cover/CoverEditorPages"), "OwnerCoverEditor");
+const SharedCoverEditor = lazyPage(() => import("@/pages/cover/CoverEditorPages"), "SharedCoverEditor");
 
 // Redirect old server-rendered paths to their SPA equivalents, preserving the id.
 function LegacyRedirect({ to }: { to: (params: Record<string, string | undefined>) => string }) {
@@ -26,8 +32,8 @@ export function App() {
   return (
     <Routes>
       {/* Редактор превью — весь экран. Ссылка /c/<токен> открывается без входа и не ходит в API сервиса. */}
-      <Route path="c/:token" element={<SharedCoverEditor />} />
-      <Route path="covers/:docId" element={<RequireModule id="covers"><OwnerCoverEditor /></RequireModule>} />
+      <Route path="c/:token" element={<Suspense fallback={<Loading />}><SharedCoverEditor /></Suspense>} />
+      <Route path="covers/:docId" element={<RequireModule id="covers"><Suspense fallback={<Loading />}><OwnerCoverEditor /></Suspense></RequireModule>} />
       <Route element={<AppShell />}>
         {/* legacy paths from the old Jinja client */}
         <Route path="sources" element={<Navigate to="/projects" replace />} />

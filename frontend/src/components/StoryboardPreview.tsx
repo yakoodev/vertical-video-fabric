@@ -19,6 +19,7 @@ export function StoryboardPreview({
   const [hover, setHover] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [idx, setIdx] = useState(0);
+  const [noThumb, setNoThumb] = useState(false);
 
   const sb = useQuery({
     queryKey: ["storyboard", sourceId],
@@ -64,7 +65,16 @@ export function StoryboardPreview({
       }}
       onMouseMove={onMove}
     >
-      <video src={`/media/sources/${sourceId}#t=1`} preload="metadata" muted playsInline />
+      {noThumb ? null : (
+        <img
+          className="pcard-thumb"
+          src={`/media/sources/${sourceId}/thumb`}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => setNoThumb(true)}
+        />
+      )}
       {active ? <img className="pcard-sb" src={frames[idx]} alt="" draggable={false} /> : null}
       {type ? <span className="pcard-type mono">{type}</span> : null}
       {duration ? <span className="pcard-dur mono">{duration}</span> : null}

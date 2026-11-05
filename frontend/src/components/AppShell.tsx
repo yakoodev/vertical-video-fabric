@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { Loading } from "@/components/ui";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ActivityCenter } from "@/components/ActivityCenter";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -166,7 +167,9 @@ export function AppShell() {
           </div>
         </div>
         <div className="content-inner">
-          <Outlet />
+          <Suspense fallback={<Loading />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 
