@@ -30,6 +30,7 @@ MIN_IDENTIFY_SEC = 1.5
 MIN_LINE_SEC = 2.5  # реплика короче — сравнивать бессмысленно
 MAX_AUDIO_SEC = 90.0
 MIN_MARGIN = 0.10  # лучшее совпадение настолько выше второго
+LABEL_PAUSE = 0.6  # дольше молчит голос — следующая реплика подписывается снова
 SCHEMA_SQL = (
     """
     CREATE TABLE IF NOT EXISTS voice_bank (
@@ -385,19 +386,36 @@ def identify_voices(store: Any, clip_plan_id: int, *, labels: bool = True, reass
             "conflicts": conflicts[:30], "moved": moved, "labels": bool(labels), "subtitles": fresh}
 
 
+def _cut_in_between(ordered: list[dict], index: int, voice: str, left: float, right: float) -> bool:
+    """Чужое слово целиком между ``left`` и ``right``: слова до ``index`` идут по времени начала."""
+    for k in range(index - 1, -1, -1):
+        word = ordered[k]
+        if float(word.get("start") or 0) < left:
+            return False
+        if str(word.get("speaker") or "A") != voice and float(word.get("end") or 0) <= right:
+            return True
+    return False
+
+
 def with_speaker_labels(payload: Any) -> Any:
     """Подпись говорящего — в готовых субтитрах, а не в тексте: первое слово каждой реплики не главного
-    голоса с именем идёт как «Глеб: Я». Хранимые слова не меняются, время слова — то же."""
+    голоса с именем идёт как «Глеб: Я». Хранимые слова не меняются, время слова — то же.
+
+    Реплика считается по самому голосу, а не по соседним словам: когда говорят одновременно, слова идут
+    вперемешку, и подпись перед каждым словом была бы ошибкой. Новая реплика — пауза этого голоса
+    или чужое слово целиком между его словами."""
     if not isinstance(payload, dict) or not payload.get("speaker_labels") or not payload.get("voice_names"):
         return payload
     names = {k: str((v or {}).get("name") or "") for k, v in payload["voice_names"].items()}
     main = str(payload.get("main_speaker") or "A")
-    out, last = [], None
-    for word in sorted((w for w in payload.get("words") or [] if isinstance(w, dict)), key=lambda w: float(w.get("start") or 0)):
+    ordered = sorted((w for w in payload.get("words") or [] if isinstance(w, dict)), key=lambda w: float(w.get("start") or 0))
+    out = []
+    voiced_until: dict[str, float] = {}
+    for index, word in enumerate(ordered):
         voice = str(word.get("speaker") or "A")
-        if voice != last and voice != main and names.get(voice):
-            word = {**word, "word": f"{names[voice]}: {word.get('word')}"}
-        last = voice
-        out.append(word)
+        start = float(word.get("start") or 0)
+        before = voiced_until.get(voice)
+        fresh = before is None or start - before > LABEL_PAUSE or _cut_in_between(ordered, index, voice, before, start)
+        voiced_until[voice] = float(word.get("end") or start)
+        out.append({**word, "word": f"{names[voice]}: {word.get('word')}"} if fresh and voice != main and names.get(voice) else word)
     return {**payload, "words": out}
-

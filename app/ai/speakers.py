@@ -16,6 +16,12 @@ Gemini слушает звук клипа и расшифровывает КАЖ
 ``caption_words`` → ``comp.words[].s`` → слой captions (свой цвет, своя страница,
 фильтр ``speakers`` — отдельный слой для других голосов). Голос один — меток нет.
 Результат кэшируется по словам: модель зовём один раз.
+
+Время реплик у модели ненадёжно: дальше первой минуты она пишет то секунды, то «1:23» как 123.0
+(каждая минута даёт +40 с). Из-за этого в сборке Муры на 214-секундном клипе те же фразы встали на
+40 и 80 с позже, а слова вылезли за конец клипа. ``fit_times`` сверяет реплики со словами whisper
+и возвращает их на место. Клип длиннее ``WINDOW_SEC`` слушаем окнами с перекрытием
+(``plan_windows``); буквы между окнами сводит ``_LetterBook``.
 """
 
 from __future__ import annotations
@@ -25,6 +31,8 @@ import difflib
 import hashlib
 import json
 import re
+from bisect import bisect_left
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -38,6 +46,21 @@ LETTERS = "ABCD"
 MIN_COVERAGE = 0.6
 LINE_MAX_WORDS = 7
 LINE_PAUSE = 0.6
+# Дольше — слушаем окнами: длинный звук модель разбирает хуже и может оборвать ответ.
+WINDOW_SEC = 180.0
+WINDOW_OVERLAP = 12.0
+# Реплика не на месте, если рядом с её временем whisper слышал меньше этой доли её слов.
+PLACED_SHARE = 0.5
+# Опора времени — столько слов подряд совпало с whisper: случайно такого почти не бывает.
+ANCHOR_RUN = 3
+SHIFT_MIN_SEC = 1.0
+# Со словами whisper совпало меньше этой доли — ответ не про этот звук, субтитры не трогаем.
+MIN_HEARD = 0.25
+# Голоса окон сравниваем отпечатками: свой голос 0.62–0.84, чужой до 0.49 (оценка на стриме Муры).
+SAME_VOICE_SCORE = 0.55
+# Озвучка чата похожа на себя слабее (0.46–0.54): та же буква в окне — достаточно этого и отрыва от остальных.
+SAME_LETTER_SCORE = 0.45
+SAME_LETTER_MARGIN = 0.1
 
 PROMPT = """\
 Это звук вертикального клипа со стрима. Ниже — черновые субтитры whisper по словам
@@ -52,7 +75,8 @@ A — главный голос клипа (обычно стример, гов�
 Ответь ТОЛЬКО JSON:
 {"speakers": {"A": "кто это, 2–4 слова", "B": "…"},
  "utterances": [{"s": "A", "start": 0.0, "end": 2.4, "text": "…"}, …]}
-start/end — секунды клипа; реплики — по порядку времени, короткие (одна фраза).
+start/end — число секунд от начала этого звука: 83.5, а не 1:23 и не 123.5.
+Реплики — по порядку времени, короткие (одна фраза).
 """
 
 
@@ -63,6 +87,16 @@ start/end — секунды клипа; реплики — по порядку 
 
 def _norm(token: str) -> str:
     return re.sub(r"[^\w]", "", token.lower().replace("ё", "е"))
+
+
+def _seconds(value: Any) -> float:
+    """Секунды реплики; модель иногда отвечает строкой «1:23.5»."""
+    if isinstance(value, str) and ":" in value:
+        total = 0.0
+        for part in value.strip().split(":"):
+            total = total * 60 + float(part)
+        return total
+    return float(value)
 
 
 def parse_utterances(text: str) -> tuple[dict, list[dict]]:
@@ -81,7 +115,7 @@ def parse_utterances(text: str) -> tuple[dict, list[dict]]:
     out = []
     for u in data.get("utterances") or []:
         try:
-            s0, s1 = float(u["start"]), float(u["end"])
+            s0, s1 = _seconds(u["start"]), _seconds(u["end"])
         except (KeyError, TypeError, ValueError):
             continue
         words = str(u.get("text") or "").split()
@@ -134,6 +168,200 @@ def merge_voices(whisper: list[dict], utterances: list[dict], slack: float = 0.6
     return out
 
 
+def _heard_near(tokens: list[str], whisper: list[dict], start: float, end: float, slack: float = 0.6) -> int:
+    """Сколько слов реплики whisper слышал рядом с её временем."""
+    near = [_norm(str(w["word"])) for w in whisper if start - slack <= float(w["start"]) <= end + slack]
+    if not near:
+        return 0
+    blocks = difflib.SequenceMatcher(a=[_norm(t) for t in tokens], b=near, autojunk=False).get_matching_blocks()
+    return sum(block.size for block in blocks)
+
+
+def _heard_total(utterances: list[dict], whisper: list[dict]) -> int:
+    return sum(_heard_near(u["text"].split(), whisper, u["start"], u["end"]) for u in utterances)
+
+
+def _from_minutes(value: float) -> float:
+    """123.5 в записи «минуты и две цифры секунд» → 83.5."""
+    minutes = int(value // 100)
+    return minutes * 60 + value - minutes * 100
+
+
+def _undo_minute_notation(utterances: list[dict], whisper: list[dict], duration: float) -> tuple[list[dict], bool]:
+    """Весь ответ в записи 1:23 → 123: секунд в ней не бывает больше 59. Решают слова whisper."""
+    values = [v for u in utterances for v in (u["start"], u["end"])]
+    if not values or max(values) < 60 or any(v % 100 >= 60 for v in values):
+        return utterances, False
+    fixed = [{**u, "start": _from_minutes(u["start"]), "end": _from_minutes(u["end"])} for u in utterances]
+    raw_heard, fixed_heard = _heard_total(utterances, whisper), _heard_total(fixed, whisper)
+    if fixed_heard > raw_heard or (fixed_heard == raw_heard and max(values) > duration + 1):
+        return fixed, True
+    return utterances, False
+
+
+def _anchor_times(utterances: list[dict], whisper: list[dict]) -> tuple[list[dict], int]:
+    """Реплики не на своём месте сдвинуть туда, где whisper слышал те же слова подряд.
+
+    Реплика, которую whisper не слышал совсем, — это потерянная им фраза под чужим голосом: своё
+    время у неё остаётся, если ближайшую реплику двигать не пришлось."""
+    tokens: list[tuple[int, float, str]] = []
+    for index, u in enumerate(utterances):
+        words = u["text"].split()
+        step = (u["end"] - u["start"]) / max(1, len(words))
+        tokens += [(index, u["start"] + step * k, _norm(word)) for k, word in enumerate(words)]
+    blocks = difflib.SequenceMatcher(
+        a=[t[2] for t in tokens], b=[_norm(str(w["word"])) for w in whisper], autojunk=False
+    ).get_matching_blocks()
+    gaps: dict[int, list[float]] = {}
+    for block in blocks:
+        if block.size < ANCHOR_RUN:
+            continue
+        for k in range(block.size):
+            index, at, _word = tokens[block.a + k]
+            gaps.setdefault(index, []).append(float(whisper[block.b + k]["start"]) - at)
+    shifts: dict[int, float] = {}
+    for index, found in gaps.items():
+        found.sort()
+        if len(found) >= 2:
+            shifts[index] = found[len(found) // 2]
+    out, moved = [], 0
+    for index, u in enumerate(utterances):
+        words = u["text"].split()
+        if _heard_near(words, whisper, u["start"], u["end"]) >= PLACED_SHARE * len(words):
+            out.append(u)
+            continue
+        shift = shifts.get(index)
+        if shift is None and shifts:
+            shift = shifts[min(shifts, key=lambda k: abs(k - index))]
+        if shift is None or abs(shift) < SHIFT_MIN_SEC:
+            out.append(u)
+            continue
+        out.append({**u, "start": max(0.0, u["start"] + shift), "end": max(0.1, u["end"] + shift)})
+        moved += 1
+    out.sort(key=lambda u: u["start"])
+    return out, moved
+
+
+def fit_times(utterances: list[dict], whisper: list[dict], duration: float) -> tuple[list[dict], dict]:
+    """Время реплик → на слова whisper. Ответ: (реплики, {minutes, moved, dropped})."""
+    fixed, minutes = _undo_minute_notation(utterances, whisper, duration)
+    fixed, moved = _anchor_times(fixed, whisper)
+    inside, dropped = [], 0
+    for u in fixed:
+        if u["start"] >= duration:
+            dropped += 1
+            continue
+        inside.append({**u, "end": min(u["end"], duration)} if u["end"] > duration else u)
+    return inside, {"minutes": minutes, "moved": moved, "dropped": dropped}
+
+
+def plan_windows(words: list[dict], duration: float, limit: float = WINDOW_SEC, overlap: float = WINDOW_OVERLAP) -> list[dict]:
+    """Окна звука: ``{start, end, keep_from, keep_to}``. Граница — самая длинная пауза последней
+    четверти окна, чтобы не резать фразу; реплика принадлежит окну, где лежит её середина."""
+    if duration <= limit:
+        return [{"start": 0.0, "end": duration, "keep_from": 0.0, "keep_to": duration}]
+    timed = sorted((float(w["start"]), float(w["end"])) for w in words)
+    out: list[dict] = []
+    begin = 0.0
+    while duration - begin > limit:
+        target = begin + limit - overlap / 2
+        floor = target - (limit - overlap) * 0.25
+        edge, best = target, -1.0
+        previous = floor
+        for a, b in timed:
+            if b <= floor:
+                continue
+            if a >= target:
+                break
+            if a - previous > best:
+                edge, best = (previous + a) / 2, a - previous
+            previous = max(previous, b)
+        if target - previous > best:
+            edge = (previous + target) / 2
+        out.append({"start": max(0.0, begin - overlap / 2), "end": edge + overlap / 2, "keep_from": begin, "keep_to": edge})
+        begin = edge
+    out.append({"start": max(0.0, begin - overlap / 2), "end": duration, "keep_from": begin, "keep_to": duration})
+    return out
+
+
+class _LetterBook:
+    """Единые буквы голосов между окнами. В каждом окне модель раздаёт A, B, C заново: сверяем отпечатки
+    голосов (app/voice_bank.py), а где отпечатка нет — одинаковые слова на перекрытии. Буквы первого окна
+    остаются как есть: A — кого модель назвала главным голосом."""
+
+    def __init__(self, voiceprints: Any = None) -> None:
+        self.voiceprints = voiceprints
+        self.vectors: dict[str, Any] = {}
+        self.words: list[dict] = []
+        self.unsure = 0
+
+    def _votes(self, words: list[dict]) -> dict[str, str]:
+        votes: Counter = Counter()
+        for w in words:
+            for old in self.words:
+                if _norm(str(w["word"])) == _norm(str(old["word"])) and abs(float(w["start"]) - float(old["start"])) <= 0.5:
+                    votes[(w["speaker"], old["speaker"])] += 1
+                    break
+        mapping: dict[str, str] = {}
+        for (new, old), count in votes.most_common():
+            if count >= 2 and new not in mapping and old not in mapping.values():
+                mapping[new] = old
+        return mapping
+
+    def _prints(self, words: list[dict]) -> dict[str, Any]:
+        if self.voiceprints is None:
+            return {}
+        try:
+            return self.voiceprints(words) or {}
+        except Exception:  # noqa: BLE001 - нет модели или исходника — остаются перекрытие и порядок букв
+            self.voiceprints = None
+            return {}
+
+    def _same_voice(self, letter: str, vector: Any, taken: set[str]) -> str | None:
+        import numpy as np
+
+        scored = sorted(((float(np.dot(vector, print_)), name) for name, print_ in self.vectors.items() if name not in taken),
+                        key=lambda x: -x[0])
+        if not scored:
+            return None
+        score, name = scored[0]
+        margin = score - scored[1][0] if len(scored) > 1 else score
+        if score >= SAME_VOICE_SCORE or (name == letter and score >= SAME_LETTER_SCORE and margin >= SAME_LETTER_MARGIN):
+            return name
+        return None
+
+    def assign(self, words: list[dict]) -> dict[str, str]:
+        """Буквы окна → общие буквы; ``words`` — слова окна со временем клипа."""
+        prints = self._prints(words)
+        votes = self._votes(words) if self.words else {}
+        known = set(self.vectors) | {w["speaker"] for w in self.words}
+        mapping: dict[str, str] = {}
+        for letter, _count in Counter(w["speaker"] for w in words).most_common():
+            taken = set(mapping.values())
+            vector = prints.get(letter)
+            same = self._same_voice(letter, vector, taken) if vector is not None else None
+            if same is None and vector is None and votes.get(letter) not in taken | {None}:
+                same = votes[letter]
+            if same is None and vector is None and letter in known and letter not in taken:
+                self.unsure += 1
+                same = letter
+            if same is None:
+                free = [x for x in LETTERS if x not in taken and x not in known]
+                if free:
+                    same = letter if letter in free else free[0]
+                else:
+                    self.unsure += 1
+                    spare = [x for x in LETTERS if x not in taken]
+                    same = spare[-1] if spare else LETTERS[-1]
+            mapping[letter] = same
+        for letter, name in mapping.items():
+            vector = prints.get(letter)
+            if vector is not None and name not in self.vectors:
+                self.vectors[name] = vector
+        self.words += [{**w, "speaker": mapping[w["speaker"]]} for w in words]
+        return mapping
+
+
 def _fill_timing(tokens: list[str], timing: list, u: dict) -> list[dict]:
     """Время слов реплики: известные — от whisper, пропуски — поровну между соседями."""
     words: list[dict] = []
@@ -169,33 +397,54 @@ _SENTENCE_END = re.compile(r"[.!?…]+[»\"')\]]*$")
 
 
 def lines_from_words(words: list[dict]) -> list[dict]:
-    """Строки субтитров из слов: новая строка на смене голоса, конце предложения
-    (. ! ? …), паузе больше LINE_PAUSE и по длине — реплики разных людей и разные
-    фразы не попадают в одну строку (агент-монтажёр: «ДТП. Бывает. Ну,» одной строкой)."""
+    """Строки субтитров из слов: у каждого голоса свои строки. Новая строка — конец предложения
+    (. ! ? …), пауза больше LINE_PAUSE, длина и реплика другого голоса между словами; реплики разных
+    людей и разные фразы не попадают в одну строку (агент-монтажёр: «ДТП. Бывает. Ну,» одной строкой).
+    Когда голоса говорят одновременно, их слова идут вперемешку по времени, но фразу это не рвёт."""
+    ordered = sorted(words, key=lambda w: w["start"])
+    voices: dict[Any, list[dict]] = {}
+    for w in ordered:
+        voices.setdefault(w.get("speaker"), []).append(w)
     lines: list[dict] = []
-    cur: list[dict] = []
-
-    def flush() -> None:
+    for voice, own in voices.items():
+        others = [w for w in ordered if w.get("speaker") != voice]
+        starts = [float(w["start"]) for w in others]
+        spoken: list[dict] = []
+        cur: list[dict] = []
+        for w in own:
+            if cur and (
+                _SENTENCE_END.search(str(cur[-1]["word"]).strip())
+                or float(w["start"]) - float(cur[-1]["end"]) > LINE_PAUSE
+                or len(cur) >= LINE_MAX_WORDS
+                or _cut_in(others, starts, float(cur[-1]["end"]), float(w["start"]))
+            ):
+                spoken.append(_line(cur))
+                cur = []
+            cur.append(w)
         if cur:
-            lines.append({"start": round(cur[0]["start"], 3), "end": round(cur[-1]["end"], 3),
-                          "text": " ".join(w["word"] for w in cur), "speaker": cur[0].get("speaker") or "A"})
-            cur.clear()
-
-    for w in sorted(words, key=lambda w: w["start"]):
-        if cur and (
-            w.get("speaker") != cur[-1].get("speaker")
-            or _SENTENCE_END.search(str(cur[-1]["word"]).strip())
-            or float(w["start"]) - float(cur[-1]["end"]) > LINE_PAUSE
-            or len(cur) >= LINE_MAX_WORDS
-        ):
-            flush()
-        cur.append(w)
-    flush()
-    # Строки одного голоса не перекрываются (редактор строк этого не любит).
-    for a, b in zip(lines, lines[1:]):
-        if a["speaker"] == b["speaker"] and a["end"] > b["start"]:
-            a["end"] = b["start"]
+            spoken.append(_line(cur))
+        # Строки одного голоса не перекрываются (редактор строк этого не любит).
+        for one, two in zip(spoken, spoken[1:]):
+            if one["end"] > two["start"]:
+                one["end"] = two["start"]
+        lines += spoken
+    lines.sort(key=lambda l: (l["start"], l["end"]))
     return [l for l in lines if l["end"] > l["start"]]
+
+
+def _line(words: list[dict]) -> dict:
+    return {"start": round(words[0]["start"], 3), "end": round(words[-1]["end"], 3),
+            "text": " ".join(w["word"] for w in words), "speaker": words[0].get("speaker") or "A"}
+
+
+def _cut_in(others: list[dict], starts: list[float], left: float, right: float) -> bool:
+    """Другой голос сказал слово целиком между ``left`` и ``right``: это другая реплика, не наложение."""
+    k = bisect_left(starts, left)
+    while k < len(others) and starts[k] < right:
+        if float(others[k]["end"]) <= right:
+            return True
+        k += 1
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -245,27 +494,42 @@ def separate_voices(
     # Черновик whisper без старых меток: модель слышит всё заново.
     draft = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])} for w in words]
     audio = _clip_audio(store, clip_plan_id)
-    listing = "\n".join(f"[{w['start']:.1f}] {w['word']}" for w in draft)
-    response = client.generate_content(
-        settings.gemini_text_model,
-        {
-            "contents": [{"role": "user", "parts": [
-                {"text": PROMPT},
-                {"inlineData": {"mimeType": "audio/mp3", "data": base64.b64encode(audio).decode()}},
-                {"text": listing},
-            ]}],
-            "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
-        },
-    )
-    text = "".join(
-        p.get("text", "") for p in ((response.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
-    )
-    speakers, utterances = parse_utterances(text)
+    windows = plan_windows(draft, _clip_seconds(store, clip_plan_id, draft))
+    book = _LetterBook(_voiceprints(store, clip_plan_id) if len(windows) > 1 else None)
+    speakers: dict = {}
+    utterances: list[dict] = []
+    fit = {"minutes": False, "moved": 0, "dropped": 0}
+    for window in windows:
+        start = window["start"]
+        here = [w for w in draft if start <= w["start"] < window["end"]]
+        local = [{**w, "start": w["start"] - start, "end": w["end"] - start} for w in here]
+        piece = audio if len(windows) == 1 else _audio_piece(audio, start, window["end"])
+        about, heard = _listen(client, piece, local)
+        heard, facts = fit_times(heard, local, window["end"] - start)
+        fit = {"minutes": fit["minutes"] or facts["minutes"], "moved": fit["moved"] + facts["moved"],
+               "dropped": fit["dropped"] + facts["dropped"]}
+        heard = [{**u, "start": u["start"] + start, "end": u["end"] + start} for u in heard]
+        if len(windows) > 1 and heard:
+            mapping = book.assign(merge_voices(here, heard))
+            heard = [{**u, "s": mapping.get(u["s"], u["s"])} for u in heard]
+            about = {mapping[k]: v for k, v in about.items() if k in mapping}
+        for letter, text in about.items():
+            speakers.setdefault(letter, text)
+        last = window is windows[-1]
+        utterances += [u for u in heard if window["keep_from"] <= (u["start"] + u["end"]) / 2
+                       and (last or (u["start"] + u["end"]) / 2 < window["keep_to"])]
+    utterances.sort(key=lambda u: u["start"])
     said = sum(len(u["text"].split()) for u in utterances)
     if not utterances or said < MIN_COVERAGE * len(draft):
         return {"speakers": speakers, "counts": _counts(words), "changed": retranscribed, "added": 0,
                 "retranscribed": retranscribed,
                 "warning": f"модель расслышала {said} слов из {len(draft)} — голоса не разбираю"}
+    matched = _heard_total(utterances, draft)
+    if matched < MIN_HEARD * said:
+        return {"speakers": speakers, "counts": _counts(words), "changed": retranscribed, "added": 0,
+                "retranscribed": retranscribed,
+                "warning": f"из {said} слов модели со словами whisper рядом совпало {matched}: "
+                           "время не сходится — голоса не разбираю"}
     merged = merge_voices(draft, utterances)
     if len({w["speaker"] for w in merged}) <= 1:
         for w in merged:
@@ -282,8 +546,78 @@ def separate_voices(
     fresh = {**payload, "words": merged, "lines": lines, "speakers": speakers, "edited": True}
     fresh["speakers_key"] = _words_key(merged)
     store.set_clip_plan_subtitles(clip_plan_id, fresh)
-    return {"speakers": speakers, "counts": _counts(merged), "changed": True,
-            "added": max(0, len(merged) - len(draft)), "retranscribed": retranscribed}
+    out = {"speakers": speakers, "counts": _counts(merged), "changed": True,
+           "added": max(0, len(merged) - len(draft)), "retranscribed": retranscribed, "windows": len(windows)}
+    if fit["minutes"] or fit["moved"] or fit["dropped"]:
+        out["retimed"] = fit
+    if book.unsure:
+        out["warning"] = f"буквы голосов между окнами сведены без уверенности: {book.unsure} — проверь identify_voices"
+    return out
+
+
+def _listen(client: Any, audio: bytes, words: list[dict]) -> tuple[dict, list[dict]]:
+    """Один запрос к модели: звук + черновые слова. Время в ответе — от начала этого звука."""
+    listing = "\n".join(f"[{w['start']:.1f}] {w['word']}" for w in words)
+    response = client.generate_content(
+        settings.gemini_text_model,
+        {
+            "contents": [{"role": "user", "parts": [
+                {"text": PROMPT},
+                {"inlineData": {"mimeType": "audio/mp3", "data": base64.b64encode(audio).decode()}},
+                {"text": listing},
+            ]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
+        },
+    )
+    text = "".join(
+        p.get("text", "") for p in ((response.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+    )
+    return parse_utterances(text)
+
+
+def _clip_seconds(store: Any, clip_plan_id: int, words: list[dict]) -> float:
+    """Длина звука клипа (куски подряд) — шкала слов whisper."""
+    last = max((float(w["end"]) for w in words), default=0.0)
+    getter = getattr(store, "get_clip_plan", None)
+    plan = getter(clip_plan_id) if getter else None
+    pieces = sum(float(s["end_sec"]) - float(s["start_sec"]) for s in (plan or {}).get("segments") or [])
+    return max(pieces, last)
+
+
+def _voiceprints(store: Any, clip_plan_id: int) -> Any:
+    """Функция «слова окна → отпечаток каждой буквы». Звук и модель поднимаем при первом вызове."""
+    state: dict[str, Any] = {}
+
+    def prints(words: list[dict]) -> dict[str, Any]:
+        from app.speech_activity import plan_pcm
+        from app.voice_bank import MIN_IDENTIFY_SEC, RATE, _cut, _voice_spans, embedder
+
+        if not state:
+            state.update(pcm=plan_pcm(store, clip_plan_id), embed=embedder())
+        out = {}
+        for letter, spans in _voice_spans(words).items():
+            chunk = _cut(state["pcm"], spans)
+            if len(chunk) / RATE >= MIN_IDENTIFY_SEC:
+                out[letter] = state["embed"](chunk)
+        return out
+
+    return prints
+
+
+def _audio_piece(audio: bytes, start: float, end: float) -> bytes:
+    """Кусок mp3 клипа без перекодирования."""
+    from app.render import _run_ffmpeg
+
+    tag = uuid4().hex
+    source, out = settings.tmp_dir / f"speakers-{tag}-all.mp3", settings.tmp_dir / f"speakers-{tag}-part.mp3"
+    try:
+        source.write_bytes(audio)
+        _run_ffmpeg(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(source),
+                     "-c", "copy", str(out)], timeout=120)
+        return out.read_bytes()
+    finally:
+        source.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
 
 
 def assign_voice(

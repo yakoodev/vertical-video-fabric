@@ -347,3 +347,22 @@ def test_with_labels_only_on_turn_change():
                "words": [_w("а", 0, 1, "A"), _w("б", 1, 2, "B"), _w("в", 2, 3, "B"), _w("г", 3, 4, "A"), _w("д", 4, 5, "B")]}
     assert [w["word"] for w in V.with_speaker_labels(payload)["words"]] == ["а", "Глеб: б", "в", "г", "Глеб: д"]
     assert V.with_speaker_labels({**payload, "speaker_labels": False}) == {**payload, "speaker_labels": False}
+
+
+def test_label_once_when_voices_overlap_word_by_word():
+    # Озвучка чата поверх Муры: по времени слова вперемешку, подпись — одна на реплику.
+    words = [_w("а", 0.0, 0.4, "A"), _w("мать", 0.1, 0.5, "B"), _w("б", 0.42, 0.8, "A"), _w("нас", 0.5, 0.9, "B"),
+             _w("в", 0.82, 1.2, "A"), _w("бросила", 0.9, 1.3, "B"), _w("г", 1.22, 1.6, "A")]
+    payload = {"speaker_labels": True, "voice_names": {"B": {"name": "Чат"}}, "words": words}
+    labelled = [w["word"] for w in V.with_speaker_labels(payload)["words"]]
+    assert labelled == ["а", "Чат: мать", "б", "нас", "в", "бросила", "г"]
+    # Порядок слов на входе не важен: перемешанные дают то же.
+    shuffled = {**payload, "words": list(reversed(words))}
+    assert [w["word"] for w in V.with_speaker_labels(shuffled)["words"]] == labelled
+
+
+def test_label_again_after_pause_or_interjection():
+    payload = {"speaker_labels": True, "voice_names": {"B": {"name": "Чат"}},
+               "words": [_w("раз", 0.0, 0.4, "B"), _w("да", 0.45, 0.6, "A"), _w("два", 0.65, 1.0, "B"),
+                         _w("три", 1.05, 1.4, "B"), _w("четыре", 2.5, 2.9, "B")]}
+    assert [w["word"] for w in V.with_speaker_labels(payload)["words"]] == ["Чат: раз", "да", "Чат: два", "три", "Чат: четыре"]
