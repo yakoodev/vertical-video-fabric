@@ -20,6 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.meme_catalog import CatalogError, fetch_template
+from app.projects import project_of_source
 from app.settings import settings
 
 KINDS = ("who", "context", "joke", "keep", "other")
@@ -315,7 +316,7 @@ def _mime_of(path: Path) -> str:
             ".webp": "image/webp"}.get(path.suffix.lower(), "application/octet-stream")
 
 
-def _prepare_option(store: Any, raw: Any) -> dict:
+def _prepare_option(store: Any, raw: Any, project_id: int | None = None) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("вариант — объект {catalog} | {asset_id} | {url}")
     note = _text(raw.get("note"), 300)
@@ -326,6 +327,10 @@ def _prepare_option(store: Any, raw: Any) -> dict:
                 "source": got["source"], "license": got["license"], "origin_url": got["origin_url"]}
     if raw.get("asset_id") not in (None, ""):
         asset = store.get_montage_asset(int(raw["asset_id"]))
+        from app.asset_scope import allowed, refusal
+
+        if not allowed(asset, project_id):
+            raise ValueError(refusal(store, asset, project_id, "стрим"))
         if asset.get("kind") not in ("image", "video"):
             raise ValueError(f"файл #{asset['id']} не картинка и не видео")
         return {"title": _text(raw.get("title"), 120) or str(asset.get("label") or ""), "note": note,
@@ -379,9 +384,10 @@ def add_meme_choices(store: Any, source_id: int, moments: Any) -> dict:
             duplicates.append(int(old["id"]))
             continue
         options, problems = [], []
+        project_id = project_of_source(store, int(source_id))
         for option in (raw.get("options") or [])[:MAX_MEME_OPTIONS]:
             try:
-                options.append(_prepare_option(store, option))
+                options.append(_prepare_option(store, option, project_id))
             except (ValueError, KeyError, CatalogError) as exc:
                 problems.append(str(exc)[:200])
         if len(options) < MIN_MEME_OPTIONS:
@@ -438,6 +444,8 @@ def _ensure_asset(store: Any, option_id: int) -> int:
     from app.montage_assets import assets_dir, kind_for, probe_asset
 
     row = store.db.query_one("SELECT * FROM meme_options WHERE id = ?", (int(option_id),))
+    # Мем выбрали для стрима этого проекта: в другие проекты он не попадёт.
+    moment = store.db.query_one("SELECT source_id FROM meme_moments WHERE id = ?", (int(row["moment_id"]),))
     if row["asset_id"]:
         return int(row["asset_id"])
     source = Path(row["file_path"])
@@ -450,7 +458,8 @@ def _ensure_asset(store: Any, option_id: int) -> int:
     asset = store.create_montage_asset(
         kind=kind, label=row["title"] or "Мем", description=origin[:500], tags="мем",
         file_path=str(dest), original_filename=source.name, mime_type=row["mime"] or "",
-        size_bytes=dest.stat().st_size, **probe_asset(dest))
+        size_bytes=dest.stat().st_size, project_id=project_of_source(store, int(moment["source_id"])),
+        **probe_asset(dest))
     store.db.execute("UPDATE meme_options SET asset_id = ? WHERE id = ?", (int(asset["id"]), int(option_id)))
     return int(asset["id"])
 

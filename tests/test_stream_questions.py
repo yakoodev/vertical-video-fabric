@@ -348,6 +348,33 @@ def test_project_brief_carries_stream_answers(tmp_path, monkeypatch):
     assert ok and result["stream_answers"]["answers"][0]["answer"] == "Шутка"
 
 
+def test_memes_keep_to_the_project_of_the_stream(tmp_path, monkeypatch):
+    client, store, source = _source(tmp_path, monkeypatch)
+    sid = source["id"]
+    mine = P.create_project(store, "Мура")["id"]
+    other = P.create_project(store, "Промо")["id"]
+    P.set_source_project(store, sid, mine)
+    path = tmp_path / "own.png"
+    path.write_bytes(PNG)
+    foreign = store.create_montage_asset(kind="image", label="Чужой", file_path=str(path), project_id=other)
+    common = store.create_montage_asset(kind="image", label="Общий", file_path=str(path))
+
+    refused = Q.add_meme_choices(store, sid, [{
+        "t_start": 1, "why": "чужой файл", "options": [{"catalog": "Two Buttons"}, {"asset_id": foreign["id"]}],
+    }])
+    assert "Промо" in json.dumps(refused, ensure_ascii=False)
+    assert store.db.query_one("SELECT COUNT(*) AS n FROM meme_moments")["n"] == 0
+
+    Q.add_meme_choices(store, sid, [{
+        "t_start": 2, "why": "шутка", "options": [{"catalog": "Two Buttons"}, {"asset_id": common["id"]}],
+    }])
+    moment = store.db.query_one("SELECT id FROM meme_moments")["id"]
+    picked = next(o for o in Q.get_moment(store, moment)["options"] if not o["asset_id"])
+    chosen = Q.choose_meme(store, moment, picked["id"])
+    option = next(o for o in chosen["options"] if o["id"] == picked["id"])
+    assert store.get_montage_asset(option["asset_id"])["project_id"] == mine
+
+
 def test_deleting_source_removes_questions_and_memes(tmp_path, monkeypatch):
     client, store, source = _source(tmp_path, monkeypatch)
     sid = source["id"]
