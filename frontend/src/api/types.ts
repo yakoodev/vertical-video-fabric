@@ -41,6 +41,8 @@ export interface Source {
   clips_count?: number;
   /** Проект-серия/канал источника (app/projects.py); null — без проекта. */
   project_id?: number | null;
+  /** Файл записи на месте. false — удалён: кадры и видео не запрашивать, моменты и клипы живы. */
+  has_file?: boolean | null;
   has_transcript?: boolean;
   transcript_segments?: number;
   focus_preset?: string;

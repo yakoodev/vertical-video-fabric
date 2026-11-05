@@ -228,6 +228,38 @@ class SourceIngestor:
             original_url=url.strip(),
         )
 
+    def restore_file(self, source_id: int, *, quality: str = "") -> dict:
+        """Скачать удалённую запись заново В ТОТ ЖЕ источник: моменты, клипы и монтаж привязаны к его
+        id и таймкодам, новый источник оставил бы их без файла. Чат и зелёнку не трогаем — уже есть."""
+        source = self.store.get_source(source_id)
+        url = str(source.get("original_url") or "").strip()
+        if not url:
+            raise ValueError("у записи нет ссылки: её загружали файлом")
+        downloader = {
+            "youtube_url": self.youtube_downloader,
+            "smotvibe_url": self.smotvibe_downloader,
+            "twitch_url": self.twitch_downloader,
+        }.get(classify_source_url(url), self.direct_downloader)
+        stored = _call_downloader(downloader, url, quality)
+        try:
+            metadata = self.probe(stored.path)
+        except Exception:
+            # Битый файл никому не привязан: не оставляем лежать гигабайты.
+            stored.path.unlink(missing_ok=True)
+            raise
+        return self.store.update_source(
+            source_id,
+            local_path=stored.path,
+            sha256=stored.sha256,
+            size_bytes=stored.size_bytes,
+            duration_sec=metadata.duration_sec or source.get("duration_sec") or 0,
+            width=metadata.width or source.get("width") or 0,
+            height=metadata.height or source.get("height") or 0,
+            fps=metadata.fps or source.get("fps") or 0,
+            status="ready",
+            error="",
+        )
+
     def _with_chroma_key(self, source: dict) -> dict:
         """Записан на зелёнке — сразу ставим ключ (app/chroma_key.py); сбой не мешает загрузке."""
         from app.chroma_key import detect_key

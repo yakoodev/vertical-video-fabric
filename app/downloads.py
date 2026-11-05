@@ -60,7 +60,15 @@ class DownloadService:
                     return dict(task)
         raise KeyError(f"download {task_id} not found")
 
-    def start(self, url: str, *, quality: str = "", selection: dict | None = None, ingestor=None) -> dict:
+    def start(
+        self,
+        url: str,
+        *,
+        quality: str = "",
+        selection: dict | None = None,
+        ingestor=None,
+        restore_source_id: int | None = None,
+    ) -> dict:
         """Запустить загрузку в фоне. ``ingestor`` — свой на этот вызов (main.py отдаёт
         текущий ``source_ingestor``, его подменяют тесты); по умолчанию — сервиса."""
         from app import modules
@@ -72,7 +80,19 @@ class DownloadService:
         # of having to open the activity panel for it.
         classify_source_url(url)
         selection = {k: str(v or "").strip() for k, v in (selection or {}).items()}
-        task = self._new_task(url=url, quality=quality, label=_label_for(url, selection))
+        if restore_source_id is not None:
+            # Повторное нажатие не качает 12 ГБ второй раз: отдаём идущую загрузку этого источника.
+            with self._lock:
+                for running in self._tasks:
+                    if running.get("restore_source_id") == restore_source_id and running["status"] in ACTIVE_STATUSES:
+                        return dict(running)
+            selection = {"restore_source_id": str(restore_source_id)}
+        task = self._new_task(
+            url=url,
+            quality=quality,
+            label=_label_for(url, selection),
+            **({"restore_source_id": restore_source_id, "source_id": restore_source_id} if restore_source_id is not None else {}),
+        )
         thread = threading.Thread(
             target=self._run,
             args=(task["id"], url, quality, selection, ingestor or self.ingestor),
@@ -177,6 +197,8 @@ class DownloadService:
         )
 
     def _ingest(self, ingestor, url: str, quality: str, selection: dict) -> dict:
+        if selection.get("restore_source_id"):
+            return ingestor.restore_file(int(selection["restore_source_id"]), quality=quality)
         if selection.get("media_url"):
             return ingestor.ingest_smotvibe_selection(
                 url,

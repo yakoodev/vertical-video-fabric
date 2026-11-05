@@ -14,12 +14,13 @@ import {
 } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import type { AiSegment, Aspect, ColorFix, CoverSettings, FreezeFrame, MixSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
+import type { AiSegment, Aspect, Clip, ColorFix, CoverSettings, FreezeFrame, MixSettings, MontageInsert, FocusPoint, RenderSettings, SourceDetail, SpeedAudio, TransitionSettings } from "@/api/types";
 import { audioMixApi } from "@/api/audioMix";
 import { FxChainEditor } from "@/pages/workspace/FxChainEditor";
 import { colorFixCss, segLen, segSpeed } from "@/api/types";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { MissingSourceNotice, isSourceFileMissing } from "@/components/MissingSourceNotice";
 import { ClipFileDialog } from "@/pages/workspace/ClipFileDialog";
 import { AiMontageDialog } from "@/pages/workspace/AiMontageDialog";
 import { useModules } from "@/hooks/useModules";
@@ -1423,6 +1424,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
   const triagePhoneRef = useRef<HTMLCanvasElement>(null);
   const query = useQuery({ queryKey: qk.source(sourceId), queryFn: () => sourcesApi.get(sourceId) });
+  // Запись удалена (клипы и монтаж живы): ни кадров, ни волны, ни видео исходника не запрашиваем.
+  const sourceMissing = isSourceFileMissing(query.data);
   const presets = useQuery({ queryKey: qk.ffmpegPresets, queryFn: ffmpegPresetsApi.list });
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
   const tracks = useQuery({ queryKey: qk.audioTracks, queryFn: audioTracksApi.list });
@@ -1432,6 +1435,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     queryKey: ["storyboard", sourceId],
     queryFn: () => sourcesApi.storyboard(sourceId),
     staleTime: 5 * 60_000,
+    enabled: query.isSuccess && !sourceMissing,
   });
 
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
@@ -1530,7 +1534,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
   const playRanges = (ranges: { start: number; end: number; speed?: number }[]) => {
     const v = videoRef.current;
-    if (!v || !ranges.length) return;
+    if (!v || !ranges.length || sourceMissing) return;
     playbackRef.current = { ranges, idx: 0 };
     // Кусок со скоростью (slow-mo ×0.5) превью играет с той же скоростью; реверс — вперёд.
     v.playbackRate = Math.min(16, Math.max(0.0625, rate * (ranges[0].speed ?? 1)));
@@ -1727,7 +1731,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const planWave = useQuery({
     queryKey: ["plan-waveform", editorPlanId],
     queryFn: () => clipPlansApi.waveform(editorPlanId as number),
-    enabled: Boolean(editorPlanId),
+    enabled: Boolean(editorPlanId) && query.isSuccess && !sourceMissing,
     staleTime: 5 * 60 * 1000,
   });
   const planSubs = useQuery({
@@ -2737,7 +2741,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (src == null || !videoRef.current) return;
     playbackRef.current = null;
     videoRef.current.currentTime = src;
-    if (play) void videoRef.current.play();
+    if (play && !sourceMissing) void videoRef.current.play();
   };
   // Шаг по клипу в его собственном времени: на стыке кусков курсор перепрыгивает
   // в следующий кусок исходника, а не уезжает в вырезанное.
@@ -3264,10 +3268,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const fx = s?.focus?.[0]?.x ?? 0.5;
     return `/media/clip-plans/${p.id}/thumb?v=${s ? `${s.start_sec.toFixed(1)}_${s.end_sec.toFixed(1)}` : 0}_${fx.toFixed(2)}`;
   };
+  // Последний готовый рендер момента: показываем его, когда записи стрима нет.
+  const planRender = (planId: number) =>
+    (query.data?.clips ?? [])
+      .filter((c) => c.clip_plan_id === planId && c.status === "succeeded")
+      .reduce<Clip | null>((best, c) => (!best || c.id > best.id ? c : best), null);
   // Холст: вместо зелёного кадра основы — фон этого клипа.
   const planThumb = (p: (typeof plans)[number]) =>
     isCanvas ? (
       <BackdropStrip className="plan-canvas-thumb" bg={normalizeBackdrop(p.render_settings?.backdrop)} width={90} height={160} />
+    ) : sourceMissing ? (
+      // Записи нет — кадр берём из готового рендера; рендера нет — без запроса в никуда.
+      planRender(p.id) ? (
+        <img src={`/media/clips/${planRender(p.id)!.id}/thumb?v=${encodeURIComponent(planRender(p.id)!.updated_at)}`} alt="" loading="lazy" />
+      ) : (
+        <span className="plan-thumb-none">нет рендера</span>
+      )
     ) : (
       <img src={planThumbUrl(p)} alt="" loading="lazy" />
     );
@@ -3471,6 +3487,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       ) : null}
       {view === "triage" && (
       <>
+      {sourceMissing ? <MissingSourceNotice source={source} /> : null}
       <div className="mo-top">
         <div className="panel mo-player">
           <div className="mo-player-frame">
@@ -3490,8 +3507,22 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   : undefined
               }
             >
-              <video ref={videoRef} src={`/media/sources/${source.id}`} controls preload="metadata" />
-              {source.width && source.height ? (
+              <video ref={videoRef} src={sourceMissing ? undefined : `/media/sources/${source.id}`} controls={!sourceMissing} preload="metadata" style={sourceMissing ? { display: "none" } : undefined} />
+              {sourceMissing ? (
+                activePlan && planRender(activePlan.id) ? (
+                  <video
+                    key={planRender(activePlan.id)!.id}
+                    className="mo-stage-render"
+                    src={`/media/clips/${planRender(activePlan.id)!.id}`}
+                    poster={`/media/clips/${planRender(activePlan.id)!.id}/thumb`}
+                    controls
+                    preload="metadata"
+                  />
+                ) : (
+                  <div className="src-missing-stage">У этого момента нет готового рендера</div>
+                )
+              ) : null}
+              {source.width && source.height && !sourceMissing ? (
                 <CropFrame
                   srcW={source.width}
                   srcH={source.height}
@@ -3558,12 +3589,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             попадает. Раньше это было только в редакторе — выбирать момент
             вслепую, не видя кадрирования, неудобно.
           */}
-          <div className="mo-phone" title="Так будет выглядеть вертикальный клип">
-            <div className="ed-phone-screen mo-phone-screen">
-              <canvas ref={triagePhoneRef} width={270} height={480} />
-              <span className="ed-phone-tag mono">9:16</span>
+          {sourceMissing ? null : (
+            <div className="mo-phone" title="Так будет выглядеть вертикальный клип">
+              <div className="ed-phone-screen mo-phone-screen">
+                <canvas ref={triagePhoneRef} width={270} height={480} />
+                <span className="ed-phone-tag mono">9:16</span>
+              </div>
             </div>
-          </div>
+          )}
           <div className="mo-stats-line">
             <b>{plans.length} моментов</b>
             <span>· {favCount} в избранном</span>
@@ -3583,9 +3616,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </button>
           <button
             className="btn mo-big"
-            disabled={batch.isPending || !selected.size}
+            disabled={batch.isPending || !selected.size || sourceMissing}
             onClick={() => batch.mutate(undefined)}
-            title="Рендер отмеченных «в рендер» с настройками из редактора"
+            title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер отмеченных «в рендер» с настройками из редактора"}
           >
             {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
           </button>
@@ -3856,8 +3889,8 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               >
                 <video
                   ref={videoRef}
-                  src={`/media/sources/${source.id}`}
-                  controls={!isCanvas}
+                  src={sourceMissing ? undefined : `/media/sources/${source.id}`}
+                  controls={!isCanvas && !sourceMissing}
                   preload="metadata"
                   style={isCanvas ? { opacity: 0 } : lookCss ? { filter: lookCss } : undefined}
                 />
@@ -4056,9 +4089,24 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     <span>Субтитры</span>
                   </div>
                 ) : null}
+                {sourceMissing && activePlan ? (
+                  planRender(activePlan.id) ? (
+                    <video
+                      key={planRender(activePlan.id)!.id}
+                      className="ed-phone-render"
+                      src={`/media/clips/${planRender(activePlan.id)!.id}`}
+                      poster={`/media/clips/${planRender(activePlan.id)!.id}/thumb`}
+                      controls
+                      preload="metadata"
+                    />
+                  ) : (
+                    <div className="src-missing-stage ed-phone-render">Рендера этого клипа нет</div>
+                  )
+                ) : null}
                 <span className="ed-phone-tag mono">{aspect}</span>
               </div>
             </div>
+          {sourceMissing ? <MissingSourceNotice source={source} compact /> : null}
           {reframedView ? (
             <div className="ed-reframe-note" role="status">
               <span>
@@ -4080,7 +4128,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </button>
             </div>
           ) : null}
-          <div className="ed-transport">
+          {sourceMissing ? null : <div className="ed-transport">
             <button
               className="btn primary sm"
               disabled={!activePlan?.segments.length}
@@ -4169,7 +4217,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   );
                 })()
               : null}
-          </div>
+          </div>}
         </div>
 
         <aside className="ed-inspector">
@@ -4308,6 +4356,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 defaultOpen={isCanvas}
               >
                 <LayoutPanel
+                  noSourceFile={sourceMissing}
                   sourceId={source.id}
                   layout={layout}
                   onChange={setLayout}
@@ -4499,7 +4548,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                           onChange={(e) => patchCover({ offset: Number(e.target.value) })}
                         />
                       </label>
-                      {seg ? (
+                      {sourceMissing ? (
+                        <p className="muted field-hint">Кадр обложки берётся из записи стрима: её нет.</p>
+                      ) : seg ? (
                         aspect === "9:16" ? (
                           <img
                             className="cover-preview"
@@ -5507,17 +5558,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <div className="ed-render-btns">
               <button
                 className="btn primary"
-                disabled={batch.isPending || !activePlan}
+                disabled={batch.isPending || !activePlan || sourceMissing}
                 onClick={() => activePlan && batch.mutate([activePlan.id])}
-                title="Рендер только этого клипа с текущими настройками"
+                title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер только этого клипа с текущими настройками"}
               >
                 {batch.isPending ? "Запуск…" : "▶ Рендерить (1)"}
               </button>
               <button
                 className="btn"
-                disabled={batch.isPending || !selected.size}
+                disabled={batch.isPending || !selected.size || sourceMissing}
                 onClick={() => batch.mutate(undefined)}
-                title="Рендер всех отмеченных «в рендер» на странице моментов"
+                title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер всех отмеченных «в рендер» на странице моментов"}
               >
                 Выбранные ({selected.size})
               </button>
@@ -5566,6 +5617,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
             <ClipTimeline
               sourceId={source.id}
+              noFrames={sourceMissing}
               canvas={isCanvas ? { bg: backdrop, accent: clipAccent(layers), tileAspect: frameSize(aspect).w / frameSize(aspect).h } : null}
               peaks={planWave.data?.peaks}
               pieces={activePlan?.segments ?? []}

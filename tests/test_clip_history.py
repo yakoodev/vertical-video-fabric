@@ -88,3 +88,17 @@ def test_undo_without_history_raises(tmp_path, monkeypatch):
         assert "отменять нечего" in str(exc)
     else:  # pragma: no cover - страховка от молчаливой регрессии
         raise AssertionError("ожидали KeyError")
+
+
+def test_saving_the_same_settings_does_not_eat_an_undo_step(tmp_path, monkeypatch):
+    """Редактор сохраняет настройки при открытии: такое сохранение — не правка, снимка быть не должно."""
+    _require_ffmpeg()
+    client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    url = f"/api/clip-plans/{plan['id']}/render-settings"
+    client.patch(url, json={"settings": {"transition": {"type": "whip"}}}).raise_for_status()
+    assert client.get(f"/api/clip-plans/{plan['id']}/undo").json()["left"] == 1
+    # То же самое ещё раз (открыли редактор заново): шаг один, и «Шаг назад» откатывает настоящую правку.
+    client.patch(url, json={"settings": {"transition": {"type": "whip"}}}).raise_for_status()
+    assert client.get(f"/api/clip-plans/{plan['id']}/undo").json()["left"] == 1
+    client.post(f"/api/clip-plans/{plan['id']}/undo").raise_for_status()
+    assert client.get(f"/api/clip-plans/{plan['id']}/spec").json()["render"]["transition"]["type"] == "cut"

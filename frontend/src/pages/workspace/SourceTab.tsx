@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toast";
 import { useModules } from "@/hooks/useModules";
 import { ApiError } from "@/api/client";
 import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
+import { MissingSourceNotice, isSourceFileMissing } from "@/components/MissingSourceNotice";
 
 const PROVIDERS = ["action", "polza", "gemini", "artemox", "mock"];
 
@@ -169,6 +170,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const source = query.data!;
+  const sourceMissing = isSourceFileMissing(source);
   const crop = insetsToCrop(insets);
   const setInset = (key: keyof Insets, v: number) =>
     setInsets((prev) => ({ ...prev, [key]: Math.min(0.45, Math.max(0, v)) }));
@@ -197,6 +199,8 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
   const running = [...source.analyses].sort((a, b) => b.id - a.id).find((a) => ANALYSIS_ACTIVE.includes(a.status));
 
   return (
+    <>
+    {sourceMissing ? <MissingSourceNotice source={source} /> : null}
     <div className="src-grid">
       <div className="src-left">
       <div className="ws-video panel">
@@ -212,7 +216,11 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
               : undefined
           }
         >
-          <video src={`/media/sources/${source.id}`} controls preload="metadata" />
+          {sourceMissing ? (
+            <div className="src-missing-stage">Файла записи нет</div>
+          ) : (
+            <video src={`/media/sources/${source.id}`} controls preload="metadata" />
+          )}
           {!isFullFrame(insets) ? (
             <div
               className="crop-frame"
@@ -242,7 +250,12 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
         <div className="panel" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong className="src-h">Кадр источника</strong>
-            <button className="btn ghost sm" disabled={detectCrop.isPending} onClick={() => detectCrop.mutate()}>
+            <button
+              className="btn ghost sm"
+              disabled={detectCrop.isPending || sourceMissing}
+              title={sourceMissing ? "Нужна запись стрима" : ""}
+              onClick={() => detectCrop.mutate()}
+            >
               {detectCrop.isPending ? "Поиск…" : "🔍 Найти полосы"}
             </button>
           </div>
@@ -386,7 +399,8 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
           </label> : null}
           <button
             className="btn primary"
-            disabled={analyze.isPending}
+            disabled={analyze.isPending || sourceMissing}
+            title={sourceMissing ? "Для анализа нужна запись стрима" : ""}
             onClick={() =>
               analyze.mutate(
                 prompt.trim()
@@ -473,5 +487,6 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
       </div>
       </div>
     </div>
+    </>
   );
 }

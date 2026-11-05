@@ -8,10 +8,13 @@ import { sourcesApi } from "@/api/sources";
 // caches them), so idle cards never trigger ffmpeg.
 export function StoryboardPreview({
   sourceId,
+  noFile,
   type,
   duration,
 }: {
   sourceId: number;
+  /** Записи нет: кадры не запрашивать, на карточке — пометка. */
+  noFile?: boolean;
   type?: string;
   duration?: string;
 }) {
@@ -19,12 +22,12 @@ export function StoryboardPreview({
   const [hover, setHover] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [idx, setIdx] = useState(0);
-  const [noThumb, setNoThumb] = useState(false);
+  const [noThumb, setNoThumb] = useState(Boolean(noFile));
 
   const sb = useQuery({
     queryKey: ["storyboard", sourceId],
     queryFn: () => sourcesApi.storyboard(sourceId),
-    enabled: hover,
+    enabled: hover && !noFile,
     staleTime: Infinity,
     retry: false,
   });
@@ -76,6 +79,7 @@ export function StoryboardPreview({
         />
       )}
       {active ? <img className="pcard-sb" src={frames[idx]} alt="" draggable={false} /> : null}
+      {noFile ? <span className="pcard-nofile">запись удалена</span> : null}
       {type ? <span className="pcard-type mono">{type}</span> : null}
       {duration ? <span className="pcard-dur mono">{duration}</span> : null}
       {active && frames.length > 1 ? (

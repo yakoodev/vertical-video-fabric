@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.clip_spec import SpecError, apply_spec, export_spec, validate_spec
 from app.clip_spec import json_schema as clip_spec_json_schema
-from app.clip_history import snapshot as snapshot_clip, undo as undo_clip
+from app.clip_history import save_with_snapshot, snapshot as snapshot_clip, undo as undo_clip
 from app.clip_settings import settings_to_render_kwargs
 from app.transitions import transition_options
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
@@ -335,6 +335,8 @@ class SourceRead(BaseModel):
     clips_count: int | None = None
     # Проект-серия/канал источника (app/projects.py); None — без проекта.
     project_id: int | None = None
+    # Файл записи на месте? False — удалён (клипы и моменты живут), кадры и видео не запрашивать.
+    has_file: bool | None = None
 
 
 class SourceCreateRequest(BaseModel):
@@ -1870,6 +1872,36 @@ def api_start_download(payload: SourceDownloadRequest, _auth: AuthDep) -> dict:
                 "filename_label": payload.smotvibe_filename_label,
             },
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class SourceRedownloadRequest(BaseModel):
+    quality: str = ""
+
+
+@app.post(
+    "/api/sources/{source_id}/redownload",
+    tags=["Sources"],
+    summary="Скачать удалённую запись заново в тот же источник (в фоне)",
+    description=(
+        "Возвращает задачу загрузки сразу, как `/api/sources/download`, но файл встаёт в этот же "
+        "источник: моменты, клипы и монтаж остаются на месте. Прогресс — `/api/tasks/active`, "
+        "отмена — `/api/downloads/{id}/cancel`."
+    ),
+)
+def api_redownload_source(source_id: int, _auth: AuthDep, payload: SourceRedownloadRequest | None = None) -> dict:
+    try:
+        source = store.get_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if source.get("has_file"):
+        raise HTTPException(status_code=409, detail="Файл записи уже на месте")
+    url = str(source.get("original_url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="У записи нет ссылки: её загружали файлом")
+    try:
+        return download_service.start(url, quality=payload.quality if payload else "", restore_source_id=source_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3675,8 +3707,9 @@ def api_set_clip_plan_render_settings(
             if "format" not in settings_in and "aspect" not in settings_in:
                 settings_in["format"] = current.get("format") or current.get("aspect")
             settings_in.setdefault("layers_format", current.get("layers_format"))
-        snapshot_clip(store, clip_plan_id, "настройки клипа")
-        return store.set_clip_plan_render_settings(clip_plan_id, settings_in)
+        return save_with_snapshot(
+            store, clip_plan_id, "настройки клипа", lambda: store.set_clip_plan_render_settings(clip_plan_id, settings_in)
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
