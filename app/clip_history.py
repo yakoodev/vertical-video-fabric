@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from app.clip_spec import apply_spec, export_spec
 
@@ -41,6 +41,23 @@ def snapshot(store: Any, clip_plan_id: int, label: str) -> dict | None:
         return state
     except Exception:  # noqa: BLE001 - история это удобство, а не причина падать
         return None
+
+
+def save_with_snapshot(store: Any, clip_plan_id: int, label: str, save: Callable[[], Any]) -> Any:
+    """Сделать правку и запомнить прежнее состояние, только если она что-то изменила.
+    Редактор сохраняет настройки сразу при открытии: снимок на каждое открытие съедал «Шаг назад»
+    (первое нажатие возвращало то же самое, что на экране)."""
+    try:
+        before = capture(store, clip_plan_id)
+    except Exception:  # noqa: BLE001 - история это удобство, а не причина падать
+        return save()
+    result = save()
+    try:
+        if capture(store, clip_plan_id) != before:
+            store.push_clip_plan_history(clip_plan_id, before, label, depth=HISTORY_DEPTH)
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 def restore(store: Any, clip_plan_id: int, state: dict) -> tuple[dict, list[str]]:

@@ -61,6 +61,18 @@ MIN_PIECE_DURATION_SEC = 1.5
 MAX_SEGMENT_DURATION_SEC = 180
 
 
+def source_file_present(local_path: Any) -> bool:
+    """Лежит ли файл записи на месте. Файл длинного стрима удаляют, когда клипы готовы (строка
+    источника, моменты и клипы остаются): интерфейс не должен дёргать кадры и видео впустую."""
+    text = str(local_path or "")
+    if not text:
+        return False
+    try:
+        return Path(text).is_file()
+    except OSError:
+        return False
+
+
 class AppStore:
     def __init__(self, db: Database, cipher: CookieCipher) -> None:
         self.db = db
@@ -888,13 +900,14 @@ class AppStore:
             """,
             params,
         )
-        return [dict(row) for row in rows]
+        return [{**dict(row), "has_file": source_file_present(row["local_path"])} for row in rows]
 
     def get_source(self, source_id: int, include_related: bool = False) -> dict:
         row = self.db.query_one("SELECT * FROM sources WHERE id = ?", (source_id,))
         if not row:
             raise KeyError(f"source not found: {source_id}")
         data = dict(row)
+        data["has_file"] = source_file_present(data.get("local_path"))
         data["content_crop"] = _parse_content_crop(data.get("content_crop"))
         data["chroma_key"] = _parse_chroma_key(data.get("chroma_key"))
         from app.source_audio import normalize_mix, normalize_tracks

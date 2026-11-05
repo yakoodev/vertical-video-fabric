@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import type { Clip } from "@/api/types";
 import { clipsApi } from "@/api/clips";
 import { VideoThumb } from "@/components/VideoThumb";
@@ -98,6 +99,11 @@ export function ClipCard({
         <span>{formatDuration(clip.duration_sec)}</span>
         {clip.width ? <span>· {clip.width}×{clip.height}</span> : null}
         {clip.published_targets_count ? <StatsBadge clipId={clip.id} /> : null}
+        {clip.clip_plan_id ? (
+          <Link className="clip-edit-link" to={`/projects/${clip.source_id}/candidates?clip=${clip.clip_plan_id}`} title="Открыть монтаж этого клипа">
+            Монтаж
+          </Link>
+        ) : null}
       </div>
       {clip.qc ? (
         <div

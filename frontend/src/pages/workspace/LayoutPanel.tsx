@@ -26,6 +26,8 @@ import {
 } from "./layout";
 
 type Props = {
+  /** Записи нет: кадра для рамки вебки тоже нет. */
+  noSourceFile?: boolean;
   sourceId: number;
   layout: StreamLayout | null | undefined;
   onChange: (next: StreamLayout) => void;
@@ -463,6 +465,7 @@ function AvatarPlaces({
 }
 
 export function LayoutPanel({
+  noSourceFile = false,
   sourceId,
   layout: raw,
   onChange,
@@ -637,13 +640,17 @@ export function LayoutPanel({
                 ? "Где аватар в исходнике"
                 : "Где вебка в исходнике"}
           </div>
-          <CamEditor
-            src={frameSrc}
-            cam={editedCam}
-            onCommit={(cam) =>
-              placeIdx >= 0 ? patch({ cams: places.map((p, i) => (i === placeIdx ? { ...p, cam } : p)) }) : patch({ cam })
-            }
-          />
+          {noSourceFile ? (
+            <p className="muted field-hint">Рамка ставится по кадру записи стрима, а её нет.</p>
+          ) : (
+            <CamEditor
+              src={frameSrc}
+              cam={editedCam}
+              onCommit={(cam) =>
+                placeIdx >= 0 ? patch({ cams: places.map((p, i) => (i === placeIdx ? { ...p, cam } : p)) }) : patch({ cam })
+              }
+            />
+          )}
           <div className="lay-row">
             <button
               type="button"

@@ -125,6 +125,7 @@ export function ClipTimeline({
   onSplitAt,
   onDeleteSelected,
   sourceId,
+  noFrames = false,
   peaks,
   layers = [],
   camera = [],
@@ -155,6 +156,8 @@ export function ClipTimeline({
   onDeleteSelected: () => void;
   /** Источник клипа: по нему дорожка «Клипы» показывает кадры, а не пустые блоки. */
   sourceId: number;
+  /** Записи нет (удалена) — блоки без кадров, не дёргаем сервер. */
+  noFrames?: boolean;
   /** Громкость по корзинам 0..1 — дорожка «Звук». Пусто, пока не посчиталась. */
   peaks?: number[];
   /** Моушн-слои: графика на своих дорожках, звуки — на дорожке «Звуки». */
@@ -701,7 +704,7 @@ export function ClipTimeline({
                       />
                     ) : (
                       <span className="ctl-thumbs" aria-hidden>
-                        {pieceThumbs(sourceId, row.piece, (l.b - l.a) * pps).map((t) => (
+                        {(noFrames ? [] : pieceThumbs(sourceId, row.piece, (l.b - l.a) * pps)).map((t) => (
                           <img key={t.at} src={t.url} alt="" loading="lazy" draggable={false} />
                         ))}
                       </span>

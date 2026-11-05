@@ -114,6 +114,7 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
     retry: false,
   });
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [noFile, setNoFile] = useState(false);
   const t = target.t ?? 0;
   // Клип без рендера — играем исходник с его кусков: секунда клипа → секунда исходника.
   const pieces = clip.data?.pieces ?? [];
@@ -132,7 +133,11 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
   let editor: string | null = null;
   if (target.kind === "source") {
     editor = `/projects/${target.id}/source`;
-    body = <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${target.id}`} controls autoPlay muted={false} />;
+    body = noFile ? (
+      <div className="muted">Запись стрима удалена — открой проект, чтобы скачать её заново</div>
+    ) : (
+      <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${target.id}`} controls autoPlay muted={false} onError={() => setNoFile(true)} />
+    );
   } else if (clip.isLoading) body = <Loading />;
   else if (clip.isError || !clip.data) body = <div className="muted">Клип #{target.id} не найден</div>;
   else {
@@ -141,8 +146,14 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
       <video ref={videoRef} className="chat-media-video" src={clip.data.video_url} poster={clip.data.thumb_url} controls autoPlay />
     ) : fromSource ? (
       <>
-        <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${clip.data.source_id}`} controls autoPlay />
-        <span className="muted chat-small">Рендера ещё нет — исходник на этом месте клипа</span>
+        {noFile ? (
+          <div className="muted">Рендера ещё нет, а запись стрима удалена</div>
+        ) : (
+          <>
+            <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${clip.data.source_id}`} controls autoPlay onError={() => setNoFile(true)} />
+            <span className="muted chat-small">Рендера ещё нет — исходник на этом месте клипа</span>
+          </>
+        )}
       </>
     ) : (
       <div className="chat-media-thumb">

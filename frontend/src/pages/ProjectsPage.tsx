@@ -12,6 +12,7 @@ import { useModuleOn, useModules } from "@/hooks/useModules";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
+import { isSourceFileMissing } from "@/components/MissingSourceNotice";
 import { NewCanvas } from "@/components/NewCanvas";
 import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { useToast } from "@/components/Toast";
@@ -71,6 +72,7 @@ function ProjectCard({
         <Link to={`/projects/${source.id}`} className="pcard-link" aria-label={name}>
           <StoryboardPreview
             sourceId={source.id}
+            noFile={isSourceFileMissing(source)}
             type={SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
             duration={formatDuration(source.duration_sec)}
           />

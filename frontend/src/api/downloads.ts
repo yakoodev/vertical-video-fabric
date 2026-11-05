@@ -9,6 +9,8 @@ export interface DownloadTask {
   message: string;
   error: string;
   source_id: number | null;
+  /** Загрузка удалённой записи в этот источник (POST /api/sources/{id}/redownload). */
+  restore_source_id?: number | null;
   url: string;
   quality: string;
   created_at: string;
@@ -18,6 +20,7 @@ export interface DownloadTask {
 export const downloadsApi = {
   list: () => api.get<DownloadTask[]>("/api/downloads"),
   cancel: (id: number) => api.post<DownloadTask>(`/api/downloads/${id}/cancel`),
+  redownload: (sourceId: number) => api.post<DownloadTask>(`/api/sources/${sourceId}/redownload`, {}),
   // Returns as soon as the task is queued; progress arrives through /api/tasks/active.
   start: (url: string, quality = "", option?: PlayerOption) =>
     api.post<DownloadTask>("/api/sources/download", {

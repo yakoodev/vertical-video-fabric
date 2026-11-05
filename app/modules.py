@@ -318,7 +318,7 @@ MODULES: list[Module] = [
         "Источники, отрезки видео, музыка и звуки по ссылке: YouTube, Twitch VOD, VK и всё, что умеет yt-dlp.",
         cost=("network",), cost_note="скачивание гигабайтов, прокси",
         tools=("add_source_from_url", "add_video_from_url", "add_music_from_url", "add_sound_from_url"),
-        routes=("POST /api/sources/download", "/api/downloads*", "POST /ui/sources/url", "POST /api/smotvibe/options",
+        routes=("POST /api/sources/download", "POST /api/sources/{id}/redownload", "/api/downloads*", "POST /ui/sources/url", "POST /api/smotvibe/options",
                 "POST /api/montage-assets/video-from-url", "POST /api/audio-tracks/from-url"),
         ui=("ссылка в окне «Создать»",),
     ),
