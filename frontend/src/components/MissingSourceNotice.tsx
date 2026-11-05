@@ -71,7 +71,7 @@ export function MissingSourceNotice({
       {canDownload ? (
         running ? (
           <div className="src-missing-actions">
-            <Link to="/tasks" className="src-missing-progress mono" title="Открыть очередь задач">
+            <Link to="/inbox?tab=tasks" className="src-missing-progress mono" title="Открыть очередь задач">
               {task?.message || "Скачивание…"}
             </Link>
             <button type="button" className="btn sm" disabled={cancel.isPending} onClick={() => task && cancel.mutate(task.id)}>

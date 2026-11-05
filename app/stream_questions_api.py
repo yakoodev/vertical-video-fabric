@@ -29,6 +29,10 @@ def build_stream_questions_router(auth_dep: Any, get_store: Callable[[], Any]) -
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Источника нет") from exc
 
+    @router.get("/api/stream-questions", summary="Вопросы и мемы всех видео («Входящие», вкладка проекта)")
+    def api_inbox(_auth: auth_dep, project_id: int | None = None, only_open: bool = True) -> dict:
+        return Q.inbox_state(get_store(), project_id, only_open)
+
     @router.put("/api/stream-questions/{question_id}/answer", summary="Ответить на вопрос, пропустить или снять ответ")
     def api_answer(question_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         try:

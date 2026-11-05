@@ -93,7 +93,7 @@ function Header({ view }: { view: ChatThreadView | undefined }) {
           </button>
         )}
         {view.project ? (
-          <Link to={`/series/${view.project.id}`} className="chat-project-chip">
+          <Link to={`/p/${view.project.id}`} className="chat-project-chip">
             {view.project.name}
           </Link>
         ) : (

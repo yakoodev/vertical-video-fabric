@@ -14,23 +14,33 @@ import { PublishDialog } from "@/components/PublishDialog";
 import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
-const clipMatches = (c: Clip, f: "all" | "ready" | "published" | "error"): boolean =>
+type ClipFilter = "all" | "ready" | "published" | "error" | "vertical" | "horizontal";
+const clipMatches = (c: Clip, f: ClipFilter): boolean =>
   f === "all"
     ? true
-    : f === "published"
-      ? (c.published_targets_count ?? 0) > 0
-      : f === "error"
-        ? ["failed", "error"].includes(c.status)
-        : c.status === "succeeded";
+    : f === "vertical"
+      ? c.status === "succeeded" && c.height >= c.width
+      : f === "horizontal"
+        ? c.status === "succeeded" && c.width > c.height
+        : f === "published"
+          ? (c.published_targets_count ?? 0) > 0
+          : f === "error"
+            ? ["failed", "error"].includes(c.status)
+            : c.status === "succeeded";
 
-export function ClipsPage() {
+/** Клипы всех проектов («Готовые ролики») или одного (projectId, вкладка «Клипы»); карточки те же. */
+export function ClipsPage({ embedded, projectId }: { embedded?: boolean; projectId?: number } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
-  const query = useQuery({ queryKey: qk.clips(), queryFn: () => clipsApi.list() });
+  const listKey = projectId ? (["clips", "project", String(projectId)] as const) : qk.clips();
+  const query = useQuery({
+    queryKey: listKey,
+    queryFn: () => (projectId ? clipsApi.listForProject(projectId) : clipsApi.list()),
+  });
   const [toDelete, setToDelete] = useState<Clip | null>(null);
   const [toPublish, setToPublish] = useState<Clip | null>(null);
   const publishingOn = useModuleOn("publishing"); // app/modules.py
-  const [filter, setFilter] = useState<"all" | "ready" | "published" | "error">("all");
+  const [filter, setFilter] = useState<ClipFilter>("all");
   const shown = useShowMore((query.data ?? []).filter((c) => clipMatches(c, filter)), filter);
 
   const upload = useMutation({
@@ -43,34 +53,39 @@ export function ClipsPage() {
   });
 
   const del = useDeleteMutation<Clip>({
-    listKey: qk.clips(),
+    listKey,
     mutationFn: clipsApi.remove,
     successMessage: () => "Клип удалён",
     onSuccess: () => setToDelete(null),
   });
 
+  // Загруженный клип без видео-основы не лежит в проекте: кнопка живёт в «Готовых роликах».
+  const uploadButton = projectId ? null : (
+    <label className="btn primary" style={{ cursor: upload.isPending ? "wait" : "pointer" }}>
+      {upload.isPending ? "Загрузка…" : "📤 Загрузить клип"}
+      <input
+        type="file"
+        accept="video/*"
+        hidden
+        disabled={upload.isPending}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) upload.mutate(f);
+          e.target.value = "";
+        }}
+      />
+    </label>
+  );
+
   return (
     <>
-      <PageHead
-        title="Клипы"
-        sub="Отрендеренные и загруженные клипы"
-        actions={
-          <label className="btn primary" style={{ cursor: upload.isPending ? "wait" : "pointer" }}>
-            {upload.isPending ? "Загрузка…" : "📤 Загрузить клип"}
-            <input
-              type="file"
-              accept="video/*"
-              hidden
-              disabled={upload.isPending}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) upload.mutate(f);
-                e.target.value = "";
-              }}
-            />
-          </label>
-        }
-      />
+      {uploadButton && embedded ? (
+        <div className="page-acts">
+          <p className="muted">Все готовые ролики всех проектов. Клипы одного проекта: его вкладка «Клипы».</p>
+          {uploadButton}
+        </div>
+      ) : null}
+      {embedded || projectId ? null : <PageHead title="Клипы" sub="Отрендеренные и загруженные клипы" actions={uploadButton} />}
       {query.isLoading ? (
         <Loading />
       ) : query.isError ? (
@@ -79,10 +94,10 @@ export function ClipsPage() {
         <EmptyState
           icon="✂️"
           title="Клипов пока нет"
-          hint="Отрендерите моменты в проекте или загрузите готовый клип"
+          hint="Отрендерите моменты видео или загрузите готовый клип"
           actions={
-            <Link className="btn primary" to="/projects">
-              К проектам
+            <Link className="btn primary" to={projectId ? `/p/${projectId}` : "/projects"}>
+              {projectId ? "К видео проекта" : "Все видео"}
             </Link>
           }
         />
@@ -92,6 +107,8 @@ export function ClipsPage() {
           {(
             [
               ["all", "Все"],
+              ["vertical", "Вертикальные"],
+              ["horizontal", "Горизонтальные"],
               ["ready", "Готово"],
               ["published", "Опубликованные"],
               ["error", "Ошибка"],

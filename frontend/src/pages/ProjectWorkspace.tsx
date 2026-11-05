@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useLocation, useParams, useSearchParams, Link } from "react-router-dom";
+import { videoPath } from "@/lib/paths";
 import { sourcesApi } from "@/api/sources";
 import { qk } from "@/api/keys";
 import { Badge, ErrorState, Loading, formatDuration } from "@/components/ui";
@@ -61,10 +62,9 @@ export function ProjectWorkspace() {
     <>
       {editing ? null : (
       <div className="ws-head">
-        <Link to="/projects" className="ws-back">
-          ← Все проекты
-        </Link>
-        <h1 className="ws-title">{source.original_filename || source.original_url || `Проект #${source.id}`}</h1>
+        <h1 className="ws-title" title={source.original_filename || undefined}>
+          {source.display_name || source.original_filename || source.original_url || `Видео #${source.id}`}
+        </h1>
         <div className="ws-pills">
           <Badge status={source.status} />
           <span className="ws-pill mono">⏱ {formatDuration(source.duration_sec)}</span>
@@ -81,7 +81,7 @@ export function ProjectWorkspace() {
               return editTarget ? (
                 <Link
                   key={tab.seg}
-                  to={`/projects/${sourceId}/candidates?clip=${editTarget.id}`}
+                  to={`${videoPath(sourceId, "candidates")}?clip=${editTarget.id}`}
                   className="tab"
                   title={favorites.length ? "Монтаж избранных моментов" : "Отметьте ★ моменты — здесь будут они"}
                 >
@@ -99,7 +99,7 @@ export function ProjectWorkspace() {
             return (
               <NavLink
                 key={tab.seg}
-                to={`/projects/${sourceId}/${tab.seg}`}
+                to={videoPath(sourceId, tab.seg)}
                 className={({ isActive }) => `tab${isActive ? " active" : ""}`}
               >
                 <span className="tab-no">{String(i + 1).padStart(2, "0")}</span>

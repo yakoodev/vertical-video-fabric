@@ -37,7 +37,13 @@ def build_explainer_channel_router(auth_dep: Any, get_store: Callable[[], Any]) 
                 "schedule": payload.get("schedule"), "description": payload.get("description")}
 
     @router.get("/api/projects/{project_id}/explainer-channel", summary="Канал объяснялок проекта")
-    def api_view(project_id: int, _auth: auth_dep) -> dict:
+    def api_view(project_id: int, _auth: auth_dep, soft: bool = False) -> dict:
+        # soft — для вкладки: «канал ещё не заведён» это обычное состояние, а не ошибка запроса.
+        if soft:
+            try:
+                return C.channel_view(get_store(), project_id)
+            except KeyError:
+                return {"no_channel": True}
         return call(C.channel_view, project_id)
 
     @router.put("/api/projects/{project_id}/explainer-channel", summary="Завести/поправить канал объяснялок")

@@ -12,6 +12,7 @@ import {
   type ApprovalAction,
   type FeedEvent,
 } from "@/api/autopilot";
+import { navKeys } from "@/api/nav";
 import { projectsApi } from "@/api/projects";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
@@ -35,10 +36,13 @@ const FILTERS: [string, string][] = [
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
-export function ApprovalsPage() {
+export function ApprovalsPage({ embedded }: { embedded?: boolean } = {}) {
   const [params, setParams] = useSearchParams();
   const focus = Number(params.get("id") || 0);
-  const status = params.get("status") || (focus ? "all" : "pending");
+  const counts = useQuery({ queryKey: apKeys.counts, queryFn: autopilotApi.counts, refetchInterval: 30000 });
+  // Ждать нечего — сразу история карточек, а не пустой экран.
+  const nothingPending = embedded && counts.data && !counts.data.pending;
+  const status = params.get("status") || (focus || nothingPending ? "all" : "pending");
   const projectId = Number(params.get("project") || 0) || undefined;
   const projects = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list });
   const filter = `${status}:${projectId ?? ""}`;
@@ -46,22 +50,30 @@ export function ApprovalsPage() {
     queryKey: apKeys.approvals(filter),
     queryFn: () => autopilotApi.approvals({ status, project_id: projectId }),
     refetchInterval: 15000,
+    enabled: !embedded || Boolean(params.get("status") || focus || counts.data || counts.isError),
   });
   const set = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
-    next.delete("id");
+    if (key !== "id") next.delete("id");
     setParams(next, { replace: true });
   };
   const items = (list.data ?? []).filter((a) => !focus || a.id === focus || status !== "all");
 
   return (
     <>
-      <PageHead
-        title="Одобрение"
-        sub="Что автопилот хочет опубликовать или запомнить. Без «Публиковать» ничего не выходит."
-      />
+      {embedded ? (
+        <p className="inbox-line">
+          Ждут решения: {counts.data?.pending ?? 0}. Всего карточек: разрешено {counts.data?.approved ?? 0}, просрочено{" "}
+          {counts.data?.expired ?? 0}. Без «Публиковать» ничего не выходит.
+        </p>
+      ) : (
+        <PageHead
+          title="Одобрение"
+          sub="Что автопилот хочет опубликовать или запомнить. Без «Публиковать» ничего не выходит."
+        />
+      )}
       <div className="series-row" style={{ marginBottom: 14 }}>
         <nav className="pipeline" style={{ margin: 0 }}>
           {FILTERS.map(([key, label]) => (
@@ -70,7 +82,7 @@ export function ApprovalsPage() {
             </button>
           ))}
         </nav>
-        <select className="input" style={{ width: "auto" }} value={projectId ?? ""} onChange={(e) => set("project", e.target.value)}>
+        <select className="input" style={{ width: "auto", flex: "0 1 auto" }} value={projectId ?? ""} onChange={(e) => set("project", e.target.value)}>
           <option value="">Все проекты</option>
           {(projects.data ?? []).map((p) => (
             <option key={p.id} value={p.id}>
@@ -85,12 +97,43 @@ export function ApprovalsPage() {
         <EmptyState title="Пусто" hint="Агент отправляет клипы сюда инструментом submit_for_approval." />
       ) : null}
       <div className="approval-list">
-        {items.map((a) => (
-          <ApprovalCard key={a.id} approval={a} highlighted={a.id === focus} />
-        ))}
+        {items.map((a) =>
+          embedded && a.status !== "pending" && a.id !== focus ? (
+            <ApprovalRow key={a.id} approval={a} onOpen={() => set("id", String(a.id))} />
+          ) : (
+            <ApprovalCard key={a.id} approval={a} highlighted={a.id === focus} />
+          ),
+        )}
       </div>
       <Feed projectId={projectId} />
     </>
+  );
+}
+
+/** «2 ноября, 09:45» — как в таблице референса; время сервера в UTC. */
+function rowTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  if (Number.isNaN(d.getTime())) return value;
+  const day = d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  return `${day}, ${d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/** Решённая карточка во «Входящих»: одна строка таблицы; полная карточка — по нажатию. */
+function ApprovalRow({ approval: a, onOpen }: { approval: Approval; onOpen: () => void }) {
+  const when = a.decided_at || a.created_at;
+  return (
+    <button type="button" className="ap-row" onClick={onOpen} title="Открыть карточку">
+      <span className="ap-row-main">
+        <span className="ap-row-title">{a.title || a.question}</span>
+        {a.decision_comment ? <span className="ap-row-note">{a.decision_comment}</span> : null}
+      </span>
+      <span className="ap-row-proj">{a.project_name ?? ""}</span>
+      <span className={`tag${a.status === "approved" ? " ok" : a.status === "changes_requested" ? " warn" : ""}`}>
+        {a.status === "approved" ? "разрешено" : APPROVAL_STATUS_LABEL[a.status] ?? a.status}
+      </span>
+      <span className="ap-row-when">{rowTime(when)}</span>
+    </button>
   );
 }
 
@@ -101,6 +144,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
   const [comment, setComment] = useState("");
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["approvals"] });
+    qc.invalidateQueries({ queryKey: navKeys.all });
     if (a.project_id) qc.invalidateQueries({ queryKey: ["channel-projects", String(a.project_id)] });
   };
   const decide = useMutation({
@@ -149,7 +193,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
       <div className="approval-body">
         <div className="series-li-main muted" style={{ fontSize: 12.5 }}>
           <span>#{a.id}</span>
-          {a.project_id ? <Link to={`/series/${a.project_id}`}>{a.project_name}</Link> : null}
+          {a.project_id ? <Link to={`/p/${a.project_id}`}>{a.project_name}</Link> : null}
           <span className={`chip${a.kind === "alert" ? " approval-kind--alert" : ""}`}>{a.kind_label}</span>
           {a.content_type ? <span className="chip">{a.content_type}</span> : null}
           <span className={`chip approval-status approval-status--${a.status}`}>{APPROVAL_STATUS_LABEL[a.status]}</span>
@@ -301,7 +345,7 @@ export function Feed({ projectId }: { projectId?: number }) {
             {e.approval_id ? (
               <>
                 {" "}
-                · <Link to={`/approvals?id=${e.approval_id}`}>#{e.approval_id}</Link> {e.approval_title}
+                · <Link to={`/inbox?tab=approve&id=${e.approval_id}`}>#{e.approval_id}</Link> {e.approval_title}
               </>
             ) : null}
             {!projectId && e.project_name ? <span className="muted"> · {e.project_name}</span> : null}

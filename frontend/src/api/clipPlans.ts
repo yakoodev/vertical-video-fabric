@@ -315,7 +315,7 @@ export const clipPlansApi = {
     api.patch<ClipPlan>(`/api/clip-plans/${clipPlanId}/render-settings`, { settings }),
   transitionOptions: () => api.get<TransitionOptions>(`/api/render/transition-options`),
   /** Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины. */
-  createCanvas: (body: { duration: number; background?: Background | string | null; title?: string }) =>
+  createCanvas: (body: { duration: number; background?: Background | string | null; title?: string; project_id?: number | null }) =>
     api.post<ClipPlan & { editor_url: string }>(`/api/canvas-clips`, body),
   // Cover picture → JPEG of the clip format's frame on the server (9:16 — 1080×1920, 16:9 —
   // 1920×1080, app/formats.py); returns its stored name. No format — 9:16, as always.

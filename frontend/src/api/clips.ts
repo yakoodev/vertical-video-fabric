@@ -13,6 +13,8 @@ export interface PublishRequest {
 export const clipsApi = {
   list: (sourceId?: number | string) =>
     api.get<Clip[]>(sourceId == null ? "/api/clips" : `/api/clips?source_id=${sourceId}`),
+  /** Клипы одного проекта (вкладка «Клипы»). */
+  listForProject: (projectId: number) => api.get<Clip[]>(`/api/projects/${projectId}/clips`),
   get: (id: number | string) => api.get<Clip>(`/api/clips/${id}`),
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/clips/${id}`),
   rename: (id: number | string, title: string) => api.patch<Clip>(`/api/clips/${id}`, { title }),

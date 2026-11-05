@@ -9,6 +9,7 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import type { ActiveTask } from "@/api/types";
 import { Badge } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 
 const DISMISS_KEY = "vvf-dismissed-tasks";
@@ -30,8 +31,8 @@ function fmtAgo(s?: string | null): string {
 }
 
 function taskLink(t: ActiveTask): string | null {
-  if (t.kind === "job") return `/publications/${t.id}`;
-  if (t.source_id) return `/projects/${t.source_id}`;
+  if (t.kind === "job") return `/pubs/${t.id}`;
+  if (t.source_id) return `/v/${t.source_id}`;
   return null;
 }
 
@@ -85,6 +86,8 @@ export function ActivityCenter() {
     [tasks, dismissed],
   );
 
+  const finishedCount = visible.filter((t) => !isActive(t.status)).length;
+
   const dismiss = (t: ActiveTask) =>
     setDismissed((prev) => new Set(prev).add(`${t.kind}:${t.id}:${t.updated_at}`));
   const dismissAllTerminal = () =>
@@ -96,9 +99,17 @@ export function ActivityCenter() {
 
   return (
     <div className="activity">
-      <button className="activity-bell" onClick={() => setOpen((v) => !v)} aria-label="Уведомления">
-        🔔
-        {activeCount > 0 ? <span className="activity-badge">{activeCount}</span> : null}
+      <button
+        type="button"
+        className={`tool${activeCount ? " tool-on" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="Задачи: прогресс, отмена, очередь"
+      >
+        <Icon name="check" size={16} />
+        <span>{activeCount ? `${activeCount} активн.` : "нет задач"}</span>
+        {activeCount ? <span className="pulse-dot" /> : null}
+        {!activeCount && finishedCount ? <span className="tool-dot" title="Есть завершённые задачи" /> : null}
       </button>
       {open ? (
         <>
@@ -184,7 +195,7 @@ export function ActivityCenter() {
                 })}
               </div>
             )}
-            <Link to="/tasks" onClick={() => setOpen(false)} className="activity-all">
+            <Link to="/inbox?tab=tasks" onClick={() => setOpen(false)} className="activity-all">
               Все задачи →
             </Link>
           </div>

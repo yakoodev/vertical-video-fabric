@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tasksApi } from "@/api/tasks";
 import { qk } from "@/api/keys";
+import { navKeys } from "@/api/nav";
 import type { ActiveTask } from "@/api/types";
 import { useToast } from "@/components/Toast";
 
@@ -75,6 +76,7 @@ export function useActiveTasks() {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.sources });
       qc.invalidateQueries({ queryKey: qk.recentTasks });
+      qc.invalidateQueries({ queryKey: navKeys.all });
     }
   }, [query.data, qc, toast]);
 

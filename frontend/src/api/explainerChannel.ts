@@ -109,7 +109,8 @@ export interface ChannelPatch {
 export const channelKey = (projectId: number) => ["channel-projects", String(projectId), "explainer-channel"] as const;
 
 export const channelApi = {
-  get: (projectId: number) => api.get<ChannelView>(`/api/projects/${projectId}/explainer-channel`),
+  /** { no_channel: true } — канал в этом проекте ещё не заведён. */
+  get: (projectId: number) => api.get<ChannelView & { no_channel?: boolean }>(`/api/projects/${projectId}/explainer-channel?soft=1`),
   save: (projectId: number, patch: ChannelPatch) =>
     request<ChannelView>(`/api/projects/${projectId}/explainer-channel`, { method: "PUT", body: patch }),
   mascots: () => api.get<MascotChoice[]>("/api/explainer-channels/mascots"),

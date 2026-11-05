@@ -27,6 +27,8 @@ export interface Source {
   facecam?: CropRect | null;
   original_url: string;
   original_filename: string;
+  /** Человеческое название видео (app/nav.py): название VOD, имя кусков, дата. */
+  display_name?: string;
   local_path: string;
   duration_sec: number;
   width: number;

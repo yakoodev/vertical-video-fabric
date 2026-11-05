@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { autoApi, type AutoStartInput } from "@/api/auto";
 import { accountsApi } from "@/api/accounts";
 import { projectsApi } from "@/api/projects";
@@ -32,7 +32,9 @@ function StartAuto() {
   const { on, ready } = useModules();
   const accounts = useQuery({ queryKey: qk.accounts, queryFn: accountsApi.list, enabled: ready("publishing") });
   const series = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, enabled: ready("series") });
-  const [projectId, setProjectId] = useState(0);
+  // Из вкладки «Автопилот» проекта: /automation?project=N.
+  const [searchParams] = useSearchParams();
+  const [projectId, setProjectId] = useState(Number(searchParams.get("project")) || 0);
   const [url, setUrl] = useState("");
   const [provider, setProvider] = useState(PROVIDERS[0]);
   const [presetId, setPresetId] = useState(0);
@@ -92,9 +94,9 @@ function StartAuto() {
         <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
       </label>
       <label className="field">
-        <span>Серия / канал — в её очередь одобрения уйдут клипы</span>
+        <span>Проект — в его очередь одобрения уйдут клипы</span>
         <select className="input" value={projectId} onChange={(e) => setProjectId(Number(e.target.value))}>
-          <option value={0}>без серии («Авто — без серии»)</option>
+          <option value={0}>вне проектов («Авто — без проекта»)</option>
           {series.data?.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} · {p.kind_label}
@@ -268,7 +270,7 @@ function StartAuto() {
         <strong className="src-h">Аккаунты — после одобрения</strong>
         <span className="muted" style={{ fontSize: 13 }}>
           Сами клипы не публикуются: каждый приходит карточкой в «Одобрение» (и в Telegram). Выбранные аккаунты, приватность и
-          интервал запишутся в автопилот серии, если там их ещё нет.
+          интервал запишутся в автопилот проекта, если там их ещё нет.
         </span>
         {accounts.isLoading ? (
           <Loading />
@@ -366,7 +368,7 @@ export function AutomationPage() {
           <h1>Авто</h1>
           <span className="muted">
             Конвейер: скачать → проанализировать → отрендерить → на одобрение. Публикует только одобренное (
-            <Link to="/approvals">«Одобрение»</Link>) или тип с доверием «сам» в автопилоте серии.
+            <Link to="/inbox?tab=approve">«Одобрение»</Link>) или тип с доверием «сам» в автопилоте проекта.
           </span>
         </div>
         <ol className="auto-flow" aria-hidden>
@@ -397,7 +399,7 @@ export function AutomationPage() {
               title="Запусков ещё не было"
               hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт моменты, смонтирует и пришлёт клипы на одобрение"
               actions={
-                <Link className="btn" to="/accounts">
+                <Link className="btn" to="/pubs?tab=accounts">
                   Аккаунты для публикации
                 </Link>
               }
@@ -432,18 +434,18 @@ export function AutomationPage() {
                   {run.error ? <div className="run-err">{run.error}</div> : null}
                   {run.warnings?.length ? <div className="muted run-msg">⚠ {run.warnings.join(" · ")}</div> : null}
                   {run.approvals ? (
-                    <Link className="run-link" to="/approvals">
+                    <Link className="run-link" to="/inbox?tab=approve">
                       одобрение →
                     </Link>
                   ) : null}
                   {run.project_id ? (
-                    <Link className="run-link" to={`/series/${run.project_id}`}>
-                      серия →
+                    <Link className="run-link" to={`/p/${run.project_id}`}>
+                      проект →
                     </Link>
                   ) : null}
                   {run.source_id ? (
-                    <Link className="run-link" to={`/projects/${run.source_id}`}>
-                      проект →
+                    <Link className="run-link" to={`/v/${run.source_id}`}>
+                      видео →
                     </Link>
                   ) : null}
                 </div>

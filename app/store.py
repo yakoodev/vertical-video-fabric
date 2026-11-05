@@ -2547,70 +2547,50 @@ class AppStore:
         )
         return self.get_clip(cur.lastrowid)
 
-    def list_clips(self, source_id: int | None = None) -> list[dict]:
-        if source_id is None:
-            rows = self.db.query_all(
-                """
-                SELECT c.*,
-                       (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                       (
-                           SELECT COUNT(*)
-                           FROM job_targets jt
-                           JOIN jobs j ON j.id = jt.job_id
-                           WHERE j.clip_id = c.id AND jt.status = 'succeeded'
-                       ) AS published_targets_count,
-                       (
-                           SELECT jt.error
-                           FROM job_targets jt
-                           JOIN jobs j ON j.id = jt.job_id
-                           WHERE j.clip_id = c.id AND jt.error != ''
-                           ORDER BY jt.updated_at DESC
-                           LIMIT 1
-                       ) AS last_post_error,
-                       (
-                           SELECT j.status
-                           FROM jobs j
-                           WHERE j.clip_id = c.id
-                           ORDER BY j.id DESC
-                           LIMIT 1
-                       ) AS last_job_status
-                FROM clips c
-                ORDER BY c.id DESC
-                LIMIT 200
-                """
+    def list_clips(self, source_id: int | None = None, project_id: int | None = None, limit: int = 200) -> list[dict]:
+        """Клипы новые первыми: все (не больше ``limit``), одного источника или одного проекта.
+        Проект — по источнику, а у холстов без проекта источника — приписка ``plan_projects``."""
+        where, tail, params = "", "LIMIT ?", [int(limit)]
+        if source_id is not None:
+            where, tail, params = "WHERE c.source_id = ?", "", [source_id]
+        elif project_id is not None:
+            where = (
+                "JOIN sources s ON s.id = c.source_id WHERE s.project_id = ? OR (s.project_id IS NULL AND "
+                "c.clip_plan_id IN (SELECT pp.clip_plan_id FROM plan_projects pp WHERE pp.project_id = ?))"
             )
-        else:
-            rows = self.db.query_all(
-                """
-                SELECT c.*,
-                       (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                       (
-                           SELECT COUNT(*)
-                           FROM job_targets jt
-                           JOIN jobs j ON j.id = jt.job_id
-                           WHERE j.clip_id = c.id AND jt.status = 'succeeded'
-                       ) AS published_targets_count,
-                       (
-                           SELECT jt.error
-                           FROM job_targets jt
-                           JOIN jobs j ON j.id = jt.job_id
-                           WHERE j.clip_id = c.id AND jt.error != ''
-                           ORDER BY jt.updated_at DESC
-                           LIMIT 1
-                       ) AS last_post_error,
-                       (
-                           SELECT j.status
-                           FROM jobs j
-                           WHERE j.clip_id = c.id
-                           ORDER BY j.id DESC
-                           LIMIT 1
-                       ) AS last_job_status
-                FROM clips c
-                WHERE c.source_id = ?
-                ORDER BY c.id DESC
-                """,
-                (source_id,),
-            )
+            params = [project_id, project_id, int(limit)]
+        rows = self.db.query_all(
+            f"""
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM job_targets jt
+                       JOIN jobs j ON j.id = jt.job_id
+                       WHERE j.clip_id = c.id AND jt.status = 'succeeded'
+                   ) AS published_targets_count,
+                   (
+                       SELECT jt.error
+                       FROM job_targets jt
+                       JOIN jobs j ON j.id = jt.job_id
+                       WHERE j.clip_id = c.id AND jt.error != ''
+                       ORDER BY jt.updated_at DESC
+                       LIMIT 1
+                   ) AS last_post_error,
+                   (
+                       SELECT j.status
+                       FROM jobs j
+                       WHERE j.clip_id = c.id
+                       ORDER BY j.id DESC
+                       LIMIT 1
+                   ) AS last_job_status
+            FROM clips c
+            {where}
+            ORDER BY c.id DESC
+            {tail}
+            """,
+            params,
+        )
         return [_decode_clip_qc(dict(row)) for row in rows]
 
     def get_clip(self, clip_id: int) -> dict:

@@ -17,7 +17,7 @@ const MIN_SEC = 5;
 const MAX_SEC = 180;
 const DEFAULT_SEC = 15;
 
-export function NewCanvas({ onCreated, disabled }: { onCreated?: () => void; disabled?: boolean }) {
+export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () => void; disabled?: boolean; projectId?: number | null }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -29,7 +29,8 @@ export function NewCanvas({ onCreated, disabled }: { onCreated?: () => void; dis
   const sec = Math.min(MAX_SEC, Math.max(MIN_SEC, Math.round(duration) || DEFAULT_SEC));
 
   const create = useMutation({
-    mutationFn: () => clipPlansApi.createCanvas({ duration: sec, background: bg, title: title.trim() }),
+    mutationFn: () =>
+      clipPlansApi.createCanvas({ duration: sec, background: bg, title: title.trim(), ...(projectId ? { project_id: projectId } : {}) }),
     onSuccess: (plan) => {
       toast.success("Холст создан — добавляйте картинки, текст и музыку");
       setOpen(false);

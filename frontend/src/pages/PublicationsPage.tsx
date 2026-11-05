@@ -16,7 +16,7 @@ function AlertMark({ alerts }: { alerts: (PostAlert | undefined)[] }) {
   if (!open) return null;
   return (
     <Link
-      to={open.approval_id ? `/approvals?id=${open.approval_id}` : "/approvals"}
+      to={open.approval_id ? `/inbox?tab=approve&id=${open.approval_id}` : "/inbox?tab=approve"}
       className="chip stats-badge stats-badge--alert"
       style={{ display: "inline-block", marginTop: 3 }}
       title="Мало просмотров после публикации — причины и чек-лист в карточке"
@@ -151,7 +151,7 @@ function JobDetail({ jobId }: { jobId: string }) {
         actions={
           <>
             <RefreshStatsButton />
-            <Link to="/publications" className="btn ghost sm">
+            <Link to="/pubs" className="btn ghost sm">
               ← К списку
             </Link>
           </>
@@ -216,7 +216,7 @@ function JobDetail({ jobId }: { jobId: string }) {
   );
 }
 
-export function PublicationsPage() {
+export function PublicationsPage({ embedded }: { embedded?: boolean } = {}) {
   const { jobId } = useParams();
   const query = useQuery({ queryKey: qk.jobs, queryFn: jobsApi.list, enabled: !jobId });
   const stats = usePublicationStats(!jobId);
@@ -225,11 +225,15 @@ export function PublicationsPage() {
 
   return (
     <>
-      <PageHead
-        title="Публикации"
-        sub="Очередь задач публикации и что из опубликованного зашло"
-        actions={query.data?.length ? <RefreshStatsButton /> : null}
-      />
+      {embedded ? (
+        query.data?.length ? <div className="page-acts"><RefreshStatsButton /></div> : null
+      ) : (
+        <PageHead
+          title="Публикации"
+          sub="Очередь задач публикации и что из опубликованного зашло"
+          actions={query.data?.length ? <RefreshStatsButton /> : null}
+        />
+      )}
       {query.data?.length ? <ZeroViewsPanel /> : null}
       {query.isLoading ? (
         <Loading />
@@ -242,10 +246,10 @@ export function PublicationsPage() {
           hint="Опубликуйте клип, чтобы поставить задачу в очередь"
           actions={
             <>
-              <Link className="btn primary" to="/clips">
-                Открыть клипы
+              <Link className="btn primary" to="/pubs?tab=ready">
+                Готовые ролики
               </Link>
-              <Link className="btn" to="/accounts">
+              <Link className="btn" to="/pubs?tab=accounts">
                 Добавить аккаунт
               </Link>
             </>
@@ -269,13 +273,13 @@ export function PublicationsPage() {
               {query.data.map((job) => (
                 <tr key={job.id} style={{ cursor: "pointer" }}>
                   <td>
-                    <Link to={`/publications/${job.id}`}>{job.id}</Link>
+                    <Link to={`/pubs/${job.id}`}>{job.id}</Link>
                   </td>
                   <td>
                     <Badge status={job.status} />
                   </td>
                   <td>
-                    <Link to={`/publications/${job.id}`}>{job.title || "—"}</Link>
+                    <Link to={`/pubs/${job.id}`}>{job.title || "—"}</Link>
                   </td>
                   <td>{job.targets?.length ?? 0}</td>
                   <td>

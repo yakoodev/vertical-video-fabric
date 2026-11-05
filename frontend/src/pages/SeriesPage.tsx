@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { navApi, navKeys } from "@/api/nav";
+import { Icon } from "@/components/Icon";
+import { PageTabs } from "@/components/PageTabs";
+import { useShell } from "@/components/AppShell";
+import { lazyPage } from "@/lazyPage";
+import { projectPath, videoPath } from "@/lib/paths";
 import {
   HYP_STATUS_LABEL,
   METRIC_OPTIONS,
@@ -32,13 +38,35 @@ import { StoriesTab } from "@/pages/StoriesTab";
 import { useModules } from "@/hooks/useModules";
 
 /**
- * Проект-серия/канал (app/projects.py): лор, правила владельца, статистика и гипотезы.
- * Маршрут /series/:projectId — /projects/:id занят источниками («проект» в старом смысле).
+ * Страница проекта /p/:projectId (app/projects.py): всё про канал или тему. Вкладка в адресе (?tab=);
+ * старые значения ?tab= с /series/:id работают как были. Лор, правила и гипотезы — одна вкладка.
  */
 
-type Tab = "aiv" | "channel" | "expl" | "story" | "brief" | "rules" | "stats" | "hyp" | "autopilot" | "chat";
+type Tab =
+  | "videos"
+  | "clips"
+  | "questions"
+  | "files"
+  | "chat"
+  | "brief"
+  | "rules"
+  | "hyp"
+  | "stats"
+  | "autopilot"
+  | "aiv"
+  | "channel"
+  | "expl"
+  | "story";
 // Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
 const TABS: [Tab, string, string?][] = [
+  ["videos", "Видео"],
+  ["clips", "Клипы"],
+  ["questions", "Вопросы", "stream_questions"],
+  ["files", "Файлы"],
+  ["chat", "Чат", "agent_chat"],
+  ["brief", "Лор и правила"],
+  ["stats", "Статистика"],
+  ["autopilot", "Автопилот", "autopilot"],
   // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
   ["aiv", "ИИ-видео", "ai_video"],
   // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал — темы, расписание, автопилот.
@@ -47,13 +75,22 @@ const TABS: [Tab, string, string?][] = [
   ["expl", "Объяснялки", "explainer"],
   // Истории (app/stories.py): рассказчик и сцена на каждую фразу — тоже только у «ИИ-видео».
   ["story", "Истории", "stories"],
-  ["brief", "Резюме"],
-  ["rules", "Правила"],
-  ["stats", "Статистика"],
-  ["hyp", "Гипотезы"],
-  ["autopilot", "Автопилот", "autopilot"],
-  ["chat", "Чат", "agent_chat"],
 ];
+// Подвкладки «Лор и правила»: те же адреса ?tab=brief|rules|hyp, что были у отдельных вкладок.
+const LORE_TABS: [Tab, string][] = [
+  ["brief", "Резюме и лор"],
+  ["rules", "Правила"],
+  ["hyp", "Гипотезы"],
+];
+const TAB_ALIAS: Record<string, Tab> = { lore: "brief", auto: "autopilot" };
+
+const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>(
+  () => import("@/pages/project/ProjectVideosTab"),
+  "ProjectVideosTab",
+);
+const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/pages/ClipsPage"), "ClipsPage");
+const ProjectQuestions = lazyPage<{ projectId: number }>(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
+const ProjectFiles = lazyPage<{ projectId: number }>(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -64,7 +101,8 @@ export function SeriesPage() {
   const id = Number(projectId);
   // Вкладка — в адресе (?tab=expl): перезагрузка и ссылка открывают то же место.
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") as Tab | null;
+  const asked = params.get("tab");
+  const tab = (asked && (TAB_ALIAS[asked] ?? asked)) as Tab | null;
   const setTab = (next: Tab) =>
     setParams(
       (prev) => {
@@ -76,6 +114,8 @@ export function SeriesPage() {
       { replace: true },
     );
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
+  const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
+  const { openNewVideo } = useShell();
   const { on } = useModules();
   const isAiv = project.data?.kind === "ai_video";
   const isChannel = project.data?.kind === "explainer";
@@ -84,39 +124,60 @@ export function SeriesPage() {
       (!mod || on(mod)) &&
       (key === "aiv" || key === "story" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
   );
-  const fallback: Tab = isChannel && tabs.some(([key]) => key === "channel")
-    ? "channel"
-    : isAiv && tabs.some(([key]) => key === "aiv") ? "aiv" : "brief";
-  const shown: Tab = tab && tabs.some(([key]) => key === tab) ? tab : fallback;
+  const lore = tab === "rules" || tab === "hyp";
+  const shown: Tab = lore || (tab && tabs.some(([key]) => key === tab)) ? (tab as Tab) : "videos";
+  const navProject = nav.data?.projects.find((x) => x.id === id);
 
   if (project.isLoading) return <Loading />;
   if (project.isError || !project.data) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
   const p = project.data;
 
+  const videosCount = navProject?.videos ?? p.sources?.length ?? 0;
+  const readyCount = (p.sources ?? []).reduce((sum, s) => sum + (s.clips_count ?? 0), 0);
+  const inLore = shown === "brief" || shown === "rules" || shown === "hyp";
   return (
     <>
-      <div className="series-head">
-        <Link to="/projects" className="muted">
-          ← Все проекты
-        </Link>
-        <h1>{p.name}</h1>
-        <div className="series-meta muted">
-          <span className="chip">{p.kind_label}</span>
-          <span>{plural(p.sources?.length ?? 0, "источник", "источника", "источников")}</span>
-          {p.brand ? <span>бренд «{p.brand.name}»</span> : null}
+      <div className="page-title page-title-row">
+        <div className="page-title-main">
+          <h1>{p.name}</h1>
+          <div className="page-sub">
+            {plural(videosCount, "видео", "видео", "видео")}
+            {readyCount ? ` · ${plural(readyCount, "готовый файл", "готовых файла", "готовых файлов")}` : ""}
+            {p.description ? `. ${p.description}` : ""}
+            {p.brand ? ` · бренд «${p.brand.name}»` : ""}
+          </div>
         </div>
+        <button className="btn primary btn-xl" onClick={openNewVideo} title="Загрузить запись или вставить ссылку (N)">
+          <Icon name="plus" />
+          Новое видео
+        </button>
       </div>
-      <nav className="pipeline series-tabs">
-        {tabs.map(([key, label]) => (
-          <button key={key} className={`tab${shown === key ? " active" : ""}`} onClick={() => setTab(key)}>
-            {label}
-          </button>
-        ))}
-        <Link className="tab" to={`/assets?tab=project&project=${id}`} title="Файлы для монтажа этого проекта">
-          Файлы
-        </Link>
-      </nav>
+      <PageTabs
+        label="Вкладки проекта"
+        active={inLore ? "brief" : shown}
+        tabs={tabs.map(([key, label]) => ({
+          key,
+          label,
+          to: projectPath(id, key),
+          count: key === "questions" && navProject?.open_questions ? navProject.open_questions : null,
+        }))}
+      />
       <div className="series-body">
+        {inLore ? (
+          <nav className="pills" aria-label="Лор и правила">
+            {LORE_TABS.map(([key, label]) => (
+              <button key={key} className={`pill${shown === key ? " on" : ""}`} onClick={() => setTab(key)}>
+                {label}
+              </button>
+            ))}
+          </nav>
+        ) : null}
+        <Suspense fallback={<Loading />}>
+          {shown === "videos" ? <ProjectVideosTab projectId={id} onNewVideo={openNewVideo} /> : null}
+          {shown === "clips" ? <ProjectClips projectId={id} /> : null}
+          {shown === "questions" ? <ProjectQuestions projectId={id} /> : null}
+          {shown === "files" ? <ProjectFiles projectId={id} /> : null}
+        </Suspense>
         {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
         {shown === "channel" ? <ExplainerChannelTab projectId={id} /> : null}
         {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
@@ -125,7 +186,16 @@ export function SeriesPage() {
         {shown === "rules" ? <RulesTab projectId={id} /> : null}
         {shown === "stats" ? <StatsTab projectId={id} /> : null}
         {shown === "hyp" ? <HypothesesTab projectId={id} /> : null}
-        {shown === "autopilot" ? <AutopilotTab projectId={id} /> : null}
+        {shown === "autopilot" ? (
+          <>
+            {on("automation") ? (
+              <p className="inbox-line">
+                Разовый запуск по одной ссылке без настройки автопилота: <Link to={`/automation?project=${id}`}>Авто →</Link>
+              </p>
+            ) : null}
+            <AutopilotTab projectId={id} />
+          </>
+        ) : null}
         {shown === "chat" ? <ProjectChatTab projectId={id} /> : null}
       </div>
     </>
@@ -334,7 +404,7 @@ function BriefTab({ project }: { project: ChannelProject }) {
       <ConfirmDialog
         open={deleting}
         title="Удалить проект?"
-        body="Источники и клипы останутся — просто без проекта. Резюме, правила, гипотезы и добавленные по ссылке публикации удалятся."
+        body="Видео и клипы останутся, просто вне проектов. Резюме, правила, гипотезы и добавленные по ссылке публикации удалятся."
         busy={remove.isPending}
         onCancel={() => setDeleting(false)}
         onConfirm={() => remove.mutate()}
@@ -358,7 +428,7 @@ function CoveredRow({ clip, projectId }: { clip: { clip_id: number; title: strin
   return (
     <li>
       <div className="series-li-main">
-        <Link to={`/projects/${clip.source_id}/candidates?clip=${clip.clip_id}`}>{clip.title}</Link>
+        <Link to={`${videoPath(clip.source_id, "candidates")}?clip=${clip.clip_id}`}>{clip.title}</Link>
         <span className="muted mono">
           {clip.pieces.map(([a, b]) => `${formatDuration(a)}–${formatDuration(b)}`).join(", ")}
         </span>
@@ -457,7 +527,7 @@ function SourcesPanel({ project }: { project: ChannelProject }) {
   return (
     <section className="panel series-panel">
       <div className="series-panel-head">
-        <h3>Источники</h3>
+        <h3>Видео проекта</h3>
         <select
           className="input series-add-source"
           value=""
@@ -467,7 +537,7 @@ function SourcesPanel({ project }: { project: ChannelProject }) {
           <option value="">{free.length ? "＋ Добавить видео…" : "Все видео уже в проектах"}</option>
           {free.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.original_filename || s.original_url || `Источник #${s.id}`}
+              {s.display_name || s.original_filename || s.original_url || `Видео #${s.id}`}
             </option>
           ))}
         </select>
@@ -476,7 +546,7 @@ function SourcesPanel({ project }: { project: ChannelProject }) {
         <ul className="series-list">
           {project.sources.map((s) => (
             <li key={s.id} className="series-li-main">
-              <Link to={`/projects/${s.id}`}>{s.original_filename || s.original_url || `Источник #${s.id}`}</Link>
+              <Link to={videoPath(s.id)}>{s.display_name || s.original_filename || s.original_url || `Видео #${s.id}`}</Link>
               <span className="muted">
                 {formatDuration(s.duration_sec)} · {plural(s.clips_count, "клип", "клипа", "клипов")}
               </span>
@@ -491,7 +561,7 @@ function SourcesPanel({ project }: { project: ChannelProject }) {
           ))}
         </ul>
       ) : (
-        <p className="muted">Добавьте сюда стримы или серии этого канала.</p>
+        <p className="muted">Добавьте сюда стримы или серии этого проекта.</p>
       )}
     </section>
   );

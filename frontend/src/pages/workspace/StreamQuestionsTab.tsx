@@ -52,7 +52,7 @@ function MomentPreview({ clip, thumb, start, end }: { clip: string; thumb: strin
   );
 }
 
-function QuestionCard({
+export function QuestionCard({
   item,
   onSave,
 }: {
@@ -97,7 +97,8 @@ function QuestionCard({
       <div className="sq-body">
         <div className="sq-meta">
           <span className="sq-kind">{KIND_LABEL[item.kind]}</span>
-          {item.scope === "channel" ? <span className="sq-scope">запомнится для всего канала</span> : null}
+          <span className="sq-scope">{item.scope === "channel" ? "на весь проект" : "только этот стрим"}</span>
+          {item.about ? <span className="sq-scope">{item.about}</span> : null}
           {item.status === "skipped" ? <span className="sq-scope">пропущено</span> : null}
           {saved ? <span className="sq-saved" role="status">Сохранено</span> : null}
         </div>
@@ -158,7 +159,7 @@ function OptionPicture({ option }: { option: MemeOption }) {
   return <img src={Q.optionPreview(option.id)} alt={option.title} loading="lazy" />;
 }
 
-function MemeCard({
+export function MemeCard({
   moment,
   onChoose,
 }: {
@@ -303,7 +304,7 @@ export function StreamQuestionsTab({ sourceId }: { sourceId: string }) {
           </div>
         ) : null}
         {tab === "questions" && !state.project_id && state.questions.some((q) => q.scope === "channel") ? (
-          <p className="sq-note">Источник не в проекте: ответы про канал останутся только у этого стрима.</p>
+          <p className="sq-note">Видео не в проекте: ответы про канал останутся только у этого стрима.</p>
         ) : null}
       </div>
 

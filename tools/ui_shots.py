@@ -19,8 +19,8 @@ from playwright.sync_api import Page, sync_playwright
 UI = os.environ.get("VVF_UI", "http://127.0.0.1:5297").rstrip("/")
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "shots")
 ONLY = set(sys.argv[2].split(",")) if len(sys.argv) > 2 else None
-EDITOR = "/projects/1/candidates?clip=1"
-CANVAS = "/projects/2/candidates?clip=2"
+EDITOR = "/v/1/candidates?clip=1"
+CANVAS = "/v/2/candidates?clip=2"
 
 
 def settle(page: Page, ms: int = 900) -> None:
@@ -120,7 +120,7 @@ def series_sub(tab: str, sub: str = "", then=None):
     """Вкладка серии (ИИ-видео / Объяснялки…) + подвкладка ИИ-видео + доп. действие."""
 
     def run(page: Page) -> None:
-        click_text(page, ".series-tabs .tab", tab)
+        click_text(page, ".ptabs a", tab)
         settle(page, 500)
         if sub:
             click_text(page, ".aiv-subtabs .tab", sub)

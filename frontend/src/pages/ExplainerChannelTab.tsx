@@ -41,11 +41,11 @@ export function ExplainerChannelTab({ projectId }: { projectId: number }) {
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 2,
     refetchInterval: (query) => {
       const v = query.state.data as ChannelView | undefined;
-      return v && (v.counts.producing || v.counts.review) ? 10000 : 60000;
+      return v?.counts && (v.counts.producing || v.counts.review) ? 10000 : 60000;
     },
   });
   if (q.isLoading) return <Loading />;
-  if (q.error instanceof ApiError && q.error.status === 404) return <ChannelSetup projectId={projectId} />;
+  if (q.data?.no_channel || (q.error instanceof ApiError && q.error.status === 404)) return <ChannelSetup projectId={projectId} />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const v = q.data;
   return (
@@ -162,7 +162,7 @@ function ChannelHead({ v }: { v: ChannelView }) {
               {m.project_id !== v.project.id ? (
                 <>
                   {" "}
-                  · <Link to={`/series/${m.project_id}`}>библиотека маскота</Link>
+                  · <Link to={`/p/${m.project_id}`}>библиотека маскота</Link>
                 </>
               ) : null}
             </span>
@@ -198,7 +198,7 @@ function ChannelHead({ v }: { v: ChannelView }) {
         <button className="btn sm" disabled={run.isPending} onClick={() => run.mutate()}>
           {run.isPending ? "Прохожу…" : "Прогнать сейчас"}
         </button>
-        <Link className="btn ghost sm" to={`/approvals?project=${v.project.id}`}>
+        <Link className="btn ghost sm" to={`/inbox?tab=approve&project=${v.project.id}`}>
           Одобрение канала →
         </Link>
       </div>
@@ -313,7 +313,7 @@ function TopicRow({ t, onChange }: { t: ChannelTopic; onChange: () => void }) {
       ) : null}
       {card && ["review", "scheduled", "published"].includes(t.status) ? (
         <span className="muted" style={{ fontSize: 13 }}>
-          <Link to={`/approvals?id=${card.id}`}>карточка #{card.id}</Link>
+          <Link to={`/inbox?tab=approve&id=${card.id}`}>карточка #{card.id}</Link>
           {card.scheduled_local ? ` · ${card.scheduled_local}` : ""}
           {card.publish_error ? <span style={{ color: "var(--danger)" }}> · {card.publish_error}</span> : null}
         </span>
@@ -478,7 +478,7 @@ function ChannelSchedule({ v }: { v: ChannelView }) {
           <ul className="series-list">
             {v.schedule.upcoming.map((u) => (
               <li key={u.id}>
-                <span className="muted">{u.scheduled_local}</span> <Link to={`/approvals?id=${u.id}`}>{u.title}</Link>
+                <span className="muted">{u.scheduled_local}</span> <Link to={`/inbox?tab=approve&id=${u.id}`}>{u.title}</Link>
                 {u.publish_error ? <span style={{ color: "var(--danger)" }}> — {u.publish_error}</span> : null}
               </li>
             ))}

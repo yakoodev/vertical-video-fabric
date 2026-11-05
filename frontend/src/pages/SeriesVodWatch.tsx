@@ -166,7 +166,7 @@ export function VodWatchPanel({ projectId }: { projectId: number }) {
                 </a>
                 <span className="muted">{fmtLen(it.duration_sec)}</span>
                 <span className="chip">{VOD_STATUS_LABEL[it.status] ?? it.status}</span>
-                {it.source_id ? <Link to={`/projects/${it.source_id}`}>источник #{it.source_id}</Link> : null}
+                {it.source_id ? <Link to={`/v/${it.source_id}`}>видео #{it.source_id}</Link> : null}
               </div>
               {it.detail ? <div className="muted" style={{ fontSize: 12.5 }}>{it.detail}</div> : null}
               {["baseline", "skipped", "failed", "done", "for_agent"].includes(it.status) ? (

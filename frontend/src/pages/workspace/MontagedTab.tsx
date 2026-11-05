@@ -12,7 +12,7 @@ export function MontagedTab({ sourceId }: { sourceId: string }) {
             перерендеривать с субтитрами/баннером.
           </p>
         </div>
-        <Link to="/clips" className="btn primary sm">
+        <Link to="/pubs?tab=ready" className="btn primary sm">
           Загрузить клип →
         </Link>
       </div>

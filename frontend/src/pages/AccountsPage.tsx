@@ -1,10 +1,10 @@
 import { PageHead } from "@/components/ui";
 import { AccountsSettings } from "@/pages/settings/AccountsSettings";
 
-export function AccountsPage() {
+export function AccountsPage({ embedded }: { embedded?: boolean } = {}) {
   return (
     <>
-      <PageHead title="Аккаунты" sub="Cookie-сессии YouTube и TikTok для публикации" />
+      {embedded ? null : <PageHead title="Аккаунты" sub="Cookie-сессии YouTube и TikTok для публикации" />}
       <AccountsSettings />
     </>
   );

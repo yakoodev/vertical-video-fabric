@@ -68,9 +68,11 @@ class DownloadService:
         selection: dict | None = None,
         ingestor=None,
         restore_source_id: int | None = None,
+        on_source: Callable[[dict], None] | None = None,
     ) -> dict:
         """Запустить загрузку в фоне. ``ingestor`` — свой на этот вызов (main.py отдаёт
-        текущий ``source_ingestor``, его подменяют тесты); по умолчанию — сервиса."""
+        текущий ``source_ingestor``, его подменяют тесты); по умолчанию — сервиса.
+        ``on_source`` — вызвать с готовым источником («Новое видео» кладёт его в проект)."""
         from app import modules
 
         # «Загрузка по ссылкам» выключена (Настройки → Модули): и наблюдатель VOD, и «Авто» — тоже стоп.
@@ -95,7 +97,7 @@ class DownloadService:
         )
         thread = threading.Thread(
             target=self._run,
-            args=(task["id"], url, quality, selection, ingestor or self.ingestor),
+            args=(task["id"], url, quality, selection, ingestor or self.ingestor, on_source),
             name=f"download-{task['id']}",
             daemon=True,
         )
@@ -157,7 +159,7 @@ class DownloadService:
             self._tasks.remove(stale)
             self._tokens.pop(stale["id"], None)
 
-    def _run(self, task_id: int, url: str, quality: str, selection: dict, ingestor) -> None:
+    def _run(self, task_id: int, url: str, quality: str, selection: dict, ingestor, on_source=None) -> None:
         # Percentages come from yt-dlp's own progress lines; keep the last one so a
         # cancel mid-download still shows where it stopped.
         def on_progress(percent: float, message: str) -> None:
@@ -188,6 +190,11 @@ class DownloadService:
                 error=source.get("error") or "не удалось скачать источник",
             )
             return
+        if on_source:
+            try:
+                on_source(source)
+            except Exception:  # noqa: BLE001 - запись скачана: без проекта она видна во «Всех видео»
+                pass
         self._update(
             task_id,
             status="succeeded",
