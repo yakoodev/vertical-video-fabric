@@ -1033,6 +1033,11 @@ class AppStore:
         )
         self._delete_record("sources", source_id)
         files_removed = _remove_files_within(files, settings.data_dir)
+        # Источник удалён с клипами и монтажом — прокси предпросмотра смотреть больше нечем.
+        # (Файл записи, удалённый отдельно, сюда не ведёт: прокси тогда остаётся.)
+        from app.preview_proxy import remove_for_deleted_source
+
+        remove_for_deleted_source(source_id)
         return {"deleted": True, "source": source, "files_removed": files_removed}
 
     def get_source_stats(self, source_id: int) -> dict:

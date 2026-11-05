@@ -61,8 +61,14 @@ def clip_waveform(store: Any, clip_plan_id: int, buckets: int = BUCKETS) -> dict
     wav = settings.tmp_dir / "waveform" / f"{clip_plan_id}-{_pieces_key(pieces)}.wav"
     wav.parent.mkdir(parents=True, exist_ok=True)
     if not wav.exists():
+        from app.preview_proxy import media_path
+
+        # Запись удалили — волна с прокси: в нём одна уже смешанная дорожка.
+        audio_file = media_path(source) or Path(source["local_path"])
+        if str(audio_file) != str(source.get("local_path")):
+            tracks = None
         subprocess.run(
-            build_clip_audio_args(Path(source["local_path"]), pieces, wav, tracks),
+            build_clip_audio_args(audio_file, pieces, wav, tracks),
             check=True,
             timeout=60 * 20,
             capture_output=True,

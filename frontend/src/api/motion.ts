@@ -112,11 +112,11 @@ export type CameraPresetResult = { preset: string; camera: CameraKey[]; layers: 
 export const motionApi = {
   cameraPreset: (body: { preset: string; start: number; duration?: number; intensity?: number; camera: CameraKey[]; clip_duration?: number }) =>
     api.post<CameraPresetResult>("/api/motion/camera-preset", body),
-  levels: (planId: number, sources: string[], fps = 30) =>
-    api.post<{ levels: Record<string, LevelTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/levels`, { sources, fps }),
+  levels: (planId: number, sources: string[], fps = 30, scale: "clip" | "final" = "clip") =>
+    api.post<{ levels: Record<string, LevelTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/levels`, { sources, fps, scale }),
   assetAnim: (assetId: string) => api.get<AssetAnim>(`/api/montage-assets/${encodeURIComponent(assetId)}/anim`),
-  voice: (planId: number, layers: unknown[], fps = 30) =>
-    api.post<{ voice: Record<string, VoiceTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/voice`, { layers, fps }),
+  voice: (planId: number, layers: unknown[], fps = 30, scale: "clip" | "final" = "clip") =>
+    api.post<{ voice: Record<string, VoiceTrackDto>; notes: string[] }>(`/api/clip-plans/${planId}/voice`, { layers, fps, scale }),
   fonts: async () => listOf<MotionFont>(await api.get<unknown>("/api/motion/fonts"), "fonts", "items"),
   /** Свой шрифт (TTF/OTF/WOFF2): POST /api/motion/fonts; лицензия — на совести загружающего. */
   uploadFont: (file: File, family = "") => {

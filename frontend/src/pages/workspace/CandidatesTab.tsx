@@ -27,29 +27,17 @@ import { useModules } from "@/hooks/useModules";
 import { AiBatchPanel, AiBatchReport } from "@/pages/workspace/AiBatchPanel";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { Group, InspectorTabs, MoreSection, readPref, writePref, type InspTabDef } from "@/pages/workspace/InspectorParts";
-import { drawKaraoke, type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
+import { type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import {
-  cameraMatrix,
-  cameraBlurTimes,
-  camera3dAt,
-  drawBasePlane,
-  paintLayerBlur,
-  paintOpaqueBlur,
-  has3dCamera,
-  layerUnit,
   captionWordsFrom,
   ORIG_SPEAKER,
   clipAccent,
-  drawFrame,
   endScreenFor,
   frameCameraMatrix,
-  holdFinalLayers,
-  paintEndScreen,
   interpolateKeys,
   layerBox,
   formatRefSize,
   frameSize,
-  isLandscape,
   layersFormat,
   reframeBetween,
   sourceStrategy,
@@ -57,17 +45,13 @@ import {
   type CameraKey,
   type CaptionWord,
   type ChatMessage,
-  type EndScreenFx,
   type Layer,
   type PngtuberLayer,
-  type VoiceTrack,
-  type Levels,
 } from "@/motion";
 import { motionApi } from "@/api/motion";
 import { browserEnv, layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { clipFormat } from "@/motion";
 import {
-  drawSelection,
   duplicateLayer,
   handleAt,
   LAYER_ICON,
@@ -82,14 +66,6 @@ import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import {
   DEFAULT_LAYOUT,
-  cameraRegions,
-  drawContainFrame,
-  drawFitFrame,
-  drawLayoutFrame,
-  avatarLayoutAt,
-  fitWindow,
-  gameplayAspect,
-  layoutForFormat,
   normalizeFit,
   normalizeLayout,
   type PieceFit,
@@ -97,7 +73,7 @@ import {
 } from "@/pages/workspace/layout";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { SourceAudioPanel } from "@/pages/workspace/SourceAudioPanel";
-import { applyChromaKey, DEFAULT_BACKDROP, normalizeBackdrop, paintBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
+import { DEFAULT_BACKDROP, normalizeBackdrop, type Backdrop, type ChromaKey } from "@/pages/workspace/chromaKey";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { LintPanel } from "@/pages/workspace/LintPanel";
 import { BackdropLive, BackdropStrip, canvasLabel, isCanvasSource } from "@/pages/workspace/canvasClip";
@@ -106,6 +82,27 @@ import { CENSOR_STYLES, isMutedAt, muteTotal, type CensorStyle, type MuteSpan } 
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain, previewVolume, type GainSpan } from "@/api/gain";
 import { compactAudio, jlSourceAt, type AudioEdit } from "@/api/audioEdit";
 import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
+import { playbackApi } from "@/api/playback";
+import { useClipMusic } from "@/pages/workspace/preview/useClipMusic";
+import { useClipRevision } from "@/pages/workspace/preview/MontagePlayer";
+import { WatchMontage } from "@/pages/workspace/preview/WatchMontage";
+import {
+  composeFrame,
+  cropWindow,
+  DT,
+  focusFeel,
+  frameGeometry,
+  insertBox,
+  INSERT_GEOM,
+  LEGACY_W,
+  legacyCv,
+  INSERT_HANDLE,
+  lookFilterCss,
+  smoothFocus,
+  type ComposeInput,
+  type InsertPreview,
+  type MotionView,
+} from "@/pages/workspace/preview/frame";
 import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import {
   GeneratePanel,
@@ -242,81 +239,7 @@ function FocusEditor({
 // focus track (linearly interpolated) during playback — mirroring the rendered
 // dynamic reframe — and respects the source's content crop. Driven by rAF and
 // written straight to the DOM to stay smooth without re-rendering React.
-const DT = 0.2;
-
-// Smoothed focus path, mirroring the server reframe (box low-pass + hysteresis
-// hold), so the preview frame moves exactly like the rendered crop — calm, not
-// chasing every noisy LLM point. Returns x samples every DT seconds.
-// Movement feel per autofocus preset — mirrors app/focus_presets.py. Keep in sync
-// or the preview lies about what the render will do.
-const FOCUS_FEEL: Record<string, { smoothTime: number; rubber: number; deadzone: number }> = {
-  balanced: { smoothTime: 0.85, rubber: 2.5, deadzone: 0.012 },
-  talking: { smoothTime: 0.6, rubber: 3.0, deadzone: 0.01 },
-  broll: { smoothTime: 1.2, rubber: 2.0, deadzone: 0.05 },
-  animation: { smoothTime: 0.75, rubber: 2.8, deadzone: 0.015 },
-  action: { smoothTime: 0.45, rubber: 3.5, deadzone: 0.02 },
-  static: { smoothTime: 1.6, rubber: 2.0, deadzone: 0.035 },
-};
-// Как app/render.REFRAME_MAX_SMOOTH_SEC: владелец просил переход на говорящего быстрее, но плавно.
-const REFRAME_MAX_SMOOTH_SEC = 0.45;
-const focusFeel = (preset?: string) => {
-  const feel = FOCUS_FEEL[preset || ""] ?? FOCUS_FEEL.balanced;
-  return { ...feel, smoothTime: Math.min(feel.smoothTime, REFRAME_MAX_SMOOTH_SEC) };
-};
-
-function smoothFocus(focus: FocusPoint[], duration: number, feel = FOCUS_FEEL.balanced): number[] {
-  const n = Math.max(2, Math.round(duration / DT) + 1);
-  if (!focus.length) return new Array(n).fill(0.5);
-  const pts = [...focus].sort((a, b) => a.t - b.t);
-  const interp = (t: number): number => {
-    if (t <= pts[0].t) return pts[0].x;
-    if (t >= pts[pts.length - 1].t) return pts[pts.length - 1].x;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i];
-      const b = pts[i + 1];
-      if (t >= a.t && t <= b.t) {
-        // Hard cut: hold the old shot, then step — never ramp across a shot change.
-        if (b.cut) return t < b.t ? a.x : b.x;
-        return b.t === a.t ? a.x : a.x + (b.x - a.x) * ((t - a.t) / (b.t - a.t));
-      }
-    }
-    return 0.5;
-  };
-  const xs = Array.from({ length: n }, (_, i) => interp(i * DT));
-  const cuts = new Set(
-    pts.filter((p) => p.cut).map((p) => Math.min(n - 1, Math.max(0, Math.round(p.t / DT)))),
-  );
-  // SmoothDamp with rubber band — mirror of the server: eases in/out, the farther
-  // the target the snappier the catch-up, teleports on cuts, holds inside a deadzone.
-  const { smoothTime, rubber, deadzone } = feel;
-  let cur = xs[0];
-  let vel = 0;
-  const out = [cur];
-  for (let i = 1; i < n; i++) {
-    const target = xs[i];
-    if (cuts.has(i)) {
-      cur = target;
-      vel = 0;
-      out.push(cur);
-      continue;
-    }
-    if (Math.abs(cur - target) < deadzone) {
-      vel = 0;
-      out.push(cur);
-      continue;
-    }
-    const st = smoothTime / (1 + rubber * Math.abs(cur - target));
-    const omega = 2 / st;
-    const x = omega * DT;
-    const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
-    const change = cur - target;
-    const temp = (vel + omega * change) * DT;
-    vel = (vel - omega * temp) * exp;
-    cur = target + (change + temp) * exp;
-    out.push(cur);
-  }
-  return out;
-}
+export { INSERT_GEOM };
 
 // Default join: hard cut with a 30 ms de-click on the sound (see app/transitions.py).
 const DEFAULT_TRANSITION: TransitionSettings = {
@@ -348,41 +271,6 @@ function focusXAt(seg: AiSegment | undefined, t: number): number {
     else break;
   }
   return x;
-}
-
-type InsertPreview = {
-  at: number;
-  duration: number;
-  mode: "full" | "pip" | "sound";
-  label: string;
-  volume: number;
-  /** Геометрия pip-вставки в долях кадра; во время перетаскивания меняется здесь же. */
-  x: number;
-  y: number;
-  scale: number;
-  el: HTMLImageElement | HTMLVideoElement | HTMLAudioElement | null;
-};
-
-/** Значения по умолчанию должны совпадать с бэкендом (montage_assets.py). */
-export const INSERT_GEOM = { x: 0.5, y: 0.32, scale: 0.82, min: 0.1, max: 1 };
-/** Где на кадре лежит pip-вставка: в тех же пикселях, что и канвас превью. */
-function insertBox(
-  ins: InsertPreview,
-  cv: { width: number; height: number },
-  mediaW: number,
-  mediaH: number,
-) {
-  if (ins.mode === "full") {
-    const k = Math.min(cv.width / mediaW, cv.height / mediaH);
-    const dw = mediaW * k;
-    const dh = mediaH * k;
-    return { dx: (cv.width - dw) / 2, dy: (cv.height - dh) / 2, dw, dh };
-  }
-  const maxH = cv.height * 0.9;
-  const k = Math.min((cv.width * ins.scale) / mediaW, maxH / mediaH);
-  const dw = mediaW * k;
-  const dh = mediaH * k;
-  return { dx: cv.width * ins.x - dw / 2, dy: cv.height * ins.y - dh / 2, dw, dh };
 }
 
 // Clip time of a source time for back-to-back pieces (null outside the clip).
@@ -423,109 +311,6 @@ function formatTimecode(sec: number): string {
   return `${String(m).padStart(2, "0")}:${rest.toFixed(2).padStart(5, "0")}`;
 }
 
-// Mirror of the render pass (app/montage_assets.py): full = letterboxed over the
-// whole 9:16 frame, pip = a window in the upper part, sound = just the audio.
-function drawInserts(
-  ctx: CanvasRenderingContext2D,
-  cv: { width: number; height: number },
-  inserts: InsertPreview[] | undefined,
-  segments: AiSegment[],
-  cur: number,
-  playing: boolean,
-) {
-  if (!inserts?.length) return;
-  const t = clipTimeOf(segments, cur);
-  for (const ins of inserts) {
-    const on = t != null && t >= ins.at && t < ins.at + ins.duration;
-    const media = ins.el;
-    const isAv = media instanceof HTMLMediaElement;
-    if (isAv) {
-      const m = media as HTMLMediaElement;
-      if (on && playing) {
-        m.volume = Math.min(1, ins.volume);
-        if (m.paused) {
-          m.currentTime = Math.max(0, (t ?? 0) - ins.at);
-          void m.play().catch(() => undefined);
-        }
-      } else if (!m.paused) {
-        m.pause();
-      }
-    }
-    if (!on) continue;
-    if (ins.mode === "sound" || media instanceof HTMLAudioElement || !media) {
-      ctx.fillStyle = "rgba(8,9,15,0.7)";
-      ctx.fillRect(10, cv.height - 44, cv.width - 20, 30);
-      ctx.fillStyle = "#ffc947";
-      ctx.font = "600 13px Inter, sans-serif";
-      ctx.fillText(`♪ ${ins.label}`.slice(0, 40), 18, cv.height - 24);
-      continue;
-    }
-    const w = media instanceof HTMLVideoElement ? media.videoWidth : (media as HTMLImageElement).naturalWidth;
-    const h = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight;
-    if (!w || !h) continue;
-    const { dx, dy, dw, dh } = insertBox(ins, cv, w, h);
-    if (ins.mode === "full") {
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, cv.width, cv.height);
-    }
-    ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
-    if (ins.mode === "pip" && !playing) {
-      // На паузе показываем рамку, уголки и подпись: за картинку вставку двигают,
-      // за правый нижний угол — растягивают.
-      ctx.save();
-      ctx.strokeStyle = "rgba(167,139,250,0.95)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.strokeRect(dx, dy, dw, dh);
-      ctx.setLineDash([]);
-      // Метки по трём углам — чтобы рамка читалась как выделение…
-      const mark = Math.min(14, dw / 4, dh / 4);
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(dx, dy + mark); ctx.lineTo(dx, dy); ctx.lineTo(dx + mark, dy);
-      ctx.moveTo(dx + dw - mark, dy); ctx.lineTo(dx + dw, dy); ctx.lineTo(dx + dw, dy + mark);
-      ctx.moveTo(dx, dy + dh - mark); ctx.lineTo(dx, dy + dh); ctx.lineTo(dx + mark, dy + dh);
-      ctx.stroke();
-      // …а правый нижний — как ручка размера.
-      ctx.fillStyle = "#a78bfa";
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2;
-      ctx.fillRect(dx + dw - INSERT_HANDLE, dy + dh - INSERT_HANDLE, INSERT_HANDLE, INSERT_HANDLE);
-      ctx.strokeRect(dx + dw - INSERT_HANDLE, dy + dh - INSERT_HANDLE, INSERT_HANDLE, INSERT_HANDLE);
-      const caption = `${ins.label}`.slice(0, 22) + ` · ${Math.round(ins.scale * 100)}%`;
-      ctx.font = "600 11px Inter, sans-serif";
-      const tw = ctx.measureText(caption).width + 10;
-      const ty = dy > 18 ? dy - 16 : dy + 2;
-      ctx.fillStyle = "rgba(15,12,24,0.85)";
-      ctx.fillRect(dx, ty, tw, 15);
-      ctx.fillStyle = "#d8ccff";
-      ctx.fillText(caption, dx + 5, ty + 11);
-      ctx.restore();
-    }
-  }
-}
-
-/** Настоящий баннер на превью: та же геометрия, что в рендере.
- *  Высота — доля кадра, ширина по пропорциям, верх по доле кадра, по центру. */
-function drawBanner(
-  ctx: CanvasRenderingContext2D,
-  cv: { width: number; height: number },
-  banner: HTMLImageElement | null,
-  heightPct: number,
-  posPct: number,
-) {
-  if (!banner?.naturalWidth || !banner.naturalHeight) return false;
-  const dh = cv.height * (heightPct / 100);
-  const dw = (banner.naturalWidth / banner.naturalHeight) * dh;
-  ctx.drawImage(banner, (cv.width - dw) / 2, cv.height * (posPct / 100), dw, dh);
-  return true;
-}
-
-/** Размер уголка-ручки на превью, px канваса. */
-const INSERT_HANDLE = 16;
-/** Сетка, в которой исторически рисуются вставки на превью. */
-const LEGACY_W = 360;
-const LEGACY_H = 640;
 /**
  * Где окно кропа формата стоит в полном кадре при фокусе `fx` (доля ширины): позиция для
  * CSS object-position — 0 у левого края, 1 у правого (окно не выходит за кадр, как в рендере).
@@ -536,12 +321,6 @@ function focusWindowPos(fx: number, srcW: number, srcH: number, fmt: Aspect): nu
   if (fw >= 1) return 0.5;
   const left = Math.min(Math.max(fx - fw / 2, 0), 1 - fw);
   return left / (1 - fw);
-}
-
-/** Сетка вставок под формат клипа: ширина 360, высота — по пропорции кадра (у 9:16 — 640). */
-function legacyCv(fmt: Aspect = "9:16"): { width: number; height: number } {
-  const f = frameSize(fmt);
-  return { width: LEGACY_W, height: f.w * 16 === f.h * 9 ? LEGACY_H : Math.round((LEGACY_W * f.h) / f.w) };
 }
 
 /** За что взялись на превью: двигаем вставку, тянем угол или ничего. */
@@ -573,70 +352,6 @@ function insertHit(
   }
   return null;
 }
-
-// Текущая строка субтитров на превью — то, что увидит зритель, ещё до рендера.
-function drawSubtitle(
-  ctx: CanvasRenderingContext2D,
-  cv: HTMLCanvasElement,
-  lines: SubtitleLine[] | undefined,
-  segments: AiSegment[],
-  cur: number,
-  posPct: number,
-) {
-  if (!lines?.length) return;
-  const t = clipTimeOf(segments, cur);
-  if (t == null) return;
-  const line = lines.find((l) => t >= l.start && t < l.end);
-  if (!line?.text) return;
-  const size = Math.round(Math.min(cv.width, cv.height) * 0.075); // от короткой стороны: у 9:16 — ширина
-  ctx.font = `800 ${size}px Inter, sans-serif`;
-  ctx.textAlign = "center";
-  const maxWidth = cv.width * 0.86;
-  const words = line.text.split(/\s+/);
-  const rows: string[] = [];
-  let row = "";
-  for (const word of words) {
-    const candidate = row ? `${row} ${word}` : word;
-    if (ctx.measureText(candidate).width > maxWidth && row) {
-      rows.push(row);
-      row = word;
-    } else row = candidate;
-  }
-  if (row) rows.push(row);
-  const baseY = cv.height * (1 - posPct / 100);
-  rows.slice(-3).forEach((text, i, all) => {
-    const y = baseY - (all.length - 1 - i) * size * 1.15;
-    ctx.lineWidth = Math.max(3, size * 0.16);
-    ctx.strokeStyle = "rgba(0,0,0,0.85)";
-    ctx.strokeText(text, cv.width / 2, y);
-    ctx.fillStyle = "#fff";
-    ctx.fillText(text, cv.width / 2, y);
-  });
-}
-
-/** Что рисует превью из моушн-слоёв: живой черновик (во время перетаскивания) и выделение. */
-type MotionView = {
-  layers: Layer[];
-  camera: CameraKey[];
-  selected: string | null;
-  words?: CaptionWord[];
-  chat?: ChatMessage[];
-  /** Состояния голоса PNGtuber по id слоя — тот же массив, что у компоновщика рендера. */
-  voice?: Record<string, VoiceTrack>;
-  /** Огибающие громкости клипа для `react` слоёв — тот же массив, что у компоновщика. */
-  levels?: Levels;
-  /** Направляющие прилипания во время перетаскивания слоя (центр кадра). */
-  guides?: { v: boolean; h: boolean };
-  /** Длина клипа: слой до конца держится на стоп-кадре без анимации выхода, как в рендере. */
-  duration?: number;
-  /** Слои показаны перекомпонованными из формата разметки — мышью их не двигаем. */
-  reframed?: boolean;
-  /** Концовка-баннер: размытие основы под слоями — как компоновщик рендера (motion/endscreen.ts). */
-  endScreen?: EndScreenFx | null;
-  /** Motion blur клипа по умолчанию (render.motion_blur) и fps пресета — как у компоновщика. */
-  motionBlur?: number;
-  fps?: number;
-};
 
 // Слова клипа для анимированных субтитров: конвертируем один раз на массив.
 const captionWordsCache = new WeakMap<object, CaptionWord[]>();
@@ -693,7 +408,10 @@ function CropFrame({
   chromaKey,
   backdrop,
   format = "9:16",
+  suspended = false,
 }: {
+  /** Открыт «Смотреть монтаж»: телефон не рисует. Иначе видео-слои (их элементы общие) дёргались бы между двумя временами. */
+  suspended?: boolean;
   srcW: number;
   srcH: number;
   crop?: { x: number; y: number; w: number; h: number } | null;
@@ -740,14 +458,12 @@ function CropFrame({
   keyRef.current = chromaKey;
   const backdropRef = useRef(backdrop ?? DEFAULT_BACKDROP);
   backdropRef.current = backdrop ?? DEFAULT_BACKDROP;
-  // Маленький холст под вырез: пиксели считаются в JS, полный кадр 1080×1920 — дорого.
-  const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Собранный кадр раскладки до камеры: камера зумит только игру, окошко вебки — на месте.
-  const layoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Кадр основы перед 3D-камерой (плоскость на глубине — space3d.drawBasePlane).
-  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Холсты-кэши кадра: вырез (маленький — пиксели считаются в JS), раскладка до камеры, 3D-плоскость.
+  const scratchRef = useRef<ComposeInput["scratch"]>({});
   const insertsRef = useRef(insertsPreview);
   insertsRef.current = insertsPreview;
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
   const draggingRef = useRef(false);
   const dragXRef = useRef(0.5);
   // Refs so the drag handler always reads the latest callback/mirror without
@@ -768,23 +484,11 @@ function CropFrame({
 
   useEffect(() => {
     if (!srcW || !srcH) return;
-    // Кадр формата клипа (у 9:16 — 1080×1920, всё как раньше): раскладка, окно кропа и
-    // основа — как в рендере (render._preset_with_output).
-    const out = frameSize(format);
-    const landscape = isLandscape(format);
-    const layAll = layoutForFormat(layout, out, srcW, srcH);
-    // Вертикальный исходник в 16:9 — целиком по высоте на размытой подложке («fit»).
-    const contain = sourceStrategy(format, srcW, srcH, crop) === "fit";
-    // Окно геймплея: пропорции кадра или шире, если сверху стоит вебка (split).
-    const targetAR = gameplayAspect(layAll, out.w, out.h, out);
-    const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
-    const effAR = (srcW * c.w) / (srcH * c.h);
-    const baseFw = contain ? 1 : effAR >= targetAR ? targetAR / effAR : 1;
-    const baseFh = contain ? 1 : effAR >= targetAR ? 1 : effAR / targetAR;
+    const geometry = frameGeometry(srcW, srcH, crop, layout, format);
+    const { c } = geometry;
     // Кусок «шире окна» (set_piece_fit): своё окно и своя основа, раскладка на нём не действует.
     // В горизонтальном кадре широкий план и так виден целиком — «шире окна» не нужно (как в рендере).
-    const fits = new Map<number, PieceFit | null>(segments.map((s) => [s.id, landscape ? null : normalizeFit(s.fit)]));
-    const lcv = legacyCv(format);
+    const fits = new Map<number, PieceFit | null>(segments.map((s) => [s.id, geometry.landscape ? null : normalizeFit(s.fit)]));
     const paths = new Map<number, number[]>(
       segments.map((s) => [s.id, smoothFocus(s.focus ?? [], s.end_sec - s.start_sec, focusFeel(focusPreset))]),
     );
@@ -794,13 +498,10 @@ function CropFrame({
       const el = ref.current;
       if (el && (v || draggingRef.current)) {
         const cur = v ? v.currentTime : 0;
-        // avatar_full с рамками по отрезкам (layout.cams, секунды исходника) — рамка под курсором, как в рендере.
-        const lay = avatarLayoutAt(layAll, cur);
         // The frame follows whichever segment is under the playhead.
         const seg = segments.find((s) => cur >= s.start_sec && cur <= s.end_sec);
         const path = seg ? paths.get(seg.id) : undefined;
         const fit = seg ? fits.get(seg.id) ?? null : null;
-        const { fw, fh } = fit ? fitWindow(fit, effAR, out.w / out.h) : { fw: baseFw, fh: baseFh };
         // While dragging, the box tracks the pointer; otherwise it follows the
         // focus track (which carries autofocus, keyframes, or a fixed frame).
         const fx = draggingRef.current
@@ -808,244 +509,39 @@ function CropFrame({
           : seg && path
             ? path[Math.min(path.length - 1, Math.max(0, Math.round((cur - seg.start_sec) / DT)))]
             : 0.5;
-        const lc = Math.min(Math.max(fx - fw / 2, 0), 1 - fw);
-        const tc = Math.min(Math.max(0.5 - fh / 2, 0), 1 - fh);
+        const { fw, fh, lc, tc } = cropWindow(geometry, fit, fx);
         el.style.left = `${(c.x + lc * c.w) * 100}%`;
         el.style.width = `${fw * c.w * 100}%`;
         el.style.top = `${(c.y + tc * c.h) * 100}%`;
         el.style.height = `${fh * c.h * 100}%`;
         const cv = phoneRef?.current;
-        if (cv && v && v.readyState >= 2 && v.videoWidth) {
-          const ctx = cv.getContext("2d");
-          const vw = v.videoWidth;
-          const vh = v.videoHeight;
-          const clipT = clipTimeOf(segments, cur) ?? 0;
-          const motion = motionRef?.current;
-          // Слои до конца клипа — без анимации выхода (рендер держит их на стоп-кадре).
-          const shownLayers = motion ? holdFinalLayers(motion.layers, motion.duration) : [];
-          // Камера двигает только видео: тот же расчёт матрицы, что и в рендере.
-          const cam = motion?.camera?.length ? cameraMatrix(motion.camera, clipT, cv.width, cv.height) : null;
-          // 3D-камера (dolly, облёт, фокусное) — основа плоскостью на глубине, как в компоновщике.
-          const cam3 = motion && has3dCamera(motion.camera) ? camera3dAt(motion.camera, clipT) : null;
-          // Motion blur наезда (motion/motionblur.ts): быстрая камера — подкадры основы, как в рендере
-          // (в превью их меньше); в покое — один кадр, ровно как раньше.
-          const blurEnv = browserEnv(cv.width, cv.height, format);
-          const camTimes = (box: { x: number; y: number; w: number; h: number } | null, threeD: boolean) =>
-            motion
-              ? cameraBlurTimes(motion.camera, clipT, {
-                  fps: motion.fps || 30,
-                  W: cv.width,
-                  H: cv.height,
-                  unit: layerUnit(blurEnv),
-                  fallback: motion.motionBlur,
-                  box,
-                  threeD,
-                  maxSamples: blurEnv.motionBlurSamples,
-                })
-              : [clipT];
-          const rect = {
-            x: (c.x + lc * c.w) * vw,
-            y: (c.y + tc * c.h) * vh,
-            w: fw * c.w * vw,
-            h: fh * c.h * vh,
-          };
-          // Основа кадра: кусок с fit — как render._piece_fit_filter, иначе — раскладка клипа.
-          const content = { x: c.x * vw, y: c.y * vh, w: c.w * vw, h: c.h * vh };
-          // Анимированный фон (meme, «шире окна», за персонажем) — в момент клипа, в цветах клипа.
-          const bgOpts = { accent: clipAccent(motion?.layers), createCanvas: browserEnv(cv.width, cv.height).createCanvas };
-          const drawBase = (target: CanvasRenderingContext2D, l: StreamLayout | undefined, tw: number, th: number, fill: string | null = null) =>
-            fit
-              ? drawFitFrame(target, v, fit, rect, content, tw, th, clipT, bgOpts, out)
-              : contain
-                ? drawContainFrame(target, v, content, tw, th, fill, out)
-                : drawLayoutFrame(target, v, l, rect, tw, th, clipT, bgOpts, out);
-          const key = keyRef.current;
-          if (ctx && key) {
-            // Как компоновщик рендера: фон → слои «за персонажем» → вырезанное видео.
-            const kc = (keyCanvasRef.current ??= document.createElement("canvas"));
-            kc.width = Math.max(2, Math.round(cv.width / 3));
-            kc.height = Math.max(2, Math.round(cv.height / 3));
-            const kctx = kc.getContext("2d", { willReadFrequently: true });
-            if (kctx) {
-              // Поля и фон раскладки — цвета ключа, чтобы вырезались вместе с зелёнкой.
-              const keyed: StreamLayout | undefined =
-                lay?.mode === "meme" ? { ...lay, bg: { kind: "solid", colors: [key.color], speed: 1, intensity: 0 } } : lay;
-              drawBase(kctx, keyed, kc.width, kc.height, key.color);
-              applyChromaKey(kctx, kc.width, kc.height, key);
-              ctx.setTransform(1, 0, 0, 1, 0, 0);
-              paintBackdrop(ctx, cv.width, cv.height, backdropRef.current, clipT, bgOpts);
-              if (motion?.layers.length) {
-                const env = browserEnv(cv.width, cv.height, format);
-                const behind = shownLayers.filter((l) => !l.hidden);
-                drawFrame(ctx, { layers: behind, words: motion.words, chat: motion.chat, voice: motion.voice, levels: motion.levels, camera: motion.camera, fps: motion.fps, motionBlur: motion.motionBlur }, clipT, env, "behind");
-              }
-              // 3D-камера: вырезанное видео — плоскость на глубине baseZ, как в компоновщике.
-              const keyedAt = (target: CanvasRenderingContext2D, tt: number) => {
-                const m = motion?.camera?.length ? cameraMatrix(motion.camera, tt, cv.width, cv.height) : null;
-                if (cam3 && motion) drawBasePlane(target, blurEnv, kc, camera3dAt(motion.camera, tt), m, layerUnit(blurEnv), kc.width, kc.height);
-                else {
-                  target.save();
-                  if (m) target.transform(m.scale, 0, 0, m.scale, m.tx, m.ty);
-                  target.drawImage(kc, 0, 0, cv.width, cv.height);
-                  target.restore();
-                }
-              };
-              const kt = camTimes(null, Boolean(cam3));
-              if (kt.length < 2 || !paintLayerBlur(ctx, blurEnv, kt, keyedAt)) keyedAt(ctx, clipT);
-            }
-          } else if (ctx) {
-            const regions = cam && motion && !fit && !contain ? cameraRegions(lay, vw, vh, cv.width, cv.height, out) : null;
-            if (regions && motion) {
-              // Как компоновщик рендера: камера двигает окно игры, окошко/полоса вебки стоят.
-              const lc = (layoutCanvasRef.current ??= document.createElement("canvas"));
-              if (lc.width !== cv.width || lc.height !== cv.height) {
-                lc.width = cv.width;
-                lc.height = cv.height;
-              }
-              const lctx = lc.getContext("2d");
-              if (lctx) {
-                drawLayoutFrame(lctx, v, lay, rect, cv.width, cv.height, clipT, bgOpts, out);
-                const box = regions.box;
-                const regionAt = (target: CanvasRenderingContext2D, tt: number) => {
-                  target.setTransform(1, 0, 0, 1, 0, 0);
-                  target.drawImage(lc, 0, 0);
-                  const bm = cameraMatrix(motion.camera, tt, box.w, box.h);
-                  target.save();
-                  target.beginPath();
-                  target.rect(box.x, box.y, box.w, box.h);
-                  target.clip();
-                  target.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
-                  // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
-                  // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
-                  if (lay?.mode === "pip_cam") target.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
-                  else target.drawImage(lc, 0, 0);
-                  target.restore();
-                  for (const p of regions.pinned) target.drawImage(lc, p.x, p.y, p.w, p.h, p.x, p.y, p.w, p.h);
-                };
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                paintOpaqueBlur(ctx, blurEnv, camTimes(box, false), regionAt);
-              }
-            } else if (cam3 && !regions) {
-              // 3D-камера: кадр основы на свой холст, потом плоскостью на глубине baseZ (space3d.ts).
-              const bc = (baseCanvasRef.current ??= document.createElement("canvas"));
-              if (bc.width !== cv.width || bc.height !== cv.height) {
-                bc.width = cv.width;
-                bc.height = cv.height;
-              }
-              const bctx = bc.getContext("2d");
-              if (bctx && motion) {
-                bctx.setTransform(1, 0, 0, 1, 0, 0);
-                drawBase(bctx, lay, cv.width, cv.height);
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                paintOpaqueBlur(ctx, blurEnv, camTimes(null, true), (target, tt) => {
-                  target.fillStyle = "#000000";
-                  target.fillRect(0, 0, cv.width, cv.height);
-                  const m = cameraMatrix(motion.camera, tt, cv.width, cv.height);
-                  drawBasePlane(target, blurEnv, bc, camera3dAt(motion.camera, tt), m, layerUnit(blurEnv));
-                });
-              }
-            } else {
-              const times = cam && motion ? camTimes(null, false) : [clipT];
-              if (times.length < 2) {
-                if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
-                drawBase(ctx, lay, cv.width, cv.height);
-              } else {
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                paintOpaqueBlur(ctx, blurEnv, times, (target, tt) => {
-                  const m = cameraMatrix(motion!.camera, tt, cv.width, cv.height);
-                  target.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
-                  drawBase(target, lay, cv.width, cv.height);
-                  target.setTransform(1, 0, 0, 1, 0, 0);
-                });
-              }
-            }
-          }
-          if (ctx && cam) ctx.setTransform(1, 0, 0, 1, 0, 0);
-          // Концовка-баннер: основа (с фоном и слоями behind) в размытие и тень — та же функция, что
-          // у компоновщика рендера; слои, баннер и субтитры на overlay остаются резкими.
-          if (ctx && motion?.endScreen) {
-            paintEndScreen(ctx, cv, cv.width, cv.height, motion.endScreen, clipT, browserEnv(cv.width, cv.height).createCanvas!);
-          }
-          const ov = overlayRef?.current;
-          const octx = ov?.getContext("2d");
-          if (ov && octx) {
-            octx.clearRect(0, 0, ov.width, ov.height);
-            // Слои followCamera едут с видео: в раскладке стрима — с окном игры, как в рендере.
-            const followBox =
-              cam && motion && !fit && !contain && !key ? cameraRegions(lay, vw, vh, ov.width, ov.height, out)?.box ?? null : null;
-            const followCam = cam && motion ? frameCameraMatrix(motion.camera, clipT, ov.width, ov.height, followBox) : null;
-            // Порядок как в рендере: слои над видео, баннер и субтитры выше слоёв.
-            if (motion?.layers.length) {
-              const env = browserEnv(ov.width, ov.height, format);
-              // Эффекту кадра (fx vhs/chromatic) нужен кадр под слоями — видео на своём холсте.
-              // В зеркале холст видео перевёрнут стилем — подложку не даём (эффект только по слоям).
-              env.underlay = mirror ? null : cv;
-              drawFrame(
-                octx,
-                {
-                  layers: shownLayers.filter((l) => !l.hidden),
-                  words: motion.words,
-                  chat: motion.chat,
-                  voice: motion.voice,
-                  levels: motion.levels,
-                  camera: motion.camera,
-                  cameraBox: followBox ?? undefined,
-                  fps: motion.fps,
-                  motionBlur: motion.motionBlur,
-                },
-                clipT,
-                env,
-                keyRef.current ? "front" : undefined,
-              );
-            }
-            // Порядок как в рендере: баннер в кадре, поверх него вставки и субтитры.
-            if (bannerRef?.current) {
-              drawBanner(octx, ov, bannerRef.current, bannerGeomRef?.current?.height ?? 12, bannerGeomRef?.current?.pos ?? 4);
-            }
-            // Вставки рисуются в старой сетке 360×640 (их ручки и подписи заданы в
-            // пикселях той сетки), холст же теперь в полном разрешении кадра.
-            octx.save();
-            octx.scale(ov.width / lcv.width, ov.height / lcv.height);
-            drawInserts(octx, lcv, insertsRef.current, segments, cur, !v.paused);
-            octx.restore();
-            // Караоке по стилю клипа; без пословных таймингов (ещё не распознали)
-            // остаётся старая строка — лучше грубое превью, чем пустой кадр.
-            const t = clipTimeOf(segments, cur);
-            const style = subStyleRef?.current;
-            const words = subWordsRef?.current;
-            // Анимированные субтитры-слой заменяют обычные (так же делает рендер).
-            const captionsOn = Boolean(motion?.layers.some((l) => l.type === "captions" && !l.hidden) && motion?.words?.length);
-            const drawn =
-              captionsOn ||
-              (style && words?.length ? drawKaraoke(octx, ov, words, style, t, subPosPctRef.current) : false);
-            if (!drawn) drawSubtitle(octx, ov, subLinesRef?.current, segments, cur, subPosPctRef.current);
-            // Рамка выделенного слоя — поверх всего, только в редакторе.
-            const sel = motion?.selected ? shownLayers.find((l) => l.id === motion.selected) : null;
-            if (sel && sel.type !== "audio") {
-              const env = browserEnv(ov.width, ov.height, format);
-              const box = layerBox(octx, sel, clipT, env, { words: motion?.words, chat: motion?.chat, voice: motion?.voice, levels: motion?.levels }, followCam);
-              const cssScale = ov.width / (ov.getBoundingClientRect().width || ov.width);
-              if (box) drawSelection(octx, box, cssScale, Boolean(sel.locked));
-            }
-            const g = motion?.guides;
-            if (g && (g.v || g.h)) {
-              octx.save();
-              octx.strokeStyle = "#ff3b8d";
-              octx.lineWidth = 2;
-              octx.setLineDash([12, 8]);
-              octx.beginPath();
-              if (g.v) {
-                octx.moveTo(ov.width / 2, 0);
-                octx.lineTo(ov.width / 2, ov.height);
-              }
-              if (g.h) {
-                octx.moveTo(0, ov.height / 2);
-                octx.lineTo(ov.width, ov.height / 2);
-              }
-              octx.stroke();
-              octx.restore();
-            }
-          }
+        if (cv && v && v.readyState >= 2 && v.videoWidth && !suspendedRef.current) {
+          const bannerImg = bannerRef?.current ?? null;
+          composeFrame({
+            cv,
+            ov: overlayRef?.current,
+            video: v,
+            vw: v.videoWidth,
+            vh: v.videoHeight,
+            geometry,
+            cur,
+            clipT: clipTimeOf(segments, cur) ?? 0,
+            subT: clipTimeOf(segments, cur),
+            fit,
+            fx,
+            motion: motionRef?.current,
+            chromaKey: keyRef.current,
+            backdrop: backdropRef.current,
+            mirror,
+            scratch: scratchRef.current,
+            banner: bannerImg ? { img: bannerImg, height: bannerGeomRef?.current?.height ?? 12, pos: bannerGeomRef?.current?.pos ?? 4 } : null,
+            inserts: insertsRef.current,
+            playing: !v.paused,
+            subLines: subLinesRef?.current,
+            subWords: subWordsRef?.current,
+            subStyle: subStyleRef?.current,
+            subPosPct: subPosPctRef.current,
+          });
         }
       }
       raf = requestAnimationFrame(tick);
@@ -1101,27 +597,6 @@ function CropFrame({
       ) : null}
     </div>
   );
-}
-
-// Approximate the render-side ffmpeg color grade with a CSS filter so the look
-// preset is visible right in the preview. Mirrors _color_style_filters in render.py.
-// Лук в превью считается по тем же числам, что уходят в ffmpeg (_color_style_filters
-// в app/render.py): contrast и saturation переносятся один в один, сдвиг каналов
-// (colorbalance) приближается лёгкой сепией для тёплого и поворотом тона для
-// холодного. Раньше превью врало направлением: у «холодного» насыщенность падала,
-// хотя рендер её поднимает, а «нуар» не реагировал на силу лука вовсе.
-const LOOK_CSS: Record<string, (s: number) => string> = {
-  warm: (s) => `sepia(${(0.12 * s).toFixed(3)}) saturate(${(1 + 0.08 * s).toFixed(3)}) contrast(${(1 + 0.06 * s).toFixed(3)})`,
-  cold: (s) => `hue-rotate(${(-6 * s).toFixed(1)}deg) saturate(${(1 + 0.05 * s).toFixed(3)}) contrast(${(1 + 0.05 * s).toFixed(3)})`,
-  cinematic: (s) => `contrast(${(1 + 0.08 * s).toFixed(3)}) saturate(${(1 + 0.06 * s).toFixed(3)})`,
-  vibrant: (s) => `saturate(${(1 + 0.35 * s).toFixed(3)}) contrast(${(1 + 0.08 * s).toFixed(3)})`,
-  noir: (s) => `grayscale(1) contrast(${(1 + 0.25 * s).toFixed(3)}) brightness(${(1 - 0.02 * s).toFixed(3)})`,
-  vintage: (s) => `sepia(${(0.25 * s).toFixed(3)}) saturate(${(1 - 0.15 * s).toFixed(3)}) contrast(${(1 + 0.05 * s).toFixed(3)})`,
-};
-function lookFilterCss(preset?: FfmpegPreset): string {
-  if (!preset) return "";
-  const fn = LOOK_CSS[(preset.color_style || "none").toLowerCase()];
-  return fn ? fn(preset.color_strength ?? 1) : "";
 }
 
 // Collapsible group in the render panel — the panel has a lot of knobs, so keep
@@ -1424,8 +899,27 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
   const triagePhoneRef = useRef<HTMLCanvasElement>(null);
   const query = useQuery({ queryKey: qk.source(sourceId), queryFn: () => sourcesApi.get(sourceId) });
-  // Запись удалена (клипы и монтаж живы): ни кадров, ни волны, ни видео исходника не запрашиваем.
-  const sourceMissing = isSourceFileMissing(query.data);
+  // Запись удалена (клипы и монтаж живы). Рендера без неё нет, а смотреть и править монтаж можно с
+  // прокси 480p (app/preview_proxy.py): он сам собирается в фоне, пока запись на месте.
+  const recordMissing = isSourceFileMissing(query.data);
+  const proxyInfo = useQuery({
+    queryKey: ["source-proxy", Number(sourceId)],
+    queryFn: () => playbackApi.proxyStatus(sourceId),
+    enabled: query.isSuccess,
+    refetchInterval: (q) => (["queued", "running"].includes(q.state.data?.status ?? "") ? 10_000 : false),
+  });
+  const proxyReady = proxyInfo.data?.status === "ready";
+  // Нет ни записи, ни прокси: ни кадров, ни волны, ни видео исходника не запрашиваем.
+  const sourceMissing = recordMissing && !proxyReady;
+  // Чем играет превью: прокси, если он уже есть, иначе запись. На время открытого проекта адрес не
+  // меняется (собрался прокси — новый адрес при следующем открытии), чтобы плеер не сбрасывало.
+  const [mediaSrc, setMediaSrc] = useState<string | null>(null);
+  useEffect(() => setMediaSrc(null), [sourceId]);
+  useEffect(() => {
+    if (!query.isSuccess || !proxyInfo.isFetched) return;
+    if (proxyReady && proxyInfo.data?.url) setMediaSrc((prev) => (prev && !recordMissing ? prev : proxyInfo.data!.url));
+    else setMediaSrc((prev) => prev ?? `/media/sources/${sourceId}`);
+  }, [query.isSuccess, proxyInfo.isFetched, proxyReady, proxyInfo.data?.url, recordMissing, sourceId]);
   const presets = useQuery({ queryKey: qk.ffmpegPresets, queryFn: ffmpegPresetsApi.list });
   const banners = useQuery({ queryKey: qk.banners, queryFn: bannersApi.list });
   const tracks = useQuery({ queryKey: qk.audioTracks, queryFn: audioTracksApi.list });
@@ -1515,6 +1009,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     if (clipParam) setActivePlanId(clipParam);
   }, [clipParam]);
+  // Открыли клип в монтаже — пусть в фоне собирается лёгкий прокси (идемпотентно; запись не трогает).
+  const hasFile = Boolean(query.data?.has_file);
+  useEffect(() => {
+    if (!clipParam || !hasFile) return;
+    void playbackApi.proxyEnsure(sourceId).then((st) => qc.setQueryData(["source-proxy", Number(sourceId)], st)).catch(() => undefined);
+  }, [Boolean(clipParam), hasFile, sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = videoRef.current;
     const plan = query.data?.clip_plans.find((p) => p.id === editorPlanId) ?? null;
@@ -1717,6 +1217,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // «Файл клипа» dialog; bumping the nonce re-reads the clip's settings into the
   // panel after the file was applied (the file may have changed them).
   const [clipFileOpen, setClipFileOpen] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
   // Moment under the pointer — the target of the F / X / E shortcuts.
   const hoverPlanRef = useRef<number | null>(null);
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -1748,6 +1249,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const pasteLayerRef = useRef<() => boolean>(() => false);
   const nudgeLayerRef = useRef<(key: string, big: boolean) => boolean>(() => false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
+  const [packagePieces, setPackagePieces] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState("");
   const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
@@ -1823,6 +1325,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   const settingsKey = JSON.stringify(panelSettings());
 
   const lastJlKeyRef = useRef<Record<number, string>>({});
+  // Что сервер последним принял от этой вкладки: правка извне (агент, другая вкладка) — всё остальное.
+  const lastServerSettingsRef = useRef<Record<number, string>>({});
+  const saveInFlightRef = useRef(0);
   const saveSettings = (planId: number, settings: RenderSettings) => {
     const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
     if (prev) {
@@ -1837,9 +1342,11 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const jlKey = JSON.stringify(
       ((settings as { audio?: { joins?: unknown } }).audio?.joins ?? null),
     );
+    saveInFlightRef.current += 1;
     return clipPlansApi
       .setRenderSettings(planId, settings)
       .then((r) => {
+        lastServerSettingsRef.current[planId] = JSON.stringify(r.render_settings);
         // J/L поменялись — субтитры превью (heard_words) идут за звуком: перечитать.
         if (jlKey !== lastJlKeyRef.current[planId]) {
           lastJlKeyRef.current[planId] = jlKey;
@@ -1847,7 +1354,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         }
         return r;
       })
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить настройки клипа"));
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить настройки клипа"))
+      .finally(() => {
+        saveInFlightRef.current -= 1;
+      });
   };
 
   // Autosave with a snapshot: the timer must save what was on the panel FOR THAT
@@ -1870,6 +1380,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     void flushSettings();
     if (!editorPlanId) return;
     const s = plans.find((p) => p.id === editorPlanId)?.render_settings;
+    if (s) lastServerSettingsRef.current[editorPlanId] = JSON.stringify(s);
     if (!s) {
       // Ручки панели остаются стартом для нового клипа, но то, что лежит на
       // таймлайне прошлого клипа (слои, вставки), сюда не переезжает.
@@ -1970,6 +1481,23 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const timer = window.setTimeout(() => void flushSettings(), 600);
     pendingSaveRef.current = { planId: editorPlanId, settings, timer };
   }, [settingsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Правка мимо этой вкладки (MCP-агент, другая вкладка): новые настройки, куски и субтитры — сами,
+  // без перезагрузки. Свою запись узнаём по ответу сервера: она ничего в панели не сбрасывает.
+  useClipRevision(editorPlanId, async () => {
+    const planId = editorPlanId;
+    if (!planId || pendingSaveRef.current || saveInFlightRef.current || agentRunningRef.current || layerDragRef.current) return;
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: qk.source(sourceId) }),
+      qc.invalidateQueries({ queryKey: ["plan-subtitles", planId] }),
+    ]);
+    const fresh = qc.getQueryData<SourceDetail>(qk.source(sourceId))?.clip_plans.find((p) => p.id === planId);
+    const json = JSON.stringify(fresh?.render_settings);
+    if (json !== lastServerSettingsRef.current[planId] && !pendingSaveRef.current) {
+      lastServerSettingsRef.current[planId] = json;
+      setSettingsNonce((n) => n + 1);
+    }
+  }, view === "editor");
 
   const applyToFavorites = async () => {
     const targets = plans.filter((p) => p.favorite && p.id !== editorPlanId);
@@ -2473,6 +2001,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   useLayerAudio(videoRef, motionViewRef, () =>
     inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null,
   );
+  // Музыка клипа тоже звучит в превью: в такт видео, с той секунды трека, что выбрана для рендера.
+  const musicTrack = musicOn && trackId ? tracks.data?.find((t) => t.id === trackId) : undefined;
+  useClipMusic(
+    videoRef,
+    musicTrack && view === "editor"
+      ? { url: `/media/audio-tracks/${musicTrack.id}`, startSec: musicStartSec, volume: musicTrack.volume ?? 0.5 }
+      : null,
+    () => (inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null),
+  );
   // Таймкод из чата агента (?clip=<id>&t=<секунда клипа>): один раз встать на эту секунду.
   const seekT = searchParams.get("t");
   const seekedRef = useRef("");
@@ -2752,6 +2289,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     const now = clipTimeOf(activePlan.segments, v.currentTime) ?? 0;
     const total = activePlan.segments.reduce((acc, s) => acc + segLen(s), 0);
     seekClipTime(Math.min(Math.max(0, now + deltaSec), Math.max(0, total - 0.001)), false);
+  };
+  // ▶ Весь монтаж на весь экран: сначала сохранить панель, чтобы плеер видел ровно её.
+  const openWatch = async () => {
+    stopPlayback();
+    await flushSettings();
+    setWatchOpen(true);
   };
   const togglePlay = () => {
     const v = videoRef.current;
@@ -3389,6 +2932,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           }}
         />
       ) : null}
+      {watchOpen && activePlan ? (
+        <WatchMontage clipPlanId={activePlan.id} title={activePlan.title || `План #${activePlan.id}`} onClose={() => setWatchOpen(false)} />
+      ) : null}
       {clipFileOpen && activePlan ? (
         <ClipFileDialog
           clipPlanId={activePlan.id}
@@ -3487,7 +3033,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       ) : null}
       {view === "triage" && (
       <>
-      {sourceMissing ? <MissingSourceNotice source={source} /> : null}
+      {recordMissing ? <MissingSourceNotice source={source} proxyReady={proxyReady} /> : null}
       <div className="mo-top">
         <div className="panel mo-player">
           <div className="mo-player-frame">
@@ -3507,7 +3053,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   : undefined
               }
             >
-              <video ref={videoRef} src={sourceMissing ? undefined : `/media/sources/${source.id}`} controls={!sourceMissing} preload="metadata" style={sourceMissing ? { display: "none" } : undefined} />
+              <video ref={videoRef} src={sourceMissing ? undefined : mediaSrc ?? undefined} controls={!sourceMissing} preload="metadata" style={sourceMissing ? { display: "none" } : undefined} />
               {sourceMissing ? (
                 activePlan && planRender(activePlan.id) ? (
                   <video
@@ -3616,9 +3162,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </button>
           <button
             className="btn mo-big"
-            disabled={batch.isPending || !selected.size || sourceMissing}
+            disabled={batch.isPending || !selected.size || recordMissing}
             onClick={() => batch.mutate(undefined)}
-            title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер отмеченных «в рендер» с настройками из редактора"}
+            title={recordMissing ? "Для рендера нужна запись стрима" : "Рендер отмеченных «в рендер» с настройками из редактора"}
           >
             {batch.isPending ? "Запуск…" : `▶ Рендерить выбранные (${selected.size})`}
           </button>
@@ -3889,7 +3435,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               >
                 <video
                   ref={videoRef}
-                  src={sourceMissing ? undefined : `/media/sources/${source.id}`}
+                  src={sourceMissing ? undefined : mediaSrc ?? undefined}
                   controls={!isCanvas && !sourceMissing}
                   preload="metadata"
                   style={isCanvas ? { opacity: 0 } : lookCss ? { filter: lookCss } : undefined}
@@ -3934,6 +3480,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   chromaKey={source.chroma_key}
                   backdrop={backdrop}
                   format={aspect}
+                  suspended={watchOpen}
                 />
               </div>
               <div className="editor-stage-meta mono">
@@ -4106,7 +3653,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 <span className="ed-phone-tag mono">{aspect}</span>
               </div>
             </div>
-          {sourceMissing ? <MissingSourceNotice source={source} compact /> : null}
+          {recordMissing ? <MissingSourceNotice source={source} compact proxyReady={proxyReady} /> : null}
           {reframedView ? (
             <div className="ed-reframe-note" role="status">
               <span>
@@ -4128,13 +3675,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               </button>
             </div>
           ) : null}
+          {sourceMissing && activePlan ? (
+            <div className="ed-transport">
+              <button className="btn primary sm" onClick={() => void openWatch()} title="Записи нет: покажет готовый рендер и скажет, что с монтажом">
+                ▶ Смотреть монтаж
+              </button>
+            </div>
+          ) : null}
           {sourceMissing ? null : <div className="ed-transport">
             <button
-              className="btn primary sm"
+              className="btn primary sm ed-watch-btn"
+              disabled={!activePlan?.segments.length}
+              onClick={() => void openWatch()}
+              title="Весь клип со склейками, звуком и музыкой на весь экран, без рендера. Там: пробел — плей/пауза, ←/→ — кадр, Esc — закрыть"
+            >
+              ▶ Смотреть монтаж
+            </button>
+            <button
+              className="btn sm"
               disabled={!activePlan?.segments.length}
               onClick={() =>
-                activePlan && playRanges(activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec })))
+                activePlan && playRanges(activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec, speed: segSpeed(s) })))
               }
+              title="Играть в телефоне слева: поверхность правки (без переходов и стоп-кадров). Весь монтаж — «Смотреть монтаж»"
             >
               ▶ Превью клипа
             </button>
@@ -4782,10 +4345,29 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </button>
                 </Group>
                 )}
-                <Group title="Отдать в монтажку" badge="OTIO">
+                <Group title="Отдать в монтажку" badge="OTIO · пакет">
                   <span className="muted" style={{ fontSize: 11.5 }}>
-                    Куски и таймкоды уезжают в общий формат монтажа. Субтитры, мемы, кадрирование 9:16 и наши
-                    переходы туда не переносятся — они остаются здесь (в .otio лежат в метаданных).
+                    Пакет для Premiere и DaVinci Resolve — одной кнопкой и без рендера: монтаж с дорожками, субтитры,
+                    картинки, звуки и музыка отдельными файлами, README на русском — что доехало, что нет и как открыть.
+                  </span>
+                  <div className="ed-foot-tools">
+                    <a
+                      className="btn sm primary"
+                      href={activePlan ? playbackApi.packageUrl(activePlan.id, packagePieces) : undefined}
+                      download
+                      onClick={() => void flushSettings()}
+                      title="Zip: FCP7 .xml + .otio, .srt, файлы мемов и звуков. Запись стрима в архив не кладём"
+                    >
+                      ⬇ Пакет для монтажки (.zip)
+                    </a>
+                    <label className="switch" title="Положить в архив короткие куски записи 720p, чтобы монтаж открылся сразу. Без галочки — только ссылка на запись и инструкция перелинковки">
+                      <input type="checkbox" checked={packagePieces} onChange={(e) => setPackagePieces(e.target.checked)} />
+                      <span className="switch-track" />
+                      <span>с кусками видео</span>
+                    </label>
+                  </div>
+                  <span className="muted" style={{ fontSize: 11.5 }}>
+                    Только куски и таймкоды, без файлов (субтитры, мемы и кадрирование туда не переносятся):
                   </span>
                   <div className="ed-foot-tools">
                     <a
@@ -5558,17 +5140,17 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             <div className="ed-render-btns">
               <button
                 className="btn primary"
-                disabled={batch.isPending || !activePlan || sourceMissing}
+                disabled={batch.isPending || !activePlan || recordMissing}
                 onClick={() => activePlan && batch.mutate([activePlan.id])}
-                title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер только этого клипа с текущими настройками"}
+                title={recordMissing ? "Для рендера нужна запись стрима" : "Рендер только этого клипа с текущими настройками"}
               >
                 {batch.isPending ? "Запуск…" : "▶ Рендерить (1)"}
               </button>
               <button
                 className="btn"
-                disabled={batch.isPending || !selected.size || sourceMissing}
+                disabled={batch.isPending || !selected.size || recordMissing}
                 onClick={() => batch.mutate(undefined)}
-                title={sourceMissing ? "Для рендера нужна запись стрима" : "Рендер всех отмеченных «в рендер» на странице моментов"}
+                title={recordMissing ? "Для рендера нужна запись стрима" : "Рендер всех отмеченных «в рендер» на странице моментов"}
               >
                 Выбранные ({selected.size})
               </button>

@@ -2074,6 +2074,24 @@ def _clip_time_arg(ctx: ToolContext, args: dict, key: str = "t") -> tuple[float,
     return clip_t, {"time": "clip", "final_t": round(t, 3)}
 
 
+def h_export_timeline_package(ctx: ToolContext, args: dict) -> dict:
+    from app.timeline_package import build_package
+
+    try:
+        result = build_package(ctx.store, ctx.plan_id, with_pieces=args.get("pieces") is True)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return {
+        "url": result["url"],
+        "filename": result["filename"],
+        "size_bytes": result["size_bytes"],
+        "files": result["files"],
+        "tracks": result["tracks"],
+        "summary": result["summary"],
+        "notes": result["notes"],
+    }
+
+
 def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
     from app.freeze import normalize_freezes, post_to_pre
 
@@ -6907,6 +6925,17 @@ def _build_registry() -> list[Tool]:
             "кусок по фразе. Без параметров — вокруг кусков клипа. / Source transcript window (source time).",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"}}), h_get_transcript,
             label=lambda a: "Читаю расшифровку исходника",
+        ),
+        Tool(
+            "export_timeline_package", "Собираю пакет для монтажки",
+            "Пакет монтажа для Premiere и DaVinci Resolve без рендера: zip с FCP7 .xml и .otio (дорожки на готовом "
+            "таймлайне после вырезов), .srt субтитров и текста слоёв, файлы мемов, картинок, звуков и музыки на нужных "
+            "таймкодах, кроп и наезды ключами, README на русском — что доехало, что нет, как открыть. Запись стрима в "
+            "архив не кладётся; pieces=true — короткие куски 720p по кускам клипа (дольше). Ответ: url для скачивания "
+            "(с токеном или cookie), размер, состав и замечания. / Build a Premiere/Resolve package (no render).",
+            _obj({"pieces": {"type": "boolean", "description": "положить в архив куски видео 720p (по умолчанию нет)"}}),
+            h_export_timeline_package,
+            label=lambda a: "Собираю пакет для монтажки",
         ),
         Tool(
             "view_frame", "Смотрю кадр",

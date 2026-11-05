@@ -98,6 +98,16 @@ def ensure_storyboard(source: dict) -> dict:
 PLAN_THUMB_HEIGHT = 480
 
 
+def _playable_path(source: dict) -> str:
+    """Файл для кадра: запись, а если её удалили — прокси предпросмотра (тот же таймлайн)."""
+    from app.preview_proxy import media_path
+
+    path = media_path(source)
+    if path is None:
+        raise ValueError("source has no playable file")
+    return str(path)
+
+
 def plan_thumb(source: dict, t: float, focus_x: float) -> Path:
     """A 9:16 still of a moment: the frame at ``t`` cropped around ``focus_x``.
 
@@ -105,9 +115,7 @@ def plan_thumb(source: dict, t: float, focus_x: float) -> Path:
     thumbnail while repeat views stay a plain file read.
     """
     source_id = int(source["id"])
-    local_path = str(source.get("local_path") or "")
-    if not local_path or not Path(local_path).exists():
-        raise ValueError("source has no playable file")
+    local_path = _playable_path(source)
     x = min(1.0, max(0.0, float(focus_x)))
     out = storyboard_dir(source_id) / "plans" / f"{t:.2f}_{x:.3f}.jpg"
     if out.exists():
@@ -148,9 +156,7 @@ def source_frame(source: dict, t: float, width: int = 960) -> Path:
     """The full source frame at ``t`` (cached) — lets an outside agent LOOK at the
     picture to decide framing, without downloading a multi-gigabyte source."""
     source_id = int(source["id"])
-    local_path = str(source.get("local_path") or "")
-    if not local_path or not Path(local_path).exists():
-        raise ValueError("source has no playable file")
+    local_path = _playable_path(source)
     duration = float(source.get("duration_sec") or 0)
     t = max(0.0, min(float(t), duration - 0.05 if duration > 0.1 else float(t)))
     width = int(min(1920, max(160, width)))

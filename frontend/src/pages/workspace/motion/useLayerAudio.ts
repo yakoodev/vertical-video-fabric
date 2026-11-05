@@ -54,6 +54,11 @@ export function useLayerAudio(
         // Эффект — volume ≤ 1, дорожка (mode track) — volume × gain_db (в браузере потолок 1).
         a.volume = previewVolume(layer);
         const want = (layer.props.offset ?? 0) + (t! - layer.start);
+        // Файл короче отрезка слоя: рендер доигрывает его один раз, и превью не запускает заново.
+        if (Number.isFinite(a.duration) && want >= a.duration) {
+          if (!a.paused) a.pause();
+          continue;
+        }
         if (a.paused) {
           a.currentTime = want;
           void a.play().catch(() => undefined);
