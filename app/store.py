@@ -2048,16 +2048,6 @@ class AppStore:
         )
         return self.get_clip_plan(clip_plan_id)
 
-    def delete_generated_clip_plans_for_source(self, source_id: int, exclude_analysis_id: int | None = None) -> int:
-        self.get_source(source_id)
-        params: list[Any] = [source_id]
-        sql = "DELETE FROM clip_plans WHERE source_id = ? AND analysis_id IS NOT NULL"
-        if exclude_analysis_id is not None:
-            sql += " AND analysis_id != ?"
-            params.append(exclude_analysis_id)
-        cur = self.db.execute(sql, params)
-        return int(cur.rowcount or 0)
-
     def add_segment_to_clip_plan(
         self,
         clip_plan_id: int,
