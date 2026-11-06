@@ -82,6 +82,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     current.checks.push({ name, ok: Boolean(ok), ...(value === undefined ? {} : { value }) });
   };
   const note = (name, value) => check(name, true, value);
+  const checkLive = (name, ok, value) => check(name, ok, ok ? undefined : value);
   const step = async (name, fn, { skipPhone = false } = {}) => {
     current = { name, checks: [], ok: true };
     result.steps.push(current);
@@ -93,7 +94,8 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     try {
       await Promise.race([fn(), sleep(90_000).then(() => { throw new Error("шаг не уложился в 90 с"); })]);
     } catch (e) {
-      current.error = String(e).split("\n")[0].slice(0, 400);
+      current.error = `${String(e).split("\n")[0].slice(0, 300)} @ ${here()}`;
+      await page.screenshot({ path: path.join(dir, `FAIL-${name.replace(/[^\wа-яё]+/gi, "_").slice(0, 50)}.jpg`), type: "jpeg", quality: 60, fullPage: true }).catch(() => undefined);
     }
     current.ok = !current.error && current.checks.every((c) => c.ok);
     current.ms = Date.now() - t0;
@@ -354,10 +356,10 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page.locator(".mo-card .mo-thumb").nth(2).click();
     await sleep(1500);
     const v = await vid();
-    check("играет", v && !v.paused, v);
-    check("время идёт", v && v.t > 0, v?.t);
+    checkLive("играет", v && !v.paused, v);
+    checkLive("время идёт", v && v.t > 0, v?.t);
     const left = await page.locator(".mo-heat-head").evaluate((el) => el.style.left);
-    check("метка на полосе", parseFloat(left) > 0, left);
+    checkLive("метка на полосе", parseFloat(left) > 0, left);
     const active = await page.locator(".mo-card.active").count();
     check("карточка подсвечена", active === 1, active);
     const drawn = await page.evaluate(() => {
@@ -485,7 +487,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     const tc1 = await tc();
     await sleep(500);
     const tc2 = await tc();
-    check("таймкод идёт", tc1 !== tc2, [tc1, tc2]);
+    checkLive("таймкод идёт", tc1 !== tc2, [tc1, tc2]);
     await page.locator(".speed-seg .seg-item", { hasText: "2×" }).click();
     await sleep(200);
     check("скорость 2×", (await vid()).rate === 2, (await vid()).rate);
@@ -643,6 +645,8 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
 
   await step("редактор: ключевые кадры", async () => {
     await neutralClick();
+    await page.keyboard.press("Home"); // курсор вне слоя: клик по строке поставит его внутрь
+    await sleep(300);
     await selectLayerRow("ЕМУ КОСТЮМ");
     const key = page.locator(".li-key").first();
     await key.scrollIntoViewIfNeeded();
@@ -826,7 +830,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page.keyboard.press(" ");
     const jumped = await until(tc, (t) => parseFloat((t || "0:0").split(":")[1]) >= 9.9, 5000);
     await page.keyboard.press(" ");
-    check("плеер перепрыгнул вырез", parseFloat((jumped || "0:0").split(":")[1]) >= 9.9, jumped);
+    checkLive("плеер перепрыгнул вырез", parseFloat((jumped || "0:0").split(":")[1]) >= 9.9, jumped);
     await sleep(200);
     await page.locator(".cut-find .btn").first().click();
     await page.locator(".cut-found, .toast").first().waitFor({ timeout: 25000 }).catch(() => undefined);
@@ -907,7 +911,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
 
   await step("редактор: выделение и Ctrl+C после ухода в список", async () => {
     await openEditorUrl(CLIP);
-    await selectLayerRow("ИЛИ ДОМОЙ").catch(() => undefined);
+    await selectLayerRow("ЕМУ КОСТЮМ");
     await page.locator("button.ed-back", { hasText: "Назад к черновикам" }).click();
     await page.locator(".mo-card").first().waitFor({ timeout: 10000 });
     await sleep(600);
@@ -1034,7 +1038,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page.locator(".mo-card .mo-thumb").first().click();
     await sleep(900);
     const v = await vid();
-    check("после монтажа плеер списка играет", v && !v.paused, v);
+    checkLive("после монтажа плеер списка играет", v && !v.paused, v);
     await page.evaluate(() => document.querySelector(".mo-stage video")?.pause());
   });
 

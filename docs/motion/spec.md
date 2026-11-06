@@ -528,7 +528,7 @@ headless Chromium (CDP через `--remote-debugging-pipe`, без Puppeteer; �
   (`frontend/src/motion/endscreen.ts`): всё, что уже на холсте (видео, фон раскладки, слои `behind`), —
   размытие с сигмой `blur·min(W,H)/1080` и чёрный поверх с `dim`; ход `inOutCubic` за `ramp`. Размытие
   считается на уменьшенной копии с краями «edge-clamp» (у кромки нет каймы и наезда). Слои, баннер,
-  субтитры — резкие. Превью редактора (DraftsAndEditorTab) зовёт ту же функцию на холсте основы.
+  субтитры — резкие. Превью редактора (`preview/frame.ts`) зовёт ту же функцию на холсте основы.
 * `comp.endScreen = {start, ramp, blur, dim}` (`app/end_screen.comp_end_screen`): `start` — начало слоя
   `end_banner` в этой композиции (вырезы и стоп-кадры его уже сдвинули), без слоя — `duration − end_screen.duration`.
   Концовка без слоёв и камеры тоже включает моушн-проход (`plan_motion`).

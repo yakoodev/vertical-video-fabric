@@ -91,7 +91,8 @@ def main() -> int:
             if isinstance(d, str) or d > threshold:
                 print(f"  кадр: {name}: {d if isinstance(d, str) else f'{d:.2f} %'}")
         same = sum(1 for v in shots.values() if isinstance(v, float) and v <= threshold)
-        print(f"  кадров совпало {same} из {len(shots)}")
+        worst = max((v for v in shots.values() if isinstance(v, float)), default=0.0)
+        print(f"  кадров совпало {same} из {len(shots)}, самое большое отличие {worst:.3f} %")
         total_bad += len(steps) + (len(shots) - same) + len(after["summary"]["failed"])
         report[width] = {"steps": steps, "shots": shots}
     (after_dir / f"compare_{before_dir.name}.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
