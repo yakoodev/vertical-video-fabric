@@ -6,14 +6,11 @@ import { montageAssetsApi } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { useToast } from "@/components/Toast";
 import { useModules } from "@/hooks/useModules";
-import { readPref } from "@/pages/workspace/InspectorParts";
 import { type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import { type Layer } from "@/motion";
 import { type TransformHandle } from "@/pages/workspace/motion/edit";
 import { playbackApi } from "@/api/playback";
 import { lookFilterCss, type InsertPreview, type MotionView } from "@/pages/workspace/preview/frame";
-import { type Selection } from "@/pages/workspace/ClipTimeline";
-import { INSP_TABS, LIB_TABS, type InspTab, type LibTab } from "@/pages/workspace/editor/editorHelpers";
 import { useEditorShortcuts } from "@/pages/workspace/editor/useEditorShortcuts";
 import { useDraftsFilters } from "@/pages/workspace/drafts/useDraftsFilters";
 import { useClipPanelSettings } from "@/pages/workspace/editor/useClipPanelSettings";
@@ -22,6 +19,7 @@ import { usePreviewLoops } from "@/pages/workspace/editor/usePreviewLoops";
 import { useClipActions } from "@/pages/workspace/editor/useClipActions";
 import { useVideoSource } from "@/pages/workspace/editor/useVideoSource";
 import { useLayerPreviewData } from "@/pages/workspace/editor/useLayerPreviewData";
+import { useEditorPanels } from "@/pages/workspace/editor/useEditorPanels";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -33,27 +31,15 @@ export function useDraftsEditorState(sourceId: string) {
   const toast = useToast();
   // Модули сервиса (app/modules.py): выключенный прячет свои панели и кнопки редактора.
   const { on: moduleOn } = useModules();
-  const libTabs = LIB_TABS.filter((t) => !t.modules || t.modules.some(moduleOn));
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLCanvasElement>(null);
   const phoneOverlayRef = useRef<HTMLCanvasElement>(null);
   const heatHeadRef = useRef<HTMLSpanElement>(null);
   const tcRef = useRef<HTMLSpanElement>(null);
-  const [libTab, setLibTab] = useState<LibTab>(() => {
-    try {
-      const saved = localStorage.getItem("vvf.ed.libTab");
-      return LIB_TABS.some((t) => t.key === saved) ? (saved as LibTab) : "moments";
-    } catch {
-      return "moments";
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("vvf.ed.libTab", libTab);
-    } catch {
-      /* приватное окно — просто не запоминаем */
-    }
-  }, [libTab]);
+  const editorPanels = useEditorPanels();
+  const {
+    setTlSelected,
+  } = editorPanels;
   // Строки субтитров открытого клипа — рисуются на превью-телефоне.
   const subLinesRef = useRef<SubtitleLine[]>([]);
   // Пословные тайминги и стиль клипа: с ними превью рисует те же субтитры,
@@ -64,29 +50,6 @@ export function useDraftsEditorState(sourceId: string) {
   const bannerGeomRef = useRef<{ height: number; pos: number } | null>(null);
   const subStyleRef = useRef<SubtitleStyle | null>(null);
   const subPosPctRef = useRef(12);
-  // Что выбрано на таймлайне: кусок, строка субтитров или вставка.
-  const [tlSelected, setTlSelected] = useState<Selection>(null);
-  // Вкладка правой панели — запоминается; выбор на таймлайне сам открывает нужную.
-  const [inspTab, setInspTab] = useState<InspTab>(() => {
-    const saved = readPref("vvf.ed.inspTab");
-    return INSP_TABS.includes(saved as InspTab) ? (saved as InspTab) : "clip";
-  });
-  const inspScrollRef = useRef<HTMLDivElement>(null);
-  const tlSelKey = tlSelected ? `${tlSelected.kind}:${"id" in tlSelected ? tlSelected.id : tlSelected.index}` : "";
-  useEffect(() => {
-    if (!tlSelected) return;
-    const to: Record<NonNullable<Selection>["kind"], InspTab> = {
-      layer: "layers",
-      cam: "layers",
-      insert: "layers",
-      piece: "piece",
-      mute: "audio",
-      sub: "subs",
-    };
-    setInspTab(to[tlSelected.kind]);
-    if (inspScrollRef.current) inspScrollRef.current.scrollTop = 0;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tlSelKey]);
   const [subLines, setSubLines] = useState<SubtitleLine[]>([]);
   const assetMediaRef = useRef(new Map<number, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>());
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
@@ -337,16 +300,16 @@ export function useDraftsEditorState(sourceId: string) {
     ...clipActions,
     ...videoSource,
     ...layerPreviewData,
-    sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
-    bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef,
-    assetsQuery, pickableAssets, navigate, view, openEditor, backToMoments, musicPreviewRef, motionViewRef,
-    inlineCancelRef, clipNowRef, clipNow, reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef,
-    hoverPlanRef, planWave, planSubs, pickPointRef, activePlan, uniquePresets, selectedPreset, lookCss, lookFrames,
-    libTab, setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, activePlanId,
-    setActivePlanId, selectedSeg, setSelectedSeg, inlineEdit, setInlineEdit, coverUploading, setCoverUploading,
-    clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal,
-    setSubsWide, useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, pickingPoint, setPickingPoint,
-    moduleOn, subsWide,
+    ...editorPanels,
+    sourceId, qc, toast, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
+    bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, assetMediaRef, triagePhoneRef, assetsQuery,
+    pickableAssets, navigate, view, openEditor, backToMoments, musicPreviewRef, motionViewRef, inlineCancelRef,
+    clipNowRef, clipNow, reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, planWave,
+    planSubs, pickPointRef, activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, subLines, setSubLines,
+    activePlanId, setActivePlanId, selectedSeg, setSelectedSeg, inlineEdit, setInlineEdit, coverUploading,
+    setCoverUploading, clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen,
+    aiGoal, setAiGoal, setSubsWide, useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, pickingPoint,
+    setPickingPoint, moduleOn, subsWide,
   };
 }
 
