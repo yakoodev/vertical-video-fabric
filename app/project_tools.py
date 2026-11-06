@@ -79,7 +79,17 @@ def h_get_project_brief(ctx: ToolContext, args: dict) -> dict:
         from app.stream_questions import answers_brief
 
         brief["stream_answers"] = answers_brief(ctx.store, int(args["source_id"]))
+    from app.agent_settings import agent_brief
+
+    brief["agent_settings"] = agent_brief(ctx.store, project_id)
     return brief
+
+
+def h_get_agent_settings(ctx: ToolContext, args: dict) -> dict:
+    from app.agent_settings import agent_brief
+
+    project_id = _pid(ctx, args)
+    return {"project_id": project_id, **agent_brief(ctx.store, project_id)}
 
 
 def h_update_project_brief(ctx: ToolContext, args: dict) -> dict:
@@ -251,6 +261,13 @@ def project_tools() -> list[Tool]:
             "не повторяйся), гипотезы и короткая статистика. brief_rev — для update_project_brief(base_rev). "
             "/ Project brief: lore, owner rules, already cut clips.",
             _obj({**_PROJECT_ARGS, "covered_limit": {"type": "integer"}}), h_get_project_brief, scope="project",
+        ),
+        Tool(
+            "get_agent_settings", "Что разрешено в проекте",
+            "Как работает агент в этом проекте: ждать ли ответов, останавливаться ли на списке клипов, сколько можно "
+            "тратить без подтверждения, можно ли публиковать самому и куда. Меняет только владелец, сам не меняй и не "
+            "обходи. То же поле agent_settings есть в get_project_brief. / What the owner allows in this project.",
+            _obj(dict(_PROJECT_ARGS)), h_get_agent_settings, scope="project",
         ),
         Tool(
             "update_project_brief", "Обновляю бриф",

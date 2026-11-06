@@ -691,7 +691,7 @@ def request_generation(store: Any, video_id: int, requested_by: str = "explainer
     except G.BudgetError as exc:
         E.set_status(store, video_id, "failed", ("planned",), error=str(exc)[:600])
         return {"status": "failed", "error": str(exc), "estimate": est}
-    if req["status"] == "awaiting_approval":
+    if req["status"] in ("awaiting_approval", "approved"):
         E.set_status(store, video_id, "awaiting_approval", ("planned",), approval_id=req["approval_id"],
                      estimate_rub=est["total_rub"])
         return {"status": "awaiting_approval", "approval_id": req["approval_id"], "estimate": est,

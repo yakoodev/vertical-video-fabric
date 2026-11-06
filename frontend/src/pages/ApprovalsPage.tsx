@@ -5,6 +5,7 @@ import {
   APPROVAL_STATUS_LABEL,
   PLATFORM_LABEL,
   PUBLISH_STATUS_LABEL,
+  SETTING_DECIDED,
   apKeys,
   autopilotApi,
   decisionMessage,
@@ -22,7 +23,7 @@ import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
 /**
  * Очередь одобрения автопилота (app/autopilot.py): клипы на публикацию, правила, карточки
- * статистики. Без «Публиковать» ничего не выходит; «Переделать» и «В мусор» с комментарием —
+ * статистики. Без «Публиковать» ничего не выходит (кроме настройки проекта «Публиковать самому»); «Переделать» и «В мусор» с комментарием —
  * урок проекту (правило с цитатой). Те же карточки приходят в Telegram, если бот подключён.
  */
 
@@ -66,12 +67,12 @@ export function ApprovalsPage({ embedded }: { embedded?: boolean } = {}) {
       {embedded ? (
         <p className="inbox-line">
           Ждут решения: {counts.data?.pending ?? 0}. Всего карточек: разрешено {counts.data?.approved ?? 0}, просрочено{" "}
-          {counts.data?.expired ?? 0}. Без «Публиковать» ничего не выходит.
+          {counts.data?.expired ?? 0}. Без «Публиковать» ничего не выходит, если в проекте не включено «Публиковать самому».
         </p>
       ) : (
         <PageHead
           title="Одобрение"
-          sub="Что автопилот хочет опубликовать или запомнить. Без «Публиковать» ничего не выходит."
+          sub="Что автопилот хочет опубликовать или запомнить. Без «Публиковать» ничего не выходит, если в проекте не включено «Публиковать самому»."
         />
       )}
       <div className="series-row" style={{ marginBottom: 14 }}>
@@ -197,7 +198,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
           <span className={`chip${a.kind === "alert" ? " approval-kind--alert" : ""}`}>{a.kind_label}</span>
           {a.content_type ? <span className="chip">{a.content_type}</span> : null}
           <span className={`chip approval-status approval-status--${a.status}`}>{APPROVAL_STATUS_LABEL[a.status]}</span>
-          {a.decided_by === "auto" ? <span className="chip">доверие auto</span> : null}
+          {SETTING_DECIDED[a.decided_by] ? <span className="chip">{SETTING_DECIDED[a.decided_by]}</span> : null}
           <span>{formatSnapshotTime(a.created_at)}</span>
         </div>
         {a.kind === "clip_publish" ? (
@@ -236,7 +237,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
         )}
         {a.decision_comment ? (
           <blockquote className="series-quote">
-            {a.decided_by ? `${a.decided_by}: ` : ""}
+            {a.decided_by && !SETTING_DECIDED[a.decided_by] ? `${a.decided_by}: ` : ""}
             {a.decision_comment}
           </blockquote>
         ) : null}
@@ -302,7 +303,9 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
 
 const EVENT_LABEL: Record<string, string> = {
   submitted: "на одобрение",
-  auto_approved: "без одобрения (auto)",
+  auto_approved: "без одобрения",
+  agent_settings: "настройки агента",
+  clip_list_stop: "стоп на списке клипов",
   approved: "одобрено",
   rejected: "в мусор",
   changes_requested: "на переделку",
@@ -350,7 +353,7 @@ export function Feed({ projectId }: { projectId?: number }) {
             ) : null}
             {!projectId && e.project_name ? <span className="muted"> · {e.project_name}</span> : null}
             {e.note ? <span className="muted"> — {e.note}</span> : null}
-            {e.actor ? <span className="muted"> ({e.actor})</span> : null}
+            {e.actor ? <span className="muted"> ({SETTING_DECIDED[e.actor] ?? e.actor})</span> : null}
           </li>
         ))}
       </ul>

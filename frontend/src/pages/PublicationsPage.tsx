@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { jobsApi } from "@/api/jobs";
+import type { Job } from "@/api/types";
 import { qk } from "@/api/keys";
 import { formatCount, formatSnapshotTime, statsApi, sumKnown, type PostAlert, type TargetStats, type ZeroViewsSettings } from "@/api/stats";
 import { usePublicationStats } from "@/components/StatsBadge";
@@ -136,6 +137,13 @@ function StatsCell({ stats, alerts = [] }: { stats: (TargetStats | undefined)[];
   );
 }
 
+/** Поставил агент сам, по настройке проекта «Публиковать самому». */
+function MadeByAgent({ job }: { job: Job }) {
+  return job.made_by === "agent" ? (
+    <span className="chip" title="Поставил агент сам: настройка проекта «Публиковать самому»">Агент</span>
+  ) : null;
+}
+
 function JobDetail({ jobId }: { jobId: string }) {
   const query = useQuery({ queryKey: qk.job(jobId), queryFn: () => jobsApi.get(jobId) });
   const stats = usePublicationStats();
@@ -159,6 +167,7 @@ function JobDetail({ jobId }: { jobId: string }) {
       />
       <div className="panel" style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
         <Badge status={job.status} />
+        <MadeByAgent job={job} />
         {job.scheduled_at ? <span className="muted">по расписанию: {job.scheduled_at}</span> : null}
         {job.error ? <span style={{ color: "var(--danger)" }}>{job.error}</span> : null}
       </div>
@@ -279,7 +288,7 @@ export function PublicationsPage({ embedded }: { embedded?: boolean } = {}) {
                     <Badge status={job.status} />
                   </td>
                   <td>
-                    <Link to={`/pubs/${job.id}`}>{job.title || "—"}</Link>
+                    <Link to={`/pubs/${job.id}`}>{job.title || "—"}</Link> <MadeByAgent job={job} />
                   </td>
                   <td>{job.targets?.length ?? 0}</td>
                   <td>

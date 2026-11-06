@@ -21,6 +21,8 @@ export interface ClipGridItem {
   drafts: number;
   status: ClipStatus;
   favorite: boolean;
+  /** Черновик взят в работу владельцем: агент может его монтировать. */
+  picked?: boolean;
   hidden: boolean;
   score: number;
   start_sec: number;

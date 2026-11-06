@@ -6668,6 +6668,7 @@ def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
 
 
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
+    from app import agent_settings as S
     from app.piece_speed import seg_length
 
     project = _source_id(args)
@@ -6687,6 +6688,9 @@ def h_list_clips(ctx: ToolContext, args: dict) -> dict:
                 "title": plan.get("title"),
                 "favorite": bool(plan.get("favorite")),
                 "status": plan.get("status"),
+                # Черновик: файла ещё нет. waits_owner: по настройке проекта его монтирует только выбор владельца.
+                "draft": plan.get("status") != "rendered",
+                "waits_owner": S.clip_list_refusal(ctx.store, int(plan["id"])) is not None,
                 "pieces": len(segs),
                 "duration": round(sum(seg_length(s) for s in segs), 2),
                 "layers": len(settings.get("layers") or []) if isinstance(settings, dict) else 0,
@@ -8411,7 +8415,7 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
             args["source_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
         except (KeyError, TypeError, ValueError):
             pass
-    paused = _montage_pause(ctx, name, args)
+    paused = _montage_pause(ctx, name, args) or _clip_list_stop(ctx, tool, args)
     if paused:
         return paused, False
     framing = _framing_call(name, args)
@@ -8461,6 +8465,26 @@ def _montage_pause(ctx: ToolContext, name: str, args: dict) -> dict | None:
     except (KeyError, TypeError, ValueError, ToolError):
         return None
     return None
+
+
+def _clip_list_stop(ctx: ToolContext, tool: Tool, args: dict) -> dict | None:
+    """Настройка «Останавливаться на списке клипов» (app/agent_settings.py): правка черновика, которого владелец не
+    выбрал, отказывает и называет настройку. Смотреть можно, новый клип по заданию создать тоже."""
+    from app import agent_settings as S
+
+    store = getattr(ctx, "store", None)
+    try:
+        if tool.name == "make_compilation":
+            ids = args.get("clip_ids") or []
+        elif tool.name == "create_clip":
+            ids = [args["version_of"]] if args.get("version_of") else []
+        elif tool.mutating and tool.scope == "clip" and getattr(ctx, "clip_plan_id", None):
+            ids = [ctx.clip_plan_id]
+        else:
+            return None
+        return S.drafts_refusal(store, ids)
+    except (KeyError, TypeError, ValueError):
+        return None  # сбой проверки не останавливает работу: отвечает сам инструмент
 
 
 # Сколько неудачных попыток кадрирования аватара подряд (detect_avatar без рамки/со сбоем, set_layout avatar_full с

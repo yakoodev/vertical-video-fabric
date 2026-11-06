@@ -507,7 +507,11 @@ def propose_topics(store: Any, project_id: int, count: int | None = None, client
     data = X._ask(client, TOPICS_RULES, topics_context(store, project_id, count), topics_schema(), 0.95)
     raw = [t for t in data.get("topics") or [] if isinstance(t, dict)]
     batch = f"g{_now().strftime('%Y%m%d%H%M%S')}"
-    status = "approved" if cfg["auto_approve_topics"] else "proposed"
+    # Темы — такой же список: «Останавливаться на списке клипов» сильнее «брать темы сразу».
+    from app.agent_settings import get_settings
+
+    stop = get_settings(store, int(project_id))["stop_at_clip_list"]
+    status = "approved" if cfg["auto_approve_topics"] and not stop else "proposed"
     res = add_topics(store, project_id, raw[: count * 2], origin="gemini", status=status, batch=batch, actor=actor)
     added = res["added"][:count]
     for extra in res["added"][count:]:  # Gemini дал больше, чем просили — лишнее не держим

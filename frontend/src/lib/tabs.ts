@@ -50,7 +50,8 @@ export const PROJECT_TABS: readonly ProjectTab[] = [
   { key: "chat", label: "Чат", cmd: "Чат проекта", module: "agent_chat" },
   { key: "know", label: "Лор и правила", cmd: "Что агент знает, лор и правила" },
   { key: "stats", label: "Статистика" },
-  { key: "autopilot", label: "Автопилот", module: "autopilot" },
+  // Без модуля автопилота на вкладке остаётся раздел «Как работает агент»: пауза и список действуют и без него.
+  { key: "autopilot", label: "Автопилот" },
   // Только у проекта вида «ИИ-видео» (app/aivideo.py), см. projectTabs.
   { key: "aiv", label: "ИИ-видео", module: "ai_video" },
   // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал: темы, расписание, автопилот.

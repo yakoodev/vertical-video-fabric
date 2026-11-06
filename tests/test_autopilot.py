@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app import agent_settings as S
 from app import autopilot as A
 from app import notify_tg
 from app import playbooks
@@ -84,13 +85,17 @@ def test_nothing_published_without_approval_then_slot(env):
     assert {"submitted", "approved", "scheduled"} <= set(events)
 
 
-def test_trust_auto_skips_approval_but_logs(env):
+def test_publish_setting_skips_approval_but_logs(env):
     _c, store, source, pid = env
     A.update_config(store, pid, {"trust": {"meme": "auto", "ad": "approve"}, "platforms": ["youtube"]})
     meme = _clip(store, source["id"], "Мем", tags=["type:meme"])
     ad = _clip(store, source["id"], "Реклама")
+    # Доверие «auto» само по себе больше ничего не публикует: нужна настройка проекта с выбранным аккаунтом.
+    asked = A.submit_clip(store, meme["id"], title="Мем")
+    assert asked["status"] == "pending" and asked["trust"] == "approve" and not _jobs(store)
+    S.save_settings(store, pid, {"publish": {"enabled": True, "account_ids": [store.list_accounts()[0]["id"]]}})
     auto = A.submit_clip(store, meme["id"], title="Мем")
-    assert auto["content_type"] == "meme" and auto["status"] == "approved" and auto["decided_by"] == "auto"
+    assert auto["content_type"] == "meme" and auto["status"] == "approved" and auto["decided_by"] == S.PUBLISH_ACTOR
     assert auto["publish_status"] == "scheduled" and auto["tg_state"] == ""
     assert "auto_approved" in [e["event"] for e in A.list_events(store, pid)]
     manual = A.submit_clip(store, ad["id"], title="Реклама", content_type="ad")
@@ -592,7 +597,7 @@ def test_autopilot_playbook():
     text = book["text"]
     for section in ("## Шаги", "## Инструменты MCP", "## Чек-лист перед сдачей"):
         assert section in text
-    for must in ("get_project_brief", "approved", "trust=auto", "цитат"):
+    for must in ("get_project_brief", "approved", "get_agent_settings", "цитат"):
         assert must in text
     known = {t.name for t in list_tools(include_discovery=True)} | {"censor_profanity"}
     block = text.split("## Инструменты MCP", 1)[1].split("##", 1)[0]

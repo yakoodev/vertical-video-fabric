@@ -549,6 +549,7 @@ class AppStore:
         privacy: str,
         allow_comments: bool,
         scheduled_at: str = "",
+        made_by: str = "",
     ) -> dict:
         clip = self.get_clip(clip_id)
         if clip["status"] != "succeeded":
@@ -569,8 +570,8 @@ class AppStore:
             """
             INSERT INTO jobs
                 (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
-                 source_sha256, source_size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_sha256, source_size_bytes, made_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clip_id,
@@ -583,6 +584,7 @@ class AppStore:
                 str(source_path),
                 sha256,
                 size_bytes,
+                str(made_by or "")[:40],
             ),
         )
         job_id = cur.lastrowid

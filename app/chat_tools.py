@@ -125,7 +125,7 @@ PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Po
 PROJECT_BOUND = {
     "get_project_brief", "update_project_brief", "remember_fact", "note_observation", "forget_fact", "list_rules", "add_rule", "revoke_rule",
     "get_project_stats", "list_hypotheses", "add_hypothesis", "evaluate_hypotheses", "add_manual_publication",
-    "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices",
+    "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices", "get_agent_settings",
 }
 
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.
@@ -402,27 +402,20 @@ def is_dangerous(store: Any, name: str, args: dict, project_id: int | None) -> b
         # Платно — только синтез платным провайдером; gemini и сухой прогон бесплатны (оценка — тоже).
         default = "polza" if name == "dub_clip" else "gemini"
         return bool(args.get("confirm")) and provider_paid(args.get("provider") or default)
-    if name == "submit_for_approval":
-        # При доверии auto карточка сразу одобряется и уходит в публикацию — это уже публикация.
+    tool = all_tools().get(name)
+    if tool is not None and tool.mutating and tool.scope == "clip" and args.get("clip_id") not in (None, ""):
+        # Черновик, которого владелец не выбрал: кнопка в чате и есть его выбор (см. decide_confirmation).
         try:
-            from app import autopilot as A
-            from app import projects as P
+            from app.agent_settings import clip_list_refusal
 
-            clip_id = int(args.get("clip_id") or 0)
-            pid = P.project_of_plan(store, clip_id) or project_id
-            if not pid:
-                return False
-            cfg = A.get_config(store, int(pid))
-            ctype = A.content_type_of(store, cfg, clip_id or None, args.get("content_type") or "")
-            return A.trust_for(cfg, ctype) == "auto"
+            return clip_list_refusal(store, int(args["clip_id"])) is not None
         except Exception:  # noqa: BLE001
             return False
     return False
 
 
 def danger_label(name: str) -> str:
-    return DANGEROUS.get(name) or PAID_LABELS.get(name) or ("Отправить на публикацию (доверие auto — опубликуется сразу)"
-                                   if name == "submit_for_approval" else name)
+    return DANGEROUS.get(name) or PAID_LABELS.get(name) or "Взять черновик в работу"
 
 
 def _foreign_project(store: Any, args: dict, project_id: int) -> str | None:

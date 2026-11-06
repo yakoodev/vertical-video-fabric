@@ -216,6 +216,8 @@ export interface ClipPlan {
   quality?: number;
   duplicate_of?: number | null;
   favorite?: boolean | number;
+  /** Владелец взял черновик в работу: ★, правка или кнопка в чате (app/agent_settings.py). */
+  owner_picked?: boolean | number;
   hidden?: boolean | number;
   // Own render settings of this clip (null = never set up in the editor).
   render_settings?: RenderSettings | null;
@@ -394,6 +396,8 @@ export interface Job {
   updated_at: string;
   error: string;
   targets: JobTarget[];
+  /** 'agent' — поставила настройка проекта «Публиковать самому». */
+  made_by?: string;
 }
 
 export interface Account {

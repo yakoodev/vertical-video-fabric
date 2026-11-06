@@ -219,8 +219,10 @@ def test_auto_never_publishes_without_approval(env, monkeypatch):
     A.decide(store, card["id"], "approve")
     assert len(_jobs(store)) == 1  # публикация — только из approved
 
-    # Доверие проекта auto — сразу в расписание (это решает автопилот, не «Авто»).
-    A.update_config(store, pid, {"trust": {"default": "auto"}})
+    # Настройка проекта «Публиковать самому» — сразу в расписание (это решает автопилот, не «Авто»).
+    from app.agent_settings import save_settings
+
+    save_settings(store, pid, {"publish": {"enabled": True, "account_ids": [yt["id"]]}})
     run = svc._new_run(label="t2")
     svc._run(run, "", {}, {"provider": "mock"}, {}, publish, source_id=source["id"])
     assert run["auto_approved"] == 1 and len(_jobs(store)) == 2

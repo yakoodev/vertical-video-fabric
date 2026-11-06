@@ -268,6 +268,17 @@ build_app_promo: {"spec":{"brand":{"accent":"#FF6A1F"},"hook":["Ищешь ко�
 """
 
 
+def owner_settings_note(store: Any, clip_plan_id: int) -> str:
+    """Что разрешено в проекте этого клипа (app/agent_settings.py): то же, что читает агент чата и MCP."""
+    from app.agent_settings import agent_brief
+    from app.projects import project_of_plan
+
+    project_id = project_of_plan(store, int(clip_plan_id))
+    if project_id is None:
+        return ""
+    return "\n\nНАСТРОЙКИ ПРОЕКТА ОТ ВЛАДЕЛЬЦА\n" + "\n".join(f"- {line}" for line in agent_brief(store, project_id)["allows"])
+
+
 def system_prompt(fmt: str | None = None, layers_format: str | None = None, *, has_layers: bool = True,
                   playbook: str | None = None) -> str:
     """Системный промпт под формат клипа (app/formats.py). 9:16 со слоями в 9:16 (клип без
@@ -629,6 +640,7 @@ def run_agent(
         # Формат читаем на каждый вызов: агент мог сменить его set_format (по просьбе владельца).
         fmt, layers_fmt, has_layers = clip_formats(store, clip_plan_id)
         prompt = system_prompt(fmt, layers_fmt, has_layers=has_layers, playbook=active_playbook(message, steps))
+        prompt += owner_settings_note(store, clip_plan_id)
         payload: dict = {
             "systemInstruction": {"parts": [{"text": prompt}]},
             "contents": contents,

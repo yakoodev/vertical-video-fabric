@@ -46,7 +46,8 @@ def _plan(store, project_id: int | None = None) -> dict:
     source = store.create_source("upload", src, duration_sec=60, width=1080, height=1920, status="ready")
     if project_id is not None:
         P.set_source_project(store, source["id"], project_id)
-    analysis = store.create_ai_analysis(source["id"], "mock", status="succeeded")
+    # Клип по заданию: черновик из анализа агент не правит без выбора владельца (app/agent_settings.py).
+    analysis = store.create_ai_analysis(source["id"], "manual", status="succeeded")
     seg = store.create_ai_segment(analysis["id"], {"start_sec": 0, "end_sec": 40, "title": "A"})
     return store.create_clip_plan(source["id"], analysis["id"], "Клип", segment_ids=[seg["id"]])
 

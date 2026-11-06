@@ -3,6 +3,8 @@ import { api } from "@/api/client";
 /** Ждёт ли монтаж ответов владельца (app/stream_questions.montage_gate). */
 export type MontageGate = {
   paused: boolean;
+  /** false — настройка проекта: монтаж этого проекта не ждёт ответов. */
+  waits: boolean;
   open: number;
   project_open: number;
   clip_open: number;

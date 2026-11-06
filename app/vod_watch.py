@@ -13,7 +13,8 @@
   весь сервис; перед ней проверка места (``vod_size_gb`` + запас ``DOWNLOAD_FREE_RESERVE_GB``).
   Мало места — карточка владельцу «Повторить / Пропустить», без попытки качать.
 * Нарезка: ``mode: pipeline`` — встроенный конвейер (``AutomationService``: анализ → кандидаты с
-  весом чата → оформление проекта → рендер → ``submit_clip``); ``mode: ask`` — хук «нужен агент»:
+  весом чата → оформление проекта → рендер → ``submit_clip``), причём по настройкам проекта
+  (app/agent_settings.py) ждёт ответов до нарезки и останавливается на черновиках; ``mode: ask`` — хук «нужен агент»:
   карточка «Новый VOD — нарезать?» с кнопками «Скачать и нарезать» / «Скачать — нарежет агент» /
   «Пропустить». Публикует по-прежнему только одобрение (app/autopilot.py).
 """
@@ -551,7 +552,8 @@ def _poll_cut(store: Any, automation: Any, item: dict) -> None:
         _fail(store, item, "нарезка прервана перезапуском сервиса — «Нарезать» ещё раз")
     elif run["status"] == "done":
         _set_item(store, item["id"], status="done", detail=run.get("message") or "готово")
-        _note(store, item, "vod_cut", f"✂️ VOD {_label(item)}: {run.get('message') or 'нарезан'} — смотри «Одобрение»")
+        where = "«Черновики» этого видео" if run.get("stopped_at_list") else "«Одобрение»"
+        _note(store, item, "vod_cut", f"✂️ VOD {_label(item)}: {run.get('message') or 'нарезан'} — смотри {where}")
     elif run["status"] == "failed":
         _fail(store, item, f"нарезка: {run.get('error') or 'ошибка'}")
     else:
@@ -570,9 +572,18 @@ def advance(store: Any, downloads: Any, automation: Any) -> None:
                 _fail(store, item, f"{type(exc).__name__}: {exc}")
 
     def cut(item: dict, cfg: dict) -> None:
-        if not _chat_pending(store, item, cfg) and not store.db.query_one(
+        if _chat_pending(store, item, cfg) or store.db.query_one(
                 "SELECT 1 FROM vod_watch_items WHERE status = 'cutting' LIMIT 1"):
-            _start_cut(store, automation, item, cfg)
+            return
+        from app.agent_settings import NAME_WAIT
+        from app.stream_questions import montage_refusal
+
+        # Настройка проекта «Ждать ответов»: запись ждёт скачанной, причина видна в строке VOD.
+        refusal = montage_refusal(store, int(item["source_id"])) if item["cutter"] != "agent" else None
+        if refusal:
+            _set_item(store, item["id"], detail=f"Ждёт ответов владельца на вопросы этого видео: настройка проекта «{NAME_WAIT}»")
+            return
+        _start_cut(store, automation, item, cfg)
 
     def expire(item: dict, cfg: dict) -> None:
         if item["approval_id"] and A.get_approval(store, int(item["approval_id"]))["status"] == "expired":

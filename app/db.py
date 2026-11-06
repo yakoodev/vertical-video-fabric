@@ -344,6 +344,8 @@ class Database:
             self._ensure_column(conn, "ai_segments", "fit_json", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "clip_id", "INTEGER REFERENCES clips(id)")
             self._ensure_column(conn, "jobs", "scheduled_at", "TEXT")
+            # Кто поставил публикацию: 'agent' — настройка проекта «Публиковать самому» (app/agent_settings.py).
+            self._ensure_column(conn, "jobs", "made_by", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "ffmpeg_presets", "audio_mix_mode", "TEXT NOT NULL DEFAULT 'primary'")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_stream", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_volume", "REAL NOT NULL DEFAULT 1")
@@ -374,6 +376,8 @@ class Database:
             # (dismiss a weak candidate from the moments list).
             self._ensure_column(conn, "clip_plans", "favorite", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "clip_plans", "hidden", "INTEGER NOT NULL DEFAULT 0")
+            # Черновик владелец взял в работу (app/agent_settings.py): звёздочка агента этого не значит.
+            self._ensure_column(conn, "clip_plans", "owner_picked", "INTEGER NOT NULL DEFAULT 0")
             # Per-clip render settings (subs, banner, music, mirror, transitions…):
             # each clip is set up on its own in the editor, see app/clip_settings.py.
             self._ensure_column(conn, "clip_plans", "render_settings_json", "TEXT NOT NULL DEFAULT '{}'")

@@ -190,14 +190,15 @@ def test_dangerous_action_needs_confirmation(env):
     store.get_clip_plan(plan2["id"])
 
 
-def test_submit_for_approval_with_auto_trust_is_dangerous(env):
+def test_submit_for_approval_is_only_a_card_and_approving_is_dangerous(env):
     _client_, store, source, pid = env
     from app import autopilot as A
 
     plan = _plan(store, source["id"])
     assert not CT.is_dangerous(store, "submit_for_approval", {"clip_id": plan["id"]}, pid)
+    # Доверие auto само не публикует: карточка, как всегда. Сам публикует только настройка проекта.
     A.update_config(store, pid, {"trust": {"default": "auto"}})
-    assert CT.is_dangerous(store, "submit_for_approval", {"clip_id": plan["id"]}, pid)
+    assert not CT.is_dangerous(store, "submit_for_approval", {"clip_id": plan["id"]}, pid)
     assert CT.is_dangerous(store, "approve_publication", {"approval_id": 1}, pid)
 
 
