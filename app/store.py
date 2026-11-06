@@ -28,45 +28,19 @@ from app.cut_refine import CUT_STRATEGIES, get_cut_strategy, refine_boundaries
 from app.focus_presets import FOCUS_PRESETS, FOCUS_STRATEGIES
 from app.settings import settings
 
+# Хранилище разложено по областям (app/store_*.py); все имена остаются доступны и отсюда.
+from app.store_common import (  # noqa: F401
+    _choice, _color_for_category, _json_text, _parse_focus, _path_inside, _remove_files_within, _segment_dict,
+    CSS_HEX_RE, MAX_SEGMENT_DURATION_SEC, MIN_PIECE_DURATION_SEC, MIN_SEGMENT_DURATION_SEC, PUBLISH_INTERRUPTED_ERROR,
+    PUBLISH_NOT_STARTED_ERROR, RENDER_INTERRUPTED_ERROR, VALID_AI_PROVIDERS, VALID_ANALYSIS_STATUSES,
+    VALID_AUDIO_MIX_MODES, VALID_BANNER_POSITIONS, VALID_CLIP_PLAN_STATUSES, VALID_CLIP_STATUSES, VALID_COLOR_STYLES,
+    VALID_CROP_ANCHORS, VALID_CUT_STRATEGIES, VALID_FOCUS_PRESETS, VALID_FOCUS_STRATEGIES, VALID_PLATFORMS,
+    VALID_PRIVACY, VALID_PROMPT_TASKS, VALID_SCALE_MODES, VALID_SEGMENT_STATUSES, VALID_SOURCE_STATUSES,
+    VALID_SOURCE_TYPES, VALID_SUBTITLE_PROVIDERS,
+)
+
+
 log = logging.getLogger(__name__)
-
-# Причины для людей: видны у клипа и в публикациях (recover_after_restart).
-RENDER_INTERRUPTED_ERROR = "Рендер прервался из-за перезапуска сервиса"
-PUBLISH_INTERRUPTED_ERROR = ("Публикация прервалась из-за перезапуска сервиса. Видео могло уже выйти: "
-                             "проверьте на площадке, прежде чем публиковать снова")
-PUBLISH_NOT_STARTED_ERROR = "Публикация прервалась из-за перезапуска сервиса. На эту площадку видео не отправляли"
-
-VALID_FOCUS_PRESETS = set(FOCUS_PRESETS)
-VALID_FOCUS_STRATEGIES = {s["key"] for s in FOCUS_STRATEGIES}
-VALID_CUT_STRATEGIES = set(CUT_STRATEGIES)
-VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
-VALID_PRIVACY = {"public", "unlisted", "private"}
-# clip_upload и canvas — скрытые якоря (готовый клип, пустой холст app/canvas.py): в «Проектах» их нет.
-VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload", "canvas"}
-VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
-# manual — клипы, которые агент создал по таймкодам сам (app/manual_clips.py).
-VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action", "manual"}
-# Subtitles can additionally use the local Whisper engine (analysis cannot).
-VALID_SUBTITLE_PROVIDERS = (VALID_AI_PROVIDERS - {"manual"}) | {"whisper"}
-VALID_PROMPT_TASKS = {"analysis", "publishing", "subtitle"}
-VALID_ANALYSIS_STATUSES = {"queued", "running", "cancelling", "cancelled", "succeeded", "failed"}
-VALID_SEGMENT_STATUSES = {"candidate", "rendering", "rendered", "rejected"}
-VALID_CLIP_PLAN_STATUSES = {"candidate", "rendering", "rendered", "failed", "rejected"}
-VALID_SCALE_MODES = {"cover", "contain", "blur_background"}
-VALID_CROP_ANCHORS = {"center", "top", "bottom"}
-VALID_AUDIO_MIX_MODES = {"primary", "secondary", "mix"}
-VALID_BANNER_POSITIONS = {"top", "center", "bottom", "custom"}
-VALID_COLOR_STYLES = {"none", "warm", "cold", "cinematic", "vibrant", "noir", "vintage"}
-VALID_CLIP_STATUSES = {"queued", "rendering", "succeeded", "failed"}
-CSS_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
-# Кусок, который предлагает анализ (ИИ-хайлайт): короче 5 с — не момент, а обрывок.
-MIN_SEGMENT_DURATION_SEC = 5
-# Кусок ручного монтажа (create_clip, файл клипа, редактор): рендеру длина куска не важна —
-# переход между кусками и так не берёт больше 40% куска (app/transitions.plan_joins), а
-# вырезы и без того дают части короче 5 с. Клипы 583–585: широкий баннер «ЧЕМПИОН» отдельным
-# куском в 1.5–3 с запрещали 5 с анализа.
-MIN_PIECE_DURATION_SEC = 1.5
-MAX_SEGMENT_DURATION_SEC = 180
 
 
 def source_file_present(local_path: Any) -> bool:
@@ -3080,38 +3054,6 @@ def _redact_proxy_url(proxy_url: str) -> str:
     return urlunsplit((parts.scheme, netloc, "", "", ""))
 
 
-def _choice(value: str, allowed: set[str], field_name: str) -> str:
-    normalized = value.strip().lower()
-    if normalized not in allowed:
-        raise ValueError(f"invalid {field_name}: {value}")
-    return normalized
-
-
-def _json_text(value: Any | None) -> str:
-    if value is None:
-        return "{}"
-    if isinstance(value, str):
-        json.loads(value)
-        return value
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _path_inside(value: str | Path, root: Path, field_name: str) -> str:
-    if value is None or not str(value).strip():
-        raise ValueError(f"{field_name} is required")
-    root.mkdir(parents=True, exist_ok=True)
-    path = Path(value)
-    if not path.is_absolute():
-        path = root / path
-    resolved_root = root.resolve()
-    resolved_path = path.resolve(strict=False)
-    try:
-        resolved_path.relative_to(resolved_root)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be inside {resolved_root}") from exc
-    return str(resolved_path)
-
-
 def _normalize_content_crop(value: Any) -> str:
     """Validate a normalized content-crop rect and return it as JSON text.
 
@@ -3141,27 +3083,6 @@ def _normalize_content_crop(value: Any) -> str:
     if x <= 0.001 and y <= 0.001 and w >= 0.999 and h >= 0.999:
         return ""
     return json.dumps({"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)})
-
-
-def _parse_focus(value: Any) -> list:
-    if not value:
-        return []
-    if isinstance(value, list):
-        return value
-    try:
-        parsed = json.loads(value)
-        return parsed if isinstance(parsed, list) else []
-    except (ValueError, TypeError):
-        return []
-
-
-def _segment_dict(row: Any) -> dict:
-    from app.video_crop import normalize_fit
-
-    data = dict(row)
-    data["focus"] = _parse_focus(data.get("focus_json"))
-    data["fit"] = normalize_fit(data.get("fit_json"))
-    return data
 
 
 def _parse_content_crop(value: Any) -> dict | None:
@@ -3211,27 +3132,6 @@ def _parse_transcript(value: Any) -> list[dict]:
         return parsed if isinstance(parsed, list) else []
     except (ValueError, TypeError):
         return []
-
-
-def _remove_files_within(paths: Iterable[str], root: Path) -> int:
-    """Best-effort delete of files that live inside ``root``. Never raises."""
-    removed = 0
-    root_resolved = root.resolve()
-    for raw in paths:
-        if not raw:
-            continue
-        try:
-            path = Path(raw).resolve(strict=False)
-            path.relative_to(root_resolved)
-        except (ValueError, OSError):
-            continue
-        try:
-            if path.is_file():
-                path.unlink()
-                removed += 1
-        except OSError:
-            continue
-    return removed
 
 
 def _normalize_segment(segment: dict[str, Any], source_duration: float, sort_order: int,
@@ -3310,18 +3210,6 @@ def _normalize_focus(value: Any, duration: float) -> str:
         points.append(point)
     points.sort(key=lambda p: p["t"])
     return json.dumps(points[:64])
-
-
-def _color_for_category(category: str) -> str:
-    palette = {
-        "conflict": "#DC2626",
-        "insight": "#2563EB",
-        "joke": "#F59E0B",
-        "reaction": "#7C3AED",
-        "story": "#0F766E",
-        "general": "#64748B",
-    }
-    return palette.get(category.strip().lower(), "#64748B")
 
 
 def _prepare_ffmpeg_preset_fields(fields: dict[str, Any], partial: bool) -> dict[str, Any]:
