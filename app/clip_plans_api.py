@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.agent_settings_api import refuse_agent_drafts
 from app.api_common import _default_subtitle_profile_id
 from app.auth import is_agent_request
-from app.clip_history import save_with_snapshot, snapshot as snapshot_clip, undo as undo_clip
+from app.clip_history import redo as redo_clip, redo_depth, save_with_snapshot, snapshot as snapshot_clip, undo as undo_clip
 from app.clip_settings import settings_to_render_kwargs
 from app.clip_spec import apply_spec, export_spec, json_schema as clip_spec_json_schema, SpecError, validate_spec
 from app.settings import settings
@@ -430,15 +430,36 @@ def build_clip_plans_router(
             "changes": changes,
             "label": label,
             "left": get_store().count_clip_plan_history(clip_plan_id),
+            "redo": redo_depth(get_store(), clip_plan_id),
         }
 
     @router.get(
         "/api/clip-plans/{clip_plan_id}/undo",
         tags=["Clip file"],
-        summary="Сколько шагов назад доступно",
+        summary="Сколько шагов назад и вперёд доступно",
     )
     def api_clip_plan_undo_depth(clip_plan_id: int, _auth: auth_dep) -> dict:
-        return {"left": get_store().count_clip_plan_history(clip_plan_id)}
+        return {"left": get_store().count_clip_plan_history(clip_plan_id), "redo": redo_depth(get_store(), clip_plan_id)}
+
+    @router.post(
+        "/api/clip-plans/{clip_plan_id}/redo",
+        tags=["Clip file"],
+        summary="↪ Шаг вперёд: вернуть то, что отменил шаг назад (пока клип после отмены не менялся)",
+    )
+    def api_clip_plan_redo(clip_plan_id: int, _auth: auth_dep) -> dict:
+        try:
+            fresh, changes, label = redo_clip(get_store(), clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SpecError as exc:
+            raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
+        return {
+            "spec": fresh,
+            "changes": changes,
+            "label": label,
+            "left": get_store().count_clip_plan_history(clip_plan_id),
+            "redo": redo_depth(get_store(), clip_plan_id),
+        }
 
     @router.post(
         "/api/clip-plans/{clip_plan_id}/spec/validate",

@@ -102,3 +102,91 @@ def test_saving_the_same_settings_does_not_eat_an_undo_step(tmp_path, monkeypatc
     assert client.get(f"/api/clip-plans/{plan['id']}/undo").json()["left"] == 1
     client.post(f"/api/clip-plans/{plan['id']}/undo").raise_for_status()
     assert client.get(f"/api/clip-plans/{plan['id']}/spec").json()["render"]["transition"]["type"] == "cut"
+
+
+# ---------------------------------------------------------------- шаг вперёд
+
+
+def _set_title(client, plan, title):
+    spec = client.get(f"/api/clip-plans/{plan['id']}/spec").json()
+    spec["title"] = title
+    client.put(f"/api/clip-plans/{plan['id']}/spec", json=spec).raise_for_status()
+
+
+def _title(client, plan):
+    return client.get(f"/api/clip-plans/{plan['id']}/spec").json()["title"]
+
+
+def test_redo_walks_forward_and_back_again(tmp_path, monkeypatch):
+    client, _store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    url = f"/api/clip-plans/{plan['id']}"
+    for title in ("раз", "два"):
+        _set_title(client, plan, title)
+    assert client.post(f"{url}/redo").status_code == 404  # ничего ещё не отменяли
+
+    assert client.post(f"{url}/undo").json()["redo"] == 1
+    out = client.post(f"{url}/undo").raise_for_status().json()
+    assert out["redo"] == 2 and _title(client, plan) == plan["title"]
+    assert client.get(f"{url}/undo").json() == {"left": 0, "redo": 2}
+
+    out = client.post(f"{url}/redo").raise_for_status().json()
+    assert out["label"] == "правка клип-файла" and out["left"] == 1 and out["redo"] == 1 and _title(client, plan) == "раз"
+    out = client.post(f"{url}/redo").raise_for_status().json()
+    assert out["left"] == 2 and out["redo"] == 0 and _title(client, plan) == "два"
+    assert client.post(f"{url}/redo").status_code == 404
+
+    # Вперёд и снова назад: шаги не теряются.
+    client.post(f"{url}/undo").raise_for_status()
+    assert _title(client, plan) == "раз"
+    client.post(f"{url}/redo").raise_for_status()
+    assert _title(client, plan) == "два"
+
+
+def test_redo_brings_back_subtitles_and_deleted_pieces(tmp_path, monkeypatch):
+    client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    url = f"/api/clip-plans/{plan['id']}"
+    store.set_clip_plan_subtitles(plan["id"], {"lines": [{"start": 0, "end": 1, "text": "было"}], "words": []})
+    client.put(f"{url}/subtitles", json={"lines": [{"start": 0, "end": 1, "text": "стало"}]}).raise_for_status()
+    spec = client.get(f"{url}/spec").json()
+    pieces = len(spec["pieces"])
+    spec["pieces"] = spec["pieces"][:1]
+    client.put(f"{url}/spec", json=spec).raise_for_status()
+
+    client.post(f"{url}/undo").raise_for_status()
+    assert len(client.get(f"{url}/spec").json()["pieces"]) == pieces
+    client.post(f"{url}/undo").raise_for_status()
+    assert store.get_clip_plan_subtitles(plan["id"])["lines"][0]["text"] == "было"
+
+    client.post(f"{url}/redo").raise_for_status()
+    assert store.get_clip_plan_subtitles(plan["id"])["lines"][0]["text"] == "стало"
+    # Кусок при отмене создан заново, с другим номером: шаг вперёд это не ломает.
+    assert client.post(f"{url}/redo").status_code == 200
+    assert len(client.get(f"{url}/spec").json()["pieces"]) == 1
+
+
+def test_new_edit_after_undo_closes_redo(tmp_path, monkeypatch):
+    client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    url = f"/api/clip-plans/{plan['id']}"
+    _set_title(client, plan, "раз")
+    client.post(f"{url}/undo").raise_for_status()
+    # Правка мимо истории: снимка нет, а клип уже другой — вперёд идти нельзя.
+    store.update_clip_plan_text(plan["id"], "своё", "", "")
+    assert client.get(f"{url}/undo").json()["redo"] == 0
+    assert client.post(f"{url}/redo").status_code == 404
+    assert _title(client, plan) == "своё"  # новая правка не пропала
+
+    _set_title(client, plan, "два")
+    client.post(f"{url}/undo").raise_for_status()
+    _set_title(client, plan, "три")
+    assert client.post(f"{url}/undo").json()["redo"] == 1  # старый хвост отмен не висит
+    client.post(f"{url}/redo").raise_for_status()
+    assert _title(client, plan) == "три"
+    assert client.post(f"{url}/redo").status_code == 404
+
+
+def test_deleting_the_plan_clears_redo(tmp_path, monkeypatch):
+    client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
+    _set_title(client, plan, "раз")
+    client.post(f"/api/clip-plans/{plan['id']}/undo").raise_for_status()
+    store.delete_clip_plan(plan["id"])
+    assert store.db.query_one("SELECT COUNT(*) AS n FROM clip_plan_redo")["n"] == 0

@@ -237,6 +237,22 @@ export function useClipActions({
         ? toast.push("Отменять нечего", "info")
         : toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"),
   });
+  const redoEdit = useMutation({
+    mutationFn: async (clipPlanId: number) => {
+      // Незаписанная правка панели — уже новая правка: сервер увидит её и скажет, что вперёд нельзя.
+      await flushSettings();
+      return clipPlansApi.redo(clipPlanId);
+    },
+    onSuccess: async (r) => {
+      await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
+      setSettingsNonce((n) => n + 1);
+      toast.success(`Шаг вперёд: ${r.label}${r.redo ? ` · ещё ${r.redo}` : ""}`);
+    },
+    onError: (e) =>
+      e instanceof ApiError && e.status === 404
+        ? toast.push("Повторять нечего: вперёд можно сразу после шага назад, до новых правок", "info")
+        : toast.error(e instanceof ApiError ? e.message : "Не удалось вернуть правку"),
+  });
 
   // ⏩ Скорость/реверс куска — тем же инструментом, что у агента (set_segment_speed): сервер
   // сдвигает слои, камеру и субтитры за новой длиной куска, поэтому панель перечитываем.
@@ -459,7 +475,7 @@ export function useClipActions({
 
   return {
     musicFromUrl, composeCover, compile, batchAuto, autoEdit, mixReport, autoMix, censorMat, brands, applyBrand,
-    undoEdit, segmentSpeed, snapBeats, pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies,
+    undoEdit, redoEdit, segmentSpeed, snapBeats, pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies,
     refineCuts, autofocus, commit, setFixedFrame, setPlanFlag, editPieces, musicUrl, setMusicUrl, coverTitle,
     setCoverTitle, coverStyle, setCoverStyle, autoProgress, censorStyle, setCensorStyle, brandPick, setBrandPick,
     snapMode, setSnapMode,

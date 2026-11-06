@@ -21,8 +21,8 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
     toast, videoRef, subLinesRef, subWordsRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef,
     assetMediaRef, query, sourceMissing, subs, assetsQuery, view, playbackRef, playRanges, stopPlayback, openEditor,
     backToMoments, reframedView, motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, clipNowRef,
-    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, keyHandlerRef, planSubs, undoRef,
-    duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef, plans, flushSettings, undoEdit, pickPointRef,
+    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, keyHandlerRef, planSubs, undoRef, redoRef,
+    duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef, plans, flushSettings, undoEdit, redoEdit, pickPointRef,
     setPlanFlag, activePlan, planGroups, selectedPreset, editPieces, tlSelected, setTlSelected, inspTab, setInspTab,
     subLines, setSubLines, setActivePlanId, selectedSeg, setSelectedSeg, setChosen, subId, bannerOn, bannerId, 
     inserts, setInserts, layers, setLayers, camera, setCamera, setMute, aspect, layersFmt,
@@ -232,6 +232,9 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
   };
   undoRef.current = () => {
     if (activePlan && !undoEdit.isPending) undoEdit.mutate(activePlan.id);
+  };
+  redoRef.current = () => {
+    if (activePlan && !redoEdit.isPending) redoEdit.mutate(activePlan.id);
   };
 
   const splitAtClip = (clipSec: number) => {

@@ -10,10 +10,15 @@
 база не пухла от автосохранений настроек. Одинаковые подряд снимки не пишем —
 редактор сохраняет настройки по таймеру, и без этого история забилась бы
 копиями одного состояния.
+
+Шаг вперёд (Ctrl+Shift+Z): отмена кладёт то, что отменила, в ``clip_plan_redo``, вместе с отпечатком
+клипа сразу после отмены. Клип с тех пор поменялся (неважно каким путём) — вперёд идти некуда.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Callable
 
 from app.clip_spec import apply_spec, export_spec
@@ -76,8 +81,80 @@ def undo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
     entry = store.pop_clip_plan_history(clip_plan_id)
     if entry is None:
         raise KeyError("отменять нечего")
+    label = str(entry.get("label") or "правка")
+    undone = capture(store, clip_plan_id)
+    # Клип поменяли после прошлой отмены: те отменённые правки вернуть уже нельзя.
+    top = _redo_top(store, clip_plan_id)
+    if top and top["after_undo"] != _fingerprint(undone):
+        _redo_clear(store, clip_plan_id)
     fresh, changes = restore(store, clip_plan_id, entry.get("state") or {})
-    return fresh, changes, str(entry.get("label") or "правка")
+    store.db.execute(
+        "INSERT INTO clip_plan_redo (clip_plan_id, state_json, label, after_undo) VALUES (?, ?, ?, ?)",
+        (clip_plan_id, _dumps(undone), label[:120], _fingerprint(capture(store, clip_plan_id))),
+    )
+    store.db.execute(
+        """
+        DELETE FROM clip_plan_redo
+        WHERE clip_plan_id = ? AND id NOT IN (
+            SELECT id FROM clip_plan_redo WHERE clip_plan_id = ? ORDER BY id DESC LIMIT ?
+        )
+        """,
+        (clip_plan_id, clip_plan_id, HISTORY_DEPTH),
+    )
+    return fresh, changes, label
+
+
+def redo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
+    """Вернуть то, что отменил шаг назад. Шаг вперёд честный, только пока клип такой, каким его оставила
+    отмена: любая новая правка (редактор, агент, чат) — и отменённое вернуть нельзя, иначе она бы пропала молча.
+    Возвращает (клип-файл, что изменилось, метка)."""
+    top = _redo_top(store, clip_plan_id)
+    if not top:
+        raise KeyError("повторять нечего")
+    current = capture(store, clip_plan_id)
+    if top["after_undo"] != _fingerprint(current):
+        _redo_clear(store, clip_plan_id)
+        raise KeyError("повторять нечего: клип уже поменялся")
+    store.db.execute("DELETE FROM clip_plan_redo WHERE id = ?", (top["id"],))
+    label = str(top["label"] or "правка")
+    store.push_clip_plan_history(clip_plan_id, current, label, depth=HISTORY_DEPTH)
+    fresh, changes = restore(store, clip_plan_id, json.loads(top["state_json"]))
+    # Куски могли создаться заново (другие segment_id): следующий шаг вперёд сверяем с тем, что вышло сейчас.
+    following = _redo_top(store, clip_plan_id)
+    if following:
+        store.db.execute(
+            "UPDATE clip_plan_redo SET after_undo = ? WHERE id = ?",
+            (_fingerprint(capture(store, clip_plan_id)), following["id"]),
+        )
+    return fresh, changes, label
+
+
+def redo_depth(store: Any, clip_plan_id: int) -> int:
+    """Сколько шагов вперёд доступно сейчас: после новой правки — ни одного."""
+    top = _redo_top(store, clip_plan_id)
+    if not top or top["after_undo"] != _fingerprint(capture(store, clip_plan_id)):
+        return 0
+    row = store.db.query_one("SELECT COUNT(*) AS n FROM clip_plan_redo WHERE clip_plan_id = ?", (clip_plan_id,))
+    return int(row["n"]) if row else 0
+
+
+def _dumps(state: dict) -> str:
+    return json.dumps(state, ensure_ascii=False, sort_keys=True)
+
+
+def _fingerprint(state: dict) -> str:
+    return hashlib.sha256(_dumps(state).encode()).hexdigest()
+
+
+def _redo_top(store: Any, clip_plan_id: int) -> Any:
+    return store.db.query_one(
+        "SELECT id, state_json, label, after_undo FROM clip_plan_redo WHERE clip_plan_id = ? ORDER BY id DESC LIMIT 1",
+        (clip_plan_id,),
+    )
+
+
+def _redo_clear(store: Any, clip_plan_id: int) -> None:
+    store.db.execute("DELETE FROM clip_plan_redo WHERE clip_plan_id = ?", (clip_plan_id,))
 
 
 def _relink_pieces(store: Any, clip_plan_id: int, pieces: list) -> list:

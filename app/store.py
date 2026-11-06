@@ -2859,6 +2859,7 @@ class AppStore:
         с агентом без внешних ключей — чистим сами."""
         self.get_clip_plan(clip_plan_id, include_segments=False)
         self.db.execute("DELETE FROM clip_plan_history WHERE clip_plan_id = ?", (clip_plan_id,))
+        self.db.execute("DELETE FROM clip_plan_redo WHERE clip_plan_id = ?", (clip_plan_id,))
         self.db.execute("DELETE FROM clip_agent_messages WHERE clip_plan_id = ?", (clip_plan_id,))
         self._delete_record("clip_plans", clip_plan_id)
 
