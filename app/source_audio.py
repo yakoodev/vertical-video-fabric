@@ -227,7 +227,7 @@ def audio_view(source: dict) -> dict:
         view["note"] = ("у записи несколько звуковых дорожек (часто 0 — игра, 1 — микрофон): выбранные смешиваются "
                         "в рендере, у каждой своя громкость gain_db (тихий микрофон — подними; gain_db \"auto\" "
                         "замерит сам). Распознавание речи (расшифровка, субтитры, listen, QC) — по speech_tracks: "
-                        "на одном микрофоне оно чище, чем на смеси с игрой. Сменить — set_source_audio(project_id, "
+                        "на одном микрофоне оно чище, чем на смеси с игрой. Сменить — set_source_audio(source_id, "
                         "tracks, speech_tracks)")
     return view
 
@@ -510,6 +510,7 @@ def set_source_audio(store: Any, source_id: int, tracks: Any = _KEEP, speech_tra
     saved = store.update_source(int(source_id), **fields) if fields else source
     return {
         "ok": True,
+        "source_id": saved["id"],
         "project_id": saved["id"],
         "audio": audio_view(saved),
         **out,

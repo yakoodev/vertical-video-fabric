@@ -471,12 +471,12 @@ def test_clip_context_fills_project_id_and_auto_focus(tmp_path, monkeypatch):
     seen = {}
 
     def fake_shots(_ctx, args):
-        seen["project"] = args.get("project_id")
+        seen["project"] = args.get("source_id")
         return {"ok": True}
 
     monkeypatch.setattr(agent_tools.get_tool("get_shots"), "handler", fake_shots)
     _out, ok = run_tool(ctx, "get_shots", {})
-    assert ok and seen["project"] == source["id"]  # проект — источник клипа, без «нужен project_id»
+    assert ok and seen["project"] == source["id"]  # источник клипа, без «нужен source_id»
 
     # Настоящий app.autofocus тянет OpenCV (есть в контейнере, не в venv хоста) — подменяем модуль.
     fake = types.SimpleNamespace(compute_segment_focus=lambda src, a, b, vlm_resolver=None, **_k: [

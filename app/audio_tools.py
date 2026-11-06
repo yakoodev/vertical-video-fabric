@@ -59,7 +59,7 @@ def h_audio_map(ctx: Any, args: dict) -> Any:
     lo, hi = at._num(args.get("from_sec")), at._num(args.get("to_sec"))
     try:
         if args.get("source") or ctx.clip_plan_id is None:
-            project = at._project_or_clip_source(ctx, args)
+            project = at._source_or_clip_source(ctx, args)
             track = at._num(args.get("track"))
             out, png = source_audio_map(ctx.store, project, lo, hi, None if track is None else int(track), image)
         else:
@@ -643,7 +643,7 @@ def tools() -> list:
             obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                  "image": {"type": "boolean", "description": "вернуть картинку карты"},
                  "source": {"type": "boolean", "description": "окно исходника, а не клип"},
-                 "project_id": {"type": "integer"},
+                 **_at().SOURCE_ARGS,
                  "track": {"type": "integer", "description": "source: одна дорожка записи"}}),
             h_audio_map, scope="global",
             label=lambda a: "Смотрю карту звука" + (" исходника" if a.get("source") else ""),

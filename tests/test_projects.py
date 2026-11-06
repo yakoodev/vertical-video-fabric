@@ -9,7 +9,7 @@ import pytest
 
 from app import projects as P
 from app.agent_api import mcp_call_tool, mcp_tool_list
-from app.agent_tools import ToolContext, _takes_project, get_tool, run_tool
+from app.agent_tools import ToolContext, _takes_source, get_tool, run_tool
 from app.db import Database
 from app.settings import settings
 from test_api_pipeline import _client
@@ -429,7 +429,7 @@ def test_mcp_project_tools(tmp_path, monkeypatch):
 
     # Встроенный монтажёр внутри клипа: проект — по источнику клипа; run_tool не подставляет
     # источник в project_id инструментам проектов.
-    assert not _takes_project(get_tool("get_project_brief"))
+    assert not _takes_source(get_tool("get_project_brief"))
     brief, ok = run_tool(ToolContext(store=store, clip_plan_id=plan["id"]), "get_project_brief", {})
     assert ok and brief["project"]["id"] == pid and brief["brief"]["people"][0]["name"] == "Влад"
     assert brief["rules"][0]["text"] == "Не брать политику"

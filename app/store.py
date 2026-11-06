@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import shutil
 from collections.abc import Iterable
@@ -27,6 +28,13 @@ from app.cut_refine import CUT_STRATEGIES, get_cut_strategy, refine_boundaries
 from app.focus_presets import FOCUS_PRESETS, FOCUS_STRATEGIES
 from app.settings import settings
 
+log = logging.getLogger(__name__)
+
+# Причины для людей: видны у клипа и в публикациях (recover_after_restart).
+RENDER_INTERRUPTED_ERROR = "Рендер прервался из-за перезапуска сервиса"
+PUBLISH_INTERRUPTED_ERROR = ("Публикация прервалась из-за перезапуска сервиса. Видео могло уже выйти: "
+                             "проверьте на площадке, прежде чем публиковать снова")
+PUBLISH_NOT_STARTED_ERROR = "Публикация прервалась из-за перезапуска сервиса. На эту площадку видео не отправляли"
 
 VALID_FOCUS_PRESETS = set(FOCUS_PRESETS)
 VALID_FOCUS_STRATEGIES = {s["key"] for s in FOCUS_STRATEGIES}
@@ -1253,11 +1261,111 @@ class AppStore:
         row = self.db.query_one("SELECT status FROM ai_analyses WHERE id = ?", (analysis_id,))
         return bool(row) and str(row["status"]) == "cancelling"
 
+    def recover_after_restart(self) -> dict:
+        """Запуск сервиса: то, что прошлый запуск оставил «идущим», уже никто не доделает.
+
+        Рендер, анализ и публикация живут в потоках этого процесса (один uvicorn в контейнере), и старт идёт раньше
+        работников, поэтому живых таких задач здесь быть не может. Чужого не трогает: ``render3d_jobs`` считает хост-воркер
+        (``tools/render_worker.py``), у очереди свой пульс; ``tools/series3d_*`` рендерят в своей временной базе.
+        Повторный вызов ничего не меняет, сбой шага не мешает ни остальным шагам, ни старту. Ничего не удаляет."""
+        report: dict = {}
+        for name, step in (("analyses", self.recover_interrupted_ai_analyses),
+                           ("renders", self.recover_interrupted_renders),
+                           ("publications", self.recover_interrupted_publications)):
+            try:
+                report[name] = step()
+            except Exception:  # noqa: BLE001 - восстановление не должно мешать старту
+                log.exception("recovery after restart failed: %s", name)
+                report[name] = None
+        if any(report.values()):
+            log.warning("recovered after restart: %s", report)
+        return report
+
+    def recover_interrupted_renders(self) -> dict:
+        """Клипы без исполнителя — ``failed`` с причиной; план и кусок — в то состояние, что и при ошибке рендера.
+
+        ``queued`` у клипа тоже мёртвый: он живёт миг между созданием и ``mark_clip_rendering``, очереди клипов нет.
+        План: файл от прошлых рендеров есть — ``rendered``, нет — ``failed`` (как в конце ``render_clip_plan``);
+        статус плана только показывается (карточка клипа считает свой по файлам), рендер он не блокирует."""
+        counts = {}
+        # Время — последний признак жизни, а не этот запуск: рендер с 21.10 не покажется в версиях и «Активности» свежей ошибкой.
+        counts["clips"] = self.db.execute(
+            """
+            UPDATE clips
+            SET status = 'failed', error = ?, finished_at = updated_at
+            WHERE status IN ('queued', 'rendering')
+            """,
+            (RENDER_INTERRUPTED_ERROR,),
+        ).rowcount
+        counts["subtitle_tracks"] = self.db.execute(
+            """
+            UPDATE subtitle_tracks SET status = 'failed', error = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('queued', 'running')
+            """,
+            (RENDER_INTERRUPTED_ERROR,),
+        ).rowcount
+        counts["plans"] = self.db.execute(
+            """
+            UPDATE clip_plans
+            SET status = CASE
+                    WHEN EXISTS (SELECT 1 FROM clips c WHERE c.clip_plan_id = clip_plans.id AND c.status = 'succeeded')
+                    THEN 'rendered' ELSE 'failed'
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'rendering'
+            """
+        ).rowcount
+        counts["segments"] = self.db.execute(
+            """
+            UPDATE ai_segments
+            SET status = CASE
+                    WHEN EXISTS (SELECT 1 FROM clips c WHERE c.segment_id = ai_segments.id AND c.status = 'succeeded')
+                    THEN 'rendered' ELSE 'candidate'
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'rendering'
+            """
+        ).rowcount
+        return {key: value for key, value in counts.items() if value}
+
+    def recover_interrupted_publications(self) -> dict:
+        """Прерванные публикации — ``failed``, в очередь не возвращаем: файл мог уже уйти на площадку, повтор задвоит пост.
+
+        Что и куда могло уйти, видно по площадкам задания; решает человек. Запланированные (``queued``) не трогаем."""
+        jobs = [int(row["id"]) for row in self.db.query_all("SELECT id FROM jobs WHERE status = 'running'")]
+        targets = self.db.execute(
+            "UPDATE job_targets SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE status = 'running'",
+            (PUBLISH_INTERRUPTED_ERROR,),
+        ).rowcount
+        for job_id in jobs:
+            self.db.execute(
+                "UPDATE job_targets SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP WHERE job_id = ? AND status = 'queued'",
+                (PUBLISH_NOT_STARTED_ERROR, job_id),
+            )
+            # Все площадки успели закончить — итог считается как обычно, прервалось только его сохранение.
+            self.finish_job_from_targets(job_id)
+            self.db.execute(
+                "UPDATE jobs SET status = 'failed', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND EXISTS "
+                "(SELECT 1 FROM job_targets t WHERE t.job_id = jobs.id AND t.error IN (?, ?))",
+                (PUBLISH_INTERRUPTED_ERROR, job_id, PUBLISH_INTERRUPTED_ERROR, PUBLISH_NOT_STARTED_ERROR),
+            )
+        return {key: value for key, value in (("jobs", len(jobs)), ("targets", targets)) if value}
+
     def recover_interrupted_ai_analyses(self) -> int:
-        rows = self.db.query_all("SELECT id, source_id FROM ai_analyses WHERE status = 'running'")
-        if not rows:
+        # «Отменяю» заканчивал поток анализа, а queued живёт миг до running: без потока их никто не доведёт.
+        cancelling = self.db.query_all("SELECT id, source_id FROM ai_analyses WHERE status = 'cancelling'")
+        rows = self.db.query_all("SELECT id, source_id FROM ai_analyses WHERE status IN ('queued', 'running')")
+        # Источник мог остаться «анализируется» и без строки анализа: запуск оборвался между двумя записями.
+        analyzing = self.db.query_all("SELECT id AS source_id FROM sources WHERE status = 'analyzing'")
+        source_ids = {int(row["source_id"]) for row in [*cancelling, *rows, *analyzing]}
+        if not source_ids:
             return 0
-        source_ids = {int(row["source_id"]) for row in rows}
+        self.db.execute(
+            "UPDATE ai_analyses SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE status = 'cancelling'"
+        )
         self.db.execute(
             """
             UPDATE ai_analyses
@@ -1270,12 +1378,12 @@ class AppStore:
                 END,
                 finished_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'running'
+            WHERE status IN ('queued', 'running')
             """
         )
         for source_id in source_ids:
             self._refresh_source_status_after_analysis_change(source_id)
-        return len(rows)
+        return len(rows) + len(cancelling)
 
     def mark_stale_ai_analyses_failed(self, stale_after_seconds: int | None = None) -> int:
         seconds = int(stale_after_seconds if stale_after_seconds is not None else settings.ai_analysis_stale_seconds)
