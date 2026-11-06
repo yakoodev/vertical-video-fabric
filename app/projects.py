@@ -29,7 +29,7 @@
 Таблицы создаёт ``ensure_projects_schema`` из ``Database.init`` (как чат Twitch).
 Существующие данные не трогаются: у старых источников ``project_id`` пустой.
 
-Где что лежит. Здесь — только схема и сводка для агента ``project_brief``. По файлам: проекты и общее ``app/projects_core.py``, правила
+Где что лежит. Здесь — схема, сводка для агента ``project_brief`` и черновик брифа ``draft_brief``. По файлам: проекты и общее ``app/projects_core.py``, правила
 ``app/projects_rules.py``, теги, публикации и статистика ``app/projects_stats.py``, гипотезы ``app/projects_hypotheses.py``, бриф
 ``app/projects_brief.py``. Те модули этот не импортируют, а он их — поэтому все имена по-прежнему доступны отсюда.
 """
