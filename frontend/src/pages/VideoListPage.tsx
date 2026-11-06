@@ -19,7 +19,7 @@ import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
-function ProjectCard({
+function VideoCard({
   source,
   onDelete,
   series,
@@ -358,7 +358,7 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   smotvibe_url: "Плеер",
 };
 
-export function ProjectsPage() {
+export function VideoListPage() {
   const query = useQuery({ queryKey: qk.sources, queryFn: sourcesApi.list });
   const seriesOn = useModules().ready("series");
   const seriesQuery = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, enabled: seriesOn });
@@ -458,7 +458,7 @@ export function ProjectsPage() {
             <>
               <div className="card-grid proj-grid">
                 {shown.visible.map((source) => (
-                  <ProjectCard key={source.id} source={source} onDelete={setPending} series={series} />
+                  <VideoCard key={source.id} source={source} onDelete={setPending} series={series} />
                 ))}
               </div>
               <ShowMore rest={shown.rest} onMore={shown.more} />

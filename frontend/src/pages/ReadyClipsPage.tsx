@@ -16,7 +16,7 @@ import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 const PAGE = 60;
 
 /** Все готовые ролики всех проектов страницами («Публикации и аккаунты → Готовые ролики»). Клипы одного проекта и видео — ClipGrid. */
-export function ClipsPage({ embedded }: { embedded?: boolean } = {}) {
+export function ReadyClipsPage({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const [filter, setFilter] = useState<RenderFilter>("all");

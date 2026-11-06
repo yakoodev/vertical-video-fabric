@@ -38,7 +38,7 @@ class SplitPayload(BaseModel):
     plan_id: int
 
 
-# Фильтры «Готовых роликов» — те же, что были на клиенте (frontend/src/pages/ClipsPage.tsx).
+# Фильтры «Готовых роликов» — те же, что были на клиенте (frontend/src/pages/ReadyClipsPage.tsx).
 _PAGE_FILTERS: dict[str, str] = {
     "all": "",
     "ready": "c.status = 'succeeded'",

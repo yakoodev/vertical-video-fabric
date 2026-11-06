@@ -225,27 +225,6 @@ def obtain_assets(
     return got
 
 
-def ensure_assets(store: Any, wishes: list[dict], client: GeminiClient | None = None) -> list[dict]:
-    """Draw the pictures an agent asked for; a failed one never breaks the rest."""
-    made: list[dict] = []
-    for wish in (wishes or [])[:3]:
-        if not isinstance(wish, dict):
-            continue
-        try:
-            made.append(
-                generate_asset(
-                    store,
-                    str(wish.get("prompt") or ""),
-                    label=str(wish.get("label") or ""),
-                    when=str(wish.get("when") or ""),
-                    client=client,
-                )
-            )
-        except Exception:  # noqa: BLE001 - an extra, never fatal for the montage
-            continue
-    return made
-
-
 def add_from_url(store: Any, url: str, label: str = "", description: str = "", timeout: float = 60,
                  project_id: int | None = None) -> dict:
     """Save a file the owner (or an agent) points at by a direct link."""

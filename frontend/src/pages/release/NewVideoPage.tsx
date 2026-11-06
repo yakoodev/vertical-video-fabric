@@ -14,7 +14,7 @@ import { useModules } from "@/hooks/useModules";
 import { clipPath, projectPath, releasePath } from "@/lib/paths";
 import { AiVideoNew } from "@/pages/AiVideoTab";
 import { ExplainerNew } from "@/pages/ExplainerTab";
-import { AddSource } from "@/pages/ProjectsPage";
+import { AddSource } from "@/pages/VideoListPage";
 import { StoryNew } from "@/pages/StoriesTab";
 import "@/styles/aivideo.css";
 import "@/styles/explainer.css";

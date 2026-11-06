@@ -197,7 +197,8 @@ def normalize_script(data: dict) -> dict:
     text = " ".join(s["text"] for s in sections)
     warnings = []
     if sections[0]["kind"] == "hook" and len(sections[0]["text"]) > HOOK_MAX_CHARS + 8:
-        warnings.append(f"крючок {len(sections[0]['text'])} символов — дольше 2 с, сократи")
+        warnings.append(f"крючок звучит около {len(sections[0]['text']) / CPS:.1f} с".replace(".", ",")
+                        + ": лучше уложиться в 2 с, первые секунды решают, досмотрят ли ролик")
     if points and not 2 <= len(points) <= 6:
         warnings.append(f"пунктов {len(points)} — лучше 3–5")
     return {"title": P._text(data.get("title"), 100), "sections": sections, "text": text,
@@ -321,7 +322,7 @@ PLAN_RULES = """\
   тема); emotion — одно слово по-английски; number_shown — сколько пальцев показывает (или 0);
 - chip — маленькая плашка, если в бите есть конкретное число или время: «07:00», «8 ч», «−30%»,
   «2 л» (до 8 символов); chip_word — слово бита, на котором она появляется. 2–5 чипов на ролик,
-  пусто, если числа нет;
+  пусто, если числа нет. Номер пункта («номер два») — не чип: его показывает отдельная плашка;
 - emphasis — 0–2 ключевых слова бита (точно как в тексте бита): их выделит субтитр — числа,
   главное существительное или глагол.
 Верни ТОЛЬКО JSON по схеме: beats — ровно столько, сколько в запросе, в том же порядке (i).
@@ -364,6 +365,21 @@ _CHIP_RE = re.compile(r"\b(\d{1,2}[:.]\d{2})\b|(\d+(?:[.,]\d+)?)\s*(%|час\w*|
                       re.IGNORECASE)
 _UNITS = {"час": "ч", "ч": "ч", "мин": "мин", "раз": "раз", "л": "л", "кг": "кг", "км": "км", "шаг": "шагов",
           "%": "%"}
+
+
+_ORDINAL_CHIP = re.compile(r"^([№#]?)\s*(\d+)\s*(?:шаг\w*)?$", re.IGNORECASE)
+
+
+def _not_point_number(chip: dict | None, beat: dict) -> dict | None:
+    """Номер пункта уже показывает плашка «#2»: чип «№2» или «2» рядом с ней повторяет то же число. Чипы с единицами
+    («10 мин», «1 ч», «07:00») и другие числа остаются."""
+    match = _ORDINAL_CHIP.match(str((chip or {}).get("text") or "").strip())
+    if not match:
+        return chip
+    point = beat.get("point_start") or beat.get("point")
+    if not point or int(match.group(2)) != int(point):
+        return chip
+    return None if match.group(1) or beat.get("point_start") else chip
 
 
 def _fallback_chip(text: str) -> dict | None:
@@ -455,7 +471,7 @@ def _assign_fallback(beats: list[dict], poses: list[dict], dry: bool = False) ->
     notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; биты можно поправить"]
     for beat, pose_id in zip(beats, assign_by_tags(beats, ready)):
         beat["pose_id"] = pose_id
-        beat["chip"] = _fallback_chip(beat["text"])
+        beat["chip"] = _not_point_number(_fallback_chip(beat["text"]), beat)
         beat["emphasis"] = _fallback_emphasis(beat["text"])
     return notes
 
@@ -530,7 +546,7 @@ def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[
         if not pid:
             raise E.ExplError(f"бит {beat['i']}: нет позы — библиотека пуста")
         beat["pose_id"] = pid
-        beat["chip"] = _chip(ans.get("chip"), ans.get("chip_word"))
+        beat["chip"] = _not_point_number(_chip(ans.get("chip"), ans.get("chip_word")), beat)
         beat["emphasis"] = _words_of(ans.get("emphasis"), 2)
     return notes
 
@@ -1199,7 +1215,8 @@ def assemble(store: Any, video_id: int) -> dict:
     previous = video.get("clip_id")
     words, sub_fixes = WF.apply_previous(store, previous, video.get("words") or [], words, notes)
     # Чип и плашка старой правки могли записаться строкой-словарём: в кадр такое не идёт.
-    beats = [{**b, "chip": _chip(b.get("chip")), "badge": _badge(b.get("badge"))} for b in video["beats"]]
+    # Старый план мог поставить чип с номером пункта: при пересборке рядом с плашкой он не нужен.
+    beats = [{**b, "chip": _not_point_number(_chip(b.get("chip")), b), "badge": _badge(b.get("badge"))} for b in video["beats"]]
     placed = place(beats, words, total)
     marks = emphasis_marks(placed, words)
     title = (video.get("title") or video["topic"])[:100]
@@ -1295,7 +1312,8 @@ def facts(store: Any, video_id: int, video: dict | None = None) -> dict:
         job = _target_jobs(store, int(video["project_id"]), "expl_video", int(video["id"]), E.NARRATION_KIND)
         voice = E.describe_voice(planned, estimate_rub=job["estimate_rub"] if job and job["provider"] == planned[
             "provider"] and job["status"] not in BAD_JOB else None)
-    spent = G.spent_approval(store, int(video["approval_id"])) if video.get("approval_id") else 0.0
+    money = G.spent_on_target(store, E.video_group(int(video["id"])), "expl_video", int(video["id"]), video.get("approval_id"))
+    spent = money["spent_rub"]
     to_draw = list(video.get("poses_to_draw") or [])
     skipped = list(timeline.get("skipped") or [])
     captions = timeline.get("captions")
@@ -1328,11 +1346,12 @@ def facts(store: Any, video_id: int, video: dict | None = None) -> dict:
     if captions:
         parts.append("Субтитры: текст сценария на времени распознанной речи." if captions.get("timing") == "speech"
                      else "Субтитры разложены по длине текста, с голосом не сверены.")
-    parts.append(f"Потрачено {spent:.2f} ₽.")
+    parts.append(f"Потрачено {spent:.2f} ₽." + (f" Ещё ≈ {money['estimated_rub']:.2f} ₽ по оценке: провайдер цену не назвал."
+                                               if money["estimated_rub"] else ""))
     if skipped:
         parts.append("Не сделано: " + "; ".join(skipped) + ".")
-    return {"voice": voice, "captions": captions, "dry_run": E.is_dry(video), "spent_rub": round(spent, 2),
-            "poses_to_draw": to_draw, "skipped": skipped, "subtitle_fixes": fixes, "summary": " ".join(parts)}
+    return {"voice": voice, "captions": captions, "dry_run": E.is_dry(video), "spent_rub": spent,
+            "spent_estimated_rub": money["estimated_rub"], "poses_to_draw": to_draw, "skipped": skipped, "subtitle_fixes": fixes, "summary": " ".join(parts)}
 
 
 def finish_publish(store: Any, video_id: int, clip_id: int, cover: bool = True) -> dict:

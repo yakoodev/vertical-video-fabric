@@ -32,6 +32,9 @@ import "@/styles/explainer.css";
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const rub = (v: number | null | undefined) => `${(v ?? 0).toFixed(v && v < 10 ? 2 : 0).replace(".", ",")} ₽`;
+/** Старые сценарии хранят замечание про крючок прежними словами. */
+const adviceText = (text: string) =>
+  /^крючок \d+ символов — дольше 2 с, сократи$/.test(text) ? "крючок звучит дольше 2 с: короче лучше, первые секунды решают, досмотрят ли ролик" : text;
 const STATUS_TONE: Record<string, string> = { done: "ok", failed: "bad", cancelled: "bad", awaiting_approval: "warn" };
 
 function useInvalidate(projectId: number) {
@@ -311,7 +314,8 @@ function VideoRow({
           </b>
         )}
         <span className="muted">{v.duration_target.toFixed(0)} с{v.tone ? ` · ${v.tone}` : ""}</span>
-        {v.estimate_rub > 0 ? <span className="muted">≈ {rub(v.estimate_rub)}</span> : null}
+        {/* Оценка нужна, пока денег не тратили: у готового ролика факт в шапке выпуска. */}
+        {v.estimate_rub > 0 && v.status !== "done" ? <span className="muted">≈ {rub(v.estimate_rub)}</span> : null}
         <span className="expl-video-actions">
           {v.clip_id && v.editor_url && !embedded ? (
             <Link className="btn sm primary" to={v.editor_url}>
@@ -376,7 +380,12 @@ function VideoRow({
               </div>
             ) : null}
             {d.script?.text ? <p className="expl-script">{d.script.text}</p> : null}
-            {d.script?.warnings?.length ? <div className="aiv-warn">{d.script.warnings.join("; ")}</div> : null}
+            {d.script?.warnings?.length ? (
+              <div className="muted expl-advice">
+                {v.status === "done" ? "На будущее: " : "Совет: "}
+                {d.script.warnings.map(adviceText).join("; ")}
+              </div>
+            ) : null}
             {beats.length ? (
               <div className="expl-beats">
                 {beats.map((b, n) => {

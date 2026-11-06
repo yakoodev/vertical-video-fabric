@@ -25,6 +25,8 @@ import "@/styles/releases.css";
 
 const ACTIVE = ["working", "approval"];
 const rub = (v: number) => `${v.toFixed(v > 0 && v < 10 ? 2 : 0).replace(".", ",")} ₽`;
+/** Потраченные деньги: с копейками, если они есть, без округления до рубля. */
+const rubExact = (v: number) => `${(Math.round(v * 100) % 100 === 0 ? v.toFixed(0) : v.toFixed(2)).replace(".", ",")} ₽`;
 
 function dateRu(value: string): string {
   const d = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
@@ -187,7 +189,11 @@ export function ReleasePage() {
       },
       { replace: true },
     );
-  const meta = [`${r.kind_label}, ${dateRu(r.date)}`, r.spent_rub ? `потрачено ${rub(r.spent_rub)}` : ""].filter(Boolean);
+  const meta = [
+    `${r.kind_label}, ${dateRu(r.date)}`,
+    r.spent_rub ? `потрачено ${rubExact(r.spent_rub)}` : "",
+    r.spent_estimated_rub ? `ещё ≈ ${rubExact(r.spent_estimated_rub)} по оценке` : "",
+  ].filter(Boolean);
   return (
     <div className="rel">
       <div className="rel-head">

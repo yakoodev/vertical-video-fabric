@@ -104,6 +104,19 @@
 | Сегмент | Кусок записи внутри клипа | `segments` |
 | Готовый файл | Результат рендера | `clips` |
 
+### Экраны в коде (шаг 5)
+
+| Экран | Файл в `frontend/src/pages` | Раньше |
+|---|---|---|
+| Проект | `project/ProjectPage.tsx`, вкладки рядом в `project/` | `SeriesPage`, `SeriesAutopilot`, `SeriesVodWatch` |
+| Видео | `VideoPage.tsx`, вкладки в `workspace/` | `ProjectWorkspace` |
+| Все видео | `VideoListPage.tsx` | `ProjectsPage` |
+| Черновики и редактор клипа | `workspace/DraftsAndEditorTab.tsx`, разделяются на шаге 6 | `CandidatesTab` |
+| Рендеры видео | `workspace/VideoRendersTab.tsx` | `ClipsTab` |
+| Готовые ролики всех проектов | `ReadyClipsPage.tsx` | `ClipsPage` |
+
+Адреса, ручки API, таблицы и модули Python названы по-старому: их не переименовывали.
+
 ### Порядок рефакторинга
 
 Сервис всё время работает, каждый шаг проходит тесты и выкладывается.
@@ -113,5 +126,5 @@
 3. «Новое видео» и выпуски, версии вместо новых клипов при пересборке, настройки агента в проекте.
 4. Черновики вместо моментов.
 5. Имена в коде, чистка мёртвого кода, CI.
-6. Разбор `agent_tools.py` и `CandidatesTab.tsx` по одному разделу за раз, общий автомат генераторов.
+6. Разбор `agent_tools.py` и `DraftsAndEditorTab.tsx` (бывший `CandidatesTab.tsx`) по одному разделу за раз, общий автомат генераторов.
 7. WAL и транзакции, единый чат.

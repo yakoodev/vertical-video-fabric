@@ -196,6 +196,33 @@ def spent_approval(store: Any, approval_id: int) -> float:
                 (int(approval_id),))
 
 
+def spent_parts(store: Any, where: str, params: tuple) -> dict:
+    """Сколько реально списано по журналу. ``spent_rub`` — факт провайдера или разница баланса; строка с источником
+    «оценка» (провайдер цену не назвал) идёт отдельно, ``estimated_rub``: за потраченное её не выдаём."""
+    spent = estimated = 0.0
+    for row in store.db.query_all(
+        "SELECT l.source, COALESCE(SUM(l.amount_rub), 0) AS total FROM aiv_ledger l "
+        "LEFT JOIN approvals a ON a.id = l.approval_id LEFT JOIN aiv_gen_jobs j ON j.id = l.job_id "
+        f"WHERE {where} GROUP BY l.source", params
+    ):
+        if row["source"] == "estimate":
+            estimated += float(row["total"] or 0)
+        else:
+            spent += float(row["total"] or 0)
+    return {"spent_rub": round(spent, 2), "estimated_rub": round(estimated, 2)}
+
+
+def spent_on_target(store: Any, group: str, target_type: str, target_id: int, approval_id: Any = None) -> dict:
+    """Все траты одного ролика по всем его карточкам. На ролик бывает несколько карточек (голос, потом позы, потом
+    новая сборка), а сам он помнит только последнюю, поэтому карточки ищем по группе ролика."""
+    return spent_parts(
+        store,
+        "(CASE WHEN json_valid(a.payload_json) THEN json_extract(a.payload_json, '$.group') END = ? "
+        "OR l.approval_id = ? OR (j.target_type = ? AND j.target_id = ?))",
+        (group, int(approval_id) if approval_id else -1, target_type, int(target_id)),
+    )
+
+
 def _reserved(store: Any, where: str, params: tuple, statuses: tuple = OPEN, exclude_approval: Any = None) -> float:
     """Зарезервировано: оценки ждущих и идущих запусков (упавшие/отменённые/готовые — нет: у готовых
     трата уже в журнале, у упавших денег не взяли). ``exclude_approval`` — id карточки (или их список),

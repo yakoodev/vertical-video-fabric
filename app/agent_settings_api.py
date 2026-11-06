@@ -67,8 +67,7 @@ _NOT_AN_EDIT = {"/flags", "/chat", "/contact-sheet", "/preview-pieces", "/stream
                 "/stream-questions", "/tags"}
 _WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 # Прямая публикация и рендер старых форм: агент ходит только через submit_for_approval и адреса клипа.
-_AGENT_NEVER = re.compile(r"^(/api/clips/\d+/posts|/api/clips/posts-batch|/api/posts|/ui/posts|/ui/clips/\d+/posts|"
-                          r"/ui/sources/\d+/render-plans|/ui/segments/\d+/render)$")
+_AGENT_NEVER = re.compile(r"^(/api/clips/\d+/posts|/api/clips/posts-batch|/api/posts|/ui/posts)$")
 
 
 def _bearer(request: Request) -> str:

@@ -1022,3 +1022,105 @@ def test_beats_round_trip_keeps_chip_and_never_shows_a_stringified_dict(env):
     assert done["status"] == "done", done["error"]
     texts = [l["props"]["text"] for l in _layers(store, done["clip_id"]) if l["type"] == "text"]
     assert texts and not any("{" in t for t in texts)
+
+
+# ---- шаг 5: деньги ролика, номер пункта, совет про крючок ------------------------------------------------
+
+
+def _card_with_spending(store, project_id: int, group: str, rows: list[tuple[float, str]]) -> int:
+    cur = store.db.execute(
+        "INSERT INTO approvals (project_id, kind, status, payload_json) VALUES (?, 'other', 'approved', ?)",
+        (project_id, json.dumps({"action": "aiv_budget", "group": group})),
+    )
+    for amount, source in rows:
+        store.db.execute("INSERT INTO aiv_ledger (project_id, approval_id, stage, amount_rub, source) VALUES (?, ?, 'explainer', ?, ?)",
+                         (project_id, cur.lastrowid, amount, source))
+    return int(cur.lastrowid)
+
+
+def test_spent_sums_every_card_of_the_video_and_keeps_estimates_apart(env):
+    """expl-4: голос 2,51 ₽, позы 18 ₽, потом ещё голос с позами 17,53 ₽. Показывало только последнюю карточку."""
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    other = E.create_video(store, ids["mascot_id"], "кофе", 45)
+    pid = int(video["project_id"])
+    group = E.video_group(video["id"])
+    _card_with_spending(store, pid, group, [(2.5121, "provider")])
+    _card_with_spending(store, pid, group, [(3.0, "provider")] * 6)
+    last = _card_with_spending(store, pid, group, [(2.5306, "provider")] + [(3.0, "provider")] * 5)
+    _card_with_spending(store, pid, E.video_group(other["id"]), [(99.0, "provider")])
+    E.update_video(store, video["id"], approval_id=last, estimate_rub=17.54)
+    facts = X.facts(store, video["id"])
+    assert facts["spent_rub"] == pytest.approx(38.04) and facts["spent_estimated_rub"] == 0
+    assert "Потрачено 38.04 ₽" in facts["summary"]
+    assert X.facts(store, other["id"])["spent_rub"] == pytest.approx(99.0)
+    # Цену провайдер не назвал: сумма по оценке не считается потраченной.
+    _card_with_spending(store, pid, group, [(4.0, "estimate"), (1.5, "balance")])
+    facts = X.facts(store, video["id"])
+    assert facts["spent_rub"] == pytest.approx(39.54) and facts["spent_estimated_rub"] == pytest.approx(4.0)
+    assert "по оценке" in facts["summary"]
+
+
+@pytest.mark.parametrize("chip, beat, kept", [
+    ({"text": "№2", "word": "два"}, {"point": 2, "point_start": 2}, False),
+    ({"text": "#2", "word": "два"}, {"point": 2, "point_start": 2}, False),
+    ({"text": "2", "word": "два"}, {"point": 2, "point_start": 2}, False),
+    ({"text": "1 шагов", "word": "1"}, {"point": 1, "point_start": 1}, False),
+    ({"text": "№2", "word": "два"}, {"point": 2}, False),  # следующий бит того же пункта
+    ({"text": "2", "word": "два"}, {"point": 2}, True),  # просто число в тексте пункта
+    ({"text": "№3", "word": "три"}, {"point": 1, "point_start": 1}, True),  # другое число
+    ({"text": "3", "word": "три"}, {}, True),  # «три причины» до первого пункта
+    ({"text": "10 мин", "word": "десять"}, {"point": 3}, True),
+    ({"text": "1 ч", "word": "час"}, {"point": 1, "point_start": 1}, True),
+    ({"text": "07:00", "word": "семь"}, {"point": 1, "point_start": 1}, True),
+    (None, {"point": 1, "point_start": 1}, True),
+])
+def test_point_number_is_a_badge_not_a_chip(chip, beat, kept):
+    assert X._not_point_number(chip, beat) == (chip if kept else None)
+
+
+def test_plan_drops_chip_repeating_the_badge_keeps_other_numbers(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    mascot = E.get_mascot(store, ids["mascot_id"])
+    beats = X.split_beats(E.get_video(store, video["id"])["script"])
+    poses = E.list_poses(store, ids["mascot_id"])
+    numbered = [b for b in beats if b.get("point_start")]
+    plain = next(b for b in beats if not b.get("point_start"))
+    answers = [{"i": b["i"], "pose_id": poses[0]["id"], "chip": f"№{b['point_start']}", "chip_word": "один"} for b in numbered]
+    answers.append({"i": plain["i"], "pose_id": poses[0]["id"], "chip": "10 мин", "chip_word": "десять"})
+    X._apply_gemini_plan(store, mascot, beats, poses, {"beats": answers})
+    assert all(b["chip"] is None for b in numbered) and plain["chip"]["text"] == "10 мин"
+    # Без Gemini то же: плашка есть, чипа с её номером нет.
+    fallback = [{**b, "text": f"{b['point_start']} шаг: встань пораньше"} for b in numbered]
+    X._assign_fallback(fallback, poses, False)
+    assert all(b["chip"] is None for b in fallback)
+
+
+def test_reassembly_drops_old_chip_repeating_the_badge(env):
+    """Планы до этой правки уже лежат в базе (expl-4): новая сборка не повторяет номер, «10 мин» оставляет."""
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    X.plan_beats(store, video["id"], client=None)
+    beats = E.get_video(store, video["id"])["beats"]
+    first = next(b for b in beats if b.get("point_start"))
+    first["chip"] = {"text": f"№{first['point_start']}", "word": ""}
+    plain = next(b for b in beats if not b.get("point_start"))
+    plain["chip"] = {"text": "10 мин", "word": ""}
+    E.update_video(store, video["id"], beats=beats)
+    done = X.advance(store, video["id"])
+    assert done["status"] == "done", done["error"]
+    texts = [l["props"]["text"] for l in _layers(store, done["clip_id"]) if l["type"] == "text"]
+    assert "10 мин" in texts and f"№{first['point_start']}" not in texts and f"#{first['point_start']}" in texts
+
+
+def test_long_hook_reads_as_advice():
+    script = X.normalize_script({"hook": "Только пообедал, а через час снова голодный?", "points": [
+        {"title": "Первое", "body": "Текст первого пункта."}, {"title": "Второе", "body": "Текст второго пункта."},
+        {"title": "Третье", "body": "Текст третьего пункта."}]})
+    assert script["warnings"] == ["крючок звучит около 2,9 с: лучше уложиться в 2 с, первые секунды решают, досмотрят ли ролик"]

@@ -18,8 +18,8 @@ type TabProps = { sourceId: string };
 // Вкладка «Черновики» тянет за собой весь редактор: остальным вкладкам он не нужен.
 const SourceTab = lazyPage<TabProps>(() => import("@/pages/workspace/SourceTab"), "SourceTab");
 const SegmentsTab = lazyPage<TabProps>(() => import("@/pages/workspace/SegmentsTab"), "SegmentsTab");
-const CandidatesTab = lazyPage<TabProps>(() => import("@/pages/workspace/CandidatesTab"), "CandidatesTab");
-const ClipsTab = lazyPage<TabProps>(() => import("@/pages/workspace/ClipsTab"), "ClipsTab");
+const DraftsAndEditorTab = lazyPage<TabProps>(() => import("@/pages/workspace/DraftsAndEditorTab"), "DraftsAndEditorTab");
+const VideoRendersTab = lazyPage<TabProps>(() => import("@/pages/workspace/VideoRendersTab"), "VideoRendersTab");
 const VideoOverview = lazyPage<TabProps>(() => import("@/pages/workspace/VideoOverview"), "VideoOverview");
 const MontagedTab = lazyPage<TabProps>(() => import("@/pages/workspace/MontagedTab"), "MontagedTab");
 const StreamQuestionsTab = lazyPage<TabProps>(() => import("@/pages/workspace/StreamQuestionsTab"), "StreamQuestionsTab");
@@ -125,7 +125,7 @@ function VideoTabs({ sourceId, counts }: { sourceId: string; counts: Record<stri
   );
 }
 
-export function ProjectWorkspace() {
+export function VideoPage() {
   const { sourceId = "" } = useParams();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -192,9 +192,9 @@ export function ProjectWorkspace() {
         <Route index element={<Navigate to="clips" replace />} />
         <Route path="source" element={<SourceTab sourceId={sourceId} />} />
         <Route path="segments" element={<SegmentsTab sourceId={sourceId} />} />
-        <Route path="candidates" element={<CandidatesTab sourceId={sourceId} />} />
+        <Route path="candidates" element={<DraftsAndEditorTab sourceId={sourceId} />} />
         <Route path="clips" element={<VideoOverview sourceId={sourceId} />} />
-        <Route path="renders" element={<ClipsTab sourceId={sourceId} />} />
+        <Route path="renders" element={<VideoRendersTab sourceId={sourceId} />} />
         <Route path="montaged" element={<MontagedTab sourceId={sourceId} />} />
         <Route path="questions" element={<RequireModule id="stream_questions"><StreamQuestionsTab sourceId={sourceId} /></RequireModule>} />
         {/* Неизвестный адрес, в том числе бывшая вкладка /edit. Только полный путь: относительный дописывался бы к адресу без конца. */}

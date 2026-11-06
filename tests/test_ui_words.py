@@ -1,7 +1,7 @@
 """Слова интерфейса (docs/redesign/concept-2026-11.md, «Словарь»): старые названия не должны вернуться.
 
 Проверка статическая: комментарии убираем, в строках и подписях ищем запрещённое. Комментарии и имена
-в коде (`CandidatesTab`, `/candidates`) не считаются: их переименование отдельным шагом.
+в коде (`/candidates`, таблицы базы) не считаются: адреса и таблицы не переименовываем.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def _labels(block: str) -> set[str]:
 def test_hints_name_only_existing_tabs():
     """Подсказки вида «на вкладке «X»» ведут только на вкладки, которые есть."""
     tabs = (SRC / "lib" / "tabs.ts").read_text(encoding="utf-8")
-    inspector = (SRC / "pages" / "workspace" / "CandidatesTab.tsx").read_text(encoding="utf-8")
+    inspector = (SRC / "pages" / "workspace" / "DraftsAndEditorTab.tsx").read_text(encoding="utf-8")
     known = _labels(tabs) | _labels(inspector) | {"Сценарий"}  # подвкладка ИИ-видео, на своём экране
     wrong = []
     for path in ui_files():
@@ -77,9 +77,9 @@ def test_hints_name_only_existing_tabs():
 
 def test_tab_lists_live_in_one_module():
     """Вкладки видео и разделов не перечисляют заново: только lib/tabs.ts."""
-    for rel in ("pages/ProjectWorkspace.tsx", "components/AppShell.tsx", "components/CommandPalette.tsx",
+    for rel in ("pages/VideoPage.tsx", "components/AppShell.tsx", "components/CommandPalette.tsx",
                 "components/shell/Ladder.tsx", "pages/InboxPage.tsx", "pages/PubsPage.tsx", "pages/SettingsPage.tsx",
-                "pages/SeriesPage.tsx"):
+                "pages/project/ProjectPage.tsx"):
         code = strip_comments((SRC / rel).read_text(encoding="utf-8"))
         assert "@/lib/tabs" in code, rel
         for label in ('"Смонтированные"', '"Пресеты рендера"', '"По проектам"'):

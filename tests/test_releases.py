@@ -475,7 +475,7 @@ def test_old_project_tabs_only_redirect():
     redirect = tabs.split("export function movedProjectTab", 1)[1].split("\n}\n", 1)[0]
     for old in ("expl", "story", "aiv", "channel"):
         assert f'"{old}"' in redirect
-    page = (ROOT / "frontend" / "src" / "pages" / "SeriesPage.tsx").read_text(encoding="utf-8")
+    page = (ROOT / "frontend" / "src" / "pages" / "project" / "ProjectPage.tsx").read_text(encoding="utf-8")
     assert "movedProjectTab" in page and "<Navigate" in page
 
 
