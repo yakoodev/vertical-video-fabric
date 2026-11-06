@@ -1,0 +1,124 @@
+/* «Новое видео» и страница выпуска. Только тёмная тема, цвета из tokens.css. */
+
+/* ---------- Новое видео ---------- */
+.nv { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
+.nv .page-title { margin-bottom: 0; }
+.nv-project { max-width: 360px; }
+.nv-form { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px 18px; display: grid; gap: 12px; min-width: 0; scroll-margin-top: 80px; }
+.nv-form h2 { margin: 0; font-size: 19px; font-weight: 650; }
+.nv-form .aiv, .nv-form .series-panel { margin: 0; }
+.nv-form > .aiv > .series-panel, .nv-form > .aiv > section { background: none; border: 0; padding: 0; box-shadow: none; }
+.nv-form .proj-add { border-top: 0; padding-top: 0; }
+.nv-hint { margin: 0; font-size: 14px; }
+.nv-foot { margin: 0; font-size: 14px; }
+.nv-foot a { color: var(--accent-2); }
+.nv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.nv-card {
+  display: grid; align-content: start; gap: 8px; min-height: 124px; text-align: left; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 15px; cursor: pointer;
+  font: inherit;
+}
+.nv-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.nv-card:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.nv-card.on { border-color: var(--accent); background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.04)); box-shadow: 0 0 0 1px var(--accent); }
+.nv-card-h { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.nv-card-h b { font-size: 16px; font-weight: 650; }
+.nv-card-h .tag { margin-left: auto; }
+.nv-card-t { color: var(--text-dim); font-size: 13.5px; line-height: 1.35; }
+.nv-card small { color: var(--text-faint); font-size: 12.5px; margin-top: auto; }
+.nv-top { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; max-height: 320px; overflow: auto; }
+.nv-top label { display: flex; gap: 8px; align-items: center; padding: 4px 2px; }
+.nv-top small { margin-left: auto; }
+.nv-scene .input { min-width: 0; }
+@media (max-width: 1180px) { .nv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) {
+  .nv-grid { gap: 8px; }
+  .nv-card { min-height: 0; padding: 11px 12px; }
+  .nv-card-h b { font-size: 15px; }
+  .nv-card-t { font-size: 12.5px; }
+}
+
+/* ---------- Страница выпуска ---------- */
+.rel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.rel-head h1 { margin: 0 0 8px; font-size: 26px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.rel-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; }
+.rel-status.ready { color: var(--success); }
+.rel-status.approval { color: var(--warn); }
+.rel-status.failed, .rel-status.cancelled { color: var(--danger); }
+.rel-summary { margin: 8px 0 0; font-size: 14px; }
+.rel-grid { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; align-items: start; }
+.rel-rail { position: sticky; top: calc(var(--top-h) + 12px); min-width: 0; }
+.rel-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.rel-body .aiv { min-width: 0; }
+.rel-step { position: relative; min-width: 0; }
+.rel-step .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.rel-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.rel-step > div, .rel-step > button {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start; width: 100%; padding: 9px 10px;
+  background: none; border: 0; border-radius: 10px; color: var(--text); text-align: left; font: inherit;
+}
+.rel-step > button { cursor: pointer; }
+.rel-step > button:hover { background: var(--surface); }
+.rel-step.on > button, .rel-step.wait > div, .rel-step.now > div, .rel-step.failed > div { background: var(--surface-2); }
+.rel-step.todo b { color: var(--text-dim); font-weight: 550; }
+.rel-step-t { display: grid; gap: 2px; min-width: 0; }
+.rel-step-t b { font-size: 15px; font-weight: 620; }
+.rel-step-t small { color: var(--text-faint); font-size: 12.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.rel-dot {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  border: 1.5px solid var(--border-strong); color: var(--text-faint);
+}
+.rel-dot.done { background: var(--success-soft); border-color: var(--success); color: var(--success); }
+.rel-dot.now { border-color: var(--accent-2); color: var(--accent-2); }
+.rel-dot.wait { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.rel-dot.failed { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.rel-card {
+  display: grid; gap: 10px; padding: 14px 16px; border: 1px solid rgba(245, 179, 66, 0.6); border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(245, 179, 66, 0.09), rgba(245, 179, 66, 0.02));
+}
+.rel-card-h { display: flex; align-items: center; gap: 10px; color: var(--warn); min-width: 0; }
+.rel-card-h h3 { margin: 0; font-size: 17px; color: var(--text); font-weight: 650; }
+.rel-card-sum { margin-left: auto; font-size: 22px; color: var(--text); white-space: nowrap; }
+.rel-card-q { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.45; color: var(--text); }
+.rel-clip-list { display: grid; gap: 8px; }
+.rel-clip { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.rel-clip-th { display: grid; place-items: center; width: 56px; height: 86px; border-radius: 8px; overflow: hidden; background: var(--surface-2); color: var(--text-faint); font-size: 11px; text-align: center; }
+.rel-clip-th img { width: 100%; height: 100%; object-fit: cover; }
+.rel-clip-m { display: grid; gap: 3px; min-width: 0; }
+.rel-clip-m a { font-weight: 620; overflow-wrap: anywhere; }
+.rel-clip-m a:hover { color: var(--accent-2); }
+.rel-clip-a { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.rel-older { font-size: 14px; }
+.rel-older summary { cursor: pointer; color: var(--text-dim); }
+.rel-older ul { margin: 6px 0 0; padding-left: 18px; }
+.rel-older a { color: var(--accent-2); }
+@media (max-width: 860px) {
+  .rel-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .rel-rail { position: static; }
+  .rel-steps { grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; padding-bottom: 4px; }
+  .rel-step-t small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .rel-head h1 { font-size: 21px; }
+  .rel-clip { grid-template-columns: 48px minmax(0, 1fr); }
+  .rel-clip-a { grid-column: 1 / -1; justify-content: flex-start; }
+  .rel-card-h h3 { font-size: 15px; }
+  .rel-card-sum { font-size: 18px; }
+}
+
+/* ---------- Список: видео и выпуски ---------- */
+.vsec { margin-top: 14px; }
+.vsec:first-child { margin-top: 0; }
+.vsec-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; font-weight: 650; letter-spacing: 0.02em; color: var(--text-faint); text-transform: uppercase; }
+.vkind-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.vrow-rel .vrow-th { width: 164px; }
+.vrow-rel-thumb { width: 100%; height: 100%; object-fit: contain; display: block; background: #05040a; }
+.vrow-status.approval { color: var(--warn); border-color: rgba(245, 179, 66, 0.6); background: var(--warn-soft); }
+.vrow-status.failed, .vrow-status.cancelled { color: var(--danger); border-color: rgba(255, 90, 106, 0.5); background: var(--danger-soft); }
+.vrow-status.working { color: var(--accent-2); }
+.vrow-status.script, .vrow-status.empty { color: var(--text-dim); }
+.vrows-unnamed { margin-top: 12px; }
+.vrows-unnamed > summary { cursor: pointer; color: var(--text-dim); font-size: 14px; padding: 6px 8px; }
+.vrow-foreign { color: var(--text-faint); font-size: 13px; }
+.vrow-foreign a { color: var(--accent-2); }
+@media (max-width: 620px) {
+  .vrow-rel .vrow-th { width: 96px; height: 96px; }
+}

@@ -764,6 +764,7 @@ export function ClipPage() {
   const canRender = !fileGone && view.status !== "rendering" && !rendering;
   const start = view.start_sec && !view.canvas ? `, ${formatDuration(view.start_sec)}` : "";
   const parent = view.canvas ? view.project?.name ?? "холст" : view.source.name;
+  const release = view.release;
   const wide = view.format === "16:9";
   const stageRatio = selected?.width && selected.height ? `${selected.width} / ${selected.height}` : wide ? "16 / 9" : view.format === "9:16" ? "9 / 16" : "1 / 1";
 
@@ -773,7 +774,12 @@ export function ClipPage() {
         <div className="cpage-title">
           <h1 title={view.title}>{view.name}</h1>
           <div className="cpage-sub">
-            <span>
+            {release?.has_steps ? (
+              <span>
+                из выпуска «<Link to={release.steps_to ?? release.to}>{release.name}</Link>»
+              </span>
+            ) : null}
+            {release?.has_steps ? null : <span>
               из {view.canvas ? "проекта" : "видео"} «
               {view.canvas ? (
                 view.project ? <Link to={projectPath(view.project.id)}>{parent}</Link> : parent
@@ -781,7 +787,8 @@ export function ClipPage() {
                 <Link to={videoPath(view.source.id)}>{parent}</Link>
               )}
               »{start}
-            </span>
+            </span>}
+            {release ? <span className="cchip">{release.kind_label}</span> : null}
             <span className="cchip fmt">{view.format}</span>
             {view.moments.map((m) => (
               <Link key={m.id} className="cpage-moment" to={clipPath(m.id)}>этот момент в {m.format}</Link>

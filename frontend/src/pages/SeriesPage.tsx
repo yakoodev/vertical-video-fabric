@@ -1,13 +1,13 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { navApi, navKeys } from "@/api/nav";
 import { Icon } from "@/components/Icon";
 import { PageTabs } from "@/components/PageTabs";
 import { useShell } from "@/components/AppShell";
 import { lazyPage } from "@/lazyPage";
 import { projectPath, videoPath } from "@/lib/paths";
-import { LORE_TABS, projectTabs } from "@/lib/tabs";
+import { LORE_TABS, movedProjectTab, projectTabs } from "@/lib/tabs";
 import {
   HYP_STATUS_LABEL,
   METRIC_OPTIONS,
@@ -32,10 +32,6 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
-import { AiVideoTab } from "@/pages/AiVideoTab";
-import { ExplainerTab } from "@/pages/ExplainerTab";
-import { ExplainerChannelTab } from "@/pages/ExplainerChannelTab";
-import { StoriesTab } from "@/pages/StoriesTab";
 import { useModules } from "@/hooks/useModules";
 import { KnowledgeCard, KnowledgeTab } from "@/pages/project/ProjectKnowledge";
 
@@ -56,10 +52,7 @@ type Tab =
   | "hyp"
   | "stats"
   | "autopilot"
-  | "aiv"
-  | "channel"
-  | "expl"
-  | "story";
+  | "materials";
 const TAB_ALIAS: Record<string, Tab> = { lore: "know", auto: "autopilot" };
 
 const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>(
@@ -69,6 +62,7 @@ const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>
 const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/components/ClipGrid"), "ProjectClipsTab");
 const ProjectQuestions = lazyPage<{ projectId: number }>(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
 const ProjectFiles = lazyPage<{ projectId: number }>(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
+const ProjectMaterials = lazyPage<{ projectId: number }>(() => import("@/pages/project/ProjectMaterials"), "ProjectMaterials");
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -79,7 +73,9 @@ export function SeriesPage() {
   const id = Number(projectId);
   // Вкладка — в адресе (?tab=expl): перезагрузка и ссылка открывают то же место.
   const [params, setParams] = useSearchParams();
+  const { hash } = useLocation();
   const asked = params.get("tab");
+  const moved = movedProjectTab(asked, params.get("sub"));
   const tab = (asked && (TAB_ALIAS[asked] ?? asked)) as Tab | null;
   const setTab = (next: Tab) =>
     setParams(
@@ -95,11 +91,19 @@ export function SeriesPage() {
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
   const { openNewVideo } = useShell();
   const { on } = useModules();
-  const tabs = projectTabs(on, project.data);
+  const tabs = projectTabs(on);
   const lore = tab === "brief" || tab === "rules" || tab === "hyp";
   const shown: Tab = lore || (tab && tabs.some((t) => t.key === tab)) ? (tab as Tab) : "videos";
   const navProject = nav.data?.projects.find((x) => x.id === id);
 
+  // Старые вкладки ?tab=expl и другие: остальные параметры и якорь едут с собой, ссылки из Telegram не ломаются.
+  if (moved) {
+    const next = new URLSearchParams(params);
+    next.delete("tab");
+    if (asked !== "aiv" || !params.get("sub")) next.delete("sub");
+    for (const [key, value] of Object.entries(moved)) next.set(key, value);
+    return <Navigate to={`${projectPath(id)}?${next.toString()}${hash}`} replace />;
+  }
   if (project.isLoading) return <Loading />;
   if (project.isError || !project.data) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
   const p = project.data;
@@ -113,13 +117,15 @@ export function SeriesPage() {
         <div className="page-title-main">
           <h1>{p.name}</h1>
           <div className="page-sub">
-            {plural(videosCount, "видео", "видео", "видео")}
+            {navProject?.releases
+              ? `${navProject.sources ? `${plural(navProject.sources, "видео", "видео", "видео")} и ` : ""}${plural(navProject.releases, "выпуск", "выпуска", "выпусков")}`
+              : plural(videosCount, "видео", "видео", "видео")}
             {readyCount ? ` · ${plural(readyCount, "готовый файл", "готовых файла", "готовых файлов")}` : ""}
             {p.description ? `. ${p.description}` : ""}
             {p.brand ? ` · бренд «${p.brand.name}»` : ""}
           </div>
         </div>
-        <button className="btn primary btn-xl" onClick={openNewVideo} title="Загрузить запись или вставить ссылку (N)">
+        <button className="btn primary btn-xl" onClick={openNewVideo} title="Ссылка, файл или ролик с нуля: выбрать тип (N)">
           <Icon name="plus" />
           Новое видео
         </button>
@@ -156,11 +162,8 @@ export function SeriesPage() {
           {shown === "clips" ? <ProjectClips projectId={id} /> : null}
           {shown === "questions" ? <ProjectQuestions projectId={id} /> : null}
           {shown === "files" ? <ProjectFiles projectId={id} /> : null}
+          {shown === "materials" ? <ProjectMaterials projectId={id} /> : null}
         </Suspense>
-        {shown === "aiv" ? <AiVideoTab projectId={id} /> : null}
-        {shown === "channel" ? <ExplainerChannelTab projectId={id} /> : null}
-        {shown === "expl" ? <ExplainerTab projectId={id} /> : null}
-        {shown === "story" ? <StoriesTab projectId={id} /> : null}
         {shown === "know" ? <KnowledgeTab projectId={id} /> : null}
         {shown === "brief" ? <BriefTab project={p} /> : null}
         {shown === "rules" ? <RulesTab projectId={id} /> : null}

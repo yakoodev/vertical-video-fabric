@@ -16,6 +16,8 @@ const SeriesPage = lazyPage(() => import("@/pages/SeriesPage"), "SeriesPage");
 const MontageAssetsPage = lazyPage(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const AutomationPage = lazyPage(() => import("@/pages/AutomationPage"), "AutomationPage");
 const ClipPage = lazyPage(() => import("@/pages/ClipPage"), "ClipPage");
+const NewVideoPage = lazyPage(() => import("@/pages/release/NewVideoPage"), "NewVideoPage");
+const ReleasePage = lazyPage(() => import("@/pages/release/ReleasePage"), "ReleasePage");
 const PubsPage = lazyPage(() => import("@/pages/PubsPage"), "PubsPage");
 const InboxPage = lazyPage(() => import("@/pages/InboxPage"), "InboxPage");
 const HelpPage = lazyPage(() => import("@/pages/HelpPage"), "HelpPage");
@@ -73,8 +75,11 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<Home />} />
 
-        {/* Лестница: проект → видео → клип; монтаж клипа — редактор внутри видео (?clip=). */}
+        {/* Лестница: проект → видео или выпуск → клип; монтаж клипа — редактор внутри видео (?clip=). */}
         <Route path="p/:projectId" element={<RequireModule id="series"><SeriesPage /></RequireModule>} />
+        <Route path="p/:projectId/new" element={<NewVideoPage />} />
+        <Route path="new" element={<NewVideoPage />} />
+        <Route path="r/:releaseKey" element={<ReleasePage />} />
         <Route path="v/:sourceId/*" element={<ProjectWorkspace />} />
         <Route path="clips/:clipId" element={<ClipPage />} />
 

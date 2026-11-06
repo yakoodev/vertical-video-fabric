@@ -197,7 +197,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/stories/worlds/{world_id}/episodes", summary="Новый эпизод «завязка → клип»")
     def api_episode_create(world_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         options = {k: payload[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part",
-                                           "music", "engine", "location", "renderer", "quality") if payload.get(k) is not None}
+                                           "music", "engine", "location", "renderer", "quality", "dry_run") if payload.get(k) is not None}
         return call(X.create, world_id, str(payload.get("premise") or ""), payload.get("duration"),
                     str(payload.get("tone") or ""), None, options, "ui")
 

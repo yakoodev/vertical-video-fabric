@@ -33,6 +33,8 @@ from typing import Any
 from app import aivideo as V
 from app import aivideo_gen as G
 from app import autopilot as A
+from app import clip_groups as CG
+from app import word_fixes as WF
 from app import explainer_gen as X
 from app import projects as P
 from app import stories as S
@@ -419,8 +421,9 @@ def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -
     target = float(ep["duration_target"])
     if abs(script["est_sec"] - target) > target * 0.25:
         script["warnings"].append(f"текст ≈ {script['est_sec']:.0f} с при цели {target:.0f} с")
-    S.set_status(store, episode_id, "scripted", None, script=script, beats=[], words=[], timeline={},
-                 title=script["title"] or P._text(ep["premise"], 100), error="", approval_id=None, clip_id=None)
+    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
+    S.set_status(store, episode_id, "scripted", None, script=script, beats=[], timeline={},
+                 title=script["title"] or P._text(ep["premise"], 100), error="", approval_id=None)
     return S.get_episode(store, episode_id)
 
 
@@ -675,7 +678,8 @@ def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
     if problems:
         raise S.StoryError("биты не приняты: " + "; ".join(problems))
     _decorate(store, int(world["id"]), beats)
-    S.set_status(store, episode_id, "planned", None, beats=beats, error="", clip_id=None, timeline={})
+    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
+    S.set_status(store, episode_id, "planned", None, beats=beats, error="", timeline={})
     return S.get_episode(store, episode_id)
 
 
@@ -715,6 +719,13 @@ def request_generation(store: Any, episode_id: int, requested_by: str = "stories
     narr = G.estimate(store, pid, S.STAGE, None, [f"{group}:{S.NARRATION_KIND}"])
     if narr["items"] and not narr["paid"]:
         G.request_stage(store, pid, S.STAGE, None, [f"{group}:{S.NARRATION_KIND}"], requested_by=requested_by)
+        job = X._target_jobs(store, pid, S.T_EP, int(episode_id), S.NARRATION_KIND)
+        if job and job["status"] in X.BAD_JOB and S.narration_ref(store, S.get_episode(store, episode_id)) is None:
+            why = " ".join(str(job.get("error") or job["status"]).split())[:300].replace(" — ", ": ")
+            error = (f"Озвучка не получилась ({why}). Эпизод без голоса не выпускаю — проверьте, доступен ли Gemini, "
+                     "и нажмите «Продолжить»")
+            S.set_status(store, episode_id, "failed", ("planned",), error=error)
+            return {"status": "failed", "error": error}
     est = estimate(store, episode_id)
     if not est["items"]:
         S.set_status(store, episode_id, "generating", ("planned",), estimate_rub=0.0, approval_id=None)
@@ -743,7 +754,7 @@ def readiness(store: Any, episode_id: int) -> dict:
         checks.append((S.T_EP, int(episode_id), S.NARRATION_KIND, "озвучка"))
     for sid in sorted(set(S.beat_scene_ids(ep))):
         scene = S.get_scene(store, sid)
-        if not scene["ready"]:
+        if not S.scene_usable(scene, S.is_dry(ep)):
             checks.append((S.T_SCENE, sid, S.SCENE_KIND, f"сцена «{P._text(scene['title'], 40)}»"))
     for target_type, target_id, kind, label in checks:
         job = X._target_jobs(store, pid, target_type, target_id, kind)
@@ -870,7 +881,7 @@ def build_layers(store: Any, world: dict, ep: dict, placed: list[dict], narratio
     camera: list[dict] = []
     for n, item in enumerate(placed):
         scene = scenes.get(int(item["scene_id"]))
-        if scene is None or not scene["ready"]:
+        if scene is None or not S.scene_usable(scene, S.is_dry(ep)):
             raise S.StoryError(f"бит {item['i']}: у сцены {item['scene_id']} нет картинки")
         t0, t1 = item["start"], item["end"]
         move = item.get("camera") or "push_in"
@@ -949,7 +960,7 @@ def _tool(ctx: Any, name: str, args: dict, notes: list[str] | None = None) -> di
 
 
 def assemble(store: Any, episode_id: int) -> dict:
-    """Озвучка → слова → биты по времени → новый холст-клип."""
+    """Озвучка → слова → биты по времени → холст-клип. Собирали раньше — новая версия того же клипа."""
     from app import agent_tools as T
     from app.aivideo_gen import _asset_path
     from app.canvas import MIN_DURATION_SEC, base_seconds, create_canvas_clip
@@ -969,15 +980,15 @@ def assemble(store: Any, episode_id: int) -> dict:
     path = _asset_path(store, ref)
     audio_sec = float(probe_duration(path))
     notes: list[str] = list(ep.get("notes") or [])
-    voice = S.world_voice(store, world)
-    words: list[dict] = []
-    if voice["provider"] != "none":
-        try:
-            words = transcribe_words(path)
-        except Exception as exc:  # noqa: BLE001 - Whisper выключен/не встал: по длине текста
-            notes.append(f"Whisper не сработал ({type(exc).__name__}: {str(exc)[:120]}) — слова по длине текста")
-    if not words:
+    dry = S.is_dry(ep)
+    heard = None
+    if dry:  # только явный сухой прогон: вместо речи тон, распознавать нечего
         words = X.proportional_words(S.narration_text(ep), audio_sec)
+    else:
+        # Текст сценария на времени речи: ошибки Whisper в субтитры не идут, без речи эпизод не выпускаем.
+        words, heard = X.real_words(store, S.narration_text(ep), ref, path, S.StoryError, "эпизод", transcribe_words)
+    previous = ep.get("clip_id")
+    words, sub_fixes = WF.apply_previous(store, previous, ep.get("words") or [], words, notes)
     disaster = D.is_disaster(world, ep)
     speech_end = round(float(words[-1]["end"]), 3)
     if disaster:
@@ -988,10 +999,12 @@ def assemble(store: Any, episode_id: int) -> dict:
     if total > base_seconds():
         raise S.StoryError(f"история {total:.1f} с длиннее холста {base_seconds():.0f} с")
     placed = place(ep["beats"], words, total)
+    title = (ep.get("title") or ep["premise"])[:100]
     clip = create_canvas_clip(store, total, {"kind": "solid", "colors": ["#101014", "#101014"]},
-                              (ep.get("title") or ep["premise"])[:100],
+                              f"{X.E.DRY_MARK}: {title}"[:100] if dry else title,
                               f"История ({world['name']}): {ep['premise']}"[:500])
     clip_id = int(clip["id"])
+    CG.hold_assembly(store, clip_id)
     P.assign_plan_project(store, clip_id, int(ep["project_id"]))  # иначе холст виден только по прямой ссылке
     layers, camera = build_layers(store, world, {**ep, "_speech_end": speech_end}, placed, int(ref["asset_id"]),
                                   total, notes)
@@ -1018,8 +1031,13 @@ def assemble(store: Any, episode_id: int) -> dict:
     mixed = X.auto_mix_clip(ctx, notes)
     S.mark_used(store, [int(p["scene_id"]) for p in placed])
     sfx_count = sum(1 for p in placed if p.get("sfx"))
+    version = CG.finish_assembly(store, clip_id, previous)
+    if version["note"] and not version["linked"]:
+        notes.append(version["note"])
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
-                "editor_url": f"/clips/{clip_id}",
+                "editor_url": f"/clips/{clip_id}", "version": version, "subtitle_fixes": sub_fixes, "dry_run": dry,
+                "captions": {"timing": "speech" if heard is not None else "text_length", "heard_share": heard,
+                             "text": "script" if heard is not None else "script_no_speech"},
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "scene_id", "scene_title", "camera",
                                                   "sfx", "variant", "sentence")} for p in placed],
                 "shots_per_min": round(len(placed) / total * 60, 1), "sfx": sfx_count,
@@ -1035,7 +1053,8 @@ def assemble(store: Any, episode_id: int) -> dict:
     S.set_status(store, episode_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
                  notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(render["layers"]),
-           "shots_per_min": timeline["shots_per_min"], "editor_url": timeline["editor_url"], "notes": notes}
+           "shots_per_min": timeline["shots_per_min"], "editor_url": timeline["editor_url"], "notes": notes,
+           "version": version, "subtitle_fixes": sub_fixes}
     options = ep.get("options") or {}
     if options.get("render"):
         out["publish"] = finish_publish(store, episode_id, clip_id, cover=options.get("cover", True))

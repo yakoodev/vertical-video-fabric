@@ -132,9 +132,9 @@ SCREENS: dict[str, tuple[str, list[Check]]] = {
     "approvals": ("/inbox?tab=approve", [T(n, sel=".pipeline") for n in ["Ждут", "На переделке", "Одобрено", "Мусор", "Все"]]),
     "series": ("/p/1", [T(n, sel=".ptabs") for n in ["Видео", "Клипы", "Вопросы", "Файлы", "Чат", "Лор и правила", "Статистика", "Автопилот"]]),
     "series-lore": ("/p/1?tab=brief", [T(n, sel=".pills") for n in ["Резюме и лор", "Правила", "Гипотезы"]]),
-    "aivideo": ("/p/2?tab=aiv", [T(n, sel=".aiv-subtabs") for n in ["Сценарий", "Персонажи", "Локации", "Раскадровка", "Сборка"]]),
+    "aivideo": ("/p/2?tab=materials&mat=aiv&sub=script", [T(n, sel=".aiv-subtabs") for n in ["Сценарий", "Персонажи", "Локации", "Раскадровка", "Сборка"]]),
     # ---- Проход 2: объяснялки, ИИ-видео v3, звук (сведение, роль/эффекты слоя) ----
-    "explainer": ("/p/3?tab=expl", [
+    "explainer": ("/p/3?tab=materials&mat=mascots", [
         T("Новый ролик"), T("Тема:", kind="placeholder"), T("Длина:"), T("сразу рендер и обложка"), T("Сделать ролик"),
         T("Ролики", sel="h3"), T("Открыть клип"), T("Продолжить"), T("Пересобрать"), T("Удалить", sel=".expl-video-actions"),
         T("Сценарий и биты"), T("биты ролика", click(".expl-toggle >> nth=-1"), sel=".expl-beat", kind="css"),
@@ -147,25 +147,25 @@ SCREENS: dict[str, tuple[str, list[Check]]] = {
         T("Добавить и нарисовать", click(".expl-lib-tools .btn")), T("Теги через запятую", click(".expl-lib-tools .btn"), kind="placeholder"),
         T("Новая версия", kind="title"), T("Убрать из библиотеки", kind="title"), T("Новый маскот"),
     ]),
-    "explainer-empty": ("/p/2?tab=expl", [
+    "explainer-empty": ("/p/2?tab=materials&mat=mascots", [
         T("Маскота пока нет"), T("Импортировать пилот"), T("Новый маскот"), T("Создать", sel=".expl"),
     ]),
-    "aivideo3": ("/p/2?tab=aiv&sub=board", [
+    "aivideo3": ("/p/2?tab=materials&mat=aiv&sub=board", [
         T("1. Блокинг"), T("2. Пары кадров"), T("Проверить кадры"), T("3. Видео планов"), T("Серия (черновик)"),
         T("Старт", sel=".aiv-shot"), T("Конец", sel=".aiv-shot"), T("Проверить сходство"), T("Видео", sel=".aiv-shot .series-row"),
         T("Проверить видео"), T("Кухня ночью", sel=".aiv-shot"), T("Сделать (0 ₽)|всё уже есть", click(".aiv-steps .btn >> nth=0"), kind="regex"),
         T("Скрыть", click(".aiv-steps .btn >> nth=0"), sel=".aiv-est"),
     ]),
-    "aivideo3-blocking": ("/p/2?tab=aiv&sub=blocking", [
+    "aivideo3-blocking": ("/p/2?tab=materials&mat=aiv&sub=blocking", [
         T("Блокинг серии"), T("блокинг: старт"), T("кадр: старт"), T("Пересоздать раскладку"), T("Править раскладку вручную"),
         T("Сохранить и отрисовать", click(".aiv-more summary")), T("Сантиметры", click(".aiv-more summary")),
     ]),
-    "aivideo3-characters": ("/p/2?tab=aiv&sub=characters", [
+    "aivideo3-characters": ("/p/2?tab=materials&mat=aiv&sub=characters", [
         T("Листы персонажа"), T("Сохранить", sel=".series-panel-head"), T("физика", kind="placeholder"),
         T("Манекен в блокинге", kind="title"), T("Как персонаж «говорит»", kind="title"), T("подписи к звукам"),
         T("Чем озвучивать", kind="title"), T("Проба"), T("Листы и референсы"), T("Своя картинка"), T("разворот"), T("Облик", sel=".series-section .btn"),
     ]),
-    "aivideo3-script": ("/p/2?tab=aiv&sub=script", [
+    "aivideo3-script": ("/p/2?tab=materials&mat=aiv&sub=script", [
         T("Модель видео планов", kind="title"), T("видео (оживить план)"), T("продолжает прошлый план"),
         T("движение:", kind="placeholder"), T("звук: фон", kind="placeholder"), T("Состояние кадра"),
         T("Начало плана", click(".aiv-shot-edit .aiv-more summary")),

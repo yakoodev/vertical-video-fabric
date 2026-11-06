@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -21,13 +21,17 @@ import {
   type StageCard,
 } from "@/api/aivideo";
 import { ApiError } from "@/api/client";
+import { navKeys } from "@/api/nav";
+import { releaseKeys } from "@/api/releases";
+import { projectPath, newVideoPath } from "@/lib/paths";
 import { useToast } from "@/components/Toast";
 import { TtsVoicePicker, type TtsVoiceValue } from "@/components/TtsVoicePicker";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
 import "@/styles/aivideo.css";
 
 /**
- * Проект «ИИ-видео» (app/aivideo*.py): Сценарий / Персонажи / Локации / Блокинг / Раскадровка / Сборка.
+ * ИИ-видео (app/aivideo*.py): Сценарий / Персонажи / Локации / Блокинг / Раскадровка / Сборка. Одна и та же страница в двух
+ * местах: «Материалы» проекта (стиль, персонажи, локации, бюджет, журнал трат) и страница выпуска (одна серия, шаги слева).
  * Платное — по этапам: «Оценить» (бесплатно) → «Запросить» → карточка с суммой (тут же сверху,
  * в «Одобрении» и Telegram) → «Разрешить» → генерация. Сухой прогон (провайдер none) — сразу, 0 ₽.
  */
@@ -81,10 +85,55 @@ function useInvalidate(projectId: number) {
   return () => {
     qc.invalidateQueries({ queryKey: aivKey(projectId) });
     qc.invalidateQueries({ queryKey: ["ai-video", "script"] });
+    qc.invalidateQueries({ queryKey: releaseKeys.all });
+    qc.invalidateQueries({ queryKey: navKeys.all });
   };
 }
 
-export function AiVideoTab({ projectId }: { projectId: number }) {
+/** Страница выпуска: все подвкладки работают с этой серией, выбора серии нет. */
+const FixedScript = createContext<number | null>(null);
+
+// В «Материалах» видно только то, что относится к проекту: Сценарий там это стиль и список серий.
+const MATERIAL_SUBS: Sub[] = ["script", "characters", "locations"];
+
+/** Форма типа в «Новое видео»: бриф и длина, дальше страница выпуска. */
+export function AiVideoNew({ projectId, onCreated }: { projectId: number; onCreated: (script: Script) => void }) {
+  const toast = useToast();
+  const invalidate = useInvalidate(projectId);
+  const [brief, setBrief] = useState("");
+  const [target, setTarget] = useState(30);
+  const create = useMutation({
+    mutationFn: () => aivApi.addScript(projectId, { brief, duration_target: target }),
+    onSuccess: (s) => {
+      invalidate();
+      onCreated(s);
+    },
+    onError: (e) => toast.error(errText(e, "Не создано")),
+  });
+  return (
+    <section className="panel series-panel">
+      <h3>Новое ИИ-видео</h3>
+      <p className="muted series-hint">
+        Дальше по шагам: сценарий (бесплатно), персонажи, раскадровка, видео. Перед каждым платным шагом оценка и карточка с суммой, без «Разрешить» деньги не тратятся.
+      </p>
+      <label className="field">
+        <span>О чём серия</span>
+        <textarea className="input" rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} placeholder="Сонная Мира хочет утренний кофе, а робот-пылесос Бип требует внимания" />
+      </label>
+      <div className="series-row">
+        <label className="field">
+          <span>Длина, с</span>
+          <input className="input" type="number" min={10} max={120} value={target} onChange={(e) => setTarget(Number(e.target.value))} />
+        </label>
+        <button className="btn primary sm" disabled={brief.trim().length < 3 || create.isPending} onClick={() => create.mutate()}>
+          ✨ Создать и перейти к шагам
+        </button>
+      </div>
+    </section>
+  );
+}
+
+export function AiVideoTab({ projectId, scriptId }: { projectId: number; scriptId?: number }) {
   // Подвкладка — в адресе (?sub=board), как вкладка серии: перезагрузка не сбрасывает на «Сценарий».
   const [params, setParams] = useSearchParams();
   const raw = params.get("sub");
@@ -112,24 +161,70 @@ export function AiVideoTab({ projectId }: { projectId: number }) {
   if (q.isLoading) return <Loading />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const o = q.data;
+  const fixed = scriptId != null;
+  // На странице серии — её карточки и общие на проект (листы, плиты). Карточки роликов других типов живут на своих страницах.
+  const cards = fixed
+    ? o.approvals.filter((c) => c.script_id === scriptId || (c.script_id == null && !["explainer", "stories"].includes(String(c.stage))))
+    : o.approvals;
+  // Старая ссылка ?sub=board из «Материалов»: подвкладка серии работает и там, но в ленте видна только по такой ссылке.
+  const shownSubs = SUBS.filter(([key]) => MATERIAL_SUBS.includes(key) || key === sub);
   return (
-    <div className="aiv">
-      <BudgetBar budget={o.budget} />
-      <StageCards projectId={projectId} cards={o.approvals} />
-      <nav className="pipeline aiv-subtabs">
-        {SUBS.map(([key, label]) => (
-          <button key={key} className={`tab${sub === key ? " active" : ""}`} onClick={() => setSub(key)}>
-            {label}
-          </button>
-        ))}
-      </nav>
-      {sub === "script" ? <ScriptSub o={o} /> : null}
-      {sub === "characters" ? <CharactersSub o={o} /> : null}
-      {sub === "locations" ? <LocationsSub o={o} /> : null}
-      {sub === "blocking" ? <BlockingSub o={o} /> : null}
-      {sub === "board" ? <BoardSub o={o} /> : null}
-      {sub === "assemble" ? <AssembleSub o={o} /> : null}
-    </div>
+    <FixedScript.Provider value={scriptId ?? null}>
+      <div className="aiv">
+        <BudgetBar budget={o.budget} />
+        <StageCards projectId={projectId} cards={cards} />
+        {fixed ? null : (
+          <nav className="pipeline aiv-subtabs">
+            {shownSubs.map(([key, label]) => (
+              <button key={key} className={`tab${sub === key ? " active" : ""}`} onClick={() => setSub(key)}>
+                {key === "script" ? "Стиль и серии" : label}
+              </button>
+            ))}
+            <button className={`tab${raw === "ledger" ? " active" : ""}`} onClick={() => setParams((prev) => { const p = new URLSearchParams(prev); p.set("sub", "ledger"); return p; }, { replace: true })}>
+              Журнал трат
+            </button>
+          </nav>
+        )}
+        {raw === "ledger" && !fixed ? (
+          <Ledger projectId={projectId} />
+        ) : (
+          <>
+            {sub === "script" ? <ScriptSub o={o} /> : null}
+            {sub === "characters" ? <CharactersSub o={o} /> : null}
+            {sub === "locations" ? <LocationsSub o={o} /> : null}
+            {sub === "blocking" ? <BlockingSub o={o} /> : null}
+            {sub === "board" ? <BoardSub o={o} /> : null}
+            {sub === "assemble" ? <AssembleSub o={o} /> : null}
+          </>
+        )}
+      </div>
+    </FixedScript.Provider>
+  );
+}
+
+function Ledger({ projectId }: { projectId: number }) {
+  const ledger = useQuery({ queryKey: [...aivKey(projectId), "ledger"], queryFn: () => aivApi.ledger(projectId) });
+  return (
+    <section className="panel series-panel">
+      <h3>Журнал трат</h3>
+      {ledger.data?.ledger.length ? (
+        <table className="aiv-ledger">
+          <tbody>
+            {ledger.data.ledger.map((l) => (
+              <tr key={l.id}>
+                <td className="muted">{l.created_at}</td>
+                <td>{l.label || l.stage}</td>
+                <td className="mono">{l.model}</td>
+                <td>{rub(l.amount_rub)}</td>
+                <td className="muted">{l.source}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">Трат не было.</p>
+      )}
+    </section>
   );
 }
 
@@ -492,16 +587,20 @@ function StylePanel({ o }: { o: Overview }) {
 }
 
 function useEpisode(o: Overview) {
-  const [id, setId] = useState<number | null>(o.scripts[0]?.id ?? null);
+  const fixed = useContext(FixedScript);
+  const [picked, setId] = useState<number | null>(o.scripts[0]?.id ?? null);
+  const id = fixed ?? picked;
   useEffect(() => {
-    if (id == null && o.scripts.length) setId(o.scripts[0].id);
-  }, [o.scripts, id]);
+    if (picked == null && o.scripts.length) setId(o.scripts[0].id);
+  }, [o.scripts, picked]);
   const q = useQuery({ queryKey: aivScriptKey(id ?? 0), queryFn: () => aivApi.script(id as number), enabled: id != null });
   return { id, setId, script: q.data, q };
 }
 
 function EpisodePicker({ o, id, setId }: { o: Overview; id: number | null; setId: (v: number) => void }) {
-  if (!o.scripts.length) return <span className="muted">Серий пока нет — создайте на вкладке «Сценарий».</span>;
+  const fixed = useContext(FixedScript);
+  if (fixed != null) return null;
+  if (!o.scripts.length) return <span className="muted">Серий пока нет. Новая серия: «Новое видео» → ИИ-видео.</span>;
   return (
     <select className="input" value={id ?? ""} onChange={(e) => setId(Number(e.target.value))}>
       {o.scripts.map((s) => (
@@ -517,17 +616,9 @@ function ScriptSub({ o }: { o: Overview }) {
   const toast = useToast();
   const invalidate = useInvalidate(o.project.id);
   const ep = useEpisode(o);
+  const fixed = useContext(FixedScript) != null;
   const [brief, setBrief] = useState("");
-  const [target, setTarget] = useState(30);
   useEffect(() => setBrief(ep.script?.brief ?? ""), [ep.script?.id, ep.script?.brief]);
-  const create = useMutation({
-    mutationFn: () => aivApi.addScript(o.project.id, { brief, duration_target: target }),
-    onSuccess: (s) => {
-      ep.setId(s.id);
-      invalidate();
-    },
-    onError: (e) => toast.error(errText(e, "Не создано")),
-  });
   const write = useMutation({
     mutationFn: () => aivApi.writeScript(ep.id as number, brief),
     onSuccess: (s) => {
@@ -538,10 +629,16 @@ function ScriptSub({ o }: { o: Overview }) {
     onError: (e) => toast.error(errText(e, "Gemini не ответил — напишите сценарий агентом (aiv_update_script)")),
   });
   return (
-    <div className="series-grid">
-      <div className="series-col">
-        <StylePanel o={o} />
-      </div>
+    <div className={fixed ? "series-col" : "series-grid"}>
+      {fixed ? (
+        <p className="muted series-hint">
+          Стиль, модели и бюджет общие на весь проект: <Link to={`${projectPath(o.project.id, "materials")}&mat=aiv`}>материалы проекта</Link>.
+        </p>
+      ) : (
+        <div className="series-col">
+          <StylePanel o={o} />
+        </div>
+      )}
       <div className="series-col">
         <section className="panel series-panel">
           <div className="series-panel-head">
@@ -553,13 +650,11 @@ function ScriptSub({ o }: { o: Overview }) {
             <textarea className="input" rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
           </label>
           <div className="series-row">
-            <label className="field">
-              <span>Длина, с</span>
-              <input className="input" type="number" min={10} max={120} value={target} onChange={(e) => setTarget(Number(e.target.value))} />
-            </label>
-            <button className="btn sm" disabled={create.isPending} onClick={() => create.mutate()}>
-              ＋ Новая серия
-            </button>
+            {fixed ? null : (
+              <Link className="btn sm" to={newVideoPath(o.project.id, "aiv")}>
+                ＋ Новая серия
+              </Link>
+            )}
             <button className="btn primary sm" disabled={!ep.id || write.isPending} onClick={() => write.mutate()}>
               {write.isPending ? "Gemini пишет…" : "✨ Сценарий (Gemini, бесплатно)"}
             </button>
@@ -1270,7 +1365,11 @@ function AssembleSub({ o }: { o: Overview }) {
                   🎬 Собрать клип
                 </button>
               </div>
-              {s.clip_plan_id ? <span className="muted">Последняя сборка: клип #{s.clip_plan_id}</span> : null}
+              {s.clip_plan_id ? (
+                <span className="muted">
+                  Последняя сборка: клип #{s.clip_plan_id}. Новая сборка станет его новой версией: субтитры и монтаж соберутся из серии заново, правки руками останутся в прошлой версии.
+                </span>
+              ) : null}
               {result ? (
                 <div className="aiv-est">
                   <Link to={result.editor_url}>Открыть в редакторе →</Link>

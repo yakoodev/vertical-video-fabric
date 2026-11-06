@@ -892,10 +892,9 @@ def test_explainer_works_in_project_of_any_kind_without_changing_it(real):
     project = client.get(f"/api/projects/{other}").json()
     assert project["kind"] == "other" and project["has_mascots"] is True
     assert P.project_of_plan(store, video["clip_id"]) == other
-    # ИИ-видео без маскота по-прежнему отказывает в чужом проекте.
+    # «Новое видео» — одна кнопка в любом проекте (решение 16): вид проекта генерации не запрещает и сам не меняется.
     empty = P.create_project(store, "Стрим", kind="stream_channel")["id"]
-    with pytest.raises(V.AivError):
-        V.require_project(store, empty)
+    assert V.require_project(store, empty)["kind"] == "stream_channel"
 
 
 def test_agent_prompt_forbids_guessing_about_voice():

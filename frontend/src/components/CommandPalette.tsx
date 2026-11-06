@@ -69,7 +69,7 @@ export function CommandPalette({
   const commands = useMemo<Cmd[]>(() => {
     const go = (to: string) => () => navigate(to);
     const list: Cmd[] = [
-      { id: "create", group: "Действия", label: "Новое видео", hint: "файл или ссылка", icon: "plus", run: onCreate },
+      { id: "create", group: "Действия", label: "Новое видео", hint: "ссылка, файл или ролик с нуля", keywords: "выпуск объяснялка история холст промо топ 3d", icon: "plus", run: onCreate },
       ...(on("series") ? [{ id: "create-p", group: "Действия", label: "Новый проект", icon: "folder", run: onCreateProject }] : []),
       ...(on("agent_chat") ? [{ id: "gchat", group: "Действия", label: "Общий чат", hint: "вопрос агенту", icon: "chat", run: onOpenChat }] : []),
       { id: "queue", group: "Действия", label: "Очередь задач", keywords: "задачи", icon: "queue", run: go("/inbox?tab=tasks") },

@@ -366,7 +366,7 @@ def tools() -> list[Tool]:
              h_update_beats, mutating=True, scope="project"),
         Tool("story_continue", "Продолжаю историю",
              "Вести эпизод дальше сейчас (обычно это делает работник): после правки, после «Разрешить», после сбоя "
-             "(failed — с того шага, где есть данные). reassemble=true — собрать готовый эпизод заново (новый клип). "
+             "(failed — с того шага, где есть данные). reassemble=true — собрать готовый эпизод заново (новая версия того же клипа). "
              "/ Advance a story episode now.",
              _obj({"episode_id": {"type": "integer"}, "reassemble": {"type": "boolean"}}, ["episode_id"]),
              h_continue, mutating=True, scope="project"),

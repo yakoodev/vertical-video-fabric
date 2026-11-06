@@ -109,9 +109,22 @@ class FakeGemini:
         return {"candidates": [{"content": {"parts": [{"text": data}]}}]}
 
 
+_REAL_CREATE_EPISODE = S.create_episode
+
+
+def _create_dry_by_default(store, world_id, premise, duration=None, tone="", options=None, requested_by="agent"):
+    """Эти тесты ведут эпизод без сети: в проекте без платного провайдера он — явный сухой прогон. Настоящий путь (голос,
+    субтитры по речи, карточка) — фикстура ``paid`` и tests/test_releases.py."""
+    opts = dict(options or {})
+    if V._style_row(store, S.get_world(store, world_id)["project_id"])["provider"] == "none":
+        opts.setdefault("dry_run", True)
+    return _REAL_CREATE_EPISODE(store, world_id, premise, duration, tone, opts, requested_by)
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     _require_ffmpeg()
+    monkeypatch.setattr(S, "create_episode", _create_dry_by_default)
     import app.canvas as canvas
 
     monkeypatch.setattr(canvas, "CANVAS_WIDTH", 108)
@@ -393,6 +406,14 @@ def paid(env, monkeypatch):
 
     real = PR.get_tts
     monkeypatch.setattr(PR, "get_tts", lambda name, *a, **k: FreeGeminiTTS() if name == "gemini" else real(name, *a, **k))
+    store = env[1]
+
+    def hear_the_script(path):  # настоящий эпизод: речь есть и читает текст сценария
+        row = store.db.query_one("SELECT id FROM story_episodes WHERE status = 'assembling' ORDER BY id DESC LIMIT 1")
+        text = S.narration_text(S.get_episode(store, int(row["id"])))
+        return [{"word": w, "start": round(i * 0.35, 3), "end": round(i * 0.35 + 0.3, 3)} for i, w in enumerate(text.split())]
+
+    monkeypatch.setattr(X, "transcribe_words", hear_the_script)
     return env, fake
 
 
@@ -526,9 +547,10 @@ def test_module_tools_and_rest(env):
     assert r.status_code == 200 and r.json()["character"]["sheet"] is None
     r = client.post(f"/api/stories/worlds/{wid}/locations", json={"name": "Камера", "description": "a tiny cell",
                                                                     "generate": True})
-    assert r.status_code == 200 and r.json()["generation"]["status"] == "done"  # сухой прогон — сразу
+    # Провайдер none у проекта — не сухой прогон: настоящая картинка платная, значит карточка, а не заглушка.
+    assert r.status_code == 200 and r.json()["generation"]["status"] == "awaiting_approval"
     r = client.get(f"/api/projects/{pid}/stories")
-    assert r.status_code == 200 and r.json()["worlds"][0]["locations"][0]["plate"]
+    assert r.status_code == 200 and not r.json()["worlds"][0]["locations"][0]["plate"]
     assert r.json()["episode_cap_rub"] == 200
     r = client.post(f"/api/stories/worlds/{wid}/episodes", json={"premise": "побег", "duration": 120})
     assert r.status_code == 400

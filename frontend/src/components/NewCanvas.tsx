@@ -17,10 +17,10 @@ const MIN_SEC = 5;
 const MAX_SEC = 180;
 const DEFAULT_SEC = 15;
 
-export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () => void; disabled?: boolean; projectId?: number | null }) {
+export function NewCanvas({ onCreated, disabled, projectId, inline }: { onCreated?: () => void; disabled?: boolean; projectId?: number | null; inline?: boolean }) {
   const toast = useToast();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(inline));
   const [duration, setDuration] = useState(DEFAULT_SEC);
   const [title, setTitle] = useState("");
   const [bg, setBg] = useState<Background>(DEFAULT_BACKGROUND);
@@ -33,7 +33,7 @@ export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () =
       clipPlansApi.createCanvas({ duration: sec, background: bg, title: title.trim(), ...(projectId ? { project_id: projectId } : {}) }),
     onSuccess: (plan) => {
       toast.success("Холст создан — добавляйте картинки, текст и музыку");
-      setOpen(false);
+      if (!inline) setOpen(false);
       onCreated?.();
       navigate(plan.editor_url);
     },
@@ -42,7 +42,7 @@ export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () =
 
   return (
     <>
-      <button
+      {inline ? null : <button
         type="button"
         className={`btn${open ? " active" : ""}`}
         disabled={disabled || create.isPending}
@@ -51,7 +51,7 @@ export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () =
         onClick={() => setOpen((v) => !v)}
       >
         🎨 Новый холст
-      </button>
+      </button>}
       {open ? (
         <div className="canvas-new">
           <div className="canvas-new-row">
@@ -92,9 +92,11 @@ export function NewCanvas({ onCreated, disabled, projectId }: { onCreated?: () =
           <BackgroundPicker value={bg} onChange={setBg} />
           <div className="canvas-new-row">
             <span className="muted li-note lay-grow">Видео не нужно: весь кадр — фон, сверху слои.</span>
-            <button type="button" className="btn ghost" onClick={() => setOpen(false)} disabled={create.isPending}>
-              Отмена
-            </button>
+            {inline ? null : (
+              <button type="button" className="btn ghost" onClick={() => setOpen(false)} disabled={create.isPending}>
+                Отмена
+              </button>
+            )}
             <button type="button" className="btn primary" disabled={create.isPending} onClick={() => create.mutate()}>
               {create.isPending ? "Создаю…" : `Создать холст · ${sec} с`}
             </button>

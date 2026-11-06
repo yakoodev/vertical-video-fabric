@@ -39,10 +39,10 @@ export function levelTab(level: ChatLevel): string {
 }
 
 export function chatPlace(where: ReturnType<typeof useWhere>, nav: NavState | undefined, clipChatOn: boolean): ChatPlace {
-  const { head, parts, videoId, source, clipId, editClipId, clip, projectId, hiddenVideo } = where;
+  const { head, parts, videoId, source, clipId, editClipId, clip, projectId, hiddenVideo, releaseKey, release } = where;
   const planAsked = clipId || editClipId;
-  if (head !== "p" && !planAsked && !videoId) return { levels: [GENERAL], pending: false };
-  if ((planAsked && clip.isLoading) || (videoId && source.isLoading) || !nav) return { levels: [GENERAL], pending: true };
+  if (head !== "p" && !planAsked && !videoId && !releaseKey) return { levels: [GENERAL], pending: false };
+  if ((planAsked && clip.isLoading) || (videoId && source.isLoading) || (releaseKey && release.isLoading) || !nav) return { levels: [GENERAL], pending: true };
 
   const levels: ChatLevel[] = [];
   const view = clip.data;

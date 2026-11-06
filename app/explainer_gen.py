@@ -39,8 +39,10 @@ from typing import Any
 from app import aivideo as V
 from app import aivideo_gen as G
 from app import autopilot as A
+from app import clip_groups as CG
 from app import explainer as E
 from app import projects as P
+from app import word_fixes as WF
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -222,8 +224,9 @@ def set_script(store: Any, video_id: int, data: dict, source: str = "agent") -> 
     target = float(video["duration_target"])
     if abs(script["est_sec"] - target) > target * 0.25:
         script["warnings"].append(f"текст ≈ {script['est_sec']:.0f} с при цели {target:.0f} с")
-    E.set_status(store, video_id, "scripted", None, script=script, beats=[], words=[], timeline={},
-                 title=script["title"] or P._text(video["topic"], 100), error="", approval_id=None, clip_id=None)
+    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
+    E.set_status(store, video_id, "scripted", None, script=script, beats=[], timeline={},
+                 title=script["title"] or P._text(video["topic"], 100), error="", approval_id=None)
     return E.get_video(store, video_id)
 
 
@@ -639,7 +642,8 @@ def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
         pose = poses.get(int(beat["pose_id"]))
         beat["pose_title"] = pose["title"] if pose else ""
         beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
-    E.set_status(store, video_id, "planned", None, beats=beats, error="", clip_id=None, timeline={})
+    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
+    E.set_status(store, video_id, "planned", None, beats=beats, error="", timeline={})
     return E.get_video(store, video_id)
 
 
@@ -975,20 +979,25 @@ def script_words(text: str, heard: list[dict]) -> list[dict]:
     return out
 
 
-def _real_words(store: Any, video: dict, ref: dict, path: Path) -> tuple[list[dict], float]:
+def real_words(store: Any, text: str, ref: dict, path: Path, error: type[Exception] = E.ExplError,
+               noun: str = "ролик", transcribe: Any = None) -> tuple[list[dict], float]:
     """Слова сценария на времени настоящей озвучки. Нет речи или в ней не тот текст — стоп: субтитры по длине текста
-    не попали бы в голос, а клип с такой озвучкой — подделка."""
+    не попали бы в голос, а клип с такой озвучкой — подделка. Общее у объяснялок и историй (app/stories_gen.py)."""
     try:
-        words = transcribe_words(path)
+        words = (transcribe or transcribe_words)(path)
     except Exception as exc:  # noqa: BLE001 - причину — владельцу, ролик ждёт
-        raise E.ExplError(f"Не удалось распознать речь в озвучке ({type(exc).__name__}: {str(exc)[:120]}). Без этого "
-                          "субтитры не попадут в голос, ролик не собираю — нажмите «Продолжить»") from exc
-    share = heard_share(E.narration_text(video), words)
+        raise error(f"Не удалось распознать речь в озвучке ({type(exc).__name__}: {str(exc)[:120]}). Без этого "
+                    f"субтитры не попадут в голос, {noun} не собираю — нажмите «Продолжить»") from exc
+    share = heard_share(text, words)
     if share < VOICE_MIN_HEARD:
         store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE id = ?", (int(ref["id"]),))  # записать заново
-        raise E.ExplError(f"В озвучке распознано только {share:.0%} текста сценария. Такой голос не выпускаю — "
-                          "нажмите «Продолжить», озвучка запишется заново")
-    return script_words(E.narration_text(video), words), share
+        raise error(f"В озвучке распознано только {share:.0%} текста сценария. Такой голос не выпускаю — "
+                    "нажмите «Продолжить», озвучка запишется заново")
+    return script_words(text, words), share
+
+
+def _real_words(store: Any, video: dict, ref: dict, path: Path) -> tuple[list[dict], float]:
+    return real_words(store, E.narration_text(video), ref, path)
 
 
 def _word_in(words: list[dict], target: Any, w0: int, w1: int) -> int | None:
@@ -1162,7 +1171,7 @@ def auto_mix_clip(ctx: Any, notes: list[str]) -> dict | None:
 
 
 def assemble(store: Any, video_id: int) -> dict:
-    """Озвучка → слова → биты по времени → новый холст-клип как пилот 887."""
+    """Озвучка → слова → биты по времени → холст-клип как пилот 887. Собирали раньше — новая версия того же клипа."""
     from app import agent_tools as T
     from app.aivideo_gen import _asset_path
     from app.canvas import base_seconds, create_canvas_clip
@@ -1187,6 +1196,8 @@ def assemble(store: Any, video_id: int) -> dict:
     total = round(max(words[-1]["end"] + TAIL_SEC, audio_sec + 0.4), 2)
     if total > base_seconds():
         raise E.ExplError(f"ролик {total:.1f} с длиннее холста {base_seconds():.0f} с")
+    previous = video.get("clip_id")
+    words, sub_fixes = WF.apply_previous(store, previous, video.get("words") or [], words, notes)
     # Чип и плашка старой правки могли записаться строкой-словарём: в кадр такое не идёт.
     beats = [{**b, "chip": _chip(b.get("chip")), "badge": _badge(b.get("badge"))} for b in video["beats"]]
     placed = place(beats, words, total)
@@ -1196,6 +1207,7 @@ def assemble(store: Any, video_id: int) -> dict:
                               f"{E.DRY_MARK}: {title}"[:100] if dry else title,
                               f"Объяснялка ({mascot['name']}): {video['topic']}"[:500])
     clip_id = int(clip["id"])
+    CG.hold_assembly(store, clip_id)
     # Клип — в проект маскота: иначе у холста нет проекта и он виден только по прямой ссылке.
     # Канал объяснялок: в проект канала (одобрение, расписание, статистика).
     channel_id = (video.get("options") or {}).get("channel_project_id")
@@ -1222,8 +1234,11 @@ def assemble(store: Any, video_id: int) -> dict:
     E.mark_used(store, [int(p["pose_id"]) for p in placed])
     job = G.get_job(store, int(ref["job_id"])) if ref.get("job_id") else {}
     skipped = _skipped(store, mascot, video, placed, layers, track, mixed, dry)
+    version = CG.finish_assembly(store, clip_id, previous)
+    if version["note"] and not version["linked"]:
+        notes.append(version["note"])
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
-                "editor_url": f"/clips/{clip_id}",
+                "editor_url": f"/clips/{clip_id}", "version": version, "subtitle_fixes": sub_fixes,
                 "voice": E.describe_voice(voice, float(job.get("cost_rub") or 0.0)), "dry_run": dry,
                 "captions": {"timing": "speech" if heard is not None else "text_length", "heard_share": heard,
                              "text": "script" if heard is not None else "script_no_speech"},
@@ -1235,7 +1250,7 @@ def assemble(store: Any, video_id: int) -> dict:
     E.update_video(store, video_id, clip_id=clip_id, words=words, timeline=timeline, notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(layers),
            "editor_url": timeline["editor_url"], "notes": notes, "voice": timeline["voice"],
-           "captions": timeline["captions"], "skipped": skipped}
+           "captions": timeline["captions"], "skipped": skipped, "version": version, "subtitle_fixes": sub_fixes}
     options = video.get("options") or {}
     if options.get("render"):
         # «done» — только когда рендер, обложки и заголовок уже сделаны: канал объяснялок
@@ -1299,6 +1314,13 @@ def facts(store: Any, video_id: int, video: dict | None = None) -> dict:
         parts.append(f"В работе: {video['status_label']}. Клипа ещё нет.")
     if to_draw:
         parts.append("Нужно нарисовать позы: " + ", ".join(f"«{t}»" for t in to_draw) + ".")
+    fixes = timeline.get("subtitle_fixes") if status == "done" else None
+    if fixes is None:
+        fixes = WF.summary(WF.from_clip(store, video.get("clip_id"), video.get("words") or []))
+    if fixes.get("note"):
+        parts.append(fixes["note"])
+    if status == "done" and (timeline.get("version") or {}).get("linked"):
+        parts.append("Это новая версия того же клипа, прошлая осталась, откат на экране клипа.")
     parts.append(voice["label"])
     if voice["paid"] and status != "done" and not timeline.get("voice"):
         parts.append("Без «Разрешить» озвучки не будет: другим голосом не подменяю. Не хотите платить — решает владелец: "
@@ -1310,7 +1332,7 @@ def facts(store: Any, video_id: int, video: dict | None = None) -> dict:
     if skipped:
         parts.append("Не сделано: " + "; ".join(skipped) + ".")
     return {"voice": voice, "captions": captions, "dry_run": E.is_dry(video), "spent_rub": round(spent, 2),
-            "poses_to_draw": to_draw, "skipped": skipped, "summary": " ".join(parts)}
+            "poses_to_draw": to_draw, "skipped": skipped, "subtitle_fixes": fixes, "summary": " ".join(parts)}
 
 
 def finish_publish(store: Any, video_id: int, clip_id: int, cover: bool = True) -> dict:

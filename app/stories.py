@@ -25,7 +25,7 @@
 
 Деньги — расширение этапа ``stories`` у ``app/aivideo_gen.py``: новые сцены, листы, плиты, кадр стиля и
 озвучка Polza — ОДНОЙ карточкой на эпизод (потолок ``STORIES_EPISODE_CAP_RUB``, 200 ₽); Gemini TTS и
-сухой прогон (провайдер проекта ``none``) — сразу, 0 ₽.
+сухой прогон (явная опция эпизода ``dry_run``) — сразу, 0 ₽.
 """
 
 from __future__ import annotations
@@ -421,12 +421,20 @@ def add_style_ref(store: Any, world_id: int, asset_id: int) -> dict:
     return get_world(store, world_id)
 
 
-def world_voice(store: Any, world: dict) -> dict:
-    """Голос рассказчика: провайдер мира; проект в сухом прогоне (провайдер ``none``) — тон."""
-    voice = world.get("voice") or {}
-    if voice.get("provider") == "none" or V._style_row(store, int(world["project_id"]))["provider"] == "none":
-        return E.dry_voice()
-    return E.mascot_voice(store, {"project_id": world["project_id"], "voice": voice})
+def world_voice(store: Any, world: dict, dry_run: bool = False) -> dict:
+    """Голос рассказчика: выбранный голос мира. Другим голосом не подменяем, скрытая настройка проекта голос не решает:
+    тон — только при ``dry_run`` (явная опция эпизода), как у объяснялок (E.mascot_voice)."""
+    return E.mascot_voice(store, {"project_id": world["project_id"], "voice": world.get("voice") or {}}, dry_run)
+
+
+def is_dry(ep: dict | None) -> bool:
+    """Черновик без голоса и настоящих картинок: только по явной опции эпизода ``dry_run``."""
+    return bool(((ep or {}).get("options") or {}).get("dry_run"))
+
+
+def scene_usable(scene: dict, dry_run: bool = False) -> bool:
+    """Заглушка сцены годится только черновику: настоящий эпизод её не возьмёт, а попросит нарисовать."""
+    return bool(scene["ready"] or (dry_run and scene.get("placeholder")))
 
 
 # --------------------------------------------------------------------------- #
@@ -637,13 +645,15 @@ def _cast(value: Any) -> list[int]:
     return out[:4]
 
 
-def _scene_view(row: Any, ref: dict | None) -> dict:
+def _scene_view(row: Any, ref: dict | None, dry_jobs: set[int] | frozenset = frozenset()) -> dict:
     data = dict(row)
     data["cast"] = _loads(data.pop("cast_json", "[]"), [])
     data["tags"] = _loads(data.pop("tags_json", "[]"), [])
-    data["ready"] = bool(ref and ref.get("asset_id"))
-    data["asset_id"] = int(ref["asset_id"]) if data["ready"] else None
-    data["url"] = ref["url"] if data["ready"] else None
+    has_image = bool(ref and ref.get("asset_id"))
+    data["placeholder"] = bool(has_image and ref.get("job_id") and int(ref["job_id"]) in dry_jobs)
+    data["ready"] = has_image and not data["placeholder"]
+    data["asset_id"] = int(ref["asset_id"]) if has_image else None
+    data["url"] = ref["url"] if has_image else None
     data["ref_id"] = int(ref["id"]) if ref else None
     data["version"] = int(ref["version"]) if ref else 0
     data["stale"] = bool(ref and ref.get("stale"))
@@ -655,7 +665,8 @@ def get_scene(store: Any, scene_id: int) -> dict:
                              "WHERE s.id = ?", (int(scene_id),))
     if not row:
         raise KeyError(f"нет сцены {scene_id}")
-    return _scene_view(row, V.selected_ref(store, int(row["project_id"]), T_SCENE, int(scene_id), SCENE_KIND))
+    return _scene_view(row, V.selected_ref(store, int(row["project_id"]), T_SCENE, int(scene_id), SCENE_KIND),
+                       E._dry_jobs(store, int(row["project_id"])))
 
 
 def list_scenes(store: Any, world_id: int, ready_only: bool = False) -> list[dict]:
@@ -665,7 +676,8 @@ def list_scenes(store: Any, world_id: int, ready_only: bool = False) -> list[dic
     refs = {int(r["target_id"]): V.ref_view(r) for r in rows}
     scenes = store.db.query_all("SELECT s.*, w.project_id FROM story_scenes s JOIN story_worlds w ON w.id = s.world_id "
                                 "WHERE s.world_id = ? ORDER BY s.id", (int(world_id),))
-    out = [_scene_view(r, refs.get(int(r["id"]))) for r in scenes]
+    dry_jobs = E._dry_jobs(store, int(world["project_id"]))
+    out = [_scene_view(r, refs.get(int(r["id"])), dry_jobs) for r in scenes]
     return [s for s in out if s["ready"]] if ready_only else out
 
 
@@ -994,7 +1006,7 @@ def narration_ref(store: Any, ep: dict) -> dict | None:
     """Готовая озвучка эпизода тем же голосом и тем же текстом (иначе — нет)."""
     from app.aivideo_gen import _asset_path, _fresh, _line_key
 
-    voice = world_voice(store, get_world(store, int(ep["world_id"])))
+    voice = world_voice(store, get_world(store, int(ep["world_id"])), is_dry(ep))
     ref = V.selected_ref(store, int(ep["project_id"]), T_EP, int(ep["id"]), NARRATION_KIND)
     if not _fresh(ref) or ref["prompt"] != _line_key(voice, narration_text(ep)):
         return None
@@ -1184,12 +1196,13 @@ class _Extension:
         world = get_world(store, int(ep["world_id"]))
         new_scenes = []
         seen: set[int] = set()
+        dry = is_dry(ep)
         for sid in beat_scene_ids(ep):
             if sid in seen:
                 continue
             seen.add(sid)
             scene = get_scene(store, sid)
-            if not scene["ready"]:
+            if not scene_usable(scene, dry):
                 new_scenes.append(scene)
         if not new_scenes:
             return out
@@ -1197,7 +1210,7 @@ class _Extension:
         # в той же карточке (работник ждёт их: deps).
         if not world["style_refs"]:
             out.append(self._image(store, project_id, T_WORLD, int(world["id"]), STYLE_KIND,
-                                   f"кадр стиля «{world['name']}»", group, slot="1"))
+                                   f"кадр стиля «{world['name']}»", group, slot="1", dry=dry))
         chars, locs = [], []
         for scene in new_scenes:
             for cid in _cast(scene["cast"]):
@@ -1208,28 +1221,31 @@ class _Extension:
         for cid in chars:
             c = get_character(store, cid)
             if not c["sheet"]:
-                out.append(self._image(store, project_id, T_CHAR, cid, SHEET_KIND, f"лист актёра «{c['name']}»", group))
+                out.append(self._image(store, project_id, T_CHAR, cid, SHEET_KIND, f"лист актёра «{c['name']}»", group, dry=dry))
         for lid in locs:
             loc = get_location(store, lid)
             if not loc["plate"]:
-                out.append(self._image(store, project_id, T_LOC, lid, PLATE_KIND, f"плита «{loc['name']}»", group))
-        out += [self._scene_item(store, project_id, scene, group) for scene in new_scenes]
+                out.append(self._image(store, project_id, T_LOC, lid, PLATE_KIND, f"плита «{loc['name']}»", group, dry=dry))
+        out += [self._scene_item(store, project_id, scene, group, dry) for scene in new_scenes]
         return out
 
     def _image(self, store: Any, project_id: int, target_type: str, target_id: int, kind: str, label: str,
-               group: str, slot: str = "") -> dict:
+               group: str, slot: str = "", dry: bool = False) -> dict:
         from app import aivideo_gen as G
 
         style = V.get_style(store, project_id)
+        # Заглушка — только в черновике. Провайдер none (значение по умолчанию у любого проекта) — не повод выдать
+        # заглушку за сцену: настоящая картинка платная, значит карточка владельцу с суммой (как у объяснялок).
+        provider = "none" if dry else (style["provider"] if style["provider"] != "none" else E.DRAW_PROVIDER)
         item = G._image_item(STAGE, target_type, target_id, kind, label, style["image_model"], style["quality"],
-                             style["provider"], slot)
+                             provider, slot)
         item["aspect"] = self.aspects.get(kind, "9:16")
         return {**item, "group": group} if group else item
 
-    def _scene_item(self, store: Any, project_id: int, scene: dict, group: str) -> dict:
+    def _scene_item(self, store: Any, project_id: int, scene: dict, group: str, dry: bool = False) -> dict:
         title = scene["title"] or scene["action"]
         return self._image(store, project_id, T_SCENE, int(scene["id"]), SCENE_KIND, f"сцена «{P._text(title, 60)}»",
-                           group)
+                           group, dry=dry)
 
     def _narration_item(self, store: Any, ep: dict, regenerate: bool) -> dict | None:
         from app.aivideo_providers import get_tts
@@ -1239,7 +1255,7 @@ class _Extension:
             raise StoryError(f"у эпизода {ep['id']} нет текста — сначала сценарий")
         if not regenerate and narration_ref(store, ep) is not None:
             return None
-        voice = world_voice(store, get_world(store, int(ep["world_id"])))
+        voice = world_voice(store, get_world(store, int(ep["world_id"])), is_dry(ep))
         tts = get_tts(voice["provider"], voice["model"], voice["voice"], voice.get("style"))
         price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
         note = {"gemini": "Gemini TTS, бесплатно", "none": "сухой прогон"}.get(voice["provider"],

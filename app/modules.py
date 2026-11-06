@@ -293,6 +293,7 @@ MODULES: list[Module] = [
         "Шаблон промо: телефон с записью экрана, подписи, музыка — одним вызовом build_app_promo.",
         cost=("cpu",), cost_note="рендер моушн-слоёв",
         tools=("build_app_promo",),
+        routes=("POST /api/projects/{id}/promo",),
     ),
     # ------------------------------------------------------------------ библиотека
     Module(

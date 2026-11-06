@@ -12,9 +12,8 @@ import { Sidebar } from "@/components/shell/Sidebar";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
-import { rememberProject, videoPath } from "@/lib/paths";
+import { newVideoPath, rememberProject, videoPath } from "@/lib/paths";
 import { SECTIONS, VIDEO_TABS, tabShortcuts, visibleTabs } from "@/lib/tabs";
-import { AddSource } from "@/pages/ProjectsPage";
 
 // Панель чата и её зависимости не нужны, пока её не открыли.
 const ChatDrawer = lazyPage<ComponentProps<typeof import("@/components/shell/ChatDrawer").ChatDrawer>>(() => import("@/components/shell/ChatDrawer"), "ChatDrawer");
@@ -55,17 +54,17 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [palette, setPalette] = useState(false);
-  const [create, setCreate] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [keys, setKeys] = useState(false);
   const [chat, setChat] = useState<"here" | "general" | null>(null);
   const { on } = useModules();
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, refetchInterval: 30000, staleTime: 15_000 });
   const where = useWhere(nav.data);
-  const { projectId, project } = where;
+  const { projectId } = where;
   const place = chatPlace(where, nav.data, on("editor_agent"));
   const chatHere = place.levels[0];
-  const openCreate = useCallback(() => setCreate(true), []);
+  // Один путь: «Новое видео» → тип → страница шагов (решение 16). В проекте — сразу в него.
+  const openCreate = useCallback(() => navigate(newVideoPath(projectId)), [navigate, projectId]);
   const openNewProject = useCallback(() => setNewProject(true), []);
   const openKeys = useCallback(() => setKeys(true), []);
   const openGeneralChat = useCallback(() => setChat("general"), []);
@@ -83,14 +82,13 @@ export function AppShell() {
         return;
       }
       if (e.key === "Escape") {
-        setCreate(false);
         setKeys(false);
         setNewProject(false);
       }
       if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
       if (document.querySelector(".modal-backdrop, .drawer-backdrop")) return; // a dialog owns the keyboard
       if (e.key === "?") setKeys(true);
-      else if (e.key === "n" || e.key === "т") setCreate(true);
+      else if (e.key === "n" || e.key === "т") openCreate();
       else if (/^[1-9]$/.test(e.key)) {
         // Цифра — вкладка по порядку на экране: выключенных модулей в списке нет, подсказка «?» считает так же.
         const n = Number(e.key) - 1;
@@ -111,7 +109,7 @@ export function AppShell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [location.pathname, location.search, navigate, on]);
+  }, [location.pathname, location.search, navigate, on, openCreate]);
 
   return (
     <div className="shell">
@@ -171,23 +169,6 @@ export function AppShell() {
       ) : null}
 
       {newProject ? <NewProjectDialog onClose={() => setNewProject(false)} /> : null}
-
-      {create ? (
-        <div className="modal-backdrop" onClick={() => setCreate(false)}>
-          <div className="modal create-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Новое видео">
-            <div className="pub-head">
-              <h3>{project ? `Новое видео в проекте «${project.name}»` : "Новое видео"}</h3>
-              <button className="pub-x" title="Закрыть" onClick={() => setCreate(false)}>
-                ×
-              </button>
-            </div>
-            <p className="muted" style={{ margin: "0 0 12px", fontSize: 13 }}>
-              Загрузите видео или вставьте ссылку: скачивание пойдёт в фоне, прогресс в «Очереди задач».
-            </p>
-            <AddSource onStarted={() => setCreate(false)} projectId={project?.id ?? null} />
-          </div>
-        </div>
-      ) : null}
 
       {keys ? (
         <div className="modal-backdrop" onClick={() => setKeys(false)}>
