@@ -12,6 +12,7 @@
   вкладка «Чат» серии и в неё пишет Telegram-тема проекта. Реплики — ``project_chat_messages``.
   Чат видео — переписка с ``source_id``: одна на видео, проект берётся у видео в момент чтения
   (перенесли видео — чат работает уже в новом проекте, лор старого к нему не идёт), удаляется вместе с видео.
+  Чат клипа — переписка с ``clip_plan_id``: так же, а ход в ней делает ИИ-монтажёр (``app/clip_chat.py``).
 * **Инструменты группами** (``app/chat_tools.py``): база (проект + посмотреть клип) в каждом
   ходе, остальное — ``load_tools`` по запросу модели или по словам владельца.
 * **Ответ печатается по ходу**: ход идёт в фоновом потоке, текст Gemini приходит потоком
@@ -57,15 +58,16 @@ from app.ai.agent_loop import (  # noqa: F401
 from app.settings import settings
 
 from app.project_chat_threads import (  # noqa: F401
-    VIDEO_THREAD_TITLE, HIDDEN_SOURCE_TYPES, _MESSAGES_SQL, CHAT_SCHEMA_SQL, ensure_chat_schema, _migrate_messages,
-    ChatBusy, ChatCancelled, _loads, _dumps, _thread, get_thread, video_thread, _video_title, create_thread,
+    VIDEO_THREAD_TITLE, CLIP_THREAD_TITLE, HIDDEN_SOURCE_TYPES, _MESSAGES_SQL, CHAT_SCHEMA_SQL, ensure_chat_schema,
+    _migrate_messages, ChatBusy, ChatCancelled, _loads, _dumps, _thread, get_thread, video_thread, _video_title,
+    clip_thread, find_clip_thread, legacy_clip_messages, active_clip_run, wait_clip_run, create_thread,
     default_thread, update_thread, _touch, delete_thread, list_threads, _msg, add_thread_message, add_message,
     update_message, get_message, thread_messages, list_messages, clear_thread, clear_chat, ai_status, models, _Run,
-    _RUNS, _LOCK, active_run, cancel, wait_thread, wait, _active,
+    _RUNS, _LOCK, _live, active_run, cancel, wait_thread, wait, _active,
 )
 from app.project_chat_context import (  # noqa: F401
     _log, HISTORY_KEEP, SUMMARIZE_AFTER, SUMMARY_CHARS, CONTEXT_CHARS, CONTEXT_SOURCES, error_hint, video_context,
-    project_context, general_context, _heuristic_summary, summarize_thread, maybe_summarize,
+    project_context, general_context, _heuristic_summary, summarize_thread, maybe_summarize, model_history,
 )
 from app.project_chat_view import (  # noqa: F401
     _confirmation, get_confirmation, _patch_step, revert_checkpoint, _decorate, thread_view, chat_view,
@@ -76,7 +78,7 @@ MAX_ROUNDS = 24
 CLIP_TOOLS = ("get_clip", "get_transcript", "get_performance", "get_playbook", "list_clips", "list_projects")
 
 
-def _gemini(client: Any = None) -> Any:
+def _gemini(client: Any = None, timeout: int = 300) -> Any:
     from app.ai import editor_agent
 
     if client is not None:
@@ -87,7 +89,7 @@ def _gemini(client: Any = None) -> Any:
         return None
     from app.ai.gemini import GeminiClient
 
-    return GeminiClient(timeout=300)
+    return GeminiClient(timeout=timeout)
 
 
 # --------------------------------------------------------------------------- #
@@ -370,11 +372,16 @@ def hold_for_owner(store: Any, thread_id: int, reply_id: int | None, step: dict,
 def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat:ui", message_id: int | None = None,
              reply_id: int | None = None, history: list[dict] | None = None, client: Any = None,
              on_step: Callable[[list], None] | None = None, run: _Run | None = None,
-             max_rounds: int = MAX_ROUNDS) -> dict:
+             max_rounds: int = MAX_ROUNDS, model: str | None = None, max_steps: int | None = None) -> dict:
     """Один ход: обучение на словах владельца (в проекте), затем модель ↔ инструменты.
     Возвращает ``{text, steps, learned, decided, ai, model, changes}``."""
     if not isinstance(thread, dict):
         thread = get_thread(store, int(thread))
+    if thread.get("clip_plan_id"):
+        from app.clip_chat import run_clip_turn
+
+        return run_clip_turn(store, thread, message, reply_id=reply_id, history=history, client=client,
+                             on_step=on_step, run=run, model=model, max_steps=max_steps)
     project_id = thread.get("project_id")
     source_id = thread.get("source_id")
     if source_id:
@@ -418,9 +425,9 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
     contents = history_contents(history or []) + [{"role": "user", "parts": [{"text": first}]}]
     if len(contents) > 1 and contents[-2]["role"] == "user":  # история кончилась вопросом без ответа
         contents.insert(-1, {"role": "model", "parts": [{"text": "(ответ прерван)"}]})
-    used_model = thread.get("model") or settings.gemini_agent_model
+    used_model = model or thread.get("model") or settings.gemini_agent_model
     policy = ThreadPolicy(store, thread, groups, message, reply_id, note)
-    final, state = run_loop(policy, gemini, used_model, contents, limit=max_rounds, on_step=on_step, run=run)
+    final, state = run_loop(policy, gemini, used_model, contents, limit=max_steps or max_rounds, on_step=on_step, run=run)
     try:
         if sorted(groups) != sorted(thread.get("tool_groups", [])):
             update_thread(store, thread["id"], tool_groups=groups)
@@ -457,7 +464,8 @@ def _attachments_note(attachments: list[dict]) -> tuple[str, list[dict]]:
 
 def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui", actor: str = "chat:ui",
                    client: Any = None, attachments: list[dict] | None = None,
-                   on_done: Callable[[str], None] | None = None) -> dict:
+                   on_done: Callable[[str], None] | None = None, model: str | None = None,
+                   max_steps: int | None = None) -> dict:
     """Сообщение владельца → ход агента в фоне. Возвращает {message_id, reply_id, thread_id}."""
     text = str(text or "").strip()
     note, files = _attachments_note(attachments or [])
@@ -465,18 +473,16 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
         raise ValueError("пустое сообщение")
     thread = get_thread(store, thread_id)
     with _LOCK:
-        current = _RUNS.get(int(thread_id))
-        if current is not None and not current.done:
+        if _live(_RUNS.get(int(thread_id))):
             raise ChatBusy("агент ещё отвечает на прошлое сообщение")
-        history = [m for m in thread_messages(store, thread_id, after=int(thread.get("summary_upto") or 0))
-                   if m["status"] != "running"][-HISTORY_KEEP:]
+        history = model_history(store, thread)
         user_id = add_thread_message(store, thread_id, "user", text or "(файл)", origin=origin,
                                      meta={"attachments": files} if files else None)
-        model = thread.get("model") or settings.gemini_agent_model
-        reply_id = add_thread_message(store, thread_id, "assistant", "", status="running", origin=origin, model=model)
+        used_model = model or thread.get("model") or settings.gemini_agent_model
+        reply_id = add_thread_message(store, thread_id, "assistant", "", status="running", origin=origin, model=used_model)
         if thread["title"] in ("Новый чат", "") and not thread["is_default"] and text:
             update_thread(store, thread_id, title=_short(text, 60))
-        run = _Run(int(thread_id), thread.get("project_id"), reply_id)
+        run = _Run(int(thread_id), thread.get("project_id"), reply_id, thread.get("clip_plan_id"))
         _RUNS[int(thread_id)] = run
         prompt = (text + ("\n" + note if note else "")).strip()
 
@@ -487,7 +493,8 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
             reply = ""
             try:
                 result = run_turn(store, get_thread(store, thread_id), prompt, actor=actor, message_id=user_id,
-                                  reply_id=reply_id, history=history, client=client, on_step=on_step, run=run)
+                                  reply_id=reply_id, history=history, client=client, on_step=on_step, run=run,
+                                  model=model, max_steps=max_steps)
                 meta = {"changes": result.get("changes") or [],
                         **({"remembered": result["remembered"]} if result.get("remembered") else {})}
                 update_message(store, reply_id, text=result["text"], steps=result["steps"],
@@ -503,7 +510,7 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
             except Exception as exc:  # noqa: BLE001 - честно: ИИ недоступен
                 _log.warning("chat thread %s failed: %s", thread_id, exc)
                 partial = run.snapshot()
-                reply = f"ИИ-агент не ответил. {error_hint(exc)} Сообщение сохранено."
+                reply = _failure_text(thread, exc)
                 update_message(store, reply_id, text=reply, status="error", steps=partial["steps"],
                                meta={"changes": _changes_of(store, reply_id)})
             try:
@@ -524,7 +531,14 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
         thread_obj = threading.Thread(target=work, name=f"chat-{thread_id}", daemon=True)
         run.thread = thread_obj
         thread_obj.start()
-    return {"message_id": user_id, "reply_id": reply_id, "thread_id": int(thread_id)}
+    return {"message_id": user_id, "reply_id": reply_id, "thread_id": int(thread_id), "run_id": run.id}
+
+
+def _failure_text(thread: dict, exc: Exception) -> str:
+    hint = error_hint(exc)
+    if thread.get("clip_plan_id"):  # чат клипа всегда начинал сбой со слова «Ошибка»: на это смотрят скрипты
+        return hint if hint.startswith("Ошибка") else f"Ошибка: {hint}"
+    return f"ИИ-агент не ответил. {hint} Сообщение сохранено."
 
 
 def _changes_of(store: Any, message_id: int) -> list[dict]:

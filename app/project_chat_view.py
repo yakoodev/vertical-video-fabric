@@ -9,8 +9,8 @@ from app import chat_tools as CT
 from app import projects as P
 from app.settings import settings
 from app.project_chat_threads import (
-    _loads, get_thread, _video_title, default_thread, add_thread_message, update_message, get_message,
-    thread_messages, ai_status, active_run
+    _clip_title, _loads, get_thread, _video_title, default_thread, add_thread_message, update_message, get_message,
+    thread_messages, ai_status, active_run, legacy_clip_messages
 )
 
 # --------------------------------------------------------------------------- #
@@ -110,7 +110,14 @@ def thread_view(store: Any, thread_id: int, after: int = 0) -> dict:
     video = None
     if thread.get("source_id"):
         video = {"id": int(thread["source_id"]), "title": _video_title(store, int(thread["source_id"]))}
-    return {"thread": {k: v for k, v in thread.items()}, "project": project, "video": video,
+    clip = None
+    if thread.get("clip_plan_id"):
+        clip_id = int(thread["clip_plan_id"])
+        plan = store.get_clip_plan(clip_id, include_segments=False)
+        clip = {"id": clip_id, "title": _clip_title(store, clip_id), "source_id": plan.get("source_id")}
+    if clip and not after:  # старая переписка клипа — перед новыми репликами, только для чтения
+        messages = [*legacy_clip_messages(store, clip["id"]), *messages]
+    return {"thread": {k: v for k, v in thread.items()}, "project": project, "video": video, "clip": clip,
             "messages": _decorate(store, messages), "running": run is not None,
             "live": run.snapshot() if run else None, "summary": thread.get("summary") or "",
             "model": thread.get("model") or settings.gemini_agent_model, "ai": ai_status(),

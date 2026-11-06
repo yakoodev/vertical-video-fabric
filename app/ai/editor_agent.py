@@ -12,12 +12,9 @@
 * **Один снимок истории на ход агента** («ИИ: <запрос>»), сделанный перед первой
   правкой: Ctrl+Z в редакторе откатывает ответ агента целиком, а вопрос без правок
   историю не засоряет.
-* **Фоновый поток + опрос.** Ход агента — это десятки секунд и до ~25 вызовов
-  модели. Так же, как ИИ-монтаж (``app/ai/montage.py``), работа идёт в потоке, а
-  редактор раз в секунду читает ``GET /api/clip-plans/{id}/agent``: шаги пишутся в
-  базу по мере работы, так что их видно живьём и после перезагрузки страницы.
-* **Разговор хранится** в ``clip_agent_messages``: следующий вопрос модель
-  получает вместе с прошлой перепиской (текстом — без старых картинок и вызовов).
+* **Переписка клипа** — обычная переписка чата (``app/clip_chat.py``): ход идёт в фоне, шаги пишутся в базу по мере
+  работы, следующий вопрос модель получает с прошлой перепиской (текстом — без старых картинок и вызовов). Строки
+  прежнего ``clip_agent_messages`` остаются на месте и читаются как история.
 
 Где что лежит. Здесь — ход агента ``run_agent`` и его проверки перед сдачей (``ClipPolicy``), запуск и вид чата: они читают ``client_factory``, который подменяют тесты.
 Сам цикл «модель ↔ инструменты» общий с чатом: ``app/ai/agent_loop.py``. Вынесено: промпт и плейбуки
@@ -29,14 +26,11 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
-import time
-import uuid
 from typing import Any, Callable
 
 from app import agent_tools
 from app.agent_tools import ToolContext
-from app.ai.agent_loop import MAX_OUTPUT_TOKENS, TurnCancelled, TurnPolicy, TurnState, run_loop  # noqa: F401
+from app.ai.agent_loop import MAX_OUTPUT_TOKENS, TurnBusy, TurnCancelled, TurnPolicy, TurnState, run_loop  # noqa: F401
 from app.settings import settings
 
 from app.ai.editor_agent_prompts import (  # noqa: F401
@@ -67,10 +61,7 @@ _log = logging.getLogger(__name__)
 client_factory: Callable[[], Any] | None = None
 
 
-class AgentBusy(RuntimeError):
-    """У клипа уже идёт ход агента."""
-
-
+AgentBusy = TurnBusy  # у клипа уже идёт ход агента
 AgentCancelled = TurnCancelled  # прежнее имя: цикл теперь общий с чатом (app/ai/agent_loop.py)
 
 
@@ -364,31 +355,8 @@ MAX_LOOK_NUDGES = 1  # потом лист кадров снимает серв�
 
 
 # --------------------------------------------------------------------------- #
-# Фоновые ходы и чат
+# Чат клипа: теперь обычная переписка (app/clip_chat.py), прежние имена — для /api/clip-plans/{id}/agent и тестов
 # --------------------------------------------------------------------------- #
-
-
-class _Run:
-    def __init__(self, clip_plan_id: int, message_id: int) -> None:
-        self.id = uuid.uuid4().hex[:12]
-        self.clip_plan_id = clip_plan_id
-        self.message_id = message_id
-        self.cancel = threading.Event()
-        self.thread: threading.Thread | None = None
-        self.started_at = time.time()
-
-
-_RUNS: dict[int, _Run] = {}
-_RUNS_LOCK = threading.Lock()
-
-
-def _active_run(clip_plan_id: int) -> _Run | None:
-    with _RUNS_LOCK:
-        run = _RUNS.get(int(clip_plan_id))
-        if run is not None and run.thread is not None and not run.thread.is_alive():
-            _RUNS.pop(int(clip_plan_id), None)
-            return None
-        return run
 
 
 def remember_owner_fact(store: Any, clip_plan_id: int, message: str, source_id: Any = None) -> str:
@@ -406,109 +374,35 @@ def remember_owner_fact(store: Any, clip_plan_id: int, message: str, source_id: 
     return K.remembered_note(remembered)
 
 
-def start_run(
-    store: Any,
-    clip_plan_id: int,
-    message: str,
-    *,
-    client: Any = None,
-    model: str | None = None,
-    max_steps: int | None = None,
-) -> dict:
-    """Запустить ход агента в фоне. Возвращает ``{run_id, message_id}``."""
-    text = str(message or "").strip()
-    if not text:
-        raise ValueError("пустое сообщение")
-    plan = store.get_clip_plan(clip_plan_id, include_segments=False)  # KeyError → 404
-    with _RUNS_LOCK:
-        current = _RUNS.get(int(clip_plan_id))
-        if current is not None and current.thread is not None and current.thread.is_alive():
-            raise AgentBusy("агент уже работает над этим клипом")
-        history = [m for m in store.list_clip_agent_messages(clip_plan_id) if m.get("status") != "running"]
-        used_model = model or settings.gemini_agent_model
-        store.add_clip_agent_message(clip_plan_id, "user", text[:8000])
-        reply = store.add_clip_agent_message(
-            clip_plan_id, "assistant", "", steps=[], status="running", model=used_model
-        )
-        run = _Run(int(clip_plan_id), int(reply["id"]))
-        store.db.execute("UPDATE clip_agent_messages SET run_id = ? WHERE id = ?", (run.id, run.message_id))
-        _RUNS[int(clip_plan_id)] = run
+def start_run(store: Any, clip_plan_id: int, message: str, *, client: Any = None, model: str | None = None,
+              max_steps: int | None = None) -> dict:
+    """Запустить ход агента в фоне: сообщение в переписку клипа (``app/clip_chat.py``). → ``{run_id, message_id, model}``."""
+    from app import clip_chat
 
-    note = remember_owner_fact(store, clip_plan_id, text, source_id=plan.get("source_id"))
-    prompt = f"{text}\n\nСервис уже сделал: {note}" if note else text
-
-    def work() -> None:
-        def on_step(steps: list[dict]) -> None:
-            store.update_clip_agent_message(run.message_id, steps=steps)
-
-        try:
-            result = run_agent(
-                store, clip_plan_id, prompt, client=client, model=used_model, history=history,
-                on_step=on_step, should_cancel=run.cancel.is_set, max_steps=max_steps,
-            )
-            reply = f"{note}\n\n{result['text']}" if note else result["text"]
-            store.update_clip_agent_message(run.message_id, text=reply, steps=result["steps"], status="done")
-        except AgentCancelled:
-            store.update_clip_agent_message(run.message_id, text="Остановлено. Уже сделанные правки остались — "
-                                            "Ctrl+Z откатит их целиком.", status="cancelled")
-        except Exception as exc:  # noqa: BLE001 - ошибка хода видна в чате, сервер живёт
-            _log.warning("editor agent failed for clip plan %s: %s", clip_plan_id, exc)
-            store.update_clip_agent_message(run.message_id, text=f"Ошибка: {str(exc)[:500]}", status="error")
-
-    run.thread = threading.Thread(target=work, name=f"editor-agent-{run.id}", daemon=True)
-    run.thread.start()
-    return {"run_id": run.id, "message_id": run.message_id, "model": used_model}
+    return clip_chat.start_run(store, clip_plan_id, message, client=client, model=model, max_steps=max_steps)
 
 
 def cancel_run(clip_plan_id: int) -> bool:
-    run = _active_run(clip_plan_id)
-    if run is None:
-        return False
-    run.cancel.set()
-    return True
+    from app import clip_chat
+
+    return clip_chat.cancel_run(clip_plan_id)
 
 
 def wait_run(clip_plan_id: int, timeout: float | None = None) -> bool:
     """Дождаться конца хода (для тестов и CLI в процессе). True — закончился."""
-    run = _active_run(clip_plan_id)
-    if run is None or run.thread is None:
-        return True
-    run.thread.join(timeout)
-    return not run.thread.is_alive()
+    from app import clip_chat
+
+    return clip_chat.wait_run(clip_plan_id, timeout)
 
 
 def chat_view(store: Any, clip_plan_id: int) -> dict:
-    """Переписка + флаг «агент работает» — то, что опрашивает редактор."""
-    store.get_clip_plan(clip_plan_id, include_segments=False)
-    run = _active_run(clip_plan_id)
-    messages = []
-    for message in store.list_clip_agent_messages(clip_plan_id):
-        if message.get("status") == "running" and (run is None or run.message_id != message["id"]):
-            # Сервер перезапускали посреди хода — поток умер, запись осталась.
-            store.update_clip_agent_message(message["id"], status="interrupted",
-                                            text=message.get("text") or "Прервано перезапуском сервера.")
-            message["status"] = "interrupted"
-            message["text"] = message.get("text") or "Прервано перезапуском сервера."
-        messages.append(
-            {
-                "id": message["id"],
-                "role": message["role"],
-                "text": message.get("text") or "",
-                "steps": [{k: v for k, v in s.items() if k != "args"} for s in message.get("steps") or []],
-                "status": message.get("status") or "done",
-                "model": message.get("model") or "",
-                "created_at": message.get("created_at"),
-            }
-        )
-    return {
-        "messages": messages,
-        "running": run is not None,
-        "run_id": run.id if run else None,
-        "model": settings.gemini_agent_model,
-    }
+    """Переписка + флаг «агент работает» — то, что опрашивает прежний адрес."""
+    from app import clip_chat
+
+    return clip_chat.chat_view(store, clip_plan_id)
 
 
 def clear_chat(store: Any, clip_plan_id: int) -> int:
-    if _active_run(clip_plan_id) is not None:
-        raise AgentBusy("агент ещё работает — сначала остановите его")
-    return store.clear_clip_agent_messages(clip_plan_id)
+    from app import clip_chat
+
+    return clip_chat.clear_chat(store, clip_plan_id)

@@ -636,7 +636,14 @@ def blocked_route(method: str, path: str, store: Any = None) -> str | None:
     if not ids:
         return None
     state = enabled_map(store)
-    return next((i for i in ids if not state.get(i, True)), None)
+    blocked = next((i for i in ids if not state.get(i, True)), None)
+    if blocked == "agent_chat" and state.get("editor_agent", True):
+        # Чат клипа живёт на адресах переписок, а принадлежит монтажёру: страница «Чат» выключена, он работает.
+        from app.project_chat_threads import clip_chat_route
+
+        if clip_chat_route(path, _resolve(store)):
+            return None
+    return blocked
 
 
 def disabled_payload(module_id: str) -> dict:

@@ -1,7 +1,7 @@
 """HTTP-вход ИИ-монтажёра: чат в редакторе и MCP-сервер для внешних агентов.
 
-Чат (``/api/clip-plans/{id}/agent``) — фоновый ход агента + опрос, см.
-``app/ai/editor_agent.py``.
+Чат (``/api/clip-plans/{id}/agent``) — прежний адрес чата клипа: фоновый ход + опрос поверх
+обычной переписки, см. ``app/clip_chat.py``. Им пользуются ``tools/vvf.py agent`` и скрипты, браузер ходит в ``/api/chat/*``.
 
 MCP (``/mcp``) — те же инструменты (``app/agent_tools.py``) для Claude Code,
 Codex и любого MCP-клиента по транспорту Streamable HTTP. Почему свой небольшой
