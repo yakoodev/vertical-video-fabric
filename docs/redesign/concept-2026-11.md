@@ -111,7 +111,7 @@
 | Проект | `project/ProjectPage.tsx`, вкладки рядом в `project/` | `SeriesPage`, `SeriesAutopilot`, `SeriesVodWatch` |
 | Видео | `VideoPage.tsx`, вкладки в `workspace/` | `ProjectWorkspace` |
 | Все видео | `VideoListPage.tsx` | `ProjectsPage` |
-| Черновики и редактор клипа | `workspace/DraftsAndEditorTab.tsx`, разделяются на шаге 6 | `CandidatesTab` |
+| Черновики и редактор клипа | `workspace/DraftsAndEditorTab.tsx` (обёртка), `workspace/drafts/DraftsScreen.tsx`, `workspace/editor/EditorScreen.tsx` | `CandidatesTab` |
 | Рендеры видео | `workspace/VideoRendersTab.tsx` | `ClipsTab` |
 | Готовые ролики всех проектов | `ReadyClipsPage.tsx` | `ClipsPage` |
 

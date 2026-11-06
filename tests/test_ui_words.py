@@ -64,7 +64,9 @@ def _labels(block: str) -> set[str]:
 def test_hints_name_only_existing_tabs():
     """Подсказки вида «на вкладке «X»» ведут только на вкладки, которые есть."""
     tabs = (SRC / "lib" / "tabs.ts").read_text(encoding="utf-8")
-    inspector = (SRC / "pages" / "workspace" / "DraftsAndEditorTab.tsx").read_text(encoding="utf-8")
+    workspace = SRC / "pages" / "workspace"
+    inspector = (workspace / "editor" / "draftsEditorSession.tsx").read_text(encoding="utf-8")  # вкладки инспектора
+    inspector += (workspace / "editor" / "editorHelpers.ts").read_text(encoding="utf-8")  # вкладки библиотеки
     known = _labels(tabs) | _labels(inspector) | {"Сценарий"}  # подвкладка ИИ-видео, на своём экране
     wrong = []
     for path in ui_files():
