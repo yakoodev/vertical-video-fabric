@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
+import { qk } from "@/api/keys";
+import { navKeys } from "@/api/nav";
 import {
   streamQuestionsApi as Q,
   streamQuestionsKey,
   type MemeMoment,
   type MemeOption,
+  type QuestionLevel,
   type StreamQuestion,
   type StreamQuestionsState,
 } from "@/api/streamQuestions";
 import { useToast } from "@/components/Toast";
-import { EmptyState, ErrorState, Loading } from "@/components/ui";
+import { EmptyState, ErrorState, Loading, plural } from "@/components/ui";
+import { clipPath, projectPath } from "@/lib/paths";
+import { MontagePause } from "@/pages/workspace/MontagePause";
 import "@/styles/stream-questions.css";
 
 const KIND_LABEL: Record<StreamQuestion["kind"], string> = {
@@ -52,12 +57,58 @@ function MomentPreview({ clip, thumb, start, end }: { clip: string; thumb: strin
   );
 }
 
+/** Где теперь ответ: одна фраза для всплывашки после смены уровня. */
+export function levelMovedText(fresh: StreamQuestion): string {
+  const answered = fresh.status === "answered";
+  if (fresh.level === "project") return answered ? "Ответ теперь в «Что агент знает», для всего проекта" : "Вопрос теперь про весь проект";
+  if (fresh.level === "clip") return answered ? "Ответ остался только у этого клипа" : "Вопрос теперь только про этот клип";
+  return answered ? "Ответ остался только у этого видео" : "Вопрос теперь только про это видео";
+}
+
+/** Агент мог ошибиться с уровнем: владелец поправляет прямо на карточке, ответ переезжает сам. */
+function LevelSwitch({
+  item,
+  inProject,
+  onLevel,
+}: {
+  item: StreamQuestion;
+  inProject: boolean;
+  onLevel: (level: QuestionLevel) => Promise<unknown>;
+}) {
+  const levels: [QuestionLevel, string][] = [
+    ...(inProject || item.level === "project" ? ([["project", "Для всего проекта"]] as [QuestionLevel, string][]) : []),
+    ["video", "Только это видео"],
+    ...(item.clip_plan_id ? ([["clip", "Только этот клип"]] as [QuestionLevel, string][]) : []),
+  ];
+  return (
+    <div className="sq-level" role="group" aria-label="К чему относится вопрос">
+      {levels.map(([level, label]) => (
+        <button
+          key={level}
+          type="button"
+          className={item.level === level ? "active" : ""}
+          aria-pressed={item.level === level}
+          onClick={() => {
+            if (item.level !== level) void onLevel(level).catch(() => undefined);
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function QuestionCard({
   item,
   onSave,
+  onLevel,
+  inProject = true,
 }: {
   item: StreamQuestion;
   onSave: (body: { option: number | null; text: string; skip?: boolean }) => Promise<unknown>;
+  onLevel: (level: QuestionLevel) => Promise<unknown>;
+  inProject?: boolean;
 }) {
   const [text, setText] = useState(item.answer_text);
   const [saved, setSaved] = useState(false);
@@ -97,10 +148,14 @@ export function QuestionCard({
       <div className="sq-body">
         <div className="sq-meta">
           <span className="sq-kind">{KIND_LABEL[item.kind]}</span>
-          <span className="sq-scope">{item.scope === "channel" ? "на весь проект" : "только этот стрим"}</span>
           {item.about ? <span className="sq-scope">{item.about}</span> : null}
+          {item.optional ? <span className="sq-scope">можно не отвечать</span> : null}
           {item.status === "skipped" ? <span className="sq-scope">пропущено</span> : null}
-          {saved ? <span className="sq-saved" role="status">Сохранено</span> : null}
+          {saved ? (
+            <span className="sq-saved" role="status">
+              {item.level === "project" && inProject && item.status === "answered" ? "Сохранено, агент запомнил для всего проекта" : "Сохранено"}
+            </span>
+          ) : null}
         </div>
         <h3>{item.question}</h3>
         <div className="sq-options" role="group" aria-label="Варианты ответа">
@@ -147,6 +202,7 @@ export function QuestionCard({
             </button>
           )}
         </div>
+        <LevelSwitch item={item} inProject={inProject} onLevel={onLevel} />
       </div>
     </article>
   );
@@ -227,7 +283,7 @@ function recount(state: StreamQuestionsState): StreamQuestionsState {
   };
 }
 
-export function StreamQuestionsTab({ sourceId }: { sourceId: string }) {
+export function StreamQuestionsTab({ sourceId, hidePause = false }: { sourceId: string; hidePause?: boolean }) {
   const toast = useToast();
   const client = useQueryClient();
   const key = useMemo(() => streamQuestionsKey(sourceId), [sourceId]);
@@ -239,17 +295,36 @@ export function StreamQuestionsTab({ sourceId }: { sourceId: string }) {
   const problem = (error: unknown, fallback: string) =>
     toast.error(error instanceof ApiError ? error.message : fallback);
 
+  const keep = (fresh: StreamQuestion) => {
+    client.setQueryData<StreamQuestionsState>(key, (old) =>
+      old ? recount({ ...old, gate: fresh.gate ?? old.gate, questions: old.questions.map((q) => (q.id === fresh.id ? fresh : q)) }) : old);
+    client.invalidateQueries({ queryKey: navKeys.all });
+    client.invalidateQueries({ queryKey: ["stream-questions"] });
+    const projectId = client.getQueryData<StreamQuestionsState>(key)?.project_id;
+    if (projectId) {
+      client.invalidateQueries({ queryKey: qk.channelKnowledge(projectId) });
+      client.invalidateQueries({ queryKey: qk.channelBrief(projectId) });
+    }
+  };
   const answer = useMutation({
     mutationFn: ({ id, body }: { id: number; body: { option: number | null; text: string; skip?: boolean } }) =>
       Q.answer(id, body),
     onSuccess: (fresh) => {
-      client.setQueryData<StreamQuestionsState>(key, (old) =>
-        old ? recount({ ...old, questions: old.questions.map((q) => (q.id === fresh.id ? fresh : q)) }) : old);
+      keep(fresh);
       if (fresh.scope === "channel" && fresh.status === "answered" && fresh.brief && !fresh.brief.written) {
-        toast.push(fresh.brief.reason ?? "В бриф канала ответ не записан", "info");
+        toast.push(fresh.brief.reason ?? "В лор проекта ответ не записан", "info");
       }
     },
     onError: (error) => problem(error, "Ответ не сохранился"),
+  });
+  // Карточка остаётся на месте до следующего открытия, чтобы лента не прыгала под рукой.
+  const changeLevel = useMutation({
+    mutationFn: ({ id, level }: { id: number; level: QuestionLevel }) => Q.setLevel(id, level),
+    onSuccess: (fresh) => {
+      keep(fresh);
+      toast.push(fresh.brief?.written === false && fresh.brief.reason ? fresh.brief.reason : levelMovedText(fresh), "info");
+    },
+    onError: (error) => problem(error, "Не получилось"),
   });
   const choose = useMutation({
     mutationFn: ({ id, body }: { id: number; body: { option_id?: number | null; none?: boolean } }) => Q.choose(id, body),
@@ -303,23 +378,47 @@ export function StreamQuestionsTab({ sourceId }: { sourceId: string }) {
             <span style={{ width: `${Math.round((done / total) * 100)}%` }} />
           </div>
         ) : null}
-        {tab === "questions" && !state.project_id && state.questions.some((q) => q.scope === "channel") ? (
-          <p className="sq-note">Видео не в проекте: ответы про канал останутся только у этого стрима.</p>
+        {tab === "questions" && !state.project_id && state.questions.some((q) => q.level === "project") ? (
+          <p className="sq-note">Видео не в проекте: ответы про проект останутся только у этого видео.</p>
         ) : null}
       </div>
+
+      {hidePause ? null : <MontagePause sourceId={sourceId} gate={state.gate} projectId={state.project_id} />}
+
+      {tab === "questions" && (state.project_id || state.elsewhere.clips.length) ? (
+        <div className="sq-elsewhere">
+          {state.project_id ? (
+            <Link to={projectPath(state.project_id, "questions")}>
+              Вопросы проекта
+              {state.elsewhere.project.open ? `: ${plural(state.elsewhere.project.open, "вопрос", "вопроса", "вопросов")} по этому видео без ответа` : ""}
+            </Link>
+          ) : null}
+          {state.elsewhere.clips.map((clip) => (
+            <Link key={clip.id} to={clipPath(clip.id)}>
+              Про клип «{clip.name || `#${clip.id}`}»{clip.open ? `: ${plural(clip.open, "вопрос", "вопроса", "вопросов")} без ответа` : ""}
+            </Link>
+          ))}
+        </div>
+      ) : null}
 
       {tab === "questions" ? (
         questions.length ? (
           <div className="sq-list">
             {questions.map((item) => (
-              <QuestionCard key={item.id} item={item} onSave={(body) => answer.mutateAsync({ id: item.id, body })} />
+              <QuestionCard
+                key={item.id}
+                item={item}
+                inProject={Boolean(state.project_id)}
+                onSave={(body) => answer.mutateAsync({ id: item.id, body })}
+                onLevel={(level) => changeLevel.mutateAsync({ id: item.id, level })}
+              />
             ))}
           </div>
         ) : (
           <EmptyState
             icon="💬"
             title={qp.total ? "На всё ответили" : "Вопросов пока нет"}
-            hint={qp.total ? "Монтажёр прочитает ответы перед отбором моментов." : "Их задаёт монтажёр-агент, когда посмотрит стрим."}
+            hint={qp.total ? "Монтажёр прочитает ответы перед отбором моментов." : "Здесь вопросы только про это видео. Их задаёт агент, когда посмотрит стрим."}
           />
         )
       ) : moments.length ? (

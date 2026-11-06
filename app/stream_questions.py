@@ -5,9 +5,25 @@
 вариантами». Вопросы и варианты заполняет агент-монтажёр через инструменты (app/stream_question_tools.py),
 ответы читает перед отбором моментов. Модель тут не зашита.
 
-Ответ со ``scope="channel"`` — про канал вообще («кто такой Глеб») — идёт в бриф проекта
-(app/projects.py), чтобы не спрашивать на каждом стриме. ``scope="stream"`` — только про этот стрим.
+Уровень вопроса (владелец: «вопросы надо делить на проект, видео, клип, не в общую кучу»). В базе
+это ``scope``, наружу ещё и ``level``:
+
+* ``channel`` = ``project``: про проект вообще («кто такой Глеб»). Ответ сразу в бриф проекта
+  (app/projects.py), чтобы не спрашивать на каждом стриме.
+* ``stream`` = ``video``: только про это видео.
+* ``clip`` = ``clip``: только про один клип (``clip_plan_id``, версии одного клипа считаются вместе).
+
+Уровень можно сменить и после ответа (``set_level``): ответ переезжает в бриф или обратно.
 Весь список того, что агент знает о проекте, и его правка — app/project_knowledge.py.
+
+Пауза монтажа (владелец: «монтаж ставить на паузу, пока на вопросы не ответили. а то у нас уже 3
+версии горизонтальной нарезки, а на вопросы я отвечаю только сейчас»). Открытый обязательный вопрос
+видео останавливает агентов: инструменты из ``MONTAGE_TOOLS`` и те же действия по токену отказывают
+(``montage_refusal``). Чего пауза не касается: правки владельца руками в редакторе, рендера готовых
+клипов, «Смотреть монтаж», субтитров, слоёв и звука. Вопрос проекта держит только то видео, откуда
+он задан, вопрос клипа только этот клип. ``optional`` не держит ничего, мемы тоже: они не меняют,
+что вырезать. Снять паузу может только владелец кнопкой «Монтировать без ответов»
+(``release_montage``); кнопка покрывает вопросы, заданные до нажатия, новый вопрос снова останавливает.
 """
 
 from __future__ import annotations
@@ -25,7 +41,16 @@ from app.projects import project_of_source
 from app.settings import settings
 
 KINDS = ("who", "context", "joke", "keep", "other")
-SCOPES = ("stream", "channel")
+SCOPES = ("stream", "channel", "clip")
+LEVELS = ("project", "video", "clip")
+LEVEL_OF_SCOPE = {"channel": "project", "stream": "video", "clip": "clip"}
+SCOPE_OF_LEVEL = {level: scope for scope, level in LEVEL_OF_SCOPE.items()}
+LEVEL_WORD = {"project": "проект", "video": "видео", "clip": "клип"}
+# Что начинает новый монтаж или резку. Остальные инструменты клипа пауза не трогает. Руками владелец
+# работает мимо этих инструментов (свои маршруты REST), так что его правки сюда не попадают.
+MONTAGE_TOOLS = frozenset({"analyze_source", "create_clip", "make_compilation", "add_video_from_source", "auto_edit",
+                           "suggest_cuts", "apply_cuts", "trim_piece"})
+GATE_SHOWN = 5
 STATUSES = ("open", "answered", "skipped")
 MOMENT_STATUSES = ("open", "chosen", "none")
 MAX_QUESTIONS_PER_CALL = 60
@@ -94,12 +119,27 @@ SCHEMA_SQL = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_meme_options_moment ON meme_options(moment_id, position)",
+    # Решение владельца «Монтировать без ответов»: покрывает вопросы видео до up_to_question_id.
+    """
+    CREATE TABLE IF NOT EXISTS stream_montage_release (
+        source_id INTEGER PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+        up_to_question_id INTEGER NOT NULL DEFAULT 0,
+        released_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 )
 
 
 def ensure_stream_questions_schema(conn: Any) -> None:
     for sql in SCHEMA_SQL:
         conn.execute(sql)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(stream_questions)")}
+    if "clip_plan_id" not in columns:
+        conn.execute("ALTER TABLE stream_questions ADD COLUMN clip_plan_id INTEGER "
+                     "REFERENCES clip_plans(id) ON DELETE SET NULL")
+    if "optional" not in columns:
+        conn.execute("ALTER TABLE stream_questions ADD COLUMN optional INTEGER NOT NULL DEFAULT 0")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_stream_questions_clip ON stream_questions(clip_plan_id)")
 
 
 def _text(value: Any, limit: int = 500) -> str:
@@ -154,6 +194,8 @@ def _question(row: Any) -> dict:
     item.pop("question_key", None)
     item["options"] = json.loads(item.pop("options_json") or "[]")
     item["answer"] = answer_value(item)
+    item["level"] = LEVEL_OF_SCOPE.get(item.get("scope"), "video")
+    item["optional"] = bool(item.get("optional"))
     return item
 
 
@@ -169,8 +211,48 @@ def answer_value(item: dict) -> str:
     return ". ".join(parts)
 
 
+def _clip_family(store: Any, clip_plan_id: int) -> set[int]:
+    """Клип и его версии (app/clip_groups.py): вопрос про клип не теряется при новой версии."""
+    row = store.db.query_one("SELECT clip_group_id FROM clip_plans WHERE id = ?", (int(clip_plan_id),))
+    if not row or row["clip_group_id"] is None:
+        return {int(clip_plan_id)}
+    rows = store.db.query_all("SELECT id FROM clip_plans WHERE clip_group_id = ?", (int(row["clip_group_id"]),))
+    return {int(r["id"]) for r in rows} | {int(clip_plan_id)}
+
+
+def _clip_of_source(store: Any, source_id: int, clip_id: Any) -> int:
+    try:
+        plan = store.get_clip_plan(int(clip_id), include_segments=False)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"клипа нет: {clip_id}") from exc
+    if int(plan["source_id"]) != int(source_id):
+        raise ValueError(f"клип #{clip_id} не из этого видео")
+    return int(plan["id"])
+
+
+def _asked_scope(raw: dict) -> tuple[str, Any]:
+    """Уровень вопроса от агента: ``level`` (project|video|clip), старое ``scope`` тоже понимаем."""
+    clip_id = raw.get("clip_id") if raw.get("clip_id") not in (None, "") else raw.get("clip_plan_id")
+    clip_id = None if clip_id in (None, "") else clip_id
+    if raw.get("level"):
+        if str(raw["level"]) not in LEVELS:
+            raise ValueError(f"level — {', '.join(LEVELS)}")
+        scope = SCOPE_OF_LEVEL[str(raw["level"])]
+    elif raw.get("scope"):
+        scope = str(raw["scope"])
+        if scope not in SCOPES:
+            raise ValueError(f"scope — {', '.join(SCOPES)}")
+    else:
+        scope = "clip" if clip_id is not None else "stream"
+    if scope == "clip" and clip_id is None:
+        raise ValueError("вопрос про клип: нужен clip_id")
+    return scope, clip_id
+
+
 def add_questions(store: Any, source_id: int, questions: Any) -> dict:
     import json
+
+    from app import projects as P
 
     source = store.get_source(int(source_id))
     if not isinstance(questions, list) or not questions:
@@ -185,35 +267,42 @@ def add_questions(store: Any, source_id: int, questions: Any) -> dict:
         if len(text) < 3:
             raise ValueError(f"вопрос {index}: пустой текст")
         kind = str(raw.get("kind") or "context")
-        scope = str(raw.get("scope") or "stream")
         if kind not in KINDS:
             raise ValueError(f"вопрос {index}: kind — {', '.join(KINDS)}")
-        if scope not in SCOPES:
-            raise ValueError(f"вопрос {index}: scope — {', '.join(SCOPES)}")
         try:
+            scope, clip_id = _asked_scope(raw)
+            clip_plan_id = _clip_of_source(store, int(source_id), clip_id) if scope == "clip" else None
             options = _options(raw.get("options"))
             a, b = _times(source, raw.get("t_start"), raw.get("t_end"))
         except ValueError as exc:
             raise ValueError(f"вопрос {index}: {exc}") from exc
-        prepared.append((text, kind, scope, _text(raw.get("about"), 120), options, a, b))
+        prepared.append((text, kind, scope, clip_plan_id, raw.get("optional") is True, _text(raw.get("about"), 120),
+                         options, a, b))
+    project_id = P.project_of_source(store, int(source_id))
     added, duplicates = [], []
-    for text, kind, scope, about, options, a, b in prepared:
+    for text, kind, scope, clip_plan_id, optional, about, options, a, b in prepared:
         key = _key(text)
         old = store.db.query_one("SELECT id FROM stream_questions WHERE source_id = ? AND question_key = ?",
                                  (int(source_id), key))
+        if not old and scope == "channel" and project_id is not None:
+            # Вопрос про проект задают один раз на проект, а не на каждом стриме.
+            old = store.db.query_one(
+                "SELECT q.id FROM stream_questions q JOIN sources s ON s.id = q.source_id "
+                "WHERE s.project_id = ? AND q.scope = 'channel' AND q.question_key = ?", (int(project_id), key))
         if old:
             duplicates.append(int(old["id"]))
             continue
         cur = store.db.execute(
             "INSERT INTO stream_questions (source_id, kind, t_start, t_end, question, question_key, options_json, "
-            "scope, about) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (int(source_id), kind, a, b, text, key, json.dumps(options, ensure_ascii=False), scope, about),
+            "scope, clip_plan_id, optional, about) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (int(source_id), kind, a, b, text, key, json.dumps(options, ensure_ascii=False), scope, clip_plan_id,
+             1 if optional else 0, about),
         )
         added.append(int(cur.lastrowid))
     return {"added": added, "duplicates": duplicates}
 
 
-def list_questions(store: Any, source_id: int, status: str | None = None) -> list[dict]:
+def list_questions(store: Any, source_id: int, status: str | None = None, level: str | None = None) -> list[dict]:
     store.get_source(int(source_id))
     sql, params = "SELECT * FROM stream_questions WHERE source_id = ?", [int(source_id)]
     if status:
@@ -221,6 +310,11 @@ def list_questions(store: Any, source_id: int, status: str | None = None) -> lis
             raise ValueError(f"status — {', '.join(STATUSES)}")
         sql += " AND status = ?"
         params.append(status)
+    if level:
+        if level not in LEVELS:
+            raise ValueError(f"level — {', '.join(LEVELS)}")
+        sql += " AND scope = ?"
+        params.append(SCOPE_OF_LEVEL[level])
     return [_question(r) for r in store.db.query_all(sql + " ORDER BY t_start, id", params)]
 
 
@@ -240,7 +334,8 @@ def _brief_patch(item: dict, value: str, current_notes: str) -> dict:
         return {"jokes": [{"text": about or item["question"], "about": value}]}
     prefix = f"{item['question']} — "
     lines = [line for line in current_notes.splitlines() if line.strip() and not line.startswith(prefix)]
-    return {"notes": "\n".join([*lines, prefix + value])}
+    # Строка заметок на один ответ: перенос в ответе оставил бы хвост, который потом не снять.
+    return {"notes": "\n".join([*lines, prefix + " ".join(value.split())])}
 
 
 def _write_brief(store: Any, item: dict) -> dict:
@@ -251,7 +346,10 @@ def _write_brief(store: Any, item: dict) -> dict:
         return {"written": False, "reason": "источник не в проекте: ответ остался только у этого стрима"}
     current = P.get_brief(store, project_id)["brief"]
     patch = _brief_patch(item, answer_value(item), current.get("notes") or "")
-    P.update_brief(store, project_id, patch)
+    fresh = P.update_brief(store, project_id, patch)["brief"]
+    if not in_brief(item, fresh):
+        return {"written": False, "project_id": project_id,
+                "reason": "В лоре проекта не осталось места: ответ пока только у этого видео"}
     return {"written": True, "project_id": project_id, "section": next(iter(patch))}
 
 
@@ -278,24 +376,43 @@ def in_brief(item: dict, brief: dict) -> bool:
 
 
 def _unwrite_brief(store: Any, item: dict, value: str) -> None:
-    """Владелец снял ответ про канал: строка уходит из брифа, если её с тех пор никто не менял."""
+    """Ответ больше не про весь проект: строка уходит из брифа, если её с тех пор никто не менял.
+    То, что дописали к человеку отдельно (приметы, другие имена), остаётся."""
     from app import projects as P
 
     project_id = P.project_of_source(store, int(item["source_id"]))
     if project_id is None:
         return
     brief = P.get_brief(store, project_id)["brief"]
-    section, _, target = brief_place(item).partition(":")
+    place = brief_place(item)
+    section, _, target = place.partition(":")
+    removed = False
     if section == "notes":
         kept = [line for line in brief["notes"].splitlines() if not line.startswith(target)]
         if len(kept) != len(brief["notes"].splitlines()):
             P.update_brief(store, project_id, {"notes": "\n".join(kept)})
-        return
-    key, body = {"people": ("name", "who"), "jokes": ("text", "about")}[section]
-    for row in brief[section]:
-        if str(row[key]).lower() == target and row.get(body) == P._text(value, 600):
-            P.update_brief(store, project_id, {section: [{key: row[key], "_delete": True}]})
-            return
+            removed = True
+    else:
+        key, body = {"people": ("name", "who"), "jokes": ("text", "about")}[section]
+        for row in brief[section]:
+            if str(row[key]).lower() == target and row.get(body) == P._text(value, 600):
+                keep = section == "people" and (row.get("traits") or row.get("aliases"))
+                P.update_brief(store, project_id, {section: [{key: row[key], **({body: ""} if keep else {"_delete": True})}]})
+                removed = True
+                break
+    if removed:
+        _restore_other_answer(store, int(project_id), int(item["id"]), place)
+
+
+def _restore_other_answer(store: Any, project_id: int, question_id: int, place: str) -> None:
+    """На то же место мог отвечать вопрос другого видео: его ответ снова действует."""
+    rows = store.db.query_all(
+        "SELECT q.* FROM stream_questions q JOIN sources s ON s.id = q.source_id "
+        "WHERE s.project_id = ? AND q.scope = 'channel' AND q.status = 'answered' AND q.id != ? "
+        "ORDER BY q.answered_at DESC, q.id DESC", (int(project_id), int(question_id)))
+    other = next((item for item in map(_question, rows) if brief_place(item) == place), None)
+    if other is not None:
+        _write_brief(store, other)
 
 
 def correct_answer(store: Any, question_id: int, text: Any) -> dict:
@@ -319,6 +436,12 @@ def forget_answer(store: Any, question_id: int) -> dict:
 
 
 def answer_question(store: Any, question_id: int, option: Any = None, text: Any = "", skip: bool = False) -> dict:
+    # Один замок с set_level: смена уровня и ответ не разъедутся в брифе.
+    with store.db._lock:
+        return _answer_locked(store, question_id, option, text, skip)
+
+
+def _answer_locked(store: Any, question_id: int, option: Any, text: Any, skip: bool) -> dict:
     item = get_question(store, question_id)
     before = answer_value(item) if item["status"] == "answered" else ""
     custom = _body(text)
@@ -353,7 +476,124 @@ def answer_question(store: Any, question_id: int, option: Any = None, text: Any 
             _unwrite_brief(store, fresh, before)
         except Exception as exc:  # noqa: BLE001 - ответ снят, а строку брифа владелец уберёт сам
             brief = {"written": False, "reason": str(exc)[:200]}
-    return {**fresh, "brief": brief}
+    return {**fresh, "brief": brief, "gate": montage_gate(store, int(fresh["source_id"]))}
+
+
+def set_level(store: Any, question_id: int, level: Any, clip_plan_id: Any = None) -> dict:
+    """Владелец поправил уровень вопроса: ответ переезжает в бриф проекта или обратно, сам ответ не меняется.
+    Клип вопроса помнится и у видео-уровня, чтобы вернуть вопрос к клипу."""
+    level = str(level or "")
+    if level not in LEVELS:
+        raise ValueError(f"level — {', '.join(LEVELS)}")
+    with store.db._lock:
+        item = get_question(store, question_id)
+        scope = SCOPE_OF_LEVEL[level]
+        clip = item.get("clip_plan_id")
+        if scope == "clip":
+            wanted = clip_plan_id if clip_plan_id not in (None, "") else clip
+            if wanted is None:
+                raise ValueError("вопрос про клип: нужен clip_id")
+            clip = _clip_of_source(store, int(item["source_id"]), wanted)
+        brief: dict[str, Any] = {"written": False}
+        if scope != item["scope"] or clip != item.get("clip_plan_id"):
+            value = answer_value(item) if item["status"] == "answered" else ""
+            store.db.execute("UPDATE stream_questions SET scope = ?, clip_plan_id = ? WHERE id = ?",
+                             (scope, clip, int(question_id)))
+            fresh = get_question(store, question_id)
+            try:
+                if value and item["scope"] == "channel" and scope != "channel":
+                    _unwrite_brief(store, item, value)
+                elif value and scope == "channel" and item["scope"] != "channel":
+                    brief = _write_brief(store, fresh)
+            except Exception as exc:  # noqa: BLE001 - уровень уже сменён, строку брифа владелец поправит сам
+                brief = {"written": False, "reason": str(exc)[:200]}
+        fresh = get_question(store, question_id)
+    return {**fresh, "brief": brief, "gate": montage_gate(store, int(fresh["source_id"]))}
+
+
+# --------------------------------------------------------------------------- #
+# Пауза монтажа
+# --------------------------------------------------------------------------- #
+
+
+def _release_row(store: Any, source_id: int) -> Any:
+    return store.db.query_one("SELECT up_to_question_id, released_at FROM stream_montage_release WHERE source_id = ?",
+                              (int(source_id),))
+
+
+def montage_gate(store: Any, source_id: int, clip_plan_id: int | None = None) -> dict:
+    """Ждёт ли монтаж ответов. Считаются открытые обязательные вопросы ЭТОГО видео: про проект и про видео
+    держат всё видео; про клип только сам этот клип (``clip_plan_id``)."""
+    family = _clip_family(store, int(clip_plan_id)) if clip_plan_id else set()
+    rows = [dict(r) for r in store.db.query_all(
+        "SELECT id, question, scope, clip_plan_id FROM stream_questions "
+        "WHERE source_id = ? AND status = 'open' AND optional = 0 ORDER BY t_start, id", (int(source_id),))]
+    relevant = [r for r in rows if r["scope"] != "clip" or r["clip_plan_id"] in family]
+    release = _release_row(store, source_id)
+    covered = int(release["up_to_question_id"]) if release else 0
+    waiting = [r for r in relevant if int(r["id"]) > covered]
+    return {
+        "paused": bool(waiting),
+        "open": len(waiting),
+        "project_open": sum(1 for r in waiting if r["scope"] == "channel"),
+        "clip_open": sum(1 for r in waiting if r["scope"] == "clip"),
+        "items": [{"id": int(r["id"]), "question": r["question"], "level": LEVEL_OF_SCOPE.get(r["scope"], "video")}
+                  for r in waiting[:GATE_SHOWN]],
+        "released": release is not None,
+        "released_open": len(relevant) - len(waiting),
+    }
+
+
+def release_montage(store: Any, source_id: int) -> dict:
+    """«Монтировать без ответов»: решение владельца про это видео, инструментов агента к нему нет."""
+    store.get_source(int(source_id))
+    with store.db._lock:
+        top = store.db.query_one("SELECT COALESCE(MAX(id), 0) AS n FROM stream_questions WHERE source_id = ?",
+                                 (int(source_id),))
+        store.db.execute(
+            "INSERT INTO stream_montage_release (source_id, up_to_question_id) VALUES (?, ?) "
+            "ON CONFLICT(source_id) DO UPDATE SET up_to_question_id = excluded.up_to_question_id, "
+            "released_at = CURRENT_TIMESTAMP", (int(source_id), int(top["n"])))
+    return montage_gate(store, source_id)
+
+
+def restore_montage_pause(store: Any, source_id: int) -> dict:
+    """Владелец передумал: снова ждём ответов."""
+    store.get_source(int(source_id))
+    store.db.execute("DELETE FROM stream_montage_release WHERE source_id = ?", (int(source_id),))
+    return montage_gate(store, source_id)
+
+
+def _ru_questions(count: int) -> str:
+    tail = count % 100
+    if 11 <= tail <= 14 or count % 10 in (0, 5, 6, 7, 8, 9):
+        return f"{count} вопросов"
+    return f"{count} вопрос" if count % 10 == 1 else f"{count} вопроса"
+
+
+def montage_refusal(store: Any, source_id: int, clip_plan_id: int | None = None) -> dict | None:
+    """Отказ агенту, пока видео ждёт ответов владельца; ``None`` — можно работать."""
+    from app import modules
+
+    if not modules.tool_enabled("add_stream_questions", store):  # модуль выключен: ответить негде, ждать нечего
+        return None
+    gate = montage_gate(store, int(source_id), clip_plan_id)
+    if not gate["paused"]:
+        return None
+    problems = [f"#{q['id']} ({LEVEL_WORD[q['level']]}): {q['question'][:140]}" for q in gate["items"]]
+    if gate["open"] > len(gate["items"]):
+        problems.append(f"и ещё {gate['open'] - len(gate['items'])}")
+    return {
+        "ok": False,
+        "paused": "open_questions",
+        "source_id": int(source_id),
+        "open_questions": [q["id"] for q in gate["items"]],
+        "error": (f"Монтаж видео #{source_id} на паузе: владелец ещё не ответил на {_ru_questions(gate['open'])}. "
+                  "Сначала ответы, потом нарезка. Дождись их и прочитай list_stream_answers. Пока можно смотреть "
+                  "стрим, задавать вопросы и править субтитры, слои и звук готовых клипов. Начать без ответов может "
+                  f"только сам владелец: кнопка «Монтировать без ответов» на странице видео /v/{source_id}."),
+        "problems": problems,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -573,13 +813,48 @@ def _source_title(store: Any, source: dict) -> str:
     return nav.titles_for(store, [source]).get(int(source["id"]), "") or source.get("original_filename") or ""
 
 
+def _clip_names(store: Any, clip_ids: set[int]) -> dict[int, str]:
+    if not clip_ids:
+        return {}
+    from app.clip_groups import display_name
+
+    ids = sorted(clip_ids)
+    marks = ",".join("?" for _ in ids)
+    rows = store.db.query_all(f"SELECT id, title FROM clip_plans WHERE id IN ({marks})", ids)
+    return {int(r["id"]): display_name(r["title"]) for r in rows}
+
+
+def _elsewhere(store: Any, source_id: int, in_project: bool) -> dict:
+    """Что задано по этому видео, но лежит на другом уровне: страница даёт туда ссылку."""
+    rows = store.db.query_all(
+        "SELECT scope, clip_plan_id, status FROM stream_questions WHERE source_id = ? AND scope != 'stream'",
+        (int(source_id),))
+    clips: dict[int, dict] = {}
+    project = {"total": 0, "open": 0}
+    for row in rows:
+        is_open = row["status"] == "open"
+        if row["scope"] == "channel":
+            project["total"] += 1
+            project["open"] += 1 if is_open else 0
+        elif row["clip_plan_id"] is not None:
+            clip = clips.setdefault(int(row["clip_plan_id"]), {"id": int(row["clip_plan_id"]), "total": 0, "open": 0})
+            clip["total"] += 1
+            clip["open"] += 1 if is_open else 0
+    names = _clip_names(store, set(clips))
+    return {"project": project if in_project else {"total": 0, "open": 0},
+            "clips": [{**clip, "name": names.get(cid, "")} for cid, clip in sorted(clips.items())]}
+
+
 def page_state(store: Any, source_id: int) -> dict:
+    """Страница видео: его собственные вопросы и мемы, про проект и клипы только ссылки туда.
+    Видео без проекта показывает и вопросы про проект: другой страницы у них нет."""
     from app import projects as P
 
     source = store.get_source(int(source_id))
-    questions = list_questions(store, source_id)
-    moments = list_moments(store, source_id)
     project_id = P.project_of_source(store, int(source_id))
+    questions = [q for q in list_questions(store, source_id)
+                 if q["level"] == "video" or (q["level"] == "project" and project_id is None)]
+    moments = list_moments(store, source_id)
     return {
         "source": {"id": source["id"], "title": _source_title(store, source),
                    "duration": source.get("duration_sec") or 0},
@@ -587,6 +862,25 @@ def page_state(store: Any, source_id: int) -> dict:
         "questions": questions,
         "moments": moments,
         "progress": progress(questions, moments),
+        "gate": montage_gate(store, source_id),
+        "elsewhere": _elsewhere(store, source_id, project_id is not None),
+    }
+
+
+def clip_state(store: Any, clip_plan_id: int) -> dict:
+    """Экран клипа: только вопросы про этот клип (с его версиями) и стоит ли монтаж."""
+    from app import projects as P
+
+    plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    source_id = int(plan["source_id"])
+    family = _clip_family(store, int(clip_plan_id))
+    questions = [q for q in list_questions(store, source_id, level="clip") if q.get("clip_plan_id") in family]
+    return {
+        "clip_plan_id": int(clip_plan_id),
+        "source_id": source_id,
+        "project_id": P.project_of_source(store, source_id),
+        "questions": questions,
+        "gate": montage_gate(store, source_id, int(clip_plan_id)),
     }
 
 
@@ -627,7 +921,21 @@ def inbox_state(store: Any, project_id: int | None = None, only_open: bool = Tru
         names = nav.titles_for(store, rows)
         for row in rows:
             sources[int(row["id"])] = {"id": row["id"], "title": names.get(int(row["id"]), ""),
-                                       "project_id": row["project_id"], "project_name": row["project_name"] or ""}
+                                       "project_id": row["project_id"], "project_name": row["project_name"] or "",
+                                       "paused": montage_gate(store, int(row["id"]))["paused"]}
+    counts = {level: {"total": 0, "open": 0} for level in (*LEVELS, "memes")}
+    for row in store.db.query_all(
+        f"SELECT x.scope, x.status, COUNT(*) AS n FROM stream_questions x JOIN sources s ON s.id = x.source_id "
+        f"WHERE 1 = 1{scope} GROUP BY x.scope, x.status", args):
+        bucket = counts[LEVEL_OF_SCOPE.get(row["scope"], "video")]
+        bucket["total"] += int(row["n"])
+        bucket["open"] += int(row["n"]) if row["status"] == "open" else 0
+    for row in store.db.query_all(
+        f"SELECT x.status, COUNT(*) AS n FROM meme_moments x JOIN sources s ON s.id = x.source_id "
+        f"WHERE 1 = 1{scope} GROUP BY x.status", args):
+        counts["memes"]["total"] += int(row["n"])
+        counts["memes"]["open"] += int(row["n"]) if row["status"] == "open" else 0
+    clip_names = _clip_names(store, {int(q["clip_plan_id"]) for q in questions if q.get("clip_plan_id")})
     totals = store.db.query_all(
         """
         SELECT s.project_id, p.name, SUM(n) AS n FROM (
@@ -642,6 +950,8 @@ def inbox_state(store: Any, project_id: int | None = None, only_open: bool = Tru
         "sources": [sources[i] for i in ids if i in sources],
         "questions": questions,
         "moments": moments,
+        "counts": counts,
+        "clips": [{"id": cid, "name": name} for cid, name in sorted(clip_names.items())],
         "open_by_project": [{"project_id": r["project_id"], "name": r["name"] or "Вне проектов", "open": int(r["n"])}
                             for r in totals],
     }
@@ -652,6 +962,7 @@ def answers_brief(store: Any, source_id: int) -> dict:
     questions = list_questions(store, source_id)
     moments = list_moments(store, source_id)
     answers = [{"id": q["id"], "t_start": q["t_start"], "t_end": q["t_end"], "kind": q["kind"], "scope": q["scope"],
+                "level": q["level"], **({"clip_id": q["clip_plan_id"]} if q["level"] == "clip" else {}),
                 "question": q["question"], "answer": q["answer"]}
                for q in questions if q["status"] == "answered"]
     memes = []
@@ -663,7 +974,11 @@ def answers_brief(store: Any, source_id: int) -> dict:
                       "status": moment["status"],
                       **({"asset_id": chosen["asset_id"], "title": chosen["title"], "license": chosen["license"],
                           "source": chosen["source"]} if chosen else {})})
-    return {"answers": answers, "memes": memes, "progress": progress(questions, moments)}
+    gate = montage_gate(store, source_id)
+    return {"answers": answers, "memes": memes, "progress": progress(questions, moments),
+            "montage": {"paused": gate["paused"], "waiting_for": gate["open"], "released_by_owner": gate["released"],
+                        "note": ("Монтаж на паузе: новые клипы и вырезы откажут, пока владелец не ответит."
+                                 if gate["paused"] else "Монтировать можно.")}}
 
 
 # --------------------------------------------------------------------------- #

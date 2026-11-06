@@ -103,7 +103,24 @@ def h_remember_fact(ctx: ToolContext, args: dict) -> dict:
     if out.get("refused"):
         return {"ok": False, "error": out["note"]}
     return {"ok": True, "project_id": project_id, "created": out["created"], "fact_id": out["fact"]["id"],
-            "text": out["fact"]["text"]}
+            "text": out["fact"]["text"], **({"note": out["note"]} if out.get("note") else {})}
+
+
+def h_note_observation(ctx: ToolContext, args: dict) -> dict:
+    project_id = _pid(ctx, args)
+    source_id = int(args["source_id"]) if args.get("source_id") not in (None, "") else None
+    if source_id is not None and P.project_of_source(ctx.store, source_id) != project_id:
+        raise ToolError(f"видео #{source_id} не из этого проекта")
+    try:
+        out = K.note_fact(ctx.store, project_id, args.get("text"), quote=args.get("quote") or "", source_id=source_id)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if out.get("refused"):
+        return {"ok": False, "error": out["note"]}
+    fact = out["fact"]
+    return {"ok": True, "project_id": project_id, "created": out["created"], "fact_id": fact["id"], "text": fact["text"],
+            "confirmed": fact["status"] == "active",
+            "note": "Владелец видит это как «агент заметил, не подтверждено» и подтвердит или уберёт."}
 
 
 def h_forget_fact(ctx: ToolContext, args: dict) -> dict:
@@ -254,6 +271,18 @@ def project_tools() -> list[Tool]:
             _obj({**_PROJECT_ARGS, "text": {"type": "string"}, "quote": {"type": "string"}}, ["text"]),
             h_remember_fact, mutating=True, scope="project",
             label=lambda a: f"Запоминаю: {str(a.get('text') or '')[:60]}",
+        ),
+        Tool(
+            "note_observation", "Записываю, что заметил",
+            "Изучил стрим — запиши, что заметил о проекте сам, одной фразой: «Онигуру часто мелькает, помогает с модом». "
+            "Владелец увидит это как «агент заметил, не подтверждено» и одним нажатием подтвердит или уберёт; "
+            "до этого в запросах оно идёт с пометкой и не перевешивает сказанное владельцем. Не уверен, кто или что это, — "
+            "не пиши, а спроси: add_stream_questions с level: project. Убранное владельцем второй раз не запишется. "
+            "source_id — видео, где заметил, quote — откуда видно (секунда, реплика). Со слов владельца — remember_fact. "
+            "/ Record what you noticed about the project; the owner confirms or removes it.",
+            _obj({**_PROJECT_ARGS, "text": {"type": "string"}, "quote": {"type": "string"}}, ["text"]),
+            h_note_observation, mutating=True, scope="project",
+            label=lambda a: f"Заметил: {str(a.get('text') or '')[:60]}",
         ),
         Tool(
             "forget_fact", "Забываю",

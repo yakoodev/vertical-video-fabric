@@ -6,6 +6,7 @@ import { chatApi } from "@/api/chat";
 import type { ClipGridData, ClipGridItem } from "@/api/clipGroups";
 import { qk } from "@/api/keys";
 import { sourcesApi } from "@/api/sources";
+import { streamQuestionsApi, streamQuestionsKey } from "@/api/streamQuestions";
 import { ClipGrid } from "@/components/ClipGrid";
 import { MissingSourceNotice, isSourceFileMissing } from "@/components/MissingSourceNotice";
 import { ErrorState, Loading, formatDuration } from "@/components/ui";
@@ -14,8 +15,9 @@ import { lazyPage } from "@/lazyPage";
 import { clipPath, videoPath } from "@/lib/paths";
 import { AiBatchPanel } from "@/pages/workspace/AiBatchPanel";
 import { AnalyzeForm } from "@/pages/workspace/AnalyzeForm";
+import { MontagePause } from "@/pages/workspace/MontagePause";
 
-const StreamQuestionsTab = lazyPage<{ sourceId: string }>(() => import("@/pages/workspace/StreamQuestionsTab"), "StreamQuestionsTab");
+const StreamQuestionsTab = lazyPage<{ sourceId: string; hidePause?: boolean }>(() => import("@/pages/workspace/StreamQuestionsTab"), "StreamQuestionsTab");
 const ChatConversation = lazyPage<ComponentProps<typeof import("@/pages/chat/ChatConversation").ChatConversation>>(
   () => import("@/pages/chat/ChatConversation"),
   "ChatConversation",
@@ -181,6 +183,11 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
   });
   const [params, setParams] = useSearchParams();
   const questionsOn = useModuleOn("stream_questions");
+  const questions = useQuery({
+    queryKey: streamQuestionsKey(sourceId),
+    queryFn: () => streamQuestionsApi.state(sourceId),
+    enabled: questionsOn,
+  });
   const chatOn = useModuleOn("twitch_chat");
   const agentOn = useModuleOn("agent_chat");
   const aiMontageOn = useModuleOn("ai_montage");
@@ -206,15 +213,20 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
   };
   const favorites = source.clip_plans.filter((p) => !p.hidden && p.favorite).length;
   const ratio = source.width && source.height ? `${source.width} / ${source.height}` : "16 / 9";
+  const progress = questions.data?.progress;
+  const openOwn = progress ? progress.questions.open + progress.memes.open : 0;
   const tabs: [Pane, string][] = [
     ["tr", `Транскрипт${source.transcript_segments ? ` ${source.transcript_segments}` : ""}`],
     ...(chatOn ? ([["chat", "Чат Twitch"]] as [Pane, string][]) : []),
-    ...(questionsOn ? ([["q", "Вопросы"]] as [Pane, string][]) : []),
+    ...(questionsOn ? ([["q", `Вопросы${openOwn ? ` ${openOwn}` : ""}`]] as [Pane, string][]) : []),
     ...(agentOn ? ([["agent", "Чат видео"]] as [Pane, string][]) : []),
   ];
   return (
     <div className="vov">
       {missing ? <MissingSourceNotice source={source} /> : null}
+      {questionsOn && questions.data ? (
+        <MontagePause sourceId={source.id} gate={questions.data.gate} projectId={questions.data.project_id} onOpen={() => setPane("q")} />
+      ) : null}
       {cutOpen ? (
         <div className="vov-cut">
           <AnalyzeForm source={source} title="Нарезать ещё" onStarted={closeCut} />
@@ -256,7 +268,7 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
             {pane === "chat" ? <ChatPane sourceId={source.id} time={time} onSeek={seek} /> : null}
             {pane === "q" ? (
               <Suspense fallback={<Loading />}>
-                <StreamQuestionsTab sourceId={String(source.id)} />
+                <StreamQuestionsTab sourceId={String(source.id)} hidePause />
               </Suspense>
             ) : null}
           </div>

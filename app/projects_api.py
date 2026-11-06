@@ -20,10 +20,11 @@
 # Без from __future__ import annotations: FastAPI читает аннотации _auth: auth_dep сразу.
 from typing import Any, Callable
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import project_knowledge as K
 from app import projects as P
+from app.auth import is_agent_request
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -104,8 +105,22 @@ def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
                      source_id=_int_or_none(payload.get("source_id")))
         return {"created": added["created"], "fact": added["fact"], "view": call(K.knowledge_view, project_id)}
 
+    @router.post("/api/projects/{project_id}/knowledge/confirm", summary="Подтвердить то, что агент заметил сам")
+    def api_confirm_knowledge(project_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        if is_agent_request(request):
+            raise HTTPException(status_code=403, detail="Подтвердить может только владелец")
+        ref = str(payload.get("ref") or "")
+        if not ref.startswith("fact:") or not ref[5:].isdigit():
+            raise HTTPException(status_code=400, detail="Подтвердить можно только заметку агента")
+        call(K.confirm_fact, project_id, int(ref[5:]))
+        return call(K.knowledge_view, project_id)
+
     @router.patch("/api/projects/{project_id}/knowledge", summary="Поправить строку: ref из списка, text, title")
-    def api_update_knowledge(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_update_knowledge(project_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        ref = str(payload.get("ref") or "")
+        if is_agent_request(request) and ref.startswith("fact:") and ref[5:].isdigit() \
+                and call(K.get_fact, project_id, int(ref[5:]))["status"] == K.STATUS_UNCONFIRMED:
+            raise HTTPException(status_code=403, detail="Правка подтверждает заметку, это может только владелец")
         return call(K.update_row, project_id, str(payload.get("ref") or ""), payload.get("text"), payload.get("title"))
 
     @router.delete("/api/projects/{project_id}/knowledge", summary="Убрать строку: агент больше её не получает")

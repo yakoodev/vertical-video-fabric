@@ -18,6 +18,7 @@ import { projectPath } from "@/lib/paths";
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 const GROUP_HINT: Record<string, string> = {
+  noticed: "Агент заметил это сам, изучая стримы. Он помнит, что это не подтверждено, и ваши слова важнее. Подтвердите или уберите.",
   videos: "Это агент видит, только когда работает с этим видео.",
   memes: "Выбор меняется на вкладке «Вопросы».",
 };
@@ -66,6 +67,11 @@ function Row({ row, projectId, onChanged }: { row: KnowledgeRow; projectId: numb
   const [text, setText] = useState(row.text);
   const [title, setTitle] = useState(row.title ?? "");
   const [removing, setRemoving] = useState(false);
+  const confirm = useMutation({
+    mutationFn: () => projectsApi.confirmKnowledge(projectId, row.ref),
+    onSuccess: onChanged,
+    onError: (e) => toast.error(errText(e, "Не подтвердилось")),
+  });
   const save = useMutation({
     mutationFn: () => projectsApi.updateKnowledge(projectId, row.ref, text, titleEditable(row) ? title : undefined),
     onSuccess: (view) => {
@@ -120,6 +126,11 @@ function Row({ row, projectId, onChanged }: { row: KnowledgeRow; projectId: numb
           </>
         ) : (
           <>
+            {row.confirmable ? (
+              <button className="btn primary sm" disabled={confirm.isPending} onClick={() => confirm.mutate()}>
+                Подтвердить
+              </button>
+            ) : null}
             {row.editable ? (
               <button
                 className="btn sm"
@@ -133,7 +144,11 @@ function Row({ row, projectId, onChanged }: { row: KnowledgeRow; projectId: numb
               </button>
             ) : null}
             {row.removable ? (
-              <button className="btn sm" onClick={() => setRemoving(true)}>
+              <button
+                className="btn sm"
+                disabled={remove.isPending}
+                onClick={() => (row.confirmable ? remove.mutate() : setRemoving(true))}
+              >
                 Убрать
               </button>
             ) : null}
@@ -154,17 +169,27 @@ function Row({ row, projectId, onChanged }: { row: KnowledgeRow; projectId: numb
 }
 
 function Waiting({ view, projectId, short }: { view: KnowledgeView; projectId: number; short?: boolean }) {
-  const { questions, memes, items } = view.waiting;
-  if (!questions && !memes) return null;
+  const { questions, memes, noticed, items } = view.waiting;
+  if (!questions && !memes && !noticed) return null;
   const parts = [questions ? plural(questions, "вопрос", "вопроса", "вопросов") : "", memes ? plural(memes, "мем", "мема", "мемов") : ""].filter(Boolean);
   return (
     <div className="kwait">
-      <div className="kwait-h">
-        <span>Ждут вашего ответа: {parts.join(" и ")}</span>
-        <Link className="btn sm" to={projectPath(projectId, "questions")}>
-          Ответить
-        </Link>
-      </div>
+      {parts.length ? (
+        <div className="kwait-h">
+          <span>Ждут вашего ответа: {parts.join(" и ")}</span>
+          <Link className="btn sm" to={projectPath(projectId, "questions")}>
+            Ответить
+          </Link>
+        </div>
+      ) : null}
+      {noticed && short ? (
+        <div className="kwait-h">
+          <span>Агент заметил сам, ждёт подтверждения: {noticed}</span>
+          <Link className="btn sm" to={projectPath(projectId, "know")}>
+            Посмотреть
+          </Link>
+        </div>
+      ) : null}
       {short ? null : (
         <ul>
           {items.map((q) => (
@@ -192,7 +217,7 @@ export function KnowledgeCard({ projectId }: { projectId: number }) {
       {query.isLoading ? <Loading /> : null}
       {query.isError ? <p className="muted">Не открылось: {errText(query.error, "ошибка")}</p> : null}
       {view && !view.total ? <p className="muted know-empty">{EMPTY_TEXT}</p> : null}
-      {view?.groups.slice(0, 2).map((g) => (
+      {view?.groups.filter((g) => g.key !== "noticed").slice(0, 2).map((g) => (
         <div key={g.key} className="kg">
           <h3>{g.title}</h3>
           {g.items.slice(0, 2).map((row) => (
