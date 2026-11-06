@@ -369,7 +369,7 @@ def active_names(groups: list[str]) -> list[str]:
 
 def declarations(groups: list[str], json_schema: bool = True) -> list[dict]:
     """Объявления функций Gemini: база + подгруженные группы; клиповым — clip_id первым аргументом."""
-    from app.ai.editor_agent import _openapi_schema
+    from app.ai.editor_agent_contents import _openapi_schema
 
     known = all_tools()
     out = []
@@ -497,7 +497,7 @@ def media_dir() -> Path:
 
 
 def save_image(image: ImageResult) -> str:
-    from app.ai.editor_agent import _shrink_frame
+    from app.ai.editor_agent_contents import _shrink_frame
 
     data, mime = _shrink_frame(image)
     ext = ".jpg" if "jpeg" in mime else ".png"

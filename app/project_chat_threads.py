@@ -12,6 +12,7 @@ from typing import Any
 from app import autopilot as A
 from app import chat_tools as CT
 from app import projects as P
+from app.ai.agent_loop import TurnCancelled
 from app.settings import settings
 
 VIDEO_THREAD_TITLE = "Чат видео"
@@ -127,8 +128,7 @@ class ChatBusy(RuntimeError):
     """Агент ещё отвечает на прошлое сообщение этой переписки."""
 
 
-class ChatCancelled(Exception):
-    pass
+ChatCancelled = TurnCancelled  # «Стоп»: один на все ходы (app/ai/agent_loop.py)
 
 
 def _loads(text: Any, default: Any) -> Any:
