@@ -272,11 +272,17 @@ export function MontagePlayer({
     }).catch(() => setLostServer(true));
   }, [clipPlanId]);
 
+  // Сами вышли из полного экрана (F, кнопка ⛶): плеер остаётся открытым, в окне.
+  const leavingByToggleRef = useRef(false);
   const toggleFullscreen = useCallback(() => {
     const el = rootRef?.current ?? selfRef.current;
     if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
-    else void el.requestFullscreen?.().catch(() => undefined);
+    if (document.fullscreenElement) {
+      leavingByToggleRef.current = true;
+      void document.exitFullscreen().catch(() => {
+        leavingByToggleRef.current = false;
+      });
+    } else void el.requestFullscreen?.().catch(() => undefined);
   }, [rootRef]);
 
   const onKeyDown = useCallback(
@@ -313,12 +319,14 @@ export function MontagePlayer({
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [onClose, onKeyDown]);
-  // Вышли из полного экрана Esc-ом браузера: оверлей закрываем тем же нажатием.
+  // Вышли из полного экрана Esc-ом браузера: оверлей закрываем тем же нажатием, редактор остаётся.
+  // Выход клавишей F оверлей не закрывает: раньше закрывал, и следующий Esc уводил уже из редактора.
   const wasFsRef = useRef(false);
   useEffect(() => {
     const onChange = () => {
       const on = Boolean(document.fullscreenElement);
-      if (wasFsRef.current && !on && onClose) onClose();
+      if (wasFsRef.current && !on && onClose && !leavingByToggleRef.current) onClose();
+      if (!on) leavingByToggleRef.current = false;
       wasFsRef.current = on;
     };
     document.addEventListener("fullscreenchange", onChange);
