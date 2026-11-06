@@ -172,12 +172,18 @@ def build_subtitles_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
     def api_put_plan_subtitles(clip_plan_id: int, payload: PlanSubtitleLines, _auth: auth_dep) -> dict:
         try:
             snapshot_clip(get_store(), clip_plan_id, "правка субтитров")
-            return save_plan_subtitle_lines(
+            old_words = (get_store().get_clip_plan_subtitles(clip_plan_id) or {}).get("words") or []
+            saved = save_plan_subtitle_lines(
                 get_store(),
                 clip_plan_id,
                 [line.model_dump() for line in payload.lines],
                 [w.model_dump() for w in payload.words] if payload.words else None,
             )
+            # Подсветка слов держится за номера слов: правка строки меняет их, как и инструменты агента.
+            from app.caption_marks import rebind_plan_marks
+
+            rebind_plan_marks(get_store(), clip_plan_id, old_words, saved.get("words") or [])
+            return saved
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

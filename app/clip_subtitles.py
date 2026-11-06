@@ -19,6 +19,7 @@ so what you fixed in the editor is what ends up in the video.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -89,18 +90,34 @@ def words_by_line(lines: list[dict], words: list[dict]) -> list[list[dict]]:
 
     Раньше слово брала каждая строка, которую оно задевает: слово на стыке строк
     («Слушай,» в строках 12 и 13) показывалось дважды, а после правки строки
-    (rebuild_words) дублировалось в словах насовсем."""
+    (rebuild_words) дублировалось в словах насовсем.
+
+    У строки с голосом (``speaker``) — только слова того же голоса: реплика второго голоса поверх
+    первой не уезжает в чужую строку. Правка строк голос у строки снимает: если слово с голосом целиком
+    лежит в двух строках внахлёст, время не решает, решает текст — слово достаётся строке, в тексте
+    которой оно ещё не встретилось (иначе верхняя строка вбирала реплику другого голоса)."""
     out: list[list[dict]] = [[] for _ in lines]
     spans = [(float(l["start"]), float(l["end"])) for l in lines]
+    voiced = any(line.get("speaker") for line in lines)
+    unseen = [Counter(_tokens(line.get("text") or "")) for line in lines]
     for w in words:
         a, b = float(w["start"]), float(w["end"])
-        best, best_overlap = None, 0.001
+        voice = w.get("speaker") or "A"
+        token = next(iter(_tokens(str(w.get("word") or ""))), "")
+        best, best_overlap, best_in_text = None, 0.0, False
         for index, (ls, le) in enumerate(spans):
+            if voiced and lines[index].get("speaker") and lines[index]["speaker"] != voice:
+                continue
             overlap = min(b, le) - max(a, ls)
-            if overlap > best_overlap:
-                best, best_overlap = index, overlap
+            if overlap <= 0.001:
+                continue
+            in_text = bool(w.get("speaker")) and unseen[index][token] > 0
+            if best is None or overlap > best_overlap + 0.001 or (overlap >= best_overlap - 0.001 and in_text and not best_in_text):
+                best, best_overlap, best_in_text = index, overlap, in_text
         if best is not None:
             out[best].append(w)
+            if best_in_text:
+                unseen[best][token] -= 1
     return out
 
 
@@ -148,12 +165,15 @@ def tidy_words(words: list[dict]) -> list[dict]:
 
 
 def _split_words(text: str, start: float, end: float) -> list[dict]:
-    """Spread a line's words over its span (used for lines the owner retyped)."""
+    """Spread a line's words over its span (used for lines the owner retyped).
+
+    Строго внутри строки, даже если она коротка для такого текста: слово за её концом другая строка
+    забрала бы себе при сохранении (``sync_lines_with_words``), и правка пропала бы."""
     tokens = [t for t in re.split(r"\s+", text.strip()) if t]
     if not tokens:
         return []
     total = sum(len(t) for t in tokens) or 1
-    span = max(0.12 * len(tokens), end - start)
+    span = max(0.0, end - start)
     out, cursor = [], start
     for token in tokens:
         share = span * (len(token) / total)
@@ -167,33 +187,89 @@ def _same_text(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+# Новому слову нужно хотя бы столько времени; меньше — оно делит время с соседним распознанным словом.
+MIN_NEW_WORD_SEC = 0.08
+
+
+def _place_new_words(tokens: list[str], timing: list, start: float, end: float) -> list[tuple[float, float]]:
+    """Время новых слов строки (``timing[k] is None``), и только внутри ``start..end``.
+
+    Встают в зазор между соседями. Зазора нет (дописали слово в конец строки, а она кончается вместе с
+    последним словом) — делят время с соседним распознанным словом, у кого его больше. Распознанные
+    слова дальше соседа не сдвигаются."""
+    timing = list(timing)
+    n = len(tokens)
+
+    def room(first: int, last: int) -> tuple[float, float]:
+        # Слово, с которым делим время, держит своё начало (или конец), новое — край зазора.
+        left = timing[first][0] if timing[first] is not None else (timing[first - 1][1] if first > 0 else start)
+        right = timing[last - 1][1] if timing[last - 1] is not None else (timing[last][0] if last < n else end)
+        return left, right
+
+    k = 0
+    while k < n:
+        if timing[k] is not None:
+            k += 1
+            continue
+        first = k
+        while k < n and timing[k] is None:
+            k += 1
+        last = k
+        left, right = room(first, last)
+        while right - left < MIN_NEW_WORD_SEC * (last - first) and (first > 0 or last < n):
+            before = timing[first - 1][1] - timing[first - 1][0] if first > 0 else -1.0
+            after = timing[last][1] - timing[last][0] if last < n else -1.0
+            if before >= after:
+                first -= 1
+            else:
+                last += 1
+                while last < n and timing[last] is None:
+                    last += 1
+            left, right = room(first, last)
+        if first == 0 and last == n and right - left < MIN_NEW_WORD_SEC * n:
+            left, right = start, end
+        spread = _split_words(" ".join(tokens[first:last]), left, right)
+        for m, word in zip(range(first, last), spread):
+            timing[m] = (word["start"], word["end"])
+        k = last
+    return timing
+
+
 def _align_line(text: str, inside: list[dict], start: float, end: float) -> list[dict]:
-    """Переписанная строка: совпавшие слова держат время распознанных, поправленные — время слова,
-    которое заменили; остальные встают между соседями. Голос строки не теряем."""
+    """Переписанная строка. Слов столько же — каждое держит время, голос и эмфазу слова на своём месте.
+    Иначе совпавшие держат своё, новые встают рядом (``_place_new_words``). Ни одного общего слова —
+    раскладка по речи строки: от первого до последнего распознанного слова. Все слова — внутри строки."""
     import difflib
 
-    from app.ai.speakers import _fill_timing, _norm
+    from app.ai.speakers import _norm
 
     tokens = [t for t in re.split(r"\s+", text.strip()) if t]
     if not tokens:
         return []
-    speaker = next((w["speaker"] for w in inside if w.get("speaker")), None)
-    timing: list = [None] * len(tokens)
+    source: list[dict | None] = [None] * len(tokens)
     if len(tokens) == len(inside):
-        timing = [(max(start, float(w["start"])), min(end, float(w["end"]))) for w in inside]
+        source = list(inside)
     else:
         sm = difflib.SequenceMatcher(a=[_norm(t) for t in tokens], b=[_norm(str(w["word"])) for w in inside], autojunk=False)
         for block in sm.get_matching_blocks():
             for k in range(block.size):
-                w = inside[block.b + k]
-                timing[block.a + k] = (max(start, float(w["start"])), min(end, float(w["end"])))
-    if not any(timing):
-        # Ни одного общего слова: речь строки от первого до последнего распознанного слова.
-        span = {"word": "", "start": float(inside[0]["start"]), "end": float(inside[-1]["end"])}
-        return [{**w, **({"speaker": speaker} if speaker else {})}
-                for w in _split_words(text, max(start, span["start"]), min(end, span["end"]))]
-    filled = _fill_timing(tokens, timing, {"s": speaker or "", "start": start, "end": end})
-    return [{k: v for k, v in w.items() if k != "speaker" or v} for w in filled]
+                source[block.a + k] = inside[block.b + k]
+    if any(source):
+        timing = [(max(start, float(w["start"])), min(end, float(w["end"]))) if w else None for w in source]
+        placed = _place_new_words(tokens, timing, start, end)
+    else:
+        a, b = max(start, float(inside[0]["start"])), min(end, float(inside[-1]["end"]))
+        if b - a < MIN_NEW_WORD_SEC * len(tokens):
+            a, b = start, end
+        placed = [(w["start"], w["end"]) for w in _split_words(text, a, b)]
+    out = []
+    for k, (token, (a, b)) in enumerate(zip(tokens, placed)):
+        origin = source[k]
+        near = origin or next((w for w in reversed(source[:k]) if w), None) or next((w for w in source[k:] if w), None) or inside[0]
+        out.append({"word": token, "start": round(a, 3), "end": round(b, 3),
+                    **({"speaker": near["speaker"]} if near.get("speaker") else {}),
+                    **({"emph": origin["emph"]} if origin and origin.get("emph") else {})})
+    return out
 
 
 def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
@@ -202,10 +278,10 @@ def rebuild_words(lines: list[dict], old_words: list[dict]) -> list[dict]:
     return _rebuild_words(lines, old_words)[0]
 
 
-def _rebuild_words(lines: list[dict], old_words: list[dict]) -> tuple[list[dict], list[int]]:
-    """→ (слова, номера слов без опоры на распознанное — их время раскладка вслепую, ``fit_blind_words``)."""
+def _rebuild_words(lines: list[dict], old_words: list[dict]) -> tuple[list[dict], list[list[int]]]:
+    """→ (слова, номера слов без опоры на распознанное по строкам — их время раскладка вслепую, ``fit_blind_words``)."""
     words: list[dict] = []
-    blind: list[int] = []
+    blind: list[list[int]] = []
     for line, inside in zip(lines, words_by_line(lines, tidy_words(old_words))):
         start, end = float(line["start"]), float(line["end"])
         if inside and _same_text(" ".join(w["word"] for w in inside), line["text"]):
@@ -218,14 +294,16 @@ def _rebuild_words(lines: list[dict], old_words: list[dict]) -> tuple[list[dict]
         elif inside:
             words.extend(_align_line(line["text"], inside, start, end))
         else:
-            spread = _split_words(line["text"], start, end)
-            blind.extend(range(len(words), len(words) + len(spread)))
+            voice = {"speaker": line["speaker"]} if line.get("speaker") else {}
+            spread = [{**w, **voice} for w in _split_words(line["text"], start, end)]
+            blind.append(list(range(len(words), len(words) + len(spread))))
             words.extend(spread)
     return words, blind
 
 
-def fit_blind_words(store: Any, clip_plan_id: int, words: list[dict], blind: list[int]) -> tuple[list[dict], list[str]]:
-    """Строки без единого распознанного слова внутри — к настоящей речи (VAD) в их границах.
+def fit_blind_words(store: Any, clip_plan_id: int, words: list[dict], blind: list[list[int]]) -> tuple[list[dict], list[str]]:
+    """Строки без единого распознанного слова внутри — к настоящей речи (VAD) в их границах, каждая в своих:
+    слово, уехавшее в соседнюю строку, ушло бы из текста своей.
     Голоса нет или звука нет — время остаётся, и об этом warning: равномерно вслепую молча не бывает."""
     if not blind:
         return words, []
@@ -237,13 +315,7 @@ def fit_blind_words(store: Any, clip_plan_id: int, words: list[dict], blind: lis
         return words, ["время новых строк не проверено по звуку — исходник недоступен"]
     out = list(words)
     notes: list[str] = []
-    runs: list[list[int]] = []
-    for index in blind:
-        if runs and index == runs[-1][-1] + 1 and float(out[index]["start"]) <= float(out[index - 1]["end"]) + 0.02:
-            runs[-1].append(index)
-        else:
-            runs.append([index])
-    for run in runs:
+    for run in blind:
         items = [out[i] for i in run]
         a, b = float(items[0]["start"]), float(items[-1]["end"])
         parts = spans_within(spans, a, b)
@@ -263,27 +335,6 @@ def _tokens(text: str) -> list[str]:
     return [t for t in (_TOKEN_EDGE.sub("", tok).lower() for tok in str(text or "").split()) if t]
 
 
-def _line_words(lines: list[dict], words: list[dict]) -> list[list[dict]]:
-    """Слова по строкам (как ``words_by_line``), но у строк с голосом (``speaker``) — только слова того же
-    голоса: реплика второго голоса поверх первой не уезжает в чужую строку."""
-    if not any(line.get("speaker") for line in lines):
-        return words_by_line(lines, words)
-    out: list[list[dict]] = [[] for _ in lines]
-    for w in words:
-        a, b = float(w["start"]), float(w["end"])
-        voice = w.get("speaker") or "A"
-        best, best_overlap = None, 0.001
-        for index, line in enumerate(lines):
-            if line.get("speaker") and line["speaker"] != voice:
-                continue
-            overlap = min(b, float(line["end"])) - max(a, float(line["start"]))
-            if overlap > best_overlap:
-                best, best_overlap = index, overlap
-        if best is not None:
-            out[best].append(w)
-    return out
-
-
 def sync_lines_with_words(payload: Any) -> Any:
     """Текст строк — по словам, если они разошлись (QA 02.11, клип 892).
 
@@ -298,7 +349,7 @@ def sync_lines_with_words(payload: Any) -> Any:
     lines = [dict(line) for line in payload["lines"] if isinstance(line, dict)]
     words = [w for w in payload["words"] if isinstance(w, dict) and str(w.get("word") or "").strip()]
     try:
-        inside = _line_words(lines, words)
+        inside = words_by_line(lines, words)
     except (KeyError, TypeError, ValueError):
         return payload
     out: list[dict] = []
@@ -644,6 +695,10 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
     ``words`` — пословные тайминги, распознанные снаружи (агент или распознавание на
     хосте): тогда караоке и анимированные субтитры идут по ним, а не по словам,
     равномерно разложенным по строке.
+
+    Строка главнее слов: слова правленой строки остаются внутри неё (``_align_line``), поэтому
+    сверка строк со словами при записи (``sync_lines_with_words``) правку не откатывает. Возвращает
+    то, что реально записано: звёздочки цензуры и сверка могли поправить текст.
     """
     current = store.get_clip_plan_subtitles(clip_plan_id) or {}
     if isinstance(words, list) and words:
@@ -677,7 +732,8 @@ def save_lines(store: Any, clip_plan_id: int, lines: Any, words: Any = None) -> 
         "edited": True,
     }
     store.set_clip_plan_subtitles(clip_plan_id, payload)
-    return {**payload, "align_warnings": notes} if notes else payload
+    stored = store.get_clip_plan_subtitles(clip_plan_id) or payload
+    return {**stored, "align_warnings": notes} if notes else stored
 
 
 def _default_profile(store: Any) -> dict:

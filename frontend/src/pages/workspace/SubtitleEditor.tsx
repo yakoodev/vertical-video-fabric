@@ -125,9 +125,8 @@ export function SubtitleEditor({
   const save = useMutation({
     mutationFn: () => clipPlansApi.saveSubtitles(clipPlanId, lines),
     onSuccess: (data) => {
-      setDirty(false);
-      onLines(data.lines ?? []);
-      qc.invalidateQueries({ queryKey: ["plan-subtitles", clipPlanId] });
+      // Что записал сервер: слова правки (их рисует превью) и текст после цензуры.
+      applyFresh(data);
       toast.success("Субтитры сохранены — рендер возьмёт именно их");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
