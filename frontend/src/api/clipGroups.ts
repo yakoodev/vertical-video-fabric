@@ -97,6 +97,7 @@ export interface ClipView {
   source: {
     id: number;
     name: string;
+    source_type: string;
     has_file: boolean;
     original_url: string;
     status: string;

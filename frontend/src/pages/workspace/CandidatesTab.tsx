@@ -2244,7 +2244,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
-      if (document.querySelector(".modal-backdrop")) return;
+      if (document.querySelector(".modal-backdrop, .drawer-backdrop")) return;
       keyHandlerRef.current?.(e);
     };
     window.addEventListener("keydown", onKey);
@@ -2656,7 +2656,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     return true;
   };
   pasteLayerRef.current = () => {
-    if (view !== "editor" || document.querySelector(".modal-backdrop")) return false;
+    if (view !== "editor" || document.querySelector(".modal-backdrop, .drawer-backdrop")) return false;
     let raw: string | null = null;
     try {
       raw = localStorage.getItem("vvf.layerClipboard");

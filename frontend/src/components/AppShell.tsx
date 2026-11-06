@@ -1,10 +1,11 @@
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, type ComponentProps } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { navApi, navKeys } from "@/api/nav";
 import { ActivityCenter } from "@/components/ActivityCenter";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Icon } from "@/components/Icon";
+import { chatPlace, levelTitle } from "@/components/shell/chatPlace";
 import { Ladder, useWhere } from "@/components/shell/Ladder";
 import { NewProjectDialog } from "@/components/shell/NewProjectDialog";
 import { Sidebar } from "@/components/shell/Sidebar";
@@ -15,7 +16,7 @@ import { rememberProject } from "@/lib/paths";
 import { AddSource } from "@/pages/ProjectsPage";
 
 // Панель чата и её зависимости не нужны, пока её не открыли.
-const GeneralChatDrawer = lazyPage<{ onClose: () => void }>(() => import("@/components/shell/GeneralChatDrawer"), "GeneralChatDrawer");
+const ChatDrawer = lazyPage<ComponentProps<typeof import("@/components/shell/ChatDrawer").ChatDrawer>>(() => import("@/components/shell/ChatDrawer"), "ChatDrawer");
 
 export const SHORTCUTS: [string, string][] = [
   ["Ctrl / ⌘ + K", "поиск и команды"],
@@ -61,15 +62,18 @@ export function AppShell() {
   const [create, setCreate] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [keys, setKeys] = useState(false);
-  const [chat, setChat] = useState(false);
+  const [chat, setChat] = useState<"here" | "general" | null>(null);
   const { on } = useModules();
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, refetchInterval: 30000, staleTime: 15_000 });
-  const { projectId, project } = useWhere(nav.data);
+  const where = useWhere(nav.data);
+  const { projectId, project } = where;
+  const place = chatPlace(where, nav.data, on("editor_agent"));
+  const chatHere = place.levels[0];
   const openCreate = useCallback(() => setCreate(true), []);
   const openNewProject = useCallback(() => setNewProject(true), []);
   const openKeys = useCallback(() => setKeys(true), []);
-  const openChat = useCallback(() => setChat(true), []);
-  const closeChat = useCallback(() => setChat(false), []);
+  const openGeneralChat = useCallback(() => setChat("general"), []);
+  const closeChat = useCallback(() => setChat(null), []);
 
   useEffect(() => {
     if (projectId) rememberProject(projectId);
@@ -88,7 +92,7 @@ export function AppShell() {
         setNewProject(false);
       }
       if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
-      if (document.querySelector(".modal-backdrop")) return; // a dialog owns the keyboard
+      if (document.querySelector(".modal-backdrop, .drawer-backdrop")) return; // a dialog owns the keyboard
       if (e.key === "?") setKeys(true);
       else if (e.key === "n" || e.key === "т") setCreate(true);
       else if (/^[1-8]$/.test(e.key)) {
@@ -119,16 +123,29 @@ export function AppShell() {
         <header className="top">
           <Ladder nav={nav.data} onCreateVideo={openCreate} />
           <div className="tools">
-            <button type="button" className="tool" onClick={() => setPalette(true)} title="Поиск и команды (Ctrl K)">
+            <button type="button" className="tool tool-search" onClick={() => setPalette(true)} title="Поиск и команды (Ctrl K)">
               <Icon name="search" size={16} />
               <span>
                 Поиск<em> Ctrl K</em>
               </span>
             </button>
             {on("agent_chat") ? (
-              <button type="button" className="tool" onClick={openChat} title="Вопросы агенту не про один проект">
+              <button
+                type="button"
+                className="tool tool-chat"
+                disabled={place.pending}
+                onClick={() => setChat("here")}
+                title={place.pending ? "Чат" : levelTitle(chatHere)}
+              >
                 <Icon name="chat" size={16} />
-                <span>Общий чат</span>
+                <span>{place.pending ? "Чат" : levelTitle(chatHere)}</span>
+              </button>
+            ) : null}
+            {on("agent_chat") && (place.pending || chatHere.kind !== "general") ? (
+              <button type="button" className="tool tool-general" onClick={openGeneralChat} title="Общий чат: вопросы агенту не про один проект">
+                <span>
+                  Общий<em> чат</em>
+                </span>
               </button>
             ) : null}
             <ActivityCenter />
@@ -146,13 +163,13 @@ export function AppShell() {
         onClose={() => setPalette(false)}
         onCreate={openCreate}
         onCreateProject={openNewProject}
-        onOpenChat={openChat}
+        onOpenChat={openGeneralChat}
         nav={nav.data}
       />
 
       {chat ? (
         <Suspense fallback={null}>
-          <GeneralChatDrawer onClose={closeChat} />
+          <ChatDrawer place={place} start={chat} onClose={closeChat} />
         </Suspense>
       ) : null}
 

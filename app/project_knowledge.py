@@ -672,6 +672,39 @@ def prompt_block(store: Any, project_id: int | None, source_id: int | None = Non
     return "\n".join(out)
 
 
+def project_mascots(store: Any, project_id: int | None) -> list[dict]:
+    """Маскоты объяснялок проекта, коротко: чат начинает с них, а не придумывает героя заново."""
+    from app import modules
+
+    if not project_id or not modules.is_enabled("explainer", store):
+        return []
+    rows = store.db.query_all(
+        "SELECT m.id, m.name, m.persona, m.identity_card, "
+        "(SELECT COUNT(*) FROM expl_poses p WHERE p.mascot_id = m.id) AS poses "
+        "FROM expl_mascots m WHERE m.project_id = ? ORDER BY m.id",
+        (int(project_id),),
+    )
+    return [{"mascot_id": int(r["id"]), "name": r["name"], "about": str(r["persona"] or "")[:200],
+             "looks": str(r["identity_card"] or "")[:200], "poses": int(r["poses"])} for r in rows]
+
+
+def mascot_block_for_plan(store: Any, clip_plan_id: int) -> str:
+    """Для чата клипа: у него нет инструментов объяснялок, но выдумывать другого героя он не должен."""
+    try:
+        from app.asset_scope import clip_project
+
+        mascots = project_mascots(store, clip_project(store, int(clip_plan_id)))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("mascots for clip plan %s failed: %s", clip_plan_id, exc)
+        return ""
+    if not mascots:
+        return ""
+    lines = [f"- {m['name']}: {m['about']} Внешность: {m['looks']}" for m in mascots]
+    return ("МАСКОТ ПРОЕКТА (другого героя не выдумывай):\n" + "\n".join(lines)
+            + "\nЭто чат одного клипа. Новую серию с маскотом собирает чат проекта: скажи владельцу открыть его "
+              "(кнопка «Проект» в панели чата).")
+
+
 def block_for_source(store: Any, source_id: int, limit: int = PROMPT_CHARS) -> str:
     """Блок для нарезки и «ИИ выберет лучшие». Сбой здесь не должен останавливать работу."""
     try:

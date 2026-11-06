@@ -944,6 +944,7 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
         "source": {
             "id": int(source["id"]),
             "name": source_name,
+            "source_type": source["source_type"],
             "has_file": has_file,
             "original_url": source.get("original_url") or "",
             "status": source.get("status"),

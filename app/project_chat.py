@@ -60,6 +60,7 @@ SUMMARY_CHARS = 3000
 CONTEXT_CHARS = 24000
 CONTEXT_SOURCES = 40  # у Apex 218 видео: их список не должен вытеснять лор из обрезки
 VIDEO_THREAD_TITLE = "Чат видео"
+HIDDEN_SOURCE_TYPES = ("canvas", "clip_upload")  # app/store.py: _HIDDEN_SOURCE_TYPES
 MAX_ROUNDS = 24
 MAX_OUTPUT_TOKENS = 8192
 SAY = "_say"
@@ -211,7 +212,9 @@ def get_thread(store: Any, thread_id: int) -> dict:
 
 def video_thread(store: Any, source_id: int) -> dict:
     """Чат видео: один на видео, заводится при первом открытии. Колонка project_id у него пустая, см. ``get_thread``."""
-    store.get_source(int(source_id))
+    source = store.get_source(int(source_id))
+    if source.get("source_type") in HIDDEN_SOURCE_TYPES:
+        raise ValueError("это служебная запись холстов и загруженных клипов, а не видео: у неё нет своего чата")
     row = store.db.query_one("SELECT id FROM chat_threads WHERE source_id = ? ORDER BY id LIMIT 1", (int(source_id),))
     if row:
         return get_thread(store, int(row["id"]))
@@ -501,7 +504,14 @@ VIDEO_NOTE = ("\nЭто чат одного видео: source_id {sid}, «{titl
               "источника давай source_id {sid}, клипы этого видео — list_clips(source_id={sid}), ещё нарезать — "
               "analyze_source(source_id={sid}). Что про него известно — в блоке video среза.\n")
 GENERAL_NOTE = ("\nЭто общий чат, без проекта. Проекты-серии/каналы и источники — в срезе ниже; инструментам "
-                "проекта давай project_id (list_channel_projects) или source_id.\n")
+                "проекта давай project_id (list_channel_projects) или source_id. Просят новую серию про героя, а он "
+                "похож на маскота проекта (поле mascots): это объяснялка с этим маскотом, группа explainer, нового "
+                "персонажа не заводи.\n")
+MASCOT_NOTE = ("\nУ этого проекта уже есть маскот: {names} (блок mascots среза). Новая серия, часть или ролик, где не "
+               "назван другой герой, — это объяснялка с ним: load_tools с группой explainer, "
+               "explainer_overview(project_id={pid}), explainer_create(mascot_id, topic). Нового персонажа не заводи и "
+               "внешность не придумывай (aiv_define_character), пока владелец прямо не попросит другого героя; "
+               "не ясно, о ком речь, — спроси.\n")
 
 
 def video_context(store: Any, source_id: int) -> dict:
@@ -530,9 +540,11 @@ def project_context(store: Any, project_id: int, source_id: int | None = None) -
                  for a in A.list_approvals(store, project_id, status="pending,changes_requested", limit=20)]
     schedule = A.get_schedule(store, project_id)
     cfg = A.get_config(store, project_id)
+    mascots = K.project_mascots(store, int(project_id))
     data = {
         "project_id": int(project_id),
         **({"video": video_context(store, int(source_id))} if source_id else {}),
+        **({"mascots": mascots} if mascots else {}),
         "brief": brief, "stats": stats, "approvals_open": approvals,
         "schedule": {"timezone": schedule["timezone"], "upcoming": [
             {k: u.get(k) for k in ("id", "title", "scheduled_local", "publish_status", "platforms")}
@@ -546,8 +558,11 @@ def project_context(store: Any, project_id: int, source_id: int | None = None) -
 
 
 def general_context(store: Any) -> str:
-    projects = [{"project_id": p["id"], "name": p["name"], "kind": p.get("kind"),
-                 "rules": p.get("active_rules_count")} for p in P.list_projects(store)]
+    projects = []
+    for p in P.list_projects(store):
+        mascots = [{k: m[k] for k in ("mascot_id", "name", "about")} for m in K.project_mascots(store, p["id"])]
+        projects.append({"project_id": p["id"], "name": p["name"], "kind": p.get("kind"),
+                         "rules": p.get("active_rules_count"), **({"mascots": mascots} if mascots else {})})
     sources = [{"source_id": s["id"], "name": s.get("original_filename") or "", "status": s.get("status"),
                 "duration_sec": s.get("duration_sec"), "clips": s.get("clip_plans_count"),
                 "channel_project_id": s.get("project_id")} for s in store.list_sources(limit=40)]
@@ -839,6 +854,8 @@ def _system(thread: dict, groups: list[str]) -> str:
     text = SYSTEM.format(groups=CT.groups_hint())
     if thread.get("project_id"):
         text += PROJECT_NOTE.format(pid=thread["project_id"])
+        if thread.get("mascots"):
+            text += MASCOT_NOTE.format(names=", ".join(m["name"] for m in thread["mascots"]), pid=thread["project_id"])
     elif not thread.get("source_id"):
         text += GENERAL_NOTE
     if thread.get("source_id"):
@@ -897,6 +914,8 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
     source_id = thread.get("source_id")
     if source_id:
         thread = {**thread, "source_title": _video_title(store, int(source_id))}
+    if project_id:
+        thread = {**thread, "mascots": K.project_mascots(store, int(project_id))}
     learned = decided = remembered = None
     gemini = _gemini(client)
     if project_id:

@@ -7,6 +7,7 @@ import { qk } from "@/api/keys";
 import { Icon } from "@/components/Icon";
 import { plural } from "@/components/ui";
 import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
+import { HIDDEN_SOURCE_TYPES, KIND_LABELS } from "@/lib/videoKinds";
 import { clipGroupKeys, clipGroupsApi, countClips } from "@/api/clipGroups";
 import { useModules } from "@/hooks/useModules";
 
@@ -83,14 +84,18 @@ export function useWhere(nav: NavState | undefined) {
   const head = parts[0] ?? "";
   // Экран клипа сам знает своё видео и проект (тот же запрос, что у страницы: второго не будет).
   const clipId = head === "clips" && /^\d+$/.test(parts[1] ?? "") ? parts[1] : "";
+  const videoId = head === "v" ? parts[1] ?? "" : "";
+  // Монтаж клипа: /v/:id/candidates?clip=N. Холсты лежат в скрытом источнике, их проект знает только клип.
+  const asked = new URLSearchParams(location.search).get("clip") ?? "";
+  const editClipId = videoId && parts[2] === "candidates" && /^\d+$/.test(asked) ? asked : "";
+  const viewId = clipId || editClipId;
   const clip = useQuery({
-    queryKey: clipGroupKeys.view(clipId),
-    queryFn: () => clipGroupsApi.view(clipId),
-    enabled: Boolean(clipId),
+    queryKey: clipGroupKeys.view(viewId),
+    queryFn: () => clipGroupsApi.view(viewId),
+    enabled: Boolean(viewId),
     retry: false,
     staleTime: 15_000,
   });
-  const videoId = head === "v" ? parts[1] ?? "" : "";
   const source = useQuery({
     queryKey: qk.source(videoId),
     queryFn: () => sourcesApi.get(videoId),
@@ -100,13 +105,11 @@ export function useWhere(nav: NavState | undefined) {
   const projectId =
     head === "p"
       ? Number(parts[1]) || null
-      : clipId
-        ? clip.data?.project?.id ?? null
-        : videoId
-          ? source.data?.project_id ?? null
-          : null;
+      : clip.data?.project?.id ?? source.data?.project_id ?? null;
   const project = nav?.projects.find((p) => p.id === projectId) ?? null;
-  return { head, parts, videoId, source, projectId, project, clipId, clip };
+  // Холст и загруженный клип: служебный источник, а не видео, которое открыл владелец.
+  const hiddenVideo = Boolean(source.data && HIDDEN_SOURCE_TYPES.includes(source.data.source_type));
+  return { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo };
 }
 
 function Menu({
@@ -194,7 +197,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
   const location = useLocation();
   const [params] = useSearchParams();
   const { on } = useModules();
-  const { head, parts, videoId, source, projectId, project, clipId, clip } = useWhere(nav);
+  const { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo } = useWhere(nav);
   const hasProject = head === "p" || head === "v" || Boolean(clipId);
   const planId = videoId && parts[2] === "candidates" ? Number(params.get("clip")) || null : null;
   // Соседи по видео на ступени «Клип»: один пункт на клип, а не на план.
@@ -244,18 +247,20 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
   const rungs = useMemo<{ list: Rung[]; active: number }>(() => {
     if (hasProject) {
       const view = clip.data;
-      const projectName = (head === "v" && source.isLoading) || (clipId && clip.isLoading) ? "…" : project?.name ?? "Вне проектов";
+      const projectName = (head === "v" && source.isLoading) || ((clipId || editClipId) && clip.isLoading) ? "…" : project?.name ?? "Вне проектов";
       const videoCount = project?.videos ?? nav?.no_project_videos ?? 0;
       const plans = (source.data?.clip_plans ?? []).filter((p) => !p.hidden);
       const plan = planId ? source.data?.clip_plans.find((p) => p.id === planId) : null;
-      const shownVideo = videoId || (view && !view.canvas ? String(view.source.id) : "");
-      const shownVideoName = videoId
-        ? source.data?.display_name || source.data?.original_filename || "…"
-        : view
-          ? view.canvas
-            ? "Холст"
-            : view.source.name
-          : "…";
+      const shownVideo = hiddenVideo ? "" : videoId || (view && !view.canvas ? String(view.source.id) : "");
+      const shownVideoName = hiddenVideo
+        ? KIND_LABELS[source.data?.source_type ?? ""]
+        : videoId
+          ? source.data?.display_name || source.data?.original_filename || "…"
+          : view
+            ? view.canvas
+              ? "Холст"
+              : view.source.name
+            : "…";
       const cardItems = cards.data?.clips.filter((c) => !c.hidden) ?? [];
       const clipRung: Rung = clipId
         ? {
@@ -281,7 +286,9 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
                 : "Сначала видео",
             href: plan ? clipPath(plan.id) : undefined,
             next: !plan,
-            items: videoId
+            items: hiddenVideo
+              ? (view?.neighbors ?? []).map((n) => ({ to: clipPath(n.id), label: n.name, hint: n.format, cur: n.id === view?.id }))
+              : videoId
               ? [
                   ...cardItems.map((c) => ({
                     to: clipPath(c.id),
@@ -319,7 +326,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
             cap: "Проект",
             val: projectName,
             href: projectId ? projectPath(projectId) : "/projects",
-            mute: !project && (head === "v" ? !source.isLoading : Boolean(clipId)),
+            mute: !project && (head === "v" ? !source.isLoading && !clip.isLoading : Boolean(clipId)),
             items: projectMenu,
             searchLabel: "Найти проект",
           },
@@ -374,7 +381,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
         },
       ],
     };
-  }, [hasProject, head, parts, params, on, source.isLoading, source.data, project, nav, planId, videos.data, videos.isLoading, open, videoId, projectId, projectMenu, onCreateVideo, clipId, clip.data, clip.isLoading, cards.data, cards.isLoading]);
+  }, [hasProject, head, parts, params, on, source.isLoading, source.data, project, nav, planId, videos.data, videos.isLoading, open, videoId, projectId, projectMenu, onCreateVideo, clipId, editClipId, hiddenVideo, clip.data, clip.isLoading, cards.data, cards.isLoading]);
 
   return (
     <nav className="lad" aria-label="Где вы находитесь">
