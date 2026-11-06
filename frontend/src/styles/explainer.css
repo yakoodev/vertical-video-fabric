@@ -4,6 +4,7 @@
 .expl .spinner.sm { width: 11px; height: 11px; border-width: 2px; display: inline-block; vertical-align: -1px; }
 .expl-note { padding: 10px 14px; font-size: 13px; color: var(--text-dim); }
 .expl-voice-used { font-size: 12.5px; }
+.expl-advice { font-size: 13px; }
 .expl-field { display: grid; gap: 2px; flex: 1 1 160px; font-size: 13px; }
 
 /* Ролики */

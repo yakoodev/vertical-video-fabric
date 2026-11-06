@@ -381,7 +381,7 @@ function VideoRow({
             ) : null}
             {d.script?.text ? <p className="expl-script">{d.script.text}</p> : null}
             {d.script?.warnings?.length ? (
-              <div className="muted">
+              <div className="muted expl-advice">
                 {v.status === "done" ? "На будущее: " : "Совет: "}
                 {d.script.warnings.map(adviceText).join("; ")}
               </div>
