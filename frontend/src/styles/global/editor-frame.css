@@ -1,0 +1,359 @@
+/* ---------- Editor (preview + timeline, like an NLE) ---------- */
+.editor {
+  display: grid;
+  gap: 14px;
+}
+
+/* Render controls sit below the full-width preview, grouped into collapsibles. */
+
+.rgroup {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.rgroup.open {
+  border-color: var(--border-strong);
+}
+.rgroup-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.rgroup-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.rgroup-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.rgroup-badge {
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rgroup-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 11px 11px;
+}
+
+.stage-frame {
+  position: relative;
+  width: 100%;
+  max-height: 64vh;
+  max-width: 100%;
+}
+.stage-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* Пустой холст: фон клипа поверх невидимой основы (она только ведёт время). */
+.stage-canvas-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.crop-9x16 {
+  position: absolute;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 9999px rgba(8, 9, 15, 0.55);
+  pointer-events: none;
+  z-index: 2;
+}
+.safe-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+.safe-zone span {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: rgba(8, 9, 15, 0.45);
+}
+/* When the stage is mirrored, flip the labels back so they stay readable. */
+.stage-frame.mirrored .safe-zone span {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+.safe-zone--banner {
+  top: 0;
+  border-bottom: 1.5px dashed rgba(110, 123, 255, 0.9);
+  background: rgba(110, 123, 255, 0.16);
+}
+.safe-zone--subs {
+  height: 13%;
+  border: 1.5px dashed rgba(53, 211, 154, 0.95);
+  background: rgba(53, 211, 154, 0.14);
+  border-radius: 6px;
+}
+/* Look preset picker: thumbnails of the same frame with each filter applied */
+.look-wrap {
+  position: relative;
+}
+/* Hover look-through: bigger, several moments of the real video */
+.look-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.look-pop-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.look-pop-frames {
+  display: flex;
+  gap: 6px;
+}
+.look-pop-frame {
+  position: relative;
+  flex: 1 1 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #000;
+}
+.look-pop-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.look-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 2px 2px;
+}
+.look-item {
+  flex: 0 0 auto;
+  width: 92px;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+.look-thumb {
+  position: relative;
+  display: block;
+  width: 92px;
+  height: 52px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: #000;
+}
+.look-item.active .look-thumb {
+  border-color: var(--accent);
+}
+.look-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.look-vig {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.85) 130%);
+}
+.look-name {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-align: center;
+  line-height: 1.2;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.look-item.active .look-name {
+  color: var(--text);
+}
+.stage-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.85) 130%);
+}
+.sub-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.field.range {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, #9aa0aa);
+}
+.field.range input[type="range"] {
+  width: 100%;
+}
+
+.editor-stage-meta {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(8, 9, 15, 0.7);
+  padding: 3px 8px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+.plan-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.plan-groups {
+  display: grid;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px;
+}
+.plan-groups-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.plan-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+}
+.plan-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.plan-group-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.plan-group-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.plan-group-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--surface-3);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+}
+.plan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+.plan-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.plan-chip.dup {
+  opacity: 0.6;
+}
+.plan-q {
+  font-size: 10.5px;
+  font-weight: 700;
+  min-width: 22px;
+  text-align: center;
+  padding: 1px 4px;
+  border-radius: 5px;
+  color: #0b0c0e;
+  /* red (low) → green (high) via the --q custom prop set inline */
+  background: hsl(calc(var(--q, 0.5) * 120), 65%, 55%);
+}
+
+.plan-chip-label {
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+  text-align: left;
+}
+.plan-chip-dur {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+}
+/* Big timeline inside the editor */
+.editor-timeline {
+  padding: 12px;
+}
+
+/* ---------- Timeline ---------- */
+.tl {
+  display: grid;
+  gap: 8px;
+}
