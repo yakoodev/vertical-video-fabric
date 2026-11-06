@@ -599,7 +599,7 @@ def run_agent(
         request=str(message or ""),
     )
     clip_state, _ok = agent_tools.run_tool(ctx, "get_clip", {})
-    from app.project_knowledge import block_for_plan
+    from app.project_knowledge import block_for_plan, mascot_block_for_plan
 
     first = (
         f"{message.strip()}\n\n---\nТекущее состояние клипа (get_clip):\n"
@@ -608,6 +608,9 @@ def run_agent(
     lore = block_for_plan(store, clip_plan_id)
     if lore:
         first += f"\n\n---\n{lore}"
+    mascots = mascot_block_for_plan(store, clip_plan_id)
+    if mascots:
+        first += f"\n\n---\n{mascots}"
     contents = _history_contents(history or []) + [{"role": "user", "parts": [{"text": first}]}]
     if len(contents) > 1 and contents[-2]["role"] == "user":  # история кончилась вопросом без ответа
         contents[-2]["parts"][0]["text"] += "\n\n(ответа не было)"

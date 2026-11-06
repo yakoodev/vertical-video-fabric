@@ -674,3 +674,82 @@ def test_old_threads_table_gets_the_column_and_keeps_rows(tmp_path):
     Chat.ensure_chat_schema(conn)  # второй запуск ничего не ломает
     row = conn.execute("SELECT id, project_id, title, is_default, source_id FROM chat_threads").fetchone()
     assert row == (7, 4, "Основной чат", 1, None)
+
+
+def _owl_project(store):
+    from app import aivideo as V
+    from app import explainer as E
+
+    pid = V.create_ai_project(store, "Сова и истории", provider="none")["project"]["id"]
+    mascot = E.save_mascot(store, pid, name="Ух", identity_card="a chubby round midnight-blue owl",
+                           persona="сова-полуночник в худи", voice={"provider": "gemini", "voice": "Puck"})
+    return pid, int(mascot["id"])
+
+
+def test_project_chat_starts_from_the_mascot(env):
+    """«Сделай новую серию совы» в чате проекта: в запросе уже есть маскот и запрет заводить нового героя."""
+    _client_, store, _mura, _apex, _ms, _as = env
+    pid, mascot_id = _owl_project(store)
+    gemini = Scripted()
+    Chat.run_turn(store, Chat.default_thread(store, pid), "сделай новую серию совы", client=gemini)
+    request = gemini.requests[0]
+    system = request["systemInstruction"]["parts"][0]["text"]
+    assert "уже есть маскот: Ух" in system and "explainer_overview" in system and "aiv_define_character" in system
+    first = request["contents"][-1]["parts"][0]["text"]
+    assert f'"mascot_id": {mascot_id}' in first and "сова-полуночник" in first
+
+
+def test_project_without_mascot_gets_no_mascot_note(env):
+    _client_, store, mura, _apex, _ms, _as = env
+    gemini = Scripted()
+    Chat.run_turn(store, Chat.default_thread(store, mura), "как дела", client=gemini)
+    assert "уже есть маскот" not in gemini.requests[0]["systemInstruction"]["parts"][0]["text"]
+    assert '"mascots"' not in gemini.requests[0]["contents"][-1]["parts"][0]["text"]
+
+
+def test_general_chat_sees_mascots_of_projects(env):
+    _client_, store, _mura, _apex, _ms, _as = env
+    pid, mascot_id = _owl_project(store)
+    gemini = Scripted()
+    Chat.run_turn(store, Chat.create_thread(store), "сделай новую серию совы", client=gemini)
+    request = gemini.requests[0]
+    assert "похож на маскота проекта" in request["systemInstruction"]["parts"][0]["text"]
+    assert f'"mascot_id": {mascot_id}' in request["contents"][-1]["parts"][0]["text"]
+
+
+def test_canvas_clip_chat_knows_the_project_mascot(env):
+    """Чат клипа на холсте: проект берётся из plan_projects, про маскота агент знает и новую серию отправляет в чат проекта."""
+    _client_, store, _mura, _apex, _ms, _as = env
+    pid, _mascot = _owl_project(store)
+    canvas = store.create_source("canvas", settings.source_dir / "canvas.mp4", original_filename="Холсты",
+                                 duration_sec=60, status="ready")
+    plan = _plan(store, canvas["id"])
+    P.assign_plan_project(store, plan["id"], pid)
+    assert "Ух" in K.mascot_block_for_plan(store, plan["id"])
+    gemini = Scripted([[{"text": "Понял."}]])
+    editor_agent.run_agent(store, plan["id"], "сделай новую серию совы", client=gemini, model="m")
+    text = _all_text(gemini.requests[0])
+    assert "МАСКОТ ПРОЕКТА" in text and "чат проекта" in text
+    # Клип другого проекта чужого маскота не видит.
+    assert K.mascot_block_for_plan(store, _plan(store, _ms["id"])["id"]) == ""
+
+
+def test_hidden_source_is_not_a_video_for_chat(env):
+    """Служебный источник холстов и загруженных клипов: своего чата видео у него нет."""
+    client, store, _mura, _apex, _ms, _as = env
+    for kind in ("canvas", "clip_upload"):
+        hidden = store.create_source(kind, settings.source_dir / f"{kind}.mp4", original_filename="Холсты",
+                                     duration_sec=60, status="ready")
+        assert client.post("/api/chat/video-thread", json={"source_id": hidden["id"]}).status_code == 400
+    assert not store.db.query_all("SELECT id FROM chat_threads WHERE source_id IS NOT NULL")
+
+
+def test_clip_view_says_when_source_is_hidden(env):
+    client, store, _mura, _apex, _ms, _as = env
+    canvas = store.create_source("canvas", settings.source_dir / "canvas.mp4", original_filename="Холсты",
+                                 duration_sec=60, status="ready")
+    plan = _plan(store, canvas["id"])
+    P.assign_plan_project(store, plan["id"], _mura)
+    view = client.get(f"/api/clip-view/{plan['id']}")
+    assert view.status_code == 200, view.text
+    assert view.json()["source"]["source_type"] == "canvas" and view.json()["project"]["id"] == _mura

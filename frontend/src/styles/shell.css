@@ -224,6 +224,9 @@
   cursor: pointer;
 }
 .tool em { font-style: normal; }
+.tool:disabled { opacity: 0.6; cursor: default; }
+/* Подпись чата видна всегда: по ней понятно, к чему он привязан. */
+.tool-chat span { display: inline; max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
 .tool:hover { background: var(--surface-3); }
 .tool-on { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: var(--accent-soft); color: var(--text); }
 .tool-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
@@ -375,7 +378,7 @@
 .sq-all-from a { color: var(--accent-2); }
 .sq-all-from a:hover { text-decoration: underline; }
 
-/* ---------- панель общего чата ---------- */
+/* ---------- панель чата ---------- */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 80; }
 .drawer {
   position: fixed;
@@ -389,10 +392,30 @@
   display: flex;
   flex-direction: column;
 }
-.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.drawer-head h2 { margin: 0; font-size: 17px; font-weight: 650; }
-.drawer-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.drawer-threads { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.drawer-head h2 { margin: 0; font-size: 17px; font-weight: 650; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.drawer-acts { display: flex; flex: none; gap: 6px; align-items: center; }
+.drawer-threads { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.drawer-threads select { flex: 1; min-width: 0; }
+.drawer-levels { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.drawer-level {
+  max-width: 100%;
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.drawer-level:hover { color: var(--text); }
+.drawer-level.on { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: var(--accent-soft); color: var(--text); }
+.drawer-body .agent { flex: 1; min-height: 0; }
+.drawer-body .chat-conv.compact { flex: 1; height: auto; }
 .drawer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px; }
 .drawer-empty { display: grid; gap: 12px; justify-items: start; }
 .drawer-empty p { margin: 0; }
@@ -407,6 +430,9 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
 /* ---------- узкие окна ---------- */
 @media (max-width: 1320px) {
   .tool span { display: none; }
+  .tool-chat span { display: inline; max-width: 150px; }
+  .tool-general span { display: inline; }
+  .tool-general em { display: none; }
   .tool { padding: 0 9px; }
   .lad-rung { padding-left: 16px; padding-right: 38px; }
   .lad-chev { right: 10px; }
@@ -450,6 +476,11 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
   .tool span { display: inline; }
   .tool em { display: none; }
   .tool { height: 32px; flex: 1; justify-content: center; min-width: 0; }
+  .tool-search { flex: none; }
+  .tool-search span { display: none; }
+  .tool-general { flex: none; }
+  .tool-chat { flex: 1.6; }
+  .tool-chat span { max-width: none; min-width: 0; }
   .activity { flex: 1; min-width: 0; display: flex; }
   .activity .tool { width: 100%; }
   .activity-panel { position: fixed; left: 8px; right: 8px; top: auto; width: auto; max-width: none; }

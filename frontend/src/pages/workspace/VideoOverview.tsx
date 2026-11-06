@@ -12,6 +12,7 @@ import { ErrorState, Loading, formatDuration } from "@/components/ui";
 import { useModuleOn } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
 import { clipPath, videoPath } from "@/lib/paths";
+import { HIDDEN_SOURCE_TYPES } from "@/lib/videoKinds";
 import { AiBatchPanel } from "@/pages/workspace/AiBatchPanel";
 import { AnalyzeForm } from "@/pages/workspace/AnalyzeForm";
 
@@ -210,7 +211,7 @@ export function VideoOverview({ sourceId }: { sourceId: string }) {
     ["tr", `Транскрипт${source.transcript_segments ? ` ${source.transcript_segments}` : ""}`],
     ...(chatOn ? ([["chat", "Чат Twitch"]] as [Pane, string][]) : []),
     ...(questionsOn ? ([["q", "Вопросы"]] as [Pane, string][]) : []),
-    ...(agentOn ? ([["agent", "Чат видео"]] as [Pane, string][]) : []),
+    ...(agentOn && !HIDDEN_SOURCE_TYPES.includes(source.source_type) ? ([["agent", "Чат видео"]] as [Pane, string][]) : []),
   ];
   return (
     <div className="vov">

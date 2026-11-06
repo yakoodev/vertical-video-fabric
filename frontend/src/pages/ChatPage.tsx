@@ -92,18 +92,18 @@ function Header({ view }: { view: ChatThreadView | undefined }) {
             {t.title || "Новый чат"}
           </button>
         )}
-        {view.project ? (
-          <Link to={`/p/${view.project.id}`} className="chat-project-chip">
-            {view.project.name}
-          </Link>
-        ) : view.video ? null : (
-          <span className="chat-project-chip muted">общий</span>
-        )}
         {view.video ? (
-          <Link to={`/v/${view.video.id}`} className="chat-project-chip">
-            Видео: {view.video.title}
+          <Link to={`/v/${view.video.id}`} className="chat-project-chip" title={`Чат видео ${view.video.title}`}>
+            Чат видео {view.video.title}
           </Link>
         ) : null}
+        {view.project ? (
+          <Link to={`/p/${view.project.id}`} className="chat-project-chip" title={`Проект ${view.project.name}`}>
+            {view.video ? `Проект ${view.project.name}` : `Чат проекта ${view.project.name}`}
+          </Link>
+        ) : view.video ? null : (
+          <span className="chat-project-chip muted">Общий чат</span>
+        )}
       </div>
       <div className="chat-header-actions">
         <label className="chat-model" title="Провайдер и модель ответа">

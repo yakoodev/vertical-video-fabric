@@ -8,3 +8,6 @@ export const KIND_LABELS: Record<string, string> = {
   canvas: "Холст",
   clip_upload: "Клип",
 };
+
+/** Служебные источники (app/store.py: _HIDDEN_SOURCE_TYPES): держат клипы, но видео не считаются. */
+export const HIDDEN_SOURCE_TYPES = ["canvas", "clip_upload"];
