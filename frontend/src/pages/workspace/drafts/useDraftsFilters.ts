@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { type SourceDetail, type ClipPlan } from "@/api/types";
 import { type UseQueryResult } from "@tanstack/react-query";
+import { type SourceDetail, type ClipPlan } from "@/api/types";
 
 /**
  * Что показывает список черновиков и что отмечено «в рендер». Живёт над экранами: когда избранных нет,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { type SourceDetail } from "@/api/types";
 import { type UseQueryResult } from "@tanstack/react-query";
+import { type SourceDetail } from "@/api/types";
 
 /**
  * Плеер исходника: куски клипа подряд, скорость, зацикливание, парковка на первом кадре открытого клипа.
