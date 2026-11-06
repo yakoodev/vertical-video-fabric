@@ -4,14 +4,11 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { clipPlansApi, type SubtitleLine } from "@/api/clipPlans";
 import { montageAssetsApi } from "@/api/assets";
 import { qk } from "@/api/keys";
-import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { useModules } from "@/hooks/useModules";
 import { readPref } from "@/pages/workspace/InspectorParts";
 import { type SubtitleStyle, type SubtitleWord } from "@/pages/workspace/subtitlePreview";
-import { reframeBetween, type AssetSizes, type ChatMessage, type Layer, type PngtuberLayer } from "@/motion";
-import { motionApi } from "@/api/motion";
-import { layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
+import { type Layer } from "@/motion";
 import { type TransformHandle } from "@/pages/workspace/motion/edit";
 import { playbackApi } from "@/api/playback";
 import { lookFilterCss, type InsertPreview, type MotionView } from "@/pages/workspace/preview/frame";
@@ -24,6 +21,7 @@ import { usePreviewPlayer } from "@/pages/workspace/editor/usePreviewPlayer";
 import { usePreviewLoops } from "@/pages/workspace/editor/usePreviewLoops";
 import { useClipActions } from "@/pages/workspace/editor/useClipActions";
 import { useVideoSource } from "@/pages/workspace/editor/useVideoSource";
+import { useLayerPreviewData } from "@/pages/workspace/editor/useLayerPreviewData";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -212,73 +210,13 @@ export function useDraftsEditorState(sourceId: string) {
     camera, aspect, layersFmt, setSettingsNonce, bannerHeightPct, bannerPosPct, subPosPct,
   } = panelSettingsState;
   const musicPreviewRef = useRef<HTMLAudioElement>(null);
-  const needsReframe = layersFmt !== aspect && (layers.length > 0 || camera.length > 0);
-  // Размеры картинок и видео слоёв — от них высота слоя в рамке сцены (как ffprobe на
-  // сервере): файлы библиотеки — из её списка, стикеры — когда догрузятся.
-  const libSizes = useMemo(() => {
-    const out: AssetSizes = {};
-    for (const a of assetsQuery.data ?? []) if (a.width > 0 && a.height > 0) out[String(a.id)] = [a.width, a.height];
-    return out;
-  }, [assetsQuery.data]);
-  const [sizesKey, setSizesKey] = useState("{}");
-  useEffect(() => {
-    if (!needsReframe) return;
-    let tries = 0;
-    const check = () => {
-      const { sizes, missing } = layerAssetSizes(layers, libSizes);
-      const key = JSON.stringify(sizes);
-      setSizesKey((prev) => (prev === key ? prev : key));
-      return missing === 0;
-    };
-    if (check()) return;
-    const id = window.setInterval(() => {
-      tries += 1;
-      if (check() || tries > 40) window.clearInterval(id);
-    }, 400);
-    return () => window.clearInterval(id);
-  }, [needsReframe, layers, libSizes]);
-  const reframedView = useMemo(
-    () => (needsReframe ? reframeBetween(layers, camera, layersFmt, aspect, JSON.parse(sizesKey) as AssetSizes) : null),
-    [needsReframe, layers, camera, layersFmt, aspect, sizesKey],
-  );
+  const layerPreviewData = useLayerPreviewData({
+    assetsQuery, editorPlanId, musicOn, trackId, layers, camera, aspect, layersFmt,
+  });
   const motionViewRef = useRef<MotionView>({ layers: [], camera: [], selected: null });
   // Правка текста прямо на кадре (двойной клик): где стоит поле — в % экрана телефона.
   const inlineCancelRef = useRef(false);
   const [inlineEdit, setInlineEdit] = useState<{ id: string; field: string; text: string; left: number; top: number; width: number } | null>(null);
-  // Шрифты движка — один раз; картинки слоёв — как только слой появился,
-  // чтобы к моменту его показа в превью они уже были в кэше.
-  useEffect(() => {
-    void loadMotionFonts();
-  }, []);
-  useEffect(() => preloadLayerImages(layers), [layers]);
-  // Чат стрима для слоя «чат на экране» — грузим, только когда такой слой есть.
-  const hasChatLayer = layers.some((l) => l.type === "chat");
-  const planChat = useQuery({
-    queryKey: ["plan-chat", editorPlanId],
-    queryFn: () => api.get<ChatMessage[]>(`/api/clip-plans/${editorPlanId}/chat?limit=5000`),
-    enabled: Boolean(editorPlanId && hasChatLayer && moduleOn("twitch_chat")),
-    staleTime: 300_000,
-  });
-  // PNGtuber: состояния голоса по кадрам считает сервер (как для рендера) — по слоям аватара:
-  // их интервалы и настройки голоса меняются — пересчёт.
-  const voiceLayers = layers.filter((l): l is PngtuberLayer => l.type === "pngtuber" && !l.hidden);
-  const voiceKey = JSON.stringify(voiceLayers.map((l) => [l.id, l.start, l.end, l.props?.voice ?? null, Boolean(l.props?.states?.shout)]));
-  const planVoice = useQuery({
-    queryKey: ["plan-voice", editorPlanId, voiceKey],
-    queryFn: () => motionApi.voice(Number(editorPlanId), voiceLayers),
-    enabled: Boolean(editorPlanId && voiceLayers.length && moduleOn("pngtuber")),
-    staleTime: 300_000,
-  });
-  // Реакция на звук (react): огибающие громкости клипа считает сервер один раз — по нужным
-  // источникам (голос / музыка / весь звук); сменились источники или музыка клипа — пересчёт.
-  const reactSources = [...new Set(layers.filter((l) => l.react && !l.hidden).map((l) => l.react?.source ?? "voice"))].sort();
-  const planLevels = useQuery({
-    queryKey: ["plan-levels", editorPlanId, reactSources.join(","), musicOn, trackId],
-    queryFn: () => motionApi.levels(Number(editorPlanId), reactSources),
-    enabled: Boolean(editorPlanId && reactSources.length),
-    staleTime: 300_000,
-  });
-  const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });
   // Стабильная «который сейчас час клипа» для панелей, которые опрашивают время сами.
   const clipNowRef = useRef<() => number>(() => 0);
   const clipNow = useCallback(() => clipNowRef.current(), []);
@@ -398,16 +336,17 @@ export function useDraftsEditorState(sourceId: string) {
     ...previewLoops,
     ...clipActions,
     ...videoSource,
+    ...layerPreviewData,
     sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
     bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef,
-    assetsQuery, pickableAssets, navigate, view, openEditor, backToMoments, musicPreviewRef, reframedView,
-    motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, motionFonts, clipNowRef, clipNow,
-    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, planWave, planSubs, pickPointRef,
-    activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, libTab, setLibTab, tlSelected, setTlSelected,
-    inspTab, setInspTab, subLines, setSubLines, activePlanId, setActivePlanId, selectedSeg, setSelectedSeg,
-    inlineEdit, setInlineEdit, coverUploading, setCoverUploading, clipFileOpen, setClipFileOpen, watchOpen,
-    setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal, setSubsWide, useVlmFocus, setUseVlmFocus,
-    packagePieces, setPackagePieces, pickingPoint, setPickingPoint, moduleOn, subsWide,
+    assetsQuery, pickableAssets, navigate, view, openEditor, backToMoments, musicPreviewRef, motionViewRef,
+    inlineCancelRef, clipNowRef, clipNow, reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef,
+    hoverPlanRef, planWave, planSubs, pickPointRef, activePlan, uniquePresets, selectedPreset, lookCss, lookFrames,
+    libTab, setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, activePlanId,
+    setActivePlanId, selectedSeg, setSelectedSeg, inlineEdit, setInlineEdit, coverUploading, setCoverUploading,
+    clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal,
+    setSubsWide, useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, pickingPoint, setPickingPoint,
+    moduleOn, subsWide,
   };
 }
 
