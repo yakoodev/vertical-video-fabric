@@ -7,7 +7,7 @@ import { segmentsApi } from "@/api/segments";
 import { ffmpegPresetsApi, bannersApi, audioTracksApi, subtitleProfilesApi, montageAssetsApi } from "@/api/assets";
 import { qk } from "@/api/keys";
 import { brandsApi } from "@/api/brands";
-import { type AiSegment, type ColorFix, type FocusPoint, type SourceDetail, type SpeedAudio, colorFixCss } from "@/api/types";
+import { type AiSegment, type ColorFix, type FocusPoint, type SourceDetail, type SpeedAudio } from "@/api/types";
 import { audioMixApi } from "@/api/audioMix";
 import { api, ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
@@ -19,21 +19,16 @@ import { frameSize, reframeBetween, type AssetSizes, type ChatMessage, type Laye
 import { motionApi } from "@/api/motion";
 import { layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { type TransformHandle } from "@/pages/workspace/motion/edit";
-import { previewSkip } from "@/api/cuts";
-import { CENSOR_STYLES, isMutedAt, type CensorStyle } from "@/api/mute";
-import { previewVolume } from "@/api/gain";
-import { jlSourceAt } from "@/api/audioEdit";
-import { useLayerAudio } from "@/pages/workspace/motion/useLayerAudio";
+import { CENSOR_STYLES, type CensorStyle } from "@/api/mute";
 import { playbackApi } from "@/api/playback";
-import { useClipMusic } from "@/pages/workspace/preview/useClipMusic";
 import { lookFilterCss, type InsertPreview, type MotionView } from "@/pages/workspace/preview/frame";
-import { setPreviewSound } from "@/pages/workspace/motion/sound";
-import { clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
-import { clipTimeOf, formatTimecode, INSP_TABS, LIB_TABS, type InspTab, type LibTab, type SpecPiece } from "@/pages/workspace/editor/editorHelpers";
+import { type Selection } from "@/pages/workspace/ClipTimeline";
+import { clipTimeOf, INSP_TABS, LIB_TABS, type InspTab, type LibTab, type SpecPiece } from "@/pages/workspace/editor/editorHelpers";
 import { useEditorShortcuts } from "@/pages/workspace/editor/useEditorShortcuts";
 import { useDraftsFilters } from "@/pages/workspace/drafts/useDraftsFilters";
 import { useClipPanelSettings } from "@/pages/workspace/editor/useClipPanelSettings";
 import { usePreviewPlayer } from "@/pages/workspace/editor/usePreviewPlayer";
+import { usePreviewLoops } from "@/pages/workspace/editor/usePreviewLoops";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -783,28 +778,13 @@ export function useDraftsEditorState(sourceId: string) {
     });
   }, [presets.data]);
   const selectedPreset = presets.data?.find((p) => p.id === presetId);
-  // Превью цвета куска: поправка того куска, что сейчас играет (по секунде исходника).
-  const [pieceCss, setPieceCss] = useState("");
-  useEffect(() => {
-    const v = videoRef.current;
-    const segs = activePlan?.segments ?? [];
-    if (!v || !segs.some((s) => s.color_fix)) {
-      setPieceCss("");
-      return;
-    }
-    const update = () => {
-      const t = v.currentTime;
-      const seg = segs.find((s) => t >= s.start_sec - 0.01 && t < s.end_sec + 0.01);
-      setPieceCss(colorFixCss(seg?.color_fix));
-    };
-    update();
-    v.addEventListener("timeupdate", update);
-    v.addEventListener("seeked", update);
-    return () => {
-      v.removeEventListener("timeupdate", update);
-      v.removeEventListener("seeked", update);
-    };
-  }, [activePlan?.segments, view, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+  const previewLoops = usePreviewLoops({
+    videoRef, heatHeadRef, tcRef, query, tracks, clipParam, view, motionViewRef, activePlan, searchParams,
+    playbackRef, cutsRef, muteRef, gainRef, audioEditRef, musicOn, trackId, musicStartSec,
+  });
+  const {
+    pieceCss,
+  } = previewLoops;
   const lookCss = [pieceCss, lookFilterCss(selectedPreset)].filter(Boolean).join(" ");
   // A few moments spread across the video — one frame can hide what a look does.
   const lookFrames = useMemo(() => {
@@ -812,205 +792,6 @@ export function useDraftsEditorState(sourceId: string) {
     if (all.length <= 3) return all;
     return [0.2, 0.5, 0.8].map((p) => all[Math.floor(all.length * p)]);
   }, [storyboard.data]);
-
-  // Playhead on the moments heat strip: where the source player is right now.
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const head = heatHeadRef.current;
-      const v = videoRef.current;
-      const dur = query.data?.duration_sec ?? 0;
-      if (head && v && dur > 0) head.style.left = `${Math.min(100, (v.currentTime / dur) * 100)}%`;
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [query.data?.duration_sec]);
-
-  // Таймкод клипа под превью. Пишем прямо в DOM из кадра анимации: React-стейт
-  // на каждый кадр перерисовывал бы весь редактор 60 раз в секунду.
-  const tcSegsRef = useRef<AiSegment[]>([]);
-  tcSegsRef.current = activePlan?.segments ?? [];
-  // Вырезы и звуки-слои — свойства открытого в монтаже клипа: в списке моментов
-  // превью играет другой клип, и чужие вырезы/звуки к нему не относятся.
-  const inEditorRef = useRef(false);
-  inEditorRef.current = view === "editor";
-  // Звуки-слои звучат в превью в такт видео.
-  useLayerAudio(videoRef, motionViewRef, () =>
-    inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null,
-  );
-  // Музыка клипа тоже звучит в превью: в такт видео, с той секунды трека, что выбрана для рендера.
-  const musicTrack = musicOn && trackId ? tracks.data?.find((t) => t.id === trackId) : undefined;
-  useClipMusic(
-    videoRef,
-    musicTrack && view === "editor"
-      ? { url: `/media/audio-tracks/${musicTrack.id}`, startSec: musicStartSec, volume: musicTrack.volume ?? 0.5 }
-      : null,
-    () => (inEditorRef.current ? clipTimeOf(tcSegsRef.current, videoRef.current?.currentTime ?? 0) : null),
-  );
-  // Таймкод из чата агента (?clip=<id>&t=<секунда клипа>): один раз встать на эту секунду.
-  const seekT = searchParams.get("t");
-  const seekedRef = useRef("");
-  useEffect(() => {
-    const v = videoRef.current;
-    const segs = activePlan?.segments ?? [];
-    const key = `${activePlan?.id}:${seekT}`;
-    if (!v || seekT == null || !segs.length || activePlan?.id !== clipParam || seekedRef.current === key) return;
-    const src = clipToSource(segs, Number(seekT));
-    if (src == null) return;
-    const apply = () => {
-      v.currentTime = src;
-      seekedRef.current = key;
-    };
-    if (v.readyState >= 1) apply();
-    else v.addEventListener("loadedmetadata", apply, { once: true });
-  });
-  // Вырезанные паузы превью перепрыгивает на ходу — смотришь клип таким, каким он выйдет.
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const v = videoRef.current;
-      if (v && !v.paused && inEditorRef.current && cutsRef.current.length) {
-        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
-        const jump = t == null ? null : previewSkip(cutsRef.current, t);
-        if (jump != null) {
-          const src = clipToSource(tcSegsRef.current, jump);
-          if (src != null) {
-            v.currentTime = src;
-            // Прыжок мог перейти в другой кусок — плеер кусков должен знать, где он.
-            const pb = playbackRef.current;
-            if (pb) {
-              const idx = pb.ranges.findIndex((r) => src >= r.start - 0.05 && src < r.end);
-              if (idx >= 0) pb.idx = idx;
-            }
-          }
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  // Громкость исходника на отрезках — в превью тоже: громче 1 тег <video> не умеет, поэтому при
-  // подъёмах всё превью тише на самый большой подъём (баланс кусков как в рендере). Свою громкость
-  // плеера владелец не теряет: base — то, что он выставил, мы только умножаем.
-  useEffect(() => {
-    let raf = 0;
-    let base: number | null = null;
-    let lastSet = -1;
-    const tick = () => {
-      const v = videoRef.current;
-      if (v) {
-        const spans = inEditorRef.current ? gainRef.current : [];
-        if (spans.length) {
-          if (base == null || Math.abs(v.volume - lastSet) > 0.005) base = v.volume; // владелец двинул громкость
-          const t = clipTimeOf(tcSegsRef.current, v.currentTime);
-          const want = t == null ? base : previewVolume(spans, t, base);
-          if (Math.abs(v.volume - want) > 0.005) v.volume = want;
-          lastSet = v.volume;
-        } else if (base != null) {
-          v.volume = base;
-          base = null;
-          lastSet = -1;
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      if (base != null && videoRef.current) videoRef.current.volume = base;
-    };
-  }, []);
-  // Заглушённые отрезки превью проигрывает без звука видео — как выйдет в рендере
-  // (звуки слоёв и музыка играют). Глушим только то, что заглушили сами: свой
-  // «без звука» в плеере владельца не трогаем.
-  // Видео-слои с audio: true звучат в превью, только если владелец не заглушил превью
-  // (наше автоглушение вырезанных отрезков звук слоёв не трогает — как в рендере).
-  const autoMutedRef = useRef(false);
-  useEffect(() => {
-    setPreviewSound(() => {
-      const v = videoRef.current;
-      return Boolean(v && (!v.muted || autoMutedRef.current) && v.volume > 0);
-    });
-    return () => setPreviewSound(() => false);
-  }, []);
-  // J/L в превью: у стыка звук картинки молчит, а второй плеер того же исходника играет звук
-  // соседнего куска (хвост прошлого — L, начало следующего — J), как склеит рендер.
-  const jlMutedRef = useRef(false);
-  useEffect(() => {
-    let raf = 0;
-    const side = new Audio();
-    side.preload = "auto";
-    const tick = () => {
-      const v = videoRef.current;
-      const joins = audioEditRef.current.joins;
-      let src: number | null = null;
-      // Свой «без звука» владельца уважаем: глушил плеер он — второй плеер тоже молчит.
-      if (v && !v.paused && inEditorRef.current && joins?.length && (!v.muted || autoMutedRef.current)) {
-        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
-        src = t == null ? null : jlSourceAt(tcSegsRef.current, joins, t);
-      }
-      if (src != null && v) {
-        if (side.src !== v.currentSrc) side.src = v.currentSrc;
-        if (Math.abs(side.currentTime - src) > 0.12) side.currentTime = src;
-        side.volume = v.volume;
-        if (side.paused) void side.play().catch(() => undefined);
-        jlMutedRef.current = true;
-      } else {
-        if (!side.paused) side.pause();
-        jlMutedRef.current = false;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      side.pause();
-      side.removeAttribute("src");
-      jlMutedRef.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    let raf = 0;
-    let ours = false;
-    const tick = () => {
-      const v = videoRef.current;
-      if (v) {
-        const t = inEditorRef.current && muteRef.current.length ? clipTimeOf(tcSegsRef.current, v.currentTime) : null;
-        const want = (t != null && isMutedAt(muteRef.current, t)) || jlMutedRef.current;
-        if (want && !ours && !v.muted) {
-          v.muted = true;
-          ours = true;
-        } else if (!want && ours) {
-          v.muted = false;
-          ours = false;
-        }
-        autoMutedRef.current = ours;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      if (ours && videoRef.current) videoRef.current.muted = false;
-    };
-  }, []);
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const el = tcRef.current;
-      const v = videoRef.current;
-      if (el && v) {
-        const t = clipTimeOf(tcSegsRef.current, v.currentTime);
-        const text = t == null ? "—" : formatTimecode(t);
-        if (el.textContent !== text) el.textContent = text;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   // Картинка баннера для превью: грузим один раз на выбранный баннер.
   useEffect(() => {
@@ -1049,6 +830,7 @@ export function useDraftsEditorState(sourceId: string) {
     ...draftsFilters,
     ...panelSettingsState,
     ...previewPlayer,
+    ...previewLoops,
     sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
     bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef, query,
     recordMissing, proxyReady, sourceMissing, banners, tracks, subs, assetsQuery, pickableAssets, navigate, view,
@@ -1057,9 +839,9 @@ export function useDraftsEditorState(sourceId: string) {
     insertDragRef, hoverPlanRef, planWave, planSubs, plans, composeCover, compile, batchAuto, autoEdit, mixReport,
     autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats, pieceColor, matchColors, batch,
     focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit, pickPointRef, setFixedFrame, setPlanFlag,
-    activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, tcSegsRef, editPieces, libTab, setLibTab,
-    tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId, setActivePlanId,
-    selectedSeg, setSelectedSeg, musicUrl, setMusicUrl, inlineEdit, setInlineEdit, coverUploading, setCoverUploading,
+    activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, editPieces, libTab, setLibTab, tlSelected,
+    setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId, setActivePlanId, selectedSeg,
+    setSelectedSeg, musicUrl, setMusicUrl, inlineEdit, setInlineEdit, coverUploading, setCoverUploading,
     clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal,
     setSubsWide, useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, coverTitle, setCoverTitle, coverStyle,
     setCoverStyle, autoProgress, censorStyle, setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode,
