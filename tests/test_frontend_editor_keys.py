@@ -29,3 +29,20 @@ console.log(JSON.stringify(Object.fromEntries(Object.entries(cases).map(([k, v])
         "ru_z": "undo", "ru_shift_z": "redo", "ru_y": "redo",
         "plain_z": None, "alt_z": None, "ctrl_shift_y": None, "ctrl_a": None,
     }
+
+
+def test_first_frame_has_a_timecode():
+    # Клип 545: встали на начало куска 268.4, плеер читает 268.399998. Раньше это было «вне клипа» и таймкод «—».
+    pieces = [{"start_sec": 268.4, "end_sec": 291.4}, {"start_sec": 300, "end_sec": 310, "speed": 2}]
+    times = {"first": 268.399998, "exact": 268.4, "mid": 270.4, "second_first": 299.999998, "second_mid": 304,
+             "before": 268.39, "gap": 295, "after": 310.5}
+    script = f"""
+import {{ clipTimeOf }} from {json.dumps((EDITOR / "clipTime.ts").as_uri())};
+const pieces = {json.dumps(pieces)};
+const times = {json.dumps(times)};
+console.log(JSON.stringify(Object.fromEntries(Object.entries(times).map(([k, t]) => [k, clipTimeOf(pieces, t)]))));
+"""
+    assert _run_node(script) == {
+        "first": 0, "exact": 0, "mid": 2, "second_first": 23, "second_mid": 25,
+        "before": None, "gap": None, "after": None,
+    }
