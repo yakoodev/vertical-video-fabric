@@ -1215,7 +1215,8 @@ def assemble(store: Any, video_id: int) -> dict:
     previous = video.get("clip_id")
     words, sub_fixes = WF.apply_previous(store, previous, video.get("words") or [], words, notes)
     # Чип и плашка старой правки могли записаться строкой-словарём: в кадр такое не идёт.
-    beats = [{**b, "chip": _chip(b.get("chip")), "badge": _badge(b.get("badge"))} for b in video["beats"]]
+    # Старый план мог поставить чип с номером пункта: при пересборке рядом с плашкой он не нужен.
+    beats = [{**b, "chip": _not_point_number(_chip(b.get("chip")), b), "badge": _badge(b.get("badge"))} for b in video["beats"]]
     placed = place(beats, words, total)
     marks = emphasis_marks(placed, words)
     title = (video.get("title") or video["topic"])[:100]

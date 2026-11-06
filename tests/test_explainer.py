@@ -1100,6 +1100,25 @@ def test_plan_drops_chip_repeating_the_badge_keeps_other_numbers(env):
     assert all(b["chip"] is None for b in fallback)
 
 
+def test_reassembly_drops_old_chip_repeating_the_badge(env):
+    """Планы до этой правки уже лежат в базе (expl-4): новая сборка не повторяет номер, «10 мин» оставляет."""
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    X.plan_beats(store, video["id"], client=None)
+    beats = E.get_video(store, video["id"])["beats"]
+    first = next(b for b in beats if b.get("point_start"))
+    first["chip"] = {"text": f"№{first['point_start']}", "word": ""}
+    plain = next(b for b in beats if not b.get("point_start"))
+    plain["chip"] = {"text": "10 мин", "word": ""}
+    E.update_video(store, video["id"], beats=beats)
+    done = X.advance(store, video["id"])
+    assert done["status"] == "done", done["error"]
+    texts = [l["props"]["text"] for l in _layers(store, done["clip_id"]) if l["type"] == "text"]
+    assert "10 мин" in texts and f"№{first['point_start']}" not in texts and f"#{first['point_start']}" in texts
+
+
 def test_long_hook_reads_as_advice():
     script = X.normalize_script({"hook": "Только пообедал, а через час снова голодный?", "points": [
         {"title": "Первое", "body": "Текст первого пункта."}, {"title": "Второе", "body": "Текст второго пункта."},
