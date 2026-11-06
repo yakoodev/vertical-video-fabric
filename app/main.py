@@ -69,6 +69,10 @@ from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
 from app import platform_stats
 from app.platform_stats import StatsCollector
+from app.api_common import (
+    THUMB_CACHE, _default_subtitle_profile_id, _normalize_schedule_text, _optional_form_float, _optional_form_int,
+    _parse_schedule_dt, _payload_data, _safe_next, _setting_int,
+)
 from app.agent_api import router as agent_router
 
 settings.ensure_dirs()
@@ -219,13 +223,6 @@ def _settings_panel_data() -> dict:
         "publishing_schema_json": json.dumps(PUBLISHING_METADATA_SCHEMA, ensure_ascii=False, indent=2),
         "subtitle_schema_json": json.dumps(gemini_subtitle_schema(), ensure_ascii=False, indent=2),
     }
-
-
-def _setting_int(value) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 class AccountCreate(BaseModel):
@@ -780,10 +777,6 @@ def clip_media(clip_id: int, _auth: AuthDep) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="clip media not found")
     return FileResponse(path)
-
-
-# Списки показывают картинку, а не <video>; адрес с ?v=… — поэтому кэш надолго (app/thumbs.py).
-THUMB_CACHE = {"Cache-Control": "private, max-age=604800"}
 
 
 @app.get("/media/clips/{clip_id}/thumb", include_in_schema=False)
@@ -1959,7 +1952,7 @@ def api_render_clip_plan(
         # Same rule as the batch: a clip set up in the editor / clip file renders
         # with its own settings; the request only fills in for a clip never set up.
         if plan.get("render_settings"):
-            kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
+            kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id(store))
             kwargs["music_volume"] = payload.music_volume if payload else None
         else:
             kwargs = {
@@ -2619,20 +2612,11 @@ def api_clip_plan_ai_montage_undo(clip_plan_id: int, _auth: AuthDep) -> dict:
     return {"spec": spec, "changes": changes}
 
 
-def _default_subtitle_profile_id() -> int | None:
-    """The profile «по умолчанию» resolves to: the saved default, else the first one."""
-    saved = _setting_int(store.get_app_setting_value("default_subtitle_profile_id"))
-    if saved:
-        return saved
-    profiles = store.list_subtitle_profiles()
-    return profiles[0]["id"] if profiles else None
-
-
 def _render_plan_own_settings(clip_plan_id: int) -> dict:
     """Render a clip with its own saved settings (what the clip file says)."""
     plan = store.get_clip_plan(clip_plan_id, include_segments=False)
     kwargs = (
-        settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
+        settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id(store))
         if plan.get("render_settings")
         else {}
     )
@@ -3092,7 +3076,7 @@ def api_render_clip_plans(
             # Each clip is set up on its own in the editor: its saved settings win.
             # A clip nobody opened falls back to the request (the panel's values).
             if plan.get("render_settings"):
-                kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id())
+                kwargs = settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id(store))
                 kwargs["music_volume"] = payload.music_volume
             else:
                 kwargs = {
@@ -4179,55 +4163,6 @@ async def _save_audio_upload(file: UploadFile, label: str, volume: float = 0.25)
     from app.music_energy import mark_track
 
     return await asyncio.to_thread(mark_track, store, track)
-
-
-def _payload_data(payload: BaseModel, exclude: set[str] | None = None, exclude_none: bool = False) -> dict:
-    if hasattr(payload, "model_dump"):
-        return payload.model_dump(exclude=exclude or set(), exclude_none=exclude_none)
-    return payload.dict(exclude=exclude or set(), exclude_none=exclude_none)
-
-
-def _safe_next(value: str) -> str:
-    if not value.startswith("/") or value.startswith("//"):
-        return "/projects"
-    return value
-
-
-def _optional_form_int(value: str | int | None) -> int | None:
-    if value is None or str(value).strip() == "":
-        return None
-    return int(value)
-
-
-def _optional_form_float(value: str | float | None) -> float | None:
-    if value is None or str(value).strip() == "":
-        return None
-    return float(value)
-
-
-def _parse_schedule_dt(value: str | None) -> datetime | None:
-    text = str(value or "").strip().replace("T", " ")
-    if not text:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    raise HTTPException(status_code=400, detail="schedule_start must be YYYY-MM-DD HH:MM")
-
-
-def _normalize_schedule_text(value: str | None) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    normalized = text.replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(normalized, fmt).strftime("%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            continue
-    raise ValueError("scheduled_at must be YYYY-MM-DD HH:MM or datetime-local format")
 
 
 # Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
