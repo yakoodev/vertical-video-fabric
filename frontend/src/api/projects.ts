@@ -20,6 +20,8 @@ export interface ChannelProject {
   name: string;
   kind: ProjectKind;
   kind_label: string;
+  /** В проекте есть маскот: вкладка «Объяснялки» у проекта любого вида. */
+  has_mascots?: boolean;
   description: string;
   links: { label: string; url: string }[];
   brand_id: number | null;

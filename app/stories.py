@@ -423,7 +423,10 @@ def add_style_ref(store: Any, world_id: int, asset_id: int) -> dict:
 
 def world_voice(store: Any, world: dict) -> dict:
     """Голос рассказчика: провайдер мира; проект в сухом прогоне (провайдер ``none``) — тон."""
-    return E.mascot_voice(store, {"project_id": world["project_id"], "voice": world.get("voice") or {}})
+    voice = world.get("voice") or {}
+    if voice.get("provider") == "none" or V._style_row(store, int(world["project_id"]))["provider"] == "none":
+        return E.dry_voice()
+    return E.mascot_voice(store, {"project_id": world["project_id"], "voice": voice})
 
 
 # --------------------------------------------------------------------------- #
@@ -842,7 +845,7 @@ def _episode_view(row: Any, full: bool = True) -> dict:
     if isinstance(wait, dict) and wait.get("label"):
         data["status_label"] = str(wait["label"])     # «рендер на компьютере… 42%»
         data["render3d"] = wait
-    data["editor_url"] = timeline.get("editor_url") if data.get("clip_id") else None
+    data["editor_url"] = f"/clips/{int(data['clip_id'])}" if data.get("clip_id") else None
     return data
 
 

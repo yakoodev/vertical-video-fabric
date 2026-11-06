@@ -992,6 +992,7 @@ def assemble(store: Any, episode_id: int) -> dict:
                               (ep.get("title") or ep["premise"])[:100],
                               f"История ({world['name']}): {ep['premise']}"[:500])
     clip_id = int(clip["id"])
+    P.assign_plan_project(store, clip_id, int(ep["project_id"]))  # иначе холст виден только по прямой ссылке
     layers, camera = build_layers(store, world, {**ep, "_speech_end": speech_end}, placed, int(ref["asset_id"]),
                                   total, notes)
     render = dict(store.get_clip_plan(clip_id).get("render_settings") or {})
@@ -1016,10 +1017,9 @@ def assemble(store: Any, episode_id: int) -> dict:
             notes.append(f"вжухи на склейках не встали: {str((result or {}).get('error') or result)[:160]}")
     mixed = X.auto_mix_clip(ctx, notes)
     S.mark_used(store, [int(p["scene_id"]) for p in placed])
-    fresh = store.get_clip_plan(clip_id)
     sfx_count = sum(1 for p in placed if p.get("sfx"))
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
-                "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
+                "editor_url": f"/clips/{clip_id}",
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "scene_id", "scene_title", "camera",
                                                   "sfx", "variant", "sentence")} for p in placed],
                 "shots_per_min": round(len(placed) / total * 60, 1), "sfx": sfx_count,

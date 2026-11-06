@@ -244,6 +244,17 @@ def test_dry_run_end_to_end_builds_story_clip(env, monkeypatch):
                                                                                            for b in beats})
 
 
+def test_story_clip_lands_in_the_world_project(env):
+    from app import projects as P
+
+    client, store, tmp = env
+    ids = _setup(store, tmp)
+    ep = X.create(store, ids["world_id"], "побег", 50, script=STORY, run=True)
+    assert ep["status"] == "done", ep["error"]
+    assert P.project_of_plan(store, ep["clip_id"]) == ids["project_id"]
+    assert ep["editor_url"] == f"/clips/{ep['clip_id']}"
+
+
 def test_title_card_and_cut_whooshes_are_optional(env):
     _client_, store, tmp = env
     ids = _setup(store, tmp, music=False, sounds=False)

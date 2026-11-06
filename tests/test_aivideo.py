@@ -95,6 +95,12 @@ def test_dry_run_pipeline_end_to_end_renders_mp4(env):
 
     out = assemble(store, sid)
     assert out["ok"] and out["shots"] == 3 and out["lines"] == 2
+    # Клип в проекте серии (не только по прямой ссылке), адрес — экран клипа.
+    from app import projects as P
+
+    script_project = V.get_script(store, sid, with_shots=False)["project_id"]
+    assert out["project_id"] == script_project == P.project_of_plan(store, out["clip_id"])
+    assert out["editor_url"] == f"/clips/{out['clip_id']}"
     plan = store.get_clip_plan(out["clip_id"])
     layers = plan["render_settings"]["layers"]
     images = [l for l in layers if l["type"] == "image"]
@@ -424,7 +430,11 @@ def test_rest_overview_and_assemble_flow(env):
     assert view["shots"][0]["keyframes"][0]["url"].startswith("/media/montage-assets/")
     resp = client.post(f"/api/ai-video/scripts/{sid}/assemble", json={})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["clip_id"]
+    clip_id = resp.json()["clip_id"]
+    assert clip_id and resp.json()["editor_url"] == f"/clips/{clip_id}" and resp.json()["project_id"] == pid
+    # Клип виден в списке проекта, а не только по прямой ссылке.
+    cards = client.get(f"/api/clip-cards?project_id={pid}").json()["clips"]
+    assert any(clip_id in c["plan_ids"] for c in cards)
     over = client.get(f"/api/projects/{pid}/ai-video").json()
     assert over["budget"]["provider"] == "none" and over["scripts"][0]["status"] == "assembled"
     assert client.get("/api/projects/999/ai-video").status_code == 404

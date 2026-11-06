@@ -352,6 +352,9 @@ def get_project(store: Any, project_id: int, include_sources: bool = True) -> di
     if not row:
         raise KeyError(f"project not found: {project_id}")
     data = _project_from_row(store, row)
+    # Вкладка «Объяснялки»: у проекта с маскотом — какого бы вида он ни был.
+    data["has_mascots"] = bool(store.db.query_one("SELECT 1 FROM expl_mascots WHERE project_id = ? LIMIT 1",
+                                                  (int(project_id),)))
     if include_sources:
         data["sources"] = project_sources(store, int(project_id))
     return data

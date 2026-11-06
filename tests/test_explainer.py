@@ -100,9 +100,22 @@ class FakeGemini:
         return {"candidates": [{"content": {"parts": [{"text": json.dumps(data, ensure_ascii=False)}]}}]}
 
 
+_REAL_CREATE_VIDEO = E.create_video
+
+
+def _create_dry_by_default(store, mascot_id, topic, duration=45, tone="", options=None, requested_by="agent"):
+    """Эти тесты ведут ролик без сети: в проекте без платного провайдера они ЯВНО просят сухой прогон.
+    Настоящий путь (голос, карточка, субтитры по речи) — фикстура ``real`` и проект с платным провайдером."""
+    opts = dict(options or {})
+    if V._style_row(store, E.get_mascot(store, mascot_id)["project_id"])["provider"] == "none":
+        opts.setdefault("dry_run", True)
+    return _REAL_CREATE_VIDEO(store, mascot_id, topic, duration, tone, opts, requested_by)
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     _require_ffmpeg()
+    monkeypatch.setattr(E, "create_video", _create_dry_by_default)
     import app.canvas as canvas
 
     monkeypatch.setattr(canvas, "CANVAS_WIDTH", 108)
@@ -188,11 +201,12 @@ def test_dry_run_end_to_end_builds_clip_like_pilot(env, monkeypatch):
     assert fake.calls == ["script", "plan"]
     assert video["status"] == "done", (video["error"], video.get("notes"))
     assert video["script"]["points"] == 3 and video["script"]["text"].startswith("Спишь восемь часов")
-    # Новые позы «Gemini» (телефон, будильник, кофе) нарисованы сухим прогоном — в библиотеке.
+    # Новые позы «Gemini» (телефон, будильник, кофе) в черновике — заглушки, готовыми не считаются.
     poses = E.list_poses(store, ids["mascot_id"])
-    assert {p["title"] for p in poses if p["origin"] == "generated"} == {"с телефоном в кровати", "будильник",
-                                                                         "пьёт кофе"}
-    assert all(p["ready"] for p in poses)
+    generated = [p for p in poses if p["origin"] == "generated"]
+    assert {p["title"] for p in generated} == {"с телефоном в кровати", "будильник", "пьёт кофе"}
+    assert all(p["placeholder"] and not p["ready"] for p in generated)
+    assert all(p["ready"] for p in poses if p["origin"] == "pilot")
     assert G.ledger(store, ids["project_id"]) == []  # ни рубля
 
     layers = _layers(store, video["clip_id"])
@@ -337,6 +351,16 @@ def test_align_maps_digits_and_splits_long_beats():
 # --------------------------------------------------------------------------- #
 
 
+def _hear_the_script(store, monkeypatch) -> None:
+    """Whisper-подделка: в озвучке последнего ролика слышен его сценарий."""
+
+    def heard(path):
+        row = store.db.query_one("SELECT id FROM expl_videos ORDER BY id DESC LIMIT 1")
+        return X.proportional_words(E.narration_text(E.get_video(store, int(row["id"]))), 30.0)
+
+    monkeypatch.setattr(X, "transcribe_words", heard)
+
+
 class FakePaid:
     name = "polza"
     paid = True
@@ -366,6 +390,7 @@ def paid(env, monkeypatch):
 
     real = PR.get_tts
     monkeypatch.setattr(PR, "get_tts", lambda name, *a, **k: FreeGeminiTTS() if name == "gemini" else real(name, *a, **k))
+    _hear_the_script(env[1], monkeypatch)
     return env, fake
 
 
@@ -475,6 +500,7 @@ def test_import_pilot_is_idempotent(env):
     out = E.import_pilot(store, None, folder)
     assert len(out["added"]) == 18 and not out["notes"]
     mascot = E.get_mascot(store, out["mascot_id"])
+    # Голос совы — как в первых роликах, один на все.
     assert mascot["name"] == "Ух" and mascot["sheet"] and mascot["voice"]["voice"] == "liam"
     assert V.get_style(store, out["project_id"])["provider"] == "polza"
     poses = E.list_poses(store, out["mascot_id"])
@@ -567,3 +593,413 @@ def test_dry_run_render_with_real_compositor(env):
     path = Path(clip["output_path"])
     assert path.is_file() and path.stat().st_size > 5_000
     assert abs(probe_duration(path) - done["timeline"]["duration"]) < 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Настоящий ролик из чата: голос, субтитры по речи, проект, правда в результате
+# --------------------------------------------------------------------------- #
+
+# Сценарий без «новых» слов подделки Gemini: хватает библиотеки, карточки нет.
+PLAIN = {"title": "Почему хочется спать", "hook": "Спишь восемь часов, а встаёшь разбитым?",
+         "points": [{"title": "Причина номер один: ты ложишься поздно.", "body": "Давай раньше, отлично выйдет."},
+                    {"title": "Причина номер два: ты не встаёшь вовремя.", "body": "Исправь это, сон станет лучше."}],
+         "cta": "Подпишись, пока не заснул!"}
+LIAM = {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "liam"}
+
+
+@pytest.fixture
+def real(env, monkeypatch):
+    """Ролик без опции dry_run. Сети нет: Gemini TTS и Whisper — подделки; настоящий Polza падает при обращении."""
+    from app import dubbing
+    from app.dubbing import DryRunTTS
+
+    client, store, tmp = env
+    monkeypatch.setattr(E, "create_video", _REAL_CREATE_VIDEO)
+    monkeypatch.setattr(dubbing.PolzaTTS, "synthesize", lambda *a, **k: pytest.fail("настоящий Polza: озвучка"))
+    monkeypatch.setattr(PR.PolzaImages, "submit", lambda *a, **k: pytest.fail("настоящий Polza: картинка"))
+    spoken: list[dict] = []
+
+    class FakeGeminiTTS(DryRunTTS):
+        name = "gemini"
+
+        def __init__(self, voice=None):
+            super().__init__()
+            spoken.append({"voice": voice})
+
+    real_tts = PR.get_tts
+    monkeypatch.setattr(PR, "get_tts", lambda name, model=None, voice=None, style=None: (
+        FakeGeminiTTS(voice) if name == "gemini" else real_tts(name, model, voice, style)))
+    _hear_the_script(store, monkeypatch)
+    return client, store, tmp, spoken
+
+
+def _narration_job(store, video_id):
+    return X._target_jobs(store, E.get_video(store, video_id)["project_id"], "expl_video", video_id, E.NARRATION_KIND)
+
+
+def test_episode_on_default_project_gets_real_voice_not_tone(real):
+    """Провайдер проекта none (значение по умолчанию) больше не означает тон: озвучивает голос маскота."""
+    client, store, tmp, spoken = real
+    ids = _setup(store, tmp)
+    video = X.create(store, ids["mascot_id"], "почему хочется спать", 45, script=PLAIN, run=True, client=FakeGemini())
+    assert video["status"] == "done", video["error"]
+    job = _narration_job(store, video["id"])
+    assert job["provider"] == "gemini"
+    assert spoken and all(x["voice"] == "Puck" for x in spoken)
+    assert G.ledger(store, ids["project_id"]) == [] and A.list_approvals(store, ids["project_id"]) == []
+    # Результат говорит правду: голос, цена, чем заменён платный и как поставлены субтитры.
+    voice = video["timeline"]["voice"]
+    assert voice["provider"] == "gemini" and voice["real"] and not voice["paid"] and voice["cost_rub"] == 0
+    assert "Gemini Puck" in voice["label"] and "бесплатно" in voice["label"]
+    assert video["timeline"]["captions"]["timing"] == "speech" and not video["timeline"]["dry_run"]
+    assert not store.get_clip_plan(video["clip_id"])["title"].startswith(E.DRY_MARK)
+    from app.agent_tools import ToolContext, run_tool
+
+    out, ok = run_tool(ToolContext(store=store), "explainer_status", {"video_id": video["id"]})
+    assert ok and out["voice"]["provider"] == "gemini" and out["spent_rub"] == 0 and out["dry_run"] is False
+    assert "Gemini Puck" in out["summary"] and "0.00 ₽" in out["summary"]
+    assert any("рендер" in x for x in out["skipped"]) and "рендер" in out["summary"]
+    # Клип в проекте маскота: список клипов проекта его показывает, ссылка — на экран клипа.
+    from app import projects as P
+
+    assert P.project_of_plan(store, video["clip_id"]) == ids["project_id"]
+    assert video["editor_url"] == f"/clips/{video['clip_id']}" == video["timeline"]["editor_url"]
+    cards = client.get(f"/api/clip-cards?project_id={ids['project_id']}").json()
+    assert video["clip_id"] in {p for c in cards["clips"] for p in [c.get("id"), c.get("head_plan_id"),
+                                                                     c.get("clip_plan_id")] if p}
+
+
+def test_status_before_the_clip_exists_says_there_is_no_clip(real):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    video = X.create(store, ids["mascot_id"], "сон", 45, script=PLAIN)
+    from app.agent_tools import ToolContext, run_tool
+
+    out, ok = run_tool(ToolContext(store=store), "explainer_status", {"video_id": video["id"]})
+    assert ok and "Клипа ещё нет" in out["summary"] and "Gemini Puck" in out["summary"]
+
+
+def test_voice_failure_stops_with_clear_message_and_no_card(real, monkeypatch):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    from app.dubbing import DubError
+
+    class Blocked:
+        name, model, voice, paid = "gemini", "m", "Puck", False
+
+        def price_rub_per_char(self):
+            return 0.0
+
+        def synthesize(self, text, path):
+            raise DubError("User location is not supported")
+
+    monkeypatch.setattr(PR, "get_tts", lambda *a, **k: Blocked())
+    # Новые позы нужны, но платить за них незачем: голоса нет.
+    video = X.create(store, ids["mascot_id"], "сон", 45, run=True, client=FakeGemini())
+    assert video["status"] == "failed" and not video["clip_id"]
+    assert "Озвучка не получилась" in video["error"] and "location" in video["error"]
+    assert not video["approval_id"] and A.list_approvals(store, ids["project_id"]) == []
+
+
+def test_whisper_failure_or_wrong_speech_stops_instead_of_fake_captions(real, monkeypatch):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    monkeypatch.setattr(X, "transcribe_words", lambda path: (_ for _ in ()).throw(RuntimeError("нет модели")))
+    video = X.create(store, ids["mascot_id"], "сон", 45, script=PLAIN, run=True, client=FakeGemini())
+    assert video["status"] == "failed" and "распознать речь" in video["error"] and not video["clip_id"]
+    # Тон или чужой текст: Whisper не слышит сценария. Ролика нет, озвучка запишется заново.
+    monkeypatch.setattr(X, "transcribe_words", lambda path: [{"word": "музыка", "start": 0.1, "end": 0.5}])
+    again = X.resume(store, video["id"], client=FakeGemini())
+    assert again["status"] == "failed" and "распознано только" in again["error"] and not again["clip_id"]
+    assert E.narration_ref(store, E.get_video(store, video["id"])) is None
+    # Речь снова слышна — ролик собирается с новой озвучкой.
+    _hear_the_script(store, monkeypatch)
+    jobs = len(G.list_jobs(store, ids["project_id"], limit=100))
+    final = X.resume(store, video["id"], client=FakeGemini())
+    assert final["status"] == "done" and len(G.list_jobs(store, ids["project_id"], limit=100)) == jobs + 1
+
+
+def test_new_pose_on_default_project_is_a_card_not_a_placeholder(real, monkeypatch):
+    client, store, tmp, _spoken = real
+    fake = FakePaid()
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: fake if name == "polza" else pytest.fail(name))
+    ids = _setup(store, tmp)
+    video = X.create(store, ids["mascot_id"], "сон", 45, run=True, client=FakeGemini())
+    # Стоп на карточке: денег не тронули, что и сколько — видно, заглушек в библиотеке нет.
+    assert video["status"] == "awaiting_approval" and fake.posts == 0, video["error"]
+    card = A.get_approval(store, video["approval_id"])
+    assert card["payload"]["amount_rub"] == pytest.approx(18.0) and card["payload"]["provider"] == "polza"
+    assert "новых поз 3" in card["question"] and "будильник" in card["question"]
+    poses = E.list_poses(store, ids["mascot_id"])
+    assert not any(p["placeholder"] for p in poses) and sum(1 for p in poses if not p["ready"]) == 3
+    view = E.get_video(store, video["id"], full=False)
+    assert set(view["poses_to_draw"]) == {"с телефоном в кровати", "будильник", "пьёт кофе"}
+    facts = X.facts(store, video["id"])
+    assert "Разрешить" in facts["summary"] and "будильник" in facts["summary"] and "Клипа" not in facts["summary"]
+    assert facts["spent_rub"] == 0 and not video["clip_id"]
+    # Голос уже бесплатный и настоящий: в карточке его нет.
+    assert E.narration_ref(store, E.get_video(store, video["id"])) is not None
+    # «Разрешить» — и только тогда рисуется и собирается.
+    A.decide(store, video["approval_id"], "approve", actor="ui")
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    G.run_approved(store, video["approval_id"], confirm=True)
+    assert fake.posts == 3
+    done = X.advance(store, video["id"])
+    assert done["status"] == "done", done["error"]
+    assert X.facts(store, video["id"])["spent_rub"] == pytest.approx(18.0)
+
+
+def test_new_pose_always_has_a_name_for_the_owner(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    pose = E.save_pose(store, ids["mascot_id"], description="covering both ears with wings", title="", tags=["шум"])
+    assert pose["title"] == "covering both ears with wings"
+    assert "title" in X.plan_schema()["properties"]["new_poses"]["items"]["required"]
+    # Поза старой записи без названия: в списке «нужно нарисовать» не пустое место.
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    E.set_status(store, video["id"], "planned", None, beats=[{"i": 0, "pose_id": pose["id"], "pose_new": True,
+                                                              "pose_title": ""}])
+    assert E.get_video(store, video["id"], full=False)["poses_to_draw"] == ["поза без названия"]
+
+
+def test_single_pose_and_sheet_on_default_project_need_a_card(real):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    pose = E.save_pose(store, ids["mascot_id"], description="juggling moons", title="жонглёр")
+    req = E.request_pose(store, pose["id"])
+    assert req["status"] == "awaiting_approval" and not E.get_pose(store, pose["id"])["url"]
+    assert E.request_sheet(store, ids["mascot_id"], regenerate=True)["status"] == "awaiting_approval"
+
+
+def test_dry_run_is_explicit_marked_and_its_placeholders_do_not_leak(real, monkeypatch):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    r = client.post(f"/api/explainer/mascots/{ids['mascot_id']}/videos",
+                    json={"topic": "черновик", "duration": 45, "dry_run": True})
+    assert r.status_code == 200 and r.json()["options"]["dry_run"] is True
+    draft = X.advance(store, r.json()["id"], client=FakeGemini())
+    assert draft["status"] == "done" and draft["dry_run"], draft["error"]
+    # Видно, что это черновик: в названии клипа, в строке ролика, в правде для агента.
+    assert store.get_clip_plan(draft["clip_id"])["title"].startswith(E.DRY_MARK)
+    assert draft["timeline"]["voice"]["real"] is False and draft["timeline"]["captions"]["timing"] == "text_length"
+    facts = X.facts(store, draft["id"])
+    assert facts["dry_run"] and "тон" in facts["summary"] and any("заглушек" in x for x in facts["skipped"])
+    assert _narration_job(store, draft["id"])["provider"] == "none"
+    # Заглушка из черновика — не готовая поза: настоящий ролик просит нарисовать её по карточке.
+    fake = FakePaid()
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: fake)
+    video = X.create(store, ids["mascot_id"], "сон", 45, run=True, client=FakeGemini())
+    assert video["status"] == "awaiting_approval" and X.estimate(store, video["id"])["new_poses"] == 3
+    assert fake.posts == 0
+
+
+def test_agent_cannot_ask_for_a_dry_run_or_a_tone_voice(real):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    from app.agent_tools import ToolContext, run_tool
+
+    ctx = ToolContext(store=store)
+    out, ok = run_tool(ctx, "explainer_create", {"mascot_id": ids["mascot_id"], "topic": "кофе", "dry_run": True})
+    assert ok and not E.get_video(store, out["video_id"])["options"].get("dry_run")
+    out, ok = run_tool(ctx, "explainer_save_mascot", {"mascot_id": ids["mascot_id"], "voice": {"provider": "none"}})
+    assert not ok
+    # Старое значение в базе не даёт тон: голос настоящий.
+    store.db.execute("UPDATE expl_mascots SET voice_json = ? WHERE id = ?", ('{"provider": "none"}', ids["mascot_id"]))
+    assert E.mascot_voice(store, E.get_mascot(store, ids["mascot_id"]))["provider"] == "gemini"
+
+
+@pytest.mark.parametrize("provider", ["none", "polza"])
+def test_paid_mascot_voice_is_never_replaced_and_waits_for_the_card(real, monkeypatch, provider):
+    """Голос маскота один на все ролики: платный — стоп на карточке с суммой, в любом проекте; подмены нет."""
+    client, store, tmp, spoken = real
+    from app.dubbing import DryRunTTS, Speech
+
+    fake = FakePaid()
+    calls = []
+
+    class FakeLiam(DryRunTTS):  # не настоящий Polza: сеть и деньги тесту запрещены
+        name, paid = "polza", True
+
+        def __init__(self, voice):
+            super().__init__(voice=voice)
+            calls.append(("init", voice))
+
+        def price_rub_per_char(self):
+            return 0.005
+
+        def synthesize(self, text, path):
+            calls.append(("speak", self.voice))
+            return Speech(super().synthesize(text, path).path, 1.5)
+
+    free = PR.get_tts
+    monkeypatch.setattr(PR, "get_tts", lambda name, model=None, voice=None, style=None: (
+        FakeLiam(voice) if name == "polza" else free(name, model, voice, style)))
+    monkeypatch.setattr(PR, "get_image_provider", lambda name: fake)
+    ids = _setup(store, tmp, provider=provider, voice=LIAM)
+    video = X.create(store, ids["mascot_id"], "сон", 45, script=PLAIN, run=True, client=FakeGemini())
+    # Стоп: Gemini не звали, Polza не звали, ни рубля; сумма и выбор названы.
+    assert video["status"] == "awaiting_approval" and not video["clip_id"], video["error"]
+    assert spoken == [] and ("speak", "liam") not in calls and G.ledger(store, ids["project_id"]) == []
+    card = A.get_approval(store, video["approval_id"])
+    assert card["payload"]["amount_rub"] > 0 and "liam" in card["question"] and "смените голос" in card["question"]
+    assert card["payload"]["provider"] == "polza"
+    assert card["title"].startswith("Объяснялка: позы маскота")
+    facts = X.facts(store, video["id"])
+    assert facts["voice"]["provider"] == "polza" and facts["voice"]["paid"] and facts["spent_rub"] == 0
+    assert "≈" in facts["voice"]["label"] and "Разрешить" in facts["summary"] and "сменить голос" in facts["summary"]
+    # «Разрешить» — озвучивает именно liam, клип с тем же голосом, цена настоящая.
+    A.decide(store, video["approval_id"], "approve", actor="ui")
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    G.run_approved(store, video["approval_id"], confirm=True)
+    assert calls.count(("speak", "liam")) == 1 and spoken == []
+    done = X.advance(store, video["id"])
+    assert done["status"] == "done", done["error"]
+    voice = done["timeline"]["voice"]
+    assert voice["provider"] == "polza" and voice["voice"] == "liam" and voice["cost_rub"] == pytest.approx(1.5)
+    assert "liam" in voice["label"] and X.facts(store, video["id"])["spent_rub"] == pytest.approx(1.5)
+
+
+def test_refusing_paid_voice_then_choosing_gemini_continues_with_it(real):
+    """Выбор владельца: отказал по карточке, сменил голос маскота, «Продолжить» — озвучка новым голосом."""
+    client, store, tmp, spoken = real
+    ids = _setup(store, tmp, voice=LIAM)
+    video = X.create(store, ids["mascot_id"], "сон", 45, script=PLAIN, run=True, client=FakeGemini())
+    A.decide(store, video["approval_id"], "reject", actor="ui")
+    assert X.advance(store, video["id"])["status"] == "cancelled" and spoken == []
+    r = client.patch(f"/api/explainer/mascots/{ids['mascot_id']}", json={"voice": {"provider": "gemini", "voice": "Puck"}})
+    assert r.status_code == 200 and "Gemini Puck" in r.json()["voice_now"]["label"]
+    done = X.resume(store, video["id"], client=FakeGemini())
+    assert done["status"] == "done" and done["timeline"]["voice"]["provider"] == "gemini", done["error"]
+    assert G.ledger(store, ids["project_id"]) == []
+
+
+def test_explainer_works_in_project_of_any_kind_without_changing_it(real):
+    client, store, tmp, _spoken = real
+    from app import projects as P
+
+    other = P.create_project(store, "Сова", kind="other")["id"]
+    assert client.get(f"/api/projects/{other}").json()["has_mascots"] is False
+    r = client.get(f"/api/projects/{other}/explainer")
+    assert r.status_code == 200 and r.json()["mascots"] == []
+    ids_lib = _setup(store, tmp)
+    mascot = E.save_mascot(store, other, name="Ух", identity_card="owl", voice={"provider": "gemini"})
+    E.set_sheet(store, mascot["id"], _image(store, tmp, "sheet2"))
+    for pose in E.list_poses(store, ids_lib["mascot_id"]):
+        E.save_pose(store, mascot["id"], description=pose["description"], title=pose["title"], tags=pose["tags"],
+                    number_shown=pose["number_shown"], origin="pilot", asset_id=pose["asset_id"], slug=pose["slug"])
+    video = X.create(store, mascot["id"], "сон", 45, script=PLAIN, run=True, client=FakeGemini())
+    assert video["status"] == "done", video["error"]
+    project = client.get(f"/api/projects/{other}").json()
+    assert project["kind"] == "other" and project["has_mascots"] is True
+    assert P.project_of_plan(store, video["clip_id"]) == other
+    # ИИ-видео без маскота по-прежнему отказывает в чужом проекте.
+    empty = P.create_project(store, "Стрим", kind="stream_channel")["id"]
+    with pytest.raises(V.AivError):
+        V.require_project(store, empty)
+
+
+def test_agent_prompt_forbids_guessing_about_voice():
+    from app.explainer_tools import all_tools
+    from app.project_chat import SYSTEM
+
+    assert "summary" in SYSTEM and "тип и настройки проекта" in SYSTEM
+    create = next(t for t in all_tools() if t.name == "explainer_create")
+    assert "dry_run" not in str(create.parameters) and "summary" in create.description
+
+
+# --- субтитры: слова сценария на времени Whisper ---------------------------- #
+
+
+def _w(*pairs):
+    return [{"word": w, "start": float(a), "end": float(b)} for w, a, b in pairs]
+
+
+def test_captions_show_script_words_on_whisper_timings():
+    heard = _w(("Снись", 0.1, 0.5), ("сахар,", 0.6, 1.0), ("подпишись", 1.2, 1.6), ("на", 1.7, 1.8), ("канал", 1.9, 2.2),
+               ("УХО.", 2.3, 2.6))
+    out = X.script_words("Снизь сахар, подпишись на канал Уха.", heard)
+    assert [w["word"] for w in out] == ["Снизь", "сахар,", "подпишись", "на", "канал", "Уха."]
+    assert [(w["start"], w["end"]) for w in out] == [(w["start"], w["end"]) for w in heard]
+
+
+def test_captions_keep_numbers_heard_as_digits_only_when_same_number():
+    heard = _w(("Спи", 0.0, 0.3), ("8", 0.4, 0.8), ("часов,", 0.9, 1.3), ("вставай", 1.4, 1.8), ("в", 1.9, 2.0),
+               ("6.", 2.1, 2.4))
+    out = X.script_words("Спи восемь часов, вставай в шесть.", heard)
+    assert [w["word"] for w in out] == ["Спи", "8", "часов,", "вставай", "в", "6."]
+    # Ослышка: сценарий «шесть», Whisper «8» — верим сценарию.
+    out = X.script_words("вставай в шесть", _w(("вставай", 0, 1), ("в", 1, 2), ("8", 2, 3)))
+    assert out[-1]["word"] == "шесть"
+    # «двадцать пять» → «25» одним словом на всё время куска.
+    out = X.script_words("выпей двадцать пять глотков", _w(("выпей", 0, 1), ("25", 1, 2), ("глотков", 2, 3)))
+    assert [w["word"] for w in out] == ["выпей", "25", "глотков"] and out[1]["start"] == 1 and out[1]["end"] == 2
+    # Цифры вместо обычного слова — нет.
+    out = X.script_words("выпей воды", _w(("выпей", 0, 1), ("5", 1, 2)))
+    assert out[1]["word"] == "воды"
+
+
+def test_captions_handle_extra_missing_and_split_words_in_order():
+    # Лишнее распознанное не показываем; «кофе-брейк», услышанный двумя словами, — одно слово на всё время.
+    out = X.script_words("Пей кофе-брейк сейчас", _w(("Эм", 0, 0.2), ("Пей", 0.3, 0.6), ("кофе", 0.7, 1.0),
+                                                     ("брейк", 1.0, 1.4), ("сейчас", 1.5, 2.0)))
+    assert [w["word"] for w in out] == ["Пей", "кофе-брейк", "сейчас"]
+    assert out[1]["start"] == 0.7 and out[1]["end"] == 1.4
+    # Не услышанное слово — в промежуток; нет промежутка — половина прошлого слова. Время не идёт назад.
+    out = X.script_words("Раз два три", _w(("Раз", 0, 1), ("три", 2, 3)))
+    assert [w["word"] for w in out] == ["Раз", "два", "три"] and 1 <= out[1]["start"] < out[1]["end"] <= 2
+    out = X.script_words("Раз два три", _w(("Раз", 0, 1), ("три", 1, 2)))
+    assert [w["word"] for w in out] == ["Раз", "два", "три"]
+    assert all(a["end"] <= b["start"] + 1e-6 and a["start"] < a["end"] for a, b in zip(out, out[1:]))
+    # Тире отдельным «словом» в субтитры не идёт.
+    assert [w["word"] for w in X.script_words("кофе — яд", _w(("кофе", 0, 1), ("яд", 1, 2)))] == ["кофе", "яд"]
+
+
+def test_clip_captions_use_script_text_not_whisper_mistakes(real, monkeypatch):
+    client, store, tmp, _spoken = real
+    ids = _setup(store, tmp)
+    script = dict(PLAIN, cta="Снизь темп и подпишись на канал Уха!")
+
+    def misheard(path):
+        text = X.normalize_script(script)["text"].replace("Снизь", "Снись").replace("Уха!", "УХО!")
+        return X.proportional_words(text, 30.0)
+
+    monkeypatch.setattr(X, "transcribe_words", misheard)
+    video = X.create(store, ids["mascot_id"], "сон", 45, script=script, run=True, client=FakeGemini())
+    assert video["status"] == "done", video["error"]
+    said = [w["word"] for w in store.get_clip_plan_subtitles(video["clip_id"])["words"]]
+    assert "Снизь" in said and "Уха!" in said and "Снись" not in said and "УХО!" not in said
+
+
+# --- биты туда и обратно ---------------------------------------------------- #
+
+
+def test_beats_round_trip_keeps_chip_and_never_shows_a_stringified_dict(env):
+    client, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    X.plan_beats(store, video["id"], client=None)
+    r = client.patch(f"/api/explainer/videos/{video['id']}/beats", json={"beats": [{"i": 1, "chip": "8 ч", "chip_word": "восемь"}]})
+    assert r.status_code == 200
+    # Как получил — так и отправил: чип приходит словарём.
+    beats = client.get(f"/api/explainer/videos/{video['id']}").json()["beats"]
+    assert beats[1]["chip"] == {"text": "8 ч", "word": "восемь"}
+    r = client.patch(f"/api/explainer/videos/{video['id']}/beats", json={"beats": beats})
+    assert r.status_code == 200 and r.json()["beats"][1]["chip"] == {"text": "8 ч", "word": "восемь"}
+    # Отдельный chip_word важнее слова в словаре; пустой чип и мусор — без чипа.
+    out = X.update_beats(store, video["id"], [{"i": 1, "chip": {"text": "9 ч", "word": "x"}, "chip_word": "девять"},
+                                              {"i": 2, "chip": ""}, {"i": 3, "chip": {"foo": 1}},
+                                              {"i": 4, "chip": 7}, {"i": 5, "badge": {"x": 1}, "emphasis": [{"y": 2}, "сон"]}])
+    assert out["beats"][1]["chip"] == {"text": "9 ч", "word": "девять"}
+    assert out["beats"][2]["chip"] is None and out["beats"][3]["chip"] is None and out["beats"][4]["chip"] is None
+    assert out["beats"][5]["badge"] is None and out["beats"][5]["emphasis"] == ["сон"]
+    # След старой правки в базе: в кадр не попадает.
+    stored = E.get_video(store, video["id"])["beats"]
+    stored[1]["chip"] = {"text": "{'text': '", "word": ""}
+    stored[2]["chip"] = "{'text': '"
+    stored[3]["badge"] = "{'x':"
+    E.update_video(store, video["id"], beats=stored)
+    done = X.advance(store, video["id"])
+    assert done["status"] == "done", done["error"]
+    texts = [l["props"]["text"] for l in _layers(store, done["clip_id"]) if l["type"] == "text"]
+    assert texts and not any("{" in t for t in texts)

@@ -57,12 +57,6 @@ export function ExplainerTab({ projectId }: { projectId: number }) {
   return (
     <div className="aiv expl">
       <ApprovalBanners o={o} />
-      {o.provider === "none" ? (
-        <div className="panel expl-note">
-          Проект в <b>сухом прогоне</b> (провайдер none): позы — заглушки, озвучка — тон, 0 ₽. Настоящие картинки —
-          провайдер Polza во вкладке «ИИ-видео».
-        </div>
-      ) : null}
       {o.mascots.length > 1 ? (
         <nav className="pipeline aiv-subtabs">
           {o.mascots.map((m) => (
@@ -239,6 +233,11 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
         <span className={`chip expl-status ${STATUS_TONE[v.status] ?? ""}`}>
           {active ? <span className="spinner sm" /> : null} {v.status_label}
         </span>
+        {v.dry_run ? (
+          <span className="chip expl-status bad" title="Вместо голоса тон, вместо новых поз заглушки. Выкладывать нельзя.">
+            Черновик без голоса
+          </span>
+        ) : null}
         <b className="expl-topic" title={v.topic}>
           {v.title || v.topic}
         </b>
@@ -272,6 +271,13 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
         </span>
       </div>
       {v.error ? <VideoError text={v.error} failed={v.status === "failed"} /> : null}
+      {v.poses_to_draw.length ? (
+        <div className="aiv-warn">
+          Нужно нарисовать: {v.poses_to_draw.map((t) => `«${t}»`).join(", ")}
+          {v.estimate_rub > 0 ? ` ≈ ${rub(v.estimate_rub)}` : ""}. Рисуем только после «Разрешить».
+        </div>
+      ) : null}
+      {v.voice_used ? <div className="muted expl-voice-used">{v.voice_used.label}</div> : null}
       {/* Раньше сценарий раскрывался кликом по названию — догадаться было нельзя; теперь явная кнопка. */}
       <button type="button" className="expl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? "▾ Скрыть сценарий" : "▸ Сценарий и биты"}
@@ -432,9 +438,12 @@ function MascotCard({ mascot, projectId }: { mascot: Mascot; projectId: number }
             </select>
           </div>
           <div className="series-row">
-            <TtsVoicePicker value={voice} showModel onChange={(next) => setVoice({ ...voice, ...next })} />
+            <TtsVoicePicker value={voice} showModel allowDry={false} onChange={(next) => setVoice({ ...voice, ...next })} />
           </div>
-          <span className="muted">Голос: Gemini — бесплатно; Polza (ElevenLabs) ≈ 3 ₽ за 45 с — в карточке ролика.</span>
+          <span className="muted">
+            Голос один на все ролики этого маскота. Gemini — бесплатно; Polza (ElevenLabs) ≈ 3 ₽ за 45 с — каждый ролик только после вашего «Разрешить».
+          </span>
+          <span className="muted">Сейчас: {mascot.voice_now.label}</span>
         </div>
       </div>
     </section>
@@ -621,7 +630,7 @@ function PoseCard({ p, projectId }: { p: Pose; projectId: number }) {
   return (
     <figure className="expl-pose" title={p.description}>
       <div className="expl-pose-img">
-        {p.url ? <img src={p.url} alt={p.title} loading="lazy" /> : <span>нарисуется в ролике</span>}
+        {p.url && !p.placeholder ? <img src={p.url} alt={p.title} loading="lazy" /> : <span>{p.placeholder ? "заглушка: ещё не нарисована" : "нарисуется в ролике"}</span>}
         {p.number_shown ? <span className="expl-badge">#{p.number_shown}</span> : null}
         {p.uses ? <span className="expl-uses">×{p.uses}</span> : null}
       </div>
