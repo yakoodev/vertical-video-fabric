@@ -119,7 +119,21 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page
       .waitForFunction(() => [...document.querySelectorAll("video")].every((v) => !v.seeking && (v.readyState >= 2 || !v.getAttribute("src"))), null, { timeout: 8000 })
       .catch(() => undefined);
-    await sleep(500);
+    // Кадры таймлайна догружаются, полоса вкладок докручивается плавно: снимаем, когда всё улеглось.
+    await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => undefined);
+    await page
+      .waitForFunction(
+        () => {
+          const now = [...document.querySelectorAll("*")].filter((e) => e.scrollLeft > 0).map((e) => e.scrollLeft).join();
+          const same = window.__scrolls === now;
+          window.__scrolls = now;
+          return same;
+        },
+        null,
+        { timeout: 3000, polling: 250 },
+      )
+      .catch(() => undefined);
+    await sleep(400);
   };
   const settle = async (ms = 900) => {
     await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => undefined);
@@ -483,7 +497,7 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page.locator(".ed-transport .btn", { hasText: "Превью клипа" }).click();
     await sleep(1400);
     const a = await vid();
-    check("играет", a && !a.paused, a);
+    checkLive("играет", a && !a.paused, a);
     const tc1 = await tc();
     await sleep(500);
     const tc2 = await tc();
