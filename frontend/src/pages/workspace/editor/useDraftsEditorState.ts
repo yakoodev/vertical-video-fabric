@@ -34,6 +34,7 @@ import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import { clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
 import { clipTimeOf, DEFAULT_COVER, DEFAULT_TRANSITION, formatTimecode, INSP_TABS, LIB_TABS, type InspTab, type LibTab, type SpecPiece } from "@/pages/workspace/editor/editorHelpers";
 import { useEditorShortcuts } from "@/pages/workspace/editor/useEditorShortcuts";
+import { useDraftsFilters } from "@/pages/workspace/drafts/useDraftsFilters";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -161,7 +162,6 @@ export function useDraftsEditorState(sourceId: string) {
   // Opened from the moments list in this visit → Back pops history; opened by a
   // link → Back replaces the URL (there is nothing to pop to inside the app).
   const openedFromListRef = useRef(false);
-  const [chosen, setChosen] = useState<Set<number> | null>(null);
   const [loop, setLoop] = useState(true);
   const [rate, setRate] = useState(1);
   const rateRef = useRef(rate);
@@ -506,12 +506,6 @@ export function useDraftsEditorState(sourceId: string) {
   });
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [packagePieces, setPackagePieces] = useState(false);
-  const [hideDuplicates, setHideDuplicates] = useState(false);
-  const [candidateSearch, setCandidateSearch] = useState("");
-  const [hiddenAnalyses, setHiddenAnalyses] = useState<Set<number>>(new Set());
-  const [onlyFavorites, setOnlyFavorites] = useState(false);
-  const [showHidden, setShowHidden] = useState(false);
-
   // Safe-zone overlay on the preview: where the banner sits (top) and where the
   // subtitles land (bottom). Percentages of the final 9:16 frame height.
   const [showZones, setShowZones] = useState(true);
@@ -533,13 +527,12 @@ export function useDraftsEditorState(sourceId: string) {
 
   const plans = query.data?.clip_plans ?? [];
 
-  // Default-select every plan for batch render once they load.
-  useEffect(() => {
-    if (chosen === null && plans.length) setChosen(new Set(plans.map((p) => p.id)));
-  }, [plans.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const selected = chosen ?? new Set<number>();
-
+  const draftsFilters = useDraftsFilters({
+    query, plans,
+  });
+  const {
+    selected,
+  } = draftsFilters;
   // ---- per-clip settings: each clip is set up on its own -------------------
   const transitionOpts = useQuery({
     queryKey: ["transition-options"],
@@ -1159,34 +1152,6 @@ export function useDraftsEditorState(sourceId: string) {
   };
 
   const activePlan = useMemo(() => plans.find((p) => p.id === activePlanId) ?? plans[0], [plans, activePlanId]);
-  // Candidates accumulate across analyses — group them so it's clear which run
-  // produced what (newest run first).
-  const planGroups = useMemo(() => {
-    const q = candidateSearch.trim().toLowerCase();
-    const by = new Map<number, typeof plans>();
-    for (const p of plans) {
-      if (hideDuplicates && p.duplicate_of != null) continue;
-      if (!showHidden && p.hidden) continue;
-      if (onlyFavorites && !p.favorite) continue;
-      if (q && !(p.title ?? "").toLowerCase().includes(q)) continue;
-      const key = p.analysis_id ?? 0;
-      by.set(key, [...(by.get(key) ?? []), p]);
-    }
-    // Best candidates first inside each analysis.
-    for (const [, group] of by) group.sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0));
-    return [...by.entries()]
-      .filter(([analysisId]) => !hiddenAnalyses.has(analysisId))
-      .sort((a, b) => b[0] - a[0]);
-  }, [plans, hideDuplicates, candidateSearch, hiddenAnalyses, onlyFavorites, showHidden]);
-  const shownCount = planGroups.reduce((n, [, g]) => n + g.length, 0);
-  const favCount = plans.filter((p) => p.favorite).length;
-  const hiddenCount = plans.filter((p) => p.hidden).length;
-  // All analyses present (for the show/hide filter chips), independent of search/hide.
-  const analysisChips = useMemo(() => {
-    const by = new Map<number, number>();
-    for (const p of plans) by.set(p.analysis_id ?? 0, (by.get(p.analysis_id ?? 0) ?? 0) + 1);
-    return [...by.entries()].sort((a, b) => b[0] - a[0]);
-  }, [plans]);
   // The preset list accumulates user-saved dupes; show each label once so the
   // picker isn't flooded with identical entries.
   const uniquePresets = useMemo(() => {
@@ -1198,11 +1163,6 @@ export function useDraftsEditorState(sourceId: string) {
       return true;
     });
   }, [presets.data]);
-  const analysisMeta = (analysisId: number) => {
-    if (!analysisId) return "Добавлены вручную";
-    const a = query.data?.analyses?.find((x) => x.id === analysisId);
-    return a ? `Анализ #${a.id} · ${a.provider}${a.model ? ` · ${a.model}` : ""}` : `Анализ #${analysisId}`;
-  };
   const selectedPreset = presets.data?.find((p) => p.id === presetId);
   // Превью цвета куска: поправка того куска, что сейчас играет (по секунде исходника).
   const [pieceCss, setPieceCss] = useState("");
@@ -1467,19 +1427,19 @@ export function useDraftsEditorState(sourceId: string) {
 
   return {
     ...editorShortcuts,
+    ...draftsFilters,
     sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
     bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef, query,
     recordMissing, proxyReady, sourceMissing, banners, tracks, subs, assetsQuery, pickableAssets, navigate, view,
     playbackRef, playRanges, stopPlayback, openEditor, backToMoments, musicPreviewRef, musicFromUrl, patchTransition,
     reframedView, motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, motionFonts, clipNowRef, clipNow,
     reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, patchCover, hoverPlanRef, planWave, planSubs,
-    plans, selected, transitionOpts, agentRunningRef, flushSettings, applyToFavorites, composeCover, compile,
-    batchAuto, autoEdit, mixReport, autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats,
-    pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit,
-    pickPointRef, setFixedFrame, setPlanFlag, activePlan, planGroups, shownCount, favCount, hiddenCount,
-    analysisChips, uniquePresets, analysisMeta, selectedPreset, lookCss, lookFrames, tcSegsRef, editPieces, libTab,
-    setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId,
-    setActivePlanId, selectedSeg, setSelectedSeg, setChosen, loop, setLoop, rate, setRate, presetId, setPresetId,
+    plans, transitionOpts, agentRunningRef, flushSettings, applyToFavorites, composeCover, compile, batchAuto,
+    autoEdit, mixReport, autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats, pieceColor,
+    matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit, pickPointRef,
+    setFixedFrame, setPlanFlag, activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, tcSegsRef,
+    editPieces, libTab, setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc,
+    activePlanId, setActivePlanId, selectedSeg, setSelectedSeg, loop, setLoop, rate, setRate, presetId, setPresetId,
     subsOn, setSubsOn, subId, setSubId, subEngine, setSubEngine, bannerOn, setBannerOn, bannerId, setBannerId,
     musicOn, setMusicOn, trackId, setTrackId, musicStartSec, setMusicStartSec, musicUrl, setMusicUrl, mirror,
     setMirror, transition, cover, inserts, setInserts, layers, setLayers, camera, setCamera, layout, setLayout, cuts,
@@ -1487,12 +1447,10 @@ export function useDraftsEditorState(sourceId: string) {
     setMixSettings, aspect, setAspect, layersFmt, setLayersFmt, endHoldSec, setEndHoldSec, motionBlur, setMotionBlur,
     inlineEdit, setInlineEdit, coverUploading, setCoverUploading, clipFileOpen, setClipFileOpen, watchOpen,
     setWatchOpen, aiMontageOpen, setAiMontageOpen, setSettingsNonce, aiGoal, setAiGoal, setSubsWide, useVlmFocus,
-    setUseVlmFocus, packagePieces, setPackagePieces, hideDuplicates, setHideDuplicates, candidateSearch,
-    setCandidateSearch, hiddenAnalyses, setHiddenAnalyses, onlyFavorites, setOnlyFavorites, showHidden,
-    setShowHidden, showZones, setShowZones, bannerHeightPct, setBannerHeightPct, bannerPosPct, setBannerPosPct,
-    subPosPct, setSubPosPct, coverTitle, setCoverTitle, coverStyle, setCoverStyle, autoProgress, censorStyle,
-    setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode, pickingPoint, setPickingPoint, moduleOn,
-    subsWide,
+    setUseVlmFocus, packagePieces, setPackagePieces, showZones, setShowZones, bannerHeightPct, setBannerHeightPct,
+    bannerPosPct, setBannerPosPct, subPosPct, setSubPosPct, coverTitle, setCoverTitle, coverStyle, setCoverStyle,
+    autoProgress, censorStyle, setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode, pickingPoint,
+    setPickingPoint, moduleOn, subsWide,
   };
 }
 
