@@ -368,7 +368,7 @@ def list_threads(store: Any) -> dict:
             item["messages_count"] = int(item.get("messages_count") or 0) + legacy_count
             item["last_text"] = item.get("last_text") or legacy_last
             if item["title"] == CLIP_THREAD_TITLE:
-                item["title"] = f"Клип: {clip_title or item['clip_plan_id']}"
+                item["title"] = f"Клип #{item['clip_plan_id']}: {clip_title or 'без названия'}"
             # Источник, приписка плана; реже всего — цепочка серии или ролика (clip_project): только для тех, кому нужно.
             item["project_id"] = clip_source if clip_source is not None else clip_direct
             if item["project_id"] is None and item["messages_count"]:

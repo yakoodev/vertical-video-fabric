@@ -149,7 +149,7 @@ def test_old_chats_get_a_thread_row_and_show_in_the_list(env):
 
     listed = client.get("/api/chat/threads").json()
     mine = next(t for p in listed["projects"] if p["id"] == pid for t in p["threads"] if t["id"] == thread["id"])
-    assert mine["title"] == "Клип: Мура пугается" and mine["messages_count"] == 2
+    assert mine["title"] == f"Клип #{plan['id']}: Мура пугается" and mine["messages_count"] == 2
     assert mine["last_text"] == "Поставил хук на 0–2 с."
     assert thread["id"] not in [t["id"] for t in listed["general"]]
 
@@ -401,6 +401,16 @@ def test_remember_writes_fact_of_clip_project(env):
     reply = C.thread_messages(store, thread["id"])[-1]
     assert reply["text"].startswith("Запомнил:") and reply["meta"]["remembered"]["project_id"] == pid
     assert "Сервис уже сделал" in gemini.requests[0]["contents"][-1]["parts"][0]["text"]
+    assert K.knowledge_view(store, pid)["groups"][0]["items"][0]["origin"] == f"из чата клипа #{plan['id']}"
+
+
+def test_remember_button_marks_the_clip(env):
+    client, store, source, pid, _other = env
+    plan = _plan(store, source["id"])
+    added = client.post(f"/api/projects/{pid}/knowledge", json={
+        "text": "Глеб — модератор", "from_chat": True, "source_id": source["id"], "clip_plan_id": plan["id"],
+        "origin_ref": f"clip#{plan['id']}"}).json()
+    assert added["created"] and added["fact"]["clip_plan_id"] == plan["id"]
     assert K.knowledge_view(store, pid)["groups"][0]["items"][0]["origin"] == f"из чата клипа #{plan['id']}"
 
 

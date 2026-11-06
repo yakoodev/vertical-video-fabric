@@ -11,6 +11,8 @@ export interface ChatThread {
   project_id: number | null;
   /** Чат видео: id видео. Проект у такого чата — тот, где видео лежит сейчас. */
   source_id?: number | null;
+  /** Чат клипа: id клипа. Проект — тот, где клип сейчас. */
+  clip_plan_id?: number | null;
   title: string;
   is_default: boolean;
   model: string;
@@ -28,6 +30,8 @@ export interface ChatThreadList {
   general: ChatThread[];
   /** Чаты видео вне проектов. */
   videos: ChatThread[];
+  /** Чаты клипов вне проектов. */
+  clips: ChatThread[];
   ai: AiStatus;
 }
 
@@ -117,6 +121,8 @@ export interface ChatMsg {
     attachments?: ChatAttachment[];
     service?: boolean;
     changes?: unknown[];
+    /** Реплика прежнего чата клипа: хранится на старом месте, только для чтения. */
+    legacy?: boolean;
     /** Сервис записал факт из «запомни: …» (app/project_knowledge.py). */
     remembered?: { id: number; text: string; created: boolean; project_id: number };
   };
@@ -136,6 +142,7 @@ export interface ChatThreadView {
   thread: ChatThread;
   project: { id: number; name: string; kind: string; auto_rules: string } | null;
   video: { id: number; title: string } | null;
+  clip: { id: number; title: string; source_id: number | null } | null;
   messages: ChatMsg[];
   running: boolean;
   live: LiveRun | null;
@@ -155,6 +162,7 @@ export const chatKeys = {
   thread: (id: number) => ["chat", "thread", id] as const,
   models: ["chat", "models"] as const,
   clip: (id: number) => ["chat", "clip", id] as const,
+  clipThread: (planId: number) => ["chat", "clip-thread", planId] as const,
   approval: (id: number) => ["approvals", "one", id] as const,
 };
 
@@ -164,6 +172,7 @@ export const chatApi = {
     api.post<ChatThread>("/api/chat/threads", body),
   thread: (id: number) => api.get<ChatThreadView>(`/api/chat/threads/${id}`),
   videoThread: (sourceId: number) => api.post<ChatThread>("/api/chat/video-thread", { source_id: sourceId }),
+  clipThread: (clipPlanId: number) => api.post<ChatThread>("/api/chat/clip-thread", { clip_plan_id: clipPlanId }),
   update: (id: number, body: { title?: string; model?: string }) => api.patch<ChatThread>(`/api/chat/threads/${id}`, body),
   remove: (id: number) => api.del<{ deleted: number }>(`/api/chat/threads/${id}`),
   clear: (id: number) => api.del<{ deleted: number }>(`/api/chat/threads/${id}/messages`),

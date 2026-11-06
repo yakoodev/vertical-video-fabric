@@ -19,7 +19,7 @@ const AgentPanel = lazyPage<{ clipPlanId: number; onChanged: () => void; compact
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
-/** Чат клипа: тот же, что на экране клипа и во вкладке ИИ в монтаже. Открытый монтаж сам подхватит правки агента. */
+/** Чат клипа: та же переписка, что на экране клипа и во вкладке ИИ в монтаже. Открытый монтаж сам подхватит правки агента. */
 function ClipChat({ planId }: { planId: number }) {
   const qc = useQueryClient();
   return (
@@ -66,8 +66,9 @@ function ThreadChat({ projectId }: { projectId: number | null }) {
     enabled: projectId != null,
     staleTime: Infinity,
   });
+  // Чаты клипов — на своей ступени и в «Все переписки»: в переключателе проекта их не видно.
   const threads: ChatThread[] =
-    projectId != null ? list.data?.projects.find((p) => p.id === projectId)?.threads ?? [] : list.data?.general ?? [];
+    projectId != null ? (list.data?.projects.find((p) => p.id === projectId)?.threads ?? []).filter((t) => !t.clip_plan_id) : list.data?.general ?? [];
   const [picked, setPicked] = useState<number | null>(null);
   const latest = [...threads].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
   const fallback = projectId != null ? main.data?.thread_id ?? null : latest?.id ?? null;
