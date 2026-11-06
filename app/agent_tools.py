@@ -19,24 +19,22 @@
 * Перед первой правкой вызывается ``ctx.before_change()`` — это снимок истории
   (Ctrl+Z). Встроенный агент делает ОДИН снимок на весь свой ход («ИИ: …»),
   MCP — по снимку на каждый вызов, меняющий клип.
+
+Где что лежит. Здесь реестр и запуск (``run_tool``) и обзор клипа (``get_clip``, ``view_frame``). Обработчики и
+описания инструментов — в своём домене: субтитры ``app/subtitle_tools.py``, файлы ``app/asset_tools.py``, кадр
+``app/framing_tools.py``, слои и камера ``app/layer_tools.py``, звук ``app/sound_tools.py``, куски и вырезы
+``app/cut_tools.py``, источник ``app/source_tools.py``, оформление ``app/brand_tools.py``; общее —
+``app/tool_core.py`` и ``app/layer_lint.py``. Домены не импортируют этот модуль, а он их — чтобы все имена
+оставались доступны отсюда.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import math
-import re
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from app import motion
-from app.clip_settings import normalize_render_settings
-from app.backgrounds import BACKGROUND_KINDS as BG_KINDS
 from app.canvas import is_canvas
-from app.promo_lint import has_device_layers, promo_warnings
-from app.subtitles.phantoms import is_phantom_text
 
 # Инструменты разложены по доменам (app/*_tools.py); имена остаются доступны и отсюда.
 from app.tool_core import (  # noqa: F401
@@ -63,7 +61,6 @@ from app.subtitle_tools import (  # noqa: F401
     h_set_subtitle_words, h_set_subtitles, h_snap_subtitles_to_speech, h_translate_subtitles, h_tts_preview,
     SUBTITLE_BAND, subtitle_gaps, word_at, word_time, words_clip_to_plain,
 )
-from app.subtitle_tools import tools as subtitle_tools_entries
 from app.asset_tools import (  # noqa: F401
     _animation_fields, _font_manifest, _IMAGE_EXTS, _layer_ref, _video_asset_result, _VIDEO_EXTS,
     h_add_image_from_url, h_add_video_from_source, h_add_video_from_url, h_generate_image, h_list_assets,
@@ -72,7 +69,6 @@ from app.asset_tools import (  # noqa: F401
     MAX_UPLOAD_VIDEO_BYTES, NO_REAL_PEOPLE_PLAYBOOKS, NO_REAL_PEOPLE_RE, people_gate, real_people_rule,
     similar_pack_refs, source_clip_args,
 )
-from app.asset_tools import tools as asset_tools_entries
 from app.framing_tools import (  # noqa: F401
     _absent_text, _avatar_bits, _avatar_layout_args, _cam_bits, _clip_time_cams, _clip_to_source_t, _face_for_cam,
     _focus_all, _focus_avatar_warnings, _format_view, _framing_view, _known_avatar_places, _piece_words, _place_view,
@@ -81,7 +77,6 @@ from app.framing_tools import (  # noqa: F401
     facecam_warnings, fit_avatar_faces, h_auto_focus, h_detect_avatar, h_set_aspect, h_set_backdrop, h_set_chroma_key,
     h_set_focus, h_set_format, h_set_layout, known_avatar, MAX_CAM_CHECKS, source_span_to_clip,
 )
-from app.framing_tools import tools as framing_tools_entries
 from app.layer_tools import (  # noqa: F401
     _anchor_zoom_keys, _AT_WORD_SCHEMA, _crop_aspect, _deep_merge, _drop_emoji, _EMOJI_RE, _image_card_warnings,
     _label_add_layers, _label_camera, _layer_index, _layer_problems, _layer_schema, _layer_summary,
@@ -94,13 +89,11 @@ from app.layer_tools import (  # noqa: F401
     MAX_LAYERS_PER_CALL, motion_enums, motion_reference, PUNCH_HOLD, punch_keys, PUNCH_LEAD, PUNCH_RELEASE,
     PUNCH_ZOOM, scene_check, SCENE_TEMPLATES, SLOW_ZOOM_MIN, SLOW_ZOOM_SEC, slow_zoom_warnings,
 )
-from app.layer_tools import tools as layer_tools_entries
 from app.sound_tools import (  # noqa: F401
     _audio_view, _is_promo, _music_track_hint, _music_warning, _source_audio_view, _track_warnings,
     h_add_music_from_url, h_add_sound_from_url, h_censor_profanity, h_find_noises, h_list_music, h_listen,
     h_mute_audio, h_set_music, h_set_source_audio, h_set_source_gain, h_source_loudness,
 )
-from app.sound_tools import tools as sound_tools_entries
 from app.cut_tools import (  # noqa: F401
     _beat_grid, _color_entries, _cuts_view, _fit_pip_insert, _plain_span_to_clip, _source_has_key, CAPTION_HALF,
     clip_cuts_to_plain, describe_inserts, ending_warning, h_add_insert, h_apply_cuts, h_auto_edit, h_freeze_frame,
@@ -109,21 +102,25 @@ from app.cut_tools import (  # noqa: F401
     INSERT_KIND_WORDS, MAX_FIT_PIECE_SEC, MIN_FINISHED_SEC, plain_cuts_to_clip, refit_inserts, short_clip_warning,
     TIME_SCALES_NOTE,
 )
-from app.cut_tools import tools as cut_tools_entries
 from app.source_tools import (  # noqa: F401
     _audio_brief, _chat_ready, _page_args, _page_info, CHAT_IMPORT_NOTE, DISCOVERY_TOOLS, h_chat_activity,
     h_create_canvas_clip, h_create_clip, h_get_chat, h_get_performance, h_list_clips, h_list_modules, h_list_projects,
     h_source_contact_sheet, h_source_shots, h_source_transcript, LIST_PAGE_DEFAULT, LIST_PAGE_MAX, MAX_CHAT_MESSAGES,
     MAX_CHAT_WINDOW_SEC,
 )
-from app.source_tools import tools as source_tools_entries
 from app.brand_tools import (  # noqa: F401
     _END_HOLD_ASK_RE, _scaffold_assets, apply_playbook_defaults, END_SCREEN_FIELDS, h_apply_brand, h_build_app_promo,
     h_compose_cover, h_get_playbook, h_list_brands, h_set_end_screen, h_set_nameplate, nameplate_after_hook,
     NAMEPLATE_FIELDS, SCAFFOLD_POSES,
 )
-from app.brand_tools import tools as brand_tools_entries
-# --- реэкспорт конец ---
+from app.asset_tools import tools as asset_tools
+from app.brand_tools import tools as brand_tools
+from app.cut_tools import tools as cut_tools
+from app.framing_tools import tools as framing_tools
+from app.layer_tools import tools as layer_tools
+from app.sound_tools import tools as sound_tools
+from app.source_tools import tools as source_tools
+from app.subtitle_tools import tools as subtitle_tools
 
 
 def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
@@ -503,7 +500,8 @@ TOOL_ORDER = (
 )
 
 
-def _remaining_tools() -> list[Tool]:
+def _clip_view_tools() -> list[Tool]:
+    """Обзор клипа: то, что собирает сведения из всех доменов."""
     return [
         Tool(
             "get_clip", "Смотрю клип",
@@ -563,8 +561,10 @@ def _remaining_tools() -> list[Tool]:
 
 def _build_registry() -> list[Tool]:
     rank = {name: index for index, name in enumerate(TOOL_ORDER)}
-    entries = [*_remaining_tools(), *brand_tools_entries(), *source_tools_entries(), *cut_tools_entries(), *sound_tools_entries(), *layer_tools_entries(), *framing_tools_entries(), *asset_tools_entries(), *subtitle_tools_entries(), ]
+    entries = [*_clip_view_tools(), *subtitle_tools(), *asset_tools(), *framing_tools(), *layer_tools(), *sound_tools(),
+               *cut_tools(), *source_tools(), *brand_tools()]
     return sorted(entries, key=lambda tool: rank.get(tool.name, len(rank)))
+
 
 _REGISTRY: dict[str, Tool] | None = None
 
