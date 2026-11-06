@@ -1,38 +1,35 @@
 import { Link } from "react-router-dom";
 import { clipPlansApi } from "@/api/clipPlans";
 import { qk } from "@/api/keys";
-import { type Aspect, type MontageInsert, type TransitionSettings, segSpeed } from "@/api/types";
+import { type Aspect, type MontageInsert, type TransitionSettings } from "@/api/types";
 import { FxChainEditor } from "@/pages/workspace/FxChainEditor";
 import { ApiError } from "@/api/client";
-import { MissingSourceNotice } from "@/components/MissingSourceNotice";
 import { SubtitleEditor } from "@/pages/workspace/SubtitleEditor";
 import { Group, InspectorTabs, MoreSection } from "@/pages/workspace/InspectorParts";
 import { type SubtitleWord } from "@/pages/workspace/subtitlePreview";
-import { clipAccent, formatRefSize, frameSize, sourceStrategy, type Layer } from "@/motion";
+import { clipAccent, formatRefSize, frameSize, type Layer } from "@/motion";
 import { duplicateLayer, LAYER_ICON, layerTitle } from "@/pages/workspace/motion/edit";
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
-import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import { clipPath } from "@/lib/paths";
 import { LayoutPanel } from "@/pages/workspace/LayoutPanel";
 import { SourceAudioPanel } from "@/pages/workspace/SourceAudioPanel";
 import { CutsPanel } from "@/pages/workspace/CutsPanel";
 import { LintPanel } from "@/pages/workspace/LintPanel";
-import { BackdropLive, canvasLabel } from "@/pages/workspace/canvasClip";
+import { canvasLabel } from "@/pages/workspace/canvasClip";
 import { cutsTotal } from "@/api/cuts";
 import { CENSOR_STYLES, muteTotal, type CensorStyle } from "@/api/mute";
 import { GAIN_MAX_DB, GAIN_MIN_DB, normalizeGain } from "@/api/gain";
 import { playbackApi } from "@/api/playback";
-import { GeneratePanel, MemesPanel, SoundsPanel, StickersPanel, TemplatesPanel, TextPanel } from "@/pages/workspace/motion/LibraryPanels";
-import { ClipTimeline } from "@/pages/workspace/ClipTimeline";
-import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
 import { formatDuration } from "@/components/ui";
-import { clipTimeOf, focusWindowPos, focusXAt, FRAME_SEC, formatTimecode, LIB_TABS } from "@/pages/workspace/editor/editorHelpers";
-import { CropFrame } from "@/pages/workspace/editor/CropFrame";
+import { clipTimeOf, focusWindowPos, focusXAt, formatTimecode } from "@/pages/workspace/editor/editorHelpers";
 import { FocusEditor } from "@/pages/workspace/editor/FocusEditor";
 import { LookPicker } from "@/pages/workspace/editor/LookPicker";
 import { colorBadge, PieceColorControl, SegmentSpeedControl, speedBadge } from "@/pages/workspace/editor/PieceControls";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
+import { EditorLibrary } from "@/pages/workspace/editor/EditorLibrary";
+import { EditorCenter } from "@/pages/workspace/editor/EditorCenter";
+import { EditorTimeline } from "@/pages/workspace/editor/EditorTimeline";
 
 /** Шапка редактора: назад к клипу или черновикам, название, шаг назад, ИИ-монтаж. */
 export function EditorViewBar({ session }: { session: DraftsEditorSession }) {
@@ -106,449 +103,29 @@ export function EditorViewBar({ session }: { session: DraftsEditorSession }) {
 /** Экран редактора: библиотека, превью, инспектор и таймлайн. Состояние — в useDraftsEditorState. */
 export function EditorScreen({ session }: { session: DraftsEditorSession }) {
   const {
-    sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, tcRef, subLinesRef, subWordsRef, bannerImgRef,
-    bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, recordMissing, proxyReady, sourceMissing, 
-    banners, tracks, subs, assetsQuery, pickableAssets, navigate, playbackRef, playRanges, stopPlayback, openEditor,
-    musicPreviewRef, musicFromUrl, patchTransition, reframedView, motionViewRef, inlineCancelRef, motionFonts,
-    clipNow, patchCover, planWave, planSubs, plans, selected, transitionOpts, agentRunningRef, flushSettings,
+    sourceId, qc, toast, videoRef, subLinesRef, subWordsRef, inspScrollRef, recordMissing, sourceMissing, banners,
+    tracks, subs, assetsQuery, pickableAssets, navigate, playbackRef, musicPreviewRef, musicFromUrl, patchTransition,
+    motionFonts, clipNow, patchCover, planWave, planSubs, plans, selected, transitionOpts, flushSettings,
     applyToFavorites, composeCover, autoEdit, mixReport, autoMix, censorMat, brands, applyBrand, segmentSpeed,
-    snapBeats, pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit,
-    pickPointRef, setFixedFrame, setPlanFlag, activePlan, uniquePresets, selectedPreset, lookCss, lookFrames,
-    tcSegsRef, libTab, setLibTab, tlSelected, setTlSelected, subLines, setSubLines, mediaSrc, activePlanId,
-    setSelectedSeg, loop, setLoop, rate, setRate, presetId, setPresetId, subsOn, setSubsOn, subId, setSubId,
-    subEngine, setSubEngine, bannerOn, setBannerOn, bannerId, setBannerId, musicOn, setMusicOn, trackId, setTrackId,
-    musicStartSec, setMusicStartSec, musicUrl, setMusicUrl, mirror, setMirror, transition, cover, inserts,
-    setInserts, layers, setLayers, camera, setCamera, layout, setLayout, cuts, setCuts, backdrop, setBackdrop, mute,
-    setMute, gain, setGain, audioEdit, setAudioEdit, mixSettings, setMixSettings, aspect, setAspect, layersFmt,
-    setLayersFmt, endHoldSec, setEndHoldSec, motionBlur, setMotionBlur, inlineEdit, setInlineEdit, coverUploading,
-    setCoverUploading, setClipFileOpen, watchOpen, setAiMontageOpen, setSettingsNonce, setAiGoal, setSubsWide,
-    useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, showZones, setShowZones, bannerHeightPct,
-    setBannerHeightPct, bannerPosPct, setBannerPosPct, subPosPct, setSubPosPct, coverTitle, setCoverTitle,
-    coverStyle, setCoverStyle, censorStyle, setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode,
-    pickingPoint, setPickingPoint, moduleOn, source, isCanvas, selectedSegment, clipTimeNow, seekClipTime, stepClip,
-    openWatch, insertsPreview, clipTimeExact, selectedLayerId, captionWords, onInsertPointerDown,
-    onInsertPointerMove, onOverlayDoubleClick, commitInlineEdit, onInsertPointerUp, splitAtClip, deleteSelected,
-    clipDuration, addLayers, addAtCursor, dropLayersAt, selectOnTimeline, inspTabs, inspActive, pickInspTab,
-    selectedPieceIndex, railPlans, planDur, planRender, planThumb,
+    pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, pickPointRef,
+    activePlan, uniquePresets, selectedPreset, lookFrames, tcSegsRef, libTab, tlSelected, setTlSelected, setSubLines,
+    setSelectedSeg, presetId, setPresetId, subsOn, setSubsOn, subId, setSubId, subEngine, setSubEngine, bannerOn,
+    setBannerOn, bannerId, setBannerId, musicOn, setMusicOn, trackId, setTrackId, musicStartSec, setMusicStartSec,
+    musicUrl, setMusicUrl, mirror, setMirror, transition, cover, inserts, setInserts, layers, setLayers, camera,
+    setCamera, layout, setLayout, cuts, setCuts, backdrop, setBackdrop, mute, setMute, gain, setGain, mixSettings,
+    setMixSettings, aspect, setAspect, layersFmt, setLayersFmt, endHoldSec, setEndHoldSec, motionBlur, setMotionBlur,
+    coverUploading, setCoverUploading, setClipFileOpen, setSettingsNonce, setSubsWide, useVlmFocus, setUseVlmFocus,
+    packagePieces, setPackagePieces, showZones, setShowZones, bannerHeightPct, setBannerHeightPct, bannerPosPct,
+    setBannerPosPct, subPosPct, setSubPosPct, coverTitle, setCoverTitle, coverStyle, setCoverStyle, censorStyle,
+    setCensorStyle, brandPick, setBrandPick, setPickingPoint, moduleOn, source, isCanvas, selectedSegment,
+    clipTimeNow, seekClipTime, clipTimeExact, selectedLayerId, captionWords, clipDuration, inspTabs, inspActive,
+    pickInspTab, selectedPieceIndex,
   } = session;
   return (
     <div className={`ed${libTab === "frame" ? " ed--wide-lib" : ""}`}>
-      <nav className="ed-tabs" aria-label="Библиотека">
-        {libTabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            className={`ed-tab${libTab === tab.key ? " active" : ""}`}
-            onClick={() => setLibTab(tab.key)}
-            title={tab.hint}
-          >
-            <span className="ed-tab-ico" aria-hidden>
-              {tab.icon}
-            </span>
-            <span className="ed-tab-label">{tab.label}</span>
-          </button>
-        ))}
-      </nav>
+      <EditorLibrary session={session} />
 
-      <aside className="ed-lib" aria-label={LIB_TABS.find((t) => t.key === libTab)?.label}>
-        {libTab === "moments" ? (
-          <>
-            <div className="ed-lib-head">
-              <strong>{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Черновики"}</strong>
-              <span className="muted">{railPlans.length}</span>
-            </div>
-            <div className="ed-lib-moments">
-              {railPlans.map((p) => (
-          <button
-            key={p.id}
-            className={`ed-rail-item${p.id === activePlan?.id ? " active" : ""}`}
-            onClick={() => openEditor(p.id)}
-            title={p.title || `Клип #${p.id}`}
-          >
-            {planThumb(p)}
-            {p.favorite ? <span className="ed-rail-star">★</span> : null}
-            <span className="ed-rail-dur mono">{formatDuration(planDur(p))}</span>
-          </button>
-        ))}
-            </div>
-          </>
-        ) : null}
-        {/* Исходник с рамкой 9:16 живёт всегда: из его <video> рисуется превью.
-            На других вкладках он «припаркован» — невидим, но играет. */}
-        <div className={`ed-lib-frame${libTab === "frame" ? "" : " parked"}`}>
-          <div className="ed-lib-head">
-            <strong>{isCanvas ? "Холст" : "Кадр видео"}</strong>
-            <span className="muted">
-              {isCanvas ? "видео нет — весь кадр фон; сменить — «Фон холста» справа" : `тащи рамку — так встанет кадр ${aspect}`}
-            </span>
-          </div>
-          <div className="ed-stage">
-            <div
-              className={`stage-frame${mirror ? " mirrored" : ""}`}
-              style={{
-                ...(source.width && source.height
-                  ? {
-                      aspectRatio: `${source.width} / ${source.height}`,
-                      // Cap by height too, or max-height would squash the frame and
-                      // the % -positioned crop window would drift off the video.
-                      maxWidth: `calc(52vh * ${source.width} / ${source.height})`,
-                      margin: "0 auto",
-                    }
-                  : {}),
-                // Mirror the whole stage so the crop window and zones stay aligned
-                // with what the render actually produces (hflip after the crop).
-                transform: mirror ? "scaleX(-1)" : undefined,
-              }}
-            >
-              <video
-                ref={videoRef}
-                src={sourceMissing || watchOpen ? undefined : mediaSrc ?? undefined}
-                controls={!isCanvas && !sourceMissing}
-                preload="metadata"
-                style={isCanvas ? { opacity: 0 } : lookCss ? { filter: lookCss } : undefined}
-              />
-              {isCanvas ? (
-                // Основа холста играет невидимой (по ней идёт время), видно — фон клипа.
-                <BackdropLive
-                  className="stage-canvas-bg"
-                  bg={backdrop}
-                  accent={clipAccent(layers)}
-                  clipTime={() => clipTimeOf(activePlan?.segments ?? [], videoRef.current?.currentTime ?? 0) ?? 0}
-                />
-              ) : null}
-              {selectedPreset?.vignette ? (
-                <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
-              ) : null}
-              <CropFrame
-                srcW={source.width}
-                srcH={source.height}
-                crop={source.content_crop}
-                segments={activePlan?.segments ?? []}
-                videoRef={videoRef}
-                showBanner={showZones && bannerOn}
-                bannerHeightPct={bannerHeightPct}
-                bannerPosPct={bannerPosPct}
-                showSubs={showZones && subsOn}
-                subPosPct={subPosPct}
-                focusPreset={source.focus_preset}
-                onManualX={activePlan && !isCanvas ? (x) => setFixedFrame(activePlan.id, x) : undefined}
-                mirror={mirror}
-                phoneRef={phoneRef}
-                insertsPreview={insertsPreview}
-                overlayRef={phoneOverlayRef}
-                subLinesRef={subLinesRef}
-                subWordsRef={subWordsRef}
-                subStyleRef={subStyleRef}
-                bannerRef={bannerImgRef}
-                bannerGeomRef={bannerGeomRef}
-                subPosPctRef={subPosPctRef}
-                motionRef={motionViewRef}
-                layout={layout}
-                chromaKey={source.chroma_key}
-                backdrop={backdrop}
-                format={aspect}
-                suspended={watchOpen}
-              />
-            </div>
-            <div className="editor-stage-meta mono">
-              {isCanvas
-                ? `${canvasLabel(backdrop)} · ${aspect} · ${Math.round(clipDuration)} с`
-                : `${formatDuration(source.duration_sec)} · ${source.width}×${source.height} → ${aspect}${
-                    sourceStrategy(aspect, source.width, source.height, source.content_crop) === "fit" ? " (целиком на подложке)" : ""
-                  }`}
-            </div>
-          </div>
-        </div>
-        {libTab === "ai" && activePlan && moduleOn("editor_agent") ? (
-          <AgentPanel
-            clipPlanId={activePlan.id}
-            onRunningChange={(on) => {
-              agentRunningRef.current = on;
-              if (on) void flushSettings();
-            }}
-            onChanged={async () => {
-              await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
-              setSettingsNonce((n) => n + 1);
-            }}
-          />
-        ) : null}
-        {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} format={layers.length || camera.length ? layersFmt : aspect} /> : null}
-        {libTab === "text" ? (
-          <TextPanel
-            onAdd={addAtCursor}
-            onCaptions={(style) => {
-              // Один слой субтитров на клип: повторный выбор меняет стиль.
-              const existing = layers.find((l) => l.type === "captions");
-              if (existing) {
-                setLayers((prev) =>
-                  prev.map((l) => (l.id === existing.id ? ({ ...l, hidden: false, props: { ...l.props, style } } as Layer) : l)),
-                );
-                setTlSelected({ kind: "layer", id: existing.id });
-              } else {
-                addLayers(
-                  [{ id: "new", type: "captions", start: 0, end: clipDuration, x: 0.5, y: 0.68, props: { style } } as Layer],
-                  0,
-                );
-              }
-              if (!planSubs.data?.words?.length) toast.push("Нужны субтитры клипа: «Распознать речь» в группе «Субтитры»", "info");
-            }}
-          />
-        ) : null}
-        {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
-        {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
-        {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={pickableAssets} clipId={activePlanId} /> : null}
-        {libTab === "generate" && libTabs.some((t) => t.key === "generate") ? <GeneratePanel onAdd={addAtCursor} /> : null}
-        {libTab === "media" ? (
-          <div className="ed-lib-media">
-            <div className="ed-shelf-head">
-            <span className="ed-shelf-title">Полка вставок</span>
-            <span className="muted ed-shelf-hint">перетащи файл на дорожку «Вставки» или кликни дважды — встанет под курсором</span>
-            {moduleOn("ai_montage") ? (
-              <button
-                className="btn sm"
-                disabled={!activePlan}
-                onClick={async () => {
-                  await flushSettings();
-                  setAiGoal("Клип не перекраивай: оставь куски как есть, только расставь мемы из библиотеки по лучшим моментам.");
-                  setAiMontageOpen(true);
-                }}
-                title="ИИ разложит мемы по клипу, не трогая куски"
-              >
-                ✨ ИИ подберёт мемы
-              </button>
-            ) : null}
-          </div>
-          <AssetDrawer
-            clipId={activePlanId}
-            onAdd={(assetId) => {
-              const asset = assetsQuery.data?.find((a) => a.id === assetId);
-              setInserts((prev) => [
-                ...prev,
-                {
-                  asset_id: assetId,
-                  at: clipTimeNow(),
-                  duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
-                  mode: asset?.kind === "audio" ? "sound" : "full",
-                  volume: 1,
-                  duck: asset?.kind !== "audio",
-                },
-              ]);
-            }}
-          />
-          </div>
-        ) : null}
-      </aside>
-
-      <div className="ed-center">
-        <div className="ed-phone" title={`Так будет выглядеть клип ${aspect}`}>
-            <div
-              className="ed-phone-screen"
-              data-fmt={aspect}
-              style={{ "--fmt-ar": `${frameSize(aspect).w} / ${frameSize(aspect).h}`, "--fmt-k": frameSize(aspect).w / frameSize(aspect).h } as React.CSSProperties}
-            >
-              <canvas
-                ref={phoneRef}
-                width={frameSize(aspect).w / 2}
-                height={frameSize(aspect).h / 2}
-                style={{
-                  filter: lookCss || undefined,
-                  transform: mirror ? "scaleX(-1)" : undefined,
-                }}
-              />
-              <canvas
-                ref={phoneOverlayRef}
-                className={`ed-phone-overlay${pickingPoint ? " picking" : ""}`}
-                width={frameSize(aspect).w}
-                height={frameSize(aspect).h}
-                style={{ pointerEvents: "auto", touchAction: "none" }}
-                title="Слой или мем можно двигать мышкой, тянуть за уголок, крутить за кружок; двойной клик по тексту — править"
-                onPointerDown={onInsertPointerDown}
-                onPointerMove={onInsertPointerMove}
-                onPointerUp={onInsertPointerUp}
-                onPointerCancel={onInsertPointerUp}
-                onDoubleClick={onOverlayDoubleClick}
-              />
-              {inlineEdit ? (
-                <textarea
-                  className="ed-inline-text"
-                  autoFocus
-                  defaultValue={inlineEdit.text}
-                  style={{ left: `${inlineEdit.left}%`, top: `${inlineEdit.top}%`, width: `${inlineEdit.width}%` }}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onBlur={(e) => commitInlineEdit(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === "Escape") {
-                      // Отмена: blur от размонтирования поля не должен сохранить текст.
-                      inlineCancelRef.current = true;
-                      setInlineEdit(null);
-                    }
-                    else if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      commitInlineEdit(e.currentTarget.value);
-                    }
-                  }}
-                />
-              ) : null}
-              {selectedPreset?.vignette ? (
-                <div className="stage-vignette" style={{ opacity: Math.min(1, selectedPreset.vignette) }} />
-              ) : null}
-              {showZones && bannerOn && !bannerId ? (
-                <div className="safe-zone safe-zone--banner" style={{ top: `${bannerPosPct}%`, height: `${bannerHeightPct}%` }}>
-                  <span>Баннер</span>
-                </div>
-              ) : null}
-              {showZones && subsOn && !planSubs.data?.words?.length ? (
-                <div className="safe-zone safe-zone--subs" style={{ bottom: `${subPosPct}%` }}>
-                  <span>Субтитры</span>
-                </div>
-              ) : null}
-              {sourceMissing && activePlan ? (
-                planRender(activePlan.id) ? (
-                  <video
-                    key={planRender(activePlan.id)!.id}
-                    className="ed-phone-render"
-                    src={`/media/clips/${planRender(activePlan.id)!.id}`}
-                    poster={`/media/clips/${planRender(activePlan.id)!.id}/thumb`}
-                    controls
-                    preload="metadata"
-                  />
-                ) : (
-                  <div className="src-missing-stage ed-phone-render">Рендера этого клипа нет</div>
-                )
-              ) : null}
-              <span className="ed-phone-tag mono">{aspect}</span>
-            </div>
-          </div>
-        {recordMissing ? <MissingSourceNotice source={source} compact proxyReady={proxyReady} /> : null}
-        {reframedView ? (
-          <div className="ed-reframe-note" role="status">
-            <span>
-              Слои размечены в <b>{layersFmt}</b> — превью показывает их перенос в <b>{aspect}</b>, как сделает рендер
-              (одним масштабом по сценам). Двигать мышью — после разметки.
-            </span>
-            <button
-              type="button"
-              className="btn sm"
-              title={`Сохранить перенесённые слои и камеру как разметку ${aspect}: дальше слои правятся прямо в этом кадре. Остальные форматы будут переноситься уже из ${aspect}`}
-              onClick={() => {
-                setLayers(reframedView.layers);
-                setCamera(reframedView.camera);
-                setLayersFmt(aspect);
-                toast.push(`Слои размечены в ${aspect}: теперь их можно двигать в этом кадре (Ctrl+Z в истории клипа — откат)`, "success");
-              }}
-            >
-              Разметить слои в этом формате
-            </button>
-          </div>
-        ) : null}
-        {sourceMissing && activePlan ? (
-          <div className="ed-transport">
-            <button className="btn primary sm" onClick={() => void openWatch()} title="Записи нет: покажет готовый рендер и скажет, что с монтажом">
-              ▶ Смотреть монтаж
-            </button>
-          </div>
-        ) : null}
-        {sourceMissing ? null : <div className="ed-transport">
-          <button
-            className="btn primary sm ed-watch-btn"
-            disabled={!activePlan?.segments.length}
-            onClick={() => void openWatch()}
-            title="Весь клип со склейками, звуком и музыкой на весь экран, без рендера. Там: пробел — плей/пауза, ←/→ — кадр, Esc — закрыть"
-          >
-            ▶ Смотреть монтаж
-          </button>
-          <button
-            className="btn sm"
-            disabled={!activePlan?.segments.length}
-            onClick={() =>
-              activePlan && playRanges(activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec, speed: segSpeed(s) })))
-            }
-            title="Играть в телефоне слева: поверхность правки (без переходов и стоп-кадров). Весь монтаж — «Смотреть монтаж»"
-          >
-            ▶ Превью клипа
-          </button>
-          <button
-            className="btn sm"
-            disabled={!selectedSegment}
-            title={selectedSegment ? "" : "Выберите сегмент на таймлайне"}
-            onClick={() => selectedSegment && playRanges([{ start: selectedSegment.start_sec, end: selectedSegment.end_sec }])}
-          >
-            ▶ Сегмент
-          </button>
-          <button className="btn sm" onClick={stopPlayback}>
-            ⏹ Стоп
-          </button>
-          <div className="ed-tc" title="Время клипа · ←/→ — кадр, Shift+←/→ — секунда, пробел — плей/пауза">
-            <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-1e6)} aria-label="В начало клипа">
-              ⏮
-            </button>
-            <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-FRAME_SEC)} aria-label="Кадр назад">
-              ◂
-            </button>
-            <span className="ed-tc-now mono" ref={tcRef}>
-              00:00.00
-            </span>
-            <span className="ed-tc-total mono muted">/ {formatTimecode(activePlan ? planDur(activePlan) : 0)}</span>
-            <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(FRAME_SEC)} aria-label="Кадр вперёд">
-              ▸
-            </button>
-          </div>
-          <label className="switch">
-            <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
-            <span className="switch-track" />
-            <span>Зациклить</span>
-          </label>
-          <div className="seg speed-seg" role="radiogroup" aria-label="Скорость">
-            {[0.5, 1, 1.5, 2].map((r) => (
-              <button
-                key={r}
-                type="button"
-                role="radio"
-                aria-checked={rate === r}
-                className={`seg-item${rate === r ? " active" : ""}`}
-                title="Скорость воспроизведения"
-                onClick={() => setRate(r)}
-              >
-                {r}×
-              </button>
-            ))}
-          </div>
-          {/* Холст — кадр 9:16 целиком: рамку двигать некуда. */}
-          {activePlan && !isCanvas
-            ? (() => {
-                const fx = activePlan.segments[0]?.focus ?? [];
-                const constant = fx.length > 0 && fx.every((p) => Math.abs(p.x - fx[0].x) < 0.001);
-                const mx = constant ? fx[0].x : null;
-                return (
-                  <div className="ed-fixed">
-                    <span className="muted">Фикс. рамка</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={Math.round((mx ?? 0.5) * 100)}
-                      onChange={(e) => setFixedFrame(activePlan.id, Number(e.target.value) / 100)}
-                      title="Зафиксировать кадр 9:16 по горизонтали (или тащи рамку на превью). Пишет точки фокуса, не конфликтует с кейфреймами."
-                    />
-                    <span className="mono ed-fixed-val">{mx == null ? "трек" : `${Math.round(mx * 100)}%`}</span>
-                    {moduleOn("autofocus") ? (
-                      <button
-                        className="btn sm"
-                        disabled={autofocus.isPending || !activePlan.segments.length}
-                        onClick={() => autofocus.mutate(activePlan.segments.map((s) => s.id))}
-                        title="Пересчитать автофокус для этого клипа"
-                      >
-                        Авто
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })()
-            : null}
-        </div>}
-      </div>
+      <EditorCenter session={session} />
 
       <aside className="ed-inspector">
         <InspectorTabs tabs={inspTabs} active={inspActive} onPick={pickInspTab} />
@@ -1925,100 +1502,7 @@ export function EditorScreen({ session }: { session: DraftsEditorSession }) {
         </div>
       </aside>
 
-      <div className="panel editor-timeline ed-bottom">
-          <div className="ed-tl-head">
-            <strong>{activePlan ? activePlan.title || `Клип #${activePlan.id}` : ""}</strong>
-            <span className="muted mono">
-              {activePlan ? `${formatDuration(planDur(activePlan))} · ${activePlan.segments.length} сегм.` : ""}
-            </span>
-            {activePlan ? (
-              <button
-                className={`mo-act${activePlan.favorite ? " fav" : ""}`}
-                title={activePlan.favorite ? "Убрать из избранного" : "В избранное"}
-                onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
-              >
-                {activePlan.favorite ? "★" : "☆"}
-              </button>
-            ) : null}
-            {activePlan ? (
-              <span className="ed-snap">
-                <select
-                  className="input"
-                  value={snapMode}
-                  disabled={snapBeats.isPending}
-                  onChange={(e) => setSnapMode(e.target.value as "beat" | "downbeat" | "joins")}
-                  title="Что ставить на доли"
-                >
-                  <option value="beat">слои, ключи, камера → доли</option>
-                  <option value="downbeat">… → сильные доли</option>
-                  <option value="joins">+ склейки кусков → доли</option>
-                </select>
-                <button
-                  className="btn sm"
-                  disabled={snapBeats.isPending}
-                  onClick={() => snapBeats.mutate({ planId: activePlan.id, mode: snapMode })}
-                  title="Начала слоёв, ключевые кадры и наезды камеры (и склейки — в третьем режиме) — на ближайшую долю музыки клипа, если до неё ≤ 0.15 с. Сетка — трек «Музыка», без него — доли звука клипа. Субтитры и чат не двигаются. Отмена — «↩ Шаг назад»"
-                >
-                  {snapBeats.isPending ? "…" : "♪ К долям"}
-                </button>
-              </span>
-            ) : null}
-          </div>
-          <ClipTimeline
-            sourceId={source.id}
-            noFrames={sourceMissing}
-            canvas={isCanvas ? { bg: backdrop, accent: clipAccent(layers), tileAspect: frameSize(aspect).w / frameSize(aspect).h } : null}
-            peaks={planWave.data?.peaks}
-            pieces={activePlan?.segments ?? []}
-            inserts={inserts}
-            subLines={subLines}
-            assets={assetsQuery.data ?? []}
-            videoRef={videoRef}
-            selected={tlSelected}
-            onSelect={(sel) => {
-              selectOnTimeline(sel);
-              if (sel?.kind === "piece") {
-                const seg = activePlan?.segments[sel.index];
-                if (seg) setSelectedSeg(seg.id);
-              }
-            }}
-            onSeekClip={(t) => seekClipTime(t, false)}
-            onPieceCommit={(id, s, e) => commit.mutate({ id, s, e })}
-            onSplitAt={splitAtClip}
-            onDeleteSelected={deleteSelected}
-            onInsertsChange={setInserts}
-            layers={layers}
-            camera={camera}
-            onLayersChange={setLayers}
-            onCameraChange={setCamera}
-            onDropLayers={(payload, at, track) => dropLayersAt(payload, at, track)}
-            mute={mute}
-            onMuteChange={setMute}
-            audioEdit={audioEdit}
-            onAudioEditChange={setAudioEdit}
-            onSubLinesChange={(next) => {
-              setSubLines(next);
-              subLinesRef.current = next;
-              if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
-            }}
-            onDropAsset={(assetId, at) => {
-              const asset = assetsQuery.data?.find((a) => a.id === assetId);
-              setInserts((prev) => [
-                ...prev,
-                {
-                  asset_id: assetId,
-                  at,
-                  duration: Math.min(4, Math.max(1, asset?.duration_sec || 1.5)),
-                  mode: asset?.kind === "audio" ? "sound" : "full",
-                  volume: 1,
-                  duck: asset?.kind !== "audio",
-                },
-              ]);
-              setTlSelected({ kind: "insert", index: inserts.length });
-              toast.success(`«${asset?.label ?? "файл"}» на ${formatDuration(at)} — тяните блок, чтобы подвинуть`);
-            }}
-          />
-      </div>
+      <EditorTimeline session={session} />
     </div>
   );
 }
