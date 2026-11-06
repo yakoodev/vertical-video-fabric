@@ -1,0 +1,456 @@
+/* ---------- Серии и каналы: проект над источниками (pages/project/ProjectPage.tsx) ---------- */
+.series-strip { display: grid; gap: 12px; margin-bottom: 18px; }
+.series-strip-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.series-strip-head .btn { margin-left: auto; }
+.series-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.series-card { display: grid; gap: 4px; padding: 14px 16px; color: inherit; }
+.pcard-series { margin-top: 8px; height: 32px; font-size: 13px; }
+.proj-series-filter { width: 180px; flex: none; }
+
+.series-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.series-col { display: grid; gap: 16px; }
+.series-panel { display: grid; gap: 10px; }
+.series-panel h3 { margin: 0; font-size: 16px; }
+.series-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.series-hint { margin: 0; font-size: 13px; }
+.series-section { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+.series-section-head { display: flex; align-items: center; justify-content: space-between; }
+.series-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.series-row .input { flex: 1 1 140px; min-width: 0; }
+.series-row .input.wide { flex: 2 1 220px; }
+.series-row .input.series-num { flex: 0 1 110px; }
+.series-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ol.series-list { list-style: decimal inside; }
+.series-list > li { padding: 8px 10px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface-2); }
+.series-li-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.series-li-main > .btn:first-of-type { margin-left: auto; }
+.series-li-sub { font-size: 12.5px; margin-top: 4px; }
+.series-li-off { opacity: 0.6; }
+.series-quote { margin: 6px 0 0; padding-left: 10px; border-left: 2px solid var(--accent); color: var(--text-dim); font-style: italic; font-size: 13.5px; }
+.series-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.series-tags .chip { padding: 2px 9px; font-size: 12px; }
+.series-tag-input { width: 120px; height: 28px; font-size: 12.5px; padding: 0 8px; }
+.series-add-source { width: auto; max-width: 260px; height: 32px; font-size: 13px; }
+.series-delete { justify-self: start; }
+.series-kind, .series-hyp { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: var(--r-pill); }
+.series-kind--do { background: var(--success-soft); color: var(--success); }
+.series-kind--dont { background: var(--danger-soft); color: var(--danger); }
+.series-kind--preference { background: var(--info-soft); color: var(--info); }
+.series-hyp--testing { background: var(--accent-soft); color: var(--accent-2); }
+.series-hyp--confirmed { background: var(--success-soft); color: var(--success); }
+.series-hyp--rejected { background: var(--danger-soft); color: var(--danger); }
+.series-hyp--inconclusive { background: var(--warn-soft); color: var(--warn); }
+.series-review { border-color: var(--warn); color: var(--warn); }
+.series-conflict { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--warn); border-radius: var(--r-sm); background: var(--warn-soft); }
+.series-conflict p { margin: 0; }
+.series-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.series-tile { display: grid; gap: 4px; padding: 14px 16px; }
+.series-tile strong { font-family: var(--display); font-size: 24px; }
+@media (max-width: 980px) {
+  .series-grid { grid-template-columns: 1fr; }
+}
+
+/* Автопилот канала: очередь одобрения, расписание, чат проекта (pages/ApprovalsPage.tsx, pages/project/AutopilotTab.tsx). */
+.approval-list { display: grid; gap: 12px; }
+.approval-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; }
+.approval-card--focus { outline: 2px solid var(--accent); }
+.approval-preview video, .approval-preview img { width: 180px; max-height: 320px; border-radius: 10px; background: #000; object-fit: contain; display: block; }
+.approval-list--compact .approval-preview video, .approval-list--compact .approval-preview img { width: 110px; max-height: 196px; }
+.approval-body { display: grid; gap: 8px; min-width: 0; }
+.approval-title { margin: 0; font-size: 16px; }
+.approval-desc { margin: 0; white-space: pre-wrap; font-size: 13.5px; color: var(--text-dim); }
+.approval-comment { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.approval-status--pending { border-color: var(--accent); color: var(--accent-2); }
+.approval-status--approved { border-color: var(--success); color: var(--success); }
+.approval-status--rejected, .approval-status--expired { color: var(--text-dim); }
+.approval-status--changes_requested { border-color: var(--warn); color: var(--warn); }
+.approval-kind--alert { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.stats-badge { font-variant-numeric: tabular-nums; }
+.stats-badge--alert { color: var(--warn); border-color: var(--warn); font-weight: 600; }
+.approval-feed li { font-size: 13px; }
+.approval-digest { white-space: pre-wrap; font: inherit; font-size: 13px; margin: 0; }
+.project-chat { min-height: 480px; grid-template-rows: auto minmax(0, 1fr) auto; }
+.project-chat .agent-list { max-height: 60vh; }
+@media (max-width: 720px) { .approval-card { grid-template-columns: 1fr; } }
+
+/* ♪ К долям — в шапке таймлайна редактора. */
+.ed-snap { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.ed-snap .input { height: 26px; font-size: 11.5px; padding: 0 6px; max-width: 210px; }
+
+/* ==========================================================================
+   UI-проход 2026-11 (docs/redesign/audit-2026-11.md): одна система вкладок,
+   инспектор редактора по вкладкам, «Ещё…», спокойные быстрые действия.
+   ========================================================================== */
+
+/* Вкладки-кнопки (<button class="tab">) выглядели как кнопки браузера: белая заливка,
+   рамка, активная — белым по белому (ИИ-видео, «Одобрение»). Сброс как у ссылок. */
+button.tab {
+  background: none;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* --- Инспектор редактора: вкладки --- */
+.insp-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.insp-tabs::-webkit-scrollbar { display: none; }
+.insp-tab {
+  flex: 1 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 5px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.insp-tab:hover { color: var(--text); }
+.insp-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.insp-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px 6px 0 0; }
+.insp-tab-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-faint);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.insp-tab.active .insp-tab-count { color: var(--accent-2); background: var(--accent-soft); }
+
+.insp-pane { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.insp-pane[hidden] { display: none; }
+
+/* Раздел без сворачивания (строки субтитров, проверка): та же рамка, что у групп. */
+.insp-section {
+  display: grid;
+  gap: 10px;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.insp-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.insp-section-title { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* «Ещё…» — редкие группы под одной строкой */
+.insp-more { display: grid; gap: 8px; }
+.insp-more-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.insp-more-head:hover { color: var(--text); border-color: var(--accent); }
+.insp-more-label { font-weight: 600; white-space: nowrap; }
+.insp-more-hint { flex: 1; min-width: 0; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insp-more.open .insp-more-head { justify-content: space-between; }
+.insp-more-body { display: grid; gap: 8px; }
+
+/* Пустое состояние вкладки */
+.insp-empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 14px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.insp-empty p { margin: 0; }
+
+/* «Кусок N из M» + номера кусков */
+.insp-piece-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 2px 2px 0; }
+.insp-piece-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+.insp-piece-pick { flex-wrap: wrap; }
+.insp-piece-pick .seg-item { min-width: 30px; }
+
+/* Быстрые действия: без «ИИ-подсветки» — это обычные кнопки, главная кнопка области — рендер */
+.ed-quick {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  padding: 10px 11px;
+}
+.ed-quick-title { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text); }
+
+/* Подвал инспектора: два тихих ряда + рендер (формат и стоп-кадр — во вкладке «Клип») */
+.ed-insp-foot { gap: 8px; padding: 10px 12px 12px; }
+.ed-foot-tools .btn { height: 30px; font-size: 12.5px; }
+
+/* Строка инструментов редактора субтитров: движок на всю ширину, кнопки — без обрезки */
+.subed-top { display: flex; flex-wrap: wrap; gap: 6px; }
+.subed-top > .input { flex: 1 1 100%; }
+.subed-top > .btn { flex: 1 1 auto; justify-content: center; white-space: nowrap; }
+
+/* Выпадающие списки с заданной высотой (32 px в карточках, 30 px в субтитрах) резали текст
+   сверху/снизу: у .input вертикальный padding 9 px. Высоту держим явно, padding — нет. */
+select.input { padding-top: 0; padding-bottom: 0; }
+:where(select.input) { height: 37px; }
+
+/* Сетки инспектора не шире панели: раньше длинные подписи распирали колонку вбок. */
+.ed-insp-scroll { grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; align-content: start; }
+.insp-pane { grid-template-columns: minmax(0, 1fr); }
+.ed-inspector .sub-options { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ed-quick-row > * { min-width: 0; }
+.ed-snap .btn { white-space: nowrap; }
+
+/* Телефон: меню было столбиком на весь первый экран — теперь одна прокручиваемая лента
+   сверху (логотип, «Создать», разделы, помощь/настройки/выход), содержимое сразу под ней. */
+@media (max-width: 720px) {
+  .content { padding: 16px 16px 64px; }
+}
+
+/* «Моменты»: четыре громкие кнопки разных цветов → одна главная («Открыть редактор»),
+   остальные вторичные; две ИИ-кнопки одним стилем (✨/🤖 = ИИ, тратит токены). */
+.mo-stats .btn.mo-big:not(.primary) { height: 42px; font-size: 14px; }
+.btn.aib-btn, .btn.aib-pick {
+  background: var(--surface-2);
+  border: 1px solid rgba(123, 108, 255, 0.55);
+  color: var(--text);
+}
+.btn.aib-btn:hover:not(:disabled), .btn.aib-pick:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+
+/* UI-проход 2: на телефоне шапка вылезала на 16 px (поля -32 при отступе контента 16) — горизонтальная
+   прокрутка на каждой странице; вкладки серии и ИИ-видео шли в три строки — теперь одна лента. */
+@media (max-width: 720px) {
+  .aiv-subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .aiv-subtabs::-webkit-scrollbar { display: none; }
+  .aiv-subtabs .tab { flex: none; padding: 10px 12px; white-space: nowrap; }
+}
+
+/* UI-проход 2: подзаголовок внутри группы («Эффекты» в «Сведении»), «Роль» слоя-звука во всю ширину
+   (список резался до «звук-э»). */
+.rgroup-sub { margin: 10px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.li-num.li-wide { flex: 1 1 100%; }
+.li-num.li-wide select.input { width: 100%; }
+.fx-chain > .li-row:first-child .fx-chain-title { flex: 1 1 100%; color: var(--text-dim); font-weight: 600; }
+.fx-params .li-num > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Видео в списке до нажатия (components/VideoThumb.tsx). */
+.vthumb {
+  all: unset;
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.vthumb:focus-visible { outline: 2px solid var(--accent, #7b6cff); outline-offset: -2px; }
+.vthumb-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 16px;
+  color: #fff;
+  background: rgba(8, 9, 15, 0.6);
+}
+.vthumb:hover .vthumb-play { background: rgba(8, 9, 15, 0.85); }
+.show-more { display: flex; justify-content: center; padding: 16px 0; }
+
+/* Запись стрима удалена: плашка, заглушка кадра, готовый рендер вместо превью. */
+.src-missing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+}
+.src-missing.compact { margin: 0; padding: 8px 12px; gap: 10px; width: 100%; }
+.src-missing.compact .muted { font-size: 12px; }
+.src-missing-text { display: grid; gap: 2px; min-width: 0; }
+.src-missing-text strong { color: var(--warn); }
+.src-missing-err { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+.src-missing-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.src-missing-progress { font-size: 13px; color: var(--text); }
+.src-missing-btn { flex-shrink: 0; }
+.src-missing-stage {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-dim);
+  background: var(--surface-2);
+}
+.mo-stage-render { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.ed-phone-render { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; z-index: 3; min-height: 0; }
+.plan-thumb-none {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-faint);
+  background: var(--surface-2);
+}
+.pcard-nofile {
+  position: absolute;
+  inset: auto auto 10px 10px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: var(--r-pill);
+  color: var(--warn);
+  background: rgba(0, 0, 0, 0.72);
+}
+
+/* Ссылка с карточки клипа в его монтаж. */
+.clip-edit-link { margin-left: auto; font-family: var(--font); color: var(--accent-2); }
+.clip-edit-link:hover { text-decoration: underline; }
+/* Узкие экраны: контент не шире окна (аудит 2026-11). */
+.settings-body, .help-wrap, .help-section, .series-col { min-width: 0; }
+.settings-body .ws-row { flex-wrap: wrap; }
+.settings-body audio { max-width: 100%; }
+.help-section { overflow-x: auto; }
+.series-col > .panel { min-width: 0; max-width: 100%; }
+@media (max-width: 760px) {
+  .editor, .mo-top { grid-template-columns: minmax(0, 1fr); }
+  .mo-toolbar, .mo-toolbar-acts { flex-wrap: wrap; max-width: 100%; min-width: 0; }
+  .src-missing { flex-wrap: wrap; }
+  .ed-bottom { overflow-x: auto; }
+  .ctl-bar { flex-wrap: wrap; }
+}
+
+/* ▶ Смотреть монтаж (pages/workspace/preview): встраиваемый плеер и его полный экран. */
+.mplayer { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; outline: none; color: var(--text); }
+.mplayer-stage { flex: 1; min-height: 0; display: grid; place-items: center; }
+.mplayer-frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+.mplayer-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.mplayer-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+.mplayer-spacer { flex: 1; }
+.mplayer-bigplay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  padding-left: 5px;
+  font-size: 26px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.mplayer-spinner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42px;
+  height: 42px;
+  margin: -21px 0 0 -21px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: mplayer-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+@keyframes mplayer-spin { to { transform: rotate(360deg); } }
+
+.mplayer-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 11.5px; }
+.mplayer-title { color: var(--text); font-weight: 600; }
+.mplayer-chip { padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; }
+.mplayer-chip--ok { color: #4ade80; border-color: rgba(74, 222, 128, 0.45); animation: mplayer-fade 4s forwards; }
+@keyframes mplayer-fade { 80% { opacity: 1; } to { opacity: 0; } }
+.mplayer-note { padding: 8px 12px; font-size: 12.5px; line-height: 1.35; color: var(--text-dim); background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--r-sm); }
+
+.mplayer-fallback { display: flex; flex-direction: column; gap: 10px; max-width: 100%; max-height: 100%; min-height: 0; align-items: center; }
+.mplayer-fallback video { max-width: 100%; max-height: calc(100% - 60px); background: #000; border-radius: 10px; }
+.mwatch.modal-backdrop { z-index: 200; display: flex; padding: 12px 16px; background: rgba(5, 5, 10, 0.97); }
+.mwatch:fullscreen { background: #05050a; }
+.mplayer--watch { flex: 1; height: 100%; width: 100%; color: #eee; }
+/* Кадр вписан в окно: и горизонталь, и вертикаль, полосы — фон оверлея. */
+.mplayer--watch .mplayer-stage { container-type: size; }
+.mplayer--watch .mplayer-frame { height: min(100cqh, calc(100cqw / var(--frame-k, 0.5625))); width: auto; }
+.ed-watch-btn { font-weight: 700; }
+@media (max-width: 640px) {
+  .mwatch.modal-backdrop { padding: 8px; }
+}
+
+/* Состояния плеера: идёт сборка кусков, нужен жест, не успевает. */
+.mplayer-status {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(86%, 420px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.35;
+  color: #fff;
+  background: rgba(8, 8, 14, 0.78);
+  border-radius: 12px;
+  cursor: default;
+  pointer-events: none;
+}
+.mplayer-status .mplayer-spinner { position: static; margin: 0; }
+.mplayer-status--problem { pointer-events: auto; background: rgba(20, 10, 14, 0.9); border: 1px solid rgba(253, 164, 175, 0.5); }
+.mplayer-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.mplayer-progress { display: block; width: 180px; max-width: 100%; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.2); }
+.mplayer-progress i { display: block; height: 100%; background: #a78bfa; transition: width 0.3s; }
+.mplayer-bigplay--tap { pointer-events: auto; border: 0; cursor: pointer; width: auto; height: auto; padding: 16px 22px; border-radius: 14px; flex-direction: column; display: flex; gap: 6px; align-items: center; }
+.mplayer-bigplay--tap small { font-size: 13px; }

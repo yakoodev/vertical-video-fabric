@@ -1,0 +1,238 @@
+/* ---------- Workspace tabs ---------- */
+
+.ws-video {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.ws-video video {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  max-height: 60vh;
+  background: #000;
+  border-radius: var(--r-sm);
+  object-fit: contain;
+}
+.ws-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.analysis-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.analysis-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+}
+.analysis-card-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.analysis-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.analysis-card-title {
+  font-size: 13.5px;
+}
+.analysis-card-count {
+  font-size: 11px;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+}
+.analysis-card-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Automation ---------- */
+.auto-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(280px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .auto-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Settings ---------- */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 22px;
+  align-items: start;
+}
+.settings-rail {
+  display: grid;
+  gap: 4px;
+  position: sticky;
+  top: 20px;
+}
+.settings-tab {
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.settings-tab:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.settings-tab.active {
+  background: var(--accent-soft);
+  color: #fff;
+}
+/* Бренды: форма слева, схематичный кадр 9:16 в цветах бренда справа. */
+.brand-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 18px;
+  align-items: start;
+  max-width: 860px;
+}
+.brand-preview {
+  position: relative;
+  width: 150px;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  font-weight: 800;
+  text-align: center;
+}
+.brand-preview-hook {
+  position: absolute;
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.brand-preview-logo {
+  position: absolute;
+  top: 24%;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+.brand-preview-logo.top-right { right: 6px; }
+.brand-preview-logo.top-left { left: 6px; }
+.brand-preview-cta {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 30%;
+  padding: 6px 4px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+.brand-preview-caps {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 17%;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  text-shadow: 0 0 3px #000;
+}
+@media (max-width: 860px) {
+  .brand-editor {
+    grid-template-columns: 1fr;
+  }
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-rail {
+    position: static;
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+}
+
+/* ---------- Focus chips ---------- */
+.focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+.focus-chip:hover {
+  border-color: var(--accent);
+}
+.focus-chip-x {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.focus-chip-x:hover {
+  color: var(--danger);
+}
+
+/* ---------- Crop editor ---------- */
+.crop-stage {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.crop-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  max-height: none;
+  object-fit: contain;
+}
+.crop-frame {
+  position: absolute;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(8, 9, 15, 0.62);
+  border-radius: 3px;
+  pointer-events: none;
+}

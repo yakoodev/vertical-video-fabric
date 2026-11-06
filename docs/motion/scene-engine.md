@@ -5,7 +5,8 @@
 панорамами) в одном формате, стилизованные заливки (toon/cel, градиент, halftone, штрих, обводка).
 Пишут сцены ИИ-агенты (Gemini/Claude по MCP) и человек в инспекторе.
 
-- Код: `frontend/src/motion/scene/` (`render.ts` — конвейер, `geometry.ts` — сетки и контуры,
+- Код: `frontend/src/motion/scene/` (`render.ts` — конвейер, `traverse.ts` — обход узлов и текст,
+  `drawMesh.ts` и `drawMedia.ts` — рисование, `shade.ts` и `lighting.ts` — цвет и свет, `geometry.ts` — сетки и контуры,
   `value.ts` — анимации, `expr.ts` — выражения, `validate.ts` — проверка, `templates.ts` — шаблоны),
   слой — `frontend/src/motion/layers/scene.ts`, сервис — `app/scene_engine.py`.
 - **Превью = рендер**: тот же TypeScript рисует в браузере (Canvas 2D) и в Node (`@napi-rs/canvas`,

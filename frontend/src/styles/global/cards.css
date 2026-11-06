@@ -1,0 +1,348 @@
+/* ---------- Panels & cards ---------- */
+.panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 42%), var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 18px;
+  box-shadow: var(--inner-hi);
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 16px;
+}
+/* Cards that link somewhere lift on hover. */
+a.panel,
+.panel.project-card {
+  transition: transform 0.16s var(--ease), border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+a.panel:hover,
+.panel.project-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  box-shadow: var(--inner-hi), var(--shadow-2);
+}
+
+/* ---------- Clip card ---------- */
+.clip-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+.clip-video {
+  aspect-ratio: 9 / 16;
+  background: #000;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.clip-video video,
+.vthumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.clip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* ---------- Table ---------- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.table tr:hover td {
+  background: var(--surface-2);
+}
+
+/* ---------- Status badge ---------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+}
+.badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.badge.ok,
+.badge.succeeded,
+.badge.ready,
+.badge.done {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.badge.running,
+.badge.rendering,
+.badge.queued,
+.badge.analyzing,
+.badge.downloading {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.badge.failed,
+.badge.error,
+.badge.needs_reauth {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ---------- Pipeline tabs (a real stage sequence) ---------- */
+.pipeline {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: #fff;
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- States ---------- */
+.muted {
+  color: var(--text-dim);
+}
+.empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 64px 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+  color: var(--text-dim);
+  text-align: center;
+}
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--surface-3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+/* ---------- Modal ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.modal {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  padding: 22px;
+}
+
+/* ---------- Project card ---------- */
+.project-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--inner-hi);
+  transition: transform 0.16s var(--ease), border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+.project-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  box-shadow: var(--inner-hi), var(--shadow-2);
+}
+.pcard-link {
+  display: grid;
+}
+.pcard-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: radial-gradient(120% 120% at 30% 10%, rgba(123, 108, 255, 0.22), transparent 55%),
+    linear-gradient(160deg, #1a1d2b, #0c0e16);
+  overflow: hidden;
+}
+.pcard-cover .pcard-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0.92;
+}
+.pcard-type {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  background: rgba(8, 9, 15, 0.7);
+  border: 1px solid var(--hairline);
+  padding: 3px 7px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+}
+.pcard-dur {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 3;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(8, 9, 15, 0.78);
+  padding: 3px 7px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+}
+.pcard-sb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  pointer-events: none;
+}
+.pcard-scrub {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 2;
+}
+.pcard-scrub > div {
+  height: 100%;
+  background: var(--accent-grad);
+  transition: width 0.12s linear;
+}
+.pcard-body {
+  padding: 13px 15px 15px;
+  display: grid;
+  gap: 9px;
+}
+.pcard-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pcard-title {
+  flex: 1;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.pcard-edit {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), color 0.15s var(--ease);
+}
+.project-card:hover .pcard-edit,
+.clip-card:hover .pcard-edit {
+  opacity: 1;
+}
+.pcard-edit:hover {
+  color: var(--accent-2);
+  background: var(--surface-2);
+}
+.pcard-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.card-del {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), color 0.15s var(--ease);
+}
+.project-card:hover .card-del {
+  opacity: 1;
+}
+.card-del:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}

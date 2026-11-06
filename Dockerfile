@@ -9,6 +9,7 @@ RUN npm run build
 # bundled into one .mjs for Node; @napi-rs/canvas stays external (runtime npm install).
 COPY frontend/src/motion /motion/frontend/src/motion
 COPY node/motion-render.ts /motion/node/motion-render.ts
+COPY node/motion-render /motion/node/motion-render
 RUN npx --yes esbuild@0.28.2 /motion/node/motion-render.ts --bundle --platform=node --format=esm \
     --target=node20 --external:@napi-rs/canvas --outfile=/motion/motion-render.mjs --log-level=warning
 # 3D scenes (node/scene3d): the three.js engine is bundled into one browser script that the

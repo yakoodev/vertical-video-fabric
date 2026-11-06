@@ -12,7 +12,7 @@ from app import agent_tools, chat_tools, motion, scene_engine
 from app.agent_tools import ImageResult, ToolContext, run_tool
 
 ROOT = Path(__file__).resolve().parents[1]
-RENDER_TS = ROOT / "frontend" / "src" / "motion" / "scene" / "render.ts"
+RENDER_TS = ROOT / "frontend" / "src" / "motion" / "scene" / "nodeTypes.ts"
 
 GOOD_SCENE = {
     "camera": {"orbit": {"azimuth": {"keys": [[0, -20], [2, 20]]}, "elevation": 15}},

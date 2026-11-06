@@ -1,0 +1,333 @@
+/* ---------- Topbar + activity center ---------- */
+
+.activity {
+  position: relative;
+}
+
+.activity-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.activity-panel {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 41;
+  width: 340px;
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  padding: 12px;
+}
+.activity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.activity-list {
+  display: grid;
+  gap: 8px;
+}
+.activity-item {
+  position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+.activity-x {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+}
+.activity-x:hover {
+  color: var(--text);
+}
+.activity-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.activity-all {
+  display: block;
+  text-align: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+/* ---------- Help page ---------- */
+.help-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.help-toc a {
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.help-toc a:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.help-wrap {
+  display: grid;
+  gap: 16px;
+  max-width: 900px;
+}
+.help-section {
+  scroll-margin-top: 16px;
+}
+.help-h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+.help-steps {
+  display: grid;
+  gap: 14px;
+}
+.help-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.help-step-n {
+  flex: 0 0 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft, rgba(110, 123, 255, 0.16));
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.help-ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--text-dim, #c7ccd6);
+  line-height: 1.5;
+}
+.help-ul code,
+.help-table code {
+  font-size: 12px;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.help-table-wrap {
+  overflow-x: auto;
+}
+.help-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13.5px;
+}
+.help-table td {
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.help-table td:first-child {
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* ---------- Tasks page ---------- */
+.task-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-faint);
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.task-log {
+  display: grid;
+  gap: 8px;
+}
+.task-row {
+  display: flex;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+}
+.task-row.failed {
+  border-left-color: var(--danger);
+}
+.task-ico {
+  font-size: 18px;
+  line-height: 1.4;
+}
+.task-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.task-label {
+  font-size: 12.5px;
+}
+.task-error {
+  color: var(--danger);
+  font-size: 12.5px;
+  word-break: break-word;
+}
+.task-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.task-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+/* The same affordance as a link, for the cancel action rendered as a button. */
+button.task-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+button.task-link:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* ---------- Download progress (activity panel) ---------- */
+.dl-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.dl-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.dl-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
+}
+
+/* ---------- Toasts ---------- */
+.toast-stack {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 380px;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-2);
+  font-size: 13.5px;
+  cursor: pointer;
+  animation: toast-in 0.18s var(--ease);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.toast.success {
+  border-left: 3px solid var(--success);
+}
+.toast.error {
+  border-left: 3px solid var(--danger);
+}
+.toast.info {
+  border-left: 3px solid var(--info);
+}
+.toast-ico {
+  font-weight: 700;
+}
+.toast.success .toast-ico {
+  color: var(--success);
+}
+.toast.error .toast-ico {
+  color: var(--danger);
+}
+.toast-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+}
+
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}
