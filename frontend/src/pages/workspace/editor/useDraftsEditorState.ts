@@ -33,6 +33,7 @@ import { clipTimeOf, formatTimecode, INSP_TABS, LIB_TABS, type InspTab, type Lib
 import { useEditorShortcuts } from "@/pages/workspace/editor/useEditorShortcuts";
 import { useDraftsFilters } from "@/pages/workspace/drafts/useDraftsFilters";
 import { useClipPanelSettings } from "@/pages/workspace/editor/useClipPanelSettings";
+import { usePreviewPlayer } from "@/pages/workspace/editor/usePreviewPlayer";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -161,46 +162,6 @@ export function useDraftsEditorState(sourceId: string) {
   // Opened from the moments list in this visit → Back pops history; opened by a
   // link → Back replaces the URL (there is nothing to pop to inside the app).
   const openedFromListRef = useRef(false);
-  const [loop, setLoop] = useState(true);
-  const [rate, setRate] = useState(1);
-  const rateRef = useRef(rate);
-  rateRef.current = rate;
-  const loopRef = useRef(loop);
-  loopRef.current = loop;
-  // Ordered ranges to play back as one clip preview (segments stitched in time).
-  const playbackRef = useRef<{ ranges: { start: number; end: number; speed?: number }[]; idx: number } | null>(null);
-
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onTime = () => {
-      const pb = playbackRef.current;
-      const cur = pb?.ranges[pb.idx];
-      if (!pb || !cur) return;
-      if (v.currentTime >= cur.end - 0.02) {
-        const next = pb.idx + 1;
-        if (next < pb.ranges.length) {
-          pb.idx = next;
-          v.currentTime = pb.ranges[next].start;
-          v.playbackRate = rateRef.current * (pb.ranges[next].speed ?? 1); // скорость куска
-        } else if (loopRef.current) {
-          pb.idx = 0;
-          v.currentTime = pb.ranges[0].start;
-          v.playbackRate = rateRef.current * (pb.ranges[0].speed ?? 1);
-        } else {
-          v.pause();
-          playbackRef.current = null;
-        }
-      }
-    };
-    v.addEventListener("timeupdate", onTime);
-    return () => v.removeEventListener("timeupdate", onTime);
-    // Re-bind whenever the <video> element is (re)mounted: after load and on
-    // every triage ↔ editor switch — each view renders its own player.
-  }, [view, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Opening a clip in the editor parks the player on its first frame, so the
-  // stage, crop window and phone preview show that moment, not 0:00.
   // The URL is the source of truth for which clip the editor shows (deep links,
   // browser Back/Forward); the moments list's selection follows it.
   const editorPlanId = view === "editor" ? clipParam : null;
@@ -222,37 +183,12 @@ export function useDraftsEditorState(sourceId: string) {
     void playbackApi.piecesEnsure(clipParam).catch(() => undefined);
     void playbackApi.proxyEnsure(sourceId).then((st) => qc.setQueryData(["source-proxy", Number(sourceId)], st)).catch(() => undefined);
   }, [clipParam, hasFile, sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const v = videoRef.current;
-    const plan = query.data?.clip_plans.find((p) => p.id === editorPlanId) ?? null;
-    const start = plan?.segments[0]?.start_sec;
-    if (!v || start == null) return;
-    const park = () => {
-      if (!playbackRef.current) v.currentTime = start;
-    };
-    if (v.readyState >= 1) park();
-    else v.addEventListener("loadedmetadata", park, { once: true });
-    return () => v.removeEventListener("loadedmetadata", park);
-  }, [editorPlanId, query.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = rate;
-  }, [rate, view, query.isSuccess, editorPlanId]);
-
-  const playRanges = (ranges: { start: number; end: number; speed?: number }[]) => {
-    const v = videoRef.current;
-    if (!v || !ranges.length || sourceMissing) return;
-    playbackRef.current = { ranges, idx: 0 };
-    // Кусок со скоростью (slow-mo ×0.5) превью играет с той же скоростью; реверс — вперёд.
-    v.playbackRate = Math.min(16, Math.max(0.0625, rate * (ranges[0].speed ?? 1)));
-    v.currentTime = ranges[0].start;
-    void v.play();
-  };
-  const stopPlayback = () => {
-    playbackRef.current = null;
-    videoRef.current?.pause();
-  };
-
+  const previewPlayer = usePreviewPlayer({
+    videoRef, query, sourceMissing, view, editorPlanId,
+  });
+  const {
+    playbackRef, stopPlayback,
+  } = previewPlayer;
   // The editor works on favourites: jump to the requested moment, else keep the
   // current one if it's starred, else the first starred one.
   const openEditor = (planId?: number) => {
@@ -1112,20 +1048,20 @@ export function useDraftsEditorState(sourceId: string) {
     ...editorShortcuts,
     ...draftsFilters,
     ...panelSettingsState,
+    ...previewPlayer,
     sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
     bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef, query,
     recordMissing, proxyReady, sourceMissing, banners, tracks, subs, assetsQuery, pickableAssets, navigate, view,
-    playbackRef, playRanges, stopPlayback, openEditor, backToMoments, musicPreviewRef, musicFromUrl, reframedView,
-    motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, motionFonts, clipNowRef, clipNow,
-    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, planWave, planSubs, plans,
-    composeCover, compile, batchAuto, autoEdit, mixReport, autoMix, censorMat, brands, applyBrand, undoEdit,
-    segmentSpeed, snapBeats, pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts,
-    autofocus, commit, pickPointRef, setFixedFrame, setPlanFlag, activePlan, uniquePresets, selectedPreset, lookCss,
-    lookFrames, tcSegsRef, editPieces, libTab, setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines,
-    setSubLines, mediaSrc, activePlanId, setActivePlanId, selectedSeg, setSelectedSeg, loop, setLoop, rate, setRate,
-    musicUrl, setMusicUrl, inlineEdit, setInlineEdit, coverUploading, setCoverUploading, clipFileOpen,
-    setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal, setSubsWide,
-    useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, coverTitle, setCoverTitle, coverStyle,
+    openEditor, backToMoments, musicPreviewRef, musicFromUrl, reframedView, motionViewRef, inlineCancelRef, planChat,
+    planVoice, planLevels, motionFonts, clipNowRef, clipNow, reframeHintRef, layerDragRef, insertsPreviewRef,
+    insertDragRef, hoverPlanRef, planWave, planSubs, plans, composeCover, compile, batchAuto, autoEdit, mixReport,
+    autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats, pieceColor, matchColors, batch,
+    focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit, pickPointRef, setFixedFrame, setPlanFlag,
+    activePlan, uniquePresets, selectedPreset, lookCss, lookFrames, tcSegsRef, editPieces, libTab, setLibTab,
+    tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId, setActivePlanId,
+    selectedSeg, setSelectedSeg, musicUrl, setMusicUrl, inlineEdit, setInlineEdit, coverUploading, setCoverUploading,
+    clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen, aiMontageOpen, setAiMontageOpen, aiGoal, setAiGoal,
+    setSubsWide, useVlmFocus, setUseVlmFocus, packagePieces, setPackagePieces, coverTitle, setCoverTitle, coverStyle,
     setCoverStyle, autoProgress, censorStyle, setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode,
     pickingPoint, setPickingPoint, moduleOn, subsWide,
   };
