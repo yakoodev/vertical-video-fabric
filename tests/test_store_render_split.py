@@ -144,3 +144,9 @@ def test_patch_on_render_reaches_every_part(monkeypatch, name):
         assert all(vars(part)[name] is fake for part in holders)
     assert getattr(render, name) is original
     assert all(vars(part)[name] is original for part in holders)
+
+
+def test_no_mega_files():
+    for name in ["store", "render"] + _parts("store") + _parts("render"):
+        lines = len((APP / f"{name}.py").read_text(encoding="utf-8").splitlines())
+        assert lines < 1000, f"{name}.py: {lines} строк"
