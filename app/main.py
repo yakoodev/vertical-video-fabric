@@ -231,7 +231,8 @@ async def _download_source_url(url: str, fields) -> dict | JSONResponse:
     raise ValueError(task.get("error") or "download failed")
 
 
-from app.settings_api import build_settings_router
+# Ручки по доменам. Порядок подключения важен, только если адреса пересекаются: кто раньше, тот и отвечает.
+from app.settings_api import build_settings_router  # noqa: E402
 
 app.include_router(build_settings_router(AuthDep, lambda: store))
 
