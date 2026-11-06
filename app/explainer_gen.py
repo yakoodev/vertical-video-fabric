@@ -24,14 +24,16 @@
    пилот 887: позы слоями ``image`` с чередованием pop/zoom, вжухи на склейках, плашки с «динь»,
    чипы с «поп», слой субтитров (hormozi, крупно, капсом, ключевые слова — ``emph``), музыка
    маскота под голосом тише. По желанию (``options.render``) — рендер, обложки, заголовок/описание.
+
+Где что лежит. Здесь — конвейер и всё, что читает подменяемые тестами имена (``_ask``, ``gemini_client``, ``transcribe_words``, ``_sfx_ok``, ``auto_mix_clip``,
+``finish_publish``). Вынесено: сценарий и разбивка на битвы ``app/explainer_gen_script.py``, раскладка слотов ``app/explainer_gen_plan.py``, слова по времени
+``app/explainer_gen_words.py``. Те модули этот не импортируют, а он их — поэтому все имена по-прежнему доступны отсюда.
 """
 
 from __future__ import annotations
 
-import difflib
 import json
 import logging
-import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -45,15 +47,23 @@ from app import projects as P
 from app import word_fixes as WF
 from app.settings import settings
 
+from app.explainer_gen_script import (  # noqa: F401
+    CPS, BEAT_MIN_SEC, BEAT_MAX_SEC, BEAT_MERGE_SEC, HOOK_MAX_CHARS, script_schema, script_context, _sentence,
+    normalize_script, set_script, _est, _clauses, _chunk, split_beats,
+)
+from app.explainer_gen_plan import (  # noqa: F401
+    MAX_NEW_POSES, plan_schema, _library_brief, plan_context, _CHIP_RE, _UNITS, _ORDINAL_CHIP, _not_point_number,
+    _fallback_chip, _fallback_emphasis, match_scores, assign_by_tags, _assign_fallback, _chip, _badge, _words_of,
+    _apply_gemini_plan, _unrepeat, update_beats,
+)
+from app.explainer_gen_words import (  # noqa: F401
+    REAL_SPLIT_SEC, proportional_words, _norm, align, place, heard_share, _DIGITS_RE, _NUMERAL_RE, _digits_for,
+    _word_tail, script_words, _word_in, _NUMBER_WORD, emphasis_marks,
+)
+
 _log = logging.getLogger(__name__)
 
-CPS = 15.0  # символов русской речи в секунду (пилот: 680 символов за 44 с)
-BEAT_MIN_SEC = 1.5
-BEAT_MAX_SEC = 3.0
-BEAT_MERGE_SEC = 0.9  # бит короче — сливается с соседним (если влезает)
-REAL_SPLIT_SEC = 3.6  # после озвучки бит длиннее — делится тем же кадром с наездом
-HOOK_MAX_CHARS = 32  # крючок — первые ~2 с
-MAX_NEW_POSES = 20
+
 TAIL_SEC = 0.8
 VOICE_MIN_HEARD = 0.6  # меньше этой доли слов сценария в распознанной речи — озвучка не та (тон, чужой текст)
 # Только настоящие записи пака freesound. Пилот звал whoosh-2 и ding — это алиасы пака
@@ -128,83 +138,6 @@ title — название ролика до 60 символов.
 """
 
 
-def script_schema() -> dict:
-    return {"type": "object", "properties": {
-        "title": {"type": "string"}, "hook": {"type": "string"}, "intro": {"type": "string"},
-        "points": {"type": "array", "items": {"type": "object", "properties": {
-            "title": {"type": "string"}, "body": {"type": "string"}}, "required": ["title", "body"]}},
-        "cta": {"type": "string"}},
-        "required": ["title", "hook", "points", "cta"]}
-
-
-def script_context(store: Any, video: dict) -> dict:
-    mascot = E.get_mascot(store, int(video["mascot_id"]))
-    project_id = int(video["project_id"])
-    options = video.get("options") or {}
-    rules = [{"kind": r["kind"], "text": r["text"]} for r in P.list_rules(store, project_id=project_id)]
-    project = P.get_project(store, project_id, include_sources=False)
-    # Ролик канала объяснялок (app/explainer_channel.py): канал может быть другим проектом, чем
-    # библиотека маскота — его правила (уроки из ответов владельца) и описание тоже в промпт.
-    channel_id = options.get("channel_project_id")
-    if channel_id and int(channel_id) != project_id:
-        try:
-            channel = P.get_project(store, int(channel_id), include_sources=False)
-            seen = {(r["kind"], r["text"]) for r in rules}
-            rules += [{"kind": r["kind"], "text": r["text"]}
-                      for r in P.list_rules(store, project_id=int(channel_id), include_global=False)
-                      if (r["kind"], r["text"]) not in seen]
-            project = channel
-        except KeyError:
-            pass
-    previous = [v["topic"] for v in E.list_videos(store, project_id, int(mascot["id"]), limit=12)
-                if int(v["id"]) != int(video["id"])]
-    out = {"channel": project["name"], "channel_about": project.get("description") or "",
-           "mascot": {"name": mascot["name"], "persona": mascot["persona"]},
-           "topic": video["topic"], "duration_sec": video["duration_target"], "tone": video["tone"],
-           "target_chars": int(video["duration_target"] * CPS), "owner_rules": rules,
-           "previous_topics": previous}
-    for key in ("niche", "angle", "owner_feedback"):
-        if options.get(key):
-            out[key] = options[key]
-    return out
-
-
-def _sentence(text: Any) -> str:
-    text = " ".join(str(text or "").replace("\n", " ").split()).strip()
-    if text and text[-1] not in ".!?…":
-        text += "."
-    return text
-
-
-def normalize_script(data: dict) -> dict:
-    """Сценарий (Gemini или агент) → разделы и полный текст. ``text`` без пунктов — один раздел."""
-    sections: list[dict] = []
-    if P._text(data.get("hook")):
-        sections.append({"kind": "hook", "text": _sentence(data["hook"])})
-    if P._text(data.get("intro")):
-        sections.append({"kind": "intro", "text": _sentence(data["intro"])})
-    points = [p for p in data.get("points") or [] if isinstance(p, dict) and (p.get("title") or p.get("body"))]
-    for n, point in enumerate(points[:6], 1):
-        title = _sentence(point.get("title"))
-        body = " ".join(_sentence(s) for s in re.split(r"(?<=[.!?…])\s+", str(point.get("body") or "")) if s.strip())
-        sections.append({"kind": "point", "n": n, "title": title, "text": " ".join(x for x in (title, body) if x)})
-    if P._text(data.get("cta")):
-        sections.append({"kind": "cta", "text": _sentence(data["cta"])})
-    if not sections and P._text(data.get("text")):
-        sections.append({"kind": "body", "text": " ".join(str(data["text"]).split())})
-    if not sections:
-        raise E.ExplError("пустой сценарий: нужны hook, points [{title, body}], cta (или text)")
-    text = " ".join(s["text"] for s in sections)
-    warnings = []
-    if sections[0]["kind"] == "hook" and len(sections[0]["text"]) > HOOK_MAX_CHARS + 8:
-        warnings.append(f"крючок звучит около {len(sections[0]['text']) / CPS:.1f} с".replace(".", ",")
-                        + ": лучше уложиться в 2 с, первые секунды решают, досмотрят ли ролик")
-    if points and not 2 <= len(points) <= 6:
-        warnings.append(f"пунктов {len(points)} — лучше 3–5")
-    return {"title": P._text(data.get("title"), 100), "sections": sections, "text": text,
-            "points": len(points), "chars": len(text), "est_sec": round(len(text) / CPS, 1), "warnings": warnings}
-
-
 def write_script(store: Any, video_id: int, client: Any = None) -> dict:
     video = E.get_video(store, video_id)
     client = client or gemini_client()
@@ -213,95 +146,6 @@ def write_script(store: Any, video_id: int, client: Any = None) -> dict:
                           "hook, intro, points [{title, body}], cta)")
     data = _ask(client, SCRIPT_RULES, script_context(store, video), script_schema(), 0.9)
     return set_script(store, video_id, data, source="gemini")
-
-
-def set_script(store: Any, video_id: int, data: dict, source: str = "agent") -> dict:
-    """Сценарий ролика → разделы и текст; биты и сборка сбрасываются (дальше — подбор поз)."""
-    video = E.get_video(store, video_id)
-    if video["status"] in ("assembling",):
-        raise E.ExplError("ролик собирается — дождись сборки")
-    script = normalize_script(data or {})
-    script["source"] = source
-    target = float(video["duration_target"])
-    if abs(script["est_sec"] - target) > target * 0.25:
-        script["warnings"].append(f"текст ≈ {script['est_sec']:.0f} с при цели {target:.0f} с")
-    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    E.set_status(store, video_id, "scripted", None, script=script, beats=[], timeline={},
-                 title=script["title"] or P._text(video["topic"], 100), error="", approval_id=None)
-    return E.get_video(store, video_id)
-
-
-# --------------------------------------------------------------------------- #
-# 2. Биты и позы
-# --------------------------------------------------------------------------- #
-
-
-def _est(text: str) -> float:
-    return len(text) / CPS
-
-
-def _clauses(sentence: str) -> list[str]:
-    parts = re.split(r"(?<=[,:;])\s+|\s+(?=[—–]\s)", sentence)
-    return [p.strip() for p in parts if p.strip()]
-
-
-def _chunk(sentence: str) -> list[str]:
-    if _est(sentence) <= BEAT_MAX_SEC:
-        return [sentence]
-    out: list[str] = []
-    cur = ""
-    for clause in _clauses(sentence):
-        cand = f"{cur} {clause}".strip()
-        if cur and _est(cand) > BEAT_MAX_SEC and _est(cur) >= BEAT_MIN_SEC * 0.8:
-            out.append(cur)
-            cur = clause
-        else:
-            cur = cand
-    if cur:
-        out.append(cur)
-    final: list[str] = []
-    for piece in out:  # часть всё ещё длинная — по словам пополам
-        while _est(piece) > BEAT_MAX_SEC * 1.3:
-            words = piece.split()
-            half = max(1, len(words) // 2)
-            final.append(" ".join(words[:half]))
-            piece = " ".join(words[half:])
-        final.append(piece)
-    return final
-
-
-def split_beats(script: dict) -> list[dict]:
-    """Разделы сценария → биты по 1.5–3 с (оценка по длине текста)."""
-    beats: list[dict] = []
-    for section in script.get("sections") or []:
-        sentences = [s for s in re.split(r"(?<=[.!?…])\s+", section["text"]) if s.strip()]
-        first = True
-        for sentence in sentences:
-            pieces = _chunk(sentence.strip())
-            if first and section["kind"] == "point" and len(pieces) == 1:
-                # «Ошибка номер один: телефон в кровати.» — как в пилоте: номер (пальцы + плашка) и
-                # тема — два бита.
-                head, sep, tail = sentence.strip().partition(":")
-                if sep and len(head) >= 8 and len(tail.strip()) >= 8:
-                    pieces = [head + sep, tail.strip()]
-            for piece in pieces:
-                beats.append({"text": piece, "section": section["kind"], "point": section.get("n"),
-                              "point_start": section.get("n") if (first and section["kind"] == "point") else None})
-                first = False
-    merged: list[dict] = []
-    for beat in beats:
-        prev = merged[-1] if merged else None
-        if (prev and _est(beat["text"]) < BEAT_MERGE_SEC and prev["section"] == beat["section"]
-                and prev.get("point") == beat.get("point") and not beat.get("point_start")
-                and _est(prev["text"] + " " + beat["text"]) <= BEAT_MAX_SEC + 0.5):
-            prev["text"] = f"{prev['text']} {beat['text']}"
-            continue
-        merged.append(dict(beat))
-    for i, beat in enumerate(merged):
-        beat["i"] = i
-        beat["est_sec"] = round(_est(beat["text"]), 2)
-        beat["badge"] = f"#{beat['point_start']}" if beat.get("point_start") else None
-    return merged
 
 
 PLAN_RULES = """\
@@ -327,243 +171,6 @@ PLAN_RULES = """\
   главное существительное или глагол.
 Верни ТОЛЬКО JSON по схеме: beats — ровно столько, сколько в запросе, в том же порядке (i).
 """
-
-
-def plan_schema() -> dict:
-    return {"type": "object", "properties": {
-        "beats": {"type": "array", "items": {"type": "object", "properties": {
-            "i": {"type": "integer"}, "pose_id": {"type": "integer"}, "new_pose_key": {"type": "string"},
-            "chip": {"type": "string"}, "chip_word": {"type": "string"},
-            "emphasis": {"type": "array", "items": {"type": "string"}}},
-            "required": ["i", "pose_id"]}},
-        "new_poses": {"type": "array", "items": {"type": "object", "properties": {
-            "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
-            "tags": {"type": "array", "items": {"type": "string"}}, "emotion": {"type": "string"},
-            "number_shown": {"type": "integer"}}, "required": ["key", "title", "description", "tags"]}}},
-        "required": ["beats"]}
-
-
-def _library_brief(poses: list[dict]) -> list[dict]:
-    return [{"id": p["id"], "title": p["title"], "description": p["description"], "tags": p["tags"],
-             **({"number_shown": p["number_shown"]} if p.get("number_shown") else {}),
-             **({"not_drawn_yet": True} if not p["ready"] else {})} for p in poses]
-
-
-def plan_context(store: Any, video: dict, beats: list[dict], poses: list[dict]) -> dict:
-    mascot = E.get_mascot(store, int(video["mascot_id"]))
-    text_all = " ".join(b["text"] for b in beats)
-    ranked = [p for p, _s in E.candidates(poses, text_all, k=80)] if len(poses) > 80 else poses
-    return {"mascot": {"name": mascot["name"], "what": mascot["identity_card"], "persona": mascot["persona"]},
-            "topic": video["topic"], "library": _library_brief(ranked),
-            "beats": [{"i": b["i"], "text": b["text"], "section": b["section"],
-                       **({"point_start": b["point_start"]} if b.get("point_start") else {}),
-                       "candidates": [p["id"] for p, s in E.candidates(poses, b["text"], 6) if s > 0]}
-                      for b in beats]}
-
-
-_CHIP_RE = re.compile(r"\b(\d{1,2}[:.]\d{2})\b|(\d+(?:[.,]\d+)?)\s*(%|час\w*|ч\b|мин\w*|раз\w*|л\b|кг|км|шаг\w*)",
-                      re.IGNORECASE)
-_UNITS = {"час": "ч", "ч": "ч", "мин": "мин", "раз": "раз", "л": "л", "кг": "кг", "км": "км", "шаг": "шагов",
-          "%": "%"}
-
-
-_ORDINAL_CHIP = re.compile(r"^([№#]?)\s*(\d+)\s*(?:шаг\w*)?$", re.IGNORECASE)
-
-
-def _not_point_number(chip: dict | None, beat: dict) -> dict | None:
-    """Номер пункта уже показывает плашка «#2»: чип «№2» или «2» рядом с ней повторяет то же число. Чипы с единицами
-    («10 мин», «1 ч», «07:00») и другие числа остаются."""
-    match = _ORDINAL_CHIP.match(str((chip or {}).get("text") or "").strip())
-    if not match:
-        return chip
-    point = beat.get("point_start") or beat.get("point")
-    if not point or int(match.group(2)) != int(point):
-        return chip
-    return None if match.group(1) or beat.get("point_start") else chip
-
-
-def _fallback_chip(text: str) -> dict | None:
-    m = _CHIP_RE.search(text)
-    if not m:
-        return None
-    if m.group(1):
-        hh, mm = re.split(r"[:.]", m.group(1))
-        return {"text": f"{int(hh):02d}:{mm}", "word": m.group(1)}
-    unit = next((v for k, v in _UNITS.items() if m.group(3).lower().startswith(k)), m.group(3))
-    sep = "" if unit == "%" else " "
-    return {"text": f"{m.group(2)}{sep}{unit}"[:8], "word": m.group(2)}
-
-
-def _fallback_emphasis(text: str) -> list[str]:
-    from app.word_emphasis import key_word_score
-
-    words = [w for w in text.split() if w.strip()]
-    scored = sorted(((key_word_score(w), w) for w in words), key=lambda x: -x[0])
-    return [scored[0][1]] if scored and scored[0][0] > 0 else []
-
-
-def match_scores(beats: list[dict], poses: list[dict]) -> list[list[float]]:
-    """Очки «бит × поза» по тегам; поза с числом пальцев — только на начало своего пункта."""
-    numbers = {p.get("number_shown") for p in poses if p.get("number_shown")}
-    out = []
-    for beat in beats:
-        want = beat.get("point_start")
-        row = []
-        for pose in poses:
-            n = pose.get("number_shown")
-            if n:
-                row.append(10.0 if want == n else -8.0)
-            else:
-                row.append(E.score(pose, beat["text"]) - (3.0 if want in numbers else 0.0))
-        out.append(row)
-    return out
-
-
-def assign_by_tags(beats: list[dict], poses: list[dict]) -> list[int]:
-    """Позы битам по тегам: максимум суммы очков, соседние — разные (Витерби); бит без совпадений —
-    наименее занятая в ролике «нейтральная» поза (не повторять одну и ту же)."""
-    scores = match_scores(beats, poses)
-    n_p = len(poses)
-    if n_p == 1:
-        return [int(poses[0]["id"])] * len(beats)
-    dp = [scores[0][:]]
-    back: list[list[int]] = [[-1] * n_p]
-    for n in range(1, len(beats)):
-        prev = dp[-1]
-        order = sorted(range(n_p), key=lambda k: -prev[k])
-        best, second = order[0], order[1]
-        row, bk = [], []
-        for k in range(n_p):
-            q = best if best != k else second
-            row.append(scores[n][k] + prev[q])
-            bk.append(q)
-        dp.append(row)
-        back.append(bk)
-    k = max(range(n_p), key=lambda j: dp[-1][j])
-    picks = [k]
-    for n in range(len(beats) - 1, 0, -1):
-        k = back[n][k]
-        picks.append(k)
-    picks.reverse()
-    count: dict[int, int] = {}
-    for k in picks:
-        count[k] = count.get(k, 0) + 1
-    for n, k in enumerate(picks):
-        if scores[n][k] > 0:
-            continue
-        neighbors = {picks[n - 1] if n else -1, picks[n + 1] if n + 1 < len(picks) else -1}
-        pool = [j for j in range(n_p) if j not in neighbors and not poses[j].get("number_shown")]
-        if not pool:
-            continue
-        j = min(pool, key=lambda x: (count.get(x, 0), -scores[n][x], int(poses[x].get("uses") or 0), x))
-        count[k] -= 1
-        count[j] = count.get(j, 0) + 1
-        picks[n] = j
-    return [int(poses[k]["id"]) for k in picks]
-
-
-def _assign_fallback(beats: list[dict], poses: list[dict], dry: bool = False) -> list[str]:
-    """Без Gemini: позы по тегам (``assign_by_tags``), без новых поз; чипы и ключевые слова — эвристикой."""
-    ready = [p for p in poses if E.pose_usable(p, dry)] or poses
-    if not ready:
-        raise E.ExplError("библиотека поз пуста, а Gemini недоступен — опиши позы сами: explainer_update_beats "
-                          "(new_pose у каждого бита) или добавь позы (explainer_add_pose)")
-    notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; биты можно поправить"]
-    for beat, pose_id in zip(beats, assign_by_tags(beats, ready)):
-        beat["pose_id"] = pose_id
-        beat["chip"] = _not_point_number(_fallback_chip(beat["text"]), beat)
-        beat["emphasis"] = _fallback_emphasis(beat["text"])
-    return notes
-
-
-def _chip(value: Any, word: Any = None) -> dict | None:
-    """Чип бита: строка или ``{text, word}`` (так его отдаёт GET ролика) → ``{text, word}``; мусор — без чипа.
-    Строка-словарь «{'text': '…» — след старой правки: в кадр она не идёт."""
-    if isinstance(value, dict):
-        word = word or value.get("word")
-        value = value.get("text")
-    text = P._text(value, 10) if isinstance(value, str) else ""
-    if not text or text[0] in "{[":
-        return None
-    return {"text": text, "word": P._text(word, 40) if isinstance(word, str) else ""}
-
-
-def _badge(value: Any) -> str | None:
-    text = P._text(value, 6) if isinstance(value, str) else ""
-    return text if text and text[0] not in "{[" else None
-
-
-def _words_of(value: Any, limit: int) -> list[str]:
-    return [P._text(w, 40) for w in value or [] if isinstance(w, str) and P._text(w)][:limit] if isinstance(
-        value, list) else []
-
-
-def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[dict], data: dict,
-                       dry: bool = False) -> list[str]:
-    notes: list[str] = []
-    by_id = {int(p["id"]): p for p in poses}
-    new_specs = {}
-    for spec in data.get("new_poses") or []:
-        if isinstance(spec, dict) and P._text(spec.get("key")) and P._text(spec.get("description")):
-            new_specs[P._text(spec["key"], 40)] = spec
-    created: dict[str, int] = {}
-    reused_similar: dict[str, int] = {}
-    answers = {int(b.get("i", -1)): b for b in data.get("beats") or [] if isinstance(b, dict)}
-    library = list(poses)
-    for beat in beats:
-        ans = answers.get(int(beat["i"])) or {}
-        pid = int(ans.get("pose_id") or 0)
-        if pid and pid not in by_id:
-            notes.append(f"бит {beat['i']}: позы {pid} нет в библиотеке — подобрал по тегам")
-            pid = 0
-        key = P._text(ans.get("new_pose_key"), 40)
-        if not pid and key and key in new_specs:
-            if key in created:
-                pid = created[key]
-            else:
-                spec = new_specs[key]
-                similar, sim = E.similar_pose(library, spec["description"], spec.get("tags"), spec.get("number_shown"))
-                if similar is not None:
-                    pid = int(similar["id"])
-                    reused_similar[key] = pid
-                    notes.append(f"новая поза «{P._text(spec.get('title') or spec['description'], 50)}» ≈ готовой "
-                                 f"#{pid} «{similar['title']}» (сходство {sim}) — беру готовую")
-                elif len(created) >= MAX_NEW_POSES:
-                    notes.append(f"бит {beat['i']}: больше {MAX_NEW_POSES} новых поз не рисую — подобрал по тегам")
-                else:
-                    pose = E.save_pose(store, int(mascot["id"]), description=spec["description"],
-                                       title=spec.get("title") or "", tags=spec.get("tags") or [],
-                                       emotion=spec.get("emotion") or "", number_shown=spec.get("number_shown"),
-                                       origin="generated")
-                    library.append(pose)
-                    by_id[int(pose["id"])] = pose
-                    pid = int(pose["id"])
-                created[key] = pid
-        if not pid:
-            ranked = [p for p, _s in E.candidates([p for p in library if E.pose_usable(p, dry)] or library,
-                                                  beat["text"], 4)]
-            pid = int(ranked[0]["id"]) if ranked else 0
-        if not pid:
-            raise E.ExplError(f"бит {beat['i']}: нет позы — библиотека пуста")
-        beat["pose_id"] = pid
-        beat["chip"] = _not_point_number(_chip(ans.get("chip"), ans.get("chip_word")), beat)
-        beat["emphasis"] = _words_of(ans.get("emphasis"), 2)
-    return notes
-
-
-def _unrepeat(beats: list[dict], poses: list[dict]) -> None:
-    """Две одинаковые позы подряд: вторую — на следующего кандидата; не нашлось — наезд (punch)."""
-    ready = [p for p in poses]
-    for n in range(1, len(beats)):
-        if beats[n]["pose_id"] != beats[n - 1]["pose_id"]:
-            continue
-        nxt = beats[n + 1]["pose_id"] if n + 1 < len(beats) else None
-        alt = next((p for p, s in E.candidates(ready, beats[n]["text"], 6)
-                    if s > 0 and p["id"] not in (beats[n - 1]["pose_id"], nxt) and not p.get("number_shown")), None)
-        if alt is not None:
-            beats[n]["pose_id"] = int(alt["id"])
-        else:
-            beats[n]["variant"] = "punch"
 
 
 def plan_beats(store: Any, video_id: int, client: Any = None) -> dict:
@@ -600,67 +207,6 @@ def plan_beats(store: Any, video_id: int, client: Any = None) -> dict:
     E.set_status(store, video_id, "planned", None, beats=beats, notes=notes, error="")
     return {"ok": True, "video_id": int(video_id), "beats": len(beats), "source": source,
             "reused": len({b["pose_id"] for b in beats}) - len(new), "new_poses": new, "notes": notes}
-
-
-def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
-    """Агент/владелец правит биты до сборки: ``[{i, pose_id? | new_pose {description, title, tags,
-    number_shown}, chip? (строка или {text, word}, как в ответе GET), chip_word?, emphasis?, badge?}]`` →
-    ролик снова «планируется» (новая оценка). Биты можно вернуть как получены."""
-    video = E.get_video(store, video_id)
-    if video["status"] in ("assembling",):
-        raise E.ExplError("ролик собирается — дождись сборки")
-    beats = video.get("beats") or []
-    if not beats:
-        if not E.narration_text(video):
-            raise E.ExplError("сначала сценарий (explainer_set_script)")
-        beats = split_beats(video["script"])
-        for b in beats:
-            b["pose_id"] = 0
-    mascot = E.get_mascot(store, int(video["mascot_id"]))
-    library = E.list_poses(store, int(mascot["id"]))
-    by_i = {int(b["i"]): b for b in beats}
-    problems = []
-    for ch in changes or []:
-        if not isinstance(ch, dict) or ch.get("i") is None or int(ch["i"]) not in by_i:
-            problems.append(f"нет бита {ch.get('i') if isinstance(ch, dict) else ch!r} (0–{len(beats) - 1})")
-            continue
-        beat = by_i[int(ch["i"])]
-        if ch.get("pose_id"):
-            pose = E.get_pose(store, int(ch["pose_id"]))
-            if int(pose["mascot_id"]) != int(mascot["id"]):
-                problems.append(f"бит {beat['i']}: поза {pose['id']} другого маскота")
-                continue
-            beat["pose_id"] = int(pose["id"])
-        elif isinstance(ch.get("new_pose"), dict):
-            spec = ch["new_pose"]
-            similar, _sim = E.similar_pose(library, str(spec.get("description") or ""), spec.get("tags"),
-                                           spec.get("number_shown"))
-            pose = similar or E.save_pose(store, int(mascot["id"]), description=spec.get("description"),
-                                          title=spec.get("title") or "", tags=spec.get("tags") or [],
-                                          emotion=spec.get("emotion") or "", number_shown=spec.get("number_shown"),
-                                          origin="agent")
-            if similar is None:
-                library.append(pose)
-            beat["pose_id"] = int(pose["id"])
-        if "chip" in ch:
-            beat["chip"] = _chip(ch.get("chip"), ch.get("chip_word"))
-        if "emphasis" in ch:
-            beat["emphasis"] = _words_of(ch.get("emphasis"), 3)
-        if "badge" in ch:
-            beat["badge"] = _badge(ch.get("badge"))
-    if problems:
-        raise E.ExplError("биты не приняты: " + "; ".join(problems))
-    if any(not b.get("pose_id") for b in beats):
-        raise E.ExplError("у каждого бита должна быть поза (pose_id или new_pose)")
-    poses = {int(p["id"]): p for p in E.list_poses(store, int(mascot["id"]))}
-    dry = E.is_dry(video)
-    for beat in beats:
-        pose = poses.get(int(beat["pose_id"]))
-        beat["pose_title"] = pose["title"] if pose else ""
-        beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
-    # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    E.set_status(store, video_id, "planned", None, beats=beats, error="", timeline={})
-    return E.get_video(store, video_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -807,194 +353,6 @@ def transcribe_words(path: Path) -> list[dict]:
             for w in result.words if str(w.word or "").strip()]
 
 
-def proportional_words(text: str, duration: float) -> list[dict]:
-    """Слова текста равномерно по длине (сухой прогон: вместо речи тон)."""
-    words = text.split()
-    if not words:
-        return []
-    weights = [len(re.sub(r"\W", "", w)) + 1.0 for w in words]
-    start, end = 0.1, max(0.5, duration - 0.1)
-    scale = (end - start) / sum(weights)
-    out, t = [], start
-    for w, wt in zip(words, weights):
-        d = wt * scale
-        out.append({"word": w, "start": round(t, 3), "end": round(t + d * 0.92, 3)})
-        t += d
-    return out
-
-
-def _norm(word: str) -> str:
-    return re.sub(r"[^a-zа-я0-9]", "", str(word).lower().replace("ё", "е"))
-
-
-def align(beats: list[dict], words: list[dict]) -> list[int]:
-    """Индекс первого слова озвучки каждого бита (difflib по словам текста и распознанным)."""
-    script_tokens: list[str] = []
-    owner: list[int] = []
-    for n, beat in enumerate(beats):
-        for w in beat["text"].split():
-            script_tokens.append(_norm(w))
-            owner.append(n)
-    spoken = [_norm(w["word"]) for w in words]
-    mapping = [0] * len(script_tokens)
-    sm = difflib.SequenceMatcher(None, script_tokens, spoken, autojunk=False)
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        for k in range(i1, i2):
-            if tag == "equal":
-                mapping[k] = j1 + (k - i1)
-            elif tag == "replace":
-                span = max(1, i2 - i1)
-                mapping[k] = min(j2 - 1, j1 + int((k - i1) * (j2 - j1) / span)) if j2 > j1 else j1
-            else:  # delete: слова нет в распознанном — к следующему
-                mapping[k] = j1
-    firsts = []
-    for n in range(len(beats)):
-        ks = [k for k, o in enumerate(owner) if o == n]
-        firsts.append(min(len(words) - 1, mapping[ks[0]]) if ks and words else 0)
-    for n in range(1, len(firsts)):  # монотонно
-        firsts[n] = max(firsts[n], firsts[n - 1])
-    return firsts
-
-
-def place(beats: list[dict], words: list[dict], total: float) -> list[dict]:
-    """Биты по времени: старт — начало первого слова; бит длиннее ``REAL_SPLIT_SEC`` делится тем же
-    кадром с наездом; слипшиеся (< 0.35 с) — в соседний."""
-    if not words:
-        raise E.ExplError("нет слов озвучки")
-    firsts = align(beats, words)
-    placed: list[dict] = []
-    for n, beat in enumerate(beats):
-        start = 0.0 if n == 0 else round(float(words[firsts[n]]["start"]), 3)
-        w0 = 0 if n == 0 else firsts[n]
-        if placed and start - placed[-1]["start"] < 0.35:
-            # Слово не нашлось или бит слишком короткий — сливаем с прошлым (поза прошлого).
-            placed[-1]["text"] += " " + beat["text"]
-            if beat.get("badge") and not placed[-1].get("badge"):
-                placed[-1]["badge"] = beat["badge"]
-            if beat.get("chip") and not placed[-1].get("chip"):
-                placed[-1]["chip"] = beat["chip"]
-            placed[-1]["emphasis"] = (placed[-1].get("emphasis") or []) + (beat.get("emphasis") or [])
-            continue
-        placed.append({**beat, "start": start, "w0": w0})
-    for n, item in enumerate(placed):
-        item["end"] = placed[n + 1]["start"] if n + 1 < len(placed) else round(total, 3)
-        item["w1"] = (placed[n + 1]["w0"] - 1) if n + 1 < len(placed) else len(words) - 1
-    out: list[dict] = []
-    for item in placed:
-        length = item["end"] - item["start"]
-        inner = [k for k in range(item["w0"] + 1, item["w1"] + 1)
-                 if item["start"] + 1.0 < words[k]["start"] < item["end"] - 1.0]
-        if length > REAL_SPLIT_SEC and inner and item is not placed[-1]:
-            mid = item["start"] + length / 2
-            k = min(inner, key=lambda j: abs(words[j]["start"] - mid))
-            cut = round(float(words[k]["start"]), 3)
-            first = {**item, "end": cut, "w1": k - 1}
-            second = {**item, "start": cut, "w0": k, "variant": "punch", "badge": None, "split_of": item["i"]}
-            if item.get("chip") and _word_in(words, item["chip"].get("word"), item["w0"], k - 1) is None:
-                first["chip"] = None
-            else:
-                second["chip"] = None
-            out += [first, second]
-        else:
-            out.append(item)
-    return out
-
-
-def heard_share(text: str, words: list[dict]) -> float:
-    """Какая доля слов сценария есть в распознанной речи, в том же порядке (0–1)."""
-    script = [t for t in (_norm(w) for w in str(text or "").split()) if t]
-    spoken = [_norm(w["word"]) for w in words]
-    if not script:
-        return 0.0
-    sm = difflib.SequenceMatcher(None, script, spoken, autojunk=False)
-    return round(sum(b.size for b in sm.get_matching_blocks()) / len(script), 3)
-
-
-_DIGITS_RE = re.compile(r"^\d[\d.,:]*%?$")
-# Основы русских числительных: только для слова, вместо которого Whisper написал цифры.
-_NUMERAL_RE = re.compile(r"^(ноль|нол|один|одн|дв|тр[иеё]|четыр|пят|шест|сем|восем|девят|десят|сорок|сто|ста|сот|"
-                         r"тысяч|полтор)")
-
-
-def _digits_for(script_word: str, heard_word: str) -> str | None:
-    """Цифры, которые Whisper услышал вместо числа словами («шесть» → «6»): в субтитрах читаются лучше. Только если
-    это то же число; иначе (ослышка, слово не про числа) — None, остаётся слово сценария."""
-    digits = re.sub(r"[^\d%]+$", "", str(heard_word).strip())
-    if not _DIGITS_RE.match(digits):
-        return None
-    key = _norm(script_word)
-    known = _NUMBER_WORD.get(key)
-    if known is not None and known != digits:
-        return None
-    return digits if known is not None or _NUMERAL_RE.match(key) else None
-
-
-def _word_tail(word: str) -> str:
-    """Пунктуация в конце слова сценария."""
-    return re.sub(r"^.*?([^\w%]*)$", r"\1", word)
-
-
-def script_words(text: str, heard: list[dict]) -> list[dict]:
-    """Слова сценария на времени распознанной речи: голос читает наш текст, значит показывать надо его, а Whisper
-    даёт только время (его «снись» вместо «снизь» в субтитры не идёт). Лишнее распознанное отбрасывается; слову,
-    которого Whisper не услышал, отводится промежуток между соседями. Числа, услышанные цифрами, — цифрами."""
-    tokens = [w for w in str(text or "").split() if _norm(w)]  # «—» отдельным словом не показываем
-    keys = [_norm(w) for w in tokens]
-    spoken = [_norm(w["word"]) for w in heard]
-    spans: list[list[float] | None] = [None] * len(tokens)
-    shown: list[str | None] = list(tokens)
-    sm = difflib.SequenceMatcher(None, keys, spoken, autojunk=False)
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
-            for k in range(i2 - i1):
-                spans[i1 + k] = [float(heard[j1 + k]["start"]), float(heard[j1 + k]["end"])]
-                digits = _digits_for(tokens[i1 + k], heard[j1 + k]["word"]) if tag == "replace" else None
-                if digits:
-                    shown[i1 + k] = digits + _word_tail(tokens[i1 + k])
-        elif tag == "replace":
-            start, end = float(heard[j1]["start"]), float(heard[j2 - 1]["end"])
-            digits = re.sub(r"[^\d%]+$", "", str(heard[j1]["word"]).strip())
-            if j2 - j1 == 1 and _DIGITS_RE.match(digits) and all(_NUMERAL_RE.match(keys[k]) for k in range(i1, i2)):
-                # «двадцать пять» → «25»: одно слово на весь кусок.
-                shown[i1] = digits + _word_tail(tokens[i2 - 1])
-                spans[i1] = [start, end]
-                for k in range(i1 + 1, i2):
-                    shown[k] = None
-                    spans[k] = [end, end]
-                continue
-            weights = [len(keys[k]) + 1.0 for k in range(i1, i2)]
-            scale = (end - start) / sum(weights)
-            t = start
-            for k, weight in zip(range(i1, i2), weights):
-                spans[k] = [t, t + weight * scale]
-                t += weight * scale
-    n = 0
-    while n < len(spans):  # слова без распознанной пары — в промежуток между соседями
-        if spans[n] is not None:
-            n += 1
-            continue
-        stop = n
-        while stop < len(spans) and spans[stop] is None:
-            stop += 1
-        count = stop - n
-        left = spans[n - 1][1] if n else 0.0
-        right = spans[stop][0] if stop < len(spans) else left + 0.3 * count
-        if right - left < 0.12 * count and n:  # промежутка нет — половина прошлого слова
-            prev = spans[n - 1]
-            prev[1] = left = round((prev[0] + prev[1]) / 2, 3)
-            right = max(right, left + 0.12 * count)
-        for k in range(count):
-            spans[n + k] = [left + (right - left) * k / count, left + (right - left) * (k + 1) / count]
-        n = stop
-    out = []
-    for word, span in zip(shown, spans):
-        if word is None:
-            continue
-        start = round(span[0], 3)
-        out.append({"word": word, "start": start, "end": round(max(span[1], start + 0.04), 3)})
-    return out
-
-
 def real_words(store: Any, text: str, ref: dict, path: Path, error: type[Exception] = E.ExplError,
                noun: str = "ролик", transcribe: Any = None) -> tuple[list[dict], float]:
     """Слова сценария на времени настоящей озвучки. Нет речи или в ней не тот текст — стоп: субтитры по длине текста
@@ -1014,39 +372,6 @@ def real_words(store: Any, text: str, ref: dict, path: Path, error: type[Excepti
 
 def _real_words(store: Any, video: dict, ref: dict, path: Path) -> tuple[list[dict], float]:
     return real_words(store, E.narration_text(video), ref, path)
-
-
-def _word_in(words: list[dict], target: Any, w0: int, w1: int) -> int | None:
-    """Индекс слова озвучки в [w0, w1]: то же слово, та же основа (4 буквы) или число («семь» → «7»)."""
-    key = _norm(target)
-    if not key:
-        return None
-    keys = [key] + ([_NUMBER_WORD[key]] if key in _NUMBER_WORD else [])
-    for want in keys:
-        for k in range(max(0, w0), min(len(words) - 1, w1) + 1):
-            word = _norm(words[k]["word"])
-            if word == want or (len(want) >= 4 and word.startswith(want[:4])):
-                return k
-    return None
-
-
-_NUMBER_WORD = {"ноль": "0", "один": "1", "одну": "1", "два": "2", "две": "2", "три": "3", "четыре": "4",
-                "пять": "5", "шесть": "6", "семь": "7", "восемь": "8", "девять": "9", "десять": "10",
-                "двенадцать": "12", "двух": "2", "трех": "3"}
-
-
-def emphasis_marks(placed: list[dict], words: list[dict]) -> dict[int, int]:
-    """Индексы слов субтитров с эмфазой: ключевые слова битов + числа чипов."""
-    marks: dict[int, int] = {}
-    for item in placed:
-        targets = list(item.get("emphasis") or [])
-        if item.get("chip") and item["chip"].get("word"):
-            targets.append(item["chip"]["word"])
-        for target in targets:
-            k = _word_in(words, target, item["w0"], item["w1"])
-            if k is not None:
-                marks[k] = 1
-    return marks
 
 
 def _sfx_ok(ref: str) -> bool:
