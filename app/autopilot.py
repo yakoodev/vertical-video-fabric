@@ -13,8 +13,10 @@
   площадки, предлагаемое время. Статус pending → approved / rejected / changes_requested /
   expired; кто и когда решил, комментарий. **Без approved ничего не публикуется**: задание
   публикации (``jobs``) создаётся только из одобренного элемента.
-* Доверие проекта по типам контента (``trust``: ``{"meme": "auto", "default": "approve"}``):
-  auto пропускает одобрение, но всё равно пишет в ленту (``approval_events``).
+* Публиковать без одобрения можно только настройкой проекта «Публиковать самому» (app/agent_settings.py):
+  на явно выбранные там аккаунты, с записью в ленту (``approval_events``) и пометкой в «Публикациях».
+  Доверие по типам контента (``trust``) теперь только добавляет исключения: тип с ``approve`` спрашивает
+  владельца всегда, ``auto`` само по себе ничего не публикует.
 * Расписание: слоты проекта (дни недели, часы, часовой пояс), не больше N в день на
   площадку. Одобренный клип встаёт в ближайший свободный слот; публикует обычный JobWorker
   по ``jobs.scheduled_at`` (UTC, как CURRENT_TIMESTAMP в SQLite).
@@ -140,9 +142,11 @@ def ensure_autopilot_schema(conn) -> None:
     """Таблицы автопилота (вызывается из ``Database.init`` после проектов)."""
     for sql in AUTOPILOT_SCHEMA_SQL:
         conn.execute(sql)
+    from app.agent_settings import ensure_agent_settings_schema
     from app.project_chat import ensure_chat_schema
     from app.vod_watch import ensure_vod_watch_schema
 
+    ensure_agent_settings_schema(conn)
     ensure_chat_schema(conn)
     ensure_vod_watch_schema(conn)
 
@@ -572,9 +576,11 @@ def _platforms(value: Any) -> list[str]:
 
 def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str = "", tags: Any = None,
                 platforms: Any = None, when: Any = None, content_type: Any = "", submitted_by: str = "agent") -> dict:
-    """Клип на одобрение. Нужен готовый рендер и проект у источника. Доверие auto —
-    сразу одобрено (и в ленту), иначе pending + карточка владельцу. Прежняя pending-карточка
+    """Клип на одобрение. Нужен готовый рендер и проект у источника. Настройка «Публиковать самому» с выбранными
+    аккаунтами — сразу одобрено (и в ленту), иначе pending + карточка владельцу. Прежняя pending-карточка
     того же клипа уходит в expired: на руках у владельца — одна, свежая."""
+    from app import agent_settings as S
+
     plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
     project_id = P.project_of_plan(store, int(clip_plan_id))
     if project_id is None:
@@ -587,7 +593,10 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
     platforms_list = _platforms(platforms) or list(cfg["platforms"])
     proposed = parse_when(when, cfg["timezone"])
     ctype = content_type_of(store, cfg, int(clip_plan_id), content_type)
-    trust = trust_for(cfg, ctype)
+    decision = S.publish_decision(store, project_id, ctype, _platforms(platforms), cfg["trust"], submitted_by)
+    if decision["allowed"]:
+        platforms_list = decision["platforms"]
+    trust = "auto" if decision["allowed"] else "approve"
     # Заголовок, описание и хэштеги, что сервис написал после рендера (app/ai/publish_meta.py), и
     # выбранная обложка (app/cover_variants.py) — в карточку, если агент своих не дал.
     meta = clip.get("publish_meta") or {}
@@ -620,13 +629,15 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
     log_event(store, approval_id, project_id, "submitted", submitted_by, title,
               {"content_type": ctype, "trust": trust, "platforms": platforms_list,
                **({"lint": lint["counts"]} if lint else {})})
-    if trust == "auto":
-        _update(store, approval_id, status="approved", decided_by="auto", decided_at=_now_text(),
-                decision_comment=f"доверие проекта: {ctype or 'default'} = auto")
-        log_event(store, approval_id, project_id, "auto_approved", "auto",
-                  f"без одобрения: доверие «{ctype or 'по умолчанию'}» = auto")
-        _place(store, approval_id, actor="auto")
+    if decision["allowed"]:
+        note = f"Опубликует агент: {S.ACTOR_LABELS[S.PUBLISH_ACTOR]}"
+        _update(store, approval_id, status="approved", decided_by=S.PUBLISH_ACTOR, decided_at=_now_text(),
+                decision_comment=note)
+        log_event(store, approval_id, project_id, "auto_approved", S.PUBLISH_ACTOR, note,
+                  {"accounts": decision["account_ids"], "privacy": decision["privacy"]})
+        _place(store, approval_id, actor=S.PUBLISH_ACTOR)
     out = get_approval(store, approval_id)
+    out["publish_decision"] = decision["reason"]
     if lint:
         out["lint"] = lint
     return out
@@ -647,7 +658,7 @@ def pre_submit_lint(store: Any, clip_plan_id: int, platforms: list[str]) -> dict
 
 def submit_card(store: Any, project_id: int | None, kind: str, question: str, payload: dict | None = None,
                 title: str = "", rule_id: int | None = None, hypothesis_id: int | None = None,
-                dedupe_key: str = "", submitted_by: str = "system") -> dict:
+                dedupe_key: str = "", submitted_by: str = "system", notify: bool = True) -> dict:
     """Карточка-вопрос владельцу (правило, статистика, что угодно). С dedupe_key — не
     повторяем, пока владелец не ответил или уже ответил (кроме expired). Без проекта
     (``project_id`` None) — только «внимание» (alert): публикация клипа вне серий."""
@@ -667,6 +678,7 @@ def submit_card(store: Any, project_id: int | None, kind: str, question: str, pa
         title=P._text(title or question, 200),
         question=P._long_text(question, 2000), payload_json=_json(payload or {}), rule_id=rule_id,
         hypothesis_id=hypothesis_id, dedupe_key=dedupe_key, submitted_by=str(submitted_by or "")[:40],
+        **({} if notify else {"tg_state": ""}),
     )
     log_event(store, approval_id, int(project_id) if project_id is not None else None, "submitted", submitted_by,
               question[:300])
@@ -1126,10 +1138,14 @@ def _fits(cfg: dict, moment: datetime, platforms: list[str], booked: list[tuple[
 
 
 def next_slot(store: Any, project_id: int, platforms: list[str], after: datetime | None = None,
-              exclude: int | None = None) -> datetime:
+              exclude: int | None = None, per_day: int | None = None) -> datetime:
     """Ближайший свободный момент: слот, не занятый другим клипом проекта, с лимитом в день
-    на каждую площадку. Без слотов — сразу (если лимит дня позволяет), иначе завтра в 12:00."""
+    на каждую площадку. Без слотов — сразу (если лимит дня позволяет), иначе завтра в 12:00.
+    ``per_day`` — лимит настройки «Публиковать самому»: действует, если он строже лимита автопилота."""
     cfg = get_config(store, project_id)
+    if per_day:
+        tight = {key: min(value or per_day, per_day) for key, value in cfg["per_day"].items()}
+        cfg = {**cfg, "per_day": {**tight, "default": min(tight.get("default") or per_day, per_day)}}
     start = after or now()
     booked = _booked(store, project_id, exclude)
     taken = {when.replace(second=0) for when, _ in booked}
@@ -1178,27 +1194,42 @@ def _place(store: Any, approval_id: int, actor: str = "", at: datetime | None = 
            use_proposed: bool = True) -> dict:
     """Одобренный клип → задание публикации на ближайший свободный слот (или на ``at``).
     Не вышло (нет аккаунта, нет слотов) — publish_status=failed с причиной, без исключения."""
+    from app import agent_settings as S
+
     approval = get_approval(store, approval_id)
     if approval["status"] != "approved" or approval["kind"] != "clip_publish":
         raise ValueError("в расписание — только одобренная публикация клипа")
     project_id = int(approval["project_id"])
     cfg = get_config(store, project_id)
     platforms = approval["platforms"] or cfg["platforms"]
+    made_by = ""
+    privacy = cfg["privacy"]
     try:
-        if not platforms:
+        if not platforms and approval.get("decided_by") != S.PUBLISH_ACTOR:
             raise ValueError("не выбраны площадки — укажи platforms или площадки по умолчанию в автопилоте")
         if not approval.get("clip_id"):
             raise ValueError("рендер клипа удалён — отрендери заново и отправь на одобрение")
-        account_ids, problems = _accounts_for(store, cfg, platforms)
-        if problems:
-            raise ValueError("; ".join(problems))
         proposed = parse_utc(approval.get("proposed_at")) if use_proposed else None
-        moment = at or (proposed if proposed and proposed > now() else None) or \
-            next_slot(store, project_id, platforms, exclude=approval_id)
+        proposed = proposed if proposed and proposed > now() else None
+        if approval.get("decided_by") == S.PUBLISH_ACTOR:
+            # Только то, что владелец выбрал сейчас: настройку могли изменить после карточки.
+            decision = S.publish_decision(store, project_id, approval.get("content_type") or "", platforms, cfg["trust"],
+                                          "agent")
+            if not decision["allowed"]:
+                raise ValueError(f"не публикую сам: {decision['reason']}. Изменить: {S.where(project_id)}")
+            platforms, account_ids, privacy = decision["platforms"], decision["account_ids"], decision["privacy"]
+            made_by = S.MADE_BY_AGENT
+            moment = at or next_slot(store, project_id, platforms, after=proposed, exclude=approval_id,
+                                     per_day=decision["per_day"])
+        else:
+            account_ids, problems = _accounts_for(store, cfg, platforms)
+            if problems:
+                raise ValueError("; ".join(problems))
+            moment = at or proposed or next_slot(store, project_id, platforms, exclude=approval_id)
         job = store.create_clip_post_job(
             int(approval["clip_id"]), approval["title"], _description_with_tags(approval["description"],
                                                                                  approval["tags"]),
-            account_ids, cfg["privacy"], True, scheduled_at=fmt_utc(moment),
+            account_ids, privacy, True, scheduled_at=fmt_utc(moment), made_by=made_by,
         )
     except (KeyError, ValueError) as exc:
         _update(store, approval_id, publish_status="failed", publish_error=str(exc)[:500])

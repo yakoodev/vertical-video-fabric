@@ -26,7 +26,7 @@ from app.transitions import transition_options
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.ai.service import VideoAnalysisService
 from app.automation import AutomationService
-from app.auth import AuthRequired, auth_required_handler, require_auth, token_is_valid
+from app.auth import AuthRequired, auth_required_handler, is_agent_request, require_auth, token_is_valid
 from app.crypto import CookieCipher
 from app.db import Database
 from app.default_pack import seed_default_brand, seed_default_pack, seed_music
@@ -163,6 +163,8 @@ app.add_exception_handler(AuthRequired, auth_required_handler)
 from app.modules_api import ModuleGate, build_modules_router, module_disabled_handler  # noqa: E402
 
 app.add_middleware(ModuleGate, get_store=lambda: store)
+from app.agent_settings_api import AgentStopGate, build_agent_settings_router, refuse_agent_drafts  # noqa: E402
+app.add_middleware(AgentStopGate, get_store=lambda: store)
 # Снаружи всех: страницы идут через домен, а JS и списки весят мегабайты (app/compression.py).
 app.add_middleware(TextGzipMiddleware)
 app.add_exception_handler(modules.ModuleDisabled, module_disabled_handler)
@@ -312,6 +314,7 @@ class JobRead(BaseModel):
     error: str
     result_json: str
     targets: list[JobTargetRead]
+    made_by: str = ""  # 'agent' — поставила настройка проекта «Публиковать самому»
 
 
 class SourceRead(BaseModel):
@@ -1636,6 +1639,7 @@ def api_auto_runs(_auth: AuthDep) -> list[dict]:
 
 @app.post("/ui/auto/start", include_in_schema=False)
 def ui_auto_start(
+    request: Request,
     _auth: AuthDep,
     url: Annotated[str, Form()],
     smotvibe_media_url: Annotated[str, Form()] = "",
@@ -1732,6 +1736,7 @@ def ui_auto_start(
             "ai_metadata": ai_metadata,
             "ai_montage": ai_montage,
         },
+        owner_started=not is_agent_request(request),
     )
     return RedirectResponse(url="/auto", status_code=303)
 
@@ -3234,6 +3239,7 @@ def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, 
     ]
     if not ids:
         raise HTTPException(status_code=400, detail="нет клипов: отметьте ★ избранные или передайте clip_plan_ids")
+    refuse_agent_drafts(request, store, ids)
     running = latest_job_for_source(source_id)
     if running and running.get("status") == "running":
         raise HTTPException(status_code=409, detail="ИИ-монтаж этого проекта уже идёт")
@@ -3271,7 +3277,16 @@ def api_source_ai_pick(source_id: int, payload: AiPickRequest, request: Request,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    if payload.montage:
+    # Выбор ИИ по кнопке владельца — его выбор. Тот же запрос агента только ставит ★: монтаж ждёт владельца.
+    from app import agent_settings as agent_settings_mod
+
+    picked_ids = [p["id"] for p in result["picks"]]
+    refused = agent_settings_mod.drafts_refusal(store, picked_ids) if is_agent_request(request) else None
+    if not is_agent_request(request):
+        agent_settings_mod.set_picked_many(store, picked_ids)
+    if refused and payload.montage:
+        result["montage_refused"] = refused["error"]
+    elif payload.montage:
         running = latest_job_for_source(source_id)
         if not (running and running.get("status") == "running"):
             result["montage_job"] = start_montage_job(
@@ -3632,10 +3647,12 @@ def api_clip_spec_schema(_auth: AuthDep) -> dict:
 def api_render_clip_plans(
     source_id: int,
     payload: RenderClipPlansRequest,
+    request: Request,
     _auth: AuthDep,
 ) -> list[dict]:
     if not payload.clip_plan_ids:
         raise HTTPException(status_code=400, detail="clip_plan_ids cannot be empty")
+    refuse_agent_drafts(request, store, payload.clip_plan_ids)
     clips: list[dict] = []
     batch_started_at = clip_render_service.batch_clock()
     try:
@@ -3809,6 +3826,7 @@ def api_source_compilation(source_id: int, payload: CompilationRequest, request:
     from app.stream_questions_api import refuse_agent_montage
 
     refuse_agent_montage(request, store, source_id)
+    refuse_agent_drafts(request, store, payload.plan_ids)
     try:
         return build_compilation(
             store, source_id, payload.plan_ids, title=payload.title, countdown=payload.countdown,
@@ -3858,9 +3876,15 @@ def api_transition_options(_auth: AuthDep) -> dict:
     tags=["Render"],
     summary="Toggle favourite/hidden triage flags on a candidate",
 )
-def api_set_clip_plan_flags(clip_plan_id: int, payload: ClipPlanFlagsPayload, _auth: AuthDep) -> dict:
+def api_set_clip_plan_flags(clip_plan_id: int, payload: ClipPlanFlagsPayload, request: Request, _auth: AuthDep) -> dict:
     try:
-        return store.set_clip_plan_flags(clip_plan_id, favorite=payload.favorite, hidden=payload.hidden)
+        flags = store.set_clip_plan_flags(clip_plan_id, favorite=payload.favorite, hidden=payload.hidden)
+        if payload.favorite is not None and not is_agent_request(request):
+            # ★ владельца — его выбор из списка черновиков (app/agent_settings.py). ★ агента выбором не считается.
+            from app.agent_settings import set_picked
+
+            set_picked(store, clip_plan_id, bool(payload.favorite))
+        return flags
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4844,6 +4868,7 @@ app.include_router(build_releases_router(AuthDep, lambda: store))
 from app.autopilot_api import build_autopilot_router  # noqa: E402
 
 app.include_router(build_autopilot_router(AuthDep, lambda: store))
+app.include_router(build_agent_settings_router(AuthDep, lambda: store))
 # Страница «Чат»: переписки с агентом, поток ответа, подтверждения, откат (app/agent_chat_api.py).
 from app.agent_chat_api import build_agent_chat_router  # noqa: E402
 

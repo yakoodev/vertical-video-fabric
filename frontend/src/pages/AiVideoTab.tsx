@@ -444,7 +444,7 @@ function Versions({ refs, projectId, onPick }: { refs: AivRef[]; projectId: numb
   const regen = useMutation({
     mutationFn: (id: number) => aivApi.regenerate(id),
     onSuccess: (r) => {
-      toast.success(r.status === "awaiting_approval" ? `Перегенерация ≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Новая версия готова");
+      toast.success(r.status === "awaiting_approval" ? `Перегенерация ≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : r.status === "approved" ? r.note : "Новая версия готова");
       invalidate();
     },
     onError: (e) => toast.error(errText(e, "Не запрошено")),
@@ -1059,7 +1059,7 @@ function BoardSub({ o }: { o: Overview }) {
   const make = useMutation({
     mutationFn: (target: string) => aivApi.regenerateTarget(target),
     onSuccess: (r) => {
-      toast.success(r.status === "awaiting_approval" ? `≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : "Готово");
+      toast.success(r.status === "awaiting_approval" ? `≈ ${rub(r.estimate.total_rub)} — ждёт «Разрешить»` : r.status === "approved" ? r.note : "Готово");
       invalidate();
     },
     onError: (e) => toast.error(errText(e, "Не запрошено")),

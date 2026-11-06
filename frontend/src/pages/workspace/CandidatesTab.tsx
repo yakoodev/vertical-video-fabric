@@ -119,6 +119,7 @@ type SpecPiece = { segment_id?: number; title?: string; start_sec: number; end_s
 import { ClipTimeline, clipToSource, pieceBounds, type Selection } from "@/pages/workspace/ClipTimeline";
 import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
+import { DraftPickHint } from "@/pages/workspace/DraftPickHint";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
 // the smart 9:16 reframe follows the subject. Pairs with the LLM auto-track.
@@ -1914,7 +1915,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     if (prev) {
       qc.setQueryData<SourceDetail>(qk.source(sourceId), {
         ...prev,
-        clip_plans: prev.clip_plans.map((p) => (p.id === planId ? { ...p, ...flags } : p)),
+        // ★ в браузере — выбор владельца: сервер отметит то же (app/agent_settings.py).
+        clip_plans: prev.clip_plans.map((p) =>
+          p.id === planId ? { ...p, ...flags, ...(flags.favorite === undefined ? {} : { owner_picked: flags.favorite }) } : p,
+        ),
       });
     }
     clipPlansApi
@@ -2850,7 +2854,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       planRender(p.id) ? (
         <img src={`/media/clips/${planRender(p.id)!.id}/thumb?v=${encodeURIComponent(planRender(p.id)!.updated_at)}`} alt="" loading="lazy" />
       ) : (
-        <span className="plan-thumb-none">нет рендера</span>
+        <span className="plan-thumb-none">черновик</span>
       )
     ) : (
       <img src={planThumbUrl(p)} alt="" loading="lazy" />
@@ -3175,8 +3179,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
           )}
           <div className="mo-stats-line">
-            <b>{plural(plans.length, "черновик", "черновика", "черновиков")}</b>
-            <span>· {favCount} в избранном</span>
+            <b>{plural(plans.length, "клип", "клипа", "клипов")}</b>
+            <span>· {plural(plans.filter((p) => p.status !== "rendered").length, "черновик", "черновика", "черновиков")}</span>
+            <span>· {favCount} в работе ★</span>
             <span>· {hiddenCount} скрыто</span>
           </div>
           <div className="mo-stats-meta muted mono">
@@ -3201,12 +3206,14 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </button>
           {moduleOn("ai_montage") ? <AiBatchPanel sourceId={sourceId} favCount={favCount} /> : null}
           <p className="muted mo-stats-hint">
-            ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть черновик.
+            ☆ — взять в работу, ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть клип.
           </p>
         </div>
       </div>
 
       <AiBatchReport sourceId={sourceId} onOpenClip={(id) => openEditor(id)} />
+
+      <DraftPickHint projectId={source.project_id ?? null} />
 
       <div className="mo-toolbar">
         <div className="mo-search">
@@ -3367,6 +3374,15 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   {p.title || `Клип #${p.id}`}
                 </button>
                 {p.ai_pick?.reason ? <div className="mo-why">✨ {p.ai_pick.reason}</div> : null}
+                <div className="mo-stateline">
+                  {p.status === "rendered" ? (
+                    <span className="mo-state ok">готов</span>
+                  ) : p.owner_picked ? (
+                    <span className="mo-state work" title="Ты выбрал этот черновик: агент может его монтировать">черновик, в работе</span>
+                  ) : (
+                    <span className="mo-state">черновик</span>
+                  )}
+                </div>
                 <div className="mo-foot">
                   <label className="check" title="Включить в рендер">
                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleChosen(p.id)} />
@@ -3374,7 +3390,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </label>
                   <button
                     className={`mo-act${p.favorite ? " fav" : ""}`}
-                    title={p.favorite ? "Убрать из избранного" : "В избранное"}
+                    title={p.favorite ? "Убрать из работы" : "Взять в работу: агент сможет монтировать этот черновик"}
                     onClick={() => setPlanFlag(p.id, { favorite: !p.favorite })}
                   >
                     {p.favorite ? "★" : "☆"}

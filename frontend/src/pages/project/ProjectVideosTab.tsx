@@ -40,7 +40,7 @@ function dateRu(value: string): string {
 function clipsLine(v: NavVideo): string {
   if (!v.clips) return "клипов пока нет";
   const formats = v.vertical && v.horizontal ? `: ${v.vertical} верт., ${v.horizontal} гориз.` : "";
-  const missing = v.no_render ? `${formats ? "," : ","} ${v.no_render} без рендера` : "";
+  const missing = v.no_render ? `, ${plural(v.no_render, "черновик", "черновика", "черновиков")}` : "";
   return `${plural(v.clips, "клип", "клипа", "клипов")}${formats}${missing}`;
 }
 

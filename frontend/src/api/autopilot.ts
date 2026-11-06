@@ -23,6 +23,11 @@ export const PUBLISH_STATUS_LABEL: Record<string, string> = {
   failed: "не поставлено",
   cancelled: "отменено",
 };
+/** Кто решил карточку вместо кнопки владельца (app/agent_settings.py). */
+export const SETTING_DECIDED: Record<string, string> = {
+  "setting:spend": "разрешила настройка проекта",
+  "setting:publish": "опубликует агент: настройка проекта",
+};
 export const PLATFORM_LABEL: Record<string, string> = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram" };
 export const WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 

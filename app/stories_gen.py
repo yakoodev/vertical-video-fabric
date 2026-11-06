@@ -736,7 +736,7 @@ def request_generation(store: Any, episode_id: int, requested_by: str = "stories
     except G.BudgetError as exc:
         S.set_status(store, episode_id, "failed", ("planned",), error=str(exc)[:600])
         return {"status": "failed", "error": str(exc), "estimate": est}
-    if req["status"] == "awaiting_approval":
+    if req["status"] in ("awaiting_approval", "approved"):
         S.set_status(store, episode_id, "awaiting_approval", ("planned",), approval_id=req["approval_id"],
                      estimate_rub=est["total_rub"])
         return {"status": "awaiting_approval", "approval_id": req["approval_id"], "estimate": est, "note": req["note"]}

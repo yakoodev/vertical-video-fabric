@@ -24,6 +24,7 @@
 он задан, вопрос клипа только этот клип. ``optional`` не держит ничего, мемы тоже: они не меняют,
 что вырезать. Снять паузу может только владелец кнопкой «Монтировать без ответов»
 (``release_montage``); кнопка покрывает вопросы, заданные до нажатия, новый вопрос снова останавливает.
+Весь проект может не ждать ответов: настройка «Ждать ответов на вопросы перед монтажом» (app/agent_settings.py).
 """
 
 from __future__ import annotations
@@ -532,8 +533,12 @@ def montage_gate(store: Any, source_id: int, clip_plan_id: int | None = None) ->
     release = _release_row(store, source_id)
     covered = int(release["up_to_question_id"]) if release else 0
     waiting = [r for r in relevant if int(r["id"]) > covered]
+    from app.agent_settings import waits_for_answers
+
+    waits = waits_for_answers(store, int(source_id))
     return {
-        "paused": bool(waiting),
+        "paused": bool(waiting) and waits,
+        "waits": waits,
         "open": len(waiting),
         "project_open": sum(1 for r in waiting if r["scope"] == "channel"),
         "clip_open": sum(1 for r in waiting if r["scope"] == "clip"),
@@ -583,15 +588,20 @@ def montage_refusal(store: Any, source_id: int, clip_plan_id: int | None = None)
     problems = [f"#{q['id']} ({LEVEL_WORD[q['level']]}): {q['question'][:140]}" for q in gate["items"]]
     if gate["open"] > len(gate["items"]):
         problems.append(f"и ещё {gate['open'] - len(gate['items'])}")
+    from app import agent_settings as S
+
+    project_id = project_of_source(store, int(source_id))
     return {
         "ok": False,
         "paused": "open_questions",
+        "setting": "wait_answers",
         "source_id": int(source_id),
         "open_questions": [q["id"] for q in gate["items"]],
         "error": (f"Монтаж видео #{source_id} на паузе: владелец ещё не ответил на {_ru_questions(gate['open'])}. "
                   "Сначала ответы, потом нарезка. Дождись их и прочитай list_stream_answers. Пока можно смотреть "
                   "стрим, задавать вопросы и править субтитры, слои и звук готовых клипов. Начать без ответов может "
-                  f"только сам владелец: кнопка «Монтировать без ответов» на странице видео /v/{source_id}."),
+                  f"только сам владелец: кнопка «Монтировать без ответов» на странице видео /v/{source_id}"
+                  + (f" или настройка «{S.NAME_WAIT}»: {S.where(project_id)}." if project_id is not None else ".")),
         "problems": problems,
     }
 
@@ -977,8 +987,10 @@ def answers_brief(store: Any, source_id: int) -> dict:
     gate = montage_gate(store, source_id)
     return {"answers": answers, "memes": memes, "progress": progress(questions, moments),
             "montage": {"paused": gate["paused"], "waiting_for": gate["open"], "released_by_owner": gate["released"],
+                        "waits_for_answers": gate["waits"],
                         "note": ("Монтаж на паузе: новые клипы и вырезы откажут, пока владелец не ответит."
-                                 if gate["paused"] else "Монтировать можно.")}}
+                                 if gate["paused"] else "Монтировать можно."
+                                 + ("" if gate["waits"] else " В этом проекте монтаж не ждёт ответов: так настроил владелец."))}}
 
 
 # --------------------------------------------------------------------------- #

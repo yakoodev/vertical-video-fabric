@@ -19,6 +19,7 @@ import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
 import { VodWatchPanel } from "@/pages/SeriesVodWatch";
 import { useModuleOn } from "@/hooks/useModules";
 import { ChatConversation } from "@/pages/chat/ChatConversation";
+import { AgentSettingsPanel } from "@/pages/project/AgentSettingsPanel";
 import { KnowledgeCard } from "@/pages/project/ProjectKnowledge";
 import { chatApi, chatKeys } from "@/api/chat";
 
@@ -35,6 +36,17 @@ const PLATFORMS = ["youtube", "tiktok", "instagram"];
 // --------------------------------------------------------------------------- //
 
 export function AutopilotTab({ projectId }: { projectId: number }) {
+  const autopilotOn = useModuleOn("autopilot");
+  return (
+    <>
+      {/* Настройки агента действуют и без модуля автопилота: пауза, список клипов, траты. */}
+      <AgentSettingsPanel projectId={projectId} />
+      {autopilotOn ? <AutopilotSettings projectId={projectId} /> : null}
+    </>
+  );
+}
+
+function AutopilotSettings({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const toast = useToast();
   const config = useQuery({ queryKey: apKeys.config(projectId), queryFn: () => autopilotApi.config(projectId) });
@@ -65,26 +77,20 @@ export function AutopilotTab({ projectId }: { projectId: number }) {
     <div className="series-grid">
       <div className="series-col">
         <section className="panel series-panel">
-          <h3>Доверие</h3>
+          <h3>Всегда спрашивать</h3>
           <p className="muted series-hint">
-            «Сам» — публикует без одобрения (но пишет в ленту). Тип контента — тег клипа (type:meme) или поле агента.
+            Сам агент публикует только по настройке «Публиковать самому» выше. Клипы этих типов идут на одобрение и тогда.
+            Тип контента — тег клипа (type:meme) или поле агента.
           </p>
           <ul className="series-list">
-            {Object.entries(draft.trust).map(([type, level]) => (
-              <li key={type} className="series-row">
-                <span style={{ minWidth: 120 }}>{type === "default" ? "всё остальное" : type}</span>
-                <select
-                  className="input"
-                  style={{ width: "auto" }}
-                  value={level}
-                  onChange={(e) => patch({ trust: { ...draft.trust, [type]: e.target.value as "approve" | "auto" } })}
-                >
-                  <option value="approve">спросить меня</option>
-                  <option value="auto">сам</option>
-                </select>
-                {type !== "default" ? (
+            {Object.entries(draft.trust)
+              .filter(([type, level]) => type !== "default" && level === "approve")
+              .map(([type]) => (
+                <li key={type} className="series-row">
+                  <span style={{ minWidth: 120 }}>{type}</span>
                   <button
                     className="btn ghost sm"
+                    aria-label={`Убрать тип ${type}`}
                     onClick={() => {
                       const { [type]: _gone, ...rest } = draft.trust;
                       patch({ trust: rest });
@@ -92,9 +98,8 @@ export function AutopilotTab({ projectId }: { projectId: number }) {
                   >
                     ✕
                   </button>
-                ) : null}
-              </li>
-            ))}
+                </li>
+              ))}
           </ul>
           <div className="series-row">
             <input className="input" style={{ width: 160 }} placeholder="meme, ad…" value={newType} onChange={(e) => setNewType(e.target.value)} />

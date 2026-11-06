@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from app import agent_settings as S
 from app import autopilot as A
 from app.agent_tools import Tool, ToolContext, _obj
 from app.project_tools import _PROJECT_ARGS, _pid
@@ -28,11 +29,13 @@ def h_submit_for_approval(ctx: ToolContext, args: dict) -> dict:
                              content_type=args.get("content_type") or "", submitted_by="agent")
     out = {"ok": True, "approval": _brief(approval)}
     if approval["status"] == "approved":
-        out["note"] = ("Доверие проекта auto: без одобрения, сразу в расписание (запись в ленте). "
-                       f"{approval['scheduled_local'] or approval['publish_error']}")
+        out["note"] = ("Настройка проекта «Публиковать самому»: без одобрения, на выбранные владельцем аккаунты, "
+                       f"запись в ленте и в «Публикациях». {approval['scheduled_local'] or approval['publish_error']}")
     else:
-        out["note"] = ("Ждёт владельца (UI «Одобрение» / Telegram). НЕ публикуй сам. Проверяй list_approvals: "
-                       "changes_requested — переделай по decision_comment и отправь заново.")
+        why = approval.get("publish_decision") or ""
+        out["note"] = (f"Ждёт владельца (UI «Одобрение» / Telegram): {why}. Изменить может только он: {S.where(approval.get('project_id'))}. "
+                       "НЕ публикуй сам. Проверяй list_approvals: changes_requested — переделай по decision_comment и "
+                       "отправь заново.")
     lint = approval.get("lint")
     if lint:
         # Линт перед сдачей (app/quality_lint.py) — предупреждения, отправку не останавливают.
@@ -72,9 +75,10 @@ def autopilot_tools() -> list[Tool]:
             "submit_for_approval", "Отправляю на одобрение",
             "Клип (готовый рендер) — на одобрение владельцу: title, description, tags [без #], platforms "
             "[youtube|tiktok|instagram] (пусто — площадки проекта), when — «ГГГГ-ММ-ДД ЧЧ:ММ» пояса проекта (пусто — "
-            "ближайший свободный слот), content_type (meme, ad… — для доверия; пусто — по тегам клипа). Без "
-            "approved НИЧЕГО не публикуется; доверие проекта auto для типа — сразу в расписание. Прежняя "
-            "pending-карточка клипа заменяется. / Submit a rendered clip for owner approval.",
+            "ближайший свободный слот), content_type (meme, ad…; пусто — по тегам клипа). Без approved НИЧЕГО не "
+            "публикуется. Сразу в расписание только при настройке проекта «Публиковать самому» (get_agent_settings) "
+            "и только на выбранные там аккаунты. Прежняя pending-карточка клипа заменяется. / Submit a rendered clip "
+            "for owner approval.",
             _obj({"title": {"type": "string"}, "description": {"type": "string"},
                   "tags": {"type": "array", "items": {"type": "string"}},
                   "platforms": {"type": "array", "items": {"type": "string", "enum": list(A.PLATFORMS)}},

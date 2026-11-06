@@ -274,7 +274,8 @@ export interface BlockingView {
 export interface StageResult {
   ok: boolean;
   // in_progress — то же уже заказано (ждёт «Разрешить» или идёт): второй раз не заказано, см. note
-  status: "done" | "awaiting_approval" | "nothing" | "in_progress";
+  // approved — разрешила настройка проекта «Тратить без подтверждения»: note говорит сумму
+  status: "done" | "awaiting_approval" | "approved" | "nothing" | "in_progress";
   approval_id?: number;
   duplicate?: boolean; // повтор запроса: возвращена уже ждущая карточка, вторая не создана
   estimate: Estimate;

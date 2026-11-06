@@ -16,7 +16,8 @@ import { clipEditorPath, clipPath } from "@/lib/paths";
 
 const STATUS: Record<ClipGridItem["status"], { label: string; cls: string }> = {
   ready: { label: "готов", cls: "ok" },
-  no_render: { label: "нет рендера", cls: "warn" },
+  // Клип без готового файла — черновик: всё, что нашёл агент, и всё, что ещё не рендерили.
+  no_render: { label: "черновик", cls: "warn" },
   rendering: { label: "рендер идёт", cls: "run" },
   failed: { label: "ошибка рендера", cls: "bad" },
 };
@@ -55,6 +56,7 @@ export function ClipTile({
   const thumb = clip.latest ? `/media/clips/${clip.latest.id}/thumb?v=${encodeURIComponent(clip.latest.updated_at)}` : "";
   const status = STATUS[clip.status];
   const wide = isHorizontal(clip.format);
+  const draft = clip.status === "no_render";
   return (
     <div className={`ctile${selected ? " picked" : ""}`}>
       <Link to={clipPath(clip.id)} className={`ctile-th${wide ? "" : " tall"}`} title={clip.title}>
@@ -64,7 +66,7 @@ export function ClipTile({
             <img className="m" src={thumb} alt="" loading="lazy" />
           </>
         ) : (
-          <span className="ctile-empty">нет рендера</span>
+          <span className="ctile-empty">черновик</span>
         )}
         <span className="ctile-fmt">{clip.format}</span>
         {clip.versions > 1 ? (
@@ -83,7 +85,7 @@ export function ClipTile({
           </Link>
           {showVideo && clip.video_name ? <div className="ctile-video" title={clip.video_name}>{clip.video_name}</div> : null}
           <div className="ctile-st">
-            <span className={`cchip ${status.cls}`}>{status.label}</span>
+            <span className={`cchip ${status.cls}`}>{status.label}{draft && clip.picked ? ", в работе" : ""}</span>
             {clip.published ? <span className="cchip">опубликован{clip.published > 1 ? `: ${clip.published}` : ""}</span> : null}
             {clip.moments.map((m) => (
               <Link key={m.id} className="ctile-moment" to={clipPath(m.id)} title="Этот момент в другом формате">
@@ -119,7 +121,7 @@ export function ClipTile({
               <Link role="menuitem" to={clipEditorPath(clip.source_id, clip.id)}>Открыть монтаж</Link>
               {clip.latest ? <a role="menuitem" href={`/media/clips/${clip.latest.id}`} download>Скачать</a> : null}
               <button role="menuitem" type="button" onClick={() => flags.mutate({ favorite: !clip.favorite })}>
-                {clip.favorite ? "Убрать ★" : "В избранное ★"}
+                {clip.favorite ? "Убрать ★" : draft ? "Взять в работу ★" : "В избранное ★"}
               </button>
               <button role="menuitem" type="button" onClick={() => flags.mutate({ hidden: true })}>Скрыть</button>
             </div>
@@ -137,13 +139,13 @@ const FILTERS: [Filter, string, (c: ClipGridItem) => boolean][] = [
   ["vertical", "Вертикальные", (c) => !isHorizontal(c.format)],
   ["horizontal", "Горизонтальные", (c) => isHorizontal(c.format)],
   ["ready", "Готово", (c) => c.status === "ready"],
-  ["no_render", "Без рендера", (c) => c.status === "no_render"],
+  ["no_render", "Черновики", (c) => c.status === "no_render"],
   ["published", "Опубликованные", (c) => c.published > 0],
   ["failed", "Ошибка", (c) => c.status === "failed"],
   ["favorite", "★", (c) => c.favorite],
 ];
 
-/** Сетка клипов видео или проекта: фильтры, поиск, пачка публикаций, «без рендера» отдельно. */
+/** Сетка клипов видео или проекта: фильтры, поиск, пачка публикаций, черновики отдельно. */
 export function ClipGrid({
   sourceId,
   projectId,
@@ -184,7 +186,7 @@ export function ClipGrid({
       ),
     [clips, test, needle],
   );
-  // На вкладке «Все» найденное без рендера уходит вниз: главное — готовые клипы.
+  // На вкладке «Все» черновики уходят вниз: главное — готовые клипы.
   const foldEmpty = filter === "all" && !needle;
   const main = foldEmpty ? list.filter((c) => c.status !== "no_render") : list;
   const empties = foldEmpty ? list.filter((c) => c.status === "no_render") : [];
@@ -268,7 +270,7 @@ export function ClipGrid({
           <ShowMore rest={shown.rest} onMore={shown.more} />
           {empties.length ? (
             <details className="cgrid-more">
-              <summary>Найдены, но без рендера: {empties.length}</summary>
+              <summary>Черновики: {empties.length}</summary>
               <div className="ctiles">
                 {emptiesShown.visible.map((clip) => (
                   <ClipTile key={clip.id} clip={clip} showVideo={Boolean(projectId)} />

@@ -15,9 +15,11 @@
 # Без from __future__ import annotations: FastAPI читает аннотации _auth: auth_dep сразу.
 from typing import Any, Callable
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import autopilot as A
+from app.agent_settings_api import owner_only
+from app.auth import is_agent_request
 from app import notify_tg
 from app import project_chat
 
@@ -51,12 +53,13 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         return call(A.list_events, project_id, limit=limit)
 
     @router.post("/api/approvals", summary="Клип на одобрение (clip_plan_id) или карточка-вопрос (project_id, kind)")
-    def api_submit(_auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_submit(request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         if payload.get("clip_plan_id"):
             return call(A.submit_clip, int(payload["clip_plan_id"]), title=str(payload.get("title") or ""),
                         description=str(payload.get("description") or ""), tags=payload.get("tags"),
                         platforms=payload.get("platforms"), when=payload.get("when"),
-                        content_type=payload.get("content_type") or "", submitted_by="ui")
+                        content_type=payload.get("content_type") or "",
+                        submitted_by="agent" if is_agent_request(request) else "ui")
         if not payload.get("project_id"):
             raise HTTPException(status_code=400, detail="нужен clip_plan_id или project_id")
         return call(A.submit_card, int(payload["project_id"]), str(payload.get("kind") or "other"),
@@ -67,7 +70,8 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         return call(A.get_approval, approval_id)
 
     @router.post("/api/approvals/{approval_id}/decide", summary="Публиковать / Переделать / В мусор")
-    def api_decide(approval_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_decide(approval_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        owner_only(request, "Карточку решает владелец: агент может только спросить")
         return call(A.decide, approval_id, str(payload.get("action") or ""), comment=str(payload.get("comment") or ""),
                     actor="ui")
 
@@ -76,7 +80,8 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         return call(A.add_comment, approval_id, str(payload.get("text") or ""), actor="ui")
 
     @router.post("/api/approvals/{approval_id}/schedule", summary="Перенести / в ближайший слот / отменить публикацию")
-    def api_reschedule(approval_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_reschedule(approval_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        owner_only(request, "Расписание публикации меняет владелец")
         return call(A.reschedule, approval_id, str(payload.get("action") or "move"), at=payload.get("at"), actor="ui")
 
     @router.post("/api/approvals/{approval_id}/telegram", summary="Отправить карточку в Telegram ещё раз")
@@ -90,7 +95,8 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         return call(A.get_config, project_id)
 
     @router.put("/api/projects/{project_id}/autopilot", summary="Изменить настройки автопилота (ключи целиком)")
-    def api_autopilot_update(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_autopilot_update(project_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        owner_only(request, "Настройки автопилота меняет только владелец")
         return call(A.update_config, project_id, payload)
 
     @router.get("/api/projects/{project_id}/schedule", summary="Ближайшие публикации и свободные слоты")

@@ -142,10 +142,10 @@ export function ProjectWorkspace() {
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const source = query.data!;
   const visible = source.clip_plans.filter((p) => !p.hidden);
-  // Клипов столько, сколько групп: версии v2 и v3 одного момента — один клип. Рендеров и черновиков больше.
+  // Клипов столько, сколько групп: версии v2 и v3 одного момента — один клип. Черновики — клипы без готового файла.
   const counts: Record<string, number> = {
     clips: countClips(visible),
-    candidates: visible.length,
+    candidates: visible.filter((p) => p.status !== "rendered").length,
     segments: source.segments.length,
     renders: source.clips_count ?? source.clips.length,
   };

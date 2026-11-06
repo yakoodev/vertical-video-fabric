@@ -6,8 +6,10 @@ from datetime import datetime, timedelta, timezone
 from itertools import count
 from typing import Any
 
+from app import agent_settings as S
 from app import autopilot as A
 from app import projects as P
+from app import stream_questions as Q
 
 INBOX_KEY = "auto_inbox_project_id"
 INBOX_NAME = "Авто — без серии"
@@ -100,8 +102,8 @@ class AutomationService:
     """Конвейер «Авто»: скачать → проанализировать → оформить → отрендерить → на одобрение.
 
     Публикует только одобрение (app/autopilot.py): каждый готовый клип уходит ``submit_clip``
-    карточкой в очередь проекта; без карточки заданий публикации нет. Исключение — доверие
-    проекта ``auto`` для типа контента (это решает сам ``submit_clip``). Источник без серии —
+    карточкой в очередь проекта; без карточки заданий публикации нет. Исключение — настройка
+    проекта «Публиковать самому» (это решает сам ``submit_clip``). Источник без серии —
     в общий проект ``inbox_project``. Каждый запуск — свой поток; статус шагов в памяти (новые
     первыми) для страницы «Авто»; ``source_id`` — готовый источник (наблюдатель VOD,
     app/vod_watch.py), иначе загрузка по ``url`` фоновой ``DownloadService``.
@@ -163,20 +165,24 @@ class AutomationService:
         project_id: int | None = None,
         look: dict | None = None,
         label: str = "",
+        owner_started: bool = False,
     ) -> dict:
+        """``owner_started`` — владелец сам нажал запуск в браузере: его выбор идти до рендера. Наблюдатель VOD и запуск
+        по токену этого выбора не сделали и останавливаются по настройкам проекта (app/agent_settings.py)."""
         run = self._new_run(label=(label or publish.get("label") or url or "Автонарезка"), url=url,
                             source_id=source_id, project_id=project_id)
         thread = threading.Thread(
             target=self._run,
             args=(run, url, smotvibe_selection or {}, analysis, render, publish),
-            kwargs={"source_id": source_id, "project_id": project_id, "look": look},
+            kwargs={"source_id": source_id, "project_id": project_id, "look": look, "owner_started": owner_started},
             name=f"automation-{run['id']}",
             daemon=True,
         )
         thread.start()
         return dict(run)
 
-    def _run(self, run, url, selection, analysis, render, publish, source_id=None, project_id=None, look=None) -> None:
+    def _run(self, run, url, selection, analysis, render, publish, source_id=None, project_id=None, look=None,
+             owner_started=False) -> None:
         try:
             if source_id:
                 source = self.store.get_source(int(source_id))
@@ -191,6 +197,10 @@ class AutomationService:
             migrated = migrate_publish_settings(self.store, project_id, publish)
             if migrated:
                 self._warn(run, "аккаунты/слоты «Авто» перенесены в автопилот проекта")
+            if not owner_started:
+                refusal = Q.montage_refusal(self.store, int(source["id"]))
+                if refusal:
+                    raise RuntimeError(refusal["error"])
 
             self._update(run, status="analyzing", message="Анализирую видео…")
             self.analysis.run_analysis(
@@ -212,6 +222,14 @@ class AutomationService:
             self._update(run, plans=len(plans))
             if not plans:
                 raise RuntimeError("анализ не дал клипов")
+            waiting = [p for p in plans if S.awaits_pick(self.store, int(p["id"]))]
+            if owner_started:
+                S.set_picked_many(self.store, [p["id"] for p in plans])
+            elif waiting and S.get_settings(self.store, project_id)["stop_at_clip_list"]:
+                message = S.list_stop_message(project_id, len(waiting))
+                A.log_event(self.store, None, project_id, "clip_list_stop", "auto", message)
+                self._update(run, status="done", message=message, stopped_at_list=True)
+                return
 
             from app import modules
 
@@ -266,7 +284,7 @@ class AutomationService:
                     else:
                         pending += 1
                 self._update(run, approvals=pending, auto_approved=auto)
-                summary += f", на одобрении {pending}" + (f", сразу в расписание {auto} (доверие auto)" if auto else "")
+                summary += f", на одобрении {pending}" + (f", сразу в расписание {auto} (настройка «Публиковать самому»)" if auto else "")
             else:
                 summary += ", без публикации"
             self._update(run, status="done", message=summary)

@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app import chat_tools
 from app import project_chat as C
+from app.agent_settings_api import owner_only
 
 _MEDIA_RE = re.compile(r"^[0-9a-f]{32}\.(jpg|png)$")
 POLL_SEC = 0.08
@@ -125,7 +126,8 @@ def build_agent_chat_router(auth_dep: Any, get_store: Callable[[], Any],
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @router.post("/api/chat/confirmations/{confirmation_id}", summary="Подтвердить / отклонить опасное действие агента")
-    def api_confirm(confirmation_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_confirm(confirmation_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        owner_only(request, "Подтверждает только владелец кнопкой в чате")
         return call(C.decide_confirmation, confirmation_id, bool(payload.get("approve")), actor="chat:ui")
 
     @router.post("/api/chat/checkpoints/{checkpoint_id}/revert", summary="Откатить правки клипа из ответа агента")

@@ -72,11 +72,36 @@ export function MontagePause({
               </>
             ) : null}
           </p>
-          <p className="sq-pause-note">Ваши правки в редакторе, рендер и просмотр монтажа работают как обычно.</p>
+          <p className="sq-pause-note">
+            Ваши правки в редакторе, рендер и просмотр монтажа работают как обычно.
+            {projectId ? (
+              <>
+                {" "}
+                Это настройка проекта: <Link to={projectPath(projectId, "autopilot")}>«Как работает агент»</Link>.
+              </>
+            ) : null}
+          </p>
         </div>
         <button type="button" className="btn sm" disabled={release.isPending} onClick={() => release.mutate()}>
           Монтировать без ответов
         </button>
+      </div>
+    );
+  }
+  if (!gate.waits && gate.open > 0 && !compact) {
+    return (
+      <div className="sq-pause sq-pause-off" role="status">
+        <div className="sq-pause-t">
+          <p>
+            В этом проекте монтаж не ждёт ответов: без них остаётся {plural(gate.open, "вопрос", "вопроса", "вопросов")}.
+            {projectId ? (
+              <>
+                {" "}
+                <Link to={projectPath(projectId, "autopilot")}>Настройка «Как работает агент»</Link>
+              </>
+            ) : null}
+          </p>
+        </div>
       </div>
     );
   }

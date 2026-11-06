@@ -436,6 +436,26 @@ def test_new_poses_need_one_owner_card_and_respect_caps(paid, monkeypatch):
     assert fake.posts == 3
 
 
+def test_spend_setting_runs_the_new_poses_without_waiting(paid, monkeypatch):
+    from app import agent_settings as S
+
+    (_client_, store, tmp), fake = paid
+    monkeypatch.setattr(G, "BALANCE_SETTLE_SEC", 0.0)
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    ids = _setup(store, tmp, provider="polza")
+    S.save_settings(store, E.get_mascot(store, ids["mascot_id"])["project_id"],
+                    {"spend": {"enabled": True, "per_run_rub": 20, "per_month_rub": 100}})
+    video = X.create(store, ids["mascot_id"], "сон", 45, run=True, client=FakeGemini())
+    card = A.get_approval(store, video["approval_id"])
+    assert video["status"] == "awaiting_approval" and card["status"] == "approved" and card["decided_by"] == S.SPEND_ACTOR
+    # Дальше обычный путь: карточка решена, ролик идёт в генерацию, запуски платит общий конвейер.
+    G.run_pending(store)
+    assert fake.posts == 3
+    assert X.advance(store, video["id"])["status"] != "cancelled"
+    assert E.get_video(store, video["id"])["status"] != "awaiting_approval"
+    assert all("настройка проекта" in row["note"] for row in G.ledger(store, card["project_id"]))
+
+
 def test_reject_cancels_video_and_paid_voice_is_in_the_card(paid, monkeypatch):
     (_client_, store, tmp), fake = paid
     ids = _setup(store, tmp, provider="polza", voice={"provider": "polza", "model": "elevenlabs/eleven-v4",

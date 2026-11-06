@@ -27,9 +27,10 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Request, UploadFile
 
 from app import aivideo as V
+from app.agent_settings_api import owner_only
 from app import aivideo_gen as G
 from app import autopilot as A
 
@@ -251,7 +252,8 @@ def build_aivideo_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         return call(apply)
 
     @router.post("/api/ai-video/approvals/{approval_id}/decide", summary="Решение владельца по карточке этапа")
-    def api_decide(approval_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_decide(approval_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        owner_only(request, "Карточку с суммой решает владелец: агент может только спросить")
         card = call(A.get_approval, approval_id)
         if (card.get("payload") or {}).get("action") != G.CARD_ACTION:
             raise HTTPException(status_code=400, detail="это не карточка этапа ИИ-видео")

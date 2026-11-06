@@ -488,7 +488,7 @@ def _fmt_of_plan(settings_fmt: Any, last: dict | None) -> str:
 
 
 _PLAN_SELECT = f"""
-    SELECT cp.id, cp.source_id, cp.title, cp.status, cp.hidden, cp.favorite, cp.score, cp.created_at,
+    SELECT cp.id, cp.source_id, cp.title, cp.status, cp.hidden, cp.favorite, cp.owner_picked, cp.score, cp.created_at,
            cp.clip_group_id, cp.group_locked, {_FMT_SQL} AS fmt
     FROM clip_plans cp
 """
@@ -567,6 +567,7 @@ def _card(plans: list[dict], renders: dict[int, list[dict]], pieces: dict[int, l
         "drafts": drafts,
         "status": status,
         "favorite": any(p.get("favorite") for p in plans),
+        "picked": any(p.get("owner_picked") for p in plans),
         "hidden": all(p.get("hidden") for p in plans),
         "score": max(float(p.get("score") or 0) for p in plans),
         "start_sec": min((a for a, _ in head_pieces), default=0.0),

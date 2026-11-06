@@ -27,6 +27,10 @@
 
 Провайдер ``none`` (сухой прогон) — 0 ₽: карточка не нужна, весь конвейер идёт сразу.
 
+Настройка проекта «Тратить без подтверждения» (app/agent_settings.py): этап в пределах суммы за раз и за месяц
+одобряет не кнопка, а настройка. Карточка та же, потолки те же, ``decided_by`` — ``setting:spend``, в журнале трат
+отметка. Перед каждой оплатой запуска настройка проверяется заново: выключили — запуск ``held``, нужна новая карточка.
+
 Двойной оплаты нет: запуск берёт ровно один исполнитель (работник, ``aiv_run_approved``, другой
 процесс) — проверка денег и ``approved → submitting`` одной транзакцией ``BEGIN IMMEDIATE``, все
 дальнейшие смены статуса — «сравнить-и-записать», второй «готово» не пишет ни версию, ни трату;
@@ -56,6 +60,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import agent_settings as S
 from app import aivideo as V
 from app import autopilot as A
 from app import projects as P
@@ -286,6 +291,8 @@ def cap_problems(store: Any, project_id: int, script_id: int | None, amount: flo
 
 
 def add_ledger(store: Any, job: dict, amount: float, source: str, note: str = "") -> None:
+    mark = S.ledger_note(store, job.get("approval_id"))
+    note = f"{mark}; {note}" if mark and note else (mark or note)
     store.db.execute(
         "INSERT INTO aiv_ledger (project_id, script_id, job_id, approval_id, stage, model, amount_rub, source, note) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -924,7 +931,7 @@ def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_i
     return int(cur.lastrowid)
 
 
-def _card_question(store: Any, project: dict, est: dict, script: dict | None) -> str:
+def _card_question(store: Any, project: dict, est: dict, script: dict | None, spend_reason: str = "") -> str:
     bud = est["budget"]
     ext = EXTENSIONS.get(est["stage"])
     head = ext.card_line(store, project["id"], est) if ext is not None and hasattr(ext, "card_line") else ""
@@ -953,6 +960,8 @@ def _card_question(store: Any, project: dict, est: dict, script: dict | None) ->
             for f in qa[:4]) + ".")
     if not settings.aivideo_enabled:
         lines.append("⚠ Платная генерация сейчас выключена в настройках сервиса: запустится после её включения.")
+    if spend_reason:
+        lines.append(f"Спрашиваю, потому что {spend_reason}.")
     lines.append("Разрешить эту сумму?")
     return "\n".join(lines)
 
@@ -1029,15 +1038,27 @@ def _request_locked(store: Any, project: dict, stage: str, script_id: int | None
     if group:
         payload["group"] = group
     prefix = getattr(EXTENSIONS[stage], "card_prefix", "Объяснялка") if stage in EXTENSIONS else "ИИ-видео"
-    card = A.submit_card(store, project_id, "other", _card_question(store, project, est, script), payload,
+    # Настройка проекта: в пределах суммы карточку решает она. Платная генерация выключена — карточка ждёт, как всегда.
+    spend = S.spend_decision(store, project_id, est["total_rub"]) if settings.aivideo_enabled else {
+        "allowed": False, "asked": False, "reason": "платная генерация выключена"}
+    card = A.submit_card(store, project_id, "other",
+                         _card_question(store, project, est, script, spend["reason"] if spend["asked"] else ""), payload,
                          title=f"{prefix}: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
-                         submitted_by=requested_by)
+                         submitted_by=requested_by, notify=not spend["allowed"])
     job_ids = [_insert_job(store, project_id, item, "awaiting", card["id"], requested_by) for item in est["items"]]
     store.db.execute("UPDATE approvals SET payload_json = ? WHERE id = ?",
                      (json.dumps({**payload, "job_ids": job_ids}, ensure_ascii=False), card["id"]))
+    if spend["allowed"]:
+        A.decide(store, card["id"], "approve", comment=spend["note"], actor=S.SPEND_ACTOR)
+        return {"ok": True, "status": "approved", "approval_id": card["id"], "estimate": est,
+                "approved_by_setting": True,
+                "note": (f"{est['total_rub']:.2f} ₽ без подтверждения: {S.ACTOR_LABELS[S.SPEND_ACTOR]} (карточка "
+                         f"#{card['id']}, запись в журнале трат). Запуски идут сами.")}
+    why = spend["reason"] or f"настройка «{S.NAME_SPEND}» выключена"
     return {"ok": True, "status": "awaiting_approval", "approval_id": card["id"], "estimate": est,
             "note": (f"карточка #{card['id']} на {est['total_rub']:.2f} ₽ ушла владельцу (UI «Одобрение», страница "
-                     "проекта, Telegram). Запуск — только после его «Разрешить»; сам не одобряй и не обходи.")}
+                     f"проекта, Telegram): {why}. Запуск — только после его «Разрешить»; сам не одобряй и не обходи. "
+                     f"Настройка меняется здесь: {S.where(project_id)}.")}
 
 
 def regenerate(store: Any, ref_id: int | None = None, target: Any = None, requested_by: str = "agent",
@@ -1647,6 +1668,8 @@ def _preflight(store: Any, job: dict) -> list[str]:
     if spent + float(job["estimate_rub"]) > amount + 0.01:
         out.append(f"по карточке #{card['id']} потрачено {spent:.2f} ₽ + {job['estimate_rub']:.2f} ₽ > одобренных "
                    f"{amount:.2f} ₽ — нужна новая карточка")
+    if card.get("decided_by") == S.SPEND_ACTOR:
+        out += S.spend_problems_at_run(store, int(job["project_id"]), amount, job)
     out += cap_problems(store, int(job["project_id"]), job.get("script_id"), float(job["estimate_rub"]), job["stage"],
                         reserved=False)
     return [p for p in out if "больше потолка одного этапа" not in p]

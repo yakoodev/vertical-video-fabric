@@ -45,6 +45,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from app import agent_settings as S
 from app import autopilot as A
 from app import chat_tools as CT
 from app import project_knowledge as K
@@ -477,12 +478,15 @@ SYSTEM = """\
   Таймкоды в ответе пиши так: «клип #123, 12.5 с» или «источник #7, 1:05:30» — владелец кликает по ним.
 - Правки клипа откатываются кнопкой «Откатить» в чате и Ctrl+Z в редакторе — правь смело, но только то,
   что просили. Посмотри результат (view_frame / contact_sheet), прежде чем отчитаться.
-- Опасное (публикация, удаление клипа, снятие всех слоёв, отмена правила) сервис сразу не выполняет:
-  владелец подтверждает карточкой в чате. Ответ pending_confirmation — скажи, что ждёшь подтверждения,
-  и не повторяй вызов.
-- Публикуется только одобренное владельцем. Перед отправкой — lint_clip (зоны кнопок площадок, темп чтения,
-  вспышки, луп): warn поправь и перерендерь. Клип на публикацию — submit_for_approval. Заголовок, описание
-  и хэштеги сервис пишет сам после рендера; обложку — generate_covers → choose_cover (группа montage).
+- Опасное (публикация, удаление клипа, снятие всех слоёв, отмена правила) и правка черновика, которого владелец не
+  выбрал, сервис сразу не выполняет: владелец подтверждает карточкой в чате. Ответ pending_confirmation — скажи, что
+  ждёшь подтверждения, и не повторяй вызов.
+- Что можно в этом проекте без владельца, решает он сам: блок agent_settings.allows в срезе. Держись его. Отказ
+  сервиса называет настройку и где её менять: перескажи владельцу, настройки сам не меняй и не обходи. Новый клип
+  через create_clip только по прямому заданию, а не чтобы обойти выбор из списка.
+- Без настройки «Публиковать самому» публикуется только одобренное владельцем. Перед отправкой — lint_clip (зоны
+  кнопок площадок, темп чтения, вспышки, луп): warn поправь и перерендерь. Клип на публикацию — submit_for_approval.
+  Заголовок, описание и хэштеги сервис пишет сам после рендера; обложку — generate_covers → choose_cover (группа montage).
 - Правила проекта — только словами владельца, с цитатой. Если в сообщении владельца правило или отмена
   правила, сервис уже разобрал его (блок «Сервис уже сделал»): опирайся на это и не дублируй.
   Своё наблюдение — гипотеза (add_hypothesis) или вопрос владельцу (propose_rule), не правило.
@@ -498,10 +502,11 @@ SYSTEM = """\
 - Стрим режем так: посмотри его, запиши, что заметил о проекте (note_observation), спроси, что непонятно
   (add_stream_questions; кто это и что за шутка — level: project), дождись ответов, потом режь. Пока ответов
   нет, нарезка и вырезы откажут и назовут открытые вопросы: скажи об этом владельцу, не обходи. Снять паузу может только он.
+  Если настройка проекта не ждёт ответов, вопросы всё равно задавай, но работу они не держат.
 - Новая часть ролика с маскотом — группа explainer: explainer_overview, потом explainer_create. Объяснялка делается
   в проекте любого вида: тип и настройки проекта ради неё не меняй. Голос у маскота один на все ролики: не меняй его
-  сам, даже чтобы не платить. Платный голос и новые позы запускает только «Разрешить» владельца: скажи сумму и что
-  выбор за ним: разрешить или сменить голос маскота. Про голос, цену, субтитры и что не сделано говори только то, что
+  сам, даже чтобы не платить. Платный голос и новые позы запускает «Разрешить» владельца (или настройка проекта «Тратить
+  без подтверждения» в её пределах): скажи сумму и что выбор за ним: разрешить или сменить голос маскота. Про голос, цену, субтитры и что не сделано говори только то, что
   написано в полях summary, voice, spent_rub, skipped результата explainer_status: своими догадками не дополняй. Пока
   status не done — клипа нет, так и скажи.
 """
@@ -553,14 +558,15 @@ def project_context(store: Any, project_id: int, source_id: int | None = None) -
     mascots = K.project_mascots(store, int(project_id))
     data = {
         "project_id": int(project_id),
+        "agent_settings": S.agent_brief(store, int(project_id)),
         **({"video": video_context(store, int(source_id))} if source_id else {}),
         **({"mascots": mascots} if mascots else {}),
         "brief": brief, "stats": stats, "approvals_open": approvals,
         "schedule": {"timezone": schedule["timezone"], "upcoming": [
             {k: u.get(k) for k in ("id", "title", "scheduled_local", "publish_status", "platforms")}
             for u in schedule["upcoming"][:10]]},
-        "autopilot": {"trust": cfg["trust"], "slots": cfg["slots"], "per_day": cfg["per_day"],
-                      "auto_rules": cfg["auto_rules"]},
+        "autopilot": {"always_ask_types": [k for k, v in cfg["trust"].items() if k != "default" and v == "approve"],
+                      "slots": cfg["slots"], "per_day": cfg["per_day"], "auto_rules": cfg["auto_rules"]},
         "project": project,
     }
     text = json.dumps(data, ensure_ascii=False, default=str)
@@ -1255,6 +1261,12 @@ def decide_confirmation(store: Any, confirmation_id: int, approve: bool, actor: 
                            meta={"service": True})
         return {"ok": True, "status": "rejected", "confirmation": get_confirmation(store, confirmation_id)}
     changes: list[dict] = []
+    if conf["args"].get("clip_id") not in (None, ""):
+        # Кнопка владельца — его выбор: черновик взят в работу (настройка «Останавливаться на списке клипов»).
+        try:
+            S.set_picked(store, int(conf["args"]["clip_id"]))
+        except (TypeError, ValueError):
+            pass
 
     def clip_ctx(clip_id: int) -> ToolContext:
         def first_change() -> None:

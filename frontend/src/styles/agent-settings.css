@@ -1,0 +1,36 @@
+/* «Как работает агент» (pages/project/AgentSettingsPanel.tsx). */
+.agset { display: grid; gap: 12px; margin-bottom: 16px; min-width: 0; }
+.agset-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.agset-head h3 { margin: 0 0 2px; }
+.agset-head p { margin: 0; font-size: 13px; max-width: 62ch; }
+.agset-rows { display: grid; gap: 8px; }
+.agset-row { border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.agset-row.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); }
+.agset-switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.agset-switch input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
+.agset-switch input:disabled { cursor: not-allowed; }
+.agset-text { display: grid; gap: 3px; min-width: 0; }
+.agset-text strong { font-size: 14px; }
+.agset-hint { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+.agset-more { margin: 10px 0 0 30px; display: grid; gap: 8px; min-width: 0; }
+.agset-fields { display: flex; gap: 12px; flex-wrap: wrap; }
+.agset-fields .field { flex: 1 1 140px; max-width: 220px; min-width: 0; }
+.agset-fields .input { width: 100%; }
+.agset-note { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+.agset-warn { margin: 0; font-size: 12.5px; color: var(--danger); }
+.agset-log, .agset-accounts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.agset-log li { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12.5px; }
+.agset-log a { color: var(--accent); }
+.agset-told { font-size: 13px; color: var(--text-dim); }
+.agset-told summary { cursor: pointer; }
+.agset-told ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.mo-pick-hint { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 0 0 12px; font-size: 13px; }
+.mo-pick-hint a { color: var(--accent); }
+.mo-stateline { display: flex; padding: 0 2px; }
+.mo-state { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); color: var(--text-dim); white-space: nowrap; }
+.mo-state.ok { color: var(--ok, var(--text)); }
+.mo-state.work { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); }
+@media (max-width: 640px) {
+  .agset-more { margin-left: 0; }
+  .agset-fields .field { max-width: none; }
+}
