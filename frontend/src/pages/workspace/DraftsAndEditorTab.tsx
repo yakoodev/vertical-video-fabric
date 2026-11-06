@@ -836,7 +836,7 @@ function LookPicker({
   );
 }
 
-export function CandidatesTab({ sourceId }: { sourceId: string }) {
+export function DraftsAndEditorTab({ sourceId }: { sourceId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   // Модули сервиса (app/modules.py): выключенный прячет свои панели и кнопки редактора.

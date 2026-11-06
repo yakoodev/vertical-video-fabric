@@ -10,9 +10,9 @@ import { lazyPage } from "@/lazyPage";
 import { lastProject, projectPath } from "@/lib/paths";
 
 // Каждая страница — свой файл: редактор монтажа и моушн не грузятся ради списка проектов.
-const ProjectsPage = lazyPage(() => import("@/pages/ProjectsPage"), "ProjectsPage");
-const ProjectWorkspace = lazyPage(() => import("@/pages/ProjectWorkspace"), "ProjectWorkspace");
-const SeriesPage = lazyPage(() => import("@/pages/SeriesPage"), "SeriesPage");
+const VideoListPage = lazyPage(() => import("@/pages/VideoListPage"), "VideoListPage");
+const VideoPage = lazyPage(() => import("@/pages/VideoPage"), "VideoPage");
+const ProjectPage = lazyPage(() => import("@/pages/project/ProjectPage"), "ProjectPage");
 const MontageAssetsPage = lazyPage(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const AutomationPage = lazyPage(() => import("@/pages/AutomationPage"), "AutomationPage");
 const ClipPage = lazyPage(() => import("@/pages/ClipPage"), "ClipPage");
@@ -76,11 +76,11 @@ export function App() {
         <Route index element={<Home />} />
 
         {/* Лестница: проект → видео или выпуск → клип; монтаж клипа — редактор внутри видео (?clip=). */}
-        <Route path="p/:projectId" element={<RequireModule id="series"><SeriesPage /></RequireModule>} />
+        <Route path="p/:projectId" element={<RequireModule id="series"><ProjectPage /></RequireModule>} />
         <Route path="p/:projectId/new" element={<NewVideoPage />} />
         <Route path="new" element={<NewVideoPage />} />
         <Route path="r/:releaseKey" element={<ReleasePage />} />
-        <Route path="v/:sourceId/*" element={<ProjectWorkspace />} />
+        <Route path="v/:sourceId/*" element={<VideoPage />} />
         <Route path="clips/:clipId" element={<ClipPage />} />
 
         {/* Вне проектов. */}
@@ -88,7 +88,7 @@ export function App() {
         <Route path="pubs" element={<PubsPage />} />
         <Route path="pubs/:jobId" element={<RequireModule id="publishing"><PubsPage /></RequireModule>} />
         <Route path="files" element={<MontageAssetsPage />} />
-        <Route path="projects" element={<ProjectsPage />} />
+        <Route path="projects" element={<VideoListPage />} />
         {/* Чат с агентом: переписки по проектам и общие (app/project_chat.py). */}
         <Route path="chat" element={<RequireModule id="agent_chat"><ChatPage /></RequireModule>} />
         <Route path="chat/:threadId" element={<RequireModule id="agent_chat"><ChatPage /></RequireModule>} />

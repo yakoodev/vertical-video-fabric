@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -386,18 +387,21 @@ console.log(JSON.stringify({{
     # Превью: подъём слышен как баланс — остальное тише, кусок на полной.
     assert out["preview"][1] == pytest.approx(1.0, abs=1e-3) and out["preview"][0] == pytest.approx(10 ** (-6 / 20), abs=1e-3)
     # Редактор сохраняет настройки клипа целиком: gain обязан проходить загрузку и автосохранение.
-    tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "CandidatesTab.tsx").read_text(encoding="utf-8")
-    assert "    mute,\n    gain,\n" in tab and "gain: s.gain ?? []," in tab and "setGain(s.gain ?? []);" in tab
+    tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "DraftsAndEditorTab.tsx").read_text(encoding="utf-8")
+    saved = re.search(r"const panelSettings\b.*?\n  \}\);", tab, re.S)
+    assert saved, "в редакторе нет panelSettings: что отправляет автосохранение?"
+    saved_fields = {m.group(1): (m.group(2) or m.group(1)) for m in re.finditer(r"^\s*(\w+)(?::\s*([^,\n]+))?,\s*$", saved.group(0), re.M)}
+    assert saved_fields.get("gain") == "gain" and "gain: s.gain ?? []," in tab and "setGain(s.gain ?? []);" in tab
     # Формат вывода (app/formats.py) — так же: в панели, при загрузке и в автосохранении
     # (старое поле aspect читается через clipFormat).
-    assert "    gain,\n    format: aspect,\n" in tab and "format: clipFormat(s)," in tab and "setAspect(clipFormat(s));" in tab
+    assert saved_fields.get("format") == "aspect" and "format: clipFormat(s)," in tab and "setAspect(clipFormat(s));" in tab
     # Стоп-кадр в конце (render.end_hold_sec) — тоже: иначе автосохранение редактора стирало бы set_end_hold.
     # Формат разметки слоёв (layers_format) — так же: «Разметить слои в этом формате» сохраняет его.
-    assert "    layers_format: layersFmt,\n" in tab and "layers_format: layersFormat(s)," in tab and "setLayersFmt(layersFormat(s));" in tab
-    assert "    format: aspect,\n    layers_format: layersFmt,\n    end_hold_sec: endHoldSec,\n" in tab and "end_hold_sec: s.end_hold_sec ?? null," in tab
+    assert saved_fields.get("layers_format") == "layersFmt" and "layers_format: layersFormat(s)," in tab and "setLayersFmt(layersFormat(s));" in tab
+    assert saved_fields.get("end_hold_sec") == "endHoldSec" and "end_hold_sec: s.end_hold_sec ?? null," in tab
     assert "setEndHoldSec(s.end_hold_sec ?? null);" in tab
     # Стоп-кадры посреди ролика (freeze_frame агента) — панель их не правит, но и не стирает.
-    assert "    end_hold_sec: endHoldSec,\n    freezes,\n  });" in tab and "freezes: s.freezes ?? []," in tab
+    assert saved_fields.get("freezes") == "freezes" and "freezes: s.freezes ?? []," in tab
     assert "setFreezes(s.freezes ?? []);" in tab
 
 

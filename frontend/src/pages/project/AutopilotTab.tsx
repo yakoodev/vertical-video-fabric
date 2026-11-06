@@ -16,7 +16,7 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
-import { VodWatchPanel } from "@/pages/SeriesVodWatch";
+import { VodWatchPanel } from "@/pages/project/VodWatchPanel";
 import { useModuleOn } from "@/hooks/useModules";
 import { ChatConversation } from "@/pages/chat/ChatConversation";
 import { AgentSettingsPanel } from "@/pages/project/AgentSettingsPanel";

@@ -8,7 +8,7 @@ import { SECTIONS, visibleTabs } from "@/lib/tabs";
 
 const PublicationsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/PublicationsPage"), "PublicationsPage");
 const AccountsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/AccountsPage"), "AccountsPage");
-const ClipsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/ClipsPage"), "ClipsPage");
+const ReadyClipsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/ReadyClipsPage"), "ReadyClipsPage");
 
 /** Публикации и аккаунты: очередь публикаций, аккаунты площадок и готовые ролики всех проектов. */
 export function PubsPage() {
@@ -28,7 +28,7 @@ export function PubsPage() {
       <Suspense fallback={<Loading />}>
         {tab === "pubs" ? <PublicationsPage embedded /> : null}
         {tab === "accounts" ? <AccountsPage embedded /> : null}
-        {tab === "ready" ? <ClipsPage embedded /> : null}
+        {tab === "ready" ? <ReadyClipsPage embedded /> : null}
       </Suspense>
     </>
   );

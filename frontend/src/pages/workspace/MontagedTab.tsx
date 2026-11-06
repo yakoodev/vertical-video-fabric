@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ProjectClipsGrid } from "@/pages/workspace/ClipsTab";
+import { VideoRendersGrid } from "@/pages/workspace/VideoRendersTab";
 
 export function MontagedTab({ sourceId }: { sourceId: string }) {
   return (
@@ -16,7 +16,7 @@ export function MontagedTab({ sourceId }: { sourceId: string }) {
           Загрузить клип →
         </Link>
       </div>
-      <ProjectClipsGrid
+      <VideoRendersGrid
         sourceId={sourceId}
         origin="montage"
         emptyIcon="🎞"

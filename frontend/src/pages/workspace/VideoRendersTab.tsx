@@ -13,7 +13,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/ui";
 import { ShowMore, useShowMore } from "@/components/ShowMore";
 
 // Shared between the "Клипы" (rendered) and "Смонтированные" (montage) tabs.
-export function ProjectClipsGrid({
+export function VideoRendersGrid({
   sourceId,
   origin,
   emptyIcon,
@@ -131,9 +131,9 @@ export function ProjectClipsGrid({
   );
 }
 
-export function ClipsTab({ sourceId }: { sourceId: string }) {
+export function VideoRendersTab({ sourceId }: { sourceId: string }) {
   return (
-    <ProjectClipsGrid
+    <VideoRendersGrid
       sourceId={sourceId}
       origin="rendered"
       emptyIcon="✂️"

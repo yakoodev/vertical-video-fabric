@@ -31,7 +31,7 @@ import { ApiError } from "@/api/client";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
-import { AutopilotTab, ProjectChatTab } from "@/pages/SeriesAutopilot";
+import { AutopilotTab, ProjectChatTab } from "@/pages/project/AutopilotTab";
 import { useModules } from "@/hooks/useModules";
 import { KnowledgeCard, KnowledgeTab } from "@/pages/project/ProjectKnowledge";
 
@@ -68,7 +68,7 @@ const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.mes
 const today = () => new Date().toISOString().slice(0, 10);
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1).replace(".", ",")}%`);
 
-export function SeriesPage() {
+export function ProjectPage() {
   const { projectId } = useParams();
   const id = Number(projectId);
   // Вкладка — в адресе (?tab=expl): перезагрузка и ссылка открывают то же место.
