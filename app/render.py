@@ -6,8 +6,10 @@ import logging
 import math
 import shutil
 import subprocess
+import sys
 import threading
 import time
+import types
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -37,6 +39,12 @@ from app.transitions import build_join_args, is_plain_concat, normalize_transiti
 from app.backgrounds import background_zones, fill_color, needs_zones
 from app.video_crop import build_reframe_x_expr
 from app.piece_speed import seg_length
+
+# Рендер разложен по этапам (app/render_*.py); все имена остаются доступны и отсюда.
+from app.render_exec import (  # noqa: F401
+    _clamp, _concat_file_line, _ff_number, _filter_filename, _fps, _has_audio_stream, _json_dict, _run_compositor,
+    _run_ffmpeg, _safe_error, _seconds, _stream_index, _video_duration, _volume, RENDER_RUNNER,
+)
 
 
 # Тише этого (LUFS) — тишина: loudnorm намерит -inf и второй проход упадёт.
@@ -3171,16 +3179,6 @@ def _color_style_filters(style: str, strength: float) -> list[str]:
     return [balance, eq]
 
 
-def _clamp(value, *, default: float, low: float, high: float) -> float:
-    if value is None or str(value).strip() == "":
-        return default
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    return max(low, min(high, number))
-
-
 def _banner_input_args(banner: dict) -> list[str]:
     path = Path(banner["file_path"])
     args = ["-stream_loop", "-1"]
@@ -3436,19 +3434,6 @@ def _retimed(graph: str, preset: dict, fps: float) -> str:
     return f"{graph};[0:a:{stream}]aresample=48000,{chain}[aout]"
 
 
-def _video_duration(meta: Any) -> float:
-    """Длина видеодорожки куска (контейнер берёт самую длинную дорожку)."""
-    for stream in (getattr(meta, "raw", None) or {}).get("streams") or []:
-        if stream.get("codec_type") == "video":
-            try:
-                value = float(stream.get("duration") or 0)
-            except (TypeError, ValueError):
-                value = 0.0
-            if value > 0:
-                return value
-    return float(getattr(meta, "duration_sec", 0) or 0)
-
-
 def _audio_map(preset: dict) -> str:
     if preset.get("source_audio_tracks") or _source_edit(preset):
         return "[aout]"
@@ -3473,55 +3458,6 @@ def _banner_position_expr(banner: dict) -> tuple[str, str]:
     return x_expr, "main_h-overlay_h"
 
 
-def _seconds(value: float) -> str:
-    return f"{max(0, value):.3f}"
-
-
-def _fps(value: float) -> str:
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.3f}".rstrip("0").rstrip(".")
-
-
-def _stream_index(value, default: int) -> int:
-    if value is None or str(value).strip() == "":
-        return default
-    return max(0, int(value))
-
-
-def _volume(value, default: float) -> float:
-    if value is None or str(value).strip() == "":
-        return default
-    return max(0.0, min(4.0, float(value)))
-
-
-def _ff_number(value: float) -> str:
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.4f}".rstrip("0").rstrip(".")
-
-
-def _json_dict(value) -> dict:
-    if isinstance(value, dict):
-        return value
-    if not value:
-        return {}
-    try:
-        parsed = json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _filter_filename(filename: str) -> str:
-    return str(Path(filename).name).replace("\\", "/").replace(":", r"\:")
-
-
-def _concat_file_line(path: Path) -> str:
-    escaped = path.resolve().as_posix().replace("'", "'\\''")
-    return f"file '{escaped}'"
-
-
 def _apply_subtitle_timing_offset(result: SubtitleResult, profile: dict, input_duration: float) -> SubtitleResult:
     offset = _subtitle_timing_offset(profile)
     if abs(offset) < 0.001:
@@ -3535,55 +3471,6 @@ def _subtitle_timing_offset(profile: dict) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(-2.0, min(2.0, offset))
-
-
-# Перехват запуска для прохода предпросмотра (app/stream_preview.py); None — как всегда.
-RENDER_RUNNER: contextvars.ContextVar[Any] = contextvars.ContextVar("render_runner", default=None)
-
-
-def _run_ffmpeg(args: list[str], timeout: int, cwd: Path | None = None) -> None:
-    runner = RENDER_RUNNER.get()
-    if runner is not None:
-        runner.ffmpeg(args, timeout, cwd)
-        return
-    proc = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-        cwd=cwd,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(_safe_error(proc.stderr or proc.stdout or "ffmpeg failed"))
-
-
-def _run_compositor(args: list[str], timeout: int) -> None:
-    """Node-компоновщик моушна. Строки ``progress i/n`` в stderr — не ошибка, их
-    в сообщение не тащим: прогресса рендера в сервисе нет, а причину падения
-    из-за них не было бы видно."""
-    runner = RENDER_RUNNER.get()
-    if runner is not None:
-        runner.compositor(args, timeout)
-        return
-    proc = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
-    if proc.returncode != 0:
-        lines = [line for line in (proc.stderr or "").splitlines() if not line.startswith("progress ")]
-        detail = "\n".join(lines[-15:]).strip() or (proc.stdout or "").strip()[-500:]
-        raise RuntimeError(_safe_error(detail or f"компоновщик завершился с кодом {proc.returncode}"))
-
-
-def _safe_error(exc) -> str:
-    text = str(exc or "").strip()
-    return text[:1000] or "render failed"
 
 
 def _subtitle_prompt_for_clip(store: AppStore, clip_id: int) -> str:
@@ -3612,12 +3499,25 @@ def _source_looks_like_anime(source: dict) -> bool:
     return any(marker in haystack for marker in ("smotvibe", "yummyani", "anime"))
 
 
-def _has_audio_stream(path: Path) -> bool:
-    proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    return bool(proc.stdout.strip())
+# Части рендера: подмена имени на этом модуле доходит и до них.
+_PARTS = tuple(sys.modules[f"app.{name}"] for name in (
+    "render_exec",
+))
+
+
+class _RenderModule(types.ModuleType):
+    """Подмена имени на ``app.render`` видна коду всех частей.
+
+    До разбора рендер был одним модулем, и подмены (``monkeypatch.setattr("app.render._run_ffmpeg", ...)``, а ещё
+    ``probe_media``, ``run_qc``, ``uuid4``, ``fit_loudness``, ...) ставятся сюда. Функции частей читают имена из
+    глобальных своего модуля, поэтому значение дублируется в каждую часть, где имя есть. Снятие подмены идёт тем же
+    путём."""
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        for part in _PARTS:
+            if name in vars(part):
+                setattr(part, name, value)
+
+
+sys.modules[__name__].__class__ = _RenderModule
