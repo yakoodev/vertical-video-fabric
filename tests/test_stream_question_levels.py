@@ -138,7 +138,7 @@ def test_gate_lifted_by_answer_skip_optional_and_release(setup):
 def test_old_video_without_questions_is_unaffected(setup):
     _client_, store, sid, _pid = setup
     assert Q.montage_gate(store, sid) == {"paused": False, "open": 0, "project_open": 0, "clip_open": 0, "items": [],
-                                          "released": False, "released_open": 0}
+                                          "released": False, "released_open": 0, "waits": True}
     out, ok = run_tool(ToolContext(store=store), "create_clip",
                        {"project_id": sid, "title": "Новая", "pieces": [{"start_sec": 1, "end_sec": 9}]})
     assert ok, out
