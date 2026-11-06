@@ -138,7 +138,7 @@ export function ClipsTab({ sourceId }: { sourceId: string }) {
       origin="rendered"
       emptyIcon="✂️"
       emptyTitle="Клипов нет"
-      emptyHint="Отрендерите моменты на вкладке «Моменты»"
+      emptyHint="Отрендерите черновики на вкладке «Черновики»"
     />
   );
 }

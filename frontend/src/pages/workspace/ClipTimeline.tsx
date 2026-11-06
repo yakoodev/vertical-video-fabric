@@ -471,9 +471,9 @@ export function ClipTimeline({
     setMuteMark(null);
   };
   const muteTitle = blockRange
-    ? `Заглушить звук исходника под выделенным (${blockRange.what}) — картинка останется`
+    ? `Заглушить звук видео под выделенным (${blockRange.what}) — картинка останется`
     : muteMark == null
-      ? "Заглушить звук исходника: нажмите здесь, подведите курсор к концу и нажмите ещё раз. Или протяните мышью по дорожке «Звук»"
+      ? "Заглушить звук видео: нажмите здесь, подведите курсор к концу и нажмите ещё раз. Или протяните мышью по дорожке «Звук»"
       : `Начало ${formatDuration(muteMark)} — подведите курсор к концу и нажмите ещё раз (то же место — отмена)`;
 
   // 🎚 Звуковой монтаж поверх волны: ручки J/L на стыках, эффекты, провалы и ducking музыки,
@@ -628,7 +628,7 @@ export function ClipTimeline({
           <div className="ctl-label">Вставки</div>
           <div className="ctl-label ctl-label--g">Звуки</div>
           <div className="ctl-label ctl-label--cam">Камера</div>
-          <div className="ctl-label" title="Звук исходника. Протяните мышью по дорожке — заглушить отрезок (картинка останется)">
+          <div className="ctl-label" title="Звук видео. Протяните мышью по дорожке — заглушить отрезок (картинка останется)">
             Звук
           </div>
         </div>
@@ -689,7 +689,7 @@ export function ClipTimeline({
                     title={
                       canvas
                         ? `${canvasLabel(canvas.bg)} · ${formatDuration(row.end - row.start)} — тяни край, чтобы изменить длину`
-                        : `${row.piece.title || "кусок"} · исходник ${formatDuration(row.piece.start_sec)}`
+                        : `${row.piece.title || "кусок"} · в видео ${formatDuration(row.piece.start_sec)}`
                     }
                   >
                     {canvas ? (
@@ -879,7 +879,7 @@ export function ClipTimeline({
                     title={`Тишина ${formatDuration(m.start)}–${formatDuration(m.end)}: ${
                       m.track !== undefined
                         ? `заглушена дорожка ${m.track} записи (остальные звучат; превью её не глушит)`
-                        : "звук исходника заглушён"
+                        : "звук видео заглушён"
                     }, картинка остаётся. Del — убрать`}
                   >
                     <span className="ctl-grip" data-resize="start" />

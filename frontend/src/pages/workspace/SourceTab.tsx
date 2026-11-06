@@ -6,7 +6,8 @@ import { qk } from "@/api/keys";
 import type { AiAnalysis, CropRect, SourceDetail } from "@/api/types";
 import { useToast } from "@/components/Toast";
 import { ApiError } from "@/api/client";
-import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration } from "@/components/ui";
+import { Badge, EmptyState, ErrorState, Loading, formatBytes, formatDuration, plural } from "@/components/ui";
+import { KIND_LABELS } from "@/lib/videoKinds";
 import { MissingSourceNotice, isSourceFileMissing } from "@/components/MissingSourceNotice";
 import { AnalyzeForm } from "@/pages/workspace/AnalyzeForm";
 
@@ -40,7 +41,7 @@ const STEPS: { key: string; label: string }[] = [
   { key: "transcript", label: "Транскрипт (Whisper)" },
   { key: "upload", label: "Загрузка в модель" },
   { key: "windows", label: "Окна анализа" },
-  { key: "collect", label: "Сбор кандидатов" },
+  { key: "collect", label: "Сбор черновиков" },
 ];
 function sinceLabel(iso?: string | null): string {
   if (!iso) return "";
@@ -211,7 +212,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
           {source.width ? <span>{source.width}×{source.height}</span> : null}
           {source.fps ? <span>{Math.round(source.fps)} fps</span> : null}
           <span>{formatBytes(source.size_bytes)}</span>
-          <span>{source.source_type}</span>
+          <span>{KIND_LABELS[source.source_type] ?? "Видео"}</span>
           {source.original_url ? (
             <a className="src-orig" href={source.original_url} target="_blank" rel="noreferrer" title={source.original_url}>
               оригинал ↗
@@ -222,7 +223,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
 
         <div className="panel" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong className="src-h">Кадр источника</strong>
+            <strong className="src-h">Кадр видео</strong>
             <button
               className="btn ghost sm"
               disabled={detectCrop.isPending || sourceMissing}
@@ -233,7 +234,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
             </button>
           </div>
           <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            Обрежьте чёрные полосы по краям — применится ко всем клипам проекта.
+            Обрежьте чёрные полосы по краям — применится ко всем клипам этого видео.
           </p>
           {SIDES.map(({ key, label }) => (
             <label key={key} className="field">
@@ -295,11 +296,11 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                 <div className="src-stats">
                   <div className="src-stat">
                     <b>{plans.length}</b>
-                    <span>моментов</span>
+                    <span>черновиков</span>
                   </div>
                   <div className="src-stat">
                     <b>{source.clips_count ?? source.clips?.length ?? 0}</b>
-                    <span>клипов</span>
+                    <span>рендеров</span>
                   </div>
                   {avgQ != null ? (
                     <div className="src-stat">
@@ -330,7 +331,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
         <strong className="src-h">Анализы ({source.analyses.length})</strong>
         <div className="analysis-list">
           {!source.analyses.length ? (
-            <EmptyState icon="🧠" title="Анализов ещё нет" hint="Запустите анализ выше — он найдёт моменты для клипов" />
+            <EmptyState icon="🧠" title="Анализов ещё нет" hint="Запустите анализ выше — он найдёт черновики клипов" />
           ) : (
             (() => {
               const FAILED = new Set(["failed", "cancelled", "error", "needs_reauth"]);
@@ -346,7 +347,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                         <Badge status={a.status} />
                         <strong className="analysis-card-title">Анализ #{a.id}</strong>
                         <span className="analysis-card-count">
-                          {count > 0 ? `${count} кандид.` : a.status === "succeeded" ? "0 кандид." : ""}
+                          {count > 0 ? plural(count, "черновик", "черновика", "черновиков") : a.status === "succeeded" ? "0 черновиков" : ""}
                         </span>
                       </div>
                       <div className="analysis-card-meta mono">
@@ -366,7 +367,7 @@ export function SourceTab({ sourceId }: { sourceId: string }) {
                     ) : (
                       <button
                         className="btn ghost sm"
-                        title="Удалить анализ и его кандидатов"
+                        title="Удалить анализ и его черновики"
                         onClick={() => removeAnalysis(a.id)}
                       >
                         🗑

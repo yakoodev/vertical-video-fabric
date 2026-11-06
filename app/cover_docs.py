@@ -505,13 +505,13 @@ def _source_moment(store: Any, clip: dict, t: float) -> tuple[Path, float]:
 
     plan_id = clip.get("clip_plan_id")
     if not plan_id:
-        raise ValueError("у этого клипа нет плана: момент в исходнике неизвестен")
+        raise ValueError("у этого клипа нет монтажа: место в видео неизвестно")
     plan = store.get_clip_plan(int(plan_id))
     at = plan_clock(store, plan).final_to_clip(t)
     source = store.get_source(int(plan["source_id"]))
     path = Path(source.get("local_path") or "")
     if not path.is_file():
-        raise ValueError("файла исходника уже нет: возьмите кадр из готового ролика")
+        raise ValueError("файла видео уже нет: возьмите кадр из готового ролика")
     segments = plan.get("segments") or []
     for seg in segments:
         length = seg_length(seg)

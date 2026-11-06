@@ -4,6 +4,7 @@ import { PageTabs } from "@/components/PageTabs";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
+import { SECTIONS, visibleTabs } from "@/lib/tabs";
 
 const PublicationsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/PublicationsPage"), "PublicationsPage");
 const AccountsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/AccountsPage"), "AccountsPage");
@@ -15,15 +16,7 @@ export function PubsPage() {
   const { jobId } = useParams();
   const { on } = useModules();
   const publishing = on("publishing");
-  const tabs = [
-    ...(publishing
-      ? [
-          { key: "pubs", label: "Публикации", to: "/pubs?tab=pubs" },
-          { key: "accounts", label: "Аккаунты", to: "/pubs?tab=accounts" },
-        ]
-      : []),
-    { key: "ready", label: "Готовые ролики", to: "/pubs?tab=ready" },
-  ];
+  const tabs = visibleTabs(SECTIONS.pubs.tabs, on);
   const asked = jobId ? "pubs" : params.get("tab") ?? "";
   const tab = tabs.some((t) => t.key === asked) ? asked : tabs[0].key;
   return (

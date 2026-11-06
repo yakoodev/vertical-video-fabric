@@ -44,7 +44,7 @@ const GROUP_LABEL: Record<string, string> = {
   cuts: "куски и кадр",
   screens: "плашки и концовки",
   assets: "библиотека",
-  sources: "исходники",
+  sources: "видео",
   other: "прочее",
 };
 
@@ -174,7 +174,7 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
         ) : (
           <>
             <video ref={videoRef} className="chat-media-video wide" src={`/media/sources/${clip.data.source_id}`} controls autoPlay onError={() => setNoFile(true)} />
-            <span className="muted chat-small">Рендера ещё нет — исходник на этом месте клипа</span>
+            <span className="muted chat-small">Рендера ещё нет — показано видео на этом месте клипа</span>
           </>
         )}
       </>
@@ -189,7 +189,7 @@ function MediaPanel({ target, onClose }: { target: MediaRef; onClose: () => void
     <div className="chat-media" role="dialog">
       <div className="chat-media-head">
         <strong>
-          {target.kind === "clip" ? `Клип #${target.id}` : `Источник #${target.id}`}
+          {target.kind === "clip" ? `Клип #${target.id}` : `Видео #${target.id}`}
           {target.t != null ? ` · ${t} с` : ""}
         </strong>
         {clip.data?.title ? <span className="muted chat-ellipsis">{clip.data.title}</span> : null}
@@ -593,11 +593,11 @@ function Composer({
             <div key={f.key} className={`chat-file ${f.state}`}>
               <span className="chat-ellipsis">{f.file.name}</span>
               <span className="muted chat-small">
-                {f.state === "uploading" ? "загружаю…" : f.state === "error" ? f.error : f.target === "source" ? "→ источник" : "→ файлы для монтажа"}
+                {f.state === "uploading" ? "загружаю…" : f.state === "error" ? f.error : f.target === "source" ? "→ новое видео" : "→ файлы для монтажа"}
               </span>
               {isVideo(f.file) && f.state !== "uploading" ? (
                 <button className="chat-file-btn" onClick={() => retarget(f)} title="Куда загрузить видео">
-                  {f.target === "asset" ? "сделать источником" : "в файлы для монтажа"}
+                  {f.target === "asset" ? "сделать новым видео" : "в файлы для монтажа"}
                 </button>
               ) : null}
               <button className="chat-file-btn" onClick={() => setFiles((list) => list.filter((x) => x.key !== f.key))} aria-label="Убрать">
@@ -652,7 +652,7 @@ function Composer({
           </button>
         )}
       </div>
-      {link ? <div className="chat-hint muted">Ссылка уйдёт агенту: видео — скачает как источник, картинку или мем — вставит в клип.</div> : null}
+      {link ? <div className="chat-hint muted">Ссылка уйдёт агенту: видео — скачает как новое видео, картинку или мем — вставит в клип.</div> : null}
     </div>
   );
 }
@@ -795,7 +795,7 @@ export function ChatConversation({
                     <div className="chat-atts">
                       {m.meta.attachments.map((a) => (
                         <span key={`${a.kind}${a.id}`} className="chat-att">
-                          {a.kind === "source" ? "источник" : "файл"} #{a.id} · {a.name}
+                          {a.kind === "source" ? "видео" : "файл"} #{a.id} · {a.name}
                         </span>
                       ))}
                     </div>

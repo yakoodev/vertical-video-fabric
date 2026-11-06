@@ -9,21 +9,7 @@ import { BrandsSettings } from "@/pages/settings/BrandsSettings";
 import { TelegramSettings } from "@/pages/settings/TelegramSettings";
 import { ModulesSettings } from "@/pages/settings/ModulesSettings";
 import { useModules } from "@/hooks/useModules";
-
-// module — вкладка видна, только пока модуль включён (app/modules.py).
-const TABS: { seg: string; label: string; module?: string }[] = [
-  { seg: "render", label: "Пресеты рендера" },
-  { seg: "banners", label: "Баннеры" },
-  { seg: "audio", label: "Музыка" },
-  { seg: "subtitles", label: "Субтитры" },
-  { seg: "brands", label: "Бренды" },
-  { seg: "prompts", label: "Промпты" },
-  { seg: "defaults", label: "По умолчанию" },
-  { seg: "modules", label: "Модули" },
-  { seg: "proxy", label: "Прокси" },
-  { seg: "telegram", label: "Telegram", module: "telegram" },
-  { seg: "backup", label: "Экспорт/импорт" },
-];
+import { SECTIONS, visibleTabs } from "@/lib/tabs";
 
 export function SettingsPage() {
   const { on } = useModules();
@@ -33,10 +19,10 @@ export function SettingsPage() {
       <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, бренды, промпты, модули" />
       <div className="settings-layout">
         <nav className="settings-rail">
-          {TABS.filter((t) => !t.module || on(t.module)).map((t) => (
+          {visibleTabs(SECTIONS.settings.tabs, on).map((t) => (
             <NavLink
-              key={t.seg}
-              to={`/settings/${t.seg}`}
+              key={t.key}
+              to={t.to}
               className={({ isActive }) => `settings-tab${isActive ? " active" : ""}`}
             >
               {t.label}
@@ -60,7 +46,7 @@ export function SettingsPage() {
               path="telegram"
               element={telegramOn ? <TelegramSettings /> : <Navigate to="/settings/modules" replace />}
             />
-            <Route path="*" element={<Navigate to="render" replace />} />
+            <Route path="*" element={<Navigate to="/settings/render" replace />} />
           </Routes>
         </div>
       </div>

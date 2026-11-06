@@ -7,6 +7,7 @@ import { PageTabs } from "@/components/PageTabs";
 import { useShell } from "@/components/AppShell";
 import { lazyPage } from "@/lazyPage";
 import { projectPath, videoPath } from "@/lib/paths";
+import { LORE_TABS, projectTabs } from "@/lib/tabs";
 import {
   HYP_STATUS_LABEL,
   METRIC_OPTIONS,
@@ -59,32 +60,6 @@ type Tab =
   | "channel"
   | "expl"
   | "story";
-// Третий элемент — модуль вкладки (app/modules.py): выключен — вкладки нет.
-const TABS: [Tab, string, string?][] = [
-  ["videos", "Видео"],
-  ["clips", "Клипы"],
-  ["questions", "Вопросы", "stream_questions"],
-  ["files", "Файлы"],
-  ["chat", "Чат", "agent_chat"],
-  ["know", "Лор и правила"],
-  ["stats", "Статистика"],
-  ["autopilot", "Автопилот", "autopilot"],
-  // Только у проекта вида «ИИ-видео» (app/aivideo.py) — см. фильтр ниже.
-  ["aiv", "ИИ-видео", "ai_video"],
-  // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал — темы, расписание, автопилот.
-  ["channel", "Канал", "explainer"],
-  // Объяснялки (app/explainer.py): маскот объясняет тему — у «ИИ-видео», «канала объяснялок» и проекта с маскотом.
-  ["expl", "Объяснялки", "explainer"],
-  // Истории (app/stories.py): рассказчик и сцена на каждую фразу — тоже только у «ИИ-видео».
-  ["story", "Истории", "stories"],
-];
-// Подвкладки «Лор и правила»: те же адреса ?tab=brief|rules|hyp, что были у отдельных вкладок.
-const LORE_TABS: [Tab, string][] = [
-  ["know", "Что агент знает"],
-  ["brief", "Резюме и лор"],
-  ["rules", "Правила"],
-  ["hyp", "Гипотезы"],
-];
 const TAB_ALIAS: Record<string, Tab> = { lore: "know", auto: "autopilot" };
 
 const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>(
@@ -120,21 +95,9 @@ export function SeriesPage() {
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
   const { openNewVideo } = useShell();
   const { on } = useModules();
-  const isAiv = project.data?.kind === "ai_video";
-  const isChannel = project.data?.kind === "explainer";
-  const tabs = TABS.filter(
-    ([key, , mod]) =>
-      (!mod || on(mod)) &&
-      (key === "aiv" || key === "story"
-        ? isAiv
-        : key === "channel"
-          ? isAiv || isChannel
-          : key === "expl"
-            ? isAiv || isChannel || !!project.data?.has_mascots
-            : true),
-  );
+  const tabs = projectTabs(on, project.data);
   const lore = tab === "brief" || tab === "rules" || tab === "hyp";
-  const shown: Tab = lore || (tab && tabs.some(([key]) => key === tab)) ? (tab as Tab) : "videos";
+  const shown: Tab = lore || (tab && tabs.some((t) => t.key === tab)) ? (tab as Tab) : "videos";
   const navProject = nav.data?.projects.find((x) => x.id === id);
 
   if (project.isLoading) return <Loading />;
@@ -164,7 +127,7 @@ export function SeriesPage() {
       <PageTabs
         label="Вкладки проекта"
         active={inLore ? "know" : shown}
-        tabs={tabs.map(([key, label]) => ({
+        tabs={tabs.map(({ key, label }) => ({
           key,
           label,
           to: projectPath(id, key),
@@ -174,7 +137,7 @@ export function SeriesPage() {
       <div className="series-body">
         {inLore ? (
           <nav className="pills" aria-label="Лор и правила">
-            {LORE_TABS.map(([key, label]) => (
+            {LORE_TABS.map(({ key, label }) => (
               <button key={key} className={`pill${shown === key ? " on" : ""}`} onClick={() => setTab(key)}>
                 {label}
               </button>

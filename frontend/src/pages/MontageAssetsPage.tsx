@@ -13,17 +13,14 @@ import { EmptyState, ErrorState, Loading, PageHead, formatDuration } from "@/com
 import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
 import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
 import { useModuleOn, useModules } from "@/hooks/useModules";
+import { SECTIONS } from "@/lib/tabs";
 
 type AssetTab = "shared" | "project" | "all";
 const PROJECT_ASSET_TABS: [AssetTab, string][] = [
   ["project", "Файлы проекта"],
   ["shared", "Общие"],
 ];
-const ASSET_TABS: [AssetTab, string][] = [
-  ["shared", "Общие"],
-  ["project", "Проект"],
-  ["all", "Все"],
-];
+const ASSET_TABS = SECTIONS.files.tabs.map((t): [AssetTab, string] => [t.key as AssetTab, t.label]);
 
 const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   image: "Картинка",

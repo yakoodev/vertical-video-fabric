@@ -86,7 +86,7 @@ export function ClipsPage({ embedded }: { embedded?: boolean } = {}) {
         <EmptyState
           icon="✂️"
           title="Клипов пока нет"
-          hint="Отрендерите моменты видео или загрузите готовый клип"
+          hint="Отрендерите черновики видео или загрузите готовый клип"
           actions={
             <Link className="btn primary" to="/projects">
               Все видео

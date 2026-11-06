@@ -678,7 +678,7 @@ def _clip_audio(store: Any, clip_plan_id: int) -> bytes:
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.exists():
-        raise ValueError("исходник недоступен")
+        raise ValueError("видео недоступно")
     pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
     out = settings.tmp_dir / f"speakers-{uuid4().hex}.mp3"
     try:

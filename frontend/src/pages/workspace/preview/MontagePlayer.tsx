@@ -417,7 +417,6 @@ export function MontagePlayer({
         ) : null}
         {updatedAt ? <span className="mplayer-chip mplayer-chip--ok" key={updatedAt}>монтаж обновлён</span> : null}
         {status?.notes?.length ? <span className="mplayer-chip" title={status.notes.join("\n")}>{status.notes[0]}</span> : null}
-        <span className="mplayer-chip" title="Тот же монтаж, что и рендер: кадр в 480p, 30 кадров/с">480p</span>
         <span className="mplayer-spacer" />
         <button type="button" className="btn sm ghost" onClick={toggleFullscreen} title="На весь экран (F)">⛶</button>
         {onClose ? <button type="button" className="btn sm ghost" onClick={onClose} title="Закрыть (Esc)">✕</button> : null}

@@ -187,7 +187,7 @@ def h_analyze_source(ctx: ToolContext, args: dict) -> dict:
 
     threading.Thread(target=work, name=f"chat-analyze-{source_id}", daemon=True).start()
     return {"ok": True, "started": True, "source_id": source_id, "provider": provider,
-            "note": "нарезка запущена в фоне — прогресс в «Очереди»; моменты появятся на вкладке «Моменты» "
+            "note": "нарезка запущена в фоне — прогресс в «Очереди»; черновики появятся на вкладке «Черновики» "
                     "проекта (list_clips по этому source_id, когда закончится)"}
 
 

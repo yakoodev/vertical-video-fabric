@@ -81,7 +81,7 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
         className="btn mo-big aib-btn aib-pick"
         disabled={pick.isPending || running}
         onClick={() => setPickOpen((v) => !v)}
-        title="ИИ прочитает все моменты и отметит ★ самые вирусные — с оценкой и причиной на карточке"
+        title="ИИ прочитает все черновики и отметит ★ самые вирусные — с оценкой и причиной на карточке"
       >
         {pick.isPending ? "✨ Выбираю… (~30 с)" : "✨ ИИ выберет лучшие"}
       </button>
@@ -133,7 +133,7 @@ export function AiBatchPanel({ sourceId, favCount }: { sourceId: string; favCoun
         className="btn mo-big aib-btn"
         disabled={running || !favCount}
         onClick={() => setOpen((v) => !v)}
-        title={favCount ? "ИИ перемонтирует все избранные клипы: хук, без пауз, переход, обложка" : "Отметьте ★ моменты"}
+        title={favCount ? "ИИ перемонтирует все избранные клипы: хук, без пауз, переход, обложка" : "Отметьте ★ клипы"}
       >
         {running ? `🤖 ИИ-монтаж… ${data?.done}/${data?.total}` : `🤖 ИИ-монтаж всех ★ (${favCount})`}
       </button>
@@ -217,7 +217,7 @@ export function AiBatchReport({ sourceId, onOpenClip }: { sourceId: string; onOp
               onClick={() => onOpenClip?.(it.plan_id)}
               title="Открыть этот клип в монтаже"
             >
-              {it.title || `План #${it.plan_id}`}
+              {it.title || `Клип #${it.plan_id}`}
             </button>
             <span className="aib-item-st">
               {it.status === "done" && it.total_before != null

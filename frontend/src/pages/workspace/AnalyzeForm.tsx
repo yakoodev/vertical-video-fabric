@@ -47,7 +47,7 @@ export function AnalyzeForm({ source, title = "Запустить анализ",
   if (!moduleOn("ai_analysis")) {
     return (
       <div className="panel muted" style={{ fontSize: 13 }}>
-        Модуль «ИИ-нарезка моментов» выключен (Настройки → Модули) — анализ недоступен. Клипы можно создавать вручную на вкладке «Моменты».
+        Модуль «ИИ-нарезка» выключен (Настройки → Модули) — анализ недоступен. Клипы можно создавать вручную на вкладке «Черновики».
       </div>
     );
   }
@@ -58,7 +58,7 @@ export function AnalyzeForm({ source, title = "Запустить анализ",
         <label className="field" style={{ flex: 1, minWidth: 200 }}>
           <span>Пресет анализа</span>
           <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-            <option value={0}>Авто (по источнику)</option>
+            <option value={0}>Авто (по видео)</option>
             {analysisPresets.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}

@@ -9,6 +9,7 @@ import type { NavState } from "@/api/nav";
 import { Icon } from "@/components/Icon";
 import { useModules } from "@/hooks/useModules";
 import { projectPath, videoPath } from "@/lib/paths";
+import { VIDEO_TABS, projectTabs, visibleTabs } from "@/lib/tabs";
 
 // Searchable words for the source type, so «твич» / «ютуб» find videos.
 const SOURCE_KIND: Record<string, string> = {
@@ -92,44 +93,25 @@ export function CommandPalette({
     const m = location.pathname.match(/^\/v\/(\d+)/);
     if (m) {
       const id = m[1];
-      const tabs: [string, string][] = [
-        ["clips", "Клипы этого видео"],
-        ["source", "Запись и анализ"],
-        ["candidates", "Моменты"],
-        ["segments", "Сегменты"],
-        ["renders", "Рендеры этого видео"],
-        ["montaged", "Смонтированные"],
-        ...(on("stream_questions") ? ([["questions", "Вопросы этого видео"]] as [string, string][]) : []),
-      ];
       list.unshift(
-        ...tabs.map(([seg, label]) => ({
-          id: `tab-${seg}`,
+        ...visibleTabs(VIDEO_TABS, on).map((tab) => ({
+          id: `tab-${tab.key}`,
           group: "Это видео",
-          label,
+          label: tab.cmd ?? tab.label,
           icon: "arrow",
-          run: go(videoPath(id, seg)),
+          run: go(videoPath(id, tab.key)),
         })),
       );
     }
     const inProject = location.pathname.match(/^\/p\/(\d+)/)?.[1];
     if (inProject) {
-      const tabs: [string, string][] = [
-        ["videos", "Видео проекта"],
-        ["clips", "Клипы проекта"],
-        ["questions", "Вопросы проекта"],
-        ["files", "Файлы проекта"],
-        ["chat", "Чат проекта"],
-        ["know", "Что агент знает, лор и правила"],
-        ["stats", "Статистика"],
-        ["autopilot", "Автопилот"],
-      ];
       list.unshift(
-        ...tabs.map(([tab, label]) => ({
-          id: `ptab-${tab}`,
+        ...projectTabs(on).map((tab) => ({
+          id: `ptab-${tab.key}`,
           group: "Этот проект",
-          label,
+          label: tab.cmd ?? tab.label,
           icon: "arrow",
-          run: go(projectPath(inProject, tab)),
+          run: go(projectPath(inProject, tab.key)),
         })),
       );
     }
@@ -148,7 +130,7 @@ export function CommandPalette({
       list.push({
         id: `plan-${p.id}`,
         group: "Клипы этого видео",
-        label: p.title || `План #${p.id}`,
+        label: p.title || `Клип #${p.id}`,
         hint: `${p.favorite ? "★ " : ""}${p.ai_pick ? `✨${p.ai_pick.score} ` : ""}→ клип`,
         icon: "scissors",
         run: go(clipPath(p.id)),
@@ -163,7 +145,7 @@ export function CommandPalette({
         hint: `${s.clip_cards_count ?? s.clip_plans_count ?? 0} клипов`,
         keywords: `${SOURCE_KIND[s.source_type] ?? ""} ${s.original_filename}`,
         icon: "film",
-        run: go(videoPath(s.id, "candidates")),
+        run: go(videoPath(s.id)),
       });
     }
     const seenPlans = new Set<number>();

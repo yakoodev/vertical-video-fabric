@@ -12,21 +12,22 @@ import { Sidebar } from "@/components/shell/Sidebar";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
-import { rememberProject } from "@/lib/paths";
+import { rememberProject, videoPath } from "@/lib/paths";
+import { SECTIONS, VIDEO_TABS, tabShortcuts, visibleTabs } from "@/lib/tabs";
 import { AddSource } from "@/pages/ProjectsPage";
 
 // Панель чата и её зависимости не нужны, пока её не открыли.
 const ChatDrawer = lazyPage<ComponentProps<typeof import("@/components/shell/ChatDrawer").ChatDrawer>>(() => import("@/components/shell/ChatDrawer"), "ChatDrawer");
 
-export const SHORTCUTS: [string, string][] = [
+const SHORTCUTS_BEFORE: [string, string][] = [
   ["Ctrl / ⌘ + K", "поиск и команды"],
   ["N", "новое видео"],
-  ["1 … 8", "вкладки проекта: Видео, Клипы, Вопросы, Файлы, Чат, Лор и правила, Статистика, Автопилот"],
-  ["1 … 5", "вкладки видео: Исходник, Моменты, Монтаж, Клипы, Смонтированные"],
-  ["1 … 3", "вкладки Входящих и Публикаций"],
-  ["F", "Моменты: ★ в избранное (момент под курсором / открытый)"],
-  ["X", "Моменты: скрыть / вернуть момент под курсором"],
-  ["E", "Моменты: открыть момент под курсором в монтаже"],
+];
+
+const SHORTCUTS_AFTER: [string, string][] = [
+  ["F", "Черновики и монтаж: ★ в избранное (черновик под курсором или открытый клип)"],
+  ["X", "Черновики: скрыть или вернуть черновик под курсором"],
+  ["E", "Черновики: открыть черновик под курсором в монтаже"],
   ["S", "Монтаж: разрезать кусок по курсору"],
   ["Del", "Монтаж: удалить выбранный блок таймлайна"],
   ["Пробел", "Монтаж: плей / пауза с места курсора"],
@@ -36,14 +37,9 @@ export const SHORTCUTS: [string, string][] = [
   ["Ctrl / ⌘ + D", "Монтаж: копия выделенного слоя"],
   ["Ctrl / ⌘ + C, V", "Монтаж: скопировать слой и вставить под курсор (можно в другой клип)"],
   ["Alt + стрелки", "Монтаж: подвинуть выделенный слой (Shift — крупнее)"],
-  ["Esc", "закрыть окно · из монтажа — назад к моментам"],
+  ["Esc", "закрыть окно · из монтажа — назад к черновикам"],
   ["?", "эта подсказка"],
 ];
-
-const PROJECT_TABS = ["videos", "clips", "questions", "files", "chat", "know", "stats", "autopilot"];
-const VIDEO_TABS = ["clips", "source", "candidates", "edit", "segments", "renders", "montaged"];
-const INBOX_TABS = ["approve", "questions", "tasks"];
-const PUBS_TABS = ["pubs", "accounts", "ready"];
 
 const typing = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -95,26 +91,27 @@ export function AppShell() {
       if (document.querySelector(".modal-backdrop, .drawer-backdrop")) return; // a dialog owns the keyboard
       if (e.key === "?") setKeys(true);
       else if (e.key === "n" || e.key === "т") setCreate(true);
-      else if (/^[1-8]$/.test(e.key)) {
+      else if (/^[1-9]$/.test(e.key)) {
+        // Цифра — вкладка по порядку на экране: выключенных модулей в списке нет, подсказка «?» считает так же.
         const n = Number(e.key) - 1;
-        const [, head, id] = location.pathname.split("/");
-        if (head === "p" && id && PROJECT_TABS[n]) {
-          // Вкладки, которых у проекта нет (модуль выключен), остаются без реакции: нажимаем настоящую ссылку.
-          document.querySelector<HTMLElement>(`.ptabs [data-tab="${PROJECT_TABS[n]}"]`)?.click();
-        } else if (head === "v" && id && VIDEO_TABS[n]) {
-          const seg = VIDEO_TABS[n];
-          if (seg === "edit") document.querySelector<HTMLAnchorElement>('.pipeline a[href*="?clip="]')?.click();
-          else navigate(`/v/${id}/${seg}`);
-        } else if (head === "inbox" && INBOX_TABS[n]) {
-          navigate(`/inbox?tab=${INBOX_TABS[n]}`);
-        } else if (head === "pubs" && !id && PUBS_TABS[n]) {
-          navigate(`/pubs?tab=${PUBS_TABS[n]}`);
+        const [, head, id, seg] = location.pathname.split("/");
+        if (head === "p" && id) {
+          // У проекта набор зависит ещё и от вида проекта: нажимаем настоящую ссылку.
+          document.querySelectorAll<HTMLElement>(".ptabs [data-tab]")[n]?.click();
+        } else if (head === "v" && id) {
+          // В монтаже вкладок на экране нет: случайная цифра не должна выбрасывать из редактора.
+          const editing = seg === "candidates" && new URLSearchParams(location.search).has("clip");
+          const tab = editing ? undefined : visibleTabs(VIDEO_TABS, on)[n];
+          if (tab) navigate(videoPath(id, tab.key));
+        } else if (head === "inbox" || (head === "pubs" && !id)) {
+          const tab = visibleTabs(SECTIONS[head].tabs, on)[n];
+          if (tab) navigate(tab.to);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [location.pathname, navigate]);
+  }, [location.pathname, location.search, navigate, on]);
 
   return (
     <div className="shell">
@@ -203,7 +200,7 @@ export function AppShell() {
             </div>
             <table className="keys-table">
               <tbody>
-                {SHORTCUTS.map(([k, v]) => (
+                {[...SHORTCUTS_BEFORE, ...tabShortcuts(on), ...SHORTCUTS_AFTER].map(([k, v]) => (
                   <tr key={`${k}${v}`}>
                     <td>
                       <kbd>{k}</kbd>

@@ -811,7 +811,7 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
                   <select className="input" value={frameOrigin} onChange={(e) => setFrameOrigin(e.target.value as FrameOrigin)}>
                     <option value="clean">Ролик без текста и субтитров</option>
                     <option value="render">Как в готовом ролике</option>
-                    <option value="source">Из исходника, весь кадр</option>
+                    <option value="source">Из видео, весь кадр</option>
                   </select>
                 </label>
                 <button type="button" className="btn primary" disabled={!!busy} onClick={() => void insertFrame(false)}>

@@ -886,7 +886,7 @@ def detect_avatar(store: Any, clip_plan_id: int, client: Any = None, *, refresh:
                 used.append(t)
                 parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(data).decode()}})
     if not parts:
-        raise ValueError("ffmpeg не отдал ни одного кадра исходника")
+        raise ValueError("ffmpeg не отдал ни одного кадра видео")
     boxes = ask_boxes(client, parts, sample_size(source))
     found = place_avatar(boxes, used)
     places = found["places"]

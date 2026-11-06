@@ -209,7 +209,7 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
         {form.engine === "3d" ? (
           <label
             className="aiv-check"
-            title="Кино-качество: герой KayKit с мимикой и лип-синком, режиссура действий по фразам (Gemini), рендер Blender на компьютере владельца — сервис ставит задание в очередь, воркер tools/render_worker.py рендерит (≈ 1–2 с на кадр). Компьютер выключен — серия ждёт."
+            title="Кино-качество: герой с мимикой и лип-синком, режиссура действий по фразам (Gemini), рендер Blender на вашем компьютере (≈ 1–2 с на кадр). Компьютер выключен — серия ждёт."
           >
             <input
               type="checkbox"

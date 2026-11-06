@@ -1299,7 +1299,7 @@ def _render_frame_png(
                 if c.get("status") == "succeeded" and c.get("output_path") and Path(c["output_path"]).is_file()
             ]
             if not rendered:
-                raise ValueError("нет ни файла исходника, ни готового рендера — кадр брать неоткуда")
+                raise ValueError("нет ни файла видео, ни готового рендера — кадр брать неоткуда")
             _render._run_ffmpeg(build_frame_args(Path(rendered[0]["output_path"]), t, base_png), timeout=120)
         # Компоновщик читает видео и ищет кадр по времени — даём «видео» из одного
         # стоп-кадра длиной до t (2 кадра в секунду: дёшево даже для t = 60 с).

@@ -41,7 +41,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
     onSuccess: (m) => {
       setTitle(m.title);
       setDescription([m.description, m.hashtags.join(" ")].filter(Boolean).join("\n\n"));
-      toast.success(m.has_transcript ? "Сгенерировано по речи клипа" : "Сгенерировано по описанию момента (транскрипта нет)");
+      toast.success(m.has_transcript ? "Сгенерировано по речи клипа" : "Сгенерировано по описанию клипа (транскрипта нет)");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сгенерировать"),
   });
