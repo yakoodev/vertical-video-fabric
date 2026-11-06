@@ -63,7 +63,6 @@ from app.store import AppStore
 from app.timeline_export import write_timeline
 from app.video_crop import detect_content_crop
 from app.worker import JobWorker
-from app import platform_stats
 from app.platform_stats import StatsCollector
 from app.api_common import (
     THUMB_CACHE, _default_subtitle_profile_id, _optional_form_float, _optional_form_int, _parse_schedule_dt,
@@ -3417,50 +3416,6 @@ def api_delete_subtitle_profile(profile_id: int, _auth: AuthDep) -> dict:
     return {"deleted": True}
 
 
-@app.get("/api/stats/clips", tags=["Jobs"], summary="What works: published clips with stats and montage features")
-def api_stats_clips(_auth: AuthDep) -> dict:
-    return {"clips": platform_stats.clip_performance(store), "status": platform_stats.status()}
-
-
-@app.get("/api/stats/publications", tags=["Jobs"], summary="Latest platform stats per publication target")
-def api_stats_publications(_auth: AuthDep) -> dict:
-    from app import zero_views
-
-    latest = store.latest_publication_stats()
-    # alerts — тревоги «0 просмотров» по публикациям, clips — значок «Статистика» клипа (app/zero_views.py).
-    return {"targets": {str(k): v for k, v in latest.items()},
-            "alerts": {str(k): v for k, v in zero_views.alerts_by_target(store).items()},
-            "clips": {str(k): v for k, v in zero_views.clip_badges(store).items()},
-            "status": platform_stats.status()}
-
-
-@app.get("/api/stats/zero-views", tags=["Jobs"], summary="Zero-views alert settings (hours after publish, threshold)")
-def api_zero_views_settings(_auth: AuthDep) -> dict:
-    from app import zero_views
-
-    return zero_views.get_settings(store)
-
-
-@app.put("/api/stats/zero-views", tags=["Jobs"], summary="Change zero-views alert settings")
-def api_zero_views_save(_auth: AuthDep, payload: dict = Body(...)) -> dict:
-    from app import zero_views
-
-    try:
-        return zero_views.save_settings(store, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/stats/publications/{target_id}", tags=["Jobs"], summary="Stats snapshots of one publication target")
-def api_stats_publication_history(target_id: int, _auth: AuthDep) -> list[dict]:
-    return store.list_publication_stats(target_id)
-
-
-@app.post("/api/stats/refresh", tags=["Jobs"], summary="Collect platform stats now (background, one link at a time)")
-def api_stats_refresh(_auth: AuthDep) -> dict:
-    return platform_stats.start_collect(store, force=True)
-
-
 async def _register_uploaded_clip(file: UploadFile, title: str, description: str) -> dict:
     """Ingest an already-edited vertical clip and register it in the clips library.
 
@@ -3628,6 +3583,10 @@ app.include_router(build_settings_router(AuthDep, lambda: store))
 from app.publishing_api import build_publishing_router  # noqa: E402
 
 app.include_router(build_publishing_router(AuthDep, lambda: store))
+
+from app.stats_api import build_stats_router  # noqa: E402
+
+app.include_router(build_stats_router(AuthDep, lambda: store))
 
 # Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
 from app.motion_api import build_motion_router  # noqa: E402
