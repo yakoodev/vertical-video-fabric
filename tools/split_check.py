@@ -6,6 +6,7 @@
    нового файла и его частей, текст совпадает побайтно (без учёта конца строки), ``ast.dump`` одинаков.
 2. **Байткод.** Прежний файл исполняется как отдельный модуль; у функций и методов сравниваются объекты кода рекурсивно
    (без имени файла, номеров строк и qualname), значения по умолчанию и атрибуты класса; константы — по значению.
+   Единственное допущение — запись вызова ``x.m()``, зависящая от импортов файла (``canonical``), такие функции выводятся.
 3. **Имена.** Каждое глобальное имя, которое читает перенесённый код, в его новом модуле указывает на то же, что в прежнем
    файле: тот же объект (импорты), функцию с тем же кодом или равное значение. Прежний модуль и новый содержат одни имена.
 
@@ -76,11 +77,65 @@ def statements(text: str, cls: str) -> tuple[dict[str, str], dict[str, str], lis
     return top, members, other
 
 
+def canonical(code: types.CodeType) -> tuple[list, list]:
+    """Команды и таблица исключений, где две записи вызова ``x.m()`` приведены к одной, а переходы — к номерам команд.
+
+    CPython 3.12 компилирует ``x.m()`` по-разному в зависимости от того, импортировано ли имя ``x`` на верхнем уровне
+    файла (compile.c, ``is_import_originated``): ``PUSH_NULL; x; LOAD_ATTR m`` вместо ``x; LOAD_ATTR метод m``. Значение
+    вызова то же. Разбор меняет только импорты, поэтому такая разница возможна и больше никакая."""
+    ins = list(dis.get_instructions(code))
+    out: list[list] = []
+    index: dict[int, int] = {}
+    i = 0
+    while i < len(ins):
+        cur = ins[i]
+        index[cur.offset] = len(out)
+        nxt = ins[i + 1] if i + 1 < len(ins) else None
+        after = ins[i + 2] if i + 2 < len(ins) else None
+        if (cur.opname == "PUSH_NULL" and nxt and after and nxt.opname.startswith("LOAD_") and after.opname == "LOAD_ATTR"
+                and not after.argrepr.startswith("NULL|self")):
+            index[nxt.offset] = len(out)
+            index[after.offset] = len(out) + 1
+            out += [[nxt.opname, nxt.argval, None], ["LOAD_METHOD", after.argval, None]]
+            i += 3
+            continue
+        if cur.opname == "LOAD_GLOBAL" and cur.argrepr.startswith("NULL + ") and nxt and nxt.opname == "LOAD_ATTR" \
+                and not nxt.argrepr.startswith("NULL|self"):
+            index[nxt.offset] = len(out) + 1
+            out += [["LOAD_GLOBAL", cur.argval, cur.argval], ["LOAD_METHOD", nxt.argval, None]]
+            i += 2
+            continue
+        if cur.opname == "LOAD_ATTR" and cur.argrepr.startswith("NULL|self"):
+            out.append(["LOAD_METHOD", cur.argval, None])
+        elif cur.opcode in dis.hasjrel:
+            out.append([cur.opname, cur.argval, "jump"])
+        elif isinstance(cur.argval, types.CodeType):
+            out.append([cur.opname, "<code>", None])
+        else:
+            # LOAD_GLOBAL без подмены NULL: argrepr отличает «NULL + f» (вызов функции) от чтения значения.
+            out.append([cur.opname, cur.argval, cur.argrepr if cur.opname == "LOAD_GLOBAL" else None])
+        i += 1
+    for row in out:
+        if row[2] == "jump":
+            row[1] = index[row[1]]
+    exceptions = [[index[e.start], index[e.end] if e.end in index else None, index[e.target], e.depth, e.lasti]
+                  for e in dis._parse_exception_table(code)]
+    return out, exceptions
+
+
+# Функции, где байткод совпал только после приведения вызова x.m() к одной записи.
+METHOD_FORM_ONLY: list[str] = []
+
+
 def same_code(a: types.CodeType, b: types.CodeType) -> bool:
-    for attr in ("co_code", "co_names", "co_varnames", "co_freevars", "co_cellvars", "co_argcount",
-                 "co_posonlyargcount", "co_kwonlyargcount", "co_flags", "co_exceptiontable"):
+    for attr in ("co_names", "co_varnames", "co_freevars", "co_cellvars", "co_argcount", "co_posonlyargcount",
+                 "co_kwonlyargcount", "co_flags"):
         if getattr(a, attr) != getattr(b, attr):
             return False
+    if a.co_code != b.co_code or a.co_exceptiontable != b.co_exceptiontable:
+        if canonical(a) != canonical(b):
+            return False
+        METHOD_FORM_ONLY.append(a.co_name)
     if len(a.co_consts) != len(b.co_consts):
         return False
     for x, y in zip(a.co_consts, b.co_consts):
@@ -177,9 +232,8 @@ def check(stem: str, cls: str, base: str) -> list[str]:
             problems.append(f"{stem}: атрибут класса {key}: значение отличается")
 
     names = 0
-    skip = {"__name__", "__doc__", "__spec__", "__loader__", "__package__", "__file__", "__cached__", "__builtins__"}
     for key, old_value in vars(old_mod).items():
-        if key in skip:
+        if key.startswith("__") and key.endswith("__"):
             continue
         names += 1
         if key not in vars(new_mod):
@@ -210,6 +264,8 @@ def check(stem: str, cls: str, base: str) -> list[str]:
           f"функций с тем же байткодом {bytecode}; имён модуля {names}; чтений глобальных имён сверено {reads}")
     print(f"  части: {', '.join(part_names(stem)) or '-'}")
     print(f"  новые определения: верхний уровень {extra_top or '-'}, в классах {extra_members or '-'}")
+    print(f"  байткод совпал после приведения x.m() к одной записи: {sorted(set(METHOD_FORM_ONLY)) or '-'}")
+    METHOD_FORM_ONLY.clear()
     return problems
 
 
