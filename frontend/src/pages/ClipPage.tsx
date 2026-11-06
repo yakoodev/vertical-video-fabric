@@ -561,6 +561,38 @@ function CoverCard({ view }: { view: ClipView }) {
   );
 }
 
+/** «Все настройки публикации» для выбранной версии: другой файл вместо неё не подставляется. */
+function VersionPublishDialog({ render, onClose }: { render: { id: number; label: string }; onClose: () => void }) {
+  const clip = useQuery({
+    queryKey: qk.clip(render.id),
+    queryFn: () => clipsApi.get(render.id),
+    retry: false,
+    refetchOnMount: "always",
+  });
+  const unavailable = clip.isError || (clip.data && (clip.data.id !== render.id || clip.data.status !== "succeeded"));
+  if (unavailable) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal" role="alertdialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <h3>Версия {render.label} недоступна</h3>
+          <p className="muted">Файл этой версии не открылся, поэтому публиковать нечего. Другую версию вместо неё мы не подставляем: обновите страницу или выберите версию ещё раз.</p>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+            <button type="button" className="btn" onClick={onClose}>Закрыть</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!clip.data) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}><Loading /></div>
+      </div>
+    );
+  }
+  return <PublishDialog key={clip.data.id} clip={clip.data} versionLabel={render.label} onClose={onClose} />;
+}
+
 function PublishCard({ view, render }: { view: ClipView; render: { id: number; label: string } | null }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -572,7 +604,8 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
   const [when, setWhen] = useState<"now" | "later">("now");
   const [scheduledAt, setScheduledAt] = useState("");
   const [jobId, setJobId] = useState<number | null>(null);
-  const [dialog, setDialog] = useState(false);
+  // Версия запоминается при открытии: готовый тем временем новый рендер не подменит файл под открытым окном.
+  const [dialogRender, setDialogRender] = useState<{ id: number; label: string } | null>(null);
   const description = [view.meta.description, view.meta.hashtags.join(" ")].filter(Boolean).join("\n\n");
   const publish = useMutation({
     mutationFn: () =>
@@ -657,10 +690,10 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
       </div>
       <div className="cpub-more">
         <a href={playbackApi.packageUrl(view.id)} title="Zip для Premiere и DaVinci Resolve: монтаж, субтитры, файлы, без рендера">Экспорт для монтажки</a>
-        {publishingOn && render && view.latest ? <button type="button" className="linkish" onClick={() => setDialog(true)}>Все настройки публикации</button> : null}
+        {publishingOn && render ? <button type="button" className="linkish" title={`Версия ${render.label}`} onClick={() => setDialogRender(render)}>Все настройки публикации</button> : null}
         {jobId ? <Link to={`/pubs/${jobId}`}>Публикация №{jobId} в очереди</Link> : view.published ? <Link to="/pubs?tab=pubs">Опубликован: {view.published}</Link> : null}
       </div>
-      {dialog && view.latest ? <PublishDialog clip={view.latest} onClose={() => setDialog(false)} /> : null}
+      {dialogRender ? <VersionPublishDialog render={dialogRender} onClose={() => setDialogRender(null)} /> : null}
     </section>
   );
 }

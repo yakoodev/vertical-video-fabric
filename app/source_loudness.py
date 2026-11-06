@@ -165,6 +165,7 @@ def source_loudness(store: Any, source_id: int, from_sec: float | None = None, t
     info = summary(levels)
     top = max(1, min(MAX_PEAKS, int(top or 10)))
     return {
+        "source_id": source["id"],
         "project_id": source["id"],
         "time": "source",
         "audio": f"дорожка {track}" if tracks else "смесь рендера (set_source_audio)",

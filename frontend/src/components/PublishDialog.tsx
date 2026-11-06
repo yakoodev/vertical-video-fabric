@@ -11,7 +11,7 @@ import { Loading } from "@/components/ui";
 import { CoverVariants } from "@/components/CoverVariants";
 import { useModules } from "@/hooks/useModules";
 
-export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => void }) {
+export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; versionLabel?: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -65,7 +65,7 @@ export function PublishDialog({ clip, onClose }: { clip: Clip; onClose: () => vo
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal pub-modal" onClick={(e) => e.stopPropagation()}>
         <div className="pub-head">
-          <h3>Опубликовать клип</h3>
+          <h3>{versionLabel ? `Опубликовать версию ${versionLabel}` : "Опубликовать клип"}</h3>
           <button className="pub-x" title="Закрыть" onClick={onClose} disabled={publish.isPending}>
             ×
           </button>

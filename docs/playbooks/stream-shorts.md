@@ -10,8 +10,8 @@
 
 ### 1. Звук записи
 
-- `list_projects` → `project_id` и `audio_tracks`. У записи OBS/NVIDIA часто две дорожки: игра и микрофон.
-- `set_source_audio(project_id, tracks: [{track: 0, gain_db: 0}, {track: 1, gain_db: "auto"}], speech_tracks: [1])`:
+- `list_projects` → `id` (это `source_id`) и `audio_tracks`. У записи OBS/NVIDIA часто две дорожки: игра и микрофон.
+- `set_source_audio(source_id, tracks: [{track: 0, gain_db: 0}, {track: 1, gain_db: "auto"}], speech_tracks: [1])`:
   голос над игрой, распознавание — по микрофону. Не уверен, где что, — `listen` на отрезке с речью.
   Подробно — docs/AGENTS.md, «Звуковые дорожки записи».
 
@@ -19,7 +19,7 @@
 
 - **Сначала вопросы владельцу.** Как в `stream-horizontal`, шаг 0: `add_stream_questions`, `add_meme_choices`,
   и **обязательно** `list_stream_answers` перед отбором. Выбранный мем уже в библиотеке (`asset_id`).
-- `get_source_transcript(project_id)` — реплики всего стрима (`status: "running"` — повтори через
+- `get_source_transcript(source_id)` — реплики всего стрима (`status: "running"` — повтори через
   `retry_after_sec`). `chat_activity` — всплески чата: событие на 5–20 с **раньше** всплеска.
   Игра без речи — `source_loudness` окнами по 10 мин.
 - `source_contact_sheet` вокруг кандидата: смешное должно быть видно, а не только слышно.
@@ -38,7 +38,7 @@
 
 ### 3. Клип
 
-- `create_clip(project_id, title, pieces)` — 1–3 куска на момент. Повтор килла/фейла в слоу-мо — тот же момент
+- `create_clip(source_id, title, pieces)` — 1–3 куска на момент. Повтор килла/фейла в слоу-мо — тот же момент
   вторым куском и `set_segment_speed(piece, speed: 0.5)` (1–3 с на клипе); «перемотка» — `reverse: true`.
 - **Длинные тёмные меню паузы** (стример отошёл, экран настроек) — сократить: `apply_cuts` по отрезку
   меню (найти глазами — `contact_sheet`/`source_contact_sheet`; `suggest_cuts` видит только тишину),

@@ -123,7 +123,8 @@ modules.register_worker("stories", "stories", lambda: stories_worker)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    store.recover_interrupted_ai_analyses()
+    # До запуска работников: сейчас в этом процессе ничего не выполняется, всё «идёт» в базе — от прошлого запуска.
+    store.recover_after_restart()
     try:
         store.dedup_unused_ffmpeg_presets()
     except Exception:  # noqa: BLE001 - cleanup must never block startup

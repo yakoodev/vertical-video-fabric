@@ -758,7 +758,7 @@ def source_audio_map(store: Any, source_id: int, from_sec: float | None, to_sec:
 
     view = _cached(key, compute)
     image_data = view.pop("_image", None)
-    out = {"time": "source", "project_id": source["id"], "from_sec": round(lo, 2), "to_sec": round(hi, 2), **view,
+    out = {"time": "source", "source_id": source["id"], "project_id": source["id"], "from_sec": round(lo, 2), "to_sec": round(hi, 2), **view,
            "note": NOTE.replace("шкала clip", "шкала source").split(". Склейки")[0]
            + ". Время — секунды исходника (create_clip, trim_piece)" + ("; " + "; ".join(notes) if notes else "")}
     png = _image(image_data, [], lambda t: t - lo, hi - lo, lo, hi, offset=lo) if want_image and image_data else None

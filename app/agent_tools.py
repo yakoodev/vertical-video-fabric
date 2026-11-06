@@ -332,7 +332,7 @@ def _assets_project(ctx: ToolContext, args: dict | None = None) -> int | None:
         try:
             return int(ctx.store.db.query_one("SELECT id FROM projects WHERE id = ?", (int(args["project_id"]),))["id"])
         except (TypeError, ValueError) as exc:
-            raise ToolError(f"проекта {args['project_id']} нет — см. list_series") from exc
+            raise ToolError(f"проекта-серии {args['project_id']} нет — см. list_channel_projects") from exc
     return ctx.project_hint
 
 
@@ -6188,11 +6188,39 @@ def _audio_brief(source: dict) -> dict:
             "selected": normalize_tracks(source.get("audio_tracks")) or [0]}
 
 
-def _project_id(args: dict) -> int:
-    try:
-        return int(args.get("project_id"))
-    except (TypeError, ValueError) as exc:
-        raise ToolError("нужен project_id (см. list_projects)") from exc
+# Инструменты, где project_id исторически значит ИСТОЧНИК (видео из list_projects), а не проект-серию из таблицы projects
+# (app/projects.py). Правильное имя у них source_id, project_id оставлен как старое имя для прежних вызовов.
+SOURCE_ID_TOOLS = frozenset({
+    "list_clips", "get_source_transcript", "get_shots", "create_clip", "source_contact_sheet", "source_loudness",
+    "chat_activity", "get_chat", "set_source_audio", "audio_map",
+})
+SOURCE_ARGS = {
+    "source_id": {"type": "integer", "description": "id видео-источника (поле id в list_projects)"},
+    "project_id": {"type": "integer", "description": "старое имя source_id: здесь это тоже id видео-источника, "
+                                                     "не проект-серия из list_channel_projects"},
+}
+
+
+def _source_arg(args: dict) -> int | None:
+    """source_id и его старое имя project_id; оба и разные — отказ: непонятно, о каком видео речь."""
+    found = {}
+    for key in ("source_id", "project_id"):
+        if args.get(key) not in (None, ""):
+            try:
+                found[key] = int(args[key])
+            except (TypeError, ValueError) as exc:
+                raise ToolError(f"{key} — число: id видео-источника (см. list_projects)") from exc
+    if len(set(found.values())) > 1:
+        raise ToolError(f"source_id {found['source_id']} и project_id {found['project_id']} расходятся: здесь project_id — "
+                        "старое имя source_id. Дай только source_id (см. list_projects)")
+    return next(iter(found.values()), None)
+
+
+def _source_id(args: dict) -> int:
+    source = _source_arg(args)
+    if source is None:
+        raise ToolError("нужен source_id: id видео-источника (см. list_projects)")
+    return source
 
 
 def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
@@ -6200,14 +6228,14 @@ def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
 
     try:
         # Whisper фоном: вызов не держит соединение дольше ~45 с (раньше HTTP рвался на 2.5 мин).
-        out = transcript_job(ctx.store, _project_id(args))
+        out = transcript_job(ctx.store, _source_id(args))
     except (KeyError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
     if out.get("status") == "running":
-        return {"project_id": out["source_id"], **{k: v for k, v in out.items() if k != "source_id"}}
+        return {"project_id": out["source_id"], **out}
     lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
     cues = [c for c in out["cues"] if float(c["end"]) > lo and (hi is None or float(c["start"]) < hi)]
-    result = {"project_id": out["source_id"], "status": "done", "time": "source",
+    result = {"source_id": out["source_id"], "project_id": out["source_id"], "status": "done", "time": "source",
               "duration_sec": out["duration_sec"],
               "lines": [[round(float(c["start"]), 2), round(float(c["end"]), 2), c["text"]] for c in cues]}
     if out.get("no_speech"):
@@ -6215,12 +6243,12 @@ def h_source_transcript(ctx: ToolContext, args: dict) -> dict:
     return result
 
 
-def _project_or_clip_source(ctx: ToolContext, args: dict) -> int:
-    """project_id из аргументов, а у встроенного монтажёра — источник его клипа."""
-    if args.get("project_id") is None and ctx.clip_plan_id is not None:
+def _source_or_clip_source(ctx: ToolContext, args: dict) -> int:
+    """source_id из аргументов, а у встроенного монтажёра — источник его клипа."""
+    if _source_arg(args) is None and ctx.clip_plan_id is not None:
         plan = ctx.store.get_clip_plan(int(ctx.clip_plan_id), include_segments=False)
         return int(plan["source_id"])
-    return _project_id(args)
+    return _source_id(args)
 
 
 def h_set_source_audio(ctx: ToolContext, args: dict) -> dict:
@@ -6229,7 +6257,7 @@ def h_set_source_audio(ctx: ToolContext, args: dict) -> dict:
 
     from app.source_audio import _KEEP
 
-    project = _project_or_clip_source(ctx, args)
+    project = _source_or_clip_source(ctx, args)
     if "tracks" not in args and "speech_tracks" not in args:
         raise ToolError("нужны tracks (дорожки для рендера) и/или speech_tracks (дорожки для распознавания речи)")
     tracks = args.get("tracks", _KEEP)
@@ -6278,7 +6306,7 @@ def h_source_loudness(ctx: ToolContext, args: dict) -> dict:
     """Громкость исходника по времени: пики и громкие места — перестрелки и реакции без Gemini."""
     from app.source_loudness import source_loudness
 
-    project = _project_or_clip_source(ctx, args)
+    project = _source_or_clip_source(ctx, args)
     try:
         track = _num(args.get("track"))
         return source_loudness(ctx.store, project, _num(args.get("from_sec")), _num(args.get("to_sec")),
@@ -6301,7 +6329,7 @@ def _chat_ready(ctx: ToolContext, project: int) -> dict | None:
     if has_chat(ctx.store, project):
         return None
     status = get_chat_status(ctx.store, project)
-    out = {"project_id": project, "has_chat": False, "status": status.get("status"), "time": "source"}
+    out = {"source_id": project, "project_id": project, "has_chat": False, "status": status.get("status"), "time": "source"}
     if status.get("status") in ("queued", "running"):
         out["note"] = f"чат импортируется ({round(float(status.get('progress') or 0) * 100)}%) — повтори позже"
     else:
@@ -6313,7 +6341,7 @@ def h_chat_activity(ctx: ToolContext, args: dict) -> dict:
     """Всплески чата Twitch по времени исходника: где зрители взорвались."""
     from app.twitch_chat import chat_activity, hype_windows_from_activity
 
-    project = _project_or_clip_source(ctx, args)
+    project = _source_or_clip_source(ctx, args)
     missing = _chat_ready(ctx, project)
     if missing:
         return missing
@@ -6331,7 +6359,7 @@ def h_chat_activity(ctx: ToolContext, args: dict) -> dict:
                if w["end"] > lo and (hi is None or w["start"] < hi)]
     shown = inside[:240]
     return {
-        "project_id": project, "has_chat": True, "time": "source", "bucket": bucket,
+        "source_id": project, "project_id": project, "has_chat": True, "time": "source", "bucket": bucket,
         "from_sec": round(lo, 2), "to_sec": round(hi, 2) if hi is not None else None,
         "messages": sum(b["count"] for b in inside),
         "median_per_bucket": counts[len(counts) // 2] if counts else 0,
@@ -6349,7 +6377,7 @@ def h_get_chat(ctx: ToolContext, args: dict) -> dict:
     """Сообщения чата Twitch между from_sec и to_sec (время исходника)."""
     from app.twitch_chat import list_messages
 
-    project = _project_or_clip_source(ctx, args)
+    project = _source_or_clip_source(ctx, args)
     missing = _chat_ready(ctx, project)
     if missing:
         return missing
@@ -6365,7 +6393,7 @@ def h_get_chat(ctx: ToolContext, args: dict) -> dict:
     if len(messages) > limit:
         notes.append(f"показаны первые {limit} сообщений — сузь окно")
     return {
-        "project_id": project, "time": "source", "from_sec": round(lo, 2), "to_sec": round(hi, 2),
+        "source_id": project, "project_id": project, "time": "source", "from_sec": round(lo, 2), "to_sec": round(hi, 2),
         "messages": [[round(m["t"], 1), m["user"], m["text"]] for m in messages[:limit]],
         "note": "[секунда исходника, кто, текст]" + ("; " + "; ".join(notes) if notes else ""),
     }
@@ -6375,7 +6403,7 @@ def h_source_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     """Лист кадров исходника с временем (до 24): что на экране в громких местах."""
     from app.motion_render import source_contact_sheet_jpeg
 
-    project = _project_or_clip_source(ctx, args)
+    project = _source_or_clip_source(ctx, args)
     lo, hi = _num(args.get("from_sec")), _num(args.get("to_sec"))
     if lo is None or hi is None:
         raise ToolError("нужны from_sec и to_sec (секунды исходника)")
@@ -6387,7 +6415,7 @@ def h_source_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     except ValueError as exc:
         raise ToolError(f"source_contact_sheet: {exc}") from exc
     return ImageResult(data=data, mime_type="image/jpeg",
-                       info={"project_id": project, "time": "source", "times": times, "x": x,
+                       info={"source_id": project, "project_id": project, "time": "source", "times": times, "x": x,
                              "note": "подписи — время исходника; окна рабочего стола/уведомления на кадрах — "
                                      "такие места в клип не брать"})
 
@@ -6396,7 +6424,7 @@ def h_source_shots(ctx: ToolContext, args: dict) -> dict:
     """Склейки планов исходника (секунды исходника) — куда ставить смену кадра (cut)."""
     from app.store import _json_text, _parse_transcript
 
-    project = _project_id(args)
+    project = _source_id(args)
     try:
         row = ctx.store.db.query_one("SELECT local_path, scene_cuts_json FROM sources WHERE id = ?", (project,))
     except Exception as exc:  # noqa: BLE001
@@ -6411,7 +6439,7 @@ def h_source_shots(ctx: ToolContext, args: dict) -> dict:
         ctx.store.db.execute("UPDATE sources SET scene_cuts_json = ? WHERE id = ?", (_json_text(cuts), project))
     lo, hi = _num(args.get("from_sec"), 0.0) or 0.0, _num(args.get("to_sec"))
     shown = [round(float(t), 3) for t in cuts if float(t) >= lo and (hi is None or float(t) <= hi)]
-    return {"project_id": project, "time": "source", "shot_changes": shown,
+    return {"source_id": project, "project_id": project, "time": "source", "shot_changes": shown,
             "note": "секунды исходника; в кадрировании куска ставь точку {t: склейка − начало куска, x, cut: true}"}
 
 
@@ -6420,7 +6448,7 @@ def h_create_clip(ctx: ToolContext, args: dict) -> dict:
 
     try:
         version_of = args.get("version_of")
-        plan = create_manual_clip(ctx.store, _project_id(args), str(args.get("title") or ""),
+        plan = create_manual_clip(ctx.store, _source_id(args), str(args.get("title") or ""),
                                   args.get("pieces") or [], str(args.get("description") or ""),
                                   version_of=int(version_of) if version_of else None)
     except (KeyError, ValueError) as exc:
@@ -6440,12 +6468,12 @@ def h_create_canvas_clip(ctx: ToolContext, args: dict) -> dict:
     except (KeyError, ValueError) as exc:
         raise ToolError(f"холст не создан: {exc}") from exc
     segs = plan.get("segments") or []
-    return {"ok": True, "clip_id": plan["id"], "title": plan["title"], "project_id": plan["source_id"],
+    return {"ok": True, "clip_id": plan["id"], "title": plan["title"], "source_id": plan["source_id"], "project_id": plan["source_id"],
             "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
             "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
             "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
                      "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera; "
-                     "квадрат, 4:5 или 16:9 из того же монтажа — set_format. Холсты лежат в скрытом проекте project_id — list_clips(project_id)")}
+                     "квадрат, 4:5 или 16:9 из того же монтажа — set_format. Холсты лежат в скрытом видео-источнике source_id — list_clips(source_id)")}
 
 
 def _scaffold_assets(ctx: ToolContext, spec: dict) -> tuple[dict, list[str]]:
@@ -6642,10 +6670,7 @@ def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
     from app.piece_speed import seg_length
 
-    try:
-        project = int(args.get("project_id"))
-    except (TypeError, ValueError) as exc:
-        raise ToolError("нужен project_id (см. list_projects)") from exc
+    project = _source_id(args)
     favorites = bool(args.get("favorites_only"))
     offset, limit = _page_args(args)
     out = []
@@ -6669,7 +6694,7 @@ def h_list_clips(ctx: ToolContext, args: dict) -> dict:
         )
     total = len(out)
     page = out[offset:offset + limit]
-    return {"project_id": project, **_page_info(total, offset, limit, len(page)), "clips": page}
+    return {"source_id": project, "project_id": project, **_page_info(total, offset, limit, len(page)), "clips": page}
 
 
 # --------------------------------------------------------------------------- #
@@ -6843,7 +6868,7 @@ def _obj(properties: dict, required: list[str] | None = None) -> dict:
 # нет и их — файл общий.
 ASSET_OWNER_PARAMS = {
     "clip_id": {"type": "integer", "description": "клип: файл его проекта"},
-    "project_id": {"type": "integer", "description": "проект: файл этого проекта"},
+    "project_id": {"type": "integer", "description": "проект-серия из list_channel_projects (не источник из list_projects): файл этого проекта"},
 }
 
 
@@ -7004,8 +7029,8 @@ def _build_registry() -> list[Tool]:
             "равномерно; x 0..1 — показать окно 9:16 с "
             "центром x, как оно встанет в вертикальный кадр. Выбирать моменты без Gemini: громкие места "
             "source_loudness → что там на экране. Окна рабочего стола, Alt-Tab, уведомления — такие места не "
-            "брать. project_id — проект (у встроенного монтажёра — источник клипа). / Contact sheet of the source.",
-            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+            "брать. source_id — видео-источник (у встроенного монтажёра — источник клипа). / Contact sheet of the source.",
+            _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                   "step": {"type": "number"}, "x": {"type": "number"}}, ["from_sec", "to_sec"]),
             h_source_contact_sheet, scope="global",
             label=lambda a: f"Смотрю кадры исходника {(_num(a.get('from_sec'), 0.0) or 0.0):.0f}–"
@@ -7018,8 +7043,8 @@ def _build_registry() -> list[Tool]:
             "громкие отрезки, сводка: медиана и порог «громко» (медиана + 6 дБ). Для игр и стримов без речи — "
             "так ищут перестрелки, взрывы, реакции; потом source_contact_sheet на пиках. Звук — смесь рендера "
             "(set_source_audio); track — одна дорожка записи (сравнить громкость игры и микрофона перед "
-            "gain_db). / Loudness profile of the source over time.",
-            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+            "gain_db). source_id — видео-источник (у встроенного монтажёра — источник клипа). / Loudness profile of the source over time.",
+            _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                   "step": {"type": "number"}, "top": {"type": "integer"},
                   "track": {"type": "integer", "description": "одна звуковая дорожка вместо смеси"}}),
             h_source_loudness, scope="global",
@@ -7031,8 +7056,8 @@ def _build_registry() -> list[Tool]:
             "(hype 0..1, top — частая реакция), buckets — [t, сообщений, hype, реакция] по bucket секунд "
             "(по умолчанию 60, на окне до 15 мин — 10). Зрители пишут с задержкой 5–20 с — событие чуть раньше "
             "всплеска. Чата нет — has_chat false: импорт — запрос к Twitch, только с разрешения владельца, сам не "
-            "импортируй. / Twitch chat activity bursts.",
-            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+            "импортируй. source_id — видео-источник. / Twitch chat activity bursts.",
+            _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                   "bucket": {"type": "number"}, "top": {"type": "integer"}}),
             h_chat_activity, scope="global",
             label=lambda a: "Смотрю активность чата",
@@ -7041,8 +7066,8 @@ def _build_registry() -> list[Tool]:
             "get_chat", "Читаю чат",
             "Сообщения чата Twitch между from_sec и to_sec (время исходника, окно до 15 мин, до 300 сообщений): "
             "[секунда, кто, текст] — что зрители писали на моменте (реакции, мемы, цитаты для хука). Чата нет — "
-            "has_chat false (импорт — только с разрешения владельца). / Twitch chat messages in a source window.",
-            _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+            "has_chat false (импорт — только с разрешения владельца). source_id — видео-источник. / Twitch chat messages in a source window.",
+            _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                   "limit": {"type": "integer"}}, ["from_sec", "to_sec"]),
             h_get_chat, scope="global",
             label=lambda a: f"Читаю чат {(_num(a.get('from_sec'), 0.0) or 0.0):.0f}–{(_num(a.get('to_sec'), 0.0) or 0.0):.0f} с",
@@ -7057,9 +7082,9 @@ def _build_registry() -> list[Tool]:
             "speech_tracks — дорожки для РАСПОЗНАВАНИЯ речи (расшифровка исходника, субтитры, listen, сверка "
             "субтитров в QC), например [1] — один микрофон: на смеси с игрой Whisper выдумывает; [] — как tracks. "
             "Сменился звук для распознавания — расшифровка исходника сбрасывается. Сколько дорожек — "
-            "get_clip.source.audio / list_projects; громкость каждой — source_loudness(track). project_id — "
-            "проект (у встроенного монтажёра — источник клипа). / Choose, mix and level the source audio tracks.",
-            _obj({"project_id": {"type": "integer"},
+            "get_clip.source.audio / list_projects; громкость каждой — source_loudness(track). source_id — "
+            "видео-источник (у встроенного монтажёра — источник клипа). / Choose, mix and level the source audio tracks.",
+            _obj({**SOURCE_ARGS,
                   "tracks": {"type": "array", "items": {
                       "anyOf": [{"type": "integer"},
                                 _obj({"track": {"type": "integer"},
@@ -7323,7 +7348,7 @@ def _build_registry() -> list[Tool]:
             "list_assets", "Смотрю библиотеку",
             "«Файлы для монтажа» владельца (мемы, реакции, звуки) — asset_id для слоёв image/audio и "
             "вставок: только общие и файлы проекта клипа, чужие брать нельзя. q — фильтр по словам; без клипа в "
-            "контексте — clip_id или project_id, иначе только общие. / Owner's montage library: shared files "
+            "контексте — clip_id или project_id (проект-серия), иначе только общие. / Owner's montage library: shared files "
             "and files of the clip's project.",
             _obj({"q": {"type": "string"}, **ASSET_OWNER_PARAMS}), h_list_assets, scope="global",
         ),
@@ -8223,7 +8248,7 @@ _REGISTRY: dict[str, Tool] | None = None
 DISCOVERY_TOOLS = [
     Tool(
         "list_projects", "Проекты",
-        "Проекты (исходные видео) с числом клипов, новые первыми. channel_project_id — проект-серия/канал "
+        "Видео-источники с числом клипов, новые первыми: id здесь — это source_id для инструментов источника. channel_project_id — проект-серия/канал "
         "источника: прочитай get_project_brief(source_id=id) перед нарезкой. Список ПОСТРАНИЧНЫЙ (limit по "
         "умолчанию 100, до 500; offset): СКОЛЬКО ВСЕГО — поле total (all_sources_total — без фильтров, by_status — "
         "по статусам), не длина projects; truncated/next_offset — есть ещё. query — часть имени/ссылки, status — "
@@ -8233,45 +8258,43 @@ DISCOVERY_TOOLS = [
     ),
     Tool(
         "list_clips", "Клипы проекта",
-        "Клипы проекта: clip_id, название, ★, длина, число слоёв. Постранично (limit по умолчанию 100, до 500; "
+        "Клипы видео-источника (source_id обязателен, id из list_projects): clip_id, название, ★, длина, число слоёв. Постранично (limit по умолчанию 100, до 500; "
         "offset): сколько всего — total, не длина clips; truncated/next_offset — есть ещё. "
         "/ Clips of a project, paginated: use total for counts.",
-        _obj({"project_id": {"type": "integer"}, "favorites_only": {"type": "boolean"},
-              "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["project_id"]),
+        _obj({**SOURCE_ARGS, "favorites_only": {"type": "boolean"},
+              "offset": {"type": "integer"}, "limit": {"type": "integer"}}),
         h_list_clips, scope="global",
     ),
     Tool(
         "get_source_transcript", "Расшифровка проекта",
-        "Реплики ВСЕГО исходника проекта [{start, end, text}] (время исходника) — выбрать моменты "
+        "Реплики ВСЕГО исходника (source_id обязателен, id из list_projects) [{start, end, text}] (время исходника) — выбрать моменты "
         "для клипов без анализа Gemini. Первый раз распознаёт локальный Whisper ФОНОМ (минуты): вызов "
         "ждёт не дольше ~45 с и, если не готово, отвечает status \"running\" — «распознаю: готово N из M "
         "мин, повтори через ~K с» (retry_after_sec); зови тот же вызов ещё раз, второе распознавание не "
         "запустится. Готово — status \"done\" и реплики из кэша. "
         "Звук без речи (игра) — пустой список и no_speech: ищи моменты source_loudness. "
         "/ Whole-source transcript.",
-        _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
-             ["project_id"]),
+        _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}}),
         h_source_transcript, scope="global",
     ),
     Tool(
         "get_shots", "Склейки планов",
-        "Моменты смены плана в исходнике (секунды исходника) между from_sec и to_sec — чтобы ставить "
+        "Моменты смены плана в исходнике source_id (id из list_projects, обязателен; секунды исходника) между from_sec и to_sec — чтобы ставить "
         "жёсткую смену кадрирования ровно на склейку. Первый вызов — ffmpeg по всему видео (минута-две), "
         "потом кэш. / Shot boundaries of the source.",
-        _obj({"project_id": {"type": "integer"}, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}},
-             ["project_id"]),
+        _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"}}),
         h_source_shots, scope="global",
     ),
     Tool(
         "create_clip", "Создаю клип",
-        "Новый клип проекта из кусков исходника: title, pieces [{start_sec, end_sec, title?}] "
+        "Новый клип из кусков видео-источника: source_id (id из list_projects), title, pieces [{start_sec, end_sec, title?}] "
         "(каждый 1.5–180 с, до 12; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
-        _obj({"project_id": {"type": "integer"}, "title": {"type": "string"}, "description": {"type": "string"},
+        _obj({**SOURCE_ARGS, "title": {"type": "string"}, "description": {"type": "string"},
               "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},
                                                           "title": {"type": "string"}}, ["start_sec", "end_sec"])},
               "version_of": {"type": "integer", "description": "новая версия этого клипа (его clip_id): карточка не задвоится"}},
-             ["project_id", "title", "pieces"]),
+             ["title", "pieces"]),
         h_create_clip, scope="global",
     ),
     Tool(
@@ -8280,7 +8303,7 @@ DISCOVERY_TOOLS = [
         "анимированный фон background (имя стиля aurora/grid/bokeh/waves/gradient/solid или объект "
         "{kind, colors, speed, intensity} как у set_backdrop; не задан — аврора). Для промо из картинок: "
         "дальше add_layers, set_music, звуки (слой audio), рендер — как у обычного клипа. Холсты лежат в "
-        "скрытом проекте (в list_projects его нет; project_id — в ответе). / Empty canvas clip, no source video.",
+        "скрытом видео-источнике (в list_projects его нет; source_id — в ответе). / Empty canvas clip, no source video.",
         _obj({"duration": {"type": "number"}, "title": {"type": "string"}, "description": {"type": "string"},
               "background": {"type": ["string", "object"]}}, ["duration"]),
         h_create_canvas_clip, scope="global",
@@ -8376,11 +8399,12 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
     if not modules.tool_enabled(name, getattr(ctx, "store", None)):
         return modules.disabled_tool_error(name), False
     args = dict(args or {})
-    if "project_id" not in args and getattr(ctx, "clip_plan_id", None) and _takes_project(tool):
-        # Монтажёр работает внутри клипа: проект — источник этого клипа (Gemini спотыкался
+    if (_takes_source(tool) and getattr(ctx, "clip_plan_id", None)
+            and args.get("source_id") in (None, "") and args.get("project_id") in (None, "")):
+        # Монтажёр работает внутри клипа: источник — источник этого клипа (Gemini спотыкался
         # о «нужен project_id» на get_shots).
         try:
-            args["project_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
+            args["source_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
         except (KeyError, TypeError, ValueError):
             pass
     framing = _framing_call(name, args)
@@ -8445,11 +8469,9 @@ def _track_framing(ctx: ToolContext, kind: str, result: Any, ok: bool) -> None:
         result["stop_framing"] = ctx.framing_stop
 
 
-def _takes_project(tool: Tool) -> bool:
-    # scope="project": project_id — проект-серия, а не источник клипа (app/project_tools.py).
-    if tool.scope == "project":
-        return False
-    return "project_id" in ((tool.parameters or {}).get("properties") or {})
+def _takes_source(tool: Tool) -> bool:
+    # У остальных project_id — проект-серия (app/project_tools.py, файлы для монтажа), источник клипа ему не подставить.
+    return tool.name in SOURCE_ID_TOOLS
 
 
 def result_for_json(result: Any) -> Any:

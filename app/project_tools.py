@@ -1,10 +1,10 @@
 """MCP-инструменты проектов (серии и каналы, app/projects.py): бриф, правила, статистика, гипотезы.
 
-Внимание к словам: в остальных инструментах MCP ``project_id`` — это id ИСТОЧНИКА
-(list_projects). Здесь ``project_id`` — id проекта-серии/канала (list_channel_projects).
+Внимание к словам: у инструментов источника (``agent_tools.SOURCE_ID_TOOLS``) ``project_id`` — старое
+имя ``source_id``, id ИСТОЧНИКА (list_projects). Здесь ``project_id`` — id проекта-серии/канала (list_channel_projects).
 Чтобы не путаться, везде можно дать ``source_id`` (id из list_projects) — возьмётся
 проект этого источника. Поэтому у инструментов scope="project": ``run_tool`` не
-подставляет им источник клипа в ``project_id`` (см. ``agent_tools._takes_project``).
+подставляет им источник клипа в ``project_id`` (см. ``agent_tools._takes_source``).
 
 Регистрируются в ``agent_tools.list_tools(include_discovery=True)`` — только для внешних
 агентов (MCP); встроенному монтажёру редактора их не отдаём (лишние токены в каждом ходе).
