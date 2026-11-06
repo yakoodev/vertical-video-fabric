@@ -404,6 +404,7 @@ def _expl_steps(store: Any, item: dict) -> dict:
         state = {"failed": "failed", "cancelled": "failed", "awaiting_approval": "wait"}.get(status, "now")
         _mark(steps, at, state)
     return {"steps": steps, "summary": facts["summary"], "voice": voice_label, "spent_rub": facts["spent_rub"],
+            "spent_estimated_rub": facts["spent_estimated_rub"],
             "approval_id": video.get("approval_id") if status == "awaiting_approval" else None,
             "error": video.get("error") or "", "notes": video.get("notes") or [],
             "words": video.get("words") or [], "raw": {"id": video["id"], "mascot_id": video["mascot_id"]}}
@@ -454,12 +455,13 @@ def _story_steps(store: Any, item: dict) -> dict:
         at = _pipeline_at(status, ep.get("error") or "", ep, scenes_done, words=("подбор", "оценка", "генерация"))
         state = {"failed": "failed", "cancelled": "failed", "awaiting_approval": "wait"}.get(status, "now")
         _mark(steps, at, state)
-    spent = AG.spent_approval(store, int(ep["approval_id"])) if ep.get("approval_id") else 0.0
+    money = AG.spent_on_target(store, S.episode_group(int(ep["id"])), S.T_EP, int(ep["id"]), ep.get("approval_id"))
     timeline = ep.get("timeline") or {}
     fixes = timeline.get("subtitle_fixes") if status == "done" else None
     if fixes is None:
         fixes = WF.summary(WF.from_clip(store, ep.get("clip_id"), ep.get("words") or []))
-    return {"steps": steps, "summary": fixes.get("note") or "", "voice": voice_note, "spent_rub": round(float(spent or 0), 2),
+    return {"steps": steps, "summary": fixes.get("note") or "", "voice": voice_note, "spent_rub": money["spent_rub"],
+            "spent_estimated_rub": money["estimated_rub"],
             "approval_id": ep.get("approval_id") if status == "awaiting_approval" else None,
             "error": ep.get("error") or "", "notes": ep.get("notes") or [], "words": ep.get("words") or [],
             "raw": {"id": ep["id"], "world_id": ep["world_id"]}}
@@ -467,6 +469,7 @@ def _story_steps(store: Any, item: dict) -> dict:
 
 def _aiv_steps(store: Any, item: dict) -> dict:
     from app import aivideo as V
+    from app import aivideo_gen as AG
 
     script = V.get_script(store, item["table_id"])
     shots = script.get("shots") or []
@@ -494,7 +497,9 @@ def _aiv_steps(store: Any, item: dict) -> dict:
         _step("assemble", "Сборка", states["assemble"], "0 ₽", "assemble"),
         _step("clip", "Клип", states["clip"], ""),
     ]
-    return {"steps": steps, "summary": "", "voice": "", "spent_rub": 0.0, "approval_id": None, "error": "", "notes": [],
+    money = AG.spent_parts(store, "l.script_id = ?", (int(script["id"]),))
+    return {"steps": steps, "summary": "", "voice": "", "spent_rub": money["spent_rub"], "spent_estimated_rub": money["estimated_rub"],
+            "approval_id": None, "error": "", "notes": [],
             "words": [], "raw": {"id": script["id"], "brief": script.get("brief") or "", "logline": script.get("logline") or ""}}
 
 
@@ -579,6 +584,7 @@ def view(store: Any, key: str) -> dict:
         "summary": data["summary"],
         "voice": data["voice"],
         "spent_rub": data["spent_rub"],
+        "spent_estimated_rub": data.get("spent_estimated_rub", 0.0),
         "error": data["error"],
         "notes": data["notes"],
         "raw": data["raw"],

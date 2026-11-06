@@ -56,6 +56,8 @@ export interface ReleaseView {
   summary: string;
   voice: string;
   spent_rub: number;
+  /** Провайдер цену не назвал: сумма по оценке, отдельно от потраченного. */
+  spent_estimated_rub: number;
   error: string;
   notes: string[];
   raw: Record<string, unknown>;
