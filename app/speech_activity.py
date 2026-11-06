@@ -213,12 +213,12 @@ def line_sync(lines: list[dict], words: list[dict], spans: list[tuple[float, flo
 def snap_starts(lines: list[dict], words: list[dict], spans: list[tuple[float, float]]) -> tuple[int, list[dict]]:
     """Первое слово строки, опередившей голос или опоздавшей, — на начало речи (строки и слова правятся на месте).
     → (сколько строк сдвинуто, что осталось решать человеку: потерянные фразы и строки без голоса)."""
-    from app.clip_subtitles import _line_words
+    from app.clip_subtitles import words_by_line
 
     issues = line_sync(lines, words, spans)
     by_start = {i["start"]: i for i in issues if i["kind"] in ("early", "late")}
     moved = 0
-    for line, members in zip(lines, _line_words(lines, words)):
+    for line, members in zip(lines, words_by_line(lines, words)):
         issue = by_start.get(float(line["start"]))
         if not issue or not members:
             continue
@@ -236,7 +236,7 @@ def snap_lines_to_speech(store: Any, clip_plan_id: int) -> dict:
     """Субтитры — на голос. Сначала страницы, разошедшиеся со сказанным (app/speech_heard.py): слова встают на
     распознанное время. Потом начала строк в тишине — по VAD. Текст не меняется; потерянные фразы, строки без голоса и
     нерасслышанные — только в ответе. Распознать нечем — только VAD, и ``by_text: false``."""
-    from app.clip_subtitles import _line_words
+    from app.clip_subtitles import words_by_line
     from app.speech_heard import snap_to_heard
 
     payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
@@ -244,7 +244,7 @@ def snap_lines_to_speech(store: Any, clip_plan_id: int) -> dict:
     if not lines or not words:
         raise ValueError("у клипа нет субтитров")
     spans = plan_speech_spans(store, clip_plan_id)
-    members = _line_words(lines, words)
+    members = words_by_line(lines, words)
     by_text, unheard = True, []
     try:
         moved, unheard = snap_to_heard(store, store.get_clip_plan(clip_plan_id), lines, words)

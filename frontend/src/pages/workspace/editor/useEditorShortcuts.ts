@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { historyKey } from "@/pages/workspace/editor/historyKey";
 
 /**
  * Клавиши редактора и списка: один постоянный слушатель на окне, а действия ставит в эти ссылки
@@ -7,8 +8,9 @@ import { useEffect, useRef } from "react";
 export function useEditorShortcuts() {
   const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   // Ctrl+Z: снимок состояния делает сервер перед каждой правкой, здесь только
-  // просим шаг назад и перечитываем клип в панель.
+  // просим шаг назад и перечитываем клип в панель. Ctrl+Shift+Z и Ctrl+Y — шаг вперёд.
   const undoRef = useRef<() => void>(() => undefined);
+  const redoRef = useRef<() => void>(() => undefined);
   // Ctrl+D — копия выделенного слоя (ставится обработчиком последнего рендера).
   const duplicateRef = useRef<() => void>(() => undefined);
   const copyLayerRef = useRef<() => boolean>(() => false);
@@ -21,10 +23,11 @@ export function useEditorShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+      const history = historyKey(e);
+      if (history) {
         if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
         e.preventDefault();
-        undoRef.current();
+        (history === "redo" ? redoRef : undoRef).current();
         return;
       }
       // Ctrl+C / Ctrl+V — слой в буфер и обратно (в том числе в другой клип).
@@ -57,6 +60,6 @@ export function useEditorShortcuts() {
   }, []);
 
   return {
-    keyHandlerRef, undoRef, duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef,
+    keyHandlerRef, undoRef, redoRef, duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef,
   };
 }

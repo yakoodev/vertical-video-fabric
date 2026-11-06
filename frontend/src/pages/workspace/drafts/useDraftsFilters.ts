@@ -48,6 +48,11 @@ export function useDraftsFilters({
   const shownCount = planGroups.reduce((n, [, g]) => n + g.length, 0);
   const favCount = plans.filter((p) => p.favorite).length;
   const hiddenCount = plans.filter((p) => p.hidden).length;
+  // Скрытых не осталось: переключатель исчезает, и фильтр вместе с ним. Иначе следующий скрытый
+  // черновик остался бы на виду, а выключить показ было бы нечем.
+  useEffect(() => {
+    if (showHidden && !hiddenCount) setShowHidden(false);
+  }, [showHidden, hiddenCount]);
   // All analyses present (for the show/hide filter chips), independent of search/hide.
   const analysisChips = useMemo(() => {
     const by = new Map<number, number>();

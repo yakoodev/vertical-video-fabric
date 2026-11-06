@@ -404,6 +404,20 @@ class Database:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_clip_plan_history ON clip_plan_history(clip_plan_id, id)"
             )
+            # Шаг вперёд (Ctrl+Shift+Z): что отменили и отпечаток клипа сразу после отмены (app/clip_history.py).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clip_plan_redo (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_plan_id INTEGER NOT NULL,
+                    state_json TEXT NOT NULL,
+                    label TEXT NOT NULL DEFAULT '',
+                    after_undo TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_plan_redo ON clip_plan_redo(clip_plan_id, id)")
             # Что уже залито в Gemini Files API: файл живёт там 48 часов и его
             # можно переиспользовать — повторный анализ не гоняет гигабайты заново.
             conn.execute(

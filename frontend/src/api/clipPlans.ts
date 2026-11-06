@@ -269,11 +269,17 @@ export const clipPlansApi = {
     }>(`/api/clip-plans/${clipPlanId}/snap-beats`, body),
   /** ↩ Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, ИИ-монтаж. */
   undo: (clipPlanId: number) =>
-    api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number }>(
+    api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number; redo: number }>(
       `/api/clip-plans/${clipPlanId}/undo`,
       {},
     ),
-  undoDepth: (clipPlanId: number) => api.get<{ left: number }>(`/api/clip-plans/${clipPlanId}/undo`),
+  /** ↪ Шаг вперёд (Ctrl+Shift+Z): вернуть отменённое, пока клип после отмены не менялся. */
+  redo: (clipPlanId: number) =>
+    api.post<{ spec: Record<string, unknown>; changes: string[]; label: string; left: number; redo: number }>(
+      `/api/clip-plans/${clipPlanId}/redo`,
+      {},
+    ),
+  undoDepth: (clipPlanId: number) => api.get<{ left: number; redo: number }>(`/api/clip-plans/${clipPlanId}/undo`),
   /** Волна звука клипа для таймлайна: по ней видно речь и паузы. */
   waveform: (clipPlanId: number) =>
     api.get<{ duration: number; peaks: number[] }>(`/api/clip-plans/${clipPlanId}/waveform`),

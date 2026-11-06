@@ -1,5 +1,5 @@
 import { type PlanSubtitles } from "@/api/clipPlans";
-import { type AiSegment, type Aspect, type CoverSettings, type TransitionSettings, segLen, segSpeed } from "@/api/types";
+import { type AiSegment, type Aspect, type CoverSettings, type TransitionSettings } from "@/api/types";
 import { type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import { captionWordsFrom, ORIG_SPEAKER, frameSize, type CaptionWord } from "@/motion";
 import { insertBox, INSERT_HANDLE, type InsertPreview } from "@/pages/workspace/preview/frame";
@@ -41,15 +41,7 @@ export function focusXAt(seg: AiSegment | undefined, t: number): number {
   return x;
 }
 
-// Clip time of a source time for back-to-back pieces (null outside the clip).
-export function clipTimeOf(segments: AiSegment[], cur: number): number | null {
-  let t = 0;
-  for (const s of segments) {
-    if (cur >= s.start_sec && cur <= s.end_sec) return t + (cur - s.start_sec) / segSpeed(s);
-    t += segLen(s);
-  }
-  return null;
-}
+export { clipTimeOf } from "@/pages/workspace/editor/clipTime";
 
 // Вкладки левой панели студии. Порядок — по частоте: клипы проекта, кадрирование,
 // файлы для монтажа; графика, звуки и ИИ встают сюда же по мере готовности.

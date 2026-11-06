@@ -12,7 +12,7 @@ import { EditorInspector } from "@/pages/workspace/editor/EditorInspector";
 /** Шапка редактора: назад к клипу или черновикам, название, шаг назад, ИИ-монтаж. */
 export function EditorViewBar({ session }: { session: DraftsEditorSession }) {
   const {
-    sourceId, qc, toast, stopPlayback, backToMoments, flushSettings, undoEdit, activePlan, setAiMontageOpen,
+    sourceId, qc, toast, stopPlayback, backToMoments, flushSettings, undoEdit, redoEdit, activePlan, setAiMontageOpen,
     setSettingsNonce, setAiGoal, moduleOn, source,
   } = session;
   return (
@@ -40,6 +40,15 @@ export function EditorViewBar({ session }: { session: DraftsEditorSession }) {
         title="Шаг назад по последней правке клипа (Ctrl+Z): настройки, куски, субтитры, мемы"
       >
         {undoEdit.isPending ? "…" : "↩ Шаг назад"}
+      </button>
+      <button
+        className="btn ed-undo-btn"
+        style={{ marginLeft: 0 }}
+        disabled={!activePlan || redoEdit.isPending}
+        onClick={() => activePlan && redoEdit.mutate(activePlan.id)}
+        title="Вернуть то, что отменил шаг назад (Ctrl+Shift+Z). После новой правки вперёд уже нельзя"
+      >
+        {redoEdit.isPending ? "…" : "↪ Шаг вперёд"}
       </button>
       {activePlan?.has_montage_backup ? (
         <button
