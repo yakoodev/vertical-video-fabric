@@ -1,0 +1,100 @@
+# Проверка на каждый пуш в main и пулреквест. Секреты не нужны, платных вызовов нет: без ключей живые тесты Gemini и Artemox
+# пропускаются сами, провайдеры в тестах подделаны. Скачанных паков и Whisper-моделей здесь нет: зависящие от них тесты
+# пропускаются сами с понятной причиной (см. -rs в логе).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python-тесты
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      # Часть тестов гоняет TypeScript фронтенда через Node, часть рендерит компоновщиком.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Установить ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+      - name: Собрать компоновщик
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:motion
+      # Три теста зависят от версии ffmpeg: проходят на 8.0 (Windows владельца), падают на 6.1 из apt.
+      - name: pytest
+        run: >
+          python -m pytest -p no:cacheprovider -rs
+          --deselect tests/test_piece_color.py::test_match_piece_colors_on_real_clip_reduces_luma_gap
+          --deselect tests/test_qa_gemini5.py::test_dissolve_render_has_no_frame_of_the_other_scene
+          --deselect tests/test_translation_dubbing.py::test_dub_track_fits_phrases_and_reports_overflow
+
+  frontend:
+    name: Фронтенд
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # npm ci ставит ровно то, что в lock-файле, в том числе hls.js.
+      - name: Установить зависимости
+        run: npm ci --no-audit --no-fund
+      - name: Типы
+        run: npx tsc --noEmit
+      - name: Сборка
+        run: npx vite build
+
+  motion:
+    name: Моушн-движок
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # Тесты командной строки компоновщика пишут и читают кадры через ffmpeg.
+      - name: Установить ffmpeg и шрифт
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+      - name: Установить зависимости
+        run: npm ci --no-audit --no-fund
+      - name: Собрать компоновщик
+        run: npm run build:motion
+      # Два теста привязаны к Windows, где снимали эталон: хэши пикселей сняты там (на Linux расходятся даже фоны без текста),
+      # а размер эмфазы меряется системным шрифтом, которого на Linux нет. Остальные 109 идут.
+      - name: Тесты
+        run: >
+          node --test
+          --test-skip-pattern="^эталон: кадры компоновщика"
+          --test-skip-pattern="^субтитры: эмфаза слова"
+          node/motion.test.mjs
