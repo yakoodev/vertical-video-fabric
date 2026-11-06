@@ -173,10 +173,10 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     if (!((await grp.getAttribute("class")) || "").includes("open")) await head.click();
     await sleep(300);
   };
-  const neutralClick = async () => {
-    await page.locator(".ed-crumb").first().click({ force: true }).catch(() => undefined);
-    await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-  };
+  /** Фокус не в поле: иначе клавиши редактора молчат. Без клика: на телефоне шапка могла бы его перехватить. */
+  const neutralClick = () => page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  /** Клик мимо перехвата укрытия (липкий подвал инспектора на телефоне): обработчик тот же. */
+  const domClick = (loc) => loc.evaluate((el) => el.click());
   const setRange = (loc, value) =>
     loc.evaluate((el, v) => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
@@ -662,11 +662,11 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await neutralClick();
     for (let i = 0; i < 5; i += 1) await page.keyboard.press("ArrowRight");
     await sleep(400);
-    await page.locator(".li-key").first().click();
+    await domClick(page.locator(".li-key").first());
     const prop = Object.keys(saved.keys)[0];
     const two = await until(() => layerOf("p1_text"), (l) => (l.keys?.[prop]?.length ?? 0) >= 2);
     note("ключей", two.keys?.[prop]?.length ?? 0);
-    await page.locator(".li-key").first().click();
+    await domClick(page.locator(".li-key").first());
     await sleep(300);
   });
 

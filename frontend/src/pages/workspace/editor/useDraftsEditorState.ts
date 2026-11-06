@@ -37,9 +37,7 @@ export function useDraftsEditorState(sourceId: string) {
   const heatHeadRef = useRef<HTMLSpanElement>(null);
   const tcRef = useRef<HTMLSpanElement>(null);
   const editorPanels = useEditorPanels();
-  const {
-    setTlSelected,
-  } = editorPanels;
+  const { setTlSelected } = editorPanels;
   // Строки субтитров открытого клипа — рисуются на превью-телефоне.
   const subLinesRef = useRef<SubtitleLine[]>([]);
   // Пословные тайминги и стиль клипа: с ними превью рисует те же субтитры,
@@ -55,12 +53,8 @@ export function useDraftsEditorState(sourceId: string) {
   // Своё превью «телефона» для «Моментов»: редактор и моменты не показываются
   // одновременно, но держим раздельно, чтобы не зависеть от порядка монтирования.
   const triagePhoneRef = useRef<HTMLCanvasElement>(null);
-  const videoSource = useVideoSource({
-    sourceId,
-  });
-  const {
-    query, plans, sourceMissing, presets, tracks, subs, storyboard,
-  } = videoSource;
+  const videoSource = useVideoSource({ sourceId });
+  const { query, plans, sourceMissing, presets, tracks, subs, storyboard } = videoSource;
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   // Файлы клипа (app/asset_scope.py): общие, его проекта и чужие, что уже в нём стоят (in_clip_only: нужны слоям,
   // в списки выбора не идут — там pickableAssets).
@@ -105,12 +99,8 @@ export function useDraftsEditorState(sourceId: string) {
     void playbackApi.piecesEnsure(clipParam).catch(() => undefined);
     void playbackApi.proxyEnsure(sourceId).then((st) => qc.setQueryData(["source-proxy", Number(sourceId)], st)).catch(() => undefined);
   }, [clipParam, hasFile, sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const previewPlayer = usePreviewPlayer({
-    videoRef, query, sourceMissing, view, editorPlanId,
-  });
-  const {
-    playbackRef, stopPlayback,
-  } = previewPlayer;
+  const previewPlayer = usePreviewPlayer({ videoRef, query, sourceMissing, view, editorPlanId });
+  const { playbackRef, stopPlayback } = previewPlayer;
   // The editor works on favourites: jump to the requested moment, else keep the
   // current one if it's starred, else the first starred one.
   const openEditor = (planId?: number) => {
@@ -236,12 +226,8 @@ export function useDraftsEditorState(sourceId: string) {
   });
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [packagePieces, setPackagePieces] = useState(false);
-  const draftsFilters = useDraftsFilters({
-    query, plans,
-  });
-  const {
-    selected,
-  } = draftsFilters;
+  const draftsFilters = useDraftsFilters({ query, plans });
+  const { selected } = draftsFilters;
   // «Следовать за…» (трекинг слоя): следующий клик по превью — точка цели, а не выбор слоя.
   const pickPointRef = useRef<((p: { x: number; y: number; t: number }) => void) | null>(null);
   const [pickingPoint, setPickingPoint] = useState(false);
@@ -267,9 +253,7 @@ export function useDraftsEditorState(sourceId: string) {
     videoRef, heatHeadRef, tcRef, query, tracks, clipParam, view, motionViewRef, activePlan, searchParams,
     playbackRef, cutsRef, muteRef, gainRef, audioEditRef, musicOn, trackId, musicStartSec,
   });
-  const {
-    pieceCss,
-  } = previewLoops;
+  const { pieceCss } = previewLoops;
   const lookCss = [pieceCss, lookFilterCss(selectedPreset)].filter(Boolean).join(" ");
   // A few moments spread across the video — one frame can hide what a look does.
   const lookFrames = useMemo(() => {
