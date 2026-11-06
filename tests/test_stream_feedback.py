@@ -387,7 +387,7 @@ console.log(JSON.stringify({{
     # Превью: подъём слышен как баланс — остальное тише, кусок на полной.
     assert out["preview"][1] == pytest.approx(1.0, abs=1e-3) and out["preview"][0] == pytest.approx(10 ** (-6 / 20), abs=1e-3)
     # Редактор сохраняет настройки клипа целиком: gain обязан проходить загрузку и автосохранение.
-    tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "editor" / "useDraftsEditorState.ts").read_text(encoding="utf-8")
+    tab = (settings.root_dir / "frontend" / "src" / "pages" / "workspace" / "editor" / "useClipPanelSettings.ts").read_text(encoding="utf-8")
     saved = re.search(r"const panelSettings\b.*?\n  \}\);", tab, re.S)
     assert saved, "в редакторе нет panelSettings: что отправляет автосохранение?"
     saved_fields = {m.group(1): (m.group(2) or m.group(1)) for m in re.finditer(r"^\s*(\w+)(?::\s*([^,\n]+))?,\s*$", saved.group(0), re.M)}
