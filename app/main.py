@@ -5,7 +5,7 @@ import subprocess
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -14,12 +14,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from app.clip_spec import SpecError
-from app.clip_history import snapshot as snapshot_clip
-from app.clip_settings import settings_to_render_kwargs
 from app.ai.service import VideoAnalysisService
 from app.automation import AutomationService
-from app.auth import AuthRequired, auth_required_handler, is_agent_request, require_auth, token_is_valid
+from app.auth import AuthRequired, auth_required_handler, require_auth, token_is_valid
 from app.crypto import CookieCipher
 from app.db import Database
 from app.default_pack import seed_default_brand, seed_default_pack, seed_music
@@ -30,19 +27,11 @@ from app.ingest import SourceIngestor, probe_media
 from app.render import ClipRenderService
 from app import proxy_config
 from app.settings import settings
-from app.ai.montage import (
-    apply_montage,
-    latest_job_for_source,
-    propose_montage,
-    start_montage_job,
-    undo_montage,
-)
 from app.ai.asset_describe import describe_asset, describe_missing
 from app.ai.asset_generate import add_from_url as add_asset_from_url
 from app.ai.asset_search import fetch_preview as fetch_asset_preview
 from app.ai.asset_search import search_images
 from app.ai.asset_generate import generate_asset
-from app.ai.pick import pick_best
 from app.montage_assets import assets_dir as montage_assets_dir
 from app.montage_assets import kind_for as asset_kind_for
 from app.montage_assets import probe_asset as probe_montage_asset
@@ -52,9 +41,7 @@ from app.thumbs import asset_thumb, clip_thumb
 from app.store import AppStore
 from app.worker import JobWorker
 from app.platform_stats import StatsCollector
-from app.api_common import (
-    THUMB_CACHE, _default_subtitle_profile_id, _optional_form_float, _optional_form_int, _payload_data, _safe_next,
-)
+from app.api_common import THUMB_CACHE, _optional_form_float, _optional_form_int, _payload_data, _safe_next
 from app.agent_api import router as agent_router
 
 settings.ensure_dirs()
@@ -148,7 +135,7 @@ app.add_exception_handler(AuthRequired, auth_required_handler)
 from app.modules_api import ModuleGate, build_modules_router, module_disabled_handler  # noqa: E402
 
 app.add_middleware(ModuleGate, get_store=lambda: store)
-from app.agent_settings_api import AgentStopGate, build_agent_settings_router, refuse_agent_drafts  # noqa: E402
+from app.agent_settings_api import AgentStopGate, build_agent_settings_router  # noqa: E402
 app.add_middleware(AgentStopGate, get_store=lambda: store)
 # Снаружи всех: страницы идут через домен, а JS и списки весят мегабайты (app/compression.py).
 app.add_middleware(TextGzipMiddleware)
@@ -421,159 +408,6 @@ async def _download_source_url(url: str, fields) -> dict | JSONResponse:
     if task["status"] == "cancelled":
         raise ValueError("download cancelled")
     raise ValueError(task.get("error") or "download failed")
-
-
-class AiMontageRequest(BaseModel):
-    goal: str = Field(default="", max_length=500, description="пожелание: «короче», «больше мемности»…")
-
-
-@app.post(
-    "/api/clip-plans/{clip_plan_id}/ai-montage",
-    tags=["Clip file"],
-    summary="🤖 ИИ-монтаж: propose a re-edit of the clip (nothing is applied)",
-)
-def api_clip_plan_ai_montage(clip_plan_id: int, _auth: AuthDep, payload: AiMontageRequest | None = None) -> dict:
-    """Returns ``{spec, diff, rationale, attempts}``; apply with PUT …/spec."""
-    try:
-        return propose_montage(store, clip_plan_id, goal=(payload.goal if payload else ""))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-class AiMontageApplyRequest(BaseModel):
-    spec: dict
-
-
-@app.post(
-    "/api/clip-plans/{clip_plan_id}/ai-montage/apply",
-    tags=["Clip file"],
-    summary="Apply an AI re-edit (the pre-AI clip file is kept for undo)",
-)
-def api_clip_plan_ai_montage_apply(clip_plan_id: int, payload: AiMontageApplyRequest, _auth: AuthDep) -> dict:
-    try:
-        snapshot_clip(store, clip_plan_id, "ИИ-монтаж")
-        spec, changes = apply_montage(store, clip_plan_id, payload.spec)
-    except SpecError as exc:
-        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"spec": spec, "changes": changes}
-
-
-@app.post(
-    "/api/clip-plans/{clip_plan_id}/ai-montage/undo",
-    tags=["Clip file"],
-    summary="↩ Undo the AI re-edit: back to the clip as it was before",
-)
-def api_clip_plan_ai_montage_undo(clip_plan_id: int, _auth: AuthDep) -> dict:
-    try:
-        spec, changes = undo_montage(store, clip_plan_id)
-    except SpecError as exc:
-        raise HTTPException(status_code=422, detail={"problems": exc.problems}) from exc
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"spec": spec, "changes": changes}
-
-
-def _render_plan_own_settings(clip_plan_id: int) -> dict:
-    """Render a clip with its own saved settings (what the clip file says)."""
-    plan = store.get_clip_plan(clip_plan_id, include_segments=False)
-    kwargs = (
-        settings_to_render_kwargs(plan["render_settings"], _default_subtitle_profile_id(store))
-        if plan.get("render_settings")
-        else {}
-    )
-    return clip_render_service.render_clip_plan(clip_plan_id, **kwargs)
-
-
-class AiMontageBatchRequest(BaseModel):
-    clip_plan_ids: list[int] = Field(default_factory=list, description="пусто = все ★ избранные (не скрытые)")
-    goal: str = Field(default="", max_length=500)
-    render: bool = False
-    # Второй проход: моушн-монтаж Gemini-агентом (хук, субтитры, панчлайны, звук, мемы).
-    polish: bool = True
-
-
-@app.post(
-    "/api/sources/{source_id}/ai-montage-batch",
-    tags=["Clip file"],
-    summary="🤖 ИИ-монтаж for many clips in the background (applies, optionally renders)",
-)
-def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, request: Request, _auth: AuthDep) -> dict:
-    from app.stream_questions_api import refuse_agent_montage
-
-    refuse_agent_montage(request, store, source_id)
-    try:
-        plans = store.list_clip_plans(source_id=source_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    own = {p["id"] for p in plans}
-    ids = [i for i in payload.clip_plan_ids if i in own] or [
-        p["id"] for p in plans if p.get("favorite") and not p.get("hidden")
-    ]
-    if not ids:
-        raise HTTPException(status_code=400, detail="нет клипов: отметьте ★ избранные или передайте clip_plan_ids")
-    refuse_agent_drafts(request, store, ids)
-    running = latest_job_for_source(source_id)
-    if running and running.get("status") == "running":
-        raise HTTPException(status_code=409, detail="ИИ-монтаж этого проекта уже идёт")
-    return start_montage_job(
-        store, source_id, ids, goal=payload.goal, render=_render_plan_own_settings if payload.render else None,
-        polish=payload.polish and bool(settings.gemini_api_key),
-    )
-
-
-class AiPickRequest(BaseModel):
-    count: int = Field(default=10, ge=1, le=50)
-    goal: str = Field(default="", max_length=500)
-    # Формат будущих клипов (app/formats.py): нет — настройка analysis_format, иначе 9:16.
-    format: Literal["9:16", "1:1", "4:5", "16:9"] | None = None
-    # Chain: start 🤖 ИИ-монтаж on the picks right away (optionally rendering).
-    montage: bool = False
-    render: bool = False
-    polish: bool = True  # моушн-монтаж Gemini-агентом после склейки
-
-
-@app.post(
-    "/api/sources/{source_id}/ai-pick",
-    tags=["Clip file"],
-    summary="✨ ИИ выбирает лучшие: star the N most shareable moments (score + reason)",
-)
-def api_source_ai_pick(source_id: int, payload: AiPickRequest, request: Request, _auth: AuthDep) -> dict:
-    from app.stream_questions_api import refuse_agent_montage
-
-    refuse_agent_montage(request, store, source_id)
-    try:
-        store.get_source(source_id)
-        result = pick_best(store, source_id, count=payload.count, goal=payload.goal,
-                           **({"output_format": payload.format} if payload.format else {}))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    # Выбор ИИ по кнопке владельца — его выбор. Тот же запрос агента только ставит ★: монтаж ждёт владельца.
-    from app import agent_settings as agent_settings_mod
-
-    picked_ids = [p["id"] for p in result["picks"]]
-    refused = agent_settings_mod.drafts_refusal(store, picked_ids) if is_agent_request(request) else None
-    if not is_agent_request(request):
-        agent_settings_mod.set_picked_many(store, picked_ids)
-    if refused and payload.montage:
-        result["montage_refused"] = refused["error"]
-    elif payload.montage:
-        running = latest_job_for_source(source_id)
-        if not (running and running.get("status") == "running"):
-            result["montage_job"] = start_montage_job(
-                store,
-                source_id,
-                [p["id"] for p in result["picks"]],
-                goal=payload.goal,
-                render=_render_plan_own_settings if payload.render else None,
-                polish=payload.polish and bool(settings.gemini_api_key),
-            )
-    return result
 
 
 # ---- «Файлы для монтажа»: memes / reactions / sounds for the AI montage ------
@@ -866,15 +700,6 @@ def media_montage_asset(asset_id: int, _auth: AuthDep) -> FileResponse:
     return FileResponse(path, media_type=asset.get("mime_type") or None)
 
 
-@app.get(
-    "/api/sources/{source_id}/ai-montage-batch",
-    tags=["Clip file"],
-    summary="Progress of the latest 🤖 ИИ-монтаж batch of this project (null if none)",
-)
-def api_source_ai_montage_batch_status(source_id: int, _auth: AuthDep) -> dict | None:
-    return latest_job_for_source(source_id)
-
-
 @app.get("/api/clips", tags=["Render"], summary="List clips")
 def api_clips(_auth: AuthDep, source_id: int | None = None) -> list[dict]:
     return store.list_clips(source_id)
@@ -1090,6 +915,10 @@ app.include_router(build_clip_edit_router(AuthDep, lambda: store))
 from app.subtitles_api import build_subtitles_router  # noqa: E402
 
 app.include_router(build_subtitles_router(AuthDep, lambda: store))
+
+from app.montage_api import build_montage_router  # noqa: E402
+
+app.include_router(build_montage_router(AuthDep, lambda: store, lambda: clip_render_service))
 
 # Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
 from app.motion_api import build_motion_router  # noqa: E402
