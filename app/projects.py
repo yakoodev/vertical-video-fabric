@@ -471,6 +471,7 @@ BRIEF_SECTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 BRIEF_SECTION_LABELS = {"people": "персонажи и люди", "arcs": "арки и сквозные темы",
                         "jokes": "внутренние шутки и мемы", "taboo": "запретные темы"}
 MAX_SECTION_ITEMS = 200
+MAX_NOTES = 12000  # заметки копят ответы про проект построчно: при 3000 новые обрезались бы незаметно
 
 
 class BriefConflict(Exception):
@@ -508,7 +509,7 @@ def normalize_brief(raw: Any) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     brief = empty_brief()
     brief["summary"] = _long_text(raw.get("summary"), 3000)
-    brief["notes"] = _long_text(raw.get("notes"), 3000)
+    brief["notes"] = _long_text(raw.get("notes"), MAX_NOTES)
     for section in BRIEF_SECTIONS:
         seen: set[str] = set()
         key = BRIEF_SECTIONS[section][0]
@@ -538,7 +539,7 @@ def merge_brief(current: dict, patch: Any) -> dict:
     brief = normalize_brief(current)
     for name in ("summary", "notes"):
         if name in patch:
-            brief[name] = _long_text(patch[name], 3000)
+            brief[name] = _long_text(patch[name], MAX_NOTES if name == "notes" else 3000)
     replace = set(patch.get("replace_sections") or [])
     for section, (key, _fields) in BRIEF_SECTIONS.items():
         if section not in patch:
@@ -667,9 +668,11 @@ def project_brief(store: Any, project_id: int, covered_limit: int = 150) -> dict
         "how_to": ("Перед нарезкой и названиями: держись лора (люди, шутки, арки), не бери темы из taboo, "
                    "соблюдай rules (dont — запрет, do — обязательно, preference — по возможности; "
                    "needs_review — правило под вопросом, уточни у владельца). facts — что владелец просил "
-                   "запомнить, memes — мемы, которые он выбрал. covered — что уже нарезано: "
+                   "запомнить, memes — мемы, которые он выбрал. noticed — что агент заметил сам, владелец не "
+                   "подтвердил: не выдавай за факт, при расхождении верь владельцу. covered — что уже нарезано: "
                    "не повторяй те же моменты (pieces — секунды источника). Новое о проекте со слов владельца — "
-                   "remember_fact или update_project_brief; правило на будущее — add_rule с цитатой и датой."),
+                   "remember_fact или update_project_brief; заметил сам — note_observation; не уверен, кто или что "
+                   "это — вопрос add_stream_questions с level: project; правило на будущее — add_rule с цитатой и датой."),
     }
 
 

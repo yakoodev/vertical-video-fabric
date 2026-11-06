@@ -8012,6 +8012,7 @@ def _build_registry() -> list[Tool]:
         Tool(
             "suggest_cuts", "Ищу паузы и паразиты",
             "Найти паузы и слова-паразиты по словам клипа (ничего не меняет). mode: pauses|fillers|both. "
+            "Пока владелец не ответил на вопросы по видео, откажет: сначала ответы (list_stream_answers), потом резка. "
             "Длинные паузы и вырезы, после которых остался бы обрывок, помечены risky и в cuts не входят — в реакциях "
             "это часто сам момент, не вырезай их вслепую. Шкала clip: "
             "cuts можно передать в apply_cuts как есть. / Suggest jump cuts.",
@@ -8020,6 +8021,7 @@ def _build_registry() -> list[Tool]:
         ),
         Tool(
             "apply_cuts", "Вырезаю паузы",
+            "Пока владелец не ответил на вопросы по видео, откажет: сначала ответы (list_stream_answers), потом резка. "
             "Сохранить вырезы [{start,end}] — шкала clip (секунды клипа ДО вырезов, с наплывами, как слои, "
             "субтитры и cuts в get_clip); [] — вернуть всё. piece — номер куска, если вырез в зоне наплыва "
             "перехода (там время принадлежит двум кускам; get_clip и suggest_cuts его дают). В warnings — обрывки: "
@@ -8287,6 +8289,8 @@ DISCOVERY_TOOLS = [
     ),
     Tool(
         "create_clip", "Создаю клип",
+        "Порядок: посмотри стрим, задай вопросы (add_stream_questions), дождись ответов (list_stream_answers), потом режь: "
+        "пока ответов нет, откажет и назовёт открытые вопросы. "
         "Новый клип из кусков видео-источника: source_id (id из list_projects), title, pieces [{start_sec, end_sec, title?}] "
         "(каждый 1.5–180 с, до 12; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
@@ -8407,6 +8411,9 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
             args["source_id"] = int(ctx.store.get_clip_plan(ctx.clip_plan_id, include_segments=False)["source_id"])
         except (KeyError, TypeError, ValueError):
             pass
+    paused = _montage_pause(ctx, name, args)
+    if paused:
+        return paused, False
     framing = _framing_call(name, args)
     if framing and getattr(ctx, "framing_stop", ""):
         return {"ok": False, "error": "кадрирование остановлено: " + ctx.framing_stop, "stop_framing": True}, False
@@ -8424,6 +8431,36 @@ def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]
     if framing:
         _track_framing(ctx, framing, result, ok)
     return result, ok
+
+
+def _montage_pause(ctx: ToolContext, name: str, args: dict) -> dict | None:
+    """Пауза монтажа (app/stream_questions.py): отказ, если инструмент начинает монтаж видео, чьих ответов ждём.
+    Сбой проверки не должен останавливать работу: тогда отвечает сам инструмент."""
+    from app import stream_questions as Q
+
+    if name not in Q.MONTAGE_TOOLS:
+        return None
+    store = getattr(ctx, "store", None)
+    try:
+        targets: list[tuple[int, int | None]] = []
+        if name == "create_clip":
+            version_of = args.get("version_of")
+            targets.append((_source_id(args), int(version_of) if version_of else None))
+        elif name == "add_video_from_source":
+            targets.append((int(args.get("source_id")), None))
+        elif name == "make_compilation":
+            for clip_id in args.get("clip_ids") or []:
+                targets.append((int(store.get_clip_plan(int(clip_id), include_segments=False)["source_id"]), int(clip_id)))
+        elif getattr(ctx, "clip_plan_id", None):
+            plan = store.get_clip_plan(int(ctx.clip_plan_id), include_segments=False)
+            targets.append((int(plan["source_id"]), int(ctx.clip_plan_id)))
+        for source_id, clip_id in targets:
+            refusal = Q.montage_refusal(store, source_id, clip_id)
+            if refusal:
+                return refusal
+    except (KeyError, TypeError, ValueError, ToolError):
+        return None
+    return None
 
 
 # Сколько неудачных попыток кадрирования аватара подряд (detect_avatar без рамки/со сбоем, set_layout avatar_full с

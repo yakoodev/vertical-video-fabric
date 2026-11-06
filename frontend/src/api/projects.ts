@@ -77,6 +77,8 @@ export interface KnowledgeRow {
   quote?: string;
   editable: boolean;
   removable: boolean;
+  /** Агент заметил сам: владелец подтверждает или убирает одним нажатием. */
+  confirmable?: boolean;
 }
 
 export interface KnowledgeGroup {
@@ -89,7 +91,7 @@ export interface KnowledgeView {
   project_id: number;
   total: number;
   groups: KnowledgeGroup[];
-  waiting: { questions: number; memes: number; items: { id: number; source_id: number; text: string }[] };
+  waiting: { questions: number; memes: number; noticed: number; items: { id: number; source_id: number; text: string }[] };
 }
 
 /** Бриф (лор), схема vvf.project_brief v1. */
@@ -275,6 +277,7 @@ export const projectsApi = {
     }),
   updateKnowledge: (id: number, ref: string, text: string, title?: string) =>
     api.patch<KnowledgeView>(`/api/projects/${id}/knowledge`, { ref, text, title }),
+  confirmKnowledge: (id: number, ref: string) => api.post<KnowledgeView>(`/api/projects/${id}/knowledge/confirm`, { ref }),
   deleteKnowledge: (id: number, ref: string) =>
     api.del<KnowledgeView>(`/api/projects/${id}/knowledge?ref=${encodeURIComponent(ref)}`),
 

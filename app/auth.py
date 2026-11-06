@@ -28,6 +28,12 @@ def token_is_valid(token: str | None) -> bool:
     return bool(token and expected and hmac.compare_digest(token, expected))
 
 
+def is_agent_request(request: Request) -> bool:
+    """Токен в заголовке и нет куки входа: это агент или скрипт (vvf.py), а не владелец в браузере."""
+    header = request.headers.get("authorization", "")
+    return header.lower().startswith("bearer ") and not request.cookies.get(settings.auth_cookie_name)
+
+
 async def require_auth(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Security(bearer_scheme)] = None,

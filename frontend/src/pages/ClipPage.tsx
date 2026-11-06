@@ -19,6 +19,7 @@ import { ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
 import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
+import { ClipQuestions } from "@/pages/workspace/ClipQuestions";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 
 // Плеер монтажа тянет за собой движок моушна: грузится только по кнопке.
@@ -802,6 +803,7 @@ export function ClipPage() {
         </div>
       </div>
       {fileGone ? <MissingSourceNotice source={{ id: view.source.id, original_url: view.source.original_url }} /> : null}
+      {on("stream_questions") ? <ClipQuestions clipPlanId={view.id} /> : null}
       <div className="cpage-grid">
         <div className="cpage-col">
           <div className="cstage" style={{ aspectRatio: wide ? "16 / 9" : undefined }}>

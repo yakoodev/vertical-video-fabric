@@ -14,10 +14,11 @@
 # _auth: auth_dep в момент объявления, а auth_dep — локальная переменная.
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.cuts import check_cuts_for_plan, cuts_total, plan_duration, suggest_for_plan, validate_cuts
+from app.stream_questions_api import refuse_agent_clip_montage
 
 
 class CutsSuggestPayload(BaseModel):
@@ -39,9 +40,11 @@ def build_cuts_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
     )
     def api_suggest_cuts(
         clip_plan_id: int,
+        request: Request,
         _auth: auth_dep,  # type: ignore[valid-type]
         payload: CutsSuggestPayload | None = None,
     ) -> dict:
+        refuse_agent_clip_montage(request, get_store(), clip_plan_id)
         body = payload or CutsSuggestPayload()
         try:
             return suggest_for_plan(get_store(), clip_plan_id, body.mode, body.min_pause, body.keep_pad)
@@ -57,11 +60,13 @@ def build_cuts_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
     def api_apply_cuts(
         clip_plan_id: int,
         payload: CutsApplyPayload,
+        request: Request,
         _auth: auth_dep,  # type: ignore[valid-type]
     ) -> dict:
         from app.clip_history import snapshot
 
         store = get_store()
+        refuse_agent_clip_montage(request, store, clip_plan_id)
         problems = validate_cuts(payload.cuts)
         if problems:
             raise HTTPException(status_code=422, detail={"problems": problems})

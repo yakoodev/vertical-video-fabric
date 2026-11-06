@@ -29,8 +29,10 @@ def h_add_stream_questions(ctx: ToolContext, args: dict) -> dict:
         out = Q.add_questions(ctx.store, source_id, args.get("questions"))
     except (ValueError, KeyError) as exc:
         raise ToolError(str(exc)) from None
-    return {"ok": True, **out, "page": _page(source_id),
-            "note": "Ответы появятся на странице источника, читай их list_stream_answers перед отбором."}
+    gate = Q.montage_gate(ctx.store, source_id)
+    return {"ok": True, **out, "page": _page(source_id), "montage_paused": gate["paused"], "waiting_for": gate["open"],
+            "note": "Ответы появятся на странице источника, читай их list_stream_answers перед отбором. "
+                    "Пока на обязательные вопросы не ответили, новые клипы и вырезы этого видео откажут."}
 
 
 def h_list_stream_answers(ctx: ToolContext, args: dict) -> dict:
@@ -65,19 +67,25 @@ def tools() -> list[Tool]:
     return [
         Tool(
             "add_stream_questions", "Задаю вопросы по стриму",
-            "ПОСЛЕ просмотра стрима, ДО отбора моментов: вопросы владельцу с вариантами ответа. questions: "
+            "Порядок работы: посмотри весь стрим, задай вопросы, дождись ответов, потом режь. Открытый вопрос ставит "
+            "монтаж этого видео на паузу: create_clip, analyze_source, apply_cuts, auto_edit и другие откажут, пока "
+            "владелец не ответит или сам не нажмёт «Монтировать без ответов». Снять паузу агент не может. questions: "
             "[{kind: who|context|joke|keep|other, t_start, t_end (секунды исходника), question, options: 2–6 "
-            "вариантов, scope: stream|channel, about}]. scope=channel — ответ идёт в бриф проекта: kind=who и "
-            "about=имя — в people, kind=joke — в jokes, остальное — в notes. Спрашивай то, чего не понять из "
-            "транскрипта: кто это, в чём шутка, стоит ли брать момент. Повтор вопроса не добавится. "
-            "/ Ask the owner questions about a stream.",
+            "вариантов, level: project|video|clip, clip_id, optional, about}]. level обязательно выбирай сам. "
+            "project — про весь проект (кто этот человек, что за шутка канала, как у нас принято): ответ сразу в знания "
+            "проекта и работает на всех его видео, kind=who и about=имя — в people, kind=joke — в jokes, остальное — в "
+            "notes. video — только про этот стрим. clip — только про один клип, нужен clip_id. optional: true — вопрос "
+            "не держит монтаж (необязательное уточнение); по умолчанию держит. Спрашивай то, чего не понять из "
+            "транскрипта: кто это, в чём шутка, стоит ли брать момент. Повтор вопроса не добавится, вопрос про проект "
+            "не повторится и с другого видео. / Ask the owner questions; montage waits for the answers.",
             _obj({**source, "questions": {"type": "array", "items": {"type": "object"}}}, ["source_id", "questions"]),
             h_add_stream_questions, mutating=True, scope="project",
         ),
         Tool(
             "list_stream_answers", "Читаю ответы по стриму",
-            "ЧИТАЙ ПЕРЕД ОТБОРОМ МОМЕНТОВ: ответы владельца на вопросы (answers), выбранные мемы (memes: asset_id "
-            "для вставки, status none — момент без мема), progress — сколько ещё открыто. "
+            "ЧИТАЙ ПЕРЕД ОТБОРОМ МОМЕНТОВ: ответы владельца на вопросы (answers, у каждого level: project|video|clip), "
+            "выбранные мемы (memes: asset_id для вставки, status none — момент без мема), progress — сколько ещё "
+            "открыто, montage.paused — ждёт ли монтаж ответов (true: не режь, подожди). "
             "/ Owner's answers and chosen memes for a stream.",
             _obj(source, ["source_id"]), h_list_stream_answers, scope="project",
         ),

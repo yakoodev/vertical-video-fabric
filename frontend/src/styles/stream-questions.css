@@ -155,6 +155,71 @@
 .sq-meme-origin { font-size: 11.5px; color: var(--text-faint); overflow-wrap: anywhere; }
 .sq-none { align-self: flex-start; }
 
+/* Пауза монтажа: пока нет ответов, агент не режет. */
+.sq-pause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--warn-soft);
+}
+.sq-pause-off { background: var(--bg-2); border: 1px solid var(--border); }
+.sq-pause-compact { padding: 7px 12px; }
+.sq-pause-compact .sq-pause-t { font-size: 13.5px; }
+.vov > .sq-pause { margin-bottom: 12px; }
+/* Узкая колонка страницы видео: кадр над вопросом, иначе текст ломается по буквам. */
+.vov-body .sq-page { padding: 10px; }
+.vov-body .sq-card { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+.sq-pause-t { flex: 1 1 320px; min-width: 0; display: grid; gap: 3px; font-size: 14px; line-height: 1.4; }
+.sq-pause-t p { margin: 0; }
+.sq-pause-note { font-size: 12.5px; color: var(--text-dim); }
+.sq-pause-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.sq-pause a { color: var(--accent); }
+
+/* К чему относится вопрос: «Для всего проекта» / «Только это видео» / «Только этот клип». */
+.sq-level { display: inline-flex; flex-wrap: wrap; align-self: flex-start; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 9px; }
+.sq-level button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.sq-level button:hover { color: var(--text); }
+.sq-level button.active { background: var(--accent-soft); color: var(--text); }
+.sq-level button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.sq-elsewhere { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; }
+.sq-elsewhere a { color: var(--accent); }
+
+/* Вкладка проекта и «Входящие»: разделы по уровням. */
+.sq-levels { flex-wrap: wrap; }
+.sq-levels button { min-height: 34px; padding: 0 11px; font-size: 13.5px; }
+.sq-section { margin: 12px 0 2px; font-size: 16px; font-weight: 650; }
+.sq-section span { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--text-faint); }
+.sq-all-item { display: flex; flex-direction: column; gap: 6px; }
+.sq-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.sq-group a { color: var(--text); }
+.sq-group a:hover { color: var(--accent); }
+.sq-group-small { font-weight: 400; font-size: 13px; }
+.sq-group-from { font-weight: 400; font-size: 13px; color: var(--text-faint); }
+.sq-group-from a { color: var(--text-dim); }
+.sq-group-pause { padding: 1px 7px; border-radius: 6px; background: var(--warn-soft); font-size: 12px; font-weight: 500; }
+
+/* Экран клипа. */
+.sq-clip { display: grid; gap: 8px; margin-bottom: 10px; }
+.sq-clip-box summary { cursor: pointer; font-size: 15px; font-weight: 650; }
+.sq-clip-box[open] summary { margin-bottom: 8px; }
+.sq-clip .sq-card { background: var(--bg); }
+.sq-clip .sq-option:not(.active), .sq-clip .sq-own input { background: var(--bg-2); }
+
 @media (max-width: 760px) {
   .sq-card { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
   .sq-options { flex-direction: column; }
@@ -163,6 +228,9 @@
   .sq-memes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .sq-meme img, .sq-meme video { height: 150px; }
   .sq-none { width: 100%; }
+  .sq-pause .btn { width: 100%; min-height: 40px; }
+  .sq-level { align-self: stretch; }
+  .sq-level button { flex: 1 1 auto; min-height: 36px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sq-bar span { transition: none; }

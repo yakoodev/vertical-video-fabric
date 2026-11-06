@@ -20,6 +20,11 @@
    чате (проект, видео, клип), модель для этого не нужна.
 3. Кнопка «Запомнить» у своей реплики в чате и «Добавить факт» на вкладке.
 4. Агент сам зовёт ``remember_fact`` по ходу разговора, если модель есть.
+5. Агент изучил стрим и что-то заметил сам: ``note_observation``. Это ``project_facts`` со статусом
+   ``unconfirmed``: владелец видит «агент заметил, не подтверждено», одним нажатием подтверждает или
+   убирает. Владелец: «лор проектов так же должен дополняться автоматически или через вопросы».
+   В запросы такое идёт отдельным блоком с пометкой и последним: сказанное владельцем важнее.
+   Подтвердить может только владелец. Убранное агент второй раз не запишет.
 
 Как доходит до агента: чат проекта и видео берут ``projects.project_brief`` в каждый ход
 (``project_chat.project_context``), внешние агенты тот же бриф через ``get_project_brief``, а чат
@@ -49,10 +54,17 @@ WAITING_SHOWN = 5
 ORIGIN_OWNER = "owner"
 ORIGIN_CHAT = "chat"
 ORIGIN_AGENT = "agent"
+ORIGIN_NOTICED = "noticed"  # заметил сам, изучая стрим; слов владельца за этим нет
+STATUS_UNCONFIRMED = "unconfirmed"
+MAX_NOTICED = 100
+PROMPT_NOTICED = 15
+NOTICED_CAPTION = ("Агент заметил сам, владелец НЕ подтвердил. Может быть неверно: не выдавай за факт, "
+                   "разойдётся со сказанным выше — верь владельцу")
 
 FACT_FORGET_NOTE = "Владелец убрал в «Что агент знает»"
 
 _LABELS = {
+    "noticed": "Агент заметил, не подтверждено",
     "facts": "Запомнил из чатов и заметок",
     "about": "О проекте",
     "people": "Люди",
@@ -107,6 +119,13 @@ def list_facts(store: Any, project_id: int) -> list[dict]:
         "SELECT * FROM project_facts WHERE project_id = ? AND status = 'active' ORDER BY id DESC", (int(project_id),))]
 
 
+def list_noticed(store: Any, project_id: int) -> list[dict]:
+    """Что агент заметил сам и владелец ещё не подтвердил. В ``list_facts`` этого нет намеренно."""
+    return [_fact(r) for r in store.db.query_all(
+        "SELECT * FROM project_facts WHERE project_id = ? AND status = ? ORDER BY id DESC",
+        (int(project_id), STATUS_UNCONFIRMED))]
+
+
 def get_fact(store: Any, project_id: int, fact_id: int) -> dict:
     """Факт ЭТОГО проекта: чужой — как будто его нет."""
     row = store.db.query_one("SELECT * FROM project_facts WHERE id = ? AND project_id = ?",
@@ -130,7 +149,10 @@ def add_fact(store: Any, project_id: int, text: Any, *, origin: str = ORIGIN_OWN
                                  (int(project_id), key))
         if old and old["status"] == "active":
             return {"created": False, "fact": _fact(old)}
-        if old and origin == ORIGIN_AGENT:
+        if old and old["status"] == STATUS_UNCONFIRMED and origin == ORIGIN_AGENT and not str(quote or "").strip():
+            return {"created": False, "fact": _fact(old),
+                    "note": "Это твоё наблюдение, владелец его ещё не подтвердил. Подтвердить может только он."}
+        if old and old["status"] != STATUS_UNCONFIRMED and origin == ORIGIN_AGENT:
             return {"created": False, "refused": True, "fact": None,
                     "note": "Владелец это убрал, сам не возвращай. Если он передумал, пусть скажет «запомни»."}
         if old:
@@ -148,6 +170,43 @@ def add_fact(store: Any, project_id: int, text: Any, *, origin: str = ORIGIN_OWN
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (int(project_id), text, key, origin, origin_ref[:200], P._long_text(quote, 2000), source_id, clip_plan_id))
         return {"created": True, "fact": get_fact(store, project_id, int(cur.lastrowid))}
+
+
+def note_fact(store: Any, project_id: int, text: Any, *, quote: Any = "", source_id: int | None = None) -> dict:
+    """Агент заметил сам: запись «не подтверждено». Такое уже знаем — останется как было, сказанное
+    владельцем не понижается. Владелец это убирал — ``refused``."""
+    P.get_project(store, int(project_id), include_sources=False)
+    text = _clean(text)
+    key = _key(text)
+    if len(key) < 3:
+        raise ValueError("нужен текст наблюдения")
+    with store.db._lock:
+        old = store.db.query_one("SELECT * FROM project_facts WHERE project_id = ? AND text_key = ?",
+                                 (int(project_id), key))
+        if old and old["status"] not in ("active", STATUS_UNCONFIRMED):
+            return {"created": False, "refused": True, "fact": None,
+                    "note": "Владелец это убрал, сам не возвращай. Если сомневаешься, задай вопрос level: project."}
+        if old:
+            return {"created": False, "fact": _fact(old)}
+        total = store.db.query_one("SELECT COUNT(*) AS n FROM project_facts WHERE project_id = ? AND status = ?",
+                                   (int(project_id), STATUS_UNCONFIRMED))
+        if int(total["n"]) >= MAX_NOTICED:
+            raise ValueError(f"уже {MAX_NOTICED} неподтверждённых наблюдений: пусть владелец разберёт их")
+        cur = store.db.execute(
+            "INSERT INTO project_facts (project_id, text, text_key, origin, quote, source_id, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(project_id), text, key, ORIGIN_NOTICED, P._long_text(quote, 2000), source_id, STATUS_UNCONFIRMED))
+        return {"created": True, "fact": get_fact(store, project_id, int(cur.lastrowid))}
+
+
+def confirm_fact(store: Any, project_id: int, fact_id: int) -> dict:
+    """Владелец подтвердил наблюдение: теперь это обычный факт."""
+    fact = get_fact(store, project_id, fact_id)
+    if fact["status"] not in ("active", STATUS_UNCONFIRMED):
+        raise KeyError(f"факта #{fact_id} уже нет")
+    store.db.execute("UPDATE project_facts SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                     (int(fact_id),))
+    return get_fact(store, project_id, fact_id)
 
 
 def update_fact(store: Any, project_id: int, fact_id: int, text: Any) -> dict:
@@ -261,7 +320,7 @@ def _brief_rows(store: Any, project_id: int, titles: dict[int, str]) -> dict[str
             return "лор проекта", "", ""
         name = titles.get(int(question["source_id"]), "")
         where = f", «{name}»" if name else ""
-        return f"ваш ответ на вопрос{where}", question.get("answered_at") or "", f"/v/{question['source_id']}/questions"
+        return f"ваш ответ на вопрос{where}", question.get("answered_at") or "", f"/p/{project_id}?tab=questions"
 
     groups: dict[str, list[dict]] = {name: [] for name in ("about", "people", "arcs", "jokes", "taboo")}
     if brief["summary"]:
@@ -292,9 +351,20 @@ def _brief_rows(store: Any, project_id: int, titles: dict[int, str]) -> dict[str
     return groups
 
 
+def _noticed_row(fact: dict, titles: dict[int, str]) -> dict:
+    name = titles.get(int(fact["source_id"]), "") if fact.get("source_id") else ""
+    return {"ref": f"fact:{fact['id']}", "text": fact["text"], "origin": f"заметил в «{name}»" if name else "заметил сам",
+            "at": fact.get("updated_at") or "", "href": f"/v/{fact['source_id']}" if fact.get("source_id") else "",
+            "quote": fact.get("quote") or "", "confirmable": True}
+
+
 def _fact_row(fact: dict, titles: dict[int, str], project_id: int) -> dict:
     href = ""
-    if fact["origin"] == ORIGIN_OWNER:
+    if fact["origin"] == ORIGIN_NOTICED:
+        origin = "агент заметил, вы подтвердили"
+        if fact.get("source_id"):
+            href = f"/v/{fact['source_id']}"
+    elif fact["origin"] == ORIGIN_OWNER:
         origin = "вы добавили"
     elif fact.get("clip_plan_id"):
         origin = f"из чата клипа #{fact['clip_plan_id']}"
@@ -369,9 +439,13 @@ def _answer_row(item: dict, titles: dict[int, str]) -> dict:
     from app import stream_questions as Q
 
     name = titles.get(int(item["source_id"]), "")
+    origin = f"только для «{name}»" if name else "только для одного видео"
+    href = f"/v/{item['source_id']}/questions"
+    if item["level"] == "clip" and item.get("clip_plan_id"):
+        origin = f"только для клипа #{item['clip_plan_id']}"
+        href = f"/clips/{item['clip_plan_id']}"
     return {"ref": f"question:{item['id']}", "title": item["question"], "text": Q.answer_value(item),
-            "origin": f"только для «{name}»" if name else "только для одного видео", "at": item.get("answered_at") or "",
-            "href": f"/v/{item['source_id']}/questions"}
+            "origin": origin, "at": item.get("answered_at") or "", "href": href}
 
 
 def _waiting(store: Any, project_id: int) -> dict:
@@ -383,7 +457,7 @@ def _waiting(store: Any, project_id: int) -> dict:
     memes = store.db.query_one(
         "SELECT COUNT(*) AS n FROM meme_moments m JOIN sources s ON s.id = m.source_id "
         "WHERE s.project_id = ? AND m.status = 'open'", (int(project_id),))
-    return {"questions": len(questions), "memes": int(memes["n"]),
+    return {"questions": len(questions), "memes": int(memes["n"]), "noticed": len(list_noticed(store, project_id)),
             "items": [{"id": int(q["id"]), "source_id": int(q["source_id"]), "text": q["question"]}
                       for q in questions[:WAITING_SHOWN]]}
 
@@ -392,22 +466,24 @@ def knowledge_view(store: Any, project_id: int) -> dict:
     """Всё, что агент знает о проекте, группами; у строки ссылка ``ref`` для правки и удаления."""
     P.get_project(store, int(project_id), include_sources=False)
     facts = list_facts(store, project_id)
+    noticed = list_noticed(store, project_id)
     memes = _chosen_memes(store, project_id)
     answers = _video_answers(store, project_id)
     links = _channel_links(store, project_id)
-    needed = {int(f["source_id"]) for f in facts if f.get("source_id")} | {int(m["source_id"]) for m in memes} \
+    needed = {int(f["source_id"]) for f in [*facts, *noticed] if f.get("source_id")} | {int(m["source_id"]) for m in memes} \
         | {int(a["source_id"]) for a in answers} | {int(q["source_id"]) for q in links.values()}
     titles = _video_titles(store, needed)
     brief_rows = _brief_rows(store, project_id, titles)
     rules = P.list_rules(store, project_id=int(project_id))
     grouped = {
+        "noticed": [_noticed_row(f, titles) for f in noticed],
         "facts": [_fact_row(f, titles, int(project_id)) for f in facts],
         **brief_rows,
         "rules": [_rule_row(r, int(project_id)) for r in rules],
         "memes": [_meme_row(m, titles) for m in memes],
         "videos": [_answer_row(a, titles) for a in answers],
     }
-    order = ("about", "facts", "people", "jokes", "arcs", "taboo", "rules", "memes", "videos")
+    order = ("noticed", "about", "facts", "people", "jokes", "arcs", "taboo", "rules", "memes", "videos")
     groups = []
     total = 0
     for key in order:
@@ -590,13 +666,17 @@ def delete_row(store: Any, project_id: int, ref: str) -> dict:
 def brief_extras(store: Any, project_id: int) -> dict:
     """Что дополняет бриф проекта (``projects.project_brief``): факты и выбранные мемы."""
     facts = [{"id": int(f["id"]), "text": f["text"], "origin": f["origin"]} for f in list_facts(store, project_id)]
+    noticed = [{"id": int(f["id"]), "text": f["text"], "unconfirmed": True,
+                **({"source_id": int(f["source_id"])} if f.get("source_id") else {})}
+               for f in list_noticed(store, project_id)[:PROMPT_NOTICED]]
     memes = [{"moment_id": int(m["id"]), "source_id": int(m["source_id"]), "t_start": m["t_start"], "why": m["why"],
               "title": m["title"], "asset_id": m["asset_id"]}
              for m in _chosen_memes(store, project_id, limit=PROMPT_MEMES)]
-    return {"facts": facts, "memes": memes}
+    return {"facts": facts, "memes": memes, "noticed": noticed}
 
 
-def _sections(store: Any, project_id: int, source_id: int | None) -> list[tuple[str, list[str]]]:
+def _sections(store: Any, project_id: int, source_id: int | None,
+              clip_plan_id: int | None = None) -> list[tuple[str, list[str]]]:
     brief = P.get_brief(store, project_id)["brief"]
     rules = [f"{_RULE_WORDS.get(r.get('kind'), 'желательно')}: {r['text']}" for r in P.list_rules(store, project_id=int(project_id))]
     facts = [f["text"] for f in list_facts(store, project_id)]
@@ -608,9 +688,10 @@ def _sections(store: Any, project_id: int, source_id: int | None) -> list[tuple[
     taboo = [f"{t['topic']}: {t['why']}" if t.get("why") else t["topic"] for t in brief["taboo"]]
     video: list[str] = []
     if source_id is not None and P.project_of_source(store, int(source_id)) == int(project_id):
-        video = _answers_lines(store, int(source_id), brief)
+        video = _answers_lines(store, int(source_id), brief, clip_plan_id)
     memes = [f"{m['why']}: мем «{m['title']}»" + (f", файл #{m['asset_id']}" if m.get("asset_id") else "")
              for m in _chosen_memes(store, project_id, source_id, limit=PROMPT_MEMES)]
+    noticed = [f"[не подтверждено] {f['text']}" for f in list_noticed(store, project_id)[:PROMPT_NOTICED]]
     return [
         ("Правила владельца", rules),
         ("Запретные темы, не брать", taboo),
@@ -621,26 +702,32 @@ def _sections(store: Any, project_id: int, source_id: int | None) -> list[tuple[
         ("Шутки и словечки", jokes),
         ("Сюжеты и сквозные темы", arcs),
         ("Мемы, которые выбрал владелец", memes),
+        (NOTICED_CAPTION, noticed),  # последним: не влезет — выпадет первым, сказанное владельцем важнее
     ]
 
 
-def _answers_lines(store: Any, source_id: int, brief: dict) -> list[str]:
+def _answers_lines(store: Any, source_id: int, brief: dict, clip_plan_id: int | None = None) -> list[str]:
+    """Ответы этого видео; про клип — только в работе над этим самым клипом."""
     from app import stream_questions as Q
 
+    family = Q._clip_family(store, int(clip_plan_id)) if clip_plan_id else set()
     lines = []
     for item in Q.list_questions(store, source_id, "answered"):
         if item["scope"] == "channel" and Q.in_brief(item, brief):
+            continue
+        if item["scope"] == "clip" and item.get("clip_plan_id") not in family:
             continue
         lines.append(f"{item['question']} — {Q.answer_value(item)}")
     return lines
 
 
-def prompt_block(store: Any, project_id: int | None, source_id: int | None = None, limit: int = PROMPT_CHARS) -> str:
+def prompt_block(store: Any, project_id: int | None, source_id: int | None = None, limit: int = PROMPT_CHARS,
+                 clip_plan_id: int | None = None) -> str:
     """Текст для запроса к модели: только этот проект (и ответы про это видео). Пусто, если знать нечего."""
     if not project_id:
         if source_id is None:
             return ""
-        lines = _answers_lines(store, int(source_id), P.empty_brief())
+        lines = _answers_lines(store, int(source_id), P.empty_brief(), clip_plan_id)
         return ("Ответы владельца про это видео:\n" + "\n".join(f"- {x}" for x in lines)) if lines else ""
     project = P.get_project(store, int(project_id), include_sources=False)
     head = f"ЧТО ТЫ ЗНАЕШЬ О ПРОЕКТЕ «{project['name']}» (так сказал владелец, держись этого):"
@@ -648,7 +735,7 @@ def prompt_block(store: Any, project_id: int | None, source_id: int | None = Non
     used = len(head)
     dropped = 0
     found = False
-    for title, lines in _sections(store, int(project_id), source_id):
+    for title, lines in _sections(store, int(project_id), source_id, clip_plan_id):
         if not lines:
             continue
         found = True
@@ -720,7 +807,8 @@ def block_for_plan(store: Any, clip_plan_id: int, limit: int = PROMPT_CHARS) -> 
         from app.asset_scope import clip_project
 
         plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
-        return prompt_block(store, clip_project(store, int(clip_plan_id)), int(plan["source_id"]), limit=limit)
+        return prompt_block(store, clip_project(store, int(clip_plan_id)), int(plan["source_id"]), limit=limit,
+                            clip_plan_id=int(clip_plan_id))
     except Exception as exc:  # noqa: BLE001
         _log.warning("knowledge block for clip plan %s failed: %s", clip_plan_id, exc)
         return ""

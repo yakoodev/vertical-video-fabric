@@ -3,11 +3,41 @@
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Any, Callable
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from app import stream_questions as Q
+from app.auth import is_agent_request
+
+
+def refuse_agent_montage(request: Request, store: Any, source_id: int, clip_plan_id: int | None = None) -> None:
+    """Пауза монтажа для тех, кто ходит по токену (vvf.py, скрипты). Владелец в браузере идёт дальше: это его руки."""
+    if not is_agent_request(request):
+        return
+    try:
+        refusal = Q.montage_refusal(store, int(source_id), clip_plan_id)
+    except KeyError:
+        return  # нет такого клипа или видео: ответит сам маршрут
+    if refusal:
+        detail = refusal["error"] + " Открытые: " + "; ".join(refusal["problems"])
+        raise HTTPException(status_code=409, detail=detail)
+
+
+def refuse_agent_clip_montage(request: Request, store: Any, clip_plan_id: int) -> None:
+    if not is_agent_request(request):
+        return
+    try:
+        plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
+    except KeyError:
+        return
+    refuse_agent_montage(request, store, int(plan["source_id"]), int(clip_plan_id))
+
+
+def _owner_only(request: Request) -> None:
+    """Отвечает и решает владелец: агент с токеном не снимет паузу сам, ни кнопкой, ни ответом за него."""
+    if is_agent_request(request):
+        raise HTTPException(status_code=403, detail="Это решает владелец на странице видео, агент не может")
 
 
 def build_stream_questions_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -33,8 +63,42 @@ def build_stream_questions_router(auth_dep: Any, get_store: Callable[[], Any]) -
     def api_inbox(_auth: auth_dep, project_id: int | None = None, only_open: bool = True) -> dict:
         return Q.inbox_state(get_store(), project_id, only_open)
 
+    @router.get("/api/clip-plans/{clip_plan_id}/stream-questions", summary="Вопросы про этот клип и стоит ли монтаж")
+    def api_clip_state(clip_plan_id: int, _auth: auth_dep) -> dict:
+        try:
+            return Q.clip_state(get_store(), clip_plan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Клипа нет") from exc
+
+    @router.post("/api/sources/{source_id}/montage-without-answers", summary="Монтировать без ответов: решение владельца")
+    def api_release(source_id: int, request: Request, _auth: auth_dep) -> dict:
+        _owner_only(request)
+        try:
+            return Q.release_montage(get_store(), source_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Источника нет") from exc
+
+    @router.delete("/api/sources/{source_id}/montage-without-answers", summary="Снова ждать ответов")
+    def api_restore(source_id: int, request: Request, _auth: auth_dep) -> dict:
+        _owner_only(request)
+        try:
+            return Q.restore_montage_pause(get_store(), source_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Источника нет") from exc
+
+    @router.put("/api/stream-questions/{question_id}/level", summary="Сменить уровень вопроса: проект, видео или клип")
+    def api_level(question_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        _owner_only(request)
+        try:
+            return Q.set_level(get_store(), question_id, payload.get("level"), payload.get("clip_id"))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Вопроса нет") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @router.put("/api/stream-questions/{question_id}/answer", summary="Ответить на вопрос, пропустить или снять ответ")
-    def api_answer(question_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_answer(question_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        _owner_only(request)
         try:
             return Q.answer_question(get_store(), question_id, payload.get("option"), payload.get("text") or "",
                                      skip=payload.get("skip") is True)

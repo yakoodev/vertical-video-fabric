@@ -1,5 +1,18 @@
 import { api } from "@/api/client";
 
+/** Ждёт ли монтаж ответов владельца (app/stream_questions.montage_gate). */
+export type MontageGate = {
+  paused: boolean;
+  open: number;
+  project_open: number;
+  clip_open: number;
+  items: { id: number; question: string; level: QuestionLevel }[];
+  released: boolean;
+  released_open: number;
+};
+
+export type QuestionLevel = "project" | "video" | "clip";
+
 export type StreamQuestion = {
   id: number;
   source_id: number;
@@ -8,13 +21,17 @@ export type StreamQuestion = {
   t_end: number;
   question: string;
   options: string[];
-  scope: "stream" | "channel";
+  scope: "stream" | "channel" | "clip";
+  level: QuestionLevel;
+  clip_plan_id: number | null;
+  optional: boolean;
   about: string;
   answer_option: number | null;
   answer_text: string;
   answer: string;
   status: "open" | "answered" | "skipped";
   brief?: { written: boolean; reason?: string; section?: string };
+  gate?: MontageGate;
 };
 
 export type MemeOption = {
@@ -48,17 +65,35 @@ export type StreamQuestionsState = {
     questions: { total: number; answered: number; skipped: number; open: number };
     memes: { total: number; chosen: number; none: number; open: number };
   };
+  gate: MontageGate;
+  /** Что задано по этому видео, но лежит на другом уровне: страница даёт туда ссылку. */
+  elsewhere: {
+    project: { total: number; open: number };
+    clips: { id: number; name: string; total: number; open: number }[];
+  };
+};
+
+/** Экран клипа: только его вопросы. */
+export type ClipQuestionsState = {
+  clip_plan_id: number;
+  source_id: number;
+  project_id: number | null;
+  questions: StreamQuestion[];
+  gate: MontageGate;
 };
 
 /** Вопросы и мемы сразу по многим видео: «Входящие», вкладка проекта (app/stream_questions.inbox_state). */
 export type StreamQuestionsAll = {
-  sources: { id: number; title: string; project_id: number | null; project_name: string }[];
+  sources: { id: number; title: string; project_id: number | null; project_name: string; paused: boolean }[];
   questions: StreamQuestion[];
   moments: MemeMoment[];
+  counts: Record<QuestionLevel | "memes", { total: number; open: number }>;
+  clips: { id: number; name: string }[];
   open_by_project: { project_id: number | null; name: string; open: number }[];
 };
 
 export const streamQuestionsKey = (sourceId: number | string) => ["sources", String(sourceId), "stream-questions"] as const;
+export const clipQuestionsKey = (clipPlanId: number | string) => ["clip-questions", String(clipPlanId)] as const;
 export const streamQuestionsAllKey = (projectId: number | undefined, onlyOpen: boolean) =>
   ["stream-questions", "all", projectId ?? "all", onlyOpen] as const;
 
@@ -68,8 +103,12 @@ export const streamQuestionsApi = {
     api.get<StreamQuestionsAll>(
       `/api/stream-questions?only_open=${onlyOpen ? "true" : "false"}${projectId ? `&project_id=${projectId}` : ""}`,
     ),
+  clip: (clipPlanId: number | string) => api.get<ClipQuestionsState>(`/api/clip-plans/${clipPlanId}/stream-questions`),
   answer: (id: number, body: { option: number | null; text: string; skip?: boolean }) =>
     api.put<StreamQuestion>(`/api/stream-questions/${id}/answer`, body),
+  setLevel: (id: number, level: QuestionLevel) => api.put<StreamQuestion>(`/api/stream-questions/${id}/level`, { level }),
+  releaseMontage: (sourceId: number | string) => api.post<MontageGate>(`/api/sources/${sourceId}/montage-without-answers`),
+  restoreMontagePause: (sourceId: number | string) => api.del<MontageGate>(`/api/sources/${sourceId}/montage-without-answers`),
   choose: (id: number, body: { option_id?: number | null; none?: boolean }) =>
     api.put<MemeMoment>(`/api/meme-moments/${id}/choice`, body),
   questionClip: (id: number) => `/api/stream-questions/${id}/clip`,

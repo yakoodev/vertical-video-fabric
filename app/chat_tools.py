@@ -123,7 +123,7 @@ PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Po
 # В чате проекта и его видео эти инструменты работают только с этим проектом: лор одного проекта не должен попасть
 # в разговор о другом. В общем чате проекта нет, там можно назвать любой.
 PROJECT_BOUND = {
-    "get_project_brief", "update_project_brief", "remember_fact", "forget_fact", "list_rules", "add_rule", "revoke_rule",
+    "get_project_brief", "update_project_brief", "remember_fact", "note_observation", "forget_fact", "list_rules", "add_rule", "revoke_rule",
     "get_project_stats", "list_hypotheses", "add_hypothesis", "evaluate_hypotheses", "add_manual_publication",
     "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices",
 }
@@ -163,6 +163,11 @@ def h_analyze_source(ctx: ToolContext, args: dict) -> dict:
     source = ctx.store.get_source(source_id)
     if ctx.project_hint and source.get("project_id") not in (None, ctx.project_hint):
         raise ToolError(f"источник #{source_id} из другого проекта: в этом чате режем только свои видео")
+    from app.stream_questions import montage_refusal
+
+    paused = montage_refusal(ctx.store, source_id)
+    if paused:
+        return paused
     if source.get("status") not in ("ready", "succeeded", None, ""):
         raise ToolError(f"источник #{source_id} ещё не готов: {source.get('status')}")
     provider = _analysis_provider(args.get("provider") or "")
@@ -240,6 +245,7 @@ def chat_only_tools() -> list[Tool]:
         ),
         Tool(
             "analyze_source", "Запускаю нарезку",
+            "Пока владелец не ответил на вопросы по этому видео, откажет: сначала ответы, потом нарезка. "
             "Запустить ИИ-нарезку источника (поиск моментов → клипы-кандидаты), в фоне: source_id (list_projects), "
             "provider gemini (по умолчанию, если есть ключ) или action (бесплатно, по динамике кадра), prompt — "
             "что искать (необязательно). Платный Polza не используется. / Start AI analysis of a source.",

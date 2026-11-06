@@ -2240,9 +2240,11 @@ class ManualClipRequest(BaseModel):
     tags=["Render"],
     summary="Create a clip from source timecodes (no AI analysis needed)",
 )
-def api_create_manual_clip(source_id: int, payload: ManualClipRequest, _auth: AuthDep) -> dict:
+def api_create_manual_clip(source_id: int, payload: ManualClipRequest, request: Request, _auth: AuthDep) -> dict:
     from app.manual_clips import create_manual_clip
+    from app.stream_questions_api import refuse_agent_montage
 
+    refuse_agent_montage(request, store, source_id, payload.version_of)
     try:
         return create_manual_clip(
             store, source_id, payload.title, [p.model_dump() for p in payload.pieces], payload.description,
@@ -2333,9 +2335,13 @@ def api_source_transcript(
 )
 def api_analyze_source(
     source_id: int,
+    request: Request,
     _auth: AuthDep,
     payload: AnalyzeSourceRequest | None = None,
 ) -> dict:
+    from app.stream_questions_api import refuse_agent_montage
+
+    refuse_agent_montage(request, store, source_id)
     try:
         return video_analysis_service.run_analysis(
             source_id,
@@ -3214,7 +3220,10 @@ class AiMontageBatchRequest(BaseModel):
     tags=["Clip file"],
     summary="🤖 ИИ-монтаж for many clips in the background (applies, optionally renders)",
 )
-def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, _auth: AuthDep) -> dict:
+def api_source_ai_montage_batch(source_id: int, payload: AiMontageBatchRequest, request: Request, _auth: AuthDep) -> dict:
+    from app.stream_questions_api import refuse_agent_montage
+
+    refuse_agent_montage(request, store, source_id)
     try:
         plans = store.list_clip_plans(source_id=source_id)
     except KeyError as exc:
@@ -3250,7 +3259,10 @@ class AiPickRequest(BaseModel):
     tags=["Clip file"],
     summary="✨ ИИ выбирает лучшие: star the N most shareable moments (score + reason)",
 )
-def api_source_ai_pick(source_id: int, payload: AiPickRequest, _auth: AuthDep) -> dict:
+def api_source_ai_pick(source_id: int, payload: AiPickRequest, request: Request, _auth: AuthDep) -> dict:
+    from app.stream_questions_api import refuse_agent_montage
+
+    refuse_agent_montage(request, store, source_id)
     try:
         store.get_source(source_id)
         result = pick_best(store, source_id, count=payload.count, goal=payload.goal,
@@ -3792,9 +3804,11 @@ class CompilationRequest(BaseModel):
     tags=["Render"],
     summary="🧩 Компиляция «ТОП-N»: моменты подряд с номерами, субтитрами и whoosh",
 )
-def api_source_compilation(source_id: int, payload: CompilationRequest, _auth: AuthDep) -> dict:
+def api_source_compilation(source_id: int, payload: CompilationRequest, request: Request, _auth: AuthDep) -> dict:
     from app.compilation import build_compilation
+    from app.stream_questions_api import refuse_agent_montage
 
+    refuse_agent_montage(request, store, source_id)
     try:
         return build_compilation(
             store, source_id, payload.plan_ids, title=payload.title, countdown=payload.countdown,
@@ -3816,9 +3830,11 @@ class AutoEditRequest(BaseModel):
     tags=["Render"],
     summary="⚡ Автомонтаж без ИИ: хук, субтитры по словам, наезды и звуки по речи",
 )
-def api_clip_plan_auto_edit(clip_plan_id: int, _auth: AuthDep, payload: AutoEditRequest | None = None) -> dict:
+def api_clip_plan_auto_edit(clip_plan_id: int, request: Request, _auth: AuthDep, payload: AutoEditRequest | None = None) -> dict:
     from app.auto_edit import apply_auto_edit
+    from app.stream_questions_api import refuse_agent_clip_montage
 
+    refuse_agent_clip_montage(request, store, clip_plan_id)
     body = payload or AutoEditRequest()
     try:
         return apply_auto_edit(store, clip_plan_id, style=body.style, keep_layers=body.keep_layers)
