@@ -754,7 +754,7 @@
     "compositor",
     {
      "args": [
-      "C:/Users/Yakoo/AppData/Local/Programs/Python/Python36/python.EXE",
+      "<NODE>",
       "<TMP>/motion-render.mjs",
       "--comp",
       "<TMP>/data/tmp/motion-<ID>/comp.json",
@@ -983,7 +983,7 @@
     "compositor",
     {
      "args": [
-      "C:/Users/Yakoo/AppData/Local/Programs/Python/Python36/python.EXE",
+      "<NODE>",
       "<TMP>/motion-render.mjs",
       "--comp",
       "<TMP>/data/tmp/motion-frame-<ID>/comp.json",
@@ -1217,7 +1217,7 @@
     "compositor",
     {
      "args": [
-      "C:/Users/Yakoo/AppData/Local/Programs/Python/Python36/python.EXE",
+      "<NODE>",
       "<TMP>/motion-render.mjs",
       "--comp",
       "<TMP>/data/tmp/motion-<ID>/comp.json",
@@ -1660,7 +1660,7 @@
     "compositor",
     {
      "args": [
-      "C:/Users/Yakoo/AppData/Local/Programs/Python/Python36/python.EXE",
+      "<NODE>",
       "<TMP>/motion-render.mjs",
       "--comp",
       "<TMP>/data/tmp/motion-frame-<ID>/comp.json",

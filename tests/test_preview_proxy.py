@@ -103,7 +103,7 @@ def test_never_more_than_two_ffmpeg_and_pieces_pause_the_proxy(tmp_path, monkeyp
 
     def track_popen(args, *a, **kw):
         proc = real_popen(args, *a, **kw)
-        if "ffmpeg" in " ".join(map(str, args[:2])):
+        if any("ffmpeg" in str(a) for a in args[:5]):  # на Linux перед ним nice -n 15
             procs.append(proc)
             peak[0] = max(peak[0], sum(1 for x in procs if x.poll() is None))
         return proc

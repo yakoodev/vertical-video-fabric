@@ -33,12 +33,14 @@ class _Meta:
 
 
 _ROOT = str(Path(__file__).resolve().parent.parent).replace("\\", "/")
+# Вместо Node в снимке стоит Python этой машины (сам компоновщик подделан): путь в эталон не идёт.
+_FAKE_NODE = shutil.which("python") or sys.executable
 
 
 def _scrub(value, tmp: str):
     if isinstance(value, str):
         text = value.replace("\\", "/")
-        text = text.replace(tmp, "<TMP>").replace(_ROOT, "<ROOT>")
+        text = text.replace(_FAKE_NODE.replace("\\", "/"), "<NODE>").replace(tmp, "<TMP>").replace(_ROOT, "<ROOT>")
         return _HEX.sub("<ID>", text)
     if isinstance(value, list):
         # Пак эмодзи (vendor/packs/twemoji) есть не в каждой копии репозитория — флаг зависит
@@ -89,7 +91,7 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
     compositor_file = tmp_path / "motion-render.mjs"
     compositor_file.write_text("// fake", encoding="utf-8")
     monkeypatch.setattr(settings, "motion_compositor", compositor_file)
-    monkeypatch.setattr(settings, "motion_node", shutil.which("python") or sys.executable)
+    monkeypatch.setattr(settings, "motion_node", _FAKE_NODE)
 
     def fake_ffmpeg(args, timeout, cwd=None):
         calls.append(["ffmpeg", list(args)])
