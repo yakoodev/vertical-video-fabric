@@ -426,7 +426,9 @@ MODULES_BY_ID: dict[str, Module] = {m.id: m for m in MODULES}
 # Инструменты без модуля: основа монтажа (всегда есть). Новый инструмент — сюда или в модуль:
 # tests/test_modules.py проверяет, что каждый инструмент реестра где-то учтён ровно один раз.
 CORE_TOOLS: frozenset[str] = frozenset({
-    "get_agent_settings", # поиск проекта и клипа, новые клипы
+    # настройки агента: что можно без владельца
+    "get_agent_settings",
+    # поиск проекта и клипа, новые клипы
     "list_projects", "list_clips", "get_shots", "create_clip", "create_canvas_clip",
     # смотреть клип и источник
     "get_clip", "get_transcript", "view_frame", "contact_sheet", "source_contact_sheet", "source_loudness",
