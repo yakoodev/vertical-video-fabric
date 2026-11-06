@@ -337,12 +337,12 @@ def test_retry_nudge_is_one_time(tmp_path, monkeypatch):
 def test_gap_warnings_push_to_fix_before_report(tmp_path, monkeypatch):
     """«пустой кадр»/«нет финала» в ответе линта, а модель заканчивает — один раз дожимаем;
     проверка — по текущему клипу (исправил — не дожимаем)."""
-    from app import agent_tools
+    from app import layer_tools
 
     _require_ffmpeg()
     _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     gap = "пустой кадр 2.0–10.0 с: нет слоёв — проверь, применились ли последние пачки"
-    monkeypatch.setattr(agent_tools, "_scene_warnings",
+    monkeypatch.setattr(layer_tools, "_scene_warnings",
                         lambda ctx, render, duration: [gap] if len(render.get("layers") or []) < 2 else [])
     fake = ScriptedGemini([
         [_call("add_layers", {"layers": [HOOK]})],
