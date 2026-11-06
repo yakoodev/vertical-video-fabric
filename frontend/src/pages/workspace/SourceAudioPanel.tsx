@@ -67,7 +67,7 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
 
   if (query.isLoading) return <div className="muted li-note">Смотрю дорожки записи…</div>;
   if (query.isError || !audio || !draft || !saved)
-    return <div className="lay-note warn">Не удалось прочитать звуковые дорожки источника</div>;
+    return <div className="lay-note warn">Не удалось прочитать звуковые дорожки видео</div>;
   if (streams.length <= 1)
     return (
       <div className="muted li-note">
@@ -115,12 +115,12 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
     }
   };
 
-  const resetText = "Расшифровка исходника сброшена и распознается заново; субтитры готовых клипов — «Распознать заново».";
+  const resetText = "Расшифровка видео сброшена и распознается заново; субтитры готовых клипов — «Распознать заново».";
 
   const apply = () =>
     void send(
       { audio_tracks: mix, speech_tracks: draft.speech == null ? [] : [draft.speech] },
-      (_r, reset) => (reset ? `Сохранено. ${resetText}` : "Сохранено: так звучат все клипы источника"),
+      (_r, reset) => (reset ? `Сохранено. ${resetText}` : "Сохранено: так звучат все клипы этого видео"),
     );
 
   // Голос — дорожка речи (если задана), иначе последняя (у DVR/OBS микрофон — вторая).
@@ -142,7 +142,7 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
   return (
     <div className="src-audio">
       <div className="muted li-note">
-        Общие для всех клипов источника. Отмеченные дорожки смешиваются в звук ролика, у каждой своя громкость; ролик
+        Общие для всех клипов этого видео. Отмеченные дорожки смешиваются в звук ролика, у каждой своя громкость; ролик
         потом всё равно выравнивается до −14 LUFS — громкость задаёт баланс голоса и игры.
       </div>
       <div className="src-audio-list">
@@ -179,7 +179,7 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
         ))}
       </div>
       <label className="field">
-        <span title="По ней — расшифровка исходника, субтитры, «послушать» и сверка субтитров с речью. На одном микрофоне распознавание чище, чем на смеси с игрой">
+        <span title="По ней — расшифровка видео, субтитры, «послушать» и сверка субтитров с речью. На одном микрофоне распознавание чище, чем на смеси с игрой">
           Дорожка речи (для субтитров)
         </span>
         <select
@@ -199,7 +199,7 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
       {!mix.length ? <div className="lay-note warn">Отметьте хотя бы одну дорожку — иначе ролик без звука</div> : null}
       {dirty && speechChanges ? (
         <div className="lay-note warn">
-          Сменится звук для распознавания речи: расшифровка исходника пересчитается заново, субтитры готовых клипов
+          Сменится звук для распознавания речи: расшифровка видео пересчитается заново, субтитры готовых клипов
           придётся распознать заново.
         </div>
       ) : null}
@@ -216,7 +216,7 @@ export function SourceAudioPanel({ sourceId }: { sourceId: number }) {
           className="btn sm"
           disabled={busy}
           onClick={auto}
-          title={`Смешать все дорожки и замерить громкость: голос (дорожка ${voice + 1}) встанет на ~9 дБ громче игры в моменты речи. Если речь не на своей дорожке — расшифровка исходника пересчитается`}
+          title={`Смешать все дорожки и замерить громкость: голос (дорожка ${voice + 1}) встанет на ~9 дБ громче игры в моменты речи. Если речь не на своей дорожке — расшифровка видео пересчитается`}
         >
           Авто: голос над игрой
         </button>

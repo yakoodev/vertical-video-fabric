@@ -6,6 +6,7 @@ import { PageTabs } from "@/components/PageTabs";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
+import { SECTIONS, visibleTabs } from "@/lib/tabs";
 
 const ApprovalsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/ApprovalsPage"), "ApprovalsPage");
 const AllStreamQuestions = lazyPage(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
@@ -20,13 +21,11 @@ export function InboxPage() {
   const { on } = useModules();
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
   const inbox = nav.data?.inbox;
-  const tabs = [
-    ...(on("autopilot") ? [{ key: "approve", label: "Одобрение", to: "/inbox?tab=approve", count: inbox?.approvals ?? 0 }] : []),
-    ...(on("stream_questions")
-      ? [{ key: "questions", label: "Вопросы", to: "/inbox?tab=questions", count: (inbox?.questions ?? 0) + (inbox?.memes ?? 0) }]
-      : []),
-    { key: "tasks", label: "Очередь задач", to: "/inbox?tab=tasks" },
-  ];
+  const counts: Record<string, number> = {
+    approve: inbox?.approvals ?? 0,
+    questions: (inbox?.questions ?? 0) + (inbox?.memes ?? 0),
+  };
+  const tabs = visibleTabs(SECTIONS.inbox.tabs, on).map((t) => ({ ...t, count: counts[t.key] }));
   const asked = params.get("tab") ?? (params.has("id") ? "approve" : "");
   const tab = tabs.some((t) => t.key === asked) ? asked : tabs[0].key;
   return (

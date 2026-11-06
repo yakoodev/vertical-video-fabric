@@ -76,7 +76,7 @@ def editor_subs(page: Page) -> None:
 def editor_audio(page: Page) -> None:
     if not insp_tab(page, "Звук"):
         open_group(page, "Тишина вместо звука")
-        open_group(page, "Громкость исходника")
+        open_group(page, "Громкость видео")
     open_group(page, "Музыка")
 
 
@@ -169,7 +169,7 @@ def last_episode(page: Page) -> None:
 
 def editor_mix(page: Page) -> None:
     insp_tab(page, "Звук")
-    for g in ("Музыка", "Тишина вместо звука", "Громкость исходника"):
+    for g in ("Музыка", "Тишина вместо звука", "Громкость видео"):
         head = page.locator(".insp-pane:not([hidden]) .rgroup-head", has_text=g)
         if head.count() and head.first.get_attribute("aria-expanded") == "true":
             head.first.click()

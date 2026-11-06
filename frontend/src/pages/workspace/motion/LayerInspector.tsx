@@ -1213,7 +1213,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
                 checked={Boolean(layer.behind)}
                 onChange={(on) => onChange({ ...layer, behind: on || undefined } as Layer)}
               />
-              {!keyed ? <div className="li-note muted">У источника выключен хромакей — «за персонажем» не сработает.</div> : null}
+              {!keyed ? <div className="li-note muted">У этого видео выключен хромакей — «за персонажем» не сработает.</div> : null}
             </div>
           ) : null}
           {hasCamera || layer.followCamera ? (

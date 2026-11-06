@@ -62,7 +62,7 @@ function TranscriptPane({ sourceId, ready, time, onSeek }: { sourceId: number; r
     const row = curRef.current;
     if (list && row) list.scrollTop = Math.max(0, row.offsetTop - list.offsetTop - 60);
   }, [current]);
-  if (!ready) return <p className="muted vp-empty">Транскрипта пока нет: он появится после распознавания речи (вкладка «Моменты», «Запись и анализ»).</p>;
+  if (!ready) return <p className="muted vp-empty">Транскрипта пока нет: он появится после распознавания речи (вкладка «Черновики», «Запись и анализ»).</p>;
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const from = Math.max(0, current - WINDOW_BACK);

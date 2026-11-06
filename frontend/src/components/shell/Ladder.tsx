@@ -7,6 +7,7 @@ import { qk } from "@/api/keys";
 import { Icon } from "@/components/Icon";
 import { plural } from "@/components/ui";
 import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
+import { SECTIONS, SECTION_ORDER, visibleTabs } from "@/lib/tabs";
 import { HIDDEN_SOURCE_TYPES, KIND_LABELS } from "@/lib/videoKinds";
 import { clipGroupKeys, clipGroupsApi, countClips } from "@/api/clipGroups";
 import { useModules } from "@/hooks/useModules";
@@ -24,58 +25,6 @@ type Rung = {
   loading?: boolean;
   searchLabel?: string;
 };
-
-export const SECTION_TABS: Record<string, { title: string; to: string; tabs: { key: string; label: string; to: string; module?: string }[] }> = {
-  inbox: {
-    title: "Входящие",
-    to: "/inbox",
-    tabs: [
-      { key: "approve", label: "Одобрение", to: "/inbox?tab=approve", module: "autopilot" },
-      { key: "questions", label: "Вопросы", to: "/inbox?tab=questions", module: "stream_questions" },
-      { key: "tasks", label: "Очередь задач", to: "/inbox?tab=tasks" },
-    ],
-  },
-  pubs: {
-    title: "Публикации и аккаунты",
-    to: "/pubs",
-    tabs: [
-      { key: "pubs", label: "Публикации", to: "/pubs?tab=pubs", module: "publishing" },
-      { key: "accounts", label: "Аккаунты", to: "/pubs?tab=accounts", module: "publishing" },
-      { key: "ready", label: "Готовые ролики", to: "/pubs?tab=ready" },
-    ],
-  },
-  files: {
-    title: "Общие файлы",
-    to: "/files",
-    tabs: [
-      { key: "shared", label: "Общие", to: "/files" },
-      { key: "project", label: "По проектам", to: "/files?tab=project" },
-      { key: "all", label: "Все файлы", to: "/files?tab=all" },
-    ],
-  },
-  settings: {
-    title: "Настройки",
-    to: "/settings",
-    tabs: [
-      { key: "render", label: "Пресеты рендера", to: "/settings/render" },
-      { key: "banners", label: "Баннеры", to: "/settings/banners" },
-      { key: "audio", label: "Музыка", to: "/settings/audio" },
-      { key: "subtitles", label: "Субтитры", to: "/settings/subtitles" },
-      { key: "brands", label: "Бренды", to: "/settings/brands" },
-      { key: "prompts", label: "Промпты", to: "/settings/prompts" },
-      { key: "defaults", label: "По умолчанию", to: "/settings/defaults" },
-      { key: "modules", label: "Модули", to: "/settings/modules" },
-      { key: "proxy", label: "Прокси", to: "/settings/proxy" },
-      { key: "telegram", label: "Telegram", to: "/settings/telegram", module: "telegram" },
-      { key: "backup", label: "Экспорт и импорт", to: "/settings/backup" },
-    ],
-  },
-  help: { title: "Помощь", to: "/help", tabs: [] },
-  automation: { title: "Авто", to: "/automation", tabs: [] },
-  chat: { title: "Все переписки", to: "/chat", tabs: [] },
-};
-
-const SECTION_ORDER = ["inbox", "pubs", "files", "settings", "help"];
 
 /** Где мы: номер проекта и видео из адреса (видео знает свой проект). */
 export function useWhere(nav: NavState | undefined) {
@@ -354,8 +303,8 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
       };
     }
     const sectionKey = head === "publications" ? "pubs" : head;
-    const section = SECTION_TABS[sectionKey];
-    const tabs = (section?.tabs ?? []).filter((t) => !t.module || on(t.module));
+    const section = SECTIONS[sectionKey];
+    const tabs = visibleTabs(section?.tabs ?? [], on);
     const asked = sectionKey === "settings" ? parts[1] : params.get("tab");
     const tab = tabs.find((t) => t.key === asked) ?? tabs[0];
     const jobDetail = sectionKey === "pubs" && parts[1];
@@ -368,8 +317,8 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
           val: section?.title ?? "",
           href: section?.to,
           items: SECTION_ORDER.map((key) => ({
-            to: SECTION_TABS[key].to,
-            label: SECTION_TABS[key].title,
+            to: SECTIONS[key].to,
+            label: SECTIONS[key].title,
             cur: key === sectionKey,
           })),
         },

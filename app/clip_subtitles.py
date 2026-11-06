@@ -575,7 +575,7 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.exists():
-        raise ValueError("исходник недоступен")
+        raise ValueError("видео недоступно")
 
     saved = store.get_clip_plan_subtitles(clip_plan_id) or {}
     settings_profile = (plan.get("render_settings") or {}).get("sub_id")
@@ -718,7 +718,7 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.exists():
-        raise ValueError("исходник недоступен")
+        raise ValueError("видео недоступно")
     clock = ClipClock.for_plan(plan)
     scale = "clip" if before_cuts else "final"
     total = clock.clip_duration if before_cuts else clock.final_duration
@@ -891,7 +891,7 @@ def find_noises(store: Any, clip_plan_id: int, threshold_db: float | None = None
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.exists():
-        raise ValueError("исходник недоступен")
+        raise ValueError("видео недоступно")
     pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
     if not pieces:
         raise ValueError("у клипа нет кусков")

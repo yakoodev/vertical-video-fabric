@@ -1250,27 +1250,12 @@ a.panel:hover,
   margin-bottom: -1px;
   transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
 }
-.tab .tab-no {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-faint);
-  padding: 2px 5px;
-  border-radius: 6px;
-  border: 1px solid var(--hairline);
-  transition: color 0.15s var(--ease), background 0.15s var(--ease), border-color 0.15s var(--ease);
-}
 .tab:hover {
   color: var(--text);
 }
 .tab.active {
   color: #fff;
   border-bottom-color: var(--accent);
-}
-.tab.active .tab-no {
-  color: var(--accent-ink);
-  background: var(--accent-grad);
-  border-color: transparent;
 }
 
 /* ---------- States ---------- */
@@ -2721,17 +2706,6 @@ button.task-link:disabled {
   letter-spacing: -0.02em;
   word-break: break-word;
 }
-.ws-pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
-.ws-pill {
-  font-size: 12.5px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 999px;
-  padding: 3px 11px;
-}
-.tab-count { color: var(--text-faint); font-weight: 500; }
-.tab.active .tab-count { color: var(--accent-2); }
 
 /* editor fixes after live check */
 .ed > * { min-width: 0; }
@@ -3331,8 +3305,6 @@ kbd {
 
 /* navigation pass 2 (codex audit) */
 .empty-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
-.ws-sum { font-size: 13px; color: var(--text-dim); margin-left: 6px; }
-.ws-sum b { color: var(--text); }
 /* Moments: the grid is the point — smaller player, sticky actions */
 .mo-player-frame, .mo-player-frame video { max-height: 36vh; }
 .mo-toolbar {

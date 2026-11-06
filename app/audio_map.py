@@ -659,7 +659,7 @@ def clip_audio_map(store: Any, clip_plan_id: int, *, from_sec: float | None = No
     source = store.get_source(int(plan["source_id"]))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.is_file():
-        raise ValueError("исходник недоступен")
+        raise ValueError("видео недоступно")
     segments = plan.get("segments") or []
     if not segments:
         raise ValueError("у клипа нет кусков")
@@ -720,7 +720,7 @@ def source_audio_map(store: Any, source_id: int, from_sec: float | None, to_sec:
     source = store.get_source(int(source_id))
     source_path = Path(str(source.get("local_path") or ""))
     if not source_path.is_file():
-        raise ValueError("файла исходника нет")
+        raise ValueError("файла видео нет")
     total = float(source.get("duration_sec") or 0)
     lo = max(0.0, float(from_sec or 0.0))
     hi = float(to_sec) if to_sec is not None else lo + 60.0

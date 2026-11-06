@@ -343,7 +343,7 @@ def _source_stem(store: Any, plan: dict, source: dict, duration: float, dst: Pat
     try:
         _run(args + ["-filter_complex", ";".join(graph), *_out_args("stemout", duration, dst)])
     except RuntimeError as exc:
-        notes.append(f"звук исходника не прочитан: {str(exc)[:160]}")
+        notes.append(f"звук видео не прочитан: {str(exc)[:160]}")
         return None
     return dst
 

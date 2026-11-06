@@ -281,7 +281,7 @@ function VersionsCard({
   const split = useMutation({
     mutationFn: (planId: number) => clipGroupsApi.split(view.id, planId),
     onSuccess: (result) => {
-      toast.success("План стал отдельным клипом");
+      toast.success("Версия стала отдельным клипом");
       setSplitPlan(null);
       onChanged();
       navigate(clipPath(result.rest_id));
@@ -299,7 +299,7 @@ function VersionsCard({
           type="button"
           className="btn ghost sm"
           disabled={newVersion.isPending}
-          title="Копия текущего монтажа новым планом этого клипа: старый останется версией"
+          title="Копия текущего монтажа новой версией этого клипа: прежняя останется"
           onClick={() => newVersion.mutate()}
         >
           + Новая версия
@@ -453,7 +453,7 @@ function MetaCard({ view, onChanged }: { view: ClipView; onChanged: () => void }
       setDescription(m.description);
       setTags(m.hashtags.join(" "));
       save.mutate({ title: m.title, description: m.description, hashtags: m.hashtags });
-      toast.success(m.has_transcript ? "Сгенерировано по речи клипа" : "Сгенерировано по описанию момента (транскрипта нет)");
+      toast.success(m.has_transcript ? "Сгенерировано по речи клипа" : "Сгенерировано по описанию клипа (транскрипта нет)");
     },
     onError: (e) => toast.error(errorText(e, "Не удалось сгенерировать")),
   });

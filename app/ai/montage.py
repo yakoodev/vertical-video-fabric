@@ -650,9 +650,9 @@ def montage_many(
     items = []
     for pid in dict.fromkeys(int(p) for p in clip_plan_ids):
         try:
-            title = store.get_clip_plan(pid, include_segments=False).get("title") or f"План #{pid}"
+            title = store.get_clip_plan(pid, include_segments=False).get("title") or f"Клип #{pid}"
         except KeyError:
-            title = f"План #{pid}"
+            title = f"Клип #{pid}"
         items.append({"plan_id": pid, "title": title, "status": "queued"})
     if on_items:
         on_items(items)  # the live list: callers watch it fill in

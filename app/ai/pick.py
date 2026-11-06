@@ -132,7 +132,7 @@ def pick_best(
 
     candidates = candidate_lines(store, source_id)
     if not candidates:
-        raise RuntimeError("нет видимых моментов — сначала анализ")
+        raise RuntimeError("нет видимых черновиков — сначала анализ")
     n = max(1, min(int(count), 50, len(candidates)))
     fmt = _analysis_output_format(store, output_format)
     rules = rules_for_format(fmt, _landscape_max_clip_sec(store) if fmt == "16:9" else 180.0)

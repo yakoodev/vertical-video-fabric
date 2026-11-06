@@ -194,12 +194,12 @@ function ChromaKeyControls({ sourceId, chromaKey }: { sourceId: number; chromaKe
 
   return (
     <div className="lay-key">
-      <label className="switch" title="Источник записан на зелёном (синем) фоне — вырезать его; ключ общий для всех клипов источника">
+      <label className="switch" title="Видео записано на зелёном (синем) фоне — вырезать его; ключ общий для всех клипов этого видео">
         <input type="checkbox" checked={Boolean(chromaKey)} disabled={busy} onChange={(e) => toggle(e.target.checked)} />
         <span className="switch-track" />
         <span>Вырезать зелёный фон (хромакей)</span>
       </label>
-      <button type="button" className="btn sm lay-detect" disabled={busy} onClick={() => void detect(false)} title="Посмотреть кадры источника и найти цвет фона">
+      <button type="button" className="btn sm lay-detect" disabled={busy} onClick={() => void detect(false)} title="Посмотреть кадры видео и найти цвет фона">
         {busy ? "Смотрю кадры…" : "🔍 Найти зелёный фон"}
       </button>
       {chromaKey ? (
@@ -376,7 +376,7 @@ function CamEditor({ src, cam, onCommit }: { src: string; cam: LayoutRect; onCom
   return (
     <div className="lay-frame" ref={frameRef} style={{ aspectRatio: String(aspect) }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       {broken ? (
-        <div className="lay-frame-empty muted">Кадр исходника недоступен</div>
+        <div className="lay-frame-empty muted">Кадр видео недоступен</div>
       ) : (
         <img
           src={src}
@@ -435,13 +435,13 @@ function AvatarPlaces({
               type="button"
               className="lay-place-go"
               disabled={!where || !onSeek}
-              title={where ? "Курсор на начало места — ниже правится его рамка" : "Этого отрезка исходника нет в кусках клипа"}
+              title={where ? "Курсор на начало места — ниже правится его рамка" : "Этого отрезка видео нет в кусках клипа"}
               onClick={() => where && onSeek?.(where.src)}
             >
               <span className="lay-place-n">{i + 1}</span>
               <span className="lay-grow">{label}</span>
               <span className="muted">
-                исх. {mmss(p.from)}–{mmss(p.to)}
+                в видео {mmss(p.from)}–{mmss(p.to)}
                 {p.video_scale ? ` · ${Math.round(p.video_scale * 100)}%` : ""}
               </span>
             </button>
@@ -538,7 +538,7 @@ export function LayoutPanel({
     try {
       const r = await facecamApi.save(sourceId, editedCam);
       setSavedCam(r.cam ? normalizeCam(r.cam) : null);
-      setNote({ kind: "ok", text: "Запомнил: новые клипы этого источника возьмут эту вебку" });
+      setNote({ kind: "ok", text: "Запомнил: новые клипы этого видео возьмут эту вебку" });
     } catch (e) {
       setNote({ kind: "warn", text: e instanceof ApiError ? e.message : "Не удалось сохранить" });
     }
@@ -634,11 +634,11 @@ export function LayoutPanel({
           <div className="li-cap">
             {places.length
               ? placeIdx >= 0
-                ? `Рамка места ${placeIdx + 1} (курсор на ${mmss(frameAt)} исходника)`
+                ? `Рамка места ${placeIdx + 1} (курсор на ${mmss(frameAt)} видео)`
                 : "Рамка вне мест — общая для остального клипа"
               : layout.mode === "avatar_full"
-                ? "Где аватар в исходнике"
-                : "Где вебка в исходнике"}
+                ? "Где аватар в видео"
+                : "Где вебка в видео"}
           </div>
           {noSourceFile ? (
             <p className="muted field-hint">Рамка ставится по кадру записи стрима, а её нет.</p>
@@ -656,10 +656,10 @@ export function LayoutPanel({
               type="button"
               className="btn ghost sm"
               disabled={!!savedCam && sameCam(savedCam, editedCam)}
-              title="Новые клипы этого источника сразу возьмут эту рамку"
+              title="Новые клипы этого видео сразу возьмут эту рамку"
               onClick={remember}
             >
-              📌 Запомнить для источника
+              📌 Запомнить для этого видео
             </button>
           </div>
 

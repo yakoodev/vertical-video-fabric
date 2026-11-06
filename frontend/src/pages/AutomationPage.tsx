@@ -108,7 +108,7 @@ function StartAuto() {
         <label className="field" style={{ flex: 2, minWidth: 180 }}>
           <span>Пресет анализа</span>
           <select className="input" value={presetId} onChange={(e) => setPresetId(Number(e.target.value))}>
-            <option value={0}>Авто (по источнику)</option>
+            <option value={0}>Авто (по видео)</option>
             {analysisPresets.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
@@ -397,7 +397,7 @@ export function AutomationPage() {
             <EmptyState
               icon="⚡"
               title="Запусков ещё не было"
-              hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт моменты, смонтирует и пришлёт клипы на одобрение"
+              hint="Вставьте ссылку слева и нажмите «▶ Запустить» — скачает, найдёт клипы, смонтирует и пришлёт клипы на одобрение"
               actions={
                 <Link className="btn" to="/pubs?tab=accounts">
                   Аккаунты для публикации
@@ -426,7 +426,7 @@ export function AutomationPage() {
                     <Badge status={run.status}>{STATUS_RU[run.status] ?? run.status}</Badge>
                   </div>
                   <div className="muted run-counts">
-                    планов {run.plans} · клипов {run.clips} · на одобрении {run.approvals ?? 0}
+                    черновиков {run.plans} · клипов {run.clips} · на одобрении {run.approvals ?? 0}
                     {run.auto_approved ? ` · сразу в расписание ${run.auto_approved}` : ""}
                   </div>
                   <RunSteps run={run} />

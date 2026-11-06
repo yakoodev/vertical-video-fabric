@@ -129,7 +129,7 @@ function ProjectCard({
         </div>
         <div className="pcard-stats">
           {source.width ? <span className="mono">{source.width}×{source.height}</span> : null}
-          <span>{plural(source.clip_plans_count ?? 0, "момент", "момента", "моментов")}</span>
+          <span>{plural(source.clip_plans_count ?? 0, "черновик", "черновика", "черновиков")}</span>
           <span>{plural(source.clip_cards_count ?? source.clips_count ?? 0, "клип", "клипа", "клипов")}</span>
         </div>
         {series.length ? (
@@ -474,7 +474,7 @@ export function ProjectsPage() {
         title="Удалить видео?"
         body={
           <>
-            Будут удалены запись, все анализы, моменты и клипы этого видео, а файлы — стёрты с диска.
+            Будут удалены запись, все анализы, черновики и клипы этого видео, а файлы — стёрты с диска.
             История публикаций сохранится. Действие необратимо.
           </>
         }

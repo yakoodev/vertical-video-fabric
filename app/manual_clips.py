@@ -52,7 +52,7 @@ def source_transcript(store: Any, source_id: int, *, refresh: bool = False,
             no_speech = True
             store.set_source_transcript(source_id, [], settings.whisper_model_size + NO_SPEECH)
         else:
-            raise ValueError("расшифровка не получилась (нет звука или файла исходника)")
+            raise ValueError("расшифровка не получилась (нет звука или файла видео)")
     out = {"source_id": source_id, "cached": cached, "duration_sec": source.get("duration_sec"), "cues": cues}
     if no_speech:
         out["no_speech"] = True

@@ -6947,11 +6947,11 @@ def _build_registry() -> list[Tool]:
             _obj({}), h_get_clip,
         ),
         Tool(
-            "get_transcript", "Читаю расшифровку исходника",
+            "get_transcript", "Читаю расшифровку видео",
             "Реплики ИСХОДНИКА (время исходника, не клипа) между from_sec и to_sec — чтобы подрезать "
             "кусок по фразе. Без параметров — вокруг кусков клипа. / Source transcript window (source time).",
             _obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"}}), h_get_transcript,
-            label=lambda a: "Читаю расшифровку исходника",
+            label=lambda a: "Читаю расшифровку видео",
         ),
         Tool(
             "export_timeline_package", "Собираю пакет для монтажки",
@@ -7033,7 +7033,7 @@ def _build_registry() -> list[Tool]:
             _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                   "step": {"type": "number"}, "x": {"type": "number"}}, ["from_sec", "to_sec"]),
             h_source_contact_sheet, scope="global",
-            label=lambda a: f"Смотрю кадры исходника {(_num(a.get('from_sec'), 0.0) or 0.0):.0f}–"
+            label=lambda a: f"Смотрю кадры видео {(_num(a.get('from_sec'), 0.0) or 0.0):.0f}–"
                             f"{(_num(a.get('to_sec'), 0.0) or 0.0):.0f} с",
         ),
         Tool(
@@ -7048,7 +7048,7 @@ def _build_registry() -> list[Tool]:
                   "step": {"type": "number"}, "top": {"type": "integer"},
                   "track": {"type": "integer", "description": "одна звуковая дорожка вместо смеси"}}),
             h_source_loudness, scope="global",
-            label=lambda a: f"Слушаю громкость исходника с {(_num(a.get('from_sec'), 0.0) or 0.0):.0f} с",
+            label=lambda a: f"Слушаю громкость видео с {(_num(a.get('from_sec'), 0.0) or 0.0):.0f} с",
         ),
         Tool(
             "chat_activity", "Активность чата",
@@ -7093,7 +7093,7 @@ def _build_registry() -> list[Tool]:
                   "speech_tracks": {"type": "array", "items": {"type": "integer"},
                                     "description": "дорожки для распознавания речи; [] — как tracks"}}),
             h_set_source_audio, mutating=True, scope="global",
-            label=lambda a: f"Звук исходника: дорожки {a.get('tracks')}"
+            label=lambda a: f"Звук видео: дорожки {a.get('tracks')}"
             + (f", речь {a.get('speech_tracks')}" if a.get("speech_tracks") is not None else ""),
         ),
         Tool(
@@ -7628,7 +7628,7 @@ def _build_registry() -> list[Tool]:
                                                             "track": {"type": "integer"}},
                                                            ["start", "end", "gain_db"])}}, ["ranges"]),
             h_set_source_gain, mutating=True,
-            label=lambda a: f"Громкость исходника ({len(a.get('ranges') or [])} отр.)",
+            label=lambda a: f"Громкость видео ({len(a.get('ranges') or [])} отр.)",
         ),
         Tool(
             "add_music_from_url", "Скачиваю музыку",

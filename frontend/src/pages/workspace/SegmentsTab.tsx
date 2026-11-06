@@ -10,7 +10,7 @@ export function SegmentsTab({ sourceId }: { sourceId: string }) {
   const segments = query.data!.segments;
 
   if (!segments.length) {
-    return <EmptyState icon="🧠" title="Сегментов нет" hint="Запустите анализ на вкладке «Исходник»" />;
+    return <EmptyState icon="🧠" title="Сегментов нет" hint="Запустите анализ на вкладке «Запись и анализ»" />;
   }
 
   return (

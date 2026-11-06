@@ -646,7 +646,7 @@ def tools() -> list:
                  **_at().SOURCE_ARGS,
                  "track": {"type": "integer", "description": "source: одна дорожка записи"}}),
             h_audio_map, scope="global",
-            label=lambda a: "Смотрю карту звука" + (" исходника" if a.get("source") else ""),
+            label=lambda a: "Смотрю карту звука" + (" видео" if a.get("source") else ""),
         ),
         Tool(
             "set_audio_joins", "J/L-склейки",

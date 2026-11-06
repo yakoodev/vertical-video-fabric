@@ -118,7 +118,7 @@ import {
 type SpecPiece = { segment_id?: number; title?: string; start_sec: number; end_sec: number };
 import { ClipTimeline, clipToSource, pieceBounds, type Selection } from "@/pages/workspace/ClipTimeline";
 import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
-import { EmptyState, ErrorState, Loading, formatDuration } from "@/components/ui";
+import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 
 // Manual focus track editor: drop point-of-interest keyframes at the playhead so
 // the smart 9:16 reframe follows the subject. Pairs with the LLM auto-track.
@@ -289,8 +289,8 @@ function clipTimeOf(segments: AiSegment[], cur: number): number | null {
 type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "media";
 // modules — вкладка видна, если включён хотя бы один из модулей (app/modules.py).
 const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string; modules?: string[] }[] = [
-  { key: "moments", icon: "🎬", label: "Моменты", hint: "Другие клипы этого проекта" },
-  { key: "frame", icon: "⛶", label: "Кадр", hint: "Исходник и рамка формата клипа: кадрирование и фокус" },
+  { key: "moments", icon: "🎬", label: "Черновики", hint: "Другие клипы этого видео" },
+  { key: "frame", icon: "⛶", label: "Кадр", hint: "Видео и рамка формата клипа: кадрирование и фокус" },
   { key: "ai", icon: "🤖", label: "ИИ", hint: "ИИ-ассистент: опишите словами, он сам смонтирует", modules: ["editor_agent"] },
   { key: "templates", icon: "✦", label: "Шаблоны", hint: "Готовая анимированная графика: титры, плашки, инфографика, призывы" },
   { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
@@ -647,7 +647,7 @@ function SegmentSpeedControl({
           ))}
         </select>
       </label>
-      <label style={{ display: "flex", gap: 8, alignItems: "center" }} title={sourceLen > 10 ? "Реверс — кусок до 10 с исходника" : ""}>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }} title={sourceLen > 10 ? "Реверс — кусок до 10 с видео" : ""}>
         <input
           type="checkbox"
           checked={reverse}
@@ -668,7 +668,7 @@ function SegmentSpeedControl({
         </label>
       ) : null}
       <p className="muted" style={{ margin: 0 }}>
-        На таймлайне {segLen(segment).toFixed(1)} с (исходника {sourceLen.toFixed(1)} с). Слои и субтитры после куска
+        На таймлайне {segLen(segment).toFixed(1)} с (в видео {sourceLen.toFixed(1)} с). Слои и субтитры после куска
         сдвигаются сами; у реверса субтитры куска скрыты, превью играет его вперёд.
       </p>
     </div>
@@ -1001,7 +1001,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   // browser Back/Forward); the moments list's selection follows it.
   const editorPlanId = view === "editor" ? clipParam : null;
   // Студия на весь экран: боковое меню сервиса в монтаже только отнимает место
-  // у превью и таймлайна, а назад ведёт кнопка «Назад к моментам».
+  // у превью и таймлайна, а назад ведёт кнопка «Назад к черновикам».
   useEffect(() => {
     if (view !== "editor") return;
     document.body.classList.add("vvf-studio");
@@ -1581,7 +1581,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       ),
     onSuccess: async (r) => {
       toast.success(
-        `Компиляция из ${r.clips} моментов, ${Math.round(r.duration)} с` +
+        `Компиляция из ${r.clips} клипов, ${Math.round(r.duration)} с` +
           (r.skipped.length ? ` · не влезло ${r.skipped.length} (лимит 12 кусков)` : ""),
       );
       await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
@@ -1734,7 +1734,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
       await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
       await qc.invalidateQueries({ queryKey: ["plan-subtitles", body.planId] });
       setSettingsNonce((n) => n + 1);
-      const what = r.reverse ? `реверс${r.speed !== 1 ? ` ×${r.speed}` : ""}` : r.speed !== 1 ? `×${r.speed}` : "как в исходнике";
+      const what = r.reverse ? `реверс${r.speed !== 1 ? ` ×${r.speed}` : ""}` : r.speed !== 1 ? `×${r.speed}` : "как в видео";
       toast.success(`Кусок ${r.piece + 1}: ${what} · ${r.length.toFixed(1)} с`);
       for (const w of r.warnings ?? []) toast.push(w, "info");
     },
@@ -2273,7 +2273,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
   if (query.isLoading) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   if (!plans.length) {
-    return <EmptyState icon="🎯" title="Кандидатов нет" hint="Кандидаты появляются после анализа" />;
+    return <EmptyState icon="🎯" title="Черновиков нет" hint="Черновики появляются после анализа" />;
   }
   const source = query.data!;
   // Пустой холст (app/canvas.py): основа — зелёная заглушка, видно только фон клипа.
@@ -2794,7 +2794,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
     { key: "clip", label: "Клип", hint: "Формат, быстрые действия, лук, раскладка, переходы, обложка, баннер, паузы; «Ещё…» — умный кадр, границы, экспорт" },
     { key: "layers", label: "Слои", count: layers.length + inserts.length, hint: "Выбранный слой, все слои клипа, мемы-вставки, наезды камеры" },
     ...(isCanvas ? [] : [{ key: "piece" as const, label: "Кусок", hint: "Скорость, цвет и фокус кадра выбранного куска" }]),
-    { key: "audio", label: "Звук", hint: "Музыка, тишина вместо звука, громкость и звуковые дорожки исходника" },
+    { key: "audio", label: "Звук", hint: "Музыка, тишина вместо звука, громкость и звуковые дорожки видео" },
     { key: "subs", label: "Субтитры", hint: "Субтитры: стиль, положение, распознавание, правка строк, голоса, перевод" },
     { key: "check", label: "Проверка", hint: "Проверка перед сдачей: зоны кнопок площадок, читаемость титров, вспышки, луп" },
   ];
@@ -2941,7 +2941,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         <AiMontageDialog
           initialGoal={aiGoal}
           clipPlanId={activePlan.id}
-          clipTitle={activePlan.title || `План #${activePlan.id}`}
+          clipTitle={activePlan.title || `Клип #${activePlan.id}`}
           onClose={() => setAiMontageOpen(false)}
           onApplied={async (changes, rendered) => {
             toast.success(
@@ -2958,7 +2958,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         />
       ) : null}
       {watchOpen && activePlan ? (
-        <WatchMontage clipPlanId={activePlan.id} title={activePlan.title || `План #${activePlan.id}`} onClose={() => setWatchOpen(false)} />
+        <WatchMontage clipPlanId={activePlan.id} title={activePlan.title || `Клип #${activePlan.id}`} onClose={() => setWatchOpen(false)} />
       ) : null}
       {clipFileOpen && activePlan ? (
         <ClipFileDialog
@@ -2979,12 +2979,12 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               К клипу
             </Link>
           ) : null}
-          <button className="btn ed-back" onClick={backToMoments} title="Вернуться к списку моментов (или кнопка «Назад» браузера)">
+          <button className="btn ed-back" onClick={backToMoments} title="Вернуться к списку черновиков (или кнопка «Назад» браузера)">
             <span className="ed-back-arrow" aria-hidden>←</span>
-            Назад к моментам
+            Назад к черновикам
           </button>
           <div className="ed-crumb">
-            <span className="ed-crumb-title">{activePlan?.title || (activePlan ? `План #${activePlan.id}` : "")}</span>
+            <span className="ed-crumb-title">{activePlan?.title || (activePlan ? `Клип #${activePlan.id}` : "")}</span>
             <span className="ed-crumb-src muted">
               {source.display_name || source.original_filename || source.original_url || `Видео #${source.id}`}
             </span>
@@ -3036,7 +3036,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
         <div className="modal-backdrop" onClick={() => setSubsWide(false)}>
           <div className="modal subs-wide" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="pub-head">
-              <h3>Субтитры клипа · {activePlan.title || `План #${activePlan.id}`}</h3>
+              <h3>Субтитры клипа · {activePlan.title || `Клип #${activePlan.id}`}</h3>
               <button className="pub-x" title="Закрыть" onClick={() => setSubsWide(false)}>
                 ×
               </button>
@@ -3096,7 +3096,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     preload="metadata"
                   />
                 ) : (
-                  <div className="src-missing-stage">У этого момента нет готового рендера</div>
+                  <div className="src-missing-stage">У этого клипа нет готового рендера</div>
                 )
               ) : null}
               {source.width && source.height && !sourceMissing ? (
@@ -3121,20 +3121,20 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           {activePlan ? (
             <div className="mo-now">
               <span className="mo-now-title" title={activePlan.title || ""}>
-                {activePlan.title || `План #${activePlan.id}`}
+                {activePlan.title || `Клип #${activePlan.id}`}
               </span>
               <button
                 type="button"
                 className={`btn mo-now-fav${activePlan.favorite ? " fav" : ""}`}
                 onClick={() => setPlanFlag(activePlan.id, { favorite: !activePlan.favorite })}
-                title="Избранные моменты попадают в редактор"
+                title="Избранные черновики попадают в редактор"
               >
                 {activePlan.favorite ? "★ В избранном" : "☆ В избранное"}
               </button>
             </div>
           ) : null}
           {source.duration_sec ? (
-            <div className="mo-heat" title="Где в видео найдены моменты — клик перематывает">
+            <div className="mo-heat" title="Где в видео найдены клипы — клик перематывает">
               <span ref={heatHeadRef} className="mo-heat-head" />
               {visiblePlans.map((p) =>
                 p.segments.map((s) => (
@@ -3145,7 +3145,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                       left: `${(s.start_sec / source.duration_sec) * 100}%`,
                       width: `max(3px, ${((s.end_sec - s.start_sec) / source.duration_sec) * 100}%)`,
                     }}
-                    title={`${p.title || `План #${p.id}`} · ${formatDuration(s.start_sec)}`}
+                    title={`${p.title || `Клип #${p.id}`} · ${formatDuration(s.start_sec)}`}
                     onClick={() => playPlan(p.id)}
                   />
                 )),
@@ -3175,7 +3175,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
             </div>
           )}
           <div className="mo-stats-line">
-            <b>{plans.length} моментов</b>
+            <b>{plural(plans.length, "черновик", "черновика", "черновиков")}</b>
             <span>· {favCount} в избранном</span>
             <span>· {hiddenCount} скрыто</span>
           </div>
@@ -3187,7 +3187,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           <button
             className="btn primary mo-big"
             onClick={() => openEditor()}
-            title={favCount ? "Работать над избранными моментами" : "Отметьте ★ моменты, чтобы работать над ними в редакторе"}
+            title={favCount ? "Работать над избранными черновиками" : "Отметьте ★ черновики, чтобы работать над ними в редакторе"}
           >
             Открыть редактор{favCount ? ` (${favCount} ★)` : ""}
           </button>
@@ -3201,7 +3201,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           </button>
           {moduleOn("ai_montage") ? <AiBatchPanel sourceId={sourceId} favCount={favCount} /> : null}
           <p className="muted mo-stats-hint">
-            ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть момент.
+            ☆ — в избранное (работа в редакторе), ☐ — в рендер, ✕ — скрыть лишнее. Клик по кадру — посмотреть черновик.
           </p>
         </div>
       </div>
@@ -3270,7 +3270,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           <button
             className="btn sm primary"
             onClick={() => openEditor()}
-            title="Монтаж избранных (E — момент под курсором)"
+            title="Монтаж избранных (E — черновик под курсором)"
           >
             ✂ Монтаж{favCount ? ` · ${favCount} ★` : ""}
           </button>
@@ -3287,7 +3287,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               className="btn sm"
               disabled={favCount < 2 || compile.isPending}
               onClick={() => compile.mutate(plans.filter((p) => p.favorite).map((p) => p.id))}
-              title="Склеить избранные в один клип «ТОП-N»: номера обратным отсчётом, названия, субтитры, whoosh между моментами"
+              title="Склеить избранные в один клип «ТОП-N»: номера обратным отсчётом, названия, субтитры, whoosh между клипами"
             >
               {compile.isPending ? "Собираю…" : "🧩 Компиляция ★"}
             </button>
@@ -3337,7 +3337,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   p.favorite ? " fav" : ""
                 }`}
               >
-                <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть момент в плеере">
+                <button className="mo-thumb" onClick={() => playPlan(p.id)} title="Посмотреть черновик в плеере">
                   {planThumb(p)}
                   {typeof p.quality === "number" ? (
                     <span
@@ -3364,7 +3364,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   onClick={() => openEditor(p.id)}
                   title="Открыть в редакторе"
                 >
-                  {p.title || `План #${p.id}`}
+                  {p.title || `Клип #${p.id}`}
                 </button>
                 {p.ai_pick?.reason ? <div className="mo-why">✨ {p.ai_pick.reason}</div> : null}
                 <div className="mo-foot">
@@ -3381,7 +3381,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </button>
                   <button
                     className="mo-act"
-                    title={p.hidden ? "Вернуть кандидата" : "Скрыть кандидата"}
+                    title={p.hidden ? "Вернуть черновик" : "Скрыть черновик"}
                     onClick={() => setPlanFlag(p.id, { hidden: !p.hidden })}
                   >
                     {p.hidden ? "↩" : "✕"}
@@ -3418,7 +3418,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
           {libTab === "moments" ? (
             <>
               <div className="ed-lib-head">
-                <strong>{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Моменты"}</strong>
+                <strong>{railPlans.some((p) => p.favorite) ? "★ Избранное" : "Черновики"}</strong>
                 <span className="muted">{railPlans.length}</span>
               </div>
               <div className="ed-lib-moments">
@@ -3427,7 +3427,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               key={p.id}
               className={`ed-rail-item${p.id === activePlan?.id ? " active" : ""}`}
               onClick={() => openEditor(p.id)}
-              title={p.title || `План #${p.id}`}
+              title={p.title || `Клип #${p.id}`}
             >
               {planThumb(p)}
               {p.favorite ? <span className="ed-rail-star">★</span> : null}
@@ -3441,7 +3441,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
               На других вкладках он «припаркован» — невидим, но играет. */}
           <div className={`ed-lib-frame${libTab === "frame" ? "" : " parked"}`}>
             <div className="ed-lib-head">
-              <strong>{isCanvas ? "Холст" : "Кадр исходника"}</strong>
+              <strong>{isCanvas ? "Холст" : "Кадр видео"}</strong>
               <span className="muted">
                 {isCanvas ? "видео нет — весь кадр фон; сменить — «Фон холста» справа" : `тащи рамку — так встанет кадр ${aspect}`}
               </span>
@@ -4334,7 +4334,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     <button
                       className="btn primary sm"
                       disabled={autofocus.isPending || !plans.length}
-                      title="Детектор фокуса для всех кандидатов проекта (займёт время)"
+                      title="Детектор фокуса для всех черновиков этого видео (займёт время)"
                       onClick={() => autofocus.mutate([])}
                     >
                       {autofocus.isPending ? "Анализ кадров…" : "Автофокус: все клипы"}
@@ -4342,10 +4342,10 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                     <button
                       className="btn sm"
                       disabled={autofocus.isPending || !activePlan?.segments.length}
-                      title="Только сегменты активного плана"
+                      title="Только сегменты этого клипа"
                       onClick={() => activePlan && autofocus.mutate(activePlan.segments.map((s) => s.id))}
                     >
-                      Только этот план
+                      Только этот клип
                     </button>
                   </div> : <div className="muted li-note">Модуль «Автофокус» выключен (Настройки → Модули).</div>}
                 </Group>
@@ -4816,7 +4816,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 forceOpen={tlSelected?.kind === "mute"}
               >
                 <div className="muted li-note">
-                  Звук исходника глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
+                  Звук видео глушится, картинка остаётся (вшитый эффект, шум, мат); звуки слоёв и музыка играют.
                   Протяните мышью по дорожке «Звук» или нажмите «🔇 Заглушить» над таймлайном.
                 </div>
                 <div className="ed-quick-row">
@@ -4880,9 +4880,9 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                   </div>
                 ) : null}
               </Group>
-              <Group title="Громкость исходника" badge={gain.length ? `${gain.length} отр.` : "как есть"}>
+              <Group title="Громкость видео" badge={gain.length ? `${gain.length} отр.` : "как есть"}>
                 <div className="muted li-note">
-                  Поднять тихий кусок (голос под игрой) или приглушить громкий: звук исходника на отрезке громче/тише
+                  Поднять тихий кусок (голос под игрой) или приглушить громкий: звук видео на отрезке громче/тише
                   на столько дБ, картинка та же; звуки слоёв и музыка не меняются. Тихий микрофон по всему ролику —
                   громкость дорожки в звуке проекта.
                 </div>
@@ -5022,7 +5022,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 ) : null}
                 <div className="rgroup-sub">Эффекты</div>
                 <FxChainEditor
-                  title={isCanvas ? "Голос (слои-озвучка)" : "Голос (звук исходника)"}
+                  title={isCanvas ? "Голос (слои-озвучка)" : "Голос (звук видео)"}
                   chain={mixSettings.voice_fx}
                   onChange={(voice_fx) => setMixSettings((m) => ({ ...m, voice_fx }))}
                 />
@@ -5181,7 +5181,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
                 className="btn"
                 disabled={batch.isPending || !selected.size || recordMissing}
                 onClick={() => batch.mutate(undefined)}
-                title={recordMissing ? "Для рендера нужна запись стрима" : "Рендер всех отмеченных «в рендер» на странице моментов"}
+                title={recordMissing ? "Для рендера нужна запись стрима" : "Рендер всех отмеченных «в рендер» на странице черновиков"}
               >
                 Выбранные ({selected.size})
               </button>
@@ -5191,7 +5191,7 @@ export function CandidatesTab({ sourceId }: { sourceId: string }) {
 
         <div className="panel editor-timeline ed-bottom">
             <div className="ed-tl-head">
-              <strong>{activePlan ? activePlan.title || `План #${activePlan.id}` : ""}</strong>
+              <strong>{activePlan ? activePlan.title || `Клип #${activePlan.id}` : ""}</strong>
               <span className="muted mono">
                 {activePlan ? `${formatDuration(planDur(activePlan))} · ${activePlan.segments.length} сегм.` : ""}
               </span>
