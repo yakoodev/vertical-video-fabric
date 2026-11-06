@@ -400,7 +400,8 @@ const r3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
     await page.keyboard.press("x");
     check("X скрывает", Boolean((await until(() => planOf(547), (p) => Boolean(p.hidden))).hidden));
     await sleep(300);
-    note("скрытый виден (скрытые уже включены выше)", await card.count());
+    // Выше вернули последний скрытый: переключатель исчез, и фильтр выключился вместе с ним.
+    check("скрытый пропал из списка", (await card.count()) === 0, await card.count());
     if (!(await card.count())) {
       await page.locator(".mo-toolbar label.switch", { hasText: "скрытые" }).click();
       await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
