@@ -89,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    conn = sqlite3.connect(args.db)
+    conn = sqlite3.connect(args.db, timeout=30)
     conn.row_factory = sqlite3.Row
     groups, assign, skipped = plan_writes(conn)
     print(f"Выпусков со старыми сборками: {len(groups)}")

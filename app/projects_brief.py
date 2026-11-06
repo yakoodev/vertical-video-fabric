@@ -110,7 +110,7 @@ def get_brief(store: Any, project_id: int) -> dict:
 
 
 def update_brief(store: Any, project_id: int, patch: Any, base_rev: int | None = None) -> dict:
-    with store.db._lock:
+    with store.db.transaction():
         current = get_brief(store, project_id)
         if base_rev is not None and int(base_rev) != current["brief_rev"]:
             raise BriefConflict(f"бриф уже изменён (ревизия {current['brief_rev']}, у вас {base_rev}) — "

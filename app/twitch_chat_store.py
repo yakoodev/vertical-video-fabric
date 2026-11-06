@@ -153,7 +153,7 @@ def _db(store):
     db = store.db
     key = str(getattr(db, "path", id(db)))
     if key not in _schema_ready:
-        with db._lock, db.connect() as conn:
+        with db.transaction() as conn:
             ensure_chat_schema(conn)
         _schema_ready.add(key)
     return db
@@ -229,7 +229,7 @@ def insert_messages(store, source_id: int, rows: Iterable[dict], shift_sec: floa
     ]
     if not params:
         return 0
-    with db._lock, db.connect() as conn:
+    with db.transaction() as conn:
         before = conn.total_changes
         conn.executemany(
             """

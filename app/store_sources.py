@@ -312,11 +312,12 @@ class SourcesStore:
                 if track.get("ass_path"):
                     files.append(track["ass_path"])
             files.extend(self._clip_cover_variant_files(clip["id"]))
-        self.db.execute(
-            "UPDATE jobs SET clip_id = NULL WHERE clip_id IN (SELECT id FROM clips WHERE source_id = ?)",
-            (source_id,),
-        )
-        self._delete_record("sources", source_id)
+        with self.db.transaction():  # файлы — только после коммита: откат не оставит строк без файлов
+            self.db.execute(
+                "UPDATE jobs SET clip_id = NULL WHERE clip_id IN (SELECT id FROM clips WHERE source_id = ?)",
+                (source_id,),
+            )
+            self._delete_record("sources", source_id)
         files_removed = _remove_files_within(files, settings.data_dir)
         # Источник удалён с клипами и монтажом — прокси предпросмотра смотреть больше нечем.
         # (Файл записи, удалённый отдельно, сюда не ведёт: прокси тогда остаётся.)

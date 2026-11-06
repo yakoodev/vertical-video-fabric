@@ -319,8 +319,9 @@ class ClipsStore:
     def delete_clip(self, clip_id: int) -> None:
         self.get_clip(clip_id)
         covers = self._clip_cover_variant_files(clip_id)
-        self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))
-        self._delete_record("clips", clip_id)
+        with self.db.transaction():
+            self.db.execute("UPDATE jobs SET clip_id = NULL WHERE clip_id = ?", (clip_id,))
+            self._delete_record("clips", clip_id)
         # Варианты обложки (app/cover_variants.py): строки уходят каскадом, файлы — здесь.
         _remove_files_within(covers, settings.clip_dir)
 

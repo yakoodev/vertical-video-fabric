@@ -253,38 +253,40 @@ def _request_locked(store: Any, project: dict, stage: str, script_id: int | None
             return {"ok": True, "status": "awaiting_approval", "approval_id": old_id, "estimate": est,
                     "duplicate": True,
                     "note": f"карточка #{old_id} на {est['total_rub']:.2f} ₽ уже ждёт владельца — вторую не шлю"}
-    # Прежняя ждущая карточка того же этапа — устарела: новая заменяет её.
-    for old_id in est["replaces"]:
-        A._update(store, old_id, status="expired", decision_comment="заменена новой карточкой этапа")
-        store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'карточка заменена' "
-                         "WHERE approval_id = ? AND status = 'awaiting'", (old_id,))
-    payload = {"action": CARD_ACTION, "stage": stage, "project_id": int(project_id), "script_id": script_id,
-               "amount_rub": est["total_rub"], "count": est["count"], "model": est["model"],
-               "provider": est["provider"], "note": P._text(note, 300)}
-    if group:
-        payload["group"] = group
-    prefix = getattr(EXTENSIONS[stage], "card_prefix", "Объяснялка") if stage in EXTENSIONS else "ИИ-видео"
-    # Настройка проекта: в пределах суммы карточку решает она. Платная генерация выключена — карточка ждёт, как всегда.
-    spend = S.spend_decision(store, project_id, est["total_rub"]) if settings.aivideo_enabled else {
-        "allowed": False, "asked": False, "reason": "платная генерация выключена"}
-    card = A.submit_card(store, project_id, "other",
-                         _card_question(store, project, est, script, spend["reason"] if spend["asked"] else ""), payload,
-                         title=f"{prefix}: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
-                         submitted_by=requested_by, notify=not spend["allowed"])
-    job_ids = [_insert_job(store, project_id, item, "awaiting", card["id"], requested_by) for item in est["items"]]
-    store.db.execute("UPDATE approvals SET payload_json = ? WHERE id = ?",
-                     (json.dumps({**payload, "job_ids": job_ids}, ensure_ascii=False), card["id"]))
-    if spend["allowed"]:
-        A.decide(store, card["id"], "approve", comment=spend["note"], actor=S.SPEND_ACTOR)
-        return {"ok": True, "status": "approved", "approval_id": card["id"], "estimate": est,
-                "approved_by_setting": True,
-                "note": (f"{est['total_rub']:.2f} ₽ без подтверждения: {S.ACTOR_LABELS[S.SPEND_ACTOR]} (карточка "
-                         f"#{card['id']}, запись в журнале трат). Запуски идут сами.")}
-    why = spend["reason"] or f"настройка «{S.NAME_SPEND}» выключена"
-    return {"ok": True, "status": "awaiting_approval", "approval_id": card["id"], "estimate": est,
-            "note": (f"карточка #{card['id']} на {est['total_rub']:.2f} ₽ ушла владельцу (UI «Одобрение», страница "
-                     f"проекта, Telegram): {why}. Запуск — только после его «Разрешить»; сам не одобряй и не обходи. "
-                     f"Настройка меняется здесь: {S.where(project_id)}.")}
+    # Старая карточка, новая и её запуски — вместе: владелец не получит карточку без запусков.
+    with store.db.transaction():
+        # Прежняя ждущая карточка того же этапа — устарела: новая заменяет её.
+        for old_id in est["replaces"]:
+            A._update(store, old_id, status="expired", decision_comment="заменена новой карточкой этапа")
+            store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'карточка заменена' "
+                             "WHERE approval_id = ? AND status = 'awaiting'", (old_id,))
+        payload = {"action": CARD_ACTION, "stage": stage, "project_id": int(project_id), "script_id": script_id,
+                   "amount_rub": est["total_rub"], "count": est["count"], "model": est["model"],
+                   "provider": est["provider"], "note": P._text(note, 300)}
+        if group:
+            payload["group"] = group
+        prefix = getattr(EXTENSIONS[stage], "card_prefix", "Объяснялка") if stage in EXTENSIONS else "ИИ-видео"
+        # Настройка проекта: в пределах суммы карточку решает она. Платная генерация выключена — карточка ждёт, как всегда.
+        spend = S.spend_decision(store, project_id, est["total_rub"]) if settings.aivideo_enabled else {
+            "allowed": False, "asked": False, "reason": "платная генерация выключена"}
+        card = A.submit_card(store, project_id, "other",
+                             _card_question(store, project, est, script, spend["reason"] if spend["asked"] else ""), payload,
+                             title=f"{prefix}: {est['stage_label']} ≈ {est['total_rub']:.0f} ₽",
+                             submitted_by=requested_by, notify=not spend["allowed"])
+        job_ids = [_insert_job(store, project_id, item, "awaiting", card["id"], requested_by) for item in est["items"]]
+        store.db.execute("UPDATE approvals SET payload_json = ? WHERE id = ?",
+                         (json.dumps({**payload, "job_ids": job_ids}, ensure_ascii=False), card["id"]))
+        if spend["allowed"]:
+            A.decide(store, card["id"], "approve", comment=spend["note"], actor=S.SPEND_ACTOR)
+            return {"ok": True, "status": "approved", "approval_id": card["id"], "estimate": est,
+                    "approved_by_setting": True,
+                    "note": (f"{est['total_rub']:.2f} ₽ без подтверждения: {S.ACTOR_LABELS[S.SPEND_ACTOR]} (карточка "
+                             f"#{card['id']}, запись в журнале трат). Запуски идут сами.")}
+        why = spend["reason"] or f"настройка «{S.NAME_SPEND}» выключена"
+        return {"ok": True, "status": "awaiting_approval", "approval_id": card["id"], "estimate": est,
+                "note": (f"карточка #{card['id']} на {est['total_rub']:.2f} ₽ ушла владельцу (UI «Одобрение», страница "
+                         f"проекта, Telegram): {why}. Запуск — только после его «Разрешить»; сам не одобряй и не обходи. "
+                         f"Настройка меняется здесь: {S.where(project_id)}.")}
 
 
 def _project_of_target(store: Any, target_type: str, target_id: int) -> int:

@@ -59,7 +59,7 @@ SOURCE_IN_TEXT = re.compile(r"\bsrc\s*(\d+)", re.IGNORECASE)
 
 def connect(db_path: Path, write: bool) -> sqlite3.Connection:
     if write:
-        conn = sqlite3.connect(str(db_path))
+        conn = sqlite3.connect(str(db_path), timeout=30)
     else:
         conn = sqlite3.connect(f"file:{quote(db_path.resolve().as_posix())}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row

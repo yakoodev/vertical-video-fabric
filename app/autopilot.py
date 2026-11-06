@@ -47,6 +47,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 from app import projects as P
+from app.db import atomic
 
 from app.autopilot_config import (  # noqa: F401
     AUTOPILOT_SCHEMA_SQL, ensure_autopilot_schema, KINDS, KIND_LABELS, STATUSES, TRUST_LEVELS, PLATFORMS,
@@ -231,25 +232,29 @@ def decide(store: Any, approval_id: int, action: str, comment: str = "", actor: 
     status = DECISION_STATUS[action]
     # Сравнить-и-записать: два одновременных решения (двойной клик, кнопка в Telegram и в UI) —
     # выполняется одно, второе видит «уже решена» (иначе обработчик карточки сработал бы дважды).
-    cur = store.db.execute(
-        "UPDATE approvals SET status = ?, decision_comment = ?, decided_by = ?, decided_at = ?, "
-        "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
-        (status, comment, str(actor or "")[:80], _now_text(), int(approval_id)))
-    if not cur.rowcount:
-        raise ValueError(f"карточка #{approval_id} уже решена: {get_approval(store, approval_id)['status']}")
-    log_event(store, approval_id, approval["project_id"], status, actor, comment)
-    result: dict = {"ok": True, "status": status}
-    if status == "approved":
-        result.update(_on_approved(store, approval, action, comment, actor))
-    elif comment and approval["kind"] == "clip_publish":
-        result["learned"] = learn_from_text(store, approval["project_id"], comment, origin=_origin(actor),
-                                            origin_ref=f"approval#{approval_id}", approval_id=approval_id,
-                                            context={"title": approval["title"]})
-    elif status == "rejected":
-        result.update(_on_rejected(store, approval, comment, actor))
     hook = (CARD_ACTIONS.get(str(approval["payload"].get("action") or ""))
             if approval["kind"] in ("other", "alert") else None)
-    if hook:
+    result: dict = {"ok": True, "status": status}
+    # Решение и его следствия целиком: упало посреди — карточка снова ждёт, а не «одобрена» без запусков.
+    with store.db.transaction():
+        cur = store.db.execute(
+            "UPDATE approvals SET status = ?, decision_comment = ?, decided_by = ?, decided_at = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+            (status, comment, str(actor or "")[:80], _now_text(), int(approval_id)))
+        if not cur.rowcount:
+            raise ValueError(f"карточка #{approval_id} уже решена: {get_approval(store, approval_id)['status']}")
+        log_event(store, approval_id, approval["project_id"], status, actor, comment)
+        if status == "approved":
+            result.update(_on_approved(store, approval, action, comment, actor))
+        elif comment and approval["kind"] == "clip_publish":
+            result["learned"] = learn_from_text(store, approval["project_id"], comment, origin=_origin(actor),
+                                                origin_ref=f"approval#{approval_id}", approval_id=approval_id,
+                                                context={"title": approval["title"]})
+        elif status == "rejected":
+            result.update(_on_rejected(store, approval, comment, actor))
+        if hook and hook.get("atomic"):
+            result.update(hook["on_decide"](store, approval, action, comment, actor) or {})
+    if hook and not hook.get("atomic"):
         result.update(hook["on_decide"](store, approval, action, comment, actor) or {})
     result["approval"] = get_approval(store, approval_id)
     return result
@@ -621,6 +626,7 @@ def _description_with_tags(description: str, tags: list[str]) -> str:
     return "\n\n".join(x for x in (description.strip(), " ".join(missing)) if x)
 
 
+@atomic
 def _place(store: Any, approval_id: int, actor: str = "", at: datetime | None = None,
            use_proposed: bool = True) -> dict:
     """Одобренный клип → задание публикации на ближайший свободный слот (или на ``at``).
@@ -682,6 +688,7 @@ def _cancel_job(store: Any, job_id: int) -> bool:
     return bool(cur.rowcount)
 
 
+@atomic
 def reschedule(store: Any, approval_id: int, action: str = "move", at: Any = None, actor: str = "ui") -> dict:
     """Перенос (move: на ``at`` — время проекта), в ближайший слот (next_slot) или отмена (cancel)."""
     approval = get_approval(store, approval_id)
