@@ -33,6 +33,7 @@ import { lookFilterCss, type InsertPreview, type MotionView } from "@/pages/work
 import { setPreviewSound } from "@/pages/workspace/motion/sound";
 import { clipToSource, type Selection } from "@/pages/workspace/ClipTimeline";
 import { clipTimeOf, DEFAULT_COVER, DEFAULT_TRANSITION, formatTimecode, INSP_TABS, LIB_TABS, type InspTab, type LibTab, type SpecPiece } from "@/pages/workspace/editor/editorHelpers";
+import { useEditorShortcuts } from "@/pages/workspace/editor/useEditorShortcuts";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -484,7 +485,6 @@ export function useDraftsEditorState(sourceId: string) {
   }, [watchOpen]);
   // Moment under the pointer — the target of the F / X / E shortcuts.
   const hoverPlanRef = useRef<number | null>(null);
-  const keyHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const [aiMontageOpen, setAiMontageOpen] = useState(false);
   const [settingsNonce, setSettingsNonce] = useState(0);
   // С чем открыт диалог ИИ-монтажа: с полки вставок он приходит с готовым
@@ -504,14 +504,6 @@ export function useDraftsEditorState(sourceId: string) {
     queryFn: () => clipPlansApi.getSubtitles(editorPlanId as number),
     enabled: Boolean(editorPlanId),
   });
-  // Ctrl+Z: снимок состояния делает сервер перед каждой правкой, здесь только
-  // просим шаг назад и перечитываем клип в панель.
-  const undoRef = useRef<() => void>(() => undefined);
-  // Ctrl+D — копия выделенного слоя (ставится обработчиком последнего рендера).
-  const duplicateRef = useRef<() => void>(() => undefined);
-  const copyLayerRef = useRef<() => boolean>(() => false);
-  const pasteLayerRef = useRef<() => boolean>(() => false);
-  const nudgeLayerRef = useRef<(key: string, big: boolean) => boolean>(() => false);
   const [useVlmFocus, setUseVlmFocus] = useState(false);
   const [packagePieces, setPackagePieces] = useState(false);
   const [hideDuplicates, setHideDuplicates] = useState(false);
@@ -1441,7 +1433,6 @@ export function useDraftsEditorState(sourceId: string) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Keyboard: F ★ / X hide / E edit the moment under the pointer; in the editor
   // Картинка баннера для превью: грузим один раз на выбранный баннер.
   useEffect(() => {
     if (!bannerOn || !bannerId) {
@@ -1454,47 +1445,7 @@ export function useDraftsEditorState(sourceId: string) {
     img.onerror = () => (bannerImgRef.current = null);
   }, [bannerOn, bannerId]);
 
-  // F stars the open clip and Esc goes back to the moments (see «?» in the shell).
-  // One stable listener (a hook must not sit after the early returns below); it
-  // calls whatever handler the latest render left in keyHandlerRef.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
-        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
-        e.preventDefault();
-        undoRef.current();
-        return;
-      }
-      // Ctrl+C / Ctrl+V — слой в буфер и обратно (в том числе в другой клип).
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && ["c", "v", "с", "м"].includes(e.key.toLowerCase())) {
-        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
-        if (window.getSelection()?.toString()) return;
-        const copy = ["c", "с"].includes(e.key.toLowerCase());
-        if ((copy ? copyLayerRef : pasteLayerRef).current()) e.preventDefault();
-        return;
-      }
-      // Alt+стрелки — подвинуть выделенный слой (Shift — крупнее).
-      if (e.altKey && !e.ctrlKey && e.key.startsWith("Arrow")) {
-        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
-        if (nudgeLayerRef.current(e.key, e.shiftKey)) e.preventDefault();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "d") {
-        if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName))) return;
-        e.preventDefault();
-        duplicateRef.current();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
-      if (document.querySelector(".modal-backdrop, .drawer-backdrop")) return;
-      keyHandlerRef.current?.(e);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
+  const editorShortcuts = useEditorShortcuts();
   // ✂ и 🗑 на таймлайне. Куски живут в клип-файле, поэтому правим его целиком
   // через тот же эндпоинт, что и ручная правка: одна проверка, один снимок для Ctrl+Z.
   const editPieces = useMutation({
@@ -1515,32 +1466,33 @@ export function useDraftsEditorState(sourceId: string) {
   });
 
   return {
+    ...editorShortcuts,
     sourceId, qc, toast, libTabs, videoRef, phoneRef, phoneOverlayRef, heatHeadRef, tcRef, subLinesRef, subWordsRef,
     bannerImgRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef, assetMediaRef, triagePhoneRef, query,
     recordMissing, proxyReady, sourceMissing, banners, tracks, subs, assetsQuery, pickableAssets, navigate, view,
     playbackRef, playRanges, stopPlayback, openEditor, backToMoments, musicPreviewRef, musicFromUrl, patchTransition,
     reframedView, motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, motionFonts, clipNowRef, clipNow,
-    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, patchCover, hoverPlanRef, keyHandlerRef,
-    planWave, planSubs, undoRef, duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef, plans, selected,
-    transitionOpts, agentRunningRef, flushSettings, applyToFavorites, composeCover, compile, batchAuto, autoEdit,
-    mixReport, autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats, pieceColor, matchColors,
-    batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit, pickPointRef, setFixedFrame,
-    setPlanFlag, activePlan, planGroups, shownCount, favCount, hiddenCount, analysisChips, uniquePresets,
-    analysisMeta, selectedPreset, lookCss, lookFrames, tcSegsRef, editPieces, libTab, setLibTab, tlSelected,
-    setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId, setActivePlanId, selectedSeg,
-    setSelectedSeg, setChosen, loop, setLoop, rate, setRate, presetId, setPresetId, subsOn, setSubsOn, subId,
-    setSubId, subEngine, setSubEngine, bannerOn, setBannerOn, bannerId, setBannerId, musicOn, setMusicOn, trackId,
-    setTrackId, musicStartSec, setMusicStartSec, musicUrl, setMusicUrl, mirror, setMirror, transition, cover,
-    inserts, setInserts, layers, setLayers, camera, setCamera, layout, setLayout, cuts, setCuts, backdrop,
-    setBackdrop, mute, setMute, gain, setGain, audioEdit, setAudioEdit, mixSettings, setMixSettings, aspect,
-    setAspect, layersFmt, setLayersFmt, endHoldSec, setEndHoldSec, motionBlur, setMotionBlur, inlineEdit,
-    setInlineEdit, coverUploading, setCoverUploading, clipFileOpen, setClipFileOpen, watchOpen, setWatchOpen,
-    aiMontageOpen, setAiMontageOpen, setSettingsNonce, aiGoal, setAiGoal, setSubsWide, useVlmFocus, setUseVlmFocus,
-    packagePieces, setPackagePieces, hideDuplicates, setHideDuplicates, candidateSearch, setCandidateSearch,
-    hiddenAnalyses, setHiddenAnalyses, onlyFavorites, setOnlyFavorites, showHidden, setShowHidden, showZones,
-    setShowZones, bannerHeightPct, setBannerHeightPct, bannerPosPct, setBannerPosPct, subPosPct, setSubPosPct,
-    coverTitle, setCoverTitle, coverStyle, setCoverStyle, autoProgress, censorStyle, setCensorStyle, brandPick,
-    setBrandPick, snapMode, setSnapMode, pickingPoint, setPickingPoint, moduleOn, subsWide,
+    reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, patchCover, hoverPlanRef, planWave, planSubs,
+    plans, selected, transitionOpts, agentRunningRef, flushSettings, applyToFavorites, composeCover, compile,
+    batchAuto, autoEdit, mixReport, autoMix, censorMat, brands, applyBrand, undoEdit, segmentSpeed, snapBeats,
+    pieceColor, matchColors, batch, focusOptions, setFocus, cutStrategies, refineCuts, autofocus, commit,
+    pickPointRef, setFixedFrame, setPlanFlag, activePlan, planGroups, shownCount, favCount, hiddenCount,
+    analysisChips, uniquePresets, analysisMeta, selectedPreset, lookCss, lookFrames, tcSegsRef, editPieces, libTab,
+    setLibTab, tlSelected, setTlSelected, inspTab, setInspTab, subLines, setSubLines, mediaSrc, activePlanId,
+    setActivePlanId, selectedSeg, setSelectedSeg, setChosen, loop, setLoop, rate, setRate, presetId, setPresetId,
+    subsOn, setSubsOn, subId, setSubId, subEngine, setSubEngine, bannerOn, setBannerOn, bannerId, setBannerId,
+    musicOn, setMusicOn, trackId, setTrackId, musicStartSec, setMusicStartSec, musicUrl, setMusicUrl, mirror,
+    setMirror, transition, cover, inserts, setInserts, layers, setLayers, camera, setCamera, layout, setLayout, cuts,
+    setCuts, backdrop, setBackdrop, mute, setMute, gain, setGain, audioEdit, setAudioEdit, mixSettings,
+    setMixSettings, aspect, setAspect, layersFmt, setLayersFmt, endHoldSec, setEndHoldSec, motionBlur, setMotionBlur,
+    inlineEdit, setInlineEdit, coverUploading, setCoverUploading, clipFileOpen, setClipFileOpen, watchOpen,
+    setWatchOpen, aiMontageOpen, setAiMontageOpen, setSettingsNonce, aiGoal, setAiGoal, setSubsWide, useVlmFocus,
+    setUseVlmFocus, packagePieces, setPackagePieces, hideDuplicates, setHideDuplicates, candidateSearch,
+    setCandidateSearch, hiddenAnalyses, setHiddenAnalyses, onlyFavorites, setOnlyFavorites, showHidden,
+    setShowHidden, showZones, setShowZones, bannerHeightPct, setBannerHeightPct, bannerPosPct, setBannerPosPct,
+    subPosPct, setSubPosPct, coverTitle, setCoverTitle, coverStyle, setCoverStyle, autoProgress, censorStyle,
+    setCensorStyle, brandPick, setBrandPick, snapMode, setSnapMode, pickingPoint, setPickingPoint, moduleOn,
+    subsWide,
   };
 }
 
