@@ -852,6 +852,17 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
     source_name = titles_for(store, [source]).get(int(source["id"])) or f"Видео #{source['id']}"
     canvas = str(source["source_type"]) == "canvas"
     project = _project_of(store, head)
+    # Выпуски — только холсты и компиляции: у клипа из записи список выпусков не читаем.
+    release = None
+    described = store.db.query_one("SELECT description FROM clip_plans WHERE id = ?", (head_id,))
+    if canvas or str((described or {"description": ""})["description"] or "").startswith("Компиляция: "):
+        from app.releases import of_plan
+
+        release = of_plan(store, head_id)
+    if project is None and release and release.get("project_id"):
+        # Сборка старых дней не приписала клип к проекту: проект всё равно известен по выпуску.
+        row = store.db.query_one("SELECT id, name FROM projects WHERE id = ?", (int(release["project_id"]),))
+        project = {"id": int(row["id"]), "name": row["name"]} if row else None
 
     # Соседи: те же клипы, что в сетке видео, в том же порядке. У холстов «видео» — проект.
     if canvas and project:
@@ -952,6 +963,7 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
             "duration_sec": float(source.get("duration_sec") or 0),
         },
         "project": project,
+        "release": release,
         "plans": [
             {
                 "id": int(p["id"]),
@@ -1234,3 +1246,58 @@ def save_meta(store: Any, clip_plan_id: int, title: str, description: str, hasht
     plan = store.get_clip_plan(int(head["id"]), include_segments=False)
     store.update_clip_plan_text(int(head["id"]), title or plan["title"], description, plan.get("notes") or "")
     return {"clip_id": None, "title": title or plan["title"], "description": description, "hashtags": tags}
+
+
+# ---- пересборка выпуска: новая версия того же клипа (решение 14) ------------------------------------
+
+
+def hold_assembly(store: Any, plan_id: int) -> None:
+    """План только что создан сборкой: пока она не дошла до конца, его не видно. Упавшая сборка не становится главным
+    планом клипа и не появляется в проекте лишней строкой; ничего не удаляется, прямая ссылка работает."""
+    store.db.execute("UPDATE clip_plans SET hidden = 1 WHERE id = ?", (int(plan_id),))
+
+
+def finish_assembly(store: Any, plan_id: int, previous: int | None) -> dict:
+    """Сборка дошла до конца: план виден и, если выпуск уже собирали, стал новой версией того же клипа.
+    Без прошлого клипа, с удалённым прошлым или с прошлым другого формата (вертикаль и горизонталь — разные клипы,
+    решение 7) план остаётся самостоятельным клипом, и ``note`` говорит почему."""
+    store.db.execute("UPDATE clip_plans SET hidden = 0 WHERE id = ?", (int(plan_id),))
+    if not previous or int(previous) == int(plan_id):
+        return {"linked": False, "first": True, "note": ""}
+    try:
+        members = group_members(store, int(previous))
+    except KeyError:
+        return {"linked": False, "first": False, "note": f"прошлого клипа #{previous} нет: собран новый клип"}
+    head = members[-1]
+    done = [c for c in _renders(store, [int(head["id"])]).get(int(head["id"]), []) if c.get("status") == "succeeded"]
+    head_fmt = _fmt_of_plan(head.get("fmt"), done[-1] if done else None)
+    fmt = _fmt_of_plan(group_members(store, int(plan_id))[-1].get("fmt"), None)
+    if head_fmt != fmt:
+        return {"linked": False, "first": False,
+                "note": f"прошлый клип #{head['id']} в формате {head_fmt}, сборка в {fmt}: это разные клипы"}
+    attach_new_plan(store, int(plan_id), version_of=int(head["id"]))
+    project = store.db.query_one("SELECT project_id FROM plan_projects WHERE clip_plan_id = ?", (int(head["id"]),))
+    if project:
+        # Клип могли перенести в другой проект: новая версия живёт там же.
+        from app import projects as P
+
+        P.assign_plan_project(store, int(plan_id), int(project["project_id"]))
+    fresh = group_members(store, int(plan_id))
+    return {"linked": True, "first": False, "group": fresh[-1].get("clip_group_id"), "of": int(head["id"]),
+            "version": _version_labels(fresh)[int(plan_id)],
+            "note": "новая версия клипа: прошлая осталась, откат на экране клипа"}
+
+
+def hand_edits(store: Any, clip_plan_id: int) -> list[str]:
+    """Что правили в главном плане клипа после сборки: слои и монтаж новая сборка не переносит, это надо сказать."""
+    try:
+        head = head_plan_id(store, int(clip_plan_id))
+    except KeyError:
+        return []
+    out: list[str] = []
+    for row in store.db.query_all("SELECT label FROM clip_plan_history WHERE clip_plan_id = ? ORDER BY id", (head,)):
+        text = str(row["label"] or "").replace("агент: ", "").strip()
+        if not text or text.endswith(": сборка") or text == "правка субтитров" or text in out:
+            continue
+        out.append(text)
+    return out

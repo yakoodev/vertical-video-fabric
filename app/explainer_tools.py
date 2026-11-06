@@ -299,7 +299,7 @@ def tools() -> list[Tool]:
         Tool("explainer_continue", "Продолжаю объяснялку",
              "Вести ролик дальше сейчас (обычно это делает работник): после правки, после «Разрешить», после "
              "сбоя (failed — с того шага, где есть данные). reassemble=true — собрать готовый ролик заново "
-             "(новый клип). / Advance an explainer video now.",
+             "(новая версия того же клипа). / Advance an explainer video now.",
              _obj({"video_id": {"type": "integer"}, "reassemble": {"type": "boolean"}}, ["video_id"]),
              h_continue, mutating=True, scope="project"),
         Tool("explainer_cancel", "Отменяю объяснялку",

@@ -66,3 +66,6 @@
 .aiv .series-col { grid-template-columns: minmax(0, 1fr); }
 .aiv .series-panel { min-width: 0; }
 .aiv .series-panel { grid-template-columns: minmax(0, 1fr); }
+
+/* Журнал трат на телефоне: широкая таблица прокручивается внутри панели. */
+.aiv-ledger { display: block; max-width: 100%; overflow-x: auto; }

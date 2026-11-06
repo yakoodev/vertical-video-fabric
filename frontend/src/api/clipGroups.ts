@@ -105,6 +105,8 @@ export interface ClipView {
     duration_sec: number;
   };
   project: { id: number; name: string } | null;
+  /** Выпуск клипа (app/releases.py): null — клип из записи. */
+  release: { key: string; kind: string; kind_label: string; name: string; has_steps: boolean; project_id: number | null; steps_to: string | null; to: string } | null;
   plans: { id: number; title: string; label: string; renders: number; created_at: string; is_head: boolean }[];
   versions: ClipVersion[];
   version_count: number;

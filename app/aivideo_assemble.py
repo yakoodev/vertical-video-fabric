@@ -18,7 +18,7 @@
 ``speech none`` молчит. Субтитры клипа — из тех же реплик с их окнами (слой ``captions``, стиль
 субтитров проекта). Музыка — трек проекта (паки, бесплатно), под репликами приглушена
 (``music_duck``). Результат — обычный клип: правится в редакторе, рендерится и публикуется как всё
-остальное. Каждая сборка — новый клип.
+остальное. Первая сборка — новый клип, следующие — его новые версии (app/clip_groups.finish_assembly).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from app import aivideo as V
+from app import clip_groups as CG
 from app import projects as P
 from app.settings import settings
 from app import aivideo_gen as G
@@ -185,7 +186,7 @@ def _music_duck(lines: list[dict]) -> list[dict]:
 
 def assemble(store: Any, script_id: int, music_track_id: int | None = None, captions_style: str | None = None,
              background: Any = None, title: str | None = None) -> dict:
-    """Серия → новый холст-клип. Нужно видео (этап video) или кадр (этап keyframes) у каждого плана;
+    """Серия → холст-клип, повторная сборка — новая версия того же клипа. Нужно видео (этап video) или кадр (этап keyframes) у каждого плана;
     озвучка — этап voice (сухой прогон делается тут же бесплатно)."""
     from app.audio_edit import normalize_audio
     from app.camera3d import PresetError
@@ -229,6 +230,8 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
                               title or f"{script['title']}"[:100],
                               f"ИИ-видео: серия {script['episode_no']} «{script['title']}». {script['logline']}"[:500])
     plan_id = int(clip["id"])
+    previous = script.get("clip_plan_id")  # собирали раньше — новая версия того же клипа (решение 14)
+    CG.hold_assembly(store, plan_id)
     P.assign_plan_project(store, plan_id, project_id)  # иначе у холста нет проекта: виден только по прямой ссылке
     layers: list[dict] = []
     camera: list[dict] = []
@@ -315,6 +318,12 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
             mix = {"voice_vs_music_db": done["after"]["voice_vs_music_db"], "changes": done["changes"]}
         except Exception as exc:  # noqa: BLE001 - сведение — надстройка, клип важнее
             notes.append(f"автосведение не вышло ({type(exc).__name__}: {str(exc)[:140]}) — audio_mix_report")
+    version = CG.finish_assembly(store, plan_id, previous)
+    if version["note"] and not version["linked"]:
+        notes.append(version["note"])
+    if version["linked"]:
+        notes.append("Новая версия того же клипа: субтитры и монтаж собраны из серии заново, правки руками остались в прошлой "
+                     "версии, откат на экране клипа")
     store.db.execute("UPDATE aiv_scripts SET clip_plan_id = ?, status = 'assembled', updated_at = CURRENT_TIMESTAMP "
                      "WHERE id = ?", (plan_id, int(script_id)))
     videos = sum(1 for s in plan["shots"] if s["video"])
@@ -324,6 +333,6 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
             "camera_keys": len(render["camera"]), "voice": voice.get("status"),
             "timeline": [{"shot": s["shot"]["idx"], "start": s["start"], "end": s["end"],
                           "kind": "video" if s["video"] else "still"} for s in plan["shots"]],
-            "editor_url": f"/clips/{plan_id}", "notes": notes,
+            "editor_url": f"/clips/{plan_id}", "notes": notes, "version": version,
             **({"mix": mix} if mix else {}),
             "note": ("обычный холст-клип: правь в редакторе (слои aiv_*), рендер и публикация — как у любого клипа")}

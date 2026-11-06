@@ -30,10 +30,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import clip_groups as CG
 from app import projects as P
 from app import series3d as S3
 from app import stories as S
 from app import stories_disaster as D
+from app import word_fixes as WF
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -364,6 +366,7 @@ def assemble(store: Any, episode_id: int) -> dict:
     from app.canvas import MIN_DURATION_SEC, base_seconds, create_canvas_clip
     from app.clip_history import snapshot
     from app.dubbing import probe_duration
+    from app import explainer_gen as X
     from app.explainer_gen import auto_mix_clip, proportional_words
     from app.motion import normalize_camera, normalize_layers
 
@@ -382,16 +385,11 @@ def assemble(store: Any, episode_id: int) -> dict:
     words: list[dict] = [dict(w) for w in ((job or {}).get("payload") or {}).get("words") or []]
     if words:
         pass
-    elif S.world_voice(store, world)["provider"] != "none":
-        try:
-            words = SG.transcribe_words(path)
-        except Exception as exc:  # noqa: BLE001 - Whisper выключен/не встал: по длине текста
-            notes.append(f"Whisper не сработал ({type(exc).__name__}: {str(exc)[:120]}) — слова по длине текста")
-    if not words:
+    elif not S.is_dry(ep):
+        # Субтитры — слова сценария со временем распознанных; без речи серию не выпускаем (как у объяснялок).
+        words, _heard = X.real_words(store, S.narration_text(ep), ref, path, S.StoryError, "серию", SG.transcribe_words)
+    if not words:  # только явный сухой прогон: вместо речи тон
         words = proportional_words(S.narration_text(ep), audio_sec)
-    else:
-        # Субтитры — слова сценария со временем распознанных (Whisper путает слова и цифры).
-        words = S3.align_words(S.narration_text(ep), words)
     disaster = D.is_disaster(world, ep)
     speech_end = round(float(words[-1]["end"]), 3)
     tail = D.PART_SEC if disaster else SG.TAIL_SEC
@@ -473,6 +471,9 @@ def assemble(store: Any, episode_id: int) -> dict:
                               (ep.get("title") or ep["premise"])[:100],
                               f"3D-серия ({world['name']}): {ep['premise']}"[:500])
     clip_id = int(clip["id"])
+    CG.hold_assembly(store, clip_id)
+    previous = ep.get("clip_id")
+    words, sub_fixes = WF.apply_previous(store, previous, ep.get("words") or [], words, notes)
     P.assign_plan_project(store, clip_id, int(ep["project_id"]))  # иначе холст виден только по прямой ссылке
     render = dict(store.get_clip_plan(clip_id).get("render_settings") or {})
     render["layers"] = normalize_layers(layers)
@@ -490,8 +491,11 @@ def assemble(store: Any, episode_id: int) -> dict:
         notes.append(D.MUSIC_NOTE)
     mixed = auto_mix_clip(ctx, notes)
     shots = result["shots"]
+    version = CG.finish_assembly(store, clip_id, previous)
+    if version["note"] and not version["linked"]:
+        notes.append(version["note"])
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2), "engine": S.ENGINE_3D,
-                "editor_url": f"/clips/{clip_id}",
+                "editor_url": f"/clips/{clip_id}", "version": version, "subtitle_fixes": sub_fixes,
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "camera", "sfx", "sentence")} for p in placed],
                 "shots_per_min": round(len(shots) / total * 60, 1), "sfx": len(result.get("sfx") or []),
                 "layers": len(render["layers"]), "music_track_id": track, "music_bed": bed, "cover_frames": covers,
@@ -515,7 +519,8 @@ def assemble(store: Any, episode_id: int) -> dict:
     S.set_status(store, episode_id, "done", ("assembling",), clip_id=clip_id, words=words, timeline=timeline,
                  notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "shots": len(shots),
-           "layers": len(render["layers"]), "editor_url": timeline["editor_url"], "notes": notes, "engine": S.ENGINE_3D}
+           "layers": len(render["layers"]), "editor_url": timeline["editor_url"], "notes": notes, "engine": S.ENGINE_3D,
+           "version": version, "subtitle_fixes": sub_fixes}
     if options.get("render"):
         out["publish"] = SG.finish_publish(store, episode_id, clip_id, cover=options.get("cover", True))
     return out

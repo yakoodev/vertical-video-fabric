@@ -38,7 +38,7 @@ export const VIDEO_TABS: readonly VideoTab[] = [
 
 /* ---------- Проект: /p/:id?tab=<key> ---------- */
 
-export type ProjectTabKey = "videos" | "clips" | "questions" | "files" | "chat" | "know" | "stats" | "autopilot" | "aiv" | "channel" | "expl" | "story";
+export type ProjectTabKey = "videos" | "clips" | "questions" | "files" | "materials" | "chat" | "know" | "stats" | "autopilot";
 
 export type ProjectTab = TabDef & { key: ProjectTabKey };
 
@@ -47,33 +47,38 @@ export const PROJECT_TABS: readonly ProjectTab[] = [
   { key: "clips", label: "Клипы", cmd: "Клипы проекта" },
   { key: "questions", label: "Вопросы", cmd: "Вопросы проекта", module: "stream_questions" },
   { key: "files", label: "Файлы", cmd: "Файлы проекта" },
+  // Маскоты и позы, миры и актёры, стиль, персонажи и бюджет ИИ-видео, темы канала (решение 16).
+  { key: "materials", label: "Материалы", cmd: "Материалы проекта: маскоты, миры, персонажи" },
   { key: "chat", label: "Чат", cmd: "Чат проекта", module: "agent_chat" },
   { key: "know", label: "Лор и правила", cmd: "Что агент знает, лор и правила" },
   { key: "stats", label: "Статистика" },
   { key: "autopilot", label: "Автопилот", module: "autopilot" },
-  // Только у проекта вида «ИИ-видео» (app/aivideo.py), см. projectTabs.
-  { key: "aiv", label: "ИИ-видео", module: "ai_video" },
-  // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал: темы, расписание, автопилот.
-  { key: "channel", label: "Канал", module: "explainer" },
-  // Объяснялки (app/explainer.py): маскот объясняет тему: у «ИИ-видео», «канала объяснялок» и проекта с маскотом.
-  { key: "expl", label: "Объяснялки", module: "explainer" },
-  // Истории (app/stories.py): рассказчик и сцена на каждую фразу, тоже только у «ИИ-видео».
-  { key: "story", label: "Истории", module: "stories" },
 ];
 
-/** Вкладки этого проекта. Без проекта: те, что есть у любого (подсказка «?» и Ctrl K). */
-export function projectTabs(on: IsOn, project?: { kind?: string | null; has_mascots?: boolean | null }): ProjectTab[] {
-  const isAiv = project?.kind === "ai_video";
-  const isChannel = project?.kind === "explainer";
-  return visibleTabs(PROJECT_TABS, on).filter((tab) =>
-    tab.key === "aiv" || tab.key === "story"
-      ? isAiv
-      : tab.key === "channel"
-        ? isAiv || isChannel
-        : tab.key === "expl"
-          ? isAiv || isChannel || Boolean(project?.has_mascots)
-          : true,
-  );
+/** Вкладки проекта. Набор один у всех проектов: «Материалы» нужны, только если включён хотя бы один генератор. */
+export function projectTabs(on: IsOn): ProjectTab[] {
+  const generators = on("explainer") || on("stories") || on("ai_video");
+  return visibleTabs(PROJECT_TABS, on).filter((tab) => tab.key !== "materials" || generators);
+}
+
+/** Разделы «Материалов»: ?tab=materials&mat=<key>. */
+export const MATERIAL_TABS = [
+  { key: "mascots", label: "Маскоты и позы", module: "explainer" },
+  { key: "worlds", label: "Миры, актёры, сцены", module: "stories" },
+  { key: "aiv", label: "ИИ-видео: стиль, персонажи, бюджет", module: "ai_video" },
+  { key: "channel", label: "Канал: темы и расписание", module: "explainer" },
+] as const;
+
+/**
+ * Старые вкладки проекта (закладки, ответы агента, Telegram). Ролики и эпизоды теперь строки вкладки «Видео»,
+ * настройки и библиотеки — «Материалы»; ?sub= у ИИ-видео ведёт в тот же раздел материалов.
+ */
+export function movedProjectTab(tab: string | null, sub: string | null): Record<string, string> | null {
+  if (tab === "expl") return { tab: "videos", kind: "expl" };
+  if (tab === "story") return { tab: "videos", kind: "story" };
+  if (tab === "aiv") return sub ? { tab: "materials", mat: "aiv", sub } : { tab: "videos", kind: "aiv" };
+  if (tab === "channel") return { tab: "materials", mat: "channel" };
+  return null;
 }
 
 /** Подвкладки «Лор и правила»: те же адреса ?tab=brief|rules|hyp, что были у отдельных вкладок. */

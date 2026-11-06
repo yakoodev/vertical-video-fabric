@@ -215,7 +215,7 @@ def test_series_parts_previously_and_hook_continuation(env):
     X.cancel(store, fifth["id"])
     assert D.next_part(store, world["id"]) == 3
     story = S.create_episode(store, world["id"], "смешная история", 50, options={"format": "story"})
-    assert story["options"] == {"format": "story"} and D.next_part(store, world["id"]) == 3
+    assert story["options"]["format"] == "story" and "part" not in story["options"] and D.next_part(store, world["id"]) == 3
 
 
 # --------------------------------------------------------------------------- #

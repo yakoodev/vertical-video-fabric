@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { releaseKeys } from "@/api/releases";
+import { navKeys } from "@/api/nav";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CAMERA_LABEL, aivApi } from "@/api/aivideo";
@@ -31,10 +34,9 @@ import "@/styles/explainer.css";
 import "@/styles/stories.css";
 
 /**
- * «Истории» (app/stories*.py): рассказчик за кадром и новая сцена на каждую фразу. Мир (стиль, голос,
- * субтитры, музыка), актёры с листами и локации с плитами (переиспользуются во всех эпизодах),
- * библиотека сцен, новый эпизод (завязка, длина, тон), ход конвейера, ОДНА карточка с суммой на эпизод
- * и ссылка на клип в редакторе.
+ * Истории и 3D-серии (app/stories*.py): рассказчик за кадром и новая сцена на каждую фразу. Три куска одного конвейера:
+ * StoriesTab — материалы проекта (мир: стиль, голос, субтитры, музыка; актёры, локации, библиотека сцен),
+ * StoryNew — форма типа в «Новое видео», StoryEpisodePanel — эпизод на странице выпуска.
  */
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -48,12 +50,13 @@ function useInvalidate(projectId: number) {
   return () => {
     qc.invalidateQueries({ queryKey: storiesKey(projectId) });
     qc.invalidateQueries({ queryKey: ["stories", "episode"] });
+    qc.invalidateQueries({ queryKey: releaseKeys.all });
+    qc.invalidateQueries({ queryKey: navKeys.all });
   };
 }
 
-export function StoriesTab({ projectId }: { projectId: number }) {
-  const [picked, setPicked] = useState<number | null>(null);
-  const q = useQuery({
+function useOverview(projectId: number) {
+  return useQuery({
     queryKey: storiesKey(projectId),
     queryFn: () => storiesApi.overview(projectId),
     refetchInterval: (query) => {
@@ -62,6 +65,79 @@ export function StoriesTab({ projectId }: { projectId: number }) {
       return busy ? 4000 : false;
     },
   });
+}
+
+function WorldPicker({ o, current, onPick }: { o: StoriesOverview; current?: StoryWorld; onPick: (id: number) => void }) {
+  if (o.worlds.length < 2) return null;
+  return (
+    <nav className="pipeline aiv-subtabs">
+      {o.worlds.map((w) => (
+        <button key={w.id} className={`tab${current?.id === w.id ? " active" : ""}`} onClick={() => onPick(w.id)}>
+          {w.name}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** Форма типа в «Новое видео»: История или 3D-серия. Мира ещё нет — заводим прямо здесь. */
+export function StoryNew({
+  projectId,
+  engine,
+  onCreated,
+}: {
+  projectId: number;
+  engine: StoryEngine;
+  onCreated: (episode: StoryEpisode) => void;
+}) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const q = useOverview(projectId);
+  if (q.isLoading) return <Loading />;
+  if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const o = q.data;
+  const world = o.worlds.find((w) => w.id === picked) ?? o.worlds[0];
+  return (
+    <div className="aiv expl story">
+      <WorldPicker o={o} current={world} onPick={setPicked} />
+      {world ? <NewEpisode key={`${world.id}-${engine}`} o={o} world={world} engine={engine} onCreated={onCreated} /> : <NewWorld o={o} empty />}
+    </div>
+  );
+}
+
+/** Эпизод на странице выпуска: всё, что было в строке вкладки «Истории», раскрыто. */
+export function StoryEpisodePanel({
+  projectId,
+  episodeId,
+  reassembleNote,
+  onDeleted,
+}: {
+  projectId: number;
+  episodeId: number;
+  reassembleNote: string;
+  onDeleted: () => void;
+}) {
+  const q = useOverview(projectId);
+  if (q.isLoading) return <Loading />;
+  if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const e = q.data.episodes.find((x) => x.id === episodeId);
+  if (!e) return <ErrorState error={new Error("Эпизода нет в этом проекте")} />;
+  const world = q.data.worlds.find((w) => w.id === e.world_id);
+  if (!world) return <ErrorState error={new Error("Мир этого эпизода удалён")} />;
+  return (
+    <div className="aiv expl story">
+      <section className="panel series-panel">
+        <div className="expl-videos">
+          <EpisodeRow e={e} projectId={projectId} world={world} embedded reassembleNote={reassembleNote} onDeleted={onDeleted} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** Материалы проекта: мир, актёры, локации, библиотека сцен. Новый эпизод делается через «Новое видео». */
+export function StoriesTab({ projectId }: { projectId: number }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const q = useOverview(projectId);
   if (q.isLoading) return <Loading />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const o = q.data;
@@ -69,25 +145,9 @@ export function StoriesTab({ projectId }: { projectId: number }) {
   return (
     <div className="aiv expl story">
       <ApprovalBanners o={o} />
-      {o.provider === "none" ? (
-        <div className="panel expl-note">
-          Проект в <b>сухом прогоне</b> (провайдер none): сцены, листы и плиты — заглушки, озвучка — тон, 0 ₽. Настоящие
-          картинки — провайдер Polza во вкладке «ИИ-видео».
-        </div>
-      ) : null}
-      {o.worlds.length > 1 ? (
-        <nav className="pipeline aiv-subtabs">
-          {o.worlds.map((w) => (
-            <button key={w.id} className={`tab${world?.id === w.id ? " active" : ""}`} onClick={() => setPicked(w.id)}>
-              {w.name}
-            </button>
-          ))}
-        </nav>
-      ) : null}
+      <WorldPicker o={o} current={world} onPick={setPicked} />
       {world ? (
         <>
-          <NewEpisode o={o} world={world} />
-          <Episodes o={o} world={world} />
           <CastAndPlaces world={world} projectId={o.project.id} />
           <SceneLibrary world={world} projectId={o.project.id} />
           <WorldCard key={world.id} world={world} projectId={o.project.id} />
@@ -143,7 +203,17 @@ function ApprovalBanners({ o }: { o: StoriesOverview }) {
 // Новый эпизод и эпизоды
 // --------------------------------------------------------------------------- //
 
-function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
+function NewEpisode({
+  o,
+  world,
+  engine,
+  onCreated,
+}: {
+  o: StoriesOverview;
+  world: StoryWorld;
+  engine: StoryEngine;
+  onCreated: (episode: StoryEpisode) => void;
+}) {
   const toast = useToast();
   const invalidate = useInvalidate(o.project.id);
   const initial = (fmt: StoryFormat) => ({
@@ -153,8 +223,8 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
     tone: fmt === "disaster" ? "напряжённо" : STORY_TONES[0],
     title_card: fmt === "disaster",
     render: false,
-    engine: "images" as StoryEngine,
-    renderer: "three" as StoryRenderer,
+    engine,
+    renderer: (engine === "3d" ? "blender" : "three") as StoryRenderer,
     quality: "fast" as StoryQuality,
   });
   const [form, setForm] = useState(() => initial(world.format ?? "story"));
@@ -165,10 +235,11 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
     Math.max(0, ...o.episodes.filter((e) => e.world_id === world.id && e.options?.format === "disaster" && e.status !== "cancelled").map((e) => e.options.part ?? 0)) + 1;
   const create = useMutation({
     mutationFn: () => storiesApi.createEpisode(world.id, form),
-    onSuccess: () => {
-      toast.success("Эпизод в работе: сценарий → сцены → (карточка, если нужны новые картинки) → клип");
+    onSuccess: (episode) => {
+      toast.success(engine === "3d" ? "Серия в работе: сценарий → режиссура → озвучка → рендер → клип" : "Эпизод в работе: сценарий → сцены → (карточка, если нужны новые картинки) → клип");
       setForm({ ...form, premise: "" });
       invalidate();
+      onCreated(episode);
     },
     onError: (e) => toast.error(errText(e, "Не создано")),
   });
@@ -176,9 +247,9 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
   return (
     <section className="panel series-panel">
       <div className="series-panel-head">
-        <h3>Новая история · {world.name}</h3>
+        <h3>{engine === "3d" ? "Новая 3D-серия" : "Новая история"} · {world.name}</h3>
         <span className="muted">
-          сцен в библиотеке {ready} — готовые бесплатны, новая ≈ 3–4,5 ₽; потолок эпизода {rub(o.episode_cap_rub)}
+          {engine === "3d" ? "свой движок, 0 ₽, рендер на этом компьютере" : `сцен в библиотеке ${ready} — готовые бесплатны, новая ≈ 3–4,5 ₽; потолок эпизода ${rub(o.episode_cap_rub)}`}
         </span>
       </div>
       <div className="series-row" role="radiogroup" aria-label="Жанр">
@@ -195,17 +266,6 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
           </button>
         ))}
         {disaster ? <span className="chip story-part">часть {nextPart}</span> : null}
-        <label
-          className="aiv-check"
-          title="Свой 3D-движок: лоу-поли герой-игрушка по карточке актёра, кадр на каждую фразу озвучки, свет и звуки на словах. Без картинок сцен и без карточки — 0 ₽; рендер — минуты."
-        >
-          <input
-            type="checkbox"
-            checked={form.engine === "3d"}
-            onChange={(e) => setForm({ ...form, engine: e.target.checked ? "3d" : "images" })}
-          />{" "}
-          🧊 3D-серия (движок, 0 ₽)
-        </label>
         {form.engine === "3d" ? (
           <label
             className="aiv-check"
@@ -263,7 +323,7 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
           <input type="checkbox" checked={form.render} onChange={(e) => setForm({ ...form, render: e.target.checked })} /> сразу рендер
         </label>
         <button className="btn primary sm" disabled={form.premise.trim().length < 3 || create.isPending} onClick={() => create.mutate()}>
-          ✨ Сделать историю
+          {engine === "3d" ? "✨ Сделать серию" : "✨ Сделать историю"}
         </button>
       </div>
       <span className="muted">
@@ -278,25 +338,25 @@ function NewEpisode({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
   );
 }
 
-function Episodes({ o, world }: { o: StoriesOverview; world: StoryWorld }) {
-  const episodes = o.episodes.filter((e) => e.world_id === world.id);
-  if (!episodes.length) return null;
-  return (
-    <section className="panel series-panel">
-      <h3>Эпизоды</h3>
-      <div className="expl-videos">
-        {episodes.map((e) => (
-          <EpisodeRow key={e.id} e={e} projectId={o.project.id} world={world} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: number; world: StoryWorld }) {
+function EpisodeRow({
+  e,
+  projectId,
+  world,
+  embedded,
+  reassembleNote,
+  onDeleted,
+}: {
+  e: StoryEpisode;
+  projectId: number;
+  world: StoryWorld;
+  embedded?: boolean;
+  reassembleNote?: string;
+  onDeleted?: () => void;
+}) {
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(embedded));
+  const [asking, setAsking] = useState(false);
   const detail = useQuery({ queryKey: storyEpisodeKey(e.id), queryFn: () => storiesApi.episode(e.id), enabled: open });
   const act = useMutation({
     mutationFn: (what: "continue" | "cancel" | "delete" | "reassemble") =>
@@ -307,7 +367,12 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
           : what === "cancel"
             ? storiesApi.cancelEpisode(e.id)
             : storiesApi.deleteEpisode(e.id),
-    onSuccess: () => invalidate(),
+    onSuccess: (_d, what) => {
+      invalidate();
+      setAsking(false);
+      if (what === "delete") onDeleted?.();
+      if (what === "reassemble") toast.success("Собираю новую версию этого клипа");
+    },
     onError: (err) => toast.error(errText(err, "Не удалось")),
   });
   const active = EPISODE_ACTIVE.includes(e.status);
@@ -320,9 +385,15 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
         <span className={`chip expl-status ${STATUS_TONE[e.status] ?? ""}`}>
           {active ? <span className="spinner sm" /> : null} {e.status_label}
         </span>
-        <button className="link-btn expl-topic" onClick={() => setOpen(!open)} title="Сценарий и кадры">
-          {e.title || e.premise}
-        </button>
+        {embedded ? (
+          <button type="button" className="expl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+            {open ? "▾ Скрыть сценарий" : "▸ Сценарий и кадры"}
+          </button>
+        ) : (
+          <button className="link-btn expl-topic" onClick={() => setOpen(!open)} title="Сценарий и кадры">
+            {e.title || e.premise}
+          </button>
+        )}
         {e.options?.format === "disaster" ? <span className="chip story-part">часть {e.options.part ?? 1}</span> : null}
         {e.options?.engine === "3d" ? <span className="chip">{e.options?.renderer === "blender" ? "3D · Blender" : "3D"}</span> : null}
         <span className="muted">
@@ -330,7 +401,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
         </span>
         {e.estimate_rub > 0 ? <span className="muted">≈ {rub(e.estimate_rub)}</span> : null}
         <span className="expl-video-actions">
-          {e.clip_id && e.editor_url ? (
+          {e.clip_id && e.editor_url && !embedded ? (
             <Link className="btn sm primary" to={e.editor_url}>
               Открыть клип #{e.clip_id}
             </Link>
@@ -341,7 +412,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
             </button>
           ) : null}
           {e.status === "done" ? (
-            <button className="btn ghost sm" disabled={act.isPending} onClick={() => act.mutate("reassemble")} title="Новый клип из тех же битов">
+            <button className="btn ghost sm" disabled={act.isPending} onClick={() => setAsking(true)} title="Новая версия этого клипа из тех же кадров">
               Пересобрать
             </button>
           ) : null}
@@ -356,6 +427,17 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
           )}
         </span>
       </div>
+      <ConfirmDialog
+        open={asking}
+        title="Пересобрать?"
+        body={reassembleNote || "Соберётся новая версия этого клипа, новый клип не появится. Прошлая версия останется, откат на экране клипа."}
+        confirmLabel="Собрать новую версию"
+        cancelLabel="Не надо"
+        danger={false}
+        busy={act.isPending}
+        onCancel={() => setAsking(false)}
+        onConfirm={() => act.mutate("reassemble")}
+      />
       {e.render3d && e.status === "assembling" ? (
         <div className="muted" title={e.render3d.worker ? `воркер: ${e.render3d.worker}` : undefined}>
           <progress max={1} value={e.render3d.progress} /> {e.render3d.note || e.render3d.label}
@@ -383,7 +465,7 @@ function EpisodeRow({ e, projectId, world }: { e: StoryEpisode; projectId: numbe
                 {d.readiness?.held.length ? <span className="aiv-warn">{d.readiness.held[0]}</span> : null}
               </div>
             ) : null}
-            {d.timeline ? (
+            {d.timeline?.duration !== undefined ? (
               <div className="aiv-est">
                 <span className="chip">{d.timeline.duration.toFixed(1)} с</span>
                 <span className="chip">{d.timeline.shots_per_min} кадров/мин</span>
@@ -790,7 +872,7 @@ function WorldCard({ world, projectId }: { world: StoryWorld; projectId: number 
             </select>
           </div>
           <div className="series-row">
-            <TtsVoicePicker value={voice} showModel onChange={(next) => setVoice({ ...voice, ...next })} />
+            <TtsVoicePicker value={voice} showModel allowDry={false} onChange={(next) => setVoice({ ...voice, ...next })} />
             <button className="btn sm primary" disabled={save.isPending} onClick={() => save.mutate()}>
               Сохранить
             </button>

@@ -6,7 +6,8 @@ import { sourcesApi } from "@/api/sources";
 import { qk } from "@/api/keys";
 import { Icon } from "@/components/Icon";
 import { plural } from "@/components/ui";
-import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
+import { clipPath, projectPath, videoPath } from "@/lib/paths";
+import { releaseKeys, releasesApi } from "@/api/releases";
 import { SECTIONS, SECTION_ORDER, visibleTabs } from "@/lib/tabs";
 import { HIDDEN_SOURCE_TYPES, KIND_LABELS } from "@/lib/videoKinds";
 import { clipGroupKeys, clipGroupsApi, countClips } from "@/api/clipGroups";
@@ -38,6 +39,15 @@ export function useWhere(nav: NavState | undefined) {
   const asked = new URLSearchParams(location.search).get("clip") ?? "";
   const editClipId = videoId && parts[2] === "candidates" && /^\d+$/.test(asked) ? asked : "";
   const viewId = clipId || editClipId;
+  // Страница выпуска: проект и клипы знает сам выпуск (тот же запрос, что у страницы).
+  const releaseKey = head === "r" ? parts[1] ?? "" : "";
+  const release = useQuery({
+    queryKey: releaseKeys.one(releaseKey),
+    queryFn: () => releasesApi.get(releaseKey),
+    enabled: Boolean(releaseKey),
+    retry: false,
+    staleTime: 15_000,
+  });
   const clip = useQuery({
     queryKey: clipGroupKeys.view(viewId),
     queryFn: () => clipGroupsApi.view(viewId),
@@ -54,11 +64,11 @@ export function useWhere(nav: NavState | undefined) {
   const projectId =
     head === "p"
       ? Number(parts[1]) || null
-      : clip.data?.project?.id ?? source.data?.project_id ?? null;
+      : release.data?.project?.id ?? clip.data?.project?.id ?? source.data?.project_id ?? null;
   const project = nav?.projects.find((p) => p.id === projectId) ?? null;
   // Холст и загруженный клип: служебный источник, а не видео, которое открыл владелец.
   const hiddenVideo = Boolean(source.data && HIDDEN_SOURCE_TYPES.includes(source.data.source_type));
-  return { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo };
+  return { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo, releaseKey, release };
 }
 
 function Menu({
@@ -146,8 +156,8 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
   const location = useLocation();
   const [params] = useSearchParams();
   const { on } = useModules();
-  const { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo } = useWhere(nav);
-  const hasProject = head === "p" || head === "v" || Boolean(clipId);
+  const { head, parts, videoId, source, projectId, project, clipId, editClipId, clip, hiddenVideo, releaseKey, release } = useWhere(nav);
+  const hasProject = head === "p" || head === "v" || Boolean(clipId) || Boolean(releaseKey);
   const planId = videoId && parts[2] === "candidates" ? Number(params.get("clip")) || null : null;
   // Соседи по видео на ступени «Клип»: один пункт на клип, а не на план.
   const cards = useQuery({
@@ -160,7 +170,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
   const videos = useQuery({
     queryKey: navKeys.videos(projectId),
     queryFn: () => navApi.videos(projectId),
-    enabled: open === 1 && hasProject && (head === "p" || Boolean(clipId) || source.isSuccess),
+    enabled: open === 1 && hasProject && (head === "p" || Boolean(clipId) || Boolean(releaseKey) || source.isSuccess),
     staleTime: 15_000,
   });
 
@@ -196,7 +206,8 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
   const rungs = useMemo<{ list: Rung[]; active: number }>(() => {
     if (hasProject) {
       const view = clip.data;
-      const projectName = (head === "v" && source.isLoading) || ((clipId || editClipId) && clip.isLoading) ? "…" : project?.name ?? "Вне проектов";
+      const rel = release.data;
+      const projectName = (head === "v" && source.isLoading) || ((clipId || editClipId) && clip.isLoading) || (releaseKey && release.isLoading) ? "…" : project?.name ?? "Вне проектов";
       const videoCount = project?.videos ?? nav?.no_project_videos ?? 0;
       const plans = (source.data?.clip_plans ?? []).filter((p) => !p.hidden);
       const plan = planId ? source.data?.clip_plans.find((p) => p.id === planId) : null;
@@ -211,7 +222,20 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
               : view.source.name
             : "…";
       const cardItems = cards.data?.clips.filter((c) => !c.hidden) ?? [];
-      const clipRung: Rung = clipId
+      const newVideo = head === "p" && parts[2] === "new";
+      // Клип из выпуска: средняя ступень — выпуск, а не служебный источник холстов.
+      const viewRelease = view?.release ?? null;
+      const clipRung: Rung = releaseKey
+        ? {
+            cap: "Клип",
+            val: rel ? (rel.clips.length ? `Выберите: ${plural(rel.clips.length, "клип", "клипа", "клипов")}` : "Клипа ещё нет") : "…",
+            next: true,
+            items: (rel?.clips ?? []).map((c) => ({ to: clipPath(c.id), label: c.name, hint: c.format })),
+            searchLabel: "Найти клип",
+          }
+        : newVideo
+          ? { cap: "Клип", val: "Сначала видео", next: true }
+          : clipId
         ? {
             cap: "Клип",
             val: view ? `${view.name}, ${view.format}` : "…",
@@ -259,17 +283,33 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
           cur: String(v.id) === videoId,
         })),
         ...(videos.data?.generated ?? []).map((g) => ({
-          to: g.tab
-            ? projectPath(projectId ?? "", g.tab)
-            : g.source_id && g.plan_id
-              ? clipEditorPath(g.source_id, g.plan_id)
-              : projectPath(projectId ?? ""),
+          to: g.to,
           label: g.name || g.kind,
           hint: g.kind,
+          cur: g.key === (releaseKey || viewRelease?.key),
         })),
       ];
+      const onRelease = Boolean(releaseKey || viewRelease);
+      const chosen = videoId || clipId || releaseKey;
+      const midCap = onRelease ? "Выпуск" : videoId || (view && !view.canvas) ? "Видео" : "Видео или выпуск";
+      const midVal = newVideo
+        ? "Новое видео"
+        : releaseKey
+          ? rel?.name ?? "…"
+          : viewRelease
+            ? viewRelease.name
+            : chosen
+              ? shownVideoName
+              : `Выберите: ${videoCount}`;
+      const midHref = releaseKey
+        ? undefined
+        : viewRelease
+          ? viewRelease.steps_to ?? undefined
+          : shownVideo
+            ? videoPath(shownVideo)
+            : undefined;
       return {
-        active: plan || clipId ? 2 : videoId ? 1 : 0,
+        active: plan || clipId ? 2 : videoId || releaseKey || newVideo ? 1 : 0,
         list: [
           {
             cap: "Проект",
@@ -280,15 +320,25 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
             searchLabel: "Найти проект",
           },
           {
-            cap: "Видео",
-            val: videoId || clipId ? shownVideoName : `Выберите: ${plural(videoCount, "видео", "видео", "видео")}`,
-            href: shownVideo ? videoPath(shownVideo) : undefined,
-            next: !videoId && !clipId,
+            cap: midCap,
+            val: midVal,
+            href: midHref,
+            next: !chosen && !newVideo,
             items: [{ to: "/", label: "+ Новое видео", action: true, onSelect: onCreateVideo }, ...videoItems],
             loading: open === 1 && videos.isLoading,
-            searchLabel: "Найти видео",
+            searchLabel: "Найти видео или выпуск",
           },
           clipRung,
+        ],
+      };
+    }
+    if (head === "new") {
+      return {
+        active: 1,
+        list: [
+          { cap: "Проект", val: "Выберите на странице", items: projectMenu, searchLabel: "Найти проект" },
+          { cap: "Видео или выпуск", val: "Новое видео" },
+          { cap: "Клип", val: "Сначала видео", next: true },
         ],
       };
     }
@@ -330,7 +380,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
         },
       ],
     };
-  }, [hasProject, head, parts, params, on, source.isLoading, source.data, project, nav, planId, videos.data, videos.isLoading, open, videoId, projectId, projectMenu, onCreateVideo, clipId, editClipId, hiddenVideo, clip.data, clip.isLoading, cards.data, cards.isLoading]);
+  }, [hasProject, head, parts, params, on, source.isLoading, source.data, project, nav, planId, videos.data, videos.isLoading, open, videoId, projectId, projectMenu, onCreateVideo, clipId, editClipId, hiddenVideo, clip.data, clip.isLoading, cards.data, cards.isLoading, releaseKey, release.data, release.isLoading]);
 
   return (
     <nav className="lad" aria-label="Где вы находитесь">

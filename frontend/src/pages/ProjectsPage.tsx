@@ -218,7 +218,7 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
   );
 }
 
-export function AddSource({ onStarted, projectId }: { onStarted?: () => void; projectId?: number | null } = {}) {
+export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () => void; projectId?: number | null; noCanvas?: boolean } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -317,7 +317,7 @@ export function AddSource({ onStarted, projectId }: { onStarted?: () => void; pr
         </button>
       </div> : null}
       {/* Ролик без видео: анимированный фон, картинки и титры (app/canvas.py). */}
-      <NewCanvas onCreated={onStarted} disabled={busy} projectId={projectId} />
+      {noCanvas ? null : <NewCanvas onCreated={onStarted} disabled={busy} projectId={projectId} />}
       {picking ? (
         <PlayerOptionsDialog
           url={picking}

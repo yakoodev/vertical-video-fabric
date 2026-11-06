@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { aivApi } from "@/api/aivideo";
@@ -15,6 +15,9 @@ import {
   type Mascot,
   type Pose,
 } from "@/api/explainer";
+import { releaseKeys } from "@/api/releases";
+import { navKeys } from "@/api/nav";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { TtsVoicePicker, type TtsVoiceValue } from "@/components/TtsVoicePicker";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
@@ -22,9 +25,9 @@ import "@/styles/aivideo.css";
 import "@/styles/explainer.css";
 
 /**
- * «Объяснялки» (app/explainer*.py): маскот объясняет тему. Карточка маскота (лист, голос с пробой,
- * цвета, музыка), библиотека поз (теги, перерисовать, убрать), новый ролик (тема, длительность,
- * тон), ход конвейера, карточка с суммой (новые позы + платная озвучка) и ссылка на клип в редакторе.
+ * Объяснялки (app/explainer*.py): маскот объясняет тему. Здесь три куска одного конвейера:
+ * ExplainerTab — материалы проекта (маскот с листом и голосом, библиотека поз), ExplainerNew — форма типа в «Новое видео»,
+ * ExplainerVideoPanel — ролик на странице выпуска (сценарий, биты, действия).
  */
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -36,12 +39,13 @@ function useInvalidate(projectId: number) {
   return () => {
     qc.invalidateQueries({ queryKey: explKey(projectId) });
     qc.invalidateQueries({ queryKey: ["explainer", "video"] });
+    qc.invalidateQueries({ queryKey: releaseKeys.all });
+    qc.invalidateQueries({ queryKey: navKeys.all });
   };
 }
 
-export function ExplainerTab({ projectId }: { projectId: number }) {
-  const [picked, setPicked] = useState<number | null>(null);
-  const q = useQuery({
+function useOverview(projectId: number) {
+  return useQuery({
     queryKey: explKey(projectId),
     queryFn: () => explApi.overview(projectId),
     refetchInterval: (query) => {
@@ -50,6 +54,25 @@ export function ExplainerTab({ projectId }: { projectId: number }) {
       return busy ? 4000 : false;
     },
   });
+}
+
+function MascotPicker({ o, current, onPick }: { o: ExplainerOverview; current?: Mascot; onPick: (id: number) => void }) {
+  if (o.mascots.length < 2) return null;
+  return (
+    <nav className="pipeline aiv-subtabs">
+      {o.mascots.map((m) => (
+        <button key={m.id} className={`tab${current?.id === m.id ? " active" : ""}`} onClick={() => onPick(m.id)}>
+          {m.name}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** Материалы проекта: маскот и библиотека поз. Новый ролик делается через «Новое видео», ролики — строки вкладки «Видео». */
+export function ExplainerTab({ projectId }: { projectId: number }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const q = useOverview(projectId);
   if (q.isLoading) return <Loading />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const o = q.data;
@@ -57,24 +80,62 @@ export function ExplainerTab({ projectId }: { projectId: number }) {
   return (
     <div className="aiv expl">
       <ApprovalBanners o={o} />
-      {o.mascots.length > 1 ? (
-        <nav className="pipeline aiv-subtabs">
-          {o.mascots.map((m) => (
-            <button key={m.id} className={`tab${mascot?.id === m.id ? " active" : ""}`} onClick={() => setPicked(m.id)}>
-              {m.name}
-            </button>
-          ))}
-        </nav>
-      ) : null}
+      <MascotPicker o={o} current={mascot} onPick={setPicked} />
       {mascot ? (
         <>
-          <NewVideo o={o} mascot={mascot} />
-          <Videos o={o} mascot={mascot} />
           <MascotCard key={mascot.id} mascot={mascot} projectId={o.project.id} />
           <PoseLibrary mascot={mascot} projectId={o.project.id} />
         </>
       ) : null}
       <NewMascot o={o} empty={!o.mascots.length} />
+    </div>
+  );
+}
+
+/** Форма типа в «Новое видео»: маскота ещё нет — заводим прямо здесь. */
+export function ExplainerNew({ projectId, onCreated }: { projectId: number; onCreated: (video: ExplainerVideo) => void }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const q = useOverview(projectId);
+  if (q.isLoading) return <Loading />;
+  if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const o = q.data;
+  const mascot = o.mascots.find((m) => m.id === picked) ?? o.mascots[0];
+  return (
+    <div className="aiv expl">
+      <MascotPicker o={o} current={mascot} onPick={setPicked} />
+      {mascot ? <NewVideo o={o} mascot={mascot} onCreated={onCreated} /> : <NewMascot o={o} empty />}
+    </div>
+  );
+}
+
+/** Ролик на странице выпуска: всё, что было в строке вкладки «Объяснялки», раскрыто. */
+export function ExplainerVideoPanel({
+  projectId,
+  videoId,
+  reassembleNote,
+  onDeleted,
+  extra,
+}: {
+  projectId: number;
+  videoId: number;
+  reassembleNote: string;
+  onDeleted: () => void;
+  extra?: ReactNode;
+}) {
+  const q = useOverview(projectId);
+  if (q.isLoading) return <Loading />;
+  if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const v = q.data.videos.find((x) => x.id === videoId);
+  if (!v) return <ErrorState error={new Error("Ролика нет в этом проекте")} />;
+  const mascot = q.data.mascots.find((m) => m.id === v.mascot_id);
+  return (
+    <div className="aiv expl">
+      <section className="panel series-panel">
+        <div className="expl-videos">
+          <VideoRow v={v} projectId={projectId} poses={mascot?.poses ?? []} embedded reassembleNote={reassembleNote} onDeleted={onDeleted} />
+        </div>
+      </section>
+      {extra}
     </div>
   );
 }
@@ -124,16 +185,17 @@ function ApprovalBanners({ o }: { o: ExplainerOverview }) {
 // Новый ролик и ролики
 // --------------------------------------------------------------------------- //
 
-function NewVideo({ o, mascot }: { o: ExplainerOverview; mascot: Mascot }) {
+function NewVideo({ o, mascot, onCreated }: { o: ExplainerOverview; mascot: Mascot; onCreated: (video: ExplainerVideo) => void }) {
   const toast = useToast();
   const invalidate = useInvalidate(o.project.id);
   const [form, setForm] = useState({ topic: "", duration: 45, tone: TONES[0], render: false });
   const create = useMutation({
     mutationFn: () => explApi.createVideo(mascot.id, form),
-    onSuccess: () => {
+    onSuccess: (video) => {
       toast.success("Ролик в работе: сценарий → позы → (карточка, если нужны новые позы) → клип");
       setForm({ ...form, topic: "" });
       invalidate();
+      onCreated(video);
     },
     onError: (e) => toast.error(errText(e, "Не создано")),
   });
@@ -170,22 +232,7 @@ function NewVideo({ o, mascot }: { o: ExplainerOverview; mascot: Mascot }) {
           ✨ Сделать ролик
         </button>
       </div>
-      {!mascot.sheet ? <span className="aiv-warn">Сначала лист маскота (ниже): без него новые позы не нарисовать.</span> : null}
-    </section>
-  );
-}
-
-function Videos({ o, mascot }: { o: ExplainerOverview; mascot: Mascot }) {
-  const videos = o.videos.filter((v) => v.mascot_id === mascot.id);
-  if (!videos.length) return null;
-  return (
-    <section className="panel series-panel">
-      <h3>Ролики</h3>
-      <div className="expl-videos">
-        {videos.map((v) => (
-          <VideoRow key={v.id} v={v} projectId={o.project.id} poses={mascot.poses} />
-        ))}
-      </div>
+      {!mascot.sheet ? <span className="aiv-warn">Сначала лист маскота в материалах проекта: без него новые позы не нарисовать.</span> : null}
     </section>
   );
 }
@@ -206,10 +253,25 @@ function VideoError({ text, failed }: { text: string; failed: boolean }) {
   );
 }
 
-function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: number; poses: Pose[] }) {
+function VideoRow({
+  v,
+  projectId,
+  poses,
+  embedded,
+  reassembleNote,
+  onDeleted,
+}: {
+  v: ExplainerVideo;
+  projectId: number;
+  poses: Pose[];
+  embedded?: boolean;
+  reassembleNote?: string;
+  onDeleted?: () => void;
+}) {
   const toast = useToast();
   const invalidate = useInvalidate(projectId);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(embedded));
+  const [asking, setAsking] = useState(false);
   const detail = useQuery({ queryKey: explVideoKey(v.id), queryFn: () => explApi.video(v.id), enabled: open });
   const act = useMutation({
     mutationFn: (what: "continue" | "cancel" | "delete" | "reassemble") =>
@@ -220,7 +282,12 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
           : what === "cancel"
             ? explApi.cancelVideo(v.id)
             : explApi.deleteVideo(v.id),
-    onSuccess: () => invalidate(),
+    onSuccess: (_d, what) => {
+      invalidate();
+      setAsking(false);
+      if (what === "delete") onDeleted?.();
+      if (what === "reassemble") toast.success("Собираю новую версию этого клипа");
+    },
     onError: (e) => toast.error(errText(e, "Не удалось")),
   });
   const active = ACTIVE.includes(v.status);
@@ -238,13 +305,15 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
             Черновик без голоса
           </span>
         ) : null}
-        <b className="expl-topic" title={v.topic}>
-          {v.title || v.topic}
-        </b>
+        {embedded ? null : (
+          <b className="expl-topic" title={v.topic}>
+            {v.title || v.topic}
+          </b>
+        )}
         <span className="muted">{v.duration_target.toFixed(0)} с{v.tone ? ` · ${v.tone}` : ""}</span>
         {v.estimate_rub > 0 ? <span className="muted">≈ {rub(v.estimate_rub)}</span> : null}
         <span className="expl-video-actions">
-          {v.clip_id && v.editor_url ? (
+          {v.clip_id && v.editor_url && !embedded ? (
             <Link className="btn sm primary" to={v.editor_url}>
               Открыть клип #{v.clip_id}
             </Link>
@@ -255,7 +324,7 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
             </button>
           ) : null}
           {v.status === "done" ? (
-            <button className="btn ghost sm" disabled={act.isPending} onClick={() => act.mutate("reassemble")} title="Новый клип из тех же битов">
+            <button className="btn ghost sm" disabled={act.isPending} onClick={() => setAsking(true)} title="Новая версия этого клипа из тех же битов">
               Пересобрать
             </button>
           ) : null}
@@ -278,6 +347,17 @@ function VideoRow({ v, projectId, poses }: { v: ExplainerVideo; projectId: numbe
         </div>
       ) : null}
       {v.voice_used ? <div className="muted expl-voice-used">{v.voice_used.label}</div> : null}
+      <ConfirmDialog
+        open={asking}
+        title="Пересобрать?"
+        body={reassembleNote || "Соберётся новая версия этого клипа, новый клип не появится. Прошлая версия останется, откат на экране клипа."}
+        confirmLabel="Собрать новую версию"
+        cancelLabel="Не надо"
+        danger={false}
+        busy={act.isPending}
+        onCancel={() => setAsking(false)}
+        onConfirm={() => act.mutate("reassemble")}
+      />
       {/* Раньше сценарий раскрывался кликом по названию — догадаться было нельзя; теперь явная кнопка. */}
       <button type="button" className="expl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? "▾ Скрыть сценарий" : "▸ Сценарий и биты"}

@@ -94,7 +94,7 @@ function ChannelSetup({ projectId }: { projectId: number }) {
       </p>
       {mascots.isLoading ? <Loading /> : null}
       {mascots.data && !mascots.data.length ? (
-        <p className="muted">Маскотов ещё нет — заведи во вкладке «Объяснялки» (или импортируй пилот «Ух»).</p>
+        <p className="muted">Маскотов ещё нет. Заведи его в разделе «Маскоты и позы» материалов проекта (или импортируй пилот «Ух»).</p>
       ) : null}
       {mascots.data?.length ? (
         <>
@@ -162,7 +162,7 @@ function ChannelHead({ v }: { v: ChannelView }) {
               {m.project_id !== v.project.id ? (
                 <>
                   {" "}
-                  · <Link to={`/p/${m.project_id}`}>библиотека маскота</Link>
+                  · <Link to={`/p/${m.project_id}?tab=materials&mat=mascots`}>библиотека маскота</Link>
                 </>
               ) : null}
             </span>
@@ -308,7 +308,7 @@ function TopicRow({ t, onChange }: { t: ChannelTopic; onChange: () => void }) {
       {t.status === "producing" && t.video ? (
         <span className="muted" style={{ fontSize: 13 }}>
           ролик #{t.video.id}: {t.video.status_label}
-          {t.video.status === "awaiting_approval" ? " — разреши траты на новые позы во вкладке «Объяснялки»" : ""}
+          {t.video.status === "awaiting_approval" ? " — разреши траты на новые позы: карточка на странице ролика и во «Входящих»" : ""}
         </span>
       ) : null}
       {card && ["review", "scheduled", "published"].includes(t.status) ? (

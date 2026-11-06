@@ -171,17 +171,6 @@ def _module_on(module_id: str, store: Any) -> bool:
     return modules.is_enabled(module_id, store)
 
 
-def _generated_plan_ids(store: Any, project_id: int | None = None) -> set[int]:
-    """Клипы-итоги генераций: они показаны строкой своего ИИ-видео, истории или объяснялки."""
-    where = "" if project_id is None else " AND project_id = ?"
-    args: tuple = () if project_id is None else (int(project_id),)
-    ids: set[int] = set()
-    for table, column in (("aiv_scripts", "clip_plan_id"), ("story_episodes", "clip_id"), ("expl_videos", "clip_id")):
-        for row in store.db.query_all(f"SELECT {column} AS id FROM {table} WHERE {column} IS NOT NULL{where}", args):
-            ids.add(int(row["id"]))
-    return ids
-
-
 def nav_counts(store: Any) -> dict:
     """Всё для боковой панели одним ответом: проекты со счётчиком видео и бейдж «Входящие»."""
     def grouped(sql: str) -> dict[int, int]:
@@ -191,24 +180,10 @@ def nav_counts(store: Any) -> dict:
         f"SELECT project_id, COUNT(*) AS n FROM sources WHERE project_id IS NOT NULL "
         f"AND source_type NOT IN {_HIDDEN} GROUP BY project_id"
     )
-    generated = [
-        grouped(f"SELECT project_id, COUNT(*) AS n FROM {table} GROUP BY project_id")
-        for table in ("aiv_scripts", "story_episodes", "expl_videos")
-    ]
-    taken = _generated_plan_ids(store)
-    canvases: dict[int, int] = {}
-    seen: set[tuple[int, int]] = set()
-    for row in store.db.query_all(
-        "SELECT pp.clip_plan_id, pp.project_id, cp.clip_group_id FROM plan_projects pp "
-        "JOIN clip_plans cp ON cp.id = pp.clip_plan_id"
-    ):
-        if int(row["clip_plan_id"]) in taken:
-            continue
-        # Версии одного холста — один клип (app/clip_groups.py).
-        key = int(row["clip_group_id"]) if row["clip_group_id"] is not None else -int(row["clip_plan_id"])
-        if (int(row["project_id"]), key) not in seen:
-            seen.add((int(row["project_id"]), key))
-            canvases[int(row["project_id"])] = canvases.get(int(row["project_id"]), 0) + 1
+    from app.releases import project_counts
+
+    # Выпуски считает тот же код, что строит список: счётчик панели и список проекта не разойдутся.
+    releases = project_counts(store)
 
     open_questions: dict[int, int] = {}
     if _module_on("stream_questions", store):
@@ -226,7 +201,9 @@ def nav_counts(store: Any) -> dict:
             "id": pid,
             "name": row["name"],
             "kind": row["kind"],
-            "videos": sources.get(pid, 0) + sum(g.get(pid, 0) for g in generated) + canvases.get(pid, 0),
+            "videos": sources.get(pid, 0) + releases.get(pid, {}).get("releases", 0),
+            "sources": sources.get(pid, 0),
+            "releases": releases.get(pid, {}).get("releases", 0),
             "open_questions": open_questions.get(pid, 0),
         })
     no_project = store.db.query_one(
@@ -306,6 +283,13 @@ def _source_rows(store: Any, project_id: int | None) -> list[dict]:
     )]
 
 
+def _plan_source(store: Any, plan_id: int | None) -> int | None:
+    if not plan_id:
+        return None
+    row = store.db.query_one("SELECT source_id FROM clip_plans WHERE id = ?", (int(plan_id),))
+    return int(row["source_id"]) if row else None
+
+
 def project_videos(store: Any, project_id: int | None) -> dict:
     """Видео проекта лёгким списком: лестница, вкладка «Видео». ``project_id=None`` — вне проектов."""
     rows = _source_rows(store, project_id)
@@ -332,57 +316,12 @@ def project_videos(store: Any, project_id: int | None) -> dict:
         })
     generated: list[dict] = []
     if project_id is not None:
-        pid = int(project_id)
-        for row in store.db.query_all(
-            "SELECT id, title, status, created_at, clip_plan_id AS plan FROM aiv_scripts WHERE project_id = ? "
-            "ORDER BY id DESC", (pid,),
-        ):
-            generated.append({"key": f"aiv-{row['id']}", "kind": "ИИ-видео", "tab": "aiv", "name": row["title"],
-                              "status": row["status"], "date": row["created_at"], "plan_id": row["plan"]})
-        for row in store.db.query_all(
-            "SELECT id, title, premise, status, created_at, clip_id AS plan FROM story_episodes WHERE project_id = ? "
-            "ORDER BY id DESC", (pid,),
-        ):
-            generated.append({"key": f"story-{row['id']}", "kind": "История", "tab": "story",
-                              "name": row["title"] or row["premise"], "status": row["status"],
-                              "date": row["created_at"], "plan_id": row["plan"]})
-        for row in store.db.query_all(
-            "SELECT id, title, topic, status, created_at, clip_id AS plan FROM expl_videos WHERE project_id = ? "
-            "ORDER BY id DESC", (pid,),
-        ):
-            generated.append({"key": f"expl-{row['id']}", "kind": "Объяснялка", "tab": "expl",
-                              "name": row["title"] or row["topic"], "status": row["status"],
-                              "date": row["created_at"], "plan_id": row["plan"]})
-        taken = _generated_plan_ids(store, pid)
-        canvas_groups: set[int] = set()
-        for row in store.db.query_all(
-            """
-            SELECT cp.id, cp.title, cp.source_id, cp.created_at, cp.status, cp.clip_group_id
-            FROM plan_projects pp JOIN clip_plans cp ON cp.id = pp.clip_plan_id
-            WHERE pp.project_id = ? ORDER BY cp.id DESC
-            """,
-            (pid,),
-        ):
-            if int(row["id"]) in taken:
-                continue
-            # Версии одного холста — одна строка: самая новая (ORDER BY cp.id DESC).
-            if row["clip_group_id"] is not None:
-                if int(row["clip_group_id"]) in canvas_groups:
-                    continue
-                canvas_groups.add(int(row["clip_group_id"]))
-            generated.append({"key": f"canvas-{row['id']}", "kind": "Холст", "tab": "", "name": row["title"],
-                              "status": row["status"], "date": row["created_at"], "plan_id": row["id"],
-                              "source_id": row["source_id"]})
-        plans = [int(g["plan_id"]) for g in generated if g.get("plan_id")]
-        if plans:
-            located: dict[int, int] = {}
-            for chunk in _chunks(plans):
-                marks = ",".join("?" for _ in chunk)
-                for row in store.db.query_all(f"SELECT id, source_id FROM clip_plans WHERE id IN ({marks})", chunk):
-                    located[int(row["id"])] = int(row["source_id"])
-            for item in generated:
-                if item.get("plan_id"):
-                    item["source_id"] = located.get(int(item["plan_id"]))
+        from app.releases import list_for_project
+
+        for item in list_for_project(store, int(project_id)):
+            # Прежние поля остались для старых клиентов: name, kind, status, date, plan_id, source_id.
+            generated.append({**item, "kind": item["kind_label"], "kind_key": item["kind"], "tab": "",
+                              "plan_id": item["head"], "source_id": _plan_source(store, item["head"])})
     return {"videos": videos, "generated": generated}
 
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { qk } from "@/api/keys";
 import { navApi, navKeys, type NavGenerated, type NavVideo } from "@/api/nav";
@@ -11,7 +11,8 @@ import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
-import { clipEditorPath, projectPath, videoPath } from "@/lib/paths";
+import { projectPath, videoPath } from "@/lib/paths";
+import "@/styles/releases.css";
 
 type StatusGroup = "done" | "processing" | "error";
 const GROUP: Record<string, StatusGroup> = {
@@ -126,45 +127,88 @@ function VideoRow({ video, onDelete }: { video: NavVideo; onDelete: (v: NavVideo
   );
 }
 
-function GeneratedRow({ item, projectId }: { item: NavGenerated; projectId: number }) {
-  const to = item.tab
-    ? projectPath(projectId, item.tab)
-    : item.source_id && item.plan_id
-      ? clipEditorPath(item.source_id, item.plan_id)
-      : projectPath(projectId);
+function releaseMeta(item: NavGenerated): string {
+  const clips = item.clip_count > 1 ? plural(item.clip_count, "клип", "клипа", "клипа") : "";
+  const versions = item.versions > 1 ? plural(item.versions, "версия", "версии", "версий") : "";
+  return [
+    `${item.kind_label}, ${dateRu(item.date)}`,
+    item.draft ? "черновик без голоса" : "",
+    item.duration_sec ? formatDuration(item.duration_sec) : "",
+    clips,
+    versions,
+    !item.clip_count && item.status === "ready" ? "клипа нет" : "",
+  ].filter(Boolean).join(" · ");
+}
+
+/** Выпуск: ролик с нуля, холст или ТОП-N. Один готовый клип — строка ведёт сразу в него, шаги рядом. */
+function ReleaseRow({ item }: { item: NavGenerated }) {
+  const status = item.status === "ready"
+    ? null
+    : item.status === "approval" && item.estimate_rub > 0
+      ? `${item.status_label} · ≈ ${Math.round(item.estimate_rub)} ₽`
+      : item.status_label;
   return (
-    <div className="vrow vrow-gen">
-      <Link to={to} className="vrow-th vrow-th-gen" aria-label={item.name || item.kind}>
-        <span>{item.kind}</span>
+    <div className="vrow vrow-rel">
+      <Link to={item.to} className="vrow-th vrow-th-gen" aria-label={item.name}>
+        {item.thumb_clip_id ? <img className="vrow-rel-thumb" src={`/media/clips/${item.thumb_clip_id}/thumb`} alt="" loading="lazy" /> : <span>{item.kind_label}</span>}
       </Link>
       <div className="vrow-main">
         <div className="vrow-title">
-          <Link to={to}>{item.name || item.kind}</Link>
+          <Link to={item.to} title={item.name}>{item.name}</Link>
         </div>
-        <div className="vrow-meta">{`${item.kind}, ${dateRu(item.date)}`}</div>
+        <div className="vrow-meta">{releaseMeta(item)}</div>
+        {item.foreign_project ? (
+          <div className="vrow-foreign">
+            Материалы в проекте <Link to={projectPath(item.foreign_project.id)}>{item.foreign_project.name}</Link>
+          </div>
+        ) : null}
       </div>
       <div className="vrow-act">
-        {item.source_id && item.plan_id && item.tab ? (
-          <Link className="btn ghost sm" to={clipEditorPath(item.source_id, item.plan_id)}>
-            Открыть монтаж
+        {status ? <span className={`tag vrow-status ${item.status}`}>{status}</span> : null}
+        {item.steps_to && item.to.startsWith("/clips/") ? (
+          <Link className="btn ghost sm" to={item.steps_to}>
+            Шаги
           </Link>
         ) : null}
-        <span className="tag ac">{item.kind}</span>
       </div>
     </div>
   );
 }
 
-/** Проект → Видео: стримы, загрузки и всё сгенерированное. Лёгкий список, кадры подгружаются по прокрутке. */
+// Фильтр по типу: «Видео» — записи, остальное — типы выпусков. ?kind= сохраняется в адресе, туда ведут старые вкладки.
+const KIND_TITLES: Record<string, string> = {
+  video: "Видео",
+  expl: "Объяснялки",
+  story: "Истории",
+  "3d": "3D-серии",
+  aiv: "ИИ-видео",
+  promo: "Промо",
+  top: "ТОП-N",
+  canvas: "Холсты",
+};
+
+/** Проект → Видео: записи и выпуски разными разделами. Безымянные холсты — настоящие клипы, свёрнуты отдельно. */
 export function ProjectVideosTab({ projectId, onNewVideo }: { projectId: number; onNewVideo: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const [params, setParams] = useSearchParams();
+  const kind = params.get("kind") ?? "";
+  const setKind = (next: string) =>
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next) p.set("kind", next);
+        else p.delete("kind");
+        return p;
+      },
+      { replace: true },
+    );
   const query = useQuery({ queryKey: navKeys.videos(projectId), queryFn: () => navApi.videos(projectId) });
   const [filter, setFilter] = useState<StatusGroup | "all">("all");
   const [search, setSearch] = useState("");
   const [pending, setPending] = useState<NavVideo | null>(null);
   const videos = useMemo(() => query.data?.videos ?? [], [query.data]);
-  const generated = query.data?.generated ?? [];
+  const generated = useMemo(() => query.data?.generated ?? [], [query.data]);
   const needle = search.trim().toLowerCase();
   const filtered = useMemo(
     () =>
@@ -176,7 +220,9 @@ export function ProjectVideosTab({ projectId, onNewVideo }: { projectId: number;
     [videos, filter, needle],
   );
   const shown = useShowMore(filtered, `${projectId}|${filter}|${needle}`);
-  const genShown = generated.filter((g) => !needle || (g.name || "").toLowerCase().includes(needle));
+  const named = generated.filter((g) => !g.unnamed && (!kind || g.kind_key === kind) && (!needle || (g.name || "").toLowerCase().includes(needle)));
+  const unnamed = generated.filter((g) => g.unnamed && (!kind || g.kind_key === kind));
+  const releasesShown = useShowMore(named, `rel|${projectId}|${kind}|${needle}`);
   const remove = useMutation({
     mutationFn: (id: number) => sourcesApi.remove(id),
     onSuccess: () => {
@@ -206,6 +252,13 @@ export function ProjectVideosTab({ projectId, onNewVideo }: { projectId: number;
   }
   const counts: Record<string, number> = { all: videos.length, done: 0, processing: 0, error: 0 };
   for (const v of videos) counts[groupOf(v.status)] += 1;
+  const kinds: Record<string, number> = {};
+  if (videos.length) kinds.video = videos.length;
+  for (const g of generated) kinds[g.kind_key] = (kinds[g.kind_key] ?? 0) + 1;
+  const kindKeys = Object.keys(KIND_TITLES).filter((k) => kinds[k]);
+  const showVideos = !kind || kind === "video";
+  const showReleases = kind !== "video";
+  const hasMaterials = ["expl", "story", "3d", "aiv"].includes(kind);
   return (
     <>
       {videos.length > 8 || counts.processing || counts.error ? (
@@ -221,16 +274,58 @@ export function ProjectVideosTab({ projectId, onNewVideo }: { projectId: number;
           </div>
         </div>
       ) : null}
-      <div className="vrows">
-        {genShown.map((g) => (
-          <GeneratedRow key={g.key} item={g} projectId={projectId} />
-        ))}
-        {shown.visible.map((v) => (
-          <VideoRow key={`${v.id}:${v.name}`} video={v} onDelete={setPending} />
-        ))}
-      </div>
-      {!filtered.length && !genShown.length ? <EmptyState icon="🔍" title="Ничего не найдено" hint="Измените запрос" /> : null}
-      <ShowMore rest={shown.rest} onMore={shown.more} />
+      {kindKeys.length > 1 ? (
+        <div className="vkind-chips" role="group" aria-label="Тип">
+          <button className={`pill${kind ? "" : " on"}`} onClick={() => setKind("")}>
+            Все {videos.length + generated.length}
+          </button>
+          {kindKeys.map((k) => (
+            <button key={k} className={`pill${kind === k ? " on" : ""}`} data-kind={k} onClick={() => setKind(k)}>
+              {KIND_TITLES[k]} {kinds[k]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {hasMaterials ? (
+        <p className="inbox-line">
+          Маскоты, миры, персонажи и бюджет: <Link to={`${projectPath(projectId, "materials")}&mat=${kind === "expl" ? "mascots" : kind === "aiv" ? "aiv" : "worlds"}`}>материалы проекта →</Link>
+        </p>
+      ) : null}
+      {showReleases && named.length ? (
+        <section className="vsec" aria-label="Выпуски">
+          {videos.length ? <h3 className="vsec-h">Выпуски · {named.length}</h3> : null}
+          <div className="vrows">
+            {releasesShown.visible.map((g) => (
+              <ReleaseRow key={g.key} item={g} />
+            ))}
+          </div>
+          <ShowMore rest={releasesShown.rest} onMore={releasesShown.more} />
+        </section>
+      ) : null}
+      {showVideos && filtered.length ? (
+        <section className="vsec" aria-label="Видео">
+          {generated.length ? <h3 className="vsec-h">Видео · {filtered.length}</h3> : null}
+          <div className="vrows">
+            {shown.visible.map((v) => (
+              <VideoRow key={`${v.id}:${v.name}`} video={v} onDelete={setPending} />
+            ))}
+          </div>
+          <ShowMore rest={shown.rest} onMore={shown.more} />
+        </section>
+      ) : null}
+      {showReleases && unnamed.length ? (
+        <details className="vrows-unnamed">
+          <summary>Холсты без названия · {unnamed.length}</summary>
+          <div className="vrows">
+            {unnamed.map((g) => (
+              <ReleaseRow key={g.key} item={g} />
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {(!showVideos || !filtered.length) && (!showReleases || !named.length) && !unnamed.length ? (
+        <EmptyState icon="🔍" title="Ничего не найдено" hint="Измените запрос" />
+      ) : null}
       <ConfirmDialog
         open={Boolean(pending)}
         title="Удалить видео?"

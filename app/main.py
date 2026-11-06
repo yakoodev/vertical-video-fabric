@@ -4836,6 +4836,10 @@ from app.nav_api import build_nav_router  # noqa: E402
 
 app.include_router(build_nav_router(AuthDep, lambda: store))
 
+from app.releases_api import build_releases_router  # noqa: E402
+
+app.include_router(build_releases_router(AuthDep, lambda: store))
+
 # Автопилот канала: одобрение, расписание, обучение, Telegram, чат проекта (app/autopilot_api.py).
 from app.autopilot_api import build_autopilot_router  # noqa: E402
 
