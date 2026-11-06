@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from app import aivideo as V
+from app import projects as P
 from app.settings import settings
 from app import aivideo_gen as G
 
@@ -228,6 +229,7 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
                               title or f"{script['title']}"[:100],
                               f"ИИ-видео: серия {script['episode_no']} «{script['title']}». {script['logline']}"[:500])
     plan_id = int(clip["id"])
+    P.assign_plan_project(store, plan_id, project_id)  # иначе у холста нет проекта: виден только по прямой ссылке
     layers: list[dict] = []
     camera: list[dict] = []
     notes: list[str] = []
@@ -315,14 +317,13 @@ def assemble(store: Any, script_id: int, music_track_id: int | None = None, capt
             notes.append(f"автосведение не вышло ({type(exc).__name__}: {str(exc)[:140]}) — audio_mix_report")
     store.db.execute("UPDATE aiv_scripts SET clip_plan_id = ?, status = 'assembled', updated_at = CURRENT_TIMESTAMP "
                      "WHERE id = ?", (plan_id, int(script_id)))
-    fresh = store.get_clip_plan(plan_id)
     videos = sum(1 for s in plan["shots"] if s["video"])
-    return {"ok": True, "clip_id": plan_id, "project_id": fresh["source_id"], "duration": round(total, 2),
+    return {"ok": True, "clip_id": plan_id, "project_id": project_id, "duration": round(total, 2),
             "shots": len(plan["shots"]), "video_shots": videos, "still_shots": len(plan["shots"]) - videos,
             "lines": len(plan["lines"]), "layers": len(render["layers"]),
             "camera_keys": len(render["camera"]), "voice": voice.get("status"),
             "timeline": [{"shot": s["shot"]["idx"], "start": s["start"], "end": s["end"],
                           "kind": "video" if s["video"] else "still"} for s in plan["shots"]],
-            "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={plan_id}", "notes": notes,
+            "editor_url": f"/clips/{plan_id}", "notes": notes,
             **({"mix": mix} if mix else {}),
             "note": ("обычный холст-клип: правь в редакторе (слои aiv_*), рендер и публикация — как у любого клипа")}

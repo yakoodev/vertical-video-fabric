@@ -128,7 +128,9 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
 
     @router.post("/api/explainer/mascots/{mascot_id}/videos", summary="Новый ролик «тема → клип»")
     def api_video_create(mascot_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
-        options = {k: payload[k] for k in ("render", "cover", "music_track_id") if payload.get(k) is not None}
+        # dry_run — явная просьба о черновике: тон вместо голоса, заглушки вместо поз, клип с пометкой.
+        options = {k: payload[k] for k in ("render", "cover", "music_track_id", "dry_run")
+                   if payload.get(k) is not None}
         return call(X.create, mascot_id, str(payload.get("topic") or ""), payload.get("duration") or 45,
                     str(payload.get("tone") or ""), None, options, "ui")
 
@@ -141,7 +143,7 @@ def build_explainer_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
                 video["readiness"] = call(X.readiness, video_id)
             except HTTPException:
                 pass
-        return video
+        return {**video, "facts": call(X.facts, video_id, video)}
 
     @router.delete("/api/explainer/videos/{video_id}", summary="Удалить ролик")
     def api_video_delete(video_id: int, _auth: auth_dep) -> dict:

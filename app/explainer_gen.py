@@ -12,11 +12,14 @@
    ключевые слова субтитров. Плашки «#1/#2/#3» — по пунктам сценария, без Gemini. Новая поза,
    почти совпадающая с готовой (``similar_pose``), не рисуется. Gemini недоступен — позы по тегам
    (без новых).
-3. ``planned`` → **оценка и деньги**: бесплатная озвучка (Gemini TTS / сухой прогон) — сразу;
-   новые позы и платная озвучка — одна карточка владельцу (этап ``explainer`` машинерии ИИ-видео:
-   «Разрешить», потолки, журнал трат). Ничего нового — сразу дальше.
+3. ``planned`` → **оценка и деньги**: бесплатная озвучка (Gemini TTS) — сразу, не вышла — ролик
+   останавливается с понятной ошибкой (без голоса не выходит); новые позы и платная озвучка — одна
+   карточка владельцу (этап ``explainer`` машинерии ИИ-видео: «Разрешить», потолки, журнал трат).
+   Ничего нового — сразу дальше.
 4. ``awaiting_approval`` / ``generating`` → ждём «Разрешить» и запуски (работник ИИ-видео).
-5. ``assembling`` → **сборка**: слова озвучки (Whisper large-v3-turbo; сухой прогон — по длине
+5. ``assembling`` → **сборка**: слова сценария на времени распознанной речи (Whisper large-v3-turbo даёт
+   только время: текст голоса известен, его ошибки в субтитры не идут; не распознал речь или в ней нет
+   текста сценария — ролик останавливается; только сухой прогон, ``options.dry_run`` — по длине
    текста) → биты по времени (длинные > 3.6 с делятся тем же кадром с наездом) → холст-клип как
    пилот 887: позы слоями ``image`` с чередованием pop/zoom, вжухи на склейках, плашки с «динь»,
    чипы с «поп», слой субтитров (hormozi, крупно, капсом, ключевые слова — ``emph``), музыка
@@ -50,6 +53,7 @@ REAL_SPLIT_SEC = 3.6  # после озвучки бит длиннее — де
 HOOK_MAX_CHARS = 32  # крючок — первые ~2 с
 MAX_NEW_POSES = 20
 TAIL_SEC = 0.8
+VOICE_MIN_HEARD = 0.6  # меньше этой доли слов сценария в распознанной речи — озвучка не та (тон, чужой текст)
 # Только настоящие записи пака freesound. Пилот звал whoosh-2 и ding — это алиасы пака
 # (app/motion_assets.FREESOUND_ALIASES): whoosh-soft и pop-soft; здесь — настоящие имена.
 CUT_SFX = ("sfx:freesound/whoosh-1.ogg", "sfx:freesound/whoosh-soft.ogg")
@@ -331,7 +335,7 @@ def plan_schema() -> dict:
         "new_poses": {"type": "array", "items": {"type": "object", "properties": {
             "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
             "tags": {"type": "array", "items": {"type": "string"}}, "emotion": {"type": "string"},
-            "number_shown": {"type": "integer"}}, "required": ["key", "description", "tags"]}}},
+            "number_shown": {"type": "integer"}}, "required": ["key", "title", "description", "tags"]}}},
         "required": ["beats"]}
 
 
@@ -439,13 +443,13 @@ def assign_by_tags(beats: list[dict], poses: list[dict]) -> list[int]:
     return [int(poses[k]["id"]) for k in picks]
 
 
-def _assign_fallback(beats: list[dict], poses: list[dict]) -> list[str]:
+def _assign_fallback(beats: list[dict], poses: list[dict], dry: bool = False) -> list[str]:
     """Без Gemini: позы по тегам (``assign_by_tags``), без новых поз; чипы и ключевые слова — эвристикой."""
-    ready = [p for p in poses if p["ready"]] or poses
+    ready = [p for p in poses if E.pose_usable(p, dry)] or poses
     if not ready:
         raise E.ExplError("библиотека поз пуста, а Gemini недоступен — опиши позы сами: explainer_update_beats "
                           "(new_pose у каждого бита) или добавь позы (explainer_add_pose)")
-    notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; поправь explainer_update_beats"]
+    notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; биты можно поправить"]
     for beat, pose_id in zip(beats, assign_by_tags(beats, ready)):
         beat["pose_id"] = pose_id
         beat["chip"] = _fallback_chip(beat["text"])
@@ -453,7 +457,30 @@ def _assign_fallback(beats: list[dict], poses: list[dict]) -> list[str]:
     return notes
 
 
-def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[dict], data: dict) -> list[str]:
+def _chip(value: Any, word: Any = None) -> dict | None:
+    """Чип бита: строка или ``{text, word}`` (так его отдаёт GET ролика) → ``{text, word}``; мусор — без чипа.
+    Строка-словарь «{'text': '…» — след старой правки: в кадр она не идёт."""
+    if isinstance(value, dict):
+        word = word or value.get("word")
+        value = value.get("text")
+    text = P._text(value, 10) if isinstance(value, str) else ""
+    if not text or text[0] in "{[":
+        return None
+    return {"text": text, "word": P._text(word, 40) if isinstance(word, str) else ""}
+
+
+def _badge(value: Any) -> str | None:
+    text = P._text(value, 6) if isinstance(value, str) else ""
+    return text if text and text[0] not in "{[" else None
+
+
+def _words_of(value: Any, limit: int) -> list[str]:
+    return [P._text(w, 40) for w in value or [] if isinstance(w, str) and P._text(w)][:limit] if isinstance(
+        value, list) else []
+
+
+def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[dict], data: dict,
+                       dry: bool = False) -> list[str]:
     notes: list[str] = []
     by_id = {int(p["id"]): p for p in poses}
     new_specs = {}
@@ -494,14 +521,14 @@ def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[
                     pid = int(pose["id"])
                 created[key] = pid
         if not pid:
-            ranked = [p for p, _s in E.candidates([p for p in library if p["ready"]] or library, beat["text"], 4)]
+            ranked = [p for p, _s in E.candidates([p for p in library if E.pose_usable(p, dry)] or library,
+                                                  beat["text"], 4)]
             pid = int(ranked[0]["id"]) if ranked else 0
         if not pid:
             raise E.ExplError(f"бит {beat['i']}: нет позы — библиотека пуста")
         beat["pose_id"] = pid
-        chip = P._text(ans.get("chip"), 10)
-        beat["chip"] = {"text": chip, "word": P._text(ans.get("chip_word"), 40)} if chip else None
-        beat["emphasis"] = [P._text(w, 40) for w in ans.get("emphasis") or [] if P._text(w)][:2]
+        beat["chip"] = _chip(ans.get("chip"), ans.get("chip_word"))
+        beat["emphasis"] = _words_of(ans.get("emphasis"), 2)
     return notes
 
 
@@ -529,26 +556,27 @@ def plan_beats(store: Any, video_id: int, client: Any = None) -> dict:
     beats = split_beats(video["script"])
     poses = E.list_poses(store, int(mascot["id"]))
     notes: list[str] = []
+    dry = E.is_dry(video)
     client = client if client is not None else gemini_client()
     source = "tags"
     if client is not None:
         try:
             data = _ask(client, PLAN_RULES, plan_context(store, video, beats, poses), plan_schema(), 0.4)
-            notes += _apply_gemini_plan(store, mascot, beats, poses, data)
+            notes += _apply_gemini_plan(store, mascot, beats, poses, data, dry)
             source = "gemini"
         except Exception as exc:  # noqa: BLE001 - Gemini часто заблокирован: по тегам
             _log.warning("explainer %s: Gemini plan failed: %s", video_id, exc)
             notes.append(f"Gemini не ответил ({type(exc).__name__}: {str(exc)[:120]})")
-            notes += _assign_fallback(beats, poses)
+            notes += _assign_fallback(beats, poses, dry)
     else:
-        notes += _assign_fallback(beats, poses)
+        notes += _assign_fallback(beats, poses, dry)
     poses = E.list_poses(store, int(mascot["id"]))
     _unrepeat(beats, poses)
     by_id = {int(p["id"]): p for p in poses}
     for beat in beats:
         pose = by_id.get(int(beat["pose_id"]))
         beat["pose_title"] = pose["title"] if pose else ""
-        beat["pose_new"] = bool(pose and not pose["ready"])
+        beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
     new = sorted({b["pose_id"] for b in beats if b["pose_new"]})
     E.set_status(store, video_id, "planned", None, beats=beats, notes=notes, error="")
     return {"ok": True, "video_id": int(video_id), "beats": len(beats), "source": source,
@@ -557,7 +585,8 @@ def plan_beats(store: Any, video_id: int, client: Any = None) -> dict:
 
 def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
     """Агент/владелец правит биты до сборки: ``[{i, pose_id? | new_pose {description, title, tags,
-    number_shown}, chip?, chip_word?, emphasis?, badge?}]`` → ролик снова «планируется» (новая оценка)."""
+    number_shown}, chip? (строка или {text, word}, как в ответе GET), chip_word?, emphasis?, badge?}]`` →
+    ролик снова «планируется» (новая оценка). Биты можно вернуть как получены."""
     video = E.get_video(store, video_id)
     if video["status"] in ("assembling",):
         raise E.ExplError("ролик собирается — дождись сборки")
@@ -595,21 +624,21 @@ def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
                 library.append(pose)
             beat["pose_id"] = int(pose["id"])
         if "chip" in ch:
-            text = P._text(ch.get("chip"), 10)
-            beat["chip"] = {"text": text, "word": P._text(ch.get("chip_word"), 40)} if text else None
+            beat["chip"] = _chip(ch.get("chip"), ch.get("chip_word"))
         if "emphasis" in ch:
-            beat["emphasis"] = [P._text(w, 40) for w in ch.get("emphasis") or [] if P._text(w)][:3]
+            beat["emphasis"] = _words_of(ch.get("emphasis"), 3)
         if "badge" in ch:
-            beat["badge"] = P._text(ch.get("badge"), 6) or None
+            beat["badge"] = _badge(ch.get("badge"))
     if problems:
         raise E.ExplError("биты не приняты: " + "; ".join(problems))
     if any(not b.get("pose_id") for b in beats):
         raise E.ExplError("у каждого бита должна быть поза (pose_id или new_pose)")
     poses = {int(p["id"]): p for p in E.list_poses(store, int(mascot["id"]))}
+    dry = E.is_dry(video)
     for beat in beats:
         pose = poses.get(int(beat["pose_id"]))
         beat["pose_title"] = pose["title"] if pose else ""
-        beat["pose_new"] = bool(pose and not pose["ready"])
+        beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
     E.set_status(store, video_id, "planned", None, beats=beats, error="", clip_id=None, timeline={})
     return E.get_video(store, video_id)
 
@@ -626,8 +655,9 @@ def estimate(store: Any, video_id: int) -> dict:
     poses = [i for i in est["items"] if i["ref_kind"] == E.POSE_KIND]
     tts = [i for i in est["items"] if i["kind"] == "tts"]
     reused = len({b["pose_id"] for b in video.get("beats") or []}) - len(poses)
+    mascot = E.get_mascot(store, int(video["mascot_id"]))
     return {"video_id": int(video_id), "total_rub": est["total_rub"], "paid": est["paid"],
-            "new_poses": len(poses), "poses_rub": round(sum(i["estimate_rub"] for i in poses), 2),
+            "voice": E.describe_voice(E.mascot_voice(store, mascot, E.is_dry(video))), "new_poses": len(poses), "poses_rub": round(sum(i["estimate_rub"] for i in poses), 2),
             "narration_rub": round(sum(i["estimate_rub"] for i in tts), 2), "reused_poses": max(0, reused),
             "narration_ready": not tts, "items": [{k: i.get(k) for k in ("label", "kind", "provider", "model",
                                                                            "estimate_rub", "price_note")}
@@ -636,13 +666,21 @@ def estimate(store: Any, video_id: int) -> dict:
 
 
 def request_generation(store: Any, video_id: int, requested_by: str = "explainer") -> dict:
-    """Бесплатное (Gemini TTS, сухой прогон) — сразу; платное — одна карточка владельцу."""
+    """Бесплатная озвучка — сразу (не вышла — стоп: без голоса ролика нет, и платить за позы незачем);
+    платное — одна карточка владельцу."""
     video = E.get_video(store, video_id)
     pid = int(video["project_id"])
     group = E.video_group(video_id)
     narr = G.estimate(store, pid, E.STAGE, None, [f"{group}:{E.NARRATION_KIND}"])
     if narr["items"] and not narr["paid"]:
         G.request_stage(store, pid, E.STAGE, None, [f"{group}:{E.NARRATION_KIND}"], requested_by=requested_by)
+        job = _target_jobs(store, pid, "expl_video", int(video_id), E.NARRATION_KIND)
+        if job and job["status"] in BAD_JOB and E.narration_ref(store, E.get_video(store, video_id)) is None:
+            why = " ".join(str(job.get("error") or job["status"]).split())[:300].replace(" — ", ": ")
+            error = (f"Озвучка не получилась ({why}). Ролик без голоса не выпускаю — проверьте, доступен ли Gemini, "
+                     "и нажмите «Продолжить»")
+            E.set_status(store, video_id, "failed", ("planned",), error=error)
+            return {"status": "failed", "error": error}
     est = estimate(store, video_id)
     if not est["items"]:
         E.set_status(store, video_id, "generating", ("planned",), estimate_rub=0.0, approval_id=None)
@@ -662,6 +700,9 @@ def request_generation(store: Any, video_id: int, requested_by: str = "explainer
     return {"status": "generating", "estimate": est, "run": req.get("run")}
 
 
+BAD_JOB = ("failed", "blocked_policy", "uncertain", "cancelled")
+
+
 def _target_jobs(store: Any, project_id: int, target_type: str, target_id: int, kind: str) -> dict | None:
     row = store.db.query_one("SELECT * FROM aiv_gen_jobs WHERE project_id = ? AND target_type = ? AND target_id = ? "
                              "AND ref_kind = ? ORDER BY id DESC LIMIT 1",
@@ -673,24 +714,27 @@ def readiness(store: Any, video_id: int) -> dict:
     """Готово ли всё к сборке: озвучка и картинка у каждой позы битов; что упало."""
     video = E.get_video(store, video_id)
     pid = int(video["project_id"])
+    dry = E.is_dry(video)
     missing, failed, active, held = [], [], [], []
     checks = []
     if E.narration_ref(store, video) is None:
         checks.append(("expl_video", int(video_id), E.NARRATION_KIND, "озвучка"))
     for pose_id in sorted(set(E.beat_pose_ids(video))):
         pose = E.get_pose(store, pose_id)
-        if not pose["ready"]:
+        if not E.pose_usable(pose, dry):
             checks.append(("pose", pose_id, E.POSE_KIND, f"поза «{pose['title']}»"))
     for target_type, target_id, kind, label in checks:
         job = _target_jobs(store, pid, target_type, target_id, kind)
         missing.append(label)
         if job is None:
             continue
-        if job["status"] in ("failed", "blocked_policy", "uncertain", "cancelled"):
+        if job["status"] in BAD_JOB:
             failed.append(f"{label}: {job['status']} — {(job.get('error') or '')[:160]}")
         elif job["status"] == "held":
             # Одобрено, но держится (AIVIDEO_ENABLED=0, потолок): включат — «Продолжить» у карточки.
-            held.append(f"{label}: {(job.get('error') or 'держится')[:160]}")
+            why = job.get("error") or "держится"
+            held.append(f"{label}: " + ("платная генерация выключена в настройках сервиса"
+                                        if "AIVIDEO_ENABLED" in why else why[:160]))
         elif job["status"] in ("approved", "submitting", "polling", "recovering", "awaiting"):
             active.append(label)
     return {"ready": not missing, "missing": missing, "failed": failed, "active": active, "held": held}
@@ -836,6 +880,117 @@ def place(beats: list[dict], words: list[dict], total: float) -> list[dict]:
     return out
 
 
+def heard_share(text: str, words: list[dict]) -> float:
+    """Какая доля слов сценария есть в распознанной речи, в том же порядке (0–1)."""
+    script = [t for t in (_norm(w) for w in str(text or "").split()) if t]
+    spoken = [_norm(w["word"]) for w in words]
+    if not script:
+        return 0.0
+    sm = difflib.SequenceMatcher(None, script, spoken, autojunk=False)
+    return round(sum(b.size for b in sm.get_matching_blocks()) / len(script), 3)
+
+
+_DIGITS_RE = re.compile(r"^\d[\d.,:]*%?$")
+# Основы русских числительных: только для слова, вместо которого Whisper написал цифры.
+_NUMERAL_RE = re.compile(r"^(ноль|нол|один|одн|дв|тр[иеё]|четыр|пят|шест|сем|восем|девят|десят|сорок|сто|ста|сот|"
+                         r"тысяч|полтор)")
+
+
+def _digits_for(script_word: str, heard_word: str) -> str | None:
+    """Цифры, которые Whisper услышал вместо числа словами («шесть» → «6»): в субтитрах читаются лучше. Только если
+    это то же число; иначе (ослышка, слово не про числа) — None, остаётся слово сценария."""
+    digits = re.sub(r"[^\d%]+$", "", str(heard_word).strip())
+    if not _DIGITS_RE.match(digits):
+        return None
+    key = _norm(script_word)
+    known = _NUMBER_WORD.get(key)
+    if known is not None and known != digits:
+        return None
+    return digits if known is not None or _NUMERAL_RE.match(key) else None
+
+
+def _word_tail(word: str) -> str:
+    """Пунктуация в конце слова сценария."""
+    return re.sub(r"^.*?([^\w%]*)$", r"\1", word)
+
+
+def script_words(text: str, heard: list[dict]) -> list[dict]:
+    """Слова сценария на времени распознанной речи: голос читает наш текст, значит показывать надо его, а Whisper
+    даёт только время (его «снись» вместо «снизь» в субтитры не идёт). Лишнее распознанное отбрасывается; слову,
+    которого Whisper не услышал, отводится промежуток между соседями. Числа, услышанные цифрами, — цифрами."""
+    tokens = [w for w in str(text or "").split() if _norm(w)]  # «—» отдельным словом не показываем
+    keys = [_norm(w) for w in tokens]
+    spoken = [_norm(w["word"]) for w in heard]
+    spans: list[list[float] | None] = [None] * len(tokens)
+    shown: list[str | None] = list(tokens)
+    sm = difflib.SequenceMatcher(None, keys, spoken, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
+            for k in range(i2 - i1):
+                spans[i1 + k] = [float(heard[j1 + k]["start"]), float(heard[j1 + k]["end"])]
+                digits = _digits_for(tokens[i1 + k], heard[j1 + k]["word"]) if tag == "replace" else None
+                if digits:
+                    shown[i1 + k] = digits + _word_tail(tokens[i1 + k])
+        elif tag == "replace":
+            start, end = float(heard[j1]["start"]), float(heard[j2 - 1]["end"])
+            digits = re.sub(r"[^\d%]+$", "", str(heard[j1]["word"]).strip())
+            if j2 - j1 == 1 and _DIGITS_RE.match(digits) and all(_NUMERAL_RE.match(keys[k]) for k in range(i1, i2)):
+                # «двадцать пять» → «25»: одно слово на весь кусок.
+                shown[i1] = digits + _word_tail(tokens[i2 - 1])
+                spans[i1] = [start, end]
+                for k in range(i1 + 1, i2):
+                    shown[k] = None
+                    spans[k] = [end, end]
+                continue
+            weights = [len(keys[k]) + 1.0 for k in range(i1, i2)]
+            scale = (end - start) / sum(weights)
+            t = start
+            for k, weight in zip(range(i1, i2), weights):
+                spans[k] = [t, t + weight * scale]
+                t += weight * scale
+    n = 0
+    while n < len(spans):  # слова без распознанной пары — в промежуток между соседями
+        if spans[n] is not None:
+            n += 1
+            continue
+        stop = n
+        while stop < len(spans) and spans[stop] is None:
+            stop += 1
+        count = stop - n
+        left = spans[n - 1][1] if n else 0.0
+        right = spans[stop][0] if stop < len(spans) else left + 0.3 * count
+        if right - left < 0.12 * count and n:  # промежутка нет — половина прошлого слова
+            prev = spans[n - 1]
+            prev[1] = left = round((prev[0] + prev[1]) / 2, 3)
+            right = max(right, left + 0.12 * count)
+        for k in range(count):
+            spans[n + k] = [left + (right - left) * k / count, left + (right - left) * (k + 1) / count]
+        n = stop
+    out = []
+    for word, span in zip(shown, spans):
+        if word is None:
+            continue
+        start = round(span[0], 3)
+        out.append({"word": word, "start": start, "end": round(max(span[1], start + 0.04), 3)})
+    return out
+
+
+def _real_words(store: Any, video: dict, ref: dict, path: Path) -> tuple[list[dict], float]:
+    """Слова сценария на времени настоящей озвучки. Нет речи или в ней не тот текст — стоп: субтитры по длине текста
+    не попали бы в голос, а клип с такой озвучкой — подделка."""
+    try:
+        words = transcribe_words(path)
+    except Exception as exc:  # noqa: BLE001 - причину — владельцу, ролик ждёт
+        raise E.ExplError(f"Не удалось распознать речь в озвучке ({type(exc).__name__}: {str(exc)[:120]}). Без этого "
+                          "субтитры не попадут в голос, ролик не собираю — нажмите «Продолжить»") from exc
+    share = heard_share(E.narration_text(video), words)
+    if share < VOICE_MIN_HEARD:
+        store.db.execute("UPDATE aiv_refs SET stale = 1 WHERE id = ?", (int(ref["id"]),))  # записать заново
+        raise E.ExplError(f"В озвучке распознано только {share:.0%} текста сценария. Такой голос не выпускаю — "
+                          "нажмите «Продолжить», озвучка запишется заново")
+    return script_words(E.narration_text(video), words), share
+
+
 def _word_in(words: list[dict], target: Any, w0: int, w1: int) -> int | None:
     """Индекс слова озвучки в [w0, w1]: то же слово, та же основа (4 буквы) или число («семь» → «7»)."""
     key = _norm(target)
@@ -879,7 +1034,7 @@ def _sfx_ok(ref: str) -> bool:
 
 
 def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict], narration_asset: int,
-                 total: float, notes: list[str]) -> list[dict]:
+                 total: float, notes: list[str], dry: bool = False) -> list[dict]:
     """Слои как в пилоте 887 (позы, вжухи, плашки, чипы, голос, субтитры)."""
     poses = {int(p["id"]): p for p in E.list_poses(store, int(mascot["id"]))}
     sfx = {ref: _sfx_ok(ref) for ref in (*CUT_SFX, BADGE_SFX, CHIP_SFX)}
@@ -890,7 +1045,7 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
     layers: list[dict] = []
     for n, item in enumerate(placed):
         pose = poses.get(int(item["pose_id"]))
-        if pose is None or not pose["ready"]:
+        if pose is None or not E.pose_usable(pose, dry):
             raise E.ExplError(f"бит {item['i']}: у позы {item['pose_id']} нет картинки")
         end = item["end"]
         layer = {"id": f"pose{n:02d}", "type": "image", "name": f"Поза: {pose['title']}"[:60],
@@ -1022,34 +1177,37 @@ def assemble(store: Any, video_id: int) -> dict:
     path = _asset_path(store, ref)
     audio_sec = float(probe_duration(path))
     notes: list[str] = list(video.get("notes") or [])
-    voice = E.mascot_voice(store, mascot)
-    words: list[dict] = []
-    if voice["provider"] != "none":
-        try:
-            words = transcribe_words(path)
-        except Exception as exc:  # noqa: BLE001 - Whisper выключен/не встал: по длине текста
-            notes.append(f"Whisper не сработал ({type(exc).__name__}: {str(exc)[:120]}) — слова по длине текста")
-    if not words:
+    dry = E.is_dry(video)
+    voice = E.mascot_voice(store, mascot, dry)
+    heard = None
+    if dry:  # только явный сухой прогон: вместо речи тон, распознавать нечего
         words = proportional_words(E.narration_text(video), audio_sec)
+    else:
+        words, heard = _real_words(store, video, ref, path)
     total = round(max(words[-1]["end"] + TAIL_SEC, audio_sec + 0.4), 2)
     if total > base_seconds():
         raise E.ExplError(f"ролик {total:.1f} с длиннее холста {base_seconds():.0f} с")
-    placed = place(video["beats"], words, total)
+    # Чип и плашка старой правки могли записаться строкой-словарём: в кадр такое не идёт.
+    beats = [{**b, "chip": _chip(b.get("chip")), "badge": _badge(b.get("badge"))} for b in video["beats"]]
+    placed = place(beats, words, total)
     marks = emphasis_marks(placed, words)
+    title = (video.get("title") or video["topic"])[:100]
     clip = create_canvas_clip(store, total, {"kind": "solid", "colors": [mascot["bg_color"], mascot["bg_color"]]},
-                              (video.get("title") or video["topic"])[:100],
+                              f"{E.DRY_MARK}: {title}"[:100] if dry else title,
                               f"Объяснялка ({mascot['name']}): {video['topic']}"[:500])
     clip_id = int(clip["id"])
+    # Клип — в проект маскота: иначе у холста нет проекта и он виден только по прямой ссылке.
+    # Канал объяснялок: в проект канала (одобрение, расписание, статистика).
     channel_id = (video.get("options") or {}).get("channel_project_id")
-    if channel_id:  # канал объяснялок: клип-холст — в проект канала (одобрение, расписание, статистика)
-        try:
-            P.assign_plan_project(store, clip_id, int(channel_id))
-        except KeyError:
-            notes.append(f"канал #{channel_id} не найден — клип без проекта")
+    try:
+        P.assign_plan_project(store, clip_id, int(channel_id or video["project_id"]))
+    except KeyError:
+        P.assign_plan_project(store, clip_id, int(video["project_id"]))
+        notes.append(f"канал #{channel_id} не найден — клип в проекте маскота")
     # trusted_assets: позы маскота живут в его проекте, а клип может лежать в проекте канала.
     ctx = T.ToolContext(store=store, clip_plan_id=clip_id, trusted_assets=True,
                         on_first_change=lambda: snapshot(store, clip_id, "объяснялка: сборка"))
-    layers = build_layers(store, mascot, placed, words, int(ref["asset_id"]), total, notes)
+    layers = build_layers(store, mascot, placed, words, int(ref["asset_id"]), total, notes, dry)
     for i in range(0, len(layers), LAYER_BATCH):
         _tool(ctx, "add_layers", {"layers": layers[i:i + LAYER_BATCH]}, notes)
     _tool(ctx, "set_subtitle_words", {"words": [{**w, **({"emph": marks[k]} if k in marks else {})}
@@ -1062,23 +1220,97 @@ def assemble(store: Any, video_id: int) -> dict:
         notes.append("музыка не выбрана (маскот без трека) — set_music по list_music")
     mixed = auto_mix_clip(ctx, notes)
     E.mark_used(store, [int(p["pose_id"]) for p in placed])
-    fresh = store.get_clip_plan(clip_id)
+    job = G.get_job(store, int(ref["job_id"])) if ref.get("job_id") else {}
+    skipped = _skipped(store, mascot, video, placed, layers, track, mixed, dry)
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
-                "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
+                "editor_url": f"/clips/{clip_id}",
+                "voice": E.describe_voice(voice, float(job.get("cost_rub") or 0.0)), "dry_run": dry,
+                "captions": {"timing": "speech" if heard is not None else "text_length", "heard_share": heard,
+                             "text": "script" if heard is not None else "script_no_speech"},
+                "skipped": skipped,
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "pose_id", "pose_title", "badge", "chip",
                                                   "variant")} for p in placed],
                 "emphasis_words": len(marks), "layers": len(layers), "music_track_id": track,
                 **({"mix": mixed} if mixed else {})}
     E.update_video(store, video_id, clip_id=clip_id, words=words, timeline=timeline, notes=notes, error="")
     out = {"ok": True, "clip_id": clip_id, "duration": total, "beats": len(placed), "layers": len(layers),
-           "editor_url": timeline["editor_url"], "notes": notes}
+           "editor_url": timeline["editor_url"], "notes": notes, "voice": timeline["voice"],
+           "captions": timeline["captions"], "skipped": skipped}
     options = video.get("options") or {}
     if options.get("render"):
         # «done» — только когда рендер, обложки и заголовок уже сделаны: канал объяснялок
         # (app/explainer_channel.py) сразу отправляет готовое на одобрение.
         out["publish"] = finish_publish(store, video_id, clip_id, cover=options.get("cover", True))
+        if ((out["publish"].get("render") or {}).get("status")) != "succeeded":
+            skipped.append("готовый файл: рендер не вышел, причина в заметках")
+            E.update_video(store, video_id, timeline=timeline)
     E.set_status(store, video_id, "done", ("assembling",))
     return out
+
+
+def _skipped(store: Any, mascot: dict, video: dict, placed: list[dict], layers: list[dict], track: int | None,
+             mixed: dict | None, dry: bool) -> list[str]:
+    """Чего нет в собранном клипе: говорится прямо, чтобы агенту не пришлось додумывать."""
+    out: list[str] = []
+    if dry:
+        by_id = {int(p["id"]): p for p in E.list_poses(store, int(mascot["id"]))}
+        fakes = {int(p["pose_id"]) for p in placed if by_id.get(int(p["pose_id"]), {}).get("placeholder")}
+        out.append("настоящий голос: это черновик, вместо речи тон, субтитры разложены по длине текста")
+        if fakes:
+            out.append(f"настоящие позы: заглушек в клипе {len(fakes)}")
+    if not track:
+        out.append("музыка: у маскота не выбран трек")
+    if len(placed) > 1 and not any(str(lay.get("id") or "").startswith("wh") for lay in layers):
+        out.append("звуки на склейках: нет пака звуков")
+    if settings.auto_mix and not mixed:
+        out.append("автосведение звука: не вышло, звук как собран")
+    if not (video.get("options") or {}).get("render"):
+        out.append("готовый файл: рендер не просили, клип открывается в редакторе")
+    return out
+
+
+def facts(store: Any, video_id: int, video: dict | None = None) -> dict:
+    """Что на самом деле с роликом: голос, субтитры, деньги, чего нет. Агент пересказывает это, а не догадки."""
+    video = video or E.get_video(store, video_id)
+    timeline = video.get("timeline") or {}
+    mascot = E.get_mascot(store, int(video["mascot_id"]))
+    voice = timeline.get("voice")
+    if not voice:
+        planned = E.mascot_voice(store, mascot, E.is_dry(video))
+        job = _target_jobs(store, int(video["project_id"]), "expl_video", int(video["id"]), E.NARRATION_KIND)
+        voice = E.describe_voice(planned, estimate_rub=job["estimate_rub"] if job and job["provider"] == planned[
+            "provider"] and job["status"] not in BAD_JOB else None)
+    spent = G.spent_approval(store, int(video["approval_id"])) if video.get("approval_id") else 0.0
+    to_draw = list(video.get("poses_to_draw") or [])
+    skipped = list(timeline.get("skipped") or [])
+    captions = timeline.get("captions")
+    status = video["status"]
+    parts: list[str] = []
+    if status == "done":
+        parts.append(f"Готов клип #{video['clip_id']}, открыть: {video['editor_url']}.")
+    elif status == "failed":
+        parts.append(f"Ролика нет: {video.get('error') or 'ошибка'}.")
+    elif status == "cancelled":
+        parts.append(f"Ролик отменён: {video.get('error') or 'отмена'}.")
+    elif status == "awaiting_approval":
+        parts.append(f"Ролик ждёт «Разрешить» владельца: карточка #{video.get('approval_id')} на "
+                     f"{float(video.get('estimate_rub') or 0.0):.2f} ₽.")
+    else:
+        parts.append(f"В работе: {video['status_label']}. Клипа ещё нет.")
+    if to_draw:
+        parts.append("Нужно нарисовать позы: " + ", ".join(f"«{t}»" for t in to_draw) + ".")
+    parts.append(voice["label"])
+    if voice["paid"] and status != "done" and not timeline.get("voice"):
+        parts.append("Без «Разрешить» озвучки не будет: другим голосом не подменяю. Не хотите платить — решает владелец: "
+                     "сменить голос маскота на все следующие ролики и продолжить этот.")
+    if captions:
+        parts.append("Субтитры: текст сценария на времени распознанной речи." if captions.get("timing") == "speech"
+                     else "Субтитры разложены по длине текста, с голосом не сверены.")
+    parts.append(f"Потрачено {spent:.2f} ₽.")
+    if skipped:
+        parts.append("Не сделано: " + "; ".join(skipped) + ".")
+    return {"voice": voice, "captions": captions, "dry_run": E.is_dry(video), "spent_rub": round(spent, 2),
+            "poses_to_draw": to_draw, "skipped": skipped, "summary": " ".join(parts)}
 
 
 def finish_publish(store: Any, video_id: int, clip_id: int, cover: bool = True) -> dict:

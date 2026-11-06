@@ -26,10 +26,22 @@ export interface Pose {
   origin: "pilot" | "generated" | "upload" | "agent";
   uses: number;
   ready: boolean;
+  /** Картинка-заглушка из черновика: в настоящий ролик не идёт. */
+  placeholder?: boolean;
   asset_id: number | null;
   url: string | null;
   ref_id: number | null;
   version: number;
+}
+
+export interface VoiceInfo {
+  provider: string;
+  voice?: string;
+  real: boolean;
+  paid: boolean;
+  cost_rub: number;
+  /** Готовая фраза: чем озвучено и сколько стоило. */
+  label: string;
 }
 
 export interface Mascot {
@@ -45,6 +57,7 @@ export interface Mascot {
   chip_color: string;
   outline_color: string;
   voice: MascotVoice;
+  voice_now: VoiceInfo;
   music_track_id: number | null;
   captions_style: string;
   notes: string;
@@ -97,7 +110,11 @@ export interface ExplainerVideo {
   estimate_rub: number;
   error: string;
   notes: string[];
-  options: { render?: boolean };
+  options: { render?: boolean; dry_run?: boolean };
+  /** Черновик: вместо голоса тон, вместо новых поз заглушки. */
+  dry_run: boolean;
+  voice_used: VoiceInfo | null;
+  poses_to_draw: string[];
   created_at: string;
   script?: { title: string; text: string; chars: number; est_sec: number; points: number; warnings: string[] };
   beats?: Beat[];

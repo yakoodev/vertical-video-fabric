@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import projects as P
 from app import series3d as S3
 from app import stories as S
 from app import stories_disaster as D
@@ -472,6 +473,7 @@ def assemble(store: Any, episode_id: int) -> dict:
                               (ep.get("title") or ep["premise"])[:100],
                               f"3D-серия ({world['name']}): {ep['premise']}"[:500])
     clip_id = int(clip["id"])
+    P.assign_plan_project(store, clip_id, int(ep["project_id"]))  # иначе холст виден только по прямой ссылке
     render = dict(store.get_clip_plan(clip_id).get("render_settings") or {})
     render["layers"] = normalize_layers(layers)
     render["camera"] = normalize_camera([])
@@ -487,10 +489,9 @@ def assemble(store: Any, episode_id: int) -> dict:
     elif bed is None and D.music_off(world, ep) and D.MUSIC_NOTE not in notes:
         notes.append(D.MUSIC_NOTE)
     mixed = auto_mix_clip(ctx, notes)
-    fresh = store.get_clip_plan(clip_id)
     shots = result["shots"]
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2), "engine": S.ENGINE_3D,
-                "editor_url": f"/projects/{fresh['source_id']}/candidates?clip={clip_id}",
+                "editor_url": f"/clips/{clip_id}",
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "camera", "sfx", "sentence")} for p in placed],
                 "shots_per_min": round(len(shots) / total * 60, 1), "sfx": len(result.get("sfx") or []),
                 "layers": len(render["layers"]), "music_track_id": track, "music_bed": bed, "cover_frames": covers,

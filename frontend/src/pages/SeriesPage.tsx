@@ -73,7 +73,7 @@ const TABS: [Tab, string, string?][] = [
   ["aiv", "ИИ-видео", "ai_video"],
   // Канал объяснялок (app/explainer_channel.py): маскот ведёт канал — темы, расписание, автопилот.
   ["channel", "Канал", "explainer"],
-  // Объяснялки (app/explainer.py): маскот объясняет тему — у «ИИ-видео» и «канала объяснялок».
+  // Объяснялки (app/explainer.py): маскот объясняет тему — у «ИИ-видео», «канала объяснялок» и проекта с маскотом.
   ["expl", "Объяснялки", "explainer"],
   // Истории (app/stories.py): рассказчик и сцена на каждую фразу — тоже только у «ИИ-видео».
   ["story", "Истории", "stories"],
@@ -125,7 +125,13 @@ export function SeriesPage() {
   const tabs = TABS.filter(
     ([key, , mod]) =>
       (!mod || on(mod)) &&
-      (key === "aiv" || key === "story" ? isAiv : key === "expl" || key === "channel" ? isAiv || isChannel : true),
+      (key === "aiv" || key === "story"
+        ? isAiv
+        : key === "channel"
+          ? isAiv || isChannel
+          : key === "expl"
+            ? isAiv || isChannel || !!project.data?.has_mascots
+            : true),
   );
   const lore = tab === "brief" || tab === "rules" || tab === "hyp";
   const shown: Tab = lore || (tab && tabs.some(([key]) => key === tab)) ? (tab as Tab) : "videos";

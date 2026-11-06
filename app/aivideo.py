@@ -352,8 +352,10 @@ OWNER_FIELDS = ("month_cap_rub",)
 
 def require_project(store: Any, project_id: int) -> dict:
     project = P.get_project(store, int(project_id), include_sources=False)
-    # Канал объяснялок (projects.kind = explainer) — тот же ИИ-проект: маскоты, позы, деньги.
-    if project.get("kind") not in (PROJECT_KIND, "explainer"):
+    # Канал объяснялок (projects.kind = explainer) — тот же ИИ-проект: маскоты, позы, деньги. Проект с маскотом —
+    # тоже: объяснялка делается в проекте любого вида, менять ему тип ради этого не нужно (app/explainer.py).
+    if project.get("kind") not in (PROJECT_KIND, "explainer") and not store.db.query_one(
+            "SELECT 1 FROM expl_mascots WHERE project_id = ? LIMIT 1", (int(project_id),)):
         raise AivError(f"проект #{project_id} — не «ИИ-видео» (kind {project.get('kind')}); "
                        "создай aiv_create_project или смени тип проекта на ai_video")
     return project

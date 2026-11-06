@@ -24,8 +24,8 @@ MASCOT = {
     "accent_color": "#ffd447",
     "chip_color": "#7a6ff0",
     "outline_color": "#1b1030",
-    # Пилот озвучен ElevenLabs через Polza (голос liam, ≈ 3 ₽ за ролик) — понравилось владельцу.
-    # Бесплатно — {"provider": "gemini", "voice": "Puck"} (поменять в карточке маскота).
+    # Голос совы — как в первых роликах: ElevenLabs через Polza, liam, ≈ 3 ₽ за ролик, каждый раз по карточке.
+    # Владелец: «голос чтобы был единый на всех видео», Gemini ему не понравился.
     "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "liam"},
     "music_track_id": 20,
     "captions_style": "hormozi",

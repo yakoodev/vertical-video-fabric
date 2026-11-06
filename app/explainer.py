@@ -24,8 +24,16 @@
 описание по Жаккару ≥ ``SIMILAR_MIN``, то же показанное число), не рисуется — берётся готовая.
 
 Деньги — расширение этапа ``explainer`` у ``app/aivideo_gen.py`` (``register_extension``): позы (по
-3 ₽ nano-banana 1K), лист маскота и озвучка Polza — карточкой владельцу; Gemini TTS и сухой прогон
-(провайдер проекта ``none``) — сразу, 0 ₽.
+3 ₽ nano-banana 1K), лист маскота и озвучка Polza — карточкой владельцу; Gemini TTS — сразу, 0 ₽.
+
+Голос у маскота один на все ролики (решение владельца: «голос чтобы был единый на всех видео»): озвучивает всегда
+выбранный голос маскота, подмены нет (``mascot_voice``, ``describe_voice``). Голос Polza платный, значит любой ролик
+такого маскота останавливается на карточке с суммой, что бы ни стояло в проекте; бесплатно только голос Gemini.
+Не выбран голос вообще — Gemini. Провайдер проекта ``none`` — НЕ сухой прогон: это значение по умолчанию у любого
+проекта, новые позы и платный голос в нём тоже идут по карточке. Сухой прогон (тон вместо
+речи, заглушки вместо поз, клип с пометкой «Черновик») — только по явной опции ролика ``options.dry_run``:
+её ставят тесты и REST-запрос, инструмента агента для неё нет. Заглушка позы не считается готовой позой
+(``placeholder``): настоящий ролик её не возьмёт, а попросит нарисовать.
 """
 
 from __future__ import annotations
@@ -129,6 +137,8 @@ ORIGINS = ("pilot", "generated", "upload", "agent")
 SIMILAR_MIN = 0.6  # Жаккар тегов или описания: новая поза ≈ готовой → берём готовую
 MAX_TAGS = 16
 DEFAULT_BG = "#2a1b47"
+DRAW_PROVIDER = "polza"  # кто рисует новую позу в проекте с провайдером none (только по карточке)
+DRY_MARK = "Черновик без голоса"
 BG_NAMES = {"#2a1b47": "dark purple"}
 NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "один": 1, "два": 2, "три": 3,
                 "четыре": 4, "пять": 5}
@@ -188,14 +198,15 @@ def _voice(value: Any) -> dict:
         text = P._text(value.get(key), 200)
         if text:
             out[key] = text
-    if out.get("provider") and out["provider"] not in ("gemini", "polza", "none"):
-        raise ExplError("voice.provider: gemini (бесплатно) | polza (платно) | none")
+    if out.get("provider") and out["provider"] not in ("gemini", "polza"):
+        raise ExplError("voice.provider: gemini (бесплатно) | polza (платно)")
     return out
 
 
 def _mascot_view(store: Any, row: Any) -> dict:
     data = dict(row)
     data["voice"] = _loads(data.pop("voice_json", "{}"), {})
+    data["voice_now"] = describe_voice(mascot_voice(store, data))
     sheet = V.selected_ref(store, int(data["project_id"]), "mascot", int(data["id"]), SHEET_KIND)
     data["sheet"] = ({"ref_id": sheet["id"], "asset_id": sheet["asset_id"], "url": sheet["url"],
                       "version": sheet["version"]} if sheet and sheet.get("asset_id") else None)
@@ -222,13 +233,13 @@ MASCOT_FIELDS = ("name", "identity_card", "persona", "style_passport", "bg_color
 
 
 def save_mascot(store: Any, project_id: int | None = None, mascot_id: int | None = None, **fields: Any) -> dict:
-    """Новый маскот (``project_id`` проекта «ИИ-видео») или правка (``mascot_id``). Смена карты
+    """Новый маскот (``project_id`` проекта любого вида) или правка (``mascot_id``). Смена карты
     личности, стиля или фона не перерисовывает позы сама: старые остаются (новые — по новой карте)."""
     current = get_mascot(store, int(mascot_id)) if mascot_id else None
     if current is None:
         if project_id is None:
-            raise ExplError("нужен project_id проекта «ИИ-видео» (или mascot_id для правки)")
-        V.require_project(store, int(project_id))
+            raise ExplError("нужен project_id проекта (или mascot_id для правки)")
+        P.get_project(store, int(project_id), include_sources=False)  # маскот живёт в проекте любого вида
         if not P._text(fields.get("name")):
             raise ExplError("нужно имя маскота (name)")
         if not P._text(fields.get("identity_card")):
@@ -312,19 +323,43 @@ def sheet_path(store: Any, mascot: dict) -> Path | None:
     return _asset_path(store, ref)
 
 
-def mascot_voice(store: Any, mascot: dict) -> dict:
-    """Голос озвучки ролика: провайдер маскота; проект в сухом прогоне (провайдер ``none``) — тон."""
-    style = V._style_row(store, int(mascot["project_id"]))
+def dry_voice() -> dict:
+    return {"provider": "none", "model": "dry", "voice": "tone"}
+
+
+def mascot_voice(store: Any, mascot: dict, dry_run: bool = False) -> dict:
+    """Чем озвучивается ролик: выбранный голос маскота, один на все его ролики; другим голосом не подменяем.
+    Тон — только при ``dry_run`` (явная опция ролика). Голос не выбран — Gemini. Платный голос идёт по карточке:
+    это решает этап генерации, а не выбор голоса."""
+    if dry_run:
+        return dry_voice()
     voice = dict(mascot.get("voice") or {})
-    provider = "none" if style["provider"] == "none" else (voice.get("provider") or "gemini")
+    provider = voice.get("provider") or "gemini"
+    if provider == "none":  # старое значение: это не голос, настоящий ролик без голоса не выходит
+        provider, voice = "gemini", {}
     if provider == "gemini":
         out = {"provider": provider, "model": voice.get("model") or settings.gemini_tts_model,
                "voice": voice.get("voice") or settings.gemini_tts_voice}
         return {**out, "style": voice["style"]} if voice.get("style") else out
-    if provider == "none":
-        return {"provider": "none", "model": "dry", "voice": "tone"}
     return {"provider": provider, "model": voice.get("model") or settings.polza_tts_model,
             "voice": voice.get("voice") or settings.polza_tts_voice}
+
+
+def describe_voice(voice: dict, cost_rub: float | None = None, estimate_rub: float | None = None) -> dict:
+    """Что сказать про голос владельцу и агенту: ``label`` — готовая фраза, ``real`` — речь ли это вообще."""
+    provider = str(voice.get("provider") or "")
+    out: dict[str, Any] = {"provider": provider, "voice": voice.get("voice"), "real": provider != "none",
+                           "paid": provider not in ("gemini", "none"), "cost_rub": round(float(cost_rub or 0.0), 2)}
+    if provider == "none":
+        out["label"] = "Голоса нет: черновик, вместо речи тон."
+    elif provider == "gemini":
+        out["label"] = f"Голос маскота: Gemini {voice.get('voice')}, бесплатно."
+    elif cost_rub is not None:
+        out["label"] = f"Голос маскота: Polza {voice.get('voice')}, стоил {float(cost_rub):.2f} ₽."
+    else:
+        price = f", ≈ {float(estimate_rub):.2f} ₽" if estimate_rub else ""
+        out["label"] = f"Голос маскота: Polza {voice.get('voice')}, платный{price}, только после «Разрешить»."
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -347,12 +382,26 @@ def number_of(description: str, explicit: Any = None) -> int | None:
     return int(word) if word.isdigit() else NUMBER_WORDS.get(word)
 
 
-def _pose_view(row: Any, ref: dict | None) -> dict:
+def _dry_jobs(store: Any, project_id: int) -> set[int]:
+    """Запуски сухого прогона: картинка от них — заглушка, а не нарисованная поза."""
+    rows = store.db.query_all("SELECT id FROM aiv_gen_jobs WHERE project_id = ? AND provider = 'none' AND ref_kind = ?",
+                              (int(project_id), POSE_KIND))
+    return {int(r["id"]) for r in rows}
+
+
+def pose_usable(pose: dict, dry_run: bool = False) -> bool:
+    """Можно ли ставить позу в ролик: настоящая картинка; заглушка — только в черновике."""
+    return bool(pose["ready"] or (dry_run and pose.get("placeholder")))
+
+
+def _pose_view(row: Any, ref: dict | None, dry_jobs: set[int] | frozenset = frozenset()) -> dict:
     data = dict(row)
     data["tags"] = _loads(data.pop("tags_json", "[]"), [])
-    data["ready"] = bool(ref and ref.get("asset_id"))
-    data["asset_id"] = int(ref["asset_id"]) if data["ready"] else None
-    data["url"] = ref["url"] if data["ready"] else None
+    has_image = bool(ref and ref.get("asset_id"))
+    data["placeholder"] = bool(has_image and ref.get("job_id") and int(ref["job_id"]) in dry_jobs)
+    data["ready"] = has_image and not data["placeholder"]
+    data["asset_id"] = int(ref["asset_id"]) if has_image else None
+    data["url"] = ref["url"] if has_image else None
     data["ref_id"] = int(ref["id"]) if ref else None
     data["version"] = int(ref["version"]) if ref else 0
     return data
@@ -370,15 +419,16 @@ def get_pose(store: Any, pose_id: int) -> dict:
     if not row:
         raise KeyError(f"нет позы {pose_id}")
     ref = V.selected_ref(store, int(row["project_id"]), "pose", int(pose_id), POSE_KIND)
-    return _pose_view(row, ref)
+    return _pose_view(row, ref, _dry_jobs(store, int(row["project_id"])))
 
 
 def list_poses(store: Any, mascot_id: int, ready_only: bool = False) -> list[dict]:
     mascot = get_mascot(store, mascot_id)
     refs = _selected_pose_refs(store, int(mascot["project_id"]))
+    dry_jobs = _dry_jobs(store, int(mascot["project_id"]))
     rows = store.db.query_all("SELECT p.*, m.project_id FROM expl_poses p JOIN expl_mascots m ON m.id = p.mascot_id "
                               "WHERE p.mascot_id = ? ORDER BY p.id", (int(mascot_id),))
-    out = [_pose_view(r, refs.get(int(r["id"]))) for r in rows]
+    out = [_pose_view(r, refs.get(int(r["id"])), dry_jobs) for r in rows]
     return [p for p in out if p["ready"]] if ready_only else out
 
 
@@ -417,7 +467,8 @@ def save_pose(store: Any, mascot_id: int | None = None, pose_id: int | None = No
                                (int(mascot["id"]), origin))
         pose_id = int(cur.lastrowid)
         sets.setdefault("slug", V.slugify(slug, f"p{pose_id}") if slug else f"p{pose_id}")
-        sets.setdefault("title", P._text(description, 60))
+        # Владелец видит название в карточке и в списке «нужно нарисовать»: пустым оно быть не может.
+        sets["title"] = sets.get("title") or P._text(description, 60)
     if sets:
         cols = ", ".join(f"{k} = ?" for k in sets)
         store.db.execute(f"UPDATE expl_poses SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -530,7 +581,13 @@ def _video_view(row: Any, full: bool = True) -> dict:
         if full or key in ("options", "notes"):
             data[key] = _loads(raw, default)
     data["status_label"] = STATUS_LABELS.get(data["status"], data["status"])
-    data["editor_url"] = timeline.get("editor_url") if data.get("clip_id") else None
+    data["editor_url"] = f"/clips/{int(data['clip_id'])}" if data.get("clip_id") else None
+    # Для строки ролика в списке: черновик ли, чем озвучен и каких поз ещё нет.
+    data["dry_run"] = is_dry(data)
+    data["voice_used"] = timeline.get("voice")
+    beats = data["beats"] if "beats" in data else _loads(row["beats_json"], [])
+    data["poses_to_draw"] = (sorted({str(b.get("pose_title") or "поза без названия") for b in beats if b.get("pose_new")})
+                             if data["status"] in ("planned", "awaiting_approval", "generating") else [])
     return data
 
 
@@ -589,6 +646,11 @@ def set_status(store: Any, video_id: int, status: str, expect: tuple[str, ...] |
     return bool(store.db.execute(sql, args).rowcount)
 
 
+def is_dry(video: dict | None) -> bool:
+    """Сухой прогон — только по явной опции ролика, а не по настройкам проекта."""
+    return bool(((video or {}).get("options") or {}).get("dry_run"))
+
+
 def create_video(store: Any, mascot_id: int, topic: str, duration: Any = 45, tone: str = "",
                  options: dict | None = None, requested_by: str = "agent") -> dict:
     mascot = get_mascot(store, mascot_id)
@@ -645,7 +707,7 @@ def narration_ref(store: Any, video: dict) -> dict | None:
     from app.aivideo_gen import _asset_path, _fresh
 
     mascot = get_mascot(store, int(video["mascot_id"]))
-    voice = mascot_voice(store, mascot)
+    voice = mascot_voice(store, mascot, is_dry(video))
     ref = V.selected_ref(store, int(video["project_id"]), "expl_video", int(video["id"]), NARRATION_KIND)
     if not _fresh(ref) or ref["prompt"] != narration_key(voice, narration_text(video)):
         return None
@@ -660,7 +722,7 @@ def overview(store: Any, project_id: int) -> dict:
     """Вкладка «Объяснялки»: маскоты с библиотекой поз, ролики, бюджет и карточки этапа."""
     from app import aivideo_gen as G
 
-    project = V.require_project(store, project_id)
+    project = P.get_project(store, int(project_id), include_sources=False)  # маскот — в проекте любого вида
     mascots = []
     for m in list_mascots(store, project_id):
         m["poses"] = list_poses(store, int(m["id"]))
@@ -703,7 +765,7 @@ def _prompt_args(mascot: dict) -> dict:
 
 class _Extension:
     stage = STAGE
-    label = "объяснялка: позы маскота и озвучка"
+    label = "позы маскота и озвучка"
     target_types = ("pose", "mascot", "expl_video")
     ref_kinds = {POSE_KIND: "поза маскота", SHEET_KIND: "лист маскота", NARRATION_KIND: "озвучка объяснялки"}
     aspects = {POSE_KIND: "9:16", SHEET_KIND: "16:9"}
@@ -745,6 +807,7 @@ class _Extension:
                 if int(video["project_id"]) != int(project_id):
                     raise ExplError("ролик из другого проекта")
                 group = video_group(target_id)
+                dry = is_dry(video)
                 if kind in ("", NARRATION_KIND):
                     item = self._narration_item(store, video, regenerate)
                     if item is not None:
@@ -756,26 +819,29 @@ class _Extension:
                             continue
                         seen.add(pid)
                         pose = get_pose(store, pid)
-                        if not pose["ready"]:
-                            out.append({**self._pose_item(store, project_id, pose, False), "group": group})
+                        if not pose_usable(pose, dry):
+                            out.append({**self._pose_item(store, project_id, pose, False, dry), "group": group})
             else:
                 raise ExplError(f"элемент {raw!r}: «expl_video:ID[:narration|pose]», «pose:ID» или «mascot:ID»")
         return out
 
     def _image(self, store: Any, project_id: int, target_type: str, target_id: int, kind: str, label: str,
-               group: str) -> dict:
+               group: str, dry: bool = False) -> dict:
         from app import aivideo_gen as G
 
         style = V.get_style(store, project_id)
+        # Заглушка — только в черновике. Провайдер none (значение по умолчанию у любого проекта) — не повод
+        # выдать градиент за позу: настоящая картинка платная, значит карточка владельцу с суммой.
+        provider = "none" if dry else (style["provider"] if style["provider"] != "none" else DRAW_PROVIDER)
         item = G._image_item(STAGE, target_type, target_id, kind, label, style["image_model"], style["quality"],
-                             style["provider"])
+                             provider)
         item["aspect"] = self.aspects.get(kind, "9:16")
         return {**item, "group": group} if group else item
 
-    def _pose_item(self, store: Any, project_id: int, pose: dict, regenerate: bool) -> dict:
+    def _pose_item(self, store: Any, project_id: int, pose: dict, regenerate: bool, dry: bool = False) -> dict:
         mascot = get_mascot(store, int(pose["mascot_id"]))
         item = self._image(store, project_id, "pose", int(pose["id"]), POSE_KIND,
-                           f"{mascot['name']}: поза «{pose['title'] or pose['slug']}»", "")
+                           f"{mascot['name']}: поза «{pose['title'] or pose['slug']}»", "", dry)
         item["regenerate"] = bool(regenerate)
         return item
 
@@ -788,10 +854,11 @@ class _Extension:
         if not regenerate and narration_ref(store, video) is not None:
             return None
         mascot = get_mascot(store, int(video["mascot_id"]))
-        voice = mascot_voice(store, mascot)
+        voice = mascot_voice(store, mascot, is_dry(video))
         tts = get_tts(voice["provider"], voice["model"], voice["voice"], voice.get("style"))
         price = tts.price_rub_per_char() if getattr(tts, "paid", False) else 0.0
-        note = {"gemini": "Gemini TTS, бесплатно", "none": "сухой прогон"}.get(voice["provider"], "цена TTS из app/dubbing.py")
+        note = {"gemini": "Gemini TTS, бесплатно", "none": "сухой прогон, тон вместо речи"}.get(
+            voice["provider"], "цена TTS из app/dubbing.py")
         return {"stage": STAGE, "kind": "tts", "target_type": "expl_video", "target_id": int(video["id"]),
                 "ref_kind": NARRATION_KIND, "slot": "", "label": f"озвучка «{P._text(video['topic'], 60)}»",
                 "provider": voice["provider"], "model": voice["model"], "voice": voice["voice"],
@@ -835,6 +902,9 @@ class _Extension:
             parts.append(f"озвучка {tts[0]['chars']} симв. ({tts[0]['model']}, {tts[0]['voice']}) ≈ "
                          f"{sum(i['estimate_rub'] for i in tts):.2f} ₽")
         head = "Объяснялка"
+        paid_voice = next((i for i in tts if i["provider"] not in ("gemini", "none")), None)
+        tail = (f"\nГолос маскота {paid_voice['voice']} платный, он один на все ролики маскота. Не хотите платить: "
+                "откажите, смените голос маскота и нажмите «Продолжить» у ролика." if paid_voice else "")
         if len(groups) == 1:
             try:
                 video = get_video(store, int(next(iter(groups)).split(":")[1]))
@@ -844,7 +914,7 @@ class _Extension:
                         f"{video['duration_target']:.0f} с; поз из библиотеки: {max(0, reused)})")
             except (KeyError, ValueError, IndexError):
                 pass
-        return f"{head}: " + "; ".join(parts) + f" — итого ≈ {est['total_rub']:.2f} ₽."
+        return f"{head}: " + "; ".join(parts) + f" — итого ≈ {est['total_rub']:.2f} ₽." + tail
 
 
 _REGISTERED = False
@@ -907,8 +977,9 @@ def _copy_asset(store: Any, src: Path, label: str, description: str, project_id:
 
 def import_pilot(store: Any, project_id: int | None = None, directory: str | Path | None = None) -> dict:
     """Маскот «Ух» и 18 поз пилота (клип 887) → библиотека. Повторный вызов не дублирует: позы
-    ищутся по slug. ``project_id`` не задан — создаётся проект «ИИ-видео» «Объяснялки: Ух» (Polza;
-    платное всё равно только по карточке владельца)."""
+    ищутся по slug. ``project_id`` — проект любого вида; не задан — создаётся проект «ИИ-видео»
+    «Объяснялки: Ух» (Polza; платное всё равно только по карточке владельца). Голос — тот же, что у
+    первых роликов (``explainer_pilot.MASCOT``): озвучка платная, по карточке."""
     from app.explainer_pilot import MASCOT, POSES, SHEET_FILE
 
     folder = Path(directory) if directory else pilot_dir()
@@ -925,7 +996,7 @@ def import_pilot(store: Any, project_id: int | None = None, directory: str | Pat
                                                  provider="polza",
                                                  description="Маскот-объяснялки: сова Ух объясняет темы за 45 с "
                                                              "(пилот — клип 887)")["project"]["id"])
-    V.require_project(store, int(project_id))
+    P.get_project(store, int(project_id), include_sources=False)
     mascot = next((m for m in list_mascots(store, project_id) if m["slug"] == MASCOT["slug"]), None)
     fields = {k: MASCOT[k] for k in ("name", "identity_card", "persona", "style_passport", "bg_color",
                                      "accent_color", "chip_color", "outline_color", "voice", "captions_style",

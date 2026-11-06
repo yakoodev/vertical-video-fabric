@@ -15,7 +15,8 @@ export interface TtsVoiceValue {
  * Выбор голоса озвучки (app/dubbing.py): провайдер, голос, «как говорить» и ▶ проба.
  * Gemini — бесплатно (30 голосов, проба сразу); Polza — платно (модель и голос текстом, проба
  * спрашивает подтверждение с суммой); none — сухой прогон тоном.
- * ``emptyLabel`` — показать пункт «по умолчанию» (provider не задан).
+ * ``emptyLabel`` — показать пункт «по умолчанию» (provider не задан). ``allowDry={false}`` — без сухого
+ * прогона: там, где голос должен быть настоящим (объяснялки).
  */
 export function TtsVoicePicker({
   value,
@@ -23,12 +24,14 @@ export function TtsVoicePicker({
   emptyLabel,
   showModel = false,
   disabled = false,
+  allowDry = true,
 }: {
   value: TtsVoiceValue;
   onChange: (next: TtsVoiceValue) => void;
   emptyLabel?: string;
   showModel?: boolean;
   disabled?: boolean;
+  allowDry?: boolean;
 }) {
   const toast = useToast();
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -78,7 +81,7 @@ export function TtsVoicePicker({
         {emptyLabel !== undefined ? <option value="">{emptyLabel}</option> : null}
         <option value="gemini">Gemini TTS (бесплатно)</option>
         <option value="polza">Polza TTS (платно)</option>
-        <option value="none">Сухой прогон (тон)</option>
+        {allowDry ? <option value="none">Сухой прогон (тон)</option> : null}
       </select>
       {provider === "gemini" ? (
         <select

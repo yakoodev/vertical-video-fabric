@@ -809,7 +809,10 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
                          + ("" if not caps.get("exclusive") else " (кадры и листы персонажей вместе не шлются — "
                                                                  "у модели это разные режимы)"))
     else:
-        provider, model = style["provider"], style["image_model"]
+        # Этап расширения платит тому провайдеру, что записан в его запусках (объяснялка: провайдер проекта none —
+        # не заглушки и не подмена голоса, а карточка на настоящую картинку и озвучку).
+        charged = [i for i in planned if _paid(i["provider"], i["kind"])] if stage in EXTENSIONS else []
+        provider, model = charged[0]["provider"] if charged else style["provider"], style["image_model"]
     if stage == "voice" or (planned and all(i["kind"] == "tts" for i in planned)):
         model = "TTS"
     elif stage in EXTENSIONS and any(i["kind"] == "tts" for i in planned):
@@ -845,7 +848,9 @@ def estimate(store: Any, project_id: int, stage: str, script_id: int | None = No
     note = (f"{STAGE_LABELS[stage]}: {len(planned)} шт. ≈ {total:.2f} ₽"
             + (f" ({model}, цены от {PRICE_CHECKED}: "
                + ", ".join(sorted({i['price_note'] for i in planned if _paid(i['provider'], i['kind'])})) + ")"
-               if paid else " — бесплатно (сухой прогон / Gemini TTS), 0 ₽"))
+               if paid else (" — сухой прогон, заглушки и тон, 0 ₽" if planned and all(i["provider"] == "none"
+                                                                                       for i in planned)
+                             else " — бесплатно, 0 ₽")))
     if stage == "video" and paid and any("потолка серии" in p for p in problems):
         problems.append(f"подсказка: серия-черновик ≤ {EPISODE_CAP_RUB['draft']:.0f} ₽ — для видео переключи серию "
                         "в quality (aiv_update_script quality) или возьми дешёвую модель (video_model "
@@ -947,7 +952,7 @@ def _card_question(store: Any, project: dict, est: dict, script: dict | None) ->
             f"план {f['idx']} — " + ("; ".join(i["detail"] for i in f["issues"][:2]) or f"оценка {f['score']}")
             for f in qa[:4]) + ".")
     if not settings.aivideo_enabled:
-        lines.append("⚠ AIVIDEO_ENABLED=0 — запустится после включения владельцем.")
+        lines.append("⚠ Платная генерация сейчас выключена в настройках сервиса: запустится после её включения.")
     lines.append("Разрешить эту сумму?")
     return "\n".join(lines)
 
@@ -966,8 +971,11 @@ def request_stage(store: Any, project_id: int, stage: str, script_id: int | None
     with _REQUEST_LOCK:
         res = _request_locked(store, project, stage, script_id, items, regenerate, requested_by, note, continuity)
     if res["status"] == "run":  # сухой прогон / бесплатное: запуски уже в базе — выполняем вне замка
-        res = {"ok": True, "status": "done", "estimate": res["estimate"], "run": run_jobs(store, res["job_ids"]),
-               "note": "сухой прогон: заглушки вместо картинок, тон вместо голоса, 0 ₽"}
+        est = res["estimate"]
+        dry = all(i["provider"] == "none" for i in est["items"])
+        res = {"ok": True, "status": "done", "estimate": est, "run": run_jobs(store, res["job_ids"]),
+               "note": ("сухой прогон: заглушки вместо картинок, тон вместо голоса, 0 ₽" if dry
+                        else "бесплатно (Gemini TTS, настоящий голос), 0 ₽")}
     return res
 
 
