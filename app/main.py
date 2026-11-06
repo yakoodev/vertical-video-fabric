@@ -22,7 +22,6 @@ from app.clip_spec import json_schema as clip_spec_json_schema
 from app.clip_history import save_with_snapshot, snapshot as snapshot_clip, undo as undo_clip
 from app.clip_settings import settings_to_render_kwargs
 from app.transitions import transition_options
-from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.ai.service import VideoAnalysisService
 from app.automation import AutomationService
 from app.auth import AuthRequired, auth_required_handler, is_agent_request, require_auth, token_is_valid
@@ -31,7 +30,6 @@ from app.db import Database
 from app.default_pack import seed_default_brand, seed_default_pack, seed_music
 from app.cut_refine import list_cut_strategies
 from app.focus_presets import list_focus_presets, list_focus_strategies
-from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
 from app.downloads import DownloadService
 from app import memory
 from app import modules
@@ -65,13 +63,12 @@ from app.thumbs import asset_thumb, clip_thumb, source_thumb
 from app.store import AppStore
 from app.timeline_export import write_timeline
 from app.video_crop import detect_content_crop
-from app.subtitles.gemini import gemini_subtitle_schema
 from app.worker import JobWorker
 from app import platform_stats
 from app.platform_stats import StatsCollector
 from app.api_common import (
     THUMB_CACHE, _default_subtitle_profile_id, _normalize_schedule_text, _optional_form_float, _optional_form_int,
-    _parse_schedule_dt, _payload_data, _safe_next, _setting_int,
+    _parse_schedule_dt, _payload_data, _safe_next,
 )
 from app.agent_api import router as agent_router
 
@@ -173,57 +170,6 @@ app.add_middleware(TextGzipMiddleware)
 app.add_exception_handler(modules.ModuleDisabled, module_disabled_handler)
 templates =Jinja2Templates(directory=settings.root_dir / "app" / "templates")
 
-PUBLISHING_METADATA_SCHEMA = {
-    "type": "object",
-    "required": ["title", "description"],
-    "properties": {
-        "title": {"type": "string", "maxLength": 100},
-        "description": {"type": "string", "maxLength": 500},
-    },
-}
-
-
-def _settings_panel_data() -> dict:
-    saved = store.list_app_settings(include_secrets=False)
-    store.ensure_prompt_presets(
-        {
-            "analysis": ("Apex analysis", saved.get("analysis_prompt") or BASE_ANALYSIS_PROMPT),
-            "publishing": ("Publishing metadata", saved.get("publishing_prompt") or DEFAULT_PUBLISHING_PROMPT),
-            "subtitle": ("Apex subtitles", saved.get("subtitle_prompt") or DEFAULT_SUBTITLE_PROMPT),
-        }
-    )
-    analysis_prompt_preset = store.get_default_prompt_preset("analysis")
-    publishing_prompt_preset = store.get_default_prompt_preset("publishing")
-    subtitle_prompt_preset = store.get_default_prompt_preset("subtitle")
-    default_banner_id = _setting_int(saved.get("default_banner_id"))
-    default_subtitle_profile_id = _setting_int(saved.get("default_subtitle_profile_id"))
-    return {
-        "accounts": store.list_accounts(),
-        "presets": store.list_ffmpeg_presets(),
-        "banners": store.list_banners(),
-        "audio_tracks": store.list_audio_tracks(),
-        "subtitle_profiles": store.list_subtitle_profiles(),
-        "prompt_presets": store.list_prompt_presets(),
-        "analysis_prompt_presets": store.list_prompt_presets("analysis"),
-        "publishing_prompt_presets": store.list_prompt_presets("publishing"),
-        "subtitle_prompt_presets": store.list_prompt_presets("subtitle"),
-        "analysis_prompt": (analysis_prompt_preset or {}).get("prompt") or saved.get("analysis_prompt") or BASE_ANALYSIS_PROMPT,
-        "publishing_prompt": (publishing_prompt_preset or {}).get("prompt") or saved.get("publishing_prompt") or DEFAULT_PUBLISHING_PROMPT,
-        "subtitle_prompt": (subtitle_prompt_preset or {}).get("prompt") or saved.get("subtitle_prompt") or DEFAULT_SUBTITLE_PROMPT,
-        "default_analysis_prompt_preset_id": (analysis_prompt_preset or {}).get("id") or 0,
-        "default_ai_provider": saved.get("default_ai_provider") or settings.ai_video_provider,
-        "default_ai_model": saved.get("default_ai_model") or "",
-        "default_subtitle_provider": saved.get("default_subtitle_provider") or settings.subtitle_provider,
-        "default_subtitle_model": saved.get("default_subtitle_model") or "",
-        "default_banner_id": default_banner_id,
-        "default_subtitle_profile_id": default_subtitle_profile_id,
-        "global_proxy_configured": bool(store.get_global_proxy_url()),
-        "global_proxy_display": "configured" if store.get_global_proxy_url() else "direct",
-        "analysis_schema_json": json.dumps(ANALYSIS_RESPONSE_SCHEMA, ensure_ascii=False, indent=2),
-        "publishing_schema_json": json.dumps(PUBLISHING_METADATA_SCHEMA, ensure_ascii=False, indent=2),
-        "subtitle_schema_json": json.dumps(gemini_subtitle_schema(), ensure_ascii=False, indent=2),
-    }
-
 
 class AccountCreate(BaseModel):
     platform: Literal["youtube", "tiktok", "instagram"] = Field(description="Target platform.")
@@ -323,45 +269,6 @@ class SourceRead(BaseModel):
     has_file: bool | None = None
     # Человеческое название видео (app/nav.py), а не twitch-XXXX.mp4.
     display_name: str = ""
-
-
-class ProxySettingsRequest(BaseModel):
-    url: str = Field(default="", max_length=500, description="http://логин:пароль@хост:порт, socks5://… или логин:пароль:хост:порт")
-    expires_on: str = Field(default="", max_length=10, description="YYYY-MM-DD — когда прокси протухнет")
-    for_gemini: bool = True
-
-
-@app.get("/api/settings/proxy", tags=["Settings"], summary="Прокси сервиса (без секретов)")
-def api_get_proxy(_auth: AuthDep) -> dict:
-    return proxy_config.status()
-
-
-@app.put("/api/settings/proxy", tags=["Settings"], summary="Задать прокси (загрузки, при желании — Gemini)")
-def api_put_proxy(payload: ProxySettingsRequest, _auth: AuthDep) -> dict:
-    try:
-        url = payload.url.strip() or proxy_config.load().get("url", "")
-        if not url:
-            raise ValueError("прокси: укажите адрес")
-        return proxy_config.save(url, payload.expires_on or None, payload.for_gemini)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.delete("/api/settings/proxy", tags=["Settings"], summary="Убрать прокси сервиса")
-def api_delete_proxy(_auth: AuthDep) -> dict:
-    return proxy_config.clear()
-
-
-class ProxyTestRequest(BaseModel):
-    url: str = Field(default="", max_length=500)
-
-
-@app.post("/api/settings/proxy/test", tags=["Settings"], summary="Проверить прокси: видео-CDN Twitch и Google")
-def api_test_proxy(_auth: AuthDep, payload: ProxyTestRequest | None = None) -> dict:
-    try:
-        return proxy_config.test((payload.url if payload else "") or None)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class SourceDownloadRequest(BaseModel):
@@ -737,7 +644,7 @@ def ui_render_uploaded_clip(
     use_music: Annotated[bool, Form()] = False,
     subtitle_offset_sec: Annotated[str, Form()] = "",
 ) -> RedirectResponse:
-    defaults = _settings_panel_data()
+    defaults = _settings_panel_data(store)
     selected_subtitle_profile_id = _optional_form_int(subtitle_profile_id) if use_subtitles else None
     if use_subtitles and not selected_subtitle_profile_id:
         selected_subtitle_profile_id = defaults["default_subtitle_profile_id"] or None
@@ -918,125 +825,6 @@ def ui_delete_ai_analysis(
     return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
-@app.get("/api/settings", tags=["Render"], summary="Default models, proxy and asset settings")
-def api_settings(_auth: AuthDep) -> dict:
-    data = _settings_panel_data()
-    return {
-        "default_ai_provider": data["default_ai_provider"],
-        "default_ai_model": data["default_ai_model"],
-        "default_subtitle_provider": data["default_subtitle_provider"],
-        "default_subtitle_model": data["default_subtitle_model"],
-        "default_banner_id": data["default_banner_id"],
-        "default_subtitle_profile_id": data["default_subtitle_profile_id"],
-        "global_proxy_configured": data["global_proxy_configured"],
-        "global_proxy_display": data["global_proxy_display"],
-        "banners": [{"id": b["id"], "label": b["label"]} for b in data["banners"]],
-        "subtitle_profiles": [{"id": p["id"], "label": p["label"]} for p in data["subtitle_profiles"]],
-        **_auto_meta_settings(),
-    }
-
-
-def _auto_meta_settings() -> dict:
-    from app.ai.publish_meta import AUTO_META_KEY
-
-    return {
-        "auto_publish_meta": bool(store.get_app_setting_value(AUTO_META_KEY, True)),
-        "gemini_configured": bool(settings.gemini_api_key),
-        "auto_publish_meta_env": bool(settings.auto_publish_meta),
-    }
-
-
-class AutoMetaPayload(BaseModel):
-    enabled: bool
-
-
-@app.put(
-    "/api/settings/auto-publish-meta",
-    tags=["Settings"],
-    summary="Write title/description/hashtags automatically after each render (needs a Gemini key)",
-)
-def api_set_auto_publish_meta(payload: AutoMetaPayload, _auth: AuthDep) -> dict:
-    from app.ai.publish_meta import AUTO_META_KEY
-
-    store.set_app_setting(AUTO_META_KEY, bool(payload.enabled))
-    return _auto_meta_settings()
-
-
-@app.post("/ui/settings/defaults", include_in_schema=False)
-def ui_save_settings_defaults(
-    _auth: AuthDep,
-    analysis_prompt: Annotated[str, Form()] = BASE_ANALYSIS_PROMPT,
-    publishing_prompt: Annotated[str, Form()] = DEFAULT_PUBLISHING_PROMPT,
-    subtitle_prompt: Annotated[str, Form()] = DEFAULT_SUBTITLE_PROMPT,
-    default_ai_provider: Annotated[str, Form()] = "mock",
-    default_ai_model: Annotated[str, Form()] = "",
-    default_subtitle_provider: Annotated[str, Form()] = "mock",
-    default_subtitle_model: Annotated[str, Form()] = "",
-    global_proxy_url: Annotated[str | None, Form()] = None,
-    default_banner_id: Annotated[int, Form()] = 0,
-    default_subtitle_profile_id: Annotated[int, Form()] = 0,
-    next: Annotated[str, Form()] = "/sources",
-) -> RedirectResponse:
-    try:
-        provider = default_ai_provider.strip().lower() or "mock"
-        subtitle_provider = default_subtitle_provider.strip().lower() or "mock"
-        if provider not in {"mock", "action", "polza", "gemini", "artemox"}:
-            raise ValueError(f"unsupported provider: {default_ai_provider}")
-        if subtitle_provider not in {"mock", "whisper", "polza", "gemini", "artemox"}:
-            raise ValueError(f"unsupported subtitle provider: {default_subtitle_provider}")
-        if global_proxy_url is not None and global_proxy_url.strip() and not global_proxy_url.strip().startswith(("http://", "https://")):
-            raise ValueError("global proxy must start with http:// or https://")
-        if default_banner_id:
-            store.get_banner(default_banner_id)
-        if default_subtitle_profile_id:
-            store.get_subtitle_profile(default_subtitle_profile_id)
-        store.set_app_setting("default_ai_provider", provider)
-        store.set_app_setting("default_ai_model", default_ai_model.strip())
-        store.set_app_setting("default_subtitle_provider", subtitle_provider)
-        store.set_app_setting("default_subtitle_model", default_subtitle_model.strip())
-        store.set_app_setting("default_banner_id", int(default_banner_id or 0))
-        store.set_app_setting("default_subtitle_profile_id", int(default_subtitle_profile_id or 0))
-        if global_proxy_url is not None:
-            store.set_app_setting("global_proxy_url", global_proxy_url.strip(), encrypted=True)
-    except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
-@app.get("/api/prompt-presets", tags=["Render"], summary="List prompt presets")
-def api_prompt_presets(_auth: AuthDep, task: str | None = None) -> list[dict]:
-    return store.list_prompt_presets(task)
-
-
-@app.post("/ui/prompt-presets", include_in_schema=False)
-def ui_create_prompt_preset(
-    _auth: AuthDep,
-    task: Annotated[str, Form()],
-    label: Annotated[str, Form()],
-    prompt: Annotated[str, Form()],
-    make_default: Annotated[bool, Form()] = False,
-    next: Annotated[str, Form()] = "/sources",
-) -> RedirectResponse:
-    try:
-        store.create_prompt_preset(task, label, prompt, is_default=make_default)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
-@app.post("/ui/prompt-presets/{preset_id}/delete", include_in_schema=False)
-def ui_delete_prompt_preset(
-    preset_id: int,
-    _auth: AuthDep,
-    next: Annotated[str, Form()] = "/sources",
-) -> RedirectResponse:
-    try:
-        store.delete_prompt_preset(preset_id)
-    except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
 @app.post("/ui/posts", include_in_schema=False)
 async def ui_create_post(
     _auth: AuthDep,
@@ -1102,7 +890,7 @@ def ui_auto_start(
             get_channel_project(store, project_id, include_sources=False)
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    defaults = _settings_panel_data()
+    defaults = _settings_panel_data(store)
     selected_prompt = ""
     if prompt_preset_id:
         try:
@@ -3574,19 +3362,6 @@ def _merge_tasks(stored: list[dict], downloads: list[dict]) -> list[dict]:
     return sorted([*downloads, *stored], key=lambda task: str(task.get("updated_at") or ""), reverse=True)
 
 
-@app.get("/api/export", tags=["Settings"], summary="Export a shareable config bundle")
-def api_export_bundle(_auth: AuthDep, accounts: bool = False) -> dict:
-    return store.export_bundle(include_accounts=accounts)
-
-
-@app.post("/api/import", tags=["Settings"], summary="Import a config bundle")
-def api_import_bundle(payload: dict, _auth: AuthDep) -> dict:
-    try:
-        return store.import_bundle(payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @app.post("/api/clip-plans/{clip_plan_id}/segments", tags=["Render"], summary="Add segment to clip plan")
 def api_add_clip_plan_segment(
     clip_plan_id: int,
@@ -4164,6 +3939,10 @@ async def _save_audio_upload(file: UploadFile, label: str, volume: float = 0.25)
 
     return await asyncio.to_thread(mark_track, store, track)
 
+
+from app.settings_api import _settings_panel_data, build_settings_router
+
+app.include_router(build_settings_router(AuthDep, lambda: store))
 
 # Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
 from app.motion_api import build_motion_router  # noqa: E402
